@@ -55,7 +55,7 @@ func TestOpenNewThenAgain(t *testing.T) {
 		t.Fatalf("journal_mode = %q", mode)
 	}
 	want := tables(t, s)
-	if want != "schema_version,sessions,threads,turns,workspaces" {
+	if want != "events,inbox,schema_version,sessions,sqlite_sequence,threads,turns,workspaces" {
 		t.Fatalf("tables = %s", want)
 	}
 	s.Close()

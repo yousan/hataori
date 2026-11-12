@@ -56,6 +56,22 @@ var migrations = []Migration{
 		)`,
 		`CREATE INDEX turns_session ON turns (session_id)`,
 	)},
+	{Name: "inbox, events", Up: execAll(
+		`CREATE TABLE inbox (
+			key         TEXT PRIMARY KEY, -- the caller's safe-to-repeat key
+			data        BLOB NOT NULL,
+			accepted_at INTEGER NOT NULL
+		)`,
+		`CREATE TABLE events (
+			pos    INTEGER PRIMARY KEY AUTOINCREMENT, -- never reused
+			scope  TEXT NOT NULL,
+			thread TEXT NOT NULL,
+			time   INTEGER NOT NULL,
+			kind   TEXT NOT NULL,
+			data   BLOB NOT NULL
+		)`,
+		`CREATE INDEX events_scope ON events (scope, thread, pos)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {
