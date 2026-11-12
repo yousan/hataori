@@ -30,6 +30,7 @@ type Server struct {
 	path  string
 	mu    sync.Mutex
 	conns map[net.Conn]struct{}
+	peers map[*Peer]struct{}
 }
 
 // Listen creates the socket for the instance at root and returns a server
@@ -64,7 +65,7 @@ func Listen(root string, api control.API, log *slog.Logger) (*Server, error) {
 		ln.Close()
 		return nil, fmt.Errorf("wire: %w", err)
 	}
-	return &Server{API: api, Log: log, uid: os.Getuid(), ln: ln, path: path, conns: map[net.Conn]struct{}{}}, nil
+	return &Server{API: api, Log: log, uid: os.Getuid(), ln: ln, path: path, conns: map[net.Conn]struct{}{}, peers: map[*Peer]struct{}{}}, nil
 }
 
 // privateDir makes dir, owned by this user and closed to others.
@@ -149,7 +150,7 @@ func (s *Server) serveConn(ctx context.Context, c *net.UnixConn) {
 	}
 	// Whatever the hello's decoder read ahead belongs to the requests.
 	dec = json.NewDecoder(bufio.NewReader(io.MultiReader(dec.Buffered(), c)))
-	if h.Version != Version {
+	if major(h.Version) != major(Version) {
 		msg := versionError(h.Version, Version).Error()
 		s.Log.Warn("control connection refused", "reason", msg)
 		enc.Encode(hello{Version: Version, Error: msg})
@@ -158,77 +159,55 @@ func (s *Server) serveConn(ctx context.Context, c *net.UnixConn) {
 	if err := enc.Encode(hello{Version: Version}); err != nil {
 		return
 	}
-	for {
-		var req request
-		if err := dec.Decode(&req); err != nil {
-			if !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
-				s.Log.Warn("control connection", "err", err)
-			}
-			return
+	p := newPeer(c, func(ctx context.Context, op string, args json.RawMessage) (any, error) {
+		return s.call(ctx, request{Op: op, Args: args})
+	})
+	s.mu.Lock()
+	s.peers[p] = struct{}{}
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.peers, p)
+		s.mu.Unlock()
+	}()
+	err = p.serve(ctx, dec, func(req request) bool {
+		if req.Op != "Events" {
+			return false
 		}
-		if req.Op == "Events" {
-			s.stream(ctx, c, dec, enc, req)
-			return
-		}
-		result, err := s.call(ctx, req)
-		resp := response{ID: req.ID}
-		if err != nil {
-			resp.Error = encodeError(err)
-		} else if result != nil {
-			resp.Result, _ = json.Marshal(result)
-		}
-		if err := enc.Encode(resp); err != nil {
-			return
-		}
+		s.mu.Lock()
+		delete(s.peers, p) // the connection is a stream now
+		s.mu.Unlock()
+		s.stream(ctx, c, dec, enc, req)
+		return true
+	})
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
+		s.Log.Warn("control connection", "err", err)
 	}
 }
 
+// Peers returns the clients connected now, to send them requests. A
+// connection that carries an event stream is not among them.
+func (s *Server) Peers() []*Peer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []*Peer
+	for p := range s.peers {
+		out = append(out, p)
+	}
+	return out
+}
+
 func (s *Server) call(ctx context.Context, req request) (any, error) {
-	args := func(v any) error {
+	op, ok := operations[req.Op]
+	if !ok || op.run == nil {
+		return nil, fmt.Errorf("wire: operation %q: %w", req.Op, ErrNotSupported)
+	}
+	return op.run(ctx, s.API, func(v any) error {
 		if err := json.Unmarshal(req.Args, v); err != nil {
 			return fmt.Errorf("wire: %s: bad arguments: %w", req.Op, err)
 		}
 		return nil
-	}
-	switch req.Op {
-	case "Threads":
-		var a threadsArgs
-		if err := args(&a); err != nil {
-			return nil, err
-		}
-		return s.API.Threads(ctx, a.Filter)
-	case "Thread":
-		var a threadArgs
-		if err := args(&a); err != nil {
-			return nil, err
-		}
-		return s.API.Thread(ctx, a.ID, a.Recent)
-	case "Start":
-		var a control.StartRequest
-		if err := args(&a); err != nil {
-			return nil, err
-		}
-		return s.API.Start(ctx, a)
-	case "Send":
-		var a sendArgs
-		if err := args(&a); err != nil {
-			return nil, err
-		}
-		return nil, s.API.Send(ctx, a.ID, a.Key, a.Input, a.Busy)
-	case "Answer":
-		var a answerArgs
-		if err := args(&a); err != nil {
-			return nil, err
-		}
-		return nil, s.API.Answer(ctx, a.Request, a.Answer)
-	case "Stop":
-		var a stopArgs
-		if err := args(&a); err != nil {
-			return nil, err
-		}
-		return nil, s.API.Stop(ctx, a.ID)
-	}
-	return nil, fmt.Errorf("wire: unknown operation %q", req.Op)
+	})
 }
 
 // stream sends events until the client goes away.

@@ -211,14 +211,9 @@ func find(ctx context.Context, c control.API, key string) (control.ThreadInfo, b
 	return ts[0], true, nil
 }
 
-type eventLine struct {
-	Pos    uint64          `json:"pos"`
-	Scope  string          `json:"scope"`
-	Thread string          `json:"thread"`
-	Time   time.Time       `json:"time"`
-	Kind   string          `json:"kind"`
-	Data   json.RawMessage `json:"data"`
-}
+// printEvent prints one event as the protocol's Event object
+// (docs/protocol.md), one per line.
+func printEvent(enc *json.Encoder, e control.Event) error { return enc.Encode(e) }
 
 func events(ctx context.Context, c control.API, after uint64, follow bool, enc *json.Encoder, fail func(error) int) int {
 	ctx, cancel := context.WithCancel(ctx)
@@ -234,8 +229,7 @@ func events(ctx context.Context, c control.API, after uint64, follow bool, enc *
 			}
 			continue
 		}
-		if err := enc.Encode(eventLine{Pos: e.Pos, Scope: e.Thread.Scope, Thread: e.Thread.Key, Time: e.Time,
-			Kind: string(e.Kind), Data: e.Data}); err != nil {
+		if err := printEvent(enc, e); err != nil {
 			return fail(err)
 		}
 	}

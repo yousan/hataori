@@ -329,6 +329,8 @@ func TestEventNamingOtherScopes(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	f := newFixture(t, fakeOwner{})
+	f.core.Store.CheckEvent = nil // events of the test's own kinds
+	f.core.Store.CheckEvent = nil // events of the test's own kinds
 	f.core.Store.Update(ctx, func(tx *store.Tx) error {
 		tx.Append(ctx, control.Event{Thread: control.ThreadID{Scope: "s", Key: "k"}, Kind: "x", Data: []byte(`{"scopes":["s","hidden"]}`)})
 		tx.Append(ctx, control.Event{Thread: control.ThreadID{Scope: "s", Key: "k"}, Kind: "y", Data: []byte(`{"scopes":["s"]}`)})
@@ -338,7 +340,11 @@ func TestEventNamingOtherScopes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e := <-evs; e.Kind != "y" {
+	e := <-evs
+	for e.Kind == control.CaughtUp {
+		e = <-evs
+	}
+	if e.Kind != "y" {
 		t.Fatalf("caller of scope s got %q", e.Kind)
 	}
 }

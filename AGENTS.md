@@ -53,6 +53,10 @@ This repository tracks problems that any hataori user could hit.
 Do not put deployment details in issues, pull requests, commits or code: no host names, absolute paths from your machine, disk sizes, user or channel IDs, tokens.
 A problem that only happens on one deployment belongs in that deployment's own tracker.
 
+## Protocol
+
+The control socket's messages and the events are a public format. Change them only as [docs/protocol.md](docs/protocol.md) says, with its version and golden files.
+
 ## Layout
 
 - `cmd/hataori/`: the command
