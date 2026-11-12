@@ -880,7 +880,9 @@ type API interface {
 	Answer(ctx context.Context, req RequestID, a Answer) error
 	Stop(ctx context.Context, id ThreadID) error
 
-	// Events delivers events after a position, then live ones.
+	// Events delivers events after a position, then live ones. Between the
+	// two it delivers one mark of kind CaughtUp, which is not stored, so a
+	// reader can stop after the stored events.
 	Events(ctx context.Context, f Filter, after uint64) (<-chan Event, error)
 }
 

@@ -32,6 +32,9 @@ type API interface {
 	Stop(ctx context.Context, id ThreadID) error
 
 	// Events delivers events after a position, then live ones, until ctx ends.
+	// Once the events stored when it was called are delivered, it delivers
+	// one Event of kind CaughtUp, whose Pos is the last position delivered
+	// (or after). The mark is not stored and belongs to no thread.
 	Events(ctx context.Context, f Filter, after uint64) (<-chan Event, error)
 }
 
@@ -173,6 +176,9 @@ type Choice struct {
 // EventKind names the kind of an Event. The kinds are defined with the
 // session state machine.
 type EventKind string
+
+// CaughtUp marks the end of the stored events in an Events stream.
+const CaughtUp EventKind = "caught_up"
 
 // Event is one entry of the core's event log. Pos is unique and increasing
 // in the instance, so a reader can resume after the last Pos it saw.

@@ -201,11 +201,14 @@ func TestEventsResumeAfterReconnect(t *testing.T) {
 	}
 	var got []uint64
 	read := func(n int) {
-		for range n {
+		for want := len(got) + n; len(got) < want; {
 			select {
 			case e, ok := <-evs:
 				if !ok {
 					t.Fatal("stream ended")
+				}
+				if e.Kind == control.CaughtUp {
+					continue // a mark, not an event; it does not count
 				}
 				got = append(got, e.Pos)
 			case <-time.After(5 * time.Second):
