@@ -75,9 +75,11 @@ func (w workDir) Make(context.Context, control.ThreadID, string) (string, error)
 }
 
 type options struct {
-	terminal     bool
-	instructions string
-	startTimeout time.Duration
+	terminal      bool
+	instructions  string
+	startTimeout  time.Duration
+	idlePeriod    time.Duration
+	conversations string // the fake's directory of conversations, if any
 }
 
 // build makes an instance's store, core and runner with the fake agent.
@@ -88,7 +90,7 @@ func build(root string, o options, log io.Writer) (*store.Store, *core.Core, *Ru
 		return nil, nil, nil, err
 	}
 	cfg, _ := json.Marshal(fake.Config{Command: []string{os.Args[0], "role", "fake"}, Hataori: os.Args[0],
-		Terminal: o.terminal, Env: []string{"PATH=" + os.Getenv("PATH")}})
+		Terminal: o.terminal, Env: []string{"PATH=" + os.Getenv("PATH")}, Conversations: o.conversations})
 	ad, err := fake.New(cfg)
 	if err != nil {
 		return nil, nil, nil, err
@@ -97,7 +99,8 @@ func build(root string, o options, log io.Writer) (*store.Store, *core.Core, *Ru
 	m := &session.Machine{Store: st}
 	r := &Runner{Store: st, Machine: m, Adapters: map[string]agent.Adapter{"fake": ad},
 		Host: host.Command{Path: os.Args[0], Args: []string{"role", "host"}}, Root: root, Log: lg,
-		Instructions: o.instructions, StartTimeout: o.startTimeout, InterruptGrace: 5 * time.Second, Poll: 20 * time.Millisecond}
+		Instructions: o.instructions, StartTimeout: o.startTimeout, InterruptGrace: 5 * time.Second, Poll: 20 * time.Millisecond,
+		IdlePeriod: o.idlePeriod}
 	c := &core.Core{Store: st, Machine: m, Scopes: map[string]core.Scope{"s": {Enabled: true, Owner: "chat"}},
 		Workspaces: workDir(filepath.Join(root, "work")), Runner: r, Agent: "fake", Log: lg}
 	return st, c, r, nil
@@ -112,7 +115,8 @@ func owner(c *core.Core) control.API {
 var thread = control.ThreadID{Scope: "s", Key: "t1"}
 
 // killSessions kills every host and agent the runner started under root,
-// and only those.
+// and only those, and removes the socket directories that killed hosts
+// left outside root.
 func killSessions(root string) {
 	dirs, _ := filepath.Glob(filepath.Join(root, "state", "sessions", "*"))
 	for _, d := range dirs {
@@ -122,6 +126,9 @@ func killSessions(root string) {
 					syscall.Kill(-pid, syscall.SIGKILL)
 				}
 			}
+		}
+		if sock := filepath.Dir(host.SocketPath(d)); strings.HasPrefix(filepath.Base(sock), "hataori-host-") {
+			os.RemoveAll(sock)
 		}
 	}
 }

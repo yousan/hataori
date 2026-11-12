@@ -18,7 +18,7 @@ import (
 )
 
 // daemon is a daemon process a test can kill: `role daemon ROOT TERMINAL
-// start|resume [SCRIPT]`.
+// start|resume [SCRIPT...]`.
 func daemon(args []string) int {
 	root, terminal, mode := args[0], args[1] == "true", args[2]
 	log, _ := os.OpenFile(filepath.Join(root, "daemon.log"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
@@ -32,11 +32,15 @@ func daemon(args []string) int {
 		fmt.Fprintln(log, err)
 		return 1
 	}
-	if mode == "start" {
-		if _, err := owner(c).Start(context.Background(), control.StartRequest{Key: "k1", Scope: "s", Thread: "t1",
-			Repo: "file:///unused", Input: control.Input{Text: args[3]}}); err != nil {
-			fmt.Fprintln(log, err)
-			return 1
+	if mode == "start" { // one thread per script: t1, t2, ...
+		for i, script := range args[3:] {
+			n := fmt.Sprint(i + 1)
+			key := "k" + n
+			if _, err := owner(c).Start(context.Background(), control.StartRequest{Key: key, Scope: "s", Thread: "t" + n,
+				Repo: "file:///unused", Input: control.Input{Text: script}}); err != nil {
+				fmt.Fprintln(log, err)
+				return 1
+			}
 		}
 	}
 	os.Stdout.WriteString("up\n")

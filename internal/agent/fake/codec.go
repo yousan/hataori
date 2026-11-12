@@ -124,6 +124,8 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 		a = c.events(e)
 	case "interrupted":
 		a = c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted})
+	case "cannot-resume":
+		a = c.events(agent.Event{Kind: agent.SessionEnded, SessionID: r.Session, Reason: agent.CannotResume})
 	default:
 		a = c.events(agent.Event{Kind: agent.Unknown, Text: string(line)})
 	}

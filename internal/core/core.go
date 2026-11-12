@@ -55,6 +55,10 @@ type Runner interface {
 	Answer(ctx context.Context, sessionID int64, req string, a control.Answer) error
 	// Interrupt stops a session's running turn.
 	Interrupt(ctx context.Context, sessionID int64) error
+	// Resume starts the agent of an asleep session again with its
+	// conversation, and sends it in as a Send of principal and key once it
+	// reports that it is ready.
+	Resume(ctx context.Context, sessionID int64, principal control.Principal, key string, in control.Input) error
 }
 
 // Launch is what Runner.Start needs.
@@ -446,6 +450,7 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 		accepted  bool
 		interrupt bool
 		answer    string // the agent's id of the open question this input answers
+		wake      bool   // the session is asleep: its agent starts again
 	)
 	// The state is read in the write transaction, so it cannot change
 	// between the Busy decision and the input.
@@ -472,6 +477,10 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 			}
 		}
 		accepted = true
+		if state == control.Asleep {
+			wake = true
+			return a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Wake})
+		}
 		if state == control.Waiting {
 			// The input is the answer to the open question.
 			var req string
@@ -493,6 +502,15 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 	}
 	if answer != "" {
 		return a.c.Runner.Answer(ctx, sid, answer, control.Answer{Text: in.Text})
+	}
+	if wake {
+		if err := a.c.Runner.Resume(ctx, sid, a.caller.Principal, key, in); err != nil {
+			if ferr := a.c.Machine.Apply(ctx, sid, session.Input{Kind: session.Exit, Reason: "resume: " + err.Error()}); ferr != nil {
+				a.c.Log.Error("recording a failed resume", "session", sid, "err", ferr)
+			}
+			return fmt.Errorf("core: send to %v: resume: %w", id, err)
+		}
+		return nil
 	}
 	if interrupt {
 		if err := a.c.Runner.Interrupt(ctx, sid); err != nil {

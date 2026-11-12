@@ -39,6 +39,9 @@ func (r *fakeRunner) Answer(_ context.Context, _ int64, req string, _ control.An
 	return r.record("answer " + req)
 }
 func (r *fakeRunner) Interrupt(context.Context, int64) error { return r.record("interrupt") }
+func (r *fakeRunner) Resume(_ context.Context, _ int64, _ control.Principal, _ string, in control.Input) error {
+	return r.record("resume " + in.Text)
+}
 func (r *fakeRunner) Calls() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
