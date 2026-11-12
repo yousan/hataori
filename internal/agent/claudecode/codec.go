@@ -12,7 +12,7 @@ import (
 
 // NewCodec returns the translator for one running session.
 func (a *Adapter) NewCodec(spec agent.Spec) agent.Codec {
-	return &codec{spec: spec, seen: map[string]bool{}, turns: map[string]*turnText{}}
+	return &codec{spec: spec, seen: map[string]bool{}, turns: map[string]*turnText{}, lines: map[string]bool{}}
 }
 
 // Actions is agent.Actions.
@@ -34,6 +34,7 @@ type codec struct {
 	current    string               // prompt id of the transcript's latest user line
 	turns      map[string]*turnText // by prompt id
 	closed     bool                 // SessionEnd was reported
+	lines      map[string]bool      // uuids of transcript lines already read
 }
 
 // turnText is what the codec knows about the text of one prompt's turn.
@@ -104,6 +105,10 @@ func (c *codec) Interrupt() Actions                   { return Actions{} }
 func (c *codec) Decode(src agent.Source, line []byte) Actions {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.number(c.decode(src, line))
+}
+
+func (c *codec) decode(src agent.Source, line []byte) Actions {
 	switch src {
 	case agent.File:
 		return c.decodeTranscript(line)
@@ -196,6 +201,7 @@ func (c *codec) turn(prompt string) *turnText {
 // transcriptLine is a line of the transcript, as far as the codec reads it.
 type transcriptLine struct {
 	Type        string `json:"type"`
+	UUID        string `json:"uuid"`
 	SessionID   string `json:"sessionId"`
 	PromptID    string `json:"promptId"`
 	IsSidechain bool   `json:"isSidechain"`
@@ -223,6 +229,12 @@ func (c *codec) decodeTranscript(raw []byte) Actions {
 	}
 	if c.session != "" && l.SessionID != "" && l.SessionID != c.session {
 		return Actions{}
+	}
+	if l.UUID != "" {
+		if c.lines[l.UUID] {
+			return Actions{} // read before, from this file or another
+		}
+		c.lines[l.UUID] = true
 	}
 	var blocks []block
 	if len(l.Message.Content) > 0 && l.Message.Content[0] == '[' {
@@ -278,10 +290,9 @@ func (c *codec) applyText(t *turnText, it textItem) Actions {
 		return merge(a, c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted}))
 	}
 	if t.ended {
-		if it.text == t.final {
-			return Actions{}
-		}
-		return c.events(agent.Event{Kind: agent.Text, Text: it.text})
+		// The turn's end is reported, with its final answer; text read
+		// later (a lagging transcript, or one read again) is not posted.
+		return Actions{}
 	}
 	a := c.release(t)
 	if c.closed { // nothing will follow to release it
@@ -435,11 +446,16 @@ func failureReason(e string) agent.Reason {
 	return agent.APIError
 }
 
-// events numbers evs and returns them.
+// events returns evs as actions; Decode numbers them in the order it
+// returns them.
 func (c *codec) events(evs ...agent.Event) Actions {
-	for i := range evs {
-		c.seq++
-		evs[i].Seq = c.seq
-	}
 	return Actions{Events: evs}
+}
+
+func (c *codec) number(a Actions) Actions {
+	for i := range a.Events {
+		c.seq++
+		a.Events[i].Seq = c.seq
+	}
+	return a
 }

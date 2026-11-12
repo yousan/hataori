@@ -200,3 +200,28 @@ func TestHooksAloneWithoutTranscript(t *testing.T) {
 		}
 	}
 }
+
+func TestSequenceFollowsOrder(t *testing.T) {
+	for _, scenario := range []string{"interrupt", "subagent", "tools"} {
+		a, _ := run(t, newTestCodec(), scenario, true)
+		for i := 1; i < len(a.Events); i++ {
+			if a.Events[i].Seq != a.Events[i-1].Seq+1 {
+				t.Fatalf("%s: sequence %d after %d", scenario, a.Events[i].Seq, a.Events[i-1].Seq)
+			}
+		}
+	}
+}
+
+// A transcript read again after its turns ended gives no text twice.
+func TestTranscriptReadAgain(t *testing.T) {
+	c := newTestCodec()
+	a, _ := run(t, c, "subagent", false)
+	before := len(texts(a))
+	var again Actions
+	for _, l := range lines(t, "subagent/transcript.jsonl") {
+		again = merge(again, c.Decode(agent.File, l))
+	}
+	if n := len(texts(again)); n != 0 || before == 0 {
+		t.Fatalf("read again: %d texts (first read %d)", n, before)
+	}
+}
