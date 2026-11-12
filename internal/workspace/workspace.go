@@ -81,10 +81,12 @@ func Segment(s string) string {
 	return out
 }
 
-var scpLike = regexp.MustCompile(`^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^/\s][^\s]*$`)
+// scpLike is git's SSH form [user@]host:path. The host has no '/', so
+// "host/owner/repo" and "git@host/owner/repo" are not it.
+var scpLike = regexp.MustCompile(`^([A-Za-z0-9._-]+@)?[A-Za-z0-9.-]+:[^\s]+$`)
 
 // CheckAddress accepts a URL with a scheme and a host or path, or the SSH
-// form user@host:path. It looks at the string only.
+// form [user@]host:path. It looks at the string only.
 func CheckAddress(repo string) error {
 	if strings.TrimSpace(repo) != repo || repo == "" || strings.ContainsAny(repo, " \t\n\r") {
 		return fmt.Errorf("workspace: repository address %q is empty or has spaces", redact(repo))
@@ -161,12 +163,12 @@ func (m Maker) Clone(ctx context.Context, client, scope, key, repo string) (stri
 	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 		return "", fmt.Errorf("workspace: %w", err)
 	}
-	// Rename does not replace a directory that holds anything, so a
-	// workspace that appeared meanwhile stays as it is.
-	if _, err := os.Lstat(target); err == nil {
-		return "", fmt.Errorf("%w: %s (the clone is left at %s)", ErrExists, target, tmp)
-	}
-	if err := os.Rename(tmp, target); err != nil {
+	// A rename that never replaces: a directory that appeared meanwhile,
+	// even an empty one, stays as it is.
+	if err := renameNoReplace(tmp, target); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return "", fmt.Errorf("%w: %s (the clone is left at %s)", ErrExists, target, tmp)
+		}
 		return "", fmt.Errorf("workspace: %w (the clone is left at %s)", err, tmp)
 	}
 	return target, nil

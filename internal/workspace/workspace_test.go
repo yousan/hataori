@@ -81,6 +81,20 @@ func TestCloneIntoPlace(t *testing.T) {
 	}
 }
 
+// An empty directory that appears while the clone runs is not replaced.
+func TestRenameNeverReplaces(t *testing.T) {
+	dir := t.TempDir()
+	from, to := filepath.Join(dir, "from"), filepath.Join(dir, "to")
+	os.Mkdir(from, 0o700)
+	os.Mkdir(to, 0o700)
+	if err := renameNoReplace(from, to); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("rename onto an empty directory: %v", err)
+	}
+	if _, err := os.Stat(from); err != nil {
+		t.Fatal("the source moved")
+	}
+}
+
 func TestExistingDirectoryIsUntouched(t *testing.T) {
 	root := t.TempDir()
 	target := Path(root, "chat", "c1", "t1")
@@ -106,7 +120,8 @@ func TestBadAddressesRefusedBeforeGit(t *testing.T) {
 			t.Errorf("%q: %v", repo, err)
 		}
 	}
-	for _, repo := range []string{"https://host/owner/repo.git", "ssh://git@host/owner/repo", "git@host:owner/repo.git", "file:///srv/repo.git"} {
+	for _, repo := range []string{"https://host/owner/repo.git", "ssh://git@host/owner/repo", "git@host:owner/repo.git",
+		"host:owner/repo.git", "git@host:/srv/repo.git", "file:///srv/repo.git"} {
 		if err := CheckAddress(repo); err != nil {
 			t.Errorf("%q refused: %v", repo, err)
 		}
