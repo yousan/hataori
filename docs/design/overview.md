@@ -28,7 +28,7 @@ How to read it:
 
 ### 2.1 Feature inventory
 
-c-lord has grown to about 64,000 lines of Python and roughly 60 slash and text commands. Appendix A lists its user-visible features in 105 rows: 61 keep, 23 change, 21 drop.
+c-lord has grown to about 64,000 lines of Python and roughly 60 slash and text commands. Appendix A lists its user-visible features in 105 rows: 62 keep, 23 change, 20 drop.
 
 What is kept is the daily loop: start a thread from a command, a text trigger or a webhook; get a clone of the bound repository; talk to the agent in the thread; answer its questions with buttons; see a lamp on your message; get pinged when the turn ends; stop, sleep, wake, close and clean up; hand files in and out; per-thread model choice; owner-only access by default; several instances on one host.
 
@@ -103,7 +103,7 @@ The Claude Agent SDK exists for Python and TypeScript only. Its docs tell other 
 
 ### 3.4 Decision
 
-**Principle.** hataori never touches login. It runs the CLI the operator installed, and whatever that CLI is logged in with, a subscription or an API key, must work. `claude -p` does not meet this in the long run: Claude Code's docs say `--bare` "will become the default for `-p`", and with `--bare` the same subscription login gave "Not logged in". So hataori does not depend on `-p`. This was the maintainer's decision.
+**Principle.** hataori never touches login. It runs the CLI the operator installed, and whatever that CLI is logged in with, a subscription or an API key, must work. `claude -p` does not meet this in the long run: Claude Code's docs say `--bare` "will become the default for `-p`", and with `--bare` the same subscription login gave "Not logged in". So hataori does not depend on `-p`. This was the maintainer's decision. Helping the owner log in again (section 4.7) keeps to the same rule: hataori runs the CLI's own login command and passes on the link and the owner's code, and stores neither.
 
 **Claude Code: the interactive CLI in a terminal that hataori owns.** The session host (section 4.3) starts the ordinary `claude` in a pseudo-terminal, with `--session-id` on first start and `--resume` after, and with `--settings <file>` pointing at a file in the session's state directory that registers hooks. Nothing is written into the working tree or the user's settings. Each kind of information has one source:
 
@@ -227,6 +227,31 @@ A workspace is removed only when all of this is proven, and removal is refused w
 
 Removal is a rename into `trash/` inside the root. A later pass deletes from trash after a retention period. This is the only code in hataori that deletes user data, and it is tested case by case before anything else.
 
+### 4.7 Login alert and relay
+
+When an agent's login runs out, every turn fails until someone logs in on the host, and the owner is usually not at the host. c-lord solved this in two steps, and hataori keeps both.
+
+**Alert.** A turn that fails with reason `login` opens a *login outage* for that agent on this instance. The owner gets one direct message for the outage: which instance, which threads stopped. Threads that stop later are added to the same message. The outage is a row in the database, so a restart does not send a second message. It closes when any turn of that agent ends without a failure, or when the relay succeeds.
+
+**Relay.** With the alert, hataori starts the agent CLI's own login command, as a process of its own, with the same config directory as the agent that is logged out.
+
+1. The command prints a sign-in link. hataori puts the link into the owner's direct message, with the time until which a code is accepted.
+2. The owner opens the link, signs in, and replies in the direct message with the code the page shows.
+3. hataori writes that reply to the login command and reports the result in the direct message. Success is the command ending cleanly and the CLI's own status check saying it is logged in. On success each stopped thread gets one line: the login is back, send your message again.
+4. If no code arrives in time, the command is stopped and the message says so. A button on the message starts a fresh login at any time, also after a restart.
+
+The rules:
+
+- **Only the owner's direct message is ever passed to the login command, and only while the command is waiting for a code.** A direct message from anyone else does nothing. The owner's message at any other time gets "not waiting for a code". A reply that is not shaped like a code (one word, no spaces) is not passed on.
+- **The link and the code exist only in the direct message and in memory.** They are not written to the database, the event log, any log file or any other conversation, and no client of the control API can read them. The log says that a code arrived and how long it was. For this reason the login command is a direct child of the daemon and does not run under the session host, which logs what it sees. A daemon restart ends a login that is in progress; the button starts another.
+- **Nothing is resent.** A message that failed is sent again by whoever sent it.
+- **If someone logs in on the host instead**, the next turn that completes closes the outage, the waiting login is stopped, and the message says the login is back.
+- The relay can be switched off in the config; the alert stays.
+
+This is the only input hataori takes from direct messages in phase 1, and the only button.
+
+For Claude Code the command is `claude auth login`. It was run with a throwaway config directory, so the existing login was not touched: it works on pipes without a terminal, prints the link on one line and then asks for the code, and answered a wrong code with one line and kept waiting (Appendix B). What it prints and how it ends after a correct code was not run **(unverified)**. Codex comes with its adapter: `codex login --device-auth` prints a link and a code and needs no reply, and `codex login status` reports the result (from its help text; not run).
+
 ## 5. Interfaces
 
 The core imports no adapter package. Adapters and clients register under a name, and that name is used only as a key and a path segment.
@@ -253,13 +278,13 @@ Sleep, close and remove join the interface with the phase that needs them. There
 
 Showing a thread in chat is one client, shared by all chat surfaces. It turns inbound chat into `Start`, `Send`, `Answer` and `Stop`; it reads `Events` and decides what to show; it owns the outbox. Underneath it, a surface driver knows one chat service and nothing about agents or threads of work.
 
-The driver's calls are: run and deliver inbound messages, button presses and commands; fetch messages since a cursor; open a thread; post, edit and delete a message; set a status on a message; set a thread's title and archived flag; report its limits. A message to post says what to show (text, files, choices, reply target, who to notify), not how.
+The driver's calls are: run and deliver inbound messages, button presses and commands; fetch messages since a cursor; open a thread; post, edit and delete a message; set a status on a message; set a thread's title and archived flag; report its limits. A message to post says what to show (text, files, choices, reply target, who to notify), not how. A driver can also open a direct conversation with one person; in phase 1 that is used for the owner only (section 4.7).
 
 The driver splits long text, picks buttons or a menu, and maps a status to whatever the surface has (a reaction, an edit). Its limits let the front end avoid asking for what a surface cannot do.
 
 ### 5.3 Agent adapter
 
-An agent adapter has two parts. The first says how to start the agent for a session, new or resumed: the command, whether it needs a terminal or pipes, and any files to put in the session's state directory first (for Claude Code, the settings file that registers its hooks). It also says whether the agent is installed and logged in. The second is a **codec**: it turns one reported line into events, whether the line came from the agent's output, from a hook call or from a file the codec asked to follow; and it turns a user message, an answer or an interrupt into bytes for the agent's input or into the reply to a waiting hook. The codec does no I/O.
+An agent adapter has two parts. The first says how to start the agent for a session, new or resumed: the command, whether it needs a terminal or pipes, and any files to put in the session's state directory first (for Claude Code, the settings file that registers its hooks). It also says whether the agent is installed and logged in, and, if the agent can be logged in again from chat, how to run its login command and how to read the link it prints. The second is a **codec**: it turns one reported line into events, whether the line came from the agent's output, from a hook call or from a file the codec asked to follow; and it turns a user message, an answer or an interrupt into bytes for the agent's input or into the reply to a waiting hook. The codec does no I/O.
 
 Splitting the agent adapter into a launch description and a pure codec is what makes the repository's test rule practical: a capture of real output goes in `testdata/`, and the codec must turn it into the expected events. The session host and the core never see agent-specific bytes. The same interface fits an agent on pipes that speaks a protocol and an agent in a terminal that reports through hooks, which is how the Claude Code adapter could be changed without touching the core.
 
@@ -391,9 +416,10 @@ In phase 1:
 - turn-end events as in section 4.4;
 - `hataori threads`, `hataori thread`, `hataori events`, `hataori stop` on the host. These are the first control API client;
 - the session host, catch-up of missed messages, sleep and resume;
-- one root per instance.
+- one root per instance;
+- the login alert and relay in the owner's direct messages (section 4.7).
 
-Not in phase 1: slash commands, buttons, the Stop button, lamps, pings, the footer, attachments into the agent, attach by hand, thread naming beyond a title from the prompt, and every way of removing a workspace. Phase 1 never deletes a workspace.
+Not in phase 1: slash commands, buttons (except the one on the login message), the Stop button, lamps, pings, the footer, attachments into the agent, attach by hand, thread naming beyond a title from the prompt, and every way of removing a workspace. Phase 1 never deletes a workspace.
 
 Acceptance:
 
@@ -414,6 +440,9 @@ Acceptance:
 - [ ] The daemon is killed with SIGKILL during a turn and started again: the turn finishes, every reply appears exactly once, and its end event appears once.
 - [ ] Three posts into a thread while the daemon is down are run once each, in order, after it starts.
 - [ ] After the idle period the agent process is gone; the next post resumes the same conversation. The same after all processes were killed, as in a host reboot.
+- [ ] When turns fail because the agent is logged out, the owner gets one direct message for the outage, also across a daemon restart, and threads that stop later are added to it.
+- [ ] The owner's reply with the code, and nothing else, reaches the login command; on success the message says so and each stopped thread gets one line; no message is resent.
+- [ ] After a login through the relay, the sign-in link and the code are found nowhere in the database, the event log or the log files.
 - [ ] No code path in the binary removes or resets a working directory.
 - [ ] Two instances with different roots on one host each ignore the other's channels.
 - [ ] No core package imports a driver, an agent adapter or a client, or contains the name of a surface or an agent (checked in CI).
@@ -472,6 +501,7 @@ Unlike Discord and Slack Socket Mode, Teams calls hataori. The host needs a publ
 - **A supervisor has no shell:** control API tools and files in its own directory only.
 - **Dashboard sign-in is a link issued in chat**, owner-only at first.
 - **Existing c-lord threads do not move.** Both run side by side on different channels.
+- **The login alert and relay are in phase 1** (section 4.7), for Claude Code. They are the only use of direct messages and the only button in phase 1.
 
 ## Appendix A: c-lord feature inventory
 
@@ -613,8 +643,8 @@ Unlike Discord and Slack Socket Mode, Teams calls hataori. The host needs a publ
 | Model and effort per thread, channel and instance | change | Per order on the trigger line and a default per channel, instead of setting the channel before each order and back after. |
 | Usage limit shown with its reset time | keep | From the failure the agent reports; where the reset time comes from on the Claude Code path is unverified. |
 | Messages during a limit are accepted | keep | |
-| Owner told once when the agent is logged out | keep | From `Probe` and the turn's end reason. |
-| Logging in again from a direct message | drop | Drove a login screen; log in on the host. |
+| Owner told by direct message when the agent is logged out: one message per outage, also across a restart | keep | From the turn's failure reason. Phase 1 (section 4.7). |
+| Logging in again from that direct message: sign-in link out, the owner's code in, a button for a fresh link | keep | Runs the CLI's own login command and stores neither link nor code. Phase 1 (section 4.7). An earlier version of this table dropped it. |
 
 ### Authorization and security
 
@@ -687,7 +717,21 @@ Not checked: turns of hours; what the stream shows at a real usage limit or an e
 | A repository never opened before | The folder-trust dialog, with the cursor on "No, exit". No hook call in 12 seconds. |
 | Where trust is kept | After the dialog was accepted for one directory in an earlier check, that directory's entry in Claude Code's state file had `hasTrustDialogAccepted: true`; directories used only with `-p` had no such field. No documented switch to trust a directory in advance was found. |
 
-Not checked: `StopFailure` (no API error occurred); a hook waiting longer than its default timeout; input while a turn is running; the user's vim mode; a second terminal attached to the session; what the terminal shows at a usage limit.
+### Claude Code: the login command
+
+`claude auth login`, run with `CLAUDE_CONFIG_DIR` set to an empty directory, for which `claude auth status` reported `loggedIn: false`. The existing login was checked before and after and was unchanged. No login was completed.
+
+| Check | Observed |
+|---|---|
+| On pipes, no terminal | Printed `Opening browser to sign in…`, then one line `If the browser didn't open, visit: <link>`, then `Paste code here if prompted > `, all on stdout. The link was on one line. |
+| On a terminal | The same text; the link was also wrapped in a terminal hyperlink sequence and coloured. |
+| A wrong code | Written to stdin on pipes, or typed on the terminal: `Invalid code. Please make sure the full code was copied.` (on stderr when on pipes). The command did not exit and went on waiting. |
+| Status | `claude auth status` prints JSON with `loggedIn` and `authMethod`. |
+| Options | `--claudeai` (default), `--console`, `--sso`, `--email`. |
+
+Not checked: a correct code, the text and exit status of a successful login, and how long the link stays valid.
+
+Not checked on the interactive path: `StopFailure` (no API error occurred); a hook waiting longer than its default timeout; input while a turn is running; the user's vim mode; a second terminal attached to the session; what the terminal shows at a usage limit.
 
 ### Codex: `codex app-server` (stdio, one JSON object per line)
 
@@ -807,6 +851,8 @@ type Driver interface {
 	Since(ctx context.Context, conv Conversation, cursor string) ([]Inbound, error)
 
 	OpenThread(ctx context.Context, parent Conversation, title string) (Conversation, error)
+	// OpenDirect returns the private conversation with one person.
+	OpenDirect(ctx context.Context, who Principal) (Conversation, error)
 	Post(ctx context.Context, conv Conversation, key string, m Message) (MessageRef, error)
 	Edit(ctx context.Context, ref MessageRef, m Message) error
 	Delete(ctx context.Context, ref MessageRef) error
@@ -852,6 +898,29 @@ type Adapter interface {
 
 	// NewCodec returns the translator for one running session.
 	NewCodec(spec Spec) Codec
+}
+
+// LoginFlow is implemented by an adapter whose agent can be logged in again
+// from chat. hataori runs the agent's own login command and passes on what it
+// prints and the owner's code; it keeps neither.
+type LoginFlow interface {
+	// LoginLaunch returns the login command, with the same config directory
+	// as sessions started from spec.
+	LoginLaunch(spec Spec) (Launch, error)
+	// LoginDecode reads one line the login command printed.
+	LoginDecode(line []byte) LoginStep
+	// LoginCode returns the bytes that hand a code to the login command.
+	LoginCode(code string) ([]byte, error)
+}
+
+// LoginStep is what a line of the login command means: a link to show
+// (with a code to show beside it, if the agent gives one), a request for a
+// code, a refusal with its text, or nothing.
+type LoginStep struct {
+	Link      string
+	ShowCode  string
+	WantsCode bool
+	Refused   string
 }
 
 // Launch is everything the session host needs to start an agent.
