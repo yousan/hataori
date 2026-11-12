@@ -15,6 +15,7 @@ import (
 	"github.com/yousan/hataori/internal/core"
 	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/instance"
+	"github.com/yousan/hataori/internal/relay"
 	"github.com/yousan/hataori/internal/runner"
 	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
@@ -94,6 +95,14 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	if err := r.Reconnect(ctx); err != nil {
 		return err
 	}
+	// The login relay (section 4.7). It starts flows only once a client of
+	// the owner takes its updates: the chat front end sets Notify.
+	lr := &relay.Relay{Store: st, Adapters: adapters, Owner: control.Principal(cfg.Owner), Off: !cfg.LoginRelay, Log: lg}
+	go func() {
+		if err := lr.Run(ctx); err != nil {
+			lg.Error("login relay", "err", err)
+		}
+	}()
 	lg.Info("hataori runs", "root", abs, "agent", agentName)
 	err = srv.Serve(ctx)
 	if errors.Is(err, context.Canceled) || ctx.Err() != nil {
