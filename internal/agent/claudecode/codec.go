@@ -2,6 +2,7 @@ package claudecode
 
 import (
 	"encoding/json"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -11,7 +12,7 @@ import (
 
 // NewCodec returns the translator for one running session.
 func (a *Adapter) NewCodec(spec agent.Spec) agent.Codec {
-	return &codec{spec: spec, seen: map[string]bool{}}
+	return &codec{spec: spec, seen: map[string]bool{}, turns: map[string]*turnText{}}
 }
 
 // Actions is agent.Actions.
@@ -26,6 +27,29 @@ type codec struct {
 	seen    map[string]bool // hook call ids already decoded
 	pasted  []string        // inputs hataori pasted that no prompt has matched yet
 	compact int             // compactions seen, to pair PreCompact with PostCompact
+
+	// From the transcript.
+	transcript string               // the transcript being followed
+	session    string               // its session id; lines of another are skipped
+	current    string               // prompt id of the transcript's latest user line
+	turns      map[string]*turnText // by prompt id
+	closed     bool                 // SessionEnd was reported
+}
+
+// turnText is what the codec knows about the text of one prompt's turn.
+// Prompt ids tie the two sources together: every hook of a turn carries
+// prompt_id, and the transcript's user lines carry the same promptId.
+type turnText struct {
+	known   bool       // a hook named this prompt: the turn is this session's
+	ended   bool       // its end was reported
+	final   string     // the final answer Stop reported
+	held    string     // the latest assistant text, held back: it may be the final answer
+	pending []textItem // read from the transcript before any hook named the prompt
+}
+
+type textItem struct {
+	text      string
+	interrupt bool
 }
 
 // call is a hook call as the session host records it.
@@ -38,11 +62,13 @@ type call struct {
 // payload holds the fields of every hook the codec reads; a field a hook
 // does not have stays empty, and fields the codec does not know are ignored.
 type payload struct {
-	Event     string `json:"hook_event_name"`
-	SessionID string `json:"session_id"`
-	Source    string `json:"source"`
-	Model     string `json:"model"`
-	Effort    struct {
+	Event          string `json:"hook_event_name"`
+	TranscriptPath string `json:"transcript_path"`
+	PromptID       string `json:"prompt_id"`
+	SessionID      string `json:"session_id"`
+	Source         string `json:"source"`
+	Model          string `json:"model"`
+	Effort         struct {
 		Level string `json:"level"`
 	} `json:"effort"`
 	Prompt          string `json:"prompt"`
@@ -78,7 +104,11 @@ func (c *codec) Interrupt() Actions                   { return Actions{} }
 func (c *codec) Decode(src agent.Source, line []byte) Actions {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if src != agent.Hook {
+	switch src {
+	case agent.File:
+		return c.decodeTranscript(line)
+	case agent.Hook:
+	default:
 		return Actions{}
 	}
 	var k call
@@ -93,7 +123,197 @@ func (c *codec) Decode(src agent.Source, line []byte) Actions {
 	if err := json.Unmarshal(k.Payload, &p); err != nil {
 		return c.events(agent.Event{Kind: agent.Unknown, Text: string(line)})
 	}
-	return c.decodeHook(k, p)
+	var follow []string
+	if p.TranscriptPath != "" && p.TranscriptPath != c.transcript {
+		// A start, a resume, a clear or a compaction may name a new
+		// transcript. Text from before is not produced again: it belongs to
+		// prompts that ended, or that no hook of this session named.
+		c.transcript = p.TranscriptPath
+		follow = []string{p.TranscriptPath}
+	}
+	if p.Event == "SessionStart" && p.SessionID != "" {
+		c.session = p.SessionID
+	}
+	// Text the transcript gave for this prompt before any hook named it
+	// goes after the turn's start and before anything else of the turn.
+	var replay Actions
+	if p.PromptID != "" {
+		t := c.turn(p.PromptID)
+		if !t.known {
+			t.known = true
+			for _, it := range t.pending {
+				replay = merge(replay, c.applyText(t, it))
+			}
+			t.pending = nil
+		}
+	}
+	// Text still held when a new prompt starts or the session ends was not
+	// a final answer; it would otherwise be lost.
+	var released Actions
+	if p.Event == "UserPromptSubmit" || p.Event == "SessionEnd" {
+		ids := make([]string, 0, len(c.turns))
+		for id := range c.turns {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids) // a fixed order; usually at most one turn holds text
+		for _, id := range ids {
+			if p.Event == "SessionEnd" || id != p.PromptID {
+				released = merge(released, c.release(c.turns[id]))
+			}
+		}
+	}
+	replay = merge(released, replay)
+	if p.Event == "SessionEnd" {
+		c.closed = true
+	}
+	h := c.decodeHook(k, p)
+	if p.Event == "UserPromptSubmit" {
+		h = merge(h, replay)
+	} else {
+		h = merge(replay, h)
+	}
+	h.Follow = append(follow, h.Follow...)
+	return h
+}
+
+func merge(a, b Actions) Actions {
+	a.Events = append(a.Events, b.Events...)
+	a.Write = append(a.Write, b.Write...)
+	a.Reply = append(a.Reply, b.Reply...)
+	a.Follow = append(a.Follow, b.Follow...)
+	return a
+}
+
+func (c *codec) turn(prompt string) *turnText {
+	t := c.turns[prompt]
+	if t == nil {
+		t = &turnText{}
+		c.turns[prompt] = t
+	}
+	return t
+}
+
+// transcriptLine is a line of the transcript, as far as the codec reads it.
+type transcriptLine struct {
+	Type        string `json:"type"`
+	SessionID   string `json:"sessionId"`
+	PromptID    string `json:"promptId"`
+	IsSidechain bool   `json:"isSidechain"`
+	Message     struct {
+		Content json.RawMessage `json:"content"`
+	} `json:"message"`
+}
+
+type block struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// interruptedLine starts the text of the user line the CLI writes when a
+// turn is interrupted. No hook reports an interrupt.
+const interruptedLine = "[Request interrupted by user"
+
+// decodeTranscript reads one transcript line: assistant text of the main
+// conversation becomes progress text, and the interrupt line ends the
+// turn. Everything else is skipped, without an error.
+func (c *codec) decodeTranscript(raw []byte) Actions {
+	var l transcriptLine
+	if err := json.Unmarshal(raw, &l); err != nil || l.IsSidechain {
+		return Actions{}
+	}
+	if c.session != "" && l.SessionID != "" && l.SessionID != c.session {
+		return Actions{}
+	}
+	var blocks []block
+	if len(l.Message.Content) > 0 && l.Message.Content[0] == '[' {
+		json.Unmarshal(l.Message.Content, &blocks)
+	}
+	var out Actions
+	switch l.Type {
+	case "user":
+		if l.PromptID != "" {
+			c.current = l.PromptID
+		}
+		for _, b := range blocks {
+			if b.Type == "text" && strings.HasPrefix(b.Text, interruptedLine) {
+				out = merge(out, c.item(textItem{interrupt: true}))
+			}
+		}
+	case "assistant":
+		for _, b := range blocks {
+			switch {
+			case b.Type == "text" && strings.TrimSpace(b.Text) != "":
+				out = merge(out, c.item(textItem{text: b.Text}))
+			case b.Type == "tool_use" && c.current != "":
+				// Text before a tool call is not the final answer.
+				out = merge(out, c.release(c.turn(c.current)))
+			}
+		}
+	}
+	return out
+}
+
+func (c *codec) item(it textItem) Actions {
+	if c.current == "" {
+		return Actions{}
+	}
+	t := c.turn(c.current)
+	if !t.known {
+		t.pending = append(t.pending, it)
+		return Actions{}
+	}
+	return c.applyText(t, it)
+}
+
+// applyText handles text or an interrupt of a turn that is this session's.
+// The latest text is held back until something follows it, because the
+// final answer arrives with Stop and is posted once, as final.
+func (c *codec) applyText(t *turnText, it textItem) Actions {
+	if it.interrupt {
+		if t.ended {
+			return Actions{}
+		}
+		a := c.release(t)
+		t.ended = true
+		return merge(a, c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted}))
+	}
+	if t.ended {
+		if it.text == t.final {
+			return Actions{}
+		}
+		return c.events(agent.Event{Kind: agent.Text, Text: it.text})
+	}
+	a := c.release(t)
+	if c.closed { // nothing will follow to release it
+		return merge(a, c.events(agent.Event{Kind: agent.Text, Text: it.text}))
+	}
+	t.held = it.text
+	return a
+}
+
+// release produces the held text as progress.
+func (c *codec) release(t *turnText) Actions {
+	if t.held == "" || !t.known {
+		return Actions{}
+	}
+	text := t.held
+	t.held = ""
+	return c.events(agent.Event{Kind: agent.Text, Text: text})
+}
+
+// end marks the turn of prompt ended with final as its answer, and
+// returns the held text if it was not the final answer.
+func (c *codec) end(prompt, final string) Actions {
+	if prompt == "" {
+		return Actions{}
+	}
+	t := c.turn(prompt)
+	var a Actions
+	if t.held != "" && t.held != final {
+		a = c.release(t)
+	}
+	t.held, t.ended, t.final = "", true, final
+	return a
 }
 
 func (c *codec) decodeHook(k call, p payload) Actions {
@@ -114,12 +334,13 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 				running++
 			}
 		}
-		return c.events(
+		return merge(c.end(p.PromptID, p.LastMessage), c.events(
 			agent.Event{Kind: agent.Text, Text: p.LastMessage, Final: true},
 			agent.Event{Kind: agent.TurnEnded, Status: agent.Completed, Background: running},
-		)
+		))
 	case "StopFailure":
-		return c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: failureReason(p.Error), Text: p.LastMessage})
+		return merge(c.end(p.PromptID, ""), c.events(
+			agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: failureReason(p.Error), Text: p.LastMessage}))
 	case "PreToolUse":
 		if p.ToolName == askTool {
 			return Actions{} // a question; reported by its own issue's decoding
