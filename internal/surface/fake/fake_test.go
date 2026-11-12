@@ -14,13 +14,18 @@ import (
 )
 
 type sink struct {
-	mu  sync.Mutex
-	got []surface.Inbound
+	mu      sync.Mutex
+	got     []surface.Inbound
+	choices []surface.Selection
 }
 
 func (s *sink) Message(in surface.Inbound) { s.mu.Lock(); s.got = append(s.got, in); s.mu.Unlock() }
-func (s *sink) Choice(surface.Selection)   {}
-func (s *sink) Command(surface.Command)    {}
+func (s *sink) Choice(c surface.Selection) {
+	s.mu.Lock()
+	s.choices = append(s.choices, c)
+	s.mu.Unlock()
+}
+func (s *sink) Command(surface.Command) {}
 func (s *sink) all() []surface.Inbound {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -179,5 +184,73 @@ func TestNotInTheCommand(t *testing.T) {
 	}
 	if bytes.Contains(out, []byte("internal/surface/fake")) {
 		t.Fatal("cmd/hataori depends on the fake surface")
+	}
+}
+
+func TestDirectConversations(t *testing.T) {
+	d := New()
+	s := connect(t, d)
+	a1, _ := d.OpenDirect(ctx, "alice")
+	a2, _ := d.OpenDirect(ctx, "alice")
+	b, _ := d.OpenDirect(ctx, "bob")
+	if a1 != a2 || a1 == b {
+		t.Fatalf("direct conversations %+v %+v %+v", a1, a2, b)
+	}
+	ref, err := d.Post(ctx, a1, "k", surface.Message{Text: "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Edit(ctx, ref, surface.Message{Text: "hello again"})
+	if calls := d.Calls(a1); len(calls) != 2 || calls[0].Op != OpPost || calls[1].Op != OpEdit {
+		t.Fatalf("calls in the direct conversation: %+v", calls)
+	}
+	d.Fail(OpOpenDirect, 1, nil) // planned for the code under test; not for the injection
+	in := d.InjectDirect("alice", "the code")
+	got := s.all()
+	if len(got) != 1 || !got[0].Direct || got[0].Ref.Conv != a1 || got[0].Author.ID != "alice" || got[0].Author.Kind != surface.Person || in.Text != "the code" {
+		t.Fatalf("direct message: %+v", got)
+	}
+	if _, err := d.OpenDirect(ctx, "alice"); err == nil {
+		t.Fatal("the planned failure of OpenDirect was used up by the injection")
+	}
+}
+
+func TestPressAButton(t *testing.T) {
+	d := New()
+	s := connect(t, d)
+	ref, _ := d.Post(ctx, ch, "", surface.Message{Text: "log in?", Choices: []surface.Choice{{Label: "Log in", Token: "tok-1"}}})
+	if err := d.Press(ref, "alice", "tok-2"); !errors.Is(err, ErrNoChoice) {
+		t.Fatalf("a token the message lacks: %v", err)
+	}
+	if err := d.Press(MessageRef{Conv: ch, ID: "nope"}, "alice", "tok-1"); !errors.Is(err, ErrNoMessage) {
+		t.Fatalf("a message the driver never posted: %v", err)
+	}
+	if err := d.Press(ref, "alice", "tok-1"); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.choices) != 1 || s.choices[0].Token != "tok-1" || s.choices[0].Ref != ref || s.choices[0].Author.ID != "alice" {
+		t.Fatalf("choices: %+v", s.choices)
+	}
+}
+
+func TestUndeliverableDirectMessages(t *testing.T) {
+	d := New()
+	a, _ := d.OpenDirect(ctx, "alice")
+	b, _ := d.OpenDirect(ctx, "bob")
+	d.Undeliverable("alice")
+	if _, err := d.Post(ctx, a, "", surface.Message{Text: "x"}); !errors.Is(err, ErrUndeliverable) {
+		t.Fatalf("post to alice: %v", err)
+	}
+	if _, err := d.Post(ctx, b, "", surface.Message{Text: "x"}); err != nil {
+		t.Fatalf("post to bob: %v", err)
+	}
+	if len(d.Calls(a)) != 0 {
+		t.Fatal("the undeliverable post was recorded")
+	}
+	d.Deliverable("alice")
+	if _, err := d.Post(ctx, a, "", surface.Message{Text: "x"}); err != nil {
+		t.Fatalf("after Deliverable: %v", err)
 	}
 }
