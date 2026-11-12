@@ -264,8 +264,8 @@ func lookPath(argv0 string, env []string, dir string) (string, error) {
 func (h *host) listen() error {
 	h.sock = defaultSocket(h.dir)
 	if h.sock != filepath.Join(h.dir, SocketFile) {
-		if err := os.MkdirAll(filepath.Dir(h.sock), 0o700); err != nil {
-			return fmt.Errorf("host: %w", err)
+		if err := privateDir(filepath.Dir(h.sock)); err != nil {
+			return err
 		}
 		if err := writeFile(filepath.Join(h.dir, pointerFile), h.sock); err != nil {
 			return err
@@ -280,6 +280,23 @@ func (h *host) listen() error {
 	}
 	ln.SetUnlinkOnClose(false)
 	h.ln = ln
+	return nil
+}
+
+// privateDir makes dir, which must then be a directory of this user that
+// nobody else can enter.
+func privateDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("host: %w", err)
+	}
+	st, err := os.Lstat(dir)
+	if err != nil {
+		return fmt.Errorf("host: %w", err)
+	}
+	sys, ok := st.Sys().(*syscall.Stat_t)
+	if !st.IsDir() || !ok || int(sys.Uid) != os.Getuid() || st.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("host: %s is not a private directory of this user", dir)
+	}
 	return nil
 }
 

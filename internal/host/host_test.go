@@ -335,3 +335,23 @@ func TestNoProc(t *testing.T) {
 		}
 	}
 }
+
+// A state directory too deep for a socket: the host and a caller with
+// another environment agree on the short path.
+func TestDeepStateDirSocket(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), strings.Repeat("deep/", 20))
+	os.MkdirAll(dir, 0o700)
+	t.Cleanup(func() { killGroups(dir) })
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir()) // the caller's; the host has none
+	t.Setenv("TMPDIR", t.TempDir())
+	if _, err := Start(hostCommand(), dir, Spec{Argv: self("echo"), Env: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	want := strings.TrimPrefix(HookEnv(dir), HookEnvVar+"=")
+	if SocketPath(dir) != want || len(want) > maxSocketLen {
+		t.Fatalf("host listens at %s, hooks are told %s", SocketPath(dir), want)
+	}
+	if _, err := Call(want, []byte(`{"x":1}`), false, 5*time.Second); err != nil {
+		t.Fatalf("a hook with the caller's path: %v", err)
+	}
+}

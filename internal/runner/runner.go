@@ -46,7 +46,7 @@ type Runner struct {
 
 	Instructions   string        // appended to every agent's own
 	StartTimeout   time.Duration // for the agent to report its start; 60s when zero
-	InterruptGrace time.Duration // after an interrupt, before the session's processes are stopped; 10s when zero
+	InterruptGrace time.Duration // after an interrupt, before the session's processes are stopped; 5s when zero
 	Poll           time.Duration // how often the logs are read; 50ms when zero
 
 	mu   sync.Mutex
@@ -64,6 +64,8 @@ type live struct {
 	client  *host.Client
 	started time.Time
 	ready   bool // the session left creating; no start check any more
+	resend  bool // after a reconnect: send a first input that was not confirmed
+	failed  bool // the start timed out; the session is being stopped
 
 	mu     sync.Mutex // the codec, the offsets and the actions, one at a time
 	seq    uint64
@@ -96,13 +98,17 @@ func (r *Runner) interruptGrace() time.Duration {
 	if r.InterruptGrace > 0 {
 		return r.InterruptGrace
 	}
-	return 10 * time.Second
+	return 5 * time.Second
 }
 
+// firstInput is the input a session starts with. It is kept until the
+// agent reports the turn it started, so that a daemon that dies after
+// sending it, or before, sends it (again) when it comes back.
 type firstInput struct {
 	Principal control.Principal `json:"principal"`
 	Key       string            `json:"key"`
 	Text      string            `json:"text"`
+	Sent      bool              `json:"sent"` // the turn was started for it, and it was handed to the codec
 }
 
 type storedSpec struct {
@@ -159,7 +165,7 @@ func (r *Runner) Start(ctx context.Context, l core.Launch) error {
 // Their agents kept running under their hosts.
 func (r *Runner) Reconnect(ctx context.Context) error {
 	rows, err := r.Store.DB.QueryContext(ctx, `SELECT id, spec FROM sessions
-		WHERE state IN ('creating', 'idle', 'running', 'waiting') AND host_pid > 0 AND spec != ''`)
+		WHERE state IN ('creating', 'idle', 'running', 'waiting') AND spec != ''`)
 	if err != nil {
 		return fmt.Errorf("runner: %w", err)
 	}
@@ -208,6 +214,7 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, resumed boo
 	}
 	if resumed {
 		lv.started = time.UnixMilli(created)
+		lv.resend = true
 		rows, err := r.Store.DB.Query(`SELECT path, offset FROM session_files WHERE session_id = ?`, id)
 		if err != nil {
 			return err
@@ -219,12 +226,33 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, resumed boo
 			lv.files[p] = o
 		}
 		rows.Close()
-		r.warm(lv)
-	} else {
-		lv.codec.Open()
+	}
+	var replies []agent.HookReply
+	if resumed {
+		replies = r.warm(lv)
 	}
 	if c, err := host.Dial(lv.dir); err == nil {
 		lv.client = c
+	}
+	if resumed && lv.client != nil {
+		// Replies decided before the daemon died and not sent: send those
+		// whose call still waits. The host refuses the others anyway.
+		waiting, _ := lv.client.Waiting()
+		open := map[string]bool{}
+		for _, w := range waiting {
+			open[w.ID] = true
+		}
+		var again agent.Actions
+		for _, rep := range replies {
+			if open[rep.Call] {
+				again.Reply = append(again.Reply, rep)
+			}
+		}
+		r.act(lv, again)
+	} else if !resumed {
+		lv.mu.Lock()
+		r.do(lv, lv.codec.Open())
+		lv.mu.Unlock()
 	}
 	r.mu.Lock()
 	if r.live == nil {
@@ -237,19 +265,23 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, resumed boo
 }
 
 // warm feeds the codec what was read before the stored offsets.
-func (r *Runner) warm(lv *live) {
+// It returns the replies to hook calls it produced: one that was never sent
+// because the daemon died first still has its call waiting at the host.
+func (r *Runner) warm(lv *live) []agent.HookReply {
+	var replies []agent.HookReply
 	if b, err := os.ReadFile(filepath.Join(lv.dir, host.EventsFile)); err == nil {
 		for _, l := range lines(b, 0, lv.offset) {
-			lv.codec.Decode(source(l), l)
+			replies = append(replies, lv.codec.Decode(source(l), l).Reply...)
 		}
 	}
 	for p, off := range lv.files {
 		if b, err := os.ReadFile(p); err == nil {
 			for _, l := range lines(b, 0, off) {
-				lv.codec.Decode(agent.File, l)
+				replies = append(replies, lv.codec.Decode(agent.File, l).Reply...)
 			}
 		}
 	}
+	return replies
 }
 
 // source tells a hook call, as the host records it, from the agent's
@@ -405,6 +437,9 @@ func (r *Runner) step(lv *live) bool {
 		r.exit(lv)
 		return false
 	}
+	if lv.failed && lv.client == nil {
+		return false // never had a host: nothing more will come
+	}
 	r.checkStart(lv)
 	return true
 }
@@ -473,25 +508,54 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 		if err := tx.QueryRowContext(ctx, `SELECT state, first_input FROM sessions WHERE id = ?`, lv.id).Scan(&state, &fi); err != nil {
 			return err
 		}
-		if fi != "" && control.State(state) == control.Idle {
-			var f firstInput
-			if err := json.Unmarshal([]byte(fi), &f); err != nil {
-				return err
-			}
+		if fi == "" {
+			return nil
+		}
+		var f firstInput
+		if err := json.Unmarshal([]byte(fi), &f); err != nil {
+			return err
+		}
+		switch {
+		case !f.Sent && control.State(state) == control.Idle:
 			if err := r.Machine.ApplyTx(ctx, tx, lv.id, session.Input{Kind: session.Send, Principal: f.Principal, Key: f.Key, Text: f.Text}); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = '' WHERE id = ?`, lv.id); err != nil {
-				return err
-			}
+			f.Sent = true
 			first = &f
+		case f.Sent && startedTurn(b.events):
+			// The agent reported the turn: delivered.
+			f = firstInput{}
+		case f.Sent && lv.resend:
+			// The daemon died between starting the turn and a report of it:
+			// hand it to the codec again.
+			first = &f
+		default:
+			return nil
+		}
+		fb := ""
+		if f.Sent {
+			b, _ := json.Marshal(f)
+			fb = string(b)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, fb, lv.id); err != nil {
+			return err
 		}
 		return nil
 	})
 	if err == nil {
 		lv.seq = seq
+		lv.resend = false
 	}
 	return first, err
+}
+
+func startedTurn(evs []agent.Event) bool {
+	for _, e := range evs {
+		if e.Kind == agent.TurnStarted {
+			return true
+		}
+	}
+	return false
 }
 
 // do commits the events of actions that did not come from a line, then
@@ -581,6 +645,7 @@ func (r *Runner) checkStart(lv *live) {
 		r.Log.Error("start timeout", "session", lv.id, "err", err)
 		return
 	}
+	lv.failed = true
 	go host.Stop(lv.dir, time.Second, time.Second)
 }
 

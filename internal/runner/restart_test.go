@@ -179,3 +179,45 @@ func TestWaitingCallAnsweredAfterRestart(t *testing.T) {
 		}
 	})
 }
+
+// The daemon killed around the first input, before the turn has started:
+// the input is neither lost nor sent twice.
+func TestDaemonKilledAroundTheFirstInput(t *testing.T) {
+	forms(t, func(t *testing.T, terminal bool) {
+		for i := range 8 {
+			t.Run(fmt.Sprint("point ", i), func(t *testing.T) {
+				root := t.TempDir()
+				t.Cleanup(func() { killSessions(root) })
+				d := runDaemon(t, root, terminal, "start", "reply once")
+				time.Sleep(time.Duration(i) * 40 * time.Millisecond)
+				d.kill()
+				d = runDaemon(t, root, terminal, "resume")
+				st := openStore(t, root)
+				deadline := time.Now().Add(20 * time.Second)
+				for counts(t, st)["turn_ended"] < 1 {
+					if time.Now().After(deadline) {
+						var state, fi string
+						st.DB.QueryRow(`SELECT state, first_input FROM sessions`).Scan(&state, &fi)
+						lg, _ := os.ReadFile(filepath.Join(root, "daemon.log"))
+						ev, _ := os.ReadFile(filepath.Join(StateDir(root, 1), host.EventsFile))
+						ents, _ := os.ReadDir(StateDir(root, 1))
+						var names []string
+						for _, e := range ents {
+							names = append(names, e.Name())
+						}
+						tail, _ := os.ReadFile(filepath.Join(StateDir(root, 1), host.TerminalLog))
+						t.Fatalf("no end: %v state %s first %s\nlog %s\nevents %s\nfiles %v sock %s (%d)\nterminal %q", counts(t, st), state, fi, lg, ev,
+							names, host.SocketPath(StateDir(root, 1)), len(filepath.Join(StateDir(root, 1), host.SocketFile)), tail)
+					}
+					time.Sleep(20 * time.Millisecond)
+				}
+				time.Sleep(300 * time.Millisecond)
+				d.kill()
+				got := counts(t, st)
+				if got["turn_started"] != 1 || got["turn_ended"] != 1 || got["text"] != 1 {
+					t.Errorf("events %v", got)
+				}
+			})
+		}
+	})
+}

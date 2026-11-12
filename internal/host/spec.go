@@ -149,15 +149,11 @@ func defaultSocket(stateDir string) string {
 	if len(p) <= maxSocketLen {
 		return p
 	}
+	// The same path in every process, whatever its environment: the host
+	// runs with none, and the caller's HookEnv must name the same socket.
 	abs, _ := filepath.Abs(stateDir)
 	sum := sha256.Sum256([]byte(abs))
-	name := filepath.Join("hataori-host-"+hex.EncodeToString(sum[:8]), SocketFile)
-	for _, base := range []string{os.Getenv("XDG_RUNTIME_DIR"), os.TempDir(), "/tmp"} {
-		if base != "" && len(filepath.Join(base, name)) <= maxSocketLen {
-			return filepath.Join(base, name)
-		}
-	}
-	return p // too long everywhere; listening will fail and say so
+	return filepath.Join("/tmp", "hataori-host-"+hex.EncodeToString(sum[:8]), SocketFile)
 }
 
 // ReadStatus returns the recorded status, and false while the command has
