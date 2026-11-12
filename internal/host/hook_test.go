@@ -68,8 +68,9 @@ func TestFiftyCallsAreFiftyLines(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// No newline: the payload must come out exactly as it went in.
 			p := fmt.Sprintf(`{"n":%d,"pad":"%s"}`, i, strings.Repeat("p", 8000))
-			if _, err := Call(socket, []byte(p+"\n"), false, 5*time.Second); err != nil {
+			if _, err := Call(socket, []byte(p), false, 5*time.Second); err != nil {
 				t.Error(err)
 			}
 		}()
@@ -83,7 +84,7 @@ func TestFiftyCallsAreFiftyLines(t *testing.T) {
 	for _, l := range lines {
 		ids[l.Hook] = true
 		var p struct{ N int }
-		if json.Unmarshal(l.Payload, &p) != nil || !bytes.HasSuffix(l.Payload, []byte(strings.Repeat("p", 8000)+`"}`)) {
+		if json.Unmarshal(l.Payload, &p) != nil || string(l.Payload) != fmt.Sprintf(`{"n":%d,"pad":"%s"}`, p.N, strings.Repeat("p", 8000)) {
 			t.Fatalf("payload changed: %.60q", l.Payload)
 		}
 	}
@@ -199,5 +200,15 @@ func TestQuickCallBesideFiftyWaiting(t *testing.T) {
 	}
 	if d := time.Since(start); d > 100*time.Millisecond {
 		t.Fatalf("a call without --wait took %v", d)
+	}
+}
+
+// A payload keeps every byte, also bytes that are not UTF-8; only CR and
+// LF change, to keep the call on one line.
+func TestOneLineKeepsOtherBytes(t *testing.T) {
+	in := []byte("{\"a\":\n\"\xff\xfe\xc3\"}\r\n")
+	want := []byte("{\"a\": \"\xff\xfe\xc3\"}")
+	if got := oneLine(in); !bytes.Equal(got, want) {
+		t.Fatalf("oneLine = %q, want %q", got, want)
 	}
 }

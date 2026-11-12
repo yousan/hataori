@@ -118,15 +118,16 @@ func (t *callTable) answer(id string, data []byte) bool {
 // LF bytes turned into spaces.
 func oneLine(p []byte) []byte {
 	p = bytes.TrimRight(p, "\r\n")
-	if bytes.ContainsAny(p, "\r\n") {
-		p = bytes.Map(func(r rune) rune {
-			if r == '\r' || r == '\n' {
-				return ' '
-			}
-			return r
-		}, p)
+	if bytes.IndexAny(p, "\r\n") < 0 {
+		return p
 	}
-	return p
+	out := append([]byte(nil), p...) // byte by byte: other bytes stay as they are
+	for i, b := range out {
+		if b == '\r' || b == '\n' {
+			out[i] = ' '
+		}
+	}
+	return out
 }
 
 // call records a hook call and, for a waiting one, answers it when the
@@ -181,7 +182,8 @@ func (c *Client) Answer(id string, data []byte) error {
 const (
 	HookOK      = 0  // recorded; with --wait, the answer was printed
 	HookGone    = 3  // no host, or it went away before answering
-	HookTimeout = 4  // --wait and no answer before --timeout
+	HookTimeout = 4  // no answer (or no host reached) before --timeout
+	HookOutput  = 5  // the answer arrived but could not be printed
 	HookUsage   = 64 // bad arguments
 )
 
@@ -195,28 +197,32 @@ var (
 // returns once the call is recorded; with wait, the answer, or ErrTimeout
 // after timeout.
 func Call(socket string, payload []byte, wait bool, timeout time.Duration) ([]byte, error) {
-	conn, err := net.DialTimeout("unix", socket, 5*time.Second)
+	deadline := time.Now().Add(timeout) // covers connecting too
+	conn, err := net.DialTimeout("unix", socket, min(5*time.Second, timeout))
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrNoHost, err)
+		return nil, callError(err)
 	}
 	defer conn.Close()
-	deadline := time.Now().Add(timeout)
 	conn.SetDeadline(deadline)
 	if err := json.NewEncoder(conn).Encode(request{Op: "call", Wait: wait, Data: payload}); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrNoHost, err)
+		return nil, callError(err)
 	}
 	var resp response
 	if err := json.NewDecoder(bufio.NewReader(conn)).Decode(&resp); err != nil {
-		var ne net.Error
-		if errors.As(err, &ne) && ne.Timeout() {
-			return nil, ErrTimeout
-		}
-		return nil, fmt.Errorf("%w: %v", ErrNoHost, err)
+		return nil, callError(err)
 	}
 	if !resp.OK {
 		return nil, fmt.Errorf("%w: %s", ErrNoHost, resp.Error)
 	}
 	return resp.Data, nil
+}
+
+func callError(err error) error {
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return ErrTimeout
+	}
+	return fmt.Errorf("%w: %v", ErrNoHost, err)
 }
 
 // HookUsageText documents `hataori hook`.
@@ -226,8 +232,9 @@ Reads a payload on stdin and hands it to the session host named by
 $` + HookEnvVar + `. With --wait, prints the answer to the call and exits.
 
 Exit status: 0 recorded (with --wait: answered, answer printed);
-3 no host, or it went away; 4 no answer before --timeout (default 1h);
-64 bad arguments. Nothing is printed unless an answer arrived.
+3 no host, or it went away; 4 nothing before --timeout (default 1h);
+5 the answer could not be printed; 64 bad arguments. Nothing is printed
+unless an answer arrived.
 `
 
 // HookMain is `hataori hook`.
@@ -255,6 +262,8 @@ func HookMain(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv f
 	case err != nil:
 		return HookGone
 	}
-	stdout.Write(answer)
+	if n, err := stdout.Write(answer); err != nil || n != len(answer) {
+		return HookOutput
+	}
 	return HookOK
 }
