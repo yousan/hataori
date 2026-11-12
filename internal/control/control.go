@@ -69,24 +69,24 @@ func (ops Ops) Has(o Ops) bool { return ops&o == o }
 // given by a client; for a chat surface the scope is a channel and the key
 // is the surface's thread.
 type ThreadID struct {
-	Scope string
-	Key   string
+	Scope string `json:"scope"`
+	Key   string `json:"key"`
 }
 
 // StartRequest is the argument of API.Start.
 type StartRequest struct {
-	Key    string // safe to repeat: the same key starts nothing twice
-	Scope  string // opaque; for chat, a channel
-	Thread string // opaque key, or empty to let the scope's owner make one
-	Repo   string // the repository the thread's workspace is cloned from
-	Input  Input  // the first input
-	Model  string // empty for the scope's default
-	Effort string // empty for the scope's default
+	Key    string `json:"key"`    // safe to repeat: the same key starts nothing twice
+	Scope  string `json:"scope"`  // opaque; for chat, a channel
+	Thread string `json:"thread"` // opaque key, or empty to let the scope's owner make one
+	Repo   string `json:"repo"`   // the repository the thread's workspace is cloned from
+	Input  Input  `json:"input"`  // the first input
+	Model  string `json:"model"`  // empty for the scope's default
+	Effort string `json:"effort"` // empty for the scope's default
 }
 
 // Input is what a client gives an agent.
 type Input struct {
-	Text string
+	Text string `json:"text"`
 }
 
 // Busy says what Send does when a turn is running.
@@ -104,16 +104,16 @@ type RequestID string
 
 // Answer answers a Request.
 type Answer struct {
-	Text    string   // a free-text answer to a question
-	Choices []string // tokens of the chosen options, for a question with choices
-	Allow   bool     // the decision, for an approval
+	Text    string   `json:"text"`    // a free-text answer to a question
+	Choices []string `json:"choices"` // tokens of the chosen options, for a question with choices
+	Allow   bool     `json:"allow"`   // the decision, for an approval
 }
 
 // Filter narrows Threads and Events. A zero field matches everything the
 // caller may see.
 type Filter struct {
-	Scope  string
-	Thread ThreadID
+	Scope  string   `json:"scope"`
+	Thread ThreadID `json:"thread"`
 }
 
 // State is the state of a thread's current session (design, section 4.2).
@@ -133,21 +133,21 @@ const (
 
 // ThreadInfo is one line of Threads.
 type ThreadInfo struct {
-	ID        ThreadID
-	Number    int64 // short number, unique in the instance
-	Title     string
-	Repo      string
-	State     State
-	StartedBy Principal
-	Created   time.Time
-	Updated   time.Time
+	ID        ThreadID  `json:"id"`
+	Number    int64     `json:"number"` // short number, unique in the instance
+	Title     string    `json:"title"`
+	Repo      string    `json:"repo"`
+	State     State     `json:"state"`
+	StartedBy Principal `json:"started_by"`
+	Created   time.Time `json:"created"`
+	Updated   time.Time `json:"updated"`
 }
 
 // ThreadDetail is the result of Thread.
 type ThreadDetail struct {
 	ThreadInfo
-	Requests []Request // open questions and approvals
-	Recent   string    // the last output, cut to the size asked for
+	Requests []Request `json:"requests"` // open questions and approvals
+	Recent   string    `json:"recent"`   // the last output, cut to the size asked for
 }
 
 // RequestKind tells a question from an approval.
@@ -161,16 +161,16 @@ const (
 
 // Request is an open question or approval from the agent.
 type Request struct {
-	ID      RequestID
-	Kind    RequestKind
-	Text    string
-	Choices []Choice
+	ID      RequestID   `json:"id"`
+	Kind    RequestKind `json:"kind"`
+	Text    string      `json:"text"`
+	Choices []Choice    `json:"choices"`
 }
 
 // Choice is one option of a question.
 type Choice struct {
-	Label string
-	Token string // what Answer.Choices carries back
+	Label string `json:"label"`
+	Token string `json:"token"` // what Answer.Choices carries back
 }
 
 // EventKind names the kind of an Event. The kinds are defined with the
@@ -183,11 +183,11 @@ const CaughtUp EventKind = "caught_up"
 // Event is one entry of the core's event log. Pos is unique and increasing
 // in the instance, so a reader can resume after the last Pos it saw.
 type Event struct {
-	Pos    uint64
-	Thread ThreadID
-	Time   time.Time
-	Kind   EventKind
-	Data   json.RawMessage // the fields of Kind
+	Pos    uint64          `json:"pos"`
+	Thread ThreadID        `json:"thread"`
+	Time   time.Time       `json:"time"`
+	Kind   EventKind       `json:"kind"`
+	Data   json.RawMessage `json:"data,omitempty"` // the fields of Kind; see EventKinds
 }
 
 // ScopeOwner is the client that gives a scope its threads. When another client

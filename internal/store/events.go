@@ -15,6 +15,7 @@ import (
 type Tx struct {
 	*sql.Tx
 	appended bool
+	check    func(control.Event) error
 }
 
 // Update runs fn in one write transaction and commits it when fn returns
@@ -25,7 +26,7 @@ func (s *Store) Update(ctx context.Context, fn func(tx *Tx) error) error {
 		return fmt.Errorf("store: begin: %w", err)
 	}
 	defer sqlTx.Rollback() // no-op after Commit; frees the connection on a panic
-	tx := &Tx{Tx: sqlTx}
+	tx := &Tx{Tx: sqlTx, check: s.CheckEvent}
 	if err := fn(tx); err != nil {
 		return err
 	}
@@ -73,6 +74,11 @@ func (tx *Tx) Accept(ctx context.Context, key string, data []byte) (bool, error)
 // Append adds e to the event log and returns its position. e.Pos is
 // ignored; e.Time is set to now when it is zero.
 func (tx *Tx) Append(ctx context.Context, e control.Event) (uint64, error) {
+	if tx.check != nil {
+		if err := tx.check(e); err != nil {
+			return 0, fmt.Errorf("store: append event: %w", err)
+		}
+	}
 	if e.Time.IsZero() {
 		e.Time = time.Now()
 	}

@@ -302,3 +302,28 @@ func TestAdaptersOnlyUnderCmd(t *testing.T) {
 		}
 	}
 }
+
+// hataori events prints each event exactly as the protocol's golden files
+// encode it.
+func TestEventsPrintTheDocumentedSchema(t *testing.T) {
+	files, _ := filepath.Glob(filepath.Join("..", "..", "internal", "wire", "testdata", "protocol", wire.Version, "event-*.json"))
+	if len(files) == 0 {
+		t.Fatal("no golden events")
+	}
+	for _, f := range files {
+		b, _ := os.ReadFile(f)
+		var msg struct {
+			Event json.RawMessage `json:"event"`
+		}
+		json.Unmarshal(b, &msg)
+		var e control.Event
+		if err := json.Unmarshal(msg.Event, &e); err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		printEvent(json.NewEncoder(&out), e)
+		if got := bytes.TrimSpace(out.Bytes()); !bytes.Equal(got, msg.Event) {
+			t.Errorf("%s:\n printed %s\n golden  %s", filepath.Base(f), got, msg.Event)
+		}
+	}
+}

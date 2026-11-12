@@ -19,10 +19,10 @@ type Client struct {
 	path    string
 	version string // the version it says it speaks; Version unless a test changes it
 
-	mu   sync.Mutex
-	conn net.Conn
-	dec  *json.Decoder
-	next uint64
+	mu      sync.Mutex
+	conn    net.Conn
+	peer    *Peer
+	handler Handler
 }
 
 var _ control.API = (*Client)(nil)
@@ -38,12 +38,45 @@ func Dial(root string) (*Client, error) {
 
 func dialPath(path, version string) (*Client, error) {
 	c := &Client{path: path, version: version}
-	conn, dec, err := c.connect(context.Background())
-	if err != nil {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.open(context.Background()); err != nil {
 		return nil, err
 	}
-	c.conn, c.dec = conn, dec
 	return c, nil
+}
+
+// SetHandler sets what answers the requests the daemon sends this client.
+// Without one, every request is answered "not supported".
+func (c *Client) SetHandler(h Handler) {
+	c.mu.Lock()
+	c.handler = h
+	c.mu.Unlock()
+}
+
+func (c *Client) handle(ctx context.Context, op string, args json.RawMessage) (any, error) {
+	c.mu.Lock()
+	h := c.handler
+	c.mu.Unlock()
+	if h == nil {
+		return nil, fmt.Errorf("wire: operation %q: %w", op, ErrNotSupported)
+	}
+	return h(ctx, op, args)
+}
+
+// open connects the client's connection for calls; c.mu is held.
+func (c *Client) open(ctx context.Context) error {
+	conn, dec, err := c.connect(ctx)
+	if err != nil {
+		return err
+	}
+	p := newPeer(conn, c.handle)
+	c.conn, c.peer = conn, p
+	go func() {
+		p.serve(context.Background(), dec, nil)
+		conn.Close()
+	}()
+	return nil
 }
 
 // connect opens a connection and exchanges hellos.
@@ -69,7 +102,7 @@ func (c *Client) connect(ctx context.Context) (net.Conn, *json.Decoder, error) {
 		conn.Close()
 		return nil, nil, fmt.Errorf("wire: daemon refused the connection: %s", h.Error)
 	}
-	if h.Version != c.version {
+	if major(h.Version) != major(c.version) {
 		conn.Close()
 		return nil, nil, versionError(c.version, h.Version)
 	}
@@ -90,52 +123,31 @@ func (c *Client) Close() error {
 // broke is opened again for the next call; the call itself is not
 // repeated, because the daemon may have run it.
 func (c *Client) call(ctx context.Context, op string, args, result any) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if c.conn == nil {
-		conn, dec, err := c.connect(ctx)
-		if err != nil {
+	c.mu.Lock()
+	if c.peer != nil {
+		select {
+		case <-c.peer.done:
+			c.peer = nil
+		default:
+		}
+	}
+	if c.peer == nil {
+		if err := c.open(ctx); err != nil {
+			c.mu.Unlock()
 			return err
 		}
-		c.conn, c.dec = conn, dec
 	}
-	c.next++
-	raw, err := json.Marshal(args)
-	if err != nil {
-		return err
-	}
-	if d, ok := ctx.Deadline(); ok {
-		c.conn.SetDeadline(d)
-	} else {
-		c.conn.SetDeadline(time.Time{})
-	}
-	// Cancelling ctx breaks a call that is waiting for its response.
-	conn := c.conn
-	stop := context.AfterFunc(ctx, func() { conn.SetDeadline(time.Unix(1, 0)) })
-	defer stop()
-	var resp response
-	err = json.NewEncoder(c.conn).Encode(request{ID: c.next, Op: op, Args: raw})
-	if err == nil {
-		err = c.dec.Decode(&resp)
-	}
-	if err == nil && resp.ID != c.next {
-		err = fmt.Errorf("response %d to request %d", resp.ID, c.next)
-	}
-	if err != nil {
-		c.conn.Close()
-		c.conn = nil
+	p := c.peer
+	c.mu.Unlock()
+	err := p.Request(ctx, op, args, result)
+	var re *remoteError
+	if err != nil && !errors.As(err, &re) && ctx.Err() == nil {
 		return fmt.Errorf("wire: %s: %w", op, err)
 	}
-	if resp.Error != nil {
-		return decodeError(resp.Error)
-	}
-	if result != nil && resp.Result != nil {
-		return json.Unmarshal(resp.Result, result)
-	}
-	return nil
+	return err
 }
 
 func (c *Client) Threads(ctx context.Context, f control.Filter) ([]control.ThreadInfo, error) {

@@ -1,0 +1,234 @@
+package wire
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/yousan/hataori/internal/control"
+)
+
+var update = flag.Bool("update", false, "write the golden files of a new protocol version")
+
+// GoldenDir is where the golden files of the current version are.
+var GoldenDir = filepath.Join("testdata", "protocol", Version)
+
+const sumsFile = "testdata/protocol/SUMS"
+
+var (
+	exampleTime = time.Date(2026, 1, 2, 3, 4, 5, 678000000, time.UTC)
+	exampleID   = control.ThreadID{Scope: "C0123", Key: "T0456"}
+	exampleInfo = control.ThreadInfo{ID: exampleID, Number: 7, Title: "Fix the build", Repo: "https://example.com/repo.git",
+		State: control.Running, StartedBy: "webhook:W1", Created: exampleTime, Updated: exampleTime}
+)
+
+// eventData is an example of every event kind's data.
+var eventData = map[control.EventKind]string{
+	"thread_created":    `{"effort":"high","model":"opus","principal":"webhook:W1","repo":"https://example.com/repo.git","session":3,"thread":7}`,
+	"state":             `{"from":"running","reason":"interrupted","session":3,"to":"asleep"}`,
+	"turn_started":      `{"by":"caller","principal":"webhook:W1","session":3,"turn":12}`,
+	"turn_ended":        `{"background":0,"by":"caller","outcome":"failure","principal":"webhook:W1","reason":"limit","session":3,"turn":12}`,
+	"input":             `{"session":3,"text":"Run the tests.","turn":12}`,
+	"answer":            `{"session":3,"text":"blue","turn":13}`,
+	"text":              `{"final":true,"session":3,"text":"All tests pass."}`,
+	"tool_started":      `{"id":"toolu_1","session":3,"tool":"Bash"}`,
+	"tool_ended":        `{"id":"toolu_1","session":3,"tool":"Bash"}`,
+	"subagent_started":  `{"id":"agent_1","session":3}`,
+	"subagent_ended":    `{"id":"agent_1","session":3}`,
+	"request":           `{"approval":false,"choices":["red","blue"],"request":"3:toolu_2","session":3,"text":"Which colour?"}`,
+	"request_withdrawn": `{"request":"3:toolu_2","session":3}`,
+	"file_out":          `{"file":"/srv/hataori/state/sessions/3/out/report.pdf","session":3}`,
+	"usage":             `{"session":3}`,
+	"login_lost":        `{"agent":"claude-code","outage":1,"thread":7}`,
+	"login_restored":    `{"agent":"claude-code","outage":1,"scopes":["C0123"],"threads":[{"scope":"C0123","key":"T0456"}]}`,
+	"session_replaced":  `{"new_session":4,"reason":"cannot resume","session":3}`,
+	control.CaughtUp:    ``,
+}
+
+func raw(s string) json.RawMessage { return json.RawMessage(s) }
+
+func mustJSON(v any) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+// examples is one encoded example of every message, of every operation's
+// request and response, and of every event kind, by golden file name.
+func examples(t *testing.T) map[string]any {
+	t.Helper()
+	ex := map[string]any{
+		"hello.json":         hello{Version: Version},
+		"hello-refusal.json": hello{Version: Version, Error: versionError("2.0", Version).Error()},
+		"response-error.json": response{ID: 5, Error: &wireError{Code: "not_supported",
+			Message: `wire: operation "Unheard": not supported`}},
+	}
+	args := map[string]any{
+		"Threads": threadsArgs{Filter: control.Filter{Scope: "C0123"}},
+		"Thread":  threadArgs{ID: exampleID, Recent: 2000},
+		"Start": control.StartRequest{Key: "M0789", Scope: "C0123", Repo: "https://example.com/repo.git",
+			Input: control.Input{Text: "Fix the build."}, Model: "opus", Effort: "high"},
+		"Send":   sendArgs{ID: exampleID, Key: "M0790", Input: control.Input{Text: "And the docs."}, Busy: control.Deliver},
+		"Answer": answerArgs{Request: "3:toolu_2", Answer: control.Answer{Text: "blue", Choices: []string{"blue"}}},
+		"Stop":   stopArgs{ID: exampleID},
+		"Events": eventsArgs{Filter: control.Filter{}, After: 41},
+	}
+	results := map[string]any{
+		"Threads": []control.ThreadInfo{exampleInfo},
+		"Thread": control.ThreadDetail{ThreadInfo: exampleInfo, Recent: "Running the tests...",
+			Requests: []control.Request{{ID: "3:toolu_2", Kind: control.Question, Text: "Which colour?",
+				Choices: []control.Choice{{Label: "red", Token: "red"}, {Label: "blue", Token: "blue"}}}}},
+		"Start": exampleID,
+	}
+	for op := range operations {
+		a, ok := args[op]
+		if !ok {
+			t.Fatalf("no example of %s's arguments", op)
+		}
+		ex["request-"+op+".json"] = request{ID: 1, Op: op, Args: mustJSON(a)}
+		resp := response{ID: 1}
+		if r, ok := results[op]; ok {
+			resp.Result = mustJSON(r)
+		}
+		ex["response-"+op+".json"] = resp
+	}
+	for kind := range control.EventKinds {
+		d, ok := eventData[kind]
+		if !ok {
+			t.Fatalf("no example of the event %s", kind)
+		}
+		e := control.Event{Pos: 42, Thread: exampleID, Time: exampleTime, Kind: kind}
+		if d != "" {
+			e.Data = raw(d)
+		}
+		if kind == control.CaughtUp {
+			e.Thread = control.ThreadID{}
+		} else if err := control.CheckEvent(e); err != nil {
+			t.Fatalf("the example of %s: %v", kind, err)
+		}
+		ex["event-"+string(kind)+".json"] = response{ID: 1, Event: &e}
+	}
+	return ex
+}
+
+// encode is a message as it goes over the socket.
+func encode(v any) []byte {
+	var b bytes.Buffer
+	json.NewEncoder(&b).Encode(v)
+	return b.Bytes()
+}
+
+// dirSum is the checksum of a version's golden files.
+func dirSum(t *testing.T, dir string) string {
+	t.Helper()
+	files, _ := filepath.Glob(filepath.Join(dir, "*.json"))
+	sort.Strings(files)
+	h := sha256.New()
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintf(h, "%s\n%d\n", filepath.Base(f), len(b))
+		h.Write(b)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func readSums(t *testing.T) map[string]string {
+	t.Helper()
+	sums := map[string]string{}
+	b, err := os.ReadFile(sumsFile)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	for _, l := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		if v, s, ok := strings.Cut(l, " "); ok {
+			sums[v] = s
+		}
+	}
+	return sums
+}
+
+// The encodings are those of the golden files of this version, and no
+// version's golden files changed since its checksum was recorded.
+func TestGolden(t *testing.T) {
+	ex := examples(t)
+	sums := readSums(t)
+	if *update {
+		if _, recorded := sums[Version]; recorded {
+			t.Fatalf("version %s is recorded in %s: change the version before writing new golden files", Version, sumsFile)
+		}
+		os.MkdirAll(GoldenDir, 0o755)
+		for name, v := range ex {
+			if err := os.WriteFile(filepath.Join(GoldenDir, name), encode(v), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		f, err := os.OpenFile(sumsFile, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sums[Version] = dirSum(t, GoldenDir)
+		fmt.Fprintf(f, "%s %s\n", Version, sums[Version])
+		f.Close()
+	}
+	files, _ := filepath.Glob(filepath.Join(GoldenDir, "*.json"))
+	if len(files) != len(ex) {
+		t.Errorf("%d golden files in %s, %d examples", len(files), GoldenDir, len(ex))
+	}
+	for name, v := range ex {
+		want, err := os.ReadFile(filepath.Join(GoldenDir, name))
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		if got := encode(v); !bytes.Equal(got, want) {
+			t.Errorf("%s: the encoding changed in version %s:\n got %s\nwant %s", name, Version, got, want)
+		}
+	}
+	dirs, _ := filepath.Glob(filepath.Join("testdata", "protocol", "*.*"))
+	for _, d := range dirs {
+		v := filepath.Base(d)
+		if got := dirSum(t, d); sums[v] != got {
+			t.Errorf("the golden files of version %s differ from their checksum in %s: a version's encodings never change; change the version", v, sumsFile)
+		}
+	}
+	if _, ok := sums[Version]; !ok {
+		t.Errorf("version %s has no checksum in %s", Version, sumsFile)
+	}
+}
+
+// Every golden message decodes and encodes again to the same bytes: the
+// file is what the code reads as well as what it writes.
+func TestGoldenRoundTrip(t *testing.T) {
+	files, _ := filepath.Glob(filepath.Join(GoldenDir, "*.json"))
+	for _, f := range files {
+		b, _ := os.ReadFile(f)
+		var v any = &response{}
+		switch name := filepath.Base(f); {
+		case strings.HasPrefix(name, "hello"):
+			v = &hello{}
+		case strings.HasPrefix(name, "request-"):
+			v = &request{}
+		}
+		if err := json.Unmarshal(b, v); err != nil {
+			t.Errorf("%s: %v", f, err)
+			continue
+		}
+		if got := encode(v); !bytes.Equal(got, b) {
+			t.Errorf("%s: decoded and encoded again:\n got %s\nwant %s", f, got, b)
+		}
+	}
+}

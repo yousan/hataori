@@ -3,12 +3,14 @@
 // line.
 //
 // A connection starts with a hello from each side carrying the protocol
-// version. Then the client sends requests and the server answers each one
-// in order. An Events request turns the connection into a stream of events
-// until the client closes it.
+// version. Then either side may send requests, and the other answers each
+// one. An Events request from the client turns the connection into a
+// stream of events until the client closes it. docs/protocol.md is the
+// description of the protocol.
 package wire
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -23,7 +25,8 @@ import (
 	"github.com/yousan/hataori/internal/session"
 )
 
-// Version is the protocol version this build speaks.
+// Version is the protocol version this build speaks: major.minor. Two
+// sides work together when their major numbers are equal (docs/protocol.md).
 const Version = "1.0"
 
 type hello struct {
@@ -51,27 +54,87 @@ type wireError struct {
 
 // The arguments of each operation.
 type (
-	threadsArgs struct{ Filter control.Filter }
-	threadArgs  struct {
-		ID     control.ThreadID
-		Recent int
+	threadsArgs struct {
+		Filter control.Filter `json:"filter"`
+	}
+	threadArgs struct {
+		ID     control.ThreadID `json:"id"`
+		Recent int              `json:"recent"`
 	}
 	sendArgs struct {
-		ID    control.ThreadID
-		Key   string
-		Input control.Input
-		Busy  control.Busy
+		ID    control.ThreadID `json:"id"`
+		Key   string           `json:"key"`
+		Input control.Input    `json:"input"`
+		Busy  control.Busy     `json:"busy"`
 	}
 	answerArgs struct {
-		Request control.RequestID
-		Answer  control.Answer
+		Request control.RequestID `json:"request"`
+		Answer  control.Answer    `json:"answer"`
 	}
-	stopArgs   struct{ ID control.ThreadID }
+	stopArgs struct {
+		ID control.ThreadID `json:"id"`
+	}
 	eventsArgs struct {
-		Filter control.Filter
-		After  uint64
+		Filter control.Filter `json:"filter"`
+		After  uint64         `json:"after"`
 	}
 )
+
+// operation is one operation of the control API on the wire: the type of
+// its arguments and of its result, and how the server runs it. Events has
+// no run: it turns the connection into a stream of Event messages.
+type operation struct {
+	args, result any
+	run          func(ctx context.Context, api control.API, args func(any) error) (any, error)
+}
+
+// operations is every operation a client may send. docs/protocol.md
+// describes each, and a test keeps the two equal.
+var operations = map[string]operation{
+	"Threads": {threadsArgs{}, []control.ThreadInfo{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a threadsArgs
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return api.Threads(ctx, a.Filter)
+	}},
+	"Thread": {threadArgs{}, control.ThreadDetail{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a threadArgs
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return api.Thread(ctx, a.ID, a.Recent)
+	}},
+	"Start": {control.StartRequest{}, control.ThreadID{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a control.StartRequest
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return api.Start(ctx, a)
+	}},
+	"Send": {sendArgs{}, nil, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a sendArgs
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return nil, api.Send(ctx, a.ID, a.Key, a.Input, a.Busy)
+	}},
+	"Answer": {answerArgs{}, nil, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a answerArgs
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return nil, api.Answer(ctx, a.Request, a.Answer)
+	}},
+	"Stop": {stopArgs{}, nil, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a stopArgs
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return nil, api.Stop(ctx, a.ID)
+	}},
+	"Events": {eventsArgs{}, control.Event{}, nil},
+}
 
 // The error codes on the wire, for the errors a client can act on.
 var codes = []struct {
@@ -83,6 +146,7 @@ var codes = []struct {
 	{"busy", core.ErrBusy},
 	{"not_found", core.ErrNotFound},
 	{"refused", session.ErrRefused},
+	{"not_supported", ErrNotSupported},
 }
 
 func encodeError(err error) *wireError {

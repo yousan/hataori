@@ -186,6 +186,7 @@ func TestEventsResumeAfterReconnect(t *testing.T) {
 	}
 	defer client.Close()
 
+	c.Store.CheckEvent = nil // events of the test's own kind
 	appendN := func(n int) {
 		c.Store.Update(ctx, func(tx *store.Tx) error {
 			for range n {

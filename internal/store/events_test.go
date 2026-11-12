@@ -18,6 +18,7 @@ func openStore(t *testing.T, root string) *Store {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
+	s.CheckEvent = nil // these tests write events of their own kinds
 	return s
 }
 
@@ -129,6 +130,7 @@ func TestEventsAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.CheckEvent = nil
 	appendEvents(t, s, "a", 20)
 	before, err := s.Events(ctx, control.Filter{}, 7, 100)
 	if err != nil {
@@ -220,5 +222,30 @@ func TestFollowMarksTheStoredEvents(t *testing.T) {
 		case <-time.After(10 * time.Second):
 			t.Fatal("no mark")
 		}
+	}
+}
+
+func TestOnlyEventsOfTheSchemaAreStored(t *testing.T) {
+	s, err := Open(context.Background(), newRoot(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, e := range []control.Event{
+		{Kind: "no_such_kind"},
+		{Kind: "usage", Data: []byte(`{"session":1,"extra":true}`)},
+		{Kind: "usage", Data: []byte(`{}`)},
+		{Kind: "usage", Data: []byte(`{"session":"one"}`)},
+	} {
+		err := s.Update(context.Background(), func(tx *Tx) error { _, err := tx.Append(context.Background(), e); return err })
+		if err == nil {
+			t.Errorf("stored %s %s", e.Kind, e.Data)
+		}
+	}
+	if err := s.Update(context.Background(), func(tx *Tx) error {
+		_, err := tx.Append(context.Background(), control.Event{Kind: "text", Data: []byte(`{"session":1,"final":true}`)})
+		return err
+	}); err != nil {
+		t.Fatalf("a text event without its text: %v", err)
 	}
 }

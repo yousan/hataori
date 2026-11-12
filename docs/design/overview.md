@@ -917,6 +917,8 @@ type ScopeOwner interface {
 
 Sleep, close and remove join the interface with the phase that needs them.
 
+The types carry lowercase JSON names, and the data of every event kind is declared in `control.EventKinds`; the store refuses an event that does not match. How all of this is encoded on the socket, and when the protocol version changes, is in [docs/protocol.md](../protocol.md).
+
 ### Surface driver
 
 ```go

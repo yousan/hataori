@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/yousan/hataori/internal/control"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -22,6 +23,10 @@ const File = "state/hataori.db"
 // only writer and writes never contend for the lock.
 type Store struct {
 	DB *sql.DB
+	// CheckEvent checks every event before it is appended: control.CheckEvent
+	// after Open, so that only events of the documented schema are stored.
+	// A test that writes events of its own kinds sets it to nil.
+	CheckEvent func(control.Event) error
 
 	mu   sync.Mutex
 	wake chan struct{} // closed when events are committed
@@ -51,7 +56,7 @@ func open(ctx context.Context, path string, steps []Migration) (*Store, error) {
 		return nil, fmt.Errorf("store: open %s: %w", path, err)
 	}
 	db.SetMaxOpenConns(1)
-	s := &Store{DB: db, wake: make(chan struct{})}
+	s := &Store{DB: db, wake: make(chan struct{}), CheckEvent: control.CheckEvent}
 	if err := s.migrate(ctx, steps); err != nil {
 		db.Close()
 		return nil, err
