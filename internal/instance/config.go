@@ -62,6 +62,9 @@ type fileScope struct {
 // ParseConfig parses a config. Every error is one line that names the key.
 // Spaces around a string value are ignored.
 func ParseConfig(data []byte) (*Config, error) {
+	if err := rejectNull(data); err != nil {
+		return nil, err
+	}
 	var f fileConfig
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
@@ -135,6 +138,46 @@ func ParseConfig(data []byte) (*Config, error) {
 		}
 	}
 	return c, nil
+}
+
+// rejectNull refuses a null anywhere outside the opaque sections, since
+// encoding/json would read it as the zero value instead of a wrong type.
+func rejectNull(data []byte) error {
+	var v any
+	if err := json.Unmarshal(data, &v); err != nil {
+		return decodeError(err)
+	}
+	return walkNull("", v)
+}
+
+func walkNull(key string, v any) error {
+	switch v := v.(type) {
+	case nil:
+		return fmt.Errorf("config: key %q must not be null", key)
+	case map[string]any:
+		for k, e := range v {
+			if key == "" && (k == "drivers" || k == "adapters") {
+				if e == nil {
+					return fmt.Errorf("config: key %q must not be null", k)
+				}
+				continue
+			}
+			sub := k
+			if key != "" {
+				sub = key + "." + k
+			}
+			if err := walkNull(sub, e); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for i, e := range v {
+			if err := walkNull(fmt.Sprintf("%s[%d]", key, i), e); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func missing(key string) error {

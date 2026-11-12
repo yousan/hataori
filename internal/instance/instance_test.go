@@ -82,6 +82,17 @@ func TestOpenRefusesPathsOutsideRoot(t *testing.T) {
 	})
 }
 
+func TestOpenRefusesFileInPlaceOfDir(t *testing.T) {
+	root := newRoot(t, validConfig)
+	if err := os.WriteFile(filepath.Join(root, "mirrors"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if in, err := Open(root); err == nil {
+		in.Close()
+		t.Fatal("Open accepted a file named mirrors")
+	}
+}
+
 func TestConfigErrorsNameTheKey(t *testing.T) {
 	for _, tc := range []struct {
 		name, config, key string
@@ -90,6 +101,7 @@ func TestConfigErrorsNameTheKey(t *testing.T) {
 		{"missing in scope", `{"owner": "o", "trigger": "!go", "idle": "30m", "scopes": [{"key": "c1"}]}`, `"scopes[0].client"`},
 		{"unknown", `{"owner": "o", "trigger": "!go", "idle": "30m", "colour": "red"}`, `"colour"`},
 		{"wrong type", `{"owner": "o", "trigger": "!go", "idle": "30m", "scopes": [{"key": "c1", "client": "chat", "enabled": "yes"}]}`, `enabled`},
+		{"null", `{"owner": "o", "trigger": "!go", "idle": "30m", "scopes": [{"key": "c1", "client": "chat", "enabled": null}]}`, `"scopes[0].enabled"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := ParseConfig([]byte(tc.config))

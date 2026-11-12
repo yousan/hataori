@@ -47,7 +47,14 @@ func (in *Instance) open() error {
 	}
 	in.Config = cfg
 	for _, d := range dirs {
-		if err := in.Root.Mkdir(d, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+		err := in.Root.Mkdir(d, 0o700)
+		if errors.Is(err, fs.ErrExist) {
+			var st fs.FileInfo
+			if st, err = in.Root.Stat(d); err == nil && !st.IsDir() {
+				err = errors.New("exists and is not a directory")
+			}
+		}
+		if err != nil {
 			return fmt.Errorf("instance: create %s: %w", d, err)
 		}
 	}
