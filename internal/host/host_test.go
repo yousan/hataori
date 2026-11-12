@@ -391,7 +391,7 @@ func TestSocketDirectoryIsRemoved(t *testing.T) {
 		t.Fatalf("after a clean end the socket directory is there: %v", err)
 	}
 
-	start("echo")   // runs until killed
+	start("echo") // runs until killed
 	// The host dies first, with its socket in place, then its command.
 	b, _ := os.ReadFile(filepath.Join(dir, HostPIDFile))
 	if pid, _ := strconv.Atoi(strings.TrimSpace(string(b))); pid > 1 {
