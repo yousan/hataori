@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite" // pure-Go driver, so the binary builds without cgo
 )
@@ -37,10 +38,11 @@ func Open(ctx context.Context, root string) (*Store, error) {
 func open(ctx context.Context, path string, steps []Migration) (*Store, error) {
 	q := url.Values{}
 	q.Add("_pragma", "busy_timeout(10000)")
-	q.Add("_pragma", "journal_mode(WAL)")
 	q.Add("_pragma", "foreign_keys(1)")
 	q.Set("_txlock", "immediate")
-	db, err := sql.Open("sqlite", "file:"+path+"?"+q.Encode())
+	// Escape the path so that '?', '#' or '%' in a root stay part of it.
+	esc := strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(path)
+	db, err := sql.Open("sqlite", "file:"+esc+"?"+q.Encode())
 	if err != nil {
 		return nil, fmt.Errorf("store: open %s: %w", path, err)
 	}
@@ -88,6 +90,10 @@ func (s *Store) migrate(ctx context.Context, steps []Migration) error {
 	}
 	if v > len(steps) {
 		return fmt.Errorf("store: database schema version %d is newer than this binary knows (%d); use a newer hataori", v, len(steps))
+	}
+	// Only now, once the database is known to be ours to change.
+	if _, err := s.DB.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
+		return fmt.Errorf("store: set WAL mode: %w", err)
 	}
 	for i := v; i < len(steps); i++ {
 		if err := s.apply(ctx, i+1, steps[i]); err != nil {

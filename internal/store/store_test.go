@@ -120,9 +120,14 @@ func TestOlderVersionRunsLaterStepsOnly(t *testing.T) {
 
 func TestNewerVersionIsRefusedUnmodified(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "db")
+	path := filepath.Join(t.TempDir(), "db?x#y")
 	s, err := open(ctx, path, []Migration{create("a"), create("b")})
 	if err != nil {
+		t.Fatal(err)
+	}
+	// Leave it in another journal mode, so that switching to WAL would
+	// modify it.
+	if _, err := s.DB.Exec(`PRAGMA journal_mode = DELETE`); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
