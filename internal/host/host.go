@@ -105,7 +105,7 @@ func exitStatus(cmd *exec.Cmd, err error) Status {
 
 // start starts the command and the goroutines that log its output.
 func (h *host) start() (*sync.WaitGroup, error) {
-	argv0, err := lookPath(h.spec.Argv[0], h.spec.Env)
+	argv0, err := lookPath(h.spec.Argv[0], h.spec.Env, h.spec.Dir)
 	if err != nil {
 		return nil, err
 	}
@@ -147,23 +147,30 @@ func (h *host) start() (*sync.WaitGroup, error) {
 		}()
 	} else {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		stdin, err := cmd.StdinPipe()
+		// Pipes of our own, not cmd's: Wait closes those before the
+		// readers have read everything.
+		inR, stdin, err := os.Pipe()
 		if err != nil {
 			return nil, err
 		}
-		stdout, err := cmd.StdoutPipe()
+		stdout, outW, err := os.Pipe()
 		if err != nil {
 			return nil, err
 		}
-		stderr, err := cmd.StderrPipe()
+		stderr, errW, err := os.Pipe()
 		if err != nil {
 			return nil, err
 		}
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = inR, outW, errW
 		errLog, err := openBounded(filepath.Join(h.dir, StderrLog), h.spec.LogLimit)
 		if err != nil {
 			return nil, err
 		}
-		if err := cmd.Start(); err != nil {
+		err = cmd.Start()
+		inR.Close() // the command holds its own copies now
+		outW.Close()
+		errW.Close()
+		if err != nil {
 			errLog.Close()
 			return nil, fmt.Errorf("host: start %s: %w", h.spec.Argv[0], err)
 		}
@@ -202,7 +209,8 @@ func trailingNewline(line []byte) int {
 }
 
 // lookPath finds argv0 on the PATH of the command's own environment.
-func lookPath(argv0 string, env []string) (string, error) {
+// Relative entries are taken from dir, where the command runs.
+func lookPath(argv0 string, env []string, dir string) (string, error) {
 	if strings.Contains(argv0, "/") {
 		return argv0, nil
 	}
@@ -210,6 +218,9 @@ func lookPath(argv0 string, env []string) (string, error) {
 		if path, ok := strings.CutPrefix(kv, "PATH="); ok {
 			for _, d := range filepath.SplitList(path) {
 				p := filepath.Join(d, argv0)
+				if !filepath.IsAbs(p) && dir != "" {
+					p = filepath.Join(dir, p)
+				}
 				if st, err := os.Stat(p); err == nil && !st.IsDir() && st.Mode()&0o111 != 0 {
 					return p, nil
 				}

@@ -34,11 +34,13 @@ func (l *boundedLog) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	n := len(p)
-	if int64(len(p)) > l.limit/2 {
+	if int64(len(p)) > l.limit { // only its end fits
 		p = p[int64(len(p))-l.limit/2:]
 	}
 	if l.size+int64(len(p)) > l.limit {
-		if err := l.trim(l.limit/2 - int64(len(p))); err != nil {
+		// Keep at most half the limit of the old content, and as much as
+		// fits beside p.
+		if err := l.trim(min(l.limit/2, l.limit-int64(len(p)))); err != nil {
 			return 0, err
 		}
 	}
