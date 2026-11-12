@@ -1,0 +1,99 @@
+package session
+
+import (
+	"errors"
+	"testing"
+
+	"github.com/yousan/hataori/internal/agent"
+	"github.com/yousan/hataori/internal/control"
+)
+
+var allStates = []control.State{control.Creating, control.Idle, control.Running, control.Waiting,
+	control.Asleep, control.Closed, control.Removed, control.Failed}
+
+type namedInput struct {
+	name string
+	in   Input
+}
+
+func agentIn(k agent.Kind) Input {
+	e := agent.Event{Kind: k}
+	if k == agent.Request {
+		e.Request = &agent.RequestInfo{ID: "r1"}
+	}
+	return Input{Kind: AgentEvent, Agent: e}
+}
+
+var allInputs = []namedInput{
+	{"send", Input{Kind: Send}},
+	{"answer", Input{Kind: Answer}},
+	{"close", Input{Kind: Close}},
+	{"remove", Input{Kind: Remove}},
+	{"exit", Input{Kind: Exit}},
+	{"start timeout", Input{Kind: StartTimeout}},
+	{"idle timeout", Input{Kind: IdleTimeout}},
+	{"ready", agentIn(agent.SessionReady)},
+	{"turn started", agentIn(agent.TurnStarted)},
+	{"turn ended", agentIn(agent.TurnEnded)},
+	{"request", agentIn(agent.Request)},
+	{"withdrawn", agentIn(agent.RequestWithdrawn)},
+	{"text", agentIn(agent.Text)},
+	{"tool started", agentIn(agent.ToolStarted)},
+	{"tool ended", agentIn(agent.ToolEnded)},
+	{"subagent started", agentIn(agent.SubagentStarted)},
+	{"subagent ended", agentIn(agent.SubagentEnded)},
+	{"file out", agentIn(agent.FileOut)},
+	{"usage", agentIn(agent.Usage)},
+	{"session ended", agentIn(agent.SessionEnded)},
+	{"unknown", agentIn(agent.Unknown)},
+}
+
+// output are the agent events that change no state; they are allowed
+// wherever an agent process is live.
+var output = []string{"text", "tool started", "tool ended", "subagent started", "subagent ended",
+	"file out", "usage", "session ended", "unknown"}
+
+func init() {
+	for _, st := range []control.State{control.Idle, control.Running, control.Waiting} {
+		for _, o := range output {
+			allowed[st][o] = st
+		}
+	}
+}
+
+// allowed lists every arrow: state, input → new state. Everything else is refused.
+var allowed = map[control.State]map[string]control.State{
+	control.Creating: {"ready": control.Idle, "exit": control.Failed, "start timeout": control.Failed},
+	control.Idle: {"send": control.Running, "turn started": control.Running, "idle timeout": control.Asleep,
+		"exit": control.Asleep},
+	control.Running: {"send": control.Running, "turn started": control.Running, "turn ended": control.Idle,
+		"request": control.Waiting, "exit": control.Asleep},
+	control.Waiting: {"answer": control.Running, "withdrawn": control.Running, "exit": control.Asleep},
+	control.Asleep:  {"ready": control.Idle, "close": control.Closed},
+	control.Closed:  {"remove": control.Removed},
+}
+
+func TestEveryStateAndInput(t *testing.T) {
+	for _, st := range allStates {
+		for _, ni := range allInputs {
+			snap := Snapshot{State: st}
+			if st == control.Running {
+				snap.Turn = &OpenTurn{By: ByCaller}
+			}
+			r, err := Step(snap, ni.in)
+			want, ok := allowed[st][ni.name]
+			if !ok {
+				if !errors.Is(err, ErrRefused) {
+					t.Errorf("%s + %s: got %v, %v; want refused", st, ni.name, r.State, err)
+				}
+				if r.State != "" || r.Out != nil || r.Start != nil || r.End != nil {
+					t.Errorf("%s + %s: refused input produced %+v", st, ni.name, r)
+				}
+				continue
+			}
+			if err != nil || r.State != want {
+				t.Errorf("%s + %s: got %v, %v; want %v", st, ni.name, r.State, err, want)
+			}
+		}
+	}
+}

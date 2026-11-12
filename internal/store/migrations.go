@@ -72,6 +72,9 @@ var migrations = []Migration{
 		)`,
 		`CREATE INDEX events_scope ON events (scope, thread, pos)`,
 	)},
+	{Name: "turns.principal", Up: execAll(
+		`ALTER TABLE turns ADD COLUMN principal TEXT NOT NULL DEFAULT ''`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {
