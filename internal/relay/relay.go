@@ -19,6 +19,7 @@ import (
 	"io"
 	"log/slog"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -96,7 +97,9 @@ type flow struct {
 	adapter agent.Adapter
 	cmd     *exec.Cmd
 	stdin   io.WriteCloser
-	expires time.Time // until when a code is taken; the command is stopped then
+	expires time.Time     // until when a code is taken; the command is stopped then
+	since   uint64        // the last event position when it started: older events are not about it
+	read    chan struct{} // closed when all its output is decoded
 
 	mu      sync.Mutex
 	waiting bool // the command asked for a code and has not had one since
@@ -133,7 +136,12 @@ func (r *Relay) Run(ctx context.Context) error {
 				}
 			}
 		case session.KindLoginRestored:
-			r.end(d.Agent, Restored)
+			r.mu.Lock()
+			f := r.flows[d.Agent]
+			r.mu.Unlock()
+			if f != nil && e.Pos > f.since { // not an outage that closed before this flow
+				r.endFlow(f, Restored)
+			}
 		}
 	}
 	if err := <-errc; err != nil && !errors.Is(err, context.Canceled) {
@@ -212,31 +220,50 @@ func (r *Relay) start(ctx context.Context, agentName string) error {
 
 	cmd := exec.Command(l.Argv[0], l.Argv[1:]...)
 	cmd.Env = l.Env
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // its own group, so that all of it can be stopped
+	cmd.SysProcAttr = procAttr() // its own group, so that all of it can be stopped
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
 	}
 	pr, pw := io.Pipe()
 	cmd.Stdout, cmd.Stderr = pw, pw // the refusal may come on either
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("relay: start the login command: %w", err)
-	}
 	f := &flow{agent: agentName, login: lf, adapter: ad, cmd: cmd, stdin: stdin, exited: make(chan struct{}),
-		expires: time.Now().Add(r.timeout())}
+		read: make(chan struct{}), expires: time.Now().Add(r.timeout())}
+	if err := r.Store.DB.QueryRowContext(ctx, `SELECT coalesce(max(pos), 0) FROM events`).Scan(&f.since); err != nil {
+		return err
+	}
+	// The command is started and waited for by one goroutine that keeps its
+	// OS thread: the kernel sends the parent-death signal when the thread
+	// that started the command ends, so it must live as long as the command.
 	r.mu.Lock()
 	if r.flows == nil {
 		r.flows = map[string]*flow{}
 	}
-	r.flows[agentName] = f
+	r.flows[agentName] = f // before it starts, so that its end finds it
 	r.mu.Unlock()
-	r.Log.Info("login relay started", "agent", agentName)
-
+	started := make(chan error, 1)
 	go func() {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		if err := cmd.Start(); err != nil {
+			pw.Close()
+			started <- err
+			return
+		}
+		started <- nil
 		err := cmd.Wait()
 		pw.Close()
+		<-f.read // every line it printed is decoded before the end is decided
 		r.finish(f, err)
 	}()
+	if err := <-started; err != nil {
+		r.mu.Lock()
+		delete(r.flows, agentName)
+		r.mu.Unlock()
+		return fmt.Errorf("relay: start the login command: %w", err)
+	}
+	r.Log.Info("login relay started", "agent", agentName)
+
 	go r.read(f, pr)
 	go func() {
 		select {
@@ -253,6 +280,7 @@ func (r *Relay) start(ctx context.Context, agentName string) error {
 // read decodes what the command prints. A line the command has not ended
 // yet, such as a prompt, is decoded as well.
 func (r *Relay) read(f *flow, out io.Reader) {
+	defer close(f.read)
 	var pending []byte
 	buf := make([]byte, 4096)
 	for {
@@ -297,46 +325,53 @@ func (r *Relay) line(f *flow, l []byte) {
 	}
 }
 
-// finish decides a flow whose command ended.
+// finish decides a flow whose command ended. The flow stays the agent's
+// current one until it is decided, so that a new one starts only after.
 func (r *Relay) finish(f *flow, waitErr error) {
 	f.mu.Lock()
 	end := f.end
 	f.done = true
 	f.mu.Unlock()
-	close(f.exited)
+	u := Update{Agent: f.agent, Done: end}
+	if end == "" {
+		u = r.decide(f, waitErr)
+	}
 	r.mu.Lock()
 	if r.flows[f.agent] == f {
 		delete(r.flows, f.agent)
 	}
 	r.mu.Unlock()
-	if end != "" { // the relay stopped it
-		r.Log.Info("login relay ended", "agent", f.agent, "outcome", string(end))
-		r.notify(Update{Agent: f.agent, Done: end})
-		return
-	}
-	u := Update{Agent: f.agent, Done: Failed}
-	switch {
-	case waitErr != nil:
-		u.Detail = "the login command failed: " + waitErr.Error()
-	default:
-		h, err := f.adapter.Probe(context.Background())
-		switch {
-		case err != nil:
-			u.Detail = "the status check failed: " + err.Error()
-		case !h.LoggedIn:
-			u.Detail = "the login command ended, but the agent is not logged in"
-		default:
-			u.Done = LoggedIn
-			if err := r.Store.Update(context.Background(), func(tx *store.Tx) error {
-				_, err := session.CloseLoginOutage(context.Background(), tx, f.agent)
-				return err
-			}); err != nil {
-				r.Log.Error("login relay: closing the outage", "agent", f.agent, "err", err)
-			}
-		}
-	}
+	close(f.exited)
 	r.Log.Info("login relay ended", "agent", f.agent, "outcome", string(u.Done))
 	r.notify(u)
+}
+
+// decide says how a command that ended by itself went, and closes the
+// outage when the agent is logged in.
+func (r *Relay) decide(f *flow, waitErr error) Update {
+	u := Update{Agent: f.agent, Done: Failed}
+	if waitErr != nil {
+		u.Detail = "the login command failed: " + waitErr.Error()
+		return u
+	}
+	h, err := f.adapter.Probe(context.Background())
+	switch {
+	case err != nil:
+		u.Detail = "the status check failed: " + err.Error()
+	case !h.LoggedIn:
+		u.Detail = "the login command ended, but the agent is not logged in"
+	default:
+		if err := r.Store.Update(context.Background(), func(tx *store.Tx) error {
+			_, err := session.CloseLoginOutage(context.Background(), tx, f.agent)
+			return err
+		}); err != nil {
+			r.Log.Error("login relay: closing the outage", "agent", f.agent, "err", err)
+			u.Detail = "logged in, but the outage could not be closed: " + err.Error()
+			return u
+		}
+		u.Done = LoggedIn
+	}
+	return u
 }
 
 // end stops the agent's running flow, if any, as outcome.

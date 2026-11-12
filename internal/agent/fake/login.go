@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/yousan/hataori/internal/agent"
 )
@@ -23,6 +24,9 @@ type Login struct {
 	NoLink bool `json:"no_link"`
 	// Quit makes it end cleanly at the first code, without logging in.
 	Quit bool `json:"quit"`
+	// Linger makes it keep running when its input ends, as a command that
+	// does not watch its input would, until it is killed.
+	Linger bool `json:"linger"`
 }
 
 // LoggedInFile marks the fake as logged in, in its config directory.
@@ -61,6 +65,9 @@ func (a *Adapter) LoginLaunch(agent.Spec) (agent.Launch, error) {
 	if a.c.Login.Quit {
 		argv = append(argv, "--quit")
 	}
+	if a.c.Login.Linger {
+		argv = append(argv, "--linger")
+	}
 	return agent.Launch{Argv: argv, Env: append([]string{}, a.c.Env...)}, nil
 }
 
@@ -95,14 +102,21 @@ func loginMain(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	accept := fs.String("accept", "", "")
 	noLink := fs.Bool("no-link", false, "")
 	quit := fs.Bool("quit", false, "")
+	linger := fs.Bool("linger", false, "")
 	if err := fs.Parse(args); err != nil || *dir == "" {
 		return 64
 	}
 	in := bufio.NewScanner(stdin)
+	end := func() int {
+		for *linger { // until killed
+			time.Sleep(time.Hour)
+		}
+		return 1
+	}
 	if *noLink {
 		for in.Scan() {
 		}
-		return 1
+		return end()
 	}
 	var b [12]byte
 	rand.Read(b[:])
@@ -110,7 +124,7 @@ func loginMain(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	for {
 		fmt.Fprintln(stdout, loginPrompt)
 		if !in.Scan() {
-			return 1
+			return end()
 		}
 		code := strings.TrimSpace(in.Text())
 		if *quit {

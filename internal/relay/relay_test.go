@@ -1,13 +1,17 @@
 package relay
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -26,7 +30,32 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 2 && os.Args[1] == "role" && os.Args[2] == "fake" {
 		os.Exit(fake.Main(os.Args[3:], os.Stdin, os.Stdout, os.Stderr))
 	}
+	if len(os.Args) > 3 && os.Args[1] == "role" && os.Args[2] == "daemon" {
+		os.Exit(daemonRole(os.Args[3]))
+	}
 	os.Exit(m.Run())
+}
+
+// daemonRole is a daemon a test kills: it starts a login flow under root
+// and prints the login command's process id.
+func daemonRole(root string) int {
+	st, err := store.Open(context.Background(), root)
+	if err != nil {
+		return 1
+	}
+	cfg, _ := json.Marshal(fake.Config{Command: []string{os.Args[0], "role", "fake"}, Env: []string{"PATH=" + os.Getenv("PATH")},
+		ConfigDir: filepath.Join(root, "agent-config"), Login: fake.Login{Code: goodCode, Linger: true}})
+	ad, _ := fake.New(cfg)
+	r := &Relay{Store: st, Adapters: map[string]agent.Adapter{"fake": ad}, Owner: "owner",
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Notify: func(Update) {}}
+	if err := r.Start(context.Background(), "owner", "fake"); err != nil {
+		return 1
+	}
+	r.mu.Lock()
+	pid := r.flows["fake"].cmd.Process.Pid
+	r.mu.Unlock()
+	os.Stdout.WriteString(itoa(pid) + "\n")
+	select {}
 }
 
 const goodCode = "k7Q-unique-code-93x"
@@ -341,4 +370,33 @@ func TestConcurrentStarts(t *testing.T) {
 func isLoginOf(p, root string) bool {
 	b, _ := os.ReadFile(p)
 	return bytes.Contains(b, []byte("login\x00--config\x00"+filepath.Join(root, "agent-config")))
+}
+
+// A daemon that dies takes its login command with it.
+func TestDaemonDeathEndsTheLogin(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "state"), 0o700)
+	os.Mkdir(filepath.Join(root, "agent-config"), 0o700)
+	d := exec.Command(os.Args[0], "role", "daemon", root)
+	out, _ := d.StdoutPipe()
+	if err := d.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Process.Kill(); d.Wait() })
+	line, err := bufio.NewReader(out).ReadString('\n')
+	if err != nil {
+		t.Fatalf("the daemon did not start a login: %v", err)
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(line))
+	if pid <= 1 || syscall.Kill(pid, 0) != nil {
+		t.Fatalf("no login command: %q", line)
+	}
+	d.Process.Signal(syscall.SIGKILL)
+	d.Wait()
+	for deadline := time.Now().Add(5 * time.Second); syscall.Kill(-pid, 0) == nil; time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			syscall.Kill(-pid, syscall.SIGKILL) // only the group this test made
+			t.Fatal("the login command outlived its daemon")
+		}
+	}
 }
