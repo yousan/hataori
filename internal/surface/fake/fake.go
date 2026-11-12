@@ -81,6 +81,9 @@ type failure struct {
 
 // Driver is an in-memory surface.Driver. The zero value is not usable; call New.
 type Driver struct {
+	// deliver orders Inject's calls of the sink as their messages were
+	// received. It is taken before mu, and the sink must not call Inject.
+	deliver   sync.Mutex
 	mu        sync.Mutex
 	sink      surface.Sink
 	connected bool
@@ -164,6 +167,8 @@ func Bot(id string) surface.Author { return surface.Author{Kind: surface.Bot, ID
 // else a thread) from author. While connected it is delivered to the sink
 // before Inject returns; either way Since finds it. It returns the message.
 func (d *Driver) Inject(conv surface.Conversation, author surface.Author, text string) surface.Inbound {
+	d.deliver.Lock()
+	defer d.deliver.Unlock()
 	d.mu.Lock()
 	id := d.id("in")
 	in := surface.Inbound{
@@ -267,11 +272,30 @@ func (d *Driver) Limits() surface.Limits {
 func (d *Driver) Calls(conv surface.Conversation) []Call {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return append([]Call(nil), d.calls[conv]...)
+	out := make([]Call, len(d.calls[conv]))
+	for i, c := range d.calls[conv] {
+		c.Message = clone(c.Message)
+		out[i] = c
+	}
+	return out
 }
 
 func (d *Driver) record(conv surface.Conversation, c Call) {
+	c.Message = clone(c.Message)
 	d.calls[conv] = append(d.calls[conv], c)
+}
+
+// clone copies m so that a caller changing its slices later does not change
+// what was recorded, and a test changing a recorded call changes nothing.
+func clone(m surface.Message) surface.Message {
+	m.Files = append([]surface.File(nil), m.Files...)
+	m.Choices = append([]surface.Choice(nil), m.Choices...)
+	m.Notify = append([]string(nil), m.Notify...)
+	if m.ReplyTo != nil {
+		r := *m.ReplyTo
+		m.ReplyTo = &r
+	}
+	return m
 }
 
 // OpenThread opens a new thread in parent's channel.
