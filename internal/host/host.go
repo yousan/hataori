@@ -79,8 +79,7 @@ func Run(stateDir string) error {
 	readers, err := h.start()
 	if err != nil {
 		h.ln.Close()
-		os.Remove(h.sock)
-		os.Remove(filepath.Join(stateDir, pointerFile))
+		h.removeSocket()
 		writeStatus(stateDir, Status{Error: err.Error(), Code: -1})
 		return err
 	}
@@ -114,8 +113,7 @@ func Run(stateDir string) error {
 	// The socket goes first, so that a reader that sees the status also
 	// finds the socket gone.
 	h.ln.Close()
-	os.Remove(h.sock)
-	os.Remove(filepath.Join(stateDir, pointerFile))
+	h.removeSocket()
 	st := exitStatus(h.cmd, waitErr)
 	if h.stopNote != "" {
 		st.Stopped, st.StopNote = true, h.stopNote
@@ -281,6 +279,17 @@ func (h *host) listen() error {
 	ln.SetUnlinkOnClose(false)
 	h.ln = ln
 	return nil
+}
+
+// removeSocket removes the socket, and the directory made for it outside
+// the state directory with the pointer to it. The directory goes only when
+// it is empty, so nothing else in it is touched.
+func (h *host) removeSocket() {
+	os.Remove(h.sock)
+	if h.sock != filepath.Join(h.dir, SocketFile) {
+		os.Remove(filepath.Dir(h.sock))
+		os.Remove(filepath.Join(h.dir, pointerFile))
+	}
 }
 
 // privateDir makes dir, which must then be a directory of this user that
