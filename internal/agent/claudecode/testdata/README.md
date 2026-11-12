@@ -61,3 +61,7 @@ Notes:
 ## Missing
 
 - **A successful login.** It needs a person to sign in with a real code. Add `login/` captures of the output and exit status after a correct code when someone next logs in.
+
+## Probe answers
+
+`2.1.322/probe/` holds the two answers `Probe` reads, from the real configuration: `version.txt` (`claude --version`) and `auth-status-logged-in.json` (`claude auth status` while logged in, scrubbed with `scrub.py`'s `Scrubber`; `orgName` replaced by hand). Both commands only read. The logged-out answer is `login/status-before.json`.

@@ -1,0 +1,190 @@
+package claudecode
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/yousan/hataori/internal/agent"
+	"github.com/yousan/hataori/internal/host"
+)
+
+// Name is the name the adapter is registered under.
+const Name = "claude-code"
+
+// Config is the adapter's section of the instance's config.
+type Config struct {
+	// Command is the CLI to run; "claude" on the PATH by default.
+	Command string `json:"command"`
+	// Hataori is the hataori binary the hooks run; this binary by default.
+	Hataori string `json:"hataori"`
+	// HookTimeout bounds how long a hook that waits for an answer (a
+	// question, an approval) waits, as a Go duration; 24h by default.
+	HookTimeout string `json:"hook_timeout"`
+	// PassEnv names variables of the daemon's environment to pass on
+	// besides the fixed list, for example an API key the CLI logs in with.
+	PassEnv []string `json:"pass_env"`
+}
+
+// Adapter runs Claude Code.
+type Adapter struct {
+	command     string
+	hataori     string
+	hookTimeout time.Duration
+	passEnv     []string
+
+	environ func() []string // the daemon's environment; os.Environ unless a test sets it
+}
+
+var _ agent.Adapter = (*Adapter)(nil)
+
+// New makes the adapter from its config section (JSON; may be empty).
+func New(settings []byte) (agent.Adapter, error) {
+	var c Config
+	if len(bytes.TrimSpace(settings)) > 0 {
+		dec := json.NewDecoder(bytes.NewReader(settings))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&c); err != nil {
+			return nil, fmt.Errorf("%s: config: %w", Name, err)
+		}
+	}
+	a := &Adapter{command: strings.TrimSpace(c.Command), hataori: strings.TrimSpace(c.Hataori),
+		hookTimeout: 24 * time.Hour, passEnv: c.PassEnv, environ: os.Environ}
+	if a.command == "" {
+		a.command = "claude"
+	}
+	if a.hataori == "" {
+		exe, err := os.Executable()
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", Name, err)
+		}
+		a.hataori = exe
+	}
+	if t := strings.TrimSpace(c.HookTimeout); t != "" {
+		d, err := time.ParseDuration(t)
+		if err != nil || d < time.Second {
+			return nil, fmt.Errorf("%s: config: hook_timeout %q is not a duration of a second or more", Name, t)
+		}
+		a.hookTimeout = d
+	}
+	return a, nil
+}
+
+// Files Launch asks the host to write into the session's state directory.
+const (
+	SettingsFile     = "claude-settings.json"
+	InstructionsFile = "claude-instructions.md"
+)
+
+// baseEnv is the fixed list of variables passed from the daemon's
+// environment. Nothing else is, unless the config's pass_env names it.
+var baseEnv = []string{"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE",
+	"TZ", "TMPDIR", "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "CLAUDE_CONFIG_DIR"}
+
+// Launch returns the interactive CLI on a terminal, with the hooks of this
+// session registered by --settings. A new session gets a fresh
+// --session-id; a resumed one --resume. Permission requests are answered
+// by the hooks, so the CLI never runs in its bypass mode.
+func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
+	// The CLI runs in the workspace, so a relative path would point there.
+	if !filepath.IsAbs(spec.StateDir) {
+		return agent.Launch{}, fmt.Errorf("%s: state directory %q is not an absolute path", Name, spec.StateDir)
+	}
+	settings, err := a.settings()
+	if err != nil {
+		return agent.Launch{}, err
+	}
+	files := map[string][]byte{SettingsFile: settings}
+	argv := []string{a.command, "--settings", stateFile(spec, SettingsFile), "--permission-mode", "default"}
+	if spec.ResumeID != "" {
+		argv = append(argv, "--resume", spec.ResumeID)
+	} else {
+		argv = append(argv, "--session-id", newUUID())
+	}
+	if spec.Model != "" {
+		argv = append(argv, "--model", spec.Model)
+	}
+	if spec.Effort != "" {
+		argv = append(argv, "--effort", spec.Effort)
+	}
+	if spec.Instructions != "" {
+		files[InstructionsFile] = []byte(spec.Instructions)
+		argv = append(argv, "--append-system-prompt-file", stateFile(spec, InstructionsFile))
+	}
+	return agent.Launch{Argv: argv, Env: a.env(spec), Terminal: true, Files: files}, nil
+}
+
+func stateFile(spec agent.Spec, name string) string {
+	return strings.TrimSuffix(spec.StateDir, "/") + "/" + name
+}
+
+// env builds the CLI's environment from the fixed list, the config's
+// pass_env, a terminal type and where the hooks find the host.
+func (a *Adapter) env(spec agent.Spec) []string {
+	allowed := map[string]bool{}
+	for _, k := range append(append([]string{}, baseEnv...), a.passEnv...) {
+		allowed[k] = true
+	}
+	var env []string
+	for _, kv := range a.environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		if allowed[k] {
+			env = append(env, kv)
+		}
+	}
+	return append(env, "TERM=xterm-256color", host.HookEnv(spec.StateDir))
+}
+
+func newUUID() string {
+	var b [16]byte
+	rand.Read(b[:])
+	b[6] = b[6]&0x0f | 0x40
+	b[8] = b[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+}
+
+// Probe reports the installed version and whether the CLI is logged in. It
+// runs only `--version` and `auth status`, which read and change nothing.
+func (a *Adapter) Probe(ctx context.Context) (agent.Health, error) {
+	var h agent.Health
+	out, err := a.run(ctx, "--version")
+	if err != nil {
+		h.Detail = "not installed: " + err.Error()
+		return h, nil
+	}
+	h.Installed = true
+	h.Version, _, _ = strings.Cut(strings.TrimSpace(string(out)), " ")
+	out, err = a.run(ctx, "auth", "status")
+	var st struct {
+		LoggedIn   bool   `json:"loggedIn"`
+		AuthMethod string `json:"authMethod"`
+	}
+	if jerr := json.Unmarshal(out, &st); jerr != nil {
+		if err == nil {
+			err = jerr
+		}
+		h.Detail = "auth status: " + err.Error()
+		return h, nil
+	}
+	h.LoggedIn = st.LoggedIn
+	if !st.LoggedIn {
+		h.Detail = "not logged in"
+	}
+	return h, nil
+}
+
+func (a *Adapter) run(ctx context.Context, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, a.command, args...)
+	cmd.Env = a.env(agent.Spec{})
+	cmd.Dir = os.TempDir()
+	return cmd.Output()
+}

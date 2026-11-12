@@ -1,4 +1,5 @@
-// Package claudecode will be the Claude Code adapter: the interactive CLI on
-// a terminal, reporting through hooks and its transcript. For now it holds
-// the captures of real output under testdata/ and the test that guards them.
+// Package claudecode is the Claude Code adapter: the ordinary interactive
+// CLI on a terminal that the session host owns, reporting through hooks it
+// registers with --settings, and through the transcript those hooks name.
+// Real output it is tested against is under testdata/.
 package claudecode
