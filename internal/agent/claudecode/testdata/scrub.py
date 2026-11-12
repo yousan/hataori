@@ -3,6 +3,8 @@
 
 usage: scrub.py RAW_DIR OUT_DIR
 
+OUT_DIR must not exist yet.
+
 Every value that identifies this machine or account is read at run time,
 never written here: the home directory, the user name, the host name and
 the e-mail addresses found in the captures. The same value is replaced the
@@ -126,7 +128,8 @@ def main():
     raw, out = sys.argv[1], sys.argv[2]
     s = Scrubber()
     if os.path.exists(out):
-        shutil.rmtree(out)
+        # Never write over anything: remove an old capture with git rm.
+        sys.exit("scrub.py: %s exists; give a new directory" % out)
     os.makedirs(out)
     shutil.copyfile(os.path.join(raw, "VERSION"), os.path.join(out, "VERSION"))
     for scen in sorted(os.listdir(raw)):

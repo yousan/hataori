@@ -18,6 +18,7 @@ var leaks = []struct {
 	{"an e-mail address", regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`)},
 	{"an API key", regexp.MustCompile(`sk-ant-[A-Za-z0-9_-]+`)},
 	{"a JWT", regexp.MustCompile(`eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`)},
+	{"a long hexadecimal string", regexp.MustCompile(`(?i)(^|[^0-9a-f])[0-9a-f]{32,}`)},
 	{"an unscrubbed UUID", regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)},
 }
 
