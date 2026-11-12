@@ -145,15 +145,16 @@ func SocketPath(root string) (string, error) {
 		return "", err
 	}
 	sum := sha256.Sum256([]byte(abs))
-	base := os.Getenv("XDG_RUNTIME_DIR")
-	if base == "" {
-		base = os.TempDir()
+	name := filepath.Join("hataori-"+hex.EncodeToString(sum[:6]), "control.sock")
+	for _, base := range []string{os.Getenv("XDG_RUNTIME_DIR"), os.TempDir(), "/tmp"} {
+		if base == "" {
+			continue
+		}
+		if short := filepath.Join(base, name); len(short) <= MaxSocketPath {
+			return short, nil
+		}
 	}
-	short := filepath.Join(base, "hataori-"+hex.EncodeToString(sum[:6]), "control.sock")
-	if len(short) > MaxSocketPath {
-		return "", fmt.Errorf("wire: no socket path short enough for root %s", root)
-	}
-	return short, nil
+	return "", fmt.Errorf("wire: no socket path short enough for root %s", root)
 }
 
 // clientPath returns where a client finds the daemon of root.

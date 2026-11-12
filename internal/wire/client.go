@@ -38,7 +38,7 @@ func Dial(root string) (*Client, error) {
 
 func dialPath(path, version string) (*Client, error) {
 	c := &Client{path: path, version: version}
-	conn, dec, err := c.connect()
+	conn, dec, err := c.connect(context.Background())
 	if err != nil {
 		return nil, err
 	}
@@ -47,11 +47,14 @@ func dialPath(path, version string) (*Client, error) {
 }
 
 // connect opens a connection and exchanges hellos.
-func (c *Client) connect() (net.Conn, *json.Decoder, error) {
-	conn, err := net.Dial("unix", c.path)
+func (c *Client) connect(ctx context.Context) (net.Conn, *json.Decoder, error) {
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "unix", c.path)
 	if err != nil {
 		return nil, nil, fmt.Errorf("wire: connect to %s: %w", c.path, err)
 	}
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stop()
 	dec := json.NewDecoder(bufio.NewReader(conn))
 	if err := json.NewEncoder(conn).Encode(hello{Version: c.version}); err != nil {
 		conn.Close()
@@ -89,8 +92,11 @@ func (c *Client) Close() error {
 func (c *Client) call(ctx context.Context, op string, args, result any) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if c.conn == nil {
-		conn, dec, err := c.connect()
+		conn, dec, err := c.connect(ctx)
 		if err != nil {
 			return err
 		}
@@ -106,6 +112,10 @@ func (c *Client) call(ctx context.Context, op string, args, result any) error {
 	} else {
 		c.conn.SetDeadline(time.Time{})
 	}
+	// Cancelling ctx breaks a call that is waiting for its response.
+	conn := c.conn
+	stop := context.AfterFunc(ctx, func() { conn.SetDeadline(time.Unix(1, 0)) })
+	defer stop()
 	var resp response
 	err = json.NewEncoder(c.conn).Encode(request{ID: c.next, Op: op, Args: raw})
 	if err == nil {
@@ -163,7 +173,7 @@ func (c *Client) Stop(ctx context.Context, id control.ThreadID) error {
 // delivered, so a reader sees no gap and no repeat. The first request is
 // made before Events returns, so a refusal is returned as an error.
 func (c *Client) Events(ctx context.Context, f control.Filter, after uint64) (<-chan control.Event, error) {
-	conn, dec, err := c.openStream(f, after)
+	conn, dec, err := c.openStream(ctx, f, after)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +191,7 @@ func (c *Client) Events(ctx context.Context, f control.Filter, after uint64) (<-
 					return
 				case <-time.After(100 * time.Millisecond):
 				}
-				if conn, dec, err = c.openStream(f, after); err == nil {
+				if conn, dec, err = c.openStream(ctx, f, after); err == nil {
 					break
 				}
 				var re *remoteError
@@ -194,11 +204,13 @@ func (c *Client) Events(ctx context.Context, f control.Filter, after uint64) (<-
 	return out, nil
 }
 
-func (c *Client) openStream(f control.Filter, after uint64) (net.Conn, *json.Decoder, error) {
-	conn, dec, err := c.connect()
+func (c *Client) openStream(ctx context.Context, f control.Filter, after uint64) (net.Conn, *json.Decoder, error) {
+	conn, dec, err := c.connect(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stop()
 	raw, _ := json.Marshal(eventsArgs{Filter: f, After: after})
 	var resp response
 	err = json.NewEncoder(conn).Encode(request{ID: 1, Op: "Events", Args: raw})
