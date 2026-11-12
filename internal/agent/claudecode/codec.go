@@ -239,6 +239,7 @@ func (c *codec) decode(src agent.Source, line []byte) Actions {
 	}
 	if p.Event == "SessionStart" && p.SessionID != "" {
 		c.session = p.SessionID
+		c.closed = false // after a clear, a new session goes on in the same CLI
 	}
 	// Text the transcript gave for this prompt before any hook named it
 	// goes after the turn's start and before anything else of the turn.

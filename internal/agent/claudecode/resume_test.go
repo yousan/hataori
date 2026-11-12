@@ -70,8 +70,19 @@ func feed(t *testing.T, c *codec, scenario string, after map[int]string) Actions
 // After a person clears the conversation at the terminal, the codec
 // follows the new session: its transcript, its turns and its id.
 func TestClearIsFollowed(t *testing.T) {
+	// Each transcript read after its turn's Stop, or before it.
+	for _, after := range []map[int]string{
+		{3: "transcript.jsonl", 7: "transcript-2.jsonl"},
+		{2: "transcript.jsonl", 6: "transcript-2.jsonl"},
+	} {
+		clearFollowed(t, after)
+	}
+}
+
+func clearFollowed(t *testing.T, after map[int]string) {
+	t.Helper()
 	c := newTestCodec()
-	all := feed(t, c, "clear", map[int]string{3: "transcript.jsonl", 7: "transcript-2.jsonl"})
+	all := feed(t, c, "clear", after)
 	if len(all.Follow) != 2 || all.Follow[0] == all.Follow[1] {
 		t.Fatalf("followed %v", all.Follow)
 	}
@@ -85,7 +96,7 @@ func TestClearIsFollowed(t *testing.T) {
 		t.Fatalf("ready ids %v", ready)
 	}
 	if got := texts(all); len(got) != 2 || got[0] != (textEv{"ok", true}) || got[1] != (textEv{"again", true}) {
-		t.Fatalf("texts %+v", got)
+		t.Fatalf("transcripts after hooks %v: texts %+v", after, got)
 	}
 }
 
