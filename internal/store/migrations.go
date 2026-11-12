@@ -1,0 +1,70 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+)
+
+// migrations is the schema, in order. Version n is the database after the
+// first n steps. Never edit or reorder a step that has been released; add one.
+var migrations = []Migration{
+	{Name: "threads, workspaces, sessions, turns", Up: execAll(
+		`CREATE TABLE threads (
+			id         INTEGER PRIMARY KEY, -- the thread's short number
+			scope      TEXT NOT NULL,
+			key        TEXT NOT NULL,
+			title      TEXT NOT NULL DEFAULT '',
+			repo       TEXT NOT NULL DEFAULT '',
+			started_by TEXT NOT NULL,
+			state      TEXT NOT NULL,
+			created_at INTEGER NOT NULL, -- unix milliseconds
+			updated_at INTEGER NOT NULL,
+			UNIQUE (scope, key)
+		)`,
+		`CREATE TABLE workspaces (
+			id        INTEGER PRIMARY KEY,
+			thread_id INTEGER NOT NULL UNIQUE REFERENCES threads (id),
+			path      TEXT NOT NULL UNIQUE, -- relative to the instance root
+			remote    TEXT NOT NULL,
+			state     TEXT NOT NULL
+		)`,
+		`CREATE TABLE sessions (
+			id               INTEGER PRIMARY KEY,
+			thread_id        INTEGER NOT NULL REFERENCES threads (id),
+			agent            TEXT NOT NULL, -- registered adapter name
+			agent_session_id TEXT NOT NULL DEFAULT '',
+			state            TEXT NOT NULL,
+			model            TEXT NOT NULL DEFAULT '',
+			effort           TEXT NOT NULL DEFAULT '',
+			host_pid         INTEGER NOT NULL DEFAULT 0,
+			log_offset       INTEGER NOT NULL DEFAULT 0,
+			last_seq         INTEGER NOT NULL DEFAULT 0,
+			created_at       INTEGER NOT NULL,
+			updated_at       INTEGER NOT NULL
+		)`,
+		`CREATE INDEX sessions_thread ON sessions (thread_id)`,
+		`CREATE TABLE turns (
+			id         INTEGER PRIMARY KEY,
+			session_id INTEGER NOT NULL REFERENCES sessions (id),
+			started_by TEXT NOT NULL,
+			trigger    TEXT NOT NULL DEFAULT '', -- key of the call that started it
+			started_at INTEGER NOT NULL,
+			ended_at   INTEGER,
+			status     TEXT NOT NULL DEFAULT '',
+			reason     TEXT NOT NULL DEFAULT '',
+			background INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE INDEX turns_session ON turns (session_id)`,
+	)},
+}
+
+func execAll(stmts ...string) func(context.Context, *sql.Tx) error {
+	return func(ctx context.Context, tx *sql.Tx) error {
+		for _, s := range stmts {
+			if _, err := tx.ExecContext(ctx, s); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
