@@ -93,7 +93,10 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 			return err
 		}
 		if e := in.Agent; e.Kind == agent.SessionReady {
-			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET agent_session_id = ?, model = ?, effort = ? WHERE id = ?`,
+			// A resume or a clear reports no model: the one reported at
+			// the start stays.
+			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET agent_session_id = ?,
+				model = coalesce(nullif(?, ''), model), effort = coalesce(nullif(?, ''), effort) WHERE id = ?`,
 				e.SessionID, e.Model, e.Effort, sessionID); err != nil {
 				return err
 			}

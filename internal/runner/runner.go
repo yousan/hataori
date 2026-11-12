@@ -603,6 +603,10 @@ func (r *Runner) step(lv *live) bool {
 		if e.Kind == agent.SessionEnded && e.Reason == agent.CannotResume {
 			go r.replace(lv)
 		}
+		if e.Kind == agent.SessionEnded && e.Reason == agent.WrongSession {
+			// The session failed; its agent runs another conversation.
+			go host.Stop(lv.dir, time.Second, 2*time.Second)
+		}
 	}
 	for _, a := range b.actions {
 		r.act(lv, a)

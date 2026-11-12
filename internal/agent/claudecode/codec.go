@@ -96,6 +96,7 @@ type payload struct {
 		Status string `json:"status"`
 	} `json:"background_tasks"`
 	Error     string `json:"error"`
+	Reason    string `json:"reason"` // SessionEnd
 	AgentID   string `json:"agent_id"`
 	AgentType string `json:"agent_type"`
 }
@@ -238,6 +239,7 @@ func (c *codec) decode(src agent.Source, line []byte) Actions {
 	}
 	if p.Event == "SessionStart" && p.SessionID != "" {
 		c.session = p.SessionID
+		c.closed = false // after a clear, a new session goes on in the same CLI
 	}
 	// Text the transcript gave for this prompt before any hook named it
 	// goes after the turn's start and before anything else of the turn.
@@ -454,12 +456,22 @@ func (c *codec) end(prompt, final string) Actions {
 func (c *codec) decodeHook(k call, p payload) Actions {
 	switch p.Event {
 	case "SessionStart":
-		// A start or a resume opens the session; a compaction or a clear
-		// starts it again inside, which is no news to the core.
-		if p.Source != "startup" && p.Source != "resume" {
-			return Actions{}
+		ready := agent.Event{Kind: agent.SessionReady, SessionID: p.SessionID, Model: p.Model, Effort: p.Effort.Level}
+		switch p.Source {
+		case "startup":
+			return c.events(ready)
+		case "resume":
+			if c.spec.ResumeID != "" && p.SessionID != c.spec.ResumeID {
+				// The CLI resumed some other conversation than the one asked for.
+				return c.events(agent.Event{Kind: agent.SessionEnded, SessionID: p.SessionID, Reason: agent.WrongSession})
+			}
+			return c.events(ready)
+		case "clear":
+			// A person cleared the conversation at the terminal: the CLI
+			// goes on with a new session id, which a later resume needs.
+			return c.events(ready)
 		}
-		return c.events(agent.Event{Kind: agent.SessionReady, SessionID: p.SessionID, Model: p.Model, Effort: p.Effort.Level})
+		return Actions{} // a compaction keeps the session id: no news to the core
 	case "UserPromptSubmit":
 		return c.events(agent.Event{Kind: agent.TurnStarted, StartedBy: c.starter(p.Prompt)})
 	case "Stop":
@@ -508,7 +520,14 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 	case "PostCompact":
 		return c.events(agent.Event{Kind: agent.ToolEnded, ID: compactID(c.compact), Tool: CompactTool})
 	case "SessionEnd":
-		return merge(c.withdrawAll(), c.events(agent.Event{Kind: agent.SessionEnded}))
+		end := agent.Event{Kind: agent.SessionEnded, SessionID: p.SessionID, Reason: agent.Reason(p.Reason)}
+		if c.spec.ResumeID != "" && c.session == "" {
+			// Asked to resume, the CLI ends without ever starting: it no
+			// longer has the conversation (it says "No conversation found"
+			// on its terminal, and reports only this SessionEnd).
+			end.Reason = agent.CannotResume
+		}
+		return merge(c.withdrawAll(), c.events(end))
 	}
 	return c.events(agent.Event{Kind: agent.Unknown, Text: p.Event})
 }

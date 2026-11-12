@@ -1069,8 +1069,11 @@ type Event struct {
 	// Plus the fields each kind needs: the text and whether it is final,
 	// who started a turn, the request id and its questions,
 	// the end status and reason, the background tasks still running.
-	// SessionEnded has a reason; CannotResume ("cannot resume") when a
-	// resumed session's conversation is gone.
+	// SessionEnded has a reason: the agent's own, CannotResume ("cannot
+	// resume") when a resumed session's conversation is gone, or
+	// WrongSession when a resume reported another session id. SessionReady
+	// in a live session is a new session id, as after a person cleared the
+	// conversation at the terminal.
 }
 
 // Factory makes an Adapter from its opaque section of the instance's config.

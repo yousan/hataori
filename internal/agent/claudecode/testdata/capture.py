@@ -160,9 +160,15 @@ class Session:
             for k in ("transcript_path", "agent_transcript_path"):
                 if p.get(k):
                     paths.add(p[k])
+        started = [self.payload(n).get("transcript_path") for n in self.calls("SessionStart")]
         for p in sorted(paths):
             if os.path.exists(p):
-                name = "transcript.jsonl" if p == self.transcript() else "subagent-" + os.path.basename(p)
+                if p == self.transcript():
+                    name = "transcript.jsonl"
+                elif p in started:  # a new session inside this one, as after /clear
+                    name = "transcript-%d.jsonl" % (started.index(p) + 1)
+                else:
+                    name = "subagent-" + os.path.basename(p)
                 shutil.copyfile(p, os.path.join(self.dir, name))
 
     def exit(self):
@@ -178,7 +184,10 @@ class Session:
     def close(self):
         deadline = time.time() + 10
         while time.time() < deadline:
-            if os.waitpid(self.pid, os.WNOHANG)[0]:
+            try:
+                if os.waitpid(self.pid, os.WNOHANG)[0]:
+                    break
+            except ChildProcessError:  # already reaped, by stop_group
                 break
             time.sleep(0.2)
         else:
@@ -335,6 +344,67 @@ def failure(out, work):
     run(out, work, "failure", steps, args=args)
 
 
+def resume_missing(out, work):
+    """`claude --resume` of a conversation the CLI does not have: a new
+    random id in a new directory. No request is sent."""
+    settings = settings_file(work)
+    s = Session(out, "resume_missing", claude(settings, "--resume", str(uuid.uuid4())),
+                new_dir(work, "resume_missing"), clean_env())
+    deadline = time.time() + 20
+    while s.alive and time.time() < deadline:
+        time.sleep(0.2)
+    s.close()
+
+
+def clear(out, work):
+    """One turn, /clear at the terminal, and one more turn."""
+    def steps(s):
+        s.turn("Reply with just the word: ok")
+        n = len(s.calls("SessionStart"))
+        s.typed("/clear")
+        s.wait("SessionStart", n + 1, timeout=60)
+        s.turn("Reply with just the word: again")
+    run(out, work, "clear", steps)
+
+
+def stop_group(s, interrupt=1.0, terminate=2.0):
+    """End the session's process group as the session host stops a session:
+    SIGINT, then SIGTERM after interrupt, then SIGKILL after terminate."""
+    for sig, wait in ((signal.SIGINT, interrupt), (signal.SIGTERM, terminate), (signal.SIGKILL, 0)):
+        try:
+            os.killpg(s.pid, sig)
+        except ProcessLookupError:
+            return
+        deadline = time.time() + wait
+        while time.time() < deadline:
+            if os.waitpid(s.pid, os.WNOHANG)[0]:
+                return
+            time.sleep(0.1)
+
+
+def sleep(out, work):
+    """A session stopped as for sleep, then resumed: does it still have its
+    conversation? The first turn asks to remember a word, the resumed turn
+    asks for it."""
+    settings = settings_file(work)
+    sid = str(uuid.uuid4())
+    cwd = new_dir(work, "sleep")
+    s = Session(out, "sleep", claude(settings, "--session-id", sid), cwd, clean_env())
+    try:
+        s.wait("SessionStart", timeout=60)
+        s.turn("Remember the word heron. Reply with just the word: ok")
+        time.sleep(1)
+        stop_group(s)
+    finally:
+        s.close()
+    s = Session(out, "sleep_resumed", claude(settings, "--resume", sid), cwd, clean_env())
+    try:
+        s.wait("SessionStart", timeout=60)
+        s.turn("Which word did I ask you to remember? Reply with just that word.")
+    finally:
+        s.exit()
+
+
 def trust(out, work):
     """The folder-trust dialog of a repository never opened before. It is
     recorded and left without being answered."""
@@ -425,7 +495,7 @@ def main():
     with open(os.path.join(out, "VERSION"), "w") as f:
         f.write("%s\n%s\n" % (ver, time.strftime("%Y-%m-%d")))
     order = ["plain", "tools", "question", "background", "subagent", "paste", "interrupt", "compact",
-             "failure", "trust", "login", "login_terminal"]
+             "failure", "trust", "login", "login_terminal", "resume_missing", "clear", "sleep"]
     for name in order:
         if want and name not in want and not (name == "plain" and "resume" in want):
             continue

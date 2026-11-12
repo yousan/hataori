@@ -19,7 +19,7 @@ same way in every file:
   sk-ant-... tokens, signatures, OAuth link parameters -> REDACTED
 
 Hook payloads are renamed NN-<event>.json in the order they were called.
-Only the trust and login_terminal scenarios keep their terminal output. In transcripts, lines
+Only the trust, login_terminal and resume_missing scenarios keep their terminal output. In transcripts, lines
 that carry the session's context (attachments, recorded API requests) keep
 their shape with every string blanked.
 """
@@ -152,7 +152,7 @@ def main():
             p = os.path.join(src, n)
             if n == "hooks" or not os.path.isfile(p):
                 continue
-            if n == "terminal.raw" and scen not in ("trust", "login_terminal"):
+            if n == "terminal.raw" and scen not in ("trust", "login_terminal", "resume_missing"):
                 continue
             with open(p, "rb") as f:
                 data = f.read()

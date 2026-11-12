@@ -193,8 +193,9 @@ const (
 	APIError       Reason = "api_error"
 	Crashed        Reason = "crashed"
 	BlockedAtStart Reason = "blocked at start"
-	NotDelivered   Reason = "not delivered" // input the agent never reported receiving
-	CannotResume   Reason = "cannot resume" // SessionEnded: the agent no longer has the conversation
+	NotDelivered   Reason = "not delivered"           // input the agent never reported receiving
+	CannotResume   Reason = "cannot resume"           // SessionEnded: the agent no longer has the conversation
+	WrongSession   Reason = "resumed another session" // SessionEnded: a resume reported another session id
 )
 
 // Event is one thing the agent did. Seq orders the events of one session.
@@ -203,7 +204,7 @@ type Event struct {
 	Seq  uint64
 	Kind Kind
 
-	SessionID string // SessionReady: the agent's own session id
+	SessionID string // SessionReady, SessionEnded: the agent's own session id
 	Model     string // SessionReady: the model the agent reports
 	Effort    string // SessionReady: the effort the agent reports
 
@@ -220,7 +221,7 @@ type Event struct {
 	File string // FileOut: the path of a file the agent hands over
 
 	Status     EndStatus // TurnEnded
-	Reason     Reason    // TurnEnded, SessionEnded when failed
+	Reason     Reason    // TurnEnded when failed; SessionEnded: why, as the agent says or CannotResume, WrongSession
 	Background int       // TurnEnded: background tasks still running
 }
 

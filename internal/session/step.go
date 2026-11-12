@@ -232,6 +232,11 @@ func stepAgent(s Snapshot, e agent.Event, r *Result,
 	live := s.State == control.Idle || s.State == control.Running || s.State == control.Waiting
 	switch e.Kind {
 	case agent.SessionReady:
+		if live {
+			// The agent goes on under a new session id, as after a person
+			// cleared the conversation: the machine stores the id.
+			return true
+		}
 		if s.State != control.Creating && s.State != control.Asleep {
 			return false
 		}
