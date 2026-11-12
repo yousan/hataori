@@ -183,3 +183,10 @@ func TestLoginCodeIsOneWord(t *testing.T) {
 		t.Fatal("logged in")
 	}
 }
+
+func TestRelativeConfigDirIsRefused(t *testing.T) {
+	cfg, _ := json.Marshal(Config{Command: []string{"x"}, ConfigDir: "relative/dir"})
+	if _, err := New(cfg); err == nil {
+		t.Fatal("a relative config directory was accepted")
+	}
+}

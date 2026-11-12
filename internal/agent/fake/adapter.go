@@ -55,6 +55,10 @@ func New(settings []byte) (agent.Adapter, error) {
 	if len(c.Command) == 0 {
 		return nil, fmt.Errorf("%s: config: no command", Name)
 	}
+	if c.ConfigDir != "" && !filepath.IsAbs(c.ConfigDir) {
+		// Sessions run in their workspace, the login and Probe elsewhere.
+		return nil, fmt.Errorf("%s: config: config_dir %q is not an absolute path", Name, c.ConfigDir)
+	}
 	return &Adapter{c: c}, nil
 }
 
