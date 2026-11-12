@@ -1,0 +1,9 @@
+{
+  "loggedIn": false,
+  "authMethod": "none",
+  "apiProvider": "firstParty",
+  "analyticsDisabled": false,
+  "projectsDirectory": "/tmp/capture-config/projects",
+  "configDirectory": "/tmp/capture-config",
+  "loginExpiresAt": null
+}
