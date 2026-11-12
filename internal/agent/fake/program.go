@@ -15,10 +15,15 @@ import (
 	"time"
 
 	"golang.org/x/term"
+
+	"github.com/yousan/hataori/internal/agent"
 )
 
 // Main is the fake agent's program. Its flags are what Launch passes.
 func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "login" {
+		return loginMain(args[1:], stdin, stdout, stderr)
+	}
 	fs := flag.NewFlagSet("fakeagent", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	terminal := fs.Bool("terminal", false, "")
@@ -30,10 +35,11 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	hook := fs.String("hook", "", "the hataori binary, for `hataori hook`")
 	neverStart := fs.Bool("never-start", false, "")
 	conversations := fs.String("conversations", "", "a directory with one file per session started")
+	configDir := fs.String("config", "", "where its login is kept; turns fail until it is logged in")
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
-	p := &program{out: stdout, hook: *hook, terminal: *terminal, answers: map[string]chan string{}}
+	p := &program{out: stdout, hook: *hook, terminal: *terminal, answers: map[string]chan string{}, configDir: *configDir}
 	if *terminal {
 		if f, ok := stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
 			if old, err := term.MakeRaw(int(f.Fd())); err == nil {
@@ -105,6 +111,7 @@ type program struct {
 	asked      int
 	answers    map[string]chan string
 	interrupts chan struct{}
+	configDir  string
 }
 
 // report sends one report: a line on stdout, or a hook call.
@@ -144,6 +151,11 @@ func (p *program) say(text string, final bool) {
 func (p *program) turn(by, script string, agentTurns chan time.Duration) (int, bool) {
 	p.report(map[string]any{"t": "turn", "by": by})
 	end := map[string]any{"t": "end", "status": "completed", "reason": "", "background": 0}
+	if !loggedIn(p.configDir) {
+		end["status"], end["reason"] = "failed", string(agent.Login)
+		p.report(end)
+		return 0, false
+	}
 	final, replied := "done", false
 	for _, line := range strings.Split(strings.TrimSpace(script), "\n") {
 		cmd, arg, _ := strings.Cut(strings.TrimSpace(line), " ")
