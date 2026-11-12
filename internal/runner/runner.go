@@ -693,14 +693,14 @@ func (r *Runner) Deliver(ctx context.Context, id int64, in control.Input) error 
 }
 
 // Answer gives the answer of an open request to a session's agent.
-func (r *Runner) Answer(ctx context.Context, id int64, req control.RequestID, ans control.Answer) error {
+func (r *Runner) Answer(ctx context.Context, id int64, req string, ans control.Answer) error {
 	lv, err := r.get(id)
 	if err != nil {
 		return err
 	}
 	lv.mu.Lock()
 	defer lv.mu.Unlock()
-	a, err := lv.codec.Answer(agent.Answer{Request: string(req), Text: ans.Text, Choices: ans.Choices, Allow: ans.Allow})
+	a, err := lv.codec.Answer(agent.Answer{Request: req, Text: ans.Text, Choices: ans.Choices, Allow: ans.Allow})
 	if err != nil {
 		return err
 	}

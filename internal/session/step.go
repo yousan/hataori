@@ -44,6 +44,7 @@ type Input struct {
 	Principal control.Principal // Send, Answer: who
 	Key       string            // Send, Answer: the call's safe-to-repeat key
 	Text      string            // Send, Answer
+	Request   string            // Answer: the agent's id of the request answered
 	Agent     agent.Event       // AgentEvent
 	Reason    string            // Exit: why; empty for "crashed"
 	Detail    string            // StartTimeout, Exit: what a person may want to read, such as the end of the terminal log

@@ -26,6 +26,7 @@ var (
 	ErrDisabled  = errors.New("scope is not enabled")
 	ErrBusy      = errors.New("a turn is running")
 	ErrNotFound  = errors.New("not found")
+	ErrNotOpen   = errors.New("the request is not open") // answered, withdrawn, or its agent ended
 )
 
 // Scope is what the core needs to know about one scope.
@@ -50,7 +51,8 @@ type Runner interface {
 	// Deliver gives input to a session's agent.
 	Deliver(ctx context.Context, sessionID int64, in control.Input) error
 	// Answer gives the answer of an open request to a session's agent.
-	Answer(ctx context.Context, sessionID int64, req control.RequestID, a control.Answer) error
+	// req is the agent's own id of the request.
+	Answer(ctx context.Context, sessionID int64, req string, a control.Answer) error
 	// Interrupt stops a session's running turn.
 	Interrupt(ctx context.Context, sessionID int64) error
 }
@@ -221,7 +223,7 @@ func (a *api) Thread(ctx context.Context, id control.ThreadID, recent int) (cont
 	}
 	d := control.ThreadDetail{ThreadInfo: t}
 	if t.State == control.Waiting {
-		if r, ok, err := a.c.openRequest(ctx, id); err != nil {
+		if r, ok, err := a.c.openRequest(ctx, a.c.Store.DB, id); err != nil {
 			return d, err
 		} else if ok {
 			d.Requests = []control.Request{r}
@@ -231,32 +233,38 @@ func (a *api) Thread(ctx context.Context, id control.ThreadID, recent int) (cont
 	return d, err
 }
 
-// openRequest returns the last request of a waiting thread.
-func (c *Core) openRequest(ctx context.Context, id control.ThreadID) (control.Request, bool, error) {
-	var data []byte
-	err := c.Store.DB.QueryRowContext(ctx,
-		`SELECT data FROM events WHERE scope = ? AND thread = ? AND kind = 'request' ORDER BY pos DESC LIMIT 1`,
-		id.Scope, id.Key).Scan(&data)
+// querier is the store's database or one of its transactions.
+type querier interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+// openRequest returns the open request of the thread's current session.
+func (c *Core) openRequest(ctx context.Context, q querier, id control.ThreadID) (control.Request, bool, error) {
+	var (
+		r        control.Request
+		approval bool
+		choices  string
+	)
+	err := q.QueryRowContext(ctx, `
+		SELECT r.handle, r.approval, r.text, r.choices FROM requests r
+		WHERE r.state = 'open' AND r.session_id = (
+			SELECT s.id FROM sessions s JOIN threads t ON t.id = s.thread_id
+			WHERE t.scope = ? AND t.key = ? ORDER BY s.id DESC LIMIT 1)
+		ORDER BY r.id DESC LIMIT 1`, id.Scope, id.Key).Scan(&r.ID, &approval, &r.Text, &choices)
 	if errors.Is(err, sql.ErrNoRows) {
 		return control.Request{}, false, nil
 	}
 	if err != nil {
 		return control.Request{}, false, fmt.Errorf("core: request: %w", err)
 	}
-	var e struct {
-		Request  string   `json:"request"`
-		Text     string   `json:"text"`
-		Approval bool     `json:"approval"`
-		Choices  []string `json:"choices"`
-	}
-	if err := json.Unmarshal(data, &e); err != nil {
-		return control.Request{}, false, fmt.Errorf("core: request: %w", err)
-	}
-	r := control.Request{ID: control.RequestID(e.Request), Text: e.Text}
-	if e.Approval {
+	if approval {
 		r.Kind = control.Approval
 	}
-	for _, c := range e.Choices {
+	var cs []string
+	if err := json.Unmarshal([]byte(choices), &cs); err != nil {
+		return control.Request{}, false, fmt.Errorf("core: request: %w", err)
+	}
+	for _, c := range cs {
 		r.Choices = append(r.Choices, control.Choice{Label: c, Token: c})
 	}
 	return r, true, nil
@@ -412,9 +420,7 @@ func (c *Core) started(ctx context.Context, inboxKey string) (control.ThreadID, 
 }
 
 // current returns the thread's current session and its state.
-func (c *Core) current(ctx context.Context, q interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-}, id control.ThreadID) (int64, control.State, error) {
+func (c *Core) current(ctx context.Context, q querier, id control.ThreadID) (int64, control.State, error) {
 	var (
 		sid   int64
 		state string
@@ -439,6 +445,7 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 		sid       int64
 		accepted  bool
 		interrupt bool
+		answer    string // the agent's id of the open question this input answers
 	)
 	// The state is read in the write transaction, so it cannot change
 	// between the Busy decision and the input.
@@ -465,10 +472,27 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 			}
 		}
 		accepted = true
+		if state == control.Waiting {
+			// The input is the answer to the open question.
+			var req string
+			err := tx.QueryRowContext(ctx, `SELECT request FROM requests WHERE session_id = ? AND state = 'open'
+				ORDER BY id DESC LIMIT 1`, sid).Scan(&req)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("core: request: %w", err)
+			}
+			if err == nil {
+				answer = req
+				return a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal,
+					Key: key, Text: in.Text, Request: req})
+			}
+		}
 		return a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Send, Principal: a.caller.Principal, Key: key, Text: in.Text})
 	})
 	if err != nil || !accepted {
 		return err
+	}
+	if answer != "" {
+		return a.c.Runner.Answer(ctx, sid, answer, control.Answer{Text: in.Text})
 	}
 	if interrupt {
 		if err := a.c.Runner.Interrupt(ctx, sid); err != nil {
@@ -482,11 +506,16 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 	if err := a.check(control.OpAnswer, "Answer", ""); err != nil {
 		return err
 	}
-	var id control.ThreadID
-	var sid int64
-	err := a.c.Store.DB.QueryRowContext(ctx,
-		`SELECT scope, thread, json_extract(data, '$.session') FROM events WHERE kind = 'request' AND json_extract(data, '$.request') = ? ORDER BY pos DESC LIMIT 1`,
-		string(req)).Scan(&id.Scope, &id.Key, &sid)
+	var (
+		id       control.ThreadID
+		sid      int64
+		agentReq string
+		state    string
+	)
+	err := a.c.Store.DB.QueryRowContext(ctx, `
+		SELECT t.scope, t.key, r.session_id, r.request, r.state FROM requests r
+		JOIN sessions s ON s.id = r.session_id JOIN threads t ON t.id = s.thread_id
+		WHERE r.handle = ?`, string(req)).Scan(&id.Scope, &id.Key, &sid, &agentReq, &state)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -497,15 +526,18 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 	if err := a.check(control.OpAnswer, "Answer", id.Scope); err != nil {
 		return err
 	}
-	if open, ok, err := a.c.openRequest(ctx, id); err != nil {
-		return err
-	} else if !ok || open.ID != req {
-		return fmt.Errorf("core: answer %q: not the open request: %w", req, ErrNotFound)
+	if state != session.RequestOpen {
+		return fmt.Errorf("core: answer %q: the request is %s: %w", req, state, ErrNotOpen)
 	}
-	if err := a.c.Machine.Apply(ctx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal, Key: "answer:" + string(req), Text: ans.Text}); err != nil {
+	// The machine refuses it, atomically, if it was closed since.
+	if err := a.c.Machine.Apply(ctx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal,
+		Key: "answer:" + string(req), Text: ans.Text, Request: agentReq}); err != nil {
+		if errors.Is(err, session.ErrRefused) {
+			return fmt.Errorf("core: answer %q: %w: %w", req, ErrNotOpen, err)
+		}
 		return err
 	}
-	return a.c.Runner.Answer(ctx, sid, req, ans)
+	return a.c.Runner.Answer(ctx, sid, agentReq, ans)
 }
 
 func (a *api) Stop(ctx context.Context, id control.ThreadID) error {

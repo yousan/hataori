@@ -100,7 +100,7 @@ func TestOneEndEventPerTurn(t *testing.T) {
 	)
 	// A turn that fails.
 	feed(t, m, id,
-		Input{Kind: Answer, Principal: "hook-1", Key: "m3", Text: "this"},
+		Input{Kind: Answer, Principal: "hook-1", Key: "m3", Text: "this", Request: "r1"},
 		ag(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.Limit}),
 	)
 

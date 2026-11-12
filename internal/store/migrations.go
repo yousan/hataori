@@ -101,6 +101,24 @@ var migrations = []Migration{
 			PRIMARY KEY (session_id, path)
 		)`,
 	)},
+	{Name: "requests", Up: execAll(
+		// One row per question or approval the agent asked. state is open,
+		// answered, withdrawn (by the agent) or closed (the agent's process
+		// ended while it was open).
+		`CREATE TABLE requests (
+			id         INTEGER PRIMARY KEY,
+			session_id INTEGER NOT NULL REFERENCES sessions (id),
+			request    TEXT NOT NULL, -- the agent's request id, unique in its session
+			handle     TEXT NOT NULL UNIQUE, -- the control API's RequestID
+			approval   INTEGER NOT NULL DEFAULT 0,
+			text       TEXT NOT NULL DEFAULT '',
+			choices    TEXT NOT NULL DEFAULT '[]', -- JSON array of strings
+			state      TEXT NOT NULL,
+			opened_at  INTEGER NOT NULL,
+			closed_at  INTEGER,
+			UNIQUE (session_id, request)
+		)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

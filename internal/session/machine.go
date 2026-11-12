@@ -122,6 +122,11 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 		for k, v := range o.Data {
 			data[k] = v
 		}
+		if req, ok := data["request"].(string); ok {
+			// Clients name a request by its handle; the agent's id is
+			// unique only in its session.
+			data["request"] = string(RequestHandle(sessionID, req))
+		}
 		switch o.Kind {
 		case KindTurnEnded:
 			data["turn"] = endedTurn
@@ -136,8 +141,80 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 			return err
 		}
 	}
+	if err := recordRequest(ctx, tx, sessionID, in, r, now); err != nil {
+		return err
+	}
 	if r.End != nil {
 		return recordLogin(ctx, tx, agentName, thread, id, *r.End)
+	}
+	return nil
+}
+
+// Request states, in the requests table.
+const (
+	RequestOpen      = "open"
+	RequestAnswered  = "answered"
+	RequestWithdrawn = "withdrawn" // by the agent
+	RequestClosed    = "closed"    // the agent's process ended while it was open
+)
+
+// RequestHandle is how the control API names the request agentID of a
+// session.
+func RequestHandle(sessionID int64, agentID string) control.RequestID {
+	return control.RequestID(fmt.Sprintf("%d:%s", sessionID, agentID))
+}
+
+// recordRequest keeps the session's requests: a question or approval from
+// the agent opens one, an answer or the agent's withdrawal closes it, and
+// so does the end of the agent's process. An answer to a request that is
+// not open is refused.
+func recordRequest(ctx context.Context, tx *store.Tx, sessionID int64, in Input, r Result, now int64) error {
+	closeOpen := func(state, req string) (int64, error) {
+		q := `UPDATE requests SET state = ?, closed_at = ? WHERE session_id = ? AND state = 'open'`
+		args := []any{state, now, sessionID}
+		if req != "" {
+			q += ` AND request = ?`
+			args = append(args, req)
+		}
+		res, err := tx.ExecContext(ctx, q, args...)
+		if err != nil {
+			return 0, fmt.Errorf("session: request: %w", err)
+		}
+		return res.RowsAffected()
+	}
+	switch {
+	case in.Kind == AgentEvent && in.Agent.Kind == agent.Request:
+		q := in.Agent.Request
+		choices, _ := json.Marshal(append([]string{}, q.Choices...))
+		_, err := tx.ExecContext(ctx, `INSERT INTO requests (session_id, request, handle, approval, text, choices, state, opened_at)
+			VALUES (?, ?, ?, ?, ?, ?, 'open', ?)
+			ON CONFLICT (session_id, request) DO UPDATE SET approval = excluded.approval, text = excluded.text,
+				choices = excluded.choices, state = 'open', opened_at = excluded.opened_at, closed_at = NULL`,
+			sessionID, q.ID, string(RequestHandle(sessionID, q.ID)), q.Approval, q.Text, string(choices), now)
+		if err != nil {
+			return fmt.Errorf("session: request: %w", err)
+		}
+	case in.Kind == AgentEvent && in.Agent.Kind == agent.RequestWithdrawn:
+		id := ""
+		if in.Agent.Request != nil {
+			id = in.Agent.Request.ID
+		}
+		_, err := closeOpen(RequestWithdrawn, id)
+		return err
+	case in.Kind == Answer:
+		n := int64(0)
+		if in.Request != "" {
+			var err error
+			if n, err = closeOpen(RequestAnswered, in.Request); err != nil {
+				return err
+			}
+		}
+		if n == 0 {
+			return fmt.Errorf("session: answer to %q, which is not open: %w", in.Request, ErrRefused)
+		}
+	case in.Kind == Exit:
+		_, err := closeOpen(RequestClosed, "")
+		return err
 	}
 	return nil
 }

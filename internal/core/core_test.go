@@ -35,8 +35,8 @@ func (r *fakeRunner) Start(_ context.Context, l Launch) error {
 func (r *fakeRunner) Deliver(_ context.Context, _ int64, in control.Input) error {
 	return r.record("deliver " + in.Text)
 }
-func (r *fakeRunner) Answer(_ context.Context, _ int64, req control.RequestID, _ control.Answer) error {
-	return r.record("answer " + string(req))
+func (r *fakeRunner) Answer(_ context.Context, _ int64, req string, _ control.Answer) error {
+	return r.record("answer " + req)
 }
 func (r *fakeRunner) Interrupt(context.Context, int64) error { return r.record("interrupt") }
 func (r *fakeRunner) Calls() string {
@@ -146,8 +146,10 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 			_, err := a.Start(ctx, control.StartRequest{Key: "k2", Scope: "s", Thread: "t2"})
 			return err
 		},
-		"Send":   func(a control.API) error { return a.Send(ctx, id, "m9", control.Input{Text: "x"}, control.Deliver) },
-		"Answer": func(a control.API) error { return a.Answer(ctx, "r1", control.Answer{Text: "x"}) },
+		"Send": func(a control.API) error { return a.Send(ctx, id, "m9", control.Input{Text: "x"}, control.Deliver) },
+		"Answer": func(a control.API) error {
+			return a.Answer(ctx, session.RequestHandle(sid, "r1"), control.Answer{Text: "x"})
+		},
 		"Stop":   func(a control.API) error { return a.Stop(ctx, id) },
 		"Events": func(a control.API) error { _, err := a.Events(ctx, control.Filter{Scope: "s"}, 0); return err },
 	}
@@ -264,7 +266,7 @@ func TestThreadDetail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.State != control.Waiting || len(d.Requests) != 1 || d.Requests[0].ID != "r1" || len(d.Requests[0].Choices) != 2 {
+	if d.State != control.Waiting || len(d.Requests) != 1 || d.Requests[0].ID != session.RequestHandle(sid, "r1") || len(d.Requests[0].Choices) != 2 {
 		t.Fatalf("detail: %+v", d)
 	}
 	if d.Recent != "rt, second part" {
@@ -335,5 +337,111 @@ func TestEventNamingOtherScopes(t *testing.T) {
 	}
 	if e := <-evs; e.Kind != "y" {
 		t.Fatalf("caller of scope s got %q", e.Kind)
+	}
+}
+
+func requestState(t *testing.T, f *fixture, req string) string {
+	t.Helper()
+	var s string
+	if err := f.core.Store.DB.QueryRow(`SELECT state FROM requests WHERE request = ?`, req).Scan(&s); err != nil {
+		t.Fatalf("request %s: %v", req, err)
+	}
+	return s
+}
+
+func blockedEvents(t *testing.T, f *fixture) int {
+	t.Helper()
+	var n int
+	f.core.Store.DB.QueryRow(`SELECT count(*) FROM events WHERE kind = 'turn_ended' AND json_extract(data, '$.outcome') = 'blocked'`).Scan(&n)
+	return n
+}
+
+func TestQuestionIsAnsweredOnce(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{})
+	id, sid := f.running(t, "t1")
+	f.agentEvent(t, sid, 2, agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: "r1", Text: "which?"}})
+
+	if d, _ := f.owner.Thread(ctx, id, 0); d.State != control.Waiting {
+		t.Fatalf("state %s, want waiting", d.State)
+	}
+	if s := requestState(t, f, "r1"); s != "open" {
+		t.Fatalf("request is %s", s)
+	}
+	if n := blockedEvents(t, f); n != 1 {
+		t.Fatalf("%d blocked events", n)
+	}
+
+	if err := f.owner.Answer(ctx, session.RequestHandle(sid, "r1"), control.Answer{Text: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := f.owner.Thread(ctx, id, 0); d.State != control.Running {
+		t.Fatalf("after the answer: %s", d.State)
+	}
+	calls := f.runner.Calls()
+	if !strings.HasSuffix(calls, "answer r1") {
+		t.Fatalf("runner calls: %q", calls)
+	}
+	if err := f.owner.Answer(ctx, session.RequestHandle(sid, "r1"), control.Answer{Text: "b"}); !errors.Is(err, ErrNotOpen) {
+		t.Fatalf("second answer: %v", err)
+	}
+
+	// A question the agent withdrew cannot be answered.
+	f.agentEvent(t, sid, 3, agent.Event{Kind: agent.TurnEnded})
+	if err := f.owner.Send(ctx, id, "m2", control.Input{Text: "more"}, control.Refuse); err != nil {
+		t.Fatal(err)
+	}
+	f.agentEvent(t, sid, 4, agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: "r2", Text: "sure?"}})
+	f.agentEvent(t, sid, 5, agent.Event{Kind: agent.RequestWithdrawn, Request: &agent.RequestInfo{ID: "r2"}})
+	if s := requestState(t, f, "r2"); s != "withdrawn" {
+		t.Fatalf("withdrawn request is %s", s)
+	}
+	calls = f.runner.Calls()
+	if err := f.owner.Answer(ctx, session.RequestHandle(sid, "r2"), control.Answer{Text: "yes"}); !errors.Is(err, ErrNotOpen) {
+		t.Fatalf("answer to a withdrawn request: %v", err)
+	}
+	if f.runner.Calls() != calls {
+		t.Fatal("a refused answer reached the runner")
+	}
+}
+
+func TestSendAnswersTheOpenQuestion(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{})
+	id, sid := f.running(t, "t1")
+	f.agentEvent(t, sid, 2, agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: "r1", Text: "which?"}})
+	calls := f.runner.Calls()
+
+	if err := f.owner.Send(ctx, id, "m1", control.Input{Text: "blue"}, control.Refuse); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimPrefix(f.runner.Calls(), calls+"; "); got != "answer r1" {
+		t.Fatalf("runner calls: %q", got)
+	}
+	if s := requestState(t, f, "r1"); s != "answered" {
+		t.Fatalf("request is %s", s)
+	}
+	var text string
+	f.core.Store.DB.QueryRow(`SELECT json_extract(data, '$.text') FROM events WHERE kind = 'answer'`).Scan(&text)
+	if text != "blue" {
+		t.Fatalf("answer event text %q", text)
+	}
+}
+
+// Agents number their requests per session, so two sessions can ask "q1".
+func TestSameRequestIDInTwoSessions(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{})
+	_, s1 := f.running(t, "t1")
+	_, s2 := f.running(t, "t2")
+	f.agentEvent(t, s1, 2, agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: "q1", Text: "one?"}})
+	f.agentEvent(t, s2, 2, agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: "q1", Text: "two?"}})
+	if err := f.owner.Answer(ctx, session.RequestHandle(s1, "q1"), control.Answer{Text: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	var states string
+	f.core.Store.DB.QueryRow(`SELECT group_concat(state, ',') FROM (SELECT state FROM requests ORDER BY session_id)`).Scan(&states)
+	if states != "answered,open" {
+		t.Fatalf("request states by session: %s", states)
 	}
 }

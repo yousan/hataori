@@ -23,7 +23,7 @@ type nopRunner struct{}
 func (nopRunner) Start(context.Context, core.Launch) error            { return nil }
 func (nopRunner) Deliver(context.Context, int64, control.Input) error { return nil }
 func (nopRunner) Interrupt(context.Context, int64) error              { return nil }
-func (nopRunner) Answer(context.Context, int64, control.RequestID, control.Answer) error {
+func (nopRunner) Answer(context.Context, int64, string, control.Answer) error {
 	return nil
 }
 
