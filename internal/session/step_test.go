@@ -38,16 +38,37 @@ var allInputs = []namedInput{
 	{"request", agentIn(agent.Request)},
 	{"withdrawn", agentIn(agent.RequestWithdrawn)},
 	{"text", agentIn(agent.Text)},
+	{"tool started", agentIn(agent.ToolStarted)},
+	{"tool ended", agentIn(agent.ToolEnded)},
+	{"subagent started", agentIn(agent.SubagentStarted)},
+	{"subagent ended", agentIn(agent.SubagentEnded)},
+	{"file out", agentIn(agent.FileOut)},
+	{"usage", agentIn(agent.Usage)},
+	{"session ended", agentIn(agent.SessionEnded)},
+	{"unknown", agentIn(agent.Unknown)},
+}
+
+// output are the agent events that change no state; they are allowed
+// wherever an agent process is live.
+var output = []string{"text", "tool started", "tool ended", "subagent started", "subagent ended",
+	"file out", "usage", "session ended", "unknown"}
+
+func init() {
+	for _, st := range []control.State{control.Idle, control.Running, control.Waiting} {
+		for _, o := range output {
+			allowed[st][o] = st
+		}
+	}
 }
 
 // allowed lists every arrow: state, input → new state. Everything else is refused.
 var allowed = map[control.State]map[string]control.State{
 	control.Creating: {"ready": control.Idle, "exit": control.Failed, "start timeout": control.Failed},
 	control.Idle: {"send": control.Running, "turn started": control.Running, "idle timeout": control.Asleep,
-		"exit": control.Asleep, "text": control.Idle},
+		"exit": control.Asleep},
 	control.Running: {"send": control.Running, "turn started": control.Running, "turn ended": control.Idle,
-		"request": control.Waiting, "exit": control.Asleep, "text": control.Running},
-	control.Waiting: {"answer": control.Running, "withdrawn": control.Running, "exit": control.Asleep, "text": control.Waiting},
+		"request": control.Waiting, "exit": control.Asleep},
+	control.Waiting: {"answer": control.Running, "withdrawn": control.Running, "exit": control.Asleep},
 	control.Asleep:  {"ready": control.Idle, "close": control.Closed},
 	control.Closed:  {"remove": control.Removed},
 }
