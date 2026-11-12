@@ -392,8 +392,13 @@ func TestSocketDirectoryIsRemoved(t *testing.T) {
 	}
 
 	start("echo")   // runs until killed
-	killGroups(dir) // the host dies with its socket in place
+	// The host dies first, with its socket in place, then its command.
+	b, _ := os.ReadFile(filepath.Join(dir, HostPIDFile))
+	if pid, _ := strconv.Atoi(strings.TrimSpace(string(b))); pid > 1 {
+		syscall.Kill(-pid, syscall.SIGKILL)
+	}
 	time.Sleep(100 * time.Millisecond)
+	killGroups(dir)
 	if _, err := os.Stat(filepath.Join(sockDir, SocketFile)); err != nil {
 		t.Fatalf("a killed host's socket: %v", err)
 	}
