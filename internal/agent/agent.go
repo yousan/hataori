@@ -194,6 +194,7 @@ const (
 	Crashed        Reason = "crashed"
 	BlockedAtStart Reason = "blocked at start"
 	NotDelivered   Reason = "not delivered" // input the agent never reported receiving
+	CannotResume   Reason = "cannot resume" // SessionEnded: the agent no longer has the conversation
 )
 
 // Event is one thing the agent did. Seq orders the events of one session.

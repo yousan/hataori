@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	transcript := fs.String("transcript", "", "")
 	hook := fs.String("hook", "", "the hataori binary, for `hataori hook`")
 	neverStart := fs.Bool("never-start", false, "")
+	conversations := fs.String("conversations", "", "a directory with one file per session started")
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
@@ -62,6 +64,18 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	id := *session
 	if *resume != "" {
 		id = *resume
+	}
+	if *conversations != "" {
+		f := filepath.Join(*conversations, filepath.Base(id))
+		if *resume != "" {
+			if _, err := os.Stat(f); err != nil {
+				p.report(map[string]any{"t": "cannot-resume", "session": id})
+				return 1
+			}
+		} else if err := os.WriteFile(f, nil, 0o600); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 	}
 	p.report(map[string]any{"t": "ready", "session": id, "model": *model, "effort": *effort, "resume": *resume, "transcript": *transcript})
 

@@ -119,6 +119,11 @@ var migrations = []Migration{
 			UNIQUE (session_id, request)
 		)`,
 	)},
+	{Name: "sessions.log_start", Up: execAll(
+		// Where the lines of the session's current agent begin in its
+		// events log; earlier lines are those of an agent put to sleep.
+		`ALTER TABLE sessions ADD COLUMN log_start INTEGER NOT NULL DEFAULT 0`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

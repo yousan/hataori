@@ -49,6 +49,7 @@ type Runner struct {
 	StartTimeout   time.Duration // for the agent to report its start; 60s when zero
 	InterruptGrace time.Duration // after an interrupt, before the session's processes are stopped; 5s when zero
 	Poll           time.Duration // how often the logs are read; 50ms when zero
+	IdlePeriod     time.Duration // idle this long, a session's agent is stopped; 30 minutes when zero
 
 	mu   sync.Mutex
 	live map[int64]*live
@@ -68,10 +69,12 @@ type live struct {
 	ready   bool // the session left creating; no start check any more
 	resend  bool // after a reconnect: send a first input that was not confirmed
 	failed  bool // the start timed out; the session is being stopped
+	asleep  bool // put to sleep: its agent is being stopped, and nothing more is read
 
 	mu     sync.Mutex // the codec, the offsets and the actions, one at a time
 	seq    uint64
 	offset int64            // in events.ndjson
+	start  int64            // where the current agent's lines begin in events.ndjson
 	files  map[string]int64 // followed files and their offsets
 	stop   chan struct{}
 	done   chan struct{}
@@ -94,6 +97,13 @@ func (r *Runner) startTimeout() time.Duration {
 		return r.StartTimeout
 	}
 	return 60 * time.Second
+}
+
+func (r *Runner) idlePeriod() time.Duration {
+	if r.IdlePeriod > 0 {
+		return r.IdlePeriod
+	}
+	return 30 * time.Minute
 }
 
 func (r *Runner) interruptGrace() time.Duration {
@@ -125,12 +135,22 @@ func (r *Runner) Start(ctx context.Context, l core.Launch) error {
 	if !ok {
 		return fmt.Errorf("runner: no agent %q", l.Agent)
 	}
-	dir := StateDir(r.Root, l.Session)
+	spec := agent.Spec{Dir: l.Dir, StateDir: StateDir(r.Root, l.Session), Model: l.Model, Effort: l.Effort,
+		Instructions: r.Instructions, Approvals: agent.AllowAll}
+	first := firstInput{Principal: l.Principal, Key: l.Key, Text: l.Input.Text}
+	if err := r.launch(ctx, l.Session, l.Agent, ad, spec, first); err != nil {
+		return err
+	}
+	return r.follow(l.Session, ad, spec, fresh)
+}
+
+// launch writes what the agent asks for into the session's state directory,
+// stores the spec and the first input, and starts the session host.
+func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agent.Adapter, spec agent.Spec, first firstInput) error {
+	dir := spec.StateDir
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("runner: %w", err)
 	}
-	spec := agent.Spec{Dir: l.Dir, StateDir: dir, Model: l.Model, Effort: l.Effort,
-		Instructions: r.Instructions, Approvals: agent.AllowAll}
 	launch, err := ad.Launch(spec)
 	if err != nil {
 		return fmt.Errorf("runner: %w", err)
@@ -147,25 +167,114 @@ func (r *Runner) Start(ctx context.Context, l core.Launch) error {
 			return fmt.Errorf("runner: %w", err)
 		}
 	}
-	sb, _ := json.Marshal(storedSpec{Agent: l.Agent, Spec: spec})
-	fb, _ := json.Marshal(firstInput{Principal: l.Principal, Key: l.Key, Text: l.Input.Text})
+	sb, _ := json.Marshal(storedSpec{Agent: agentName, Spec: spec})
+	fb, _ := json.Marshal(first)
 	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET spec = ?, first_input = ? WHERE id = ?`,
-		string(sb), string(fb), l.Session); err != nil {
+		string(sb), string(fb), id); err != nil {
 		return fmt.Errorf("runner: %w", err)
 	}
-	pid, err := host.Start(r.Host, dir, host.Spec{Argv: launch.Argv, Env: launch.Env, Terminal: launch.Terminal, Dir: l.Dir})
+	pid, err := host.Start(r.Host, dir, host.Spec{Argv: launch.Argv, Env: launch.Env, Terminal: launch.Terminal, Dir: spec.Dir})
 	if err != nil {
 		return err
 	}
-	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET host_pid = ? WHERE id = ?`, pid, l.Session); err != nil {
+	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET host_pid = ? WHERE id = ?`, pid, id); err != nil {
 		return fmt.Errorf("runner: %w", err)
 	}
-	return r.follow(l.Session, ad, spec, false)
+	return nil
+}
+
+// Resume starts the agent of an asleep session again, resuming its
+// conversation, and sends in once the agent reports that it is ready.
+func (r *Runner) Resume(ctx context.Context, id int64, principal control.Principal, key string, in control.Input) error {
+	// The agent that was put to sleep must be gone, and read to its end,
+	// before another starts in the same state directory.
+	r.mu.Lock()
+	old := r.live[id]
+	r.mu.Unlock()
+	if old != nil {
+		select {
+		case <-old.done:
+		case <-time.After(time.Minute):
+			return fmt.Errorf("runner: session %d: the agent put to sleep has not ended", id)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	var specJSON, resumeID string
+	if err := r.Store.DB.QueryRowContext(ctx, `SELECT spec, agent_session_id FROM sessions WHERE id = ?`, id).
+		Scan(&specJSON, &resumeID); err != nil {
+		return fmt.Errorf("runner: session %d: %w", id, err)
+	}
+	var s storedSpec
+	if err := json.Unmarshal([]byte(specJSON), &s); err != nil {
+		return fmt.Errorf("runner: session %d: spec: %w", id, err)
+	}
+	ad, ok := r.Adapters[s.Agent]
+	if !ok {
+		return fmt.Errorf("runner: no agent %q", s.Agent)
+	}
+	if resumeID == "" {
+		return fmt.Errorf("runner: session %d never reported its id; it cannot be resumed", id)
+	}
+	if !host.Gone(s.Spec.StateDir) && !hostLost(s.Spec.StateDir) {
+		return fmt.Errorf("runner: session %d: its host is still running", id)
+	}
+	if err := r.skipRest(ctx, id, s.Spec.StateDir); err != nil {
+		return err
+	}
+	// The status of the ended host would make the new one look ended.
+	if err := os.Remove(filepath.Join(s.Spec.StateDir, host.StatusFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("runner: %w", err)
+	}
+	spec := s.Spec
+	spec.ResumeID = resumeID
+	if err := r.launch(ctx, id, s.Agent, ad, spec, firstInput{Principal: principal, Key: key, Text: in.Text}); err != nil {
+		return err
+	}
+	return r.follow(id, ad, spec, wake)
+}
+
+// skipRest moves the session's offsets to the end of what its last agent
+// wrote: what it wrote while it was being put to sleep is not read.
+func (r *Runner) skipRest(ctx context.Context, id int64, dir string) error {
+	end := func(p string) int64 {
+		b, _ := os.ReadFile(p)
+		return complete(b, 0)
+	}
+	return r.Store.Update(ctx, func(tx *store.Tx) error {
+		n := end(filepath.Join(dir, host.EventsFile))
+		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET log_offset = ?, log_start = ? WHERE id = ?`, n, n, id); err != nil {
+			return err
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT path FROM session_files WHERE session_id = ?`, id)
+		if err != nil {
+			return err
+		}
+		var paths []string
+		for rows.Next() {
+			var p string
+			rows.Scan(&p)
+			paths = append(paths, p)
+		}
+		rows.Close()
+		for _, p := range paths {
+			if _, err := tx.ExecContext(ctx, `UPDATE session_files SET offset = ? WHERE session_id = ? AND path = ?`,
+				end(p), id, p); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // Reconnect follows every session that was live when the daemon stopped.
-// Their agents kept running under their hosts.
+// Their agents kept running under their hosts. An asleep session whose
+// agent is still running, because the daemon stopped while putting it to
+// sleep, has its agent stopped.
 func (r *Runner) Reconnect(ctx context.Context) error {
+	if err := r.stopSleepers(ctx); err != nil {
+		return err
+	}
 	rows, err := r.Store.DB.QueryContext(ctx, `SELECT id, spec FROM sessions
 		WHERE state IN ('creating', 'idle', 'running', 'waiting') AND spec != ''`)
 	if err != nil {
@@ -196,27 +305,66 @@ func (r *Runner) Reconnect(ctx context.Context) error {
 			r.Log.Error("session of an agent not registered", "session", x.id, "agent", s.Agent)
 			continue
 		}
-		if err := r.follow(x.id, ad, s.Spec, true); err != nil {
+		if err := r.follow(x.id, ad, s.Spec, reconnect); err != nil {
 			r.Log.Error("reconnect", "session", x.id, "err", err)
 		}
 	}
 	return nil
 }
 
-// follow starts following a session. When resumed, the codec first reads
+// How follow starts following a session.
+type mode int
+
+const (
+	fresh     mode = iota // a new session: nothing was read yet
+	reconnect             // after a daemon restart: the agent kept running
+	wake                  // a new agent of a session read before: read on from the stored offsets
+)
+
+// stopSleepers stops the agents of asleep sessions that are still running.
+func (r *Runner) stopSleepers(ctx context.Context) error {
+	rows, err := r.Store.DB.QueryContext(ctx, `SELECT id FROM sessions WHERE state = 'asleep' AND spec != ''`)
+	if err != nil {
+		return fmt.Errorf("runner: %w", err)
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	for _, id := range ids {
+		dir := StateDir(r.Root, id)
+		if _, err := os.Stat(filepath.Join(dir, host.HostPIDFile)); err != nil || host.Gone(dir) || hostLost(dir) {
+			continue
+		}
+		r.Log.Warn("stopping the agent of an asleep session", "session", id)
+		go host.Stop(dir, time.Second, 2*time.Second)
+	}
+	return nil
+}
+
+// follow starts following a session. On reconnect, the codec first reads
 // what was read before, with its results discarded, to rebuild its state.
-func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, resumed bool) error {
+func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) error {
+	resumed := m == reconnect
 	lv := &live{id: id, dir: spec.StateDir, adapter: ad, codec: ad.NewCodec(spec), spec: spec,
 		files: map[string]int64{}, stop: make(chan struct{}), done: make(chan struct{}), started: time.Now()}
 	var created int64
-	err := r.Store.DB.QueryRow(`SELECT last_seq, log_offset, created_at FROM sessions WHERE id = ?`, id).
-		Scan(&lv.seq, &lv.offset, &created)
+	err := r.Store.DB.QueryRow(`SELECT last_seq, log_offset, log_start, created_at FROM sessions WHERE id = ?`, id).
+		Scan(&lv.seq, &lv.offset, &lv.start, &created)
 	if err != nil {
 		return fmt.Errorf("runner: session %d: %w", id, err)
 	}
 	if resumed {
 		lv.started = time.UnixMilli(created)
 		lv.resend = true
+	}
+	if m != fresh {
 		rows, err := r.Store.DB.Query(`SELECT path, offset FROM session_files WHERE session_id = ?`, id)
 		if err != nil {
 			return err
@@ -272,7 +420,7 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, resumed boo
 func (r *Runner) warm(lv *live) []agent.HookReply {
 	var replies []agent.HookReply
 	if b, err := os.ReadFile(filepath.Join(lv.dir, host.EventsFile)); err == nil {
-		for _, l := range lines(b, 0, lv.offset) {
+		for _, l := range lines(b, lv.start, lv.offset) {
 			replies = append(replies, lv.codec.Decode(source(l), l).Reply...)
 		}
 	}
@@ -390,6 +538,7 @@ func (r *Runner) loop(lv *live) {
 			lv.mu.Lock()
 			r.do(lv, lv.codec.Tick(time.Now()))
 			lv.mu.Unlock()
+			r.checkIdle(lv)
 		}
 	}
 }
@@ -408,6 +557,9 @@ type batch struct {
 func (r *Runner) step(lv *live) bool {
 	lv.mu.Lock()
 	defer lv.mu.Unlock()
+	if lv.asleep {
+		return !host.Gone(lv.dir) && !hostLost(lv.dir)
+	}
 	exited := host.Gone(lv.dir) || hostLost(lv.dir) // looked at before reading, so nothing written before the exit is missed
 	b := batch{offset: lv.offset, files: map[string]int64{}}
 	if data, err := os.ReadFile(filepath.Join(lv.dir, host.EventsFile)); err == nil {
@@ -446,6 +598,11 @@ func (r *Runner) step(lv *live) bool {
 	lv.offset = b.offset
 	for p, o := range b.files {
 		lv.files[p] = o
+	}
+	for _, e := range b.events {
+		if e.Kind == agent.SessionEnded && e.Reason == agent.CannotResume {
+			go r.replace(lv)
+		}
 	}
 	for _, a := range b.actions {
 		r.act(lv, a)
@@ -646,6 +803,120 @@ func (r *Runner) exit(lv *live) {
 		r.Log.Error("exit", "session", lv.id, "err", err)
 	}
 }
+
+// checkIdle puts the session to sleep when it has been idle for the idle
+// period, with no background task running and no open request, and stops
+// its agent. The session keeps its id, so its next input resumes it.
+func (r *Runner) checkIdle(lv *live) {
+	lv.mu.Lock()
+	defer lv.mu.Unlock()
+	if lv.asleep || lv.failed {
+		return
+	}
+	slept := false
+	ctx := context.Background()
+	err := r.Store.Update(ctx, func(tx *store.Tx) error {
+		slept = false
+		var state string
+		var updated int64
+		if err := tx.QueryRowContext(ctx, `SELECT state, updated_at FROM sessions WHERE id = ?`, lv.id).Scan(&state, &updated); err != nil {
+			return err
+		}
+		if control.State(state) != control.Idle || time.Since(time.UnixMilli(updated)) < r.idlePeriod() {
+			return nil
+		}
+		var background, open int
+		err := tx.QueryRowContext(ctx, `SELECT background FROM turns WHERE session_id = ? ORDER BY id DESC LIMIT 1`, lv.id).Scan(&background)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM requests WHERE session_id = ? AND state = 'open'`, lv.id).Scan(&open); err != nil {
+			return err
+		}
+		if background > 0 || open > 0 {
+			return nil
+		}
+		if err := r.Machine.ApplyTx(ctx, tx, lv.id, session.Input{Kind: session.IdleTimeout}); err != nil {
+			return err
+		}
+		slept = true
+		return nil
+	})
+	if err != nil {
+		r.Log.Error("idle check", "session", lv.id, "err", err)
+		return
+	}
+	if slept {
+		lv.asleep = true
+		go host.Stop(lv.dir, time.Second, 2*time.Second)
+	}
+}
+
+// replace starts a new session in the same workspace for a session whose
+// conversation the agent no longer has, with the input the old one was
+// woken for. It does nothing when the thread already has a newer session.
+func (r *Runner) replace(lv *live) {
+	ctx := context.Background()
+	var (
+		l     core.Launch
+		first firstInput
+		fi    string
+		state string
+	)
+	err := r.Store.Update(ctx, func(tx *store.Tx) error {
+		l = core.Launch{}
+		var thread int64
+		if err := tx.QueryRowContext(ctx, `SELECT s.state, s.thread_id, s.agent, s.model, s.effort, s.first_input, t.scope, t.key
+			FROM sessions s JOIN threads t ON t.id = s.thread_id WHERE s.id = ?`, lv.id).
+			Scan(&state, &thread, &l.Agent, &l.Model, &l.Effort, &fi, &l.Thread.Scope, &l.Thread.Key); err != nil {
+			return err
+		}
+		var newer int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM sessions WHERE thread_id = ? AND id > ?`, thread, lv.id).Scan(&newer); err != nil {
+			return err
+		}
+		if control.State(state) != control.Failed || newer > 0 {
+			return nil
+		}
+		now := time.Now().UnixMilli()
+		res, err := tx.ExecContext(ctx, `INSERT INTO sessions (thread_id, agent, state, model, effort, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`, thread, l.Agent, string(control.Creating), l.Model, l.Effort, now, now)
+		if err != nil {
+			return err
+		}
+		if l.Session, err = res.LastInsertId(); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE threads SET state = ?, updated_at = ? WHERE id = ?`,
+			string(control.Creating), now, thread); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"session": lv.id, "new_session": l.Session, "reason": string(agent.CannotResume)})
+		_, err = tx.Append(ctx, control.Event{Thread: l.Thread, Kind: KindSessionReplaced, Data: data})
+		return err
+	})
+	if err != nil {
+		r.Log.Error("replacing a session that cannot resume", "session", lv.id, "err", err)
+		return
+	}
+	if l.Session == 0 {
+		return
+	}
+	if fi != "" {
+		json.Unmarshal([]byte(fi), &first)
+	}
+	l.Dir, l.Principal, l.Key, l.Input = lv.spec.Dir, first.Principal, first.Key, control.Input{Text: first.Text}
+	if err := r.Start(ctx, l); err != nil {
+		r.Log.Error("starting the new session", "session", l.Session, "err", err)
+		if err := r.Machine.Apply(ctx, l.Session, session.Input{Kind: session.Exit, Reason: "start: " + err.Error()}); err != nil {
+			r.Log.Error("recording a failed start", "session", l.Session, "err", err)
+		}
+	}
+}
+
+// KindSessionReplaced is the event of a thread whose conversation the agent
+// no longer has: a new session starts in the same workspace.
+const KindSessionReplaced control.EventKind = "session_replaced"
 
 // checkStart fails a session that has not reported its start in time,
 // with the end of its terminal log for a person, and stops its processes.

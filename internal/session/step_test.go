@@ -32,6 +32,8 @@ var allInputs = []namedInput{
 	{"exit", Input{Kind: Exit}},
 	{"start timeout", Input{Kind: StartTimeout}},
 	{"idle timeout", Input{Kind: IdleTimeout}},
+	{"wake", Input{Kind: Wake}},
+	{"cannot resume", Input{Kind: AgentEvent, Agent: agent.Event{Kind: agent.SessionEnded, Reason: agent.CannotResume}}},
 	{"ready", agentIn(agent.SessionReady)},
 	{"turn started", agentIn(agent.TurnStarted)},
 	{"turn ended", agentIn(agent.TurnEnded)},
@@ -58,18 +60,20 @@ func init() {
 		for _, o := range output {
 			allowed[st][o] = st
 		}
+		allowed[st]["cannot resume"] = st // a session end like any other once it is live
 	}
 }
 
 // allowed lists every arrow: state, input → new state. Everything else is refused.
 var allowed = map[control.State]map[string]control.State{
-	control.Creating: {"ready": control.Idle, "exit": control.Failed, "start timeout": control.Failed},
+	control.Creating: {"ready": control.Idle, "exit": control.Failed, "start timeout": control.Failed,
+		"cannot resume": control.Failed},
 	control.Idle: {"send": control.Running, "turn started": control.Running, "idle timeout": control.Asleep,
 		"exit": control.Asleep},
 	control.Running: {"send": control.Running, "turn started": control.Running, "turn ended": control.Idle,
 		"request": control.Waiting, "exit": control.Asleep},
 	control.Waiting: {"answer": control.Running, "withdrawn": control.Running, "exit": control.Asleep},
-	control.Asleep:  {"ready": control.Idle, "close": control.Closed},
+	control.Asleep:  {"ready": control.Idle, "close": control.Closed, "wake": control.Creating},
 	control.Closed:  {"remove": control.Removed},
 }
 

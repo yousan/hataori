@@ -27,9 +27,10 @@ const (
 	Exit                          // the agent's process ended
 	StartTimeout                  // timer: no SessionReady within the start timeout
 	IdleTimeout                   // timer: idle for the idle period
+	Wake                          // API: input for an asleep session, which is started again
 )
 
-var inputNames = [...]string{"send", "answer", "close", "remove", "agent event", "exit", "start timeout", "idle timeout"}
+var inputNames = [...]string{"send", "answer", "close", "remove", "agent event", "exit", "start timeout", "idle timeout", "wake"}
 
 func (k InputKind) String() string {
 	if int(k) < len(inputNames) {
@@ -191,6 +192,11 @@ func Step(s Snapshot, in Input) (Result, error) {
 			return refuse()
 		}
 		to(control.Asleep, "idle")
+	case Wake:
+		if s.State != control.Asleep {
+			return refuse()
+		}
+		to(control.Creating, "wake")
 	case Exit:
 		reason := in.Reason
 		if reason == "" {
@@ -274,7 +280,17 @@ func stepAgent(s Snapshot, e agent.Event, r *Result,
 		r.Out = append(r.Out, agentOut(e))
 		to(control.Running, "")
 		start(OpenTurn{By: ByTerminal}, "")
-	case agent.Unknown, agent.SessionEnded:
+	case agent.SessionEnded:
+		if s.State == control.Creating && e.Reason != "" {
+			// It ended before it was ready, for a reason it gave, such as
+			// a conversation it cannot resume.
+			to(control.Failed, string(e.Reason))
+			return true
+		}
+		if !live {
+			return false
+		}
+	case agent.Unknown:
 		if !live {
 			return false
 		}

@@ -24,6 +24,7 @@
 //	{"t":"file","path":P}
 //	{"t":"end","status":"completed"|"failed"|"interrupted","reason":R,"background":N}
 //	{"t":"interrupted"}                          (transcript only)
+//	{"t":"cannot-resume","session":S}            (then it exits)
 //	{"t":"mystery"}                              (a kind no codec knows)
 //
 // On pipes the program reads {"input":T}, {"answer":{"id":I,"text":A}} and
@@ -43,6 +44,9 @@
 //	unknown             report a line of a kind no codec knows
 //	subagent ID         report a subagent's start and end
 //	file PATH           hand over a file
+//
+// With --conversations DIR the program keeps one file per session it starts
+// in DIR, and a resume whose file is gone reports "cannot-resume".
 //
 // The spec's instructions are the start-up script: a line "never-start"
 // makes the program never report that it is ready.

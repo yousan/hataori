@@ -27,6 +27,10 @@ type Config struct {
 	Terminal bool `json:"terminal"`
 	// Env is passed to the program, for example PATH for its tool.
 	Env []string `json:"env"`
+	// Conversations, when set, is a directory where the program keeps one
+	// file per session it started. Resuming a session whose file is gone
+	// fails as "cannot resume", as when an agent's retention removed it.
+	Conversations string `json:"conversations"`
 }
 
 // Adapter is the fake agent.
@@ -74,6 +78,9 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 		if strings.TrimSpace(l) == "never-start" {
 			argv = append(argv, "--never-start")
 		}
+	}
+	if a.c.Conversations != "" {
+		argv = append(argv, "--conversations", a.c.Conversations)
 	}
 	env := append([]string{}, a.c.Env...)
 	if a.c.Terminal {
