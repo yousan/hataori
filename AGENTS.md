@@ -31,8 +31,16 @@ go test ./...
 
 ## Tests
 
+The core and the adapter interfaces are still moving, so do not write broad unit tests yet.
+Until hataori runs real work for the first time, only these tests are required:
+
 - Code that reads what an agent or a chat service produced (terminal screens, event streams, API payloads) is tested against real captured output stored under `testdata/`, not strings written from memory. When the real output changes, add the new capture next to the old one.
-- A test that passes with the fix reverted proves nothing. Check that it fails without the fix.
+- Code that removes, resets or overwrites a working directory is tested (see "Never lose work").
+- One end-to-end test: with a fake chat surface and a fake agent, open one thread, run one turn, and check that the turn finishes.
+
+Write the full test suite before hataori runs real work for the first time.
+
+A test that passes with the fix reverted proves nothing. Check that it fails without the fix.
 
 ## Never lose work
 
