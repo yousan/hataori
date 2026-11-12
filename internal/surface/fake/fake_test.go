@@ -204,10 +204,14 @@ func TestDirectConversations(t *testing.T) {
 	if calls := d.Calls(a1); len(calls) != 2 || calls[0].Op != OpPost || calls[1].Op != OpEdit {
 		t.Fatalf("calls in the direct conversation: %+v", calls)
 	}
+	d.Fail(OpOpenDirect, 1, nil) // planned for the code under test; not for the injection
 	in := d.InjectDirect("alice", "the code")
 	got := s.all()
 	if len(got) != 1 || !got[0].Direct || got[0].Ref.Conv != a1 || got[0].Author.ID != "alice" || got[0].Author.Kind != surface.Person || in.Text != "the code" {
 		t.Fatalf("direct message: %+v", got)
+	}
+	if _, err := d.OpenDirect(ctx, "alice"); err == nil {
+		t.Fatal("the planned failure of OpenDirect was used up by the injection")
 	}
 }
 

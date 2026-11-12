@@ -333,11 +333,7 @@ func (d *Driver) OpenDirect(_ context.Context, who string) (surface.Conversation
 	if before != nil {
 		return surface.Conversation{}, before
 	}
-	conv, ok := d.direct[who]
-	if !ok {
-		conv = surface.Conversation{Channel: d.id("direct")}
-		d.direct[who] = conv
-	}
+	conv := d.directConv(who)
 	if after != nil {
 		return surface.Conversation{}, after
 	}
@@ -417,9 +413,23 @@ func (d *Driver) SetThread(_ context.Context, conv surface.Conversation, t surfa
 
 // InjectDirect receives a direct message from the person who, in the
 // private conversation with them, delivered as direct.
+// It is not a call of the code under test, so failures planned for
+// OpenDirect do not touch it.
 func (d *Driver) InjectDirect(who, text string) surface.Inbound {
-	conv, _ := d.OpenDirect(context.Background(), who)
+	d.mu.Lock()
+	conv := d.directConv(who)
+	d.mu.Unlock()
 	return d.Inject(conv, Person(who), text)
+}
+
+// directConv returns the private conversation with who; d.mu is held.
+func (d *Driver) directConv(who string) surface.Conversation {
+	conv, ok := d.direct[who]
+	if !ok {
+		conv = surface.Conversation{Channel: d.id("direct")}
+		d.direct[who] = conv
+	}
+	return conv
 }
 
 // Press uses the choice with token on the message ref as the person who:
