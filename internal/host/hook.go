@@ -32,6 +32,14 @@ func HookEnv(stateDir string) string { return HookEnvVar + "=" + defaultSocket(s
 // becomes a space, so the call stays one line; inside a JSON value those
 // bytes can only be whitespace.
 
+// CallLine is a call as the host writes it to events.ndjson, without the
+// newline. A reader that learns of a waiting call another way (Waiting,
+// after a restart) can build the same line from its id and payload.
+func CallLine(id string, wait bool, payload []byte) []byte {
+	head := fmt.Sprintf(`{"hook":%q,"wait":%t,"payload":`, id, wait)
+	return append(append([]byte(head), oneLine(payload)...), '}')
+}
+
 // WaitingCall is a call that waits for an answer.
 type WaitingCall struct {
 	ID      string `json:"id"`
@@ -139,8 +147,7 @@ func (h *host) call(c net.Conn, req request) response {
 	if req.Wait {
 		w = h.calls.add(id, payload) // before the line, so an answer to it finds it
 	}
-	head := fmt.Sprintf(`{"hook":%q,"wait":%t,"payload":`, id, req.Wait)
-	if err := h.events.append([]byte(head), payload, []byte("}")); err != nil {
+	if err := h.events.append(CallLine(id, req.Wait, payload)); err != nil {
 		h.calls.remove(id)
 		return response{Error: err.Error()}
 	}

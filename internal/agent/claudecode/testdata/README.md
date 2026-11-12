@@ -65,3 +65,16 @@ Notes:
 ## Probe answers
 
 `2.1.322/probe/` holds the two answers `Probe` reads, from the real configuration: `version.txt` (`claude --version`) and `auth-status-logged-in.json` (`claude auth status` while logged in, scrubbed with `scrub.py`'s `Scrubber`; `orgName` replaced by hand). Both commands only read. The logged-out answer is `login/status-before.json`.
+
+## Questions and waiting hooks (taken for #60, same day and version)
+
+Taken with the same setup as above, but a check script in place of the recorder's answers. Only the hooks and the transcripts are kept, scrubbed by `scrub.py`.
+
+| Scenario | What the hook did | What the CLI did |
+|---|---|---|
+| `question-free` | answered `AskUserQuestion` with `answers` holding a free text that is none of the options | accepted it; `PostToolUse` and the final answer carry the text |
+| `question-multi` | answered a `multiSelect` question with the labels joined by `, ` | accepted it; the final answer repeats `red, blue, green` |
+| `question-timeout-q` | the `PreToolUse` hook for `AskUserQuestion` slept past its 5-second `timeout` | ignored the hook, asked `PermissionRequest` (also left to time out), sent `Notification`, and showed its own question dialog in the terminal |
+| `question-timeout-p` | the `PermissionRequest` hook slept past its 5-second `timeout` | sent `Notification` and showed its own permission dialog in the terminal |
+
+In both timeout scenarios the hooks after `Notification` came from the script's `/exit` keystrokes landing in the dialog, not from an answer.
