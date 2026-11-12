@@ -42,15 +42,16 @@ func (m *Machine) Apply(ctx context.Context, sessionID int64, in Input) error {
 // can commit other rows, such as the inbox entry of the call, with it.
 func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in Input) error {
 	var (
-		state   string
-		lastSeq uint64
-		thread  int64
-		id      control.ThreadID
+		state     string
+		lastSeq   uint64
+		agentName string
+		thread    int64
+		id        control.ThreadID
 	)
 	err := tx.QueryRowContext(ctx, `
-		SELECT s.state, s.last_seq, t.id, t.scope, t.key
+		SELECT s.state, s.last_seq, s.agent, t.id, t.scope, t.key
 		FROM sessions s JOIN threads t ON t.id = s.thread_id
-		WHERE s.id = ?`, sessionID).Scan(&state, &lastSeq, &thread, &id.Scope, &id.Key)
+		WHERE s.id = ?`, sessionID).Scan(&state, &lastSeq, &agentName, &thread, &id.Scope, &id.Key)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("session: no session %d", sessionID)
 	}
@@ -134,6 +135,9 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 		if _, err := tx.Append(ctx, control.Event{Thread: id, Kind: o.Kind, Data: b}); err != nil {
 			return err
 		}
+	}
+	if r.End != nil {
+		return recordLogin(ctx, tx, agentName, thread, id, *r.End)
 	}
 	return nil
 }

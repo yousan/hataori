@@ -317,3 +317,23 @@ func TestStartKeyIsPerScope(t *testing.T) {
 		t.Fatalf("Start in another scope with the same key: %v, %v", b, err)
 	}
 }
+
+// An event that names threads of other scopes is not shown to a caller
+// that may not see them.
+func TestEventNamingOtherScopes(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := newFixture(t, fakeOwner{})
+	f.core.Store.Update(ctx, func(tx *store.Tx) error {
+		tx.Append(ctx, control.Event{Thread: control.ThreadID{Scope: "s", Key: "k"}, Kind: "x", Data: []byte(`{"scopes":["s","hidden"]}`)})
+		tx.Append(ctx, control.Event{Thread: control.ThreadID{Scope: "s", Key: "k"}, Kind: "y", Data: []byte(`{"scopes":["s"]}`)})
+		return nil
+	})
+	evs, err := f.core.As(control.Caller{Scopes: []string{"s"}, May: all}).Events(ctx, control.Filter{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e := <-evs; e.Kind != "y" {
+		t.Fatalf("caller of scope s got %q", e.Kind)
+	}
+}
