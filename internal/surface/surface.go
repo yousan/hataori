@@ -31,17 +31,24 @@ type Driver interface {
 	Edit(ctx context.Context, ref MessageRef, m Message) error
 	// Delete deletes a posted message.
 	Delete(ctx context.Context, ref MessageRef) error
-	SetStatus(ctx context.Context, ref MessageRef, s Status) error        // lamp on a message
-	SetThread(ctx context.Context, conv Conversation, t ThreadMeta) error // title, archived
+	// SetStatus shows a lamp on a message.
+	SetStatus(ctx context.Context, ref MessageRef, s Status) error
+	// SetThread sets a thread's title and archived flag.
+	SetThread(ctx context.Context, conv Conversation, t ThreadMeta) error
 
-	Limits() Limits // message length, choices per message, which optional calls work
+	// Limits reports message length, choices per message, and which
+	// optional calls work.
+	Limits() Limits
 }
 
 // Sink is implemented by the chat front end, not by the core.
 type Sink interface {
-	Message(Inbound)  // text, files, author, ids
-	Choice(Selection) // a button or menu was used
-	Command(Command)  // a slash or text command
+	// Message delivers an inbound message: text, files, author, ids.
+	Message(Inbound)
+	// Choice delivers the use of a button or menu.
+	Choice(Selection)
+	// Command delivers a slash or text command.
+	Command(Command)
 }
 
 // Conversation is a place messages are posted in: a channel, or a thread

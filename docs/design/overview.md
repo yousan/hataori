@@ -832,7 +832,7 @@ type Message struct {
 	Files   []File
 	Choices []Choice    // rendered as buttons or a menu; each carries an opaque token
 	ReplyTo *MessageRef // quote-reply
-	Notify  []Principal // people to ping
+	Notify  []string    // ids of people to ping
 	Quiet   bool        // no notification
 }
 ```

@@ -55,10 +55,15 @@ const (
 // Codec turns what an agent reports into events, and requests into what the
 // agent accepts. It does no I/O, so it is tested against captured output.
 type Codec interface {
-	Open() Actions                          // what to do first, if anything
-	Decode(src Source, line []byte) Actions // one reported line
-	Input(in Input) (Actions, error)        // a user message
-	Answer(a Answer) (Actions, error)       // to an approval or a question
+	// Open returns what to do first, if anything.
+	Open() Actions
+	// Decode translates one reported line.
+	Decode(src Source, line []byte) Actions
+	// Input translates a user message.
+	Input(in Input) (Actions, error)
+	// Answer translates the answer to an approval or a question.
+	Answer(a Answer) (Actions, error)
+	// Interrupt returns how to stop the running turn.
 	Interrupt() Actions
 }
 
