@@ -69,13 +69,17 @@ type Relay struct {
 	Store    *store.Store
 	Adapters map[string]agent.Adapter // by registered name
 	Owner    control.Principal
-	Notify   func(Update)  // the owner's client; called from the relay's goroutines
-	Timeout  time.Duration // for the owner's code; 10 minutes when zero
-	Off      bool          // the config switched the relay off: outages do not start flows
-	Log      *slog.Logger
+	Notify   func(Update) // the owner's client; called from the relay's goroutines. Without one, outages start no flow
+	// Spec gives the spec whose config directory the agent's login command
+	// uses; the zero Spec when nil.
+	Spec    func(agentName string) agent.Spec
+	Timeout time.Duration // for the owner's code; 10 minutes when zero
+	Off     bool          // the config switched the relay off: outages do not start flows
+	Log     *slog.Logger
 
-	mu    sync.Mutex
-	flows map[string]*flow // by agent
+	startMu sync.Mutex // one start at a time, so that no flow is left untracked
+	mu      sync.Mutex
+	flows   map[string]*flow // by agent
 }
 
 func (r *Relay) timeout() time.Duration {
@@ -92,6 +96,7 @@ type flow struct {
 	adapter agent.Adapter
 	cmd     *exec.Cmd
 	stdin   io.WriteCloser
+	expires time.Time // until when a code is taken; the command is stopped then
 
 	mu      sync.Mutex
 	waiting bool // the command asked for a code and has not had one since
@@ -122,7 +127,7 @@ func (r *Relay) Run(ctx context.Context) error {
 		json.Unmarshal(e.Data, &d)
 		switch e.Kind {
 		case session.KindLoginLost:
-			if !r.Off {
+			if !r.Off && r.Notify != nil {
 				if err := r.start(ctx, d.Agent); err != nil && !errors.Is(err, ErrNoLogin) {
 					r.Log.Error("login relay", "agent", d.Agent, "err", err)
 				}
@@ -164,17 +169,20 @@ func (r *Relay) Code(caller control.Principal, agentName, code string) error {
 	if f == nil {
 		return ErrNotWaiting
 	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if !f.waiting || f.done {
-		return ErrNotWaiting
-	}
 	b, err := f.login.LoginCode(code)
 	if err != nil {
 		return ErrNotACode
 	}
+	f.mu.Lock()
+	if !f.waiting || f.done || f.end != "" {
+		f.mu.Unlock()
+		return ErrNotWaiting
+	}
 	f.waiting = false
+	f.mu.Unlock()
 	r.Log.Info("login code arrived", "agent", agentName, "length", len(code))
+	// Written without the flow's lock: a command that stops reading can
+	// still be stopped, which ends this write.
 	if _, err := f.stdin.Write(b); err != nil {
 		return fmt.Errorf("relay: hand the code to the login command: %w", err)
 	}
@@ -182,12 +190,18 @@ func (r *Relay) Code(caller control.Principal, agentName, code string) error {
 }
 
 func (r *Relay) start(ctx context.Context, agentName string) error {
+	r.startMu.Lock()
+	defer r.startMu.Unlock()
 	ad := r.Adapters[agentName]
 	lf, ok := ad.(agent.LoginFlow)
 	if !ok {
 		return ErrNoLogin
 	}
-	l, err := lf.LoginLaunch(agent.Spec{})
+	var spec agent.Spec
+	if r.Spec != nil {
+		spec = r.Spec(agentName)
+	}
+	l, err := lf.LoginLaunch(spec)
 	if err != nil {
 		return fmt.Errorf("relay: %w", err)
 	}
@@ -208,7 +222,8 @@ func (r *Relay) start(ctx context.Context, agentName string) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("relay: start the login command: %w", err)
 	}
-	f := &flow{agent: agentName, login: lf, adapter: ad, cmd: cmd, stdin: stdin, exited: make(chan struct{})}
+	f := &flow{agent: agentName, login: lf, adapter: ad, cmd: cmd, stdin: stdin, exited: make(chan struct{}),
+		expires: time.Now().Add(r.timeout())}
 	r.mu.Lock()
 	if r.flows == nil {
 		r.flows = map[string]*flow{}
@@ -225,7 +240,7 @@ func (r *Relay) start(ctx context.Context, agentName string) error {
 	go r.read(f, pr)
 	go func() {
 		select {
-		case <-time.After(r.timeout()):
+		case <-time.After(time.Until(f.expires)):
 			r.endFlow(f, Expired)
 		case <-f.exited:
 		case <-ctx.Done():
@@ -276,7 +291,7 @@ func (r *Relay) line(f *flow, l []byte) {
 	f.mu.Unlock()
 	switch {
 	case st.Link != "":
-		r.notify(Update{Agent: f.agent, Link: st.Link, ShowCode: st.ShowCode, Expires: time.Now().Add(r.timeout())})
+		r.notify(Update{Agent: f.agent, Link: st.Link, ShowCode: st.ShowCode, Expires: f.expires})
 	case st.Refused != "":
 		r.notify(Update{Agent: f.agent, Refused: st.Refused})
 	}

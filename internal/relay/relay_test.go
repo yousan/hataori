@@ -47,6 +47,12 @@ type fixture struct {
 
 func newFixture(t *testing.T, l fake.Login, timeout time.Duration) *fixture {
 	t.Helper()
+	return newFixtureWith(t, l, timeout, nil)
+}
+
+// newFixtureWith is newFixture, with set applied to the relay before it runs.
+func newFixtureWith(t *testing.T, l fake.Login, timeout time.Duration, set func(*Relay)) *fixture {
+	t.Helper()
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, "state"), 0o700)
 	st, err := store.Open(context.Background(), root)
@@ -70,6 +76,9 @@ func newFixture(t *testing.T, l fake.Login, timeout time.Duration) *fixture {
 	}
 	if _, err := st.DB.Exec(`INSERT INTO sessions (id, thread_id, agent, state, created_at, updated_at) VALUES (1, 1, 'fake', 'idle', 0, 0)`); err != nil {
 		t.Fatal(err)
+	}
+	if set != nil {
+		set(f.relay)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -291,15 +300,45 @@ func TestOutageClosedElsewhere(t *testing.T) {
 }
 
 func TestRelaySwitchedOff(t *testing.T) {
+	for name, set := range map[string]func(*Relay){
+		"login_relay false":   func(r *Relay) { r.Off = true },
+		"no client to notify": func(r *Relay) { r.Notify = nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixtureWith(t, fake.Login{Code: goodCode}, 0, set)
+			f.turn(agent.Failed, agent.Login)
+			time.Sleep(300 * time.Millisecond)
+			if f.loginEvents(session.KindLoginLost) != 1 || f.running() {
+				t.Fatalf("login_lost events %d, a login command runs: %v", f.loginEvents(session.KindLoginLost), f.running())
+			}
+		})
+	}
+}
+
+// Starts at the same time leave one command, and it is the one tracked.
+func TestConcurrentStarts(t *testing.T) {
 	f := newFixture(t, fake.Login{Code: goodCode}, 0)
-	f.relay.Off = true
-	f.turn(agent.Failed, agent.Login)
-	select {
-	case u := <-f.updates:
-		t.Fatalf("a flow started: %+v", u)
-	case <-time.After(300 * time.Millisecond):
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() { defer wg.Done(); f.relay.Start(context.Background(), "owner", "fake") }()
 	}
-	if f.loginEvents(session.KindLoginLost) != 1 {
-		t.Fatal("the alert's event is missing")
+	wg.Wait()
+	ps, _ := filepath.Glob("/proc/[0-9]*/cmdline")
+	n := 0
+	for _, p := range ps {
+		if isLoginOf(p, f.root) {
+			n++
+		}
 	}
+	if n != 1 || !f.running() {
+		t.Fatalf("%d login commands run; the tracked one runs: %v", n, f.running())
+	}
+}
+
+// isLoginOf reports whether the process of the cmdline file p is a login
+// command of this test's fake, by its command line.
+func isLoginOf(p, root string) bool {
+	b, _ := os.ReadFile(p)
+	return bytes.Contains(b, []byte("login\x00--config\x00"+filepath.Join(root, "agent-config")))
 }
