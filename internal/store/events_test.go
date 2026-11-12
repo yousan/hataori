@@ -196,3 +196,29 @@ func TestRolledBackEventIsNeverSeen(t *testing.T) {
 		t.Fatalf("log holds %v", evs)
 	}
 }
+
+// The mark comes after the events stored when the call was made, also
+// when more are stored while they are read.
+func TestFollowMarksTheStoredEvents(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := openStore(t, newRoot(t))
+	appendEvents(t, s, "a", 1200)
+	out := make(chan control.Event)
+	marked := make(chan uint64, 1)
+	go s.FollowMark(ctx, control.Filter{}, 0, out, func(pos uint64) { marked <- pos })
+	<-out                        // the follower has read the head
+	appendEvents(t, s, "a", 600) // stored after the call
+	for {
+		select {
+		case <-out:
+		case pos := <-marked:
+			if pos != 1200 {
+				t.Fatalf("marked at %d, want 1200", pos)
+			}
+			return
+		case <-time.After(10 * time.Second):
+			t.Fatal("no mark")
+		}
+	}
+}

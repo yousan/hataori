@@ -81,7 +81,7 @@ func newRoot(t *testing.T) string {
 }
 
 // killSessions kills the hosts and agents of the sessions under root, and
-// only those.
+// only those, and removes the socket directories they left outside root.
 func killSessions(root string) {
 	dirs, _ := filepath.Glob(filepath.Join(root, "state", "sessions", "*"))
 	for _, d := range dirs {
@@ -91,6 +91,9 @@ func killSessions(root string) {
 					syscall.Kill(-pid, syscall.SIGKILL)
 				}
 			}
+		}
+		if sock := filepath.Dir(host.SocketPath(d)); strings.HasPrefix(filepath.Base(sock), "hataori-host-") {
+			os.RemoveAll(sock) // left outside root by a killed host
 		}
 	}
 }
@@ -244,7 +247,7 @@ func TestCommands(t *testing.T) {
 		fdone <- runCtx(fctx, []string{"events", "--root", root, "--after", fmt.Sprint(len(all)), "--follow"}, pw, io.Discard)
 		pw.Close()
 	}()
-	defer func() { fcancel(); <-fdone }()
+	defer func() { fcancel(); pr.Close(); <-fdone }() // a write blocked on the pipe ends too
 
 	code, out, _ = cli(t, "stop", "--root", root, "t1")
 	if m := lines(t, out); code != 0 || len(m) != 1 || m[0]["running"] != true {
@@ -270,8 +273,6 @@ func TestCommands(t *testing.T) {
 	if m := lines(t, out); code != 0 || m[0]["running"] != false {
 		t.Fatalf("stop when idle: exit %d, %q", code, out)
 	}
-	fcancel()
-	go io.Copy(io.Discard, pr) // let the follower finish its last write
 }
 
 // Driver and adapter packages are imported only under cmd/.

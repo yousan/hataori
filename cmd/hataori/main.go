@@ -139,7 +139,9 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 			return fail(err)
 		}
 		for _, t := range ts {
-			enc.Encode(threadLine(t))
+			if err := enc.Encode(threadLine(t)); err != nil {
+				return fail(err)
+			}
 		}
 	case "thread":
 		t, ok, err := find(ctx, c, pos[0])
@@ -156,7 +158,9 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 		}
 		l := threadLine(d.ThreadInfo)
 		l.Requests = len(d.Requests)
-		enc.Encode(l)
+		if err := enc.Encode(l); err != nil {
+			return fail(err)
+		}
 	case "events":
 		return events(ctx, c, *after, *follow, enc, fail)
 	case "stop":
@@ -172,7 +176,9 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 		if err := c.Stop(ctx, t.ID); err != nil {
 			return fail(err)
 		}
-		enc.Encode(map[string]any{"scope": t.ID.Scope, "key": t.ID.Key, "running": running})
+		if err := enc.Encode(map[string]any{"scope": t.ID.Scope, "key": t.ID.Key, "running": running}); err != nil {
+			return fail(err)
+		}
 	}
 	return 0
 }

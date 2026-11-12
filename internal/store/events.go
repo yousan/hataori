@@ -144,6 +144,18 @@ func (s *Store) Follow(ctx context.Context, f control.Filter, after uint64, out 
 // last event sent, when every event stored before the call has been sent.
 func (s *Store) FollowMark(ctx context.Context, f control.Filter, after uint64, out chan<- control.Event, caughtUp func(pos uint64)) error {
 	const batch = 500
+	var head uint64 // the last position stored when the call was made
+	if caughtUp != nil {
+		if err := s.DB.QueryRowContext(ctx, `SELECT coalesce(max(pos), 0) FROM events`).Scan(&head); err != nil {
+			return err
+		}
+	}
+	mark := func() {
+		if caughtUp != nil {
+			caughtUp(after)
+			caughtUp = nil
+		}
+	}
 	for {
 		// Take the waiter before reading, so a commit between the read
 		// and the wait is not missed.
@@ -153,6 +165,9 @@ func (s *Store) FollowMark(ctx context.Context, f control.Filter, after uint64, 
 			return err
 		}
 		for _, e := range evs {
+			if e.Pos > head {
+				mark() // the first event stored after the call
+			}
 			select {
 			case out <- e:
 				after = e.Pos
@@ -163,10 +178,7 @@ func (s *Store) FollowMark(ctx context.Context, f control.Filter, after uint64, 
 		if len(evs) == batch {
 			continue
 		}
-		if caughtUp != nil {
-			caughtUp(after)
-			caughtUp = nil
-		}
+		mark()
 		select {
 		case <-wake:
 		case <-ctx.Done():
