@@ -284,3 +284,36 @@ func TestNoDestructiveOperation(t *testing.T) {
 		}
 	}
 }
+
+func TestRepeatedSendIsIgnoredWhateverBusySays(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{})
+	id, _ := f.running(t, "t1")
+	if err := f.owner.Send(ctx, id, "m1", control.Input{Text: "a"}, control.Deliver); err != nil {
+		t.Fatal(err)
+	}
+	calls := f.runner.Calls()
+	for _, busy := range []control.Busy{control.Refuse, control.Deliver, control.Interrupt} {
+		if err := f.owner.Send(ctx, id, "m1", control.Input{Text: "a"}, busy); err != nil {
+			t.Fatalf("repeated Send with %v: %v", busy, err)
+		}
+	}
+	if f.runner.Calls() != calls {
+		t.Fatalf("a repeated Send reached the runner: %q", f.runner.Calls())
+	}
+}
+
+func TestStartKeyIsPerScope(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{key: "new"})
+	f.core.Scopes["s2"] = Scope{Enabled: true, Owner: "chat"}
+	a, err := f.owner.Start(ctx, control.StartRequest{Key: "k1", Scope: "s", Thread: "t1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := f.core.As(control.Caller{Principal: "y", Scopes: []string{"s2"}, May: all})
+	b, err := other.Start(ctx, control.StartRequest{Key: "k1", Scope: "s2", Thread: "t2"})
+	if err != nil || b == a || b.Scope != "s2" {
+		t.Fatalf("Start in another scope with the same key: %v, %v", b, err)
+	}
+}

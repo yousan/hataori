@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
@@ -78,6 +79,43 @@ type Core struct {
 	Runner     Runner
 	Agent      string // the registered name of the agent new sessions use
 	Log        *slog.Logger
+
+	locks keyedMutex
+}
+
+// keyedMutex serializes work per key.
+type keyedMutex struct {
+	mu   sync.Mutex
+	held map[string]*keyLock
+}
+
+type keyLock struct {
+	sync.Mutex
+	users int
+}
+
+// lock locks key and returns the function that unlocks it.
+func (k *keyedMutex) lock(key string) func() {
+	k.mu.Lock()
+	if k.held == nil {
+		k.held = map[string]*keyLock{}
+	}
+	l := k.held[key]
+	if l == nil {
+		l = &keyLock{}
+		k.held[key] = l
+	}
+	l.users++
+	k.mu.Unlock()
+	l.Lock()
+	return func() {
+		l.Unlock()
+		k.mu.Lock()
+		if l.users--; l.users == 0 {
+			delete(k.held, key)
+		}
+		k.mu.Unlock()
+	}
 }
 
 // As returns the API as seen by caller. It is the only way to reach an
@@ -102,12 +140,24 @@ func (a *api) check(op control.Ops, name, scope string) error {
 	return fmt.Errorf("core: %s in scope %q: %w", name, scope, ErrForbidden)
 }
 
-func (a *api) Threads(ctx context.Context, f control.Filter) ([]control.ThreadInfo, error) {
+// filterScope checks a read with filter f and returns the one scope f
+// names, or "" for all of the caller's. A filter that names two different
+// scopes matches nothing, and is refused.
+func (a *api) filterScope(name string, f control.Filter) (string, error) {
 	scope := f.Scope
 	if scope == "" {
 		scope = f.Thread.Scope
 	}
-	if err := a.check(control.OpRead, "Threads", scope); err != nil {
+	if f.Scope != "" && f.Thread.Scope != "" && f.Scope != f.Thread.Scope {
+		a.c.Log.Warn("control call refused", "op", name, "principal", string(a.caller.Principal), "scope", f.Scope, "thread_scope", f.Thread.Scope)
+		return "", fmt.Errorf("core: %s: filter names scopes %q and %q: %w", name, f.Scope, f.Thread.Scope, ErrForbidden)
+	}
+	return scope, a.check(control.OpRead, name, scope)
+}
+
+func (a *api) Threads(ctx context.Context, f control.Filter) ([]control.ThreadInfo, error) {
+	scope, err := a.filterScope("Threads", f)
+	if err != nil {
 		return nil, err
 	}
 	scopes := a.caller.Scopes
@@ -263,7 +313,11 @@ func (a *api) Start(ctx context.Context, r control.StartRequest) (control.Thread
 		a.c.Log.Warn("start refused", "scope", r.Scope, "reason", "scope is not enabled")
 		return control.ThreadID{}, fmt.Errorf("core: start in %q: %w", r.Scope, ErrDisabled)
 	}
-	inboxKey := "start:" + r.Key
+	// The key is per scope, so a caller cannot reach another scope's thread
+	// by reusing its key. Starts with one key run one at a time, so the
+	// owner is asked for one thread only.
+	inboxKey := "start:" + r.Scope + "\x00" + r.Key
+	defer a.c.locks.lock(inboxKey)()
 	if id, ok, err := a.c.started(ctx, inboxKey); err != nil || ok {
 		return id, err
 	}
@@ -381,26 +435,33 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 	if err := a.check(control.OpSend, "Send", id.Scope); err != nil {
 		return err
 	}
-	sid, state, err := a.c.current(ctx, a.c.Store.DB, id)
-	if err != nil {
-		return err
-	}
-	if state == control.Running {
-		switch busy {
-		case control.Refuse:
-			return fmt.Errorf("core: send to %v: %w", id, ErrBusy)
-		case control.Interrupt:
-			if err := a.c.Runner.Interrupt(ctx, sid); err != nil {
-				return fmt.Errorf("core: send to %v: interrupt: %w", id, err)
+	var (
+		sid       int64
+		accepted  bool
+		interrupt bool
+	)
+	// The state is read in the write transaction, so it cannot change
+	// between the Busy decision and the input.
+	err := a.c.Store.Update(ctx, func(tx *store.Tx) error {
+		var state control.State
+		var err error
+		sid, state, err = a.c.current(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if key != "" {
+			data, _ := json.Marshal(map[string]any{"thread": id, "session": sid, "text": in.Text})
+			ok, err := tx.Accept(ctx, "send:"+id.Scope+"\x00"+key, data)
+			if err != nil || !ok {
+				return err // a repeated key is ignored, whatever Busy says
 			}
 		}
-	}
-	accepted := false
-	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
-		if key != "" {
-			ok, err := tx.Accept(ctx, "send:"+key, nil)
-			if err != nil || !ok {
-				return err
+		if state == control.Running {
+			switch busy {
+			case control.Refuse:
+				return fmt.Errorf("core: send to %v: %w", id, ErrBusy)
+			case control.Interrupt:
+				interrupt = true
 			}
 		}
 		accepted = true
@@ -408,6 +469,11 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 	})
 	if err != nil || !accepted {
 		return err
+	}
+	if interrupt {
+		if err := a.c.Runner.Interrupt(ctx, sid); err != nil {
+			return fmt.Errorf("core: send to %v: interrupt: %w", id, err)
+		}
 	}
 	return a.c.Runner.Deliver(ctx, sid, in)
 }
@@ -431,6 +497,11 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 	if err := a.check(control.OpAnswer, "Answer", id.Scope); err != nil {
 		return err
 	}
+	if open, ok, err := a.c.openRequest(ctx, id); err != nil {
+		return err
+	} else if !ok || open.ID != req {
+		return fmt.Errorf("core: answer %q: not the open request: %w", req, ErrNotFound)
+	}
 	if err := a.c.Machine.Apply(ctx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal, Key: "answer:" + string(req), Text: ans.Text}); err != nil {
 		return err
 	}
@@ -449,11 +520,7 @@ func (a *api) Stop(ctx context.Context, id control.ThreadID) error {
 }
 
 func (a *api) Events(ctx context.Context, f control.Filter, after uint64) (<-chan control.Event, error) {
-	scope := f.Scope
-	if scope == "" {
-		scope = f.Thread.Scope
-	}
-	if err := a.check(control.OpRead, "Events", scope); err != nil {
+	if _, err := a.filterScope("Events", f); err != nil {
 		return nil, err
 	}
 	in := make(chan control.Event)
