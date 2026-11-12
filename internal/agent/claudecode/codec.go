@@ -14,7 +14,7 @@ import (
 // NewCodec returns the translator for one running session.
 func (a *Adapter) NewCodec(spec agent.Spec) agent.Codec {
 	return &codec{spec: spec, seen: map[string]bool{}, turns: map[string]*turnText{}, lines: map[string]bool{},
-		timeout: a.inputTimeout}
+		timeout: a.inputTimeout, hookTimeout: a.hookTimeout, requests: map[string]*request{}}
 }
 
 // Actions is agent.Actions.
@@ -38,13 +38,17 @@ type codec struct {
 	closed     bool                 // SessionEnd was reported
 
 	// Input.
-	ready         bool            // the session reported its start
-	running       bool            // a turn is running
-	runningPrompt string          // the prompt id of that turn
-	queue         []string        // input held until the CLI can take it
-	sent          *sentInput      // input written, not yet reported
-	timeout       time.Duration   // for sent; DefaultInputTimeout when zero
-	lines         map[string]bool // uuids of transcript lines already read
+	ready         bool          // the session reported its start
+	running       bool          // a turn is running
+	runningPrompt string        // the prompt id of that turn
+	queue         []string      // input held until the CLI can take it
+	sent          *sentInput    // input written, not yet reported
+	timeout       time.Duration // for sent; DefaultInputTimeout when zero
+
+	// Questions.
+	requests    map[string]*request // by hook call id, while the call waits
+	hookTimeout time.Duration       // after it the CLI gives up on a waiting hook
+	lines       map[string]bool     // uuids of transcript lines already read
 }
 
 // turnText is what the codec knows about the text of one prompt's turn.
@@ -67,6 +71,7 @@ type textItem struct {
 type call struct {
 	Hook    string          `json:"hook"`
 	Wait    bool            `json:"wait"`
+	At      int64           `json:"at"` // when the host took the call, Unix milliseconds
 	Payload json.RawMessage `json:"payload"`
 }
 
@@ -82,10 +87,11 @@ type payload struct {
 	Effort         struct {
 		Level string `json:"level"`
 	} `json:"effort"`
-	Prompt          string `json:"prompt"`
-	ToolName        string `json:"tool_name"`
-	ToolUseID       string `json:"tool_use_id"`
-	LastMessage     string `json:"last_assistant_message"`
+	Prompt          string          `json:"prompt"`
+	ToolName        string          `json:"tool_name"`
+	ToolInput       json.RawMessage `json:"tool_input"`
+	ToolUseID       string          `json:"tool_use_id"`
+	LastMessage     string          `json:"last_assistant_message"`
 	BackgroundTasks []struct {
 		Status string `json:"status"`
 	} `json:"background_tasks"`
@@ -145,11 +151,17 @@ type sentInput struct {
 	at   time.Time // the first Tick after writing it
 }
 
-// Tick ends the wait for input the CLI never reported: after the input
-// timeout the turn it was to start ends as failed, "not delivered".
+// Tick acts on the codec's deadlines: input the CLI never reported, and
+// questions whose hook has passed its timeout.
 func (c *codec) Tick(now time.Time) Actions {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.number(merge(c.tickInput(now), c.tickRequests(now)))
+}
+
+// tickInput ends the wait for input the CLI never reported: after the
+// input timeout the turn it was to start ends as failed, "not delivered".
+func (c *codec) tickInput(now time.Time) Actions {
 	if c.sent == nil {
 		return Actions{}
 	}
@@ -168,7 +180,7 @@ func (c *codec) Tick(now time.Time) Actions {
 	}
 	c.sent = nil
 	a := c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered})
-	return c.number(merge(a, c.flush()))
+	return merge(a, c.flush())
 }
 
 func (c *codec) inputTimeout() time.Duration {
@@ -180,8 +192,6 @@ func (c *codec) inputTimeout() time.Duration {
 
 // DefaultInputTimeout is how long input may go unreported by a hook.
 const DefaultInputTimeout = 30 * time.Second
-
-func (c *codec) Answer(agent.Answer) (Actions, error) { return Actions{}, nil }
 
 // Interrupt returns the key that stops a turn. The turn counts as
 // interrupted only when the transcript says so.
@@ -399,7 +409,7 @@ func (c *codec) applyText(t *turnText, it textItem) Actions {
 		if t.ended {
 			return Actions{}
 		}
-		a := c.release(t)
+		a := merge(c.withdrawAll(), c.release(t))
 		t.ended = true
 		return merge(a, c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted}))
 	}
@@ -453,27 +463,31 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 	case "UserPromptSubmit":
 		return c.events(agent.Event{Kind: agent.TurnStarted, StartedBy: c.starter(p.Prompt)})
 	case "Stop":
+		withdrawn := c.withdrawAll()
 		running := 0
 		for _, t := range p.BackgroundTasks {
 			if t.Status == "running" {
 				running++
 			}
 		}
-		return merge(c.end(p.PromptID, p.LastMessage), c.events(
+		return merge(merge(withdrawn, c.end(p.PromptID, p.LastMessage)), c.events(
 			agent.Event{Kind: agent.Text, Text: p.LastMessage, Final: true},
 			agent.Event{Kind: agent.TurnEnded, Status: agent.Completed, Background: running},
 		))
 	case "StopFailure":
-		return merge(c.end(p.PromptID, ""), c.events(
+		return merge(merge(c.withdrawAll(), c.end(p.PromptID, "")), c.events(
 			agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: failureReason(p.Error), Text: p.LastMessage}))
 	case "PreToolUse":
 		if p.ToolName == askTool {
-			return Actions{} // a question; reported by its own issue's decoding
+			if !k.Wait {
+				return Actions{} // the duplicate the settings file registers; the waiting call is the question
+			}
+			return c.question(k, p)
 		}
 		return c.events(agent.Event{Kind: agent.ToolStarted, ID: p.ToolUseID, Tool: p.ToolName})
 	case "PostToolUse", "PostToolUseFailure":
 		if p.ToolName == askTool {
-			return Actions{}
+			return c.withdrawTool(p.ToolUseID) // answered some other way, or refused
 		}
 		return c.events(agent.Event{Kind: agent.ToolEnded, ID: p.ToolUseID, Tool: p.ToolName})
 	case "PermissionRequest":
@@ -494,7 +508,7 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 	case "PostCompact":
 		return c.events(agent.Event{Kind: agent.ToolEnded, ID: compactID(c.compact), Tool: CompactTool})
 	case "SessionEnd":
-		return c.events(agent.Event{Kind: agent.SessionEnded})
+		return merge(c.withdrawAll(), c.events(agent.Event{Kind: agent.SessionEnded}))
 	}
 	return c.events(agent.Event{Kind: agent.Unknown, Text: p.Event})
 }

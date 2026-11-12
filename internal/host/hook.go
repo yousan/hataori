@@ -25,17 +25,30 @@ func HookEnv(stateDir string) string { return HookEnvVar + "=" + defaultSocket(s
 
 // A call is written to events.ndjson as one line:
 //
-//	{"hook":"<id>","wait":<true|false>,"payload":<payload>}
+//	{"hook":"<id>","wait":<true|false>,"at":<unix ms>,"payload":<payload>}
 //
 // The payload is copied as it is, without being read: when it is JSON the
 // line is JSON. Trailing newlines are dropped and any other CR or LF byte
 // becomes a space, so the call stays one line; inside a JSON value those
 // bytes can only be whitespace.
 
+// CallLine is a call as the host writes it to events.ndjson, without the
+// newline: its id, whether it waits, when the host took it (Unix
+// milliseconds), and the payload. A reader that learns of a waiting call
+// another way (Waiting, after a restart) builds the same line from it.
+func CallLine(id string, wait bool, at time.Time, payload []byte) []byte {
+	head := fmt.Sprintf(`{"hook":%q,"wait":%t,"at":%d,"payload":`, id, wait, at.UnixMilli())
+	return append(append([]byte(head), oneLine(payload)...), '}')
+}
+
+// Line is the call as the host wrote it to events.ndjson.
+func (w WaitingCall) Line() []byte { return CallLine(w.ID, true, w.At, w.Payload) }
+
 // WaitingCall is a call that waits for an answer.
 type WaitingCall struct {
-	ID      string `json:"id"`
-	Payload []byte `json:"payload"`
+	ID      string    `json:"id"`
+	At      time.Time `json:"at"` // when the host took the call
+	Payload []byte    `json:"payload"`
 }
 
 type callTable struct {
@@ -47,6 +60,7 @@ type callTable struct {
 }
 
 type waitingCall struct {
+	at      time.Time
 	payload []byte
 	answer  chan []byte // buffered, one answer
 }
@@ -61,13 +75,13 @@ func (t *callTable) newID() string {
 	return t.prefix + "-" + strconv.FormatUint(t.next, 10)
 }
 
-func (t *callTable) add(id string, payload []byte) *waitingCall {
+func (t *callTable) add(id string, at time.Time, payload []byte) *waitingCall {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.waiting == nil {
 		t.waiting = map[string]*waitingCall{}
 	}
-	w := &waitingCall{payload: payload, answer: make(chan []byte, 1)}
+	w := &waitingCall{at: at, payload: payload, answer: make(chan []byte, 1)}
 	t.waiting[id] = w
 	t.order = append(t.order, id)
 	return w
@@ -90,7 +104,8 @@ func (t *callTable) list() []WaitingCall {
 	defer t.mu.Unlock()
 	out := []WaitingCall{}
 	for _, id := range t.order {
-		out = append(out, WaitingCall{ID: id, Payload: t.waiting[id].payload})
+		w := t.waiting[id]
+		out = append(out, WaitingCall{ID: id, At: w.at, Payload: w.payload})
 	}
 	return out
 }
@@ -135,12 +150,12 @@ func oneLine(p []byte) []byte {
 func (h *host) call(c net.Conn, req request) response {
 	id := h.calls.newID()
 	payload := oneLine(req.Data)
+	at := time.Now()
 	var w *waitingCall
 	if req.Wait {
-		w = h.calls.add(id, payload) // before the line, so an answer to it finds it
+		w = h.calls.add(id, at, payload) // before the line, so an answer to it finds it
 	}
-	head := fmt.Sprintf(`{"hook":%q,"wait":%t,"payload":`, id, req.Wait)
-	if err := h.events.append([]byte(head), payload, []byte("}")); err != nil {
+	if err := h.events.append(CallLine(id, req.Wait, at, payload)); err != nil {
 		h.calls.remove(id)
 		return response{Error: err.Error()}
 	}
