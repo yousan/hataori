@@ -145,8 +145,34 @@ func TestEachCapture(t *testing.T) {
 	}
 	for _, x := range expected {
 		t.Run(x.file, func(t *testing.T) {
-			if got := summary(decodeFile(t, newTestCodec(), "c1", x.file)); got != x.want {
+			a := decodeFile(t, newTestCodec(), "c1", x.file)
+			if got := summary(a); got != x.want {
 				t.Fatalf("got %q, want %q", got, x.want)
+			}
+			// The ids come from the payload itself.
+			b, _ := os.ReadFile(filepath.Join("testdata/2.1.322", x.file))
+			var p payload
+			json.Unmarshal(b, &p)
+			for _, e := range a.Events {
+				switch e.Kind {
+				case agent.SessionReady:
+					if e.SessionID != p.SessionID || e.Model != p.Model {
+						t.Errorf("ready: %+v, payload session %s model %s", e, p.SessionID, p.Model)
+					}
+				case agent.ToolStarted, agent.ToolEnded:
+					if e.Tool != CompactTool && (e.ID == "" || e.ID != p.ToolUseID) {
+						t.Errorf("tool id %q, payload %q", e.ID, p.ToolUseID)
+					}
+				case agent.SubagentStarted, agent.SubagentEnded:
+					if e.ID == "" || e.ID != p.AgentID {
+						t.Errorf("subagent id %q, payload %q", e.ID, p.AgentID)
+					}
+				}
+			}
+			for _, r := range a.Reply {
+				if r.Call != "c1" {
+					t.Errorf("reply to %q, want the call c1", r.Call)
+				}
 			}
 		})
 	}
