@@ -739,7 +739,7 @@ All numbers are `yousan/c-lord` issues.
 
 ## Appendix D: interfaces in Go
 
-Drafts. Names will move during phase 1; the split between the three packages should not.
+Declared in `internal/control`, `internal/surface` and `internal/agent`; the packages hold the types this appendix leaves out. Names will move during phase 1; the split between the three packages should not. A pull request that changes one of the packages changes this appendix with it.
 
 ### Control API
 
@@ -752,7 +752,8 @@ type API interface {
 	Thread(ctx context.Context, id ThreadID, recent int) (ThreadDetail, error)
 
 	Start(ctx context.Context, r StartRequest) (ThreadID, error)
-	Send(ctx context.Context, id ThreadID, in Input, busy Busy) error
+	// key makes Send safe to repeat; for chat, the surface's message id.
+	Send(ctx context.Context, id ThreadID, key string, in Input, busy Busy) error
 	Answer(ctx context.Context, req RequestID, a Answer) error
 	Stop(ctx context.Context, id ThreadID) error
 
@@ -765,7 +766,7 @@ type API interface {
 type Caller struct {
 	Principal Principal // a person, a webhook, a supervisor, a dashboard user
 	Scopes    []string  // the scopes it may see and act in
-	May       Ops       // any of Read, Start, Send, Answer, Stop
+	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop
 }
 
 type StartRequest struct {
@@ -814,6 +815,10 @@ type Driver interface {
 
 	Limits() Limits // message length, choices per message, which optional calls work
 }
+
+// Factory makes a Driver from its opaque section of the instance's config.
+// Register(name, f) fails when name is taken; Lookup(name) finds it.
+type Factory func(settings []byte) (Driver, error)
 
 // Sink is implemented by the chat front end, not by the core.
 type Sink interface {
@@ -885,6 +890,7 @@ type Spec struct {
 	StateDir     string // settings, attachments, extra instructions; outside the workspace
 	ResumeID     string
 	Model        string
+	Effort       string
 	Instructions string // appended to the agent's own
 	Approvals    Policy // allow everything, or ask in chat
 }
@@ -899,6 +905,10 @@ type Event struct {
 	// who started a turn, the request id and its questions,
 	// the end status and reason, the background tasks still running.
 }
+
+// Factory makes an Adapter from its opaque section of the instance's config.
+// Register(name, f) fails when name is taken; Lookup(name) finds it.
+type Factory func(settings []byte) (Adapter, error)
 ```
 
 ## Appendix E: acceptance criteria after phase 1
