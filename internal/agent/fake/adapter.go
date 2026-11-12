@@ -1,0 +1,87 @@
+package fake
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/json"
+	"fmt"
+	"path/filepath"
+
+	"github.com/yousan/hataori/internal/agent"
+	"github.com/yousan/hataori/internal/host"
+)
+
+// Name is the name the fake registers under in tests.
+const Name = "fake"
+
+// Config is the fake's section of the instance's config.
+type Config struct {
+	// Command runs the program: a binary built from ./fakeagent, or a test
+	// binary that calls Main.
+	Command []string `json:"command"`
+	// Hataori is the binary whose `hook` the terminal form runs.
+	Hataori string `json:"hataori"`
+	// Terminal selects the terminal form; pipes otherwise.
+	Terminal bool `json:"terminal"`
+	// NeverStart makes the program never report that it is ready.
+	NeverStart bool `json:"never_start"`
+	// Env is passed to the program, for example PATH for its tool.
+	Env []string `json:"env"`
+}
+
+// Adapter is the fake agent.
+type Adapter struct{ c Config }
+
+var _ agent.Adapter = (*Adapter)(nil)
+
+// New makes the fake from its config section (JSON).
+func New(settings []byte) (agent.Adapter, error) {
+	var c Config
+	if len(bytes.TrimSpace(settings)) > 0 {
+		if err := json.Unmarshal(settings, &c); err != nil {
+			return nil, fmt.Errorf("%s: config: %w", Name, err)
+		}
+	}
+	if len(c.Command) == 0 {
+		return nil, fmt.Errorf("%s: config: no command", Name)
+	}
+	return &Adapter{c: c}, nil
+}
+
+// Probe always reports the fake installed and logged in.
+func (a *Adapter) Probe(context.Context) (agent.Health, error) {
+	return agent.Health{Installed: true, LoggedIn: true, Version: "fake"}, nil
+}
+
+// TranscriptFile is where the terminal form writes its text, in the
+// session's state directory.
+const TranscriptFile = "fake-transcript.jsonl"
+
+// Launch runs the program with the spec's model, effort and resume id.
+func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
+	argv := append([]string{}, a.c.Command...)
+	argv = append(argv, "--model", spec.Model, "--effort", spec.Effort)
+	if spec.ResumeID != "" {
+		argv = append(argv, "--resume", spec.ResumeID)
+	} else {
+		var b [8]byte
+		rand.Read(b[:])
+		argv = append(argv, "--session", fmt.Sprintf("fake-%x", b))
+	}
+	if a.c.NeverStart {
+		argv = append(argv, "--never-start")
+	}
+	env := append([]string{}, a.c.Env...)
+	if a.c.Terminal {
+		argv = append(argv, "--terminal", "--hook", a.c.Hataori,
+			"--transcript", filepath.Join(spec.StateDir, TranscriptFile))
+		env = append(env, host.HookEnv(spec.StateDir))
+	}
+	return agent.Launch{Argv: argv, Env: env, Terminal: a.c.Terminal}, nil
+}
+
+// NewCodec returns the codec of one session.
+func (a *Adapter) NewCodec(spec agent.Spec) agent.Codec {
+	return &codec{terminal: a.c.Terminal, followed: map[string]bool{}}
+}

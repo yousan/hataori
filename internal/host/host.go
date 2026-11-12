@@ -70,14 +70,17 @@ func Run(stateDir string) error {
 	}
 	defer h.events.Close()
 
-	readers, err := h.start()
-	if err != nil {
+	// Listen before the command starts, so that its first hook call finds
+	// the socket; connections wait in the backlog until serve accepts them.
+	if err := h.listen(); err != nil {
 		writeStatus(stateDir, Status{Error: err.Error(), Code: -1})
 		return err
 	}
-	if err := h.listen(); err != nil {
-		syscall.Kill(-h.cmd.Process.Pid, syscall.SIGKILL)
-		h.cmd.Wait()
+	readers, err := h.start()
+	if err != nil {
+		h.ln.Close()
+		os.Remove(h.sock)
+		os.Remove(filepath.Join(stateDir, pointerFile))
 		writeStatus(stateDir, Status{Error: err.Error(), Code: -1})
 		return err
 	}
