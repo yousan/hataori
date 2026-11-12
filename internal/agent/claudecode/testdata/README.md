@@ -58,9 +58,13 @@ Notes:
 - The model ran a bare `sleep` in the background by itself, and the CLI refused a standalone foreground `sleep`. The interrupt scenario therefore waits with `python3 -c 'import time; time.sleep(45)'`.
 - The real login was never touched: the login scenario only ever sees the throwaway directory, which is deleted afterwards.
 
+## The login command on a terminal (taken for #73, same day and version)
+
+`login_terminal/terminal.raw`: `claude auth login` on a terminal of 50×160 with a new, empty `CLAUDE_CONFIG_DIR`, by `capture.py RAW_DIR login_terminal`. The link is printed inside a terminal hyperlink (`ESC]8;;<link> BEL`, the link again in colour, `ESC]8;; BEL`). After `Paste code here if prompted > ` the wrong code `not-a-valid-code` was typed, and the CLI answered `Invalid code. ...` on the same line. The process was killed and the throwaway directory deleted.
+
 ## Missing
 
-- **A successful login.** It needs a person to sign in with a real code. Add `login/` captures of the output and exit status after a correct code when someone next logs in.
+- **A successful login.** It needs a person to sign in with a real code. Add `login/` captures of the output and exit status after a correct code when someone next logs in. Until then the adapter's success case rests on the command's exit status and `claude auth status` alone.
 
 ## Probe answers
 

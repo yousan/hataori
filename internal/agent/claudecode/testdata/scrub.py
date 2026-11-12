@@ -19,7 +19,7 @@ same way in every file:
   sk-ant-... tokens, signatures, OAuth link parameters -> REDACTED
 
 Hook payloads are renamed NN-<event>.json in the order they were called.
-Only the trust scenario keeps its terminal output. In transcripts, lines
+Only the trust and login_terminal scenarios keep their terminal output. In transcripts, lines
 that carry the session's context (attachments, recorded API requests) keep
 their shape with every string blanked.
 """
@@ -39,7 +39,7 @@ EMAIL = re.compile(rb"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 TEMP = re.compile(rb"capture-(config-)?[A-Za-z0-9_-]{8}(?![A-Za-z0-9_])")
 TOKEN = re.compile(rb"sk-ant-[A-Za-z0-9_-]+")
 SIGNATURE = re.compile(rb'("signature"\s*:\s*")[^"]*(")')
-OAUTH = re.compile(rb"([?&](?:code_challenge|state|code|client_id)=)[^&\s\"'\x1b]+")
+OAUTH = re.compile(rb"([?&](?:code_challenge|state|code|client_id)=)[^&\s\"'\x1b\x07]+")
 
 
 class Scrubber:
@@ -152,7 +152,7 @@ def main():
             p = os.path.join(src, n)
             if n == "hooks" or not os.path.isfile(p):
                 continue
-            if n == "terminal.raw" and scen != "trust":
+            if n == "terminal.raw" and scen not in ("trust", "login_terminal"):
                 continue
             with open(p, "rb") as f:
                 data = f.read()

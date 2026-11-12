@@ -139,6 +139,12 @@ func stateFile(spec agent.Spec, name string) string {
 // env builds the CLI's environment from the fixed list, the config's
 // pass_env, a terminal type and where the hooks find the host.
 func (a *Adapter) env(spec agent.Spec) []string {
+	return append(a.baseEnv(), host.HookEnv(spec.StateDir))
+}
+
+// baseEnv is the environment without the hooks' variable: the fixed list,
+// pass_env, and a terminal type.
+func (a *Adapter) baseEnv() []string {
 	allowed := map[string]bool{}
 	for _, k := range append(append([]string{}, baseEnv...), a.passEnv...) {
 		allowed[k] = true
@@ -150,7 +156,7 @@ func (a *Adapter) env(spec agent.Spec) []string {
 			env = append(env, kv)
 		}
 	}
-	return append(env, "TERM=xterm-256color", host.HookEnv(spec.StateDir))
+	return append(env, "TERM=xterm-256color")
 }
 
 func newUUID() string {
@@ -173,19 +179,16 @@ func (a *Adapter) Probe(ctx context.Context) (agent.Health, error) {
 	h.Installed = true
 	h.Version, _, _ = strings.Cut(strings.TrimSpace(string(out)), " ")
 	out, err = a.run(ctx, "auth", "status")
-	var st struct {
-		LoggedIn   bool   `json:"loggedIn"`
-		AuthMethod string `json:"authMethod"`
-	}
-	if jerr := json.Unmarshal(out, &st); jerr != nil {
+	loggedIn, jerr := ParseStatus(out)
+	if jerr != nil {
 		if err == nil {
 			err = jerr
 		}
 		h.Detail = "auth status: " + err.Error()
 		return h, nil
 	}
-	h.LoggedIn = st.LoggedIn
-	if !st.LoggedIn {
+	h.LoggedIn = loggedIn
+	if !loggedIn {
 		h.Detail = "not logged in"
 	}
 	return h, nil
@@ -195,7 +198,7 @@ func (a *Adapter) run(ctx context.Context, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, a.command, args...)
-	cmd.Env = a.env(agent.Spec{})
+	cmd.Env = a.baseEnv()
 	cmd.Dir = os.TempDir()
 	return cmd.Output()
 }
