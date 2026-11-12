@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	_ "modernc.org/sqlite" // pure-Go driver, so the binary builds without cgo
 )
@@ -21,6 +22,9 @@ const File = "state/hataori.db"
 // only writer and writes never contend for the lock.
 type Store struct {
 	DB *sql.DB
+
+	mu   sync.Mutex
+	wake chan struct{} // closed when events are committed
 }
 
 // Migration is one forward-only step of the schema. Each is applied in its
@@ -47,7 +51,7 @@ func open(ctx context.Context, path string, steps []Migration) (*Store, error) {
 		return nil, fmt.Errorf("store: open %s: %w", path, err)
 	}
 	db.SetMaxOpenConns(1)
-	s := &Store{DB: db}
+	s := &Store{DB: db, wake: make(chan struct{})}
 	if err := s.migrate(ctx, steps); err != nil {
 		db.Close()
 		return nil, err
