@@ -337,3 +337,91 @@ func TestEventNamingOtherScopes(t *testing.T) {
 		t.Fatalf("caller of scope s got %q", e.Kind)
 	}
 }
+
+func requestState(t *testing.T, f *fixture, req string) string {
+	t.Helper()
+	var s string
+	if err := f.core.Store.DB.QueryRow(`SELECT state FROM requests WHERE request = ?`, req).Scan(&s); err != nil {
+		t.Fatalf("request %s: %v", req, err)
+	}
+	return s
+}
+
+func blockedEvents(t *testing.T, f *fixture) int {
+	t.Helper()
+	var n int
+	f.core.Store.DB.QueryRow(`SELECT count(*) FROM events WHERE kind = 'turn_ended' AND json_extract(data, '$.outcome') = 'blocked'`).Scan(&n)
+	return n
+}
+
+func TestQuestionIsAnsweredOnce(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{})
+	id, sid := f.running(t, "t1")
+	f.agentEvent(t, sid, 2, agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: "r1", Text: "which?"}})
+
+	if d, _ := f.owner.Thread(ctx, id, 0); d.State != control.Waiting {
+		t.Fatalf("state %s, want waiting", d.State)
+	}
+	if s := requestState(t, f, "r1"); s != "open" {
+		t.Fatalf("request is %s", s)
+	}
+	if n := blockedEvents(t, f); n != 1 {
+		t.Fatalf("%d blocked events", n)
+	}
+
+	if err := f.owner.Answer(ctx, "r1", control.Answer{Text: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := f.owner.Thread(ctx, id, 0); d.State != control.Running {
+		t.Fatalf("after the answer: %s", d.State)
+	}
+	calls := f.runner.Calls()
+	if !strings.HasSuffix(calls, "answer r1") {
+		t.Fatalf("runner calls: %q", calls)
+	}
+	if err := f.owner.Answer(ctx, "r1", control.Answer{Text: "b"}); !errors.Is(err, ErrNotOpen) {
+		t.Fatalf("second answer: %v", err)
+	}
+
+	// A question the agent withdrew cannot be answered.
+	f.agentEvent(t, sid, 3, agent.Event{Kind: agent.TurnEnded})
+	if err := f.owner.Send(ctx, id, "m2", control.Input{Text: "more"}, control.Refuse); err != nil {
+		t.Fatal(err)
+	}
+	f.agentEvent(t, sid, 4, agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: "r2", Text: "sure?"}})
+	f.agentEvent(t, sid, 5, agent.Event{Kind: agent.RequestWithdrawn, Request: &agent.RequestInfo{ID: "r2"}})
+	if s := requestState(t, f, "r2"); s != "withdrawn" {
+		t.Fatalf("withdrawn request is %s", s)
+	}
+	calls = f.runner.Calls()
+	if err := f.owner.Answer(ctx, "r2", control.Answer{Text: "yes"}); !errors.Is(err, ErrNotOpen) {
+		t.Fatalf("answer to a withdrawn request: %v", err)
+	}
+	if f.runner.Calls() != calls {
+		t.Fatal("a refused answer reached the runner")
+	}
+}
+
+func TestSendAnswersTheOpenQuestion(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{})
+	id, sid := f.running(t, "t1")
+	f.agentEvent(t, sid, 2, agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: "r1", Text: "which?"}})
+	calls := f.runner.Calls()
+
+	if err := f.owner.Send(ctx, id, "m1", control.Input{Text: "blue"}, control.Refuse); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimPrefix(f.runner.Calls(), calls+"; "); got != "answer r1" {
+		t.Fatalf("runner calls: %q", got)
+	}
+	if s := requestState(t, f, "r1"); s != "answered" {
+		t.Fatalf("request is %s", s)
+	}
+	var text string
+	f.core.Store.DB.QueryRow(`SELECT json_extract(data, '$.text') FROM events WHERE kind = 'answer'`).Scan(&text)
+	if text != "blue" {
+		t.Fatalf("answer event text %q", text)
+	}
+}
