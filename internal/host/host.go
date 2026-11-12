@@ -38,6 +38,7 @@ type host struct {
 	sock  string
 
 	events *lineLog
+	calls  callTable
 	done   chan struct{} // closed when the command has exited
 
 	stopMu   sync.Mutex
@@ -293,16 +294,21 @@ func (h *host) serve() {
 type request struct {
 	Op        string        `json:"op"`
 	Data      []byte        `json:"data,omitempty"`
+	ID        string        `json:"id,omitempty"`        // answer: the call answered
+	Wait      bool          `json:"wait,omitempty"`      // call: keep it open for an answer
 	Interrupt time.Duration `json:"interrupt,omitempty"` // stop: grace after SIGINT
 	Terminate time.Duration `json:"terminate,omitempty"` // stop: grace after SIGTERM
 }
 
 type response struct {
-	OK      bool   `json:"ok"`
-	Error   string `json:"error,omitempty"`
-	PID     int    `json:"pid,omitempty"`
-	Already bool   `json:"already,omitempty"` // stop: nothing was running
-	Signals string `json:"signals,omitempty"` // stop: the signals sent, in order
+	OK      bool          `json:"ok"`
+	Error   string        `json:"error,omitempty"`
+	PID     int           `json:"pid,omitempty"`
+	Already bool          `json:"already,omitempty"` // stop: nothing was running
+	ID      string        `json:"id,omitempty"`      // call: the call's id
+	Data    []byte        `json:"data,omitempty"`    // call: the answer
+	Calls   []WaitingCall `json:"calls,omitempty"`   // waiting: the calls that wait
+	Signals string        `json:"signals,omitempty"` // stop: the signals sent, in order
 }
 
 func (h *host) serveConn(c *net.UnixConn) {
@@ -313,6 +319,11 @@ func (h *host) serveConn(c *net.UnixConn) {
 		var req request
 		if err := dec.Decode(&req); err != nil {
 			return
+		}
+		if req.Op == "call" {
+			resp := h.call(c, req)
+			enc.Encode(resp)
+			return // a call has its own connection
 		}
 		if req.Op == "stop" {
 			resp, registered := h.stop(req)
@@ -348,6 +359,13 @@ func (h *host) handle(req request) response {
 		return response{OK: true}
 	case "status":
 		return response{OK: true, PID: h.cmd.Process.Pid}
+	case "waiting":
+		return response{OK: true, Calls: h.calls.list()}
+	case "answer":
+		if !h.calls.answer(req.ID, req.Data) {
+			return response{Error: fmt.Sprintf("no call %q is waiting", req.ID)}
+		}
+		return response{OK: true}
 	}
 	return response{Error: fmt.Sprintf("unknown operation %q", req.Op)}
 }
