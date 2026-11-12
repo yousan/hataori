@@ -194,6 +194,7 @@ func TestWhoStartedATurn(t *testing.T) {
 	}
 	for _, file := range []string{"paste/hooks/02-UserPromptSubmit.json", "plain/hooks/02-UserPromptSubmit.json"} {
 		c := newTestCodec()
+		decodeFile(t, c, "c0", "plain/hooks/01-SessionStart.json") // input waits for the start
 		c.Input(agent.Input{Text: unwrapPaste(raw(file)["prompt"].(string))})
 		if got := summary(decodeFile(t, c, "c1", file)); got != "turn(caller)" {
 			t.Errorf("%s after Input: %s", file, got)

@@ -6,13 +6,15 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/yousan/hataori/internal/agent"
 )
 
 // NewCodec returns the translator for one running session.
 func (a *Adapter) NewCodec(spec agent.Spec) agent.Codec {
-	return &codec{spec: spec, seen: map[string]bool{}, turns: map[string]*turnText{}, lines: map[string]bool{}}
+	return &codec{spec: spec, seen: map[string]bool{}, turns: map[string]*turnText{}, lines: map[string]bool{},
+		timeout: a.inputTimeout}
 }
 
 // Actions is agent.Actions.
@@ -34,7 +36,15 @@ type codec struct {
 	current    string               // prompt id of the transcript's latest user line
 	turns      map[string]*turnText // by prompt id
 	closed     bool                 // SessionEnd was reported
-	lines      map[string]bool      // uuids of transcript lines already read
+
+	// Input.
+	ready         bool            // the session reported its start
+	running       bool            // a turn is running
+	runningPrompt string          // the prompt id of that turn
+	queue         []string        // input held until the CLI can take it
+	sent          *sentInput      // input written, not yet reported
+	timeout       time.Duration   // for sent; DefaultInputTimeout when zero
+	lines         map[string]bool // uuids of transcript lines already read
 }
 
 // turnText is what the codec knows about the text of one prompt's turn.
@@ -93,12 +103,91 @@ func (c *codec) Open() Actions { return Actions{} }
 func (c *codec) Input(in agent.Input) (Actions, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.pasted = append(c.pasted, normalize(in.Text))
-	return Actions{}, nil
+	c.queue = append(c.queue, cleanPaste(in.Text))
+	return c.number(c.flush()), nil
 }
 
+// Bracketed paste: what the terminal sends around pasted text.
+const (
+	pasteStart = "\x1b[200~"
+	pasteEnd   = "\x1b[201~"
+	confirm    = "\r"   // Enter
+	stopKey    = "\x1b" // Escape
+)
+
+// cleanPaste removes the bracketed-paste markers from text, so that text
+// cannot end the paste early and have the rest read as keys.
+func cleanPaste(text string) string {
+	for strings.Contains(text, pasteEnd) || strings.Contains(text, pasteStart) {
+		text = strings.ReplaceAll(strings.ReplaceAll(text, pasteEnd, ""), pasteStart, "")
+	}
+	return text
+}
+
+// flush writes the next queued input when the CLI can take it: after the
+// session reported its start, with no turn running and no input waiting to
+// be reported. Input is one bracketed paste and Enter; it counts as
+// delivered only when UserPromptSubmit reports the same text.
+func (c *codec) flush() Actions {
+	if !c.ready || c.running || c.sent != nil || len(c.queue) == 0 {
+		return Actions{}
+	}
+	text := c.queue[0]
+	c.queue = c.queue[1:]
+	c.sent = &sentInput{text: normalize(text)}
+	c.pasted = append(c.pasted, normalize(text))
+	return Actions{Write: [][]byte{[]byte(pasteStart + text + pasteEnd), []byte(confirm)}}
+}
+
+// sentInput is input written and not yet reported by a hook.
+type sentInput struct {
+	text string
+	at   time.Time // the first Tick after writing it
+}
+
+// Tick ends the wait for input the CLI never reported: after the input
+// timeout the turn it was to start ends as failed, "not delivered".
+func (c *codec) Tick(now time.Time) Actions {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sent == nil {
+		return Actions{}
+	}
+	if c.sent.at.IsZero() {
+		c.sent.at = now
+		return Actions{}
+	}
+	if now.Sub(c.sent.at) < c.inputTimeout() {
+		return Actions{}
+	}
+	for i, p := range c.pasted {
+		if p == c.sent.text {
+			c.pasted = append(c.pasted[:i], c.pasted[i+1:]...)
+			break
+		}
+	}
+	c.sent = nil
+	a := c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered})
+	return c.number(merge(a, c.flush()))
+}
+
+func (c *codec) inputTimeout() time.Duration {
+	if c.timeout > 0 {
+		return c.timeout
+	}
+	return DefaultInputTimeout
+}
+
+// DefaultInputTimeout is how long input may go unreported by a hook.
+const DefaultInputTimeout = 30 * time.Second
+
 func (c *codec) Answer(agent.Answer) (Actions, error) { return Actions{}, nil }
-func (c *codec) Interrupt() Actions                   { return Actions{} }
+
+// Interrupt returns the key that stops a turn. The turn counts as
+// interrupted only when the transcript says so.
+func (c *codec) Interrupt() Actions {
+	return Actions{Write: [][]byte{[]byte(stopKey)}}
+}
 
 // Decode reads one recorded line. Lines it cannot read become one Unknown
 // event; it never fails.
@@ -111,7 +200,8 @@ func (c *codec) Decode(src agent.Source, line []byte) Actions {
 func (c *codec) decode(src agent.Source, line []byte) Actions {
 	switch src {
 	case agent.File:
-		return c.decodeTranscript(line)
+		a := c.decodeTranscript(line)
+		return merge(a, c.track(c.current, a)) // the prompt of the line just read
 	case agent.Hook:
 	default:
 		return Actions{}
@@ -177,8 +267,32 @@ func (c *codec) decode(src agent.Source, line []byte) Actions {
 	} else {
 		h = merge(replay, h)
 	}
+	h = merge(h, c.track(p.PromptID, h))
 	h.Follow = append(follow, h.Follow...)
 	return h
+}
+
+// track keeps what input needs to know, the session's start and whether a
+// turn runs, from the events just produced, and writes held input when the
+// CLI can take it.
+// prompt is the prompt the events belong to; the end of another prompt's
+// turn (an interrupt line read late) does not end the running one.
+func (c *codec) track(prompt string, a Actions) Actions {
+	for _, e := range a.Events {
+		switch e.Kind {
+		case agent.SessionReady:
+			c.ready = true
+		case agent.TurnStarted:
+			c.running, c.runningPrompt = true, prompt
+		case agent.TurnEnded:
+			if prompt == "" || c.runningPrompt == "" || prompt == c.runningPrompt {
+				c.running = false
+			}
+		case agent.SessionEnded:
+			c.ready, c.running = false, false
+		}
+	}
+	return c.flush()
 }
 
 func merge(a, b Actions) Actions {
@@ -402,6 +516,9 @@ func (c *codec) starter(prompt string) agent.Starter {
 	for i, p := range c.pasted {
 		if p == text {
 			c.pasted = append(c.pasted[:i], c.pasted[i+1:]...)
+			if c.sent != nil && c.sent.text == text {
+				c.sent = nil // delivered
+			}
 			return agent.ByCaller
 		}
 	}

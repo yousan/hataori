@@ -59,7 +59,10 @@ func (a *Adapter) settings() ([]byte, error) {
 				Type: "command", Timeout: secs, Command: fmt.Sprintf("%s --wait --timeout %ds", plain, secs)}}})
 		}
 	}
-	return json.MarshalIndent(map[string]any{"hooks": hooks}, "", "  ")
+	// The user's own vim mode would make Escape leave insert mode instead
+	// of stopping the turn; settings given with --settings take precedence
+	// over the user's global choice, so the session runs in normal mode.
+	return json.MarshalIndent(map[string]any{"hooks": hooks, "editorMode": "normal"}, "", "  ")
 }
 
 // shellQuote quotes s for the shell Claude Code runs a hook command in.

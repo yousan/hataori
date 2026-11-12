@@ -99,10 +99,14 @@ func TestSettingsRegisterEveryHook(t *testing.T) {
 		t.Fatal(err)
 	}
 	var s struct {
-		Hooks map[string][]hookMatcher
+		Hooks      map[string][]hookMatcher
+		EditorMode string
 	}
 	if err := json.Unmarshal(l.Files[SettingsFile], &s); err != nil {
 		t.Fatal(err)
+	}
+	if s.EditorMode != "normal" {
+		t.Errorf("editorMode = %q, want normal", s.EditorMode)
 	}
 	for _, ev := range hookEvents {
 		if len(s.Hooks[ev]) == 0 {
