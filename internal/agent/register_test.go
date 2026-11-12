@@ -1,0 +1,16 @@
+package agent
+
+import "testing"
+
+func TestRegisterLookup(t *testing.T) {
+	f := func([]byte) (Adapter, error) { return nil, nil }
+	if err := Register("test-agent", f); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if got, ok := Lookup("test-agent"); !ok || got == nil {
+		t.Fatal("Lookup did not find the registered factory")
+	}
+	if err := Register("test-agent", f); err == nil {
+		t.Fatal("registering a name twice succeeded")
+	}
+}
