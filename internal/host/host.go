@@ -35,6 +35,11 @@ type host struct {
 
 	events *lineLog
 	done   chan struct{} // closed when the command has exited
+
+	stopMu   sync.Mutex
+	closing  bool           // the host is shutting down; no new stop starts
+	stops    sync.WaitGroup // stops in progress
+	stopNote string         // the signals the last stop sent
 }
 
 // Run is `hataori host <state-dir>`: it runs the Spec in stateDir until the
@@ -74,6 +79,12 @@ func Run(stateDir string) error {
 
 	waitErr := h.cmd.Wait()
 	close(h.done)
+	// A stop in progress ends the rest of the group before the terminal is
+	// closed; a stop asked for from now on finds the command gone.
+	h.stopMu.Lock()
+	h.closing = true
+	h.stopMu.Unlock()
+	h.stops.Wait()
 	drained := make(chan struct{})
 	go func() { readers.Wait(); close(drained) }()
 	select {
@@ -89,7 +100,11 @@ func Run(stateDir string) error {
 	h.ln.Close()
 	os.Remove(h.sock)
 	os.Remove(filepath.Join(stateDir, pointerFile))
-	return writeStatus(stateDir, exitStatus(h.cmd, waitErr))
+	st := exitStatus(h.cmd, waitErr)
+	if h.stopNote != "" {
+		st.Stopped, st.StopNote = true, h.stopNote
+	}
+	return writeStatus(stateDir, st)
 }
 
 func exitStatus(cmd *exec.Cmd, err error) Status {
@@ -264,14 +279,18 @@ func (h *host) serve() {
 
 // request is one call on the host's socket; response its answer.
 type request struct {
-	Op   string `json:"op"`
-	Data []byte `json:"data,omitempty"`
+	Op        string        `json:"op"`
+	Data      []byte        `json:"data,omitempty"`
+	Interrupt time.Duration `json:"interrupt,omitempty"` // stop: grace after SIGINT
+	Terminate time.Duration `json:"terminate,omitempty"` // stop: grace after SIGTERM
 }
 
 type response struct {
-	OK    bool   `json:"ok"`
-	Error string `json:"error,omitempty"`
-	PID   int    `json:"pid,omitempty"`
+	OK      bool   `json:"ok"`
+	Error   string `json:"error,omitempty"`
+	PID     int    `json:"pid,omitempty"`
+	Already bool   `json:"already,omitempty"` // stop: nothing was running
+	Signals string `json:"signals,omitempty"` // stop: the signals sent, in order
 }
 
 func (h *host) serveConn(c *net.UnixConn) {
@@ -282,6 +301,17 @@ func (h *host) serveConn(c *net.UnixConn) {
 		var req request
 		if err := dec.Decode(&req); err != nil {
 			return
+		}
+		if req.Op == "stop" {
+			resp, registered := h.stop(req)
+			err := enc.Encode(resp)
+			if registered {
+				h.stops.Done()
+			}
+			if err != nil {
+				return
+			}
+			continue
 		}
 		resp := h.handle(req)
 		if err := enc.Encode(resp); err != nil {
