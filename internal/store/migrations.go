@@ -89,6 +89,18 @@ var migrations = []Migration{
 			PRIMARY KEY (outage_id, thread_id)
 		)`,
 	)},
+	{Name: "runner: session spec, first input, followed files", Up: execAll(
+		// spec: JSON, what the codec is made from; first_input: JSON, sent
+		// once the agent reports that it is ready.
+		`ALTER TABLE sessions ADD COLUMN spec TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE sessions ADD COLUMN first_input TEXT NOT NULL DEFAULT ''`,
+		`CREATE TABLE session_files (
+			session_id INTEGER NOT NULL REFERENCES sessions (id),
+			path       TEXT NOT NULL,
+			offset     INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (session_id, path)
+		)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {
