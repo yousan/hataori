@@ -362,6 +362,8 @@ func (h *host) handle(req request) response {
 		return response{OK: true}
 	case "status":
 		return response{OK: true, PID: h.cmd.Process.Pid}
+	case "tail":
+		return response{OK: true, Data: h.tail(int(req.Interrupt))}
 	case "waiting":
 		return response{OK: true, Calls: h.calls.list()}
 	case "answer":
@@ -371,6 +373,21 @@ func (h *host) handle(req request) response {
 		return response{OK: true}
 	}
 	return response{Error: fmt.Sprintf("unknown operation %q", req.Op)}
+}
+
+// tail returns the last n bytes of the raw log: the terminal's, or
+// standard error on pipes. It is for a person to read; the host passes it
+// on without looking at it.
+func (h *host) tail(n int) []byte {
+	name := StderrLog
+	if h.spec.Terminal {
+		name = TerminalLog
+	}
+	b, _ := os.ReadFile(filepath.Join(h.dir, name))
+	if n > 0 && len(b) > n {
+		b = b[len(b)-n:]
+	}
+	return b
 }
 
 func writeFile(path, s string) error {

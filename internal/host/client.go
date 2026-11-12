@@ -57,6 +57,13 @@ func (c *Client) Input(b []byte) error {
 	return err
 }
 
+// Tail returns the last n bytes of the command's raw log (its terminal, or
+// its standard error on pipes), for a person to read.
+func (c *Client) Tail(n int) ([]byte, error) {
+	resp, err := c.call(request{Op: "tail", Interrupt: time.Duration(n)})
+	return resp.Data, err
+}
+
 // PID returns the command's process id.
 func (c *Client) PID() (int, error) {
 	resp, err := c.call(request{Op: "status"})

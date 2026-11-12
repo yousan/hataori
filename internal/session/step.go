@@ -46,6 +46,7 @@ type Input struct {
 	Text      string            // Send, Answer
 	Agent     agent.Event       // AgentEvent
 	Reason    string            // Exit: why; empty for "crashed"
+	Detail    string            // StartTimeout, Exit: what a person may want to read, such as the end of the terminal log
 }
 
 // Turn-end outcomes and reasons that the state machine adds to the agent's.
@@ -181,6 +182,9 @@ func Step(s Snapshot, in Input) (Result, error) {
 			return refuse()
 		}
 		to(control.Failed, string(agent.BlockedAtStart))
+		if in.Detail != "" {
+			r.Out[len(r.Out)-1].Data["detail"] = in.Detail
+		}
 	case IdleTimeout:
 		if s.State != control.Idle {
 			return refuse()

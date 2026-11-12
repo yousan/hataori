@@ -54,6 +54,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		go p.readPipes(stdin, inputs)
 	}
 	if *neverStart {
+		fmt.Fprintln(stderr, "fake: never reporting the start") // for the end of the terminal log
 		for range inputs {
 		}
 		return 0
