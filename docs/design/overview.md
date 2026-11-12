@@ -18,14 +18,16 @@ How to read it:
 3. **The price is live typing into a running session.** A person can still take a session over in the agent's own terminal UI between turns, and hand it back. They cannot type into it while hataori is driving it (section 3.4).
 4. **Each agent process runs under a small session host that outlives the hataori daemon.** Restarting or upgrading hataori does not stop running turns, and output is read from a file with a stored position, so nothing is lost or posted twice (section 4.3).
 5. **Everything needed after a restart is in SQLite before it is acted on:** inbound messages, outbound posts, open questions, turn state (section 6).
-6. **hataori writes nothing into a working tree**, and removes a workspace only after proving there is nothing in it that exists nowhere else (section 4.6).
-7. **One known risk:** Claude Code's docs say `--bare` will become the default for `-p`, and bare mode does not use the subscription login. The agent adapter boundary is kept narrow enough that a different Claude Code adapter can replace this one (section 3.5, question 1).
+6. **The core has one entry, the control API.** Chat adapters, a supervisor agent and a dashboard are all clients of it (sections 5 and 7). The first interface draft did not allow that; section 5.4 says what changed.
+7. **hataori writes nothing into a working tree**, and removes a workspace only after proving there is nothing in it that exists nowhere else (section 4.6).
+8. **Phase 1 is narrow:** replace c-lord for orders that a managing agent sends through a webhook, with the full test suite written before the first real order. Everything a person does by hand in chat comes after (section 8).
+9. **One known risk:** Claude Code's docs say `--bare` will become the default for `-p`, and bare mode does not use the subscription login. The agent adapter boundary is kept narrow enough that a different Claude Code adapter can replace this one (section 3.5, question 1).
 
 ## 2. What c-lord taught us
 
 ### 2.1 Feature inventory
 
-c-lord has grown to about 64,000 lines of Python and roughly 60 slash and text commands. Appendix A lists its user-visible features in 105 rows: 61 keep, 19 change, 25 drop.
+c-lord has grown to about 64,000 lines of Python and roughly 60 slash and text commands. Appendix A lists its user-visible features in 105 rows: 60 keep, 20 change, 25 drop.
 
 What is kept is the daily loop: start a thread from a command, a text trigger or a webhook; get a clone of the bound repository; talk to the agent in the thread; answer its questions with buttons; see a lamp on your message; get pinged when the turn ends; stop, sleep, wake, close and clean up; hand files in and out; per-thread model choice; owner-only access by default; several instances on one host.
 
@@ -34,7 +36,7 @@ Most kept features keep their behaviour but not their mechanism: they are driven
 What is dropped falls into three kinds:
 
 - **Things that exist only because of tmux:** attaching a thread to a hand-made window, window lists, pane screenshots, resync, the folder-trust dialog handling, vim-mode handling, the unknown-prompt safety net, the menu watchdog.
-- **A second control surface:** the HTTP API with its scheduled notifications and "lounge" endpoints. It accounts for most of the input-validation bugs. A local `hataori` command replaces it.
+- **A second control surface:** the HTTP API with its scheduled notifications and "lounge" endpoints. It accounts for most of the input-validation bugs. The control API, reached through a local `hataori` command, replaces it.
 - **Opt-in extras and tooling:** table images, the mockup renderer, the status board, thread-name lamps, subagent "voices", the fuzz harness, evidence capture, localised READMEs.
 
 ### 2.2 Bug issues by cause
@@ -115,7 +117,7 @@ The Claude Agent SDK exists for Python and TypeScript only. Its docs tell other 
 
 ### 4.1 Three objects
 
-- **Thread:** a conversation on a chat surface. Identified by `(surface, channel, thread)`.
+- **Thread:** one line of work. Identified by `(scope, key)`. Both are opaque strings that a client gives the core: for a chat surface the scope is a channel and the key is the surface's thread. The core never looks inside them.
 - **Session:** one agent conversation, identified by the agent's own session id, and the process that currently serves it (or none).
 - **Workspace:** one directory, a clone of one repository, owned by exactly one thread.
 
@@ -133,7 +135,7 @@ creating ──► idle ◄──► running ◄──► waiting      (waiting:
            closed ──► removed      (closed: stopped by a person or by idle age; workspace kept)
 ```
 
-Every transition is caused by one event (a chat message, an agent event, a timer, a command), is written to the database in the same transaction as its effects (rows in the outbox), and is the only place that state changes. Lamps, the progress line, pings and turn-end events are all derived from the transition, so they cannot disagree with each other.
+Every transition is caused by one event (a chat message, an agent event, a timer, a command), is written to the database in the same transaction as the events it produces, and is the only place that state changes. Lamps, the progress line, pings and turn-end events are all derived from those events, so they cannot disagree with each other.
 
 ### 4.3 The session host
 
@@ -150,16 +152,22 @@ Checked: a `claude -p` process with stdin on a FIFO and stdout on a file finishe
 
 ### 4.4 Running a turn
 
-1. The surface adapter delivers an inbound message. The core stores it in the **inbox**, keyed by the surface's message id. A message already in the inbox is ignored. This is what makes "run exactly once" true across reconnects and backfill.
-2. The core authorizes the sender. One function, called for messages, commands and button presses alike.
-3. The core finds or creates the thread, workspace and session, and sends the input. If a turn is running, the input is delivered into it (question 3).
-4. The agent adapter decodes log lines into events. Each event has `(session, sequence number)`.
-5. For each event the core updates state and writes rows to the **outbox**: a reply, an edit, a lamp change. A row is keyed by `(session, sequence, part)`, so replaying the log after a crash writes nothing twice.
-6. The outbox sender posts rows in order per thread, paced per route, and stores the surface's message id on success. Rows marked as decoration (lamps, progress line, thread rename) are dropped after a few failures and never block a reply.
+1. A client calls the control API: start a thread, or send to one. The chat front end does this for an inbound chat message. The call carries the caller and a key that makes it safe to repeat (for chat, the surface's message id). The core stores it in the **inbox**; a key already there is ignored. This is what makes "run exactly once" true across reconnects and catch-up.
+2. The core authorizes the caller. One function, for every call from every client.
+3. The core finds or creates the thread, workspace and session, and sends the input. If a turn is running, the call says what to do: refuse, deliver into the turn, or interrupt (question 3).
+4. The agent adapter decodes log lines into agent events. Each has `(session, sequence number)`.
+5. For each agent event the core updates state and appends to the **event log** in the database: thread created, turn started, text, question asked, tool progress, turn ended. Events are numbered per instance. Any client can read them from a position, so a reader that was down misses nothing.
+6. The chat front end is one such reader. For each event it decides what to show and writes rows to its **outbox**, keyed by `(event, part)`, so reading an event twice writes nothing twice. The sender posts rows in order per thread, paced per route, and stores the surface's message id on success. Rows marked as decoration (lamps, progress line, thread rename) are dropped after a few failures and never block a reply.
 
 One gap remains: if the daemon dies after the surface accepted a post but before the id was stored, the post is sent again. An adapter closes the gap where its surface offers an idempotency key (Discord's message nonce, **unverified**).
 
 Questions and approvals are rows too: the agent's request id, the question, the message that shows it. A button carries the request id. After a restart the row is still there, so the button still works (c-lord#671, c-lord#752).
+
+**Turn-end events** are what a managing agent depends on most, so their rules are fixed here:
+
+- Every turn produces exactly one end event, whoever started it. In the first deployment's c-lord log, 175 of 298 recent completions were turns the agent started by itself after a background task.
+- The event says who started the turn, how it ended (`completion`, `blocked` on a question, `failure` with a reason) and how many background tasks are still running. A reader that wants "really finished" waits for an end event with none running. c-lord instead held the event back for up to an hour, and the held state had bugs of its own (c-lord#1249, c-lord#1296). Whether background subagents are reported like background commands is **(unverified)**.
+- Events are read from a position (`hataori events --after <n>`), not only tailed, so a reader that restarts loses none.
 
 ### 4.5 Sleep, wake, restart
 
@@ -184,101 +192,47 @@ Removal is a rename into `trash/` inside the root. A later pass deletes from tra
 
 ## 5. Interfaces
 
-The core imports neither adapter package. Adapters register themselves under a name, and that name is used only as a key and a path segment.
+The core imports no adapter package. Adapters and clients register under a name, and that name is used only as a key and a path segment.
 
-```go
-// Package surface: a chat service.
+### 5.1 The control API
 
-type Adapter interface {
-	// Run connects and delivers inbound events to sink until ctx ends.
-	// It reconnects by itself and calls sink in order per conversation.
-	Run(ctx context.Context, sink Sink) error
+Everything that can be asked of the core is one interface. In-process clients call it directly; other processes (the `hataori` command, the supervisor's tools, the dashboard) reach the same operations over a Unix socket.
 
-	// Since returns the messages in a conversation after cursor,
-	// for catching up after an outage.
-	Since(ctx context.Context, conv Conversation, cursor string) ([]Inbound, error)
+| Operation | What it does |
+|---|---|
+| `Threads` | list the threads the caller may see |
+| `Thread` | one thread's state, open requests and last output, capped |
+| `Start` | start a thread in a scope; safe to repeat with the same key |
+| `Send` | send input; says what to do if a turn is running: refuse, deliver, interrupt |
+| `Answer` | answer a question or an approval |
+| `Stop` | interrupt the running turn |
+| `Events` | events after a position, then live ones |
 
-	OpenThread(ctx context.Context, parent Conversation, title string) (Conversation, error)
-	Post(ctx context.Context, conv Conversation, key string, m Message) (MessageRef, error)
-	Edit(ctx context.Context, ref MessageRef, m Message) error
-	Delete(ctx context.Context, ref MessageRef) error
-	SetStatus(ctx context.Context, ref MessageRef, s Status) error        // lamp on a message
-	SetThread(ctx context.Context, conv Conversation, t ThreadMeta) error // title, archived
+Every call is made as a `Caller`: who it is, which scopes it may see, and which operations it may use. The core checks each call against it. A scope has one owner, the client that gives it its threads; when another client starts a thread there, the core asks the owner for the thread's key, and a chat front end answers by opening a chat thread. Appendix D has the Go declarations.
 
-	Limits() Limits // message length, choices per message, which optional calls work
-}
+Sleep, close and remove join the interface with the phase that needs them. There is no operation to reset or merge anything, for any caller.
 
-type Sink interface {
-	Message(Inbound)  // text, files, author, ids
-	Choice(Selection) // a button or menu was used
-	Command(Command)  // a slash or text command
-}
+### 5.2 Chat front end and surface driver
 
-type Message struct {
-	Text    string
-	Files   []File
-	Choices []Choice    // rendered as buttons or a menu; each carries an opaque token
-	ReplyTo *MessageRef // quote-reply
-	Notify  []Principal // people to ping
-	Quiet   bool        // no notification
-}
-```
+Showing a thread in chat is one client, shared by all chat surfaces. It turns inbound chat into `Start`, `Send`, `Answer` and `Stop`; it reads `Events` and decides what to show; it owns the outbox. Underneath it, a surface driver knows one chat service and nothing about agents or threads of work.
 
-`Message` says what to show, not how. The adapter splits long text, picks buttons or a menu, and maps `Status` to whatever the surface has (a reaction, an edit). `Limits` lets the core avoid asking for what a surface cannot do.
+The driver's calls are: run and deliver inbound messages, button presses and commands; fetch messages since a cursor; open a thread; post, edit and delete a message; set a status on a message; set a thread's title and archived flag; report its limits. A message to post says what to show (text, files, choices, reply target, who to notify), not how.
 
-```go
-// Package agent: a coding agent.
+The driver splits long text, picks buttons or a menu, and maps a status to whatever the surface has (a reaction, an edit). Its limits let the front end avoid asking for what a surface cannot do.
 
-type Adapter interface {
-	// Probe reports whether the agent is installed and logged in.
-	Probe(ctx context.Context) (Health, error)
+### 5.3 Agent adapter
 
-	// Command returns how to start the agent for spec: a new session,
-	// or a resumed one when spec.ResumeID is set.
-	Command(spec Spec) (argv []string, env []string)
-
-	// Interactive returns the command a person runs to take the session over
-	// in the agent's own terminal UI.
-	Interactive(spec Spec) (argv []string)
-
-	// NewCodec returns the translator for one running process.
-	NewCodec(spec Spec) Codec
-}
-
-// Codec turns the agent's output into events and requests into the agent's input.
-// It does no I/O, so it is tested against captured output.
-type Codec interface {
-	Open() [][]byte                                      // bytes to send first (handshake), if any
-	Decode(line []byte) (events []Event, reply [][]byte) // one output line
-	Input(in Input) ([][]byte, error)                    // a user message, during a turn or not
-	Answer(a Answer) ([][]byte, error)                   // to an approval or a question
-	Interrupt() [][]byte
-}
-
-type Spec struct {
-	Dir          string // workspace
-	StateDir     string // attachments, extra instructions; outside the workspace
-	ResumeID     string
-	Model        string
-	Instructions string // appended to the agent's own
-	Approvals    Policy // bypass, or ask in chat
-}
-
-// Event is one thing the agent did. Kind is one of SessionReady, TurnStarted,
-// Text, ToolStarted, ToolProgress, ToolEnded, Request, RequestWithdrawn,
-// FileOut, Usage, Limit, TurnEnded, Unknown.
-type Event struct {
-	Seq  uint64
-	Kind Kind
-	// Plus the fields each kind needs: the text and whether it is final,
-	// the parent tool call, the request id and its questions,
-	// the end status and reason.
-}
-```
+An agent adapter has two parts. The first says how to start the agent for a session (new or resumed), how a person opens the same session in the agent's terminal UI, and whether the agent is installed and logged in. The second is a **codec**: it turns one line of the agent's output into events, and turns a user message, an answer or an interrupt into bytes for the agent's input. The codec does no I/O.
 
 Splitting the agent adapter into a command line and a pure codec is what makes the repository's test rule practical: a capture of real output goes in `testdata/`, and the codec must turn it into the expected events. The session host and the core never see agent-specific bytes.
 
 `TurnEnded` carries a status (`completed`, `interrupted`, `failed`) and a reason (`limit`, `login`, `api_error`, `crashed`). `TurnStarted` says who started it (a person, or the agent itself after a background task). These two fields replace most of the "guessing turn state" group.
+
+### 5.4 Did the first draft allow chat, supervisor and dashboard on one API?
+
+No, not as written. The agent side is unchanged. The surface side was a plug-in that the core called: the core itself received every inbound chat event (the `Sink` interface), owned the outbox, and pushed finished messages to one surface per thread. Nothing in it could list threads, read a thread's state, or follow events, which is all a dashboard does and most of what a supervisor does. And a thread was identified by `(surface, channel, thread)`, which the core had to understand.
+
+What changed: the control API (5.1) now sits between. The methods of the old surface interface survive as the driver (5.2), but `Sink` is implemented by the chat front end, the outbox moved to it, and the core identifies a thread by two opaque strings. The supervisor's tools and the dashboard's server are two more clients, and so is the `hataori` command.
 
 ## 6. Storage and layout
 
@@ -292,7 +246,7 @@ Splitting the agent adapter into a command line and a pure codec is what makes t
 │   ├── hataori.db            SQLite, WAL, one writer (the daemon)
 │   ├── log/
 │   └── sessions/<id>/        events.ndjson, host socket, attachments, extra instructions
-├── workspaces/<surface>/<channel>/<thread>/
+├── workspaces/<surface>/<channel>/<thread>/   the thread's scope and key, as path segments
 ├── mirrors/      one bare mirror per remote
 └── trash/        removed workspaces, kept for the retention period
 ```
@@ -307,12 +261,13 @@ One database file. A schema version table and forward-only migrations (c-lord ha
 
 | Table | Holds |
 |---|---|
-| `threads` | `(surface, channel, thread)`, short number, title, owner, state |
+| `threads` | `(scope, key)`, short number, title, who started it, state |
 | `workspaces` | path, remote, state |
 | `sessions` | agent name, agent session id, state, model, host pid, log offset, last sequence |
 | `turns` | who started it, the message that triggered it, start, end, status, reason |
-| `inbox` | inbound messages by surface message id; the catch-up cursor per conversation |
-| `outbox` | pending and sent posts by `(session, sequence, part)`, with the surface message id |
+| `inbox` | accepted calls by their key; for chat, the catch-up cursor per conversation |
+| `events` | the numbered event log that clients read from a position |
+| `outbox` | the chat front end's pending and sent posts by `(event, part)`, with the surface message id |
 | `requests` | open questions and approvals, their message, their answer |
 | `bindings` | channel to repository, and per-thread overrides |
 | `settings` | model and other choices per scope |
@@ -329,51 +284,117 @@ A second host (for example a macOS machine) is another instance: its own root, d
 
 For macOS specifically: the service manager is launchd, not systemd; the host process must not depend on `/proc`; Claude Code keeps its login in the Keychain there, which a background service may not be able to read **(unverified)**; the default filesystem is case-insensitive, which matters for workspace paths. None of this was run.
 
-## 7. Phases
+## 7. Supervisor and dashboard
 
-Each criterion is met or not. "Core packages" means everything except the adapter packages and `cmd/`.
+Both are wanted, both come after phase 1, and both are clients of the control API. Neither adds a concept to the core.
 
-### Phase 1: Discord and Claude Code, enough for c-lord's daily use
+### 7.1 Supervisor agent
 
-- [ ] Captures of real Claude Code output for every scenario in Appendix B are in `testdata/`, and the codec turns each into the expected events.
-- [ ] A command or text trigger in a bound channel creates a thread, a clone under `workspaces/discord/<channel>/<thread>/`, and a reply in the thread.
-- [ ] A second message in the thread continues the same agent session id.
-- [ ] A turn of 30 minutes ends with its final answer posted once and the sender pinged once.
-- [ ] A question from the agent appears with buttons; pressing one delivers the answer. The same works when the daemon was restarted between question and answer.
-- [ ] Stop ends a running command within 10 seconds and leaves no process of the agent's behind; the next message works.
-- [ ] The daemon is killed with SIGKILL during a turn and started again: the turn finishes, and every reply appears exactly once.
-- [ ] Three messages posted to a thread while the daemon is down are run once each, in order, after it starts.
-- [ ] After the idle period the agent process is gone; the next message resumes the same conversation.
-- [ ] Removal refuses, with the reason, for each of: modified file, untracked file, ignored file not listed as disposable, unpushed commit, stash, commit only in the reflog, submodule with an unpushed commit, nested repository, remote that is another workspace, git error. It removes a clean, pushed workspace. Each test fails when its check is removed.
-- [ ] `hataori attach` opens the conversation in the agent's terminal UI, and a turn typed there is known to the next turn from chat.
-- [ ] A message, a command and a button press from a user who is not allowed each do nothing and are logged.
-- [ ] A usage limit and an expired login each end the turn with one specific message in the thread and one notice to the owner.
-- [ ] One turn-end event (completion, blocked or failure) per turn reaches the configured outlet.
+A supervisor is one ordinary session, Claude Code or Codex, that looks after the threads of one scope (one channel). It is a thread like any other, with its own directory and no repository. It is not an orchestration system: no roles, no task graph, no memory of its own beyond its conversation.
+
+**What it can do.** hataori gives it the control API as MCP tools, through a small MCP server (`hataori mcp`) that connects to the daemon as a `Caller` limited to that scope:
+
+| Tool | Control API call |
+|---|---|
+| list threads | `Threads` |
+| read one thread: state, open question, latest output | `Thread`, output capped |
+| send to a thread | `Send` with `Refuse` when busy |
+| start a thread | `Start` |
+
+**What it cannot do.**
+
+- Interrupt a busy thread. `Send` is refused with "busy" and the supervisor gets the turn-end event later. Interrupting is a separate tool, and each use of it is put to a person as an approval in the supervisor's own thread.
+- Merge, delete or reset. The control API has no such operations, so there is nothing to grant.
+- Touch other workspaces directly. Its session runs without a shell and with file tools confined to its own directory. Checked for Claude Code: with `--restricted --strict-mcp-config --mcp-config <file>` the session had no Bash and no WebFetch, loaded only the listed MCP servers, and a write outside its directory was refused. That mode still leaves subagent and wake-up tools, so the tool list is also narrowed with `--tools` **(not run)**. The Codex equivalent is its read-only or workspace-only sandbox **(not run)**.
+
+One limit is not enforced by this: the supervisor can *ask* a worker thread to merge or delete. What a worker may do is decided by that worker's own rules. Messages from a supervisor are marked as such, so a worker's instructions can treat them differently from a person's.
+
+**When it runs.** It never polls. The core wakes it by sending it one message when something happens in its scope: a turn ended, a question was asked, a turn failed, a usage limit was hit. Its own thread is excluded. Events that arrive while it is busy, or within a short quiet period after the first, are folded into one message.
+
+**How its cost is bounded.**
+
+- *No events, no turns.* An idle scope costs nothing.
+- *Small input per wake.* The wake message is a digest: thread, how the turn ended, the last lines. Reading more is an explicit tool call with a capped answer.
+- *A budget per scope:* supervisor turns per hour, sends and starts per hour, and tokens per day, counted from the usage the agent reports with each turn end (seen in Appendix B). Over budget, the supervisor is not woken; a person is told once.
+- *A loop guard.* A supervisor send that ends a worker turn that wakes the supervisor is a cycle. After a set number of cycles on one thread with no person's message in between, that thread stops waking the supervisor until a person acts.
+- *The ordinary limits apply:* the cap on turns running at once, and sleep when idle.
+- *A cheaper model by default.* Its job is reading digests and routing.
+
+### 7.2 Dashboard
+
+Every thread side by side with its live state and recent output, like tiled terminal panes. The unit is the thread, not the pane, so it does not depend on how hataori talks to the agent. If an adapter that drives a terminal is ever used (section 3.5), that adapter can offer the raw screen as one more view in the tile.
+
+- **Served by hataori**, as a client of the control API: `Threads` for the grid, `Thread` for a tile's content, `Events` from a position for live updates. A page that reconnects asks for events after the last one it saw, so it shows no gap and no repeat.
+- **Read-only first.** The first version makes no call that changes anything. Sending, answering and stopping come later through the same API and the same checks.
+- **A native window later** (Wails or Electron) wraps the same pages. Not designed here.
+
+**Authentication is required, also on a private network.**
+
+- No route, including the event stream, answers without a signed-in session.
+- Sign-in is a short-lived, single-use link. A person asks for it in chat and gets it privately, or the operator prints one on the host. The dashboard session then belongs to that chat identity, so there are no extra passwords and no surface-specific login. Other ways (the chat service's own sign-in) can be added.
+- A person sees a thread only if their `Caller` includes its scope. The channel decides who can read a thread in chat, and the dashboard must not widen that. The first version is owner-only.
+- The server checks `Host` and `Origin` on every request, so a web page elsewhere cannot reach it through the user's browser. Cookies are not readable by scripts. Anything beyond loopback should be served over TLS.
+
+## 8. Phases
+
+Each criterion is met or not. "Core packages" means everything except drivers, agent adapters, clients and `cmd/`.
+
+### Phase 1: replace c-lord for dispatched orders (Discord and Claude Code)
+
+The first deployment's orders are sent by a managing agent, not typed by a person. It starts a thread by posting a text trigger with a repository and a prompt through a channel webhook, follows up through the same webhook, chooses model and effort per order, and learns that a turn ended from an event log. It reads results from the thread and tells a running turn from a stuck one by the progress and subagent lines. Phase 1 is exactly that, plus what running unattended needs (restart safety, sleep), plus the tests.
+
+In phase 1:
+
+- starting from a webhook post in an enabled channel, with `repo:`, `model:` and `effort:` on the trigger line; a default model and effort per channel;
+- follow-ups into the thread through the webhook;
+- only the configured webhooks and the owner are accepted; everything else is ignored and logged;
+- progress text, final answer, the quiet-gap progress line, subagent start and end lines, long replies split, files the agent hands over;
+- a question from the agent shown as text, with the next message as its answer; permission checks bypassed as in c-lord;
+- turn-end events as in section 4.4;
+- `hataori threads`, `hataori thread`, `hataori events`, `hataori stop` on the host. These are the first control API client;
+- the session host, catch-up of missed messages, sleep and resume;
+- one root per instance.
+
+Not in phase 1: slash commands, buttons, the Stop button, lamps, pings, the footer, attachments into the agent, attach by hand, thread naming beyond a title from the prompt, and every way of removing a workspace. Phase 1 never deletes a workspace.
+
+Acceptance:
+
+- [ ] The full test suite exists before the first real order: the codec against captures of real Claude Code output for every scenario in Appendix B, and end-to-end tests with a fake driver and a fake agent for each criterion below that does not need the real services.
+- [ ] A webhook post with the trigger, a repository and a prompt in an enabled channel creates a thread, a clone under `workspaces/discord/<channel>/<thread>/`, and a first reply. The full prompt is in the thread, and editing the channel message afterwards changes nothing.
+- [ ] The same post in a channel that is not enabled, or from an account that is not allowed, starts nothing and writes one log line.
+- [ ] A webhook post into the thread continues the same agent session id.
+- [ ] `model:` and `effort:` on the trigger line are the ones the agent reports for that thread, and the next thread without them gets the channel's defaults.
+- [ ] A turn of 30 minutes ends with its final answer posted once.
+- [ ] Every turn, including one the agent starts by itself after a background task, produces exactly one end event, with who started it and how many background tasks are still running.
+- [ ] `hataori events --after <n>` returns exactly the events after `n`, also after the daemon was restarted.
+- [ ] A question from the agent appears in the thread, produces a `blocked` event, and is answered by the next message.
+- [ ] A usage limit, an expired login and a crashed agent each produce one line in the thread and one `failure` event with that reason. (Recorded from the real CLI when they occur; simulated until then.)
+- [ ] While a tool runs for more than 90 seconds, the thread shows one progress line that is updated in place and removed at the end.
+- [ ] `hataori thread <key>` tells a hataori thread from an ordinary one, and gives its state.
+- [ ] `hataori stop <thread>` ends a running command within 10 seconds and leaves no process of the agent's behind.
+- [ ] The daemon is killed with SIGKILL during a turn and started again: the turn finishes, every reply appears exactly once, and its end event appears once.
+- [ ] Three posts into a thread while the daemon is down are run once each, in order, after it starts.
+- [ ] After the idle period the agent process is gone; the next post resumes the same conversation. The same after all processes were killed, as in a host reboot.
+- [ ] No code path in the binary removes or resets a working directory.
 - [ ] Two instances with different roots on one host each ignore the other's channels.
-- [ ] No core package imports an adapter package or contains the name of a surface or an agent (checked in CI).
-- [ ] The end-to-end test with a fake surface and a fake agent opens a thread, runs a turn and sees it finish.
-- [ ] The maintainer has used it for two weeks on a real project channel without going back to c-lord.
+- [ ] No core package imports a driver, an agent adapter or a client, or contains the name of a surface or an agent (checked in CI).
+- [ ] For one week, every order the deployment's manager sends runs on hataori and none on c-lord.
 
-### Phase 2: Codex
+### After phase 1
 
-- [ ] A channel or thread can be set to Codex; start, continue, sleep and wake work as in Phase 1.
-- [ ] Approvals and questions from Codex appear in the thread and can be answered.
-- [ ] After an interrupt, no command started by that turn is still running.
-- [ ] A turn of 30 minutes completes.
-- [ ] Captures of real `app-server` output are in `testdata/`, and the codec passes on them.
-- [ ] The change touches no core package except the line that registers the adapter.
+The order below is a recommendation (question 8). Each later phase also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter. Appendix E has the acceptance criteria of each.
 
-### Phase 3: Slack
+**People in chat, and cleanup.** Slash commands, buttons for questions, lamps, pings, attach by hand, and removing workspaces behind the proof in section 4.6. This is what lets c-lord be switched off.
 
-Go has no official Slack SDK (official ones are JavaScript, Python and Java); a community library with Socket Mode is assumed **(unverified)**. Socket Mode needs no inbound endpoint.
+**Dashboard, read-only.** Section 7.2.
 
-- [ ] Phase 1's criteria for start, continue, questions, stop, restart and catch-up pass on Slack.
-- [ ] Interactions are acknowledged within Slack's deadline while the work continues.
-- [ ] The change touches no core package except the line that registers the adapter.
+**Supervisor.** Section 7.1.
 
-### Phase 4: Microsoft Teams
+**Codex.** The second agent adapter (section 3.4).
 
-Microsoft's bot SDKs are C#, TypeScript and Python; the older Bot Framework SDK is archived. There is nothing for Go, so the adapter is written against the HTTP protocol. By hand **(the list is from memory, unverified)**:
+**Slack.** Go has no official Slack SDK (official ones are JavaScript, Python and Java); a community library with Socket Mode is assumed **(unverified)**. Socket Mode needs no inbound endpoint.
+
+**Microsoft Teams.** Microsoft's bot SDKs are C#, TypeScript and Python; the older Bot Framework SDK is archived. There is nothing for Go, so the adapter is written against the HTTP protocol. By hand **(the list is from memory, unverified)**:
 
 - an HTTPS endpoint that receives activities, and validation of the signed token on each one;
 - getting and refreshing the service token for outbound calls;
@@ -385,23 +406,27 @@ Microsoft's bot SDKs are C#, TypeScript and Python; the older Bot Framework SDK 
 
 Unlike Discord and Slack Socket Mode, Teams calls hataori. The host needs a public HTTPS address, which is a deployment decision.
 
-- [ ] Phase 1's criteria for start, continue, questions, stop, restart and catch-up pass on Teams.
-- [ ] An activity with an invalid or missing token is rejected.
-- [ ] The change touches no core package except the line that registers the adapter.
+## 9. Future work, not designed here
 
-## 8. Open questions for the maintainer
+**Surfaces without threads.** The core takes a thread as an opaque key, so a surface with no native threads only needs a front end that makes the keys up. The intended rules: a reply to a hataori message continues that message's thread; any other message goes to the thread used last; `/new` starts one; every hataori message begins with the thread's name. If the bot cannot see what a message replies to, one chat is one thread. A surface whose threads expire (LINE OpenChat: 24 hours or two weeks) counts as having none.
+
+## 10. Open questions for the maintainer
 
 1. **Do we accept depending on `claude -p` keeping the subscription login?** It works today. The docs announce `--bare` as a future default, and `--bare` drops the login; the Agent SDK docs restrict third parties from offering claude.ai login. *Recommendation:* go ahead. hataori never handles the login, the dependency is isolated in one adapter, and the alternative is the screen-driving that produced half of c-lord's bugs. State in the README that hataori runs the operator's own CLI and login.
-2. **Is take-over between turns enough, in place of `tmux attach`?** *Recommendation:* yes. `hataori attach` for hands-on work, `hataori tail` to watch.
-3. **A message arrives while a turn runs: interrupt it (c-lord) or deliver it into the turn?** Both agents accept input mid-turn. *Recommendation:* deliver it into the turn; Stop is the explicit way to interrupt.
-4. **Permission checks.** c-lord bypasses them in every session. *Recommendation:* keep bypass as the default in Phase 1 so daily use does not change, and add "ask in chat" as a per-channel setting afterwards; the events for it already exist.
-5. **Is dropping these acceptable?** The HTTP API (replaced by the `hataori` command and webhook triggers), scheduled tasks and notifications, docker container tracking, table images, the status board. *Recommendation:* drop them all for Phase 1; bring scheduled tasks back first if they are missed.
-6. **One bot identity per instance, including a second host?** *Recommendation:* yes. It is the only arrangement in which two instances cannot both act on one message.
-7. **Do existing c-lord threads move to hataori?** *Recommendation:* no. Run both side by side on different channels; let c-lord threads finish where they are.
+2. **Is take-over between turns enough, in place of `tmux attach`?** *Recommendation:* yes. `hataori attach` for hands-on work, `hataori tail` to watch, and later the dashboard.
+3. **A message arrives while a turn runs: interrupt it (c-lord) or deliver it into the turn?** Both agents accept input mid-turn. Today's manager avoids the case by sending only after a turn ends. *Recommendation:* deliver it into the turn; stopping is the explicit way to interrupt.
+4. **Permission checks.** c-lord bypasses them in every session. *Recommendation:* keep bypass as the default so unattended orders do not stall, and add "ask in chat" as a per-channel setting with the buttons.
+5. **Is phase 1 really only the dispatched orders?** Nothing a person types into chat directly is in it: no slash commands, no stop or compact commands, no buttons. *Recommendation:* yes. Keep c-lord for hands-on threads until the next phase.
+6. **Is dropping these acceptable?** The HTTP API (replaced by the `hataori` command, the control API and webhook triggers), scheduled tasks and notifications, docker container tracking, table images, the status board (replaced by the dashboard). *Recommendation:* drop them; bring scheduled tasks back first if they are missed.
+7. **One bot identity per instance, including a second host?** *Recommendation:* yes. It is the only arrangement in which two instances cannot both act on one message.
+8. **Order after phase 1.** *Recommendation:* people in chat and cleanup, then the dashboard, then the supervisor, then Codex, Slack, Teams. The dashboard comes before the supervisor because it is read-only and is how a person watches what a supervisor does.
+9. **May a supervisor have a shell?** With one it could reach other workspaces and the repository host directly, and "cannot merge, delete or reset" would rest on instructions alone. *Recommendation:* no shell; control API tools and files in its own directory only.
+10. **Dashboard sign-in by a link issued in chat?** *Recommendation:* yes, owner-only at first. It reuses the identity and the allow-list hataori already has.
+11. **Do existing c-lord threads move to hataori?** *Recommendation:* no. Run both side by side on different channels; let c-lord threads finish where they are.
 
 ## Appendix A: c-lord feature inventory
 
-Compiled from c-lord's README, `docs/`, `docs/specs/` and code. A reading agent collected the facts; the bridge facts in section 3.1 were re-checked in code, the rest of the rows were not re-checked one by one. Features that c-lord documents but does not run (tool-call embeds, permission buttons, starting a session by posting in the main channel, automatic resume after restart) are left out.
+"Keep" does not mean phase 1; section 8 says what is in phase 1. Compiled from c-lord's README, `docs/`, `docs/specs/` and code. A reading agent collected the facts; the bridge facts in section 3.1 were re-checked in code, the rest of the rows were not re-checked one by one. Features that c-lord documents but does not run (tool-call embeds, permission buttons, starting a session by posting in the main channel, automatic resume after restart) are left out.
 
 ### Starting a session
 
@@ -415,7 +440,7 @@ Compiled from c-lord's README, `docs/`, `docs/specs/` and code. A reading agent 
 | Clear error when the channel is unbound or the bot lacks permissions | keep | A silent start failure looks like a hang. |
 | Run a skill as a command (`/skill`) | change | Becomes an ordinary first message beginning with the skill's name; no separate launch path. |
 | Attach a thread to a hand-made tmux window | drop | No tmux. |
-| Programmatic spawn over HTTP | change | `hataori spawn` on the host, or the text trigger through a webhook. |
+| Programmatic spawn over HTTP | change | The control API: `hataori spawn` on the host, the supervisor's tool, or the text trigger through a webhook. |
 | CI webhook trigger with a fixed server-side prompt | drop | Not wired in c-lord's default setup; the text trigger covers it. |
 
 ### Input and turns
@@ -476,7 +501,7 @@ Compiled from c-lord's README, `docs/`, `docs/specs/` and code. A reading agent 
 | Issue or pull request number in the thread name; manual rename wins | keep | |
 | Thread-name lamp, automatic topic, re-title | drop | Opt-in in c-lord; a source of rate limiting. |
 | Status command with a table of sessions | keep | From the database. |
-| Pinned status board | drop | Opt-in in c-lord (question 5). |
+| Pinned status board | drop | Opt-in in c-lord; the dashboard takes its place (question 6). |
 | Pane screenshot, window list, resync | drop | No pane. |
 | Coordination-channel notices | drop | Unused extra. |
 
@@ -511,7 +536,7 @@ Compiled from c-lord's README, `docs/`, `docs/specs/` and code. A reading agent 
 | Delete refuses to lose work | change | One proof, stricter (section 4.6). |
 | Orphan directory sweep | change | Same proof; unknown directories are reported, not removed. |
 | Skill and history files written into the checkout | change | Passed from outside the working tree. |
-| Docker containers per thread tracked and listed | drop | Deployment-specific (question 5). |
+| Docker containers per thread tracked and listed | drop | Deployment-specific (question 6). |
 
 ### Files
 
@@ -529,14 +554,14 @@ Compiled from c-lord's README, `docs/`, `docs/specs/` and code. A reading agent 
 | Turn-end events (completion, blocked, failure) to a log or signed webhook | keep | The contract that orchestration builds on. |
 | Events for turns the agent starts itself | keep | `TurnStarted` says who started it. |
 | Completion held while background subagents run | keep | From task events instead of a side file. |
-| Scheduled tasks | drop | Not in Phase 1 (question 5). |
+| Scheduled tasks | drop | Question 6. |
 | Scheduled and immediate notifications, "lounge" notes | drop | A second product inside the bot. |
 
 ### Models, limits, login
 
 | Feature | Verdict | Why |
 |---|---|---|
-| Model and effort per thread, channel and instance | keep | Applied by a request to the running session or at the next start. |
+| Model and effort per thread, channel and instance | change | Per order on the trigger line and a default per channel, instead of setting the channel before each order and back after. |
 | Usage limit shown with its reset time | keep | From the rate-limit event, not from screen text. |
 | Messages during a limit are accepted | keep | |
 | Owner told once when the agent is logged out | keep | From `Probe` and the turn's end reason. |
@@ -590,8 +615,9 @@ Claude Code 2.1.322 and codex-cli 0.163.0, Linux, 2026-11-12. Each agent was sta
 | Usage information | `rate_limit_event` with status, window and reset time; `result` with token usage, context window and cost. |
 | Detached process | Started with stdin on a FIFO and stdout on a file; the launching process exited; the turn completed, and a second message through the FIFO was answered. |
 | `--bare` | With the same login and no API key: `Not logged in · Please run /login`. |
+| `--restricted --strict-mcp-config --mcp-config <file>` | The tool list had no Bash and no WebFetch (21 tools instead of 48), only the listed MCP servers were loaded, and a write to a path outside the working directory was refused. Subagent, skill, web search and wake-up tools were still listed. |
 
-Not checked: turns of hours; what the stream shows at a real usage limit or an expired login; `/compact` in `-p`; plan approval; two processes on one session at once.
+Not checked: turns of hours; what the stream shows at a real usage limit or an expired login; `/compact` in `-p`; plan approval; two processes on one session at once; MCP tools given with `--mcp-config` and their approval requests; `--tools`; events for background subagents.
 
 ### Codex: `codex app-server` (stdio, one JSON object per line)
 
@@ -636,3 +662,195 @@ All numbers are `yousan/c-lord` issues.
 - **Rendering helpers (15):** 210 408 415 588 607 623 664 683 750 1035 1036 1087 1096 1097 1175
 - **Workspace setup and mirrors (12):** 366 476 477 681 923 1116 1133 1134 1135 1173 1174 1268
 - **Other (45):** 3 61 65 66 98 148 154 164 183 186 233 331 341 397 401 428 432 436 437 491 492 520 523 528 543 551 559 612 616 619 634 678 687 693 699 810 836 880 881 927 976 1100 1103 1113 1182
+
+## Appendix D: interfaces in Go
+
+Drafts. Names will move during phase 1; the split between the three packages should not.
+
+### Control API
+
+```go
+// Package control: everything a client can ask of the core.
+
+type API interface {
+	Threads(ctx context.Context, f Filter) ([]ThreadInfo, error)
+	// Thread returns state, open requests and the last output, capped at recent bytes.
+	Thread(ctx context.Context, id ThreadID, recent int) (ThreadDetail, error)
+
+	Start(ctx context.Context, r StartRequest) (ThreadID, error)
+	Send(ctx context.Context, id ThreadID, in Input, busy Busy) error
+	Answer(ctx context.Context, req RequestID, a Answer) error
+	Stop(ctx context.Context, id ThreadID) error
+
+	// Events delivers events after a position, then live ones.
+	Events(ctx context.Context, f Filter, after uint64) (<-chan Event, error)
+}
+
+// Caller is who is asking. An API value is bound to one Caller,
+// and the core checks every call against it.
+type Caller struct {
+	Principal Principal // a person, a webhook, a supervisor, a dashboard user
+	Scopes    []string  // the scopes it may see and act in
+	May       Ops       // any of Read, Start, Send, Answer, Stop
+}
+
+type StartRequest struct {
+	Key    string // safe to repeat: the same key starts nothing twice
+	Scope  string // opaque; for chat, a channel
+	Thread string // opaque key, or empty to let the scope's owner make one
+	Repo   string
+	Input  Input
+	Model  string
+	Effort string
+}
+
+// Busy says what Send does when a turn is running.
+type Busy int // Refuse, Deliver, Interrupt
+
+// ScopeOwner is the client that gives a scope its threads. When another client
+// starts a thread there, the core asks the owner for the key; a chat front end
+// opens a chat thread and returns its id.
+type ScopeOwner interface {
+	NewThread(ctx context.Context, scope, title string) (key string, err error)
+}
+```
+
+Sleep, close and remove join the interface with the phase that needs them.
+
+### Surface driver
+
+```go
+// Package surface: a chat service.
+
+type Driver interface {
+	// Run connects and delivers inbound events to sink until ctx ends.
+	// It reconnects by itself and calls sink in order per conversation.
+	Run(ctx context.Context, sink Sink) error
+
+	// Since returns the messages in a conversation after cursor,
+	// for catching up after an outage.
+	Since(ctx context.Context, conv Conversation, cursor string) ([]Inbound, error)
+
+	OpenThread(ctx context.Context, parent Conversation, title string) (Conversation, error)
+	Post(ctx context.Context, conv Conversation, key string, m Message) (MessageRef, error)
+	Edit(ctx context.Context, ref MessageRef, m Message) error
+	Delete(ctx context.Context, ref MessageRef) error
+	SetStatus(ctx context.Context, ref MessageRef, s Status) error        // lamp on a message
+	SetThread(ctx context.Context, conv Conversation, t ThreadMeta) error // title, archived
+
+	Limits() Limits // message length, choices per message, which optional calls work
+}
+
+// Sink is implemented by the chat front end, not by the core.
+type Sink interface {
+	Message(Inbound)  // text, files, author, ids
+	Choice(Selection) // a button or menu was used
+	Command(Command)  // a slash or text command
+}
+
+type Message struct {
+	Text    string
+	Files   []File
+	Choices []Choice    // rendered as buttons or a menu; each carries an opaque token
+	ReplyTo *MessageRef // quote-reply
+	Notify  []Principal // people to ping
+	Quiet   bool        // no notification
+}
+```
+
+### Agent adapter
+
+```go
+// Package agent: a coding agent.
+
+type Adapter interface {
+	// Probe reports whether the agent is installed and logged in.
+	Probe(ctx context.Context) (Health, error)
+
+	// Command returns how to start the agent for spec: a new session,
+	// or a resumed one when spec.ResumeID is set.
+	Command(spec Spec) (argv []string, env []string)
+
+	// Interactive returns the command a person runs to take the session over
+	// in the agent's own terminal UI.
+	Interactive(spec Spec) (argv []string)
+
+	// NewCodec returns the translator for one running process.
+	NewCodec(spec Spec) Codec
+}
+
+// Codec turns the agent's output into events and requests into the agent's input.
+// It does no I/O, so it is tested against captured output.
+type Codec interface {
+	Open() [][]byte                                      // bytes to send first (handshake), if any
+	Decode(line []byte) (events []Event, reply [][]byte) // one output line
+	Input(in Input) ([][]byte, error)                    // a user message, during a turn or not
+	Answer(a Answer) ([][]byte, error)                   // to an approval or a question
+	Interrupt() [][]byte
+}
+
+type Spec struct {
+	Dir          string // workspace
+	StateDir     string // attachments, extra instructions; outside the workspace
+	ResumeID     string
+	Model        string
+	Instructions string // appended to the agent's own
+	Approvals    Policy // bypass, or ask in chat
+}
+
+// Event is one thing the agent did. Kind is one of SessionReady, TurnStarted,
+// Text, ToolStarted, ToolProgress, ToolEnded, Request, RequestWithdrawn,
+// FileOut, Usage, Limit, TurnEnded, Unknown.
+type Event struct {
+	Seq  uint64
+	Kind Kind
+	// Plus the fields each kind needs: the text and whether it is final,
+	// the parent tool call, the request id and its questions,
+	// the end status and reason.
+}
+```
+
+## Appendix E: acceptance criteria after phase 1
+
+Every phase here also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter.
+
+### People in chat, and cleanup
+
+- [ ] Slash commands start a thread, stop a turn and show status. A message, a command and a button press from a user who is not allowed each do nothing and are logged.
+- [ ] A question appears with buttons; pressing one delivers the answer, also when the daemon was restarted in between.
+- [ ] The sender's message carries a lamp for working, done and error, and the sender is pinged once when the turn ends.
+- [ ] `hataori attach` opens the conversation in the agent's terminal UI, and a turn typed there is known to the next turn from chat.
+- [ ] Removal refuses, with the reason, for each of: modified file, untracked file, ignored file not listed as disposable, unpushed commit, stash, commit only in the reflog, submodule with an unpushed commit, nested repository, remote that is another workspace, git error. It removes a clean, pushed workspace. Each test fails when its check is removed.
+
+### Dashboard, read-only
+
+- [ ] Without a signed-in session every route, including the event stream, answers 401. A request with an unknown `Host` is refused.
+- [ ] Each thread in the user's scopes is a tile whose state and last output follow the events within 2 seconds. A thread outside those scopes is never sent to the browser.
+- [ ] After a daemon restart the open page catches up with no gap and no repeat.
+- [ ] Every request that is not a read is refused.
+
+### Supervisor
+
+- [ ] With every thread in its scope idle for an hour, the supervisor's session makes no model request.
+- [ ] One turn end in its scope starts one supervisor turn; ten within the quiet period start one.
+- [ ] Sending to a busy thread is refused. Interrupting happens only after a person approved that call.
+- [ ] Attempts by the supervisor's session to write outside its directory, to run a command, and to remove a workspace each fail (tested).
+- [ ] When the budget is used up no supervisor turn starts, and a person is told once. The loop guard stops a two-thread ping-pong at the set count.
+
+### Codex
+
+- [ ] A channel or thread can be set to Codex; start, continue, sleep and wake work as in phase 1.
+- [ ] Approvals and questions from Codex appear in the thread and can be answered.
+- [ ] After an interrupt, no command started by that turn is still running.
+- [ ] A turn of 30 minutes completes.
+- [ ] Captures of real `app-server` output are in `testdata/`, and the codec passes on them.
+
+### Slack
+
+- [ ] Phase 1's criteria for start, continue, questions, restart and catch-up pass on Slack.
+- [ ] Interactions are acknowledged within Slack's deadline while the work continues.
+
+### Microsoft Teams
+
+- [ ] Phase 1's criteria for start, continue, questions, restart and catch-up pass on Teams.
+- [ ] An activity with an invalid or missing token is rejected.
