@@ -1,0 +1,331 @@
+package host
+
+import (
+	"bufio"
+	"bytes"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	"golang.org/x/term"
+)
+
+// The test binary is also the host and every command the tests run:
+// `<test binary> role <name> args...` runs one of the roles below.
+func TestMain(m *testing.M) {
+	if len(os.Args) > 2 && os.Args[1] == "role" {
+		os.Exit(role(os.Args[2], os.Args[3:]))
+	}
+	os.Exit(m.Run())
+}
+
+func role(name string, args []string) int {
+	switch name {
+	case "host":
+		if err := Run(args[0]); err != nil {
+			return 1
+		}
+		return 0
+	case "printenv":
+		wd, _ := os.Getwd()
+		fmt.Printf("cwd=%s\n", wd)
+		for _, kv := range os.Environ() {
+			fmt.Printf("env=%s\n", kv)
+		}
+		return 0
+	case "lines":
+		os.Stdout.Write(testLines())
+		return 0
+	case "size":
+		w, h, err := term.GetSize(0)
+		fmt.Printf("size=%dx%d err=%v\n", h, w, err)
+		r := bufio.NewScanner(os.Stdin) // then answer input until the terminal closes
+		for r.Scan() {
+			fmt.Printf("got %s\n", r.Text())
+		}
+		return 0
+	case "rawread": // rawread <file>: raw mode, then everything up to the paste end
+		old, err := term.MakeRaw(0)
+		if err != nil {
+			fmt.Println("raw:", err)
+			return 1
+		}
+		defer term.Restore(0, old)
+		fmt.Print("ready\r\n")
+		var got []byte
+		buf := make([]byte, 4096)
+		for !bytes.HasSuffix(got, []byte(pasteEnd)) {
+			n, err := os.Stdin.Read(buf)
+			got = append(got, buf[:n]...)
+			if err != nil {
+				break
+			}
+		}
+		os.WriteFile(args[0], got, 0o600)
+		fmt.Print("done\r\n")
+		return 0
+	case "echo": // answer every input line
+		r := bufio.NewScanner(os.Stdin)
+		for r.Scan() {
+			fmt.Printf("got %s\n", r.Text())
+		}
+		return 0
+	case "exit":
+		n, _ := strconv.Atoi(args[0])
+		return n
+	case "starter": // starter <state> <terminal>: start a host, then wait to be killed
+		_, err := Start(hostCommand(), args[0], Spec{Argv: []string{os.Args[0], "role", "echo"}, Terminal: args[1] == "true", Env: []string{}})
+		if err != nil {
+			fmt.Println("start:", err)
+			return 1
+		}
+		fmt.Println("started")
+		select {}
+	}
+	return 99
+}
+
+const pasteStart, pasteEnd = "\x1b[200~", "\x1b[201~"
+
+func hostCommand() Command { return Command{Path: os.Args[0], Args: []string{"role", "host"}} }
+
+func testLines() []byte {
+	var b bytes.Buffer
+	b.WriteString(`{"json":true}` + "\n")
+	b.WriteString("not json at all\n")
+	b.Write([]byte{0xff, 0xfe, 'x', 0xc3, '\n'}) // not UTF-8
+	b.WriteString(strings.Repeat("m", 1<<20) + "\n")
+	b.WriteString("\n") // an empty line
+	b.WriteString("last\n")
+	return b.Bytes()
+}
+
+// waitFor polls cond until it holds or the time limit passes.
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// killGroups kills the host and the command of stateDir, and only those.
+func killGroups(stateDir string) {
+	for _, f := range []string{PIDFile, HostPIDFile} {
+		if b, err := os.ReadFile(filepath.Join(stateDir, f)); err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid > 1 {
+				syscall.Kill(-pid, syscall.SIGKILL) // both lead their own group
+			}
+		}
+	}
+}
+
+// startHost starts a host for spec and arranges that nothing it started
+// survives the test.
+func startHost(t *testing.T, spec Spec) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Cleanup(func() { killGroups(dir) })
+	if _, err := Start(hostCommand(), dir, spec); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func read(t *testing.T, dir, name string) []byte {
+	b, _ := os.ReadFile(filepath.Join(dir, name))
+	return b
+}
+
+func self(args ...string) []string { return append([]string{os.Args[0], "role"}, args...) }
+
+func TestDirectoryAndEnvironment(t *testing.T) {
+	work := t.TempDir()
+	env := []string{"ONE=1", "TWO=two words", "EMPTY="}
+	for _, terminal := range []bool{false, true} {
+		t.Run(fmt.Sprint("terminal=", terminal), func(t *testing.T) {
+			dir := t.TempDir()
+			t.Cleanup(func() { killGroups(dir) })
+			// The host has an environment of its own, which must not leak.
+			hc := hostCommand()
+			hc.Env = []string{"HOST_ONLY=leaked"}
+			if _, err := Start(hc, dir, Spec{Argv: self("printenv"), Dir: work, Env: env, Terminal: terminal}); err != nil {
+				t.Fatal(err)
+			}
+			waitFor(t, "the command to end", func() bool { return Gone(dir) })
+			out := read(t, dir, EventsFile)
+			if terminal {
+				out = bytes.ReplaceAll(read(t, dir, TerminalLog), []byte("\r\n"), []byte("\n"))
+			}
+			want := "cwd=" + work + "\n"
+			for _, kv := range env {
+				want += "env=" + kv + "\n"
+			}
+			if string(out) != want {
+				t.Fatalf("command saw:\n%s\nwant:\n%s", out, want)
+			}
+		})
+	}
+}
+
+func TestPipeLinesByteForByte(t *testing.T) {
+	dir := startHost(t, Spec{Argv: self("lines"), Env: []string{}})
+	waitFor(t, "the command to end", func() bool { return Gone(dir) })
+	if got := read(t, dir, EventsFile); !bytes.Equal(got, testLines()) {
+		t.Fatalf("events.ndjson differs from the output: %d bytes, want %d", len(got), len(testLines()))
+	}
+}
+
+func TestTerminalSizeAndBoundedLog(t *testing.T) {
+	dir := startHost(t, Spec{Argv: self("size"), Env: []string{}, Terminal: true, Rows: 40, Cols: 123, LogLimit: 64 << 10})
+	waitFor(t, "the size line", func() bool { return bytes.Contains(read(t, dir, TerminalLog), []byte("size=40x123 err=<nil>")) })
+
+	// Fill the log past its limit with the command's answers. (The
+	// terminal's own echo is not waited for: the kernel may drop it.)
+	c, err := Dial(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	chunk := []byte(strings.Repeat("x", 1000) + "\n")
+	for range 200 {
+		if err := c.Input(chunk); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c.Input([]byte("end-of-fill\n"))
+	waitFor(t, "the last answer", func() bool { return bytes.Contains(read(t, dir, TerminalLog), []byte("got end-of-fill")) })
+	st, _ := os.Stat(filepath.Join(dir, TerminalLog))
+	if st.Size() > 64<<10 {
+		t.Fatalf("terminal log is %d bytes, limit %d", st.Size(), 64<<10)
+	}
+	if bytes.Contains(read(t, dir, TerminalLog), []byte("size=")) {
+		t.Fatal("the oldest part of the log was not dropped")
+	}
+}
+
+func TestTerminalPasteArrivesUnchanged(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "got")
+	dir := startHost(t, Spec{Argv: self("rawread", out), Env: []string{}, Terminal: true})
+	waitFor(t, "raw mode", func() bool { return bytes.Contains(read(t, dir, TerminalLog), []byte("ready")) })
+
+	var body bytes.Buffer
+	body.WriteString("-leading dash ")
+	for body.Len() < 100<<10 {
+		body.WriteString("日本語のテキスト ✓ \x01\x03\x04\x1a\x7f\t\r\n tab;")
+	}
+	body.WriteString(" trailing;")
+	paste := []byte(pasteStart + body.String() + pasteEnd)
+
+	c, err := Dial(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	for i := 0; i < len(paste); i += 7000 { // several writes, in order
+		if err := c.Input(paste[i:min(i+7000, len(paste))]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitFor(t, "the reader to finish", func() bool { _, err := os.Stat(out); return err == nil })
+	got, _ := os.ReadFile(out)
+	if !bytes.Equal(got, paste) {
+		t.Fatalf("the command read %d bytes, want %d identical bytes", len(got), len(paste))
+	}
+}
+
+func TestInputInOrderAndSecondClient(t *testing.T) {
+	dir := startHost(t, Spec{Argv: self("echo"), Env: []string{}})
+	for client := range 2 {
+		c, err := Dial(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range 50 {
+			if err := c.Input(fmt.Appendf(nil, "c%d-%d\n", client, i)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		c.Close()
+	}
+	var want strings.Builder
+	for client := range 2 {
+		for i := range 50 {
+			fmt.Fprintf(&want, "got c%d-%d\n", client, i)
+		}
+	}
+	waitFor(t, "every echo", func() bool { return string(read(t, dir, EventsFile)) == want.String() })
+}
+
+func TestHostOutlivesItsStarter(t *testing.T) {
+	for _, terminal := range []bool{false, true} {
+		t.Run(fmt.Sprint("terminal=", terminal), func(t *testing.T) {
+			dir := t.TempDir()
+			t.Cleanup(func() { killGroups(dir) })
+			starter := exec.Command(os.Args[0], "role", "starter", dir, fmt.Sprint(terminal))
+			out, _ := starter.StdoutPipe()
+			if err := starter.Start(); err != nil {
+				t.Fatal(err)
+			}
+			line, _ := bufio.NewReader(out).ReadString('\n')
+			if line != "started\n" {
+				starter.Process.Kill()
+				starter.Wait()
+				t.Fatalf("starter: %q", line)
+			}
+			starter.Process.Signal(syscall.SIGKILL)
+			starter.Wait()
+
+			logFile := EventsFile
+			if terminal {
+				logFile = TerminalLog
+			}
+			waitFor(t, "the host's socket", func() bool { _, err := os.Stat(SocketPath(dir)); return err == nil })
+			c, err := Dial(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.Close()
+			if err := c.Input([]byte("after the starter died\n")); err != nil {
+				t.Fatal(err)
+			}
+			waitFor(t, "the command's answer", func() bool {
+				return bytes.Contains(read(t, dir, logFile), []byte("got after the starter died"))
+			})
+		})
+	}
+}
+
+func TestExitIsRecordedAndSocketRemoved(t *testing.T) {
+	dir := startHost(t, Spec{Argv: self("exit", "7"), Env: []string{}})
+	waitFor(t, "the status", func() bool { _, ok, _ := ReadStatus(dir); return ok })
+	st, _, err := ReadStatus(dir)
+	if err != nil || !st.Exited || st.Code != 7 {
+		t.Fatalf("status %+v, %v", st, err)
+	}
+	if _, err := os.Stat(SocketPath(dir)); !os.IsNotExist(err) {
+		t.Fatalf("socket after exit: %v", err)
+	}
+}
+
+// The package reads nothing under /proc.
+func TestNoProc(t *testing.T) {
+	files, _ := filepath.Glob("*.go")
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		if b, _ := os.ReadFile(f); bytes.Contains(b, []byte("/proc")) {
+			t.Errorf("%s mentions /proc", f)
+		}
+	}
+}
