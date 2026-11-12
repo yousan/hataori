@@ -122,6 +122,11 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 		for k, v := range o.Data {
 			data[k] = v
 		}
+		if req, ok := data["request"].(string); ok {
+			// Clients name a request by its handle; the agent's id is
+			// unique only in its session.
+			data["request"] = string(RequestHandle(sessionID, req))
+		}
 		switch o.Kind {
 		case KindTurnEnded:
 			data["turn"] = endedTurn
@@ -153,6 +158,12 @@ const (
 	RequestClosed    = "closed"    // the agent's process ended while it was open
 )
 
+// RequestHandle is how the control API names the request agentID of a
+// session.
+func RequestHandle(sessionID int64, agentID string) control.RequestID {
+	return control.RequestID(fmt.Sprintf("%d:%s", sessionID, agentID))
+}
+
 // recordRequest keeps the session's requests: a question or approval from
 // the agent opens one, an answer or the agent's withdrawal closes it, and
 // so does the end of the agent's process. An answer to a request that is
@@ -175,11 +186,11 @@ func recordRequest(ctx context.Context, tx *store.Tx, sessionID int64, in Input,
 	case in.Kind == AgentEvent && in.Agent.Kind == agent.Request:
 		q := in.Agent.Request
 		choices, _ := json.Marshal(append([]string{}, q.Choices...))
-		_, err := tx.ExecContext(ctx, `INSERT INTO requests (session_id, request, approval, text, choices, state, opened_at)
-			VALUES (?, ?, ?, ?, ?, 'open', ?)
+		_, err := tx.ExecContext(ctx, `INSERT INTO requests (session_id, request, handle, approval, text, choices, state, opened_at)
+			VALUES (?, ?, ?, ?, ?, ?, 'open', ?)
 			ON CONFLICT (session_id, request) DO UPDATE SET approval = excluded.approval, text = excluded.text,
 				choices = excluded.choices, state = 'open', opened_at = excluded.opened_at, closed_at = NULL`,
-			sessionID, q.ID, q.Approval, q.Text, string(choices), now)
+			sessionID, q.ID, string(RequestHandle(sessionID, q.ID)), q.Approval, q.Text, string(choices), now)
 		if err != nil {
 			return fmt.Errorf("session: request: %w", err)
 		}

@@ -51,7 +51,8 @@ type Runner interface {
 	// Deliver gives input to a session's agent.
 	Deliver(ctx context.Context, sessionID int64, in control.Input) error
 	// Answer gives the answer of an open request to a session's agent.
-	Answer(ctx context.Context, sessionID int64, req control.RequestID, a control.Answer) error
+	// req is the agent's own id of the request.
+	Answer(ctx context.Context, sessionID int64, req string, a control.Answer) error
 	// Interrupt stops a session's running turn.
 	Interrupt(ctx context.Context, sessionID int64) error
 }
@@ -245,7 +246,7 @@ func (c *Core) openRequest(ctx context.Context, q querier, id control.ThreadID) 
 		choices  string
 	)
 	err := q.QueryRowContext(ctx, `
-		SELECT r.request, r.approval, r.text, r.choices FROM requests r
+		SELECT r.handle, r.approval, r.text, r.choices FROM requests r
 		WHERE r.state = 'open' AND r.session_id = (
 			SELECT s.id FROM sessions s JOIN threads t ON t.id = s.thread_id
 			WHERE t.scope = ? AND t.key = ? ORDER BY s.id DESC LIMIT 1)
@@ -444,7 +445,7 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 		sid       int64
 		accepted  bool
 		interrupt bool
-		answer    control.RequestID // the open question this input answers
+		answer    string // the agent's id of the open question this input answers
 	)
 	// The state is read in the write transaction, so it cannot change
 	// between the Busy decision and the input.
@@ -473,14 +474,16 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 		accepted = true
 		if state == control.Waiting {
 			// The input is the answer to the open question.
-			req, ok, err := a.c.openRequest(ctx, tx, id)
-			if err != nil {
-				return err
+			var req string
+			err := tx.QueryRowContext(ctx, `SELECT request FROM requests WHERE session_id = ? AND state = 'open'
+				ORDER BY id DESC LIMIT 1`, sid).Scan(&req)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("core: request: %w", err)
 			}
-			if ok {
-				answer = req.ID
+			if err == nil {
+				answer = req
 				return a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal,
-					Key: key, Text: in.Text, Request: string(req.ID)})
+					Key: key, Text: in.Text, Request: req})
 			}
 		}
 		return a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Send, Principal: a.caller.Principal, Key: key, Text: in.Text})
@@ -504,14 +507,15 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 		return err
 	}
 	var (
-		id    control.ThreadID
-		sid   int64
-		state string
+		id       control.ThreadID
+		sid      int64
+		agentReq string
+		state    string
 	)
 	err := a.c.Store.DB.QueryRowContext(ctx, `
-		SELECT t.scope, t.key, r.session_id, r.state FROM requests r
+		SELECT t.scope, t.key, r.session_id, r.request, r.state FROM requests r
 		JOIN sessions s ON s.id = r.session_id JOIN threads t ON t.id = s.thread_id
-		WHERE r.request = ? ORDER BY r.id DESC LIMIT 1`, string(req)).Scan(&id.Scope, &id.Key, &sid, &state)
+		WHERE r.handle = ?`, string(req)).Scan(&id.Scope, &id.Key, &sid, &agentReq, &state)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -527,13 +531,13 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 	}
 	// The machine refuses it, atomically, if it was closed since.
 	if err := a.c.Machine.Apply(ctx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal,
-		Key: "answer:" + string(req), Text: ans.Text, Request: string(req)}); err != nil {
+		Key: "answer:" + string(req), Text: ans.Text, Request: agentReq}); err != nil {
 		if errors.Is(err, session.ErrRefused) {
 			return fmt.Errorf("core: answer %q: %w: %w", req, ErrNotOpen, err)
 		}
 		return err
 	}
-	return a.c.Runner.Answer(ctx, sid, req, ans)
+	return a.c.Runner.Answer(ctx, sid, agentReq, ans)
 }
 
 func (a *api) Stop(ctx context.Context, id control.ThreadID) error {

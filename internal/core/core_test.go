@@ -35,8 +35,8 @@ func (r *fakeRunner) Start(_ context.Context, l Launch) error {
 func (r *fakeRunner) Deliver(_ context.Context, _ int64, in control.Input) error {
 	return r.record("deliver " + in.Text)
 }
-func (r *fakeRunner) Answer(_ context.Context, _ int64, req control.RequestID, _ control.Answer) error {
-	return r.record("answer " + string(req))
+func (r *fakeRunner) Answer(_ context.Context, _ int64, req string, _ control.Answer) error {
+	return r.record("answer " + req)
 }
 func (r *fakeRunner) Interrupt(context.Context, int64) error { return r.record("interrupt") }
 func (r *fakeRunner) Calls() string {
@@ -146,8 +146,10 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 			_, err := a.Start(ctx, control.StartRequest{Key: "k2", Scope: "s", Thread: "t2"})
 			return err
 		},
-		"Send":   func(a control.API) error { return a.Send(ctx, id, "m9", control.Input{Text: "x"}, control.Deliver) },
-		"Answer": func(a control.API) error { return a.Answer(ctx, "r1", control.Answer{Text: "x"}) },
+		"Send": func(a control.API) error { return a.Send(ctx, id, "m9", control.Input{Text: "x"}, control.Deliver) },
+		"Answer": func(a control.API) error {
+			return a.Answer(ctx, session.RequestHandle(sid, "r1"), control.Answer{Text: "x"})
+		},
 		"Stop":   func(a control.API) error { return a.Stop(ctx, id) },
 		"Events": func(a control.API) error { _, err := a.Events(ctx, control.Filter{Scope: "s"}, 0); return err },
 	}
@@ -264,7 +266,7 @@ func TestThreadDetail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.State != control.Waiting || len(d.Requests) != 1 || d.Requests[0].ID != "r1" || len(d.Requests[0].Choices) != 2 {
+	if d.State != control.Waiting || len(d.Requests) != 1 || d.Requests[0].ID != session.RequestHandle(sid, "r1") || len(d.Requests[0].Choices) != 2 {
 		t.Fatalf("detail: %+v", d)
 	}
 	if d.Recent != "rt, second part" {
@@ -370,7 +372,7 @@ func TestQuestionIsAnsweredOnce(t *testing.T) {
 		t.Fatalf("%d blocked events", n)
 	}
 
-	if err := f.owner.Answer(ctx, "r1", control.Answer{Text: "a"}); err != nil {
+	if err := f.owner.Answer(ctx, session.RequestHandle(sid, "r1"), control.Answer{Text: "a"}); err != nil {
 		t.Fatal(err)
 	}
 	if d, _ := f.owner.Thread(ctx, id, 0); d.State != control.Running {
@@ -380,7 +382,7 @@ func TestQuestionIsAnsweredOnce(t *testing.T) {
 	if !strings.HasSuffix(calls, "answer r1") {
 		t.Fatalf("runner calls: %q", calls)
 	}
-	if err := f.owner.Answer(ctx, "r1", control.Answer{Text: "b"}); !errors.Is(err, ErrNotOpen) {
+	if err := f.owner.Answer(ctx, session.RequestHandle(sid, "r1"), control.Answer{Text: "b"}); !errors.Is(err, ErrNotOpen) {
 		t.Fatalf("second answer: %v", err)
 	}
 
@@ -395,7 +397,7 @@ func TestQuestionIsAnsweredOnce(t *testing.T) {
 		t.Fatalf("withdrawn request is %s", s)
 	}
 	calls = f.runner.Calls()
-	if err := f.owner.Answer(ctx, "r2", control.Answer{Text: "yes"}); !errors.Is(err, ErrNotOpen) {
+	if err := f.owner.Answer(ctx, session.RequestHandle(sid, "r2"), control.Answer{Text: "yes"}); !errors.Is(err, ErrNotOpen) {
 		t.Fatalf("answer to a withdrawn request: %v", err)
 	}
 	if f.runner.Calls() != calls {
@@ -423,5 +425,23 @@ func TestSendAnswersTheOpenQuestion(t *testing.T) {
 	f.core.Store.DB.QueryRow(`SELECT json_extract(data, '$.text') FROM events WHERE kind = 'answer'`).Scan(&text)
 	if text != "blue" {
 		t.Fatalf("answer event text %q", text)
+	}
+}
+
+// Agents number their requests per session, so two sessions can ask "q1".
+func TestSameRequestIDInTwoSessions(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{})
+	_, s1 := f.running(t, "t1")
+	_, s2 := f.running(t, "t2")
+	f.agentEvent(t, s1, 2, agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: "q1", Text: "one?"}})
+	f.agentEvent(t, s2, 2, agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: "q1", Text: "two?"}})
+	if err := f.owner.Answer(ctx, session.RequestHandle(s1, "q1"), control.Answer{Text: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	var states string
+	f.core.Store.DB.QueryRow(`SELECT group_concat(state, ',') FROM (SELECT state FROM requests ORDER BY session_id)`).Scan(&states)
+	if states != "answered,open" {
+		t.Fatalf("request states by session: %s", states)
 	}
 }

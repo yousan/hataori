@@ -108,7 +108,8 @@ var migrations = []Migration{
 		`CREATE TABLE requests (
 			id         INTEGER PRIMARY KEY,
 			session_id INTEGER NOT NULL REFERENCES sessions (id),
-			request    TEXT NOT NULL, -- the agent's request id
+			request    TEXT NOT NULL, -- the agent's request id, unique in its session
+			handle     TEXT NOT NULL UNIQUE, -- the control API's RequestID
 			approval   INTEGER NOT NULL DEFAULT 0,
 			text       TEXT NOT NULL DEFAULT '',
 			choices    TEXT NOT NULL DEFAULT '[]', -- JSON array of strings
@@ -117,7 +118,6 @@ var migrations = []Migration{
 			closed_at  INTEGER,
 			UNIQUE (session_id, request)
 		)`,
-		`CREATE INDEX requests_request ON requests (request)`,
 	)},
 }
 
