@@ -140,7 +140,7 @@ The four drivers were run in turn, three rounds.
 | mattn (cgo) | 699 ms / 768 ms / 710 ms | 71 µs | 10.1 / 4.9 / 5.1 ms |
 | zombiezen | 560 ms / 596 ms / 597 ms | 60 µs | 1.5 / 1.6 / 2.6 ms |
 
-All four are within about 25 % of each other on inserts, and the spread between runs of one driver is as large as the spread between drivers. Reading back is a few milliseconds for all of them. zombiezen is slightly faster than modernc on the same SQLite code because it skips `database/sql`.
+All four are within about 25 % of each other on inserts, and the spread between runs of one driver is as large as the spread between drivers. Reading back is a few milliseconds for all of them. zombiezen is slightly faster than modernc on the same SQLite code; its bench path reuses prepared statements (`sqlitex.Execute`) and does not go through `database/sql`, and this benchmark does not separate the two causes.
 
 ### `synchronous=FULL`, one round
 
