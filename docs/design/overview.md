@@ -9,25 +9,26 @@ How to read it:
 - Issue numbers written `c-lord#123` are issues of `yousan/c-lord`.
 - c-lord facts come from its docs and code at v1.4.420.
 - Claims about the agent CLIs were checked on 2026-11-12 against Claude Code 2.1.322 and codex-cli 0.163.0 on Linux, by driving the real programs. Appendix B lists each check.
+- Section 3 first recommended `claude -p`. The maintainer decided against it; sections 3.4 and 3.5 describe the path chosen instead, and the earlier checks stay in the document as the record.
 - Anything marked **(unverified)** was not checked by running it.
 
 ## 1. Summary
 
-1. **Talk to agents through their structured interfaces, not their screens.** Claude Code runs as `claude -p` with `stream-json` in both directions. Codex runs as `codex app-server` (JSON-RPC). Both kept the subscription login, ran a 15-minute turn, and delivered permission prompts, questions, interrupt and resume as messages (section 3).
-2. **This removes about half of c-lord's bugs by construction.** Of 443 bug issues, 106 came from driving a terminal (reading it, typing into it, keeping track of tmux windows), and 123 from rebuilding output and turn state out of a transcript file and timers (section 2).
-3. **The price is live typing into a running session.** A person can still take a session over in the agent's own terminal UI between turns, and hand it back. They cannot type into it while hataori is driving it (section 3.4).
-4. **Each agent process runs under a small session host that outlives the hataori daemon.** Restarting or upgrading hataori does not stop running turns, and output is read from a file with a stored position, so nothing is lost or posted twice (section 4.3).
+1. **Learn what an agent is doing from what it reports, never from its screen.** Claude Code runs as the ordinary interactive `claude` in a terminal that hataori owns: turn start and end, questions and permission requests come from Claude Code hooks, text from the transcript the hooks point to, and input goes in by paste. Codex runs as `codex app-server` (JSON-RPC). hataori never touches login; whatever the installed CLI is logged in with works (section 3).
+2. **This removes most of the causes behind half of c-lord's bugs.** Of 443 bug issues, 106 came from driving a terminal (reading it, typing into it, keeping track of tmux windows), and 123 from rebuilding output and turn state out of a transcript file and timers (section 2).
+3. **A person can attach to a live session.** Because Claude Code runs in a real terminal, `hataori attach` can connect a person's terminal to it, to watch and to type, as `tmux attach` does today. That comes after phase 1 (section 3.4).
+4. **Each agent runs under a small session host that outlives the hataori daemon.** The host owns the agent's terminal or pipes and writes what the agent reports to a file. Restarting or upgrading hataori does not stop running turns, and the file is read from a stored position, so nothing is lost or posted twice (section 4.3).
 5. **Everything needed after a restart is in SQLite before it is acted on:** inbound messages, outbound posts, open questions, turn state (section 6).
 6. **The core has one entry, the control API.** Chat adapters, a supervisor agent and a dashboard are all clients of it (sections 5 and 7). The first interface draft did not allow that; section 5.4 says what changed.
 7. **hataori writes nothing into a working tree**, and removes a workspace only after proving there is nothing in it that exists nowhere else (section 4.6).
 8. **Phase 1 is narrow:** replace c-lord for orders that a managing agent sends through a webhook, with the full test suite written before the first real order. Everything a person does by hand in chat comes after (section 8).
-9. **One known risk:** Claude Code's docs say `--bare` will become the default for `-p`, and bare mode does not use the subscription login. The agent adapter boundary is kept narrow enough that a different Claude Code adapter can replace this one (section 3.5, question 1).
+9. **Two things have no hook:** the folder-trust dialog at a workspace's first start, and the end of an interrupted turn. Section 3.5 says how each is handled; the first needs the maintainer's decision (section 10).
 
 ## 2. What c-lord taught us
 
 ### 2.1 Feature inventory
 
-c-lord has grown to about 64,000 lines of Python and roughly 60 slash and text commands. Appendix A lists its user-visible features in 105 rows: 60 keep, 20 change, 25 drop.
+c-lord has grown to about 64,000 lines of Python and roughly 60 slash and text commands. Appendix A lists its user-visible features in 105 rows: 61 keep, 23 change, 21 drop.
 
 What is kept is the daily loop: start a thread from a command, a text trigger or a webhook; get a clone of the bound repository; talk to the agent in the thread; answer its questions with buttons; see a lamp on your message; get pinged when the turn ends; stop, sleep, wake, close and clean up; hand files in and out; per-thread model choice; owner-only access by default; several instances on one host.
 
@@ -35,7 +36,7 @@ Most kept features keep their behaviour but not their mechanism: they are driven
 
 What is dropped falls into three kinds:
 
-- **Things that exist only because of tmux:** attaching a thread to a hand-made window, window lists, pane screenshots, resync, the folder-trust dialog handling, vim-mode handling, the unknown-prompt safety net, the menu watchdog.
+- **Things that exist only because of tmux and screen reading:** attaching a thread to a hand-made window, window lists, pane screenshots, resync, the unknown-prompt safety net, the menu watchdog.
 - **A second control surface:** the HTTP API with its scheduled notifications and "lounge" endpoints. It accounts for most of the input-validation bugs. The control API, reached through a local `hataori` command, replaces it.
 - **Opt-in extras and tooling:** table images, the mockup renderer, the status board, thread-name lamps, subagent "voices", the fuzz harness, evidence capture, localised READMEs.
 
@@ -45,12 +46,12 @@ c-lord has 698 issues. 443 are bugs (labelled `bug`, or titled `bug:` / `fix:`).
 
 | Cause | Count | Examples | What removes it in hataori |
 |---|---:|---|---|
-| Reading the terminal screen: finding menus, dialogs, limits and login state in pane text | 52 | c-lord#388, c-lord#990 | No screen. Questions, approvals, limits and errors arrive as typed messages. |
-| Typing into the terminal: keystrokes lost, split, reinterpreted or sent to the wrong dialog | 22 | c-lord#560, c-lord#1284 | Input is one JSON message on stdin, any length, any characters. |
+| Reading the terminal screen: finding menus, dialogs, limits and login state in pane text | 52 | c-lord#388, c-lord#990 | The screen is not read. Questions, approvals, turn ends and failures arrive as hook calls or protocol messages. One start-up dialog is left (section 3.5). |
+| Typing into the terminal: keystrokes lost, split, reinterpreted or sent to the wrong dialog | 22 | c-lord#560, c-lord#1284 | Input is one paste, and it counts as delivered only when the agent's own hook reports the same text. Nothing is typed before the session has reported its start. |
 | tmux window bookkeeping: which window is which thread, twins, reaping | 32 | c-lord#649, c-lord#701 | No tmux. One process per session, tracked by the database. |
-| Tailing the transcript file: replies lost, posted twice, user input echoed, internal text leaked | 39 | c-lord#553, c-lord#773 | Output is the event stream of a process hataori started, with a stored read position. |
-| Guessing turn state from timers and polling: false "finished", false timeouts, stuck lamps, wrong person pinged | 64 | c-lord#541, c-lord#1132 | Turn start and end are events with a status. One state machine per session. |
-| Subagents and background tasks, tracked through the transcript | 20 | c-lord#1136, c-lord#1302 | Events carry the parent tool call; background tasks have start and end events. |
+| Tailing the transcript file: replies lost, posted twice, user input echoed, internal text leaked | 39 | c-lord#553, c-lord#773 | The agent's hooks name the transcript file; it is read from a stored position, and only for text. What hataori pasted is known from the hook, so nothing has to be recognised as an echo. |
+| Guessing turn state from timers and polling: false "finished", false timeouts, stuck lamps, wrong person pinged | 64 | c-lord#541, c-lord#1132 | Turn start and end are reported by the agent, with a reason. One state machine per session. |
+| Subagents and background tasks, tracked through the transcript | 20 | c-lord#1136, c-lord#1302 | Subagent start and end are hook calls with their own transcript path; a turn's end lists the background tasks still running. |
 | Restart and reconnect: state held in memory, messages missed while down | 17 | c-lord#671, c-lord#776 | State is in SQLite before it is acted on. Agent processes outlive the daemon. |
 | Sleep, wake and the resident cap | 22 | c-lord#922, c-lord#1171 | "Is it working" comes from events, not from file times. Sleep is an explicit state. |
 | Cleanup: work deleted, or nothing reclaimed | 22 | c-lord#903, c-lord#1080 | One check that must prove there is nothing to lose. Nothing injected into the working tree. |
@@ -77,6 +78,8 @@ c-lord starts the interactive `claude` in a tmux window. Everything it sends is 
 
 ### 3.2 The options, against what c-lord relies on
 
+This table compares c-lord's way with the two protocol interfaces. The path chosen for Claude Code is neither column; it is in section 3.4.
+
 | Need | Screen in tmux (c-lord) | Claude Code `-p` + `stream-json` | Codex `app-server` |
 |---|---|---|---|
 | Subscription login | Yes | **Yes.** `apiKeySource: "none"` with a claude.ai login and no API key set. Not with `--bare`. | **Yes.** `account/read` reports a ChatGPT login. |
@@ -96,22 +99,55 @@ The interactive path also showed the folder-trust dialog, with the cursor on "No
 
 ### 3.3 The Agent SDK
 
-The Claude Agent SDK exists for Python and TypeScript only. Its docs tell other languages to run the CLI with `-p`, and describe the SDK as a library that runs the Claude Code binary. So from Go, the interface *is* `claude -p` with `stream-json`, and hataori speaks the same messages the SDKs do. The same docs say that third-party developers may not offer claude.ai login for their products without approval. hataori does not handle login at all: it runs the CLI that the operator installed and logged in to. Whether that reading is right is the maintainer's call (question 1).
+The Claude Agent SDK exists for Python and TypeScript only. Its docs tell other languages to run the CLI with `-p`, and describe the SDK as a library that runs the Claude Code binary. So from Go the SDK route is `claude -p`, and it carries the same risk as `-p` itself. The same docs say that third-party developers may not offer claude.ai login for their products without approval.
 
-### 3.4 Recommendation
+### 3.4 Decision
 
-**Claude Code:** `claude -p --input-format stream-json --output-format stream-json --verbose --permission-prompt-tool stdio`, with `--session-id` on first start and `--resume` after. One long-lived process per session; each user message is one line on stdin.
+**Principle.** hataori never touches login. It runs the CLI the operator installed, and whatever that CLI is logged in with, a subscription or an API key, must work. `claude -p` does not meet this in the long run: Claude Code's docs say `--bare` "will become the default for `-p`", and with `--bare` the same subscription login gave "Not logged in". So hataori does not depend on `-p`. This was the maintainer's decision.
 
-**Codex:** `codex app-server` over stdio, one process per session, `thread/start` with `cwd`, then `turn/start`, `turn/steer`, `turn/interrupt`, `thread/resume`.
+**Claude Code: the interactive CLI in a terminal that hataori owns.** The session host (section 4.3) starts the ordinary `claude` in a pseudo-terminal, with `--session-id` on first start and `--resume` after, and with `--settings <file>` pointing at a file in the session's state directory that registers hooks. Nothing is written into the working tree or the user's settings. Each kind of information has one source:
 
-**Attach by hand:** `hataori attach <thread>` on the host. It waits for the turn to end, stops hataori's process for that session, and opens the same conversation in the agent's own terminal UI in the workspace. When the person exits, hataori resumes the session. `hataori tail <thread>` shows the live event log, read-only. This replaces `tmux attach`. A person can no longer type into a session while it is running a turn for chat.
+| What hataori needs | Where it comes from | Checked |
+|---|---|---|
+| The session is up; its id and transcript file | `SessionStart` hook | Yes. The id equalled `--session-id`. |
+| A turn started, and who started it | `UserPromptSubmit` hook, with the prompt text. A prompt hataori did not paste is the agent's own (it arrives as a task notification) or a person's at the terminal. | Yes |
+| A turn ended; the final answer; background tasks still running | `Stop` hook: `last_assistant_message`, `background_tasks` | Yes |
+| A turn failed, and why (rate limit, login, ...) | `StopFailure` hook: `error` | Documented; not triggered in the checks **(unverified)** |
+| A permission request, and the answer to it | `PermissionRequest` hook; the hook's reply allows or denies | Yes. No dialog was answered by keys. |
+| A question to the user, and the answer to it | `PreToolUse` hook for `AskUserQuestion`; the hook's reply carries the answers | Yes |
+| Tool and subagent activity | `PreToolUse`, `PostToolUse`, `SubagentStart`, `SubagentStop` hooks | Yes |
+| The session ended | `SessionEnd` hook, and the host's record of the exit | Yes |
+| Text before the final answer | The transcript file named by the hooks, read from a stored position | Format seen; reader not built |
+| Input | One bracketed paste into the terminal, then Enter. Delivered means the `UserPromptSubmit` hook reported the same text. | Yes: 6,188 characters in 64 lines, with a leading `-`, a trailing `;`, Japanese, backticks and quotes, arrived unchanged (inside a `pasted_content` tag) |
+| Interrupt | The Escape key. | Yes: the running command was gone |
 
-### 3.5 Risks of this choice
+Each hook is the command `hataori hook`. It hands its payload to the session host and, for the two hooks that decide something, waits for the reply. The screen is never read to learn state.
 
-- **`--bare` as the future default for `-p`.** Claude Code's docs say `--bare` "will become the default for `-p` in a future release". With `--bare`, the same login gave "Not logged in". If that default arrives without a way to opt out, this adapter loses the subscription login. Mitigation: the launch command is one function in the Claude Code adapter; the adapter interface (section 5) does not assume `-p`, so a screen-driven or background-session adapter can replace it without touching the core. `claude --bg` with `claude attach` exists in this CLI version and was not evaluated **(unverified)**.
-- **The control messages are not a documented wire format** as far as we found **(unverified)**; they are what the SDKs exchange with the CLI. `--permission-prompt-tool stdio` is not in `claude --help`. Mitigation: decode against captures per CLI version, skip unknown messages, and run the capture suite before allowing a new CLI version in production.
-- **Codex `app-server` is marked experimental** in its own help text. Same mitigation.
+**Permission requests in phase 1** are answered "allow" by the hook. This gives c-lord's behaviour without starting Claude Code in its bypass mode, which shows a warning dialog of its own. "Ask in chat" is later the same path with a person behind the reply.
+
+**Codex:** `codex app-server` over pipes, one process per session, `thread/start` with `cwd`, then `turn/start`, `turn/steer`, `turn/interrupt`, `thread/resume`. Unchanged.
+
+**Attach by hand.** A Claude Code session is a real terminal program, so a person can be connected to it: `hataori attach <thread>` relays their terminal to the session's through the host, to watch and to type while it runs. What they type is reported by the same hooks and shows in the thread. `hataori tail <thread>` is the read-only form. The host owns the terminal directly; tmux is not needed, and none of c-lord's window bookkeeping comes back. Attach is after phase 1 **(not built, not run)**.
+
+**Two alternatives are kept as spikes**, separate from the adapter, because either could replace paste as the way in:
+
+- *Channels.* A channel is an MCP server that Claude Code starts; it pushes messages into the session and offers a reply tool, and can relay permission requests. It is a research preview: a custom channel needs `--dangerously-load-development-channels`, which shows a warning dialog at start, and delivery is not acknowledged (from the docs; not run).
+- *Background sessions.* `claude --bg` runs a session under Claude Code's own supervisor, `claude agents --json` reports its state, and `claude attach` opens it. The docs name no way to send input to a running one without a terminal (from the docs; not run).
+
+### 3.5 What hooks do not cover, and other risks
+
+- **The folder-trust dialog.** The first time the interactive CLI starts in a repository, it asks whether the folder is trusted, with the cursor on "No, exit". Until that is answered no hook runs at all (documented, and seen: zero hook calls in 12 seconds). Trust is recorded per repository root, and trusting a parent directory does not cover a clone inside it (documented). So every new workspace meets the dialog, and no hook can report or answer it. The ways out are: recognise this one dialog in the terminal output and answer it by keys; write the trust record into Claude Code's own state file before starting; or have a person accept it. None is clean. This is question 1 in section 10.
+- **Any other start-up dialog** (a login prompt, a consent prompt for a new MCP server) has the same shape: nothing is reported. The rule: a session that has not reported `SessionStart` within the start timeout is `failed` with reason `blocked at start`, with its terminal output attached for a person to read. hataori does not guess and does not type.
+- **An interrupted turn fires no hook** (documented, and seen). Its end is read from the transcript, which gets a line saying the request was interrupted. This is the one piece of turn state that rests on the transcript.
+- **The transcript is not a documented format** as far as we found **(unverified)**. Hooks are: their payloads are specified field by field. So the split matters: turn state, questions, failures and the final answer come from hooks; only text before the final answer, and the interrupt line, come from the transcript. If the transcript changes, progress text degrades and nothing else.
+- **A hook that waits for a person.** Command hooks time out after 600 seconds by default (documented). A question may wait for hours, so the hook's timeout must be raised, and what happens when it still expires must be known **(unverified)**.
+- **Input while a turn is running** was not checked on this path **(unverified)**. Until it is, hataori holds such input and pastes it when the turn ends.
+- **Paste depends on the terminal UI's input box.** It was checked in the default editing mode only; the user's own settings (vim mode) are **unverified**.
+- **Whether the usage-limit menu still needs an answer** on screen when a limit is hit is **unverified**; c-lord answers it by keys.
+- **Codex `app-server` is marked experimental** in its own help text. Captures per version, unknown messages skipped.
 - **Codex interrupt leaves the command running** (observed). The session host runs the agent in its own process group so hataori can end what the agent left behind.
+
+For every version of an agent CLI: decode against captures of that version's real output, skip what is unknown, and run the capture suite before the version is used for real work.
 
 ## 4. Core model and lifecycle
 
@@ -139,23 +175,24 @@ Every transition is caused by one event (a chat message, an agent event, a timer
 
 ### 4.3 The session host
 
-Each agent process is started by a small host process (`hataori host`, the same binary). The host:
+Each agent is started by a small host process (`hataori host`, the same binary). The host:
 
-- starts the agent in its own process group, in the workspace;
-- appends every line the agent writes to `events.ndjson` in the session's state directory;
-- accepts input on a Unix socket and writes it to the agent's stdin;
+- starts the agent in the workspace, in its own process group, on a pseudo-terminal or on pipes, whichever the adapter asks for;
+- takes what the agent reports and appends it, one line each, to `events.ndjson` in the session's state directory. For an agent on pipes that is its output. For an agent in a terminal it is the calls its hooks make (`hataori hook`), and when a hook waits for an answer, the host holds the call open and passes the answer back;
+- accepts input on a Unix socket and writes it to the agent's terminal or stdin;
+- keeps the terminal's raw output in a bounded log, for a person to look at and for `attach`. Nothing reads it to decide anything;
 - records the exit status when the agent ends.
 
-The host does nothing else and does not parse anything, so it rarely needs to change. It is detached from the daemon. When the daemon restarts, running turns continue; the daemon reconnects to the socket and reads the log from the byte offset it last stored.
+The host does not parse or interpret anything, so it rarely needs to change. It is detached from the daemon. When the daemon restarts, running turns continue; the daemon reconnects to the socket and reads the log from the byte offset it last stored. A hook that is waiting for an answer keeps waiting across the restart.
 
-Checked: a `claude -p` process with stdin on a FIFO and stdout on a file finished its turn after the process that launched it had exited, and accepted a second message afterwards. The host itself is new code and is the first thing Phase 1 must prove.
+Checked: a `claude -p` process with stdin on a FIFO and stdout on a file finished its turn after the process that launched it had exited, and accepted a second message afterwards. The interactive CLI was run in a terminal with its hooks writing to a file (Appendix B). The host itself is new code and is the first thing phase 1 must prove.
 
 ### 4.4 Running a turn
 
 1. A client calls the control API: start a thread, or send to one. The chat front end does this for an inbound chat message. The call carries the caller and a key that makes it safe to repeat (for chat, the surface's message id). The core stores it in the **inbox**; a key already there is ignored. This is what makes "run exactly once" true across reconnects and catch-up.
 2. The core authorizes the caller. One function, for every call from every client.
-3. The core finds or creates the thread, workspace and session, and sends the input. If a turn is running, the call says what to do: refuse, deliver into the turn, or interrupt (question 3).
-4. The agent adapter decodes log lines into agent events. Each has `(session, sequence number)`.
+3. The core finds or creates the thread, workspace and session, and sends the input. If a turn is running, the call says what to do: refuse, deliver into the turn, or interrupt (section 10).
+4. The agent adapter decodes what the agent reported into agent events: lines of the host's log, and lines of any file the adapter asked to follow, such as a transcript. Each event has `(session, sequence number)`.
 5. For each agent event the core updates state and appends to the **event log** in the database: thread created, turn started, text, question asked, tool progress, turn ended. Events are numbered per instance. Any client can read them from a position, so a reader that was down misses nothing.
 6. The chat front end is one such reader. For each event it decides what to show and writes rows to its **outbox**, keyed by `(event, part)`, so reading an event twice writes nothing twice. The sender posts rows in order per thread, paced per route, and stores the surface's message id on success. Rows marked as decoration (lamps, progress line, thread rename) are dropped after a few failures and never block a reply.
 
@@ -166,7 +203,7 @@ Questions and approvals are rows too: the agent's request id, the question, the 
 **Turn-end events** are what a managing agent depends on most, so their rules are fixed here:
 
 - Every turn produces exactly one end event, whoever started it. In the first deployment's c-lord log, 175 of 298 recent completions were turns the agent started by itself after a background task.
-- The event says who started the turn, how it ended (`completion`, `blocked` on a question, `failure` with a reason) and how many background tasks are still running. A reader that wants "really finished" waits for an end event with none running. c-lord instead held the event back for up to an hour, and the held state had bugs of its own (c-lord#1249, c-lord#1296). Whether background subagents are reported like background commands is **(unverified)**.
+- The event says who started the turn, how it ended (`completion`, `blocked` on a question, `failure` with a reason) and how many background tasks are still running. A reader that wants "really finished" waits for an end event with none running. c-lord instead held the event back for up to an hour, and the held state had bugs of its own (c-lord#1249, c-lord#1296). For Claude Code the count comes from the `Stop` hook's list of background tasks; whether background subagents appear in that list like background commands is **(unverified)**.
 - Events are read from a position (`hataori events --after <n>`), not only tailed, so a reader that restarts loses none.
 
 ### 4.5 Sleep, wake, restart
@@ -222,11 +259,11 @@ The driver splits long text, picks buttons or a menu, and maps a status to whate
 
 ### 5.3 Agent adapter
 
-An agent adapter has two parts. The first says how to start the agent for a session (new or resumed), how a person opens the same session in the agent's terminal UI, and whether the agent is installed and logged in. The second is a **codec**: it turns one line of the agent's output into events, and turns a user message, an answer or an interrupt into bytes for the agent's input. The codec does no I/O.
+An agent adapter has two parts. The first says how to start the agent for a session, new or resumed: the command, whether it needs a terminal or pipes, and any files to put in the session's state directory first (for Claude Code, the settings file that registers its hooks). It also says whether the agent is installed and logged in. The second is a **codec**: it turns one reported line into events, whether the line came from the agent's output, from a hook call or from a file the codec asked to follow; and it turns a user message, an answer or an interrupt into bytes for the agent's input or into the reply to a waiting hook. The codec does no I/O.
 
-Splitting the agent adapter into a command line and a pure codec is what makes the repository's test rule practical: a capture of real output goes in `testdata/`, and the codec must turn it into the expected events. The session host and the core never see agent-specific bytes.
+Splitting the agent adapter into a launch description and a pure codec is what makes the repository's test rule practical: a capture of real output goes in `testdata/`, and the codec must turn it into the expected events. The session host and the core never see agent-specific bytes. The same interface fits an agent on pipes that speaks a protocol and an agent in a terminal that reports through hooks, which is how the Claude Code adapter could be changed without touching the core.
 
-`TurnEnded` carries a status (`completed`, `interrupted`, `failed`) and a reason (`limit`, `login`, `api_error`, `crashed`). `TurnStarted` says who started it (a person, or the agent itself after a background task). These two fields replace most of the "guessing turn state" group.
+`TurnEnded` carries a status (`completed`, `interrupted`, `failed`) and a reason (`limit`, `login`, `api_error`, `crashed`, `blocked at start`). `TurnStarted` says who started it (a caller, the agent itself after a background task, or a person at the terminal). These two fields replace most of the "guessing turn state" group.
 
 ### 5.4 Did the first draft allow chat, supervisor and dashboard on one API?
 
@@ -245,7 +282,7 @@ What changed: the control API (5.1) now sits between. The methods of the old sur
 ├── state/
 │   ├── hataori.db            SQLite, WAL, one writer (the daemon)
 │   ├── log/
-│   └── sessions/<id>/        events.ndjson, host socket, attachments, extra instructions
+│   └── sessions/<id>/        events.ndjson, terminal log, host socket, agent settings, attachments
 ├── workspaces/<surface>/<channel>/<thread>/   the thread's scope and key, as path segments
 ├── mirrors/      one bare mirror per remote
 └── trash/        removed workspaces, kept for the retention period
@@ -305,7 +342,7 @@ A supervisor is one ordinary session, Claude Code or Codex, that looks after the
 
 - Interrupt a busy thread. `Send` is refused with "busy" and the supervisor gets the turn-end event later. Interrupting is a separate tool, and each use of it is put to a person as an approval in the supervisor's own thread.
 - Merge, delete or reset. The control API has no such operations, so there is nothing to grant.
-- Touch other workspaces directly. Its session runs without a shell and with file tools confined to its own directory. Checked for Claude Code: with `--restricted --strict-mcp-config --mcp-config <file>` the session had no Bash and no WebFetch, loaded only the listed MCP servers, and a write outside its directory was refused. That mode still leaves subagent and wake-up tools, so the tool list is also narrowed with `--tools` **(not run)**. The Codex equivalent is its read-only or workspace-only sandbox **(not run)**.
+- Touch other workspaces directly. Its session runs without a shell and with file tools confined to its own directory. Checked for Claude Code (in a `-p` run): with `--restricted --strict-mcp-config --mcp-config <file>` the session had no Bash and no WebFetch, loaded only the listed MCP servers, and a write outside its directory was refused. That mode still leaves subagent and wake-up tools, so the tool list is also narrowed with `--tools` **(not run)**. The Codex equivalent is its read-only or workspace-only sandbox **(not run)**.
 
 One limit is not enforced by this: the supervisor can *ask* a worker thread to merge or delete. What a worker may do is decided by that worker's own rules. Messages from a supervisor are marked as such, so a worker's instructions can treat them differently from a person's.
 
@@ -315,14 +352,14 @@ One limit is not enforced by this: the supervisor can *ask* a worker thread to m
 
 - *No events, no turns.* An idle scope costs nothing.
 - *Small input per wake.* The wake message is a digest: thread, how the turn ended, the last lines. Reading more is an explicit tool call with a capped answer.
-- *A budget per scope:* supervisor turns per hour, sends and starts per hour, and tokens per day, counted from the usage the agent reports with each turn end (seen in Appendix B). Over budget, the supervisor is not woken; a person is told once.
+- *A budget per scope:* supervisor turns per hour, sends and starts per hour, and tokens per day, counted from the usage the agent records for each turn. Over budget, the supervisor is not woken; a person is told once.
 - *A loop guard.* A supervisor send that ends a worker turn that wakes the supervisor is a cycle. After a set number of cycles on one thread with no person's message in between, that thread stops waking the supervisor until a person acts.
 - *The ordinary limits apply:* the cap on turns running at once, and sleep when idle.
 - *A cheaper model by default.* Its job is reading digests and routing.
 
 ### 7.2 Dashboard
 
-Every thread side by side with its live state and recent output, like tiled terminal panes. The unit is the thread, not the pane, so it does not depend on how hataori talks to the agent. If an adapter that drives a terminal is ever used (section 3.5), that adapter can offer the raw screen as one more view in the tile.
+Every thread side by side with its live state and recent output, like tiled terminal panes. The unit is the thread, not the pane, so it does not depend on how hataori talks to the agent. A session that runs in a terminal, as Claude Code's do, can also show that terminal live in its tile.
 
 - **Served by hataori**, as a client of the control API: `Threads` for the grid, `Thread` for a tile's content, `Events` from a position for live updates. A page that reconnects asks for events after the last one it saw, so it shows no gap and no repeat.
 - **Read-only first.** The first version makes no call that changes anything. Sending, answering and stopping come later through the same API and the same checks.
@@ -349,7 +386,8 @@ In phase 1:
 - follow-ups into the thread through the webhook;
 - only the configured webhooks and the owner are accepted; everything else is ignored and logged;
 - progress text, final answer, the quiet-gap progress line, subagent start and end lines, long replies split, files the agent hands over;
-- a question from the agent shown as text, with the next message as its answer; permission checks bypassed as in c-lord;
+- a question from the agent shown as text, with the next message as its answer; permission requests allowed automatically, as in c-lord;
+- a new workspace starting with nobody at the terminal (the folder-trust dialog, section 10);
 - turn-end events as in section 4.4;
 - `hataori threads`, `hataori thread`, `hataori events`, `hataori stop` on the host. These are the first control API client;
 - the session host, catch-up of missed messages, sleep and resume;
@@ -359,10 +397,11 @@ Not in phase 1: slash commands, buttons, the Stop button, lamps, pings, the foot
 
 Acceptance:
 
-- [ ] The full test suite exists before the first real order: the codec against captures of real Claude Code output for every scenario in Appendix B, and end-to-end tests with a fake driver and a fake agent for each criterion below that does not need the real services.
+- [ ] The full test suite exists before the first real order: the codec against captures of real Claude Code hook calls and transcript lines for every scenario in Appendix B, and end-to-end tests with a fake driver and a fake agent for each criterion below that does not need the real services.
 - [ ] A webhook post with the trigger, a repository and a prompt in an enabled channel creates a thread, a clone under `workspaces/discord/<channel>/<thread>/`, and a first reply. The full prompt is in the thread, and editing the channel message afterwards changes nothing.
 - [ ] The same post in a channel that is not enabled, or from an account that is not allowed, starts nothing and writes one log line.
 - [ ] A webhook post into the thread continues the same agent session id.
+- [ ] A thread in a repository that was never opened on the host before starts with nobody at the terminal; a session that does not report its start within the timeout is `failed` with its terminal output attached.
 - [ ] `model:` and `effort:` on the trigger line are the ones the agent reports for that thread, and the next thread without them gets the channel's defaults.
 - [ ] A turn of 30 minutes ends with its final answer posted once.
 - [ ] Every turn, including one the agent starts by itself after a background task, produces exactly one end event, with who started it and how many background tasks are still running.
@@ -382,7 +421,7 @@ Acceptance:
 
 ### After phase 1
 
-The order below is a recommendation (question 8). Each later phase also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter. Appendix E has the acceptance criteria of each.
+The order below is a recommendation (section 10). Each later phase also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter. Appendix E has the acceptance criteria of each.
 
 **People in chat, and cleanup.** Slash commands, buttons for questions, lamps, pings, attach by hand, and removing workspaces behind the proof in section 4.6. This is what lets c-lord be switched off.
 
@@ -410,19 +449,29 @@ Unlike Discord and Slack Socket Mode, Teams calls hataori. The host needs a publ
 
 **Surfaces without threads.** The core takes a thread as an opaque key, so a surface with no native threads only needs a front end that makes the keys up. The intended rules: a reply to a hataori message continues that message's thread; any other message goes to the thread used last; `/new` starts one; every hataori message begins with the thread's name. If the bot cannot see what a message replies to, one chat is one thread. A surface whose threads expire (LINE OpenChat: 24 hours or two weeks) counts as having none.
 
-## 10. Open questions for the maintainer
+## 10. Decisions
 
-1. **Do we accept depending on `claude -p` keeping the subscription login?** It works today. The docs announce `--bare` as a future default, and `--bare` drops the login; the Agent SDK docs restrict third parties from offering claude.ai login. *Recommendation:* go ahead. hataori never handles the login, the dependency is isolated in one adapter, and the alternative is the screen-driving that produced half of c-lord's bugs. State in the README that hataori runs the operator's own CLI and login.
-2. **Is take-over between turns enough, in place of `tmux attach`?** *Recommendation:* yes. `hataori attach` for hands-on work, `hataori tail` to watch, and later the dashboard.
-3. **A message arrives while a turn runs: interrupt it (c-lord) or deliver it into the turn?** Both agents accept input mid-turn. Today's manager avoids the case by sending only after a turn ends. *Recommendation:* deliver it into the turn; stopping is the explicit way to interrupt.
-4. **Permission checks.** c-lord bypasses them in every session. *Recommendation:* keep bypass as the default so unattended orders do not stall, and add "ask in chat" as a per-channel setting with the buttons.
-5. **Is phase 1 really only the dispatched orders?** Nothing a person types into chat directly is in it: no slash commands, no stop or compact commands, no buttons. *Recommendation:* yes. Keep c-lord for hands-on threads until the next phase.
-6. **Is dropping these acceptable?** The HTTP API (replaced by the `hataori` command, the control API and webhook triggers), scheduled tasks and notifications, docker container tracking, table images, the status board (replaced by the dashboard). *Recommendation:* drop them; bring scheduled tasks back first if they are missed.
-7. **One bot identity per instance, including a second host?** *Recommendation:* yes. It is the only arrangement in which two instances cannot both act on one message.
-8. **Order after phase 1.** *Recommendation:* people in chat and cleanup, then the dashboard, then the supervisor, then Codex, Slack, Teams. The dashboard comes before the supervisor because it is read-only and is how a person watches what a supervisor does.
-9. **May a supervisor have a shell?** With one it could reach other workspaces and the repository host directly, and "cannot merge, delete or reset" would rest on instructions alone. *Recommendation:* no shell; control API tools and files in its own directory only.
-10. **Dashboard sign-in by a link issued in chat?** *Recommendation:* yes, owner-only at first. It reuses the identity and the allow-list hataori already has.
-11. **Do existing c-lord threads move to hataori?** *Recommendation:* no. Run both side by side on different channels; let c-lord threads finish where they are.
+### Open
+
+1. **How does a new workspace get past the folder-trust dialog with nobody at the terminal?** No hook runs before it is answered (section 3.5). The choices:
+   - *Answer it by keys.* Before `SessionStart`, and only then, look at the terminal output for this one dialog, move to the line that says yes, and confirm. Success is `SessionStart` arriving; anything unrecognised is a failed start and no key is sent. This is the one place hataori would read the screen, and the dialog is behind nine c-lord issues.
+   - *Write the trust record.* Mark the workspace as trusted in Claude Code's own state file before starting. No screen, but the file is not a documented interface, Claude Code rewrites it all the time, and it is the file that also holds the account.
+   - *A person accepts it* once per workspace, through `hataori attach`. Clean, but an order then waits for a person.
+
+   *Recommendation:* answer it by keys, as the single bounded exception, with the failed-start rule behind it. Writing into the CLI's state file is closer to touching login than reading one known dialog is. The adapter issue for start-up records what is tried first: whether Claude Code offers a supported way to trust a directory in advance.
+
+### Decided
+
+- **Claude Code is not driven through `claude -p`.** Decided by the maintainer; section 3.4. Live attach comes back with the terminal, so the earlier question about take-over between turns is closed.
+- **A message that arrives while a turn runs is delivered into the turn**; stopping is the explicit way to interrupt. On the Claude Code path it is held until the turn ends, until delivery during a turn has been checked (section 3.5).
+- **Permission requests are allowed automatically** by default, so unattended orders do not stall. "Ask in chat" becomes a per-channel setting with the buttons.
+- **Phase 1 is only the dispatched orders.** Nothing a person types into chat directly is in it. c-lord stays for hands-on threads until the next phase.
+- **Dropped:** the HTTP API (replaced by the `hataori` command, the control API and webhook triggers), scheduled tasks and notifications, docker container tracking, table images, the status board (replaced by the dashboard). Scheduled tasks come back first if they are missed.
+- **One bot identity per instance**, including a second host.
+- **Order after phase 1:** people in chat and cleanup, then the dashboard, then the supervisor, then Codex, Slack, Teams.
+- **A supervisor has no shell:** control API tools and files in its own directory only.
+- **Dashboard sign-in is a link issued in chat**, owner-only at first.
+- **Existing c-lord threads do not move.** Both run side by side on different channels.
 
 ## Appendix A: c-lord feature inventory
 
@@ -439,7 +488,7 @@ Unlike Discord and Slack Socket Mode, Teams calls hataori. The host needs a publ
 | Only threads hataori created are sessions | keep | Prevents adopting ordinary conversations (c-lord#551). |
 | Clear error when the channel is unbound or the bot lacks permissions | keep | A silent start failure looks like a hang. |
 | Run a skill as a command (`/skill`) | change | Becomes an ordinary first message beginning with the skill's name; no separate launch path. |
-| Attach a thread to a hand-made tmux window | drop | No tmux. |
+| Attach a thread to a hand-made tmux window | drop | No tmux; hataori starts every session's terminal itself. |
 | Programmatic spawn over HTTP | change | The control API: `hataori spawn` on the host, the supervisor's tool, or the text trigger through a webhook. |
 | CI webhook trigger with a fixed server-side prompt | drop | Not wired in c-lord's default setup; the text trigger covers it. |
 
@@ -448,24 +497,24 @@ Unlike Discord and Slack Socket Mode, Teams calls hataori. The host needs a publ
 | Feature | Verdict | Why |
 |---|---|---|
 | A message in the thread is the next prompt | keep | |
-| A new message interrupts the running turn | change | Delivered into the running turn instead (question 3). |
-| Stop button and stop command | keep | Now an interrupt request plus killing the turn's process group. |
+| A new message interrupts the running turn | change | Delivered into the running turn instead (section 10). |
+| Stop button and stop command | keep | Now an interrupt through the adapter plus ending the turn's process group. |
 | Messages missed during an outage or restart are run once | keep | Built into the inbox instead of added later. |
 | Limit on turns running at once | keep | Needed on a shared host. |
 | Trusted bots and webhooks may post into existing threads | keep | Agents talk to agents this way. |
 | Pasted chat links and replies are expanded into context | keep | Small, used daily. |
-| Input checked on screen after typing; vim mode, paste folding, long-input splitting | drop | No typing. |
+| Input checked on screen after typing; vim mode, paste folding, long-input splitting | change | One paste, confirmed by the agent's own hook instead of by reading the screen. |
 | Post into a thread over HTTP | change | `hataori send`. |
 
 ### Output
 
 | Feature | Verdict | Why |
 |---|---|---|
-| Progress text posted quietly, final answer as a notifying reply | keep | Now decided by the agent's own "final" marker. |
+| Progress text posted quietly, final answer as a notifying reply | keep | The final answer is the one the agent reports at the turn's end. |
 | Long replies split without breaking code blocks | keep | Done by the surface adapter, which knows the limit. |
 | `progress.txt` with the turn's tool calls attached to the answer | keep | Built from tool events. |
-| Text typed by a person in the pane is shown in the thread | change | Applies to turns typed during `hataori attach`. |
-| Hiding of internal harness text (reminders, notifications, slash-command records) | drop | The event stream separates them; nothing to scrub. |
+| Text typed by a person in the pane is shown in the thread | keep | Reported by the same hook as any other input, during `hataori attach`. |
+| Hiding of internal harness text (reminders, notifications, slash-command records) | change | Chosen by a transcript line's type and fields, not by scrubbing text. |
 | Repeated identical lines folded into a counter | keep | A looping agent can still flood a thread. |
 | Subagent start and end lines with an attached record | change | One line each, from events that carry the parent tool call. |
 | Named subagent "voices" through webhooks | drop | Opt-in; caused a class of bugs of its own. |
@@ -478,31 +527,31 @@ Unlike Discord and Slack Socket Mode, Teams calls hataori. The host needs a publ
 
 | Feature | Verdict | Why |
 |---|---|---|
-| Agent questions as buttons or a menu, with free-text answer | keep | From the structured request. |
+| Agent questions as buttons or a menu, with free-text answer | keep | From the agent's request (a hook call or a protocol message), not from a menu on screen. |
 | Multi-select questions | keep | Same request. |
 | Plan approval as a menu | keep | Same mechanism **(not checked against the CLI)**. |
 | Ping when input is needed | keep | |
 | Buttons work after a restart; old cards are disarmed | keep | Requests are rows; nothing to recover. |
 | Typing a sentence instead of pressing a button | keep | An open request takes the next message as its answer. |
-| Tool permission prompts auto-accepted | change | Default stays bypass; "ask in chat" becomes possible (question 4). |
-| Folder-trust dialog handling | drop | `-p` shows no dialog. |
-| Unknown-prompt safety net, menu watchdog, dead-pane guard | drop | No screen. |
-| Usage-limit menu answered with "wait" | drop | The limit is an event, not a menu. |
+| Tool permission prompts auto-accepted | change | Default stays bypass; "ask in chat" becomes possible (section 10). |
+| Folder-trust dialog handling | change | Still needed: the interactive CLI shows it and no hook runs before it (section 10). |
+| Unknown-prompt safety net, menu watchdog, dead-pane guard | drop | The screen is not read. A session that does not report its start fails with its terminal output attached. |
+| Usage-limit menu answered with "wait" | change | The limit arrives as a hook call; whether the menu on screen still needs an answer is unverified. |
 
 ### Status and visibility
 
 | Feature | Verdict | Why |
 |---|---|---|
 | Lamp on the triggering message (working, done, error) | keep | Derived from the state machine. |
-| Stall lamps after 10 s and 30 s of silence | change | Driven by the tool heartbeat and process liveness, not by file silence. |
+| Stall lamps after 10 s and 30 s of silence | change | Driven by tool start and end reports and by process liveness, not by file silence. |
 | Quiet-gap progress line, edited in place | keep | From tool events. |
-| Turn footer: context use, model, versions | keep | From usage events and `get_context_usage`. |
+| Turn footer: context use, model, versions | keep | From the usage the agent records per turn (source on the Claude Code path unverified). |
 | Thread name `W<N> │ #issue topic` | change | The tmux window number becomes a short thread number that `hataori attach` accepts. |
 | Issue or pull request number in the thread name; manual rename wins | keep | |
 | Thread-name lamp, automatic topic, re-title | drop | Opt-in in c-lord; a source of rate limiting. |
 | Status command with a table of sessions | keep | From the database. |
-| Pinned status board | drop | Opt-in in c-lord; the dashboard takes its place (question 6). |
-| Pane screenshot, window list, resync | drop | No pane. |
+| Pinned status board | drop | Opt-in in c-lord; the dashboard takes its place (section 10). |
+| Pane screenshot, window list, resync | drop | `hataori attach` and `tail` show the terminal itself. |
 | Coordination-channel notices | drop | Unused extra. |
 
 ### Lifecycle
@@ -518,7 +567,7 @@ Unlike Discord and Slack Socket Mode, Teams calls hataori. The host needs a publ
 | Automatic delete at the agent's transcript-retention age | change | Moves to trash first, behind the proof in section 4.6. |
 | Running turns survive a bot restart | change | By the session host, not by tmux. |
 | Notice when the agent was found stopped mid-turn | keep | Only after a host reboot now. |
-| Clear and compact the conversation | keep | Compact through the agent **(unverified in `-p`)**; clear is a new session. |
+| Clear and compact the conversation | keep | Compact is given to the agent as its own command (unverified); clear is a new session. |
 | Restart the agent process, keep the conversation | keep | Stop and resume. |
 | Reattach a thread whose record was lost | drop | Records are not swept away while a workspace exists. |
 | Drain before an upgrade restart | drop | Restarts no longer stop turns. |
@@ -536,7 +585,7 @@ Unlike Discord and Slack Socket Mode, Teams calls hataori. The host needs a publ
 | Delete refuses to lose work | change | One proof, stricter (section 4.6). |
 | Orphan directory sweep | change | Same proof; unknown directories are reported, not removed. |
 | Skill and history files written into the checkout | change | Passed from outside the working tree. |
-| Docker containers per thread tracked and listed | drop | Deployment-specific (question 6). |
+| Docker containers per thread tracked and listed | drop | Deployment-specific (section 10). |
 
 ### Files
 
@@ -554,7 +603,7 @@ Unlike Discord and Slack Socket Mode, Teams calls hataori. The host needs a publ
 | Turn-end events (completion, blocked, failure) to a log or signed webhook | keep | The contract that orchestration builds on. |
 | Events for turns the agent starts itself | keep | `TurnStarted` says who started it. |
 | Completion held while background subagents run | keep | From task events instead of a side file. |
-| Scheduled tasks | drop | Question 6. |
+| Scheduled tasks | drop | Section 10. |
 | Scheduled and immediate notifications, "lounge" notes | drop | A second product inside the bot. |
 
 ### Models, limits, login
@@ -562,7 +611,7 @@ Unlike Discord and Slack Socket Mode, Teams calls hataori. The host needs a publ
 | Feature | Verdict | Why |
 |---|---|---|
 | Model and effort per thread, channel and instance | change | Per order on the trigger line and a default per channel, instead of setting the channel before each order and back after. |
-| Usage limit shown with its reset time | keep | From the rate-limit event, not from screen text. |
+| Usage limit shown with its reset time | keep | From the failure the agent reports; where the reset time comes from on the Claude Code path is unverified. |
 | Messages during a limit are accepted | keep | |
 | Owner told once when the agent is logged out | keep | From `Probe` and the turn's end reason. |
 | Logging in again from a direct message | drop | Drove a login screen; log in on the host. |
@@ -619,6 +668,27 @@ Claude Code 2.1.322 and codex-cli 0.163.0, Linux, 2026-11-12. Each agent was sta
 
 Not checked: turns of hours; what the stream shows at a real usage limit or an expired login; `/compact` in `-p`; plan approval; two processes on one session at once; MCP tools given with `--mcp-config` and their approval requests; `--tools`; events for background subagents.
 
+### Claude Code, interactive in a terminal, with hooks
+
+`claude --settings <file> --session-id <uuid> --permission-mode default`, started in a terminal by a script. The settings file registered one command for 17 hook events; the command appended each payload to a file and, for two events, printed a decision. Input was pasted with bracketed paste and confirmed with Enter. The screen was looked at only to write this table.
+
+| Check | Observed |
+|---|---|
+| Hooks from `--settings` | Ran, with nothing written to the working tree or the user's settings. |
+| Start | `SessionStart` with `source: "startup"`, the model, `transcript_path`, and a `session_id` equal to the one given with `--session-id`. |
+| Paste | A prompt of 6,188 characters in 64 lines (leading `-`, trailing `;`, Japanese, backticks, `$HOME`, quotes) arrived in `UserPromptSubmit` wrapped in a `pasted_content` tag, with the text inside identical. A short prompt arrived as it was. |
+| Turn end | `Stop` with `last_assistant_message` (the final answer), `background_tasks`, `session_crons`, `stop_hook_active`. |
+| Permission request | In the default permission mode a file write produced `PreToolUse`, then `PermissionRequest` with the tool and its input. The hook printed `behavior: "allow"` and the file was written. No key was sent. |
+| Question | `PreToolUse` for `AskUserQuestion` carried the questions and options. The hook printed `permissionDecision: "allow"` with `updatedInput` holding an `answers` map, and Claude's reply named the chosen option. No key was sent. |
+| Interrupt | Escape during a running command: the command was gone. No `Stop` and no `PostToolUse` followed. The transcript got a `user` line with the text `[Request interrupted by user for tool use]`. |
+| Turn started by the agent | After a background command was started, `Stop` listed it under `background_tasks` as running. When it ended, `UserPromptSubmit` fired with a `<task-notification>` prompt, then `Stop` with an empty list. |
+| Subagent end | `SubagentStop` with `agent_id` and `agent_transcript_path`; one fired with an empty `agent_type` for an agent Claude Code runs for itself. |
+| Exit | `/exit` produced `SessionEnd` with `reason: "prompt_input_exit"`. |
+| A repository never opened before | The folder-trust dialog, with the cursor on "No, exit". No hook call in 12 seconds. |
+| Where trust is kept | After the dialog was accepted for one directory in an earlier check, that directory's entry in Claude Code's state file had `hasTrustDialogAccepted: true`; directories used only with `-p` had no such field. No documented switch to trust a directory in advance was found. |
+
+Not checked: `StopFailure` (no API error occurred); a hook waiting longer than its default timeout; input while a turn is running; the user's vim mode; a second terminal attached to the session; what the terminal shows at a usage limit.
+
 ### Codex: `codex app-server` (stdio, one JSON object per line)
 
 The method list comes from `codex app-server generate-json-schema` of the installed binary.
@@ -642,6 +712,10 @@ Not checked: turns of hours; behaviour at a usage limit; two clients driving one
 
 - Agent SDK overview: Python and TypeScript only; other languages run the CLI with `-p`; the note on third parties and claude.ai login.
 - "Run Claude Code programmatically": `--bare` does not read the subscription login and "will become the default for `-p` in a future release"; on SIGTERM the turn is left unfinished and running commands are terminated.
+- Hooks reference: the list of hook events and their payloads; `Stop` "does not run if the stoppage occurred due to a user interrupt"; `StopFailure` runs instead when a turn ends with an API error and names the error type; command hooks time out after 600 seconds by default; in an interactive session no hook runs until the folder-trust dialog is accepted.
+- Permissions: trust is keyed on the repository root, and trusting a parent directory does not extend to a repository nested in it.
+- Channels reference: a channel is an MCP server started by Claude Code; `notifications/claude/channel` pushes an event into the session; replies go through a tool the channel offers; permission requests can be relayed; custom channels need `--dangerously-load-development-channels`, which shows a warning dialog and is ignored with `-p`; notifications are not acknowledged.
+- Agent view: `claude --bg` sessions run under a supervisor; `claude agents --json` reports their state; no way to send input to a running session other than interactively is described.
 
 ## Appendix C: c-lord bug issues by group
 
@@ -767,46 +841,63 @@ type Adapter interface {
 	// Probe reports whether the agent is installed and logged in.
 	Probe(ctx context.Context) (Health, error)
 
-	// Command returns how to start the agent for spec: a new session,
+	// Launch returns how to start the agent for spec: a new session,
 	// or a resumed one when spec.ResumeID is set.
-	Command(spec Spec) (argv []string, env []string)
+	Launch(spec Spec) (Launch, error)
 
-	// Interactive returns the command a person runs to take the session over
-	// in the agent's own terminal UI.
-	Interactive(spec Spec) (argv []string)
-
-	// NewCodec returns the translator for one running process.
+	// NewCodec returns the translator for one running session.
 	NewCodec(spec Spec) Codec
 }
 
-// Codec turns the agent's output into events and requests into the agent's input.
-// It does no I/O, so it is tested against captured output.
+// Launch is everything the session host needs to start an agent.
+type Launch struct {
+	Argv     []string
+	Env      []string
+	Terminal bool              // run on a pseudo-terminal instead of pipes
+	Files    map[string][]byte // written into the session's state directory first
+}
+
+// Source says where a line came from: Output (the agent's output on pipes),
+// Hook (a call from the agent's hook command) or File (a file the codec asked
+// to follow).
+type Source int
+
+// Codec turns what an agent reports into events, and requests into what the
+// agent accepts. It does no I/O, so it is tested against captured output.
 type Codec interface {
-	Open() [][]byte                                      // bytes to send first (handshake), if any
-	Decode(line []byte) (events []Event, reply [][]byte) // one output line
-	Input(in Input) ([][]byte, error)                    // a user message, during a turn or not
-	Answer(a Answer) ([][]byte, error)                   // to an approval or a question
-	Interrupt() [][]byte
+	Open() Actions                          // what to do first, if anything
+	Decode(src Source, line []byte) Actions // one reported line
+	Input(in Input) (Actions, error)        // a user message
+	Answer(a Answer) (Actions, error)       // to an approval or a question
+	Interrupt() Actions
+}
+
+// Actions is what the caller of a Codec does next.
+type Actions struct {
+	Events []Event     // for the core
+	Write  [][]byte    // to the agent's input (terminal or stdin), in order
+	Reply  []HookReply // to hook calls that are waiting for an answer
+	Follow []string    // files to start following, such as a transcript
 }
 
 type Spec struct {
 	Dir          string // workspace
-	StateDir     string // attachments, extra instructions; outside the workspace
+	StateDir     string // settings, attachments, extra instructions; outside the workspace
 	ResumeID     string
 	Model        string
 	Instructions string // appended to the agent's own
-	Approvals    Policy // bypass, or ask in chat
+	Approvals    Policy // allow everything, or ask in chat
 }
 
 // Event is one thing the agent did. Kind is one of SessionReady, TurnStarted,
-// Text, ToolStarted, ToolProgress, ToolEnded, Request, RequestWithdrawn,
-// FileOut, Usage, Limit, TurnEnded, Unknown.
+// Text, ToolStarted, ToolEnded, SubagentStarted, SubagentEnded, Request,
+// RequestWithdrawn, FileOut, Usage, TurnEnded, SessionEnded, Unknown.
 type Event struct {
 	Seq  uint64
 	Kind Kind
 	// Plus the fields each kind needs: the text and whether it is final,
-	// the parent tool call, the request id and its questions,
-	// the end status and reason.
+	// who started a turn, the request id and its questions,
+	// the end status and reason, the background tasks still running.
 }
 ```
 
