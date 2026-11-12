@@ -75,6 +75,20 @@ var migrations = []Migration{
 	{Name: "turns.principal", Up: execAll(
 		`ALTER TABLE turns ADD COLUMN principal TEXT NOT NULL DEFAULT ''`,
 	)},
+	{Name: "login outages", Up: execAll(
+		`CREATE TABLE login_outages (
+			id        INTEGER PRIMARY KEY,
+			agent     TEXT NOT NULL, -- registered adapter name
+			opened_at INTEGER NOT NULL,
+			closed_at INTEGER
+		)`,
+		`CREATE UNIQUE INDEX login_outages_open ON login_outages (agent) WHERE closed_at IS NULL`,
+		`CREATE TABLE login_outage_threads (
+			outage_id INTEGER NOT NULL REFERENCES login_outages (id),
+			thread_id INTEGER NOT NULL REFERENCES threads (id),
+			PRIMARY KEY (outage_id, thread_id)
+		)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {
