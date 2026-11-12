@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -70,4 +72,47 @@ func Gone(stateDir string) bool {
 	}
 	_, err := os.Stat(SocketPath(stateDir))
 	return errors.Is(err, os.ErrNotExist)
+}
+
+// StopResult says what Stop did.
+type StopResult struct {
+	Already bool   // the command had already exited; nothing was sent
+	Signals string // the signals sent, in order, such as "SIGINT,SIGTERM"
+	Status  Status // how the command ended, as recorded
+}
+
+// Stop ends the command of the host in stateDir and leaves no process of
+// its group: SIGINT, then SIGTERM after interrupt, then SIGKILL after
+// terminate. It returns once the host has recorded the command's status,
+// so its logs are complete. A command that already exited is not an error.
+func Stop(stateDir string, interrupt, terminate time.Duration) (StopResult, error) {
+	var r StopResult
+	c, err := Dial(stateDir)
+	if err == nil {
+		resp, cerr := c.call(request{Op: "stop", Interrupt: interrupt, Terminate: terminate})
+		c.Close()
+		r.Already, r.Signals = resp.Already, resp.Signals
+		if cerr != nil && !isGoneError(cerr) {
+			return r, cerr
+		}
+	} else if _, ok, _ := ReadStatus(stateDir); !ok {
+		return r, err // no host and no status: nothing to say
+	} else {
+		r.Already = true
+	}
+	deadline := time.Now().Add(drainGoneTimeout + killWait)
+	for !Gone(stateDir) {
+		if time.Now().After(deadline) {
+			return r, errors.New("host: the host did not record the command's end")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	r.Status, _, err = ReadStatus(stateDir)
+	return r, err
+}
+
+// isGoneError reports whether err means the host closed the connection
+// while answering, because it was finishing.
+func isGoneError(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE)
 }

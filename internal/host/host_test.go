@@ -88,8 +88,14 @@ func role(name string, args []string) int {
 		fmt.Println("started")
 		select {}
 	}
+	if f, ok := extraRoles[name]; ok {
+		return f(args)
+	}
 	return 99
 }
+
+// extraRoles are roles defined by other test files.
+var extraRoles = map[string]func(args []string) int{}
 
 const pasteStart, pasteEnd = "\x1b[200~", "\x1b[201~"
 
