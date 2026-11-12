@@ -930,8 +930,9 @@ type Driver interface {
 	Since(ctx context.Context, conv Conversation, cursor string) ([]Inbound, error)
 
 	OpenThread(ctx context.Context, parent Conversation, title string) (Conversation, error)
-	// OpenDirect returns the private conversation with one person.
-	OpenDirect(ctx context.Context, who Principal) (Conversation, error)
+	// OpenDirect returns the private conversation with one person, given
+	// by the person's id on the service.
+	OpenDirect(ctx context.Context, who string) (Conversation, error)
 	Post(ctx context.Context, conv Conversation, key string, m Message) (MessageRef, error)
 	Edit(ctx context.Context, ref MessageRef, m Message) error
 	Delete(ctx context.Context, ref MessageRef) error
@@ -950,6 +951,19 @@ type Sink interface {
 	Message(Inbound)  // text, files, author, ids
 	Choice(Selection) // a button or menu was used
 	Command(Command)  // a slash or text command
+}
+
+// Inbound is a received message. Direct says that its conversation is a
+// private one with the author.
+type Inbound struct {
+	Ref     MessageRef
+	Author  Author
+	Text    string
+	Files   []File
+	ReplyTo *MessageRef
+	Direct  bool
+	Time    time.Time
+	Cursor  string // pass to Since to get the messages after this one
 }
 
 type Message struct {

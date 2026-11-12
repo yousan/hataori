@@ -24,6 +24,9 @@ type Driver interface {
 
 	// OpenThread opens a thread under parent and returns it.
 	OpenThread(ctx context.Context, parent Conversation, title string) (Conversation, error)
+	// OpenDirect returns the private conversation with one person, given
+	// by the person's id on the service.
+	OpenDirect(ctx context.Context, who string) (Conversation, error)
 	// Post posts m. key makes the post safe to repeat where the service
 	// supports it.
 	Post(ctx context.Context, conv Conversation, key string, m Message) (MessageRef, error)
@@ -89,6 +92,7 @@ type Inbound struct {
 	Text    string
 	Files   []File
 	ReplyTo *MessageRef
+	Direct  bool // the conversation is a private one with the author
 	Time    time.Time
 	Cursor  string // pass to Since to get the messages after this one
 }

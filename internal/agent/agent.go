@@ -24,6 +24,30 @@ type Adapter interface {
 	NewCodec(spec Spec) Codec
 }
 
+// LoginFlow is implemented by an adapter whose agent can be logged in again
+// from chat. hataori runs the agent's own login command and passes on what it
+// prints and the owner's code; it keeps neither. An adapter that does not
+// implement it is still an Adapter; its login outages are only reported.
+type LoginFlow interface {
+	// LoginLaunch returns the login command, with the same config directory
+	// as sessions started from spec.
+	LoginLaunch(spec Spec) (Launch, error)
+	// LoginDecode reads one line the login command printed.
+	LoginDecode(line []byte) LoginStep
+	// LoginCode returns the bytes that hand a code to the login command.
+	LoginCode(code string) ([]byte, error)
+}
+
+// LoginStep is what a line of the login command means: a link to show
+// (with a code to show beside it, if the agent gives one), a request for a
+// code, a refusal with its text, or nothing (the zero value).
+type LoginStep struct {
+	Link      string // a sign-in link for the owner
+	ShowCode  string // a code the owner enters on the link's page
+	WantsCode bool   // the command waits for the code the page showed
+	Refused   string // the command rejected a code, with its text
+}
+
 // Health is the result of Probe.
 type Health struct {
 	Installed bool
