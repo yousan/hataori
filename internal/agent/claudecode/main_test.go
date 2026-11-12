@@ -23,6 +23,8 @@ func TestMain(m *testing.M) {
 			os.Exit(0)
 		case "hook":
 			os.Exit(host.HookMain(os.Args[3:], os.Stdin, os.Stdout, os.Stderr, os.Getenv))
+		case "login-pure":
+			os.Exit(loginPure())
 		case "idle":
 			os.Stdin.Read(make([]byte, 1))
 			os.Exit(0)

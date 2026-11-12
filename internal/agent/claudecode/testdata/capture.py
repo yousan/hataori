@@ -393,6 +393,29 @@ def login(out, work):
     shutil.rmtree(cfg)  # the throwaway directory, created above
 
 
+def login_terminal(out, work):
+    """`claude auth login` on a terminal, with a throwaway CLAUDE_CONFIG_DIR:
+    the link (wrapped in a terminal hyperlink), then a wrong code."""
+    cfg = tempfile.mkdtemp(prefix="capture-config-")
+    s = Session(out, "login_terminal", ["claude", "auth", "login"], cfg, clean_env({"CLAUDE_CONFIG_DIR": cfg}))
+    try:
+        def seen(b, timeout=60):
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                if b in open(s.term.name, "rb").read():
+                    return True
+                time.sleep(0.2)
+            return False
+        if seen(b"Paste code"):
+            s.typed("not-a-valid-code")
+            seen(b"Invalid code")
+            time.sleep(1)
+    finally:
+        os.kill(s.pid, signal.SIGKILL)
+        s.close()
+        shutil.rmtree(cfg)
+
+
 def main():
     out = os.path.abspath(sys.argv[1])
     want = set(sys.argv[2:])
@@ -402,7 +425,7 @@ def main():
     with open(os.path.join(out, "VERSION"), "w") as f:
         f.write("%s\n%s\n" % (ver, time.strftime("%Y-%m-%d")))
     order = ["plain", "tools", "question", "background", "subagent", "paste", "interrupt", "compact",
-             "failure", "trust", "login"]
+             "failure", "trust", "login", "login_terminal"]
     for name in order:
         if want and name not in want and not (name == "plain" and "resume" in want):
             continue
