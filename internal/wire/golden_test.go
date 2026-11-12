@@ -34,7 +34,7 @@ var (
 // eventData is an example of every event kind's data.
 var eventData = map[control.EventKind]string{
 	"thread_created":    `{"effort":"high","model":"opus","principal":"webhook:W1","repo":"https://example.com/repo.git","session":3,"thread":7}`,
-	"state":             `{"from":"running","reason":"interrupted","session":3,"to":"asleep"}`,
+	"state":             `{"detail":"last lines of the terminal","from":"running","reason":"interrupted","session":3,"to":"asleep"}`,
 	"turn_started":      `{"by":"caller","principal":"webhook:W1","session":3,"turn":12}`,
 	"turn_ended":        `{"background":0,"by":"caller","outcome":"failure","principal":"webhook:W1","reason":"limit","session":3,"turn":12}`,
 	"input":             `{"session":3,"text":"Run the tests.","turn":12}`,
@@ -116,6 +116,15 @@ func examples(t *testing.T) map[string]any {
 			e.Thread = control.ThreadID{}
 		} else if err := control.CheckEvent(e); err != nil {
 			t.Fatalf("the example of %s: %v", kind, err)
+		}
+		// Every field of the kind is in its example, optional ones too, so
+		// that a change to any field changes a golden file.
+		var m map[string]any
+		json.Unmarshal(e.Data, &m)
+		for _, f := range control.EventKinds[kind] {
+			if _, ok := m[f.Name]; !ok {
+				t.Fatalf("the example of %s has no field %s", kind, f.Name)
+			}
 		}
 		ex["event-"+string(kind)+".json"] = response{ID: 1, Event: &e}
 	}

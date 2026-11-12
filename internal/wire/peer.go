@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/yousan/hataori/internal/control"
 )
@@ -61,6 +63,24 @@ func (p *Peer) write(m any) error {
 	return err
 }
 
+// writeCtx is write, given up when ctx ends: a side that stops reading
+// cannot hold the writer forever.
+func (p *Peer) writeCtx(ctx context.Context, m any) error {
+	conn, ok := p.w.(net.Conn)
+	if !ok {
+		return p.write(m)
+	}
+	stop := context.AfterFunc(ctx, func() { conn.SetWriteDeadline(time.Unix(1, 0)) })
+	err := p.write(m)
+	if !stop() {
+		// ctx ended during the write: the line may be cut, so the
+		// connection is of no further use.
+		conn.Close()
+		return ctx.Err()
+	}
+	return err
+}
+
 // Request sends op to the other side and waits for its answer, which is
 // decoded into result when result is not nil.
 func (p *Peer) Request(ctx context.Context, op string, args, result any) error {
@@ -83,7 +103,7 @@ func (p *Peer) Request(ctx context.Context, op string, args, result any) error {
 		delete(p.pending, id)
 		p.mu.Unlock()
 	}()
-	if err := p.write(request{ID: id, Op: op, Args: raw}); err != nil {
+	if err := p.writeCtx(ctx, request{ID: id, Op: op, Args: raw}); err != nil {
 		return fmt.Errorf("wire: %s: %w", op, err)
 	}
 	select {

@@ -112,7 +112,7 @@ func TestUnknownFieldsAndKinds(t *testing.T) {
 		t.Fatal(err)
 	}
 	var kinds []string
-	for len(kinds) < 2 {
+	for len(kinds) < 1 {
 		select {
 		case e := <-evs:
 			kinds = append(kinds, string(e.Kind))
@@ -120,7 +120,7 @@ func TestUnknownFieldsAndKinds(t *testing.T) {
 			t.Fatalf("events: %v", kinds)
 		}
 	}
-	if kinds[0] != "from_the_future" || kinds[1] != "usage" {
+	if kinds[0] != "usage" { // the unknown kind before it is skipped
 		t.Fatalf("events: %v", kinds)
 	}
 }

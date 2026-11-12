@@ -261,6 +261,10 @@ func (c *Client) pump(ctx context.Context, conn net.Conn, dec *json.Decoder, out
 		if resp.Event.Pos <= after {
 			continue
 		}
+		if _, known := control.EventKinds[resp.Event.Kind]; !known {
+			after = resp.Event.Pos // a kind of a newer daemon: skipped, and not asked for again
+			continue
+		}
 		select {
 		case out <- *resp.Event:
 			after = resp.Event.Pos

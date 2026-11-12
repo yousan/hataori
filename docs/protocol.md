@@ -31,7 +31,7 @@ What a change does to the version:
 | Making an optional field required | major |
 | Changing a field's type, or what a field or a value means | major |
 
-So a reader must ignore what it does not know: a field it does not know, an event kind it does not know, a request it does not know (answered `not_supported`). The project's own client does.
+So a reader must ignore what it does not know: a field it does not know, an event kind it does not know, a request it does not know (answered `not_supported`). The project's own client does: it skips an event of a kind it does not know.
 
 Events are stored, and a reader reads them from a position, possibly long after they were written. Their schema is part of this version: an event kind or a field changes under the same rules.
 
