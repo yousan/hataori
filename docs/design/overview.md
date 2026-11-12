@@ -123,7 +123,7 @@ The Claude Agent SDK exists for Python and TypeScript only. Its docs tell other 
 
 Each hook is the command `hataori hook`. It hands its payload to the session host and, for the two hooks that decide something, waits for the reply. The screen is never read to learn state.
 
-**Permission requests in phase 1** are answered "allow" by the hook. This gives c-lord's behaviour without starting Claude Code in its bypass mode, which shows a warning dialog of its own. "Ask in chat" is later the same path with a person behind the reply.
+**Permission requests in phase 1** are answered "allow" by the hook. This gives c-lord's behaviour without starting Claude Code in its bypass mode, which shows a warning dialog of its own (c-lord#695; not re-checked on this version). "Ask in chat" is later the same path with a person behind the reply.
 
 **Codex:** `codex app-server` over pipes, one process per session, `thread/start` with `cwd`, then `turn/start`, `turn/steer`, `turn/interrupt`, `thread/resume`. Unchanged.
 
