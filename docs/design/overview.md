@@ -10,6 +10,7 @@ How to read it:
 - c-lord facts come from its docs and code at v1.4.420.
 - Claims about the agent CLIs were checked on 2026-11-12 against Claude Code 2.1.322 and codex-cli 0.163.0 on Linux, by driving the real programs. Appendix B lists each check.
 - Section 3 first recommended `claude -p`. The maintainer decided against it; sections 3.4 and 3.5 describe the path chosen instead, and the earlier checks stay in the document as the record.
+- OpenClaw facts (section 7.3) come from its documentation for version 2026.10.6, read on 2026-11-12.
 - Anything marked **(unverified)** was not checked by running it.
 
 ## 1. Summary
@@ -19,7 +20,7 @@ How to read it:
 3. **A person can attach to a live session.** Because Claude Code runs in a real terminal, `hataori attach` can connect a person's terminal to it, to watch and to type, as `tmux attach` does today. That comes after phase 1 (section 3.4).
 4. **Each agent runs under a small session host that outlives the hataori daemon.** The host owns the agent's terminal or pipes and writes what the agent reports to a file. Restarting or upgrading hataori does not stop running turns, and the file is read from a stored position, so nothing is lost or posted twice (section 4.3).
 5. **Everything needed after a restart is in SQLite before it is acted on:** inbound messages, outbound posts, open questions, turn state (section 6).
-6. **The core has one entry, the control API.** Chat adapters, a supervisor agent and a dashboard are all clients of it (sections 5 and 7). The first interface draft did not allow that; section 5.4 says what changed.
+6. **The core has one entry, the control API.** Chat adapters, a supervisor agent, a dashboard and plugins are all clients of it (sections 5 and 7). The first interface draft did not allow that; section 5.4 says what changed.
 7. **hataori writes nothing into a working tree**, and removes a workspace only after proving there is nothing in it that exists nowhere else (section 4.6).
 8. **Phase 1 is narrow:** replace c-lord for orders that a managing agent sends through a webhook, with the full test suite written before the first real order. Everything a person does by hand in chat comes after (section 8).
 9. **Two things have no hook:** the folder-trust dialog at a workspace's first start, and the end of an interrupted turn. Section 3.5 says how each is handled; the first needs the maintainer's decision (section 10).
@@ -346,9 +347,9 @@ A second host (for example a macOS machine) is another instance: its own root, d
 
 For macOS specifically: the service manager is launchd, not systemd; the host process must not depend on `/proc`; Claude Code keeps its login in the Keychain there, which a background service may not be able to read **(unverified)**; the default filesystem is case-insensitive, which matters for workspace paths. None of this was run.
 
-## 7. Supervisor and dashboard
+## 7. Supervisor, dashboard and plugins
 
-Both are wanted, both come after phase 1, and both are clients of the control API. Neither adds a concept to the core.
+All three are wanted, all come after phase 1, and all are clients of the control API. The supervisor and the dashboard add no concept to the core; plugins add hook points (section 7.3).
 
 ### 7.1 Supervisor agent
 
@@ -396,6 +397,79 @@ Every thread side by side with its live state and recent output, like tiled term
 - Sign-in is a short-lived, single-use link. A person asks for it in chat and gets it privately, or the operator prints one on the host. The dashboard session then belongs to that chat identity, so there are no extra passwords and no surface-specific login. Other ways (the chat service's own sign-in) can be added.
 - A person sees a thread only if their `Caller` includes its scope. The channel decides who can read a thread in chat, and the dashboard must not widen that. The first version is owner-only.
 - The server checks `Host` and `Origin` on every request, so a web page elsewhere cannot reach it through the user's browser. Cookies are not readable by scripts. Anything beyond loopback should be served over TLS.
+
+### 7.3 Plugins
+
+A plugin lets another developer add to what hataori does, in any language, without changing the core. The aim is that more people use hataori and that it grows by reusing what exists.
+
+Its shape follows OpenClaw's plugins: a manifest, registration, and hooks. Hook names and timing follow OpenClaw's where the meaning is the same, so someone who wrote an OpenClaw plugin can write one for hataori, and an existing one is easy to port. One thing differs. An OpenClaw plugin is loaded into the Gateway's process and is trusted like core code; its documentation says it is not sandboxed. A hataori plugin is a separate program, for two reasons:
+
+- Go cannot reliably load code into a running binary. The standard `plugin` package needs the same toolchain and the same version of every shared package as the binary.
+- Only a separate program makes what a plugin declares enforceable. The core checks each of its calls, as for every client.
+
+hataori does not depend on OpenClaw. An OpenClaw plugin that talks to hataori is an ordinary client of the control API.
+
+**What is not a plugin.** Tools used inside a session (MCP servers, skills, Claude Code and Codex plugins) already work in a hataori session; hataori only hands them to a session by flags, per scope (section 4.6). hataori does not load OpenClaw's native plugins. The built-in surface drivers and agent adapters stay in the binary.
+
+**How a plugin runs.**
+
+- A plugin is an executable with a manifest, `hataori-plugin.json`, next to it. Any language that can open a Unix socket can be used.
+- The operator lists it in the config with its path and the SHA-256 of the executable. hataori starts it as a child process, passes the socket path and a token for this start in its environment, and stops it when the daemon stops. An executable whose hash does not match is not started.
+- A plugin that exits is started again after a backoff. After repeated failures it stays stopped, and the owner is told once. A plugin's failure never stops the daemon or a turn.
+- A program that runs elsewhere, such as an OpenClaw plugin, is not started by hataori. It connects with a token from the config and gets the same checks.
+- It speaks the control API's wire protocol on the same socket as the `hataori` command, and states its protocol version when it connects.
+- It reads events from a position, like any client, and keeps the position itself, so a restart misses nothing.
+
+**The manifest** says what the plugin is and what it wants. hataori reads it without running the plugin.
+
+| Field | Meaning |
+|---|---|
+| `id`, `version` | the plugin's name and version |
+| `protocol` | the protocol major version it speaks, and the lowest minor version it needs |
+| `operations` | the control API operations it calls, for example `Threads` and `Send` |
+| `events` | the event kinds it reads |
+| `hooks` | the hook points it handles, each with an optional priority and timeout |
+| `conversation` | whether it needs message text (below) |
+| `config` | a JSON Schema for its own settings |
+
+**What the operator grants.** The plugin's config entry names the scopes it may see and act in, and may narrow the operations, events and hooks below what the manifest asks for. The plugin's `Caller` is what the manifest asks for and the config grants, and nothing more. Any other call is refused by the core's one authorization function (section 4.4), and the refusal is logged.
+
+Message text (input to the agent, the agent's text, outgoing posts) reaches a plugin only with an explicit `conversation` grant, as with OpenClaw's `allowConversationAccess`. Without it, the plugin gets events and hook calls with the text left out. No client can read the login relay's link and code (section 4.7), so no plugin can either.
+
+**Hooks.** A hook is a call from hataori to a plugin at a fixed point, which the plugin answers. The kinds are OpenClaw's:
+
+- *Observe*: the plugin is told and does not answer. In hataori these are events read from a position, with no separate mechanism.
+- *Modify*: the plugin may change what passes the point.
+- *Gate*: the plugin may stop it, with a reason that the thread shows.
+
+The first hook points, and the events, next to the OpenClaw hook with the same meaning:
+
+| hataori | Kind | Where | OpenClaw |
+|---|---|---|---|
+| `before_agent_run` | Gate | core: before input from `Start` or `Send` reaches the agent | `before_agent_run` |
+| `before_prompt_build` | Modify | core: at the same point; may add text before or after the input | `before_prompt_build` |
+| `message_sending` | Modify, Gate | chat front end: before an outbox row is posted; may rewrite the text or cancel the post | `message_sending` |
+| thread created | Observe | core event | `session_start` |
+| turn started | Observe | core event | none |
+| tool progress | Observe | core event | `after_tool_call` (closest) |
+| question asked | Observe | core event | none |
+| turn ended | Observe | core event | `agent_end` |
+| post sent | Observe | chat front end event | `message_sent` |
+| plugin started, stopping | Observe | told to the plugin itself | `gateway_start`, `gateway_stop` |
+
+The event names follow the session state machine (#16) and may still change. A cancelled post stays in the outbox with the plugin and the reason, and is visible through `hataori thread`. Nothing is posted in its place unless the plugin returned new text.
+
+**Order, timeout and failure.** Handlers on one point run one after another, by priority (higher first) and then in config order, and each sees the result of the one before. The defaults follow OpenClaw. Each handler has 15 seconds. When a `before_agent_run` handler fails or times out, the input is blocked (fail closed), and the thread says which plugin blocked it. When a `before_prompt_build` or `message_sending` handler fails or times out, that handler is skipped and the other results are kept. The operator can change the timeout and the failure policy per plugin, for example to make a secret scanner on `message_sending` fail closed.
+
+**Distribution.** At first a plugin is a path, a version and a hash in the config. There is no registry and no install command. A list of known plugins, and signatures, come when there are plugins to list.
+
+**What phase 1 must allow.** Adding hook points later must not need a new major version of the protocol (#51):
+
+- One connection carries requests in both directions, so the daemon can send a client a request and wait for the answer. A scope owner that is a separate program needs this already (`NewThread`, Appendix D), and hooks use the same message.
+- A client that gets a request it does not know answers "not supported". For a hook, the daemon then applies that point's failure policy.
+- Text fields are optional in every event, so leaving text out for a plugin without the `conversation` grant does not change the format.
+
+**Later, not designed here.** *Claim* hooks, by which a plugin takes an inbound message instead of the normal path (OpenClaw's `inbound_claim` and `before_dispatch`); this is how routing an order to a thread would be done. A plugin that registers a surface driver or an agent adapter, as OpenClaw's `registerChannel` does: it would implement the driver or adapter calls of Appendix D over the socket. Commands that a plugin adds to chat. Confinement beyond a separate process; running a plugin as another OS user is a deployment choice.
 
 ## 8. Phases
 
@@ -450,7 +524,7 @@ Acceptance:
 
 ### After phase 1
 
-The order below is a recommendation (section 10). Each later phase also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter. Appendix E has the acceptance criteria of each.
+The order below is a recommendation (section 10). Each later phase also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter; the plugin phase may also add hook points. Appendix E has the acceptance criteria of each.
 
 **People in chat, and cleanup.** Slash commands, buttons for questions, lamps, pings, attach by hand, and removing workspaces behind the proof in section 4.6. This is what lets c-lord be switched off.
 
@@ -474,6 +548,8 @@ The order below is a recommendation (section 10). Each later phase also has this
 
 Unlike Discord and Slack Socket Mode, Teams calls hataori. The host needs a public HTTPS address, which is a deployment decision.
 
+**Plugins.** Section 7.3. Where this goes in the order is open (section 10).
+
 ## 9. Future work, not designed here
 
 **Surfaces without threads.** The core takes a thread as an opaque key, so a surface with no native threads only needs a front end that makes the keys up. The intended rules: a reply to a hataori message continues that message's thread; any other message goes to the thread used last; `/new` starts one; every hataori message begins with the thread's name. If the bot cannot see what a message replies to, one chat is one thread. A surface whose threads expire (LINE OpenChat: 24 hours or two weeks) counts as having none.
@@ -489,6 +565,8 @@ Unlike Discord and Slack Socket Mode, Teams calls hataori. The host needs a publ
 
    *Recommendation:* answer it by keys, as the single bounded exception, with the failed-start rule behind it. Writing into the CLI's state file is closer to touching login than reading one known dialog is. The adapter issue for start-up records what is tried first: whether Claude Code offers a supported way to trust a directory in advance.
 
+2. **Where do plugins go in the order after phase 1?** *Recommendation:* right after the supervisor. The supervisor is the first program outside the daemon with a limited `Caller` that reads events from a position; plugins add the manifest, the grant and hooks on top of that.
+
 ### Decided
 
 - **Claude Code is not driven through `claude -p`.** Decided by the maintainer; section 3.4. Live attach comes back with the terminal, so the earlier question about take-over between turns is closed.
@@ -502,6 +580,7 @@ Unlike Discord and Slack Socket Mode, Teams calls hataori. The host needs a publ
 - **Dashboard sign-in is a link issued in chat**, owner-only at first.
 - **Existing c-lord threads do not move.** Both run side by side on different channels.
 - **The login alert and relay are in phase 1** (section 4.7), for Claude Code. They are the only use of direct messages and the only button in phase 1.
+- **Plugins are separate programs shaped like OpenClaw's plugins:** a manifest, registration and hooks, with OpenClaw's hook names and timing where the meaning is the same. hataori does not depend on OpenClaw. Tools used inside a session are not hataori plugins. Section 7.3.
 
 ## Appendix A: c-lord feature inventory
 
@@ -982,7 +1061,7 @@ type Factory func(settings []byte) (Adapter, error)
 
 ## Appendix E: acceptance criteria after phase 1
 
-Every phase here also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter.
+Every phase here also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter; the plugin phase may also add hook points.
 
 ### People in chat, and cleanup
 
@@ -1024,3 +1103,13 @@ Every phase here also has this criterion: the change touches no core package, ex
 
 - [ ] Phase 1's criteria for start, continue, questions, restart and catch-up pass on Teams.
 - [ ] An activity with an invalid or missing token is rejected.
+
+### Plugins
+
+- [ ] An example plugin written in a language other than Go is in the repository, and the tests below use it.
+- [ ] The plugin connects, reads events from a position and calls `Threads`. A call to an operation its grant lacks is refused and logged.
+- [ ] A plugin is not started when the hash of its executable differs from the config, and it is refused when its protocol major version differs. Each log line names both values.
+- [ ] A plugin killed during a turn is started again, the turn finishes, and the plugin reads each event it missed exactly once.
+- [ ] A `message_sending` handler rewrites one post and cancels another. A `before_agent_run` handler stops an input before it reaches the agent, and the thread names the plugin and the reason.
+- [ ] Two handlers on one point run by priority, then in config order. A handler that times out gets the point's default failure policy, and a per-plugin override in the config replaces it (each tested).
+- [ ] Without the `conversation` grant, nothing sent to the plugin contains message text (tested with a marker string in the input, the agent's text and a post).
