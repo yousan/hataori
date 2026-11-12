@@ -23,6 +23,10 @@ type Config struct {
 	Trigger string        // the word that starts a thread
 	Idle    time.Duration // idle period before a session is put to sleep
 	Scopes  []Scope
+	// LoginRelay is whether a login outage starts the agent's login
+	// command for the owner (section 4.7); "login_relay": false switches it
+	// off, and the alert stays.
+	LoginRelay bool
 
 	// Drivers and Adapters hold each driver's and adapter's own section of
 	// the config, by registered name, unparsed.
@@ -42,12 +46,13 @@ type Scope struct {
 
 // The config as written in the file.
 type fileConfig struct {
-	Owner    string                     `json:"owner"`
-	Trigger  string                     `json:"trigger"`
-	Idle     string                     `json:"idle"`
-	Scopes   []fileScope                `json:"scopes"`
-	Drivers  map[string]json.RawMessage `json:"drivers"`
-	Adapters map[string]json.RawMessage `json:"adapters"`
+	Owner      string                     `json:"owner"`
+	Trigger    string                     `json:"trigger"`
+	Idle       string                     `json:"idle"`
+	LoginRelay *bool                      `json:"login_relay"`
+	Scopes     []fileScope                `json:"scopes"`
+	Drivers    map[string]json.RawMessage `json:"drivers"`
+	Adapters   map[string]json.RawMessage `json:"adapters"`
 }
 
 type fileScope struct {
@@ -76,10 +81,11 @@ func ParseConfig(data []byte) (*Config, error) {
 	}
 
 	c := &Config{
-		Owner:    strings.TrimSpace(f.Owner),
-		Trigger:  strings.TrimSpace(f.Trigger),
-		Drivers:  raw(f.Drivers),
-		Adapters: raw(f.Adapters),
+		LoginRelay: f.LoginRelay == nil || *f.LoginRelay,
+		Owner:      strings.TrimSpace(f.Owner),
+		Trigger:    strings.TrimSpace(f.Trigger),
+		Drivers:    raw(f.Drivers),
+		Adapters:   raw(f.Adapters),
 	}
 	if c.Owner == "" {
 		return nil, missing("owner")
