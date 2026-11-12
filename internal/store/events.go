@@ -137,7 +137,25 @@ func (s *Store) Events(ctx context.Context, f control.Filter, after uint64, limi
 // to out, in order and once each, then live ones, until ctx ends. It
 // returns ctx's error, or the error that stopped it.
 func (s *Store) Follow(ctx context.Context, f control.Filter, after uint64, out chan<- control.Event) error {
+	return s.FollowMark(ctx, f, after, out, nil)
+}
+
+// FollowMark is Follow, and calls caughtUp once, with the position of the
+// last event sent, when every event stored before the call has been sent.
+func (s *Store) FollowMark(ctx context.Context, f control.Filter, after uint64, out chan<- control.Event, caughtUp func(pos uint64)) error {
 	const batch = 500
+	var head uint64 // the last position stored when the call was made
+	if caughtUp != nil {
+		if err := s.DB.QueryRowContext(ctx, `SELECT coalesce(max(pos), 0) FROM events`).Scan(&head); err != nil {
+			return err
+		}
+	}
+	mark := func() {
+		if caughtUp != nil {
+			caughtUp(after)
+			caughtUp = nil
+		}
+	}
 	for {
 		// Take the waiter before reading, so a commit between the read
 		// and the wait is not missed.
@@ -147,6 +165,9 @@ func (s *Store) Follow(ctx context.Context, f control.Filter, after uint64, out 
 			return err
 		}
 		for _, e := range evs {
+			if e.Pos > head {
+				mark() // the first event stored after the call
+			}
 			select {
 			case out <- e:
 				after = e.Pos
@@ -157,6 +178,7 @@ func (s *Store) Follow(ctx context.Context, f control.Filter, after uint64, out 
 		if len(evs) == batch {
 			continue
 		}
+		mark()
 		select {
 		case <-wake:
 		case <-ctx.Done():

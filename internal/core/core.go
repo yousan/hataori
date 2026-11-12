@@ -597,7 +597,12 @@ func (a *api) Events(ctx context.Context, f control.Filter, after uint64) (<-cha
 	in := make(chan control.Event)
 	out := make(chan control.Event)
 	go func() {
-		err := a.c.Store.Follow(ctx, f, after, in)
+		err := a.c.Store.FollowMark(ctx, f, after, in, func(pos uint64) {
+			select {
+			case in <- control.Event{Pos: pos, Kind: control.CaughtUp}:
+			case <-ctx.Done():
+			}
+		})
 		if err != nil && !errors.Is(err, context.Canceled) {
 			a.c.Log.Error("following events", "err", err)
 		}
@@ -606,7 +611,7 @@ func (a *api) Events(ctx context.Context, f control.Filter, after uint64) (<-cha
 	go func() {
 		defer close(out)
 		for e := range in {
-			if !a.mayRead(e) {
+			if e.Kind != control.CaughtUp && !a.mayRead(e) {
 				continue
 			}
 			select {

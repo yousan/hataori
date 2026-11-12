@@ -238,6 +238,14 @@ func (c *Client) pump(ctx context.Context, conn net.Conn, dec *json.Decoder, out
 		if err := dec.Decode(&resp); err != nil || resp.Event == nil {
 			return after
 		}
+		if resp.Event.Kind == control.CaughtUp {
+			select {
+			case out <- *resp.Event: // after a reconnect too: the stored events are delivered again up to here
+			case <-ctx.Done():
+				return after
+			}
+			continue
+		}
 		if resp.Event.Pos <= after {
 			continue
 		}
