@@ -341,7 +341,8 @@ func TestNoProc(t *testing.T) {
 func TestDeepStateDirSocket(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), strings.Repeat("deep/", 20))
 	os.MkdirAll(dir, 0o700)
-	t.Cleanup(func() { killGroups(dir) })
+	// Stopped, not killed, so that the host removes its socket directory.
+	t.Cleanup(func() { Stop(dir, time.Second, time.Second); killGroups(dir) })
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir()) // the caller's; the host has none
 	t.Setenv("TMPDIR", t.TempDir())
 	if _, err := Start(hostCommand(), dir, Spec{Argv: self("echo"), Env: []string{}}); err != nil {
@@ -353,5 +354,57 @@ func TestDeepStateDirSocket(t *testing.T) {
 	}
 	if _, err := Call(want, []byte(`{"x":1}`), false, 5*time.Second); err != nil {
 		t.Fatalf("a hook with the caller's path: %v", err)
+	}
+}
+
+// waitGoneT waits until the host of dir has recorded its end.
+func waitGoneT(t *testing.T, dir string) {
+	t.Helper()
+	for deadline := time.Now().Add(30 * time.Second); !Gone(dir); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the host did not end")
+		}
+	}
+}
+
+// The directory a host makes for its socket outside a deep state directory
+// goes when the host ends; after a killed host, the next host takes it over
+// and removes it when it ends.
+func TestSocketDirectoryIsRemoved(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), strings.Repeat("deep/", 20))
+	os.MkdirAll(dir, 0o700)
+	t.Cleanup(func() { killGroups(dir) })
+	sockDir := filepath.Dir(defaultSocket(dir))
+	if sockDir == dir {
+		t.Fatal("the state directory is not deep enough for the test")
+	}
+	start := func(args ...string) {
+		t.Helper()
+		os.Remove(filepath.Join(dir, StatusFile))
+		if _, err := Start(hostCommand(), dir, Spec{Argv: self(args...), Env: []string{}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	start("exit", "0")
+	waitGoneT(t, dir)
+	if _, err := os.Stat(sockDir); !os.IsNotExist(err) {
+		t.Fatalf("after a clean end the socket directory is there: %v", err)
+	}
+
+	start("echo")   // runs until killed
+	// The host dies first, with its socket in place, then its command.
+	b, _ := os.ReadFile(filepath.Join(dir, HostPIDFile))
+	if pid, _ := strconv.Atoi(strings.TrimSpace(string(b))); pid > 1 {
+		syscall.Kill(-pid, syscall.SIGKILL)
+	}
+	time.Sleep(100 * time.Millisecond)
+	killGroups(dir)
+	if _, err := os.Stat(filepath.Join(sockDir, SocketFile)); err != nil {
+		t.Fatalf("a killed host's socket: %v", err)
+	}
+	start("exit", "0")
+	waitGoneT(t, dir)
+	if _, err := os.Stat(sockDir); !os.IsNotExist(err) {
+		t.Fatalf("after the next host ended the socket directory is there: %v", err)
 	}
 }
