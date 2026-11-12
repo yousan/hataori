@@ -70,6 +70,13 @@ type MessageRef = surface.MessageRef
 // one that was deleted.
 var ErrNoMessage = errors.New("fake surface: no such message")
 
+// ErrUndeliverable is returned for a direct message to a person who does
+// not take them (see Undeliverable).
+var ErrUndeliverable = errors.New("fake surface: the person does not take direct messages")
+
+// ErrNoChoice is returned by Press for a message without that choice.
+var ErrNoChoice = errors.New("fake surface: the message has no such choice")
+
 // ErrInjected is the default error of a call a test made fail.
 var ErrInjected = errors.New("fake surface: injected failure")
 
@@ -92,6 +99,8 @@ type Driver struct {
 	calls     map[surface.Conversation][]Call
 	inbound   map[surface.Conversation][]surface.Inbound
 	live      map[MessageRef]bool
+	shown     map[MessageRef]surface.Message // what each live message shows now
+	blocked   map[string]bool                // people whose direct messages fail
 	fail      map[Op]*failure
 	direct    map[string]surface.Conversation
 }
@@ -116,6 +125,8 @@ func New() *Driver {
 		calls:   map[surface.Conversation][]Call{},
 		inbound: map[surface.Conversation][]surface.Inbound{},
 		live:    map[MessageRef]bool{},
+		shown:   map[MessageRef]surface.Message{},
+		blocked: map[string]bool{},
 		fail:    map[Op]*failure{},
 		direct:  map[string]surface.Conversation{},
 	}
@@ -341,8 +352,14 @@ func (d *Driver) Post(_ context.Context, conv surface.Conversation, key string, 
 	if before != nil {
 		return MessageRef{}, before
 	}
+	for who, c := range d.direct {
+		if c == conv && d.blocked[who] {
+			return MessageRef{}, fmt.Errorf("%w: %s", ErrUndeliverable, who)
+		}
+	}
 	ref := MessageRef{Conv: conv, ID: d.id("m")}
 	d.live[ref] = true
+	d.shown[ref] = clone(m)
 	d.record(conv, Call{Op: OpPost, Ref: ref, Key: key, Message: m})
 	if after != nil {
 		return MessageRef{}, after
@@ -375,8 +392,12 @@ func (d *Driver) change(op Op, ref MessageRef, c Call) error {
 	if !d.live[ref] {
 		return ErrNoMessage
 	}
-	if op == OpDelete {
+	switch op {
+	case OpDelete:
 		delete(d.live, ref)
+		delete(d.shown, ref)
+	case OpEdit:
+		d.shown[ref] = clone(c.Message)
 	}
 	d.record(ref.Conv, c)
 	return after
@@ -392,4 +413,54 @@ func (d *Driver) SetThread(_ context.Context, conv surface.Conversation, t surfa
 	}
 	d.record(conv, Call{Op: OpSetThread, Thread: t})
 	return after
+}
+
+// InjectDirect receives a direct message from the person who, in the
+// private conversation with them, delivered as direct.
+func (d *Driver) InjectDirect(who, text string) surface.Inbound {
+	conv, _ := d.OpenDirect(context.Background(), who)
+	return d.Inject(conv, Person(who), text)
+}
+
+// Press uses the choice with token on the message ref as the person who:
+// the press is delivered to the sink as a Selection. The message must be
+// one the driver posted and still shows that choice.
+func (d *Driver) Press(ref MessageRef, who, token string) error {
+	d.deliver.Lock()
+	defer d.deliver.Unlock()
+	d.mu.Lock()
+	m, ok := d.shown[ref]
+	sink := d.sink
+	if !d.connected {
+		sink = nil
+	}
+	d.mu.Unlock()
+	if !ok {
+		return ErrNoMessage
+	}
+	found := false
+	for _, c := range m.Choices {
+		found = found || c.Token == token
+	}
+	if !found {
+		return ErrNoChoice
+	}
+	if sink != nil {
+		sink.Choice(surface.Selection{Ref: ref, Author: Person(who), Token: token})
+	}
+	return nil
+}
+
+// Undeliverable makes every post into the direct conversation with who
+// fail with ErrUndeliverable, as when a person does not take direct
+// messages; Deliverable undoes it.
+func (d *Driver) Undeliverable(who string) { d.setBlocked(who, true) }
+
+// Deliverable undoes Undeliverable.
+func (d *Driver) Deliverable(who string) { d.setBlocked(who, false) }
+
+func (d *Driver) setBlocked(who string, b bool) {
+	d.mu.Lock()
+	d.blocked[who] = b
+	d.mu.Unlock()
 }
