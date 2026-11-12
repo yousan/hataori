@@ -5,10 +5,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -93,8 +93,9 @@ var baseEnv = []string{"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_A
 // --session-id; a resumed one --resume. Permission requests are answered
 // by the hooks, so the CLI never runs in its bypass mode.
 func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
-	if spec.StateDir == "" {
-		return agent.Launch{}, errors.New(Name + ": no state directory")
+	// The CLI runs in the workspace, so a relative path would point there.
+	if !filepath.IsAbs(spec.StateDir) {
+		return agent.Launch{}, fmt.Errorf("%s: state directory %q is not an absolute path", Name, spec.StateDir)
 	}
 	settings, err := a.settings()
 	if err != nil {

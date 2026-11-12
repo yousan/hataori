@@ -67,6 +67,14 @@ func TestLaunchNewAndResumed(t *testing.T) {
 	}
 }
 
+func TestRelativeStateDirIsRefused(t *testing.T) {
+	s := spec(t)
+	s.StateDir = "state/sessions/1"
+	if _, err := newAdapter(t, "").Launch(s); err == nil {
+		t.Fatal("a relative state directory was accepted")
+	}
+}
+
 func TestFilesAreUnderStateDir(t *testing.T) {
 	s := spec(t)
 	l, err := newAdapter(t, "").Launch(s)
@@ -156,6 +164,15 @@ func TestEnvironmentFromFixedList(t *testing.T) {
 	}
 }
 
+// version is the real CLI's answer to --version.
+func version(t *testing.T) string {
+	b, err := os.ReadFile("testdata/2.1.322/probe/version.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
 // fakeCLI writes a script that records its arguments and answers
 // --version and auth status as the real CLI does.
 func fakeCLI(t *testing.T, status string) (path, log string) {
@@ -163,8 +180,8 @@ func fakeCLI(t *testing.T, status string) (path, log string) {
 	path, log = filepath.Join(dir, "claude"), filepath.Join(dir, "args")
 	script := "#!/bin/sh\necho \"$*\" >> '" + log + "'\n" +
 		"case \"$*\" in\n" +
-		"  --version) echo '2.1.322 (Claude Code)' ;;\n" +
-		"  'auth status') cat <<'EOF'\n" + status + "\nEOF\n exit 1 ;;\n" +
+		"  --version) cat <<'EOF'\n" + version(t) + "EOF\n ;;\n" +
+		"  'auth status') cat <<'EOF'\n" + status + "\nEOF\n ;;\n" +
 		"  *) exit 64 ;;\n" +
 		"esac\n"
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
@@ -174,15 +191,19 @@ func fakeCLI(t *testing.T, status string) (path, log string) {
 }
 
 func TestProbe(t *testing.T) {
-	status, _ := os.ReadFile("testdata/2.1.322/login/status-before.json") // a real logged-out answer
+	// Real answers of the CLI, logged out and logged in.
 	for _, tc := range []struct {
-		status   string
+		capture  string
 		loggedIn bool
 	}{
-		{string(status), false},
-		{`{"loggedIn": true, "authMethod": "claude.ai"}`, true},
+		{"testdata/2.1.322/login/status-before.json", false},
+		{"testdata/2.1.322/probe/auth-status-logged-in.json", true},
 	} {
-		path, log := fakeCLI(t, tc.status)
+		status, err := os.ReadFile(tc.capture)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path, log := fakeCLI(t, string(status))
 		a := newAdapter(t, `{"command": "`+path+`"}`)
 		h, err := a.Probe(context.Background())
 		if err != nil || !h.Installed || h.Version != "2.1.322" || h.LoggedIn != tc.loggedIn {
