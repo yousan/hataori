@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/yousan/hataori/internal/agent"
@@ -70,7 +71,15 @@ func recordLogin(ctx context.Context, tx *store.Tx, agentName string, thread int
 		if _, err := tx.ExecContext(ctx, `UPDATE login_outages SET closed_at = ? WHERE id = ?`, now, outage); err != nil {
 			return fmt.Errorf("session: close login outage: %w", err)
 		}
-		return appendLogin(ctx, tx, id, KindLoginRestored, map[string]any{"agent": agentName, "outage": outage, "threads": stopped})
+		// "scopes" lets a reader withhold the event from a caller that may
+		// not see every thread it names.
+		var scopes []string
+		for _, t := range stopped {
+			if !slices.Contains(scopes, t.Scope) {
+				scopes = append(scopes, t.Scope)
+			}
+		}
+		return appendLogin(ctx, tx, id, KindLoginRestored, map[string]any{"agent": agentName, "outage": outage, "threads": stopped, "scopes": scopes})
 	}
 	return nil
 }

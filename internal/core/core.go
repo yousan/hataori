@@ -519,6 +519,27 @@ func (a *api) Stop(ctx context.Context, id control.ThreadID) error {
 	return a.c.Runner.Interrupt(ctx, sid)
 }
 
+// mayRead reports whether the caller may see e: its scope, and every
+// scope its data lists under "scopes" (an event about threads in several
+// scopes, such as the end of a login outage).
+func (a *api) mayRead(e control.Event) bool {
+	if !slices.Contains(a.caller.Scopes, e.Thread.Scope) {
+		return false
+	}
+	var d struct {
+		Scopes []string `json:"scopes"`
+	}
+	if len(e.Data) > 0 {
+		json.Unmarshal(e.Data, &d) // data that is not an object names no scopes
+	}
+	for _, s := range d.Scopes {
+		if !slices.Contains(a.caller.Scopes, s) {
+			return false
+		}
+	}
+	return true
+}
+
 func (a *api) Events(ctx context.Context, f control.Filter, after uint64) (<-chan control.Event, error) {
 	if _, err := a.filterScope("Events", f); err != nil {
 		return nil, err
@@ -535,7 +556,7 @@ func (a *api) Events(ctx context.Context, f control.Filter, after uint64) (<-cha
 	go func() {
 		defer close(out)
 		for e := range in {
-			if !slices.Contains(a.caller.Scopes, e.Thread.Scope) {
+			if !a.mayRead(e) {
 				continue
 			}
 			select {
