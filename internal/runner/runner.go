@@ -268,8 +268,13 @@ func (r *Runner) skipRest(ctx context.Context, id int64, dir string) error {
 }
 
 // Reconnect follows every session that was live when the daemon stopped.
-// Their agents kept running under their hosts.
+// Their agents kept running under their hosts. An asleep session whose
+// agent is still running, because the daemon stopped while putting it to
+// sleep, has its agent stopped.
 func (r *Runner) Reconnect(ctx context.Context) error {
+	if err := r.stopSleepers(ctx); err != nil {
+		return err
+	}
 	rows, err := r.Store.DB.QueryContext(ctx, `SELECT id, spec FROM sessions
 		WHERE state IN ('creating', 'idle', 'running', 'waiting') AND spec != ''`)
 	if err != nil {
@@ -315,6 +320,33 @@ const (
 	reconnect             // after a daemon restart: the agent kept running
 	wake                  // a new agent of a session read before: read on from the stored offsets
 )
+
+// stopSleepers stops the agents of asleep sessions that are still running.
+func (r *Runner) stopSleepers(ctx context.Context) error {
+	rows, err := r.Store.DB.QueryContext(ctx, `SELECT id FROM sessions WHERE state = 'asleep' AND spec != ''`)
+	if err != nil {
+		return fmt.Errorf("runner: %w", err)
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	for _, id := range ids {
+		dir := StateDir(r.Root, id)
+		if _, err := os.Stat(filepath.Join(dir, host.HostPIDFile)); err != nil || host.Gone(dir) || hostLost(dir) {
+			continue
+		}
+		r.Log.Warn("stopping the agent of an asleep session", "session", id)
+		go host.Stop(dir, time.Second, 2*time.Second)
+	}
+	return nil
+}
 
 // follow starts following a session. On reconnect, the codec first reads
 // what was read before, with its results discarded, to rebuild its state.

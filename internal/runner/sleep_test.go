@@ -229,3 +229,28 @@ func TestRestartAloneSleepsNothing(t *testing.T) {
 		t.Fatalf("state %s, agent alive %v", s, agentAlive(t, root, 1))
 	}
 }
+
+// The daemon stopped after putting a session to sleep and before its agent
+// was stopped: the next daemon stops it.
+func TestAsleepWithARunningAgentIsStopped(t *testing.T) {
+	root := t.TempDir()
+	t.Cleanup(func() { killSessions(root) })
+	d := runDaemon(t, root, false, "start", "reply hi")
+	st := openStore(t, root)
+	until(t, "the turn's end", st, "turn_ended", 1)
+	d.kill()
+	if !agentAlive(t, root, 1) {
+		t.Fatal("the agent is not running")
+	}
+	st.DB.Exec(`UPDATE sessions SET state = 'asleep' WHERE id = 1`) // committed, then the daemon died
+
+	st2, _, r, err := build(root, options{}, &syncBuffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { r.Close(); st2.Close() }()
+	if err := r.Reconnect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the agent's end", 15*time.Second, func() bool { return !agentAlive(t, root, 1) })
+}
