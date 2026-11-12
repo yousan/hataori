@@ -166,7 +166,7 @@ A thread has one workspace for its whole life and one current session. Clearing 
 creating ──► idle ◄──► running ◄──► waiting      (waiting: a question or approval is open)
    │          │           │
    ▼          ▼           ▼
- failed     asleep ──► idle        (asleep: no process; the next message resumes it)
+ failed     asleep ──► idle        (asleep: no process; the next message resumes it, through creating)
               │
               ▼
            closed ──► removed      (closed: stopped by a person or by idle age; workspace kept)
@@ -289,7 +289,7 @@ An agent adapter has two parts. The first says how to start the agent for a sess
 
 Splitting the agent adapter into a launch description and a pure codec is what makes the repository's test rule practical: a capture of real output goes in `testdata/`, and the codec must turn it into the expected events. The session host and the core never see agent-specific bytes. The same interface fits an agent on pipes that speaks a protocol and an agent in a terminal that reports through hooks, which is how the Claude Code adapter could be changed without touching the core.
 
-`TurnEnded` carries a status (`completed`, `interrupted`, `failed`) and a reason (`limit`, `login`, `api_error`, `crashed`, `blocked at start`, `not delivered`). `TurnStarted` says who started it (a caller, the agent itself after a background task, or a person at the terminal). These two fields replace most of the "guessing turn state" group.
+`TurnEnded` carries a status (`completed`, `interrupted`, `failed`) and a reason (`limit`, `login`, `api_error`, `crashed`, `blocked at start`, `not delivered`). `SessionEnded` carries a reason too; `cannot resume` means the agent no longer has the conversation, and the core starts a new session in the same workspace. `TurnStarted` says who started it (a caller, the agent itself after a background task, or a person at the terminal). These two fields replace most of the "guessing turn state" group.
 
 ### 5.4 Did the first draft allow chat, supervisor and dashboard on one API?
 
@@ -1069,6 +1069,8 @@ type Event struct {
 	// Plus the fields each kind needs: the text and whether it is final,
 	// who started a turn, the request id and its questions,
 	// the end status and reason, the background tasks still running.
+	// SessionEnded has a reason; CannotResume ("cannot resume") when a
+	// resumed session's conversation is gone.
 }
 
 // Factory makes an Adapter from its opaque section of the instance's config.
