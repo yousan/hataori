@@ -24,9 +24,9 @@ func (s *Store) Update(ctx context.Context, fn func(tx *Tx) error) error {
 	if err != nil {
 		return fmt.Errorf("store: begin: %w", err)
 	}
+	defer sqlTx.Rollback() // no-op after Commit; frees the connection on a panic
 	tx := &Tx{Tx: sqlTx}
 	if err := fn(tx); err != nil {
-		sqlTx.Rollback()
 		return err
 	}
 	if err := sqlTx.Commit(); err != nil {
