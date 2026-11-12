@@ -100,7 +100,7 @@ func Stop(stateDir string, interrupt, terminate time.Duration) (StopResult, erro
 	} else {
 		r.Already = true
 	}
-	deadline := time.Now().Add(drainTimeout + killWait)
+	deadline := time.Now().Add(drainGoneTimeout + killWait)
 	for !Gone(stateDir) {
 		if time.Now().After(deadline) {
 			return r, errors.New("host: the host did not record the command's end")

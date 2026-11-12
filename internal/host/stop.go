@@ -23,6 +23,10 @@ func (h *host) stop(req request) (resp response, registered bool) {
 	}
 	h.stops.Add(1)
 	h.stopMu.Unlock()
+	// A second stop waits for the first, and then finds the group gone, so
+	// its shorter grace periods cannot cut the first one's short.
+	h.stopOne.Lock()
+	defer h.stopOne.Unlock()
 	return h.signalGroup(req), true
 }
 

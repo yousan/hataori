@@ -22,6 +22,10 @@ import (
 // exited, for bytes still in flight or held by a process the command left.
 const drainTimeout = 2 * time.Second
 
+// drainGoneTimeout bounds the same wait once no process of the group is
+// left.
+const drainGoneTimeout = 30 * time.Second
+
 // host is one running session host.
 type host struct {
 	dir   string
@@ -37,6 +41,7 @@ type host struct {
 	done   chan struct{} // closed when the command has exited
 
 	stopMu   sync.Mutex
+	stopOne  sync.Mutex     // one stop at a time
 	closing  bool           // the host is shutting down; no new stop starts
 	stops    sync.WaitGroup // stops in progress
 	stopNote string         // the signals the last stop sent
@@ -79,18 +84,25 @@ func Run(stateDir string) error {
 
 	waitErr := h.cmd.Wait()
 	close(h.done)
-	// A stop in progress ends the rest of the group before the terminal is
-	// closed; a stop asked for from now on finds the command gone.
-	h.stopMu.Lock()
-	h.closing = true
-	h.stopMu.Unlock()
+	// A stop in progress ends the rest of the group first. While the output
+	// drains, a stop can still end what the command left behind.
 	h.stops.Wait()
 	drained := make(chan struct{})
 	go func() { readers.Wait(); close(drained) }()
+	// With the group gone every writer is closed, so the readers end; the
+	// long bound only guards against a descriptor passed elsewhere.
+	limit := drainTimeout
+	if groupGone(h.cmd.Process.Pid) {
+		limit = drainGoneTimeout
+	}
 	select {
 	case <-drained:
-	case <-time.After(drainTimeout):
+	case <-time.After(limit):
 	}
+	h.stopMu.Lock()
+	h.closing = true // a stop asked for from now on finds the command gone
+	h.stopMu.Unlock()
+	h.stops.Wait()
 	if h.tty != nil {
 		h.tty.Close()
 	}
