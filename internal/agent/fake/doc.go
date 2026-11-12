@@ -48,6 +48,16 @@
 // With --conversations DIR the program keeps one file per session it starts
 // in DIR, and a resume whose file is gone reports "cannot-resume".
 //
+// With --config DIR every turn fails with the reason login until DIR holds
+// the file LoggedInFile, which the login command writes:
+//
+//	login --config DIR --accept CODE [--no-link] [--quit]
+//
+// prints a link line and a request for a code, refuses any other code and
+// asks again, and logs in on CODE. --no-link prints nothing and waits for
+// its input to end; --quit ends cleanly at the first code without logging
+// in.
+//
 // The spec's instructions are the start-up script: a line "never-start"
 // makes the program never report that it is ready.
 package fake

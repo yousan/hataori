@@ -31,6 +31,12 @@ type Config struct {
 	// file per session it started. Resuming a session whose file is gone
 	// fails as "cannot resume", as when an agent's retention removed it.
 	Conversations string `json:"conversations"`
+	// ConfigDir, when set, is where the fake keeps its login, like an
+	// agent's config directory: until its login command has accepted a
+	// code, every turn fails with the reason login.
+	ConfigDir string `json:"config_dir"`
+	// Login is what its login command does.
+	Login Login `json:"login"`
 }
 
 // Adapter is the fake agent.
@@ -52,9 +58,14 @@ func New(settings []byte) (agent.Adapter, error) {
 	return &Adapter{c: c}, nil
 }
 
-// Probe always reports the fake installed and logged in.
+// Probe reports the fake installed, and logged in unless it has a config
+// directory whose login has not succeeded.
 func (a *Adapter) Probe(context.Context) (agent.Health, error) {
-	return agent.Health{Installed: true, LoggedIn: true, Version: "fake"}, nil
+	h := agent.Health{Installed: true, LoggedIn: loggedIn(a.c.ConfigDir), Version: "fake"}
+	if !h.LoggedIn {
+		h.Detail = "not logged in"
+	}
+	return h, nil
 }
 
 // TranscriptFile is where the terminal form writes its text, in the
@@ -81,6 +92,9 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 	}
 	if a.c.Conversations != "" {
 		argv = append(argv, "--conversations", a.c.Conversations)
+	}
+	if a.c.ConfigDir != "" {
+		argv = append(argv, "--config", a.c.ConfigDir)
 	}
 	env := append([]string{}, a.c.Env...)
 	if a.c.Terminal {
