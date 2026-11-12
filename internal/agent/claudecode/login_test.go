@@ -6,9 +6,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -92,10 +94,10 @@ func TestLoginDecodeCaptures(t *testing.T) {
 
 func TestLoginCode(t *testing.T) {
 	a := newAdapter(t, "")
-	if b, err := a.LoginCode(" AbC-123_x#y \n"); err != nil || string(b) != "AbC-123_x#y\n" {
+	if b, err := a.LoginCode("AbC-123_x#y"); err != nil || string(b) != "AbC-123_x#y\n" {
 		t.Fatalf("a code: %q, %v", b, err)
 	}
-	for _, bad := range []string{"", "  ", "two words", "tab\there", "line\nbreak", "esc\x1b[0m"} {
+	for _, bad := range []string{"", "  ", " code", "code ", "code\n", "two words", "tab\there", "esc\x1b[0m"} {
 		if _, err := a.LoginCode(bad); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
@@ -117,8 +119,49 @@ func TestParseStatusCaptures(t *testing.T) {
 	}
 }
 
-// The login functions keep nothing: login.go reaches no file, process or
-// network, and LoginLaunch asks for no file.
+// The login functions keep nothing. They run in a child process that may
+// not write any file (RLIMIT_FSIZE 0, in a directory that is gone, with no
+// HOME); every one of them still gives its result.
+func TestLoginRunsWithoutAFilesystem(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "role", "login-pure")
+	cmd.Env = []string{}
+	out, err := cmd.CombinedOutput()
+	if err != nil || string(out) != "ok\n" {
+		t.Fatalf("child: %q, %v", out, err)
+	}
+}
+
+// loginPure is the child of TestLoginRunsWithoutAFilesystem.
+func loginPure() int {
+	dir, _ := os.MkdirTemp("", "pure-")
+	os.Chdir(dir)
+	os.Remove(dir)
+	if syscall.Setrlimit(syscall.RLIMIT_FSIZE, &syscall.Rlimit{Cur: 0, Max: 0}) != nil {
+		return 2
+	}
+	signal.Ignore(syscall.SIGXFSZ) // a write then fails instead of killing the process
+	if f, err := os.Create("/tmp/pure-probe"); err == nil {
+		_, werr := f.Write([]byte("x"))
+		f.Close()
+		os.Remove("/tmp/pure-probe")
+		if werr == nil {
+			return 3 // the limit does not hold; the test would prove nothing
+		}
+	}
+	a := &Adapter{command: "claude", environ: func() []string { return []string{"CLAUDE_CONFIG_DIR=/nowhere"} }}
+	l, err := a.LoginLaunch(agent.Spec{})
+	st := a.LoginDecode([]byte("If the browser didn't open, visit: https://example.com/x?state=s"))
+	code, cerr := a.LoginCode("abc")
+	in, perr := ParseStatus([]byte(`{"loggedIn":true}`))
+	if err != nil || len(l.Argv) != 3 || st.Link == "" || cerr != nil || string(code) != "abc\n" || perr != nil || !in {
+		return 4
+	}
+	os.Stdout.WriteString("ok\n")
+	return 0
+}
+
+// login.go also imports nothing that reaches a file, a process or the
+// network.
 func TestLoginIsPure(t *testing.T) {
 	src, err := os.ReadFile("login.go")
 	if err != nil {
@@ -200,11 +243,12 @@ func TestRealLogin(t *testing.T) {
 				got.Refused = s.Refused
 			}
 		case <-deadline:
-			t.Fatalf("timed out; so far %+v", got)
+			// Never print the link itself.
+			t.Fatalf("timed out; link read: %v, code requested: %v", got.Link != "", got.WantsCode)
 		}
 	}
 	if !strings.HasPrefix(got.Link, "https://") || !got.WantsCode {
-		t.Fatalf("real login: %+v", got)
+		t.Fatalf("real login: link read %v, code requested %v", strings.HasPrefix(got.Link, "https://"), got.WantsCode)
 	}
 	t.Logf("link read (%d characters), code requested, wrong code refused: %q", len(got.Link), got.Refused)
 	if _, err := os.Stat(filepath.Join(cfg, ".credentials.json")); err == nil {

@@ -62,10 +62,9 @@ func (a *Adapter) LoginDecode(line []byte) agent.LoginStep {
 var ErrNotACode = errors.New(Name + ": a login code is one word without spaces")
 
 // LoginCode returns the bytes that hand code to the login command: the
-// code and a line end. Spaces around it are dropped; anything else that is
-// not one printable word is refused.
+// code and a line end. Anything that is not one printable word without
+// spaces, also with spaces around it, is refused.
 func (a *Adapter) LoginCode(code string) ([]byte, error) {
-	code = strings.TrimSpace(code)
 	if code == "" || strings.IndexFunc(code, func(r rune) bool { return unicode.IsSpace(r) || !unicode.IsPrint(r) }) >= 0 {
 		return nil, ErrNotACode
 	}
