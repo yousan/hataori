@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/yousan/hataori/internal/control"
 )
@@ -130,17 +131,24 @@ func (s *Server) DropConns() {
 
 func (s *Server) serveConn(ctx context.Context, c *net.UnixConn) {
 	enc := json.NewEncoder(c)
-	if uid, err := peerUID(c); err != nil || uid != s.uid {
-		s.Log.Warn("control connection refused", "peer_uid", uid, "err", err)
+	// Read the client's hello before answering, so that a refusal reaches a
+	// client that is still writing it. The hello must come quickly and be
+	// short.
+	c.SetReadDeadline(time.Now().Add(10 * time.Second))
+	dec := json.NewDecoder(io.LimitReader(c, 4096))
+	var h hello
+	err := dec.Decode(&h)
+	c.SetReadDeadline(time.Time{})
+	if uid, perr := peerUID(c); perr != nil || uid != s.uid {
+		s.Log.Warn("control connection refused", "peer_uid", uid, "err", perr)
 		enc.Encode(hello{Version: Version, Error: "connection refused: not the instance's OS user"})
 		return
 	}
-	r := bufio.NewReader(c)
-	dec := json.NewDecoder(r)
-	var h hello
-	if err := dec.Decode(&h); err != nil {
+	if err != nil {
 		return
 	}
+	// Whatever the hello's decoder read ahead belongs to the requests.
+	dec = json.NewDecoder(bufio.NewReader(io.MultiReader(dec.Buffered(), c)))
 	if h.Version != Version {
 		msg := versionError(h.Version, Version).Error()
 		s.Log.Warn("control connection refused", "reason", msg)
