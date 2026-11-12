@@ -289,7 +289,7 @@ An agent adapter has two parts. The first says how to start the agent for a sess
 
 Splitting the agent adapter into a launch description and a pure codec is what makes the repository's test rule practical: a capture of real output goes in `testdata/`, and the codec must turn it into the expected events. The session host and the core never see agent-specific bytes. The same interface fits an agent on pipes that speaks a protocol and an agent in a terminal that reports through hooks, which is how the Claude Code adapter could be changed without touching the core.
 
-`TurnEnded` carries a status (`completed`, `interrupted`, `failed`) and a reason (`limit`, `login`, `api_error`, `crashed`, `blocked at start`). `TurnStarted` says who started it (a caller, the agent itself after a background task, or a person at the terminal). These two fields replace most of the "guessing turn state" group.
+`TurnEnded` carries a status (`completed`, `interrupted`, `failed`) and a reason (`limit`, `login`, `api_error`, `crashed`, `blocked at start`, `not delivered`). `TurnStarted` says who started it (a caller, the agent itself after a background task, or a person at the terminal). These two fields replace most of the "guessing turn state" group.
 
 ### 5.4 Did the first draft allow chat, supervisor and dashboard on one API?
 
@@ -1037,6 +1037,9 @@ type Codec interface {
 	Input(in Input) (Actions, error)        // a user message
 	Answer(a Answer) (Actions, error)       // to an approval or a question
 	Interrupt() Actions
+	// Tick gives the codec the time for its deadlines (input not reported
+	// as delivered); the codec has no clock of its own.
+	Tick(now time.Time) Actions
 }
 
 // Actions is what the caller of a Codec does next.

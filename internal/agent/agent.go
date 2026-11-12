@@ -7,6 +7,7 @@ package agent
 
 import (
 	"context"
+	"time"
 
 	"github.com/yousan/hataori/internal/registry"
 )
@@ -89,6 +90,9 @@ type Codec interface {
 	Answer(a Answer) (Actions, error)
 	// Interrupt returns how to stop the running turn.
 	Interrupt() Actions
+	// Tick tells the codec the time, so that it can act on its deadlines
+	// without a clock of its own. The caller calls it every second or so.
+	Tick(now time.Time) Actions
 }
 
 // Actions is what the caller of a Codec does next.
@@ -189,6 +193,7 @@ const (
 	APIError       Reason = "api_error"
 	Crashed        Reason = "crashed"
 	BlockedAtStart Reason = "blocked at start"
+	NotDelivered   Reason = "not delivered" // input the agent never reported receiving
 )
 
 // Event is one thing the agent did. Seq orders the events of one session.

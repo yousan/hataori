@@ -28,6 +28,9 @@ type Config struct {
 	// HookTimeout bounds how long a hook that waits for an answer (a
 	// question, an approval) waits, as a Go duration; 24h by default.
 	HookTimeout string `json:"hook_timeout"`
+	// InputTimeout bounds how long input may go unreported by the CLI's
+	// UserPromptSubmit hook before it counts as not delivered; 30s by default.
+	InputTimeout string `json:"input_timeout"`
 	// PassEnv names variables of the daemon's environment to pass on
 	// besides the fixed list, for example an API key the CLI logs in with.
 	PassEnv []string `json:"pass_env"`
@@ -35,10 +38,11 @@ type Config struct {
 
 // Adapter runs Claude Code.
 type Adapter struct {
-	command     string
-	hataori     string
-	hookTimeout time.Duration
-	passEnv     []string
+	command      string
+	hataori      string
+	hookTimeout  time.Duration
+	inputTimeout time.Duration
+	passEnv      []string
 
 	environ func() []string // the daemon's environment; os.Environ unless a test sets it
 }
@@ -66,6 +70,13 @@ func New(settings []byte) (agent.Adapter, error) {
 			return nil, fmt.Errorf("%s: %w", Name, err)
 		}
 		a.hataori = exe
+	}
+	if t := strings.TrimSpace(c.InputTimeout); t != "" {
+		d, err := time.ParseDuration(t)
+		if err != nil || d < time.Second {
+			return nil, fmt.Errorf("%s: config: input_timeout %q is not a duration of a second or more", Name, t)
+		}
+		a.inputTimeout = d
 	}
 	if t := strings.TrimSpace(c.HookTimeout); t != "" {
 		d, err := time.ParseDuration(t)
