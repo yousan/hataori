@@ -66,7 +66,18 @@ Notes:
 
 - **A successful login.** It needs a person to sign in with a real code. Add `login/` captures of the output and exit status after a correct code when someone next logs in. Until then the adapter's success case rests on the command's exit status and `claude auth status` alone.
 
-## Probe answers
+## Resume, clear and sleep (taken for #61, same day and version)
+
+Taken by `capture.py RAW_DIR resume_missing clear sleep` with the setup above.
+
+| Scenario | What was done | Hooks, in order |
+|---|---|---|
+| `resume_missing` | `claude --resume <a new random id>` in a new directory; no request is sent | only `SessionEnd` (`reason: other`), with the id asked for, and no `SessionStart`. The terminal (`terminal.raw`, kept) says `No conversation found with session ID: ...`. |
+| `clear` | one typed turn, `/clear`, one more typed turn | `SessionEnd` (`reason: clear`), then `SessionStart` (`source: clear`) with a **new** session id and transcript (`transcript-2.jsonl`), and no model |
+| `sleep` | one typed turn asking to remember a word, then the process group stopped as the session host stops a session: SIGINT, SIGTERM after 1 s, SIGKILL after 2 s more | `SessionEnd` (`reason: other`) after the SIGINT |
+| `sleep_resumed` | `claude --resume <sleep's id>` in the same directory, asking for the word | `SessionStart` (`source: resume`, the same id, no model); the `Stop` answer is the word: the conversation survived the stop |
+
+
 
 `2.1.322/probe/` holds the two answers `Probe` reads, from the real configuration: `version.txt` (`claude --version`) and `auth-status-logged-in.json` (`claude auth status` while logged in, scrubbed with `scrub.py`'s `Scrubber`; `orgName` replaced by hand). Both commands only read. The logged-out answer is `login/status-before.json`.
 

@@ -61,6 +61,7 @@ func init() {
 			allowed[st][o] = st
 		}
 		allowed[st]["cannot resume"] = st // a session end like any other once it is live
+		allowed[st]["ready"] = st         // a new session id, as after a clear
 	}
 }
 
