@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/yousan/hataori/internal/agent"
@@ -60,6 +61,7 @@ type live struct {
 	id      int64
 	dir     string
 	adapter agent.Adapter
+	spec    agent.Spec
 	codec   agent.Codec
 	client  *host.Client
 	started time.Time
@@ -204,7 +206,7 @@ func (r *Runner) Reconnect(ctx context.Context) error {
 // follow starts following a session. When resumed, the codec first reads
 // what was read before, with its results discarded, to rebuild its state.
 func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, resumed bool) error {
-	lv := &live{id: id, dir: spec.StateDir, adapter: ad, codec: ad.NewCodec(spec),
+	lv := &live{id: id, dir: spec.StateDir, adapter: ad, codec: ad.NewCodec(spec), spec: spec,
 		files: map[string]int64{}, stop: make(chan struct{}), done: make(chan struct{}), started: time.Now()}
 	var created int64
 	err := r.Store.DB.QueryRow(`SELECT last_seq, log_offset, created_at FROM sessions WHERE id = ?`, id).
@@ -282,6 +284,23 @@ func (r *Runner) warm(lv *live) []agent.HookReply {
 		}
 	}
 	return replies
+}
+
+// hostLost reports whether the host of dir is gone without recording an
+// end: its process no longer exists, as after a host reboot.
+func hostLost(dir string) bool {
+	if _, ok, _ := host.ReadStatus(dir); ok {
+		return false
+	}
+	b, err := os.ReadFile(filepath.Join(dir, host.HostPIDFile))
+	if err != nil {
+		return false // not started yet, or never: the start check handles it
+	}
+	pid, err := strconv.Atoi(string(bytes.TrimSpace(b)))
+	if err != nil || pid <= 1 {
+		return false
+	}
+	return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
 }
 
 // source tells a hook call, as the host records it, from the agent's
@@ -389,7 +408,7 @@ type batch struct {
 func (r *Runner) step(lv *live) bool {
 	lv.mu.Lock()
 	defer lv.mu.Unlock()
-	exited := host.Gone(lv.dir) // looked at before reading, so nothing written before the exit is missed
+	exited := host.Gone(lv.dir) || hostLost(lv.dir) // looked at before reading, so nothing written before the exit is missed
 	b := batch{offset: lv.offset, files: map[string]int64{}}
 	if data, err := os.ReadFile(filepath.Join(lv.dir, host.EventsFile)); err == nil {
 		end := complete(data, lv.offset)
@@ -416,7 +435,12 @@ func (r *Runner) step(lv *live) bool {
 	}
 	first, err := r.commit(lv, b)
 	if err != nil {
+		// The codec has read lines whose results were not stored: build it
+		// again from what was, so the lines are read once more by a codec
+		// that has not seen them.
 		r.Log.Error("commit", "session", lv.id, "err", err)
+		lv.codec = lv.adapter.NewCodec(lv.spec)
+		r.warm(lv)
 		return true
 	}
 	lv.offset = b.offset
@@ -610,9 +634,12 @@ func (r *Runner) act(lv *live, a agent.Actions) {
 
 // exit records that the agent's process ended.
 func (r *Runner) exit(lv *live) {
-	st, _, _ := host.ReadStatus(lv.dir)
+	st, recorded, _ := host.ReadStatus(lv.dir)
 	in := session.Input{Kind: session.Exit}
-	if st.Stopped {
+	switch {
+	case !recorded:
+		in.Reason = session.ReasonInterrupted // the host died with it, as in a reboot (section 4.5)
+	case st.Stopped:
 		in.Reason = "stopped"
 	}
 	if err := r.Machine.Apply(context.Background(), lv.id, in); err != nil && !errors.Is(err, session.ErrRefused) {

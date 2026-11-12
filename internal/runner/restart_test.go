@@ -221,3 +221,27 @@ func TestDaemonKilledAroundTheFirstInput(t *testing.T) {
 		}
 	})
 }
+
+// After a host reboot nothing of a session is left and nothing recorded its
+// end: the session becomes asleep, its turn interrupted.
+func TestHostRebootEndsTheTurnAsInterrupted(t *testing.T) {
+	root := t.TempDir()
+	t.Cleanup(func() { killSessions(root) })
+	d := runDaemon(t, root, false, "start", "tool wait 60s")
+	st := openStore(t, root)
+	until(t, "the tool", st, "tool_started", 1)
+	d.kill()
+	killSessions(root) // every process gone, no status written: a reboot
+	d = runDaemon(t, root, false, "resume")
+	waitFor(t, "asleep", 20*time.Second, func() bool {
+		var state string
+		st.DB.QueryRow(`SELECT state FROM sessions`).Scan(&state)
+		return state == "asleep"
+	})
+	var reason string
+	st.DB.QueryRow(`SELECT reason FROM turns`).Scan(&reason)
+	if reason != "interrupted" {
+		t.Fatalf("turn reason %q", reason)
+	}
+	d.kill()
+}
