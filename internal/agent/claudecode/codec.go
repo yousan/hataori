@@ -71,6 +71,7 @@ type textItem struct {
 type call struct {
 	Hook    string          `json:"hook"`
 	Wait    bool            `json:"wait"`
+	At      int64           `json:"at"` // when the host took the call, Unix milliseconds
 	Payload json.RawMessage `json:"payload"`
 }
 
@@ -408,7 +409,7 @@ func (c *codec) applyText(t *turnText, it textItem) Actions {
 		if t.ended {
 			return Actions{}
 		}
-		a := c.release(t)
+		a := merge(c.withdrawAll(), c.release(t))
 		t.ended = true
 		return merge(a, c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted}))
 	}
@@ -462,18 +463,19 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 	case "UserPromptSubmit":
 		return c.events(agent.Event{Kind: agent.TurnStarted, StartedBy: c.starter(p.Prompt)})
 	case "Stop":
+		withdrawn := c.withdrawAll()
 		running := 0
 		for _, t := range p.BackgroundTasks {
 			if t.Status == "running" {
 				running++
 			}
 		}
-		return merge(c.end(p.PromptID, p.LastMessage), c.events(
+		return merge(merge(withdrawn, c.end(p.PromptID, p.LastMessage)), c.events(
 			agent.Event{Kind: agent.Text, Text: p.LastMessage, Final: true},
 			agent.Event{Kind: agent.TurnEnded, Status: agent.Completed, Background: running},
 		))
 	case "StopFailure":
-		return merge(c.end(p.PromptID, ""), c.events(
+		return merge(merge(c.withdrawAll(), c.end(p.PromptID, "")), c.events(
 			agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: failureReason(p.Error), Text: p.LastMessage}))
 	case "PreToolUse":
 		if p.ToolName == askTool {
@@ -485,7 +487,7 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 		return c.events(agent.Event{Kind: agent.ToolStarted, ID: p.ToolUseID, Tool: p.ToolName})
 	case "PostToolUse", "PostToolUseFailure":
 		if p.ToolName == askTool {
-			return Actions{}
+			return c.withdrawTool(p.ToolUseID) // answered some other way, or refused
 		}
 		return c.events(agent.Event{Kind: agent.ToolEnded, ID: p.ToolUseID, Tool: p.ToolName})
 	case "PermissionRequest":
@@ -506,7 +508,7 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 	case "PostCompact":
 		return c.events(agent.Event{Kind: agent.ToolEnded, ID: compactID(c.compact), Tool: CompactTool})
 	case "SessionEnd":
-		return c.events(agent.Event{Kind: agent.SessionEnded})
+		return merge(c.withdrawAll(), c.events(agent.Event{Kind: agent.SessionEnded}))
 	}
 	return c.events(agent.Event{Kind: agent.Unknown, Text: p.Event})
 }

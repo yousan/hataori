@@ -1,8 +1,12 @@
 package claudecode
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -138,22 +142,97 @@ func TestQuestionWithdrawnAtTheHookTimeout(t *testing.T) {
 	}
 }
 
-// A daemon restart loses the codec. The host still holds the waiting call
-// (#50); the new codec learns it from the host's list and answers it.
+// A daemon restart loses the codec, not the question: the session host
+// keeps the hook's call open (#50). A new codec learns the call from the
+// host's list of waiting calls and answers it; the hook prints the answer.
 func TestQuestionAnsweredAfterRestart(t *testing.T) {
-	before := newTestCodec()
-	decodeFile(t, before, "q1", "question/hooks/03-PreToolUse.json")
-
-	waiting := []host.WaitingCall{{ID: "q1", Payload: readCapture(t, "question/hooks/03-PreToolUse.json")}}
-	after := newTestCodec()
-	for _, w := range waiting {
-		after.Decode(agent.Hook, host.CallLine(w.ID, true, w.Payload))
+	dir := t.TempDir()
+	t.Cleanup(func() { killGroups(dir) })
+	if _, err := host.Start(host.Command{Path: os.Args[0], Args: []string{"role", "host"}}, dir,
+		host.Spec{Argv: []string{os.Args[0], "role", "idle"}, Env: []string{}}); err != nil {
+		t.Fatal(err)
 	}
-	a, err := after.Answer(agent.Answer{Request: "q1", Choices: []string{"red"}})
+	// The agent's hook asks the question and waits.
+	hook := exec.Command(os.Args[0], "role", "hook", "--wait", "--timeout", "20s")
+	hook.Env = []string{host.HookEnv(dir)}
+	hook.Stdin = bytes.NewReader(readCapture(t, "question/hooks/03-PreToolUse.json"))
+	var out bytes.Buffer
+	hook.Stdout = &out
+	if err := hook.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- hook.Wait() }()
+
+	// Before the restart: the codec saw the call in events.ndjson.
+	before := newTestCodec()
+	deadline := time.Now().Add(10 * time.Second)
+	var asked Actions
+	for len(asked.Events) == 0 && time.Now().Before(deadline) {
+		if b, _ := os.ReadFile(filepath.Join(dir, host.EventsFile)); len(b) > 0 {
+			asked = before.Decode(agent.Hook, bytes.TrimSpace(b))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(asked.Events) != 1 || asked.Events[0].Kind != agent.Request {
+		t.Fatalf("before the restart: %+v", asked.Events)
+	}
+
+	// After the restart: a new codec, and only the host to ask.
+	c, err := host.Dial(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := replyInput(t, a), capturedInput(t, "question/hooks/04-PostToolUse.json"); !reflect.DeepEqual(got, want) {
-		t.Fatalf("reply after restart: %v", got)
+	defer c.Close()
+	waiting, err := c.Waiting()
+	if err != nil || len(waiting) != 1 {
+		t.Fatalf("waiting calls: %+v, %v", waiting, err)
+	}
+	after := newTestCodec()
+	if a := after.Decode(agent.Hook, waiting[0].Line()); len(a.Events) != 1 || a.Events[0].Request.ID != asked.Events[0].Request.ID {
+		t.Fatalf("after the restart: %+v", a.Events)
+	}
+	a, err := after.Answer(agent.Answer{Request: waiting[0].ID, Choices: []string{"red"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Answer(a.Reply[0].Call, a.Reply[0].Body); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil || !bytes.Equal(out.Bytes(), a.Reply[0].Body) {
+			t.Fatalf("hook printed %q, %v", out.Bytes(), err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the hook did not get its answer")
+	}
+}
+
+// The timeout runs from when the host took the call, also for a codec that
+// learns of the call later.
+func TestTimeoutFromTheCall(t *testing.T) {
+	c := newTestCodec()
+	c.hookTimeout = time.Minute
+	asked := time.Now().Add(-2 * time.Minute)
+	c.Decode(agent.Hook, host.CallLine("q1", true, asked, readCapture(t, "question/hooks/03-PreToolUse.json")))
+	if a := c.Tick(time.Now()); len(a.Events) != 1 || a.Events[0].Kind != agent.RequestWithdrawn {
+		t.Fatalf("an expired call: %+v", a.Events)
+	}
+}
+
+// A question the CLI went past without an answer is withdrawn first, and
+// can no longer be answered.
+func TestQuestionWithdrawnWhenTheCLIGoesOn(t *testing.T) {
+	for _, file := range []string{"question/hooks/05-Stop.json", "question/hooks/06-SessionEnd.json", "question/hooks/04-PostToolUse.json"} {
+		c := newTestCodec()
+		decodeFile(t, c, "q1", "question/hooks/03-PreToolUse.json")
+		a := decodeFile(t, c, "x", file)
+		if len(a.Events) == 0 || a.Events[0].Kind != agent.RequestWithdrawn {
+			t.Fatalf("%s: %+v", file, a.Events)
+		}
+		if _, err := c.Answer(agent.Answer{Request: "q1", Text: "red"}); !errors.Is(err, ErrNotWaiting) {
+			t.Fatalf("%s: answer afterwards: %v", file, err)
+		}
 	}
 }

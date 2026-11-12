@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -31,7 +32,38 @@ type question struct {
 type request struct {
 	input     map[string]json.RawMessage // the tool's input, echoed in the reply
 	questions []question
-	at        time.Time // the first Tick after it was asked
+	toolUseID string
+	at        time.Time // when the host took the call; the first Tick if unknown
+}
+
+// withdrawAll withdraws every waiting question: the CLI went on without
+// its answer (the turn ended, was interrupted, or the session ended).
+func (c *codec) withdrawAll() Actions {
+	ids := make([]string, 0, len(c.requests))
+	for id := range c.requests {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var a Actions
+	for _, id := range ids {
+		a = merge(a, c.withdraw(id))
+	}
+	return a
+}
+
+// withdrawTool withdraws the question of a tool call that finished.
+func (c *codec) withdrawTool(toolUseID string) Actions {
+	for id, r := range c.requests {
+		if toolUseID != "" && r.toolUseID == toolUseID {
+			return c.withdraw(id)
+		}
+	}
+	return Actions{}
+}
+
+func (c *codec) withdraw(id string) Actions {
+	delete(c.requests, id)
+	return c.events(agent.Event{Kind: agent.RequestWithdrawn, Request: &agent.RequestInfo{ID: id}})
 }
 
 // ErrNotWaiting is returned by Answer for a call that no longer waits.
@@ -45,7 +77,11 @@ func (c *codec) question(k call, p payload) Actions {
 	if json.Unmarshal(p.ToolInput, &input) != nil || json.Unmarshal(p.ToolInput, &qs) != nil || len(qs.Questions) == 0 {
 		return c.events(agent.Event{Kind: agent.Unknown, Text: string(p.ToolInput)})
 	}
-	c.requests[k.Hook] = &request{input: input, questions: qs.Questions}
+	r := &request{input: input, questions: qs.Questions, toolUseID: p.ToolUseID}
+	if k.At > 0 {
+		r.at = time.UnixMilli(k.At) // the timeout runs from the call, also across a restart
+	}
+	c.requests[k.Hook] = r
 	info := &agent.RequestInfo{ID: k.Hook, Text: render(qs.Questions)}
 	if len(qs.Questions) == 1 {
 		for _, o := range qs.Questions[0].Options {
@@ -134,8 +170,7 @@ func (c *codec) tickRequests(now time.Time) Actions {
 			continue
 		}
 		if c.hookTimeout > 0 && now.Sub(r.at) >= c.hookTimeout {
-			delete(c.requests, id)
-			a = merge(a, c.events(agent.Event{Kind: agent.RequestWithdrawn, Request: &agent.RequestInfo{ID: id}}))
+			a = merge(a, c.withdraw(id))
 		}
 	}
 	return a
