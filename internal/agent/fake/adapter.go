@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/host"
@@ -24,8 +25,6 @@ type Config struct {
 	Hataori string `json:"hataori"`
 	// Terminal selects the terminal form; pipes otherwise.
 	Terminal bool `json:"terminal"`
-	// NeverStart makes the program never report that it is ready.
-	NeverStart bool `json:"never_start"`
 	// Env is passed to the program, for example PATH for its tool.
 	Env []string `json:"env"`
 }
@@ -69,8 +68,12 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 		rand.Read(b[:])
 		argv = append(argv, "--session", fmt.Sprintf("fake-%x", b))
 	}
-	if a.c.NeverStart {
-		argv = append(argv, "--never-start")
+	// The start-up script is the spec's instructions: "never-start" makes
+	// the program never report that it is ready.
+	for _, l := range strings.Split(spec.Instructions, "\n") {
+		if strings.TrimSpace(l) == "never-start" {
+			argv = append(argv, "--never-start")
+		}
 	}
 	env := append([]string{}, a.c.Env...)
 	if a.c.Terminal {

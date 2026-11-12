@@ -129,7 +129,7 @@ func (p *program) say(text string, final bool) {
 func (p *program) turn(by, script string, agentTurns chan time.Duration) (int, bool) {
 	p.report(map[string]any{"t": "turn", "by": by})
 	end := map[string]any{"t": "end", "status": "completed", "reason": "", "background": 0}
-	final := "done"
+	final, replied := "done", false
 	for _, line := range strings.Split(strings.TrimSpace(script), "\n") {
 		cmd, arg, _ := strings.Cut(strings.TrimSpace(line), " ")
 		select {
@@ -140,10 +140,10 @@ func (p *program) turn(by, script string, agentTurns chan time.Duration) (int, b
 		}
 		switch cmd {
 		case "reply":
-			if final != "done" {
+			if replied {
 				p.say(final, false)
 			}
-			final = arg
+			final, replied = arg, true
 		case "tool":
 			name, dur, _ := strings.Cut(arg, " ")
 			d, _ := time.ParseDuration(dur)
@@ -156,18 +156,12 @@ func (p *program) turn(by, script string, agentTurns chan time.Duration) (int, b
 		case "ask":
 			p.asked++
 			id := fmt.Sprintf("q%d", p.asked)
-			var answer string
-			if p.terminal {
-				answer = p.report(map[string]any{"t": "ask", "id": id, "text": arg})
-			} else {
-				ch := make(chan string, 1)
-				p.mu.Lock()
-				p.answers[id] = ch
-				p.mu.Unlock()
-				p.report(map[string]any{"t": "ask", "id": id, "text": arg})
-				answer = <-ch
+			answer, ok := p.ask(id, arg)
+			if !ok {
+				p.interrupted(end)
+				return 0, false
 			}
-			final = "answer: " + answer
+			final, replied = "answer: "+answer, true
 		case "background":
 			d, _ := time.ParseDuration(arg)
 			end["background"] = 1
@@ -189,6 +183,42 @@ func (p *program) turn(by, script string, agentTurns chan time.Duration) (int, b
 	end["answer"] = final
 	p.report(end)
 	return 0, false
+}
+
+// ask asks a question and waits for its answer, or for an interrupt.
+func (p *program) ask(id, text string) (string, bool) {
+	v := map[string]any{"t": "ask", "id": id, "text": text}
+	if !p.terminal {
+		ch := make(chan string, 1)
+		p.mu.Lock()
+		p.answers[id] = ch
+		p.mu.Unlock()
+		p.report(v)
+		select {
+		case a := <-ch:
+			return a, true
+		case <-p.interrupts:
+			return "", false
+		}
+	}
+	b, _ := json.Marshal(v)
+	cmd := exec.Command(p.hook, "hook", "--wait", "--timeout", "1h")
+	cmd.Stdin = bytes.NewReader(b)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if cmd.Start() != nil {
+		return "", false
+	}
+	done := make(chan struct{})
+	go func() { cmd.Wait(); close(done) }()
+	select {
+	case <-done:
+		return out.String(), true
+	case <-p.interrupts:
+		cmd.Process.Kill() // the host withdraws the call when its hook goes away
+		<-done
+		return "", false
+	}
 }
 
 func (p *program) interrupted(end map[string]any) {
@@ -285,8 +315,10 @@ func (p *program) readTerminal(r io.Reader, inputs chan<- string) {
 				continue
 			}
 			if buf[0] == 0x1b {
-				if len(buf) < len(pasteStart) && bytes.HasPrefix([]byte(pasteStart), buf) && err == nil {
-					break // maybe the start of a paste
+				// A paste's start split by the read waits for the rest; a
+				// lone Escape at the end of a read is the interrupt key.
+				if len(buf) > 1 && len(buf) < len(pasteStart) && bytes.HasPrefix([]byte(pasteStart), buf) && err == nil {
+					break
 				}
 				p.interrupt()
 				buf = buf[1:]

@@ -62,9 +62,9 @@ type session struct {
 	events []agent.Event
 }
 
-func adapter(t *testing.T, terminal, neverStart bool) *Adapter {
+func adapter(t *testing.T, terminal bool) *Adapter {
 	cfg, _ := json.Marshal(Config{Command: []string{os.Args[0], "role", "fake"}, Hataori: os.Args[0],
-		Terminal: terminal, NeverStart: neverStart, Env: []string{"PATH=" + os.Getenv("PATH")}})
+		Terminal: terminal, Env: []string{"PATH=" + os.Getenv("PATH")}})
 	a, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -217,7 +217,7 @@ func TestScripts(t *testing.T) {
 		answer             string
 	}{
 		{"reply", "reply hello", "turn(caller) text(hello,true) end(0,,bg=0)", ""},
-		{"two replies", "reply first\nreply second", "turn(caller) text(first,false) text(second,true) end(0,,bg=0)", ""},
+		{"two replies", "reply done\nreply second", "turn(caller) text(done,false) text(second,true) end(0,,bg=0)", ""},
 		{"tool", "tool grep 100ms", "turn(caller) tool+(t-grep) tool-(t-grep) text(done,true) end(0,,bg=0)", ""},
 		{"ask", "ask which colour?", "turn(caller) request text(answer: blue,true) end(0,,bg=0)", "blue"},
 		{"background", "background 100ms\nreply started",
@@ -230,7 +230,7 @@ func TestScripts(t *testing.T) {
 	forms(t, func(t *testing.T, terminal bool) {
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
-				s := start(t, adapter(t, terminal, false), agent.Spec{})
+				s := start(t, adapter(t, terminal), agent.Spec{})
 				s.until("ready", s.has(agent.SessionReady))
 				s.send(tc.script)
 				if tc.answer != "" {
@@ -263,7 +263,7 @@ func TestScripts(t *testing.T) {
 
 func TestExitWithoutEndingTheTurn(t *testing.T) {
 	forms(t, func(t *testing.T, terminal bool) {
-		s := start(t, adapter(t, terminal, false), agent.Spec{})
+		s := start(t, adapter(t, terminal), agent.Spec{})
 		s.until("ready", s.has(agent.SessionReady))
 		s.send("reply never said\nexit")
 		s.until("the exit", func() bool { _, ok, _ := host.ReadStatus(s.dir); return ok })
@@ -277,7 +277,7 @@ func TestExitWithoutEndingTheTurn(t *testing.T) {
 
 func TestNeverStarts(t *testing.T) {
 	forms(t, func(t *testing.T, terminal bool) {
-		s := start(t, adapter(t, terminal, true), agent.Spec{})
+		s := start(t, adapter(t, terminal), agent.Spec{Instructions: "never-start"})
 		deadline := time.Now().Add(time.Second)
 		for time.Now().Before(deadline) {
 			s.poll()
@@ -291,7 +291,7 @@ func TestNeverStarts(t *testing.T) {
 
 func TestReportsModelEffortAndResume(t *testing.T) {
 	forms(t, func(t *testing.T, terminal bool) {
-		s := start(t, adapter(t, terminal, false), agent.Spec{Model: "m1", Effort: "high", ResumeID: "fake-resumed"})
+		s := start(t, adapter(t, terminal), agent.Spec{Model: "m1", Effort: "high", ResumeID: "fake-resumed"})
 		s.until("ready", s.has(agent.SessionReady))
 		e := s.events[0]
 		if e.Model != "m1" || e.Effort != "high" || e.SessionID != "fake-resumed" {
@@ -301,7 +301,7 @@ func TestReportsModelEffortAndResume(t *testing.T) {
 }
 
 func TestTerminalOutputNeverReachesTheCodec(t *testing.T) {
-	c := adapter(t, true, false).NewCodec(agent.Spec{})
+	c := adapter(t, true).NewCodec(agent.Spec{})
 	defer func() {
 		if recover() == nil {
 			t.Fatal("the terminal form's codec accepted terminal output")
@@ -333,4 +333,27 @@ func bySource(desc string) string {
 		}
 	}
 	return strings.Join(append(rest, texts...), " ")
+}
+
+// An interrupt ends a running tool and an open question, in both forms.
+func TestInterrupt(t *testing.T) {
+	forms(t, func(t *testing.T, terminal bool) {
+		for _, script := range []string{"tool long 30s", "ask anything?"} {
+			s := start(t, adapter(t, terminal), agent.Spec{})
+			s.until("ready", s.has(agent.SessionReady))
+			s.send(script)
+			if strings.HasPrefix(script, "tool") {
+				s.until("the tool", s.has(agent.ToolStarted))
+			} else {
+				s.until("the question", s.has(agent.Request))
+			}
+			s.do(s.codec.Interrupt())
+			s.until("the interrupted end", s.has(agent.TurnEnded))
+			for _, e := range s.events {
+				if e.Kind == agent.TurnEnded && e.Status != agent.Interrupted {
+					t.Fatalf("%s: %s", script, s.after())
+				}
+			}
+		}
+	})
 }

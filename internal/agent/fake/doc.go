@@ -44,6 +44,6 @@
 //	subagent ID         report a subagent's start and end
 //	file PATH           hand over a file
 //
-// Starting with Config.NeverStart, the program never reports that it is
-// ready.
+// The spec's instructions are the start-up script: a line "never-start"
+// makes the program never report that it is ready.
 package fake
