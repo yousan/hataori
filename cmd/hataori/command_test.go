@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -228,6 +229,8 @@ func TestCommands(t *testing.T) {
 	}
 
 	// events --after n: exactly the events above n, and then it exits.
+	// The fake agent may still write events between the two reads, so the
+	// later read must start with the earlier one's tail and may hold more.
 	_, out, _ = cli(t, "events", "--root", root)
 	all := lines(t, out)
 	if len(all) < 3 {
@@ -235,8 +238,13 @@ func TestCommands(t *testing.T) {
 	}
 	_, out, _ = cli(t, "events", "--root", root, "--after", "2")
 	got := lines(t, out)
-	if len(got) != len(all)-2 || got[0]["pos"] != 3.0 {
+	if len(got) < len(all)-2 {
 		t.Fatalf("events --after 2: %v of %v", got, all)
+	}
+	for i, e := range got {
+		if e["pos"] != float64(3+i) || (i < len(all)-2 && !reflect.DeepEqual(e, all[i+2])) {
+			t.Fatalf("events --after 2: %v of %v", got, all)
+		}
 	}
 
 	// --follow goes on with new events.
