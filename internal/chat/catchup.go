@@ -92,7 +92,19 @@ func (f *FrontEnd) receive(in surface.Inbound) {
 // conversation is caught up, its live messages wait for the catch-up.
 func (f *FrontEnd) Connected() {
 	ctx := f.context()
-	convs := f.toCatchUp(ctx)
+	convs, err := f.toCatchUp(ctx)
+	if err != nil {
+		// Which threads are open is not known: all of it again, later.
+		retry := f.Outbox.Retry
+		if retry <= 0 {
+			retry = 5 * time.Second
+		}
+		time.AfterFunc(retry, func() {
+			if ctx.Err() == nil {
+				f.Connected()
+			}
+		})
+	}
 	s := f.inboundState()
 	for _, c := range convs {
 		s.mu.Lock()
@@ -109,18 +121,25 @@ func (f *FrontEnd) Connected() {
 	}()
 }
 
-// toCatchUp returns the enabled channels and the open threads.
-func (f *FrontEnd) toCatchUp(ctx context.Context) []surface.Conversation {
+// toCatchUp returns the enabled channels and the open threads. A channel
+// never read before is read from now on: what was posted in it before is
+// not an order for this front end.
+func (f *FrontEnd) toCatchUp(ctx context.Context) ([]surface.Conversation, error) {
 	var convs []surface.Conversation
 	for ch, sc := range f.Scopes {
 		if sc.Enabled {
 			convs = append(convs, surface.Conversation{Channel: ch})
+			if _, err := f.Outbox.Store.DB.ExecContext(ctx, `INSERT INTO chat_inbound (client, channel, thread, cursor, since)
+				VALUES (?, ?, '', '', ?) ON CONFLICT DO NOTHING`, f.Name, ch, time.Now().UnixMilli()); err != nil {
+				f.Log.Error("chat: catch-up: a new channel", "channel", ch, "err", err)
+			}
 		}
 	}
 	api := f.API(control.Caller{Principal: f.Owner, Scopes: f.scopeList(), May: control.OpRead})
 	threads, err := api.Threads(ctx, control.Filter{})
 	if err != nil {
 		f.Log.Error("chat: catch-up: listing threads", "err", err)
+		return convs, err
 	}
 	for _, t := range threads {
 		switch t.State {
@@ -129,7 +148,7 @@ func (f *FrontEnd) toCatchUp(ctx context.Context) []surface.Conversation {
 			convs = append(convs, convOf(t.ID))
 		}
 	}
-	return convs
+	return convs, nil
 }
 
 // catchUp handles the messages of conv after its cursor, in order, and
