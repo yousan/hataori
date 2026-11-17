@@ -71,6 +71,7 @@ type live struct {
 	ready   bool  // the session left creating; no start check any more
 	resend  bool  // after a reconnect: send a first input that was not confirmed
 	pending bool  // after a reconnect: hand over pending input once the logs are read
+	held    bool  // lv.mu is held from follow until the loop's first step has handed over the pending input
 	upTo    int64 // the last pending input there was at the reconnect; later ones are handed over by their call
 	failed  bool  // the start timed out; the session is being stopped
 	asleep  bool  // put to sleep: its agent is being stopped, and nothing more is read
@@ -405,6 +406,12 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) err
 		r.do(lv, lv.codec.Open())
 		lv.mu.Unlock()
 	}
+	if lv.pending {
+		// Input accepted after the reconnect waits until what was pending
+		// before it is handed over: the loop's first step unlocks.
+		lv.mu.Lock()
+		lv.held = true
+	}
 	r.mu.Lock()
 	if r.live == nil {
 		r.live = map[int64]*live{}
@@ -588,6 +595,26 @@ func (r *Runner) get(id int64) (*live, error) {
 
 func (r *Runner) loop(lv *live) {
 	defer close(lv.done)
+	// Held from follow: unlock once the pending input is handed over, which
+	// a failed commit puts off to the next poll.
+	for lv.held {
+		ok := r.stepLocked(lv)
+		if ok && lv.pending {
+			select {
+			case <-lv.stop:
+			case <-time.After(r.poll()):
+				continue
+			}
+		}
+		lv.held = false
+		lv.mu.Unlock()
+		if !ok {
+			r.mu.Lock()
+			delete(r.live, lv.id)
+			r.mu.Unlock()
+			return
+		}
+	}
 	tick := time.NewTicker(r.poll())
 	defer tick.Stop()
 	lastTick := time.Now()
@@ -627,6 +654,11 @@ type batch struct {
 func (r *Runner) step(lv *live) bool {
 	lv.mu.Lock()
 	defer lv.mu.Unlock()
+	return r.stepLocked(lv)
+}
+
+// stepLocked is step with lv.mu held.
+func (r *Runner) stepLocked(lv *live) bool {
 	if lv.asleep {
 		return !host.Gone(lv.dir) && !hostLost(lv.dir)
 	}

@@ -2,6 +2,7 @@ package runner
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -81,6 +82,7 @@ type options struct {
 	idlePeriod    time.Duration
 	conversations string // the fake's directory of conversations, if any
 	contextBytes  int
+	poll          time.Duration                     // 20ms when zero
 	wrap          func(agent.Adapter) agent.Adapter // wraps the fake adapter, if set
 }
 
@@ -105,7 +107,7 @@ func build(root string, o options, log io.Writer) (*store.Store, *core.Core, *Ru
 	m := &session.Machine{Store: st}
 	r := &Runner{Store: st, Machine: m, Adapters: map[string]agent.Adapter{"fake": adapter},
 		Host: host.Command{Path: os.Args[0], Args: []string{"role", "host"}}, Root: root, Log: lg,
-		Instructions: o.instructions, StartTimeout: o.startTimeout, InterruptGrace: 5 * time.Second, Poll: 20 * time.Millisecond,
+		Instructions: o.instructions, StartTimeout: o.startTimeout, InterruptGrace: 5 * time.Second, Poll: cmp.Or(o.poll, 20*time.Millisecond),
 		IdlePeriod: o.idlePeriod, ContextBytes: o.contextBytes}
 	c := &core.Core{Store: st, Machine: m, Scopes: map[string]core.Scope{"s": {Enabled: true, Owner: "chat"}},
 		Workspaces: workDir(filepath.Join(root, "work")), Runner: r, Agent: "fake", Log: lg}
