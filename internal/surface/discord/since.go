@@ -24,6 +24,7 @@ var ErrCursor = errors.New("discord: the service cannot serve messages from this
 const (
 	codeUnknownChannel = 10003
 	codeMissingAccess  = 50001
+	codeMissingPerms   = 50013
 	codeInvalidForm    = 50035
 )
 
@@ -49,7 +50,7 @@ func (d *Driver) Since(ctx context.Context, conv surface.Conversation, cursor st
 		}
 	}
 	var out []surface.Inbound
-	for {
+	for first := true; ; first = false {
 		var page []wireMessage
 		q := discord.QueryValues{"after": after.String(), "limit": d.pageSize}
 		if err := d.client.Do(rest.GetMessages.Compile(q, ch), nil, &page, rest.WithCtx(ctx)); err != nil {
@@ -65,6 +66,14 @@ func (d *Driver) Since(ctx context.Context, conv surface.Conversation, cursor st
 				continue
 			}
 			out = append(out, m.inbound(conv, direct))
+		}
+		if first && len(page) == 0 && cursor != "" {
+			// Without Read Message History the service answers an empty page,
+			// not an error. Reading the cursor's own message needs that
+			// permission, so it tells "nothing new" from "cannot read".
+			if err := d.canRead(ctx, ch, after); err != nil {
+				return nil, err
+			}
 		}
 		if len(page) < d.pageSize {
 			return out, nil
@@ -82,11 +91,22 @@ func cmp(a, b snowflake.ID) int {
 	return 0
 }
 
+// canRead checks that the history of ch can be read, by reading the
+// message msg in it. A message that is gone is no sign either way.
+func (d *Driver) canRead(ctx context.Context, ch, msg snowflake.ID) error {
+	err := wrap("read the history", d.client.Do(rest.GetMessage.Compile(nil, ch, msg), nil, nil, rest.WithCtx(ctx)))
+	var e *Error
+	if errors.As(err, &e) && e.Code == codeUnknownMessage {
+		return nil
+	}
+	return cursorError(err)
+}
+
 // cursorError marks a refusal that means the conversation cannot be read
 // from the cursor.
 func cursorError(err error) error {
 	var e *Error
-	if errors.As(err, &e) && (e.Code == codeUnknownChannel || e.Code == codeMissingAccess ||
+	if errors.As(err, &e) && (e.Code == codeUnknownChannel || e.Code == codeMissingAccess || e.Code == codeMissingPerms ||
 		e.Code == codeInvalidForm || e.Status == http.StatusNotFound) {
 		return fmt.Errorf("%w: %w", ErrCursor, err)
 	}

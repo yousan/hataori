@@ -135,6 +135,7 @@ func TestSinceCursorErrors(t *testing.T) {
 	last := capture(t, "bot/rest-history-page-3.json")
 	r.serve(t, "GET "+strings.Split(last["request"].(map[string]any)["path"].(string), "?")[0], "bot/rest-history-page-3.json")
 	th := strings.Split(last["request"].(map[string]any)["path"].(string), "/")[2]
+	r.serve(t, "GET /channels/"+th+"/messages/"+after(t, "bot/rest-history-page-3.json"), "bot/rest-post-thread-4.json")
 	got, err := d.Since(context.Background(), surface.Conversation{Channel: "1", Thread: th}, after(t, "bot/rest-history-page-3.json"))
 	if err != nil || len(got) != 0 {
 		t.Fatalf("no messages: %v %v", got, err)
@@ -145,5 +146,33 @@ func TestSinceCursorErrors(t *testing.T) {
 	_, err = d.Since(context.Background(), surface.Conversation{Channel: "1", Thread: th}, "1000000000000000002")
 	if !errors.Is(err, ErrCursor) {
 		t.Fatalf("a refused cursor: %v", err)
+	}
+}
+
+// Without Read Message History the service answers an empty page; reading
+// the cursor's message then fails, and that is a cursor error. A cursor
+// whose message is gone, or readable, is just "no messages".
+func TestSinceTellsUnreadableFromEmpty(t *testing.T) {
+	last := capture(t, "unbroken/rest-history-page-4.json") // the empty page
+	th := strings.Split(last["request"].(map[string]any)["path"].(string), "/")[2]
+	cursor := after(t, "unbroken/rest-history-page-4.json")
+	conv := surface.Conversation{Channel: "1", Thread: th}
+	for _, c := range []struct {
+		reply string // the answer to reading the cursor's message
+		gone  bool
+	}{
+		// 403 refusal; the capture is of a refused thread deletion, the
+		// same shape as a refused read.
+		{"second/rest-delete-thread-refused.json", true},
+		{"bot/rest-delete-again.json", false}, // 404 Unknown Message
+		{"bot/rest-post-thread-1.json", false},
+	} {
+		r := newFakeREST(t)
+		r.serve(t, "GET /channels/"+th+"/messages", "unbroken/rest-history-page-4.json")
+		r.serve(t, "GET /channels/"+th+"/messages/"+cursor, c.reply)
+		got, err := testDriver(t, botID(t), r, nil).Since(context.Background(), conv, cursor)
+		if errors.Is(err, ErrCursor) != c.gone || (!c.gone && (err != nil || len(got) != 0)) {
+			t.Errorf("%s: %v %v", c.reply, got, err)
+		}
 	}
 }
