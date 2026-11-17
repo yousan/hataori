@@ -3,6 +3,7 @@ package host
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -39,6 +40,7 @@ type host struct {
 
 	events *lineLog
 	calls  callTable
+	log    *hostLog      // the host's own record; nil when it could not be opened
 	done   chan struct{} // closed when the command has exited
 
 	stopMu   sync.Mutex
@@ -50,7 +52,7 @@ type host struct {
 
 // Run is `hataori host <state-dir>`: it runs the Spec in stateDir until the
 // command exits, and returns after recording how it ended.
-func Run(stateDir string) error {
+func Run(stateDir string) (err error) {
 	// First of all: a second host for the same state directory leaves
 	// everything to the first, and records nothing.
 	lk, err := lock(stateDir)
@@ -58,11 +60,21 @@ func Run(stateDir string) error {
 		return err
 	}
 	defer lk.Close()
+	hl := openHostLog(stateDir)
+	hl.printf("started, pid %d", os.Getpid())
+	hl.recordSignals()
+	defer func() {
+		if err != nil {
+			hl.printf("ended: %v", err)
+		} else {
+			hl.printf("ended")
+		}
+	}()
 	b, err := os.ReadFile(filepath.Join(stateDir, SpecFile))
 	if err != nil {
 		return fmt.Errorf("host: %w", err)
 	}
-	h := &host{dir: stateDir, done: make(chan struct{})}
+	h := &host{dir: stateDir, done: make(chan struct{}), log: hl}
 	if err := json.Unmarshal(b, &h.spec); err != nil {
 		return fmt.Errorf("host: %s: %w", SpecFile, err)
 	}
@@ -94,6 +106,7 @@ func Run(stateDir string) error {
 
 	waitErr := h.cmd.Wait()
 	close(h.done)
+	hl.printf("the command ended: %v", h.cmd.ProcessState)
 	// A stop in progress ends the rest of the group first. While the output
 	// drains, a stop can still end what the command left behind.
 	h.stops.Wait()
@@ -354,11 +367,16 @@ func (h *host) serveConn(c *net.UnixConn) {
 	for {
 		var req request
 		if err := dec.Decode(&req); err != nil {
+			if !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
+				h.log.dropped("reading a request", err) // the other end closing is not news
+			}
 			return
 		}
 		if req.Op == "call" {
 			resp := h.call(c, req)
-			enc.Encode(resp)
+			if err := enc.Encode(resp); err != nil {
+				h.log.dropped("writing the answer of a call", err)
+			}
 			return // a call has its own connection
 		}
 		if req.Op == "stop" {
@@ -368,12 +386,14 @@ func (h *host) serveConn(c *net.UnixConn) {
 				h.stops.Done()
 			}
 			if err != nil {
+				h.log.dropped("writing the reply to stop", err)
 				return
 			}
 			continue
 		}
 		resp := h.handle(req)
 		if err := enc.Encode(resp); err != nil {
+			h.log.dropped("writing the reply to "+req.Op, err)
 			return
 		}
 	}
