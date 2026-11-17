@@ -39,6 +39,11 @@ type FrontEnd struct {
 	Scopes  map[string]Scope // by channel
 	Log     *slog.Logger
 
+	// The progress line: posted after QuietAfter (90s) of a turn without
+	// output, edited at most every EditEvery (15s), checked every Tick (1s).
+	QuietAfter, EditEvery, Tick time.Duration
+	Now                         func() time.Time // the clock; time.Now when nil
+
 	ctx context.Context
 }
 

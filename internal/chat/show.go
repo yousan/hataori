@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/store"
@@ -21,6 +22,9 @@ type reader struct {
 	api   control.API
 	first map[control.ThreadID]uint64 // position of each thread's first event
 	turn  map[control.ThreadID]string // key of the call that started the open turn
+	quiet map[control.ThreadID]*quiet // open turns, for the progress line
+	// quietAfter is FrontEnd.QuietAfter.
+	quietAfter time.Duration
 }
 
 // show reads the events of the front end's scopes, from where it stopped
@@ -37,17 +41,55 @@ func (f *FrontEnd) show(ctx context.Context) error {
 		api:   f.API(control.Caller{Principal: f.Owner, Scopes: scopes, May: control.OpRead}),
 		first: map[control.ThreadID]uint64{},
 		turn:  map[control.ThreadID]string{},
+		quiet: map[control.ThreadID]*quiet{},
+
+		quietAfter: f.quietAfter(),
 	}
 	var after uint64
 	err := f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT pos FROM chat_cursors WHERE client = ?`, f.Name).Scan(&after)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("chat: reading the cursor: %w", err)
 	}
+	// The open turns, for their progress lines, as their events tell.
+	threads, err := r.api.Threads(ctx, control.Filter{})
+	if err != nil {
+		return err
+	}
+	for _, t := range threads {
+		if t.State == control.Running {
+			if err := r.scan(ctx, t.ID, ^uint64(0), func(e control.Event) { r.track(e) }); err != nil {
+				return err
+			}
+		}
+	}
 	evs, err := r.api.Events(ctx, control.Filter{}, after)
 	if err != nil {
 		return err
 	}
-	for e := range evs {
+	every := f.Tick
+	if every <= 0 {
+		every = time.Second
+	}
+	tick := time.NewTicker(every)
+	defer tick.Stop()
+	for {
+		var e control.Event
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-tick.C:
+			if rows := f.tick(r, f.now()); len(rows) > 0 {
+				if err := f.Outbox.Write(ctx, rows...); err != nil {
+					return err
+				}
+			}
+			continue
+		case ev, ok := <-evs:
+			if !ok {
+				return ctx.Err()
+			}
+			e = ev
+		}
 		if e.Kind == control.CaughtUp || e.Thread.Key == "" {
 			continue
 		}
@@ -55,6 +97,7 @@ func (f *FrontEnd) show(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		rows = append(r.track(e), rows...)
 		err = f.Outbox.Store.Update(ctx, func(tx *store.Tx) error {
 			if err := f.Outbox.WriteTx(ctx, tx, rows...); err != nil {
 				return err
@@ -70,7 +113,6 @@ func (f *FrontEnd) show(ctx context.Context) error {
 			f.Outbox.Wake()
 		}
 	}
-	return ctx.Err()
 }
 
 // eventData holds the fields of the event kinds the front end shows.

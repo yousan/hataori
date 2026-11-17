@@ -30,7 +30,22 @@ type Row struct {
 	// ReplyToRow makes the message a reply to the message another row
 	// posted, once that row is sent; Message.ReplyTo is used otherwise.
 	ReplyToRow *RowKey
+	// Op is what the row does: post (the default), or edit or delete the
+	// message that the row Target posted. An edit or a delete whose target
+	// was never posted is dropped. A delete is never dropped for failing.
+	Op     Op
+	Target *RowKey
 }
+
+// Op is what a row does.
+type Op string
+
+// The values of Op.
+const (
+	Post   Op = ""
+	Edit   Op = "edit"
+	Delete Op = "delete"
+)
 
 // RowKey names a row.
 type RowKey struct {
@@ -98,6 +113,8 @@ type message struct {
 	Quiet   bool             `json:"quiet,omitempty"`
 	// ReplyRow is Row.ReplyToRow, resolved when the row is posted.
 	ReplyRow *RowKey `json:"reply_row,omitempty"`
+	Op       Op      `json:"op,omitempty"`
+	Target   *RowKey `json:"target,omitempty"`
 }
 
 type ref struct {
@@ -106,24 +123,26 @@ type ref struct {
 	ID      string `json:"id"`
 }
 
-func encode(m surface.Message, replyRow *RowKey) ([]byte, error) {
-	s := message{Text: m.Text, Files: m.Files, Choices: m.Choices, Notify: m.Notify, Quiet: m.Quiet, ReplyRow: replyRow}
+func encode(r Row) ([]byte, error) {
+	m := r.Message
+	s := message{Text: m.Text, Files: m.Files, Choices: m.Choices, Notify: m.Notify, Quiet: m.Quiet,
+		ReplyRow: r.ReplyToRow, Op: r.Op, Target: r.Target}
 	if r := m.ReplyTo; r != nil {
 		s.ReplyTo = &ref{Channel: r.Conv.Channel, Thread: r.Conv.Thread, ID: r.ID}
 	}
 	return json.Marshal(s)
 }
 
-func decode(data []byte) (surface.Message, *RowKey, error) {
+func decode(data []byte) (surface.Message, message, error) {
 	var s message
 	if err := json.Unmarshal(data, &s); err != nil {
-		return surface.Message{}, nil, err
+		return surface.Message{}, s, err
 	}
 	m := surface.Message{Text: s.Text, Files: s.Files, Choices: s.Choices, Notify: s.Notify, Quiet: s.Quiet}
 	if r := s.ReplyTo; r != nil {
 		m.ReplyTo = &surface.MessageRef{Conv: surface.Conversation{Channel: r.Channel, Thread: r.Thread}, ID: r.ID}
 	}
-	return m, s.ReplyRow, nil
+	return m, s, nil
 }
 
 // Write stores rows in one transaction. A row whose key exists is left as
@@ -141,7 +160,7 @@ func (o *Outbox) Write(ctx context.Context, rows ...Row) error {
 func (o *Outbox) WriteTx(ctx context.Context, tx *store.Tx, rows ...Row) error {
 	now := time.Now().UnixMilli()
 	for _, r := range rows {
-		msg, err := encode(r.Message, r.ReplyToRow)
+		msg, err := encode(r)
 		if err != nil {
 			return fmt.Errorf("chat: outbox: %w", err)
 		}
@@ -332,7 +351,8 @@ const (
 // send posts one row and records the outcome.
 func (o *Outbox) send(ctx context.Context, conv surface.Conversation, r pending) outcome {
 	k := key(r.event, r.part)
-	m, replyRow, err := decode(r.message)
+	m, meta, err := decode(r.message)
+	replyRow := meta.ReplyRow
 	if err == nil && replyRow != nil {
 		state, to, err := o.state(ctx, *replyRow)
 		switch {
@@ -356,6 +376,9 @@ func (o *Outbox) send(ctx context.Context, conv surface.Conversation, r pending)
 		o.Log.Error("chat outbox: dropping an unreadable row", "key", k, "err", err)
 		return o.record(ctx, failedPost, r.id, `UPDATE chat_outbox SET state = 'dropped' WHERE id = ?`, r.id)
 	}
+	if meta.Op == Edit || meta.Op == Delete {
+		return o.change(ctx, r, meta, m)
+	}
 	ref, err := o.Driver.Post(ctx, conv, k, m)
 	if err == nil {
 		return o.record(ctx, posted, r.id, `UPDATE chat_outbox SET state = 'sent', ref = ?, sent_at = ? WHERE id = ?`,
@@ -369,6 +392,49 @@ func (o *Outbox) send(ctx context.Context, conv surface.Conversation, r pending)
 		return o.record(ctx, failedPost, r.id, `UPDATE chat_outbox SET state = 'dropped', failures = failures + 1 WHERE id = ?`, r.id)
 	}
 	o.Log.Warn("chat outbox: post failed", "key", k, "decoration", r.decoration, "err", err)
+	return o.record(ctx, failedPost, r.id, `UPDATE chat_outbox SET failures = failures + 1 WHERE id = ?`, r.id)
+}
+
+// change edits or deletes the message another row posted.
+func (o *Outbox) change(ctx context.Context, r pending, meta message, m surface.Message) outcome {
+	k := key(r.event, r.part)
+	var (
+		state string
+		to    surface.MessageRef
+		err   error
+	)
+	if meta.Target != nil {
+		state, to, err = o.state(ctx, *meta.Target)
+	}
+	switch {
+	case err != nil:
+		return stuck
+	case state == "pending":
+		// It comes earlier in the order, so it failed or was written since
+		// this drain read the queue: try again on the next tick. Not a
+		// failure of this row.
+		return failedPost
+	case state != "sent":
+		// Never posted, or dropped: there is nothing to change.
+		return o.record(ctx, failedPost, r.id, `UPDATE chat_outbox SET state = 'dropped' WHERE id = ?`, r.id)
+	}
+	if meta.Op == Edit {
+		err = o.Driver.Edit(ctx, to, m)
+	} else {
+		err = o.Driver.Delete(ctx, to)
+	}
+	if err == nil {
+		return o.record(ctx, posted, r.id, `UPDATE chat_outbox SET state = 'sent', ref = ?, sent_at = ? WHERE id = ?`,
+			to.ID, time.Now().UnixMilli(), r.id)
+	}
+	if ctx.Err() != nil {
+		return stuck
+	}
+	if meta.Op == Edit && r.decoration && r.failures+1 >= o.MaxFailures {
+		o.Log.Warn("chat outbox: dropping an edit", "key", k, "failures", r.failures+1, "err", err)
+		return o.record(ctx, failedPost, r.id, `UPDATE chat_outbox SET state = 'dropped', failures = failures + 1 WHERE id = ?`, r.id)
+	}
+	o.Log.Warn("chat outbox: "+string(meta.Op)+" failed", "key", k, "decoration", r.decoration, "err", err)
 	return o.record(ctx, failedPost, r.id, `UPDATE chat_outbox SET failures = failures + 1 WHERE id = ?`, r.id)
 }
 
