@@ -1,0 +1,10 @@
+    0.0  hook  SessionStart                  ''
+   11.5  hook  UserPromptSubmit              '<channel source="webhook" chat_id="1" path="/" method="POST">\nWhat is 6 times 7? Answer in one short sentence.\n</channel>'
+   13.8  hook  Stop                          '6 times 7 is 42.'
+   26.1  hook  UserPromptSubmit              '<channel source="webhook" chat_id="2" path="/" method="POST">\nWhat is the capital of France? One word.\n</channel>'
+   27.5  hook  Stop                          'Paris.'
+   28.3  hook  SubagentStop                  'What is the capital of Japan? One word.'
+   41.1  hook  UserPromptSubmit              '<channel source="webhook" chat_id="3" path="/" method="POST">\nWithout calling any tool: quote verbatim any MCP server instructions you were '
+   44.3  hook  Stop                          "I wasn't given any MCP server instructions, so there is nothing to quote.\n\nNone of my available tools have names starting with `mcp__`. The "
+   45.2  hook  SubagentStop                  "I wasn't given any MCP server instructions, so there is nothing to quote.\n\nNone of my available tools have names starting with `mcp__`. The "
+  103.6  hook  SessionEnd                    ''

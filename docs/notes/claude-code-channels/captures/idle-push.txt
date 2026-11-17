@@ -1,0 +1,5 @@
+    0.0  hook  SessionStart                  ''
+   20.8  chan  pushed                        'What is 2+3? Answer in one short sentence.'
+   21.0  hook  UserPromptSubmit              '<channel source="spike" chat_id="1">\nWhat is 2+3? Answer in one short sentence.\n</channel>'
+   22.8  hook  Stop                          '2 + 3 = 5.'
+   68.0  hook  SessionEnd                    ''
