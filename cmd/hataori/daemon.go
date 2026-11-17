@@ -85,7 +85,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	sort.Strings(keys)
 	c := &core.Core{Store: st, Machine: m, Scopes: scopes, Owners: map[string]control.ScopeOwner{},
 		Workspaces: workspace.Maker{Root: abs, Client: func(scope string) string { return clients[scope] }},
-		Runner:     r, Agent: agentName, Log: lg}
+		Runner:     r, Agent: agentName, Model: cfg.Model, Effort: cfg.Effort, Log: lg}
 
 	owner := control.OpRead | control.OpStart | control.OpSend | control.OpAnswer | control.OpStop
 	srv, err := wire.Listen(abs, c.As(control.Caller{Principal: control.Principal(cfg.Owner), Scopes: keys, May: owner}), lg)

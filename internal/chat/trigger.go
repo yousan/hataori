@@ -8,11 +8,17 @@ import (
 // order is what a trigger message asks for.
 type order struct {
 	Repo   string
+	Model  string // empty for the scope's default
+	Effort string // empty for the scope's default
 	Prompt string
 }
 
+// Efforts are the effort values hataori knows. An agent adapter maps each
+// to what its agent takes.
+var Efforts = []string{"low", "medium", "high", "xhigh", "max"}
+
 // options are the names a trigger line may carry as name:value.
-var options = map[string]bool{"repo": true}
+var options = map[string]bool{"repo": true, "model": true, "effort": true}
 
 // parseTrigger reads a message that starts with the trigger word. The
 // options follow the word on the same line, separated by spaces; the prompt
@@ -43,7 +49,7 @@ func parseTrigger(trigger, text string) (order, bool) {
 		opts[name] = value
 		rest = rest[end:]
 	}
-	return order{Repo: opts["repo"], Prompt: strings.TrimSpace(rest)}, true
+	return order{Repo: opts["repo"], Model: opts["model"], Effort: opts["effort"], Prompt: strings.TrimSpace(rest)}, true
 }
 
 func isSpace(b byte) bool { return b == ' ' || b == '\t' || b == '\n' || b == '\r' }

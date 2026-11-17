@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -133,14 +134,25 @@ func (f *FrontEnd) Message(in surface.Inbound) {
 		refuse("no prompt")
 		return
 	}
-	if !seen {
-		if text, err = f.remember(ctx, in.Ref, text); err != nil {
-			f.Log.Error("trigger: storing the message", "scope", channel, "message", in.Ref.ID, "err", err)
-			return
+	var n int64
+	if text, n, err = f.remember(ctx, in.Ref, text); err != nil {
+		f.Log.Error("trigger: storing the message", "scope", channel, "message", in.Ref.ID, "err", err)
+		return
+	}
+	if o, ok = parseTrigger(f.Trigger, text); !ok {
+		return // stored by a concurrent delivery of another text
+	}
+	if o.Effort != "" && !slices.Contains(Efforts, o.Effort) {
+		refuse("unknown effort " + strconv.Quote(o.Effort))
+		// Not about an event: the row is keyed by event 0 and the
+		// trigger's number, so a second delivery writes it once.
+		err := f.Outbox.Write(ctx, Row{Event: 0, Part: int(n), Conv: in.Ref.Conv, Message: surface.Message{
+			Text:    "Nothing was started: effort " + strconv.Quote(o.Effort) + " is not one of " + strings.Join(Efforts, ", ") + ".",
+			ReplyTo: &in.Ref}})
+		if err != nil {
+			f.Log.Error("trigger: writing the refusal", "message", in.Ref.ID, "err", err)
 		}
-		if o, ok = parseTrigger(f.Trigger, text); !ok {
-			return // stored by a concurrent delivery of another text
-		}
+		return
 	}
 	f.start(ctx, in, o)
 }
@@ -157,18 +169,19 @@ func (f *FrontEnd) stored(ctx context.Context, ref surface.MessageRef) (string, 
 }
 
 // remember stores the text of a trigger message the first time it is
-// received, and returns the text stored.
-func (f *FrontEnd) remember(ctx context.Context, ref surface.MessageRef, text string) (string, error) {
+// received, and returns the text stored and the trigger's number.
+func (f *FrontEnd) remember(ctx context.Context, ref surface.MessageRef, text string) (string, int64, error) {
+	var n int64
 	err := f.Outbox.Store.Update(ctx, func(tx *store.Tx) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO chat_triggers (client, channel, message, text, received_at)
 			VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`, f.Name, ref.Conv.Channel, ref.ID, text, time.Now().UnixMilli())
 		if err != nil {
 			return err
 		}
-		return tx.QueryRowContext(ctx, `SELECT text FROM chat_triggers WHERE client = ? AND channel = ? AND message = ?`,
-			f.Name, ref.Conv.Channel, ref.ID).Scan(&text)
+		return tx.QueryRowContext(ctx, `SELECT rowid, text FROM chat_triggers WHERE client = ? AND channel = ? AND message = ?`,
+			f.Name, ref.Conv.Channel, ref.ID).Scan(&n, &text)
 	})
-	return text, err
+	return text, n, err
 }
 
 func (f *FrontEnd) start(ctx context.Context, in surface.Inbound, o order) {
@@ -176,7 +189,7 @@ func (f *FrontEnd) start(ctx context.Context, in surface.Inbound, o order) {
 	api := f.API(control.Caller{Principal: control.Principal(in.Author.ID), Scopes: []string{channel},
 		May: control.OpRead | control.OpStart})
 	id, startErr := api.Start(ctx, control.StartRequest{Key: in.Ref.ID, Scope: channel, Repo: o.Repo,
-		Input: control.Input{Text: o.Prompt}})
+		Model: o.Model, Effort: o.Effort, Input: control.Input{Text: o.Prompt}})
 	if id.Key == "" {
 		f.Log.Error("trigger: start failed", "scope", channel, "message", in.Ref.ID, "err", startErr)
 		return

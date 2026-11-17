@@ -22,6 +22,8 @@ type Config struct {
 	Owner   string        // the principal that owns the instance
 	Trigger string        // the word that starts a thread
 	Idle    time.Duration // idle period before a session is put to sleep
+	Model   string        // default model of a scope without one; empty for the agent's own default
+	Effort  string        // default effort of a scope without one; empty for the agent's own default
 	// ContextBytes caps, in bytes, the thread's earlier inputs and final
 	// answers given to a session that replaces one whose conversation the
 	// agent no longer has (section 4.5). "context_bytes"; 8192 when absent.
@@ -53,6 +55,8 @@ type fileConfig struct {
 	Owner      string                     `json:"owner"`
 	Trigger    string                     `json:"trigger"`
 	Idle       string                     `json:"idle"`
+	Model      string                     `json:"model"`
+	Effort     string                     `json:"effort"`
 	Context    *int                       `json:"context_bytes"`
 	LoginRelay *bool                      `json:"login_relay"`
 	Scopes     []fileScope                `json:"scopes"`
@@ -89,6 +93,8 @@ func ParseConfig(data []byte) (*Config, error) {
 		LoginRelay: f.LoginRelay == nil || *f.LoginRelay,
 		Owner:      strings.TrimSpace(f.Owner),
 		Trigger:    strings.TrimSpace(f.Trigger),
+		Model:      strings.TrimSpace(f.Model),
+		Effort:     strings.TrimSpace(f.Effort),
 		Drivers:    raw(f.Drivers),
 		Adapters:   raw(f.Adapters),
 	}
