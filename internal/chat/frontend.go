@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -79,11 +80,22 @@ func (f *FrontEnd) Message(in surface.Inbound) {
 	if in.Direct || in.Ref.Conv.Thread != "" {
 		return
 	}
-	o, ok := parseTrigger(f.Trigger, in.Text)
+	ctx := f.context()
+	channel := in.Ref.Conv.Channel
+	// A message delivered again (after an outage, or edited since) starts
+	// what it started the first time.
+	text, seen, err := f.stored(ctx, in.Ref)
+	if err != nil {
+		f.Log.Error("trigger: reading stored messages", "scope", channel, "message", in.Ref.ID, "err", err)
+		return
+	}
+	if !seen {
+		text = in.Text
+	}
+	o, ok := parseTrigger(f.Trigger, text)
 	if !ok {
 		return
 	}
-	channel := in.Ref.Conv.Channel
 	refuse := func(reason string) {
 		f.Log.Warn("trigger ignored", "reason", reason, "scope", channel,
 			"author", in.Author.ID, "message", in.Ref.ID)
@@ -106,17 +118,27 @@ func (f *FrontEnd) Message(in surface.Inbound) {
 		refuse("no prompt")
 		return
 	}
-	ctx := f.context()
-	// A message delivered again (after an outage, or edited since) starts
-	// what it started the first time.
-	text, err := f.remember(ctx, in.Ref, in.Text)
-	if err != nil {
-		f.Log.Error("trigger: storing the message", "scope", channel, "message", in.Ref.ID, "err", err)
-		return
+	if !seen {
+		if text, err = f.remember(ctx, in.Ref, text); err != nil {
+			f.Log.Error("trigger: storing the message", "scope", channel, "message", in.Ref.ID, "err", err)
+			return
+		}
+		if o, ok = parseTrigger(f.Trigger, text); !ok {
+			return // stored by a concurrent delivery of another text
+		}
 	}
-	if o, ok = parseTrigger(f.Trigger, text); ok {
-		f.start(ctx, in, o)
+	f.start(ctx, in, o)
+}
+
+// stored returns the text of a trigger message as it was first received.
+func (f *FrontEnd) stored(ctx context.Context, ref surface.MessageRef) (string, bool, error) {
+	var text string
+	err := f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT text FROM chat_triggers WHERE client = ? AND channel = ? AND message = ?`,
+		f.Name, ref.Conv.Channel, ref.ID).Scan(&text)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
 	}
+	return text, err == nil, err
 }
 
 // remember stores the text of a trigger message the first time it is

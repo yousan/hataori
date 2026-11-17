@@ -278,6 +278,9 @@ func TestRedeliveryAfterACrashShowsTheFirstText(t *testing.T) {
 			store.DB.Exec(`CREATE TRIGGER lost AFTER INSERT ON chat_outbox BEGIN DELETE FROM chat_outbox WHERE id = NEW.id; END`)
 			in := f.deliver(chanConv, fake.Webhook(hook), "!go repo:https://example.com/r.git first")
 			store.DB.Exec(`DROP TRIGGER lost`)
+			// An edit that is no longer a trigger, then one that asks for more.
+			in.Text = "the order was taken back"
+			f.fe.Message(in)
 			in.Text = "!go repo:https://example.com/r.git edited"
 			f.fe.Message(in)
 			th := f.threads()[0].Opened
