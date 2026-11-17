@@ -61,6 +61,7 @@ type Call struct {
 	Thread  surface.ThreadMeta   // SetThread's meta
 	Opened  surface.Conversation // OpenThread's new thread
 	Title   string               // OpenThread's title
+	From    string               // OpenThread's message the thread is opened from, if any
 }
 
 // MessageRef is surface.MessageRef, repeated here for short test code.
@@ -330,7 +331,9 @@ func clone(m surface.Message) surface.Message {
 	return m
 }
 
-// OpenThread opens a new thread in parent's channel.
+// OpenThread opens a new thread in parent's channel, from the message
+// parent.Thread names when it is set. The call is recorded in the channel,
+// with the message in From.
 func (d *Driver) OpenThread(_ context.Context, parent surface.Conversation, title string) (surface.Conversation, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -339,7 +342,7 @@ func (d *Driver) OpenThread(_ context.Context, parent surface.Conversation, titl
 		return surface.Conversation{}, before
 	}
 	conv := surface.Conversation{Channel: parent.Channel, Thread: d.id("thread")}
-	d.record(parent, Call{Op: OpOpenThread, Opened: conv, Title: title})
+	d.record(surface.Conversation{Channel: parent.Channel}, Call{Op: OpOpenThread, Opened: conv, Title: title, From: parent.Thread})
 	if after != nil {
 		return surface.Conversation{}, after
 	}

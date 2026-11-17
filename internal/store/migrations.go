@@ -218,6 +218,11 @@ var migrations = []Migration{
 			PRIMARY KEY (client, channel, thread)
 		)`,
 	)},
+	{Name: "chat_triggers.thread", Up: execAll(
+		// thread: the chat thread opened from the trigger message, '' until
+		// one is, so that the trigger delivered again opens no second one.
+		`ALTER TABLE chat_triggers ADD COLUMN thread TEXT NOT NULL DEFAULT ''`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {
