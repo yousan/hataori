@@ -63,12 +63,12 @@ func newChatRoot(t *testing.T, change func(cfg map[string]any)) *chatRoot {
 	t.Helper()
 	root := t.TempDir()
 	d := fakesurface.New()
-	drivers.Store(t.Name(), d)
-	t.Cleanup(func() { drivers.Delete(t.Name()) })
+	drivers.Store(root, d) // by root: a test may run two instances
+	t.Cleanup(func() { drivers.Delete(root) })
 	cfg := map[string]any{
 		"owner": e2eOwner, "trigger": "!go", "idle": "1h",
 		"scopes":   []map[string]any{{"key": "c1", "client": fakeSurface, "enabled": true, "posters": []string{e2eHook}}},
-		"drivers":  map[string]any{fakeSurface: map[string]any{"id": t.Name()}},
+		"drivers":  map[string]any{fakeSurface: map[string]any{"id": root}},
 		"adapters": map[string]any{fake.Name: fake.Config{Command: []string{os.Args[0], "fake"}, Env: []string{"PATH=" + os.Getenv("PATH")}}},
 	}
 	if change != nil {

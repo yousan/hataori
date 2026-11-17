@@ -1,3 +1,36 @@
+# Testing
+
+## Phase 1 acceptance criteria and their tests
+
+Every acceptance criterion of phase 1 ([design, section 8](design/overview.md#phase-1-replace-c-lord-for-dispatched-orders-discord-and-claude-code)), and the tests that cover it with the fakes. `e2e` tests are in `cmd/hataori` and run the daemon, a session host, the fake agent and the fake surface; the others are named with their package. A criterion that needs the real services says so, and why.
+
+| Criterion | Covered by | Needs the real services |
+|---|---|---|
+| The full test suite exists before the first real order: the codec against captures for every scenario in Appendix B, and end-to-end tests for each criterion that does not need the real services | this table; `internal/agent/claudecode`: `TestEachCapture` and the codec tests beside it; `TestCapturesAreScrubbed` | |
+| A webhook post with the trigger, a repository and a prompt in an enabled channel creates a thread, a clone under `workspaces/<client>/<channel>/<thread>/` and a first reply; the full prompt is in the thread; editing the channel message changes nothing | e2e `TestOneThreadOneTurn`, `TestTwoInstancesIgnoreEachOthersScopes` (the clone's place); `internal/chat`: `TestTriggerStartsAThread`, `TestRedeliveryAfterACrashShowsTheFirstText` | Discord's webhook and thread calls: the driver's own tests use its fakes |
+| The same post in a channel that is not enabled, or from an account that is not allowed, starts nothing and writes one log line | e2e `TestRefusedTriggersStartNothingAndLogOneLine` | |
+| A webhook post into the thread continues the same agent session id | e2e `TestFollowUpContinuesTheSameAgentSession` | |
+| A thread in a repository never opened on the host starts with nobody at the terminal; a session that does not report its start within the timeout is `failed` with its terminal output | `internal/runner`: `TestBlockedAtStart` | the folder-trust dialog is the real CLI's (#56) |
+| `model:` and `effort:` on the trigger line are the ones the agent reports, and the next thread without them gets the channel's defaults | e2e `TestModelAndEffortReachTheAgentAndTheNextThreadGetsTheDefaults`; `internal/chat`: `TestModelAndEffortFromTheTriggerLineOrTheDefaults` | what the real CLI reports (#62) |
+| A turn of 30 minutes ends with its final answer posted once | e2e `TestLongTurnEndsWithItsAnswerPostedOnce` (half an hour on the front end's clock) | a real 30-minute turn: only the real agent and service show their own timeouts |
+| Every turn, including one the agent starts by itself after a background task, produces exactly one end event, with who started it and how many background tasks still run | e2e `TestTurnTheAgentStartsHasOneEndEvent`; `internal/agent/claudecode`: `TestWhoStartedATurn` | |
+| `hataori events --after <n>` returns exactly the events after `n`, also after the daemon was restarted | `cmd/hataori`: `TestCommands`; after a restart: the restart suite (#46) | |
+| A question from the agent appears in the thread, produces a `blocked` event, and is answered by the next message | e2e `TestQuestionIsShownBlocksAndTakesTheNextPost`; `internal/agent/claudecode`: `TestQuestionBecomesARequest` | |
+| A usage limit, an expired login and a crashed agent each produce one line in the thread and one `failure` event with that reason | e2e `TestLimitLoginAndCrashEachGiveOneLineAndOneFailure`; `internal/agent/claudecode`: `TestFailureReasons` | recorded from the real CLI when they occur; simulated until then |
+| While a tool runs for more than 90 seconds, the thread shows one progress line, updated in place and removed at the end | e2e `TestProgressLineAppearsIsEditedAndRemoved`; `internal/chat`: `TestProgressLineAppearsIsEditedAndRemoved`, `TestNoSecondLineWhileTheFirstIsNotDeleted` | |
+| `hataori thread <key>` tells a hataori thread from an ordinary one, and gives its state | e2e `TestThreadCommandTellsAHataoriThread`; `cmd/hataori`: `TestCommands` | |
+| `hataori stop <thread>` ends a running command within 10 seconds and leaves no process of the agent's behind | `internal/runner`: `TestStopEndsARunningTool`; end to end: the restart suite (#46) | |
+| The daemon is killed with SIGKILL during a turn and started again: the turn finishes, every reply appears once, and its end event once | `internal/runner`: `TestDaemonKilledDuringATurn`; end to end: the restart suite (#46) | |
+| Three posts into a thread while the daemon is down are run once each, in order, after it starts | `internal/chat`: `TestThreeMessagesWhileDownRunOnceEachInOrder`, `TestCursorStaysWhenAFailureComesBetween`; end to end: the restart suite (#46) | |
+| After the idle period the agent process is gone; the next post resumes the same conversation. The same after all processes were killed | `internal/runner`: `TestIdleSessionSleepsAndResumes`, `TestRebootThenResume`; end to end: the restart suite (#46) | |
+| When turns fail because the agent is logged out, the owner gets one direct message for the outage, also across a daemon restart, and threads that stop later are added to it | e2e `TestLoginOutageWithTheFakes`; `internal/chat`: `TestOneDirectMessagePerOutage`; `internal/session`: `TestLoginOutageSurvivesRestart` | |
+| The owner's reply with the code, and nothing else, reaches the login command; on success the message says so and each stopped thread gets one line; no message is resent | e2e `TestLoginOutageWithTheFakes`; `internal/chat`: `TestDirectMessagesThatAreNoCode`; `internal/relay`: `TestLoginThroughTheRelay`, `TestCodeOnlyWhenAskedAndOneWord` | a real login: `TestRealLogin` below runs the real command with a wrong code only |
+| After a login through the relay, the sign-in link and the code are found nowhere in the database, the event log or the log files | e2e `TestLoginOutageWithTheFakes` (every table and every file under the root) | |
+| No code path in the binary removes or resets a working directory | `cmd/hataori`: `TestRemovalsAreAllowListed` | |
+| Two instances with different roots on one host each ignore the other's channels | e2e `TestTwoInstancesIgnoreEachOthersScopes` | |
+| No core package imports a driver, an agent adapter or a client, or contains the name of a surface or an agent (checked in CI) | `cmd/hataori`: `TestAdaptersOnlyUnderCmd`; `internal/chat`: `TestNoSurfaceOrAgentNames`; and the fakes stay out of the binary: e2e `TestTheBinaryHasNoFakes` | |
+| For one week, every order the deployment's manager sends runs on hataori and none on c-lord | | yes: it is the deployment itself |
+
 # Testing against the real agent CLIs
 
 `go test ./...` never runs a real agent CLI. It uses captures of real output under each adapter's `testdata/`, and fake binaries. The checks below run the installed CLI on purpose, and only when asked for.
