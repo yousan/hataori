@@ -13,8 +13,10 @@ export HATAORI_DISCORD_OWNER=<the person's user id>
 python3 capture.py bot    /tmp/raw/bot           # the bot alone
 python3 capture.py person /tmp/raw/person 230    # waits for the person's steps below
 python3 capture.py second /tmp/raw/second          # more REST captures, no gateway connection
+python3 capture.py lookups /tmp/raw/third          # channel objects, trimmed to the fields the driver reads
+python3 capture.py pages /tmp/raw/unbroken         # consecutive pages of history
 python3 capture.py cleanup /tmp/raw/bot; python3 capture.py cleanup /tmp/raw/person; python3 capture.py cleanup /tmp/raw/second
-python3 scrub.py v10 /tmp/raw/bot /tmp/raw/person /tmp/raw/second
+python3 scrub.py v10 /tmp/raw/bot /tmp/raw/person /tmp/raw/second /tmp/raw/third /tmp/raw/unbroken
 ```
 
 Each run opens one gateway connection, saves every dispatch, does its REST calls, and closes the connection with code 1000. `cleanup` deletes what the bot posted. It cannot delete the test thread (deleting a thread needs Manage Threads), so it archives it.
@@ -45,7 +47,8 @@ The run fetches each of these messages through REST as soon as it arrives, so th
 | Post refused for its length | `bot/rest-post-too-long.json` (400, code 50035) | |
 | Rate-limit response | `bot/rest-rate-limited.json` (429), and `bot/rest-other-route-after-429.json`, another route at the same moment (200); `second/rest-rate-limited.json` and `second/rest-other-route-after-429.json` again with the `Via` header kept, which the REST client reads to tell a route's limit from a Cloudflare one | |
 | Thread without a message; archived; a post into it; a refusal | `second/rest-thread-without-message.json`, `rest-set-thread-archived.json`, `rest-post-archived-thread.json` (200: posting unarchives), `rest-delete-thread-refused.json` (403, 50013) | |
-| Two pages of history | `bot/rest-history-page-1.json`, `-page-2.json` (`after=<cursor>&limit=2`), `-page-3.json` (empty) | |
+| Two pages of history | `unbroken/rest-history-page-1.json` … `-4.json`: each page `after=` the newest message of the page before, `limit=2`; the third is short and the fourth empty. (`bot/rest-history-page-*.json` skip a message between pages 1 and 2, a mistake of the first run; they are kept for the starter message's shape and the empty page) | |
+| A channel and a direct conversation looked up | `third/rest-get-channel.json`, `third/rest-get-direct-channel.json` (trimmed: only `id`, `type`, `guild_id`, `name`, `flags`, `recipients` are kept, so that ids the tests never see do not enter the captures) | |
 | History with a cursor the service cannot serve | `bot/rest-history-bad-cursor.json` (400), `bot/rest-history-unknown-channel.json` (404, code 10003) | |
 | Direct message from a person | `person/rest-get-direct-message.json` | `person/gw-07-MESSAGE_CREATE.json` (no `guild_id`) |
 | Message posted with a button | `person/rest-post-button.json`, `person/rest-edit-direct.json` | `person/gw-03-MESSAGE_CREATE.json` |
@@ -57,6 +60,7 @@ The run fetches each of these messages through REST as soon as it arrives, so th
 
 ## Observed, and worth knowing
 
+- Messages read through REST have no `guild_id`, in a channel as in a direct conversation; only gateway messages say which they are.
 - Pages fetched with `after=` come **newest first**. The first page after a thread's id holds the thread's type 21 starter message.
 - In the 429, the `Retry-After` header was `5`, `X-RateLimit-Reset-After` was `4.462`, and the body's `retry_after` was `0.462`. The limit was per thread: a call on the parent channel right after it got a 200, in another bucket.
 - A webhook message made in the server settings carries `application_id` as well as `webhook_id`. So `application_id` alone does not mean an application-owned webhook. This corrects the research note on that point.

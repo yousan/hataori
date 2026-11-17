@@ -1,0 +1,62 @@
+{
+ "body": {
+  "flags": 0,
+  "id": "1000000000000000028",
+  "recipients": [
+   {
+    "accent_color": null,
+    "avatar": "0000000000000000000000000000000b",
+    "avatar_decoration_data": null,
+    "banner": null,
+    "banner_color": null,
+    "clan": {
+     "badge": "0000000000000000000000000000000a",
+     "identity_enabled": true,
+     "identity_guild_id": "1000000000000000002",
+     "tag": "TAG"
+    },
+    "collectibles": null,
+    "discriminator": "0",
+    "display_name_styles": null,
+    "flags": 0,
+    "global_name": "name-3",
+    "id": "1000000000000000001",
+    "primary_guild": {
+     "badge": "0000000000000000000000000000000a",
+     "identity_enabled": true,
+     "identity_guild_id": "1000000000000000002",
+     "tag": "TAG"
+    },
+    "public_flags": 0,
+    "username": "name-2"
+   }
+  ],
+  "type": 1
+ },
+ "date": "2026-11-17T03:39:48Z",
+ "headers": {
+  "content-type": "application/json",
+  "via": "1.1 google",
+  "x-ratelimit-bucket": "00000000000000000000000000000011",
+  "x-ratelimit-limit": "1000",
+  "x-ratelimit-remaining": "999",
+  "x-ratelimit-reset": "1794886788.607",
+  "x-ratelimit-reset-after": "0.001"
+ },
+ "request": {
+  "body": null,
+  "files": [],
+  "method": "GET",
+  "path": "/channels/1000000000000000028"
+ },
+ "source": "rest",
+ "status": 200,
+ "trimmed": [
+  "id",
+  "type",
+  "guild_id",
+  "name",
+  "flags",
+  "recipients"
+ ]
+}

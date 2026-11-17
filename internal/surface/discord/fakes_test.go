@@ -62,6 +62,7 @@ type fakeREST struct {
 // request is a request the fake received.
 type request struct {
 	key         string
+	query       string
 	contentType string
 	body        []byte
 }
@@ -79,7 +80,7 @@ func newFakeREST(t *testing.T) *fakeREST {
 		b, _ := io.ReadAll(r.Body)
 		f.mu.Lock()
 		f.calls = append(f.calls, key)
-		f.bodies = append(f.bodies, request{key: key, contentType: r.Header.Get("Content-Type"), body: b})
+		f.bodies = append(f.bodies, request{key: key, query: r.URL.RawQuery, contentType: r.Header.Get("Content-Type"), body: b})
 		rs := f.routes[key]
 		rp := f.last[key]
 		if len(rs) > 0 {
