@@ -79,6 +79,7 @@ func (f *FrontEnd) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	f.ctx = ctx
+	f.Outbox.init() // its defaults, before the goroutines below read them
 	var wg sync.WaitGroup
 	wg.Add(4)
 	go func() { defer wg.Done(); f.runCatchUp(ctx) }()
