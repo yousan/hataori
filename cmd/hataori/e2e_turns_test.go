@@ -94,11 +94,15 @@ func TestLongTurnEndsWithItsAnswerPostedOnce(t *testing.T) {
 	r := newChatRoot(t, nil)
 	startDaemon(t, r.root)
 	r.connected(t)
-	th := r.order(t, 0, "!go repo:"+bareRepo(t)+" tool wait 2s\nreply done after a long time")
-	r.posted(t, th, "tool wait 2s\nreply done after a long time")
-	for i := 0; i < 30; i++ { // half an hour on the front end's clock
+	th := r.order(t, 0, "!go repo:"+bareRepo(t)+" tool wait 8s\nreply done after a long time")
+	r.posted(t, th, "tool wait 8s\nreply done after a long time")
+	eventually(t, "the tool to run", 5*time.Second, func() bool { return len(r.events(t, "tool_started", th)) == 1 })
+	for i := 0; i < 30; i++ { // half an hour on the front end's clock, while the tool runs
 		c.add(time.Minute)
 		time.Sleep(15 * time.Millisecond)
+	}
+	if len(r.events(t, "tool_ended", th)) != 0 {
+		t.Fatal("the tool ended before the half hour passed on the front end's clock; the turn was not long")
 	}
 	r.posted(t, th, "done after a long time")
 	eventually(t, "the end event", 10*time.Second, func() bool { return len(r.events(t, "turn_ended", th)) == 1 })
@@ -171,8 +175,8 @@ func TestProgressLineAppearsIsEditedAndRemoved(t *testing.T) {
 	r := newChatRoot(t, nil)
 	startDaemon(t, r.root)
 	r.connected(t)
-	th := r.order(t, 0, "!go repo:"+bareRepo(t)+" tool wait 3s\nreply finished")
-	r.posted(t, th, "tool wait 3s\nreply finished")
+	th := r.order(t, 0, "!go repo:"+bareRepo(t)+" tool wait 8s\nreply finished")
+	r.posted(t, th, "tool wait 8s\nreply finished")
 	eventually(t, "the tool to run", 10*time.Second, func() bool { return len(r.events(t, "tool_started", th)) == 1 })
 	line := func() (posted, edited, deleted int) {
 		var ref fakesurface.MessageRef
@@ -193,6 +197,9 @@ func TestProgressLineAppearsIsEditedAndRemoved(t *testing.T) {
 	eventually(t, "the line", 5*time.Second, func() bool { p, _, _ := line(); return p == 1 })
 	c.add(20 * time.Second)
 	eventually(t, "an edit", 5*time.Second, func() bool { _, e, _ := line(); return e >= 1 })
+	if len(r.events(t, "tool_ended", th)) != 0 {
+		t.Fatal("the tool ended before the line was edited")
+	}
 	r.posted(t, th, "finished")
 	eventually(t, "the line removed", 5*time.Second, func() bool { _, _, d := line(); return d == 1 })
 	if p, _, _ := line(); p != 1 {
@@ -234,9 +241,8 @@ func TestLoginOutageWithTheFakes(t *testing.T) {
 	defer func() {
 		if t.Failed() {
 			for _, c := range r.driver.Calls(dm) {
-				t.Logf("dm %v %q", c.Op, c.Message.Text)
+				t.Logf("dm %v, %d bytes", c.Op, len(c.Message.Text)) // not the text: it holds the link
 			}
-			t.Logf("log:\n%s", logged())
 		}
 	}()
 	eventually(t, "the link in the owner's message", 15*time.Second, func() bool {
@@ -263,10 +269,32 @@ func TestLoginOutageWithTheFakes(t *testing.T) {
 		t.Fatalf("%d direct messages about the outage", posts)
 	}
 	// The link and the code: in no log, table or event.
-	for _, secret := range []string{link, code} {
+	// The agent is logged in: a stopped thread runs a turn again.
+	if _, err := os.Stat(filepath.Join(configDir, fake.LoggedInFile)); err != nil {
+		t.Fatalf("the fake agent is not logged in: %v", err)
+	}
+	r.driver.Inject(a, fakesurface.Webhook(e2eHook), "reply one again")
+	r.posted(t, a, "one again")
+	for i, secret := range []string{link, code} {
+		name := []string{"the link", "the code"}[i]
 		if strings.Contains(logged(), secret) {
-			t.Fatalf("%q is in the log", secret)
+			t.Fatalf("%s is in the daemon's log", name)
 		}
+		// Every file under the root (host logs, event logs, transcripts, the
+		// database), but the config: the fake's section names the code it
+		// accepts.
+		filepath.WalkDir(r.root, func(p string, d os.DirEntry, err error) error {
+			if err == nil && d.IsDir() && p == filepath.Join(r.root, "config") {
+				return filepath.SkipDir
+			}
+			if err != nil || d.IsDir() || strings.Contains(p, string(filepath.Separator)+".git"+string(filepath.Separator)) {
+				return nil
+			}
+			if b, err := os.ReadFile(p); err == nil && strings.Contains(string(b), secret) {
+				t.Errorf("%s is in %s", name, p)
+			}
+			return nil
+		})
 	}
 	db := r.db(t)
 	rows, _ := db.Query(`SELECT name FROM sqlite_master WHERE type = 'table'`)
