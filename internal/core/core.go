@@ -4,6 +4,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -115,6 +116,8 @@ type Core struct {
 	Workspaces Workspaces
 	Runner     Runner
 	Agent      string // the registered name of the agent new sessions use
+	Model      string // default model of a scope without one
+	Effort     string // default effort of a scope without one
 	Log        *slog.Logger
 
 	locks keyedMutex
@@ -377,13 +380,8 @@ func (a *api) Start(ctx context.Context, r control.StartRequest) (control.Thread
 		}
 		id.Key = key
 	}
-	model, effort := r.Model, r.Effort
-	if model == "" {
-		model = sc.Model
-	}
-	if effort == "" {
-		effort = sc.Effort
-	}
+	model := cmp.Or(r.Model, sc.Model, a.c.Model)
+	effort := cmp.Or(r.Effort, sc.Effort, a.c.Effort)
 
 	var sessionID int64
 	dup := false
