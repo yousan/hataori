@@ -46,7 +46,7 @@ var eventData = map[control.EventKind]string{
 	"subagent_ended":    `{"id":"agent_1","session":3}`,
 	"request":           `{"approval":false,"choices":["red","blue"],"request":"3:toolu_2","session":3,"text":"Which colour?"}`,
 	"request_withdrawn": `{"request":"3:toolu_2","session":3}`,
-	"file_out":          `{"file":"/srv/hataori/state/sessions/3/out/report.pdf","session":3}`,
+	"file_out":          `{"caption":"The report and its data.","file":"/srv/hataori/state/sessions/3/out/report.pdf","more":["/srv/hataori/state/sessions/3/out/data.csv"],"session":3}`,
 	"usage":             `{"session":3}`,
 	"login_lost":        `{"agent":"claude-code","outage":1,"thread":7}`,
 	"login_restored":    `{"agent":"claude-code","outage":1,"scopes":["C0123"],"threads":[{"scope":"C0123","key":"T0456"}]}`,

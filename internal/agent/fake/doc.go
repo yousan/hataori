@@ -21,7 +21,7 @@
 //	{"t":"tool","id":I,"name":N,"parent":P,"end":false|true}   (P: the subagent it runs in)
 //	{"t":"subagent","id":I,"name":N,"end":false|true}
 //	{"t":"ask","id":I,"text":Q}                 (on a terminal: a waiting hook call)
-//	{"t":"file","path":P}
+//	{"t":"file","path":P,"more":[P...],"caption":C}
 //	{"t":"end","status":"completed"|"failed"|"interrupted","reason":R,"background":N}
 //	{"t":"interrupted"}                          (transcript only)
 //	{"t":"cannot-resume","session":S}            (then it exits)
@@ -47,7 +47,8 @@
 //	unknown             report a line of a kind no codec knows
 //	subagent ID [NAME [TOOL...]]
 //	                    report a subagent's start, its tools, and its end
-//	file PATH           hand over a file
+//	file PATH [PATH...] [-- CAPTION]
+//	                    hand over files, with a caption
 //
 // With --conversations DIR the program keeps one file per session it starts
 // in DIR, and a resume whose file is gone reports "cannot-resume".

@@ -112,10 +112,12 @@ var DefaultLimits = surface.Limits{
 	MaxText:    2000,
 	MaxChoices: 5,
 	MaxFiles:   10,
-	Edit:       true,
-	Delete:     true,
-	SetStatus:  true,
-	SetThread:  true,
+	// MaxFileBytes: 8 MiB.
+	MaxFileBytes: 8 << 20,
+	Edit:         true,
+	Delete:       true,
+	SetStatus:    true,
+	SetThread:    true,
 }
 
 // New returns an empty, disconnected driver.

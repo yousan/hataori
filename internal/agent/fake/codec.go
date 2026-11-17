@@ -20,24 +20,26 @@ type codec struct {
 
 // report is any of the fake's reports.
 type report struct {
-	T          string `json:"t"`
-	Session    string `json:"session"`
-	Model      string `json:"model"`
-	Effort     string `json:"effort"`
-	Resume     string `json:"resume"`
-	Transcript string `json:"transcript"`
-	By         string `json:"by"`
-	Text       string `json:"text"`
-	Final      bool   `json:"final"`
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Parent     string `json:"parent"`
-	End        bool   `json:"end"`
-	Path       string `json:"path"`
-	Status     string `json:"status"`
-	Reason     string `json:"reason"`
-	Background int    `json:"background"`
-	Input      string `json:"input"`
+	T          string   `json:"t"`
+	Session    string   `json:"session"`
+	Model      string   `json:"model"`
+	Effort     string   `json:"effort"`
+	Resume     string   `json:"resume"`
+	Transcript string   `json:"transcript"`
+	By         string   `json:"by"`
+	Text       string   `json:"text"`
+	Final      bool     `json:"final"`
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	Parent     string   `json:"parent"`
+	More       []string `json:"more"`
+	Caption    string   `json:"caption"`
+	End        bool     `json:"end"`
+	Path       string   `json:"path"`
+	Status     string   `json:"status"`
+	Reason     string   `json:"reason"`
+	Background int      `json:"background"`
+	Input      string   `json:"input"`
 }
 
 // call is a hook call as the session host records it.
@@ -114,7 +116,7 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 		c.asked[id] = r.ID
 		a = c.events(agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: id, Text: r.Text}})
 	case "file":
-		a = c.events(agent.Event{Kind: agent.FileOut, File: r.Path})
+		a = c.events(agent.Event{Kind: agent.FileOut, File: r.Path, More: r.More, Caption: r.Caption})
 	case "end":
 		e := agent.Event{Kind: agent.TurnEnded, Background: r.Background}
 		switch r.Status {

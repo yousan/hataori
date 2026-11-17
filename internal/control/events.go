@@ -51,7 +51,7 @@ var EventKinds = map[EventKind][]Field{
 	"subagent_ended":    {req("session", Integer), req("id", String)},
 	"request":           {req("session", Integer), req("request", String), req("approval", Boolean), text("text", String), text("choices", Array)},
 	"request_withdrawn": {req("session", Integer), req("request", String)},
-	"file_out":          {req("session", Integer), req("file", String)},
+	"file_out":          {req("session", Integer), req("file", String), opt("more", Array), text("caption", String)},
 	"usage":             {req("session", Integer)},
 	"login_lost":        {req("agent", String), req("outage", Integer), req("thread", Integer)},
 	"login_restored":    {req("agent", String), req("outage", Integer), req("threads", Array), req("scopes", Array)},
