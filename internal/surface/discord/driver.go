@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/disgoorg/disgo/gateway"
@@ -105,9 +106,10 @@ func newDriver(botID snowflake.ID, token, restURL, gatewayURL string, log *slog.
 }
 
 // Run connects and delivers inbound messages to sink until ctx ends. It
-// first checks that the token is the configured bot's. The gateway
-// connection reconnects by itself; events are handled one at a time, in the
-// order the service sends them, so inbound order per conversation is kept.
+// first checks that the token is the configured bot's. A dropped
+// connection is reopened and the session resumed; events are handled one at
+// a time, in the order the service sends them, so inbound order per
+// conversation is kept.
 func (d *Driver) Run(ctx context.Context, sink surface.Sink) error {
 	var me struct {
 		ID  snowflake.ID `json:"id"`
@@ -127,7 +129,15 @@ func (d *Driver) Run(ctx context.Context, sink surface.Sink) error {
 		default:
 		}
 	}
+	// lost is a dropped connection that may be resumed. Reconnecting is
+	// done here, under ctx, rather than by the library on a context of its
+	// own, so that nothing reconnects or delivers after Run returns.
+	lost := make(chan error, 1)
+	var stopped atomic.Bool
 	handle := func(_ gateway.Gateway, t gateway.EventType, _ int, ev gateway.EventData) {
+		if stopped.Load() {
+			return
+		}
 		switch e := ev.(type) {
 		case gateway.EventReady:
 			if e.User.ID != d.botID {
@@ -144,28 +154,44 @@ func (d *Driver) Run(ctx context.Context, sink surface.Sink) error {
 		gateway.WithIntents(Intents),
 		gateway.WithCompression(gateway.CompressionNone),
 		gateway.WithEnableRawEvents(true),
+		gateway.WithAutoReconnect(false),
 		gateway.WithLogger(d.log),
 		gateway.WithBrowser("hataori"),
 		gateway.WithDevice("hataori"),
 		gateway.WithCloseHandler(func(_ gateway.Gateway, err error, reconnect bool) {
 			if !reconnect {
-				report(fmt.Errorf("discord: the gateway closed and will not reconnect: %w", err))
+				report(fmt.Errorf("discord: the gateway closed and may not reconnect: %w", err))
+				return
+			}
+			select {
+			case lost <- err:
+			default:
 			}
 		}),
 	)
-	if err := gw.Open(ctx); err != nil {
-		return fmt.Errorf("discord: connect to the gateway: %w", err)
-	}
 	defer func() {
+		stopped.Store(true)
 		cctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		gw.Close(cctx)
 	}()
-	select {
-	case <-ctx.Done():
-		return nil
-	case err := <-fatal:
-		return err
+	for {
+		// Open retries with a growing delay until it connects, ctx ends or
+		// the service refuses for good; after a drop it resumes the session.
+		if err := gw.Open(ctx); err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return fmt.Errorf("discord: connect to the gateway: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case err := <-fatal:
+			return err
+		case err := <-lost:
+			d.log.Warn("discord: gateway connection lost; reconnecting", "err", err)
+		}
 	}
 }
 

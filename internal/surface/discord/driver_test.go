@@ -237,3 +237,31 @@ func TestTokenOnlyFromConfigDir(t *testing.T) {
 		t.Error("a bad bot_id was accepted")
 	}
 }
+
+// A connection that drops just before Run ends is not reopened afterwards.
+func TestNoReconnectAfterRun(t *testing.T) {
+	r := newFakeREST(t)
+	r.serve(t, "GET /users/@me", "bot/rest-users-me.json")
+	g := newFakeGateway(t, payload(t, "bot/gw-01-READY.json"))
+	d := testDriver(t, botID(t), r, g)
+	s := newSink()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx, s) }()
+	select {
+	case <-g.connected:
+	case <-time.After(20 * time.Second):
+		t.Fatal("no session")
+	}
+	g.drop()
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	time.Sleep(3 * time.Second) // longer than the first reconnect delay
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.identify+g.resume != 1 || g.conn != nil {
+		t.Fatalf("reconnected after Run returned: %d identifies, %d resumes", g.identify, g.resume)
+	}
+}
