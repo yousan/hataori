@@ -108,3 +108,5 @@ There is no `SessionEnd`. `/exit` opened a dialog ("Background work is running",
 
 `scrub.py` now also replaces an interpreter path under the home directory (a virtual environment) in the hook command with `/usr/bin/python3`.
 
+The 2.1.322 files were rescrubbed with that rule alone, in place, on 2026-11-17 (`scrub.py --again 2.1.322`): only the hook command's interpreter changed. `captures_test.go` fails on such a path.
+
