@@ -186,7 +186,14 @@ func describe(evs []agent.Event) string {
 		case agent.TurnEnded:
 			s += fmt.Sprintf("(%d,%s,bg=%d)", e.Status, e.Reason, e.Background)
 		case agent.ToolStarted, agent.ToolEnded, agent.SubagentStarted, agent.SubagentEnded:
-			s += "(" + e.ID + ")"
+			s += "(" + e.ID
+			if e.Tool != "" && e.Kind == agent.SubagentStarted {
+				s += " " + e.Tool
+			}
+			if e.Parent != "" {
+				s += " in " + e.Parent
+			}
+			s += ")"
 		case agent.FileOut:
 			s += "(" + e.File + ")"
 		}
@@ -225,6 +232,8 @@ func TestScripts(t *testing.T) {
 		{"fail", "fail limit", "turn(caller) text(done,true) end(2,limit,bg=0)", ""},
 		{"unknown", "unknown", "turn(caller) unknown text(done,true) end(0,,bg=0)", ""},
 		{"subagent", "subagent s1", "turn(caller) sub+(s1) sub-(s1) text(done,true) end(0,,bg=0)", ""},
+		{"subagent with tools", "subagent s1 explorer Read Grep",
+			"turn(caller) sub+(s1 explorer) tool+(s1-t1 in s1) tool-(s1-t1 in s1) tool+(s1-t2 in s1) tool-(s1-t2 in s1) sub-(s1) text(done,true) end(0,,bg=0)", ""},
 		{"file", "file /tmp/report.txt", "turn(caller) file(/tmp/report.txt) text(done,true) end(0,,bg=0)", ""},
 	}
 	forms(t, func(t *testing.T, terminal bool) {

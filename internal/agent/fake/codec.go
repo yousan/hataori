@@ -31,6 +31,7 @@ type report struct {
 	Final      bool   `json:"final"`
 	ID         string `json:"id"`
 	Name       string `json:"name"`
+	Parent     string `json:"parent"`
 	End        bool   `json:"end"`
 	Path       string `json:"path"`
 	Status     string `json:"status"`
@@ -95,13 +96,13 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 		if r.End {
 			k = agent.ToolEnded
 		}
-		a = c.events(agent.Event{Kind: k, ID: r.ID, Tool: r.Name})
+		a = c.events(agent.Event{Kind: k, ID: r.ID, Tool: r.Name, Parent: r.Parent})
 	case "subagent":
 		k := agent.SubagentStarted
 		if r.End {
 			k = agent.SubagentEnded
 		}
-		a = c.events(agent.Event{Kind: k, ID: r.ID})
+		a = c.events(agent.Event{Kind: k, ID: r.ID, Tool: r.Name})
 	case "ask":
 		id := r.ID
 		if c.terminal {

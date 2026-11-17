@@ -120,3 +120,16 @@ func TestTurnStartedCarriesTheKey(t *testing.T) {
 	}
 	t.Fatalf("no turn_started in %+v", r.Out)
 }
+
+// A chat front end names a subagent and counts its tool calls.
+func TestSubagentNameAndToolParentReachTheEvents(t *testing.T) {
+	if o := agentOut(agent.Event{Kind: agent.SubagentStarted, ID: "s1", Tool: "explorer"}); o.Data["name"] != "explorer" {
+		t.Fatalf("subagent_started %v", o.Data)
+	}
+	if o := agentOut(agent.Event{Kind: agent.ToolStarted, ID: "t1", Tool: "Read", Parent: "s1"}); o.Data["parent"] != "s1" {
+		t.Fatalf("tool_started %v", o.Data)
+	}
+	if o := agentOut(agent.Event{Kind: agent.ToolStarted, ID: "t2", Tool: "Read"}); o.Data["parent"] != nil {
+		t.Fatalf("tool_started of the agent's own tool %v", o.Data)
+	}
+}

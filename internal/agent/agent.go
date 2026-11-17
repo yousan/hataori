@@ -218,8 +218,11 @@ type Event struct {
 	StartedBy Starter // TurnStarted
 	Input     string  // TurnStarted: the Input.ID of the input this turn reports, "" when none or not known
 
-	Tool string // ToolStarted, ToolEnded: the tool's name or label
+	Tool string // ToolStarted, ToolEnded: the tool's name or label; SubagentStarted, SubagentEnded: the subagent's name or type
 	ID   string // ToolStarted, ToolEnded, SubagentStarted, SubagentEnded: pairs start and end
+	// Parent is, for ToolStarted and ToolEnded, the ID of the subagent the
+	// tool runs in; empty for the agent's own tools.
+	Parent string
 
 	Request *RequestInfo // Request; RequestWithdrawn uses only its ID
 

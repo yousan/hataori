@@ -919,7 +919,7 @@ type ScopeOwner interface {
 
 Sleep, close and remove join the interface with the phase that needs them.
 
-The types carry lowercase JSON names, and the data of every event kind is declared in `control.EventKinds`; the store refuses an event that does not match. A `turn_started` event carries the key of the call that started the turn, so a chat front end can reply to the message that started it. How all of this is encoded on the socket, and when the protocol version changes, is in [docs/protocol.md](../protocol.md).
+The types carry lowercase JSON names, and the data of every event kind is declared in `control.EventKinds`; the store refuses an event that does not match. A `turn_started` event carries the key of the call that started the turn, so a chat front end can reply to the message that started it. A `subagent_started` event carries the subagent's name, and a `tool_started` event the subagent the tool runs in (`agent.Event.Parent`), so a front end can count a subagent's tool calls. How all of this is encoded on the socket, and when the protocol version changes, is in [docs/protocol.md](../protocol.md).
 
 ### Surface driver
 
@@ -1083,7 +1083,7 @@ type Event struct {
 	Kind Kind
 	// Plus the fields each kind needs: the text and whether it is final,
 	// who started a turn and the Input.ID of the message it reports, the
-	// request id and its questions,
+	// request id and its questions, the subagent a tool runs in (Parent),
 	// the end status and reason, the background tasks still running.
 	// SessionEnded has a reason: the agent's own, CannotResume ("cannot
 	// resume") when a resumed session's conversation is gone, or

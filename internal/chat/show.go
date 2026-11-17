@@ -20,11 +20,12 @@ import (
 // events. It is rebuilt from the threads' events when it is missing.
 type reader struct {
 	api   control.API
-	first map[control.ThreadID]uint64  // position of each thread's first event
-	turn  map[control.ThreadID]string  // key of the call that started the open turn
-	quiet map[control.ThreadID]*quiet  // open turns, for the progress line
-	gone  map[control.ThreadID]*RowKey // the last delete of a progress line
-	known map[control.ThreadID]bool    // threads whose earlier events were read
+	first map[control.ThreadID]uint64               // position of each thread's first event
+	turn  map[control.ThreadID]string               // key of the call that started the open turn
+	quiet map[control.ThreadID]*quiet               // open turns, for the progress line
+	gone  map[control.ThreadID]*RowKey              // the last delete of a progress line
+	known map[control.ThreadID]bool                 // threads whose earlier events were read
+	subs  map[control.ThreadID]map[string]*subagent // running subagents, by id
 	// outbox and ctx are the front end's, for looking up rows.
 	outbox *Outbox
 	ctx    context.Context
@@ -49,6 +50,7 @@ func (f *FrontEnd) show(ctx context.Context) error {
 		quiet: map[control.ThreadID]*quiet{},
 		gone:  map[control.ThreadID]*RowKey{},
 		known: map[control.ThreadID]bool{},
+		subs:  map[control.ThreadID]map[string]*subagent{},
 
 		outbox: f.Outbox,
 		ctx:    ctx,
@@ -121,7 +123,7 @@ func (f *FrontEnd) show(ctx context.Context) error {
 		if err := r.catchUp(ctx, e.Thread, e.Pos); err != nil {
 			return err
 		}
-		rows = append(r.track(e), rows...)
+		rows = append(append(r.track(e), rows...), r.subagents(e)...)
 		err = f.Outbox.Store.Update(ctx, func(tx *store.Tx) error {
 			if err := f.Outbox.WriteTx(ctx, tx, rows...); err != nil {
 				return err
@@ -289,7 +291,7 @@ func (r *reader) catchUp(ctx context.Context, id control.ThreadID, before uint64
 		return nil
 	}
 	r.known[id] = true
-	return r.scan(ctx, id, before, func(e control.Event) { r.track(e) })
+	return r.scan(ctx, id, before, func(e control.Event) { r.track(e); r.subagents(e) })
 }
 
 // scan calls fn with the thread's stored events before position before.

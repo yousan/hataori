@@ -18,8 +18,8 @@
 //	{"t":"ready","session":S,"model":M,"effort":E,"resume":R,"transcript":P}
 //	{"t":"turn","by":"caller"|"agent","input":I}
 //	{"t":"text","text":T,"final":true|false}   (on a terminal: in the transcript)
-//	{"t":"tool","id":I,"name":N,"end":false|true}
-//	{"t":"subagent","id":I,"end":false|true}
+//	{"t":"tool","id":I,"name":N,"parent":P,"end":false|true}   (P: the subagent it runs in)
+//	{"t":"subagent","id":I,"name":N,"end":false|true}
 //	{"t":"ask","id":I,"text":Q}                 (on a terminal: a waiting hook call)
 //	{"t":"file","path":P}
 //	{"t":"end","status":"completed"|"failed"|"interrupted","reason":R,"background":N}
@@ -45,7 +45,8 @@
 //	fail REASON         end the turn as failed with REASON
 //	exit                exit at once, without ending the turn
 //	unknown             report a line of a kind no codec knows
-//	subagent ID         report a subagent's start and end
+//	subagent ID [NAME [TOOL...]]
+//	                    report a subagent's start, its tools, and its end
 //	file PATH           hand over a file
 //
 // With --conversations DIR the program keeps one file per session it starts

@@ -207,8 +207,22 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 		case "unknown":
 			p.report(map[string]any{"t": "mystery"})
 		case "subagent":
-			p.report(map[string]any{"t": "subagent", "id": arg})
-			p.report(map[string]any{"t": "subagent", "id": arg, "end": true})
+			// subagent ID [NAME [TOOL...]]: the tools run in it, one after another.
+			f := strings.Fields(arg)
+			if len(f) == 0 {
+				f = []string{"subagent"}
+			}
+			id, name := f[0], ""
+			if len(f) > 1 {
+				name = f[1]
+			}
+			p.report(map[string]any{"t": "subagent", "id": id, "name": name})
+			for i, tool := range f[min(2, len(f)):] {
+				tid := fmt.Sprintf("%s-t%d", id, i+1)
+				p.report(map[string]any{"t": "tool", "id": tid, "name": tool, "parent": id})
+				p.report(map[string]any{"t": "tool", "id": tid, "name": tool, "parent": id, "end": true})
+			}
+			p.report(map[string]any{"t": "subagent", "id": id, "name": name, "end": true})
 		case "file":
 			p.report(map[string]any{"t": "file", "path": arg})
 		}

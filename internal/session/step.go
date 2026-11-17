@@ -331,8 +331,14 @@ func agentOut(e agent.Event) Out {
 		d["text"], d["final"] = e.Text, e.Final
 	case agent.ToolStarted, agent.ToolEnded:
 		d["id"], d["tool"] = e.ID, e.Tool
+		if e.Kind == agent.ToolStarted && e.Parent != "" {
+			d["parent"] = e.Parent
+		}
 	case agent.SubagentStarted, agent.SubagentEnded:
 		d["id"] = e.ID
+		if e.Kind == agent.SubagentStarted && e.Tool != "" {
+			d["name"] = e.Tool
+		}
 	case agent.Request, agent.RequestWithdrawn:
 		if e.Request != nil {
 			d["request"] = e.Request.ID

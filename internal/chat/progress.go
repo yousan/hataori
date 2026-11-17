@@ -3,7 +3,6 @@ package chat
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -63,6 +62,8 @@ func visible(e control.Event) bool {
 		return strings.TrimSpace(d.Text) != ""
 	case "request":
 		return !d.Approval
+	case "subagent_started", "subagent_ended":
+		return true // a subagent line
 	}
 	return false
 }
@@ -156,7 +157,7 @@ func (f *FrontEnd) tick(ctx context.Context, r *reader, now time.Time) []Row {
 
 func progressText(el time.Duration, tools []tool) string {
 	el = el.Truncate(time.Second)
-	s := fmt.Sprintf("Still working: %dm %02ds without output.", int(el.Minutes()), int(el.Seconds())%60)
+	s := "Still working: " + duration(el) + " without output."
 	if len(tools) > 0 {
 		s += " Running " + tools[len(tools)-1].name + "."
 	}
