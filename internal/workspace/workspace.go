@@ -1,7 +1,8 @@
 // Package workspace makes the working directory of a thread: a clone of one
 // repository, at a path of its own that nothing else uses.
 //
-// This package creates directories and never removes or resets one.
+// This package never removes or resets a workspace or a mirror in place.
+// It removes only temporary mirror directories it created in the same call.
 package workspace
 
 import (
@@ -14,10 +15,10 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/yousan/hataori/internal/control"
 )
@@ -36,6 +37,8 @@ var ErrExists = errors.New("workspace: the directory exists")
 // Workspaces.
 type Maker struct {
 	Root string
+	// FetchTimeout bounds mirror work, including waiting for its lock; zero means two minutes.
+	FetchTimeout time.Duration
 	// Client names the client that owns a scope: the first path segment.
 	Client func(scope string) string
 	// Environ is the daemon's environment; os.Environ when nil.
@@ -131,7 +134,8 @@ func (m Maker) Make(ctx context.Context, thread control.ThreadID, repo string) (
 	return m.Clone(ctx, client, thread.Scope, thread.Key, repo)
 }
 
-// Clone makes the workspace of (client, scope, key) as a clone of repo.
+// Clone makes the workspace of (client, scope, key) from repo's mirror when
+// it can, falling back to repo. The workspace's origin is repo.
 // The address is checked before git runs. The clone is made outside the
 // workspaces directory and renamed into place when complete, so a failed
 // clone never appears there. An existing directory is never touched.
@@ -153,12 +157,24 @@ func (m Maker) Clone(ctx context.Context, client, scope, key, repo string) (stri
 	rand.Read(r[:])
 	tmp := filepath.Join(tmpRoot, hex.EncodeToString(r[:]))
 
-	cmd := exec.CommandContext(ctx, "git", "clone", "--quiet", "--", repo, tmp)
+	source, unlock := m.mirror(ctx, repo)
+	defer unlock()
+	cmd := gitCommand(ctx, "clone", "--quiet", "--", source, tmp)
 	cmd.Env = m.gitEnv()
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("workspace: git clone %s failed: %s", redact(repo), lastLines(redact(stderr.String()), 3, redactErr(err)))
+	}
+	if source != repo {
+		cmd := gitCommand(ctx, "-C", tmp, "remote", "set-url", "origin", repo)
+		cmd.Env = m.gitEnv()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("workspace: set origin: %s: %s", redactErr(err), redact(string(out)))
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(tmp, ".git", "objects", "info", "alternates")); !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("workspace: clone has alternates or cannot be checked")
 	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 		return "", fmt.Errorf("workspace: %w", err)
