@@ -108,12 +108,17 @@ func killSessions(root string) {
 }
 
 // startDaemon runs `hataori run` in this process until the test ends.
-func startDaemon(t *testing.T, root string) {
+func startDaemon(t *testing.T, root string) { t.Helper(); startDaemonLog(t, root) }
+
+// startDaemonLog is startDaemon, and returns what the daemon has logged
+// so far, whenever it is called.
+func startDaemonLog(t *testing.T, root string) func() string {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan int, 1)
 	var log bytes.Buffer
 	var mu sync.Mutex
+	logged := func() string { mu.Lock(); defer mu.Unlock(); return log.String() }
 	go func() { done <- runCtx(ctx, []string{"run", "--root", root}, io.Discard, lockedWriter{&mu, &log}) }()
 	t.Cleanup(func() {
 		cancel()
@@ -123,7 +128,7 @@ func startDaemon(t *testing.T, root string) {
 	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
 		if c, err := wire.Dial(root); err == nil {
 			c.Close()
-			return
+			return logged
 		}
 		if time.Now().After(deadline) {
 			mu.Lock()

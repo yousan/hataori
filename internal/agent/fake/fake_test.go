@@ -238,6 +238,7 @@ func TestScripts(t *testing.T) {
 		{"subagent", "subagent s1", "turn(caller) sub+(s1) sub-(s1) text(done,true) end(0,,bg=0)", ""},
 		{"subagent with tools", "subagent s1 explorer Read Grep",
 			"turn(caller) sub+(s1 explorer) tool+(s1-t1 in s1) tool-(s1-t1 in s1) tool+(s1-t2 in s1) tool-(s1-t2 in s1) sub-(s1) text(done,true) end(0,,bg=0)", ""},
+		{"whoami", "whoami", "turn(caller) text(model  effort ,true) end(0,,bg=0)", ""},
 		{"file", "file /tmp/report.txt", "turn(caller) file(/tmp/report.txt) text(done,true) end(0,,bg=0)", ""},
 		{"files with a caption", "file /tmp/a.txt /tmp/b.txt -- two files",
 			"turn(caller) file(/tmp/a.txt,/tmp/b.txt: two files) text(done,true) end(0,,bg=0)", ""},

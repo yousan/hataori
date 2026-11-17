@@ -38,6 +38,7 @@
 // The input of a turn is its script, one command per line:
 //
 //	reply TEXT          say TEXT; the last reply is the final answer
+//	whoami              reply "model M effort E", as the program was started
 //	tool NAME DURATION  run a tool (a child process) for DURATION
 //	ask QUESTION        ask, wait for the answer, then reply "answer: A"
 //	background DURATION end the turn with one background task, then start a
