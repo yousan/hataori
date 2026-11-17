@@ -25,7 +25,8 @@ type Driver interface {
 
 	// OpenThread opens a thread in parent.Channel and returns it. When
 	// parent.Thread is set, it names a message in that channel, and the
-	// thread is opened from that message.
+	// thread is opened from that message; when that message has a thread
+	// already, OpenThread returns it and opens none.
 	OpenThread(ctx context.Context, parent Conversation, title string) (Conversation, error)
 	// OpenDirect returns the private conversation with one person, given
 	// by the person's id on the service.

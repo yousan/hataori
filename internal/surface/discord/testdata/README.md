@@ -56,7 +56,14 @@ The run fetches each of these messages through REST as soon as it arrives, so th
 | Opening a direct conversation | `person/rest-open-direct.json` | |
 | Post with an idempotency key | `bot/rest-post-nonce-1.json`, `-2.json` (same `nonce`, `enforce_nonce`: the second returns the first message) | |
 | Edit, delete, delete again, set the thread title | `bot/rest-edit.json`, `rest-delete.json` (204), `rest-delete-again.json` (404, 10008), `rest-set-thread-title.json` | `bot/gw-14-MESSAGE_UPDATE`, `gw-15-MESSAGE_DELETE`, `gw-17-THREAD_UPDATE` |
+| A thread opened again from its message | `rethread/rest-rethread-post.json`, `rest-rethread-first.json` (201), `rest-rethread-again.json` (400, code 160004), `rest-rethread-get-message.json` (the message names its thread) | |
 | Who the bot is | `bot/rest-users-me.json` | `bot/gw-01-READY.json` |
+
+## A thread opened again from its message (taken for #165)
+
+`v10/rethread/`, taken on 2026-11-17 with API v10 by the hataori bot in a test server's channel. It was a REST-only run, with no gateway connection: `capture.py rethread /tmp/raw/rethread`, then `capture.py cleanup /tmp/raw/rethread` and `scrub.py <new dir> /tmp/raw/rethread`. Its ids are numbered on their own, from `1000000000000000001`, so they do not continue the other captures.
+
+The bot posted one message, opened a thread from it (201), and opened again from the same message. The service refused with 400 `{"code": 160004, "message": "A thread has already been created for this message"}`. Fetching the message then returned it with `flags` 32 (has a thread) and a `thread` object: the thread, with the message's id and `parent_id` the channel. The cleanup run deleted the message. The bot may not delete the thread, so it was left for a person to delete.
 
 ## Observed, and worth knowing
 

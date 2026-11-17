@@ -62,6 +62,11 @@ func (e *Error) Temporary() bool {
 // Discord's JSON error code for a message that does not exist.
 const codeUnknownMessage = 10008
 
+// Discord's JSON error code for opening a thread from a message that has one
+// (400, "A thread has already been created for this message", seen on
+// 2026-11-17).
+const codeThreadExists = 160004
+
 func wrap(op string, err error) error {
 	if err == nil {
 		return nil
@@ -109,6 +114,10 @@ func target(conv surface.Conversation) (snowflake.ID, error) {
 // it; on Discord the thread then has the message's id. Otherwise the thread
 // is started without a message, and Discord posts a notice of it (message
 // type 18, by the bot) in the channel. The title is cut to 100 characters.
+//
+// When the message has a thread already, as when the answer to an earlier
+// call was lost, the service refuses (code 160004) and OpenThread returns
+// the thread the message names instead.
 func (d *Driver) OpenThread(ctx context.Context, parent surface.Conversation, title string) (surface.Conversation, error) {
 	ch, err := parseID("channel", parent.Channel)
 	if err != nil {
@@ -127,7 +136,21 @@ func (d *Driver) OpenThread(ctx context.Context, parent surface.Conversation, ti
 		body := map[string]any{"name": name, "auto_archive_duration": archiveAfter}
 		err = d.client.Do(rest.CreateThreadWithMessage.Compile(nil, ch, msg), body, &c, rest.WithCtx(ctx))
 		if err != nil {
-			return surface.Conversation{}, wrap("open a thread", err)
+			err = wrap("open a thread", err)
+			var e *Error
+			if !errors.As(err, &e) || e.Code != codeThreadExists {
+				return surface.Conversation{}, err
+			}
+			var m struct {
+				Thread *wireChannel `json:"thread"`
+			}
+			if err := d.client.Do(rest.GetMessage.Compile(nil, ch, msg), nil, &m, rest.WithCtx(ctx)); err != nil {
+				return surface.Conversation{}, wrap("look up the message's thread", err)
+			}
+			if m.Thread == nil || m.Thread.ID == 0 {
+				return surface.Conversation{}, err
+			}
+			c = *m.Thread
 		}
 	} else {
 		body := map[string]any{"name": name, "type": 11, "auto_archive_duration": archiveAfter}

@@ -70,6 +70,25 @@ func TestOpenThread(t *testing.T) {
 	}
 }
 
+// Opening a thread again from a message that has one is refused; the
+// driver returns the thread the message names (captured 2026-11-17).
+func TestOpenThreadAgainFromTheSameMessage(t *testing.T) {
+	r := newFakeREST(t)
+	first := payload(t, "rethread/rest-rethread-first.json")
+	msg := payload(t, "rethread/rest-rethread-get-message.json")
+	ch, m := id(msg["channel_id"]), id(msg["id"])
+	r.serve(t, "POST /channels/"+ch+"/messages/"+m+"/threads", "rethread/rest-rethread-again.json")
+	r.serve(t, "GET /channels/"+ch+"/messages/"+m, "rethread/rest-rethread-get-message.json")
+	d := testDriver(t, botID(t), r, nil)
+	conv, err := d.OpenThread(context.Background(), surface.Conversation{Channel: ch, Thread: m}, "again")
+	if err != nil || conv != (surface.Conversation{Channel: ch, Thread: id(first["id"])}) {
+		t.Fatalf("OpenThread: %+v, %v; want the thread %s opened the first time", conv, err, id(first["id"]))
+	}
+	if n := r.called("POST /channels/"); n != 1 {
+		t.Fatalf("%d thread requests, want 1", n)
+	}
+}
+
 func TestSplit(t *testing.T) {
 	long := strings.Repeat("word ", 900) // 4500 characters
 	parts := split(long, 2000)

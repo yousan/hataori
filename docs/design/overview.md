@@ -940,7 +940,8 @@ type Driver interface {
 	Since(ctx context.Context, conv Conversation, cursor string) ([]Inbound, error)
 
 	// OpenThread opens a thread in parent.Channel, from the message
-	// parent.Thread names when it is set.
+	// parent.Thread names when it is set; a message that has a thread
+	// already gets that thread back, and no second one is opened.
 	OpenThread(ctx context.Context, parent Conversation, title string) (Conversation, error)
 	// OpenDirect returns the private conversation with one person, given
 	// by the person's id on the service.

@@ -1,0 +1,27 @@
+{
+ "body": {
+  "code": 160004,
+  "message": "A thread has already been created for this message"
+ },
+ "date": "2026-11-17T05:34:54Z",
+ "headers": {
+  "content-type": "application/json",
+  "via": "1.1 google",
+  "x-ratelimit-bucket": "00000000000000000000000000000001",
+  "x-ratelimit-limit": "50",
+  "x-ratelimit-remaining": "48",
+  "x-ratelimit-reset": "1794893994.132",
+  "x-ratelimit-reset-after": "299.367"
+ },
+ "request": {
+  "body": {
+   "auto_archive_duration": 60,
+   "name": "[hataori test] the same message again"
+  },
+  "files": [],
+  "method": "POST",
+  "path": "/channels/1000000000000000002/messages/1000000000000000004/threads"
+ },
+ "source": "rest",
+ "status": 400
+}

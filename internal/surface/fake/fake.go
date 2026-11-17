@@ -104,6 +104,8 @@ type Driver struct {
 	blocked   map[string]bool                // people whose direct messages fail
 	fail      map[Op]*failure
 	direct    map[string]surface.Conversation
+	// fromMessage is the thread opened from each message.
+	fromMessage map[MessageRef]surface.Conversation
 }
 
 var _ surface.Driver = (*Driver)(nil)
@@ -132,6 +134,8 @@ func New() *Driver {
 		blocked: map[string]bool{},
 		fail:    map[Op]*failure{},
 		direct:  map[string]surface.Conversation{},
+
+		fromMessage: map[MessageRef]surface.Conversation{},
 	}
 }
 
@@ -333,7 +337,8 @@ func clone(m surface.Message) surface.Message {
 
 // OpenThread opens a new thread in parent's channel, from the message
 // parent.Thread names when it is set. The call is recorded in the channel,
-// with the message in From.
+// with the message in From. A message that has a thread already gets that
+// thread back, and nothing is recorded.
 func (d *Driver) OpenThread(_ context.Context, parent surface.Conversation, title string) (surface.Conversation, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -341,7 +346,17 @@ func (d *Driver) OpenThread(_ context.Context, parent surface.Conversation, titl
 	if before != nil {
 		return surface.Conversation{}, before
 	}
+	from := MessageRef{Conv: surface.Conversation{Channel: parent.Channel}, ID: parent.Thread}
+	if conv, ok := d.fromMessage[from]; ok && parent.Thread != "" {
+		if after != nil {
+			return surface.Conversation{}, after
+		}
+		return conv, nil
+	}
 	conv := surface.Conversation{Channel: parent.Channel, Thread: d.id("thread")}
+	if parent.Thread != "" {
+		d.fromMessage[from] = conv
+	}
 	d.record(surface.Conversation{Channel: parent.Channel}, Call{Op: OpOpenThread, Opened: conv, Title: title, From: parent.Thread})
 	if after != nil {
 		return surface.Conversation{}, after

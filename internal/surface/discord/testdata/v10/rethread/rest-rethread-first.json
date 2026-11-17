@@ -1,0 +1,55 @@
+{
+ "body": {
+  "bitrate": 64000,
+  "flags": 0,
+  "guild_id": "1000000000000000001",
+  "id": "1000000000000000004",
+  "last_message_id": "1000000000000000005",
+  "member": {
+   "flags": 1,
+   "id": "1000000000000000004",
+   "join_timestamp": "2026-11-17T05:34:54.202200+00:00",
+   "mute_config": null,
+   "muted": false,
+   "user_id": "1000000000000000003"
+  },
+  "member_count": 1,
+  "message_count": 0,
+  "name": "[hataori test] thread from a message",
+  "owner_id": "1000000000000000003",
+  "parent_id": "1000000000000000002",
+  "rate_limit_per_user": 0,
+  "rtc_region": null,
+  "thread_metadata": {
+   "archive_timestamp": "2026-11-17T05:34:54.201248+00:00",
+   "archived": false,
+   "auto_archive_duration": 60,
+   "create_timestamp": "2026-11-17T05:34:54.201248+00:00",
+   "locked": false
+  },
+  "total_message_sent": 0,
+  "type": 11,
+  "user_limit": 0
+ },
+ "date": "2026-11-17T05:34:54Z",
+ "headers": {
+  "content-type": "application/json",
+  "via": "1.1 google",
+  "x-ratelimit-bucket": "00000000000000000000000000000001",
+  "x-ratelimit-limit": "50",
+  "x-ratelimit-remaining": "49",
+  "x-ratelimit-reset": "1794893994.136",
+  "x-ratelimit-reset-after": "300.000"
+ },
+ "request": {
+  "body": {
+   "auto_archive_duration": 60,
+   "name": "[hataori test] thread from a message"
+  },
+  "files": [],
+  "method": "POST",
+  "path": "/channels/1000000000000000002/messages/1000000000000000004/threads"
+ },
+ "source": "rest",
+ "status": 201
+}

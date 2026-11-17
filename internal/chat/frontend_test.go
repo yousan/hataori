@@ -246,6 +246,28 @@ func TestTriggerAfterARestartOpensNoSecondThread(t *testing.T) {
 	}
 }
 
+// The service opened the trigger's thread, but the answer was lost: the
+// trigger delivered again opens no second thread and starts in that one.
+func TestTriggerAfterALostThreadAnswerOpensOneThread(t *testing.T) {
+	f := newFront(t, workspaces{})
+	f.driver.FailAfter(fake.OpOpenThread, 1, nil)
+	in := f.deliver(chanConv, fake.Webhook(hook), "!go repo:https://example.com/r.git first")
+	if l := f.runner.all(); len(l) != 0 {
+		t.Fatalf("started %+v before the thread was known", l)
+	}
+	// Catch-up delivers it again: a message that failed is left to it.
+	if err := f.fe.handle(in); err != nil {
+		t.Fatalf("again: %v", err)
+	}
+	ths := f.threads()
+	if len(ths) != 1 {
+		t.Fatalf("opened %+v, want one thread", ths)
+	}
+	if l := f.runner.all(); len(l) != 1 || l[0].Thread.Key != ths[0].Opened.Thread {
+		t.Fatalf("started %+v, want one start in %s", l, ths[0].Opened.Thread)
+	}
+}
+
 func TestRefusedTriggersStartNothingAndLogOneLine(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

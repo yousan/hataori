@@ -7,6 +7,7 @@ usage:
   capture.py second RAW_DIR      more REST captures for posting (no gateway connection)
   capture.py pages RAW_DIR       consecutive pages of history (no gateway connection)
   capture.py lookups RAW_DIR     the channel objects the driver looks up (no gateway connection)
+  capture.py rethread RAW_DIR    a thread opened from a message, then opened again from it (no gateway connection)
   capture.py cleanup RAW_DIR     delete what the bot posted in the runs above
 
 Environment:
@@ -376,6 +377,21 @@ def second_run(raw):
     rest(raw, "other-route-after-429", "GET", f"/channels/{ch}/messages?limit=1")
 
 
+def rethread_run(raw):
+    """Open a thread from a message twice. Only the message is noted for the cleanup run:
+    the bot may not delete the thread, and it is left as it is."""
+    ch = os.environ["HATAORI_DISCORD_CHANNEL"]
+    st, m = rest(raw, "rethread-post", "POST", f"/channels/{ch}/messages",
+                 {"content": "[hataori test] a message a thread is opened from twice"})
+    raw.note("messages", [ch, m["id"]])
+    path = f"/channels/{ch}/messages/{m['id']}/threads"
+    st, th = rest(raw, "rethread-first", "POST", path, {"name": "[hataori test] thread from a message", "auto_archive_duration": 60})
+    if st in (200, 201):
+        print("thread left for deletion:", th["id"], file=sys.stderr)
+    rest(raw, "rethread-again", "POST", path, {"name": "[hataori test] the same message again", "auto_archive_duration": 60})
+    rest(raw, "rethread-get-message", "GET", f"/channels/{ch}/messages/{m['id']}")
+
+
 # The fields of a channel object the driver reads. lookups keeps only these, so that
 # ids of things the tests never see (the channel's category, its role overrides, its
 # last message) do not enter the captures.
@@ -410,4 +426,4 @@ if __name__ == "__main__":
     cmd, path = sys.argv[1], sys.argv[2]
     raw = Raw(path)
     {"bot": lambda: bot_run(raw), "person": lambda: person_run(raw, float(sys.argv[3])),
-     "second": lambda: second_run(raw), "lookups": lambda: lookups(raw), "pages": lambda: pages_run(raw), "cleanup": lambda: cleanup(raw)}[cmd]()
+     "second": lambda: second_run(raw), "lookups": lambda: lookups(raw), "pages": lambda: pages_run(raw), "rethread": lambda: rethread_run(raw), "cleanup": lambda: cleanup(raw)}[cmd]()
