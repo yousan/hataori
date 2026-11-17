@@ -31,11 +31,18 @@ const Name = "discord"
 //   - GUILD_MESSAGES: messages in channels and threads.
 //   - MESSAGE_CONTENT: the text of those messages, which a webhook post does
 //     not get without it because it does not mention the bot.
+//   - DIRECT_MESSAGES: messages in direct conversations, for the owner's
+//     replies to the login message. Their text comes without
+//     MESSAGE_CONTENT.
+//
+// A button press (INTERACTION_CREATE) needs no intent.
 //
 // The bot's role in an enabled channel needs: View Channel, Read Message
 // History, Create Public Threads, Send Messages in Threads and Attach Files.
-// It needs no Manage permission.
-const Intents = gateway.IntentGuilds | gateway.IntentGuildMessages | gateway.IntentMessageContent
+// It needs no Manage permission. A direct conversation and a button in it
+// need no permission.
+const Intents = gateway.IntentGuilds | gateway.IntentGuildMessages | gateway.IntentMessageContent |
+	gateway.IntentDirectMessages
 
 // Settings is the driver's section of the instance's config.
 type Settings struct {
@@ -139,6 +146,8 @@ func (d *Driver) Run(ctx context.Context, sink surface.Sink) error {
 	// own, so that nothing reconnects or delivers after Run returns.
 	lost := make(chan error, 1)
 	var stopped atomic.Bool
+	q := newQueue(sink)
+	defer q.close()
 	handle := func(_ gateway.Gateway, t gateway.EventType, _ int, ev gateway.EventData) {
 		if stopped.Load() {
 			return
@@ -149,7 +158,7 @@ func (d *Driver) Run(ctx context.Context, sink surface.Sink) error {
 				report(fmt.Errorf("discord: logged in as bot %s, but the config names bot %s", e.User.ID, d.botID))
 			}
 		case gateway.EventRaw:
-			if err := d.dispatch(ctx, string(e.EventType), e.Payload, sink); err != nil {
+			if err := d.dispatch(ctx, string(e.EventType), e.Payload, q); err != nil {
 				d.log.Warn("discord: event skipped", "type", e.EventType, "err", err)
 			}
 		}
@@ -219,6 +228,8 @@ func (d *Driver) dispatch(ctx context.Context, t string, payload io.Reader, sink
 		for _, c := range g.Threads {
 			d.setParent(c)
 		}
+	case "INTERACTION_CREATE":
+		return d.press(ctx, payload, sink)
 	case "MESSAGE_CREATE":
 		var m wireMessage
 		if err := json.NewDecoder(payload).Decode(&m); err != nil {
@@ -352,15 +363,6 @@ func (m wireMessage) inbound(conv surface.Conversation, direct bool) surface.Inb
 		in.ReplyTo = &surface.MessageRef{Conv: conv, ID: m.MessageReference.MessageID.String()}
 	}
 	return in
-}
-
-// The calls of later issues.
-
-var errNotYet = errors.New("discord: not implemented yet")
-
-// OpenDirect is not implemented yet.
-func (d *Driver) OpenDirect(context.Context, string) (surface.Conversation, error) {
-	return surface.Conversation{}, errNotYet
 }
 
 // SetStatus is not implemented: lamps come after phase 1.
