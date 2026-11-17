@@ -1,9 +1,12 @@
 package surface
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func TestRegisterLookup(t *testing.T) {
-	f := func([]byte) (Driver, error) { return nil, nil }
+	f := func(*os.Root, []byte) (Driver, error) { return nil, nil }
 	if err := Register("test-surface", f); err != nil {
 		t.Fatalf("Register: %v", err)
 	}

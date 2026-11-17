@@ -7,6 +7,7 @@ package surface
 
 import (
 	"context"
+	"os"
 	"time"
 
 	"github.com/yousan/hataori/internal/registry"
@@ -167,8 +168,9 @@ type Limits struct {
 }
 
 // Factory makes a Driver from its section of the instance's config, which
-// is opaque to everything but the driver.
-type Factory func(settings []byte) (Driver, error)
+// is opaque to everything but the driver. config is the instance's config
+// directory, the one place a driver may read a secret from.
+type Factory func(config *os.Root, settings []byte) (Driver, error)
 
 var drivers registry.Registry[Factory]
 
