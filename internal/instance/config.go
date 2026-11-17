@@ -22,7 +22,11 @@ type Config struct {
 	Owner   string        // the principal that owns the instance
 	Trigger string        // the word that starts a thread
 	Idle    time.Duration // idle period before a session is put to sleep
-	Scopes  []Scope
+	// ContextBytes caps, in bytes, the thread's earlier inputs and final
+	// answers given to a session that replaces one whose conversation the
+	// agent no longer has (section 4.5). "context_bytes"; 8192 when absent.
+	ContextBytes int
+	Scopes       []Scope
 	// LoginRelay is whether a login outage starts the agent's login
 	// command for the owner (section 4.7); "login_relay": false switches it
 	// off, and the alert stays.
@@ -49,6 +53,7 @@ type fileConfig struct {
 	Owner      string                     `json:"owner"`
 	Trigger    string                     `json:"trigger"`
 	Idle       string                     `json:"idle"`
+	Context    *int                       `json:"context_bytes"`
 	LoginRelay *bool                      `json:"login_relay"`
 	Scopes     []fileScope                `json:"scopes"`
 	Drivers    map[string]json.RawMessage `json:"drivers"`
@@ -102,6 +107,13 @@ func ParseConfig(data []byte) (*Config, error) {
 		return nil, fmt.Errorf("config: key %q: %q is not a positive duration such as \"30m\"", "idle", idle)
 	}
 	c.Idle = d
+	c.ContextBytes = 8192
+	if f.Context != nil {
+		if *f.Context <= 0 {
+			return nil, fmt.Errorf("config: key %q: %d is not a positive number of bytes", "context_bytes", *f.Context)
+		}
+		c.ContextBytes = *f.Context
+	}
 
 	seen := map[string]bool{}
 	for i, s := range f.Scopes {

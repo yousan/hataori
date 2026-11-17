@@ -51,6 +51,7 @@ type Runner struct {
 	InterruptGrace time.Duration // after an interrupt, before the session's processes are stopped; 5s when zero
 	Poll           time.Duration // how often the logs are read; 50ms when zero
 	IdlePeriod     time.Duration // idle this long, a session's agent is stopped; 30 minutes when zero
+	ContextBytes   int           // the cap on the earlier context a replacing session starts with; 8192 when zero
 
 	mu   sync.Mutex
 	live map[int64]*live
@@ -135,7 +136,7 @@ func (r *Runner) Start(ctx context.Context, l core.Launch) error {
 	}
 	spec := agent.Spec{Dir: l.Dir, StateDir: StateDir(r.Root, l.Session), Model: l.Model, Effort: l.Effort,
 		Instructions: r.Instructions, Approvals: agent.AllowAll}
-	first := firstInput{Principal: l.Principal, Key: l.Key, Text: l.Input.Text}
+	first := firstInput{Principal: l.Principal, Key: l.Key, Text: l.Input.Text, Context: l.Context}
 	if err := r.launch(ctx, l.Session, l.Agent, ad, spec, first); err != nil {
 		return err
 	}
@@ -681,7 +682,7 @@ func (r *Runner) step(lv *live) bool {
 		r.act(lv, a)
 	}
 	if first != nil {
-		a, err := lv.codec.Input(agent.Input{Text: first.Text})
+		a, err := lv.codec.Input(agent.Input{Text: first.Context + first.Text})
 		if err != nil {
 			r.Log.Error("first input", "session", lv.id, "err", err)
 		}
@@ -1011,6 +1012,9 @@ func (r *Runner) replace(lv *live) {
 		json.Unmarshal([]byte(fi), &first)
 	}
 	l.Dir, l.Principal, l.Key, l.Input = lv.spec.Dir, first.Principal, first.Key, control.Input{Text: first.Text}
+	if l.Context, err = r.earlier(ctx, l.Thread); err != nil {
+		r.Log.Error("the thread's earlier context", "session", l.Session, "err", err) // the new session starts without it
+	}
 	if err := r.Start(ctx, l); err != nil {
 		r.Log.Error("starting the new session", "session", l.Session, "err", err)
 		if err := r.Machine.Apply(ctx, l.Session, session.Input{Kind: session.Exit, Reason: "start: " + err.Error()}); err != nil {
