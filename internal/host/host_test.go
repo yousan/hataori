@@ -239,7 +239,9 @@ func TestTerminalPasteArrivesUnchanged(t *testing.T) {
 	defer c.Close()
 	for i := 0; i < len(paste); i += 7000 { // several writes, in order
 		if err := c.Input(paste[i:min(i+7000, len(paste))]); err != nil {
-			t.Fatal(err)
+			// What the host and the reader say about why (#155).
+			term := read(t, dir, TerminalLog)
+			t.Fatalf("input at byte %d: %v\nhost.log:\n%s\nend of the terminal log: %q", i, err, read(t, dir, HostLog), term[max(0, len(term)-500):])
 		}
 	}
 	// "done" comes after the file is written. The file exists as soon as it
