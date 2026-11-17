@@ -93,7 +93,11 @@ func (f *FrontEnd) NewThread(ctx context.Context, scope, title string) (string, 
 // Message handles an inbound message. In a channel, a trigger starts a
 // thread; everything else is ignored.
 func (f *FrontEnd) Message(in surface.Inbound) {
-	if in.Direct || in.Ref.Conv.Thread != "" {
+	if in.Direct || in.Service {
+		return
+	}
+	if in.Ref.Conv.Thread != "" {
+		f.followUp(in)
 		return
 	}
 	ctx := f.context()
@@ -246,6 +250,36 @@ func startOutcome(ctx context.Context, api control.API, id control.ThreadID) (fi
 		return 0, "", fmt.Errorf("chat: thread %s: %w", id.Key, errNoEvent)
 	}
 	return first, failure, nil
+}
+
+// followUp sends a message in a thread to the thread's session. A thread
+// hataori does not know gets nothing.
+func (f *FrontEnd) followUp(in surface.Inbound) {
+	if in.Author.Kind == surface.Bot {
+		return // the front end's own posts come back this way
+	}
+	ctx := f.context()
+	conv := in.Ref.Conv
+	sc, known := f.Scopes[conv.Channel]
+	if !known {
+		return
+	}
+	who := control.Principal(in.Author.ID)
+	api := f.API(control.Caller{Principal: who, Scopes: []string{conv.Channel}, May: control.OpRead | control.OpSend})
+	id := control.ThreadID{Scope: conv.Channel, Key: conv.Thread}
+	if _, err := api.Thread(ctx, id, 0); err != nil {
+		return // not a hataori thread, or unreadable: nothing to send to
+	}
+	if who != f.Owner && !slices.Contains(sc.Posters, who) {
+		f.Log.Warn("follow-up ignored", "reason", "the author is not allowed", "scope", conv.Channel,
+			"thread", conv.Thread, "author", in.Author.ID, "message", in.Ref.ID)
+		return
+	}
+	// The key makes a second delivery one input; a running turn gets it
+	// delivered, an open question gets it as the answer (the core decides).
+	if err := api.Send(ctx, id, in.Ref.ID, control.Input{Text: in.Text}, control.Deliver); err != nil {
+		f.Log.Error("follow-up: send failed", "scope", conv.Channel, "thread", conv.Thread, "message", in.Ref.ID, "err", err)
+	}
 }
 
 // Choice handles the use of a button; there are none yet.

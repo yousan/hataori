@@ -19,8 +19,21 @@ import (
 
 // starts records what the core asked the runner to start.
 type starts struct {
-	mu sync.Mutex
-	l  []core.Launch
+	mu    sync.Mutex
+	l     []core.Launch
+	calls []string // deliver TEXT, answer REQUEST TEXT
+}
+
+func (r *starts) record(s string) {
+	r.mu.Lock()
+	r.calls = append(r.calls, s)
+	r.mu.Unlock()
+}
+
+func (r *starts) handed() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.calls...)
 }
 
 func (r *starts) Start(_ context.Context, l core.Launch) error {
@@ -29,8 +42,12 @@ func (r *starts) Start(_ context.Context, l core.Launch) error {
 	r.mu.Unlock()
 	return nil
 }
-func (r *starts) Deliver(context.Context, int64, int64, control.Input) error { return nil }
-func (r *starts) Answer(context.Context, int64, int64, string, control.Answer) error {
+func (r *starts) Deliver(_ context.Context, _, _ int64, in control.Input) error {
+	r.record("deliver " + in.Text)
+	return nil
+}
+func (r *starts) Answer(_ context.Context, _, _ int64, req string, a control.Answer) error {
+	r.record("answer " + req + " " + a.Text)
 	return nil
 }
 func (r *starts) Interrupt(context.Context, int64) error { return nil }
