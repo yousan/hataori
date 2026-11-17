@@ -70,7 +70,8 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	lg := slog.New(slog.NewTextHandler(logOut, nil))
 	m := &session.Machine{Store: st}
 	r := &runner.Runner{Store: st, Machine: m, Adapters: adapters,
-		Host: host.Command{Path: exe, Args: []string{"host"}}, Root: abs, Log: lg, IdlePeriod: cfg.Idle}
+		Host: host.Command{Path: exe, Args: []string{"host"}}, Root: abs, Log: lg, IdlePeriod: cfg.Idle,
+		ContextBytes: cfg.ContextBytes}
 	defer r.Close()
 
 	scopes := map[string]core.Scope{}

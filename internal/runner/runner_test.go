@@ -80,6 +80,8 @@ type options struct {
 	startTimeout  time.Duration
 	idlePeriod    time.Duration
 	conversations string // the fake's directory of conversations, if any
+	contextBytes  int
+	wrap          func(agent.Adapter) agent.Adapter // wraps the fake adapter, if set
 }
 
 // build makes an instance's store, core and runner with the fake agent.
@@ -95,12 +97,16 @@ func build(root string, o options, log io.Writer) (*store.Store, *core.Core, *Ru
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	var adapter agent.Adapter = ad
+	if o.wrap != nil {
+		adapter = o.wrap(adapter)
+	}
 	lg := slog.New(slog.NewTextHandler(log, nil))
 	m := &session.Machine{Store: st}
-	r := &Runner{Store: st, Machine: m, Adapters: map[string]agent.Adapter{"fake": ad},
+	r := &Runner{Store: st, Machine: m, Adapters: map[string]agent.Adapter{"fake": adapter},
 		Host: host.Command{Path: os.Args[0], Args: []string{"role", "host"}}, Root: root, Log: lg,
 		Instructions: o.instructions, StartTimeout: o.startTimeout, InterruptGrace: 5 * time.Second, Poll: 20 * time.Millisecond,
-		IdlePeriod: o.idlePeriod}
+		IdlePeriod: o.idlePeriod, ContextBytes: o.contextBytes}
 	c := &core.Core{Store: st, Machine: m, Scopes: map[string]core.Scope{"s": {Enabled: true, Owner: "chat"}},
 		Workspaces: workDir(filepath.Join(root, "work")), Runner: r, Agent: "fake", Log: lg}
 	return st, c, r, nil

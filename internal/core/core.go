@@ -73,6 +73,9 @@ type Launch struct {
 	Principal control.Principal
 	Key       string
 	Input     control.Input
+	// Context is what the thread said before, for a session that replaces
+	// one whose conversation the agent no longer has; empty otherwise.
+	Context string
 }
 
 // FirstInput is the input a session starts with, as sessions.first_input
@@ -86,6 +89,9 @@ type FirstInput struct {
 	Sent      bool              `json:"sent,omitempty"` // the turn was started for it, and it was handed to the codec
 	Wake      bool              `json:"wake,omitempty"` // the session was asleep: its agent resumes
 	Dir       string            `json:"dir,omitempty"`  // the workspace, once it is made
+	// Context goes before Text when the input is handed to the agent; the
+	// input event records Text alone. See Launch.Context.
+	Context string `json:"context,omitempty"`
 }
 
 // pend stores input or an answer for a session's agent until the runner
