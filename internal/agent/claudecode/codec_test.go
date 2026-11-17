@@ -323,3 +323,37 @@ func TestCodecDoesNoIO(t *testing.T) {
 		}
 	}
 }
+
+// A subagent's tools name the subagent; the main agent's own tools (here
+// the Agent tool that starts it) name none. Captured with 2.1.326.
+func TestToolsNameTheirSubagent(t *testing.T) {
+	files, _ := filepath.Glob("testdata/2.1.326/subagent_tools/hooks/*.json")
+	if len(files) == 0 {
+		t.Fatal("no capture")
+	}
+	c := newTestCodec()
+	var sub string
+	var got []string
+	for i, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range c.Decode(agent.Hook, envelope(fmt.Sprint("c", i), filepath.Base(f), b)).Events {
+			switch e.Kind {
+			case agent.SubagentStarted:
+				sub = e.ID
+			case agent.ToolStarted, agent.ToolEnded:
+				parent := e.Parent
+				if parent != "" && parent == sub {
+					parent = "sub"
+				}
+				got = append(got, fmt.Sprintf("%s(%t,%s)", describe(e), e.ID != "", parent))
+			}
+		}
+	}
+	want := "tool+(Agent)(true,) tool-(Agent)(true,) tool+(Bash)(true,sub) tool+(Bash)(true,sub) tool-(Bash)(true,sub) tool-(Bash)(true,sub)"
+	if sub == "" || strings.Join(got, " ") != want {
+		t.Fatalf("subagent %q, tools:\n%s\nwant:\n%s", sub, strings.Join(got, " "), want)
+	}
+}

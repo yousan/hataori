@@ -16,6 +16,7 @@ same way in every file:
   capture temp dirs  -> capture-work, capture-config
   UUIDs              -> 00000000-0000-4000-8000-00000000000N, numbered in order of appearance
   e-mail addresses   -> userN@example.com
+  an interpreter under the home directory -> /usr/bin/python3
   sk-ant-... tokens, signatures, OAuth link parameters -> REDACTED
 
 Hook payloads are renamed NN-<event>.json in the order they were called.
@@ -39,6 +40,7 @@ EMAIL = re.compile(rb"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 TEMP = re.compile(rb"capture-(config-)?[A-Za-z0-9_-]{8}(?![A-Za-z0-9_])")
 TOKEN = re.compile(rb"sk-ant-[A-Za-z0-9_-]+")
 SIGNATURE = re.compile(rb'("signature"\s*:\s*")[^"]*(")')
+HOME_PYTHON = re.compile(rb"/home/user/[^\s\"']*/bin/(python3?)(?![A-Za-z0-9.])")
 OAUTH = re.compile(rb"([?&](?:code_challenge|state|code|client_id)=)[^&\s\"'\x1b\x07]+")
 
 
@@ -83,6 +85,10 @@ class Scrubber:
         for old, new in self.fixed:
             if len(old) >= 3:  # a name this short would hit ordinary words
                 b = re.sub(rb"(?<![A-Za-z0-9])" + re.escape(old) + rb"(?![A-Za-z0-9])", new, b)
+        # The interpreter the hook command runs, when it lives in the home
+        # directory (a virtual environment): which one says nothing about
+        # the CLI, and its path names the machine's own directories.
+        b = HOME_PYTHON.sub(rb"/usr/bin/\1", b)
         return b
 
 
