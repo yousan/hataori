@@ -5,6 +5,8 @@ usage:
   capture.py bot    RAW_DIR      the captures a bot can take alone
   capture.py person RAW_DIR MIN  wait up to MIN minutes for the person's steps (README)
   capture.py second RAW_DIR      more REST captures for posting (no gateway connection)
+  capture.py pages RAW_DIR       consecutive pages of history (no gateway connection)
+  capture.py lookups RAW_DIR     the channel objects the driver looks up (no gateway connection)
   capture.py cleanup RAW_DIR     delete what the bot posted in the runs above
 
 Environment:
@@ -230,9 +232,7 @@ def bot_run(raw):
             ids.append(p["id"])
             raw.note("messages", [t, p["id"]])
         rest(raw, "history-starter", "GET", f"/channels/{t}/messages?limit=10")
-        rest(raw, "history-page-1", "GET", f"/channels/{t}/messages?after={t}&limit=2")
-        rest(raw, "history-page-2", "GET", f"/channels/{t}/messages?after={ids[1]}&limit=2")
-        rest(raw, "history-page-3", "GET", f"/channels/{t}/messages?after={ids[3]}&limit=2")
+        pages(raw, t, "history-page")
         rest(raw, "history-bad-cursor", "GET", f"/channels/{t}/messages?after=not-a-snowflake&limit=2")
         rest(raw, "history-unknown-channel", "GET", "/channels/1/messages?limit=2")
         st, a = rest(raw, "post-attachment", "POST", f"/channels/{t}/messages",
@@ -324,6 +324,33 @@ def person_run(raw, minutes):
         gw.close()
 
 
+def pages(raw, conv, name):
+    """Consecutive pages of two: each after the newest message of the one before."""
+    cursor, n = conv, 1
+    while True:
+        st, page = rest(raw, f"{name}-{n}", "GET", f"/channels/{conv}/messages?after={cursor}&limit=2")
+        if not page:
+            return
+        cursor = max(page, key=lambda m: int(m["id"]))["id"]
+        n += 1
+
+
+def pages_run(raw):
+    ch = os.environ["HATAORI_DISCORD_CHANNEL"]
+    st, th = rest(raw, "thread-for-pages", "POST", f"/channels/{ch}/threads",
+                  {"name": "[hataori test] pages", "type": 11, "auto_archive_duration": 60})
+    t = th["id"]
+    raw.note("threads", t)
+    for i in range(1, 6):
+        st, p = rest(None, None, "POST", f"/channels/{t}/messages", {"content": f"[hataori test] message {i}"})
+        raw.note("messages", [t, p["id"]])
+    pages(raw, t, "history-page")
+    st, notices = rest(None, None, "GET", f"/channels/{ch}/messages?limit=10")
+    for m in notices:
+        if m["type"] == 18 and (m.get("message_reference") or {}).get("channel_id") == t:
+            raw.note("messages", [ch, m["id"]])
+
+
 def second_run(raw):
     ch = os.environ["HATAORI_DISCORD_CHANNEL"]
     st, th = rest(raw, "thread-without-message", "POST", f"/channels/{ch}/threads",
@@ -349,6 +376,24 @@ def second_run(raw):
     rest(raw, "other-route-after-429", "GET", f"/channels/{ch}/messages?limit=1")
 
 
+# The fields of a channel object the driver reads. lookups keeps only these, so that
+# ids of things the tests never see (the channel's category, its role overrides, its
+# last message) do not enter the captures.
+CHANNEL_FIELDS = ("id", "type", "guild_id", "name", "flags", "recipients")
+
+
+def lookups(raw):
+    ch = os.environ["HATAORI_DISCORD_CHANNEL"]
+    st, dm = rest(None, None, "POST", "/users/@me/channels", {"recipient_id": os.environ["HATAORI_DISCORD_OWNER"]})
+    for name, cid in (("get-channel", ch), ("get-direct-channel", dm["id"])):
+        rest(raw, name, "GET", f"/channels/{cid}")
+        f = os.path.join(raw.path, f"rest-{name}.json")
+        d = json.load(open(f))
+        d["body"] = {k: v for k, v in d["body"].items() if k in CHANNEL_FIELDS}
+        d["trimmed"] = list(CHANNEL_FIELDS)
+        raw.save(f"rest-{name}", d)
+
+
 def cleanup(raw):
     for conv, mid in raw.created["messages"]:
         st, _ = rest(None, None, "DELETE", f"/channels/{conv}/messages/{mid}")
@@ -365,4 +410,4 @@ if __name__ == "__main__":
     cmd, path = sys.argv[1], sys.argv[2]
     raw = Raw(path)
     {"bot": lambda: bot_run(raw), "person": lambda: person_run(raw, float(sys.argv[3])),
-     "second": lambda: second_run(raw), "cleanup": lambda: cleanup(raw)}[cmd]()
+     "second": lambda: second_run(raw), "lookups": lambda: lookups(raw), "pages": lambda: pages_run(raw), "cleanup": lambda: cleanup(raw)}[cmd]()

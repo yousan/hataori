@@ -54,8 +54,11 @@ type Driver struct {
 	gatewayURL string
 	log        *slog.Logger
 
+	pageSize int // messages per history request
+
 	mu      sync.Mutex
 	parents map[snowflake.ID]snowflake.ID // thread -> the channel it is in
+	direct  map[snowflake.ID]bool         // channel -> whether it is a direct conversation
 }
 
 var _ surface.Driver = (*Driver)(nil)
@@ -101,7 +104,9 @@ func newDriver(botID snowflake.ID, token, restURL, gatewayURL string, log *slog.
 		client:     rest.NewClient(token, rest.WithURL(restURL), rest.WithLogger(log)),
 		gatewayURL: gatewayURL,
 		log:        log,
+		pageSize:   100,
 		parents:    map[snowflake.ID]snowflake.ID{},
+		direct:     map[snowflake.ID]bool{},
 	}
 }
 
@@ -226,7 +231,10 @@ func (d *Driver) dispatch(ctx context.Context, t string, payload io.Reader, sink
 		if err != nil {
 			return err
 		}
-		sink.Message(m.inbound(conv))
+		if conv.Thread == "" {
+			d.setDirect(m.ChannelID, m.GuildID == 0)
+		}
+		sink.Message(m.inbound(conv, m.GuildID == 0))
 	}
 	return nil
 }
@@ -314,12 +322,14 @@ const (
 	typeReply   = 19
 )
 
-// inbound turns m, posted in conv, into a surface.Inbound.
-func (m wireMessage) inbound(conv surface.Conversation) surface.Inbound {
+// inbound turns m, posted in conv, into a surface.Inbound. direct is
+// whether conv is a direct conversation: a gateway message says so by having
+// no guild_id, but a message read through REST has none either way.
+func (m wireMessage) inbound(conv surface.Conversation, direct bool) surface.Inbound {
 	in := surface.Inbound{
 		Ref:     surface.MessageRef{Conv: conv, ID: m.ID.String()},
 		Text:    m.Content,
-		Direct:  m.GuildID == 0,
+		Direct:  direct,
 		Service: m.Author.System || (m.Type != typeDefault && m.Type != typeReply),
 		Time:    m.Timestamp,
 		Cursor:  m.ID.String(),
@@ -347,11 +357,6 @@ func (m wireMessage) inbound(conv surface.Conversation) surface.Inbound {
 // The calls of later issues.
 
 var errNotYet = errors.New("discord: not implemented yet")
-
-// Since is not implemented yet.
-func (d *Driver) Since(context.Context, surface.Conversation, string) ([]surface.Inbound, error) {
-	return nil, errNotYet
-}
 
 // OpenDirect is not implemented yet.
 func (d *Driver) OpenDirect(context.Context, string) (surface.Conversation, error) {
