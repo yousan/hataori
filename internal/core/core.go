@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/session"
@@ -363,11 +364,16 @@ func (c *Core) recentText(ctx context.Context, id control.ThreadID, max int) (st
 	return s, rows.Err()
 }
 
-// title is the first line of a prompt, cut to 80 bytes.
+// title is the first line of a prompt, cut to 80 bytes at a character
+// boundary.
 func title(prompt string) string {
 	line, _, _ := strings.Cut(strings.TrimSpace(prompt), "\n")
 	if len(line) > 80 {
-		line = line[:80]
+		n := 80
+		for n > 0 && !utf8.RuneStart(line[n]) {
+			n--
+		}
+		line = line[:n]
 	}
 	return strings.TrimSpace(line)
 }

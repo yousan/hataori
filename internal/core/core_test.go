@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/control"
@@ -456,5 +457,18 @@ func TestSameRequestIDInTwoSessions(t *testing.T) {
 	f.core.Store.DB.QueryRow(`SELECT group_concat(state, ',') FROM (SELECT state FROM requests ORDER BY session_id)`).Scan(&states)
 	if states != "answered,open" {
 		t.Fatalf("request states by session: %s", states)
+	}
+}
+
+// A title is cut to 80 bytes at a character boundary; a shorter first
+// line is kept as it is.
+func TestTitleCutAtACharacter(t *testing.T) {
+	long := strings.Repeat("あ", 27) // 81 bytes
+	if got := title(long + "\nmore"); !utf8.ValidString(got) || got != strings.Repeat("あ", 26) {
+		t.Fatalf("title %q (%d bytes, valid %v)", got, len(got), utf8.ValidString(got))
+	}
+	short := strings.Repeat("あ", 26) + "ab" // 80 bytes
+	if got := title(short + "\nmore"); got != short {
+		t.Fatalf("title %q, want %q", got, short)
 	}
 }
