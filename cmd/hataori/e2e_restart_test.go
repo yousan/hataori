@@ -55,8 +55,9 @@ func newProcRoot(t *testing.T, change func(cfg map[string]any)) *procRoot {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		p.kill(t)
+		p.stopDaemon()
 		killSessions(p.root)
+		waitSessionsGone(p.root)
 	})
 	return p
 }
@@ -79,7 +80,53 @@ func (p *procRoot) start(t *testing.T) {
 		}
 		return err == nil && p.svc.isAttached()
 	})
-	time.Sleep(50 * time.Millisecond) // its first catch-up
+	// Its front end has caught up once: the channel is read from now on.
+	eventually(t, "the first catch-up", 10*time.Second, func() bool {
+		var n int
+		p.db(t).QueryRow(`SELECT count(*) FROM chat_inbound WHERE channel = 'c1' AND since > 0`).Scan(&n)
+		return n == 1
+	})
+}
+
+// stopDaemon kills the daemon the test started, if it runs, and waits for
+// it; it does not fail the test, so that cleanup goes on.
+func (p *procRoot) stopDaemon() {
+	if p.daemon != nil {
+		p.daemon.Process.Signal(syscall.SIGKILL)
+		p.daemon.Wait()
+		p.daemon = nil
+	}
+}
+
+// waitSessionsGone waits, up to five seconds, until no host or agent whose
+// pid is in a session directory under root runs.
+func waitSessionsGone(root string) {
+	dirs, _ := filepath.Glob(filepath.Join(root, "state", "sessions", "*"))
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		left := false
+		for _, d := range dirs {
+			for _, f := range []string{host.PIDFile, host.HostPIDFile} {
+				if b, err := os.ReadFile(filepath.Join(d, f)); err == nil {
+					if pid, _ := strconv.Atoi(strings.TrimSpace(string(b))); alive(pid) && !zombie(pid) {
+						left = true
+					}
+				}
+			}
+		}
+		if !left {
+			return
+		}
+	}
+}
+
+// zombie reports whether pid has ended and waits only to be reaped.
+func zombie(pid int) bool {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return false
+	}
+	f := strings.Fields(string(b))
+	return len(f) > 2 && f[2] == "Z"
 }
 
 // kill kills the daemon the test started with SIGKILL, and nothing else.
@@ -88,9 +135,7 @@ func (p *procRoot) kill(t *testing.T) {
 	if p.daemon == nil {
 		return
 	}
-	p.daemon.Process.Signal(syscall.SIGKILL)
-	p.daemon.Wait()
-	p.daemon = nil
+	p.stopDaemon()
 	eventually(t, "the service to see the daemon go", 5*time.Second, func() bool { return !p.svc.isAttached() })
 }
 
@@ -127,15 +172,19 @@ func alive(pid int) bool { return pid > 1 && syscall.Kill(pid, 0) == nil }
 func TestDaemonKilledDuringATurnFinishesIt(t *testing.T) {
 	p := newProcRoot(t, nil)
 	p.start(t)
-	p.in(c1, "!go repo:"+bareRepo(t)+" tool wait 3s\nreply after the kill")
+	p.in(c1, "!go repo:"+bareRepo(t)+" tool wait 4s\nreply after the kill")
 	th := p.thread(t, 0)
-	p.posted(t, th, "tool wait 3s\nreply after the kill")
+	p.posted(t, th, "tool wait 4s\nreply after the kill")
 	eventually(t, "the tool", 10*time.Second, func() bool { return len(p.events(t, "tool_started", th)) == 1 })
-	p.restart(t)
+	p.kill(t)
+	if len(p.events(t, "tool_ended", th)) != 0 {
+		t.Fatal("the tool ended before the daemon was killed; the kill was not during the turn")
+	}
+	p.start(t)
 	p.posted(t, th, "after the kill")
 	eventually(t, "the end event", 10*time.Second, func() bool { return len(p.events(t, "turn_ended", th)) > 0 })
 	time.Sleep(300 * time.Millisecond)
-	if a, b := p.count(th, "tool wait 3s\nreply after the kill"), p.count(th, "after the kill"); a != 1 || b != 1 {
+	if a, b := p.count(th, "tool wait 4s\nreply after the kill"), p.count(th, "after the kill"); a != 1 || b != 1 {
 		t.Fatalf("the prompt was posted %d times, the answer %d", a, b)
 	}
 	if n := len(p.events(t, "turn_ended", th)); n != 1 {
@@ -182,6 +231,19 @@ func TestThreePostsWhileTheDaemonIsDownRunOnceEachInOrder(t *testing.T) {
 	}
 	if got := strings.Join(answers, ","); got != "one,two,three" {
 		t.Fatalf("answers %s", got)
+	}
+	// What the agent got: each post once, in order, and four turns in all.
+	eventually(t, "four turns", 10*time.Second, func() bool { return len(p.events(t, "turn_ended", th)) == 4 })
+	time.Sleep(300 * time.Millisecond)
+	var inputs []string
+	for _, e := range p.events(t, "input", th) {
+		inputs = append(inputs, e["text"].(string))
+	}
+	if got := strings.Join(inputs, ","); got != "reply first,reply one,reply two,reply three" {
+		t.Fatalf("inputs %s", got)
+	}
+	if n := len(p.events(t, "turn_ended", th)); n != 4 {
+		t.Fatalf("%d turns", n)
 	}
 }
 
@@ -255,13 +317,15 @@ func TestStopEndsARunningToolWithinTenSeconds(t *testing.T) {
 		}
 		return pids
 	}
-	if len(others()) == 0 {
-		t.Fatal("the tool's process is not in the session's group")
-	}
+	eventually(t, "the tool's process in the session's group", 10*time.Second, func() bool { return len(others()) > 0 })
 	start := time.Now()
 	if code, _, errOut := cli(t, "stop", "--root", p.root, th.Thread); code != 0 {
 		t.Fatalf("stop: exit %d, %s", code, errOut)
 	}
-	eventually(t, "the end of the turn", 10*time.Second-time.Since(start), func() bool { return len(p.events(t, "turn_ended", th)) == 1 })
-	eventually(t, "the tool's process to go", 10*time.Second-time.Since(start), func() bool { return len(others()) == 0 })
+	eventually(t, "the end of the turn", 10*time.Second, func() bool { return len(p.events(t, "turn_ended", th)) == 1 })
+	eventually(t, "the tool's process to go", 10*time.Second, func() bool { return len(others()) == 0 })
+	if took := time.Since(start); took > 10*time.Second {
+		t.Fatalf("the tool ended %v after the stop", took)
+	}
+	// The agent and its host stay, for the next message; the tool is gone.
 }
