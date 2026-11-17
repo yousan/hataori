@@ -47,6 +47,13 @@ func TestMain(m *testing.M) {
 	if err := surface.Register(fakeSurface, fakeDriver); err != nil {
 		panic(err)
 	}
+	if err := surface.Register(remoteSurface, remoteDriver); err != nil {
+		panic(err)
+	}
+	// `hataori run` as a process of its own, which a test can kill.
+	if len(os.Args) > 2 && os.Args[1] == "daemon" {
+		os.Exit(run([]string{"run", "--root", os.Args[2]}, os.Stdout, os.Stderr))
+	}
 	os.Exit(m.Run())
 }
 
