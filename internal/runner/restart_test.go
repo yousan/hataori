@@ -31,6 +31,8 @@ func daemon(args []string) int {
 			mode, o.instructions = m, "input-delay 1500ms"
 		} else if m, ok := strings.CutSuffix(mode, "+quick"); ok { // written input goes unreported for 1s at most
 			mode, o.inputTimeout = m, "1s"
+		} else if m, ok := strings.CutSuffix(mode, "+dieplaced"); ok { // killed right after a workspace is in place
+			mode, o.dieWhenPlaced = m, true
 		} else {
 			break
 		}

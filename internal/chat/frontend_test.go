@@ -62,7 +62,11 @@ func (r *starts) all() []core.Launch {
 
 type workspaces struct{ err error }
 
-func (w workspaces) Make(context.Context, control.ThreadID, string) (string, error) {
+func (workspaces) Adopt(context.Context, control.ThreadID, core.Placement) (string, bool, error) {
+	return "", false, nil
+}
+
+func (w workspaces) Make(context.Context, control.ThreadID, string, func(core.Placement) error) (string, error) {
 	return "dir", w.err
 }
 

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/core"
 )
 
 // bareRepo makes a bare repository with one commit, in a new temporary
@@ -69,7 +70,7 @@ func TestPathSegmentsAreSafe(t *testing.T) {
 func TestCloneIntoPlace(t *testing.T) {
 	root := t.TempDir()
 	m := Maker{Root: root}
-	dir, err := m.Clone(context.Background(), "chat", "c1", "t1", bareRepo(t))
+	dir, err := m.Clone(context.Background(), "chat", "c1", "t1", bareRepo(t), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +101,7 @@ func TestExistingDirectoryIsUntouched(t *testing.T) {
 	target := Path(root, "chat", "c1", "t1")
 	os.MkdirAll(target, 0o700)
 	os.WriteFile(filepath.Join(target, "work.txt"), []byte("mine"), 0o600)
-	_, err := Maker{Root: root}.Clone(context.Background(), "chat", "c1", "t1", bareRepo(t))
+	_, err := Maker{Root: root}.Clone(context.Background(), "chat", "c1", "t1", bareRepo(t), nil)
 	if !errors.Is(err, ErrExists) {
 		t.Fatalf("clone over an existing directory: %v", err)
 	}
@@ -115,7 +116,7 @@ func TestBadAddressesRefusedBeforeGit(t *testing.T) {
 	root := t.TempDir()
 	for _, repo := range []string{"host/owner/repo", "git@host/owner/repo", "", " https://h/r", "ftp://host/repo",
 		"https://", "https://host", "-upload-pack=x", "owner/repo"} {
-		_, err := Maker{Root: root}.Clone(context.Background(), "chat", "c1", "t1", repo)
+		_, err := Maker{Root: root}.Clone(context.Background(), "chat", "c1", "t1", repo, nil)
 		if err == nil || !strings.Contains(err.Error(), "repository address") {
 			t.Errorf("%q: %v", repo, err)
 		}
@@ -142,7 +143,7 @@ func TestCloneIsMadeOutsideWorkspaces(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	root := t.TempDir()
 	repo := bareRepo(t)
-	if _, err := (Maker{Root: root}).Clone(context.Background(), "chat", "c1", "t1", repo); err != nil {
+	if _, err := (Maker{Root: root}).Clone(context.Background(), "chat", "c1", "t1", repo, nil); err != nil {
 		t.Fatal(err)
 	}
 	args, _ := os.ReadFile(log)
@@ -151,7 +152,7 @@ func TestCloneIsMadeOutsideWorkspaces(t *testing.T) {
 	}
 
 	// A clone that fails never appears under workspaces/.
-	_, err = Maker{Root: root}.Clone(context.Background(), "chat", "c1", "t2", "file://"+filepath.Join(t.TempDir(), "missing.git"))
+	_, err = Maker{Root: root}.Clone(context.Background(), "chat", "c1", "t2", "file://"+filepath.Join(t.TempDir(), "missing.git"), nil)
 	if err == nil {
 		t.Fatal("a clone of a missing repository succeeded")
 	}
@@ -166,7 +167,7 @@ func TestFailedCloneHidesCredentials(t *testing.T) {
 	defer srv.Close()
 	addr := strings.Replace(srv.URL, "http://", "http://someone:s3cret-pass@", 1) + "/repo.git"
 	m := Maker{Root: t.TempDir(), Environ: func() []string { return []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir()} }}
-	_, err := m.Clone(context.Background(), "chat", "c1", "t1", addr)
+	_, err := m.Clone(context.Background(), "chat", "c1", "t1", addr, nil)
 	if err == nil {
 		t.Fatal("clone succeeded")
 	}
@@ -185,7 +186,7 @@ func TestGitIgnoresTheDaemonsGitVariables(t *testing.T) {
 	t.Setenv("GIT_WORK_TREE", elsewhere)
 	t.Setenv("GIT_COMMON_DIR", elsewhere)
 	root := t.TempDir()
-	dir, err := Maker{Root: root}.Clone(context.Background(), "chat", "c1", "t1", repo)
+	dir, err := Maker{Root: root}.Clone(context.Background(), "chat", "c1", "t1", repo, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,6 +198,34 @@ func TestGitIgnoresTheDaemonsGitVariables(t *testing.T) {
 	}
 }
 
-var _ interface {
-	Make(context.Context, control.ThreadID, string) (string, error)
-} = Maker{} // the core's Workspaces
+var _ core.Workspaces = Maker{}
+
+// Adopt takes the directory a clone placed, and refuses another one at the
+// same place without touching it.
+func TestAdoptOnlyTheDirectoryItPlaced(t *testing.T) {
+	root := t.TempDir()
+	m := Maker{Root: root, Client: func(string) string { return "chat" }}
+	th := control.ThreadID{Scope: "c1", Key: "t1"}
+	var p core.Placement
+	dir, err := m.Make(context.Background(), th, bareRepo(t), func(got core.Placement) error { p = got; return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := m.Adopt(context.Background(), th, p); err != nil || !ok || got != dir {
+		t.Fatalf("adopt the placed clone: %q, %v, %v", got, ok, err)
+	}
+	// Another directory at the same place.
+	if err := os.Rename(dir, dir+".moved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "theirs.txt"), []byte("theirs"), 0o600)
+	if _, ok, err := m.Adopt(context.Background(), th, p); ok || !errors.Is(err, ErrExists) {
+		t.Fatalf("adopt another directory: %v, %v", ok, err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "theirs.txt")); string(b) != "theirs" {
+		t.Fatal("the other directory was touched")
+	}
+}
