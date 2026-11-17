@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/host"
@@ -37,6 +38,9 @@ type Config struct {
 	ConfigDir string `json:"config_dir"`
 	// Login is what its login command does.
 	Login Login `json:"login"`
+	// InputTimeout is how long written input may go unreported before its
+	// turn fails as "not delivered"; DefaultInputTimeout when empty.
+	InputTimeout string `json:"input_timeout"`
 }
 
 // Adapter is the fake agent.
@@ -58,6 +62,11 @@ func New(settings []byte) (agent.Adapter, error) {
 	if c.ConfigDir != "" && !filepath.IsAbs(c.ConfigDir) {
 		// Sessions run in their workspace, the login and Probe elsewhere.
 		return nil, fmt.Errorf("%s: config: config_dir %q is not an absolute path", Name, c.ConfigDir)
+	}
+	if t := c.InputTimeout; t != "" {
+		if d, err := time.ParseDuration(t); err != nil || d <= 0 {
+			return nil, fmt.Errorf("%s: config: input_timeout %q is not a positive duration", Name, t)
+		}
 	}
 	return &Adapter{c: c}, nil
 }
@@ -88,10 +97,15 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 		argv = append(argv, "--session", fmt.Sprintf("fake-%x", b))
 	}
 	// The start-up script is the spec's instructions: "never-start" makes
-	// the program never report that it is ready.
+	// the program never report that it is ready; "input-delay D" makes it
+	// wait D before it takes each input.
 	for _, l := range strings.Split(spec.Instructions, "\n") {
-		if strings.TrimSpace(l) == "never-start" {
+		l = strings.TrimSpace(l)
+		if l == "never-start" {
 			argv = append(argv, "--never-start")
+		}
+		if d, ok := strings.CutPrefix(l, "input-delay "); ok {
+			argv = append(argv, "--input-delay", strings.TrimSpace(d))
 		}
 	}
 	if a.c.Conversations != "" {
@@ -111,5 +125,6 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 
 // NewCodec returns the codec of one session.
 func (a *Adapter) NewCodec(spec agent.Spec) agent.Codec {
-	return &codec{terminal: a.c.Terminal, followed: map[string]bool{}}
+	d, _ := time.ParseDuration(a.c.InputTimeout) // checked in New
+	return &codec{terminal: a.c.Terminal, followed: map[string]bool{}, timeout: d}
 }

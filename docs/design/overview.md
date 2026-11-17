@@ -293,6 +293,8 @@ Splitting the agent adapter into a launch description and a pure codec is what m
 
 Each user message the core hands to a codec carries an id. The codec returns that id in the `TurnStarted` of the turn that reports the message, and leaves it empty when it does not know. The core keeps a message it accepted until a turn reports its id, and hands it to the agent again after a daemon restart until then, so a message is delivered exactly once even when the codec holds it until the agent can take it.
 
+Whatever call of the codec produced it, the actions that write a message name its id. The core records the message as written just before it writes it. After a restart, a message written and not yet reported is handed to the new codec marked as written, before any new line is read. The codec records it and writes nothing, so the report that comes is matched to it. If no report comes, the codec ends its turn as failed, `not delivered`, naming the id. A daemon that dies between the record and the write leaves a turn that fails that way, never a message run twice or lost without a trace.
+
 ### 5.4 Did the first draft allow chat, supervisor and dashboard on one API?
 
 No, not as written. The agent side is unchanged. The surface side was a plug-in that the core called: the core itself received every inbound chat event (the `Sink` interface), owned the outbox, and pushed finished messages to one surface per thread. Nothing in it could list threads, read a thread's state, or follow events, which is all a dashboard does and most of what a supervisor does. And a thread was identified by `(surface, channel, thread)`, which the core had to understand.
@@ -1058,13 +1060,17 @@ type Actions struct {
 	Write  [][]byte    // to the agent's input (terminal or stdin), in order
 	Reply  []HookReply // to hook calls that are waiting for an answer
 	Follow []string    // files to start following, such as a transcript
+	Inputs []string    // the Input.IDs of the messages Write carries
 }
 
 // Input is a user message. ID is opaque to the codec; the TurnStarted of
-// the turn that reports the message carries it back.
+// the turn that reports the message carries it back, and so does a
+// TurnEnded "not delivered" when no report came. Written: the message was
+// written before a restart; the codec records it and writes nothing.
 type Input struct {
-	ID   string
-	Text string
+	ID      string
+	Text    string
+	Written bool
 }
 
 type Spec struct {

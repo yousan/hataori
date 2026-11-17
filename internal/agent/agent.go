@@ -101,6 +101,9 @@ type Actions struct {
 	Write  [][]byte    // to the agent's input (terminal or stdin), in order
 	Reply  []HookReply // to hook calls that are waiting for an answer
 	Follow []string    // files to start following, such as a transcript
+	// Inputs are the Input.IDs of the inputs that Write carries, whichever
+	// call produced it: the caller records them as written before it writes.
+	Inputs []string
 }
 
 // HookReply answers one hook call that is waiting.
@@ -136,6 +139,10 @@ type Input struct {
 	// the codec, and may be empty.
 	ID   string
 	Text string
+	// Written says the input was written to the agent before the caller
+	// restarted, and its report has not been read. The codec records it as
+	// written and waiting for its report, and writes nothing.
+	Written bool
 }
 
 // Answer answers a Request event.
@@ -216,7 +223,7 @@ type Event struct {
 	Final bool   // Text: the turn's final answer
 
 	StartedBy Starter // TurnStarted
-	Input     string  // TurnStarted: the Input.ID of the input this turn reports, "" when none or not known
+	Input     string  // TurnStarted: the Input.ID of the input this turn reports; TurnEnded with NotDelivered: of the input never reported; "" when none or not known
 
 	Tool string // ToolStarted, ToolEnded: the tool's name or label; SubagentStarted, SubagentEnded: the subagent's name or type
 	ID   string // ToolStarted, ToolEnded, SubagentStarted, SubagentEnded: pairs start and end

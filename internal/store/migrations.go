@@ -182,6 +182,11 @@ var migrations = []Migration{
 			pos    INTEGER NOT NULL
 		)`,
 	)},
+	{Name: "pending_inputs.written", Up: execAll(
+		// written: the input was written to the agent, and its report not
+		// read yet; after a restart the codec is told, and writes nothing.
+		`ALTER TABLE pending_inputs ADD COLUMN written INTEGER NOT NULL DEFAULT 0`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

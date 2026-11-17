@@ -110,6 +110,15 @@ func (c *codec) Open() Actions { return Actions{} }
 func (c *codec) Input(in agent.Input) (Actions, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if in.Written {
+		// Pasted before a restart: its prompt is still to come.
+		text := normalize(cleanPaste(in.Text))
+		c.pasted = append(c.pasted, queued{id: in.ID, text: text})
+		if c.sent == nil {
+			c.sent = &sentInput{text: text, id: in.ID}
+		}
+		return Actions{}, nil
+	}
 	c.queue = append(c.queue, queued{id: in.ID, text: cleanPaste(in.Text)})
 	return c.number(c.flush()), nil
 }
@@ -144,14 +153,19 @@ func (c *codec) flush() Actions {
 	}
 	q := c.queue[0]
 	c.queue = c.queue[1:]
-	c.sent = &sentInput{text: normalize(q.text)}
+	c.sent = &sentInput{text: normalize(q.text), id: q.id}
 	c.pasted = append(c.pasted, queued{id: q.id, text: normalize(q.text)})
-	return Actions{Write: [][]byte{[]byte(pasteStart + q.text + pasteEnd), []byte(confirm)}}
+	a := Actions{Write: [][]byte{[]byte(pasteStart + q.text + pasteEnd), []byte(confirm)}}
+	if q.id != "" {
+		a.Inputs = []string{q.id}
+	}
+	return a
 }
 
 // sentInput is input written and not yet reported by a hook.
 type sentInput struct {
 	text string
+	id   string    // its Input.ID
 	at   time.Time // the first Tick after writing it
 }
 
@@ -182,8 +196,9 @@ func (c *codec) tickInput(now time.Time) Actions {
 			break
 		}
 	}
+	id := c.sent.id
 	c.sent = nil
-	a := c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered})
+	a := c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered, Input: id})
 	return merge(a, c.flush())
 }
 
@@ -315,6 +330,7 @@ func merge(a, b Actions) Actions {
 	a.Write = append(a.Write, b.Write...)
 	a.Reply = append(a.Reply, b.Reply...)
 	a.Follow = append(a.Follow, b.Follow...)
+	a.Inputs = append(a.Inputs, b.Inputs...)
 	return a
 }
 

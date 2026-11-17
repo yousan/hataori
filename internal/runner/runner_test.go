@@ -83,6 +83,7 @@ type options struct {
 	conversations string // the fake's directory of conversations, if any
 	contextBytes  int
 	poll          time.Duration                     // 20ms when zero
+	inputTimeout  string                            // the fake's; 5s when empty
 	wrap          func(agent.Adapter) agent.Adapter // wraps the fake adapter, if set
 }
 
@@ -94,7 +95,8 @@ func build(root string, o options, log io.Writer) (*store.Store, *core.Core, *Ru
 		return nil, nil, nil, err
 	}
 	cfg, _ := json.Marshal(fake.Config{Command: []string{os.Args[0], "role", "fake"}, Hataori: os.Args[0],
-		Terminal: o.terminal, Env: []string{"PATH=" + os.Getenv("PATH")}, Conversations: o.conversations})
+		Terminal: o.terminal, Env: []string{"PATH=" + os.Getenv("PATH")}, Conversations: o.conversations,
+		InputTimeout: cmp.Or(o.inputTimeout, "5s")})
 	ad, err := fake.New(cfg)
 	if err != nil {
 		return nil, nil, nil, err

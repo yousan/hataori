@@ -34,6 +34,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	transcript := fs.String("transcript", "", "")
 	hook := fs.String("hook", "", "the hataori binary, for `hataori hook`")
 	neverStart := fs.Bool("never-start", false, "")
+	inputDelay := fs.Duration("input-delay", 0, "wait this long before taking each input")
 	conversations := fs.String("conversations", "", "a directory with one file per session started")
 	configDir := fs.String("config", "", "where its login is kept; turns fail until it is logged in")
 	if err := fs.Parse(args); err != nil {
@@ -92,6 +93,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			if !ok {
 				return 0
 			}
+			time.Sleep(*inputDelay)
 			id := ""
 			if rest, found := strings.CutPrefix(text, inputIDPrefix); found {
 				id, text, _ = strings.Cut(rest, "\n")

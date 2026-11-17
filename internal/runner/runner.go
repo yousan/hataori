@@ -443,6 +443,9 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) err
 	var replies []agent.HookReply
 	if resumed {
 		replies = r.warm(lv)
+		// Before any new line is read: input written before the restart,
+		// so that the report of it, if it comes, is known for what it is.
+		r.handOverWritten(lv)
 	}
 	if c, err := host.Dial(lv.dir); err == nil {
 		lv.client = c
@@ -487,7 +490,8 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) err
 // agent, oldest first: those the core accepted and a daemon that died did
 // not hand over, or whose input the agent had not reported. lv.mu is held.
 func (r *Runner) handOverPending(lv *live) {
-	rows, err := r.Store.DB.Query(`SELECT id, request, data FROM pending_inputs WHERE session_id = ? AND id <= ? ORDER BY id`, lv.id, lv.upTo)
+	rows, err := r.Store.DB.Query(`SELECT id, request, data FROM pending_inputs
+		WHERE session_id = ? AND id <= ? AND written = 0 ORDER BY id`, lv.id, lv.upTo)
 	if err != nil {
 		r.Log.Error("pending input", "session", lv.id, "err", err)
 		return
@@ -527,6 +531,86 @@ func (r *Runner) handOverPending(lv *live) {
 			r.Log.Error("pending input", "session", lv.id, "pending", x.id, "err", err)
 		}
 	}
+}
+
+// handOverWritten tells the codec of a reconnected session which input was
+// written to the agent and not reported yet: the first input and pending
+// input marked written. The codec records them and writes nothing.
+func (r *Runner) handOverWritten(lv *live) {
+	var fi string
+	r.Store.DB.QueryRow(`SELECT first_input FROM sessions WHERE id = ?`, lv.id).Scan(&fi)
+	var f firstInput
+	if fi != "" && json.Unmarshal([]byte(fi), &f) == nil && f.Sent && f.Written {
+		r.do(lv, r.inputActions(lv, agent.Input{ID: firstInputID, Text: f.Context + f.Text, Written: true}))
+		lv.resend = false
+	}
+	rows, err := r.Store.DB.Query(`SELECT id, data FROM pending_inputs
+		WHERE session_id = ? AND request = '' AND written = 1 ORDER BY id`, lv.id)
+	if err != nil {
+		r.Log.Error("written input", "session", lv.id, "err", err)
+		return
+	}
+	var ins []agent.Input
+	for rows.Next() {
+		var id int64
+		var data string
+		var in control.Input
+		if rows.Scan(&id, &data) == nil && json.Unmarshal([]byte(data), &in) == nil {
+			ins = append(ins, agent.Input{ID: strconv.FormatInt(id, 10), Text: in.Text, Written: true})
+		}
+	}
+	rows.Close()
+	for _, in := range ins {
+		r.do(lv, r.inputActions(lv, in))
+	}
+}
+
+// inputActions is what the codec makes of in; an error is logged.
+func (r *Runner) inputActions(lv *live, in agent.Input) agent.Actions {
+	a, err := lv.codec.Input(in)
+	if err != nil {
+		r.Log.Error("input", "session", lv.id, "input", in.ID, "err", err)
+	}
+	return a
+}
+
+// markWritten records that the inputs ids are about to be written to the
+// agent: from now on a restart tells the codec instead of writing them
+// again.
+func (r *Runner) markWritten(lv *live, ids []string) error {
+	err := r.Store.Update(context.Background(), func(tx *store.Tx) error {
+		ctx := context.Background()
+		for _, id := range ids {
+			if id == firstInputID {
+				var fi string
+				if err := tx.QueryRowContext(ctx, `SELECT first_input FROM sessions WHERE id = ?`, lv.id).Scan(&fi); err != nil {
+					return err
+				}
+				var f firstInput
+				if fi == "" || json.Unmarshal([]byte(fi), &f) != nil {
+					continue
+				}
+				f.Written = true
+				b, _ := json.Marshal(f)
+				if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, string(b), lv.id); err != nil {
+					return err
+				}
+				continue
+			}
+			row, err := strconv.ParseInt(id, 10, 64)
+			if err != nil {
+				continue // not one of ours
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE pending_inputs SET written = 1 WHERE id = ? AND session_id = ?`, row, lv.id); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		r.Log.Error("marking input written", "session", lv.id, "err", err)
+	}
+	return err
 }
 
 // handOver carries out what the codec makes of one pending input or
@@ -756,6 +840,11 @@ func (r *Runner) stepLocked(lv *live) bool {
 		r.Log.Error("commit", "session", lv.id, "err", err)
 		lv.codec = lv.adapter.NewCodec(lv.spec)
 		r.warm(lv)
+		// What the old codec knew of input: what was written, and what it
+		// held to write later.
+		r.handOverWritten(lv)
+		lv.pending = true
+		r.Store.DB.QueryRow(`SELECT coalesce(max(id), 0) FROM pending_inputs WHERE session_id = ?`, lv.id).Scan(&lv.upTo)
 		return true
 	}
 	lv.offset = b.offset
@@ -882,6 +971,9 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 		case f.Sent && reported(b.events, firstInputID):
 			// The agent reported the turn: delivered.
 			f = firstInput{}
+		case f.Sent && notDelivered(b.events, firstInputID):
+			// The agent never reported it; its turn failed, as the events say.
+			f = firstInput{}
 		case f.Sent && lv.resend:
 			// The daemon died between starting the turn and a report of it:
 			// hand it to the codec again.
@@ -906,11 +998,13 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 	return first, err
 }
 
-// clearReported removes the pending input whose turn the agent reported:
+// clearReported removes the pending input whose turn the agent reported, or
+// whose turn failed because it never reported it:
 // the codec names it by the Input.ID it was given, the row's id.
 func clearReported(ctx context.Context, tx *store.Tx, id int64, evs []agent.Event) error {
 	for _, e := range evs {
-		if e.Kind != agent.TurnStarted || e.Input == "" {
+		gone := e.Kind == agent.TurnStarted || e.Kind == agent.TurnEnded && e.Reason == agent.NotDelivered
+		if !gone || e.Input == "" {
 			continue
 		}
 		row, err := strconv.ParseInt(e.Input, 10, 64)
@@ -927,6 +1021,17 @@ func clearReported(ctx context.Context, tx *store.Tx, id int64, evs []agent.Even
 // firstInputID is the Input.ID of a session's first input. It is not a
 // number, so it names no pending input.
 const firstInputID = "first"
+
+// notDelivered reports whether a turn among evs failed because the input
+// id was never reported.
+func notDelivered(evs []agent.Event, id string) bool {
+	for _, e := range evs {
+		if e.Kind == agent.TurnEnded && e.Reason == agent.NotDelivered && e.Input == id {
+			return true
+		}
+	}
+	return false
+}
 
 // reported reports whether a turn among evs reports the input id.
 func reported(evs []agent.Event, id string) bool {
@@ -969,6 +1074,18 @@ func (r *Runner) act(lv *live, a agent.Actions) error {
 	if len(a.Write) == 0 && len(a.Reply) == 0 {
 		return nil
 	}
+	if len(a.Inputs) > 0 {
+		if err := r.markWritten(lv, a.Inputs); err != nil {
+			// Not written: the codec, which counts it written, fails its
+			// turn as "not delivered" when no report comes.
+			a.Write = nil
+			if len(a.Reply) == 0 {
+				return err
+			}
+		}
+		r.at("input marked")
+	}
+	defer r.at("input written")
 	if lv.client == nil {
 		c, err := host.Dial(lv.dir)
 		if err != nil {

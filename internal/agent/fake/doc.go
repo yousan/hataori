@@ -64,5 +64,11 @@
 // in.
 //
 // The spec's instructions are the start-up script: a line "never-start"
-// makes the program never report that it is ready.
+// makes the program never report that it is ready, and "input-delay D"
+// makes it wait D before it takes each input.
+//
+// The codec holds input while a turn runs and writes it when the turn
+// ends, as an agent that takes one prompt at a time would. Written input
+// whose turn is not reported within Config.InputTimeout ends as failed,
+// "not delivered".
 package fake
