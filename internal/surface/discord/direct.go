@@ -70,6 +70,7 @@ type wireInteraction struct {
 	Token     string       `json:"token"`
 	ChannelID snowflake.ID `json:"channel_id"`
 	GuildID   snowflake.ID `json:"guild_id"`
+	Channel   wireChannel  `json:"channel"`
 	Data      struct {
 		ComponentType int    `json:"component_type"`
 		CustomID      string `json:"custom_id"`
@@ -131,10 +132,9 @@ func (d *Driver) press(ctx context.Context, payload io.Reader, sink surface.Sink
 		name = u.Username
 	}
 	conv := surface.Conversation{Channel: in.ChannelID.String()}
-	if in.GuildID != 0 {
-		if c, err := d.conversation(ctx, wireMessage{ChannelID: in.ChannelID}); err == nil {
-			conv = c
-		}
+	if isThread(in.Channel.Type) && in.Channel.ParentID != 0 {
+		d.setParent(in.Channel)
+		conv = surface.Conversation{Channel: in.Channel.ParentID.String(), Thread: in.ChannelID.String()}
 	}
 	sink.Choice(surface.Selection{
 		Ref:    surface.MessageRef{Conv: conv, ID: in.Message.ID.String()},

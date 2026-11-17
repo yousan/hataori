@@ -165,3 +165,68 @@ func TestIntents(t *testing.T) {
 		t.Fatalf("intents %d, want exactly %d", Intents, want)
 	}
 }
+
+// Through Run, a slow sink does not hold up the next press's
+// acknowledgement: the sink is called off the gateway's receive loop.
+func TestPressesNotHeldBySlowSink(t *testing.T) {
+	r := newFakeREST(t)
+	r.serve(t, "GET /users/@me", "bot/rest-users-me.json")
+	var acks []string
+	for _, f := range []string{"person/gw-05-INTERACTION_CREATE.json", "person/gw-06-INTERACTION_CREATE.json"} {
+		in := payload(t, f)
+		k := "POST /interactions/" + id(in["id"]) + "/" + in["token"].(string) + "/callback"
+		r.serve(t, k, "person/rest-interaction-ack.json")
+		acks = append(acks, k)
+	}
+	g := newFakeGateway(t, payload(t, "bot/gw-01-READY.json"))
+	d := testDriver(t, botID(t), r, g)
+	s := slowSink{newSink(), 4 * time.Second}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx, s) }()
+	select {
+	case <-g.connected:
+	case <-time.After(20 * time.Second):
+		t.Fatal("no session")
+	}
+	start := time.Now()
+	g.event("INTERACTION_CREATE", payload(t, "person/gw-05-INTERACTION_CREATE.json"))
+	g.event("INTERACTION_CREATE", payload(t, "person/gw-06-INTERACTION_CREATE.json"))
+	for len(r.requests(acks[0])) == 0 || len(r.requests(acks[1])) == 0 {
+		if time.Since(start) > 2500*time.Millisecond {
+			t.Fatalf("acknowledged %d and %d within the deadline", len(r.requests(acks[0])), len(r.requests(acks[1])))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	for i := 0; i < 2; i++ {
+		select {
+		case <-s.got:
+		case <-time.After(15 * time.Second):
+			t.Fatal("a press was not delivered")
+		}
+	}
+	cancel()
+	<-done
+	if s.choices[0].Ref.ID != s.choices[1].Ref.ID || len(s.choices) != 2 {
+		t.Fatalf("%+v", s.choices)
+	}
+}
+
+// A press in a server thread names the thread and its channel, from the
+// channel object the press carries.
+func TestPressInThread(t *testing.T) {
+	in := payload(t, "person/gw-06-INTERACTION_CREATE.json")
+	th := payload(t, "bot/gw-05-THREAD_CREATE.json")
+	in["channel_id"], in["guild_id"] = th["id"], th["guild_id"]
+	in["channel"] = map[string]any{"id": th["id"], "type": 11.0, "parent_id": th["parent_id"]}
+	r := newFakeREST(t)
+	r.serve(t, "POST /interactions/"+id(in["id"])+"/"+in["token"].(string)+"/callback", "person/rest-interaction-ack.json")
+	s := newSink()
+	if err := testDriver(t, botID(t), r, nil).dispatch(context.Background(), "INTERACTION_CREATE", bytes.NewReader(raw(t, in)), s); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.choices) != 1 || s.choices[0].Ref.Conv != (surface.Conversation{Channel: id(th["parent_id"]), Thread: id(th["id"])}) {
+		t.Fatalf("%+v", s.choices)
+	}
+}

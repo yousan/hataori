@@ -146,6 +146,8 @@ func (d *Driver) Run(ctx context.Context, sink surface.Sink) error {
 	// own, so that nothing reconnects or delivers after Run returns.
 	lost := make(chan error, 1)
 	var stopped atomic.Bool
+	q := newQueue(sink)
+	defer q.close()
 	handle := func(_ gateway.Gateway, t gateway.EventType, _ int, ev gateway.EventData) {
 		if stopped.Load() {
 			return
@@ -156,7 +158,7 @@ func (d *Driver) Run(ctx context.Context, sink surface.Sink) error {
 				report(fmt.Errorf("discord: logged in as bot %s, but the config names bot %s", e.User.ID, d.botID))
 			}
 		case gateway.EventRaw:
-			if err := d.dispatch(ctx, string(e.EventType), e.Payload, sink); err != nil {
+			if err := d.dispatch(ctx, string(e.EventType), e.Payload, q); err != nil {
 				d.log.Warn("discord: event skipped", "type", e.EventType, "err", err)
 			}
 		}
