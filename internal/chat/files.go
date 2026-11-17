@@ -42,7 +42,7 @@ func (f *FrontEnd) fileRows(ctx context.Context, e control.Event, conv surface.C
 		}
 		// What is posted is a copy taken now, so the file cannot be
 		// changed or replaced by a link between the check and the post.
-		copied, n, err := f.copyFile(real, filepath.Join(fmt.Sprint(e.Pos), fmt.Sprint(len(files)+len(notices))), lim.MaxFileBytes)
+		copied, n, err := f.copyFile(real, roots, filepath.Join(fmt.Sprint(e.Pos), fmt.Sprint(len(files)+len(notices))), lim.MaxFileBytes)
 		switch {
 		case errors.Is(err, errTooBig):
 			notices = append(notices, fmt.Sprintf("File %s was not posted: %s is over the limit of %s.", name, size(n), size(lim.MaxFileBytes)))
@@ -77,14 +77,20 @@ func (f *FrontEnd) fileRows(ctx context.Context, e control.Event, conv surface.C
 var errTooBig = errors.New("over the size limit")
 
 // copyFile copies the regular file real into FileDir under name and returns
-// the copy's path. It opens real without following a link at its end and
-// checks that it is still the file that was resolved, and it copies at
-// most max bytes (0: no limit); a longer file gives errTooBig and its size.
-func (f *FrontEnd) copyFile(real, name string, max int64) (string, int64, error) {
+// the copy's path. It opens real without blocking and without following a
+// link at its end, then checks that the file it opened is real, inside
+// roots; it copies at most max bytes (0: no limit), and a longer file gives
+// errTooBig and its size. A copy made before (an event read again) is kept
+// and used as it is.
+func (f *FrontEnd) copyFile(real string, roots []string, name string, max int64) (string, int64, error) {
 	if f.FileDir == "" {
 		return "", 0, errors.New("no FileDir to copy into")
 	}
-	src, err := os.OpenFile(real, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	dst := filepath.Join(f.FileDir, name)
+	if st, err := os.Stat(dst); err == nil {
+		return dst, st.Size(), nil
+	}
+	src, err := os.OpenFile(real, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return "", 0, err
 	}
@@ -96,26 +102,35 @@ func (f *FrontEnd) copyFile(real, name string, max int64) (string, int64, error)
 	if !st.Mode().IsRegular() {
 		return "", 0, errors.New("not a regular file")
 	}
-	if again, err := filepath.EvalSymlinks(real); err != nil || again != real {
+	// What was opened, as the kernel names it, so that a directory on the
+	// way replaced by a link meanwhile is seen.
+	opened, err := os.Readlink(fmt.Sprintf("/proc/self/fd/%d", src.Fd()))
+	if err != nil {
+		opened, err = filepath.EvalSymlinks(real) // no /proc: the best this system offers
+	}
+	if err != nil || opened != real {
 		return "", 0, errors.New("the path changed while it was checked")
+	}
+	if _, ok := within(opened, roots); !ok {
+		return "", 0, errors.New("the file opened is outside the roots")
 	}
 	if max > 0 && st.Size() > max {
 		return "", st.Size(), errTooBig
 	}
-	dst := filepath.Join(f.FileDir, name)
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return "", 0, err
 	}
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	tmp, err := os.CreateTemp(filepath.Dir(dst), ".copy-*")
 	if err != nil {
 		return "", 0, err
 	}
+	defer os.Remove(tmp.Name()) // a no-op once it is renamed
 	limit := int64(math.MaxInt64)
 	if max > 0 {
 		limit = max + 1
 	}
-	n, err := io.Copy(out, io.LimitReader(src, limit))
-	if cerr := out.Close(); err == nil {
+	n, err := io.Copy(tmp, io.LimitReader(src, limit))
+	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}
 	if err != nil {
@@ -123,6 +138,9 @@ func (f *FrontEnd) copyFile(real, name string, max int64) (string, int64, error)
 	}
 	if max > 0 && n > max {
 		return "", n, errTooBig // it grew after the check
+	}
+	if err := os.Rename(tmp.Name(), dst); err != nil {
+		return "", 0, err
 	}
 	return dst, n, nil
 }
@@ -142,7 +160,7 @@ func within(p string, roots []string) (string, bool) {
 		if err != nil {
 			continue
 		}
-		if rel, err := filepath.Rel(rr, real); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != "." {
+		if rel, err := filepath.Rel(rr, real); err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return real, true
 		}
 	}

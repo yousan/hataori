@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/yousan/hataori/internal/control"
@@ -149,5 +150,22 @@ func TestFileReplacedAfterTheCheckIsNotWhatIsPosted(t *testing.T) {
 	got, err := os.ReadFile(fileCalls(f, id)[0].Message.Files[0].Path)
 	if err != nil || string(got) != "xxx" {
 		t.Fatalf("posted %q, %v; want the file as it was checked", got, err)
+	}
+}
+
+func TestNamedPipeIsRefusedWithoutBlocking(t *testing.T) {
+	ws, _, _, opt := withDirs(t)
+	f := newFront(t, workspaces{}, opt)
+	id, _ := f.started(t)
+	f.showing(t)
+	pipe := filepath.Join(ws, "pipe")
+	if err := syscall.Mkfifo(pipe, 0o600); err != nil {
+		t.Skip("no named pipes here:", err)
+	}
+	f.event(t, id, "file_out", map[string]any{"file": pipe})
+	f.event(t, id, "text", map[string]any{"text": "marker", "final": false})
+	f.postedUntil(t, id, "marker")
+	if c := fileCalls(f, id); len(c) != 2 || !strings.Contains(c[0].Message.Text, "cannot be read") {
+		t.Fatalf("calls %+v", c)
 	}
 }
