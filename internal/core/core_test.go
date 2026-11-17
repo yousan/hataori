@@ -57,8 +57,12 @@ func (o fakeOwner) NewThread(context.Context, string, string) (string, error) { 
 
 type fakeWorkspaces struct{}
 
-func (fakeWorkspaces) Make(context.Context, control.ThreadID, string) (string, error) {
+func (fakeWorkspaces) Make(context.Context, control.ThreadID, string, func(Placement) error) (string, error) {
 	return "dir", nil
+}
+
+func (fakeWorkspaces) Adopt(context.Context, control.ThreadID, Placement) (string, bool, error) {
+	return "", false, nil
 }
 
 const all = control.OpRead | control.OpStart | control.OpSend | control.OpAnswer | control.OpStop

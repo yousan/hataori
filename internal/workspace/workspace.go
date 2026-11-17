@@ -18,9 +18,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/core"
 )
 
 // Dir is the workspaces directory, relative to the instance root.
@@ -126,12 +128,47 @@ func redact(s string) string { return userinfo.ReplaceAllString(s, "${1}***@") }
 func redactErr(err error) string { return redact(err.Error()) }
 
 // Make clones repo for thread. It implements the core's Workspaces.
-func (m Maker) Make(ctx context.Context, thread control.ThreadID, repo string) (string, error) {
-	client := "client"
+func (m Maker) Make(ctx context.Context, thread control.ThreadID, repo string, placed func(core.Placement) error) (string, error) {
+	return m.Clone(ctx, m.client(thread), thread.Scope, thread.Key, repo, placed)
+}
+
+func (m Maker) client(thread control.ThreadID) string {
 	if m.Client != nil {
-		client = m.Client(thread.Scope)
+		return m.Client(thread.Scope)
 	}
-	return m.Clone(ctx, client, thread.Scope, thread.Key, repo)
+	return "client"
+}
+
+// Adopt returns the workspace of thread when it is the directory a Make
+// that reported p put in place: the same path, device and inode. It looks
+// only at the directory itself, and changes nothing. It implements the
+// core's Workspaces.
+func (m Maker) Adopt(ctx context.Context, thread control.ThreadID, p core.Placement) (string, bool, error) {
+	target := Path(m.Root, m.client(thread), thread.Scope, thread.Key)
+	if p.Dir != target {
+		return "", false, fmt.Errorf("workspace: %s is not the workspace of %v", p.Dir, thread)
+	}
+	st, err := os.Lstat(target)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("workspace: %w", err)
+	}
+	dev, ino, ok := identity(st)
+	if !st.IsDir() || !ok || dev != p.Dev || ino != p.Inode {
+		return "", false, fmt.Errorf("%w: %s is not the directory this thread's clone made", ErrExists, target)
+	}
+	return target, true, nil
+}
+
+// identity is the device and inode of st.
+func identity(st os.FileInfo) (dev, ino uint64, ok bool) {
+	sys, ok := st.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, 0, false
+	}
+	return uint64(sys.Dev), uint64(sys.Ino), true
 }
 
 // Clone makes the workspace of (client, scope, key) from repo's mirror when
@@ -139,7 +176,9 @@ func (m Maker) Make(ctx context.Context, thread control.ThreadID, repo string) (
 // The address is checked before git runs. The clone is made outside the
 // workspaces directory and renamed into place when complete, so a failed
 // clone never appears there. An existing directory is never touched.
-func (m Maker) Clone(ctx context.Context, client, scope, key, repo string) (string, error) {
+// Right before the rename, placed, when not nil, is called with the clone's
+// identity; when it fails, the clone is not renamed.
+func (m Maker) Clone(ctx context.Context, client, scope, key, repo string, placed func(core.Placement) error) (string, error) {
 	if err := CheckAddress(repo); err != nil {
 		return "", err
 	}
@@ -178,6 +217,20 @@ func (m Maker) Clone(ctx context.Context, client, scope, key, repo string) (stri
 	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 		return "", fmt.Errorf("workspace: %w", err)
+	}
+	if placed != nil {
+		st, err := os.Lstat(tmp)
+		if err != nil {
+			return "", fmt.Errorf("workspace: %w", err)
+		}
+		dev, ino, ok := identity(st)
+		if !ok {
+			return "", fmt.Errorf("workspace: %s has no device and inode", tmp)
+		}
+		// A rename keeps them: they identify the workspace at its place.
+		if err := placed(core.Placement{Dir: target, Dev: dev, Inode: ino}); err != nil {
+			return "", fmt.Errorf("workspace: %w (the clone is left at %s)", err, tmp)
+		}
 	}
 	// A rename that never replaces: a directory that appeared meanwhile,
 	// even an empty one, stays as it is.

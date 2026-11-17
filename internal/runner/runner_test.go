@@ -68,11 +68,59 @@ func (s *syncBuffer) String() string {
 	return s.b.String()
 }
 
-type workDir string
+// workDir makes one directory per thread under root, as the workspace
+// maker does: made aside, with a file in it, then renamed into place. With
+// die, it kills its own process right after the rename.
+type workDir struct {
+	root string
+	die  bool
+}
 
-func (w workDir) Make(context.Context, control.ThreadID, string) (string, error) {
-	os.MkdirAll(string(w), 0o700)
-	return string(w), nil
+func (w workDir) Make(_ context.Context, th control.ThreadID, _ string, placed func(core.Placement) error) (string, error) {
+	target := filepath.Join(w.root, th.Key)
+	if _, err := os.Lstat(target); err == nil {
+		return "", fmt.Errorf("workspace exists: %s", target)
+	}
+	tmp, err := os.MkdirTemp(filepath.Dir(w.root), "clone-")
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "notes.txt"), []byte("someone's work\n"), 0o600); err != nil {
+		return "", err
+	}
+	st, err := os.Lstat(tmp)
+	if err != nil {
+		return "", err
+	}
+	sys := st.Sys().(*syscall.Stat_t)
+	if err := placed(core.Placement{Dir: target, Dev: uint64(sys.Dev), Inode: sys.Ino}); err != nil {
+		return "", err
+	}
+	os.MkdirAll(w.root, 0o700)
+	if err := os.Rename(tmp, target); err != nil {
+		return "", err
+	}
+	if w.die {
+		syscall.Kill(os.Getpid(), syscall.SIGKILL) // this process only
+		select {}
+	}
+	return target, nil
+}
+
+func (w workDir) Adopt(_ context.Context, th control.ThreadID, p core.Placement) (string, bool, error) {
+	target := filepath.Join(w.root, th.Key)
+	st, err := os.Lstat(target)
+	if os.IsNotExist(err) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	sys := st.Sys().(*syscall.Stat_t)
+	if p.Dir != target || uint64(sys.Dev) != p.Dev || sys.Ino != p.Inode {
+		return "", false, fmt.Errorf("not the directory this thread's Make placed: %s", target)
+	}
+	return target, true, nil
 }
 
 type options struct {
@@ -84,6 +132,7 @@ type options struct {
 	contextBytes  int
 	poll          time.Duration                     // 20ms when zero
 	inputTimeout  string                            // the fake's; 5s when empty
+	dieWhenPlaced bool                              // the workspace maker kills its process right after it placed a workspace
 	wrap          func(agent.Adapter) agent.Adapter // wraps the fake adapter, if set
 }
 
@@ -112,7 +161,7 @@ func build(root string, o options, log io.Writer) (*store.Store, *core.Core, *Ru
 		Instructions: o.instructions, StartTimeout: o.startTimeout, InterruptGrace: 5 * time.Second, Poll: cmp.Or(o.poll, 20*time.Millisecond),
 		IdlePeriod: o.idlePeriod, ContextBytes: o.contextBytes}
 	c := &core.Core{Store: st, Machine: m, Scopes: map[string]core.Scope{"s": {Enabled: true, Owner: "chat"}},
-		Workspaces: workDir(filepath.Join(root, "work")), Runner: r, Agent: "fake", Log: lg}
+		Workspaces: workDir{root: filepath.Join(root, "work"), die: o.dieWhenPlaced}, Runner: r, Agent: "fake", Log: lg}
 	return st, c, r, nil
 }
 

@@ -53,3 +53,36 @@ func TestDaemonKilledDuringALaunch(t *testing.T) {
 		})
 	}
 }
+
+// A daemon killed after a new thread's workspace is in place and before
+// it recorded it: after a restart the session starts in that workspace,
+// whose contents are as they were, and the first input is delivered once.
+func TestDaemonKilledAfterTheWorkspaceIsPlaced(t *testing.T) {
+	root := t.TempDir()
+	t.Cleanup(func() { killSessions(root) })
+	runDaemon(t, root, false, "die-at+dieplaced", "no such point", "reply once").waitKilled(t)
+	work := filepath.Join(root, "work", "t1")
+	before, err := os.ReadDir(work)
+	if err != nil {
+		t.Fatalf("the workspace is not in place: %v", err)
+	}
+	st := openStore(t, root)
+	d := runDaemon(t, root, false, "resume")
+	until(t, "the turn's end", st, "turn_ended", 1)
+	time.Sleep(300 * time.Millisecond)
+	d.kill()
+	got := counts(t, st)
+	if got["turn_started"] != 1 || got["input"] != 1 || got["text"] != 1 {
+		t.Errorf("events %v", got)
+	}
+	var dir string
+	st.DB.QueryRow(`SELECT json_extract(spec, '$.spec.Dir') FROM sessions WHERE id = 1`).Scan(&dir)
+	if dir != work {
+		t.Errorf("the session runs in %q, want %q", dir, work)
+	}
+	after, _ := os.ReadDir(work)
+	notes, _ := os.ReadFile(filepath.Join(work, "notes.txt"))
+	if len(after) != len(before) || len(after) != 1 || string(notes) != "someone's work\n" {
+		t.Errorf("the workspace changed: %v, then %v; notes %q", before, after, notes)
+	}
+}

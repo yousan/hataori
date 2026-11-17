@@ -64,7 +64,11 @@ func (c *reportingCodec) Decode(src agent.Source, line []byte) agent.Actions {
 // workspaceDirs makes one directory per thread under root.
 type workspaceDirs string
 
-func (w workspaceDirs) Make(_ context.Context, id control.ThreadID, _ string) (string, error) {
+func (workspaceDirs) Adopt(context.Context, control.ThreadID, core.Placement) (string, bool, error) {
+	return "", false, nil
+}
+
+func (w workspaceDirs) Make(_ context.Context, id control.ThreadID, _ string, _ func(core.Placement) error) (string, error) {
 	d := filepath.Join(string(w), id.Scope, id.Key)
 	return d, os.MkdirAll(d, 0o700)
 }

@@ -40,7 +40,23 @@ type Scope struct {
 
 // Workspaces makes the working directory of a new thread.
 type Workspaces interface {
-	Make(ctx context.Context, thread control.ThreadID, repo string) (dir string, err error)
+	// Make makes the working directory of a new thread. Right before the
+	// directory appears at its place, Make calls placed with what will
+	// identify it there; when placed fails, the directory does not appear.
+	Make(ctx context.Context, thread control.ThreadID, repo string, placed func(Placement) error) (dir string, err error)
+	// Adopt returns the directory of p when the one at p.Dir is the
+	// directory a Make that called placed with p put there, as when a daemon
+	// died before it recorded what Make returned. ok is false when nothing
+	// is there yet. Any other directory is refused. Adopt changes nothing.
+	Adopt(ctx context.Context, thread control.ThreadID, p Placement) (dir string, ok bool, err error)
+}
+
+// Placement identifies a directory a Make put in place: where, and the
+// device and inode of the directory it moved there.
+type Placement struct {
+	Dir   string `json:"dir"`
+	Dev   uint64 `json:"dev"`
+	Inode uint64 `json:"inode"`
 }
 
 // Runner runs agent sessions. The core tells it what to do; what the agent
@@ -77,6 +93,8 @@ type Launch struct {
 	// Context is what the thread said before, for a session that replaces
 	// one whose conversation the agent no longer has; empty otherwise.
 	Context string
+
+	placed *Placement // a workspace a Make placed before the daemon died
 }
 
 // FirstInput is the input a session starts with, as sessions.first_input
@@ -94,6 +112,9 @@ type FirstInput struct {
 	// Context goes before Text when the input is handed to the agent; the
 	// input event records Text alone. See Launch.Context.
 	Context string `json:"context,omitempty"`
+	// Placed is the workspace a Make was about to put in place, until Dir
+	// records what it returned.
+	Placed *Placement `json:"placed,omitempty"`
 }
 
 // pend stores input or an answer for a session's agent until the runner
@@ -434,12 +455,26 @@ func (a *api) Start(ctx context.Context, r control.StartRequest) (control.Thread
 // starts its agent. A failure is recorded as the session's end.
 func (c *Core) launch(ctx context.Context, l Launch, repo string) error {
 	var err error
-	if l.Dir == "" {
-		l.Dir, err = c.Workspaces.Make(ctx, l.Thread, repo)
+	record := func(f FirstInput) error {
+		f.Principal, f.Key, f.Text, f.Context = l.Principal, l.Key, l.Input.Text, l.Context
+		fi, _ := json.Marshal(f)
+		_, err := c.Store.DB.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, string(fi), l.Session)
+		return err
+	}
+	if l.Dir == "" && l.placed != nil {
+		// A Make before the daemon died may have put it in place.
+		var ok bool
+		if l.Dir, ok, err = c.Workspaces.Adopt(ctx, l.Thread, *l.placed); err == nil && ok {
+			err = record(FirstInput{Dir: l.Dir})
+		}
+	}
+	if l.Dir == "" && err == nil {
+		l.Dir, err = c.Workspaces.Make(ctx, l.Thread, repo, func(p Placement) error {
+			return record(FirstInput{Placed: &p})
+		})
 		if err == nil {
 			// A daemon that dies before the agent starts finds it again.
-			fi, _ := json.Marshal(FirstInput{Principal: l.Principal, Key: l.Key, Text: l.Input.Text, Dir: l.Dir})
-			_, err = c.Store.DB.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, string(fi), l.Session)
+			err = record(FirstInput{Dir: l.Dir})
 		}
 	}
 	if err == nil {
@@ -503,6 +538,7 @@ func (c *Core) Recover(ctx context.Context) error {
 			err = c.resume(ctx, x.l.Session, x.f.Principal, x.f.Key, in)
 		} else {
 			x.l.Dir, x.l.Principal, x.l.Key, x.l.Input, x.l.Context = x.f.Dir, x.f.Principal, x.f.Key, in, x.f.Context
+			x.l.placed = x.f.Placed
 			err = c.launch(ctx, x.l, x.repo)
 		}
 		if err != nil {

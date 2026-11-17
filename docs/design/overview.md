@@ -345,6 +345,8 @@ Who is allowed is in the config file, not in the database.
 
 A workspace is a full clone per thread. To avoid downloading a repository for every thread, hataori keeps one bare mirror per remote, fetches it before a clone, and clones from it. The rule: **a workspace stays valid if its mirror is deleted.** So the clone takes its objects by hard link or copy, not by a reference to the mirror's object store, and its `origin` points at the real remote. (c-lord references the mirror's objects and protects them by never pruning the mirror.) A mirror that cannot be fetched in time is used as it is, or skipped; it never blocks a thread.
 
+A clone is made in a directory of its own and renamed into place, so a half-made workspace never appears. Right before the rename, the core records where the workspace goes and the device and inode of the clone, which the rename keeps. A daemon that died before it recorded the finished workspace takes the directory at that place only when its device and inode match. If nothing is there, it clones again; any other directory there is refused and left as it is. Nothing is written into the workspace to mark it.
+
 ### 6.4 A second host
 
 A second host (for example a macOS machine) is another instance: its own root, database, agent logins and bot identity. Hosts share nothing and do not coordinate. A channel belongs to one instance, by config. Which bot answers tells you which host the work is on. Moving a thread between hosts is not supported; push the branch and start a thread on the other host.

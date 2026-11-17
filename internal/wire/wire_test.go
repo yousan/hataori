@@ -32,7 +32,13 @@ func (nopRunner) Resume(context.Context, int64, control.Principal, string, contr
 
 type dirs struct{}
 
-func (dirs) Make(context.Context, control.ThreadID, string) (string, error) { return "dir", nil }
+func (dirs) Make(context.Context, control.ThreadID, string, func(core.Placement) error) (string, error) {
+	return "dir", nil
+}
+
+func (dirs) Adopt(context.Context, control.ThreadID, core.Placement) (string, bool, error) {
+	return "", false, nil
+}
 
 const all = control.OpRead | control.OpStart | control.OpSend | control.OpAnswer | control.OpStop
 
