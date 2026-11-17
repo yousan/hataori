@@ -16,7 +16,20 @@ type codec struct {
 	seq      uint64
 	followed map[string]bool
 	asked    map[string]string // request id → the fake's question id (pipes) or hook call id (terminal)
+	running  bool              // a turn is running: input waits for its end, as an agent's own would
+	queue    []agent.Input     // input held until the turn ends
+	waiting  []*written        // inputs written and not yet reported, with an Input.ID
+	timeout  time.Duration     // for waiting; DefaultInputTimeout when zero
 }
+
+// written is an input written and not yet reported.
+type written struct {
+	id string
+	at time.Time // the first Tick after writing it
+}
+
+// DefaultInputTimeout is how long written input may go unreported.
+const DefaultInputTimeout = 30 * time.Second
 
 // report is any of the fake's reports.
 type report struct {
@@ -91,6 +104,13 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 			by = agent.ByAgent
 		}
 		a = c.events(agent.Event{Kind: agent.TurnStarted, StartedBy: by, Input: r.Input})
+		c.running = true
+		for i, w := range c.waiting {
+			if w.id == r.Input {
+				c.waiting = append(c.waiting[:i], c.waiting[i+1:]...)
+				break
+			}
+		}
 	case "text":
 		a = c.events(agent.Event{Kind: agent.Text, Text: r.Text, Final: r.Final})
 	case "tool":
@@ -126,8 +146,9 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 			e.Status = agent.Interrupted
 		}
 		a = c.events(e)
+		a = merge(a, c.ended())
 	case "interrupted":
-		a = c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted})
+		a = merge(c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted}), c.ended())
 	case "cannot-resume":
 		a = c.events(agent.Event{Kind: agent.SessionEnded, SessionID: r.Session, Reason: agent.CannotResume})
 	default:
@@ -149,16 +170,59 @@ const (
 	escapeKey = "\x1b"
 )
 
-// Input is one line on pipes, or one bracketed paste and Enter.
+// ended writes the input held during the turn that ended.
+func (c *codec) ended() agent.Actions {
+	c.running = false
+	var a agent.Actions
+	for _, in := range c.queue {
+		a = merge(a, c.write(in))
+	}
+	c.queue = nil
+	return a
+}
+
+func merge(a, b agent.Actions) agent.Actions {
+	a.Events = append(a.Events, b.Events...)
+	a.Write = append(a.Write, b.Write...)
+	a.Reply = append(a.Reply, b.Reply...)
+	a.Follow = append(a.Follow, b.Follow...)
+	a.Inputs = append(a.Inputs, b.Inputs...)
+	return a
+}
+
+// Input is one line on pipes, or one bracketed paste and Enter. During a
+// turn it is held until the turn ends. Written input is only recorded.
 func (c *codec) Input(in agent.Input) (agent.Actions, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	switch {
+	case in.Written:
+		if in.ID != "" {
+			c.waiting = append(c.waiting, &written{id: in.ID})
+		}
+		return agent.Actions{}, nil
+	case c.running:
+		c.queue = append(c.queue, in)
+		return agent.Actions{}, nil
+	}
+	return c.write(in), nil
+}
+
+// write is what writes in, and records it as waiting for its report.
+func (c *codec) write(in agent.Input) agent.Actions {
+	var a agent.Actions
 	if in.ID != "" {
+		a.Inputs = []string{in.ID}
+		c.waiting = append(c.waiting, &written{id: in.ID})
 		in.Text = inputIDPrefix + in.ID + "\n" + in.Text
 	}
 	if c.terminal {
-		return agent.Actions{Write: [][]byte{[]byte(pasteStart + in.Text + pasteEnd), []byte(pasteKey)}}, nil
+		a.Write = [][]byte{[]byte(pasteStart + in.Text + pasteEnd), []byte(pasteKey)}
+		return a
 	}
 	b, _ := json.Marshal(map[string]string{"input": in.Text})
-	return agent.Actions{Write: [][]byte{append(b, '\n')}}, nil
+	a.Write = [][]byte{append(b, '\n')}
+	return a
 }
 
 // ErrNotAsked is returned by Answer for a question that is not open.
@@ -189,5 +253,27 @@ func (c *codec) Interrupt() agent.Actions {
 	return agent.Actions{Write: [][]byte{[]byte("{\"interrupt\":true}\n")}}
 }
 
-// Tick does nothing: the fake has no deadlines.
-func (c *codec) Tick(time.Time) agent.Actions { return agent.Actions{} }
+// Tick ends the wait for written input that was never reported: after the
+// input timeout, as failed, "not delivered", naming the input.
+func (c *codec) Tick(now time.Time) agent.Actions {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	timeout := c.timeout
+	if timeout <= 0 {
+		timeout = DefaultInputTimeout
+	}
+	var evs []agent.Event
+	kept := c.waiting[:0]
+	for _, w := range c.waiting {
+		switch {
+		case w.at.IsZero():
+			w.at = now
+		case now.Sub(w.at) >= timeout:
+			evs = append(evs, agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered, Input: w.id})
+			continue
+		}
+		kept = append(kept, w)
+	}
+	c.waiting = kept
+	return c.events(evs...)
+}

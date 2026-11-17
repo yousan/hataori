@@ -139,3 +139,40 @@ func TestLateEndOfAnotherTurn(t *testing.T) {
 		t.Fatalf("held input written during the running turn: %q", a.Write)
 	}
 }
+
+// Input written before a restart is recorded, not written again: the
+// prompt it produced returns its id, and if none comes, its turn fails as
+// "not delivered", naming it.
+func TestWrittenInputIsRecordedOnly(t *testing.T) {
+	file := "plain/hooks/02-UserPromptSubmit.json"
+	c := started(t)
+	a, err := c.Input(agent.Input{ID: "in-3", Text: unwrapPaste(prompt(t, file)), Written: true})
+	if err != nil || len(a.Write) != 0 || len(a.Inputs) != 0 {
+		t.Fatalf("written input: %+v, %v", a, err)
+	}
+	evs := decodeFile(t, c, "u", file)
+	if summary(evs) != "turn(caller)" || evs.Events[0].Input != "in-3" {
+		t.Fatalf("its prompt: %s, input %q", summary(evs), evs.Events[0].Input)
+	}
+
+	c = started(t)
+	c.Input(agent.Input{ID: "in-4", Text: "never reported", Written: true})
+	now := time.Now()
+	c.Tick(now)
+	a = c.Tick(now.Add(DefaultInputTimeout))
+	if len(a.Events) != 1 || a.Events[0].Reason != agent.NotDelivered || a.Events[0].Input != "in-4" {
+		t.Fatalf("after the timeout: %+v", a.Events)
+	}
+}
+
+// Input held during a turn and written when it ends names itself in the
+// actions that write it.
+func TestHeldInputNamedWhenWritten(t *testing.T) {
+	c := started(t)
+	decodeFile(t, c, "u", "plain/hooks/02-UserPromptSubmit.json")
+	c.Input(agent.Input{ID: "in-5", Text: "later"})
+	a := decodeFile(t, c, "s", "plain/hooks/03-Stop.json")
+	if len(a.Write) != 2 || len(a.Inputs) != 1 || a.Inputs[0] != "in-5" {
+		t.Fatalf("written when the turn ended: %q, inputs %q", a.Write, a.Inputs)
+	}
+}

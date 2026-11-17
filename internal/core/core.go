@@ -87,9 +87,10 @@ type FirstInput struct {
 	Principal control.Principal `json:"principal"`
 	Key       string            `json:"key"`
 	Text      string            `json:"text"`
-	Sent      bool              `json:"sent,omitempty"` // the turn was started for it, and it was handed to the codec
-	Wake      bool              `json:"wake,omitempty"` // the session was asleep: its agent resumes
-	Dir       string            `json:"dir,omitempty"`  // the workspace, once it is made
+	Sent      bool              `json:"sent,omitempty"`    // the turn was started for it, and it was handed to the codec
+	Written   bool              `json:"written,omitempty"` // it was written to the agent; see agent.Input.Written
+	Wake      bool              `json:"wake,omitempty"`    // the session was asleep: its agent resumes
+	Dir       string            `json:"dir,omitempty"`     // the workspace, once it is made
 	// Context goes before Text when the input is handed to the agent; the
 	// input event records Text alone. See Launch.Context.
 	Context string `json:"context,omitempty"`

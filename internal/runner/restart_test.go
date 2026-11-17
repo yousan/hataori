@@ -24,8 +24,16 @@ import (
 func daemon(args []string) int {
 	root, terminal, mode := args[0], args[1] == "true", args[2]
 	o := options{terminal: terminal}
-	if m, ok := strings.CutSuffix(mode, "+idle"); ok {
-		mode, o.idlePeriod = m, 300*time.Millisecond
+	for {
+		if m, ok := strings.CutSuffix(mode, "+idle"); ok {
+			mode, o.idlePeriod = m, 300*time.Millisecond
+		} else if m, ok := strings.CutSuffix(mode, "+slow"); ok { // a new agent takes each input after 1.5s
+			mode, o.instructions = m, "input-delay 1500ms"
+		} else if m, ok := strings.CutSuffix(mode, "+quick"); ok { // written input goes unreported for 1s at most
+			mode, o.inputTimeout = m, "1s"
+		} else {
+			break
+		}
 	}
 	log, _ := os.OpenFile(filepath.Join(root, "daemon.log"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 	st, c, r, err := build(root, o, log)
@@ -41,6 +49,22 @@ func daemon(args []string) int {
 	if err := c.Recover(context.Background()); err != nil {
 		fmt.Fprintln(log, err)
 		return 1
+	}
+	if mode == "die-send" { // send to t1, and kill itself at a point of handing it over
+		point := args[3]
+		r.point = func(p string) {
+			if p == point {
+				syscall.Kill(os.Getpid(), syscall.SIGKILL) // this process only
+				select {}
+			}
+		}
+		os.Stdout.WriteString("up\n")
+		if err := owner(c).Send(context.Background(), control.ThreadID{Scope: "s", Key: "t1"}, "d1",
+			control.Input{Text: args[4]}, control.Deliver); err != nil {
+			fmt.Fprintln(log, err)
+			return 1
+		}
+		select {} // the write may come when the running turn ends
 	}
 	if mode == "die-at" { // kill itself at a point of the launch of a new thread's session
 		point := args[3]
@@ -145,6 +169,14 @@ func TestDaemonKilledDuringATurn(t *testing.T) {
 				time.Sleep(150 * time.Millisecond) // anything late would show now
 				d.kill()
 				got := counts(t, st)
+				if notDeliveredTurn(t, st) {
+					// Killed after the input was marked written and before it
+					// was: it failed, visibly, and nothing ran twice.
+					if got["turn_ended"] != 1 || got["text"] != 0 || got["tool_started"] != 0 {
+						t.Errorf("a turn not delivered, and events %v", got)
+					}
+					return
+				}
 				for kind, n := range once {
 					if got[kind] != n {
 						t.Errorf("%d %s events, want %d (all: %v)", got[kind], kind, n, got)
@@ -249,6 +281,9 @@ func TestDaemonKilledAroundTheFirstInput(t *testing.T) {
 				time.Sleep(300 * time.Millisecond)
 				d.kill()
 				got := counts(t, st)
+				if notDeliveredTurn(t, st) && got["turn_started"] == 1 && got["turn_ended"] == 1 && got["text"] == 0 {
+					return // killed between marking the input written and writing it: it failed, visibly
+				}
 				if got["turn_started"] != 1 || got["turn_ended"] != 1 || got["text"] != 1 {
 					t.Errorf("events %v", got)
 				}
@@ -279,4 +314,12 @@ func TestHostRebootEndsTheTurnAsInterrupted(t *testing.T) {
 		t.Fatalf("turn reason %q", reason)
 	}
 	d.kill()
+}
+
+// notDeliveredTurn reports whether a turn ended as "not delivered".
+func notDeliveredTurn(t *testing.T, st *store.Store) bool {
+	t.Helper()
+	var n int
+	st.DB.QueryRow(`SELECT count(*) FROM events WHERE kind = 'turn_ended' AND json_extract(data, '$.reason') = 'not delivered'`).Scan(&n)
+	return n > 0
 }
