@@ -18,6 +18,7 @@ type recorder struct {
 	agent.Adapter
 	mu     sync.Mutex
 	inputs map[string][]string
+	ids    map[string][]string // the Input.ID of each, in the same order
 }
 
 type recordingCodec struct {
@@ -33,8 +34,19 @@ func (r *recorder) NewCodec(s agent.Spec) agent.Codec {
 func (c *recordingCodec) Input(in agent.Input) (agent.Actions, error) {
 	c.r.mu.Lock()
 	c.r.inputs[c.dir] = append(c.r.inputs[c.dir], in.Text)
+	if c.r.ids == nil {
+		c.r.ids = map[string][]string{}
+	}
+	c.r.ids[c.dir] = append(c.r.ids[c.dir], in.ID)
 	c.r.mu.Unlock()
 	return c.Codec.Input(in)
+}
+
+// idsOf returns the Input.IDs of the inputs of session id.
+func (r *recorder) idsOf(root string, id int64) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.ids[StateDir(root, id)]...)
 }
 
 func (r *recorder) of(root string, id int64) []string {

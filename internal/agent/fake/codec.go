@@ -16,7 +16,6 @@ type codec struct {
 	seq      uint64
 	followed map[string]bool
 	asked    map[string]string // request id → the fake's question id (pipes) or hook call id (terminal)
-	inputs   []string          // the Input.IDs of inputs written and not yet reported, in order
 }
 
 // report is any of the fake's reports.
@@ -37,6 +36,7 @@ type report struct {
 	Status     string `json:"status"`
 	Reason     string `json:"reason"`
 	Background int    `json:"background"`
+	Input      string `json:"input"`
 }
 
 // call is a hook call as the session host records it.
@@ -87,12 +87,7 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 		if r.By == "agent" {
 			by = agent.ByAgent
 		}
-		e := agent.Event{Kind: agent.TurnStarted, StartedBy: by}
-		if by == agent.ByCaller && len(c.inputs) > 0 {
-			// The fake takes its input in order, a turn each.
-			e.Input, c.inputs = c.inputs[0], c.inputs[1:]
-		}
-		a = c.events(e)
+		a = c.events(agent.Event{Kind: agent.TurnStarted, StartedBy: by, Input: r.Input})
 	case "text":
 		a = c.events(agent.Event{Kind: agent.Text, Text: r.Text, Final: r.Final})
 	case "tool":
@@ -153,9 +148,9 @@ const (
 
 // Input is one line on pipes, or one bracketed paste and Enter.
 func (c *codec) Input(in agent.Input) (agent.Actions, error) {
-	c.mu.Lock()
-	c.inputs = append(c.inputs, in.ID)
-	c.mu.Unlock()
+	if in.ID != "" {
+		in.Text = inputIDPrefix + in.ID + "\n" + in.Text
+	}
 	if c.terminal {
 		return agent.Actions{Write: [][]byte{[]byte(pasteStart + in.Text + pasteEnd), []byte(pasteKey)}}, nil
 	}
