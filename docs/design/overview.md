@@ -965,6 +965,12 @@ type Sink interface {
 	Command(Command)  // a slash or text command
 }
 
+// Reconnected is implemented by a Sink that wants to catch up: Run calls
+// Connected after it connects and after each reconnect.
+type Reconnected interface {
+	Connected()
+}
+
 // Inbound is a received message. Direct says that its conversation is a
 // private one with the author; Service, that the service wrote it itself
 // (a notice that a thread was renamed, for example).

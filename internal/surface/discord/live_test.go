@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/disgoorg/disgo/gateway"
 	"github.com/disgoorg/disgo/rest"
 	"github.com/disgoorg/snowflake/v2"
 
@@ -18,7 +19,8 @@ import (
 // run only when asked for:
 //
 //	HATAORI_REAL_DISCORD=1 HATAORI_DISCORD_TOKEN_FILE=... HATAORI_DISCORD_BOT=<id> \
-//	HATAORI_DISCORD_CHANNEL=<test channel> go test -run TestLive -v ./internal/surface/discord
+//	HATAORI_DISCORD_CHANNEL=<test channel> HATAORI_DISCORD_OWNER=<person> \
+//	go test -run TestLive -v ./internal/surface/discord
 //
 // They post only into the test channel, in threads they open, and delete
 // what they post.
@@ -31,7 +33,7 @@ func liveDriver(t *testing.T) (*Driver, string) {
 		t.Fatal(err)
 	}
 	id := snowflake.MustParse(os.Getenv("HATAORI_DISCORD_BOT"))
-	d := newDriver(id, strings.TrimSpace(string(b)), "https://discord.com/api/v10", "", nil)
+	d := newDriver(id, strings.TrimSpace(string(b)), "https://discord.com/api/v10", gateway.URL, nil)
 	return d, os.Getenv("HATAORI_DISCORD_CHANNEL")
 }
 
@@ -96,5 +98,51 @@ func TestLivePosting(t *testing.T) {
 	}
 	if err := d.Delete(ctx, ref); err != nil {
 		t.Fatalf("deleting again: %v", err)
+	}
+}
+
+// Run connects with the driver's intents, checks the bot's identity, and
+// closes its one connection when ctx ends.
+func TestLiveRun(t *testing.T) {
+	d, _ := liveDriver(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := d.Run(ctx, newSink()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// One direct message to the person, without a notification, with a button;
+// edited without it, then deleted.
+func TestLiveDirect(t *testing.T) {
+	d, _ := liveDriver(t)
+	ctx := context.Background()
+	conv, err := d.OpenDirect(ctx, os.Getenv("HATAORI_DISCORD_OWNER"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := d.Post(ctx, conv, fmt.Sprintf("live-dm-%d", time.Now().UnixNano()), surface.Message{
+		Text: "[hataori test] a check of the driver; this message deletes itself", Quiet: true,
+		Choices: []surface.Choice{{Label: "Not needed", Token: "hataori-live-test"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := d.Delete(ctx, ref); err != nil {
+			t.Errorf("the test message was not deleted: %v", err)
+		}
+	}()
+	if err := d.Edit(ctx, ref, surface.Message{Text: "[hataori test] edited; deleting now"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := d.Since(ctx, conv, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range got {
+		if !m.Direct {
+			t.Errorf("%s is not marked direct", m.Ref.ID)
+		}
 	}
 }
