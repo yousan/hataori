@@ -15,6 +15,10 @@ var leaks = []struct {
 	re   *regexp.Regexp
 }{
 	{"a home directory path", regexp.MustCompile(`/home/[^/"\s\\]+|/Users/[^/"\s\\]+|-home-[A-Za-z0-9_]+-`)},
+	// An interpreter in the home directory (a virtual environment): even
+	// under /home/user, the rest of its path names the machine's own
+	// directories.
+	{"an interpreter in the home directory", regexp.MustCompile(`(/home|/Users)/[^"\s\\]*/bin/python[0-9.]*`)},
 	{"an e-mail address", regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`)},
 	{"an API key", regexp.MustCompile(`sk-ant-[A-Za-z0-9_-]+`)},
 	{"a JWT", regexp.MustCompile(`eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`)},

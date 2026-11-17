@@ -2,8 +2,11 @@
 """Turn raw captures into committable testdata.
 
 usage: scrub.py RAW_DIR OUT_DIR
+       scrub.py --again DIR
 
-OUT_DIR must not exist yet.
+OUT_DIR must not exist yet. --again rewrites the files of an already
+scrubbed DIR in place with the rules that are safe to run twice (today the
+interpreter path); the others would renumber what they replaced before.
 
 Every value that identifies this machine or account is read at run time,
 never written here: the home directory, the user name, the host name and
@@ -130,7 +133,22 @@ def transcript(data):
     return b"\n".join(out)
 
 
+def again(top):
+    for d, _, names in os.walk(top):
+        for n in names:
+            p = os.path.join(d, n)
+            with open(p, "rb") as f:
+                data = f.read()
+            new = HOME_PYTHON.sub(rb"/usr/bin/\1", data)
+            if new != data:
+                with open(p, "wb") as f:
+                    f.write(new)
+                print("rewrote", p, file=sys.stderr)
+
+
 def main():
+    if sys.argv[1] == "--again":
+        return again(sys.argv[2])
     raw, out = sys.argv[1], sys.argv[2]
     s = Scrubber()
     if os.path.exists(out):
