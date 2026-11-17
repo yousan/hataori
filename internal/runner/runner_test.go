@@ -432,6 +432,41 @@ func TestStopEndsARunningTool(t *testing.T) {
 	})
 }
 
+// A message sent right after a stop starts the next turn as soon as the
+// interrupted one ends. The watcher of the interrupt waits for the turn it
+// interrupted only: the next turn, longer than the grace period, runs to
+// its end.
+func TestNextTurnAfterAStopIsNotStopped(t *testing.T) {
+	forms(t, func(t *testing.T, terminal bool) {
+		f := newFixture(t, options{terminal: terminal})
+		f.start("tool long 60s\nreply late")
+		waitFor(t, "the tool", 15*time.Second, f.has("tool_started", 1))
+		// The watcher looks only once the next turn has started, so that it
+		// never sees the session between the two turns.
+		var once sync.Once
+		f.run.point = func(p string) {
+			if p == "interrupt watch" {
+				once.Do(func() { waitFor(t, "the next turn", 15*time.Second, f.has("turn_started", 2)) })
+			}
+		}
+		api := owner(f.core)
+		if err := api.Stop(context.Background(), thread); err != nil {
+			t.Fatal(err)
+		}
+		if err := api.Send(context.Background(), thread, "k2", control.Input{Text: "tool wait 7s\nreply second"}, control.Deliver); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "the end of the next turn", 20*time.Second, f.has("turn_ended", 2))
+		d := f.eventData("turn_ended")
+		if d[0]["reason"] != session.ReasonInterrupted || d[1]["outcome"] != "completion" {
+			t.Fatalf("turn ends %v; want the first interrupted and the next completed", d)
+		}
+		if strings.Contains(f.log.String(), "stopping the session") {
+			t.Fatalf("the session was stopped: %s", f.log.String())
+		}
+	})
+}
+
 func readFile(t *testing.T, p string) []byte {
 	b, err := os.ReadFile(p)
 	if err != nil {

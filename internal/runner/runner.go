@@ -1340,22 +1340,31 @@ func (r *Runner) Answer(ctx context.Context, id, pending int64, req string, ans 
 }
 
 // Interrupt stops a session's running turn: the agent's own interrupt
-// first. When the turn has not ended after the grace period, every process
-// of the session is stopped.
+// first. When that turn has not ended after the grace period, every process
+// of the session is stopped; a turn started after it is not watched.
 func (r *Runner) Interrupt(ctx context.Context, id int64) error {
 	lv, err := r.get(id)
 	if err != nil {
 		return err
 	}
+	// The turn the interrupt is for. Once it has ended the watch is over,
+	// even when the next turn has started meanwhile.
+	var turn int64
+	r.Store.DB.QueryRow(`SELECT coalesce(max(id), 0) FROM turns WHERE session_id = ? AND ended_at IS NULL`, id).Scan(&turn)
 	lv.mu.Lock()
 	r.do(lv, lv.codec.Interrupt())
 	lv.mu.Unlock()
 	go func() {
 		deadline := time.Now().Add(r.interruptGrace())
 		for time.Now().Before(deadline) {
+			r.at("interrupt watch")
 			var state string
 			if r.Store.DB.QueryRow(`SELECT state FROM sessions WHERE id = ?`, id).Scan(&state) == nil &&
 				control.State(state) != control.Running {
+				return
+			}
+			var ended sql.NullInt64
+			if turn != 0 && r.Store.DB.QueryRow(`SELECT ended_at FROM turns WHERE id = ?`, turn).Scan(&ended) == nil && ended.Valid {
 				return
 			}
 			time.Sleep(r.poll())
