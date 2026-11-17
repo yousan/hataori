@@ -1,0 +1,23 @@
+{
+ "body": {
+  "code": 10008,
+  "message": "Unknown Message"
+ },
+ "date": "2026-11-17T02:26:14Z",
+ "headers": {
+  "content-type": "application/json",
+  "x-ratelimit-bucket": "00000000000000000000000000000002",
+  "x-ratelimit-limit": "3",
+  "x-ratelimit-remaining": "1",
+  "x-ratelimit-reset": "1794882374.312",
+  "x-ratelimit-reset-after": "0.334"
+ },
+ "request": {
+  "body": null,
+  "files": [],
+  "method": "DELETE",
+  "path": "/channels/1000000000000000010/messages/1000000000000000015"
+ },
+ "source": "rest",
+ "status": 404
+}

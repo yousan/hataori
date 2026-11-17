@@ -1,0 +1,85 @@
+{
+ "body": {
+  "attachments": [],
+  "author": {
+   "accent_color": null,
+   "avatar": null,
+   "avatar_decoration_data": null,
+   "banner": null,
+   "banner_color": null,
+   "bot": true,
+   "clan": null,
+   "collectibles": null,
+   "discriminator": "0000",
+   "display_name_styles": null,
+   "flags": 0,
+   "global_name": null,
+   "id": "1000000000000000007",
+   "primary_guild": null,
+   "public_flags": 0,
+   "username": "name-1"
+  },
+  "channel_id": "1000000000000000028",
+  "components": [
+   {
+    "components": [
+     {
+      "custom_id": "hataori-test-choice",
+      "id": 2,
+      "label": "Press me",
+      "style": 1,
+      "type": 2
+     }
+    ],
+    "id": 1,
+    "type": 1
+   }
+  ],
+  "content": "[hataori test] Please press the button below, then send me one direct message.",
+  "edited_timestamp": "2026-11-17T02:27:47.258147+00:00",
+  "embeds": [],
+  "flags": 0,
+  "id": "1000000000000000029",
+  "mention_everyone": false,
+  "mention_roles": [],
+  "mentions": [],
+  "pinned": false,
+  "timestamp": "2026-11-17T02:27:46.640000+00:00",
+  "tts": false,
+  "type": 0
+ },
+ "date": "2026-11-17T02:27:47Z",
+ "headers": {
+  "content-type": "application/json",
+  "x-ratelimit-bucket": "00000000000000000000000000000003",
+  "x-ratelimit-limit": "5",
+  "x-ratelimit-remaining": "4",
+  "x-ratelimit-reset": "1794882468.213",
+  "x-ratelimit-reset-after": "1.000"
+ },
+ "request": {
+  "body": {
+   "components": [
+    {
+     "components": [
+      {
+       "custom_id": "hataori-test-choice",
+       "id": 2,
+       "label": "Press me",
+       "style": 1,
+       "type": 2
+      }
+     ],
+     "id": 1,
+     "type": 1
+    }
+   ],
+   "content": "[hataori test] Please press the button below, then send me one direct message."
+  },
+  "files": [],
+  "method": "PATCH",
+  "path": "/channels/1000000000000000028/messages/1000000000000000029"
+ },
+ "source": "rest",
+ "status": 200
+}

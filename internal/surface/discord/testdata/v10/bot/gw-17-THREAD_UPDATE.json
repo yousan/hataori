@@ -1,0 +1,27 @@
+{
+ "d": {
+  "flags": 0,
+  "guild_id": "1000000000000000004",
+  "id": "1000000000000000010",
+  "last_message_id": "1000000000000000019",
+  "member_count": 1,
+  "message_count": 6,
+  "name": "[hataori test] thread, renamed",
+  "owner_id": "1000000000000000007",
+  "parent_id": "1000000000000000005",
+  "rate_limit_per_user": 0,
+  "thread_metadata": {
+   "archive_timestamp": "2026-11-17T02:26:01.434000+00:00",
+   "archived": false,
+   "auto_archive_duration": 60,
+   "create_timestamp": "2026-11-17T02:26:01.434000+00:00",
+   "locked": false
+  },
+  "total_message_sent": 7,
+  "type": 11
+ },
+ "op": 0,
+ "s": 17,
+ "source": "gateway",
+ "t": "THREAD_UPDATE"
+}
