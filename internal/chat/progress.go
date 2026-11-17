@@ -28,11 +28,7 @@ type quiet struct {
 	since  time.Time // its time
 	tools  []tool    // running, in the order they started
 	line   bool      // the line's post is written
-	edit   int64     // the last edit written
-	wrote  time.Time // when the last post or edit was written
-	// gone is the delete of the line of the stretch before, if any. No
-	// new line is posted while it is not done, so a thread never has two.
-	gone *RowKey
+	edit   int64     // the last edit written (0: the post)
 }
 
 type tool struct{ id, name string }
@@ -95,30 +91,34 @@ func (r *reader) track(e control.Event) []Row {
 		return nil
 	}
 	var rows []Row
-	gone := q.gone
 	// The line was due, so it may have been posted, also by a reader
 	// before a restart; a delete of a line never posted is dropped.
 	if q.line || e.Time.Sub(q.since) >= r.quietAfter {
-		gone = &RowKey{Event: e.Pos, Part: deletePart}
 		rows = append(rows, Row{Event: e.Pos, Part: deletePart, Conv: convOf(e.Thread), Decoration: true,
 			Op: Delete, Target: &RowKey{Event: q.anchor, Part: linePart}})
+		// A line is posted only once the delete before it is done, so
+		// while one is waiting, this stretch had no line to delete.
+		if g := r.gone[e.Thread]; g == nil || r.done(*g) {
+			r.gone[e.Thread] = &RowKey{Event: e.Pos, Part: deletePart}
+		}
 	}
 	if e.Kind == "turn_ended" {
 		delete(r.quiet, e.Thread)
 	} else {
-		r.quiet[e.Thread] = &quiet{anchor: e.Pos, since: e.Time, tools: q.tools, gone: gone}
+		r.quiet[e.Thread] = &quiet{anchor: e.Pos, since: e.Time, tools: q.tools}
 	}
 	return rows
+}
+
+// done reports whether row k is sent or given up.
+func (r *reader) done(k RowKey) bool {
+	state, _, err := r.outbox.state(r.ctx, k)
+	return err == nil && state != "pending"
 }
 
 // tick returns the rows that post or edit the progress lines due at now.
 func (f *FrontEnd) tick(ctx context.Context, r *reader, now time.Time) []Row {
 	var rows []Row
-	// done reports whether row k is posted or given up; pending ones wait.
-	done := func(k RowKey) bool {
-		state, _, err := f.Outbox.state(ctx, k)
-		return err == nil && state != "pending"
-	}
 	for id, q := range r.quiet {
 		el := now.Sub(q.since)
 		if el < f.quietAfter() {
@@ -127,20 +127,22 @@ func (f *FrontEnd) tick(ctx context.Context, r *reader, now time.Time) []Row {
 		n := int64((el - f.quietAfter()) / f.editEvery())
 		m := surface.Message{Text: progressText(el, q.tools), Quiet: true}
 		if !q.line {
-			if q.gone != nil && !done(*q.gone) {
+			if g := r.gone[id]; g != nil && !r.done(*g) {
 				continue // the line before is still shown
 			}
 			rows = append(rows, Row{Event: q.anchor, Part: linePart, Conv: convOf(id), Message: m, Decoration: true})
-			q.line, q.wrote = true, now
+			q.line = true
 			if n == 0 {
 				continue
 			}
-		} else if n <= q.edit || now.Sub(q.wrote) < f.editEvery() || !done(RowKey{Event: q.anchor, Part: linePart + int(q.edit)}) {
-			// Not due, or the last change is not done: one at a time,
-			// so changes that failed for a while do not come in a burst.
+		} else if n <= q.edit {
+			continue
+		} else if at, ok := f.Outbox.sentAt(ctx, RowKey{Event: q.anchor, Part: linePart + int(q.edit)}); !ok || now.Sub(at) < f.editEvery() {
+			// The last change is not sent, or was sent less than EditEvery
+			// ago: one change at a time, at that pace.
 			continue
 		}
-		q.edit, q.wrote = n, now
+		q.edit = n
 		rows = append(rows, Row{Event: q.anchor, Part: linePart + int(n), Conv: convOf(id), Message: m, Decoration: true,
 			Op: Edit, Target: &RowKey{Event: q.anchor, Part: linePart}})
 	}

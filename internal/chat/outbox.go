@@ -73,6 +73,7 @@ type Outbox struct {
 	// Retry is how long the sender waits before trying a failed post
 	// again (default 5s).
 	Retry time.Duration
+	Now   func() time.Time // the clock of sent_at; time.Now when nil
 
 	once sync.Once
 	wake chan struct{}
@@ -195,6 +196,24 @@ func (o *Outbox) Sent(ctx context.Context, event uint64, part int) (surface.Mess
 		return surface.MessageRef{}, false, fmt.Errorf("chat: outbox: %w", err)
 	}
 	return r, true, nil
+}
+
+func (o *Outbox) now() time.Time {
+	if o.Now != nil {
+		return o.Now()
+	}
+	return time.Now()
+}
+
+// sentAt returns when row k was sent, and false while it is not.
+func (o *Outbox) sentAt(ctx context.Context, k RowKey) (time.Time, bool) {
+	var ms sql.NullInt64
+	err := o.Store.DB.QueryRowContext(ctx, `SELECT sent_at FROM chat_outbox WHERE client = ? AND event = ? AND part = ? AND state = 'sent'`,
+		o.Client, k.Event, k.Part).Scan(&ms)
+	if err != nil || !ms.Valid {
+		return time.Time{}, false
+	}
+	return time.UnixMilli(ms.Int64), true
 }
 
 // state returns the state of a row ("" when it does not exist) and its
@@ -382,7 +401,7 @@ func (o *Outbox) send(ctx context.Context, conv surface.Conversation, r pending)
 	ref, err := o.Driver.Post(ctx, conv, k, m)
 	if err == nil {
 		return o.record(ctx, posted, r.id, `UPDATE chat_outbox SET state = 'sent', ref = ?, sent_at = ? WHERE id = ?`,
-			ref.ID, time.Now().UnixMilli(), r.id)
+			ref.ID, o.now().UnixMilli(), r.id)
 	}
 	if ctx.Err() != nil {
 		return stuck
@@ -425,7 +444,7 @@ func (o *Outbox) change(ctx context.Context, r pending, meta message, m surface.
 	}
 	if err == nil {
 		return o.record(ctx, posted, r.id, `UPDATE chat_outbox SET state = 'sent', ref = ?, sent_at = ? WHERE id = ?`,
-			to.ID, time.Now().UnixMilli(), r.id)
+			to.ID, o.now().UnixMilli(), r.id)
 	}
 	if ctx.Err() != nil {
 		return stuck

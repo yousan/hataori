@@ -26,7 +26,7 @@ var t0 = time.Date(2026, 1, 2, 3, 0, 0, 0, time.UTC)
 
 func withClock(c *clock) func(*FrontEnd) {
 	return func(fe *FrontEnd) {
-		fe.Now, fe.Tick = c.now, 2*time.Millisecond
+		fe.Now, fe.Tick, fe.Outbox.Now = c.now, 2*time.Millisecond, c.now
 	}
 }
 
@@ -190,21 +190,32 @@ func TestRestartDuringAQuietStretchUsesTheSameLine(t *testing.T) {
 	}
 }
 
-// Output that arrives while the front end is down still removes the line.
+// Output, or the end of the turn, while the front end is down still
+// removes the line.
 func TestOutputWhileDownRemovesTheLineAfterARestart(t *testing.T) {
-	c := &clock{t: t0}
-	f := newFront(t, workspaces{}, withClock(c))
-	id, trigger := f.started(t)
-	stop := f.showing(t)
-	f.at(t, id, 0, "turn_started", map[string]any{"turn": 1, "by": "caller", "key": trigger.Ref.ID})
-	f.fe.Outbox.Store.DB.Exec(`UPDATE threads SET state = 'running'`)
-	f.advance(t, c, 95)
-	f.waitLines(t, id, "post Still working: 1m 35s without output.")
-	stop()
-	f.at(t, id, 100, "text", map[string]any{"text": "While down.", "final": false})
-	c.set(t0.Add(110 * time.Second))
-	f.showing(t)
-	f.waitLines(t, id, "post Still working: 1m 35s without output.", "delete")
+	for _, tc := range []struct {
+		name, kind, state string
+		data              map[string]any
+	}{
+		{"text", "text", "running", map[string]any{"text": "While down.", "final": false}},
+		{"turn ended", "turn_ended", "idle", map[string]any{"turn": 1, "by": "caller", "outcome": "completion", "background": 0}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &clock{t: t0}
+			f := newFront(t, workspaces{}, withClock(c))
+			id, trigger := f.started(t)
+			stop := f.showing(t)
+			f.at(t, id, 0, "turn_started", map[string]any{"turn": 1, "by": "caller", "key": trigger.Ref.ID})
+			f.advance(t, c, 95)
+			f.waitLines(t, id, "post Still working: 1m 35s without output.")
+			stop()
+			f.at(t, id, 100, tc.kind, tc.data)
+			f.fe.Outbox.Store.DB.Exec(`UPDATE threads SET state = ?`, tc.state)
+			c.set(t0.Add(110 * time.Second))
+			f.showing(t)
+			f.waitLines(t, id, "post Still working: 1m 35s without output.", "delete")
+		})
+	}
 }
 
 // While the line of the stretch before cannot be deleted, no second one
@@ -223,8 +234,16 @@ func TestNoSecondLineWhileTheFirstIsNotDeleted(t *testing.T) {
 	settle()
 	f.postedUntil(t, id, "Out.")
 	f.waitLines(t, id, "post Still working: 1m 35s without output.")
+	// Nor in the next turn, nor after a stretch that had no line.
+	f.at(t, id, 300, "turn_ended", map[string]any{"turn": 1, "by": "caller", "outcome": "completion", "background": 0})
+	f.at(t, id, 310, "turn_started", map[string]any{"turn": 2, "by": "caller", "key": trigger.Ref.ID})
+	f.at(t, id, 450, "text", map[string]any{"text": "Out again.", "final": false})
+	f.advance(t, c, 600)
+	settle()
+	f.postedUntil(t, id, "Out again.")
+	f.waitLines(t, id, "post Still working: 1m 35s without output.")
 	f.driver.Fail(fake.OpDelete, 0, nil)
-	f.waitLines(t, id, "post Still working: 1m 35s without output.", "delete", "post Still working: 1m 40s without output.")
+	f.waitLines(t, id, "post Still working: 1m 35s without output.", "delete", "post Still working: 2m 30s without output.")
 }
 
 // Text that shows nothing is not output: it neither ends a stretch nor
