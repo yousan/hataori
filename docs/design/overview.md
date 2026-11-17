@@ -949,8 +949,10 @@ type Driver interface {
 }
 
 // Factory makes a Driver from its opaque section of the instance's config.
-// Register(name, f) fails when name is taken; Lookup(name) finds it.
-type Factory func(settings []byte) (Driver, error)
+// config is the instance's config directory, the one place a driver may read
+// a secret from. Register(name, f) fails when name is taken; Lookup(name)
+// finds it.
+type Factory func(config *os.Root, settings []byte) (Driver, error)
 
 // Sink is implemented by the chat front end, not by the core.
 type Sink interface {
