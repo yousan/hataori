@@ -124,6 +124,11 @@ func (f *FrontEnd) show(ctx context.Context) error {
 			return err
 		}
 		rows = append(append(r.track(e), rows...), r.subagents(e)...)
+		lr, err := f.loginEvent(ctx, e)
+		if err != nil {
+			return err
+		}
+		rows = append(rows, lr...)
 		err = f.Outbox.Store.Update(ctx, func(tx *store.Tx) error {
 			if err := f.Outbox.WriteTx(ctx, tx, rows...); err != nil {
 				return err

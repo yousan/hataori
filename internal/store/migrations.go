@@ -182,6 +182,23 @@ var migrations = []Migration{
 			pos    INTEGER NOT NULL
 		)`,
 	)},
+	{Name: "chat: login outages", Up: execAll(
+		// The owner's direct message about each login outage: the threads
+		// it stopped and the message's reference. Never the sign-in link
+		// or a code. done: the message shows the end of the outage.
+		`CREATE TABLE chat_logins (
+			client     TEXT NOT NULL, -- the chat front end's name
+			outage     INTEGER NOT NULL,
+			agent      TEXT NOT NULL,
+			threads    TEXT NOT NULL, -- JSON array of thread ids
+			dm_channel TEXT NOT NULL DEFAULT '',
+			dm_thread  TEXT NOT NULL DEFAULT '',
+			dm_ref     TEXT NOT NULL DEFAULT '',
+			closed     INTEGER NOT NULL DEFAULT 0,
+			done       INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (client, outage)
+		)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {
