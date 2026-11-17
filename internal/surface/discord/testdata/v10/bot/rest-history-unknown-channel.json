@@ -1,0 +1,23 @@
+{
+ "body": {
+  "code": 10003,
+  "message": "Unknown Channel"
+ },
+ "date": "2026-11-17T02:26:09Z",
+ "headers": {
+  "content-type": "application/json",
+  "x-ratelimit-bucket": "00000000000000000000000000000004",
+  "x-ratelimit-limit": "5",
+  "x-ratelimit-remaining": "4",
+  "x-ratelimit-reset": "1794882370.177",
+  "x-ratelimit-reset-after": "1.000"
+ },
+ "request": {
+  "body": null,
+  "files": [],
+  "method": "GET",
+  "path": "/channels/1/messages?limit=2"
+ },
+ "source": "rest",
+ "status": 404
+}

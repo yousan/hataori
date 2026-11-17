@@ -1,0 +1,28 @@
+{
+ "body": {
+  "global": false,
+  "message": "You are being rate limited.",
+  "retry_after": 0.462
+ },
+ "date": "2026-11-17T02:26:18Z",
+ "headers": {
+  "content-type": "application/json",
+  "retry-after": "5",
+  "x-ratelimit-bucket": "00000000000000000000000000000005",
+  "x-ratelimit-limit": "5",
+  "x-ratelimit-remaining": "0",
+  "x-ratelimit-reset": "1794882382.740",
+  "x-ratelimit-reset-after": "4.462",
+  "x-ratelimit-scope": "user"
+ },
+ "request": {
+  "body": {
+   "content": "[hataori test] burst 9"
+  },
+  "files": [],
+  "method": "POST",
+  "path": "/channels/1000000000000000010/messages"
+ },
+ "source": "rest",
+ "status": 429
+}

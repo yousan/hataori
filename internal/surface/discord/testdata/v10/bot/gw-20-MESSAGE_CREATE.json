@@ -1,0 +1,55 @@
+{
+ "d": {
+  "attachments": [],
+  "author": {
+   "avatar": null,
+   "avatar_decoration_data": null,
+   "bot": true,
+   "clan": null,
+   "collectibles": null,
+   "discriminator": "0000",
+   "display_name_styles": null,
+   "global_name": null,
+   "id": "1000000000000000007",
+   "primary_guild": null,
+   "public_flags": 0,
+   "username": "name-1"
+  },
+  "channel_id": "1000000000000000010",
+  "channel_type": 11,
+  "components": [],
+  "content": "[hataori test] burst 2",
+  "edited_timestamp": null,
+  "embeds": [],
+  "flags": 0,
+  "guild_id": "1000000000000000004",
+  "id": "1000000000000000021",
+  "member": {
+   "avatar": null,
+   "banner": null,
+   "communication_disabled_until": null,
+   "deaf": false,
+   "flags": 0,
+   "joined_at": "2026-11-17T02:18:35.317512+00:00",
+   "mute": false,
+   "nick": null,
+   "pending": false,
+   "premium_since": null,
+   "roles": [
+    "1000000000000000008"
+   ]
+  },
+  "mention_everyone": false,
+  "mention_roles": [],
+  "mentions": [],
+  "pinned": false,
+  "position": 8,
+  "timestamp": "2026-11-17T02:26:15.106000+00:00",
+  "tts": false,
+  "type": 0
+ },
+ "op": 0,
+ "s": 20,
+ "source": "gateway",
+ "t": "MESSAGE_CREATE"
+}

@@ -1,0 +1,33 @@
+{
+ "body": {
+  "code": 50035,
+  "errors": {
+   "after": {
+    "_errors": [
+     {
+      "code": "NUMBER_TYPE_COERCE",
+      "message": "Value \"not-a-snowflake\" is not snowflake."
+     }
+    ]
+   }
+  },
+  "message": "Invalid Form Body"
+ },
+ "date": "2026-11-17T02:26:08Z",
+ "headers": {
+  "content-type": "application/json",
+  "x-ratelimit-bucket": "00000000000000000000000000000004",
+  "x-ratelimit-limit": "5",
+  "x-ratelimit-remaining": "2",
+  "x-ratelimit-reset": "1794882371.662",
+  "x-ratelimit-reset-after": "2.830"
+ },
+ "request": {
+  "body": null,
+  "files": [],
+  "method": "GET",
+  "path": "/channels/1000000000000000010/messages?after=not-a-snowflake&limit=2"
+ },
+ "source": "rest",
+ "status": 400
+}

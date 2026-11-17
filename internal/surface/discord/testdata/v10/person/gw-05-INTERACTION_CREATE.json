@@ -1,0 +1,118 @@
+{
+ "d": {
+  "app_permissions": "562949953863680",
+  "application_id": "1000000000000000007",
+  "attachment_size_limit": 20971520,
+  "authorizing_integration_owners": {
+   "0": "0"
+  },
+  "channel": {
+   "flags": 0,
+   "id": "1000000000000000028",
+   "last_message_id": "1000000000000000029",
+   "recipient_flags": 0,
+   "recipients": [
+    {
+     "avatar": null,
+     "avatar_decoration_data": null,
+     "bot": true,
+     "clan": null,
+     "collectibles": null,
+     "discriminator": "0000",
+     "display_name_styles": null,
+     "global_name": null,
+     "id": "1000000000000000007",
+     "primary_guild": null,
+     "public_flags": 0,
+     "username": "name-1"
+    }
+   ],
+   "type": 1
+  },
+  "channel_id": "1000000000000000028",
+  "context": 1,
+  "data": {
+   "component_type": 2,
+   "custom_id": "hataori-test-choice",
+   "id": 2
+  },
+  "entitlements": [],
+  "id": "1000000000000000030",
+  "locale": "ja",
+  "message": {
+   "attachments": [],
+   "author": {
+    "avatar": null,
+    "avatar_decoration_data": null,
+    "bot": true,
+    "clan": null,
+    "collectibles": null,
+    "discriminator": "0000",
+    "display_name_styles": null,
+    "global_name": null,
+    "id": "1000000000000000007",
+    "primary_guild": null,
+    "public_flags": 0,
+    "username": "name-1"
+   },
+   "channel_id": "1000000000000000028",
+   "components": [
+    {
+     "components": [
+      {
+       "custom_id": "hataori-test-choice",
+       "id": 2,
+       "label": "Press me",
+       "style": 1,
+       "type": 2
+      }
+     ],
+     "id": 1,
+     "type": 1
+    }
+   ],
+   "content": "[hataori test] Please press the button below, then send me one direct message.",
+   "edited_timestamp": "2026-11-17T02:27:47.258000+00:00",
+   "embeds": [],
+   "flags": 0,
+   "id": "1000000000000000029",
+   "mention_everyone": false,
+   "mention_roles": [],
+   "mentions": [],
+   "pinned": false,
+   "timestamp": "2026-11-17T02:27:46.640000+00:00",
+   "tts": false,
+   "type": 0
+  },
+  "token": "REDACTED-TOKEN-1",
+  "type": 3,
+  "user": {
+   "avatar": "0000000000000000000000000000000b",
+   "avatar_decoration_data": null,
+   "clan": {
+    "badge": "0000000000000000000000000000000a",
+    "identity_enabled": true,
+    "identity_guild_id": "1000000000000000002",
+    "tag": "TAG"
+   },
+   "collectibles": null,
+   "discriminator": "0",
+   "display_name_styles": null,
+   "global_name": "name-3",
+   "id": "1000000000000000001",
+   "primary_guild": {
+    "badge": "0000000000000000000000000000000a",
+    "identity_enabled": true,
+    "identity_guild_id": "1000000000000000002",
+    "tag": "TAG"
+   },
+   "public_flags": 0,
+   "username": "name-2"
+  },
+  "version": 1
+ },
+ "op": 0,
+ "s": 5,
+ "source": "gateway",
+ "t": "INTERACTION_CREATE"
+}

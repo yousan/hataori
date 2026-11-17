@@ -1,0 +1,43 @@
+{
+ "body": {
+  "accent_color": null,
+  "avatar": null,
+  "avatar_decoration_data": null,
+  "banner": null,
+  "banner_color": null,
+  "bio": "",
+  "bot": true,
+  "clan": null,
+  "collectibles": null,
+  "discriminator": "0000",
+  "display_name_styles": null,
+  "email": null,
+  "flags": 0,
+  "global_name": null,
+  "id": "1000000000000000007",
+  "locale": "en-US",
+  "mfa_enabled": true,
+  "premium_type": 0,
+  "primary_guild": null,
+  "public_flags": 0,
+  "username": "name-1",
+  "verified": true
+ },
+ "date": "2026-11-17T02:26:00Z",
+ "headers": {
+  "content-type": "application/json",
+  "x-ratelimit-bucket": "00000000000000000000000000000008",
+  "x-ratelimit-limit": "1000",
+  "x-ratelimit-remaining": "999",
+  "x-ratelimit-reset": "1794882360.565",
+  "x-ratelimit-reset-after": "0.001"
+ },
+ "request": {
+  "body": null,
+  "files": [],
+  "method": "GET",
+  "path": "/users/@me"
+ },
+ "source": "rest",
+ "status": 200
+}
