@@ -82,6 +82,9 @@ func (f *FrontEnd) LoginUpdate(u relay.Update) {
 		fl.done, fl.detail, fl.waiting, fl.link, fl.showCode = u.Done, u.Detail, false, "", ""
 		switch u.Done {
 		case relay.LoggedIn:
+			// Nothing to keep: the message says so once the outage closes,
+			// and the next outage starts afresh.
+			delete(l.flows, u.Agent)
 			reply = "Logged in again."
 		case relay.Failed:
 			reply = "The login failed: " + u.Detail
@@ -382,7 +385,7 @@ func (f *FrontEnd) loginMessage(ctx context.Context, o outage) surface.Message {
 	}
 	l.mu.Unlock()
 	switch {
-	case o.closed || flow.done == relay.LoggedIn:
+	case o.closed:
 		b.WriteString("Logged in again.")
 	case f.Relay == nil:
 		b.WriteString("Log the agent in again at the host.")
