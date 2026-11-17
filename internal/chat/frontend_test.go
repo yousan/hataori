@@ -259,3 +259,35 @@ func TestParseTrigger(t *testing.T) {
 		}
 	}
 }
+
+// The daemon died after the core started the thread and before the
+// front end wrote its rows; the driver delivers the message again, edited.
+func TestRedeliveryAfterACrashShowsTheFirstText(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ws   workspaces
+		want string
+	}{
+		{"started", workspaces{}, "first"},
+		{"workspace failed", workspaces{err: errors.New("repository not found")}, "first|This thread could not start: repository not found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFront(t, tc.ws)
+			store := f.fe.Outbox.Store
+			// Keep the sender from posting before the rows are taken away.
+			store.DB.Exec(`CREATE TRIGGER lost AFTER INSERT ON chat_outbox BEGIN DELETE FROM chat_outbox WHERE id = NEW.id; END`)
+			in := f.deliver(chanConv, fake.Webhook(hook), "!go repo:https://example.com/r.git first")
+			store.DB.Exec(`DROP TRIGGER lost`)
+			in.Text = "!go repo:https://example.com/r.git edited"
+			f.fe.Message(in)
+			th := f.threads()[0].Opened
+			if err := f.fe.Outbox.Write(context.Background(), row(1<<40, 0, th, "marker")); err != nil {
+				t.Fatal(err)
+			}
+			waitFor(t, "the marker", func() bool { _, ok, _ := f.fe.Outbox.Sent(context.Background(), 1<<40, 0); return ok })
+			if got := strings.Join(postsIn(f.driver, th), "|"); got != tc.want+"|marker" {
+				t.Fatalf("thread shows %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

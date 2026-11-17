@@ -2,12 +2,16 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
+	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/store"
 	"github.com/yousan/hataori/internal/surface"
 )
 
@@ -42,10 +46,13 @@ var (
 
 // Run connects the driver and sends the outbox until ctx ends.
 func (f *FrontEnd) Run(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	f.ctx = ctx
 	done := make(chan error, 1)
 	go func() { done <- f.Outbox.Run(ctx) }()
 	err := f.Driver.Run(ctx, f)
+	cancel() // the driver stopped: stop the sender too
 	<-done
 	return err
 }
@@ -99,7 +106,32 @@ func (f *FrontEnd) Message(in surface.Inbound) {
 		refuse("no prompt")
 		return
 	}
-	f.start(f.context(), in, o)
+	ctx := f.context()
+	// A message delivered again (after an outage, or edited since) starts
+	// what it started the first time.
+	text, err := f.remember(ctx, in.Ref, in.Text)
+	if err != nil {
+		f.Log.Error("trigger: storing the message", "scope", channel, "message", in.Ref.ID, "err", err)
+		return
+	}
+	if o, ok = parseTrigger(f.Trigger, text); ok {
+		f.start(ctx, in, o)
+	}
+}
+
+// remember stores the text of a trigger message the first time it is
+// received, and returns the text stored.
+func (f *FrontEnd) remember(ctx context.Context, ref surface.MessageRef, text string) (string, error) {
+	err := f.Outbox.Store.Update(ctx, func(tx *store.Tx) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO chat_triggers (client, channel, message, text, received_at)
+			VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`, f.Name, ref.Conv.Channel, ref.ID, text, time.Now().UnixMilli())
+		if err != nil {
+			return err
+		}
+		return tx.QueryRowContext(ctx, `SELECT text FROM chat_triggers WHERE client = ? AND channel = ? AND message = ?`,
+			f.Name, ref.Conv.Channel, ref.ID).Scan(&text)
+	})
+	return text, err
 }
 
 func (f *FrontEnd) start(ctx context.Context, in surface.Inbound, o order) {
@@ -112,18 +144,22 @@ func (f *FrontEnd) start(ctx context.Context, in surface.Inbound, o order) {
 		f.Log.Error("trigger: start failed", "scope", channel, "message", in.Ref.ID, "err", startErr)
 		return
 	}
-	// The thread's rows are keyed by its first event, so a trigger
-	// delivered again writes nothing twice.
-	pos, err := firstEvent(ctx, api, id)
+	// The thread's rows are keyed by its first event, and what they show
+	// is read from the thread's events, so a trigger delivered again
+	// writes the same rows, which the outbox keeps once.
+	pos, failure, err := startOutcome(ctx, api, id)
 	if err != nil {
 		f.Log.Error("trigger: reading the new thread", "thread", id.Key, "err", err)
 		return
 	}
+	if failure == "" && startErr != nil {
+		failure = startErr.Error() // not recorded as the session's end
+	}
 	conv := surface.Conversation{Channel: channel, Thread: id.Key}
 	rows := []Row{{Event: pos, Part: 0, Conv: conv, Message: surface.Message{Text: o.Prompt, Quiet: true}}}
-	if startErr != nil {
+	if failure != "" {
 		rows = append(rows, Row{Event: pos, Part: 1, Conv: conv,
-			Message: surface.Message{Text: "This thread could not start: " + startErr.Error()}})
+			Message: surface.Message{Text: "This thread could not start: " + failure}})
 	}
 	if err := f.Outbox.Write(ctx, rows...); err != nil {
 		f.Log.Error("trigger: writing the prompt", "thread", id.Key, "err", err)
@@ -132,21 +168,34 @@ func (f *FrontEnd) start(ctx context.Context, in surface.Inbound, o order) {
 
 var errNoEvent = errors.New("the thread has no events")
 
-// firstEvent returns the position of a thread's first event.
-func firstEvent(ctx context.Context, api control.API, id control.ThreadID) (uint64, error) {
+// startOutcome reads a new thread's stored events: the position of its
+// first, and why its first session failed before it started, if it did.
+func startOutcome(ctx context.Context, api control.API, id control.ThreadID) (first uint64, failure string, err error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	evs, err := api.Events(ctx, control.Filter{Thread: id}, 0)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	for e := range evs {
 		if e.Kind == control.CaughtUp {
 			break
 		}
-		return e.Pos, nil
+		if first == 0 {
+			first = e.Pos
+		}
+		if e.Kind != "state" || failure != "" {
+			continue
+		}
+		var d struct{ From, To, Reason string }
+		if json.Unmarshal(e.Data, &d) == nil && d.From == string(control.Creating) && d.To == string(control.Failed) {
+			failure = strings.TrimPrefix(d.Reason, "start: ")
+		}
 	}
-	return 0, fmt.Errorf("chat: thread %s: %w", id.Key, errNoEvent)
+	if first == 0 {
+		return 0, "", fmt.Errorf("chat: thread %s: %w", id.Key, errNoEvent)
+	}
+	return first, failure, nil
 }
 
 // Choice handles the use of a button; there are none yet.
