@@ -139,6 +139,28 @@ var migrations = []Migration{
 			data       TEXT NOT NULL
 		)`,
 	)},
+	{Name: "chat: outbox", Up: execAll(
+		// One row per message the chat front end posts, in the order it
+		// was written. state is pending, sent or dropped (a decoration that
+		// failed too often).
+		`CREATE TABLE chat_outbox (
+			id         INTEGER PRIMARY KEY,
+			client     TEXT NOT NULL, -- the chat front end's name
+			event      INTEGER NOT NULL, -- position of the event it shows
+			part       INTEGER NOT NULL,
+			channel    TEXT NOT NULL,
+			thread     TEXT NOT NULL DEFAULT '',
+			message    TEXT NOT NULL, -- JSON
+			decoration INTEGER NOT NULL DEFAULT 0,
+			state      TEXT NOT NULL DEFAULT 'pending',
+			failures   INTEGER NOT NULL DEFAULT 0,
+			ref        TEXT NOT NULL DEFAULT '', -- the surface's message id, once sent
+			created_at INTEGER NOT NULL,
+			sent_at    INTEGER,
+			UNIQUE (client, event, part)
+		)`,
+		`CREATE INDEX chat_outbox_pending ON chat_outbox (client, channel, thread, id) WHERE state = 'pending'`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {
