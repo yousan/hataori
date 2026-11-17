@@ -2,6 +2,7 @@ package discord
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -52,8 +53,17 @@ func raw(t *testing.T, v any) []byte {
 type fakeREST struct {
 	*httptest.Server
 	mu     sync.Mutex
-	routes map[string][]reply // served in order; the last one repeats
+	routes map[string][]reply // served in order; the last one served repeats
+	last   map[string]reply
 	calls  []string
+	bodies []request
+}
+
+// request is a request the fake received.
+type request struct {
+	key         string
+	contentType string
+	body        []byte
 }
 
 type reply struct {
@@ -63,18 +73,19 @@ type reply struct {
 }
 
 func newFakeREST(t *testing.T) *fakeREST {
-	f := &fakeREST{routes: map[string][]reply{}}
+	f := &fakeREST{routes: map[string][]reply{}, last: map[string]reply{}}
 	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := r.Method + " " + r.URL.Path
+		b, _ := io.ReadAll(r.Body)
 		f.mu.Lock()
 		f.calls = append(f.calls, key)
+		f.bodies = append(f.bodies, request{key: key, contentType: r.Header.Get("Content-Type"), body: b})
 		rs := f.routes[key]
-		var rp reply
+		rp := f.last[key]
 		if len(rs) > 0 {
 			rp = rs[0]
-			if len(rs) > 1 {
-				f.routes[key] = rs[1:]
-			}
+			f.routes[key] = rs[1:]
+			f.last[key] = rp
 		}
 		f.mu.Unlock()
 		if rp.status == 0 {
@@ -120,6 +131,19 @@ func (f *fakeREST) serveJSON(t *testing.T, key string, status int, v any) {
 	f.mu.Lock()
 	f.routes[key] = append(f.routes[key], reply{status: status, body: raw(t, v)})
 	f.mu.Unlock()
+}
+
+// requests returns the requests made to key, in order.
+func (f *fakeREST) requests(key string) []request {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []request
+	for _, r := range f.bodies {
+		if r.key == key {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 func (f *fakeREST) called(prefix string) int {

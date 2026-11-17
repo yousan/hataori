@@ -12,8 +12,9 @@ export HATAORI_DISCORD_CHANNEL=<test channel id>
 export HATAORI_DISCORD_OWNER=<the person's user id>
 python3 capture.py bot    /tmp/raw/bot           # the bot alone
 python3 capture.py person /tmp/raw/person 230    # waits for the person's steps below
-python3 capture.py cleanup /tmp/raw/bot; python3 capture.py cleanup /tmp/raw/person
-python3 scrub.py v10 /tmp/raw/bot /tmp/raw/person
+python3 capture.py second /tmp/raw/second          # more REST captures, no gateway connection
+python3 capture.py cleanup /tmp/raw/bot; python3 capture.py cleanup /tmp/raw/person; python3 capture.py cleanup /tmp/raw/second
+python3 scrub.py v10 /tmp/raw/bot /tmp/raw/person /tmp/raw/second
 ```
 
 Each run opens one gateway connection, saves every dispatch, does its REST calls, and closes the connection with code 1000. `cleanup` deletes what the bot posted. It cannot delete the test thread (deleting a thread needs Manage Threads), so it archives it.
@@ -42,7 +43,8 @@ The run fetches each of these messages through REST as soon as it arrives, so th
 | Thread created from a message | `bot/rest-thread-from-message.json` | `bot/gw-04-MESSAGE_UPDATE.json` (source gets `thread`), `gw-05-THREAD_CREATE.json`, `gw-07-MESSAGE_CREATE.json` (the type 21 starter) |
 | Message with an attachment | `bot/rest-post-attachment.json` | `bot/gw-12-MESSAGE_CREATE.json` |
 | Post refused for its length | `bot/rest-post-too-long.json` (400, code 50035) | |
-| Rate-limit response | `bot/rest-rate-limited.json` (429), and `bot/rest-other-route-after-429.json`, another route at the same moment (200) | |
+| Rate-limit response | `bot/rest-rate-limited.json` (429), and `bot/rest-other-route-after-429.json`, another route at the same moment (200); `second/rest-rate-limited.json` and `second/rest-other-route-after-429.json` again with the `Via` header kept, which the REST client reads to tell a route's limit from a Cloudflare one | |
+| Thread without a message; archived; a post into it; a refusal | `second/rest-thread-without-message.json`, `rest-set-thread-archived.json`, `rest-post-archived-thread.json` (200: posting unarchives), `rest-delete-thread-refused.json` (403, 50013) | |
 | Two pages of history | `bot/rest-history-page-1.json`, `-page-2.json` (`after=<cursor>&limit=2`), `-page-3.json` (empty) | |
 | History with a cursor the service cannot serve | `bot/rest-history-bad-cursor.json` (400), `bot/rest-history-unknown-channel.json` (404, code 10003) | |
 | Direct message from a person | `person/rest-get-direct-message.json` | `person/gw-07-MESSAGE_CREATE.json` (no `guild_id`) |
@@ -59,4 +61,4 @@ The run fetches each of these messages through REST as soon as it arrives, so th
 - In the 429, the `Retry-After` header was `5`, `X-RateLimit-Reset-After` was `4.462`, and the body's `retry_after` was `0.462`. The limit was per thread: a call on the parent channel right after it got a 200, in another bucket.
 - A webhook message made in the server settings carries `application_id` as well as `webhook_id`. So `application_id` alone does not mean an application-owned webhook. This corrects the research note on that point.
 - The webhook message's `author` has `bot: true`, so `author.bot` alone does not tell a webhook from a bot account; `webhook_id` does.
-- The thread creator could rename its own thread without Manage Threads.
+- The thread creator could rename and archive its own thread without Manage Threads. Deleting it was refused while it was archived (403) and accepted later, after a post had unarchived it (the cleanup run).
