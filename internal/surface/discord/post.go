@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -155,8 +156,12 @@ func (d *Driver) Post(ctx context.Context, conv surface.Conversation, key string
 	if err != nil {
 		return surface.MessageRef{}, err
 	}
-	if len(m.Choices) > 0 {
-		return surface.MessageRef{}, fmt.Errorf("discord: choices are not supported in this conversation")
+	buttons, err := components(m.Choices)
+	if err != nil {
+		return surface.MessageRef{}, err
+	}
+	if len(m.Choices) > 0 && len(m.Files) > 0 {
+		return surface.MessageRef{}, errors.New("discord: a post with choices cannot carry files")
 	}
 	if len(m.Files) > maxFiles {
 		return surface.MessageRef{}, fmt.Errorf("discord: %d files, at most %d fit in one message", len(m.Files), maxFiles)
@@ -217,6 +222,20 @@ func (d *Driver) Post(ctx context.Context, conv surface.Conversation, key string
 		var out wireMessage
 		if err != nil {
 			return first, &Error{Op: "post", Local: true, Err: err}
+		}
+		if i == len(parts)-1 && len(m.Choices) > 0 {
+			// The buttons go on the last part, added as plain JSON rather
+			// than through disgo's component types.
+			var plain map[string]any
+			raw, err := json.Marshal(body)
+			if err == nil {
+				err = json.Unmarshal(raw, &plain)
+			}
+			if err != nil {
+				return first, &Error{Op: "post", Local: true, Err: err}
+			}
+			plain["components"] = buttons
+			body = plain
 		}
 		err = d.client.Do(rest.CreateMessage.Compile(nil, ch), body, &out, rest.WithCtx(ctx))
 		if err != nil {
@@ -279,15 +298,12 @@ func (d *Driver) Edit(ctx context.Context, ref surface.MessageRef, m surface.Mes
 	if n := length(m.Text); n > maxText {
 		return &Error{Op: "edit", Status: http.StatusBadRequest, Message: fmt.Sprintf("%d characters, at most %d fit", n, maxText)}
 	}
-	if len(m.Choices) > 0 {
-		return fmt.Errorf("discord: choices are not supported in this conversation")
-	}
-	text := m.Text
-	mu := discord.MessageUpdate{Content: &text}
-	body, err := mu.ToBody()
+	buttons, err := components(m.Choices)
 	if err != nil {
 		return err
 	}
+	// An edit replaces the message: no choices remove its buttons.
+	body := map[string]any{"content": m.Text, "components": buttons}
 	return wrap("edit", d.client.Do(rest.UpdateMessage.Compile(nil, ch, id), body, nil, rest.WithCtx(ctx)))
 }
 
@@ -327,11 +343,12 @@ func (d *Driver) SetThread(ctx context.Context, conv surface.Conversation, t sur
 // Limits reports what the driver can do.
 func (d *Driver) Limits() surface.Limits {
 	return surface.Limits{
-		MaxText:   maxText,
-		MaxFiles:  maxFiles,
-		Edit:      true,
-		Delete:    true,
-		SetThread: true,
+		MaxText:    maxText,
+		MaxChoices: maxChoices,
+		MaxFiles:   maxFiles,
+		Edit:       true,
+		Delete:     true,
+		SetThread:  true,
 	}
 }
 
