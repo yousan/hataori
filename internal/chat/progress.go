@@ -130,16 +130,21 @@ func (f *FrontEnd) tick(ctx context.Context, r *reader, now time.Time) []Row {
 			if g := r.gone[id]; g != nil && !r.done(*g) {
 				continue // the line before is still shown
 			}
-			rows = append(rows, Row{Event: q.anchor, Part: linePart, Conv: convOf(id), Message: m, Decoration: true})
 			q.line = true
-			if n == 0 {
+			if last, _, err := f.Outbox.lineChanges(ctx, q.anchor); err != nil || last.IsZero() {
+				// Not posted yet (also not before a restart): post it.
+				rows = append(rows, Row{Event: q.anchor, Part: linePart, Conv: convOf(id), Message: m, Decoration: true})
 				continue
 			}
-		} else if n <= q.edit {
+		}
+		if n <= q.edit {
 			continue
-		} else if at, ok := f.Outbox.sentAt(ctx, RowKey{Event: q.anchor, Part: linePart + int(q.edit)}); !ok || now.Sub(at) < f.editEvery() {
-			// The last change is not sent, or was sent less than EditEvery
-			// ago: one change at a time, at that pace.
+		}
+		// One change at a time, at most every EditEvery after the last one
+		// sent (also by a reader before a restart). A dropped change
+		// holds nothing back.
+		last, pending, err := f.Outbox.lineChanges(ctx, q.anchor)
+		if err != nil || pending || last.IsZero() || now.Sub(last) < f.editEvery() {
 			continue
 		}
 		q.edit = n

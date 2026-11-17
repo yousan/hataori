@@ -205,15 +205,22 @@ func (o *Outbox) now() time.Time {
 	return time.Now()
 }
 
-// sentAt returns when row k was sent, and false while it is not.
-func (o *Outbox) sentAt(ctx context.Context, k RowKey) (time.Time, bool) {
+// lineChanges returns, for the rows of event with a part of 100 or more (a
+// progress line and its edits), when the last of them was sent (zero for
+// none) and whether one is pending.
+func (o *Outbox) lineChanges(ctx context.Context, event uint64) (last time.Time, pending bool, err error) {
 	var ms sql.NullInt64
-	err := o.Store.DB.QueryRowContext(ctx, `SELECT sent_at FROM chat_outbox WHERE client = ? AND event = ? AND part = ? AND state = 'sent'`,
-		o.Client, k.Event, k.Part).Scan(&ms)
-	if err != nil || !ms.Valid {
-		return time.Time{}, false
+	var n int
+	err = o.Store.DB.QueryRowContext(ctx, `SELECT max(CASE WHEN state = 'sent' THEN sent_at END),
+		count(CASE WHEN state = 'pending' THEN 1 END) FROM chat_outbox WHERE client = ? AND event = ? AND part >= 100`,
+		o.Client, event).Scan(&ms, &n)
+	if err != nil {
+		return time.Time{}, false, err
 	}
-	return time.UnixMilli(ms.Int64), true
+	if ms.Valid {
+		last = time.UnixMilli(ms.Int64)
+	}
+	return last, n > 0, nil
 }
 
 // state returns the state of a row ("" when it does not exist) and its
