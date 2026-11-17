@@ -1,0 +1,39 @@
+# 1. while dc635feb runs (process alive, state done):
+$ claude --resume <dc635feb uuid> --bg --settings <run>/settings.json "Second prompt: ..."
+note: session dc635feb is already running in the background, so this started a copy as 9d7e1719. `claude attach dc635feb` opens the original.
+backgrounded · 9d7e1719
+  claude agents             list sessions
+  claude attach 9d7e1719    open in this terminal
+  claude logs 9d7e1719      show recent output
+  claude stop 9d7e1719      stop this session
+
+# 2. after claude stop dc635feb, with --settings again:
+stopped dc635feb
+$ claude --resume <dc635feb uuid> --bg --settings <run>/settings.json "Third prompt: ..."
+note: background session dc635feb keeps its own saved options, so the flags you passed started a copy as 604f53f6. Without flags, the same command continues dc635feb itself.
+backgrounded · 604f53f6
+  claude agents             list sessions
+  claude attach 604f53f6    open in this terminal
+  claude logs 604f53f6      show recent output
+  claude stop 604f53f6      stop this session
+
+# 3. stopped, no other flags:
+$ claude --resume <dc635feb uuid> --bg "Fourth prompt: ..."
+note: woke session dc635feb with its saved options (--settings, --model).
+backgrounded · dc635feb · sleep shell command test
+  claude agents             list sessions
+  claude attach dc635feb    open in this terminal
+  claude logs dc635feb      show recent output
+  claude stop dc635feb      stop this session
+
+# hooks for 1-3 (session id, SessionStart source)
+   4.0 SessionStart 9d7e1719 fork 
+   5.4 UserPromptSubmit 9d7e1719  Second prompt: what is 7 times 8? One sentence.
+  10.4 Stop 9d7e1719  7 times 8 is 56.
+  23.0 SessionEnd dc635feb  
+  31.3 SessionStart 604f53f6 fork 
+  33.3 UserPromptSubmit 604f53f6  Third prompt: what is 9 times 9? One sentence.
+  42.0 Stop 604f53f6  9 times 9 is 81.
+  46.6 SessionStart dc635feb resume 
+  48.3 UserPromptSubmit dc635feb  Fourth prompt: what is 3 times 3? One sentence.
+  54.0 Stop dc635feb  3 times 3 is 9.

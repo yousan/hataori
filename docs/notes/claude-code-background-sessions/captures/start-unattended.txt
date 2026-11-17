@@ -1,0 +1,21 @@
+$ cd <run>/work && claude --bg --model sonnet --session-id <uuid> --settings <run>/settings.json "Run the shell command: sleep 8 ; then answer in one sentence: what is 6 times 7?" </dev/null
+warning: --bg manages the session id; ignoring --session-id (use --resume <id> to continue an existing session)
+Starting background service…
+backgrounded · dc635feb
+  claude agents             list sessions
+  claude attach dc635feb    open in this terminal
+  claude logs dc635feb      show recent output
+  claude stop dc635feb      stop this session
+
+# hooks
+    5.7  hook  SessionStart                  ''
+    7.2  hook  UserPromptSubmit              'Run the shell command: sleep 8 ; then answer in one sentence: what is 6 times 7?'
+    9.9  hook  PreToolUse         Bash       '{"command": "sleep 8", "description": "Wait 8 seconds"}'
+   19.7  hook  PostToolUse        Bash       '{"command": "sleep 8", "description": "Wait 8 seconds"}'
+   22.2  hook  Stop                          '6 times 7 is 42.'
+
+# claude agents --json --all, polled every 0.5 s (state changes only)
+    0.6  id=dc635feb state=working status=None waitingFor=None pid=None sessionId=<uuid>
+    5.6  id=dc635feb state=working status=idle waitingFor=None pid=1813513 sessionId=<uuid>
+    7.3  id=dc635feb state=working status=busy waitingFor=None pid=1813513 sessionId=<uuid>
+   22.3  id=dc635feb state=done status=idle waitingFor=None pid=1813513 sessionId=<uuid>

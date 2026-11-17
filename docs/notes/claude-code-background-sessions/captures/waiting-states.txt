@@ -1,0 +1,23 @@
+# b3
+    4.1  hook  SessionStart                  ''
+    5.8  hook  UserPromptSubmit              'Run the shell command: touch waiting.txt'
+    8.6  hook  PreToolUse         Bash       '{"command": "touch waiting.txt", "description": "Create empty waiting.txt file"}'
+    9.5  hook  PermissionRequest  Bash       '{"command": "touch waiting.txt", "description": "Create empty waiting.txt file"}'
+   15.8  hook  Notification                  'Claude needs your permission'
+   44.3  hook  SessionEnd                    ''
+    0.0  id=1b789fda state=working status=None waitingFor=None pid=None sessionId=<uuid>
+    3.8  id=1b789fda state=working status=idle waitingFor=None pid=1840597 sessionId=<uuid>
+    5.5  id=1b789fda state=working status=busy waitingFor=None pid=1840597 sessionId=<uuid>
+    9.2  id=1b789fda state=blocked status=waiting waitingFor=permission prompt pid=1840597 sessionId=<uuid>
+
+# b4
+    6.0  hook  SessionStart                  ''
+    7.3  hook  UserPromptSubmit              'Use the AskUserQuestion tool to ask me: red or blue?'
+   10.5  hook  PreToolUse         AskUserQuestion '{"questions": [{"question": "Red or blue?", "header": "Color", "options": [{"label": "Red", "description": "Choose red"}, {"label": "Blue", '
+   10.7  hook  PermissionRequest  AskUserQuestion '{"questions": [{"question": "Red or blue?", "header": "Color", "options": [{"label": "Red", "description": "Choose red"}, {"label": "Blue", '
+   16.8  hook  Notification                  'Claude needs your permission'
+   44.3  hook  SessionEnd                    ''
+    2.0  id=3c867e54 state=working status=None waitingFor=None pid=None sessionId=<uuid>
+    5.5  id=3c867e54 state=working status=busy waitingFor=None pid=1845560 sessionId=<uuid>
+   11.2  id=3c867e54 state=blocked status=waiting waitingFor=input needed pid=1845560 sessionId=<uuid>
+

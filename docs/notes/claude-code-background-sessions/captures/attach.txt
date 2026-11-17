@@ -1,0 +1,21 @@
+# claude attach 9d7e1719 in a tmux pane; bracketed paste of a prompt, Enter, then Left on the empty prompt
+  11.5 Notification 9d7e1719 
+  16.6 UserPromptSubmit 9d7e1719 Attached prompt: what is 5 times 5? One sentence.
+  20.4 Stop 9d7e1719 5 times 5 is 25.
+  43.3 Notification 604f53f6 
+  55.1 Notification dc635feb 
+
+# agents --json state changes
+   15.4  id=9d7e1719 state=done status=idle waitingFor=None pid=1813515 sessionId=<uuid>
+   17.1  id=9d7e1719 state=working status=busy waitingFor=None pid=1813515 sessionId=<uuid>
+   20.1  id=9d7e1719 state=done status=idle waitingFor=None pid=1813515 sessionId=<uuid>
+
+# screen after Left (agent view opened in the pane)
+  Completed
+❯ ✻ arithmetic-question-answer       answered 5 times 5: result is 25                                                                                                                                 9s
+  ✻ sleep shell command test         3 times 3 is 9.                                                                                                                                                 21s
+  ✻ arithmetic-prompt-test-response  9 times 9 is 81.                                                                                                                                                13s
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ describe a task for a new session
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  enter to return · space to reply · ctrl+x to remove · ? for shortcuts
