@@ -27,7 +27,7 @@ type codec struct {
 	spec    agent.Spec
 	seq     uint64
 	seen    map[string]bool // hook call ids already decoded
-	pasted  []string        // inputs hataori pasted that no prompt has matched yet
+	pasted  []queued        // inputs hataori pasted that no prompt has matched yet, with normalized text
 	compact int             // compactions seen, to pair PreCompact with PostCompact
 
 	// From the transcript.
@@ -41,7 +41,7 @@ type codec struct {
 	ready         bool          // the session reported its start
 	running       bool          // a turn is running
 	runningPrompt string        // the prompt id of that turn
-	queue         []string      // input held until the CLI can take it
+	queue         []queued      // input held until the CLI can take it
 	sent          *sentInput    // input written, not yet reported
 	timeout       time.Duration // for sent; DefaultInputTimeout when zero
 
@@ -110,9 +110,12 @@ func (c *codec) Open() Actions { return Actions{} }
 func (c *codec) Input(in agent.Input) (Actions, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.queue = append(c.queue, cleanPaste(in.Text))
+	c.queue = append(c.queue, queued{id: in.ID, text: cleanPaste(in.Text)})
 	return c.number(c.flush()), nil
 }
+
+// queued is an input and its Input.ID.
+type queued struct{ id, text string }
 
 // Bracketed paste: what the terminal sends around pasted text.
 const (
@@ -139,11 +142,11 @@ func (c *codec) flush() Actions {
 	if !c.ready || c.running || c.sent != nil || len(c.queue) == 0 {
 		return Actions{}
 	}
-	text := c.queue[0]
+	q := c.queue[0]
 	c.queue = c.queue[1:]
-	c.sent = &sentInput{text: normalize(text)}
-	c.pasted = append(c.pasted, normalize(text))
-	return Actions{Write: [][]byte{[]byte(pasteStart + text + pasteEnd), []byte(confirm)}}
+	c.sent = &sentInput{text: normalize(q.text)}
+	c.pasted = append(c.pasted, queued{id: q.id, text: normalize(q.text)})
+	return Actions{Write: [][]byte{[]byte(pasteStart + q.text + pasteEnd), []byte(confirm)}}
 }
 
 // sentInput is input written and not yet reported by a hook.
@@ -174,7 +177,7 @@ func (c *codec) tickInput(now time.Time) Actions {
 		return Actions{}
 	}
 	for i, p := range c.pasted {
-		if p == c.sent.text {
+		if p.text == c.sent.text {
 			c.pasted = append(c.pasted[:i], c.pasted[i+1:]...)
 			break
 		}
@@ -473,7 +476,8 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 		}
 		return Actions{} // a compaction keeps the session id: no news to the core
 	case "UserPromptSubmit":
-		return c.events(agent.Event{Kind: agent.TurnStarted, StartedBy: c.starter(p.Prompt)})
+		by, id := c.starter(p.Prompt)
+		return c.events(agent.Event{Kind: agent.TurnStarted, StartedBy: by, Input: id})
 	case "Stop":
 		withdrawn := c.withdrawAll()
 		running := 0
@@ -542,23 +546,23 @@ func compactID(n int) string { return "compaction-" + strconv.Itoa(n) }
 var allow = []byte(`{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}`)
 
 // starter tells who started a turn from its prompt: text hataori pasted is
-// the caller's, a task notification is the agent's own, and anything else
-// was typed at the terminal.
-func (c *codec) starter(prompt string) agent.Starter {
+// the caller's, and its Input.ID is returned; a task notification is the
+// agent's own, and anything else was typed at the terminal.
+func (c *codec) starter(prompt string) (agent.Starter, string) {
 	text := normalize(unwrapPaste(prompt))
 	for i, p := range c.pasted {
-		if p == text {
+		if p.text == text {
 			c.pasted = append(c.pasted[:i], c.pasted[i+1:]...)
 			if c.sent != nil && c.sent.text == text {
 				c.sent = nil // delivered
 			}
-			return agent.ByCaller
+			return agent.ByCaller, p.id
 		}
 	}
 	if strings.HasPrefix(strings.TrimSpace(prompt), "<task-notification>") {
-		return agent.ByAgent
+		return agent.ByAgent, ""
 	}
-	return agent.ByTerminal
+	return agent.ByTerminal, ""
 }
 
 // unwrapPaste returns the text inside the <pasted_content> tag the CLI

@@ -48,11 +48,12 @@ type Runner interface {
 	// Start starts the agent of a new session. Once the agent reports that it
 	// is ready, the runner sends it s.Input as a Send of s.Principal and s.Key.
 	Start(ctx context.Context, s Launch) error
-	// Deliver gives input to a session's agent.
-	Deliver(ctx context.Context, sessionID int64, in control.Input) error
+	// Deliver gives input to a session's agent. pending is its row in
+	// pending_inputs, which the runner removes once it has handed it over.
+	Deliver(ctx context.Context, sessionID, pending int64, in control.Input) error
 	// Answer gives the answer of an open request to a session's agent.
-	// req is the agent's own id of the request.
-	Answer(ctx context.Context, sessionID int64, req string, a control.Answer) error
+	// req is the agent's own id of the request; pending is as for Deliver.
+	Answer(ctx context.Context, sessionID, pending int64, req string, a control.Answer) error
 	// Interrupt stops a session's running turn.
 	Interrupt(ctx context.Context, sessionID int64) error
 	// Resume starts the agent of an asleep session again with its
@@ -72,6 +73,30 @@ type Launch struct {
 	Principal control.Principal
 	Key       string
 	Input     control.Input
+}
+
+// FirstInput is the input a session starts with, as sessions.first_input
+// holds it. The core stores it with the state change that starts or wakes
+// the session, and sets sessions.launch; the runner clears launch when it
+// launches the agent, and keeps the input until the agent reports its turn.
+type FirstInput struct {
+	Principal control.Principal `json:"principal"`
+	Key       string            `json:"key"`
+	Text      string            `json:"text"`
+	Sent      bool              `json:"sent,omitempty"` // the turn was started for it, and it was handed to the codec
+	Wake      bool              `json:"wake,omitempty"` // the session was asleep: its agent resumes
+	Dir       string            `json:"dir,omitempty"`  // the workspace, once it is made
+}
+
+// pend stores input or an answer for a session's agent until the runner
+// has handed it over. req is the agent's id of the request an answer is for.
+func pend(ctx context.Context, tx *store.Tx, sid int64, req string, v any) (int64, error) {
+	b, _ := json.Marshal(v)
+	res, err := tx.ExecContext(ctx, `INSERT INTO pending_inputs (session_id, request, data) VALUES (?, ?, ?)`, sid, req, string(b))
+	if err != nil {
+		return 0, fmt.Errorf("core: pending input: %w", err)
+	}
+	return res.LastInsertId()
 }
 
 // Core is the core of one instance. It has no operations of its own: use
@@ -371,9 +396,11 @@ func (a *api) Start(ctx context.Context, r control.StartRequest) (control.Thread
 			return fmt.Errorf("core: create thread: %w", err)
 		}
 		thread, _ := res.LastInsertId()
+		fi, _ := json.Marshal(FirstInput{Principal: a.caller.Principal, Key: r.Key, Text: r.Input.Text})
 		res, err = tx.ExecContext(ctx,
-			`INSERT INTO sessions (thread_id, agent, state, model, effort, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			thread, a.c.Agent, string(control.Creating), model, effort, now, now)
+			`INSERT INTO sessions (thread_id, agent, state, model, effort, first_input, launch, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+			thread, a.c.Agent, string(control.Creating), model, effort, string(fi), now, now)
 		if err != nil {
 			return fmt.Errorf("core: create session: %w", err)
 		}
@@ -391,19 +418,93 @@ func (a *api) Start(ctx context.Context, r control.StartRequest) (control.Thread
 		return id, err
 	}
 
-	dir, err := a.c.Workspaces.Make(ctx, id, r.Repo)
+	if err := a.c.launch(ctx, Launch{Session: sessionID, Thread: id, Agent: a.c.Agent,
+		Model: model, Effort: effort, Principal: a.caller.Principal, Key: r.Key, Input: r.Input}, r.Repo); err != nil {
+		return id, err
+	}
+	return id, nil
+}
+
+// launch makes the workspace of a new session, unless l.Dir names it, and
+// starts its agent. A failure is recorded as the session's end.
+func (c *Core) launch(ctx context.Context, l Launch, repo string) error {
+	var err error
+	if l.Dir == "" {
+		l.Dir, err = c.Workspaces.Make(ctx, l.Thread, repo)
+		if err == nil {
+			// A daemon that dies before the agent starts finds it again.
+			fi, _ := json.Marshal(FirstInput{Principal: l.Principal, Key: l.Key, Text: l.Input.Text, Dir: l.Dir})
+			_, err = c.Store.DB.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, string(fi), l.Session)
+		}
+	}
 	if err == nil {
-		err = a.c.Runner.Start(ctx, Launch{Session: sessionID, Thread: id, Agent: a.c.Agent, Dir: dir,
-			Model: model, Effort: effort, Principal: a.caller.Principal, Key: r.Key, Input: r.Input})
+		err = c.Runner.Start(ctx, l)
 	}
 	if err != nil {
 		// The thread exists; its session failed to start.
-		if ferr := a.c.Machine.Apply(ctx, sessionID, session.Input{Kind: session.Exit, Reason: "start: " + err.Error()}); ferr != nil {
-			a.c.Log.Error("recording a failed start", "session", sessionID, "err", ferr)
+		if ferr := c.Machine.Apply(ctx, l.Session, session.Input{Kind: session.Exit, Reason: "start: " + err.Error()}); ferr != nil {
+			c.Log.Error("recording a failed start", "session", l.Session, "err", ferr)
 		}
-		return id, fmt.Errorf("core: start: %w", err)
+		return fmt.Errorf("core: start: %w", err)
 	}
-	return id, nil
+	return nil
+}
+
+// resume starts the agent of a woken session. A failure is recorded as the
+// session's end.
+func (c *Core) resume(ctx context.Context, sid int64, principal control.Principal, key string, in control.Input) error {
+	if err := c.Runner.Resume(ctx, sid, principal, key, in); err != nil {
+		if ferr := c.Machine.Apply(ctx, sid, session.Input{Kind: session.Exit, Reason: "resume: " + err.Error()}); ferr != nil {
+			c.Log.Error("recording a failed resume", "session", sid, "err", ferr)
+		}
+		return fmt.Errorf("resume: %w", err)
+	}
+	return nil
+}
+
+// Recover hands the runner what the core committed and a daemon that died
+// did not hand over: the agent of a started or woken session that was
+// never launched. Input and answers for running agents are handed over by
+// the runner when it reconnects. Call it after the runner has reconnected.
+func (c *Core) Recover(ctx context.Context) error {
+	rows, err := c.Store.DB.QueryContext(ctx, `SELECT s.id, s.agent, s.model, s.effort, s.first_input, t.scope, t.key, t.repo
+		FROM sessions s JOIN threads t ON t.id = s.thread_id WHERE s.state = ? AND s.launch = 1 ORDER BY s.id`, string(control.Creating))
+	if err != nil {
+		return fmt.Errorf("core: recover: %w", err)
+	}
+	type todo struct {
+		l    Launch
+		repo string
+		f    FirstInput
+	}
+	var found []todo
+	for rows.Next() {
+		var x todo
+		var fi string
+		if err := rows.Scan(&x.l.Session, &x.l.Agent, &x.l.Model, &x.l.Effort, &fi, &x.l.Thread.Scope, &x.l.Thread.Key, &x.repo); err != nil {
+			rows.Close()
+			return fmt.Errorf("core: recover: %w", err)
+		}
+		if err := json.Unmarshal([]byte(fi), &x.f); err != nil {
+			c.Log.Error("first input unreadable", "session", x.l.Session, "err", err)
+			continue
+		}
+		found = append(found, x)
+	}
+	rows.Close()
+	for _, x := range found {
+		in := control.Input{Text: x.f.Text}
+		if x.f.Wake {
+			err = c.resume(ctx, x.l.Session, x.f.Principal, x.f.Key, in)
+		} else {
+			x.l.Dir, x.l.Principal, x.l.Key, x.l.Input = x.f.Dir, x.f.Principal, x.f.Key, in
+			err = c.launch(ctx, x.l, x.repo)
+		}
+		if err != nil {
+			c.Log.Error("recovering a session", "session", x.l.Session, "err", err)
+		}
+	}
+	return nil
 }
 
 // started returns the thread a Start key created, if it was used before.
@@ -447,6 +548,7 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 	}
 	var (
 		sid       int64
+		pending   int64
 		accepted  bool
 		interrupt bool
 		answer    string // the agent's id of the open question this input answers
@@ -479,7 +581,14 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 		accepted = true
 		if state == control.Asleep {
 			wake = true
-			return a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Wake})
+			if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Wake}); err != nil {
+				return err
+			}
+			fi, _ := json.Marshal(FirstInput{Principal: a.caller.Principal, Key: key, Text: in.Text, Wake: true})
+			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ?, launch = 1 WHERE id = ?`, string(fi), sid); err != nil {
+				return fmt.Errorf("core: wake: %w", err)
+			}
+			return nil
 		}
 		if state == control.Waiting {
 			// The input is the answer to the open question.
@@ -491,24 +600,29 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 			}
 			if err == nil {
 				answer = req
-				return a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal,
-					Key: key, Text: in.Text, Request: req})
+				if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal,
+					Key: key, Text: in.Text, Request: req}); err != nil {
+					return err
+				}
+				pending, err = pend(ctx, tx, sid, req, control.Answer{Text: in.Text})
+				return err
 			}
 		}
-		return a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Send, Principal: a.caller.Principal, Key: key, Text: in.Text})
+		if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Send, Principal: a.caller.Principal, Key: key, Text: in.Text}); err != nil {
+			return err
+		}
+		pending, err = pend(ctx, tx, sid, "", in)
+		return err
 	})
 	if err != nil || !accepted {
 		return err
 	}
 	if answer != "" {
-		return a.c.Runner.Answer(ctx, sid, answer, control.Answer{Text: in.Text})
+		return a.c.Runner.Answer(ctx, sid, pending, answer, control.Answer{Text: in.Text})
 	}
 	if wake {
-		if err := a.c.Runner.Resume(ctx, sid, a.caller.Principal, key, in); err != nil {
-			if ferr := a.c.Machine.Apply(ctx, sid, session.Input{Kind: session.Exit, Reason: "resume: " + err.Error()}); ferr != nil {
-				a.c.Log.Error("recording a failed resume", "session", sid, "err", ferr)
-			}
-			return fmt.Errorf("core: send to %v: resume: %w", id, err)
+		if err := a.c.resume(ctx, sid, a.caller.Principal, key, in); err != nil {
+			return fmt.Errorf("core: send to %v: %w", id, err)
 		}
 		return nil
 	}
@@ -517,7 +631,7 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 			return fmt.Errorf("core: send to %v: interrupt: %w", id, err)
 		}
 	}
-	return a.c.Runner.Deliver(ctx, sid, in)
+	return a.c.Runner.Deliver(ctx, sid, pending, in)
 }
 
 func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Answer) error {
@@ -548,14 +662,23 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 		return fmt.Errorf("core: answer %q: the request is %s: %w", req, state, ErrNotOpen)
 	}
 	// The machine refuses it, atomically, if it was closed since.
-	if err := a.c.Machine.Apply(ctx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal,
-		Key: "answer:" + string(req), Text: ans.Text, Request: agentReq}); err != nil {
+	var pending int64
+	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
+		if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal,
+			Key: "answer:" + string(req), Text: ans.Text, Request: agentReq}); err != nil {
+			return err
+		}
+		var err error
+		pending, err = pend(ctx, tx, sid, agentReq, ans)
+		return err
+	})
+	if err != nil {
 		if errors.Is(err, session.ErrRefused) {
 			return fmt.Errorf("core: answer %q: %w: %w", req, ErrNotOpen, err)
 		}
 		return err
 	}
-	return a.c.Runner.Answer(ctx, sid, agentReq, ans)
+	return a.c.Runner.Answer(ctx, sid, pending, agentReq, ans)
 }
 
 func (a *api) Stop(ctx context.Context, id control.ThreadID) error {

@@ -18,11 +18,17 @@ import (
 )
 
 // daemon is a daemon process a test can kill: `role daemon ROOT TERMINAL
-// start|resume [SCRIPT...]`.
+// start|resume|die [ARG...]`. A mode ending in "+idle" puts idle sessions
+// to sleep after a short idle period. die (see dieBeforeHandOver) makes one
+// call and kills itself when the core hands it to the runner.
 func daemon(args []string) int {
 	root, terminal, mode := args[0], args[1] == "true", args[2]
+	o := options{terminal: terminal}
+	if m, ok := strings.CutSuffix(mode, "+idle"); ok {
+		mode, o.idlePeriod = m, 300*time.Millisecond
+	}
 	log, _ := os.OpenFile(filepath.Join(root, "daemon.log"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
-	st, c, r, err := build(root, options{terminal: terminal}, log)
+	st, c, r, err := build(root, o, log)
 	if err != nil {
 		fmt.Fprintln(log, err)
 		return 1
@@ -31,6 +37,18 @@ func daemon(args []string) int {
 	if err := r.Reconnect(context.Background()); err != nil {
 		fmt.Fprintln(log, err)
 		return 1
+	}
+	if err := c.Recover(context.Background()); err != nil {
+		fmt.Fprintln(log, err)
+		return 1
+	}
+	if mode == "die" {
+		c.Runner = dying{r}
+		os.Stdout.WriteString("up\n")
+		if err := dieBeforeHandOver(st, c, args[3], args[4]); err != nil {
+			fmt.Fprintln(log, err)
+		}
+		return 1 // it should have died
 	}
 	if mode == "start" { // one thread per script: t1, t2, ...
 		for i, script := range args[3:] {

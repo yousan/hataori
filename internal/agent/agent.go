@@ -131,6 +131,10 @@ const (
 
 // Input is a user message for the agent.
 type Input struct {
+	// ID names the input for its report: the codec returns it in the
+	// TurnStarted event of the turn that reports the input. It is opaque to
+	// the codec, and may be empty.
+	ID   string
 	Text string
 }
 
@@ -212,6 +216,7 @@ type Event struct {
 	Final bool   // Text: the turn's final answer
 
 	StartedBy Starter // TurnStarted
+	Input     string  // TurnStarted: the Input.ID of the input this turn reports, "" when none or not known
 
 	Tool string // ToolStarted, ToolEnded: the tool's name or label
 	ID   string // ToolStarted, ToolEnded, SubagentStarted, SubagentEnded: pairs start and end
