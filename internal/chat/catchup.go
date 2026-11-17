@@ -23,6 +23,12 @@ type inbound struct {
 	convs   map[surface.Conversation]*sync.Mutex // one message at a time per conversation
 	behind  map[surface.Conversation]bool        // a message failed: only catch-up moves the cursor
 	pending chan struct{}
+	// unsure: the open threads could not be listed, so every thread counts
+	// as behind until they are.
+	unsure bool
+	// since is when the driver first connected: the start of a channel
+	// never read before, also when storing it has to be tried again.
+	since int64
 }
 
 func (f *FrontEnd) inboundState() *inbound {
@@ -61,6 +67,15 @@ func (s *inbound) setBehind(c surface.Conversation, b bool) {
 	}
 }
 
+func (s *inbound) firstConnected() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.since == 0 {
+		s.since = time.Now().UnixMilli()
+	}
+	return s.since
+}
+
 func (s *inbound) isBehind(c surface.Conversation) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -74,7 +89,10 @@ func (f *FrontEnd) receive(in surface.Inbound) {
 	s := f.inboundState()
 	conv := in.Ref.Conv
 	defer s.lock(conv)()
-	if s.isBehind(conv) {
+	s.mu.Lock()
+	unsure := s.unsure && conv.Thread != ""
+	s.mu.Unlock()
+	if unsure || s.isBehind(conv) {
 		s.setBehind(conv, true) // and catch up soon
 		return
 	}
@@ -92,7 +110,16 @@ func (f *FrontEnd) receive(in surface.Inbound) {
 // conversation is caught up, its live messages wait for the catch-up.
 func (f *FrontEnd) Connected() {
 	ctx := f.context()
+	s := f.inboundState()
+	s.mu.Lock()
+	if s.since == 0 {
+		s.since = time.Now().UnixMilli()
+	}
+	s.mu.Unlock()
 	convs, err := f.toCatchUp(ctx)
+	s.mu.Lock()
+	s.unsure = err != nil
+	s.mu.Unlock()
 	if err != nil {
 		// Which threads are open is not known: all of it again, later.
 		retry := f.Outbox.Retry
@@ -105,7 +132,6 @@ func (f *FrontEnd) Connected() {
 			}
 		})
 	}
-	s := f.inboundState()
 	for _, c := range convs {
 		s.mu.Lock()
 		s.behind[c] = true
@@ -130,7 +156,7 @@ func (f *FrontEnd) toCatchUp(ctx context.Context) ([]surface.Conversation, error
 		if sc.Enabled {
 			convs = append(convs, surface.Conversation{Channel: ch})
 			if _, err := f.Outbox.Store.DB.ExecContext(ctx, `INSERT INTO chat_inbound (client, channel, thread, cursor, since)
-				VALUES (?, ?, '', '', ?) ON CONFLICT DO NOTHING`, f.Name, ch, time.Now().UnixMilli()); err != nil {
+				VALUES (?, ?, '', '', ?) ON CONFLICT DO NOTHING`, f.Name, ch, f.inboundState().firstConnected()); err != nil {
 				f.Log.Error("chat: catch-up: a new channel", "channel", ch, "err", err)
 			}
 		}
@@ -166,12 +192,11 @@ func (f *FrontEnd) catchUp(ctx context.Context, conv surface.Conversation) {
 		// A channel never read: what was posted in it before is not an
 		// order for this front end. From now on it is.
 		if _, err := f.Outbox.Store.DB.ExecContext(ctx, `INSERT INTO chat_inbound (client, channel, thread, cursor, since)
-			VALUES (?, ?, '', '', ?) ON CONFLICT DO NOTHING`, f.Name, conv.Channel, time.Now().UnixMilli()); err != nil {
+			VALUES (?, ?, '', '', ?) ON CONFLICT DO NOTHING`, f.Name, conv.Channel, s.firstConnected()); err != nil {
 			s.setBehind(conv, true)
 			return
 		}
-		s.setBehind(conv, false)
-		return
+		cursor, since = "", s.firstConnected()
 	}
 	msgs, err := f.Driver.Since(ctx, conv, cursor)
 	if err != nil {
