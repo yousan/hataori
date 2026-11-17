@@ -40,7 +40,8 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
-	p := &program{out: stdout, hook: *hook, terminal: *terminal, answers: map[string]chan string{}, configDir: *configDir}
+	p := &program{out: stdout, hook: *hook, terminal: *terminal, answers: map[string]chan string{}, configDir: *configDir,
+		model: *model, effort: *effort}
 	if *terminal {
 		if f, ok := stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
 			if old, err := term.MakeRaw(int(f.Fd())); err == nil {
@@ -118,6 +119,8 @@ type program struct {
 	answers    map[string]chan string
 	interrupts chan struct{}
 	configDir  string
+	model      string // as started, for whoami
+	effort     string
 }
 
 // report sends one report: a line on stdout, or a hook call.
@@ -180,6 +183,11 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 				p.say(final, false)
 			}
 			final, replied = arg, true
+		case "whoami":
+			if replied {
+				p.say(final, false)
+			}
+			final, replied = "model "+p.model+" effort "+p.effort, true
 		case "tool":
 			name, dur, _ := strings.Cut(arg, " ")
 			d, _ := time.ParseDuration(dur)
