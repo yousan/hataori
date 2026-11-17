@@ -142,6 +142,10 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	return err
 }
 
+// frontEndHook, when a test sets it, sees each front end before it runs,
+// for a clock of the test's own.
+var frontEndHook func(*chat.FrontEnd)
+
 // frontEnds makes one chat front end for each surface driver the config
 // names, in the binary's registry, and makes it the owner of the scopes
 // whose client has the driver's name. Scopes of other clients keep no
@@ -183,6 +187,9 @@ func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.St
 			}}
 		if cfg.LoginRelay {
 			fe.Relay = lr
+		}
+		if frontEndHook != nil {
+			frontEndHook(fe)
 		}
 		c.Owners[name] = fe
 		fronts = append(fronts, fe)
