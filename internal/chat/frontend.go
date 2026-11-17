@@ -50,7 +50,16 @@ type FrontEnd struct {
 	// FileDir is where the front end keeps the copies of the files it
 	// posts, taken when it checks them. Without it no file is posted.
 	FileDir string
-	Now     func() time.Time // the clock; time.Now when nil
+
+	// Instance names the instance in the owner's login message. Relay is
+	// the login relay; nil when the config switched it off, and the
+	// message then has no link and no button.
+	Instance string
+	Relay    LoginRelay
+
+	loginOnce sync.Once
+	login     *logins
+	Now       func() time.Time // the clock; time.Now when nil
 
 	ctx context.Context
 }
@@ -67,8 +76,9 @@ func (f *FrontEnd) Run(ctx context.Context) error {
 	defer cancel()
 	f.ctx = ctx
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go func() { defer wg.Done(); f.Outbox.Run(ctx) }()
+	go func() { defer wg.Done(); f.runLogins(ctx) }()
 	go func() {
 		defer wg.Done()
 		for ctx.Err() == nil {
@@ -106,7 +116,11 @@ func (f *FrontEnd) NewThread(ctx context.Context, scope, title string) (string, 
 // Message handles an inbound message. In a channel, a trigger starts a
 // thread; everything else is ignored.
 func (f *FrontEnd) Message(in surface.Inbound) {
-	if in.Direct || in.Service {
+	if in.Service {
+		return
+	}
+	if in.Direct {
+		f.direct(in)
 		return
 	}
 	if in.Ref.Conv.Thread != "" {
@@ -294,9 +308,6 @@ func (f *FrontEnd) followUp(in surface.Inbound) {
 		f.Log.Error("follow-up: send failed", "scope", conv.Channel, "thread", conv.Thread, "message", in.Ref.ID, "err", err)
 	}
 }
-
-// Choice handles the use of a button; there are none yet.
-func (f *FrontEnd) Choice(surface.Selection) {}
 
 // Command handles a command; there are none yet.
 func (f *FrontEnd) Command(surface.Command) {}
