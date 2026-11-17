@@ -49,7 +49,9 @@ func (r *reader) subagents(e control.Event) []Row {
 	case "subagent_ended":
 		s := open[d.ID]
 		if s == nil {
-			return []Row{line(0, "Subagent "+d.ID+" ended.")}
+			// Closed with its turn already, or never started: its one end
+			// line is posted, or cannot say how long it ran.
+			return nil
 		}
 		delete(open, d.ID)
 		return []Row{line(0, endLine(s, e.Time, ""))}

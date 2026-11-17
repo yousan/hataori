@@ -62,6 +62,7 @@ func TestSubagentWithoutAnEndIsClosedWithItsTurn(t *testing.T) {
 	f.at(t, id, 5, "subagent_started", map[string]any{"id": "s1", "name": "a"})
 	f.at(t, id, 6, "subagent_started", map[string]any{"id": "s2"})
 	f.at(t, id, 50, "turn_ended", map[string]any{"turn": 1, "by": "caller", "outcome": "completion", "background": 0})
+	f.at(t, id, 55, "subagent_ended", map[string]any{"id": "s1"}) // after its turn: no second line
 	f.at(t, id, 60, "text", map[string]any{"text": "marker", "final": false})
 	got := texts(f.postedUntil(t, id, "marker"))
 	want := "the prompt|Subagent a started.|Subagent s2 started.|" +

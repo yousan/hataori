@@ -209,6 +209,9 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 		case "subagent":
 			// subagent ID [NAME [TOOL...]]: the tools run in it, one after another.
 			f := strings.Fields(arg)
+			if len(f) == 0 {
+				f = []string{"subagent"}
+			}
 			id, name := f[0], ""
 			if len(f) > 1 {
 				name = f[1]
