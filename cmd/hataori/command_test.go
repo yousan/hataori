@@ -27,6 +27,7 @@ import (
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/instance"
+	"github.com/yousan/hataori/internal/surface"
 	"github.com/yousan/hataori/internal/wire"
 )
 
@@ -41,6 +42,9 @@ func TestMain(m *testing.M) {
 		}
 	}
 	if err := agent.Register(fake.Name, fake.New); err != nil {
+		panic(err)
+	}
+	if err := surface.Register(fakeSurface, fakeDriver); err != nil {
 		panic(err)
 	}
 	os.Exit(m.Run())

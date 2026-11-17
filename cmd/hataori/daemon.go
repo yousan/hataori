@@ -9,8 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 
 	"github.com/yousan/hataori/internal/agent"
+	"github.com/yousan/hataori/internal/chat"
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
 	"github.com/yousan/hataori/internal/host"
@@ -19,6 +21,7 @@ import (
 	"github.com/yousan/hataori/internal/runner"
 	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
+	"github.com/yousan/hataori/internal/surface"
 	"github.com/yousan/hataori/internal/wire"
 	"github.com/yousan/hataori/internal/workspace"
 )
@@ -102,6 +105,30 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	// The login relay (section 4.7). It starts flows only once a client of
 	// the owner takes its updates: the chat front end sets Notify.
 	lr := &relay.Relay{Store: st, Adapters: adapters, Owner: control.Principal(cfg.Owner), Off: !cfg.LoginRelay, Log: lg}
+	var fronts []*chat.FrontEnd
+	if len(cfg.Drivers) > 0 {
+		confDir, err := in.Root.OpenRoot("config")
+		if err != nil {
+			return fmt.Errorf("config: %w", err)
+		}
+		defer confDir.Close()
+		if fronts, err = frontEnds(abs, confDir, cfg, st, c, lr, lg); err != nil {
+			return err
+		}
+	}
+	// The front ends end, and are waited for, before what they use is closed.
+	feCtx, feCancel := context.WithCancel(ctx)
+	var feDone sync.WaitGroup
+	defer func() { feCancel(); feDone.Wait() }()
+	for _, fe := range fronts {
+		feDone.Add(1)
+		go func() {
+			defer feDone.Done()
+			if err := fe.Run(feCtx); err != nil && feCtx.Err() == nil {
+				lg.Error("chat front end", "client", fe.Name, "err", err)
+			}
+		}()
+	}
 	go func() {
 		if err := lr.Run(ctx); err != nil {
 			lg.Error("login relay", "err", err)
@@ -113,4 +140,60 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		return nil
 	}
 	return err
+}
+
+// frontEnds makes one chat front end for each surface driver the config
+// names, in the binary's registry, and makes it the owner of the scopes
+// whose client has the driver's name. Scopes of other clients keep no
+// owner here.
+func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.Store, c *core.Core, lr *relay.Relay, lg *slog.Logger) ([]*chat.FrontEnd, error) {
+	var names []string
+	for name := range cfg.Drivers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var fronts []*chat.FrontEnd
+	for _, name := range names {
+		f, ok := surface.Lookup(name)
+		if !ok {
+			return nil, fmt.Errorf("config: key %q: no surface driver %q in this binary", "drivers."+name, name)
+		}
+		d, err := f(confDir, cfg.Drivers[name])
+		if err != nil {
+			return nil, err
+		}
+		scopes := map[string]chat.Scope{}
+		for _, s := range cfg.Scopes {
+			if s.Client != name {
+				continue
+			}
+			var posters []control.Principal
+			for _, p := range s.Posters {
+				posters = append(posters, control.Principal(p))
+			}
+			scopes[s.Key] = chat.Scope{Enabled: s.Enabled, Posters: posters}
+		}
+		client := name
+		fe := &chat.FrontEnd{Name: name, Driver: d, API: c.As, Trigger: cfg.Trigger, Owner: control.Principal(cfg.Owner),
+			Scopes: scopes, Log: lg.With("client", name), Instance: filepath.Base(root),
+			Outbox:  &chat.Outbox{Store: st, Client: name, Driver: d, Log: lg.With("client", name)},
+			FileDir: filepath.Join(root, "state", "chat", name, "files"),
+			FileRoots: func(_ context.Context, id control.ThreadID, session int64) ([]string, error) {
+				return []string{workspace.Path(root, client, id.Scope, id.Key), runner.StateDir(root, session)}, nil
+			}}
+		if cfg.LoginRelay {
+			fe.Relay = lr
+		}
+		c.Owners[name] = fe
+		fronts = append(fronts, fe)
+	}
+	if len(fronts) > 0 {
+		// The owner's direct messages: every front end hears the relay.
+		lr.Notify = func(u relay.Update) {
+			for _, fe := range fronts {
+				fe.LoginUpdate(u)
+			}
+		}
+	}
+	return fronts, nil
 }

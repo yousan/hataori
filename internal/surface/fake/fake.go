@@ -154,6 +154,13 @@ func (d *Driver) Run(ctx context.Context, sink surface.Sink) error {
 	return nil
 }
 
+// Connected reports whether Run has connected the driver to a sink.
+func (d *Driver) Connected() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.connected
+}
+
 // Disconnect simulates an outage: injected messages are kept for Since but
 // not delivered, until Reconnect.
 func (d *Driver) Disconnect() {
