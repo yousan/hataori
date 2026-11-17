@@ -161,6 +161,18 @@ var migrations = []Migration{
 		)`,
 		`CREATE INDEX chat_outbox_pending ON chat_outbox (client, channel, thread, id) WHERE state = 'pending'`,
 	)},
+	{Name: "chat: triggers", Up: execAll(
+		// The text of each trigger message as it first arrived, so that a
+		// message delivered again after an edit starts what the first did.
+		`CREATE TABLE chat_triggers (
+			client      TEXT NOT NULL, -- the chat front end's name
+			channel     TEXT NOT NULL,
+			message     TEXT NOT NULL, -- the surface's message id
+			text        TEXT NOT NULL,
+			received_at INTEGER NOT NULL,
+			PRIMARY KEY (client, channel, message)
+		)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {
