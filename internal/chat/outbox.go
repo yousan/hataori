@@ -205,15 +205,15 @@ func (o *Outbox) now() time.Time {
 	return time.Now()
 }
 
-// lineChanges returns, for the rows of event with a part of 100 or more (a
-// progress line and its edits), when the last of them was sent (zero for
+// lineChanges returns, for the rows of event with a part of linePart or
+// more (a progress line and its edits), when the last of them was sent (zero for
 // none) and whether one is pending.
 func (o *Outbox) lineChanges(ctx context.Context, event uint64) (last time.Time, pending bool, err error) {
 	var ms sql.NullInt64
 	var n int
 	err = o.Store.DB.QueryRowContext(ctx, `SELECT max(CASE WHEN state = 'sent' THEN sent_at END),
-		count(CASE WHEN state = 'pending' THEN 1 END) FROM chat_outbox WHERE client = ? AND event = ? AND part >= 100`,
-		o.Client, event).Scan(&ms, &n)
+		count(CASE WHEN state = 'pending' THEN 1 END) FROM chat_outbox WHERE client = ? AND event = ? AND part >= ?`,
+		o.Client, event, linePart).Scan(&ms, &n)
 	if err != nil {
 		return time.Time{}, false, err
 	}

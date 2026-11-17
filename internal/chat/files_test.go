@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/surface"
 	"github.com/yousan/hataori/internal/surface/fake"
 )
 
@@ -22,6 +23,7 @@ func withDirs(t *testing.T) (ws, state, outside string, opt func(*FrontEnd)) {
 	}
 	return ws, state, outside, func(fe *FrontEnd) {
 		fe.FileRoots = func(context.Context, control.ThreadID, int64) ([]string, error) { return []string{ws, state}, nil }
+		fe.FileDir = filepath.Join(base, "copies")
 	}
 }
 
@@ -123,5 +125,29 @@ func TestFilesOutsideTheRootsAreRefusedAlsoThroughASymlink(t *testing.T) {
 		if len(c.Message.Files) != 0 || !strings.Contains(c.Message.Text, "outside the workspace") {
 			t.Fatalf("call %+v, want a refusal", c)
 		}
+	}
+}
+
+// The file is copied when it is checked: replacing it by a link to a file
+// outside before the post changes nothing.
+func TestFileReplacedAfterTheCheckIsNotWhatIsPosted(t *testing.T) {
+	ws, _, outside, opt := withDirs(t)
+	fl := newFlaky()
+	fl.setFail(func(_ surface.Conversation, m surface.Message) bool { return len(m.Files) > 0 })
+	f := newFront(t, workspaces{}, opt, func(fe *FrontEnd) { fe.Driver, fe.Outbox.Driver = fl, fl })
+	f.driver = fl.Driver
+	id, _ := f.started(t)
+	f.showing(t)
+	report := write(t, filepath.Join(ws, "report.txt"), 3)
+	secret := write(t, filepath.Join(outside, "secret.txt"), 7)
+	f.event(t, id, "file_out", map[string]any{"file": report})
+	waitFor(t, "a post of the file to be tried", func() bool { return len(fl.tries(conv(id))) >= 2 })
+	os.Remove(report)
+	os.Symlink(secret, report)
+	fl.setFail(nil)
+	waitFor(t, "the file to be posted", func() bool { return len(fileCalls(f, id)) == 1 })
+	got, err := os.ReadFile(fileCalls(f, id)[0].Message.Files[0].Path)
+	if err != nil || string(got) != "xxx" {
+		t.Fatalf("posted %q, %v; want the file as it was checked", got, err)
 	}
 }

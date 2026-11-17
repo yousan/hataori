@@ -17,8 +17,8 @@ import (
 // event that began the stretch, so a front end that reads the stretch
 // again (after a restart) writes the same rows and uses the same line.
 const (
-	linePart   = 100 // (anchor, 100) posts the line, (anchor, 100+n) is its n-th edit
-	deletePart = -1  // (event, -1) deletes it, before what the event shows
+	linePart   = 1 << 30 // (anchor, linePart) posts the line, (anchor, linePart+n) is its n-th edit; far above other parts
+	deletePart = -1      // (event, -1) deletes it, before what the event shows
 )
 
 // quiet is a thread's open turn, for its progress line.

@@ -2,18 +2,18 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/surface"
 )
-
-// noticePart is the first part of the lines about files not posted, after
-// the messages that carry the files.
-const noticePart = 50
 
 // fileRows returns the messages that hand over the files of a file_out
 // event: the files, as many per message as the service takes, the caption
@@ -40,14 +40,17 @@ func (f *FrontEnd) fileRows(ctx context.Context, e control.Event, conv surface.C
 			notices = append(notices, "File "+name+" was not posted: it is outside the workspace and the session's directory.")
 			continue
 		}
-		st, err := os.Stat(real)
+		// What is posted is a copy taken now, so the file cannot be
+		// changed or replaced by a link between the check and the post.
+		copied, n, err := f.copyFile(real, filepath.Join(fmt.Sprint(e.Pos), fmt.Sprint(len(files)+len(notices))), lim.MaxFileBytes)
 		switch {
-		case err != nil || !st.Mode().IsRegular():
+		case errors.Is(err, errTooBig):
+			notices = append(notices, fmt.Sprintf("File %s was not posted: %s is over the limit of %s.", name, size(n), size(lim.MaxFileBytes)))
+		case err != nil:
+			f.Log.Warn("chat: a file the agent handed over cannot be read", "file", p, "err", err)
 			notices = append(notices, "File "+name+" was not posted: it cannot be read.")
-		case lim.MaxFileBytes > 0 && st.Size() > lim.MaxFileBytes:
-			notices = append(notices, fmt.Sprintf("File %s was not posted: %s is over the limit of %s.", name, size(st.Size()), size(lim.MaxFileBytes)))
 		default:
-			files = append(files, surface.File{Name: name, Path: real})
+			files = append(files, surface.File{Name: name, Path: copied})
 		}
 	}
 	per := lim.MaxFiles
@@ -60,15 +63,68 @@ func (f *FrontEnd) fileRows(ctx context.Context, e control.Event, conv surface.C
 		if i == 0 {
 			m.Text = caption
 		}
-		rows = append(rows, Row{Event: e.Pos, Part: i / per, Conv: conv, Message: m})
+		rows = append(rows, Row{Event: e.Pos, Part: len(rows), Conv: conv, Message: m})
 	}
 	if len(files) == 0 && strings.TrimSpace(caption) != "" && len(notices) > 0 {
-		rows = append(rows, Row{Event: e.Pos, Part: 0, Conv: conv, Message: surface.Message{Text: caption}})
+		rows = append(rows, Row{Event: e.Pos, Part: len(rows), Conv: conv, Message: surface.Message{Text: caption}})
 	}
-	for j, n := range notices {
-		rows = append(rows, Row{Event: e.Pos, Part: noticePart + j, Conv: conv, Message: surface.Message{Text: n, Quiet: true}})
+	for _, n := range notices {
+		rows = append(rows, Row{Event: e.Pos, Part: len(rows), Conv: conv, Message: surface.Message{Text: n, Quiet: true}})
 	}
 	return rows
+}
+
+var errTooBig = errors.New("over the size limit")
+
+// copyFile copies the regular file real into FileDir under name and returns
+// the copy's path. It opens real without following a link at its end and
+// checks that it is still the file that was resolved, and it copies at
+// most max bytes (0: no limit); a longer file gives errTooBig and its size.
+func (f *FrontEnd) copyFile(real, name string, max int64) (string, int64, error) {
+	if f.FileDir == "" {
+		return "", 0, errors.New("no FileDir to copy into")
+	}
+	src, err := os.OpenFile(real, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return "", 0, err
+	}
+	defer src.Close()
+	st, err := src.Stat()
+	if err != nil {
+		return "", 0, err
+	}
+	if !st.Mode().IsRegular() {
+		return "", 0, errors.New("not a regular file")
+	}
+	if again, err := filepath.EvalSymlinks(real); err != nil || again != real {
+		return "", 0, errors.New("the path changed while it was checked")
+	}
+	if max > 0 && st.Size() > max {
+		return "", st.Size(), errTooBig
+	}
+	dst := filepath.Join(f.FileDir, name)
+	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+		return "", 0, err
+	}
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return "", 0, err
+	}
+	limit := int64(math.MaxInt64)
+	if max > 0 {
+		limit = max + 1
+	}
+	n, err := io.Copy(out, io.LimitReader(src, limit))
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return "", 0, err
+	}
+	if max > 0 && n > max {
+		return "", n, errTooBig // it grew after the check
+	}
+	return dst, n, nil
 }
 
 // within returns p with its symbolic links resolved, and whether that is
