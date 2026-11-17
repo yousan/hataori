@@ -170,6 +170,9 @@ type fakeGateway struct {
 	identify  int
 	resume    int
 	connected chan struct{} // a session is ready (READY or RESUMED sent)
+	// refuseResume answers the next RESUME with an invalid session that may
+	// not be resumed, so that the client identifies again.
+	refuseResume bool
 }
 
 func newFakeGateway(t *testing.T, ready map[string]any) *fakeGateway {
@@ -207,8 +210,16 @@ func newFakeGateway(t *testing.T, ready map[string]any) *fakeGateway {
 				g.connected <- struct{}{}
 			case 6:
 				g.mu.Lock()
-				g.resume++
+				refuse := g.refuseResume
+				g.refuseResume = false
+				if !refuse {
+					g.resume++
+				}
 				g.mu.Unlock()
+				if refuse {
+					g.send(c, map[string]any{"op": 9, "d": false})
+					continue
+				}
 				g.dispatch(c, "RESUMED", map[string]any{})
 				g.connected <- struct{}{}
 			}
