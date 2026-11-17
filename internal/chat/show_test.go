@@ -208,3 +208,26 @@ func TestReadingATurnAgainPostsNothing(t *testing.T) {
 		t.Fatalf("posts after reading again:\n%s\nwant\n%s|marker", got, first)
 	}
 }
+
+// The prompt row is written after Start returns, so the final answer can
+// be read before it exists; it still replies to the prompt.
+func TestFinalAnswerWaitsForThePromptItRepliesTo(t *testing.T) {
+	f := newFront(t, workspaces{}, func(fe *FrontEnd) { fe.Outbox.MaxFailures = 1000 })
+	st := f.fe.Outbox.Store
+	st.DB.Exec(`CREATE TRIGGER lost AFTER INSERT ON chat_outbox BEGIN DELETE FROM chat_outbox WHERE id = NEW.id; END`)
+	id, trigger := f.started(t)
+	st.DB.Exec(`DROP TRIGGER lost`)
+	f.showing(t)
+	turn(f, t, id, 1, trigger.Ref.ID)
+	pos := f.event(t, id, "text", map[string]any{"text": "Done.", "final": true})
+	waitFor(t, "the answer to be tried", func() bool {
+		var n int
+		st.DB.QueryRow(`SELECT failures FROM chat_outbox WHERE event = ?`, pos).Scan(&n)
+		return n > 0
+	})
+	f.fe.Message(trigger) // delivered again: the prompt row is written now
+	calls := f.postedUntil(t, id, "Done.")
+	if len(calls) != 2 || calls[1].Message.ReplyTo == nil || *calls[1].Message.ReplyTo != calls[0].Ref {
+		t.Fatalf("posts %+v, want the prompt, then the answer replying to it", calls)
+	}
+}

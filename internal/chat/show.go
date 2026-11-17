@@ -26,6 +26,8 @@ type reader struct {
 // show reads the events of the front end's scopes, from where it stopped
 // before, and writes what to post into the outbox, until ctx ends.
 func (f *FrontEnd) show(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel() // ends the subscription when reading stops on an error
 	var scopes []string
 	for s := range f.Scopes {
 		scopes = append(scopes, s)
@@ -84,6 +86,11 @@ type eventData struct {
 
 // rowsFor returns the rows that show e. A kind it does not show gives none.
 func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event) ([]Row, error) {
+	switch e.Kind {
+	case "thread_created", "turn_started", "text", "request", "turn_ended":
+	default:
+		return nil, nil // a kind the front end does not show, or does not know
+	}
 	var d eventData
 	if len(e.Data) > 0 {
 		if err := json.Unmarshal(e.Data, &d); err != nil {

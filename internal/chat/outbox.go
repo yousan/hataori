@@ -46,7 +46,8 @@ func key(event uint64, part int) string {
 }
 
 // Outbox holds what one front end posts, and its sender posts it. Rows of
-// one conversation are posted in the order they were written.
+// one conversation are posted in the order of their keys, the order of the
+// events they show.
 type Outbox struct {
 	Store  *store.Store
 	Client string // the front end's name; rows of other clients are not touched
@@ -177,6 +178,24 @@ func (o *Outbox) Sent(ctx context.Context, event uint64, part int) (surface.Mess
 	return r, true, nil
 }
 
+// state returns the state of a row ("" when it does not exist) and its
+// message reference once it is sent.
+func (o *Outbox) state(ctx context.Context, k RowKey) (string, surface.MessageRef, error) {
+	var (
+		state string
+		r     surface.MessageRef
+	)
+	err := o.Store.DB.QueryRowContext(ctx, `SELECT state, channel, thread, ref FROM chat_outbox
+		WHERE client = ? AND event = ? AND part = ?`, o.Client, k.Event, k.Part).Scan(&state, &r.Conv.Channel, &r.Conv.Thread, &r.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", surface.MessageRef{}, nil
+	}
+	if err != nil {
+		o.Log.Error("chat outbox: reading a row", "key", key(k.Event, k.Part), "err", err)
+	}
+	return state, r, err
+}
+
 // Run posts the pending rows until ctx ends. Each conversation is sent by
 // a goroutine of its own, so a failing one holds back no other.
 func (o *Outbox) Run(ctx context.Context) error {
@@ -258,6 +277,7 @@ func (o *Outbox) drain(ctx context.Context, conv surface.Conversation) {
 			return
 		}
 		left := false
+	rows:
 		for _, r := range rows {
 			if failed[r.id] {
 				continue
@@ -266,6 +286,8 @@ func (o *Outbox) drain(ctx context.Context, conv surface.Conversation) {
 			switch o.send(ctx, conv, r) {
 			case stuck:
 				return
+			case reread:
+				break rows
 			case failedPost:
 				if !r.decoration {
 					return // a reply holds back the rows behind it
@@ -281,7 +303,7 @@ func (o *Outbox) drain(ctx context.Context, conv surface.Conversation) {
 
 func (o *Outbox) pendingRows(ctx context.Context, conv surface.Conversation) ([]pending, error) {
 	rows, err := o.Store.DB.QueryContext(ctx, `SELECT id, event, part, message, decoration, failures FROM chat_outbox
-		WHERE client = ? AND channel = ? AND thread = ? AND state = 'pending' ORDER BY id`,
+		WHERE client = ? AND channel = ? AND thread = ? AND state = 'pending' ORDER BY event, part`,
 		o.Client, conv.Channel, conv.Thread)
 	if err != nil {
 		return nil, err
@@ -304,6 +326,7 @@ const (
 	posted     outcome = iota
 	failedPost         // the post failed, or the row was dropped
 	stuck              // the outcome could not be recorded: stop, or the row is posted again at once
+	reread             // the queue changed in front of the row: read it again
 )
 
 // send posts one row and records the outcome.
@@ -311,14 +334,21 @@ func (o *Outbox) send(ctx context.Context, conv surface.Conversation, r pending)
 	k := key(r.event, r.part)
 	m, replyRow, err := decode(r.message)
 	if err == nil && replyRow != nil {
-		var to surface.MessageRef
-		var ok bool
-		if to, ok, err = o.Sent(ctx, replyRow.Event, replyRow.Part); err != nil {
+		state, to, err := o.state(ctx, *replyRow)
+		switch {
+		case err != nil:
 			return stuck
-		}
-		if ok {
+		case state == "sent":
 			m.ReplyTo = &to
+		case state == "pending":
+			// Written since this drain read the queue; it comes earlier in
+			// the order, so read the queue again.
+			return reread
+		case state == "" && r.failures+1 < o.MaxFailures:
+			// The row it replies to is not written yet; give it a few ticks.
+			return o.record(ctx, failedPost, r.id, `UPDATE chat_outbox SET failures = failures + 1 WHERE id = ?`, r.id)
 		}
+		// Otherwise (dropped, or never written) it is posted without the reply.
 	}
 	if err != nil {
 		// Unreadable rows cannot become readable: drop it, so it holds
