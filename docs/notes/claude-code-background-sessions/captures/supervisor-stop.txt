@@ -1,0 +1,30 @@
+$ claude daemon status   (before)
+pid:     1813110
+version: 2.1.326
+uptime:  42s
+
+$ claude daemon stop --any
+stopped (ended 6 background sessions)
+note: the next `claude agents` or `claude --bg` will start a new one
+
+# every SessionEnd hook of these runs, in order (the first dc635feb is the earlier `claude stop`; the stop above ended the next five)
+SessionEnd dc635feb reason=other
+SessionEnd 604f53f6 reason=other
+SessionEnd dc635feb reason=other
+SessionEnd 9d7e1719 reason=other
+SessionEnd dc635feb reason=other
+SessionEnd 1b789fda reason=other
+SessionEnd 3c867e54 reason=other
+
+$ claude --resume <dc635feb uuid> --bg "After the supervisor stop: ..."
+Starting background service…
+note: woke session dc635feb with its saved options (--settings, --model).
+backgrounded · dc635feb · sleep shell command test
+  claude agents             list sessions
+  claude attach dc635feb    open in this terminal
+  claude logs dc635feb      show recent output
+  claude stop dc635feb      stop this session
+   5.5 SessionStart dc635feb resume 
+   6.7 UserPromptSubmit dc635feb  After the supervisor stop: what is 4 times 4? One sentence.
+  11.5 Stop dc635feb  4 times 4 is 16.
+  22.7 SessionEnd dc635feb  

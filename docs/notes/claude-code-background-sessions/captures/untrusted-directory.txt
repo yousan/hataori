@@ -1,0 +1,3 @@
+$ claude --bg ... (in a fresh, untrusted directory, no terminal)
+Workspace not trusted. Run `claude` in /var/tmp/hataori-spike-untrusted-UyQE6w once and accept the trust prompt, then retry.
+(exit status 1; no session, no hook call, no trust entry written)
