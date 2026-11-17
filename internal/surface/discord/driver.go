@@ -353,36 +353,12 @@ func (d *Driver) Since(context.Context, surface.Conversation, string) ([]surface
 	return nil, errNotYet
 }
 
-// OpenThread is not implemented yet.
-func (d *Driver) OpenThread(context.Context, surface.Conversation, string) (surface.Conversation, error) {
-	return surface.Conversation{}, errNotYet
-}
-
 // OpenDirect is not implemented yet.
 func (d *Driver) OpenDirect(context.Context, string) (surface.Conversation, error) {
 	return surface.Conversation{}, errNotYet
 }
 
-// Post is not implemented yet.
-func (d *Driver) Post(context.Context, surface.Conversation, string, surface.Message) (surface.MessageRef, error) {
-	return surface.MessageRef{}, errNotYet
-}
-
-// Edit is not implemented yet.
-func (d *Driver) Edit(context.Context, surface.MessageRef, surface.Message) error { return errNotYet }
-
-// Delete is not implemented yet.
-func (d *Driver) Delete(context.Context, surface.MessageRef) error { return errNotYet }
-
 // SetStatus is not implemented: lamps come after phase 1.
 func (d *Driver) SetStatus(context.Context, surface.MessageRef, surface.Status) error {
 	return errors.ErrUnsupported
 }
-
-// SetThread is not implemented yet.
-func (d *Driver) SetThread(context.Context, surface.Conversation, surface.ThreadMeta) error {
-	return errNotYet
-}
-
-// Limits reports nothing yet: the outbound calls come in a later issue.
-func (d *Driver) Limits() surface.Limits { return surface.Limits{} }

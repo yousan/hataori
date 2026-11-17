@@ -4,6 +4,7 @@
 usage:
   capture.py bot    RAW_DIR      the captures a bot can take alone
   capture.py person RAW_DIR MIN  wait up to MIN minutes for the person's steps (README)
+  capture.py second RAW_DIR      more REST captures for posting (no gateway connection)
   capture.py cleanup RAW_DIR     delete what the bot posted in the runs above
 
 Environment:
@@ -77,7 +78,7 @@ def rest(raw, name, method, path, body=None, files=None):
     except urllib.error.HTTPError as e:
         status, hdr, out = e.code, e.headers, e.read()
     keep = {k.lower(): v for k, v in hdr.items()
-            if k.lower().startswith("x-ratelimit") or k.lower() in ("retry-after", "content-type")}
+            if k.lower().startswith("x-ratelimit") or k.lower() in ("retry-after", "content-type", "via")}
     parsed = json.loads(out) if out else None
     if name:
         raw.save("rest-" + name, {"source": "rest", "date": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -323,6 +324,31 @@ def person_run(raw, minutes):
         gw.close()
 
 
+def second_run(raw):
+    ch = os.environ["HATAORI_DISCORD_CHANNEL"]
+    st, th = rest(raw, "thread-without-message", "POST", f"/channels/{ch}/threads",
+                  {"name": "[hataori test] thread without a message", "type": 11, "auto_archive_duration": 60})
+    t = th["id"]
+    raw.note("threads", t)
+    st, p = rest(raw, "post-thread", "POST", f"/channels/{t}/messages", {"content": "[hataori test] in the thread"})
+    raw.note("messages", [t, p["id"]])
+    rest(raw, "set-thread-archived", "PATCH", f"/channels/{t}", {"archived": True})
+    st, p = rest(raw, "post-archived-thread", "POST", f"/channels/{t}/messages",
+                 {"content": "[hataori test] into the archived thread"})
+    if st == 200:
+        raw.note("messages", [t, p["id"]])
+    rest(raw, "delete-thread-refused", "DELETE", f"/channels/{t}")
+    for i in range(1, 12):
+        st, p = rest(raw, f"burst-{i}", "POST", f"/channels/{t}/messages", {"content": f"[hataori test] burst {i}"})
+        if st == 200:
+            raw.note("messages", [t, p["id"]])
+            os.remove(os.path.join(raw.path, f"rest-burst-{i}.json"))
+        else:
+            os.rename(os.path.join(raw.path, f"rest-burst-{i}.json"), os.path.join(raw.path, "rest-rate-limited.json"))
+            break
+    rest(raw, "other-route-after-429", "GET", f"/channels/{ch}/messages?limit=1")
+
+
 def cleanup(raw):
     for conv, mid in raw.created["messages"]:
         st, _ = rest(None, None, "DELETE", f"/channels/{conv}/messages/{mid}")
@@ -339,4 +365,4 @@ if __name__ == "__main__":
     cmd, path = sys.argv[1], sys.argv[2]
     raw = Raw(path)
     {"bot": lambda: bot_run(raw), "person": lambda: person_run(raw, float(sys.argv[3])),
-     "cleanup": lambda: cleanup(raw)}[cmd]()
+     "second": lambda: second_run(raw), "cleanup": lambda: cleanup(raw)}[cmd]()
