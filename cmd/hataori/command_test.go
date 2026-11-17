@@ -6,11 +6,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go/parser"
+	"go/token"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -283,31 +287,82 @@ func TestCommands(t *testing.T) {
 	}
 }
 
-// Driver and adapter packages are imported only under cmd/.
+// Production code outside cmd/ and adapter, driver or client packages must
+// depend only on interfaces and must not name particular surfaces or agents.
 func TestAdaptersOnlyUnderCmd(t *testing.T) {
-	out, err := exec.Command("go", "list", "-f", `{{.ImportPath}} {{join .Deps " "}}`, "github.com/yousan/hataori/internal/...").Output()
-	if err != nil {
-		t.Skipf("go list: %v", err)
-	}
-	const mod = "github.com/yousan/hataori/internal/"
-	adapter := func(p string) bool {
-		for _, iface := range []string{"agent/", "surface/"} {
-			if strings.HasPrefix(p, mod+iface) {
+	const module = "github.com/yousan/hataori/"
+	// The trailing slashes keep the interface packages themselves on the
+	// core side: internal/agent is core, internal/agent/fake an adapter.
+	// Add future adapter, driver and client package prefixes here.
+	packagePrefixes := []string{"internal/agent/", "internal/surface/"}
+	isAdapter := func(path string) bool {
+		for _, prefix := range packagePrefixes {
+			if strings.HasPrefix(path, prefix) {
 				return true
 			}
 		}
 		return false
 	}
-	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		f := strings.Fields(l)
-		if adapter(f[0]) {
-			continue
+	// Keep all surface and agent names in this one list.
+	names := []string{"Discord", "Slack", "Microsoft Teams", "Teams", "Claude Code", "Claude", "Codex"}
+	patterns := make([]string, len(names))
+	for i, name := range names {
+		patterns[i] = regexp.QuoteMeta(name)
+	}
+	words := regexp.MustCompile(`(?i)\b(?:` + strings.Join(patterns, "|") + `)\b`)
+
+	root := filepath.Join("..", "..")
+	fset := token.NewFileSet()
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
-		for _, d := range f[1:] {
-			if adapter(d) {
-				t.Errorf("%s imports the adapter or driver %s", f[0], d)
+		if entry.IsDir() {
+			if strings.HasPrefix(entry.Name(), ".") && path != root || entry.Name() == "vendor" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		pkg := filepath.ToSlash(filepath.Dir(rel))
+		if pkg == "cmd" || strings.HasPrefix(pkg, "cmd/") || isAdapter(pkg) {
+			return nil
+		}
+		source, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		file, err := parser.ParseFile(fset, rel, source, parser.ImportsOnly)
+		if err != nil {
+			return err
+		}
+		for _, imp := range file.Imports {
+			importPath, err := strconv.Unquote(imp.Path.Value)
+			if err != nil {
+				return err
+			}
+			if strings.HasPrefix(importPath, module) && isAdapter(strings.TrimPrefix(importPath, module)) {
+				t.Errorf("%s: imports adapter, driver or client %s", fset.Position(imp.Pos()), importPath)
 			}
 		}
+		if strings.HasPrefix(pkg, "internal/") {
+			for i, line := range strings.Split(string(source), "\n") {
+				for _, word := range words.FindAllString(line, -1) {
+					t.Errorf("%s:%d: core source names surface or agent %q", rel, i+1, word)
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
