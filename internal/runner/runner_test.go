@@ -134,6 +134,7 @@ type options struct {
 	inputTimeout  string                            // the fake's; 5s when empty
 	dieWhenPlaced bool                              // the workspace maker kills its process right after it placed a workspace
 	wrap          func(agent.Adapter) agent.Adapter // wraps the fake adapter, if set
+	dialog        string                            // the fake's start-up dialog, in the terminal form
 }
 
 // build makes an instance's store, core and runner with the fake agent.
@@ -145,7 +146,7 @@ func build(root string, o options, log io.Writer) (*store.Store, *core.Core, *Ru
 	}
 	cfg, _ := json.Marshal(fake.Config{Command: []string{os.Args[0], "role", "fake"}, Hataori: os.Args[0],
 		Terminal: o.terminal, Env: []string{"PATH=" + os.Getenv("PATH")}, Conversations: o.conversations,
-		InputTimeout: cmp.Or(o.inputTimeout, "5s")})
+		InputTimeout: cmp.Or(o.inputTimeout, "5s"), Dialog: o.dialog})
 	ad, err := fake.New(cfg)
 	if err != nil {
 		return nil, nil, nil, err
@@ -320,6 +321,33 @@ func TestBlockedAtStart(t *testing.T) {
 		dir := StateDir(f.root, 1)
 		waitFor(t, "the host to end", 15*time.Second, func() bool { return host.Gone(dir) })
 	})
+}
+
+// A start-up dialog no hook reports: the codec asked for the screen, the
+// runner gave it until the start and carried out the key the codec sent.
+// The fake shows its dialog again after the start, and panics if the
+// screen reaches its codec after that.
+func TestScreenUntilTheStart(t *testing.T) {
+	f := newFixture(t, options{terminal: true, dialog: "fake: trust this folder? Enter"})
+	f.start("reply hello")
+	waitFor(t, "the end of the turn", 15*time.Second, f.has("turn_ended", 1))
+	if texts := f.eventData("text"); len(texts) != 1 || texts[0]["text"] != "hello" {
+		t.Fatalf("texts %v", texts)
+	}
+	tty := readFile(t, filepath.Join(StateDir(f.root, 1), host.TerminalLog))
+	if !bytes.Contains(tty, []byte("(shown again after the start)")) {
+		t.Fatalf("the dialog was not shown again after the start: %q", tty)
+	}
+	lv, err := f.run.get(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lv.mu.Lock()
+	watching := lv.screen
+	lv.mu.Unlock()
+	if watching {
+		t.Fatal("the runner still watches the screen after the start")
+	}
 }
 
 func TestPartialLineWaitsForItsEnd(t *testing.T) {

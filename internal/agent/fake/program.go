@@ -37,6 +37,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	inputDelay := fs.Duration("input-delay", 0, "wait this long before taking each input")
 	conversations := fs.String("conversations", "", "a directory with one file per session started")
 	configDir := fs.String("config", "", "where its login is kept; turns fail until it is logged in")
+	dialog := fs.String("dialog", "", "a start-up dialog to show on the terminal, answered by Enter")
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
@@ -55,6 +56,20 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		defer t.Close()
 		p.transcript = t
+	}
+	if *terminal && *dialog != "" {
+		// Like an agent's own start-up dialog: shown on the terminal, and
+		// nothing reported until a key answers it.
+		fmt.Fprint(stdout, *dialog+"\r\n")
+		for b := make([]byte, 1); ; {
+			n, err := stdin.Read(b)
+			if err != nil {
+				return 1
+			}
+			if n == 1 && b[0] == '\r' {
+				break
+			}
+		}
 	}
 	inputs := make(chan string, 16)
 	p.interrupts = make(chan struct{}, 1)
@@ -86,6 +101,9 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 	}
 	p.report(map[string]any{"t": "ready", "session": id, "model": *model, "effort": *effort, "resume": *resume, "transcript": *transcript})
+	if *terminal && *dialog != "" {
+		fmt.Fprint(stdout, *dialog+" (shown again after the start)\r\n")
+	}
 
 	agentTurns := make(chan time.Duration, 4)
 	for {

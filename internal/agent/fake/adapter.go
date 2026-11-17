@@ -41,6 +41,11 @@ type Config struct {
 	// InputTimeout is how long written input may go unreported before its
 	// turn fails as "not delivered"; DefaultInputTimeout when empty.
 	InputTimeout string `json:"input_timeout"`
+	// Dialog, in the terminal form, is the text of a start-up dialog that
+	// no hook reports: the program shows it and reports its start only
+	// after an Enter, and shows it once more after the start. The codec
+	// watches the screen for it and answers it with Enter.
+	Dialog string `json:"dialog"`
 }
 
 // Adapter is the fake agent.
@@ -114,6 +119,9 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 	if a.c.ConfigDir != "" {
 		argv = append(argv, "--config", a.c.ConfigDir)
 	}
+	if a.c.Terminal && a.c.Dialog != "" {
+		argv = append(argv, "--dialog", a.c.Dialog)
+	}
 	env := append([]string{}, a.c.Env...)
 	if a.c.Terminal {
 		argv = append(argv, "--terminal", "--hook", a.c.Hataori,
@@ -126,5 +134,9 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 // NewCodec returns the codec of one session.
 func (a *Adapter) NewCodec(spec agent.Spec) agent.Codec {
 	d, _ := time.ParseDuration(a.c.InputTimeout) // checked in New
-	return &codec{terminal: a.c.Terminal, followed: map[string]bool{}, timeout: d}
+	c := &codec{terminal: a.c.Terminal, followed: map[string]bool{}, timeout: d}
+	if a.c.Terminal {
+		c.dialog = a.c.Dialog
+	}
+	return c
 }

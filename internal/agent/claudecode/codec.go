@@ -49,6 +49,10 @@ type codec struct {
 	requests    map[string]*request // by hook call id, while the call waits
 	hookTimeout time.Duration       // after it the CLI gives up on a waiting hook
 	lines       map[string]bool     // uuids of transcript lines already read
+
+	// The screen, read only before the first hook call (screen.go).
+	started bool        // a hook was called: the CLI is past any start-up dialog
+	scr     screenState // the trust dialog
 }
 
 // turnText is what the codec knows about the text of one prompt's turn.
@@ -103,7 +107,9 @@ type payload struct {
 
 const askTool = "AskUserQuestion"
 
-func (c *codec) Open() Actions { return Actions{} }
+// Open asks for the screen, for the folder-trust dialog of a workspace
+// never opened before; the runner gives it only until the session starts.
+func (c *codec) Open() Actions { return Actions{WatchScreen: true} }
 
 // Input records what hataori pastes, so that the prompt it produces is
 // known as the caller's. Writing it to the terminal is not done here yet.
@@ -174,7 +180,7 @@ type sentInput struct {
 func (c *codec) Tick(now time.Time) Actions {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.number(merge(c.tickInput(now), c.tickRequests(now)))
+	return c.number(merge(merge(c.tickScreen(now), c.tickInput(now)), c.tickRequests(now)))
 }
 
 // tickInput ends the wait for input the CLI never reported: after the
@@ -231,6 +237,8 @@ func (c *codec) decode(src agent.Source, line []byte) Actions {
 	case agent.File:
 		a := c.decodeTranscript(line)
 		return merge(a, c.track(c.current, a)) // the prompt of the line just read
+	case agent.Screen:
+		return c.screen(line)
 	case agent.Hook:
 	default:
 		return Actions{}
@@ -239,6 +247,7 @@ func (c *codec) decode(src agent.Source, line []byte) Actions {
 	if err := json.Unmarshal(line, &k); err != nil || k.Hook == "" {
 		return c.events(agent.Event{Kind: agent.Unknown, Text: string(line)})
 	}
+	c.started = true // no hook runs before a start-up dialog is answered
 	if c.seen[k.Hook] {
 		return Actions{} // the same call again
 	}

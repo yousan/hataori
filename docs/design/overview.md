@@ -23,7 +23,7 @@ How to read it:
 6. **The core has one entry, the control API.** Chat adapters, a supervisor agent, a dashboard and plugins are all clients of it (sections 5 and 7). The first interface draft did not allow that; section 5.4 says what changed.
 7. **hataori writes nothing into a working tree**, and removes a workspace only after proving there is nothing in it that exists nowhere else (section 4.6).
 8. **Phase 1 is narrow:** replace c-lord for orders that a managing agent sends through a webhook, with the full test suite written before the first real order. Everything a person does by hand in chat comes after (section 8).
-9. **Two things have no hook:** the folder-trust dialog at a workspace's first start, and the end of an interrupted turn. Section 3.5 says how each is handled; the first needs the maintainer's decision (section 10).
+9. **Two things have no hook:** the folder-trust dialog at a workspace's first start, and the end of an interrupted turn. Section 3.5 says how each is handled; the first is answered by keys before the session starts (decided, section 10).
 
 ## 2. What c-lord taught us
 
@@ -137,7 +137,7 @@ Each hook is the command `hataori hook`. It hands its payload to the session hos
 
 ### 3.5 What hooks do not cover, and other risks
 
-- **The folder-trust dialog.** The first time the interactive CLI starts in a repository, it asks whether the folder is trusted, with the cursor on "No, exit". Until that is answered no hook runs at all (documented, and seen: zero hook calls in 12 seconds). Trust is recorded per repository root, and trusting a parent directory does not cover a clone inside it (documented). So every new workspace meets the dialog, and no hook can report or answer it. The ways out are: recognise this one dialog in the terminal output and answer it by keys; write the trust record into Claude Code's own state file before starting; or have a person accept it. None is clean. This is question 1 in section 10.
+- **The folder-trust dialog.** The first time the interactive CLI starts in a repository, it asks whether the folder is trusted, with the cursor on "No, exit". Until that is answered no hook runs at all (documented, and seen: zero hook calls in 12 seconds). Trust is recorded per repository root, and trusting a parent directory does not cover a clone inside it (documented). So every new workspace meets the dialog, and no hook can report it. Claude Code 2.1.326 offers no supported way to trust a directory in advance (#56). **Decided:** hataori answers this one dialog by keys, before `SessionStart` only (section 10). The adapter asks to watch the screen until the session starts. It recognises the captured dialog by its text, for the workspace's own path, and waits until the screen has settled: right after drawing it, the CLI asks the terminal what it supports, and a key sent then was lost. Then it moves the cursor one line at a time toward the line that says yes, found by its text, and confirms once the screen shows the cursor there. Any other screen gets no key, and the start fails as below.
 - **Any other start-up dialog** (a login prompt, a consent prompt for a new MCP server) has the same shape: nothing is reported. The rule: a session that has not reported `SessionStart` within the start timeout is `failed` with reason `blocked at start`, with its terminal output attached for a person to read. hataori does not guess and does not type.
 - **An interrupted turn fires no hook** (documented, and seen). Its end is read from the transcript, which gets a line saying the request was interrupted. This is the one piece of turn state that rests on the transcript.
 - **The transcript is not a documented format** as far as we found **(unverified)**. Hooks are: their payloads are specified field by field. So the split matters: turn state, questions, failures and the final answer come from hooks; only text before the final answer, and the interrupt line, come from the transcript. If the transcript changes, progress text degrades and nothing else.
@@ -564,17 +564,11 @@ Unlike Discord and Slack Socket Mode, Teams calls hataori. The host needs a publ
 
 ### Open
 
-1. **How does a new workspace get past the folder-trust dialog with nobody at the terminal?** No hook runs before it is answered (section 3.5). The choices:
-   - *Answer it by keys.* Before `SessionStart`, and only then, look at the terminal output for this one dialog, move to the line that says yes, and confirm. Success is `SessionStart` arriving; anything unrecognised is a failed start and no key is sent. This is the one place hataori would read the screen, and the dialog is behind nine c-lord issues.
-   - *Write the trust record.* Mark the workspace as trusted in Claude Code's own state file before starting. No screen, but the file is not a documented interface, Claude Code rewrites it all the time, and it is the file that also holds the account.
-   - *A person accepts it* once per workspace, through `hataori attach`. Clean, but an order then waits for a person.
-
-   *Recommendation:* answer it by keys, as the single bounded exception, with the failed-start rule behind it. Writing into the CLI's state file is closer to touching login than reading one known dialog is. The adapter issue for start-up records what is tried first: whether Claude Code offers a supported way to trust a directory in advance.
-
-2. **Where do plugins go in the order after phase 1?** *Recommendation:* right after the supervisor. The supervisor is the first program outside the daemon with a limited `Caller` that reads events from a position; plugins add the manifest, the grant and hooks on top of that.
+1. **Where do plugins go in the order after phase 1?** *Recommendation:* right after the supervisor. The supervisor is the first program outside the daemon with a limited `Caller` that reads events from a position; plugins add the manifest, the grant and hooks on top of that.
 
 ### Decided
 
+- **A new workspace gets past the folder-trust dialog by keys** (#56; the maintainer, 2026-11-12). Claude Code 2.1.326 has no supported way to trust a directory in advance, and writing the trust record into its state file was rejected: that file also holds the account. Only the captured dialog is known, by its text. The line is chosen by its text, and keys are sent only before `SessionStart`. Any other screen gets no key, and the start fails as `blocked at start` (section 3.5).
 - **Claude Code is not driven through `claude -p`.** Decided by the maintainer; section 3.4. Live attach comes back with the terminal, so the earlier question about take-over between turns is closed.
 - **A message that arrives while a turn runs is delivered into the turn**; stopping is the explicit way to interrupt. On the Claude Code path it is held until the turn ends, until delivery during a turn has been checked (section 3.5).
 - **Permission requests are allowed automatically** by default, so unattended orders do not stall. "Ask in chat" becomes a per-channel setting with the buttons.
@@ -649,7 +643,7 @@ Unlike Discord and Slack Socket Mode, Teams calls hataori. The host needs a publ
 | Buttons work after a restart; old cards are disarmed | keep | Requests are rows; nothing to recover. |
 | Typing a sentence instead of pressing a button | keep | An open request takes the next message as its answer. |
 | Tool permission prompts auto-accepted | change | Default stays bypass; "ask in chat" becomes possible (section 10). |
-| Folder-trust dialog handling | change | Still needed: the interactive CLI shows it and no hook runs before it (section 10). |
+| Folder-trust dialog handling | change | Still needed: the interactive CLI shows it and no hook runs before it. Answered by keys, before `SessionStart` only, for the captured dialog alone (section 10). |
 | Unknown-prompt safety net, menu watchdog, dead-pane guard | drop | The screen is not read. A session that does not report its start fails with its terminal output attached. |
 | Usage-limit menu answered with "wait" | change | The limit arrives as a hook call; whether the menu on screen still needs an answer is unverified. |
 
@@ -1056,7 +1050,10 @@ type Source int
 // agent accepts. It does no I/O, so it is tested against captured output.
 type Codec interface {
 	Open() Actions                          // what to do first, if anything
-	Decode(src Source, line []byte) Actions // one reported line
+	// One reported line. src is Output, Hook, File, or Screen: the agent's
+	// terminal output, given only to a codec whose Open asked for it, and
+	// only until the session reports SessionReady.
+	Decode(src Source, line []byte) Actions
 	Input(in Input) (Actions, error)        // a user message; TurnStarted returns its ID
 	Answer(a Answer) (Actions, error)       // to an approval or a question
 	Interrupt() Actions
@@ -1072,6 +1069,9 @@ type Actions struct {
 	Reply  []HookReply // to hook calls that are waiting for an answer
 	Follow []string    // files to start following, such as a transcript
 	Inputs []string    // the Input.IDs of the messages Write carries
+	// WatchScreen, from Open only: give Decode the terminal (Source Screen)
+	// until SessionReady, for a start-up dialog no hook reports.
+	WatchScreen bool
 }
 
 // Input is a user message. ID is opaque to the codec; the TurnStarted of

@@ -3,7 +3,7 @@
 Real output of the interactive `claude` CLI, for testing the adapter's codec. These files are not a contract: when the CLI changes, add a capture of the new version next to this one.
 
 - `2.1.322/`: Claude Code 2.1.322, captured on 2026-11-12 (also in `2.1.322/VERSION`), on Linux, with the model `haiku` (it reports itself as `claude-haiku-5-5`).
-- `2.1.326/`: Claude Code 2.1.326, captured on 2026-11-17 (also in `2.1.326/VERSION`), on Linux, with the model `haiku`: one scenario, `subagent_tools`, taken for #142 (see below).
+- `2.1.326/`: Claude Code 2.1.326, captured on 2026-11-17 (also in `2.1.326/VERSION`), on Linux, with the model `haiku`: `subagent_tools`, taken for #142, and `trust_answered`, taken for #56 (see below).
 - `capture.py` took them; `scrub.py` made them committable. `captures_test.go` in the package fails when a capture holds a home directory path, an e-mail address, an unscrubbed UUID or something shaped like a token.
 
 ## How they were taken
@@ -109,4 +109,30 @@ There is no `SessionEnd`. `/exit` opened a dialog ("Background work is running",
 `scrub.py` now also replaces an interpreter path under the home directory (a virtual environment) in the hook command with `/usr/bin/python3`.
 
 The 2.1.322 files were rescrubbed with that rule alone, in place, on 2026-11-17 (`scrub.py --again 2.1.322`): only the hook command's interpreter changed. `captures_test.go` fails on such a path.
+
+## The folder-trust dialog answered (2.1.326, taken for #56)
+
+`2.1.326/trust_answered/`, taken by `TestLiveFolderTrust` in the package. It runs only with `HATAORI_REAL_CLAUDE=1 HATAORI_CAPTURE_DIR=<raw dir>`, and its output was scrubbed with `scrub.py`. The privacy setup is the same as above: only `--settings` and the project's own settings, no CLAUDE.md, no memory, no connectors, the user's plugins switched off, model `haiku`. Hooks were registered for `SessionStart`, `UserPromptSubmit`, `Stop` and `SessionEnd`.
+
+The workspace was a clone of a new local repository, in a new temporary directory, never opened on the machine. The terminal was 24×80, the session host's default size. The codec itself answered the dialog. No prompt was sent, so no turn ran. After `SessionStart` the test typed `/exit`.
+
+| File | What it is |
+|---|---|
+| `screen-01.raw` … `screen-08.raw` | The terminal output, chunk by chunk as the codec was given it, up to the chunk that made it confirm. `screen-04` is the dialog. `screen-05` to `-07` are the CLI's questions to the terminal (`ESC[>0q`, `ESC[?u`, an OSC 7501 query, `ESC[c`), which no terminal answered. `screen-08` redraws the choices with the cursor on "Yes, I trust this folder". |
+| `keys.txt` | The keys and when they were sent: Down once the screen had settled after `screen-07`, then Enter once it had settled after `screen-08`. |
+| `hooks/` | `SessionStart` (`source: startup`) right after the Enter, and `SessionEnd` (`prompt_input_exit`) after `/exit`. |
+
+The screen after the Enter is not kept: it is the CLI's main screen, which the tests do not need, and it may show details of the account.
+
+The dialog's text in 2.1.326 is the 2.1.322 text, wrapped to 80 columns. The first try sent Down as soon as the dialog appeared, before the CLI's questions to the terminal. The cursor then moved down and back up, as if the key had been taken twice, and the Enter after it was lost: no trust was recorded and nothing started. So the codec now waits until the screen has stopped changing before each key.
+
+### Trusting a directory in advance: what was tried (2.1.326)
+
+None of these trusts a directory for an interactive session in advance:
+
+- `command claude --help`: only `-p` says the trust dialog is skipped, and hataori does not use `-p` (design, section 3.4). No flag trusts a directory.
+- The settings documentation (code.claude.com/docs/en/settings): trust decisions are per-project state in `~/.claude.json`, which Claude Code "writes for itself; you don't need to edit it". No settings key sets trust.
+- The security documentation (code.claude.com/docs/en/security): the trust dialog appears in an interactive session for a folder not trusted. In the home directory, trust is held for the session only, and "there is no setting to persist it".
+- The permissions documentation (code.claude.com/docs/en/permissions): trusting a parent folder does not cover a nested repository, so a clone inside a trusted directory still gets the dialog.
+- The environment-variable documentation (code.claude.com/docs/en/env-vars): the only trust-related variable is `CLAUDE_CODE_DISABLE_ULTRAREVIEW_TRUST_CHECK`, for `claude ultrareview` alone. The binary also holds `CLAUDE_CODE_IGNORE_PERSISTED_TRUST`, which does the opposite, and variables of background sessions; none of them is documented for this.
 
