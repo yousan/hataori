@@ -190,3 +190,47 @@ func TestRestartDuringAQuietStretchUsesTheSameLine(t *testing.T) {
 	}
 }
 
+// Output that arrives while the front end is down still removes the line.
+func TestOutputWhileDownRemovesTheLineAfterARestart(t *testing.T) {
+	c := &clock{t: t0}
+	f := newFront(t, workspaces{}, withClock(c))
+	id, trigger := f.started(t)
+	stop := f.showing(t)
+	f.at(t, id, 0, "turn_started", map[string]any{"turn": 1, "by": "caller", "key": trigger.Ref.ID})
+	f.fe.Outbox.Store.DB.Exec(`UPDATE threads SET state = 'running'`)
+	f.advance(t, c, 95)
+	f.waitLines(t, id, "post Still working: 1m 35s without output.")
+	stop()
+	f.at(t, id, 100, "text", map[string]any{"text": "While down.", "final": false})
+	c.set(t0.Add(110 * time.Second))
+	f.showing(t)
+	f.waitLines(t, id, "post Still working: 1m 35s without output.", "delete")
+}
+
+// While the line of the stretch before cannot be deleted, no second one
+// is posted.
+func TestNoSecondLineWhileTheFirstIsNotDeleted(t *testing.T) {
+	c := &clock{t: t0}
+	f := newFront(t, workspaces{}, withClock(c))
+	id, trigger := f.started(t)
+	f.showing(t)
+	f.at(t, id, 0, "turn_started", map[string]any{"turn": 1, "by": "caller", "key": trigger.Ref.ID})
+	f.advance(t, c, 95)
+	f.waitLines(t, id, "post Still working: 1m 35s without output.")
+	f.driver.Fail(fake.OpDelete, 1000, nil)
+	f.at(t, id, 100, "text", map[string]any{"text": "Out.", "final": false})
+	f.advance(t, c, 200)
+	settle()
+	f.postedUntil(t, id, "Out.")
+	f.waitLines(t, id, "post Still working: 1m 35s without output.")
+	f.driver.Fail(fake.OpDelete, 0, nil)
+	f.waitLines(t, id, "post Still working: 1m 35s without output.", "delete", "post Still working: 1m 40s without output.")
+}
+
+// Text that shows nothing is not output: it neither ends a stretch nor
+// removes the line.
+func TestBlankTextIsNotOutput(t *testing.T) {
+	if visible(control.Event{Kind: "text", Data: json.RawMessage(`{"text":" \n","final":false}`)}) {
+		t.Fatal("blank text counts as output")
+	}
+}

@@ -50,14 +50,15 @@ func (f *FrontEnd) show(ctx context.Context) error {
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("chat: reading the cursor: %w", err)
 	}
-	// The open turns, for their progress lines, as their events tell.
+	// The open turns, for their progress lines, as their events up to the
+	// cursor tell; the events after it are read below.
 	threads, err := r.api.Threads(ctx, control.Filter{})
 	if err != nil {
 		return err
 	}
 	for _, t := range threads {
 		if t.State == control.Running {
-			if err := r.scan(ctx, t.ID, ^uint64(0), func(e control.Event) { r.track(e) }); err != nil {
+			if err := r.scan(ctx, t.ID, after+1, func(e control.Event) { r.track(e) }); err != nil {
 				return err
 			}
 		}
@@ -72,13 +73,17 @@ func (f *FrontEnd) show(ctx context.Context) error {
 	}
 	tick := time.NewTicker(every)
 	defer tick.Stop()
+	caughtUp := false // lines are due only once the stored events are read
 	for {
 		var e control.Event
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-tick.C:
-			if rows := f.tick(r, f.now()); len(rows) > 0 {
+			if !caughtUp {
+				continue
+			}
+			if rows := f.tick(ctx, r, f.now()); len(rows) > 0 {
 				if err := f.Outbox.Write(ctx, rows...); err != nil {
 					return err
 				}
@@ -90,7 +95,11 @@ func (f *FrontEnd) show(ctx context.Context) error {
 			}
 			e = ev
 		}
-		if e.Kind == control.CaughtUp || e.Thread.Key == "" {
+		if e.Kind == control.CaughtUp {
+			caughtUp = true
+			continue
+		}
+		if e.Thread.Key == "" {
 			continue
 		}
 		rows, err := f.rowsFor(ctx, r, e)
