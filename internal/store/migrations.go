@@ -205,6 +205,18 @@ var migrations = []Migration{
 		// read yet; after a restart the codec is told, and writes nothing.
 		`ALTER TABLE pending_inputs ADD COLUMN written INTEGER NOT NULL DEFAULT 0`,
 	)},
+	{Name: "chat: inbound cursors", Up: execAll(
+		// Per channel and thread, the cursor (surface.Inbound.Cursor) of
+		// the last message the front end has handled, with every message
+		// before it. Catch-up asks the driver for the messages after it.
+		`CREATE TABLE chat_inbound (
+			client  TEXT NOT NULL, -- the chat front end's name
+			channel TEXT NOT NULL,
+			thread  TEXT NOT NULL DEFAULT '',
+			cursor  TEXT NOT NULL,
+			PRIMARY KEY (client, channel, thread)
+		)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

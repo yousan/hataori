@@ -55,6 +55,13 @@ type Sink interface {
 	Command(Command)
 }
 
+// Reconnected is implemented by a Sink that wants to know when the driver
+// has connected: Run calls Connected after it connects and after each
+// reconnect, so that the sink can catch up on what it missed with Since.
+type Reconnected interface {
+	Connected()
+}
+
 // Conversation is a place messages are posted in: a channel, or a thread
 // inside it. Both fields are opaque ids of the service.
 type Conversation struct {
