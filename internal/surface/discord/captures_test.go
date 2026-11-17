@@ -1,6 +1,7 @@
 package discord
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -101,13 +102,24 @@ func TestCapturesAreScrubbed(t *testing.T) {
 	}
 }
 
+// Made-up secrets in the shapes the checks look for, built at run time from
+// a placeholder id so that no secret-shaped literal is in the source.
+func fakeBotToken() string {
+	return base64.RawStdEncoding.EncodeToString([]byte("1000000000000000001")) + "." +
+		"G" + strings.Repeat("x", 5) + "." + strings.Repeat("aB3", 10)
+}
+
+func fakeInteractionToken() string {
+	return base64.RawStdEncoding.EncodeToString([]byte("interaction:1000000000000000001:" + strings.Repeat("Ab9", 6)))
+}
+
 // The checks catch the shapes they are for.
 func TestLeakShapes(t *testing.T) {
 	for _, s := range []string{
-		`"id": "1572073076823298120"`,
-		`"x": "MTU3MjA3MzA3NjgyMzI5ODEyMA.GabcdE.abcdefghijklmnopqrstuvwxyz0123"`,
+		`"id": "1999999999999999999"`,
+		`"x": "` + fakeBotToken() + `"`,
 		`"avatar": "5f2b9c0e4d7a1b3c8e6f0a2d4b6c8e0f"`,
-		`"token": "aW50ZXJhY3Rpb246MTU3MjA3MzA3NjgyMzI5ODEyMDpYeVo"`,
+		`"token": "` + fakeInteractionToken() + `"`,
 		`"url": "https://cdn.discordapp.com/a/b/c.txt?ex=1&is=2&hm=3f4e"`,
 		`"email": "someone@corp.example"`,
 		`"path": "/home/someone/x"`,
