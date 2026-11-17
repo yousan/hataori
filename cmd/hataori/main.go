@@ -31,6 +31,8 @@ import (
 	"github.com/yousan/hataori/internal/agent/claudecode"
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/host"
+	"github.com/yousan/hataori/internal/surface"
+	"github.com/yousan/hataori/internal/surface/discord"
 	"github.com/yousan/hataori/internal/version"
 	"github.com/yousan/hataori/internal/wire"
 )
@@ -45,6 +47,9 @@ const (
 func init() {
 	// Adapters and drivers are registered here, and only here.
 	if err := agent.Register(claudecode.Name, claudecode.New); err != nil {
+		panic(err)
+	}
+	if err := surface.Register(discord.Name, discord.New); err != nil {
 		panic(err)
 	}
 }
