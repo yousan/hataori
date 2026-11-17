@@ -70,14 +70,20 @@ func (w workspaceDirs) Make(_ context.Context, id control.ThreadID, _ string) (s
 }
 
 // killSessions kills the hosts and agents started under root, by the PIDs
-// they wrote, and removes the socket directories they left.
+// they wrote, and removes the socket directories they left. Each runs in a
+// process group of its own (with the tools it started), and the group is
+// killed only when the PID leads it.
 func killSessions(root string) {
 	dirs, _ := filepath.Glob(filepath.Join(root, "state", "sessions", "*"))
 	for _, d := range dirs {
 		for _, f := range []string{host.PIDFile, host.HostPIDFile} {
 			if b, err := os.ReadFile(filepath.Join(d, f)); err == nil {
 				if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid > 1 {
-					syscall.Kill(-pid, syscall.SIGKILL)
+					if pg, err := syscall.Getpgid(pid); err == nil && pg == pid {
+						syscall.Kill(-pid, syscall.SIGKILL)
+					} else {
+						syscall.Kill(pid, syscall.SIGKILL)
+					}
 				}
 			}
 		}
