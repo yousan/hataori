@@ -188,3 +188,46 @@ func TestConcurrentWritersAreNeverLocked(t *testing.T) {
 		t.Fatalf("writer: %v", err)
 	}
 }
+
+// Triggers stored before chat_triggers.thread keep the thread their start
+// was accepted with; the others have none yet.
+func TestTriggerThreadsKeptOnUpgrade(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "db")
+	last := len(migrations) - 1
+	if migrations[last].Name != "chat_triggers.thread" {
+		t.Fatalf("the last step is %q", migrations[last].Name)
+	}
+	s, err := open(ctx, path, migrations[:last])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO chat_triggers (client, channel, message, text, received_at) VALUES ('chat', 'c1', 'm1', 't', 0), ('chat', 'c1', 'm2', 't', 0)`,
+		`INSERT INTO inbox (key, data, accepted_at) VALUES ('start:c1' || char(0) || 'm1', CAST('{"scope":"c1","key":"th1"}' AS BLOB), 0)`,
+	} {
+		if _, err := s.DB.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Close()
+	s, err = open(ctx, path, migrations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	got := map[string]string{}
+	rows, err := s.DB.QueryContext(ctx, `SELECT message, thread FROM chat_triggers`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var m, th string
+		rows.Scan(&m, &th)
+		got[m] = th
+	}
+	if got["m1"] != "th1" || got["m2"] != "" || len(got) != 2 {
+		t.Fatalf("threads %v, want m1 in th1 and m2 in none", got)
+	}
+}

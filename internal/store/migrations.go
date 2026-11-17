@@ -218,6 +218,16 @@ var migrations = []Migration{
 			PRIMARY KEY (client, channel, thread)
 		)`,
 	)},
+	{Name: "chat_triggers.thread", Up: execAll(
+		// thread: the chat thread opened from the trigger message, '' until
+		// one is, so that the trigger delivered again opens no second one.
+		`ALTER TABLE chat_triggers ADD COLUMN thread TEXT NOT NULL DEFAULT ''`,
+		// A trigger that started a thread before this step keeps it: the
+		// core accepted its start under 'start:' scope NUL key, with the
+		// thread's id as data, and a chat scope is its channel.
+		`UPDATE chat_triggers SET thread = COALESCE((SELECT json_extract(CAST(data AS TEXT), '$.key') FROM inbox
+			WHERE inbox.key = 'start:' || chat_triggers.channel || char(0) || chat_triggers.message), '')`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

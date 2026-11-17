@@ -156,8 +156,8 @@ func TestTriggerStartsAThread(t *testing.T) {
 	prompt := "Fix the login bug\n\nDetails on a second line."
 	in := f.deliver(chanConv, fake.Webhook(hook), "!go repo:https://example.com/r.git "+prompt)
 	ths := f.threads()
-	if len(ths) != 1 || ths[0].Title != "Fix the login bug" {
-		t.Fatalf("opened %+v, want one thread titled from the first line", ths)
+	if len(ths) != 1 || ths[0].Title != "Fix the login bug" || ths[0].From != in.Ref.ID {
+		t.Fatalf("opened %+v, want one thread from the trigger %s, titled from the first line", ths, in.Ref.ID)
 	}
 	l := f.runner.all()
 	if len(l) != 1 || l[0].Key != in.Ref.ID || l[0].Input.Text != prompt || l[0].Thread.Key != ths[0].Opened.Thread ||
@@ -194,6 +194,55 @@ func TestSameMessageTwiceStartsOneThreadAndEditsChangeNothing(t *testing.T) {
 	waitFor(t, "the marker", func() bool { _, ok, _ := f.fe.Outbox.Sent(context.Background(), 1<<40, 0); return ok })
 	if got := strings.Join(postsIn(f.driver, th), "|"); got != "first|marker" {
 		t.Fatalf("thread shows %q", got)
+	}
+}
+
+// A thread another client starts has no trigger message: it is opened in
+// the channel alone.
+func TestThreadOfAnotherClientOpensInTheChannel(t *testing.T) {
+	f := newFront(t, workspaces{})
+	api := f.fe.API(control.Caller{Principal: owner, Scopes: []string{channel}, May: control.OpRead | control.OpStart})
+	id, err := api.Start(context.Background(), control.StartRequest{Key: "k1", Scope: channel,
+		Repo: "https://example.com/r.git", Input: control.Input{Text: "From elsewhere"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ths := f.threads()
+	if len(ths) != 1 || ths[0].From != "" || ths[0].Opened.Thread != id.Key || ths[0].Title != "From elsewhere" {
+		t.Fatalf("opened %+v for %+v, want one thread in the channel alone", ths, id)
+	}
+}
+
+// failStart is the core for a front end whose Start fails, as when the
+// daemon stops after the thread was opened.
+type failStart struct{ control.API }
+
+func (failStart) Start(context.Context, control.StartRequest) (control.ThreadID, error) {
+	return control.ThreadID{}, errors.New("stopped")
+}
+
+// The thread is opened once per trigger: delivered again after a restart,
+// the trigger starts in the thread opened the first time.
+func TestTriggerAfterARestartOpensNoSecondThread(t *testing.T) {
+	f := newFront(t, workspaces{})
+	api := f.fe.API
+	f.fe.API = func(c control.Caller) control.API { return failStart{api(c)} }
+	in := f.deliver(chanConv, fake.Webhook(hook), "!go repo:https://example.com/r.git first")
+	if ths := f.threads(); len(ths) != 1 || len(f.runner.all()) != 0 {
+		t.Fatalf("opened %+v, started %+v; want a thread and no start", ths, f.runner.all())
+	}
+	// A new front end on the same store, as after a restart.
+	old := f.fe
+	f.fe = &FrontEnd{Name: old.Name, Driver: old.Driver, Trigger: old.Trigger, Owner: old.Owner, Log: old.Log,
+		Outbox: old.Outbox, Scopes: old.Scopes, API: api}
+	f.fe.Message(in)
+	f.fe.Message(in)
+	ths := f.threads()
+	if len(ths) != 1 {
+		t.Fatalf("opened %+v, want one thread", ths)
+	}
+	if l := f.runner.all(); len(l) != 1 || l[0].Thread.Key != ths[0].Opened.Thread {
+		t.Fatalf("started %+v, want one start in %s", l, ths[0].Opened.Thread)
 	}
 }
 

@@ -939,6 +939,8 @@ type Driver interface {
 	// for catching up after an outage.
 	Since(ctx context.Context, conv Conversation, cursor string) ([]Inbound, error)
 
+	// OpenThread opens a thread in parent.Channel, from the message
+	// parent.Thread names when it is set.
 	OpenThread(ctx context.Context, parent Conversation, title string) (Conversation, error)
 	// OpenDirect returns the private conversation with one person, given
 	// by the person's id on the service.

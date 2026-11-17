@@ -62,6 +62,7 @@ type FrontEnd struct {
 
 	inboundOnce sync.Once
 	in          *inbound
+	opening     sync.Mutex       // held while a trigger's thread is looked up or opened
 	Now         func() time.Time // the clock; time.Now when nil
 
 	ctx context.Context
@@ -111,6 +112,8 @@ func (f *FrontEnd) context() context.Context {
 }
 
 // NewThread opens a chat thread in the channel scope and returns its id.
+// The core calls it for a thread another client starts; a trigger's thread
+// is opened from the trigger message instead (threadOf).
 func (f *FrontEnd) NewThread(ctx context.Context, scope, title string) (string, error) {
 	conv, err := f.Driver.OpenThread(ctx, surface.Conversation{Channel: scope}, title)
 	if err != nil {
@@ -231,9 +234,14 @@ func (f *FrontEnd) remember(ctx context.Context, ref surface.MessageRef, text st
 
 func (f *FrontEnd) start(ctx context.Context, in surface.Inbound, o order) error {
 	channel := in.Ref.Conv.Channel
+	thread, err := f.threadOf(ctx, in.Ref, o.Prompt)
+	if err != nil {
+		f.Log.Error("trigger: opening its thread", "scope", channel, "message", in.Ref.ID, "err", err)
+		return err
+	}
 	api := f.API(control.Caller{Principal: control.Principal(in.Author.ID), Scopes: []string{channel},
 		May: control.OpRead | control.OpStart})
-	id, startErr := api.Start(ctx, control.StartRequest{Key: in.Ref.ID, Scope: channel, Repo: o.Repo,
+	id, startErr := api.Start(ctx, control.StartRequest{Key: in.Ref.ID, Scope: channel, Thread: thread, Repo: o.Repo,
 		Model: o.Model, Effort: o.Effort, Input: control.Input{Text: o.Prompt}})
 	if id.Key == "" {
 		f.Log.Error("trigger: start failed", "scope", channel, "message", in.Ref.ID, "err", startErr)
@@ -261,6 +269,35 @@ func (f *FrontEnd) start(ctx context.Context, in surface.Inbound, o order) error
 		return err
 	}
 	return nil
+}
+
+// threadOf returns the chat thread of the trigger message ref: the one
+// opened for it before, or one opened now from the message and stored
+// with it, so that the trigger delivered again opens no second thread.
+// Its title is the prompt's first line; the driver cuts it to what the
+// service takes.
+func (f *FrontEnd) threadOf(ctx context.Context, ref surface.MessageRef, prompt string) (string, error) {
+	f.opening.Lock()
+	defer f.opening.Unlock()
+	db := f.Outbox.Store.DB
+	var thread string
+	if err := db.QueryRowContext(ctx, `SELECT thread FROM chat_triggers WHERE client = ? AND channel = ? AND message = ?`,
+		f.Name, ref.Conv.Channel, ref.ID).Scan(&thread); err != nil {
+		return "", err
+	}
+	if thread != "" {
+		return thread, nil
+	}
+	title, _, _ := strings.Cut(strings.TrimSpace(prompt), "\n")
+	conv, err := f.Driver.OpenThread(ctx, surface.Conversation{Channel: ref.Conv.Channel, Thread: ref.ID}, strings.TrimSpace(title))
+	if err != nil {
+		return "", err
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE chat_triggers SET thread = ? WHERE client = ? AND channel = ? AND message = ?`,
+		conv.Thread, f.Name, ref.Conv.Channel, ref.ID); err != nil {
+		return "", err
+	}
+	return conv.Thread, nil
 }
 
 var errNoEvent = errors.New("the thread has no events")
