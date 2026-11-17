@@ -39,8 +39,17 @@ func fakeDriver(_ *os.Root, settings []byte) (surface.Driver, error) {
 // chatRoot is an instance root whose config has the fake agent and the fake
 // surface, with one enabled channel c1 that hook-1 may post in.
 type chatRoot struct {
-	root   string
-	driver *fakesurface.Driver
+	root     string
+	driver   *fakesurface.Driver
+	deadline time.Time // when set, no wait goes past it
+}
+
+// within returns timeout, or what is left until the deadline if less.
+func (r *chatRoot) within(timeout time.Duration) time.Duration {
+	if !r.deadline.IsZero() && time.Until(r.deadline) < timeout {
+		return time.Until(r.deadline)
+	}
+	return timeout
 }
 
 const (
@@ -85,7 +94,7 @@ func eventually(t *testing.T, what string, timeout time.Duration, ok func() bool
 // connected waits until the daemon's front end has connected the driver.
 func (r *chatRoot) connected(t *testing.T) {
 	t.Helper()
-	eventually(t, "the driver to connect", 10*time.Second, r.driver.Connected)
+	eventually(t, "the driver to connect", r.within(10*time.Second), r.driver.Connected)
 	time.Sleep(20 * time.Millisecond) // the first catch-up marks the channel as read from now
 }
 
@@ -93,7 +102,7 @@ func (r *chatRoot) connected(t *testing.T) {
 func (r *chatRoot) thread(t *testing.T, n int) surface.Conversation {
 	t.Helper()
 	var th surface.Conversation
-	eventually(t, "a thread", 15*time.Second, func() bool {
+	eventually(t, "a thread", r.within(15*time.Second), func() bool {
 		i := 0
 		for _, c := range r.driver.Calls(c1) {
 			if c.Op == fakesurface.OpOpenThread {
@@ -113,7 +122,7 @@ func (r *chatRoot) thread(t *testing.T, n int) surface.Conversation {
 func (r *chatRoot) posted(t *testing.T, conv surface.Conversation, text string) fakesurface.Call {
 	t.Helper()
 	var got fakesurface.Call
-	eventually(t, "a post of "+text, 15*time.Second, func() bool {
+	eventually(t, "a post of "+text, r.within(15*time.Second), func() bool {
 		for _, c := range r.driver.Calls(conv) {
 			if c.Op == fakesurface.OpPost && c.Message.Text == text {
 				got = c
@@ -147,8 +156,8 @@ func (r *chatRoot) events(t *testing.T, kind string, thread surface.Conversation
 // opens a thread, the fake agent's final answer is posted there, and the
 // turn's end event is written.
 func TestOneThreadOneTurn(t *testing.T) {
-	start := time.Now()
 	r := newChatRoot(t, nil)
+	r.deadline = time.Now().Add(30 * time.Second) // every wait below counts against it
 	startDaemon(t, r.root)
 	r.connected(t)
 	r.driver.Inject(c1, fakesurface.Webhook(e2eHook), "!go repo:"+bareRepo(t)+" reply hello there")
@@ -159,15 +168,12 @@ func TestOneThreadOneTurn(t *testing.T) {
 		t.Fatalf("answer %+v, want a reply to the prompt %+v", answer.Message, prompt.Ref)
 	}
 	var ended []map[string]any
-	eventually(t, "the end event", 15*time.Second, func() bool {
+	eventually(t, "the end event", r.within(15*time.Second), func() bool {
 		ended = r.events(t, "turn_ended", th)
 		return len(ended) > 0
 	})
 	if len(ended) != 1 || ended[0]["outcome"] != "completion" {
 		t.Fatalf("turn_ended %v", ended)
-	}
-	if took := time.Since(start); took > 30*time.Second {
-		t.Fatalf("took %v", took)
 	}
 }
 

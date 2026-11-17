@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/chat"
@@ -115,9 +116,15 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 			return err
 		}
 	}
+	// The front ends end, and are waited for, before what they use is closed.
+	feCtx, feCancel := context.WithCancel(ctx)
+	var feDone sync.WaitGroup
+	defer func() { feCancel(); feDone.Wait() }()
 	for _, fe := range fronts {
+		feDone.Add(1)
 		go func() {
-			if err := fe.Run(ctx); err != nil && ctx.Err() == nil {
+			defer feDone.Done()
+			if err := fe.Run(feCtx); err != nil && feCtx.Err() == nil {
 				lg.Error("chat front end", "client", fe.Name, "err", err)
 			}
 		}()
