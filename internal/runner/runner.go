@@ -1347,13 +1347,18 @@ func (r *Runner) Interrupt(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	// The turn the interrupt is for. Once it has ended the watch is over,
-	// even when the next turn has started meanwhile.
+	// The turn the interrupt is for, read under lv.mu, as the runner's steps
+	// that end and start turns are: none comes between this and the
+	// interrupt. Once it has ended the watch is over, even when the next
+	// turn has started.
+	lv.mu.Lock()
 	var turn int64
 	r.Store.DB.QueryRow(`SELECT coalesce(max(id), 0) FROM turns WHERE session_id = ? AND ended_at IS NULL`, id).Scan(&turn)
-	lv.mu.Lock()
 	r.do(lv, lv.codec.Interrupt())
 	lv.mu.Unlock()
+	if turn == 0 {
+		return nil // no turn runs: nothing to stop later
+	}
 	go func() {
 		deadline := time.Now().Add(r.interruptGrace())
 		for time.Now().Before(deadline) {
@@ -1364,7 +1369,7 @@ func (r *Runner) Interrupt(ctx context.Context, id int64) error {
 				return
 			}
 			var ended sql.NullInt64
-			if turn != 0 && r.Store.DB.QueryRow(`SELECT ended_at FROM turns WHERE id = ?`, turn).Scan(&ended) == nil && ended.Valid {
+			if r.Store.DB.QueryRow(`SELECT ended_at FROM turns WHERE id = ?`, turn).Scan(&ended) == nil && ended.Valid {
 				return
 			}
 			time.Sleep(r.poll())
