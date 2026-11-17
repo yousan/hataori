@@ -93,6 +93,7 @@ type Inbound struct {
 	Files   []File
 	ReplyTo *MessageRef
 	Direct  bool // the conversation is a private one with the author
+	Service bool // written by the service itself, such as a notice that a thread was renamed
 	Time    time.Time
 	Cursor  string // pass to Since to get the messages after this one
 }

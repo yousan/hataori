@@ -960,7 +960,8 @@ type Sink interface {
 }
 
 // Inbound is a received message. Direct says that its conversation is a
-// private one with the author.
+// private one with the author; Service, that the service wrote it itself
+// (a notice that a thread was renamed, for example).
 type Inbound struct {
 	Ref     MessageRef
 	Author  Author
@@ -968,6 +969,7 @@ type Inbound struct {
 	Files   []File
 	ReplyTo *MessageRef
 	Direct  bool
+	Service bool
 	Time    time.Time
 	Cursor  string // pass to Since to get the messages after this one
 }
