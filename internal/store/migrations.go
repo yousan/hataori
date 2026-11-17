@@ -125,8 +125,10 @@ var migrations = []Migration{
 		`ALTER TABLE sessions ADD COLUMN log_start INTEGER NOT NULL DEFAULT 0`,
 	)},
 	{Name: "pending input", Up: execAll(
-		// launch: the core started or woke the session and the runner has
-		// not launched its agent yet; first_input holds what it needs.
+		// launch: 1 when the core started or woke the session and the
+		// runner has not launched its agent yet, 2 while the runner starts
+		// its host, 0 once the host is recorded as started; first_input
+		// holds what a launch needs.
 		`ALTER TABLE sessions ADD COLUMN launch INTEGER NOT NULL DEFAULT 0`,
 		// Input or an answer the core accepted for a session's agent and
 		// the runner has not handed over yet. request is the agent's id of
