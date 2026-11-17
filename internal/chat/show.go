@@ -150,12 +150,16 @@ type eventData struct {
 	Outcome  string   `json:"outcome"`
 	Reason   string   `json:"reason"`
 	Key      string   `json:"key"`
+	Session  int64    `json:"session"`
+	File     string   `json:"file"`
+	More     []string `json:"more"`
+	Caption  string   `json:"caption"`
 }
 
 // rowsFor returns the rows that show e. A kind it does not show gives none.
 func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event) ([]Row, error) {
 	switch e.Kind {
-	case "thread_created", "turn_started", "text", "request", "turn_ended":
+	case "thread_created", "turn_started", "text", "request", "turn_ended", "file_out":
 	default:
 		return nil, nil // a kind the front end does not show, or does not know
 	}
@@ -209,6 +213,8 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event) ([]R
 			return nil, nil // allowed by the core in phase 1; nothing to answer
 		}
 		return row(surface.Message{Text: question(d.Text, d.Choices)}), nil
+	case "file_out":
+		return f.fileRows(ctx, e, conv, d.Session, append([]string{d.File}, d.More...), d.Caption), nil
 	case "turn_ended":
 		delete(r.turn, e.Thread)
 		if d.Outcome == "failure" {

@@ -14,7 +14,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **1.2**. Both hellos carry it.
+The protocol version is `major.minor`, now **1.3**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 1.0`.
 - With the same major number and different minor numbers they work together.
@@ -394,6 +394,8 @@ The agent asks a question or an approval; the turn ends `blocked`.
 |---|---|---|---|
 | `session` | integer | required | the session |
 | `file` | string | required | the path of a file the agent hands over |
+| `more` | array | optional | the paths of further files handed over with it, in order, strings; since 1.3 |
+| `caption` | string | optional | the text that goes with the files; since 1.3 |
 
 ### Event `usage`
 

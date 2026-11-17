@@ -42,7 +42,12 @@ type FrontEnd struct {
 	// The progress line: posted after QuietAfter (90s) of a turn without
 	// output, edited at most every EditEvery (15s), checked every Tick (1s).
 	QuietAfter, EditEvery, Tick time.Duration
-	Now                         func() time.Time // the clock; time.Now when nil
+	// FileRoots returns the directories a session's files may be handed
+	// over from: the thread's workspace and the session's state
+	// directory. A file elsewhere, also through a symbolic link, is
+	// refused; without FileRoots every file is.
+	FileRoots func(ctx context.Context, thread control.ThreadID, session int64) ([]string, error)
+	Now       func() time.Time // the clock; time.Now when nil
 
 	ctx context.Context
 }

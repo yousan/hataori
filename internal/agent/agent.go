@@ -227,6 +227,10 @@ type Event struct {
 	Request *RequestInfo // Request; RequestWithdrawn uses only its ID
 
 	File string // FileOut: the path of a file the agent hands over
+	// More are, for FileOut, further files handed over with File, in
+	// order; Caption is the text that goes with them.
+	More    []string
+	Caption string
 
 	Status     EndStatus // TurnEnded
 	Reason     Reason    // TurnEnded when failed; SessionEnded: why, as the agent says or CannotResume, WrongSession

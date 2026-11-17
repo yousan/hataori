@@ -224,7 +224,13 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 			}
 			p.report(map[string]any{"t": "subagent", "id": id, "name": name, "end": true})
 		case "file":
-			p.report(map[string]any{"t": "file", "path": arg})
+			// file PATH [PATH...] [-- CAPTION]
+			paths, caption, _ := strings.Cut(arg, " -- ")
+			f := strings.Fields(paths)
+			if len(f) == 0 {
+				f = []string{""}
+			}
+			p.report(map[string]any{"t": "file", "path": f[0], "more": f[1:], "caption": caption})
 		}
 	}
 	p.say(final, true)

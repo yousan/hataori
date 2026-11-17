@@ -348,6 +348,12 @@ func agentOut(e agent.Event) Out {
 		}
 	case agent.FileOut:
 		d["file"] = e.File
+		if len(e.More) > 0 {
+			d["more"] = e.More
+		}
+		if e.Caption != "" {
+			d["caption"] = e.Caption
+		}
 	}
 	return Out{Kind: agentKinds[e.Kind], Data: d}
 }

@@ -195,7 +195,11 @@ func describe(evs []agent.Event) string {
 			}
 			s += ")"
 		case agent.FileOut:
-			s += "(" + e.File + ")"
+			s += "(" + strings.Join(append([]string{e.File}, e.More...), ",")
+			if e.Caption != "" {
+				s += ": " + e.Caption
+			}
+			s += ")"
 		}
 		b = append(b, s)
 	}
@@ -235,6 +239,8 @@ func TestScripts(t *testing.T) {
 		{"subagent with tools", "subagent s1 explorer Read Grep",
 			"turn(caller) sub+(s1 explorer) tool+(s1-t1 in s1) tool-(s1-t1 in s1) tool+(s1-t2 in s1) tool-(s1-t2 in s1) sub-(s1) text(done,true) end(0,,bg=0)", ""},
 		{"file", "file /tmp/report.txt", "turn(caller) file(/tmp/report.txt) text(done,true) end(0,,bg=0)", ""},
+		{"files with a caption", "file /tmp/a.txt /tmp/b.txt -- two files",
+			"turn(caller) file(/tmp/a.txt,/tmp/b.txt: two files) text(done,true) end(0,,bg=0)", ""},
 	}
 	forms(t, func(t *testing.T, terminal bool) {
 		for _, tc := range cases {

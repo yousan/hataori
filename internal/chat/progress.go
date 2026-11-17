@@ -62,8 +62,8 @@ func visible(e control.Event) bool {
 		return strings.TrimSpace(d.Text) != ""
 	case "request":
 		return !d.Approval
-	case "subagent_started", "subagent_ended":
-		return true // a subagent line
+	case "subagent_started", "subagent_ended", "file_out":
+		return true // a line or a file in the thread
 	}
 	return false
 }

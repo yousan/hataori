@@ -161,10 +161,13 @@ type Limits struct {
 	MaxText    int // characters in one message
 	MaxChoices int // choices in one message
 	MaxFiles   int // files in one message
-	Edit       bool
-	Delete     bool
-	SetStatus  bool
-	SetThread  bool
+	// MaxFileBytes is the size of the largest file a message may carry;
+	// 0 for no limit.
+	MaxFileBytes int64
+	Edit         bool
+	Delete       bool
+	SetStatus    bool
+	SetThread    bool
 }
 
 // Factory makes a Driver from its section of the instance's config, which

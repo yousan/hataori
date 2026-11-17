@@ -133,3 +133,10 @@ func TestSubagentNameAndToolParentReachTheEvents(t *testing.T) {
 		t.Fatalf("tool_started of the agent's own tool %v", o.Data)
 	}
 }
+
+func TestFileOutCarriesMoreAndCaption(t *testing.T) {
+	o := agentOut(agent.Event{Kind: agent.FileOut, File: "/w/a", More: []string{"/w/b"}, Caption: "two"})
+	if o.Data["file"] != "/w/a" || o.Data["caption"] != "two" || len(o.Data["more"].([]string)) != 1 {
+		t.Fatalf("file_out %v", o.Data)
+	}
+}
