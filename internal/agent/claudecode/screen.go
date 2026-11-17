@@ -135,17 +135,40 @@ func trimLines(screen []string) []string {
 
 // inertModes are the private modes the CLI sets that change nothing shown:
 // the cursor's visibility and blinking, mouse and focus reports, bracketed
-// paste, synchronized output, and theme reports (seen: 25, 1000, 1002,
-// 1003, 1004, 1006, 1016, 2004, 2031).
+// paste and theme reports (seen: 25, 1000, 1002, 1003, 1004, 1006, 1016,
+// 2004, 2031).
 var inertModes = map[string]bool{"12": true, "25": true, "1000": true, "1002": true, "1003": true, "1004": true,
-	"1005": true, "1006": true, "1015": true, "1016": true, "2004": true, "2026": true, "2031": true}
+	"1005": true, "1006": true, "1015": true, "1016": true, "2004": true, "2031": true}
+
+// inertOSC are the operating system commands that change nothing shown: a
+// title (0, 1, 2), a link around text (8), and a query (7501, seen).
+var inertOSC = map[string]bool{"0": true, "1": true, "2": true, "8": true, "7501": true}
+
+// inertSGR reports whether a graphic rendition leaves the text readable:
+// colours and weights do, concealing it (8) does not.
+func inertSGR(params string) bool {
+	ps := strings.Split(params, ";")
+	for i := 0; i < len(ps); i++ {
+		switch ps[i] {
+		case "8":
+			return false
+		case "38", "48", "58": // an extended colour: its arguments follow
+			if i+1 < len(ps) && ps[i+1] == "5" {
+				i += 2
+			} else if i+1 < len(ps) && ps[i+1] == "2" {
+				i += 4
+			}
+		}
+	}
+	return true
+}
 
 // renderScreen plays terminal output onto a grid of lines and returns them.
 // It knows only what the CLI uses to draw: text, tab, carriage return, line
 // feed, backspace, saving and restoring the cursor, and the cursor
 // movements and erasures of ECMA-48. Colours, cursor shape, terminal
-// queries, titles and the modes that do not change what is shown are
-// skipped. Anything else that could change the screen (a reset, the
+// queries, titles, links and the modes that do not change what is shown
+// are skipped. Anything else that could change the screen (a reset, the
 // alternate screen, scrolling, inserting or deleting lines or characters)
 // makes ok false: such a screen is not read. The grid has no height: it
 // grows as the cursor goes down, and a cursor position counts from its top.
@@ -224,12 +247,17 @@ func renderScreen(b []byte) (screen []string, ok bool) {
 				return def
 			}
 			switch final {
-			case 'm', 'c', 'n', 't':
-				// colours, and queries of the terminal
+			case 'm':
+				if !inertSGR(params) {
+					return nil, false
+				}
+			case 'c', 'n':
+				// queries of the terminal
 			case 'r':
 				if params != "" {
 					return nil, false // a scrolling region
 				}
+				row, col = 0, 0 // resetting the margins homes the cursor
 			case 's':
 				savedRow, savedCol = row, col
 			case 'u':
@@ -279,7 +307,14 @@ func renderScreen(b []byte) (screen []string, ok bool) {
 				return nil, false
 			}
 		case c == 0x1b && i+1 < len(b) && b[i+1] == ']':
-			// An operating system command (a title, a query), ended by BEL or ST.
+			// An operating system command, ended by BEL or ST.
+			num := i + 2
+			for num < len(b) && b[num] >= '0' && b[num] <= '9' {
+				num++
+			}
+			if num < len(b) && !inertOSC[string(b[i+2:num])] {
+				return nil, false // an image, a palette change, or one not known
+			}
 			j := i + 2
 			for j < len(b) && b[j] != 0x07 && !(b[j] == 0x1b && j+1 < len(b) && b[j+1] == '\\') {
 				j++
@@ -306,7 +341,13 @@ func renderScreen(b []byte) (screen []string, ok bool) {
 			case '=', '>':
 				i += 2 // keypad modes
 			case '(', ')':
-				i += 3 // a character set
+				if i+2 >= len(b) {
+					return gridLines(grid), true
+				}
+				if b[i+2] != 'B' {
+					return nil, false // a character set other than ASCII
+				}
+				i += 3
 			default:
 				return nil, false // a reset, an index, or anything else
 			}

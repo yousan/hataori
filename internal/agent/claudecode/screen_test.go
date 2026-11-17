@@ -167,6 +167,11 @@ func TestUnreadableScreenGetsNoKey(t *testing.T) {
 		{"lines deleted", "\x1b[2M"},
 		{"a mode that clears the screen", "\x1b[?3h"},
 		{"the cursor saved by a mode", "\x1b[?1048h"},
+		{"concealed text", "\x1b[8m"},
+		{"a window resized", "\x1b[8;24;40t"},
+		{"an inline image", "\x1b]1337;File=inline=1:AAAA\x07"},
+		{"line drawing characters", "\x1b(0"},
+		{"synchronized output", "\x1b[?2026h"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := screenCodec(trustDir)
