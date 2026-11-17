@@ -55,6 +55,8 @@ type Runner struct {
 
 	mu   sync.Mutex
 	live map[int64]*live
+
+	point func(name string) // for tests: called at the named points of a launch
 }
 
 var _ core.Runner = (*Runner)(nil)
@@ -167,20 +169,67 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 			return fmt.Errorf("runner: %w", err)
 		}
 	}
+	first.Dir = spec.Dir // so that a launch begun here can be begun again
 	sb, _ := json.Marshal(storedSpec{Agent: agentName, Spec: spec})
 	fb, _ := json.Marshal(first)
-	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET spec = ?, first_input = ?, launch = 0 WHERE id = ?`,
+	var before, recorded int
+	if err := r.Store.DB.QueryRowContext(ctx, `SELECT launch, host_pid FROM sessions WHERE id = ?`, id).Scan(&before, &recorded); err != nil {
+		return fmt.Errorf("runner: %w", err)
+	}
+	// launch = 2: the host is being started. Until it is recorded as
+	// started, a daemon that comes back launches the session again, and
+	// keeps the host it finds running instead of starting another.
+	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET spec = ?, first_input = ?, launch = 2 WHERE id = ?`,
 		string(sb), string(fb), id); err != nil {
 		return fmt.Errorf("runner: %w", err)
 	}
-	pid, err := host.Start(r.Host, dir, host.Spec{Argv: launch.Argv, Env: launch.Env, Terminal: launch.Terminal, Dir: spec.Dir})
-	if err != nil {
-		return err
+	r.at("before host start")
+	pid := hostPID(dir)
+	if before == 2 && (pid > 0 && pid != recorded || host.Running(dir)) {
+		// A daemon that died had started this host, which runs or has run:
+		// it is followed, not started again. The old host of a woken
+		// session had let go of the state directory before launch was 2.
+		if err := host.WaitReady(dir); err != nil {
+			return err
+		}
+	} else {
+		if host.Running(dir) {
+			if before != 2 {
+				return fmt.Errorf("runner: session %d: another host still holds its state directory", id)
+			}
+			// The host the daemon that died started took the lock just now.
+			if err := host.WaitReady(dir); err != nil {
+				return err
+			}
+		} else if _, err := host.Start(r.Host, dir, host.Spec{Argv: launch.Argv, Env: launch.Env, Terminal: launch.Terminal, Dir: spec.Dir}); err != nil {
+			return err
+		}
 	}
-	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET host_pid = ? WHERE id = ?`, pid, id); err != nil {
+	// The host writes its pid before it listens; a process that found the
+	// state directory taken exits, so the file names the one that runs.
+	pid = hostPID(dir)
+	r.at("after host start")
+	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET host_pid = ?, launch = 0 WHERE id = ?`, pid, id); err != nil {
 		return fmt.Errorf("runner: %w", err)
 	}
 	return nil
+}
+
+// hostPID is the pid the host of dir recorded, or 0.
+func hostPID(dir string) int {
+	b, err := os.ReadFile(filepath.Join(dir, host.HostPIDFile))
+	if err != nil {
+		return 0
+	}
+	pid, _ := strconv.Atoi(string(bytes.TrimSpace(b)))
+	return pid
+}
+
+// at calls the test hook for a point of a launch.
+func (r *Runner) at(point string) {
+	if r.point != nil {
+		r.point(point)
+	}
 }
 
 // Resume starts the agent of an asleep session again, resuming its
@@ -201,8 +250,9 @@ func (r *Runner) Resume(ctx context.Context, id int64, principal control.Princip
 		}
 	}
 	var specJSON, resumeID string
-	if err := r.Store.DB.QueryRowContext(ctx, `SELECT spec, agent_session_id FROM sessions WHERE id = ?`, id).
-		Scan(&specJSON, &resumeID); err != nil {
+	var launching int
+	if err := r.Store.DB.QueryRowContext(ctx, `SELECT spec, agent_session_id, launch FROM sessions WHERE id = ?`, id).
+		Scan(&specJSON, &resumeID, &launching); err != nil {
 		return fmt.Errorf("runner: session %d: %w", id, err)
 	}
 	var s storedSpec
@@ -216,19 +266,30 @@ func (r *Runner) Resume(ctx context.Context, id int64, principal control.Princip
 	if resumeID == "" {
 		return fmt.Errorf("runner: session %d never reported its id; it cannot be resumed", id)
 	}
-	if !host.Gone(s.Spec.StateDir) && !hostLost(s.Spec.StateDir) {
-		return fmt.Errorf("runner: session %d: its host is still running", id)
-	}
-	if err := r.skipRest(ctx, id, s.Spec.StateDir); err != nil {
-		return err
-	}
-	// The status of the ended host would make the new one look ended.
-	if err := os.Remove(filepath.Join(s.Spec.StateDir, host.StatusFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("runner: %w", err)
+	// launch = 2: a daemon that died had begun this launch, after the old
+	// host was gone; a host running now is the new one.
+	if launching != 2 {
+		if !host.Gone(s.Spec.StateDir) && !hostLost(s.Spec.StateDir) {
+			return fmt.Errorf("runner: session %d: its host is still running", id)
+		}
+		// An ended host records its end before it lets go of the state
+		// directory.
+		for deadline := time.Now().Add(5 * time.Second); host.Running(s.Spec.StateDir); time.Sleep(10 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				return fmt.Errorf("runner: session %d: its ended host still holds the state directory", id)
+			}
+		}
+		if err := r.skipRest(ctx, id, s.Spec.StateDir); err != nil {
+			return err
+		}
+		// The status of the ended host would make the new one look ended.
+		if err := os.Remove(filepath.Join(s.Spec.StateDir, host.StatusFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("runner: %w", err)
+		}
 	}
 	spec := s.Spec
 	spec.ResumeID = resumeID
-	if err := r.launch(ctx, id, s.Agent, ad, spec, firstInput{Principal: principal, Key: key, Text: in.Text}); err != nil {
+	if err := r.launch(ctx, id, s.Agent, ad, spec, firstInput{Principal: principal, Key: key, Text: in.Text, Wake: true}); err != nil {
 		return err
 	}
 	return r.follow(id, ad, spec, wake)

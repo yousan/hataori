@@ -42,6 +42,19 @@ func daemon(args []string) int {
 		fmt.Fprintln(log, err)
 		return 1
 	}
+	if mode == "die-at" { // kill itself at a point of the launch of a new thread's session
+		point := args[3]
+		r.point = func(p string) {
+			if p == point {
+				syscall.Kill(os.Getpid(), syscall.SIGKILL) // this process only
+				select {}
+			}
+		}
+		os.Stdout.WriteString("up\n")
+		owner(c).Start(context.Background(), control.StartRequest{Key: "k1", Scope: "s", Thread: "t1",
+			Repo: "file:///unused", Input: control.Input{Text: args[4]}})
+		return 1 // it should have died
+	}
 	if mode == "die" {
 		c.Runner = dying{r}
 		os.Stdout.WriteString("up\n")

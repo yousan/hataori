@@ -51,6 +51,13 @@ type host struct {
 // Run is `hataori host <state-dir>`: it runs the Spec in stateDir until the
 // command exits, and returns after recording how it ended.
 func Run(stateDir string) error {
+	// First of all: a second host for the same state directory leaves
+	// everything to the first, and records nothing.
+	lk, err := lock(stateDir)
+	if err != nil {
+		return err
+	}
+	defer lk.Close()
 	b, err := os.ReadFile(filepath.Join(stateDir, SpecFile))
 	if err != nil {
 		return fmt.Errorf("host: %w", err)

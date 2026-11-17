@@ -472,7 +472,7 @@ func (c *Core) resume(ctx context.Context, sid int64, principal control.Principa
 // the runner when it reconnects. Call it after the runner has reconnected.
 func (c *Core) Recover(ctx context.Context) error {
 	rows, err := c.Store.DB.QueryContext(ctx, `SELECT s.id, s.agent, s.model, s.effort, s.first_input, t.scope, t.key, t.repo
-		FROM sessions s JOIN threads t ON t.id = s.thread_id WHERE s.state = ? AND s.launch = 1 ORDER BY s.id`, string(control.Creating))
+		FROM sessions s JOIN threads t ON t.id = s.thread_id WHERE s.state = ? AND s.launch IN (1, 2) ORDER BY s.id`, string(control.Creating))
 	if err != nil {
 		return fmt.Errorf("core: recover: %w", err)
 	}
@@ -501,7 +501,7 @@ func (c *Core) Recover(ctx context.Context) error {
 		if x.f.Wake {
 			err = c.resume(ctx, x.l.Session, x.f.Principal, x.f.Key, in)
 		} else {
-			x.l.Dir, x.l.Principal, x.l.Key, x.l.Input = x.f.Dir, x.f.Principal, x.f.Key, in
+			x.l.Dir, x.l.Principal, x.l.Key, x.l.Input, x.l.Context = x.f.Dir, x.f.Principal, x.f.Key, in, x.f.Context
 			err = c.launch(ctx, x.l, x.repo)
 		}
 		if err != nil {

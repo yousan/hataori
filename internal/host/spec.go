@@ -109,22 +109,27 @@ func Start(c Command, stateDir string, spec Spec) (int, error) {
 	}
 	pid := cmd.Process.Pid
 	cmd.Process.Release()
+	return pid, WaitReady(stateDir)
+}
 
-	// Return once the host listens, or has recorded why it could not.
+// WaitReady returns once the host of stateDir listens, or has recorded how
+// it ended; an error when it recorded why it could not start, or neither
+// happened in time.
+func WaitReady(stateDir string) error {
 	deadline := time.Now().Add(startTimeout)
 	for {
 		if st, ok, _ := ReadStatus(stateDir); ok {
 			if st.Error != "" {
-				return pid, fmt.Errorf("host: %s", st.Error)
+				return fmt.Errorf("host: %s", st.Error)
 			}
-			return pid, nil // the command already ended
+			return nil // the command already ended
 		}
 		if c, err := net.Dial("unix", SocketPath(stateDir)); err == nil {
 			c.Close()
-			return pid, nil
+			return nil
 		}
 		if time.Now().After(deadline) {
-			return pid, fmt.Errorf("host: not ready after %v", startTimeout)
+			return fmt.Errorf("host: not ready after %v", startTimeout)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
