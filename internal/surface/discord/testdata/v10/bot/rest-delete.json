@@ -1,0 +1,20 @@
+{
+ "body": null,
+ "date": "2026-11-17T02:26:13Z",
+ "headers": {
+  "content-type": "text/html; charset=utf-8",
+  "x-ratelimit-bucket": "00000000000000000000000000000002",
+  "x-ratelimit-limit": "3",
+  "x-ratelimit-remaining": "2",
+  "x-ratelimit-reset": "1794882373.949",
+  "x-ratelimit-reset-after": "0.333"
+ },
+ "request": {
+  "body": null,
+  "files": [],
+  "method": "DELETE",
+  "path": "/channels/1000000000000000010/messages/1000000000000000015"
+ },
+ "source": "rest",
+ "status": 204
+}

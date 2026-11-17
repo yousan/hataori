@@ -1,0 +1,15 @@
+{
+ "d": {
+  "flags": 1,
+  "guild_id": "1000000000000000004",
+  "id": "1000000000000000010",
+  "join_timestamp": "2026-11-17T02:26:01.435935+00:00",
+  "mute_config": null,
+  "muted": false,
+  "user_id": "1000000000000000007"
+ },
+ "op": 0,
+ "s": 6,
+ "source": "gateway",
+ "t": "THREAD_MEMBER_UPDATE"
+}

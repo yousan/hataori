@@ -1,0 +1,54 @@
+{
+ "d": {
+  "_trace": [
+   "REDACTED"
+  ],
+  "application": {
+   "flags": 524288,
+   "flags_new": "524288",
+   "id": "1000000000000000007"
+  },
+  "auth": {},
+  "game_relationships": [],
+  "geo_ordered_rtc_regions": [
+   "japan",
+   "hongkong",
+   "singapore",
+   "jakarta",
+   "india"
+  ],
+  "guild_join_requests": [],
+  "guilds": [
+   {
+    "id": "1000000000000000004",
+    "unavailable": true
+   }
+  ],
+  "presences": [],
+  "private_channels": [],
+  "relationships": [],
+  "resume_gateway_url": "wss://gateway.discord.gg",
+  "session_id": "00000000000000000000000000000001",
+  "session_type": "normal",
+  "user": {
+   "avatar": null,
+   "bot": true,
+   "clan": null,
+   "discriminator": "0000",
+   "email": null,
+   "flags": 0,
+   "global_name": null,
+   "id": "1000000000000000007",
+   "mfa_enabled": true,
+   "primary_guild": null,
+   "username": "name-1",
+   "verified": true
+  },
+  "user_settings": {},
+  "v": 10
+ },
+ "op": 0,
+ "s": 1,
+ "source": "gateway",
+ "t": "READY"
+}
