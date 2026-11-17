@@ -63,6 +63,16 @@ func (q *queue) close() {
 	<-q.done
 }
 
+// connected tells the sink, in order with the messages, that a session is
+// ready, when the sink wants to know (surface.Reconnected).
+func (q *queue) connected() {
+	q.push(func(s surface.Sink) {
+		if r, ok := s.(surface.Reconnected); ok {
+			r.Connected()
+		}
+	})
+}
+
 func (q *queue) Message(in surface.Inbound) { q.push(func(s surface.Sink) { s.Message(in) }) }
 func (q *queue) Choice(c surface.Selection) { q.push(func(s surface.Sink) { s.Choice(c) }) }
 func (q *queue) Command(c surface.Command)  { q.push(func(s surface.Sink) { s.Command(c) }) }

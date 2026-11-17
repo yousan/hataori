@@ -208,6 +208,76 @@ func TestReconnectKeepsOrder(t *testing.T) {
 	}
 }
 
+// reconnectedSink records messages and Connected calls in one log.
+type reconnectedSink struct {
+	*sink
+	log []string // "connected", or a message's text
+}
+
+func (s *reconnectedSink) Connected() {
+	s.mu.Lock()
+	s.log = append(s.log, "connected")
+	s.mu.Unlock()
+	s.got <- struct{}{}
+}
+
+func (s *reconnectedSink) Message(in surface.Inbound) {
+	s.mu.Lock()
+	s.log = append(s.log, in.Text)
+	s.mu.Unlock()
+	s.sink.Message(in)
+}
+
+// Run tells a sink that wants to know when a session is ready: the first
+// one, a resumed one, and a new one after the service refused to resume.
+func TestRunTellsSinkWhenConnected(t *testing.T) {
+	r := newFakeREST(t)
+	r.serve(t, "GET /users/@me", "bot/rest-users-me.json")
+	g := newFakeGateway(t, payload(t, "bot/gw-01-READY.json"))
+	d := testDriver(t, botID(t), r, g)
+	s := &reconnectedSink{sink: newSink()}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx, s) }()
+
+	wait := func(what string, c <-chan struct{}) {
+		t.Helper()
+		select {
+		case <-c:
+		case <-time.After(20 * time.Second):
+			t.Fatalf("timed out waiting for %s", what)
+		}
+	}
+	wait("the first session", g.connected)
+	g.event("MESSAGE_CREATE", person(t, "1", 1))
+	wait("connected", s.got)
+	wait("message 1", s.got)
+	g.drop() // resumed
+	wait("the resumed session", g.connected)
+	g.event("MESSAGE_CREATE", person(t, "2", 2))
+	wait("connected again", s.got)
+	wait("message 2", s.got)
+	g.mu.Lock()
+	g.refuseResume = true
+	g.mu.Unlock()
+	g.drop() // the resume is refused: a new session
+	wait("the new session", g.connected)
+	g.event("MESSAGE_CREATE", person(t, "3", 3))
+	wait("connected a third time", s.got)
+	wait("message 3", s.got)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	want := []string{"connected", "1", "connected", "2", "connected", "3"}
+	if !slices.Equal(s.log, want) {
+		t.Fatalf("got %q, want %q", s.log, want)
+	}
+	if g.identify != 2 || g.resume != 1 {
+		t.Fatalf("%d identifies and %d resumes, want 2 and 1", g.identify, g.resume)
+	}
+}
+
 func TestTokenOnlyFromConfigDir(t *testing.T) {
 	dir := t.TempDir()
 	config := filepath.Join(dir, "config")

@@ -122,6 +122,11 @@ func newDriver(botID snowflake.ID, token, restURL, gatewayURL string, log *slog.
 // connection is reopened and the session resumed; events are handled one at
 // a time, in the order the service sends them, so inbound order per
 // conversation is kept.
+//
+// When sink implements surface.Reconnected, Run calls Connected each time a
+// session is ready: after the first one, and after each resume or new
+// session. It is called in order with the messages, before any message the
+// session delivers.
 func (d *Driver) Run(ctx context.Context, sink surface.Sink) error {
 	var me struct {
 		ID  snowflake.ID `json:"id"`
@@ -156,7 +161,11 @@ func (d *Driver) Run(ctx context.Context, sink surface.Sink) error {
 		case gateway.EventReady:
 			if e.User.ID != d.botID {
 				report(fmt.Errorf("discord: logged in as bot %s, but the config names bot %s", e.User.ID, d.botID))
+				return
 			}
+			q.connected() // a new session
+		case gateway.EventResumed:
+			q.connected() // the session resumed after a drop
 		case gateway.EventRaw:
 			if err := d.dispatch(ctx, string(e.EventType), e.Payload, q); err != nil {
 				d.log.Warn("discord: event skipped", "type", e.EventType, "err", err)
