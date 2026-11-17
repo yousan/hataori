@@ -1,0 +1,8 @@
+# path<TAB>function<TAB>call<TAB>reason
+# Identical calls within a function share an entry; closures use their enclosing function.
+docs/notes/sqlite-bench/main.go	run	os.RemoveAll	Removes only the benchmark directory freshly created by os.MkdirTemp, containing its disposable database.
+internal/host/host.go	host.listen	os.Remove	Removes the stale host socket at the computed socket path in session state or the private socket directory, outside the workspace.
+internal/host/host.go	host.removeSocket	os.Remove	Removes the host socket and its session-state pointer file; the private external socket directory is removed only when empty, never recursively.
+internal/runner/runner.go	Runner.Resume	os.Remove	Removes only the ended host's status file in the session state directory before launching a resumed host, outside the workspace.
+internal/wire/server.go	Listen	os.Remove	Removes only the control socket and its pointer file in instance metadata or the private socket directory, outside workspaces.
+internal/workspace/mirror.go	Maker.mirror	os.RemoveAll	Removes only this call's freshly created temporary bare-clone directory under state/mirrors-tmp; after successful rename that temporary path no longer exists.
