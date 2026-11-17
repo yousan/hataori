@@ -14,7 +14,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **1.1**. Both hellos carry it.
+The protocol version is `major.minor`, now **1.2**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 1.0`.
 - With the same major number and different minor numbers they work together.
@@ -344,6 +344,7 @@ Exactly one per turn.
 | `session` | integer | required | the session |
 | `id` | string | required | pairs it with its `tool_ended` |
 | `tool` | string | required | the tool's name |
+| `parent` | string | optional | the `id` of the subagent the tool runs in; absent for the agent's own tools; since 1.2 |
 
 ### Event `tool_ended`
 
@@ -359,6 +360,7 @@ Exactly one per turn.
 |---|---|---|---|
 | `session` | integer | required | the session |
 | `id` | string | required | pairs it with its `subagent_ended` |
+| `name` | string | optional | the subagent's name or type; since 1.2 |
 
 ### Event `subagent_ended`
 
