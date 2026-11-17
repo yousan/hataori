@@ -14,7 +14,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **1.0**. Both hellos carry it.
+The protocol version is `major.minor`, now **1.1**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 1.0`.
 - With the same major number and different minor numbers they work together.
@@ -297,6 +297,7 @@ The session's state changed.
 | `turn` | integer | required | the turn |
 | `by` | string | required | `caller`, `agent` (by itself, after a background task) or `terminal` (a person at the agent's terminal) |
 | `principal` | string | optional | the caller, for `by: caller` |
+| `key` | string | optional | the key of the call that started it, for `by: caller` (for chat, the message's id); since 1.1 |
 
 ### Event `turn_ended`
 

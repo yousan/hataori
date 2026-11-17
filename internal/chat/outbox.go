@@ -27,6 +27,15 @@ type Row struct {
 	// Decoration marks a message that may be lost: it is dropped after
 	// MaxFailures failed posts and never holds back the rows behind it.
 	Decoration bool
+	// ReplyToRow makes the message a reply to the message another row
+	// posted, once that row is sent; Message.ReplyTo is used otherwise.
+	ReplyToRow *RowKey
+}
+
+// RowKey names a row.
+type RowKey struct {
+	Event uint64 `json:"event"`
+	Part  int    `json:"part"`
 }
 
 // Key is the key a row is posted with, the same on every attempt.
@@ -86,6 +95,8 @@ type message struct {
 	ReplyTo *ref             `json:"reply_to,omitempty"`
 	Notify  []string         `json:"notify,omitempty"`
 	Quiet   bool             `json:"quiet,omitempty"`
+	// ReplyRow is Row.ReplyToRow, resolved when the row is posted.
+	ReplyRow *RowKey `json:"reply_row,omitempty"`
 }
 
 type ref struct {
@@ -94,24 +105,24 @@ type ref struct {
 	ID      string `json:"id"`
 }
 
-func encode(m surface.Message) ([]byte, error) {
-	s := message{Text: m.Text, Files: m.Files, Choices: m.Choices, Notify: m.Notify, Quiet: m.Quiet}
+func encode(m surface.Message, replyRow *RowKey) ([]byte, error) {
+	s := message{Text: m.Text, Files: m.Files, Choices: m.Choices, Notify: m.Notify, Quiet: m.Quiet, ReplyRow: replyRow}
 	if r := m.ReplyTo; r != nil {
 		s.ReplyTo = &ref{Channel: r.Conv.Channel, Thread: r.Conv.Thread, ID: r.ID}
 	}
 	return json.Marshal(s)
 }
 
-func decode(data []byte) (surface.Message, error) {
+func decode(data []byte) (surface.Message, *RowKey, error) {
 	var s message
 	if err := json.Unmarshal(data, &s); err != nil {
-		return surface.Message{}, err
+		return surface.Message{}, nil, err
 	}
 	m := surface.Message{Text: s.Text, Files: s.Files, Choices: s.Choices, Notify: s.Notify, Quiet: s.Quiet}
 	if r := s.ReplyTo; r != nil {
 		m.ReplyTo = &surface.MessageRef{Conv: surface.Conversation{Channel: r.Channel, Thread: r.Thread}, ID: r.ID}
 	}
-	return m, nil
+	return m, s.ReplyRow, nil
 }
 
 // Write stores rows in one transaction. A row whose key exists is left as
@@ -129,7 +140,7 @@ func (o *Outbox) Write(ctx context.Context, rows ...Row) error {
 func (o *Outbox) WriteTx(ctx context.Context, tx *store.Tx, rows ...Row) error {
 	now := time.Now().UnixMilli()
 	for _, r := range rows {
-		msg, err := encode(r.Message)
+		msg, err := encode(r.Message, r.ReplyToRow)
 		if err != nil {
 			return fmt.Errorf("chat: outbox: %w", err)
 		}
@@ -298,7 +309,17 @@ const (
 // send posts one row and records the outcome.
 func (o *Outbox) send(ctx context.Context, conv surface.Conversation, r pending) outcome {
 	k := key(r.event, r.part)
-	m, err := decode(r.message)
+	m, replyRow, err := decode(r.message)
+	if err == nil && replyRow != nil {
+		var to surface.MessageRef
+		var ok bool
+		if to, ok, err = o.Sent(ctx, replyRow.Event, replyRow.Part); err != nil {
+			return stuck
+		}
+		if ok {
+			m.ReplyTo = &to
+		}
+	}
 	if err != nil {
 		// Unreadable rows cannot become readable: drop it, so it holds
 		// nothing back.
