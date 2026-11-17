@@ -145,6 +145,7 @@ func (d *Driver) Run(ctx context.Context, sink surface.Sink) error {
 	d.sink = sink
 	d.connected = true
 	d.mu.Unlock()
+	connected(sink)
 	<-ctx.Done()
 	d.mu.Lock()
 	d.sink = nil
@@ -166,7 +167,18 @@ func (d *Driver) Disconnect() {
 func (d *Driver) Reconnect() {
 	d.mu.Lock()
 	d.connected = d.sink != nil
+	sink := d.sink
 	d.mu.Unlock()
+	if sink != nil {
+		connected(sink)
+	}
+}
+
+// connected tells a sink that wants to know that the driver connected.
+func connected(sink surface.Sink) {
+	if r, ok := sink.(surface.Reconnected); ok {
+		r.Connected()
+	}
 }
 
 // Person, Webhook and Bot make an author of each kind.
