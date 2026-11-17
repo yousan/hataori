@@ -165,6 +165,8 @@ func TestUnreadableScreenGetsNoKey(t *testing.T) {
 		{"erasing up to the cursor", "\x1b[1J"},
 		{"the alternate screen", "\x1b[?1049h"},
 		{"lines deleted", "\x1b[2M"},
+		{"a mode that clears the screen", "\x1b[?3h"},
+		{"the cursor saved by a mode", "\x1b[?1048h"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := screenCodec(trustDir)

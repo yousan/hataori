@@ -133,6 +133,13 @@ func trimLines(screen []string) []string {
 	return out
 }
 
+// inertModes are the private modes the CLI sets that change nothing shown:
+// the cursor's visibility and blinking, mouse and focus reports, bracketed
+// paste, synchronized output, and theme reports (seen: 25, 1000, 1002,
+// 1003, 1004, 1006, 1016, 2004, 2031).
+var inertModes = map[string]bool{"12": true, "25": true, "1000": true, "1002": true, "1003": true, "1004": true,
+	"1005": true, "1006": true, "1015": true, "1016": true, "2004": true, "2026": true, "2031": true}
+
 // renderScreen plays terminal output onto a grid of lines and returns them.
 // It knows only what the CLI uses to draw: text, tab, carriage return, line
 // feed, backspace, saving and restoring the cursor, and the cursor
@@ -191,11 +198,11 @@ func renderScreen(b []byte) (screen []string, ok bool) {
 				switch final {
 				case 'h', 'l':
 					for _, m := range strings.Split(p, ";") {
-						if m == "47" || m == "1047" || m == "1049" {
-							return nil, false // the alternate screen
+						if !inertModes[m] {
+							return nil, false // the alternate screen, a clear, or a mode not known
 						}
 					}
-					continue // modes that change nothing shown
+					continue
 				case 'u':
 					continue // a query of the keyboard protocol
 				}
