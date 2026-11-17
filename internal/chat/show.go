@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/store"
@@ -19,8 +20,16 @@ import (
 // events. It is rebuilt from the threads' events when it is missing.
 type reader struct {
 	api   control.API
-	first map[control.ThreadID]uint64 // position of each thread's first event
-	turn  map[control.ThreadID]string // key of the call that started the open turn
+	first map[control.ThreadID]uint64  // position of each thread's first event
+	turn  map[control.ThreadID]string  // key of the call that started the open turn
+	quiet map[control.ThreadID]*quiet  // open turns, for the progress line
+	gone  map[control.ThreadID]*RowKey // the last delete of a progress line
+	known map[control.ThreadID]bool    // threads whose earlier events were read
+	// outbox and ctx are the front end's, for looking up rows.
+	outbox *Outbox
+	ctx    context.Context
+	// quietAfter is FrontEnd.QuietAfter.
+	quietAfter time.Duration
 }
 
 // show reads the events of the front end's scopes, from where it stopped
@@ -37,24 +46,82 @@ func (f *FrontEnd) show(ctx context.Context) error {
 		api:   f.API(control.Caller{Principal: f.Owner, Scopes: scopes, May: control.OpRead}),
 		first: map[control.ThreadID]uint64{},
 		turn:  map[control.ThreadID]string{},
+		quiet: map[control.ThreadID]*quiet{},
+		gone:  map[control.ThreadID]*RowKey{},
+		known: map[control.ThreadID]bool{},
+
+		outbox: f.Outbox,
+		ctx:    ctx,
+
+		quietAfter: f.quietAfter(),
 	}
 	var after uint64
 	err := f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT pos FROM chat_cursors WHERE client = ?`, f.Name).Scan(&after)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("chat: reading the cursor: %w", err)
 	}
+	// The open turns, for their progress lines, as their events up to the
+	// cursor tell; the events after it are read below.
+	threads, err := r.api.Threads(ctx, control.Filter{})
+	if err != nil {
+		return err
+	}
+	for _, t := range threads {
+		if t.State == control.Running {
+			if err := r.catchUp(ctx, t.ID, after+1); err != nil {
+				return err
+			}
+		}
+	}
 	evs, err := r.api.Events(ctx, control.Filter{}, after)
 	if err != nil {
 		return err
 	}
-	for e := range evs {
-		if e.Kind == control.CaughtUp || e.Thread.Key == "" {
+	every := f.Tick
+	if every <= 0 {
+		every = time.Second
+	}
+	tick := time.NewTicker(every)
+	defer tick.Stop()
+	caughtUp := false // lines are due only once the stored events are read
+	for {
+		var e control.Event
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-tick.C:
+			if !caughtUp {
+				continue
+			}
+			if rows := f.tick(ctx, r, f.now()); len(rows) > 0 {
+				if err := f.Outbox.Write(ctx, rows...); err != nil {
+					return err
+				}
+			}
+			continue
+		case ev, ok := <-evs:
+			if !ok {
+				return ctx.Err()
+			}
+			e = ev
+		}
+		if e.Kind == control.CaughtUp {
+			caughtUp = true
+			continue
+		}
+		if e.Thread.Key == "" {
 			continue
 		}
 		rows, err := f.rowsFor(ctx, r, e)
 		if err != nil {
 			return err
 		}
+		// A thread seen for the first time since the start: what its
+		// earlier events tell about the progress line, first.
+		if err := r.catchUp(ctx, e.Thread, e.Pos); err != nil {
+			return err
+		}
+		rows = append(r.track(e), rows...)
 		err = f.Outbox.Store.Update(ctx, func(tx *store.Tx) error {
 			if err := f.Outbox.WriteTx(ctx, tx, rows...); err != nil {
 				return err
@@ -70,7 +137,6 @@ func (f *FrontEnd) show(ctx context.Context) error {
 			f.Outbox.Wake()
 		}
 	}
-	return ctx.Err()
 }
 
 // eventData holds the fields of the event kinds the front end shows.
@@ -214,6 +280,16 @@ func (r *reader) firstPos(ctx context.Context, id control.ThreadID) (uint64, err
 		r.first[id] = p
 	}
 	return p, err
+}
+
+// catchUp follows the thread's events before position before for the
+// progress line, once per thread.
+func (r *reader) catchUp(ctx context.Context, id control.ThreadID, before uint64) error {
+	if r.known[id] {
+		return nil
+	}
+	r.known[id] = true
+	return r.scan(ctx, id, before, func(e control.Event) { r.track(e) })
 }
 
 // scan calls fn with the thread's stored events before position before.
