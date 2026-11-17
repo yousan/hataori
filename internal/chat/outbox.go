@@ -237,6 +237,7 @@ func (o *Outbox) drain(ctx context.Context, conv surface.Conversation) {
 		delete(o.busy, conv)
 		o.mu.Unlock()
 	}()
+	failed := map[int64]bool{} // decorations that failed in this call; tried again on the next tick
 	for ctx.Err() == nil {
 		rows, err := o.pendingRows(ctx, conv)
 		if err != nil {
@@ -245,23 +246,24 @@ func (o *Outbox) drain(ctx context.Context, conv surface.Conversation) {
 			}
 			return
 		}
-		if len(rows) == 0 {
-			return
-		}
-		failed := false
+		left := false
 		for _, r := range rows {
+			if failed[r.id] {
+				continue
+			}
+			left = true
 			switch o.send(ctx, conv, r) {
 			case stuck:
 				return
 			case failedPost:
-				failed = true
 				if !r.decoration {
 					return // a reply holds back the rows behind it
 				}
+				failed[r.id] = true
 			}
 		}
-		if failed {
-			return // only decorations failed; they are tried again on the next tick
+		if !left {
+			return
 		}
 	}
 }
