@@ -71,9 +71,9 @@ type call struct {
 // Open watches the screen when the fake shows a start-up dialog.
 func (c *codec) Open() agent.Actions { return agent.Actions{WatchScreen: c.dialog != ""} }
 
-// onScreen answers the dialog with Enter, once, when the screen shows it.
-// The screen after the start, or without a dialog to watch for, must never
-// reach the codec.
+// onScreen answers the dialog with Enter, once, when the screen shows it,
+// and stops watching. The screen after that, after the start, or without a
+// dialog to watch for, must never reach the codec.
 func (c *codec) onScreen(b []byte) agent.Actions {
 	if c.dialog == "" {
 		panic("fake: the codec was given the screen without asking for it")
@@ -81,12 +81,15 @@ func (c *codec) onScreen(b []byte) agent.Actions {
 	if c.started {
 		panic("fake: the codec was given the screen after the start")
 	}
+	if c.answered {
+		panic("fake: the codec was given the screen after it stopped watching")
+	}
 	c.screen = append(c.screen, b...)
-	if c.answered || !bytes.Contains(c.screen, []byte(c.dialog)) {
+	if !bytes.Contains(c.screen, []byte(c.dialog)) {
 		return agent.Actions{}
 	}
 	c.answered = true
-	return agent.Actions{Write: [][]byte{[]byte("\r")}}
+	return agent.Actions{Write: [][]byte{[]byte("\r")}, StopScreen: true}
 }
 
 // Decode reads one line. In the terminal form only hook calls and the

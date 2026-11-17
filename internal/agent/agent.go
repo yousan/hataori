@@ -114,6 +114,9 @@ type Actions struct {
 	// Screen) until the session reports SessionReady: for a start-up
 	// dialog that no hook reports. Elsewhere it is ignored.
 	WatchScreen bool
+	// StopScreen ends the watch before SessionReady: the codec needs the
+	// screen no more, as once it has answered the dialog.
+	StopScreen bool
 }
 
 // HookReply answers one hook call that is waiting.

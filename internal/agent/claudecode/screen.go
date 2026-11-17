@@ -133,14 +133,19 @@ func trimLines(screen []string) []string {
 	return out
 }
 
-// renderScreen plays terminal output onto a grid of lines and returns them. It
-// knows only what the CLI uses to draw: text, carriage return, line feed,
-// backspace, and the cursor movements and erasures of ECMA-48. Colours and
-// modes are skipped. The grid has no height: it grows as the cursor goes
-// down, and a cursor position counts from its top.
-func renderScreen(b []byte) []string {
+// renderScreen plays terminal output onto a grid of lines and returns them.
+// It knows only what the CLI uses to draw: text, tab, carriage return, line
+// feed, backspace, saving and restoring the cursor, and the cursor
+// movements and erasures of ECMA-48. Colours, cursor shape, terminal
+// queries, titles and the modes that do not change what is shown are
+// skipped. Anything else that could change the screen (a reset, the
+// alternate screen, scrolling, inserting or deleting lines or characters)
+// makes ok false: such a screen is not read. The grid has no height: it
+// grows as the cursor goes down, and a cursor position counts from its top.
+func renderScreen(b []byte) (screen []string, ok bool) {
 	var grid [][]rune
 	row, col := 0, 0
+	savedRow, savedCol := 0, 0
 	put := func(r rune) {
 		for len(grid) <= row {
 			grid = append(grid, nil)
@@ -166,16 +171,41 @@ func renderScreen(b []byte) []string {
 				j++
 			}
 			params := string(b[i+2 : j])
-			for j < len(b) && b[j] >= 0x20 && b[j] <= 0x2f {
-				j++
+			k := j
+			for k < len(b) && b[k] >= 0x20 && b[k] <= 0x2f {
+				k++
 			}
-			if j >= len(b) {
-				return gridLines(grid)
+			inter := string(b[j:k])
+			if k >= len(b) {
+				return gridLines(grid), true // the rest of the sequence is still to come
 			}
-			final := b[j]
-			i = j + 1
-			if strings.ContainsAny(params, "<=>?") {
-				continue // private modes and queries
+			final := b[k]
+			i = k + 1
+			if inter != "" {
+				if final == 'q' {
+					continue // cursor shape
+				}
+				return nil, false
+			}
+			if p, private := strings.CutPrefix(params, "?"); private {
+				switch final {
+				case 'h', 'l':
+					for _, m := range strings.Split(p, ";") {
+						if m == "47" || m == "1047" || m == "1049" {
+							return nil, false // the alternate screen
+						}
+					}
+					continue // modes that change nothing shown
+				case 'u':
+					continue // a query of the keyboard protocol
+				}
+				return nil, false
+			}
+			if strings.ContainsAny(params, "<=>") {
+				if final == 'q' || final == 'c' || final == 'm' || final == 'u' {
+					continue // queries of the terminal and keyboard modes
+				}
+				return nil, false
 			}
 			n := func(k, def int) int {
 				ps := strings.Split(params, ";")
@@ -187,6 +217,16 @@ func renderScreen(b []byte) []string {
 				return def
 			}
 			switch final {
+			case 'm', 'c', 'n', 't':
+				// colours, and queries of the terminal
+			case 'r':
+				if params != "" {
+					return nil, false // a scrolling region
+				}
+			case 's':
+				savedRow, savedCol = row, col
+			case 'u':
+				row, col = savedRow, savedCol
 			case 'A':
 				row = max(0, row-n(0, 1))
 			case 'B':
@@ -201,38 +241,44 @@ func renderScreen(b []byte) []string {
 				row, col = n(0, 1)-1, n(1, 1)-1
 			case 'K':
 				l := line()
-				switch n(0, 0) {
-				case 0:
+				switch params {
+				case "", "0":
 					if col < len(l) {
 						grid[row] = l[:col]
 					}
-				case 1:
+				case "1":
 					for k := 0; k <= col && k < len(l); k++ {
 						l[k] = ' '
 					}
-				case 2:
+				case "2":
 					grid[row] = nil
+				default:
+					return nil, false
 				}
 			case 'J':
-				switch n(0, 0) {
-				case 0:
+				switch params {
+				case "", "0":
 					l := line()
 					if col < len(l) {
 						grid[row] = l[:col]
 					}
 					grid = grid[:row+1]
-				case 2, 3:
+				case "2", "3":
 					grid = nil
+				default:
+					return nil, false
 				}
+			default:
+				return nil, false
 			}
 		case c == 0x1b && i+1 < len(b) && b[i+1] == ']':
-			// An operating system command, ended by BEL or ST.
+			// An operating system command (a title, a query), ended by BEL or ST.
 			j := i + 2
 			for j < len(b) && b[j] != 0x07 && !(b[j] == 0x1b && j+1 < len(b) && b[j+1] == '\\') {
 				j++
 			}
 			if j >= len(b) {
-				return gridLines(grid)
+				return gridLines(grid), true
 			}
 			if b[j] == 0x07 {
 				i = j + 1
@@ -240,9 +286,22 @@ func renderScreen(b []byte) []string {
 				i = j + 2
 			}
 		case c == 0x1b:
-			i += 2 // a two-byte escape, such as a character set choice
-			if i <= len(b) && (b[i-1] == '(' || b[i-1] == ')') {
-				i++
+			if i+1 >= len(b) {
+				return gridLines(grid), true
+			}
+			switch b[i+1] {
+			case '7':
+				savedRow, savedCol = row, col
+				i += 2
+			case '8':
+				row, col = savedRow, savedCol
+				i += 2
+			case '=', '>':
+				i += 2 // keypad modes
+			case '(', ')':
+				i += 3 // a character set
+			default:
+				return nil, false // a reset, an index, or anything else
 			}
 		case c == '\r':
 			col = 0
@@ -253,22 +312,26 @@ func renderScreen(b []byte) []string {
 		case c == '\b':
 			col = max(0, col-1)
 			i++
-		case c < 0x20 || c == 0x7f:
+		case c == '\t':
+			col = (col/8 + 1) * 8
 			i++
+		case c == 0x07:
+			i++ // the bell
+		case c < 0x20 || c == 0x7f:
+			return nil, false
 		default:
 			r, size := utf8.DecodeRune(b[i:])
 			if r == utf8.RuneError && size <= 1 {
 				if !utf8.FullRune(b[i:]) {
-					return gridLines(grid)
+					return gridLines(grid), true
 				}
-				i++
-				continue
+				return nil, false
 			}
 			put(r)
 			i += size
 		}
 	}
-	return gridLines(grid)
+	return gridLines(grid), true
 }
 
 func gridLines(grid [][]rune) []string {
@@ -307,6 +370,7 @@ func (c *codec) screen(b []byte) Actions {
 	s.changed = true
 	if len(s.seen) > maxScreen {
 		s.done, s.seen = true, nil
+		return Actions{StopScreen: true}
 	}
 	return Actions{}
 }
@@ -326,18 +390,23 @@ func (c *codec) tickScreen(now time.Time) Actions {
 	if s.quiet.IsZero() || now.Sub(s.quiet) < screenSettle {
 		return Actions{}
 	}
-	cursor, yes, ok := trustDialog(renderScreen(s.seen), c.spec.Dir)
+	screen, ok := renderScreen(s.seen)
+	if !ok {
+		s.done, s.seen = true, nil // a screen it cannot read: no key, ever
+		return Actions{StopScreen: true}
+	}
+	cursor, yes, ok := trustDialog(screen, c.spec.Dir)
 	if !ok || (s.moved > 0 && cursor == s.from) {
 		return Actions{}
 	}
 	s.quiet = time.Time{} // the next key waits for the screen to change and settle again
 	switch {
 	case cursor == yes:
-		s.done = true
-		return Actions{Write: [][]byte{keyEnter}}
+		s.done, s.seen = true, nil
+		return Actions{Write: [][]byte{keyEnter}, StopScreen: true}
 	case s.moved >= 2: // two choices: never more than one move is needed
-		s.done = true
-		return Actions{}
+		s.done, s.seen = true, nil
+		return Actions{StopScreen: true}
 	case cursor < yes:
 		s.moved, s.from = s.moved+1, cursor
 		return Actions{Write: [][]byte{keyDown}}

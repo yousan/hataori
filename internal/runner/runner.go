@@ -924,6 +924,9 @@ func (r *Runner) watchScreen(lv *live, b *batch) {
 // decode runs one line through the codec and keeps what it gave.
 func (r *Runner) decode(lv *live, b *batch, src agent.Source, l []byte) {
 	a := lv.codec.Decode(src, l)
+	if a.StopScreen {
+		lv.screen = false
+	}
 	for _, e := range a.Events {
 		if e.Kind == agent.Unknown {
 			r.Log.Warn("skipped a line the codec does not know", "session", lv.id, "line", truncate(e.Text, 200))
@@ -1080,6 +1083,9 @@ func reported(evs []agent.Event, id string) bool {
 // do commits the events of actions that did not come from a line, then
 // carries out the rest. It returns the first error writing to the host.
 func (r *Runner) do(lv *live, a agent.Actions) error {
+	if a.StopScreen {
+		lv.screen = false
+	}
 	if len(a.Events) > 0 {
 		b := batch{offset: lv.offset, files: map[string]int64{}}
 		for p, o := range lv.files {

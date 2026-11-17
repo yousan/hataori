@@ -155,3 +155,46 @@ func TestTrustDialogAnsweredAsCaptured(t *testing.T) {
 		t.Fatalf("keys %q once the cursor moved, want enter", keys)
 	}
 }
+
+// A screen the renderer cannot read gets no key, even when the dialog was
+// drawn before: a reset, an erasure it does not know, the alternate screen.
+func TestUnreadableScreenGetsNoKey(t *testing.T) {
+	dialog := readScreen(t, "testdata/2.1.322/trust/terminal.raw")
+	for _, tc := range []struct{ name, after string }{
+		{"a reset", "\x1bc"},
+		{"erasing up to the cursor", "\x1b[1J"},
+		{"the alternate screen", "\x1b[?1049h"},
+		{"lines deleted", "\x1b[2M"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := screenCodec(trustDir)
+			if got, _ := settle(c, append(append([]byte{}, dialog...), tc.after...), time.Now()); got != "" {
+				t.Fatalf("keys %q after %s", got, tc.name)
+			}
+		})
+	}
+}
+
+// The codec ends the watch once it has confirmed, and at the first hook.
+func TestScreenWatchEnds(t *testing.T) {
+	c := screenCodec("/tmp/capture-work/sessions/trust_answered")
+	dir := "testdata/2.1.326/trust_answered/"
+	var first []byte
+	for i := 1; i <= 7; i++ {
+		first = append(first, readScreen(t, fmt.Sprintf("%sscreen-%02d.raw", dir, i))...)
+	}
+	_, now := settle(c, first, time.Now())
+	a := merge(c.Decode(agent.Screen, readScreen(t, dir+"screen-08.raw")), Actions{})
+	for i := 0; i <= 4 && !a.StopScreen; i++ {
+		a = merge(a, c.Tick(now.Add(time.Duration(i)*time.Second)))
+	}
+	if keysOf(a) != "enter" || !a.StopScreen {
+		t.Fatalf("keys %q, stop %t: want enter and the end of the watch", keysOf(a), a.StopScreen)
+	}
+
+	c = screenCodec(trustDir)
+	start := readScreen(t, "testdata/2.1.322/plain/hooks/01-SessionStart.json")
+	if !c.Decode(agent.Hook, envelope("c1", "plain/hooks/01-SessionStart.json", start)).StopScreen {
+		t.Fatal("the first hook does not end the watch")
+	}
+}

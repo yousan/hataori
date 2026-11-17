@@ -324,9 +324,10 @@ func TestBlockedAtStart(t *testing.T) {
 }
 
 // A start-up dialog no hook reports: the codec asked for the screen, the
-// runner gave it until the start and carried out the key the codec sent.
-// The fake shows its dialog again after the start, and panics if the
-// screen reaches its codec after that.
+// runner gave it until the codec stopped watching and carried out the key
+// it sent. The fake writes to its screen after the answer and shows its
+// dialog again after the start; its codec panics if the screen reaches it
+// after it stopped watching or after the start.
 func TestScreenUntilTheStart(t *testing.T) {
 	f := newFixture(t, options{terminal: true, dialog: "fake: trust this folder? Enter"})
 	f.start("reply hello")

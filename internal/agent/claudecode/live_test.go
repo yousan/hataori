@@ -41,6 +41,9 @@ func TestLiveFolderTrust(t *testing.T) {
 	}
 	out := filepath.Join(raw, "trust_answered")
 	hooks := filepath.Join(out, "hooks")
+	if _, err := os.Stat(out); err == nil {
+		t.Fatalf("%s exists: give a new HATAORI_CAPTURE_DIR, so that no earlier run's hooks count", out)
+	}
 	if err := os.MkdirAll(hooks, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -86,8 +89,9 @@ func TestLiveFolderTrust(t *testing.T) {
 	sb, _ := json.Marshal(map[string]any{"hooks": hs, "remoteControlAtStartup": false, "enabledPlugins": off})
 	os.WriteFile(settings, sb, 0o600)
 
+	session := newUUID()
 	cmd := exec.Command("claude", "--settings", settings, "--setting-sources", "project,local", "--model", "haiku",
-		"--permission-mode", "default", "--session-id", newUUID())
+		"--permission-mode", "default", "--session-id", session)
 	cmd.Dir = clone
 	for _, k := range []string{"PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "SHELL", "TMPDIR"} {
 		if v, ok := os.LookupEnv(k); ok {
@@ -124,7 +128,9 @@ func TestLiveFolderTrust(t *testing.T) {
 	started := func() bool {
 		names, _ := os.ReadDir(hooks)
 		for _, n := range names {
-			if b, _ := os.ReadFile(filepath.Join(hooks, n.Name())); bytes.Contains(b, []byte(`"SessionStart"`)) {
+			var p payload
+			if b, err := os.ReadFile(filepath.Join(hooks, n.Name())); err == nil && json.Unmarshal(b, &p) == nil &&
+				p.Event == "SessionStart" && p.SessionID == session && p.Source == "startup" {
 				return true
 			}
 		}

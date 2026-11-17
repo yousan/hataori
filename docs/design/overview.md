@@ -1072,6 +1072,7 @@ type Actions struct {
 	// WatchScreen, from Open only: give Decode the terminal (Source Screen)
 	// until SessionReady, for a start-up dialog no hook reports.
 	WatchScreen bool
+	StopScreen  bool // ends that watch early: the codec needs the screen no more
 }
 
 // Input is a user message. ID is opaque to the codec; the TurnStarted of

@@ -42,9 +42,10 @@ type Config struct {
 	// turn fails as "not delivered"; DefaultInputTimeout when empty.
 	InputTimeout string `json:"input_timeout"`
 	// Dialog, in the terminal form, is the text of a start-up dialog that
-	// no hook reports: the program shows it and reports its start only
-	// after an Enter, and shows it once more after the start. The codec
-	// watches the screen for it and answers it with Enter.
+	// no hook reports: the program shows it, and after an Enter writes a
+	// line and then reports its start; it shows the dialog once more after
+	// the start. The codec watches the screen for it, answers it with
+	// Enter, and stops watching.
 	Dialog string `json:"dialog"`
 }
 

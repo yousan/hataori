@@ -229,7 +229,12 @@ func (c *codec) Interrupt() Actions {
 func (c *codec) Decode(src agent.Source, line []byte) Actions {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.number(c.decode(src, line))
+	before := c.started
+	a := c.number(c.decode(src, line))
+	if c.started && !before {
+		a.StopScreen = true // past any start-up dialog: the screen is not needed
+	}
+	return a
 }
 
 func (c *codec) decode(src agent.Source, line []byte) Actions {
@@ -335,6 +340,7 @@ func (c *codec) track(prompt string, a Actions) Actions {
 }
 
 func merge(a, b Actions) Actions {
+	a.StopScreen = a.StopScreen || b.StopScreen
 	a.Events = append(a.Events, b.Events...)
 	a.Write = append(a.Write, b.Write...)
 	a.Reply = append(a.Reply, b.Reply...)

@@ -70,6 +70,9 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				break
 			}
 		}
+		// Between the answer and the start, as an agent draws its screen.
+		fmt.Fprint(stdout, "fake: answered, starting\r\n")
+		time.Sleep(200 * time.Millisecond)
 	}
 	inputs := make(chan string, 16)
 	p.interrupts = make(chan struct{}, 1)
