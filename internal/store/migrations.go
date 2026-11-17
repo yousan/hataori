@@ -196,6 +196,7 @@ var migrations = []Migration{
 			dm_ref     TEXT NOT NULL DEFAULT '',
 			closed     INTEGER NOT NULL DEFAULT 0,
 			done       INTEGER NOT NULL DEFAULT 0,
+			ended      TEXT NOT NULL DEFAULT '', -- how the last relay flow ended (expired, failed), for after a restart
 			PRIMARY KEY (client, outage)
 		)`,
 	)},

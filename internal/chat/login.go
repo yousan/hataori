@@ -88,6 +88,16 @@ func (f *FrontEnd) LoginUpdate(u relay.Update) {
 		}
 	}
 	l.mu.Unlock()
+	// How the flow ended, without anything secret, for the message after
+	// a restart; a new link clears it.
+	ended := string(u.Done)
+	if u.Link != "" || u.Done == relay.Expired || u.Done == relay.Failed {
+		if u.Link != "" {
+			ended = ""
+		}
+		f.Outbox.Store.DB.ExecContext(context.WithoutCancel(f.context()),
+			`UPDATE chat_logins SET ended = ? WHERE client = ? AND agent = ? AND closed = 0`, ended, f.Name, u.Agent)
+	}
 	l.poke()
 	if reply != "" {
 		f.postDirect(f.context(), reply)
@@ -135,16 +145,11 @@ func (f *FrontEnd) direct(in surface.Inbound) {
 		f.postDirect(f.context(), "Not waiting for a code.")
 		return
 	}
+	// The relay tells how the code went (a refusal, or the end).
 	if err := f.Relay.Code(f.Owner, agent, code); err != nil {
 		f.Log.Warn("chat: the relay took no code", "agent", agent, "err", err)
 		f.postDirect(f.context(), "The code was not taken: "+err.Error())
-		return
 	}
-	l.mu.Lock()
-	if fl := l.flows[agent]; fl != nil {
-		fl.waiting = false
-	}
-	l.mu.Unlock()
 }
 
 // Choice handles a button: the login message's "New link".
@@ -163,6 +168,7 @@ func (f *FrontEnd) Choice(s surface.Selection) {
 type outage struct {
 	id      int64
 	agent   string
+	ended   string // how the last relay flow ended, as stored
 	threads []control.ThreadID
 	dm      surface.MessageRef
 	closed  bool
@@ -211,6 +217,13 @@ func (f *FrontEnd) loginEvent(ctx context.Context, e control.Event) ([]Row, erro
 			}
 			return err
 		default: // login_restored
+			// The outage is over, and with it what the relay said about it:
+			// the next one starts afresh. (Not at login_lost: the relay may
+			// have sent the new link before this reader gets there.)
+			l := f.loginState()
+			l.mu.Lock()
+			delete(l.flows, d.Agent)
+			l.mu.Unlock()
 			if _, err := tx.ExecContext(ctx, `UPDATE chat_logins SET closed = 1 WHERE client = ? AND outage = ?`,
 				f.Name, d.Outage); err != nil {
 				return err
@@ -248,7 +261,7 @@ func openOutages(ctx context.Context, q queryer, client string) ([]outage, error
 }
 
 func outages(ctx context.Context, q queryer, client, where string) ([]outage, error) {
-	rows, err := q.QueryContext(ctx, `SELECT outage, agent, threads, dm_channel, dm_thread, dm_ref, closed FROM chat_logins
+	rows, err := q.QueryContext(ctx, `SELECT outage, agent, threads, dm_channel, dm_thread, dm_ref, closed, ended FROM chat_logins
 		WHERE client = ? `+where+` ORDER BY outage`, client)
 	if err != nil {
 		return nil, err
@@ -258,7 +271,7 @@ func outages(ctx context.Context, q queryer, client, where string) ([]outage, er
 	for rows.Next() {
 		var o outage
 		var threads string
-		if err := rows.Scan(&o.id, &o.agent, &threads, &o.dm.Conv.Channel, &o.dm.Conv.Thread, &o.dm.ID, &o.closed); err != nil {
+		if err := rows.Scan(&o.id, &o.agent, &threads, &o.dm.Conv.Channel, &o.dm.Conv.Thread, &o.dm.ID, &o.closed, &o.ended); err != nil {
 			return nil, err
 		}
 		json.Unmarshal([]byte(threads), &o.threads)
@@ -363,7 +376,7 @@ func (f *FrontEnd) loginMessage(ctx context.Context, o outage) surface.Message {
 	l := f.loginState()
 	l.mu.Lock()
 	fl := l.flows[o.agent]
-	var flow loginFlow
+	flow := loginFlow{done: relay.Outcome(o.ended)} // after a restart, what was stored
 	if fl != nil {
 		flow = *fl
 	}

@@ -261,6 +261,7 @@ func TestExpiredLinkKeepsItsButtonAlsoAfterARestart(t *testing.T) {
 	a, _ := f.twoThreads(t)
 	stop := f.running(t)
 	f.lost(t, a, 1)
+	f.waitFirst(t, "the alert", func(m surface.Message) bool { return m.Text != "" })
 	f.fe.LoginUpdate(relay.Update{Agent: "agent", Link: link, Expires: time.Now().Add(time.Minute)})
 	f.fe.LoginUpdate(relay.Update{Agent: "agent", Done: relay.Expired})
 	m := f.waitFirst(t, "the expiry", func(m surface.Message) bool { return strings.Contains(m.Text, "expired") })
@@ -272,6 +273,12 @@ func TestExpiredLinkKeepsItsButtonAlsoAfterARestart(t *testing.T) {
 	f.fe.login = nil
 	f.fe.loginOnce = sync.Once{}
 	f.running(t)
+	f.event(t, a, "text", map[string]any{"text": "marker", "final": false})
+	f.postedUntil(t, a, "marker")
+	time.Sleep(50 * time.Millisecond)
+	if _, m := f.dmPosts(); !strings.Contains(m.Text, "expired") || len(m.Choices) != 1 {
+		t.Fatalf("alert after the restart %+v, want it still to say the link expired", m)
+	}
 	posts, _ := f.dmPosts()
 	f.fe.Choice(surface.Selection{Ref: posts[0].Ref, Author: fake.Person("someone"), Token: m.Choices[0].Token})
 	f.fe.Choice(surface.Selection{Ref: posts[0].Ref, Author: fake.Person(owner), Token: m.Choices[0].Token})
@@ -304,5 +311,28 @@ func TestUndeliverableAlert(t *testing.T) {
 	f.running(t)
 	f.lost(t, a, 1)
 	f.postedUntil(t, a, "The turn failed: the agent is not logged in.")
-	waitFor(t, "the log line", func() bool { return strings.Contains(strings.Join(f.log.lines(), "\n"), "the owner could not be reached") })
+	waitFor(t, "the log line", func() bool {
+		return strings.Contains(strings.Join(f.log.lines(), "\n"), "the owner could not be reached")
+	})
+}
+
+// A refused code is said in the direct conversation, and the next one
+// still goes to the relay.
+func TestARefusedCodeAndTheNextOne(t *testing.T) {
+	r := &fakeRelay{}
+	f := newFront(t, workspaces{}, withRelay(r))
+	a, _ := f.twoThreads(t)
+	f.running(t)
+	f.lost(t, a, 1)
+	f.fe.LoginUpdate(relay.Update{Agent: "agent", Link: link, Expires: time.Now().Add(time.Minute)})
+	f.fe.Message(f.driver.InjectDirect(owner, "WRONG"))
+	f.fe.LoginUpdate(relay.Update{Agent: "agent", Refused: "Invalid code."})
+	f.fe.Message(f.driver.InjectDirect(owner, "RIGHT"))
+	if _, codes := r.got(); strings.Join(codes, "|") != owner+" agent WRONG|"+owner+" agent RIGHT" {
+		t.Fatalf("codes %v", codes)
+	}
+	posts, _ := f.dmPosts()
+	if posts[len(posts)-1].Message.Text != "The code was refused: Invalid code." {
+		t.Fatalf("last reply %q", posts[len(posts)-1].Message.Text)
+	}
 }
