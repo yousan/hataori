@@ -169,3 +169,30 @@ func TestNamedPipeIsRefusedWithoutBlocking(t *testing.T) {
 		t.Fatalf("calls %+v", c)
 	}
 }
+
+// An event read again posts the copy made the first time, whatever
+// became of the file since.
+func TestFileEventReadAgainUsesTheFirstCopy(t *testing.T) {
+	ws, _, outside, opt := withDirs(t)
+	f := newFront(t, workspaces{}, opt)
+	id, _ := f.started(t)
+	stop := f.showing(t)
+	report := write(t, filepath.Join(ws, "report.txt"), 3)
+	f.event(t, id, "file_out", map[string]any{"file": report})
+	waitFor(t, "the file", func() bool { return len(fileCalls(f, id)) == 1 })
+	stop()
+	os.Remove(report)
+	os.Symlink(write(t, filepath.Join(outside, "secret.txt"), 7), report)
+	f.fe.Outbox.Store.DB.Exec(`DELETE FROM chat_cursors`)
+	f.fe.Outbox.Store.DB.Exec(`DELETE FROM chat_outbox WHERE message LIKE '%report.txt%'`) // as if it was never written
+	f.showing(t)
+	f.event(t, id, "text", map[string]any{"text": "marker", "final": false})
+	f.postedUntil(t, id, "marker")
+	c := fileCalls(f, id)
+	if len(c) != 3 || len(c[1].Message.Files) != 1 {
+		t.Fatalf("calls %+v, want the file posted from its first copy", c)
+	}
+	if got, _ := os.ReadFile(c[1].Message.Files[0].Path); string(got) != "xxx" {
+		t.Fatalf("posted %q", got)
+	}
+}

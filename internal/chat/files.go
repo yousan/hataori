@@ -29,8 +29,16 @@ func (f *FrontEnd) fileRows(ctx context.Context, e control.Event, conv surface.C
 	lim := f.Driver.Limits()
 	var files []surface.File
 	var notices []string
-	for _, p := range paths {
+	for i, p := range paths {
 		name := filepath.Base(p)
+		// A copy made when the event was read before is what is posted.
+		copyName := filepath.Join(fmt.Sprint(e.Pos), fmt.Sprint(i))
+		if dst := filepath.Join(f.FileDir, copyName); f.FileDir != "" {
+			if _, err := os.Stat(dst); err == nil {
+				files = append(files, surface.File{Name: name, Path: dst})
+				continue
+			}
+		}
 		if rootErr != nil {
 			notices = append(notices, "File "+name+" was not posted: its place cannot be checked.")
 			continue
@@ -42,7 +50,7 @@ func (f *FrontEnd) fileRows(ctx context.Context, e control.Event, conv surface.C
 		}
 		// What is posted is a copy taken now, so the file cannot be
 		// changed or replaced by a link between the check and the post.
-		copied, n, err := f.copyFile(real, roots, filepath.Join(fmt.Sprint(e.Pos), fmt.Sprint(len(files)+len(notices))), lim.MaxFileBytes)
+		copied, n, err := f.copyFile(real, roots, copyName, lim.MaxFileBytes)
 		switch {
 		case errors.Is(err, errTooBig):
 			notices = append(notices, fmt.Sprintf("File %s was not posted: %s is over the limit of %s.", name, size(n), size(lim.MaxFileBytes)))
@@ -80,16 +88,13 @@ var errTooBig = errors.New("over the size limit")
 // the copy's path. It opens real without blocking and without following a
 // link at its end, then checks that the file it opened is real, inside
 // roots; it copies at most max bytes (0: no limit), and a longer file gives
-// errTooBig and its size. A copy made before (an event read again) is kept
-// and used as it is.
+// errTooBig and its size. Where the system has no /proc to name the file
+// opened, the file is refused.
 func (f *FrontEnd) copyFile(real string, roots []string, name string, max int64) (string, int64, error) {
 	if f.FileDir == "" {
 		return "", 0, errors.New("no FileDir to copy into")
 	}
 	dst := filepath.Join(f.FileDir, name)
-	if st, err := os.Stat(dst); err == nil {
-		return dst, st.Size(), nil
-	}
 	src, err := os.OpenFile(real, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return "", 0, err
@@ -104,10 +109,8 @@ func (f *FrontEnd) copyFile(real string, roots []string, name string, max int64)
 	}
 	// What was opened, as the kernel names it, so that a directory on the
 	// way replaced by a link meanwhile is seen.
+	// Without /proc this cannot be checked, and the file is refused.
 	opened, err := os.Readlink(fmt.Sprintf("/proc/self/fd/%d", src.Fd()))
-	if err != nil {
-		opened, err = filepath.EvalSymlinks(real) // no /proc: the best this system offers
-	}
 	if err != nil || opened != real {
 		return "", 0, errors.New("the path changed while it was checked")
 	}
@@ -124,7 +127,7 @@ func (f *FrontEnd) copyFile(real string, roots []string, name string, max int64)
 	if err != nil {
 		return "", 0, err
 	}
-	defer os.Remove(tmp.Name()) // a no-op once it is renamed
+	// A copy that fails is left in FileDir under its temporary name.
 	limit := int64(math.MaxInt64)
 	if max > 0 {
 		limit = max + 1
