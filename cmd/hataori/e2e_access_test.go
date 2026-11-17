@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -44,18 +45,35 @@ func TestTwoInstancesIgnoreEachOthersScopes(t *testing.T) {
 		r.driver.Inject(cb, fakesurface.Webhook(e2eHook), "!go repo:"+repo+" reply for b")
 	}
 	eventually(t, "a thread in each", 15*time.Second, func() bool { return a.opened(ca) == 1 && b.opened(cb) == 1 })
+	openedIn := func(r *chatRoot, conv surface.Conversation) surface.Conversation {
+		for _, c := range r.driver.Calls(conv) {
+			if c.Op == fakesurface.OpOpenThread {
+				return c.Opened
+			}
+		}
+		return surface.Conversation{}
+	}
+	// Each answers in its own scope: its turn ran, so its clone is made.
+	ta, tb := openedIn(a, ca), openedIn(b, cb)
+	a.posted(t, ta, "for a")
+	b.posted(t, tb, "for b")
 	time.Sleep(200 * time.Millisecond)
 	if a.opened(cb) != 0 || b.opened(ca) != 0 {
 		t.Fatalf("a opened %d threads in b's scope, b %d in a's", a.opened(cb), b.opened(ca))
 	}
-	for _, r := range []struct {
-		root       *chatRoot
+	for _, x := range []struct {
+		r          *chatRoot
+		th         surface.Conversation
 		own, other string
-	}{{a, "ca", "cb"}, {b, "cb", "ca"}} {
-		own, _ := filepath.Glob(filepath.Join(r.root.root, "workspaces", fakeSurface, r.own, "*"))
-		other, _ := filepath.Glob(filepath.Join(r.root.root, "workspaces", fakeSurface, r.other, "*"))
+	}{{a, ta, "ca", "cb"}, {b, tb, "cb", "ca"}} {
+		clone := filepath.Join(x.r.root, "workspaces", fakeSurface, x.own, x.th.Thread)
+		if _, err := os.Stat(filepath.Join(clone, "README")); err != nil {
+			t.Fatalf("no clone at %s: %v", clone, err)
+		}
+		own, _ := filepath.Glob(filepath.Join(x.r.root, "workspaces", fakeSurface, x.own, "*"))
+		other, _ := filepath.Glob(filepath.Join(x.r.root, "workspaces", fakeSurface, x.other, "*"))
 		if len(own) != 1 || len(other) != 0 {
-			t.Fatalf("clones under %s: %v in its scope, %v in the other's", r.root.root, own, other)
+			t.Fatalf("clones under %s: %v in its scope, %v in the other's", x.r.root, own, other)
 		}
 	}
 }

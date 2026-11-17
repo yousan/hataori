@@ -259,6 +259,15 @@ func TestLoginOutageWithTheFakes(t *testing.T) {
 		r.posted(t, th, "The agent is logged in again. Send your last message again to go on.")
 	}
 	r.posted(t, dm, "Logged in again.")
+	time.Sleep(200 * time.Millisecond)
+	for _, th := range []surface.Conversation{a, b} {
+		if n := r.count(th, "The agent is logged in again. Send your last message again to go on."); n != 1 {
+			t.Fatalf("%d lines about the login in a thread", n)
+		}
+	}
+	if r.count(a, "one") != 0 || r.count(b, "two") != 0 {
+		t.Fatal("a stopped turn's input was sent to the agent again")
+	}
 	posts := 0
 	for _, c := range r.driver.Calls(dm) {
 		if c.Op == fakesurface.OpPost && strings.Contains(c.Message.Text, "is logged out") {
