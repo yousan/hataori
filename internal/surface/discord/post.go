@@ -38,7 +38,10 @@ type Error struct {
 	Status  int    // the HTTP status, 0 when no response came
 	Code    int    // Discord's JSON error code, 0 when none
 	Message string // the service's message
-	Err     error
+	// Local is a failure before the request reached the service, such as
+	// a file that cannot be read: trying again does not help.
+	Local bool
+	Err   error
 }
 
 func (e *Error) Error() string {
@@ -52,7 +55,7 @@ func (e *Error) Unwrap() error { return e.Err }
 
 // Temporary reports whether a retry can help.
 func (e *Error) Temporary() bool {
-	return e.Status == 0 || e.Status == http.StatusTooManyRequests || e.Status >= 500
+	return !e.Local && (e.Status == 0 || e.Status == http.StatusTooManyRequests || e.Status >= 500)
 }
 
 // Discord's JSON error code for a message that does not exist.
@@ -79,6 +82,7 @@ func wrap(op string, err error) error {
 	if errors.Is(err, context.Canceled) {
 		return err
 	}
+	e.Local = true
 	return e
 }
 
@@ -168,6 +172,17 @@ func (d *Driver) Post(ctx context.Context, conv surface.Conversation, key string
 	if text == "" && len(m.Files) == 0 {
 		return surface.MessageRef{}, errors.New("discord: nothing to post")
 	}
+	// The files are opened before anything is posted, so that a file that
+	// cannot be read does not leave half a post behind.
+	files, err := openFiles(m.Files)
+	if err != nil {
+		return surface.MessageRef{}, err
+	}
+	defer func() {
+		for _, f := range files {
+			f.r.Close()
+		}
+	}()
 	parts := split(text, maxText)
 	var first surface.MessageRef
 	for i, part := range parts {
@@ -193,28 +208,17 @@ func (d *Driver) Post(ctx context.Context, conv surface.Conversation, key string
 				mc.MessageReference = &discord.MessageReference{MessageID: &id, FailIfNotExists: false}
 			}
 		}
-		var closers []func() error
 		if i == len(parts)-1 {
-			for _, f := range m.Files {
-				r, err := os.Open(f.Path)
-				if err != nil {
-					for _, c := range closers {
-						c()
-					}
-					return first, fmt.Errorf("discord: file %q: %w", f.Name, err)
-				}
-				closers = append(closers, r.Close)
-				mc.Files = append(mc.Files, discord.NewFile(f.Name, "", r))
+			for _, f := range files {
+				mc.Files = append(mc.Files, discord.NewFile(f.name, "", f.r))
 			}
 		}
 		body, err := mc.ToBody()
 		var out wireMessage
-		if err == nil {
-			err = d.client.Do(rest.CreateMessage.Compile(nil, ch), body, &out, rest.WithCtx(ctx))
+		if err != nil {
+			return first, &Error{Op: "post", Local: true, Err: err}
 		}
-		for _, c := range closers {
-			c()
-		}
+		err = d.client.Do(rest.CreateMessage.Compile(nil, ch), body, &out, rest.WithCtx(ctx))
 		if err != nil {
 			return first, wrap("post", err)
 		}
@@ -223,6 +227,35 @@ func (d *Driver) Post(ctx context.Context, conv surface.Conversation, key string
 		}
 	}
 	return first, nil
+}
+
+type openFile struct {
+	name string
+	r    *os.File
+}
+
+func openFiles(fs []surface.File) ([]openFile, error) {
+	var out []openFile
+	for _, f := range fs {
+		r, err := os.Open(f.Path)
+		if err == nil {
+			var st os.FileInfo
+			if st, err = r.Stat(); err == nil && !st.Mode().IsRegular() {
+				err = errors.New("not a regular file")
+			}
+			if err != nil {
+				r.Close()
+			}
+		}
+		if err != nil {
+			for _, o := range out {
+				o.r.Close()
+			}
+			return nil, &Error{Op: "post", Local: true, Err: fmt.Errorf("file %q: %w", f.Name, err)}
+		}
+		out = append(out, openFile{name: f.Name, r: r})
+	}
+	return out, nil
 }
 
 // nonce is the idempotency key of part i of a post with key: at most 25
@@ -326,15 +359,20 @@ func cutRunes(s string, n int) string {
 
 const fenceMark = "```"
 
+// maxOpener bounds the opening line of a code block that a part repeats:
+// the fence and its language, cut so that a long opening line cannot crowd
+// out the text.
+const maxOpener = 32
+
 // split cuts text into parts of at most limit characters (see length). It
-// cuts after a line where it can, else after a space, else anywhere. When
-// a part ends inside a code block, the part is closed with a fence and the
-// next part opens the block again with the same opening line.
+// cuts after a line where it can, else after a space, else anywhere, and
+// drops nothing: the parts, without the fences split adds, are the text.
+// When a part ends inside a code block, the part is closed with a fence
+// and the next part opens the block again.
 func split(text string, limit int) []string {
 	if length(text) <= limit {
 		return []string{text}
 	}
-	closing := "\n" + fenceMark
 	var parts []string
 	open := "" // the opening line of a code block the previous part left open
 	rest := text
@@ -347,14 +385,17 @@ func split(text string, limit int) []string {
 			parts = append(parts, prefix+rest)
 			break
 		}
-		budget := limit - length(prefix) - length(closing)
-		cut, skip := cutAt(rest, budget)
+		budget := limit - length(prefix) - length("\n"+fenceMark)
+		cut := cutAt(rest, budget)
 		chunk := rest[:cut]
-		rest = rest[cut+skip:]
+		rest = rest[cut:]
 		open = fenceAfter(open, chunk)
 		part := prefix + chunk
 		if open != "" {
-			part += closing
+			if !strings.HasSuffix(part, "\n") {
+				part += "\n"
+			}
+			part += fenceMark
 		}
 		parts = append(parts, part)
 	}
@@ -362,8 +403,9 @@ func split(text string, limit int) []string {
 }
 
 // cutAt returns where to cut s so that s[:cut] has at most budget
-// characters, and how many separator bytes to drop after the cut.
-func cutAt(s string, budget int) (cut, skip int) {
+// characters: after the last newline or space in the second half of what
+// fits, else where the budget ends. It always takes at least one character.
+func cutAt(s string, budget int) int {
 	n, end := 0, len(s)
 	for i, r := range s {
 		w := utf16.RuneLen(r)
@@ -373,22 +415,23 @@ func cutAt(s string, budget int) (cut, skip int) {
 		}
 		n += w
 	}
-	if end == 0 { // budget smaller than one character: take one anyway
+	if end == 0 {
 		_, size := utf8.DecodeRuneInString(s)
-		return size, 0
+		return size
 	}
 	head := s[:end]
-	if i := strings.LastIndexByte(head, '\n'); i > len(head)/2 {
-		return i, 1
+	if i := strings.LastIndexByte(head, '\n'); i >= 0 && i+1 > len(head)/2 {
+		return i + 1
 	}
-	if i := strings.LastIndexByte(head, ' '); i > len(head)/2 {
-		return i, 1
+	if i := strings.LastIndexByte(head, ' '); i >= 0 && i+1 > len(head)/2 {
+		return i + 1
 	}
-	return end, 0
+	return end
 }
 
 // fenceAfter tells whether a code block is open after chunk, given the
-// opening line of the block open before it: the block's opening line, or "".
+// opening line of the block open before it: the block's opening line, cut
+// to maxOpener characters, or "".
 func fenceAfter(open, chunk string) string {
 	for _, line := range strings.Split(chunk, "\n") {
 		t := strings.TrimSpace(line)
@@ -396,7 +439,8 @@ func fenceAfter(open, chunk string) string {
 			continue
 		}
 		if open == "" {
-			open = t
+			lang, _, _ := strings.Cut(strings.TrimLeft(t, "`"), " ")
+			open = fenceMark + cutRunes(lang, maxOpener-len(fenceMark))
 		} else {
 			open = ""
 		}

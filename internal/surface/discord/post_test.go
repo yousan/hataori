@@ -73,7 +73,7 @@ func TestOpenThread(t *testing.T) {
 func TestSplit(t *testing.T) {
 	long := strings.Repeat("word ", 900) // 4500 characters
 	parts := split(long, 2000)
-	if len(parts) != 3 || strings.Join(parts, " ") != long {
+	if len(parts) != 3 || strings.Join(parts, "") != long {
 		t.Fatalf("%d parts", len(parts))
 	}
 	for _, p := range parts {
@@ -101,6 +101,28 @@ func TestSplit(t *testing.T) {
 	}
 	if !strings.HasSuffix(parts[len(parts)-1], "```\nafter") {
 		t.Fatal("the end is lost")
+	}
+
+	// A long opening line of a code block does not crowd out the text.
+	for _, text := range []string{
+		"```" + strings.Repeat("a", 1993) + "\n" + strings.Repeat("x", 10) + "\n```",
+		"```" + strings.Repeat("a", 3000) + "\n```",
+	} {
+		for i, p := range split(text, 2000) {
+			if length(p) > 2000 {
+				t.Errorf("part %d of a long opening line has %d characters", i, length(p))
+			}
+		}
+	}
+
+	// Nothing is dropped, not even indentation inside code.
+	indented := "```go\n" + strings.Repeat(" ", 1200) + strings.Repeat("x", 1000) + "\n```"
+	if got := strings.Count(strings.Join(split(indented, 2000), ""), " "); got != 1200 {
+		t.Errorf("%d of 1200 spaces kept", got)
+	}
+	prose := strings.Repeat("line one\nline two and more ", 300)
+	if strings.Join(split(prose, 2000), "") != prose {
+		t.Error("prose changed by the split")
 	}
 
 	// Characters outside the BMP count twice.
@@ -158,6 +180,24 @@ func TestPostSplitsAndAttachesToLast(t *testing.T) {
 	}
 	if !strings.HasPrefix(joined[0], "start\n```sh\n") || !strings.HasPrefix(joined[1], "```sh\n") || !strings.HasSuffix(joined[2], "```\nend") {
 		t.Fatal("parts out of order or fences lost")
+	}
+}
+
+// A file that cannot be read fails the post before anything is posted, and
+// a retry would not help.
+func TestPostChecksFilesFirst(t *testing.T) {
+	r := newFakeREST(t)
+	d := testDriver(t, botID(t), r, nil)
+	long := strings.Repeat("word ", 900)
+	for _, f := range []surface.File{{Name: "dir", Path: t.TempDir()}, {Name: "gone", Path: filepath.Join(t.TempDir(), "missing")}} {
+		_, err := d.Post(context.Background(), surface.Conversation{Channel: "1", Thread: "2"}, "", surface.Message{Text: long, Files: []surface.File{f}})
+		var e *Error
+		if !errors.As(err, &e) || e.Temporary() {
+			t.Errorf("%s: %v", f.Name, err)
+		}
+	}
+	if n := r.called("POST "); n != 0 {
+		t.Fatalf("%d messages posted before the file was checked", n)
 	}
 }
 
