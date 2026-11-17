@@ -516,12 +516,14 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 			}
 			return c.question(k, p)
 		}
-		return c.events(agent.Event{Kind: agent.ToolStarted, ID: p.ToolUseID, Tool: p.ToolName})
+		// agent_id is set in the hooks of a subagent's own tools, as in
+		// its SubagentStart, and absent for the main agent's.
+		return c.events(agent.Event{Kind: agent.ToolStarted, ID: p.ToolUseID, Tool: p.ToolName, Parent: p.AgentID})
 	case "PostToolUse", "PostToolUseFailure":
 		if p.ToolName == askTool {
 			return c.withdrawTool(p.ToolUseID) // answered some other way, or refused
 		}
-		return c.events(agent.Event{Kind: agent.ToolEnded, ID: p.ToolUseID, Tool: p.ToolName})
+		return c.events(agent.Event{Kind: agent.ToolEnded, ID: p.ToolUseID, Tool: p.ToolName, Parent: p.AgentID})
 	case "PermissionRequest":
 		if c.spec.Approvals == agent.AllowAll && k.Wait {
 			return Actions{Reply: []agent.HookReply{{Call: k.Hook, Body: allow}}}

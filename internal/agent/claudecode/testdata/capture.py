@@ -293,6 +293,13 @@ def subagent(out, work):
         "Then reply with just what it said.", timeout=300))
 
 
+def subagent_tools(out, work):
+    run(out, work, "subagent_tools", lambda s: s.turn(
+        "Use the Agent tool to start one general-purpose subagent, with the model haiku, and this prompt: "
+        "'Run the Bash command `echo one`, then the Bash command `echo two`, as two separate tool calls. "
+        "Then reply with just: sub-ok'. Then reply with just what it said.", timeout=300))
+
+
 def paste(out, work):
     body = "".join("%02d - 長い貼り付けのテスト `code` \"quoted\" $HOME line;\n" % i for i in range(100))
     run(out, work, "paste", lambda s: s.turn(
@@ -495,7 +502,7 @@ def main():
     with open(os.path.join(out, "VERSION"), "w") as f:
         f.write("%s\n%s\n" % (ver, time.strftime("%Y-%m-%d")))
     order = ["plain", "tools", "question", "background", "subagent", "paste", "interrupt", "compact",
-             "failure", "trust", "login", "login_terminal", "resume_missing", "clear", "sleep"]
+             "failure", "trust", "login", "login_terminal", "resume_missing", "clear", "sleep", "subagent_tools"]
     for name in order:
         if want and name not in want and not (name == "plain" and "resume" in want):
             continue

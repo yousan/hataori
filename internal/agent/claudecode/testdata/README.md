@@ -3,6 +3,7 @@
 Real output of the interactive `claude` CLI, for testing the adapter's codec. These files are not a contract: when the CLI changes, add a capture of the new version next to this one.
 
 - `2.1.322/`: Claude Code 2.1.322, captured on 2026-11-12 (also in `2.1.322/VERSION`), on Linux, with the model `haiku` (it reports itself as `claude-haiku-5-5`).
+- `2.1.326/`: Claude Code 2.1.326, captured on 2026-11-17 (also in `2.1.326/VERSION`), on Linux, with the model `haiku`: one scenario, `subagent_tools`, taken for #142 (see below).
 - `capture.py` took them; `scrub.py` made them committable. `captures_test.go` in the package fails when a capture holds a home directory path, an e-mail address, an unscrubbed UUID or something shaped like a token.
 
 ## How they were taken
@@ -93,3 +94,17 @@ Taken with the same setup as above, but a check script in place of the recorder'
 | `question-timeout-p` | the `PermissionRequest` hook slept past its 5-second `timeout` | sent `Notification` and showed its own permission dialog in the terminal |
 
 In both timeout scenarios the hooks after `Notification` came from the script's `/exit` keystrokes landing in the dialog, not from an answer.
+
+## A subagent's tools (2.1.326, taken for #142)
+
+`2.1.326/subagent_tools/`, by `capture.py RAW_DIR subagent_tools` with the setup above: the same command line, environment and recorder hook, one tiny turn. The prompt asks for one general-purpose subagent, with the model `haiku`, that runs `echo one` and `echo two` with the Bash tool as two tool calls.
+
+| Hooks, in order | What they show |
+|---|---|
+| `PreToolUse` (Agent), `SubagentStart`, `PostToolUse` (Agent), `Stop` | The CLI ran the subagent in the background: the Agent tool ended and the turn stopped before the subagent's tools ran. The main agent's tool calls carry no `agent_id`. |
+| `PreToolUse` (Bash) ×2, `PostToolUse` (Bash) ×2, `SubagentStop` | The subagent's two Bash calls, started together. Each carries `agent_id` and `agent_type` (`general-purpose`), the same as `SubagentStart` and `SubagentStop`. No `PermissionRequest`: `echo` ran without one. |
+
+There is no `SessionEnd`. `/exit` opened a dialog ("Background work is running", with the choices "Exit and stop tasks", "Move to background and exit" and "Stay"), because the subagent was still running when `/exit` was typed. Nobody answered it, so `capture.py` killed the process (its own child, by PID) after the usual waits. The terminal output is not kept.
+
+`scrub.py` now also replaces an interpreter path under the home directory (a virtual environment) in the hook command with `/usr/bin/python3`.
+
