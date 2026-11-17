@@ -291,6 +291,8 @@ Splitting the agent adapter into a launch description and a pure codec is what m
 
 `TurnEnded` carries a status (`completed`, `interrupted`, `failed`) and a reason (`limit`, `login`, `api_error`, `crashed`, `blocked at start`, `not delivered`). `SessionEnded` carries a reason too; `cannot resume` means the agent no longer has the conversation, and the core starts a new session in the same workspace. `TurnStarted` says who started it (a caller, the agent itself after a background task, or a person at the terminal). These two fields replace most of the "guessing turn state" group.
 
+Each user message the core hands to a codec carries an id. The codec returns that id in the `TurnStarted` of the turn that reports the message, and leaves it empty when it does not know. The core keeps a message it accepted until a turn reports its id, and hands it to the agent again after a daemon restart until then, so a message is delivered exactly once even when the codec holds it until the agent can take it.
+
 ### 5.4 Did the first draft allow chat, supervisor and dashboard on one API?
 
 No, not as written. The agent side is unchanged. The surface side was a plug-in that the core called: the core itself received every inbound chat event (the `Sink` interface), owned the outbox, and pushed finished messages to one surface per thread. Nothing in it could list threads, read a thread's state, or follow events, which is all a dashboard does and most of what a supervisor does. And a thread was identified by `(surface, channel, thread)`, which the core had to understand.
@@ -1038,7 +1040,7 @@ type Source int
 type Codec interface {
 	Open() Actions                          // what to do first, if anything
 	Decode(src Source, line []byte) Actions // one reported line
-	Input(in Input) (Actions, error)        // a user message
+	Input(in Input) (Actions, error)        // a user message; TurnStarted returns its ID
 	Answer(a Answer) (Actions, error)       // to an approval or a question
 	Interrupt() Actions
 	// Tick gives the codec the time for its deadlines (input not reported
@@ -1052,6 +1054,13 @@ type Actions struct {
 	Write  [][]byte    // to the agent's input (terminal or stdin), in order
 	Reply  []HookReply // to hook calls that are waiting for an answer
 	Follow []string    // files to start following, such as a transcript
+}
+
+// Input is a user message. ID is opaque to the codec; the TurnStarted of
+// the turn that reports the message carries it back.
+type Input struct {
+	ID   string
+	Text string
 }
 
 type Spec struct {
@@ -1071,7 +1080,8 @@ type Event struct {
 	Seq  uint64
 	Kind Kind
 	// Plus the fields each kind needs: the text and whether it is final,
-	// who started a turn, the request id and its questions,
+	// who started a turn and the Input.ID of the message it reports, the
+	// request id and its questions,
 	// the end status and reason, the background tasks still running.
 	// SessionEnded has a reason: the agent's own, CannotResume ("cannot
 	// resume") when a resumed session's conversation is gone, or

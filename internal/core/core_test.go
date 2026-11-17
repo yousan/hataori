@@ -32,10 +32,10 @@ func (r *fakeRunner) record(s string) error {
 func (r *fakeRunner) Start(_ context.Context, l Launch) error {
 	return r.record("start " + l.Input.Text)
 }
-func (r *fakeRunner) Deliver(_ context.Context, _ int64, in control.Input) error {
+func (r *fakeRunner) Deliver(_ context.Context, _, _ int64, in control.Input) error {
 	return r.record("deliver " + in.Text)
 }
-func (r *fakeRunner) Answer(_ context.Context, _ int64, req string, _ control.Answer) error {
+func (r *fakeRunner) Answer(_ context.Context, _, _ int64, req string, _ control.Answer) error {
 	return r.record("answer " + req)
 }
 func (r *fakeRunner) Interrupt(context.Context, int64) error { return r.record("interrupt") }

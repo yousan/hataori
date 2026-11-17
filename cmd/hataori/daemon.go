@@ -95,6 +95,9 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	if err := r.Reconnect(ctx); err != nil {
 		return err
 	}
+	if err := c.Recover(ctx); err != nil {
+		return err
+	}
 	// The login relay (section 4.7). It starts flows only once a client of
 	// the owner takes its updates: the chat front end sets Notify.
 	lr := &relay.Relay{Store: st, Adapters: adapters, Owner: control.Principal(cfg.Owner), Off: !cfg.LoginRelay, Log: lg}

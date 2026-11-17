@@ -15,6 +15,7 @@ package runner
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -66,10 +67,12 @@ type live struct {
 	codec   agent.Codec
 	client  *host.Client
 	started time.Time
-	ready   bool // the session left creating; no start check any more
-	resend  bool // after a reconnect: send a first input that was not confirmed
-	failed  bool // the start timed out; the session is being stopped
-	asleep  bool // put to sleep: its agent is being stopped, and nothing more is read
+	ready   bool  // the session left creating; no start check any more
+	resend  bool  // after a reconnect: send a first input that was not confirmed
+	pending bool  // after a reconnect: hand over pending input once the logs are read
+	upTo    int64 // the last pending input there was at the reconnect; later ones are handed over by their call
+	failed  bool  // the start timed out; the session is being stopped
+	asleep  bool  // put to sleep: its agent is being stopped, and nothing more is read
 
 	mu     sync.Mutex // the codec, the offsets and the actions, one at a time
 	seq    uint64
@@ -116,12 +119,7 @@ func (r *Runner) interruptGrace() time.Duration {
 // firstInput is the input a session starts with. It is kept until the
 // agent reports the turn it started, so that a daemon that dies after
 // sending it, or before, sends it (again) when it comes back.
-type firstInput struct {
-	Principal control.Principal `json:"principal"`
-	Key       string            `json:"key"`
-	Text      string            `json:"text"`
-	Sent      bool              `json:"sent"` // the turn was started for it, and it was handed to the codec
-}
+type firstInput = core.FirstInput
 
 type storedSpec struct {
 	Agent string     `json:"agent"`
@@ -169,7 +167,7 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 	}
 	sb, _ := json.Marshal(storedSpec{Agent: agentName, Spec: spec})
 	fb, _ := json.Marshal(first)
-	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET spec = ?, first_input = ? WHERE id = ?`,
+	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET spec = ?, first_input = ?, launch = 0 WHERE id = ?`,
 		string(sb), string(fb), id); err != nil {
 		return fmt.Errorf("runner: %w", err)
 	}
@@ -276,7 +274,7 @@ func (r *Runner) Reconnect(ctx context.Context) error {
 		return err
 	}
 	rows, err := r.Store.DB.QueryContext(ctx, `SELECT id, spec FROM sessions
-		WHERE state IN ('creating', 'idle', 'running', 'waiting') AND spec != ''`)
+		WHERE state IN ('creating', 'idle', 'running', 'waiting') AND spec != '' AND launch = 0`)
 	if err != nil {
 		return fmt.Errorf("runner: %w", err)
 	}
@@ -363,6 +361,8 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) err
 	if resumed {
 		lv.started = time.UnixMilli(created)
 		lv.resend = true
+		lv.pending = true
+		r.Store.DB.QueryRow(`SELECT coalesce(max(id), 0) FROM pending_inputs WHERE session_id = ?`, id).Scan(&lv.upTo)
 	}
 	if m != fresh {
 		rows, err := r.Store.DB.Query(`SELECT path, offset FROM session_files WHERE session_id = ?`, id)
@@ -412,6 +412,75 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) err
 	r.mu.Unlock()
 	go r.loop(lv)
 	return nil
+}
+
+// handOverPending hands the session's pending input and answers to its
+// agent, oldest first: those the core accepted and a daemon that died did
+// not hand over, or whose input the agent had not reported. lv.mu is held.
+func (r *Runner) handOverPending(lv *live) {
+	rows, err := r.Store.DB.Query(`SELECT id, request, data FROM pending_inputs WHERE session_id = ? AND id <= ? ORDER BY id`, lv.id, lv.upTo)
+	if err != nil {
+		r.Log.Error("pending input", "session", lv.id, "err", err)
+		return
+	}
+	type row struct {
+		id        int64
+		req, data string
+	}
+	var found []row
+	for rows.Next() {
+		var x row
+		if err := rows.Scan(&x.id, &x.req, &x.data); err != nil {
+			r.Log.Error("pending input", "session", lv.id, "err", err)
+			break
+		}
+		found = append(found, x)
+	}
+	rows.Close()
+	for _, x := range found {
+		var err error
+		if x.req != "" {
+			var a control.Answer
+			if err = json.Unmarshal([]byte(x.data), &a); err == nil {
+				err = r.handOver(lv, x.id, true, func() (agent.Actions, error) {
+					return lv.codec.Answer(agent.Answer{Request: x.req, Text: a.Text, Choices: a.Choices, Allow: a.Allow})
+				})
+			}
+		} else {
+			var in control.Input
+			if err = json.Unmarshal([]byte(x.data), &in); err == nil {
+				err = r.handOver(lv, x.id, false, func() (agent.Actions, error) {
+					return lv.codec.Input(agent.Input{ID: strconv.FormatInt(x.id, 10), Text: in.Text})
+				})
+			}
+		}
+		if err != nil {
+			r.Log.Error("pending input", "session", lv.id, "pending", x.id, "err", err)
+		}
+	}
+}
+
+// handOver carries out what the codec makes of one pending input or
+// answer. Input stays pending until the agent reports the turn it starts
+// (see commit): a codec may hold it until the agent can take it. An answer
+// is removed once the host has taken it. One the codec refuses is removed,
+// and its error returned. lv.mu is held.
+func (r *Runner) handOver(lv *live, pending int64, answer bool, f func() (agent.Actions, error)) error {
+	a, err := f()
+	if err == nil {
+		if err = r.do(lv, a); err != nil || !answer {
+			return err
+		}
+	}
+	r.dropPending(pending)
+	return err
+}
+
+// dropPending removes a pending input that cannot be handed over.
+func (r *Runner) dropPending(pending int64) {
+	if _, err := r.Store.DB.Exec(`DELETE FROM pending_inputs WHERE id = ?`, pending); err != nil {
+		r.Log.Error("pending input", "pending", pending, "err", err)
+	}
 }
 
 // warm feeds the codec what was read before the stored offsets.
@@ -618,6 +687,12 @@ func (r *Runner) step(lv *live) bool {
 		}
 		r.do(lv, a)
 	}
+	if lv.pending {
+		// What the agent reported before the daemon died is committed now,
+		// so only what it did not report is handed over again.
+		lv.pending = false
+		r.handOverPending(lv)
+	}
 	if exited && len(b.events) == 0 {
 		r.exit(lv)
 		return false
@@ -693,6 +768,9 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 		if err := tx.QueryRowContext(ctx, `SELECT state, first_input FROM sessions WHERE id = ?`, lv.id).Scan(&state, &fi); err != nil {
 			return err
 		}
+		if err := clearReported(ctx, tx, lv.id, b.events); err != nil {
+			return err
+		}
 		if fi == "" {
 			return nil
 		}
@@ -734,6 +812,24 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 	return first, err
 }
 
+// clearReported removes the pending input whose turn the agent reported:
+// the codec names it by the Input.ID it was given, the row's id.
+func clearReported(ctx context.Context, tx *store.Tx, id int64, evs []agent.Event) error {
+	for _, e := range evs {
+		if e.Kind != agent.TurnStarted || e.Input == "" {
+			continue
+		}
+		row, err := strconv.ParseInt(e.Input, 10, 64)
+		if err != nil {
+			continue // not one of ours
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM pending_inputs WHERE id = ? AND session_id = ? AND request = ''`, row, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func startedTurn(evs []agent.Event) bool {
 	for _, e := range evs {
 		if e.Kind == agent.TurnStarted {
@@ -744,8 +840,8 @@ func startedTurn(evs []agent.Event) bool {
 }
 
 // do commits the events of actions that did not come from a line, then
-// carries out the rest.
-func (r *Runner) do(lv *live, a agent.Actions) {
+// carries out the rest. It returns the first error writing to the host.
+func (r *Runner) do(lv *live, a agent.Actions) error {
 	if len(a.Events) > 0 {
 		b := batch{offset: lv.offset, files: map[string]int64{}}
 		for p, o := range lv.files {
@@ -765,32 +861,37 @@ func (r *Runner) do(lv *live, a agent.Actions) {
 			lv.files[p] = 0
 		}
 	}
-	r.act(lv, a)
+	return r.act(lv, a)
 }
 
-// act writes to the agent and answers waiting hook calls.
-func (r *Runner) act(lv *live, a agent.Actions) {
+// act writes to the agent and answers waiting hook calls. It returns the
+// first error, which it has logged.
+func (r *Runner) act(lv *live, a agent.Actions) error {
 	if len(a.Write) == 0 && len(a.Reply) == 0 {
-		return
+		return nil
 	}
 	if lv.client == nil {
 		c, err := host.Dial(lv.dir)
 		if err != nil {
 			r.Log.Error("host unreachable", "session", lv.id, "err", err)
-			return
+			return err
 		}
 		lv.client = c
 	}
+	var first error
 	for _, w := range a.Write {
 		if err := lv.client.Input(w); err != nil {
 			r.Log.Error("input", "session", lv.id, "err", err)
+			first = cmp.Or(first, err)
 		}
 	}
 	for _, rep := range a.Reply {
 		if err := lv.client.Answer(rep.Call, rep.Body); err != nil {
 			r.Log.Error("answer", "session", lv.id, "call", rep.Call, "err", err)
+			first = cmp.Or(first, err)
 		}
 	}
+	return first
 }
 
 // exit records that the agent's process ended.
@@ -952,35 +1053,31 @@ func (r *Runner) checkStart(lv *live) {
 }
 
 // Deliver gives input to a session's agent.
-func (r *Runner) Deliver(ctx context.Context, id int64, in control.Input) error {
+func (r *Runner) Deliver(ctx context.Context, id, pending int64, in control.Input) error {
 	lv, err := r.get(id)
 	if err != nil {
+		r.dropPending(pending)
 		return err
 	}
 	lv.mu.Lock()
 	defer lv.mu.Unlock()
-	a, err := lv.codec.Input(agent.Input{Text: in.Text})
-	if err != nil {
-		return err
-	}
-	r.do(lv, a)
-	return nil
+	return r.handOver(lv, pending, false, func() (agent.Actions, error) {
+		return lv.codec.Input(agent.Input{ID: strconv.FormatInt(pending, 10), Text: in.Text})
+	})
 }
 
 // Answer gives the answer of an open request to a session's agent.
-func (r *Runner) Answer(ctx context.Context, id int64, req string, ans control.Answer) error {
+func (r *Runner) Answer(ctx context.Context, id, pending int64, req string, ans control.Answer) error {
 	lv, err := r.get(id)
 	if err != nil {
+		r.dropPending(pending)
 		return err
 	}
 	lv.mu.Lock()
 	defer lv.mu.Unlock()
-	a, err := lv.codec.Answer(agent.Answer{Request: req, Text: ans.Text, Choices: ans.Choices, Allow: ans.Allow})
-	if err != nil {
-		return err
-	}
-	r.do(lv, a)
-	return nil
+	return r.handOver(lv, pending, true, func() (agent.Actions, error) {
+		return lv.codec.Answer(agent.Answer{Request: req, Text: ans.Text, Choices: ans.Choices, Allow: ans.Allow})
+	})
 }
 
 // Interrupt stops a session's running turn: the agent's own interrupt

@@ -58,9 +58,13 @@ func prompt(t *testing.T, file string) string {
 func TestDeliveredWhenTheHookReportsIt(t *testing.T) {
 	for _, file := range []string{"plain/hooks/02-UserPromptSubmit.json", "paste/hooks/02-UserPromptSubmit.json"} {
 		c := started(t)
-		c.Input(agent.Input{Text: unwrapPaste(prompt(t, file))})
-		if got := summary(decodeFile(t, c, "u", file)); got != "turn(caller)" {
+		c.Input(agent.Input{ID: "in-7", Text: unwrapPaste(prompt(t, file))})
+		evs := decodeFile(t, c, "u", file)
+		if got := summary(evs); got != "turn(caller)" {
 			t.Fatalf("%s: %s", file, got)
+		}
+		if evs.Events[0].Input != "in-7" {
+			t.Fatalf("%s: the turn reports input %q, want the id it was given", file, evs.Events[0].Input)
 		}
 		now := time.Now()
 		c.Tick(now)

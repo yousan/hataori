@@ -124,6 +124,21 @@ var migrations = []Migration{
 		// events log; earlier lines are those of an agent put to sleep.
 		`ALTER TABLE sessions ADD COLUMN log_start INTEGER NOT NULL DEFAULT 0`,
 	)},
+	{Name: "pending input", Up: execAll(
+		// launch: the core started or woke the session and the runner has
+		// not launched its agent yet; first_input holds what it needs.
+		`ALTER TABLE sessions ADD COLUMN launch INTEGER NOT NULL DEFAULT 0`,
+		// Input or an answer the core accepted for a session's agent and
+		// the runner has not handed over yet. request is the agent's id of
+		// the request an answer is for, '' for input. data: JSON, the
+		// control.Input or control.Answer.
+		`CREATE TABLE pending_inputs (
+			id         INTEGER PRIMARY KEY,
+			session_id INTEGER NOT NULL REFERENCES sessions (id),
+			request    TEXT NOT NULL DEFAULT '',
+			data       TEXT NOT NULL
+		)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

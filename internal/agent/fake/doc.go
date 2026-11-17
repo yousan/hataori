@@ -30,6 +30,9 @@
 // On pipes the program reads {"input":T}, {"answer":{"id":I,"text":A}} and
 // {"interrupt":true}.
 //
+// The program takes its input in order, one turn each, so the codec returns
+// the Input.ID of each input in the next turn the caller started.
+//
 // # Scripts
 //
 // The input of a turn is its script, one command per line:
