@@ -117,7 +117,12 @@ func (f *FrontEnd) Connected() {
 	}
 	s.mu.Unlock()
 	convs, err := f.toCatchUp(ctx)
+	// Marked behind, and sure of the threads, at once: no live message
+	// gets in between.
 	s.mu.Lock()
+	for _, c := range convs {
+		s.behind[c] = true
+	}
 	s.unsure = err != nil
 	s.mu.Unlock()
 	if err != nil {
@@ -131,11 +136,6 @@ func (f *FrontEnd) Connected() {
 				f.Connected()
 			}
 		})
-	}
-	for _, c := range convs {
-		s.mu.Lock()
-		s.behind[c] = true
-		s.mu.Unlock()
 	}
 	go func() {
 		for _, c := range convs {
