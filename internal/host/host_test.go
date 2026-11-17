@@ -242,7 +242,9 @@ func TestTerminalPasteArrivesUnchanged(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	waitFor(t, "the reader to finish", func() bool { _, err := os.Stat(out); return err == nil })
+	// "done" comes after the file is written. The file exists as soon as it
+	// is created, so waiting for it alone can read it half written.
+	waitFor(t, "the reader to finish", func() bool { return bytes.Contains(read(t, dir, TerminalLog), []byte("done")) })
 	got, _ := os.ReadFile(out)
 	if !bytes.Equal(got, paste) {
 		t.Fatalf("the command read %d bytes, want %d identical bytes", len(got), len(paste))
