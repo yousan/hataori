@@ -39,6 +39,8 @@ func TestRemovalsAreAllowListed(t *testing.T) {
 	seen := make(map[string]bool)
 	root := filepath.Join("..", "..")
 	fset := token.NewFileSet()
+	packages := make(map[string][]*ast.File)
+	paths := make(map[*ast.File]string)
 	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -65,56 +67,65 @@ func TestRemovalsAreAllowListed(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		osName := ""
-		for _, imp := range file.Imports {
-			if removalString(imp.Path) == "os" {
-				osName = "os"
-				if imp.Name != nil {
-					osName = imp.Name.Name
-				}
-			}
-		}
-		for _, decl := range file.Decls {
-			function := ""
-			if fn, ok := decl.(*ast.FuncDecl); ok {
-				function = fn.Name.Name
-				if fn.Recv != nil {
-					receiver := fn.Recv.List[0].Type
-					for {
-						switch typ := receiver.(type) {
-						case *ast.StarExpr:
-							receiver = typ.X
-						case *ast.IndexExpr:
-							receiver = typ.X
-						case *ast.IndexListExpr:
-							receiver = typ.X
-						default:
-							function = receiver.(*ast.Ident).Name + "." + function
-							goto named
-						}
-					}
-				}
-			}
-		named:
-			ast.Inspect(decl, func(node ast.Node) bool {
-				call, ok := node.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				for _, operation := range removalOperations(call, osName) {
-					key := rel + "\t" + function + "\t" + operation
-					seen[key] = true
-					if _, ok := allowed[key]; !ok {
-						t.Errorf("%s: removal is not allow-listed: %s", fset.Position(call.Pos()), key)
-					}
-				}
-				return true
-			})
-		}
+		key := filepath.Dir(rel) + ":" + file.Name.Name
+		packages[key] = append(packages[key], file)
+		paths[file] = rel
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, files := range packages {
+		gitCalls, slices := removalGitCalls(files)
+		for _, file := range files {
+			rel := paths[file]
+			osName := ""
+			for _, imp := range file.Imports {
+				if removalString(imp.Path) == "os" {
+					osName = "os"
+					if imp.Name != nil {
+						osName = imp.Name.Name
+					}
+				}
+			}
+			for _, decl := range file.Decls {
+				function := ""
+				if fn, ok := decl.(*ast.FuncDecl); ok {
+					function = fn.Name.Name
+					if fn.Recv != nil {
+						receiver := fn.Recv.List[0].Type
+						for {
+							switch typ := receiver.(type) {
+							case *ast.StarExpr:
+								receiver = typ.X
+							case *ast.IndexExpr:
+								receiver = typ.X
+							case *ast.IndexListExpr:
+								receiver = typ.X
+							default:
+								function = receiver.(*ast.Ident).Name + "." + function
+								goto named
+							}
+						}
+					}
+				}
+			named:
+				ast.Inspect(decl, func(node ast.Node) bool {
+					call, ok := node.(*ast.CallExpr)
+					if !ok {
+						return true
+					}
+					for _, operation := range removalOperations(call, osName, gitCalls[call], slices) {
+						key := rel + "\t" + function + "\t" + operation
+						seen[key] = true
+						if _, ok := allowed[key]; !ok {
+							t.Errorf("%s: removal is not allow-listed: %s", fset.Position(call.Pos()), key)
+						}
+					}
+					return true
+				})
+			}
+		}
 	}
 	for key, line := range allowed {
 		if !seen[key] {
@@ -131,7 +142,7 @@ func removalString(expr ast.Expr) string {
 	return ""
 }
 
-func removalOperations(call *ast.CallExpr, osName string) []string {
+func removalOperations(call *ast.CallExpr, osName string, gitCall bool, slices map[*ast.Object][]string) []string {
 	var operations []string
 	name := ""
 	switch fun := call.Fun.(type) {
@@ -147,14 +158,16 @@ func removalOperations(call *ast.CallExpr, osName string) []string {
 	if name == "Remove" || name == "RemoveAll" {
 		operations = append(operations, "os."+name)
 	}
-	// Deliberately inspect only direct string literal arguments in this call.
-	// This covers exec.Command/CommandContext and wrappers taking "git", and
-	// helpers whose name says they run git, such as gitCommand(ctx, "reset").
+	// Preserve the original conservative name/literal checks as well as
+	// calls discovered through same-package wrapper bodies.
 	var args []string
-	if callee := strings.ToLower(calleeName(call)); strings.Contains(callee, "git") {
+	if callee := strings.ToLower(calleeName(call)); gitCall || strings.Contains(callee, "git") {
 		args = append(args, "git")
 	}
-	for _, arg := range call.Args {
+	for i, arg := range call.Args {
+		if call.Ellipsis.IsValid() && i == len(call.Args)-1 {
+			args = append(args, removalSliceStrings(arg, slices)...)
+		}
 		if value := removalString(arg); value != "" {
 			args = append(args, value)
 		}
@@ -193,4 +206,175 @@ func calleeName(call *ast.CallExpr) string {
 		return fun.Sel.Name
 	}
 	return ""
+}
+
+// removalGitCalls follows calls within one package. Each closure owns its own
+// calls: merely defining a git-running closure does not make its parent a wrapper.
+func removalGitCalls(files []*ast.File) (map[*ast.CallExpr]bool, map[*ast.Object][]string) {
+	functions := make(map[string]ast.Node)
+	bodies := make(map[ast.Node]*ast.BlockStmt)
+	execNames := make(map[*ast.File]string)
+	for _, file := range files {
+		for _, imp := range file.Imports {
+			if removalString(imp.Path) == "os/exec" {
+				name := "exec"
+				if imp.Name != nil {
+					name = imp.Name.Name
+				}
+				execNames[file] = name
+			}
+		}
+		ast.Inspect(file, func(node ast.Node) bool {
+			switch fn := node.(type) {
+			case *ast.FuncDecl:
+				if fn.Recv == nil {
+					functions[fn.Name.Name] = fn
+				}
+				if fn.Body != nil {
+					bodies[fn] = fn.Body
+				}
+			case *ast.FuncLit:
+				bodies[fn] = fn.Body
+			}
+			return true
+		})
+	}
+	resolve := func(expr ast.Expr) ast.Node {
+		switch fun := expr.(type) {
+		case *ast.FuncLit:
+			return fun
+		case *ast.Ident:
+			if fun.Obj != nil {
+				switch decl := fun.Obj.Decl.(type) {
+				case *ast.FuncDecl:
+					return decl
+				case *ast.AssignStmt:
+					for i, lhs := range decl.Lhs {
+						if id, ok := lhs.(*ast.Ident); ok && id.Obj == fun.Obj && i < len(decl.Rhs) {
+							if lit, ok := decl.Rhs[i].(*ast.FuncLit); ok {
+								return lit
+							}
+						}
+					}
+				case *ast.ValueSpec:
+					for i, id := range decl.Names {
+						if id.Obj == fun.Obj && i < len(decl.Values) {
+							if lit, ok := decl.Values[i].(*ast.FuncLit); ok {
+								return lit
+							}
+						}
+					}
+				}
+				return nil
+			}
+			return functions[fun.Name]
+		}
+		return nil
+	}
+	calls := make(map[ast.Node][]*ast.CallExpr)
+	slices := make(map[*ast.Object][]string)
+	for fn, body := range bodies {
+		ast.Inspect(body, func(node ast.Node) bool {
+			if _, nested := node.(*ast.FuncLit); nested {
+				return false
+			}
+			switch node := node.(type) {
+			case *ast.CallExpr:
+				calls[fn] = append(calls[fn], node)
+			case *ast.AssignStmt:
+				for i, lhs := range node.Lhs {
+					if id, ok := lhs.(*ast.Ident); ok && i < len(node.Rhs) {
+						slices[id.Obj] = append(slices[id.Obj], removalSliceStrings(node.Rhs[i], nil)...)
+					}
+				}
+			case *ast.ValueSpec:
+				for i, id := range node.Names {
+					if i < len(node.Values) {
+						slices[id.Obj] = append(slices[id.Obj], removalSliceStrings(node.Values[i], nil)...)
+					}
+				}
+			}
+			return true
+		})
+	}
+	gitCalls := make(map[*ast.CallExpr]bool)
+	for _, file := range files {
+		ast.Inspect(file, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			name := calleeName(call)
+			isExec := false
+			switch fun := call.Fun.(type) {
+			case *ast.SelectorExpr:
+				pkg, ok := fun.X.(*ast.Ident)
+				isExec = ok && execNames[file] != "" && pkg.Name == execNames[file]
+			case *ast.Ident:
+				isExec = execNames[file] == "."
+			}
+			index := 0
+			if name == "CommandContext" {
+				index = 1
+			}
+			if isExec && (name == "Command" || name == "CommandContext") && len(call.Args) > index && removalString(call.Args[index]) == "git" {
+				gitCalls[call] = true
+			}
+			return true
+		})
+	}
+	wrappers := make(map[ast.Node]bool)
+	for changed := true; changed; {
+		changed = false
+		for fn, bodyCalls := range calls {
+			for _, call := range bodyCalls {
+				if gitCalls[call] || wrappers[resolve(call.Fun)] {
+					gitCalls[call] = true
+					if !wrappers[fn] {
+						wrappers[fn] = true
+						changed = true
+					}
+				}
+			}
+		}
+	}
+	return gitCalls, slices
+}
+
+// Collect literal slice elements and append operands without interpreting Go
+// expressions. Assignments are conservatively combined, without control flow.
+func removalSliceStrings(expr ast.Expr, slices map[*ast.Object][]string) []string {
+	var values []string
+	switch expr := expr.(type) {
+	case *ast.Ident:
+		return slices[expr.Obj]
+	case *ast.CompositeLit:
+		typ, ok := expr.Type.(*ast.ArrayType)
+		if !ok || typ.Len != nil {
+			return nil
+		}
+		elt, ok := typ.Elt.(*ast.Ident)
+		if !ok || elt.Name != "string" {
+			return nil
+		}
+		for _, elt := range expr.Elts {
+			if pair, ok := elt.(*ast.KeyValueExpr); ok {
+				elt = pair.Value
+			}
+			if value := removalString(elt); value != "" {
+				values = append(values, value)
+			}
+		}
+	case *ast.CallExpr:
+		if id, ok := expr.Fun.(*ast.Ident); !ok || id.Name != "append" {
+			return nil
+		}
+		for _, arg := range expr.Args {
+			values = append(values, removalSliceStrings(arg, slices)...)
+			if value := removalString(arg); value != "" {
+				values = append(values, value)
+			}
+		}
+	}
+	return values
 }
