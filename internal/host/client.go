@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -79,6 +80,17 @@ func Gone(stateDir string) bool {
 	}
 	_, err := os.Stat(SocketPath(stateDir))
 	return errors.Is(err, os.ErrNotExist)
+}
+
+// Screen returns what the command wrote to its terminal after the first
+// from bytes, and the offset to ask from next time. It is for a codec
+// waiting for a start-up dialog only; on pipes there is none.
+func Screen(stateDir string, from int64) ([]byte, int64) {
+	b, err := os.ReadFile(filepath.Join(stateDir, TerminalLog))
+	if err != nil || int64(len(b)) <= from {
+		return nil, from
+	}
+	return b[from:], int64(len(b))
 }
 
 // StopResult says what Stop did.

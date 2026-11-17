@@ -9,8 +9,10 @@
 // Events are numbered after the session's last stored sequence number, so
 // the numbers go on across restarts.
 //
-// The runner names no agent, and never reads a terminal log: the end of one
-// is asked of the host only to be shown to a person.
+// The runner names no agent. It reads an agent's terminal only for a codec
+// whose Open asked to watch it (agent.Actions.WatchScreen), and only until
+// the session reports SessionReady; otherwise the end of a terminal log is
+// asked of the host only to be shown to a person.
 package runner
 
 import (
@@ -77,6 +79,8 @@ type live struct {
 	upTo    int64 // the last pending input there was at the reconnect; later ones are handed over by their call
 	failed  bool  // the start timed out; the session is being stopped
 	asleep  bool  // put to sleep: its agent is being stopped, and nothing more is read
+	screen  bool  // the codec watches the terminal; until the session reports SessionReady
+	seenTo  int64 // how much of the terminal the codec was given
 
 	mu     sync.Mutex // the codec, the offsets and the actions, one at a time
 	seq    uint64
@@ -467,7 +471,11 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) err
 		r.act(lv, again)
 	} else if !resumed {
 		lv.mu.Lock()
-		r.do(lv, lv.codec.Open())
+		a := lv.codec.Open()
+		// Only a new start: a codec rebuilt after a restart does not watch
+		// the screen, so no key is sent from a replay of it.
+		lv.screen = a.WatchScreen
+		r.do(lv, a)
 		lv.mu.Unlock()
 	}
 	if lv.pending {
@@ -832,6 +840,7 @@ func (r *Runner) stepLocked(lv *live) bool {
 			b.files[p] = end
 		}
 	}
+	r.watchScreen(lv, &b)
 	first, err := r.commit(lv, b)
 	if err != nil {
 		// The codec has read lines whose results were not stored: build it
@@ -887,9 +896,37 @@ func (r *Runner) stepLocked(lv *live) bool {
 	return true
 }
 
+// watchScreen gives the codec what the agent wrote to its terminal since
+// the last step, while it watches the screen. Once the session has reported
+// SessionReady, now or before, it stops for good: the terminal is not read
+// again.
+func (r *Runner) watchScreen(lv *live, b *batch) {
+	if !lv.screen {
+		return
+	}
+	for _, e := range b.events {
+		if e.Kind == agent.SessionReady {
+			lv.screen = false
+			return
+		}
+	}
+	if lv.ready {
+		lv.screen = false
+		return
+	}
+	data, next := host.Screen(lv.dir, lv.seenTo)
+	lv.seenTo = next
+	if len(data) > 0 {
+		r.decode(lv, b, agent.Screen, data)
+	}
+}
+
 // decode runs one line through the codec and keeps what it gave.
 func (r *Runner) decode(lv *live, b *batch, src agent.Source, l []byte) {
 	a := lv.codec.Decode(src, l)
+	if a.StopScreen {
+		lv.screen = false
+	}
 	for _, e := range a.Events {
 		if e.Kind == agent.Unknown {
 			r.Log.Warn("skipped a line the codec does not know", "session", lv.id, "line", truncate(e.Text, 200))
@@ -1046,6 +1083,9 @@ func reported(evs []agent.Event, id string) bool {
 // do commits the events of actions that did not come from a line, then
 // carries out the rest. It returns the first error writing to the host.
 func (r *Runner) do(lv *live, a agent.Actions) error {
+	if a.StopScreen {
+		lv.screen = false
+	}
 	if len(a.Events) > 0 {
 		b := batch{offset: lv.offset, files: map[string]int64{}}
 		for p, o := range lv.files {

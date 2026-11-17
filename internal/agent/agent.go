@@ -66,8 +66,8 @@ type Launch struct {
 }
 
 // Source says where a line came from: Output (the agent's output on pipes),
-// Hook (a call from the agent's hook command) or File (a file the codec asked
-// to follow).
+// Hook (a call from the agent's hook command), File (a file the codec asked
+// to follow) or Screen (what the agent wrote to its terminal).
 type Source int
 
 // The values of Source.
@@ -75,6 +75,12 @@ const (
 	Output Source = iota
 	Hook
 	File
+	// Screen is the agent's terminal output, the bytes as the terminal got
+	// them and not cut into lines, each call carrying what came after the
+	// last. It is given only to a codec whose Open asked for it
+	// (Actions.WatchScreen), and only until the session reports
+	// SessionReady; after that the terminal is never read again.
+	Screen
 )
 
 // Codec turns what an agent reports into events, and requests into what the
@@ -104,6 +110,13 @@ type Actions struct {
 	// Inputs are the Input.IDs of the inputs that Write carries, whichever
 	// call produced it: the caller records them as written before it writes.
 	Inputs []string
+	// WatchScreen, from Open only, asks for the terminal's output (Source
+	// Screen) until the session reports SessionReady: for a start-up
+	// dialog that no hook reports. Elsewhere it is ignored.
+	WatchScreen bool
+	// StopScreen ends the watch before SessionReady: the codec needs the
+	// screen no more, as once it has answered the dialog.
+	StopScreen bool
 }
 
 // HookReply answers one hook call that is waiting.

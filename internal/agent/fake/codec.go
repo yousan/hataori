@@ -1,6 +1,7 @@
 package fake
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -20,6 +21,11 @@ type codec struct {
 	queue    []agent.Input     // input held until the turn ends
 	waiting  []*written        // inputs written and not yet reported, with an Input.ID
 	timeout  time.Duration     // for waiting; DefaultInputTimeout when zero
+
+	dialog   string // the start-up dialog to answer, if any
+	screen   []byte // the screen so far, before the start
+	answered bool   // Enter was sent for the dialog
+	started  bool   // a hook was called: the screen must not come any more
 }
 
 // written is an input written and not yet reported.
@@ -62,7 +68,29 @@ type call struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
-func (c *codec) Open() agent.Actions { return agent.Actions{} }
+// Open watches the screen when the fake shows a start-up dialog.
+func (c *codec) Open() agent.Actions { return agent.Actions{WatchScreen: c.dialog != ""} }
+
+// onScreen answers the dialog with Enter, once, when the screen shows it,
+// and stops watching. The screen after that, after the start, or without a
+// dialog to watch for, must never reach the codec.
+func (c *codec) onScreen(b []byte) agent.Actions {
+	if c.dialog == "" {
+		panic("fake: the codec was given the screen without asking for it")
+	}
+	if c.started {
+		panic("fake: the codec was given the screen after the start")
+	}
+	if c.answered {
+		panic("fake: the codec was given the screen after it stopped watching")
+	}
+	c.screen = append(c.screen, b...)
+	if !bytes.Contains(c.screen, []byte(c.dialog)) {
+		return agent.Actions{}
+	}
+	c.answered = true
+	return agent.Actions{Write: [][]byte{[]byte("\r")}, StopScreen: true}
+}
 
 // Decode reads one line. In the terminal form only hook calls and the
 // transcript are read: the terminal's own output must never reach a codec,
@@ -75,7 +103,10 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 	switch {
 	case c.terminal && src == agent.Output:
 		panic("fake: the codec was given the terminal's output")
+	case src == agent.Screen:
+		return c.onScreen(line)
 	case src == agent.Hook:
+		c.started = true
 		var k call
 		if json.Unmarshal(line, &k) != nil || json.Unmarshal(k.Payload, &r) != nil {
 			return c.events(agent.Event{Kind: agent.Unknown, Text: string(line)})
