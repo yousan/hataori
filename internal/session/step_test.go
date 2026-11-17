@@ -102,3 +102,21 @@ func TestEveryStateAndInput(t *testing.T) {
 		}
 	}
 }
+
+// A chat front end replies to the message that started a turn, so the
+// turn's start names the key of that call.
+func TestTurnStartedCarriesTheKey(t *testing.T) {
+	r, err := Step(Snapshot{State: control.Idle}, Input{Kind: Send, Principal: "p", Key: "m1", Text: "go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range r.Out {
+		if o.Kind == KindTurnStarted {
+			if o.Data["key"] != "m1" {
+				t.Fatalf("turn_started %v, want key m1", o.Data)
+			}
+			return
+		}
+	}
+	t.Fatalf("no turn_started in %+v", r.Out)
+}

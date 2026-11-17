@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
@@ -45,16 +46,30 @@ var (
 	_ control.ScopeOwner = (*FrontEnd)(nil)
 )
 
-// Run connects the driver and sends the outbox until ctx ends.
+// Run connects the driver, shows the events of its scopes and sends the
+// outbox until ctx ends.
 func (f *FrontEnd) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	f.ctx = ctx
-	done := make(chan error, 1)
-	go func() { done <- f.Outbox.Run(ctx) }()
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); f.Outbox.Run(ctx) }()
+	go func() {
+		defer wg.Done()
+		for ctx.Err() == nil {
+			if err := f.show(ctx); err != nil && ctx.Err() == nil {
+				f.Log.Error("chat: reading events", "err", err)
+			}
+			select { // and start again from the stored cursor
+			case <-ctx.Done():
+			case <-time.After(time.Second):
+			}
+		}
+	}()
 	err := f.Driver.Run(ctx, f)
-	cancel() // the driver stopped: stop the sender too
-	<-done
+	cancel() // the driver stopped: stop the rest too
+	wg.Wait()
 	return err
 }
 

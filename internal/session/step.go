@@ -146,6 +146,9 @@ func Step(s Snapshot, in Input) (Result, error) {
 		if t.Principal != "" {
 			d["principal"] = string(t.Principal)
 		}
+		if key != "" {
+			d["key"] = key
+		}
 		r.Out = append(r.Out, Out{Kind: KindTurnStarted, Data: d})
 	}
 	inTurn := s.State == control.Running && s.Turn != nil

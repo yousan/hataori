@@ -86,7 +86,7 @@ const (
 
 var chanConv = surface.Conversation{Channel: channel}
 
-func newFront(t *testing.T, ws workspaces) *front {
+func newFront(t *testing.T, ws workspaces, opts ...func(*FrontEnd)) *front {
 	t.Helper()
 	st := openStore(t, t.TempDir())
 	t.Cleanup(func() { st.Close() })
@@ -101,6 +101,9 @@ func newFront(t *testing.T, ws workspaces) *front {
 		Scopes: map[string]core.Scope{channel: {Enabled: true, Owner: "chat"}, "off": {Owner: "chat"}},
 		Owners: map[string]control.ScopeOwner{"chat": fe}}
 	fe.API = c.As
+	for _, o := range opts {
+		o(fe)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { fe.Outbox.Run(ctx); close(done) }()

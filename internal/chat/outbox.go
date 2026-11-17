@@ -27,6 +27,15 @@ type Row struct {
 	// Decoration marks a message that may be lost: it is dropped after
 	// MaxFailures failed posts and never holds back the rows behind it.
 	Decoration bool
+	// ReplyToRow makes the message a reply to the message another row
+	// posted, once that row is sent; Message.ReplyTo is used otherwise.
+	ReplyToRow *RowKey
+}
+
+// RowKey names a row.
+type RowKey struct {
+	Event uint64 `json:"event"`
+	Part  int    `json:"part"`
 }
 
 // Key is the key a row is posted with, the same on every attempt.
@@ -37,7 +46,8 @@ func key(event uint64, part int) string {
 }
 
 // Outbox holds what one front end posts, and its sender posts it. Rows of
-// one conversation are posted in the order they were written.
+// one conversation are posted in the order of their keys, the order of the
+// events they show.
 type Outbox struct {
 	Store  *store.Store
 	Client string // the front end's name; rows of other clients are not touched
@@ -86,6 +96,8 @@ type message struct {
 	ReplyTo *ref             `json:"reply_to,omitempty"`
 	Notify  []string         `json:"notify,omitempty"`
 	Quiet   bool             `json:"quiet,omitempty"`
+	// ReplyRow is Row.ReplyToRow, resolved when the row is posted.
+	ReplyRow *RowKey `json:"reply_row,omitempty"`
 }
 
 type ref struct {
@@ -94,24 +106,24 @@ type ref struct {
 	ID      string `json:"id"`
 }
 
-func encode(m surface.Message) ([]byte, error) {
-	s := message{Text: m.Text, Files: m.Files, Choices: m.Choices, Notify: m.Notify, Quiet: m.Quiet}
+func encode(m surface.Message, replyRow *RowKey) ([]byte, error) {
+	s := message{Text: m.Text, Files: m.Files, Choices: m.Choices, Notify: m.Notify, Quiet: m.Quiet, ReplyRow: replyRow}
 	if r := m.ReplyTo; r != nil {
 		s.ReplyTo = &ref{Channel: r.Conv.Channel, Thread: r.Conv.Thread, ID: r.ID}
 	}
 	return json.Marshal(s)
 }
 
-func decode(data []byte) (surface.Message, error) {
+func decode(data []byte) (surface.Message, *RowKey, error) {
 	var s message
 	if err := json.Unmarshal(data, &s); err != nil {
-		return surface.Message{}, err
+		return surface.Message{}, nil, err
 	}
 	m := surface.Message{Text: s.Text, Files: s.Files, Choices: s.Choices, Notify: s.Notify, Quiet: s.Quiet}
 	if r := s.ReplyTo; r != nil {
 		m.ReplyTo = &surface.MessageRef{Conv: surface.Conversation{Channel: r.Channel, Thread: r.Thread}, ID: r.ID}
 	}
-	return m, nil
+	return m, s.ReplyRow, nil
 }
 
 // Write stores rows in one transaction. A row whose key exists is left as
@@ -129,7 +141,7 @@ func (o *Outbox) Write(ctx context.Context, rows ...Row) error {
 func (o *Outbox) WriteTx(ctx context.Context, tx *store.Tx, rows ...Row) error {
 	now := time.Now().UnixMilli()
 	for _, r := range rows {
-		msg, err := encode(r.Message)
+		msg, err := encode(r.Message, r.ReplyToRow)
 		if err != nil {
 			return fmt.Errorf("chat: outbox: %w", err)
 		}
@@ -164,6 +176,24 @@ func (o *Outbox) Sent(ctx context.Context, event uint64, part int) (surface.Mess
 		return surface.MessageRef{}, false, fmt.Errorf("chat: outbox: %w", err)
 	}
 	return r, true, nil
+}
+
+// state returns the state of a row ("" when it does not exist) and its
+// message reference once it is sent.
+func (o *Outbox) state(ctx context.Context, k RowKey) (string, surface.MessageRef, error) {
+	var (
+		state string
+		r     surface.MessageRef
+	)
+	err := o.Store.DB.QueryRowContext(ctx, `SELECT state, channel, thread, ref FROM chat_outbox
+		WHERE client = ? AND event = ? AND part = ?`, o.Client, k.Event, k.Part).Scan(&state, &r.Conv.Channel, &r.Conv.Thread, &r.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", surface.MessageRef{}, nil
+	}
+	if err != nil {
+		o.Log.Error("chat outbox: reading a row", "key", key(k.Event, k.Part), "err", err)
+	}
+	return state, r, err
 }
 
 // Run posts the pending rows until ctx ends. Each conversation is sent by
@@ -247,6 +277,7 @@ func (o *Outbox) drain(ctx context.Context, conv surface.Conversation) {
 			return
 		}
 		left := false
+	rows:
 		for _, r := range rows {
 			if failed[r.id] {
 				continue
@@ -255,6 +286,8 @@ func (o *Outbox) drain(ctx context.Context, conv surface.Conversation) {
 			switch o.send(ctx, conv, r) {
 			case stuck:
 				return
+			case reread:
+				break rows
 			case failedPost:
 				if !r.decoration {
 					return // a reply holds back the rows behind it
@@ -270,7 +303,7 @@ func (o *Outbox) drain(ctx context.Context, conv surface.Conversation) {
 
 func (o *Outbox) pendingRows(ctx context.Context, conv surface.Conversation) ([]pending, error) {
 	rows, err := o.Store.DB.QueryContext(ctx, `SELECT id, event, part, message, decoration, failures FROM chat_outbox
-		WHERE client = ? AND channel = ? AND thread = ? AND state = 'pending' ORDER BY id`,
+		WHERE client = ? AND channel = ? AND thread = ? AND state = 'pending' ORDER BY event, part`,
 		o.Client, conv.Channel, conv.Thread)
 	if err != nil {
 		return nil, err
@@ -293,12 +326,30 @@ const (
 	posted     outcome = iota
 	failedPost         // the post failed, or the row was dropped
 	stuck              // the outcome could not be recorded: stop, or the row is posted again at once
+	reread             // the queue changed in front of the row: read it again
 )
 
 // send posts one row and records the outcome.
 func (o *Outbox) send(ctx context.Context, conv surface.Conversation, r pending) outcome {
 	k := key(r.event, r.part)
-	m, err := decode(r.message)
+	m, replyRow, err := decode(r.message)
+	if err == nil && replyRow != nil {
+		state, to, err := o.state(ctx, *replyRow)
+		switch {
+		case err != nil:
+			return stuck
+		case state == "sent":
+			m.ReplyTo = &to
+		case state == "pending":
+			// Written since this drain read the queue; it comes earlier in
+			// the order, so read the queue again.
+			return reread
+		case state == "" && r.failures+1 < o.MaxFailures:
+			// The row it replies to is not written yet; give it a few ticks.
+			return o.record(ctx, failedPost, r.id, `UPDATE chat_outbox SET failures = failures + 1 WHERE id = ?`, r.id)
+		}
+		// Otherwise (dropped, or never written) it is posted without the reply.
+	}
 	if err != nil {
 		// Unreadable rows cannot become readable: drop it, so it holds
 		// nothing back.

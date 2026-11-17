@@ -39,7 +39,7 @@ var EventKinds = map[EventKind][]Field{
 	"thread_created": {req("thread", Integer), req("session", Integer), req("repo", String),
 		req("principal", String), req("model", String), req("effort", String)},
 	"state":        {req("session", Integer), req("from", String), req("to", String), opt("reason", String), text("detail", String)},
-	"turn_started": {req("session", Integer), req("turn", Integer), req("by", String), opt("principal", String)},
+	"turn_started": {req("session", Integer), req("turn", Integer), req("by", String), opt("principal", String), opt("key", String)},
 	"turn_ended": {req("session", Integer), req("turn", Integer), req("by", String), opt("principal", String),
 		req("outcome", String), opt("reason", String), req("background", Integer)},
 	"input":             {req("session", Integer), req("turn", Integer), text("text", String)},

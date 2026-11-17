@@ -173,6 +173,13 @@ var migrations = []Migration{
 			PRIMARY KEY (client, channel, message)
 		)`,
 	)},
+	{Name: "chat: event reader", Up: execAll(
+		// The position after which each chat front end reads events again.
+		`CREATE TABLE chat_cursors (
+			client TEXT PRIMARY KEY,
+			pos    INTEGER NOT NULL
+		)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {
