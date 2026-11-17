@@ -309,8 +309,19 @@ func (f *FrontEnd) followUp(in surface.Inbound) error {
 	who := control.Principal(in.Author.ID)
 	api := f.API(control.Caller{Principal: who, Scopes: []string{conv.Channel}, May: control.OpRead | control.OpSend})
 	id := control.ThreadID{Scope: conv.Channel, Key: conv.Thread}
-	if _, err := api.Thread(ctx, id, 0); err != nil {
-		return nil // not a hataori thread, or unreadable: nothing to send to
+	ts, err := api.Threads(ctx, control.Filter{Thread: id})
+	if err != nil {
+		return err // not known yet whether it is one of ours: try again
+	}
+	if len(ts) == 0 {
+		return nil // not a hataori thread
+	}
+	switch ts[0].State {
+	case control.Failed, control.Closed, control.Removed:
+		// Its session cannot take input; the message is not for later.
+		f.Log.Warn("follow-up ignored", "reason", "the thread is "+string(ts[0].State), "scope", conv.Channel,
+			"thread", conv.Thread, "message", in.Ref.ID)
+		return nil
 	}
 	if who != f.Owner && !slices.Contains(sc.Posters, who) {
 		f.Log.Warn("follow-up ignored", "reason", "the author is not allowed", "scope", conv.Channel,

@@ -67,28 +67,50 @@ func (s *inbound) isBehind(c surface.Conversation) bool {
 	return s.behind[c]
 }
 
-// receive handles a live message and moves its conversation's cursor,
-// unless an earlier message there is still to be handled.
+// receive handles a live message and moves its conversation's cursor.
+// While the conversation is behind (catching up, or an earlier message
+// failed), the message is left to catch-up, which takes it in its order.
 func (f *FrontEnd) receive(in surface.Inbound) {
 	s := f.inboundState()
 	conv := in.Ref.Conv
 	defer s.lock(conv)()
+	if s.isBehind(conv) {
+		s.setBehind(conv, true) // and catch up soon
+		return
+	}
 	if err := f.handle(in); err != nil {
 		s.setBehind(conv, true)
 		return
 	}
-	if !s.isBehind(conv) && in.Cursor != "" {
+	if in.Cursor != "" {
 		f.setCursor(f.context(), conv, in.Cursor)
 	}
 }
 
 // Connected catches up on every enabled channel and open thread. The
-// driver calls it after it connects and after each reconnect.
+// driver calls it after it connects and after each reconnect. Until a
+// conversation is caught up, its live messages wait for the catch-up.
 func (f *FrontEnd) Connected() {
-	go f.catchUpAll(f.context())
+	ctx := f.context()
+	convs := f.toCatchUp(ctx)
+	s := f.inboundState()
+	for _, c := range convs {
+		s.mu.Lock()
+		s.behind[c] = true
+		s.mu.Unlock()
+	}
+	go func() {
+		for _, c := range convs {
+			if ctx.Err() != nil {
+				return
+			}
+			f.catchUp(ctx, c)
+		}
+	}()
 }
 
-func (f *FrontEnd) catchUpAll(ctx context.Context) {
+// toCatchUp returns the enabled channels and the open threads.
+func (f *FrontEnd) toCatchUp(ctx context.Context) []surface.Conversation {
 	var convs []surface.Conversation
 	for ch, sc := range f.Scopes {
 		if sc.Enabled {
@@ -107,12 +129,7 @@ func (f *FrontEnd) catchUpAll(ctx context.Context) {
 			convs = append(convs, convOf(t.ID))
 		}
 	}
-	for _, c := range convs {
-		if ctx.Err() != nil {
-			return
-		}
-		f.catchUp(ctx, c)
-	}
+	return convs
 }
 
 // catchUp handles the messages of conv after its cursor, in order, and
@@ -120,15 +137,21 @@ func (f *FrontEnd) catchUpAll(ctx context.Context) {
 func (f *FrontEnd) catchUp(ctx context.Context, conv surface.Conversation) {
 	s := f.inboundState()
 	defer s.lock(conv)()
-	cursor, ok, err := f.cursor(ctx, conv)
+	cursor, since, ok, err := f.cursor(ctx, conv)
 	if err != nil {
 		f.Log.Error("chat: catch-up: reading the cursor", "channel", conv.Channel, "thread", conv.Thread, "err", err)
 		s.setBehind(conv, true)
 		return
 	}
 	if !ok && conv.Thread == "" {
-		// A channel never read: its old messages are not orders to run
-		// now. Its cursor starts with the next message.
+		// A channel never read: what was posted in it before is not an
+		// order for this front end. From now on it is.
+		if _, err := f.Outbox.Store.DB.ExecContext(ctx, `INSERT INTO chat_inbound (client, channel, thread, cursor, since)
+			VALUES (?, ?, '', '', ?) ON CONFLICT DO NOTHING`, f.Name, conv.Channel, time.Now().UnixMilli()); err != nil {
+			s.setBehind(conv, true)
+			return
+		}
+		s.setBehind(conv, false)
 		return
 	}
 	msgs, err := f.Driver.Since(ctx, conv, cursor)
@@ -138,7 +161,7 @@ func (f *FrontEnd) catchUp(ctx context.Context, conv surface.Conversation) {
 		return
 	}
 	for _, in := range msgs {
-		if in.Direct {
+		if in.Direct || (cursor == "" && since > 0 && in.Time.UnixMilli() < since) {
 			continue
 		}
 		if err := f.handle(in); err != nil {
@@ -186,14 +209,17 @@ func (f *FrontEnd) runCatchUp(ctx context.Context) {
 	}
 }
 
-func (f *FrontEnd) cursor(ctx context.Context, conv surface.Conversation) (string, bool, error) {
+// cursor returns conv's cursor, and for a channel without one yet the
+// time from which its messages are caught up on.
+func (f *FrontEnd) cursor(ctx context.Context, conv surface.Conversation) (string, int64, bool, error) {
 	var c string
-	err := f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT cursor FROM chat_inbound WHERE client = ? AND channel = ? AND thread = ?`,
-		f.Name, conv.Channel, conv.Thread).Scan(&c)
+	var since int64
+	err := f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT cursor, since FROM chat_inbound WHERE client = ? AND channel = ? AND thread = ?`,
+		f.Name, conv.Channel, conv.Thread).Scan(&c, &since)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", false, nil
+		return "", 0, false, nil
 	}
-	return c, err == nil, err
+	return c, since, err == nil, err
 }
 
 func (f *FrontEnd) setCursor(ctx context.Context, conv surface.Conversation, cursor string) error {

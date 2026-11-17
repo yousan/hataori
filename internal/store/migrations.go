@@ -213,7 +213,8 @@ var migrations = []Migration{
 			client  TEXT NOT NULL, -- the chat front end's name
 			channel TEXT NOT NULL,
 			thread  TEXT NOT NULL DEFAULT '',
-			cursor  TEXT NOT NULL,
+			cursor  TEXT NOT NULL, -- '' until a message was handled
+			since   INTEGER NOT NULL DEFAULT 0, -- unix ms: with cursor '', catch up on messages from then
 			PRIMARY KEY (client, channel, thread)
 		)`,
 	)},

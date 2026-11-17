@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/yousan/hataori/internal/surface"
 	"github.com/yousan/hataori/internal/surface/fake"
@@ -43,7 +44,7 @@ func (s signalling) Connected() {
 }
 
 func (f *front) storedCursor(conv surface.Conversation) string {
-	c, _, _ := f.fe.cursor(context.Background(), conv)
+	c, _, _, _ := f.fe.cursor(context.Background(), conv)
 	return c
 }
 
@@ -60,8 +61,14 @@ func TestThreeMessagesWhileDownRunOnceEachInOrder(t *testing.T) {
 
 func TestTriggerWhileDownStartsItsThreadOnce(t *testing.T) {
 	f := newFront(t, workspaces{})
-	f.connect(t)
-	f.driver.Inject(chanConv, fake.Person(owner), "good morning") // read live: the channel's cursor
+	// Not an order: posted before the front end first ran.
+	f.driver.Inject(chanConv, fake.Webhook(hook), "!go repo:https://example.com/r.git from before hataori")
+	time.Sleep(5 * time.Millisecond)
+	f.connect(t) // the first start: no message in the channel read yet
+	waitFor(t, "the channel to be read from now on", func() bool {
+		_, since, _, _ := f.fe.cursor(context.Background(), chanConv)
+		return since > 0
+	})
 	f.driver.Disconnect()
 	trigger := f.driver.Inject(chanConv, fake.Webhook(hook), "!go repo:https://example.com/r.git while down")
 	f.driver.Reconnect()
@@ -114,6 +121,23 @@ func TestCursorStaysWhenAFailureComesBetween(t *testing.T) {
 	f.connect(t) // catches up again
 	waitFor(t, "the cursor at the end", func() bool { return f.storedCursor(conv(id)) == ins[2].Cursor })
 	if got := strings.Join(f.runner.handed(), "; "); got != "deliver first input; deliver one; deliver two; deliver three" {
+		t.Fatalf("handed %s", got)
+	}
+}
+
+// A live message that arrives while its conversation catches up (or after
+// a message there failed) waits for the catch-up, which takes both in order.
+func TestLiveMessageWaitsForTheCatchUp(t *testing.T) {
+	f := newFront(t, workspaces{})
+	id := f.runningThread(t)
+	f.driver.Inject(conv(id), fake.Webhook(hook), "one") // while down
+	f.fe.inboundState().setBehind(conv(id), true)        // as Connected leaves it until caught up
+	f.fe.Message(f.driver.Inject(conv(id), fake.Webhook(hook), "two"))
+	if got := f.runner.handed(); len(got) != 1 {
+		t.Fatalf("handed before the catch-up: %v", got)
+	}
+	f.fe.catchUp(context.Background(), conv(id))
+	if got := strings.Join(f.runner.handed(), "; "); got != "deliver first input; deliver one; deliver two" {
 		t.Fatalf("handed %s", got)
 	}
 }
