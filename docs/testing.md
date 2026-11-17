@@ -76,13 +76,13 @@ It runs `hataori run` as a process of its own, with the Claude Code adapter regi
 8. **Killing the daemon during a turn.** SIGKILL to the daemon during a command, then a new daemon. The answer is posted once, and the turn ends once.
 9. **Sleep and resume.** With a 20-second idle period, the agent is stopped (`asleep`, reason `idle`). The next message resumes the same conversation: the agent still knows a word from before.
 10. **Nothing left running, nothing left in the workspace.** After everything is stopped, no session process runs, and `git status --ignored` in the workspace is empty.
-11. **The user's settings file unchanged.** `~/.claude/settings.json` has the same modification time and checksum as before.
+11. **The user's settings file unchanged.** The settings file (`settings.json` in `$CLAUDE_CONFIG_DIR`, or `~/.claude`) has the same modification time and checksum as before.
 
 Steps 10 and 11 run even when an earlier step failed. A failed step logs the thread's events, its posts and the end of the daemon's log, because the temporary directory is removed afterwards.
 
 The CLI runs through a wrapper (`realWrapper` in the test): `--setting-sources project,local`, and `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` and `ENABLE_CLAUDEAI_MCP_SERVERS=false`. The user's settings, hooks, plugins, CLAUDE.md, memory and connectors stay out. The adapter adds its own `--settings` (its hooks) and the model `haiku`.
 
-The login is left alone. The check runs the CLI with whatever login it has, the same way for every kind of login: it passes the CLI nothing about the login and switches the login relay off. `TestRealCheckLeavesTheLoginAlone`, which runs in CI, fails if the check's source names a credential, a key, an account file, a config directory, a login command or a kind of login. A key given only in the environment is not passed on (the adapter passes `pass_env` variables only, and the check sets none), so a login like that needs `pass_env` in a real config, not in this check.
+The login is left alone. The check runs the CLI with whatever login it has, the same way for every kind of login: it passes the CLI nothing about the login and switches the login relay off. `TestRealCheckLeavesTheLoginAlone`, which runs in CI, fails if the check's source names a credential, a key, an account file, a login command or a kind of login, or names the config directory for anything but finding the settings file it compares. A key given only in the environment is not passed on (the adapter passes `pass_env` variables only, and the check sets none), so a login like that needs `pass_env` in a real config, not in this check.
 
 Last passed: 2026-11-17, Claude Code 2.1.326, logged in with a subscription. The maintainer's machine has that login; the check does not look. All 11 steps passed in 12.6 minutes, and the 10-minute turn took 10 m 12 s.
 

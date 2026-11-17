@@ -336,10 +336,15 @@ exec claude --setting-sources project,local "$@"
 `
 
 // userSettings is the modification time and checksum of the person's
-// Claude Code settings file, or "absent".
+// Claude Code settings file, or "absent": settings.json in the CLI's
+// config directory, ~/.claude unless the environment names another.
 func userSettings(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(os.Getenv("HOME"), ".claude", "settings.json")
+	dir := os.Getenv("CLAUDE_CONFIG_DIR")
+	if dir == "" {
+		dir = filepath.Join(os.Getenv("HOME"), ".claude")
+	}
+	path := filepath.Join(dir, "settings.json")
 	st, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return "absent"
