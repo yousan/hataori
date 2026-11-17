@@ -1,0 +1,35 @@
+{
+ "body": {
+  "flags": 0,
+  "guild_id": "1000000000000000004",
+  "id": "1000000000000000005",
+  "name": "name-6",
+  "type": 0
+ },
+ "date": "2026-11-17T03:39:48Z",
+ "headers": {
+  "content-type": "application/json",
+  "via": "1.1 google",
+  "x-ratelimit-bucket": "00000000000000000000000000000011",
+  "x-ratelimit-limit": "1000",
+  "x-ratelimit-remaining": "999",
+  "x-ratelimit-reset": "1794886788.261",
+  "x-ratelimit-reset-after": "0.001"
+ },
+ "request": {
+  "body": null,
+  "files": [],
+  "method": "GET",
+  "path": "/channels/1000000000000000005"
+ },
+ "source": "rest",
+ "status": 200,
+ "trimmed": [
+  "id",
+  "type",
+  "guild_id",
+  "name",
+  "flags",
+  "recipients"
+ ]
+}
