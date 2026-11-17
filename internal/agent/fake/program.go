@@ -92,12 +92,16 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			if !ok {
 				return 0
 			}
-			if code, exit := p.turn("caller", text, agentTurns); exit {
+			id := ""
+			if rest, found := strings.CutPrefix(text, inputIDPrefix); found {
+				id, text, _ = strings.Cut(rest, "\n")
+			}
+			if code, exit := p.turn("caller", id, text, agentTurns); exit {
 				return code
 			}
 		case d := <-agentTurns:
 			time.Sleep(d)
-			p.turn("agent", "reply background done", agentTurns)
+			p.turn("agent", "", "reply background done", agentTurns)
 		}
 	}
 }
@@ -146,10 +150,13 @@ func (p *program) say(text string, final bool) {
 	p.mu.Unlock()
 }
 
-// turn runs one script. It returns an exit code and true when the script
-// says to exit.
-func (p *program) turn(by, script string, agentTurns chan time.Duration) (int, bool) {
-	p.report(map[string]any{"t": "turn", "by": by})
+// inputIDPrefix starts the line before a script that names its input.
+const inputIDPrefix = "@input "
+
+// turn runs one script; input is the id the input named, if any. It
+// returns an exit code and true when the script says to exit.
+func (p *program) turn(by, input, script string, agentTurns chan time.Duration) (int, bool) {
+	p.report(map[string]any{"t": "turn", "by": by, "input": input})
 	end := map[string]any{"t": "end", "status": "completed", "reason": "", "background": 0}
 	if !loggedIn(p.configDir) {
 		end["status"], end["reason"] = "failed", string(agent.Login)

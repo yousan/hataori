@@ -81,7 +81,7 @@ type Launch struct {
 // FirstInput is the input a session starts with, as sessions.first_input
 // holds it. The core stores it with the state change that starts or wakes
 // the session, and sets sessions.launch; the runner clears launch when it
-// launches the agent, and keeps the input until the agent reports its turn.
+// launches the agent, and keeps the input until a turn reports its id.
 type FirstInput struct {
 	Principal control.Principal `json:"principal"`
 	Key       string            `json:"key"`

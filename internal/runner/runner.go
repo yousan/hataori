@@ -117,8 +117,8 @@ func (r *Runner) interruptGrace() time.Duration {
 	return 5 * time.Second
 }
 
-// firstInput is the input a session starts with. It is kept until the
-// agent reports the turn it started, so that a daemon that dies after
+// firstInput is the input a session starts with. It is kept until a turn
+// reports its id (firstInputID), so that a daemon that dies after
 // sending it, or before, sends it (again) when it comes back.
 type firstInput = core.FirstInput
 
@@ -682,7 +682,7 @@ func (r *Runner) step(lv *live) bool {
 		r.act(lv, a)
 	}
 	if first != nil {
-		a, err := lv.codec.Input(agent.Input{Text: first.Context + first.Text})
+		a, err := lv.codec.Input(agent.Input{ID: firstInputID, Text: first.Context + first.Text})
 		if err != nil {
 			r.Log.Error("first input", "session", lv.id, "err", err)
 		}
@@ -786,7 +786,7 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 			}
 			f.Sent = true
 			first = &f
-		case f.Sent && startedTurn(b.events):
+		case f.Sent && reported(b.events, firstInputID):
 			// The agent reported the turn: delivered.
 			f = firstInput{}
 		case f.Sent && lv.resend:
@@ -831,9 +831,14 @@ func clearReported(ctx context.Context, tx *store.Tx, id int64, evs []agent.Even
 	return nil
 }
 
-func startedTurn(evs []agent.Event) bool {
+// firstInputID is the Input.ID of a session's first input. It is not a
+// number, so it names no pending input.
+const firstInputID = "first"
+
+// reported reports whether a turn among evs reports the input id.
+func reported(evs []agent.Event, id string) bool {
 	for _, e := range evs {
-		if e.Kind == agent.TurnStarted {
+		if e.Kind == agent.TurnStarted && e.Input == id {
 			return true
 		}
 	}

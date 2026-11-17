@@ -16,7 +16,7 @@
 // Every report is a JSON object with a field "t":
 //
 //	{"t":"ready","session":S,"model":M,"effort":E,"resume":R,"transcript":P}
-//	{"t":"turn","by":"caller"|"agent"}
+//	{"t":"turn","by":"caller"|"agent","input":I}
 //	{"t":"text","text":T,"final":true|false}   (on a terminal: in the transcript)
 //	{"t":"tool","id":I,"name":N,"end":false|true}
 //	{"t":"subagent","id":I,"end":false|true}
@@ -30,8 +30,8 @@
 // On pipes the program reads {"input":T}, {"answer":{"id":I,"text":A}} and
 // {"interrupt":true}.
 //
-// The program takes its input in order, one turn each, so the codec returns
-// the Input.ID of each input in the next turn the caller started.
+// An input with an Input.ID starts with the line "@input I"; the program
+// takes it off the script and reports I in the turn's "input".
 //
 // # Scripts
 //
