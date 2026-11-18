@@ -227,6 +227,7 @@ const ja: Catalog = {
   "tabs.label": "開いているタブ",
   "tabs.all": "すべてのスレッド",
   "tabs.close": "タブ {name} を閉じる",
+  "tabs.closeMark": "×",
   "tabs.question": "質問",
   "tabs.failed": "失敗",
   "tabs.tree": "ツリー",
