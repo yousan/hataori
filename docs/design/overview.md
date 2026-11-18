@@ -243,7 +243,7 @@ When an agent's login runs out, every turn fails until someone logs in on the ho
 
 The rules:
 
-- **Only the owner's direct message is ever passed to the login command, and only while the command is waiting for a code.** A direct message from anyone else does nothing. The owner's message at any other time gets "not waiting for a code". A reply that is not shaped like a code (one word, no spaces) is not passed on.
+- **Only the owner's direct message is ever passed to the login command, and only while the command is waiting for a code.** The owner is the person of section 5.5, reached at their id on each client; the relay resolves the author's `<client>:<id>` and compares the person. A direct message from anyone else, a guest included, does nothing. The owner's message at any other time gets "not waiting for a code". A reply that is not shaped like a code (one word, no spaces) is not passed on.
 - **The link and the code exist only in the direct message and in memory.** They are not written to the database, the event log, any log file or any other conversation, and no client of the control API can read them. The log says that a code arrived and how long it was. For this reason the login command is a direct child of the daemon and does not run under the session host, which logs what it sees. A daemon restart ends a login that is in progress; the button starts another.
 - **Nothing is resent.** A message that failed is sent again by whoever sent it.
 - **If someone logs in on the host instead**, the next turn that completes closes the outage, the waiting login is stopped, and the message says the login is back.
@@ -273,13 +273,19 @@ Everything that can be asked of the core is one interface. In-process clients ca
 
 Every call is made as a `Caller`: who it is, which scopes it may see, and which operations it may use. The core checks each call against it. A scope has one owner, the client that gives it its threads; when another client starts a thread there, the core asks the owner for the thread's key, and a chat front end answers by opening a chat thread. Appendix D has the Go declarations.
 
+**Whose input reaches the agent.** A client that relays input from a chat service says where it came from: `Caller.From`, an id of the form `<client>:<id>` (section 5.5). The core resolves that id to a person; the client does not. Then, for `Start`, `Send`, `Answer` and `Stop`, the core allows the call only when the person is the owner or is listed in the scope of the thread (for `Start`, the scope asked for; for `Answer`, the scope of the request's thread). An id that no person lists is a guest, and a guest is refused every one of the four. A refusal changes nothing and writes one log line with the operation, the scope, the client and the id, and the person when there is one. This is the only check of who may give input, for every client: a chat front end, a second surface, a driver in another process, the `hataori` command. A caller that the daemon authenticates itself, such as the OS user on the control socket, which is the owner, names the person directly and has no `From`. Reads (`Threads`, `Thread`, `Events`) are checked against the caller's scopes as before; they give the agent nothing.
+
+Every record of input keeps both the person and the id it came from (section 6.2).
+
 Sleep, close and remove join the interface with the phase that needs them. There is no operation to reset or merge anything, for any caller.
 
 ### 5.2 Chat front end and surface driver
 
-Showing a thread in chat is one client, shared by all chat surfaces. It turns inbound chat into `Start`, `Send`, `Answer` and `Stop`; it reads `Events` and decides what to show; it owns the outbox. Underneath it, a surface driver knows one chat service and nothing about agents or threads of work.
+Showing a thread in chat is one client, shared by all chat surfaces. It turns inbound chat into `Start`, `Send`, `Answer` and `Stop`, each with `From` set to `<client>:<author's id>`; it reads `Events` and decides what to show; it owns the outbox.
 
-The driver's calls are: run and deliver inbound messages, button presses and commands; fetch messages since a cursor; open a thread; post, edit and delete a message; set a status on a message; set a thread's title and archived flag; report its limits. A message to post says what to show (text, files, choices, reply target, who to notify), not how. A driver can also open a direct conversation with one person; in phase 1 that is used for the owner only (section 4.7).
+The chat front end makes no allow check of its own and keeps no list of people, owners or posters: whether a message reaches the agent is decided by the core (section 5.1). The front end still drops what is not input from anyone: its own posts, posts by bot accounts and messages the service writes itself; that compares no id with a list. A trigger's chat thread is opened only once the core accepted the `Start`: the front end leaves `StartRequest.Thread` empty, and the core, after its check, asks the scope owner for the key with the call's key, so the front end opens the thread from the trigger message. A guest's trigger therefore opens nothing. Underneath it, a surface driver knows one chat service and nothing about agents or threads of work.
+
+The driver's calls are: run and deliver inbound messages, button presses and commands; fetch messages since a cursor; open a thread; post, edit and delete a message; set a status on a message; set a thread's title and archived flag; report its limits. A message to post says what to show (text, files, choices, reply target, who to notify), not how. A driver can also open a direct conversation with one person; in phase 1 that is used for the owner only (section 4.7), at the owner's id on that client. The login relay, not the front end, decides that a direct message is the owner's: the front end hands it the message's `<client>:<id>`, and the relay resolves it as the core does.
 
 The driver splits long text, picks buttons or a menu, and maps a status to whatever the surface has (a reaction, an edit). Its limits let the front end avoid asking for what a surface cannot do.
 
@@ -300,6 +306,35 @@ Whatever call of the codec produced it, the actions that write a message name it
 No, not as written. The agent side is unchanged. The surface side was a plug-in that the core called: the core itself received every inbound chat event (the `Sink` interface), owned the outbox, and pushed finished messages to one surface per thread. Nothing in it could list threads, read a thread's state, or follow events, which is all a dashboard does and most of what a supervisor does. And a thread was identified by `(surface, channel, thread)`, which the core had to understand.
 
 What changed: the control API (5.1) now sits between. The methods of the old surface interface survive as the driver (5.2), but `Sink` is implemented by the chat front end, the outbox moved to it, and the core identifies a thread by two opaque strings. The supervisor's tools and the dashboard's server are two more clients, and so is the `hataori` command.
+
+### 5.5 People
+
+hataori manages people. The config lists them; each has a name and the ids by which chat services and automated posters know them:
+
+```json
+"people": [
+  {"name": "ada",     "ids": ["discord:111", "slack:U222"]},
+  {"name": "grace",   "ids": ["discord:333"]},
+  {"name": "dispatch", "ids": ["discord:444"]}
+],
+"owner": "ada",
+"scopes": [
+  {"key": "<channel>", "client": "discord", "enabled": true, "people": ["grace", "dispatch"]}
+]
+```
+
+- An **id** is `<client>:<id>`: the registered name of the client, a colon, and the service's own id of the author, as the driver reports it. The shape is the same as OpenClaw's `session.identityLinks`. A webhook or another automated poster is listed the same way, under a name of its own (`dispatch` above, with the webhook's id).
+- A **name** is a word without a colon, so a name and an id are never confused. Each name and each id appears once; an id listed under two people is refused at start.
+- `owner` names a person. The owner may act in every scope. A scope's `people` names the others who may act in it. Every name must be listed under `people`.
+- An id that no person lists is a **guest**. A guest is shown and logged as its `<client>:<id>`. A guest can never start a thread, send input, answer or stop (section 5.1).
+- **Ids are linked to people only in the config, by the operator.** Nothing said in chat links an id to a person or changes who a person is: no command, no message, no answer of the agent. A change takes effect when the daemon restarts with the new config.
+
+**Moving from `owner` and `posters`.** Today the config's `owner` is a raw id, compared with the author's id by every chat front end and used as the control socket's principal, and each scope's `posters` are raw ids of that scope's client. A config without `people` is read in that form, unchanged, and converted when the daemon starts:
+
+- the owner becomes a person named `owner` whose ids are `<driver>:<owner>` for every driver the config names;
+- each poster `p` of a scope whose client is `c` becomes a person with the id `c:p`, allowed in that scope; one id that is a poster in several scopes is one person allowed in each.
+
+So a running instance accepts exactly whom it accepts today, and the daemon logs one line saying the config uses the old form. A config with `people` names the owner by person, and a scope with `posters` in it is refused there, with a message to use `people`. Records made before the move keep the principal they were made with.
 
 ## 6. Storage and layout
 
@@ -339,7 +374,7 @@ One database file. A schema version table and forward-only migrations (c-lord ha
 | `bindings` | channel to repository, and per-thread overrides |
 | `settings` | model and other choices per scope |
 
-Who is allowed is in the config file, not in the database.
+Who is allowed is in the config file, not in the database: the people, their ids, the owner and each scope's people (section 5.5). The database keeps who gave each input: `threads.started_by` and `turns.principal` hold the person, and `turns` gains `from_id`, the `<client>:<id>` the input came from. The events `thread_created`, `turn_started` and `turn_ended` carry both, as `principal` and `from`; `from` is absent for a caller with no `From`, such as the `hataori` command.
 
 ### 6.3 Workspaces and mirrors
 
@@ -637,6 +672,7 @@ Unlike Discord and Slack Socket Mode, Teams calls hataori. The host needs a publ
 
 ### Decided
 
+- **hataori manages people, and the core decides whose input reaches the agent** (#216; the maintainer, 2026-11-18). The config lists people, each with a name and ids `<client>:<id>`; the owner and each scope's people are named by person; an id no person lists is a guest and can never start, send, answer or stop. The core resolves the id and checks the scope for `Start`, `Send`, `Answer` and `Stop` from every client; the chat front end has no allow list. Ids are linked to people only in the config. An old config's `owner` and `posters` are converted at start so that the same authors are accepted. Sections 5.1, 5.2 and 5.5.
 - **A new workspace gets past the folder-trust dialog by keys** (#56; the maintainer, 2026-11-12). Claude Code 2.1.326 has no supported way to trust a directory in advance, and writing the trust record into its state file was rejected: that file also holds the account. Only the captured dialog is known, by its text. The line is chosen by its text, and keys are sent only before `SessionStart`. Any other screen gets no key, and the start fails as `blocked at start` (section 3.5).
 - **Claude Code is not driven through `claude -p`.** Decided by the maintainer; section 3.4. Live attach comes back with the terminal, so the earlier question about take-over between turns is closed.
 - **A message that arrives while a turn runs is delivered into the turn**; stopping is the explicit way to interrupt. On the Claude Code path it is held until the turn ends, until delivery during a turn has been checked (section 3.5).
@@ -802,7 +838,7 @@ Unlike Discord and Slack Socket Mode, Teams calls hataori. The host needs a publ
 
 | Feature | Verdict | Why |
 |---|---|---|
-| Owner-only by default; allow-list by user or role; explicit switch to open | keep | |
+| Owner-only by default; allow-list by user or role; explicit switch to open | keep | The allow list is by person, checked in the core (section 5.5). Roles and an open switch are not designed yet. |
 | One rule for messages, commands and buttons | keep | One function in the core. |
 | Secrets removed from the agent's environment | keep | The host starts the agent with a built environment, not an inherited one. |
 | Identity and single-instance checks at start | keep | |
@@ -962,10 +998,18 @@ type API interface {
 // Caller is who is asking. An API value is bound to one Caller,
 // and the core checks every call against it.
 type Caller struct {
-	Principal Principal // a person, a webhook, a supervisor, a dashboard user
+	// From is the "<client>:<id>" a relayed input came from, such as a chat
+	// message's author. The core resolves it to a person and sets Principal;
+	// an id no person lists is a guest, with no Principal. Empty for a
+	// caller the daemon authenticated itself.
+	From      string
+	Principal Principal // a person's name (section 5.5)
 	Scopes    []string  // the scopes it may see and act in
 	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop
 }
+
+// Start, Send, Answer and Stop are refused unless Principal is the owner or
+// one of the people of the thread's scope.
 
 type StartRequest struct {
 	Key    string // safe to repeat: the same key starts nothing twice
@@ -980,11 +1024,12 @@ type StartRequest struct {
 // Busy says what Send does when a turn is running.
 type Busy int // Refuse, Deliver, Interrupt
 
-// ScopeOwner is the client that gives a scope its threads. When another client
-// starts a thread there, the core asks the owner for the key; a chat front end
-// opens a chat thread and returns its id.
+// ScopeOwner is the client that gives a scope its threads. When a Start has
+// no Thread, the core asks the owner for the key, after the call is allowed;
+// key is the Start's key. A chat front end opens a chat thread, from the
+// trigger message when key is one, and returns its id.
 type ScopeOwner interface {
-	NewThread(ctx context.Context, scope, title string) (key string, err error)
+	NewThread(ctx context.Context, scope, key, title string) (thread string, err error)
 }
 ```
 
