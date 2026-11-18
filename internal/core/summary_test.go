@@ -57,6 +57,12 @@ func TestThreadInfoTurnsBackgroundAndLast(t *testing.T) {
 	if got.Last != "second line" {
 		t.Fatalf("last = %q", got.Last)
 	}
+	for i := range 25 { // blank messages do not hide the last line
+		f.agentEvent(t, sid, uint64(10+i), agent.Event{Kind: agent.Text, Text: " \n"})
+	}
+	if got := f.info(t, f.owner, id); got.Last != "second line" {
+		t.Fatalf("last after blank messages = %q", got.Last)
+	}
 	ended, err := f.core.Store.Last(ctx, id, 1, func(e control.Event) bool { return e.Kind == "turn_ended" })
 	if err != nil || len(ended) != 1 {
 		t.Fatalf("turn_ended: %v, %v", ended, err)
@@ -70,10 +76,10 @@ func TestThreadInfoTurnsBackgroundAndLast(t *testing.T) {
 	if err := f.owner.Send(ctx, id, "second", control.Input{Text: "again"}, control.Refuse); err != nil {
 		t.Fatal(err)
 	}
-	f.agentEvent(t, sid, 4, agent.Event{Kind: agent.TurnStarted})
+	f.agentEvent(t, sid, 40, agent.Event{Kind: agent.TurnStarted})
 	long := strings.Repeat("é", control.LastMax) // two bytes each
-	f.agentEvent(t, sid, 5, agent.Event{Kind: agent.Text, Text: "x" + long})
-	f.agentEvent(t, sid, 6, agent.Event{Kind: agent.TurnEnded, Status: agent.Completed})
+	f.agentEvent(t, sid, 41, agent.Event{Kind: agent.Text, Text: "x" + long})
+	f.agentEvent(t, sid, 42, agent.Event{Kind: agent.TurnEnded, Status: agent.Completed})
 	got = f.info(t, f.owner, id)
 	if got.Turns != 2 || got.Background != 0 {
 		t.Fatalf("after the second turn: %+v", got)

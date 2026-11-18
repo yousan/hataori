@@ -229,7 +229,7 @@ A field left empty matches everything the caller may see.
 | `model` | string | optional | the model of its current session: as the agent reports it, and as asked for (or the scope's default) until it does; since 1.4 |
 | `effort` | string | optional | the effort, in the same way as `model`; since 1.4 |
 | `turns` | integer | optional | the turns started in the thread, in all its sessions; absent for none; since 1.4 |
-| `last` | string | optional | the last line of its output that is not blank, trimmed, at most 200 bytes; text; since 1.4 |
+| `last` | string | optional | the last line that is not blank of its last `text` event that has one, trimmed, at most 200 bytes; text; since 1.4 |
 | `background` | integer | optional | the `background` of the thread's last `turn_ended` event; absent for 0 or before its first turn ends; since 1.4 |
 
 ### Type `ThreadDetail`

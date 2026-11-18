@@ -53,7 +53,8 @@ type Caller struct {
 	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop
 	// NoText leaves text written by a person or an agent out of what the
 	// caller reads: ThreadInfo.Last, ThreadDetail.Recent, the text of its
-	// requests, and the text fields of events (Field.Text).
+	// requests, and the text fields of events (Field.Text). The thread's
+	// title, taken from its first prompt, is not left out.
 	NoText bool
 }
 

@@ -301,9 +301,11 @@ func (a *api) summary(ctx context.Context, t *control.ThreadInfo) error {
 
 // lastLine returns the last line of the thread's text output that is not
 // blank, trimmed and cut to control.LastMax bytes at a character boundary.
+// Each text event is a whole message of the agent, so a line never spans
+// two events.
 func (c *Core) lastLine(ctx context.Context, id control.ThreadID) (string, error) {
 	rows, err := c.Store.DB.QueryContext(ctx,
-		`SELECT data FROM events WHERE scope = ? AND thread = ? AND kind = 'text' ORDER BY pos DESC LIMIT 20`, id.Scope, id.Key)
+		`SELECT data FROM events WHERE scope = ? AND thread = ? AND kind = 'text' ORDER BY pos DESC`, id.Scope, id.Key)
 	if err != nil {
 		return "", fmt.Errorf("core: last line: %w", err)
 	}
