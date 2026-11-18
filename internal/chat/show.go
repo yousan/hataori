@@ -79,6 +79,7 @@ func (f *FrontEnd) show(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	defer stopEvents(cancel, evs)
 	every := f.Tick
 	if every <= 0 {
 		every = time.Second
@@ -305,6 +306,16 @@ func (r *reader) catchUp(ctx context.Context, id control.ThreadID, before uint64
 	return r.scan(ctx, id, before, func(e control.Event) { r.track(e); r.subagents(e) })
 }
 
+// stopEvents ends a subscription to API.Events and waits until it has
+// stopped: its channel is closed only once nothing is read for it any more.
+// A caller that returns without waiting leaves the store in use, so it
+// could be closed while a read is still going on.
+func stopEvents(cancel context.CancelFunc, evs <-chan control.Event) {
+	cancel()
+	for range evs {
+	}
+}
+
 // scan calls fn with the thread's stored events before position before.
 func (r *reader) scan(ctx context.Context, id control.ThreadID, before uint64, fn func(control.Event)) error {
 	ctx, cancel := context.WithCancel(ctx)
@@ -313,6 +324,7 @@ func (r *reader) scan(ctx context.Context, id control.ThreadID, before uint64, f
 	if err != nil {
 		return err
 	}
+	defer stopEvents(cancel, evs)
 	for e := range evs {
 		if e.Kind == control.CaughtUp || e.Pos >= before {
 			return nil
