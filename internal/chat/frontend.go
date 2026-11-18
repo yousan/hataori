@@ -68,6 +68,9 @@ type FrontEnd struct {
 	Now         func() time.Time // the clock; time.Now when nil
 
 	ctx context.Context
+	// bg counts the goroutines the driver's calls start (Connected's
+	// catch-up and its retry); Run returns only once they have ended.
+	bg sync.WaitGroup
 }
 
 var (
@@ -103,6 +106,7 @@ func (f *FrontEnd) Run(ctx context.Context) error {
 	err := f.Driver.Run(ctx, f)
 	cancel() // the driver stopped: stop the rest too
 	wg.Wait()
+	f.bg.Wait()
 	return err
 }
 

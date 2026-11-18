@@ -2,11 +2,14 @@ package chat
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/surface"
+	"github.com/yousan/hataori/internal/surface/fake"
 )
 
 // heldEvents is an API whose Events subscriptions, once their context
@@ -82,4 +85,43 @@ func TestShowWaitsForItsSubscription(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	h.onEvents = cancel // show stops as soon as it has subscribed
 	returnsAfterItsSubscription(t, h, func() { f.fe.show(ctx) })
+}
+
+// heldSince is the fake driver with a Since that waits until release is
+// closed, as reading a channel's history can take a while.
+type heldSince struct {
+	*fake.Driver
+	entered  chan struct{}
+	once     sync.Once
+	release  chan struct{}
+	returned atomic.Bool
+}
+
+func (d *heldSince) Since(ctx context.Context, conv surface.Conversation, cursor string) ([]surface.Inbound, error) {
+	d.once.Do(func() { close(d.entered) })
+	<-d.release
+	defer d.returned.Store(true)
+	return d.Driver.Since(ctx, conv, cursor)
+}
+
+// Run returns only once the catch-up that the driver's Connected started
+// has ended.
+func TestRunWaitsForTheCatchUp(t *testing.T) {
+	f := newFront(t, workspaces{})
+	d := &heldSince{Driver: f.driver, entered: make(chan struct{}), release: make(chan struct{})}
+	f.fe.Driver = d
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan bool)
+	go func() { f.fe.Run(ctx); done <- d.returned.Load() }()
+	<-d.entered
+	cancel()
+	select {
+	case <-done:
+		t.Fatal("Run returned while its catch-up was still reading")
+	case <-time.After(200 * time.Millisecond): // the catch-up is held this long
+	}
+	close(d.release)
+	if caughtUp := <-done; !caughtUp {
+		t.Fatal("Run returned before its catch-up did")
+	}
 }
