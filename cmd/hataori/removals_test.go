@@ -12,7 +12,8 @@ import (
 	"testing"
 )
 
-// Phase 1 has no workspace removal. Every potentially destructive call must
+// Workspace removal lives in internal/workspace/remove.go only, behind the
+// proof of design section 4.6. Every other potentially destructive call must
 // explain why it cannot touch a workspace, even in docs or a nested module.
 func TestRemovalsAreAllowListed(t *testing.T) {
 	const list = "testdata/removals.txt"

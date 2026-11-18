@@ -2,6 +2,7 @@ package instance
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -103,6 +104,9 @@ func TestConfigErrorsNameTheKey(t *testing.T) {
 		{"unknown", `{"owner": "o", "trigger": "!go", "idle": "30m", "colour": "red"}`, `"colour"`},
 		{"wrong type", `{"owner": "o", "trigger": "!go", "idle": "30m", "scopes": [{"key": "c1", "client": "chat", "enabled": "yes"}]}`, `enabled`},
 		{"null", `{"owner": "o", "trigger": "!go", "idle": "30m", "scopes": [{"key": "c1", "client": "chat", "enabled": null}]}`, `"scopes[0].enabled"`},
+		{"bad pattern", `{"owner": "o", "trigger": "!go", "idle": "30m", "cleanup": {"disposable": ["[x"]}}`, `"cleanup.disposable[0]"`},
+		{"bad retention", `{"owner": "o", "trigger": "!go", "idle": "30m", "cleanup": {"trash_retention": "0s"}}`, `"cleanup.trash_retention"`},
+		{"relative root", `{"owner": "o", "trigger": "!go", "idle": "30m", "cleanup": {"other_roots": ["srv/other"]}}`, `"cleanup.other_roots[0]"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := ParseConfig([]byte(tc.config))
@@ -114,6 +118,24 @@ func TestConfigErrorsNameTheKey(t *testing.T) {
 				t.Fatalf("error %q is not one line naming %s", msg, tc.key)
 			}
 		})
+	}
+}
+
+func TestCleanupConfig(t *testing.T) {
+	c, err := ParseConfig([]byte(`{"owner": "o", "trigger": "!go", "idle": "30m"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Cleanup.TrashRetention != DefaultTrashRetention || c.Cleanup.Disposable != nil {
+		t.Fatalf("defaults: %+v", c.Cleanup)
+	}
+	c, err = ParseConfig([]byte(`{"owner": "o", "trigger": "!go", "idle": "30m",
+		"cleanup": {"disposable": [" node_modules ", "*.pyc"], "trash_retention": "48h", "other_roots": ["/srv/other/"]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprintf("%q %v %q", c.Cleanup.Disposable, c.Cleanup.TrashRetention, c.Cleanup.OtherRoots); got != `["node_modules" "*.pyc"] 48h0m0s ["/srv/other"]` {
+		t.Fatal(got)
 	}
 }
 
