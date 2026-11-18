@@ -171,7 +171,7 @@ func TestDashboardTerminalPaneIsReadOnly(t *testing.T) {
 	// Every request of the page: a GET or HEAD of its own routes, with no
 	// body, and nothing typed in its address.
 	page, _ := url.Parse(r.base)
-	routes := []string{"/", "/signin", "/favicon.ico", "/api/threads", "/api/thread", "/api/events", "/api/terminal", "/api/limits"}
+	routes := []string{"/", "/signin", "/favicon.ico", "/api/threads", "/api/thread", "/api/events", "/api/terminal", "/api/limits", "/api/workspace"}
 	requests := 0
 	for _, e := range b.events {
 		switch e.Method {
@@ -211,7 +211,7 @@ func TestDashboardTerminalPaneIsReadOnly(t *testing.T) {
 			number := regexp.MustCompile(`^[0-9]+$`)
 			for name, vs := range u.Query() {
 				allowed := map[string][]string{"/api/thread": {"scope", "key", "recent", "events"},
-					"/api/terminal": {"scope", "key"}, "/api/events": {"after"}, "/signin": {"t"}}[u.Path]
+					"/api/terminal": {"scope", "key"}, "/api/workspace": {"scope", "key"}, "/api/events": {"after"}, "/signin": {"t"}}[u.Path]
 				if !slices.Contains(allowed, name) || len(vs) != 1 {
 					t.Fatalf("a request has a parameter %q it does not need: %s", name, q.URL)
 				}

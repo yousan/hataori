@@ -5,7 +5,9 @@ import { useDashboard, useNow } from "./live";
 import { StatusBar } from "./StatusBar";
 import { TabBar, tabID } from "./TabBar";
 import { ThreadPane } from "./ThreadPane";
-import { active, close, initialTabs, panes, type Split, type TabKey, type Tabs, threadOf, threadTab, view } from "./tabs";
+import { AllThreads } from "./AllThreads";
+import { useWorkspaces } from "./workspaces";
+import { active, allTab, close, initialTabs, panes, type Split, type TabKey, type Tabs, threadOf, threadTab, view } from "./tabs";
 import { useTheme } from "./theme";
 import { type Density, Tree } from "./Tree";
 
@@ -41,6 +43,7 @@ export function App() {
     }
   };
   const thread = (n: number) => d.threads?.find((x) => x.number === n);
+  const workspaces = useWorkspaces(d.threads);
   const current = threadOf(active(tabs));
 
   const paneThread = (k: TabKey) => {
@@ -103,7 +106,15 @@ export function App() {
                 {k ? (
                   <>
                     <h2 className="pane-name">{paneName(k)}</h2>
-                    {paneThread(k) ? (
+                    {k === allTab ? (
+                      <AllThreads
+                        threads={d.threads}
+                        workspaces={workspaces}
+                        now={now}
+                        selected={current}
+                        onOpen={(n) => setTabs((s) => view(s, threadTab(n)))}
+                      />
+                    ) : paneThread(k) ? (
                       <ThreadPane key={k} x={paneThread(k)!} subscribe={d.subscribe} />
                     ) : (
                       <p className="empty">{t("pane.later")}</p>

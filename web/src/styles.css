@@ -659,3 +659,75 @@ body {
 .ev-tool_ended .ev-line {
   color: var(--muted);
 }
+
+/* The "All threads" table. */
+.all-threads {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+
+.all-threads th,
+.all-threads td {
+  padding: 3px 8px;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--line);
+}
+
+.all-threads thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.all-threads .scope-row th {
+  background: var(--bar);
+  font-weight: 600;
+}
+
+.all-threads tbody tr[data-thread] {
+  cursor: pointer;
+}
+
+.all-threads tbody tr[data-thread]:hover,
+.all-threads tbody tr.selected {
+  background: var(--bar);
+}
+
+.all-threads tbody tr[data-thread]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.cell-title,
+.cell-last {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ctx-bar {
+  position: relative;
+  display: inline-block;
+  width: 72px;
+  height: 14px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  vertical-align: middle;
+}
+
+.ctx-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--st-running);
+  opacity: 0.35;
+}
+
+.ctx-text {
+  position: relative;
+  padding-left: 4px;
+  font-size: 11px;
+}
