@@ -81,6 +81,7 @@ The control socket's messages and the events are a public format. Change them on
 
 - `cmd/hataori/`: the command
 - `internal/`: packages that are not a public API
+- `web/`: the dashboard's page; its build is committed. Rules: [web/AGENTS.md](web/AGENTS.md)
 
 ## About this file
 

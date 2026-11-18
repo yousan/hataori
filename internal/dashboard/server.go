@@ -203,10 +203,7 @@ func Listen(cfg Config, api func(person string) (control.API, bool), log *slog.L
 	s.ln = ln
 	s.mux = http.NewServeMux()
 	s.mux.HandleFunc("GET "+SignInPath, s.signIn)
-	s.mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		fmt.Fprintln(w, "Signed in to the hataori dashboard.")
-	})
+	s.pageRoutes()
 	s.routes()
 	s.srv = &http.Server{Handler: s, ReadHeaderTimeout: 10 * time.Second,
 		ErrorLog: slog.NewLogLogger(log.Handler(), slog.LevelWarn)}
@@ -385,7 +382,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("X-Frame-Options", "DENY")
-	h.Set("Content-Security-Policy", "frame-ancestors 'none'")
+	h.Set("Content-Security-Policy", contentSecurityPolicy)
 
 	if s.proxy != nil {
 		ip, _, _ := net.SplitHostPort(r.RemoteAddr)

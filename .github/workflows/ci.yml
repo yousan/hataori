@@ -47,3 +47,34 @@ jobs:
         run: CGO_ENABLED=0 go build ./...
       - name: go test
         run: go test ./...
+
+  # The dashboard's page (design, section 7.2): its built files are
+  # committed, so this builds them again and fails when they differ.
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: web/.nvmrc
+      - run: npm ci --ignore-scripts
+      # Type check, and no user-visible string outside the catalog.
+      - run: npm run check
+      - run: npm run build
+      - name: the committed build is the fresh one
+        run: |
+          changed="$(git status --porcelain --untracked-files=all -- ../internal/dashboard/page)"
+          if [ -n "$changed" ]; then
+            echo "internal/dashboard/page differs from a fresh build of web/."
+            echo "Build it with Node $(cat .nvmrc) (npm ci && npm run build) and commit the result:"
+            echo "$changed"
+            git diff --stat -- ../internal/dashboard/page
+            exit 1
+          fi
+      - name: the build is reproducible
+        run: |
+          npm run build -- --outDir "$RUNNER_TEMP/second"
+          diff -r ../internal/dashboard/page "$RUNNER_TEMP/second"
