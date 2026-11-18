@@ -1,0 +1,320 @@
+[
+ {
+  "hook_event_name": "SessionStart",
+  "tool_name": null,
+  "keys": [
+   "cwd",
+   "hook_event_name",
+   "model",
+   "scratchpad_dir",
+   "session_id",
+   "source",
+   "transcript_path"
+  ],
+  "has_pr_field": false
+ },
+ {
+  "hook_event_name": "UserPromptSubmit",
+  "tool_name": null,
+  "keys": [
+   "cwd",
+   "hook_event_name",
+   "permission_mode",
+   "prompt",
+   "prompt_id",
+   "scratchpad_dir",
+   "session_id",
+   "transcript_path"
+  ],
+  "has_pr_field": true
+ },
+ {
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "keys": [
+   "cwd",
+   "effort",
+   "hook_event_name",
+   "permission_mode",
+   "prompt_id",
+   "scratchpad_dir",
+   "session_id",
+   "tool_input",
+   "tool_name",
+   "tool_use_id",
+   "transcript_path"
+  ],
+  "has_pr_field": true
+ },
+ {
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Bash",
+  "keys": [
+   "cwd",
+   "duration_ms",
+   "effort",
+   "hook_event_name",
+   "permission_mode",
+   "prompt_id",
+   "scratchpad_dir",
+   "session_id",
+   "tool_input",
+   "tool_name",
+   "tool_response",
+   "tool_use_id",
+   "transcript_path"
+  ],
+  "has_pr_field": true
+ },
+ {
+  "hook_event_name": "Stop",
+  "tool_name": null,
+  "keys": [
+   "background_tasks",
+   "cwd",
+   "effort",
+   "hook_event_name",
+   "last_assistant_message",
+   "permission_mode",
+   "prompt_id",
+   "scratchpad_dir",
+   "session_crons",
+   "session_id",
+   "stop_hook_active",
+   "transcript_path"
+  ],
+  "has_pr_field": true
+ },
+ {
+  "hook_event_name": "UserPromptSubmit",
+  "tool_name": null,
+  "keys": [
+   "cwd",
+   "hook_event_name",
+   "permission_mode",
+   "prompt",
+   "prompt_id",
+   "scratchpad_dir",
+   "session_id",
+   "transcript_path"
+  ],
+  "has_pr_field": true
+ },
+ {
+  "hook_event_name": "Stop",
+  "tool_name": null,
+  "keys": [
+   "background_tasks",
+   "cwd",
+   "effort",
+   "hook_event_name",
+   "last_assistant_message",
+   "permission_mode",
+   "prompt_id",
+   "scratchpad_dir",
+   "session_crons",
+   "session_id",
+   "stop_hook_active",
+   "transcript_path"
+  ],
+  "has_pr_field": true
+ },
+ {
+  "hook_event_name": "Notification",
+  "tool_name": null,
+  "keys": [
+   "cwd",
+   "hook_event_name",
+   "message",
+   "notification_type",
+   "prompt_id",
+   "scratchpad_dir",
+   "session_id",
+   "transcript_path"
+  ],
+  "has_pr_field": true
+ },
+ {
+  "hook_event_name": "UserPromptSubmit",
+  "tool_name": null,
+  "keys": [
+   "cwd",
+   "hook_event_name",
+   "permission_mode",
+   "prompt",
+   "prompt_id",
+   "scratchpad_dir",
+   "session_id",
+   "transcript_path"
+  ],
+  "has_pr_field": true
+ },
+ {
+  "hook_event_name": "Stop",
+  "tool_name": null,
+  "keys": [
+   "background_tasks",
+   "cwd",
+   "effort",
+   "hook_event_name",
+   "last_assistant_message",
+   "permission_mode",
+   "prompt_id",
+   "scratchpad_dir",
+   "session_crons",
+   "session_id",
+   "stop_hook_active",
+   "transcript_path"
+  ],
+  "has_pr_field": true
+ },
+ {
+  "hook_event_name": "Notification",
+  "tool_name": null,
+  "keys": [
+   "cwd",
+   "hook_event_name",
+   "message",
+   "notification_type",
+   "prompt_id",
+   "scratchpad_dir",
+   "session_id",
+   "transcript_path"
+  ],
+  "has_pr_field": true
+ },
+ {
+  "hook_event_name": "UserPromptSubmit",
+  "tool_name": null,
+  "keys": [
+   "cwd",
+   "hook_event_name",
+   "permission_mode",
+   "prompt",
+   "prompt_id",
+   "scratchpad_dir",
+   "session_id",
+   "transcript_path"
+  ],
+  "has_pr_field": true
+ },
+ {
+  "hook_event_name": "Stop",
+  "tool_name": null,
+  "keys": [
+   "background_tasks",
+   "cwd",
+   "effort",
+   "hook_event_name",
+   "last_assistant_message",
+   "permission_mode",
+   "prompt_id",
+   "scratchpad_dir",
+   "session_crons",
+   "session_id",
+   "stop_hook_active",
+   "transcript_path"
+  ],
+  "has_pr_field": true
+ },
+ {
+  "hook_event_name": "UserPromptSubmit",
+  "tool_name": null,
+  "keys": [
+   "cwd",
+   "hook_event_name",
+   "permission_mode",
+   "prompt",
+   "prompt_id",
+   "scratchpad_dir",
+   "session_id",
+   "transcript_path"
+  ],
+  "has_pr_field": true
+ },
+ {
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "keys": [
+   "cwd",
+   "effort",
+   "hook_event_name",
+   "permission_mode",
+   "prompt_id",
+   "scratchpad_dir",
+   "session_id",
+   "tool_input",
+   "tool_name",
+   "tool_use_id",
+   "transcript_path"
+  ],
+  "has_pr_field": true
+ },
+ {
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Bash",
+  "keys": [
+   "cwd",
+   "duration_ms",
+   "effort",
+   "hook_event_name",
+   "permission_mode",
+   "prompt_id",
+   "scratchpad_dir",
+   "session_id",
+   "tool_input",
+   "tool_name",
+   "tool_response",
+   "tool_use_id",
+   "transcript_path"
+  ],
+  "has_pr_field": true
+ },
+ {
+  "hook_event_name": "Stop",
+  "tool_name": null,
+  "keys": [
+   "background_tasks",
+   "cwd",
+   "effort",
+   "hook_event_name",
+   "last_assistant_message",
+   "permission_mode",
+   "prompt_id",
+   "scratchpad_dir",
+   "session_crons",
+   "session_id",
+   "stop_hook_active",
+   "transcript_path"
+  ],
+  "has_pr_field": true
+ },
+ {
+  "hook_event_name": "SessionEnd",
+  "tool_name": null,
+  "keys": [
+   "cwd",
+   "hook_event_name",
+   "prompt_id",
+   "reason",
+   "scratchpad_dir",
+   "session_id",
+   "transcript_path"
+  ],
+  "has_pr_field": true
+ },
+ {
+  "hook_event_name": "SessionStart",
+  "tool_name": null,
+  "keys": [
+   "cwd",
+   "hook_event_name",
+   "model",
+   "scratchpad_dir",
+   "session_id",
+   "source",
+   "transcript_path"
+  ],
+  "has_pr_field": false
+ }
+]

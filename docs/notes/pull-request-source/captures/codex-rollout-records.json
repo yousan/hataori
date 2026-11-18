@@ -1,0 +1,112 @@
+[
+ {
+  "type": "session_meta",
+  "payload_type": null,
+  "mentions_pull_224": false,
+  "git_keys": [
+   "branch",
+   "commit_hash",
+   "repository_url"
+  ]
+ },
+ {
+  "type": "event_msg",
+  "payload_type": "task_started",
+  "mentions_pull_224": false
+ },
+ {
+  "type": "response_item",
+  "payload_type": "message",
+  "mentions_pull_224": false
+ },
+ {
+  "type": "response_item",
+  "payload_type": "message",
+  "mentions_pull_224": false
+ },
+ {
+  "type": "response_item",
+  "payload_type": "message",
+  "mentions_pull_224": false
+ },
+ {
+  "type": "response_item",
+  "payload_type": "message",
+  "mentions_pull_224": false
+ },
+ {
+  "type": "world_state",
+  "payload_type": null,
+  "mentions_pull_224": false
+ },
+ {
+  "type": "turn_context",
+  "payload_type": null,
+  "mentions_pull_224": false
+ },
+ {
+  "type": "event_msg",
+  "payload_type": "thread_settings_applied",
+  "mentions_pull_224": false
+ },
+ {
+  "type": "response_item",
+  "payload_type": "message",
+  "mentions_pull_224": false
+ },
+ {
+  "type": "event_msg",
+  "payload_type": "item_completed",
+  "mentions_pull_224": false
+ },
+ {
+  "type": "response_item",
+  "payload_type": "custom_tool_call",
+  "mentions_pull_224": false
+ },
+ {
+  "type": "token_usage_record",
+  "payload_type": null,
+  "mentions_pull_224": false
+ },
+ {
+  "type": "event_msg",
+  "payload_type": "item_completed",
+  "mentions_pull_224": true
+ },
+ {
+  "type": "response_item",
+  "payload_type": "custom_tool_call_output",
+  "mentions_pull_224": true
+ },
+ {
+  "type": "event_msg",
+  "payload_type": "token_count",
+  "mentions_pull_224": false
+ },
+ {
+  "type": "event_msg",
+  "payload_type": "item_completed",
+  "mentions_pull_224": false
+ },
+ {
+  "type": "response_item",
+  "payload_type": "message",
+  "mentions_pull_224": false
+ },
+ {
+  "type": "token_usage_record",
+  "payload_type": null,
+  "mentions_pull_224": false
+ },
+ {
+  "type": "event_msg",
+  "payload_type": "token_count",
+  "mentions_pull_224": false
+ },
+ {
+  "type": "event_msg",
+  "payload_type": "task_complete",
+  "mentions_pull_224": false
+ }
+]

@@ -1,0 +1,8 @@
+{
+ "type": "pr-link",
+ "sessionId": "<uuid>",
+ "prNumber": 224,
+ "prUrl": "https://github.com/OWNER/REPO/pull/224",
+ "prRepository": "OWNER/REPO",
+ "timestamp": "2026-11-18T07:40:02.497Z"
+}
