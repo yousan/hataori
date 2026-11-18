@@ -341,6 +341,14 @@ func TestRefuseLocalRemoteResolvedLikeGit(t *testing.T) {
 			os.WriteFile(g, []byte("gitdir: "+b+"\n"), 0o600)
 			return g
 		}},
+		// A linked worktree's git directory reads the refs and objects
+		// of the common directory it names.
+		{"worktree git directory", RemoteIsLocal, func(x *removal, b string) string {
+			return x.worktreeGitDir(b)
+		}},
+		{"worktree git directory, relative", RemoteIsLocal, func(x *removal, b string) string {
+			return x.worktreeGitDir("../root/" + Dir + "/c/s/other/b.git")
+		}},
 		// git expands a leading ~/ to $HOME, which is x.tmp.
 		{"home", RemoteIsLocal, func(x *removal, b string) string {
 			return "~/root/" + Dir + "/c/s/other/b.git"
@@ -380,6 +388,33 @@ func TestRemoteByHomeOutsideTheRootCounts(t *testing.T) {
 	if err := x.check(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// worktreeGitDir is <tmp>/wt, a linked worktree's git directory whose
+// commondir file holds common.
+func (x *removal) worktreeGitDir(common string) string {
+	d := filepath.Join(x.tmp, "wt")
+	os.Mkdir(d, 0o700)
+	os.WriteFile(filepath.Join(d, "HEAD"), []byte("ref: refs/heads/main\n"), 0o600)
+	os.WriteFile(filepath.Join(d, "commondir"), []byte(common+"\n"), 0o600)
+	return d
+}
+
+// git applies url.<base>.insteadOf to the address the check fetches as
+// well: a rule that sends it to another workspace makes it not count.
+func TestRefuseRemoteRewrittenAgain(t *testing.T) {
+	x := newRemoval(t)
+	b := filepath.Join(x.root, Dir, "c", "s", "other", "b.git")
+	x.git(x.tmp, "clone", "-q", "--bare", x.bare, b)
+	first, second := filepath.Join(x.tmp, "first.git"), filepath.Join(x.tmp, "second.git")
+	// The workspace's git rewrites first to second, once; the fetch would
+	// rewrite second to b.
+	global := filepath.Join(x.tmp, "gitconfig")
+	x.git(x.tmp, "config", "--file", global, "url."+second+".insteadOf", first)
+	x.git(x.tmp, "config", "--file", global, "url."+b+".insteadOf", second)
+	x.r.Maker.Environ = func() []string { return append(x.env(), "GIT_CONFIG_GLOBAL="+global) }
+	x.git(x.clone, "remote", "set-url", "origin", first)
+	wantRefusal(t, x.check(), RemoteUnresolved, "")
 }
 
 // dotDotLink is <tmp>/l/link, a symlink to <tmp>/nested.

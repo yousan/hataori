@@ -653,7 +653,7 @@ func (c *checker) commits(g *reader, rp repo) error {
 		urls = append(urls, addr)
 	}
 
-	tips, scratch, err := c.ask(g, urls)
+	tips, scratch, err := c.ask(g, rp, urls)
 	if scratch != "" {
 		defer os.RemoveAll(scratch)
 	}
@@ -750,7 +750,7 @@ func (c *checker) stashCommits(g *reader) ([]string, error) {
 // so that only what it lacks is downloaded. It returns one "^<commit>"
 // line per commit a remote ref names, and the scratch repository, which
 // the caller removes.
-func (c *checker) ask(g *reader, urls []string) (string, string, error) {
+func (c *checker) ask(g *reader, rp repo, urls []string) (string, string, error) {
 	objects, err := g.gitPath(c.ctx, "objects")
 	if err != nil {
 		return "", "", err
@@ -782,6 +782,13 @@ func (c *checker) ask(g *reader, urls []string) (string, string, error) {
 		return "", scratch, err
 	}
 	for i, u := range urls {
+		// git rewrites the address again by url.<base>.insteadOf: what
+		// was checked must be what is fetched.
+		if got, err := s.line(c.ctx, "ls-remote", "--get-url", "--", u); err != nil {
+			return "", scratch, err
+		} else if got != u {
+			return "", scratch, c.refuse(rp, RemoteUnresolved, "remote "+redact(u)+" is rewritten to "+redact(got))
+		}
 		if _, _, err := s.run(c.ctx, "-c", "gc.auto=0", "-c", "maintenance.auto=false",
 			"fetch", "--quiet", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules",
 			"--", u, fmt.Sprintf("+refs/*:refs/r%d/*", i)); err != nil {
@@ -923,7 +930,9 @@ func gitReads(p string) ([]string, error) {
 		if !ok {
 			continue
 		}
-		reads = append(reads, r)
+		if reads, err = withCommonDir(reads, r); err != nil {
+			return nil, err
+		}
 		gitdir, err := readGitfile(r)
 		if err != nil {
 			return nil, err
@@ -939,10 +948,34 @@ func gitReads(p string) ([]string, error) {
 		if r, ok, err = resolve(gitdir); err != nil {
 			return nil, err
 		} else if ok {
-			reads = append(reads, r)
+			if reads, err = withCommonDir(reads, r); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return reads, nil
+}
+
+// withCommonDir appends the resolved git directory r and, when r is a
+// linked worktree's git directory, the common directory its commondir
+// file names, where git reads the refs and objects.
+func withCommonDir(reads []string, r string) ([]string, error) {
+	reads = append(reads, r)
+	b, err := os.ReadFile(filepath.Join(r, "commondir"))
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+		return reads, nil
+	} else if err != nil {
+		return nil, err
+	}
+	common := strings.TrimRight(string(b), "\r\n")
+	if !filepath.IsAbs(common) {
+		common = r + "/" + common
+	}
+	resolved, err := filepath.EvalSymlinks(common)
+	if err != nil {
+		return nil, err // git refuses a missing one too
+	}
+	return append(reads, resolved), nil
 }
 
 // readGitfile returns the git directory a .git file names, or "" for a
