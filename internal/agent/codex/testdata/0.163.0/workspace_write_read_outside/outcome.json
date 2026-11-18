@@ -1,0 +1,38 @@
+{
+ "sandbox": "workspace-write",
+ "config": [],
+ "cwd": "/tmp/capture-work",
+ "outside": "/tmp/capture-work",
+ "thread_sandbox": {
+  "type": "workspaceWrite",
+  "writableRoots": [],
+  "networkAccess": false,
+  "excludeTmpdirEnvVar": false,
+  "excludeSlashTmp": false
+ },
+ "thread_approval": "never",
+ "items": [
+  {
+   "type": "userMessage"
+  },
+  {
+   "type": "agentMessage",
+   "text": "I’ll make one direct read attempt."
+  },
+  {
+   "type": "commandExecution",
+   "command": "/usr/bin/zsh -lc 'cat /tmp/capture-work/secret.txt'",
+   "exitCode": 0,
+   "status": "completed",
+   "output": "outside-secret-word\n"
+  },
+  {
+   "type": "agentMessage",
+   "text": "outside-secret-word"
+  }
+ ],
+ "files_in_cwd": [],
+ "files_outside": [
+  "secret.txt"
+ ]
+}

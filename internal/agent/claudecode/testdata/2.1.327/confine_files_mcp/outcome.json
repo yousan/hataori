@@ -1,0 +1,23 @@
+{
+ "variant": "files",
+ "cwd": "/tmp/capture-work",
+ "outside": "/tmp/capture-work",
+ "session": "00000000-0000-4000-8000-000000000001",
+ "answer": "pong from sv",
+ "calls": [
+  {
+   "event": "PreToolUse",
+   "tool": "mcp__sv__ping"
+  },
+  {
+   "event": "PermissionRequest",
+   "tool": "mcp__sv__ping"
+  },
+  {
+   "event": "PostToolUse",
+   "tool": "mcp__sv__ping"
+  }
+ ],
+ "files_in_cwd": [],
+ "files_outside": []
+}

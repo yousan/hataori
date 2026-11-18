@@ -1,0 +1,35 @@
+{
+ "sandbox": "workspace-write",
+ "config": [],
+ "cwd": "/tmp/capture-work",
+ "outside": "/tmp/capture-work",
+ "thread_sandbox": {
+  "type": "workspaceWrite",
+  "writableRoots": [],
+  "networkAccess": false,
+  "excludeTmpdirEnvVar": false,
+  "excludeSlashTmp": false
+ },
+ "thread_approval": "never",
+ "items": [
+  {
+   "type": "userMessage"
+  },
+  {
+   "type": "fileChange",
+   "status": "completed",
+   "paths": [
+    "/tmp/capture-work/x.txt"
+   ]
+  },
+  {
+   "type": "agentMessage",
+   "text": "done"
+  }
+ ],
+ "written": true,
+ "files_in_cwd": [],
+ "files_outside": [
+  "x.txt"
+ ]
+}

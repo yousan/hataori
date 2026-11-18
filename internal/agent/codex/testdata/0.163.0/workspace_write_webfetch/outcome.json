@@ -1,0 +1,32 @@
+{
+ "sandbox": "workspace-write",
+ "config": [],
+ "cwd": "/tmp/capture-work",
+ "outside": "/tmp/capture-work",
+ "thread_sandbox": {
+  "type": "workspaceWrite",
+  "writableRoots": [],
+  "networkAccess": false,
+  "excludeTmpdirEnvVar": false,
+  "excludeSlashTmp": false
+ },
+ "thread_approval": "never",
+ "items": [
+  {
+   "type": "userMessage"
+  },
+  {
+   "type": "commandExecution",
+   "command": "/usr/bin/zsh -lc 'curl -L --fail --silent --show-error https://example.com/'",
+   "exitCode": 6,
+   "status": "failed",
+   "output": "curl: (6) Could not resolve host: example.com\n"
+  },
+  {
+   "type": "agentMessage",
+   "text": "curl: (6) Could not resolve host: example.com"
+  }
+ ],
+ "files_in_cwd": [],
+ "files_outside": []
+}

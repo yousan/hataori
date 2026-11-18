@@ -1,0 +1,10 @@
+{
+ "variant": "files",
+ "cwd": "/tmp/capture-work",
+ "outside": "/tmp/capture-work",
+ "session": "00000000-0000-4000-8000-000000000283",
+ "answer": "no-tool",
+ "calls": [],
+ "files_in_cwd": [],
+ "files_outside": []
+}

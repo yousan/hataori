@@ -1,0 +1,26 @@
+{
+ "variant": "files",
+ "cwd": "/tmp/capture-work",
+ "outside": "/tmp/capture-work",
+ "session": "00000000-0000-4000-8000-000000000391",
+ "answer": "done",
+ "calls": [
+  {
+   "event": "PreToolUse",
+   "tool": "Write"
+  },
+  {
+   "event": "PermissionRequest",
+   "tool": "Write"
+  },
+  {
+   "event": "PostToolUse",
+   "tool": "Write"
+  }
+ ],
+ "written": true,
+ "files_in_cwd": [
+  "a.txt"
+ ],
+ "files_outside": []
+}
