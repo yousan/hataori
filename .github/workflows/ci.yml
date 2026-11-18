@@ -47,14 +47,6 @@ jobs:
         run: CGO_ENABLED=0 go build ./...
       - name: go test
         run: go test ./...
-      # TEMPORARY (#295): remove before merging.
-      - name: flaky tests, 50 runs
-        if: always()
-        run: |
-          rc=0
-          go test -count=50 -run '^TestStopLeavesNoProcess$' ./internal/host || rc=1
-          go test -count=50 -run '^TestDaemonDeathEndsTheLogin$' ./internal/relay || rc=1
-          exit $rc
 
   # The dashboard's page (design, section 7.2): its built files are
   # committed, so this builds them again and fails when they differ.
