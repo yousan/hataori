@@ -110,7 +110,7 @@ func (f *FrontEnd) copyFile(real string, roots []string, name string, max int64)
 	// What was opened, as the kernel names it, so that a directory on the
 	// way replaced by a link meanwhile is seen.
 	// Where this cannot be asked, the file is refused.
-	opened, err := openedPath(src)
+	opened, err := openedPath(src, real)
 	if err != nil || opened != real {
 		return "", 0, errors.New("the path changed while it was checked")
 	}

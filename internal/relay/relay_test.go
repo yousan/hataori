@@ -356,7 +356,7 @@ func TestConcurrentStarts(t *testing.T) {
 	wg.Wait()
 	n := 0
 	for _, args := range commandLines(t) {
-		if strings.Contains(args, " login --config "+filepath.Join(f.root, "agent-config")) {
+		if strings.Contains(args+" ", " login --config "+filepath.Join(f.root, "agent-config")+" ") {
 			n++
 		}
 	}

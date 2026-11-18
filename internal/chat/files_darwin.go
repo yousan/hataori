@@ -3,14 +3,23 @@ package chat
 import (
 	"bytes"
 	"os"
-	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 // openedPath returns the path of the file f, as the kernel names it.
-func openedPath(f *os.File) (string, error) {
-	buf := make([]byte, 1024) // MAXPATHLEN, the size F_GETPATH writes at most
-	if _, _, errno := syscall.Syscall(syscall.SYS_FCNTL, f.Fd(), syscall.F_GETPATH, uintptr(unsafe.Pointer(&buf[0]))); errno != 0 {
+// macOS has two names for a file behind a firmlink (/private/var and
+// /System/Volumes/Data/private/var); the one that is real is returned
+// when the kernel gives it.
+func openedPath(f *os.File, real string) (string, error) {
+	return getPath(f, unix.F_GETPATH) // TEMPORARY: without the fallback, to see the test fail
+
+}
+
+func getPath(f *os.File, cmd uintptr) (string, error) {
+	buf := make([]byte, unix.PathMax) // the most F_GETPATH writes
+	if _, _, errno := unix.Syscall(unix.SYS_FCNTL, f.Fd(), cmd, uintptr(unsafe.Pointer(&buf[0]))); errno != 0 {
 		return "", errno
 	}
 	n := bytes.IndexByte(buf, 0)

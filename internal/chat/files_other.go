@@ -8,6 +8,6 @@ import (
 )
 
 // openedPath cannot name the file f here, so every file is refused.
-func openedPath(*os.File) (string, error) {
+func openedPath(*os.File, string) (string, error) {
 	return "", errors.New("the system cannot name an open file")
 }
