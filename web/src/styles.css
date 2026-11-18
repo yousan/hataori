@@ -827,3 +827,99 @@ body {
 .recent-line {
   overflow-wrap: anywhere;
 }
+
+/* A narrow screen: the same page as a list (design, section 7.2). Nothing
+   is wider than the screen; a terminal wider than it scrolls in its own
+   box. */
+.narrow-body {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.narrow-list.tree {
+  width: auto;
+  border-right: none;
+  background: var(--bg);
+}
+
+.narrow-list section,
+.narrow-list details {
+  border-bottom: 1px solid var(--line);
+}
+
+.narrow-list summary {
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.narrow-list .row {
+  padding: 6px 10px;
+}
+
+.narrow-thread {
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.narrow-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  min-width: 0;
+}
+
+.narrow-back {
+  flex: none;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bar);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.narrow-title {
+  margin: 0;
+  font-size: 14px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.narrow-pane {
+  margin: 8px 0 14px;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.narrow-pane .terminal-view {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.shell.narrow .status {
+  flex-wrap: wrap;
+  overflow: hidden;
+}
+
+.shell.narrow .status-item,
+.shell.narrow .status-right {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.shell.narrow .details-top {
+  overflow-wrap: anywhere;
+}
+
+.shell.narrow .field dt {
+  width: 40%;
+}

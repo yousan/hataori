@@ -23,7 +23,7 @@ function Field(props: { name: string; label: string; value: string; time?: strin
 
 // Waiting is what the thread waits on: an open question with its choices,
 // shown as text only and with nothing that answers, or the failure reason.
-function Waiting({ a }: { a: Attention }) {
+export function Waiting({ a }: { a: Attention }) {
   if (a.kind === "failure") {
     return (
       <section className="details-top failure" data-block="failure">
@@ -77,19 +77,22 @@ interface Props {
   workspace: Workspace | undefined;
   subscribe: (f: (e: Event) => void) => () => void;
   opens: number;
+  // withWaiting shows what the thread waits on at the top; a view that
+  // shows it elsewhere leaves it out here.
+  withWaiting?: boolean;
 }
 
 // Details is the panel on the right for the active tab's thread. Every
 // value comes from the control API; one it leaves out is a dash. It only
 // shows: nothing in it answers, sends or changes anything.
-export function Details({ x, attention, workspace, subscribe, opens }: Props) {
+export function Details({ x, attention, workspace, subscribe, opens, withWaiting = true }: Props) {
   if (!x) return <p className="empty">{t("details.none")}</p>;
   const ws = workspace && workspace !== "unreadable" ? workspace : undefined;
   const pct = x.context && x.context.size > 0 ? Math.round((100 * x.context.used) / x.context.size) : null;
   const n = (v: number | undefined) => (v === undefined ? dash() : numbers.format(v));
   return (
     <div className="details-body" data-details={x.number}>
-      {attention && <Waiting a={attention} />}
+      {withWaiting && attention && <Waiting a={attention} />}
       <section data-block="thread">
         <h3>{t("details.thread")}</h3>
         <dl>

@@ -1,0 +1,100 @@
+import { useEffect, useState } from "react";
+import type { Event, ThreadInfo } from "./api";
+import { t } from "./catalog";
+import { Details, Waiting } from "./Details";
+import type { Attention } from "./live";
+import { ThreadPane } from "./ThreadPane";
+import { Row } from "./Tree";
+import type { Workspace } from "./workspaces";
+
+// narrowQuery is when the page becomes a list: a phone held upright, or a
+// window as narrow.
+export const narrowQuery = "(max-width: 720px)";
+
+// useNarrow reports whether the page is narrow now, following the window.
+export function useNarrow(): boolean {
+  const [narrow, setNarrow] = useState(() => matchMedia(narrowQuery).matches);
+  useEffect(() => {
+    const q = matchMedia(narrowQuery);
+    const changed = () => setNarrow(q.matches);
+    q.addEventListener("change", changed);
+    return () => q.removeEventListener("change", changed);
+  }, []);
+  return narrow;
+}
+
+interface ListProps {
+  threads: ThreadInfo[] | null;
+  attention: ReadonlyMap<number, Attention>;
+  now: number;
+  onOpen: (n: number) => void;
+}
+
+// NarrowList is the page on a narrow screen: the threads that need
+// attention, then those running, then the rest folded. The rows are the
+// tree's.
+export function NarrowList({ threads, attention, now, onOpen }: ListProps) {
+  const all = threads ?? [];
+  const waiting = all.filter((x) => attention.has(x.number));
+  const running = all.filter((x) => !attention.has(x.number) && x.state === "running");
+  const rest = all.filter((x) => !attention.has(x.number) && x.state !== "running");
+  const rows = (list: ThreadInfo[], why: boolean) => (
+    <ul role="listbox">
+      {list.map((x) => (
+        <Row key={x.number} x={x} attention={attention.get(x.number)} why={why} now={now} selected={false} onSelect={onOpen} />
+      ))}
+    </ul>
+  );
+  return (
+    <nav className="narrow-list tree density-dense" aria-label={t("narrow.label")}>
+      {threads !== null && all.length === 0 && <p className="none">{t("narrow.none")}</p>}
+      {waiting.length > 0 && (
+        <section data-section="attention">
+          <h2>{t("narrow.attention")}</h2>
+          {rows(waiting, true)}
+        </section>
+      )}
+      {running.length > 0 && (
+        <section data-section="running">
+          <h2>{t("narrow.running")}</h2>
+          {rows(running, false)}
+        </section>
+      )}
+      {rest.length > 0 && (
+        <details data-section="rest">
+          <summary>{t("narrow.rest", { n: rest.length })}</summary>
+          {rows(rest, false)}
+        </details>
+      )}
+    </nav>
+  );
+}
+
+interface ThreadProps {
+  x: ThreadInfo;
+  attention: Attention | undefined;
+  workspace: Workspace | undefined;
+  subscribe: (f: (e: Event) => void) => () => void;
+  opens: number;
+  onBack: () => void;
+}
+
+// NarrowThread is one thread opened from the list: what it waits on, its
+// terminal or its rebuilt output, then the details panel, and a way back.
+export function NarrowThread({ x, attention, workspace, subscribe, opens, onBack }: ThreadProps) {
+  return (
+    <div className="narrow-thread" data-narrow-thread={x.number}>
+      <div className="narrow-bar">
+        <button type="button" className="narrow-back" onClick={onBack}>
+          {t("narrow.back")}
+        </button>
+        <h2 className="narrow-title">{t("narrow.thread", { n: x.number, title: x.title })}</h2>
+      </div>
+      {attention && <Waiting a={attention} />}
+      <div className="narrow-pane">
+        <ThreadPane x={x} subscribe={subscribe} opens={opens} />
+      </div>
+      <Details x={x} attention={attention} workspace={workspace} subscribe={subscribe} opens={opens} withWaiting={false} />
+    </div>
+  );
+}

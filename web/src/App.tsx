@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { t } from "./catalog";
 import { useLayout } from "./layout";
 import { useDashboard, useNow } from "./live";
@@ -7,6 +7,7 @@ import { TabBar, tabID } from "./TabBar";
 import { ThreadPane } from "./ThreadPane";
 import { AllThreads } from "./AllThreads";
 import { Details } from "./Details";
+import { NarrowList, NarrowThread, useNarrow } from "./Narrow";
 import { useWorkspaces } from "./workspaces";
 import { active, allTab, close, initialTabs, panes, type Split, type TabKey, type Tabs, threadOf, threadTab, view } from "./tabs";
 import { useTheme } from "./theme";
@@ -58,8 +59,58 @@ export function App() {
     return x ? t("pane.thread", { n, title: x.title }) : t("thread.number", { n });
   };
 
+  // On a narrow screen the same page is a list; a thread opened from it is
+  // one entry of the browser's history, so Back returns to the list.
+  const narrow = useNarrow();
+  const [opened, setOpened] = useState<number | null>(null);
+  useEffect(() => {
+    const popped = (e: PopStateEvent) => {
+      const n = (e.state as { hataoriThread?: unknown } | null)?.hataoriThread;
+      setOpened(typeof n === "number" ? n : null);
+    };
+    addEventListener("popstate", popped);
+    return () => removeEventListener("popstate", popped);
+  }, []);
+  const openNarrow = (n: number) => {
+    setTabs((s) => view(s, threadTab(n)));
+    setOpened(n);
+    history.pushState({ hataoriThread: n }, "");
+  };
+  const backNarrow = () => {
+    if ((history.state as { hataoriThread?: unknown } | null)?.hataoriThread !== undefined) history.back();
+    else setOpened(null);
+  };
+
+  if (narrow) {
+    const x = opened === null ? undefined : thread(opened);
+    return (
+      <div className="shell narrow" data-layout="narrow">
+        {d.signedOut && (
+          <p className="signed-out" role="alert">
+            {t("app.signedOut")}
+          </p>
+        )}
+        <div className="narrow-body">
+          {x ? (
+            <NarrowThread
+              x={x}
+              attention={d.attention.get(x.number)}
+              workspace={workspaces.get(x.number)}
+              subscribe={d.subscribe}
+              opens={d.opens}
+              onBack={backNarrow}
+            />
+          ) : (
+            <NarrowList threads={d.threads} attention={d.attention} now={now} onOpen={openNarrow} />
+          )}
+        </div>
+        <StatusBar selected={x} live={d.live} limits={d.limits} now={now} />
+      </div>
+    );
+  }
+
   return (
-    <div className="shell">
+    <div className="shell" data-layout="wide">
       {d.signedOut && (
         <p className="signed-out" role="alert">
           {t("app.signedOut")}

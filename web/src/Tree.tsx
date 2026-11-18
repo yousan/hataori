@@ -18,7 +18,7 @@ interface Props {
 }
 
 // attentionText is what a thread that needs attention waits on.
-function attentionText(a: Attention): string {
+export function attentionText(a: Attention): string {
   switch (a.kind) {
     case "question":
       return a.text ? t("thread.question", { text: a.text }) : t("thread.questionHidden");
@@ -31,7 +31,7 @@ function attentionText(a: Attention): string {
 
 // Row is one thread. In needs attention, what it waits on has a line of
 // its own, shown in either density; elsewhere it is on the second line.
-function Row(props: {
+export function Row(props: {
   x: ThreadInfo;
   attention?: Attention;
   why: boolean;
