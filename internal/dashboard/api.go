@@ -21,11 +21,14 @@ import (
 //	GET /api/threads                          [ThreadInfo]
 //	GET /api/thread?scope=S&key=K[&recent=N][&events=N]   ThreadDetail
 //	GET /api/events[?after=N]                 a stream of Event (Server-Sent Events)
+//	GET /api/terminal?scope=S&key=K           a stream of TerminalChunk (Server-Sent Events)
+//	GET /api/hostscreen?pane=P                a stream of a tmux pane's screen (Server-Sent Events)
 //
 // The event stream sends each event as one message whose id is the event's
 // position, and the caught_up mark as a message of type caught_up. A page
 // that reconnects sends the last id it saw as Last-Event-ID, as a browser's
-// EventSource does, and gets every later event once.
+// EventSource does, and gets every later event once. The terminal and
+// pane streams are described in terminal.go.
 const (
 	ThreadsPath = "/api/threads"
 	ThreadPath  = "/api/thread"
@@ -39,28 +42,36 @@ const (
 	defaultEvents = 20
 )
 
-// keepAlive is how often an idle event stream sends a comment, so that a
-// proxy or a browser does not close it.
-var keepAlive = 15 * time.Second
-
-// writeTimeout is how long one write to an event stream may take. A page
-// that stops reading loses its stream, and the follower behind it ends.
-var writeTimeout = 30 * time.Second
+// Defaults of the stream timings (Server.keepAlive, writeTimeout).
+const (
+	// defaultKeepAlive is how often an idle stream sends a comment, so that
+	// a proxy or a browser does not close it.
+	defaultKeepAlive = 15 * time.Second
+	// defaultWriteTimeout is how long one write to a stream may take. A
+	// page that stops reading loses its stream, and the follower behind it
+	// ends.
+	defaultWriteTimeout = 30 * time.Second
+)
 
 // writeBy is the deadline of one write to a stream: writeTimeout from now,
 // and never after the session expires.
-func writeBy(exp time.Time) time.Time {
-	d := time.Now().Add(writeTimeout)
+func (s *Server) writeBy(exp time.Time) time.Time {
+	d := time.Now().Add(s.writeTimeout)
 	if exp.Before(d) {
 		return exp
 	}
 	return d
 }
 
+// errNotFound is the core's error for no such thread or session.
+var errNotFound = core.ErrNotFound
+
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET "+ThreadsPath, s.threads)
 	s.mux.HandleFunc("GET "+ThreadPath, s.thread)
 	s.mux.HandleFunc("GET "+EventsPath, s.events)
+	s.mux.HandleFunc("GET "+TerminalPath, s.terminal)
+	s.mux.HandleFunc("GET "+HostScreenPath, s.hostScreen)
 }
 
 // apiError answers err with its status: 403 for a call the caller may not
@@ -70,7 +81,7 @@ func (s *Server) apiError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, control.ErrForbidden):
 		code = http.StatusForbidden
-	case errors.Is(err, core.ErrNotFound):
+	case errors.Is(err, errNotFound):
 		code = http.StatusNotFound
 	default:
 		s.Log.Warn("dashboard call failed", "err", err)
@@ -153,27 +164,50 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not a position", http.StatusBadRequest)
 		return
 	}
-	// The stream ends when its session does: the page must sign in again.
+	stream(s, w, r, func(ctx context.Context) (<-chan control.Event, error) {
+		return s.API.Events(ctx, control.Filter{}, after)
+	}, s.apiError, func(e control.Event) message {
+		m := message{id: strconv.FormatUint(e.Pos, 10), data: e}
+		if e.Kind == control.CaughtUp {
+			m.event = "caught_up"
+		}
+		return m
+	})
+}
+
+// message is one Server-Sent Events message.
+type message struct {
+	id, event string
+	data      any // sent as JSON
+}
+
+// stream answers r with a Server-Sent Events stream of what open delivers,
+// one message each, until the page goes, the channel closes or the
+// session expires: the page must then sign in again. A write that takes
+// longer than writeTimeout ends the stream, so that a page that stops
+// reading lets go of the follower behind it. When open fails, fail answers.
+func stream[T any](s *Server, w http.ResponseWriter, r *http.Request, open func(context.Context) (<-chan T, error),
+	fail func(http.ResponseWriter, error), msg func(T) message) {
 	exp := sessionExpiry(r)
 	ctx, cancel := context.WithDeadline(r.Context(), exp)
 	defer cancel()
-	evs, err := s.API.Events(ctx, control.Filter{}, after)
+	ch, err := open(ctx)
 	if err != nil {
-		s.apiError(w, err)
+		fail(w, err)
 		return
 	}
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")
-	h.Set("X-Accel-Buffering", "no") // a proxy must pass each event on at once
+	h.Set("X-Accel-Buffering", "no") // a proxy must pass each message on at once
 	w.WriteHeader(http.StatusOK)
 	if r.Method == http.MethodHead {
 		return
 	}
 	rc := http.NewResponseController(w)
-	rc.SetWriteDeadline(writeBy(exp))
+	rc.SetWriteDeadline(s.writeBy(exp))
 	fmt.Fprint(w, "retry: 1000\n\n")
 	rc.Flush()
-	tick := time.NewTicker(keepAlive)
+	tick := time.NewTicker(s.keepAlive)
 	defer tick.Stop()
 	for {
 		rc.SetWriteDeadline(time.Time{})
@@ -181,24 +215,25 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			rc.SetWriteDeadline(writeBy(exp))
+			rc.SetWriteDeadline(s.writeBy(exp))
 			if _, err := fmt.Fprint(w, ": keep-alive\n\n"); err != nil {
 				return
 			}
-		case e, ok := <-evs:
+		case v, ok := <-ch:
 			if !ok {
 				return
 			}
-			b, err := json.Marshal(e)
+			m := msg(v)
+			b, err := json.Marshal(m.data)
 			if err != nil {
-				s.Log.Warn("dashboard event", "pos", e.Pos, "err", err)
+				s.Log.Warn("dashboard stream", "id", m.id, "err", err)
 				return
 			}
-			rc.SetWriteDeadline(writeBy(exp))
-			if e.Kind == control.CaughtUp {
-				fmt.Fprint(w, "event: caught_up\n")
+			rc.SetWriteDeadline(s.writeBy(exp))
+			if m.event != "" {
+				fmt.Fprintf(w, "event: %s\n", m.event)
 			}
-			if _, err := fmt.Fprintf(w, "id: %d\ndata: %s\n\n", e.Pos, b); err != nil {
+			if _, err := fmt.Fprintf(w, "id: %s\ndata: %s\n\n", m.id, b); err != nil {
 				return
 			}
 		}

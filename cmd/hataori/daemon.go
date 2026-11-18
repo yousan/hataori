@@ -114,7 +114,12 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		if dc.SessionKey, err = sessionKey(in.Root); err != nil {
 			return err
 		}
+		// Owner only, so the owner's terminals on the host too when the
+		// config turns them on.
 		caller := control.Caller{Principal: control.Principal(cfg.Owner), Scopes: keys, May: control.OpRead}
+		if cfg.HostTerminals {
+			caller.May |= control.OpHost
+		}
 		if dashboardHook != nil {
 			dashboardHook(&caller)
 		}
