@@ -27,12 +27,20 @@ import (
 // browser is a headless Chrome driven over the DevTools protocol: the
 // dashboard's page as a person's browser runs it, against a real daemon.
 type browser struct {
-	t    *testing.T
-	conn *websocket.Conn
-	id   int
+	t       browserTest
+	conn    *websocket.Conn
+	id      int
+	timeout time.Duration
 	// events are the DevTools events read so far, in order, such as the
 	// page's requests once Network.enable is called.
 	events []cdpEvent
+}
+
+// browserTest is the part of testing.T used by the browser.
+type browserTest interface {
+	Helper()
+	Fatal(args ...any)
+	Fatalf(format string, args ...any)
 }
 
 // cdpEvent is one DevTools event.
@@ -126,7 +134,7 @@ func newBrowser(t *testing.T) *browser {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { conn.Close() })
-	return &browser{t: t, conn: conn}
+	return &browser{t: t, conn: conn, timeout: 20 * time.Second}
 }
 
 // call sends one DevTools command and returns its result.
@@ -166,33 +174,59 @@ func (b *browser) call(method string, params any) json.RawMessage {
 // eval runs expr in the page and decodes its value into v.
 func (b *browser) eval(expr string, v any) {
 	b.t.Helper()
+	if exception := b.evalException(expr, v); exception != "" {
+		b.t.Fatalf("%s: %s", expr, exception)
+	}
+}
+
+// evalException runs expr and returns the exception, if it threw.
+func (b *browser) evalException(expr string, v any) string {
+	b.t.Helper()
 	var r struct {
 		Result           struct{ Value json.RawMessage }
-		ExceptionDetails *struct{ Text string }
+		ExceptionDetails *struct {
+			Text      string
+			Exception *struct{ Description string }
+		}
 	}
 	json.Unmarshal(b.call("Runtime.evaluate", map[string]any{"expression": expr, "returnByValue": true, "awaitPromise": true}), &r)
-	if r.ExceptionDetails != nil {
-		b.t.Fatalf("%s: %s", expr, r.ExceptionDetails.Text)
+	if e := r.ExceptionDetails; e != nil {
+		text := e.Text
+		if e.Exception != nil && e.Exception.Description != "" {
+			text += ": " + e.Exception.Description
+		}
+		if text == "" {
+			text = "JavaScript exception"
+		}
+		return text
 	}
 	if v != nil {
 		if err := json.Unmarshal(r.Result.Value, v); err != nil {
 			b.t.Fatalf("%s: %s: %v", expr, r.Result.Value, err)
 		}
 	}
+	return ""
 }
 
 // until waits for expr, a JavaScript expression, to be true in the page.
 func (b *browser) until(what, expr string) {
 	b.t.Helper()
-	var ok bool
-	for deadline := time.Now().Add(20 * time.Second); ; time.Sleep(50 * time.Millisecond) {
-		b.eval("!!("+expr+")", &ok)
-		if ok {
+	var lastException string
+	for deadline := time.Now().Add(b.timeout); ; time.Sleep(50 * time.Millisecond) {
+		var ok bool
+		if exception := b.evalException("!!("+expr+")", &ok); exception != "" {
+			lastException = exception
+		} else if ok {
 			return
 		}
 		if time.Now().After(deadline) {
 			var html string
-			b.eval("document.body.innerHTML", &html)
+			if exception := b.evalException("document.body.innerHTML", &html); exception != "" {
+				html = "reading the page's HTML threw: " + exception
+			}
+			if lastException != "" {
+				b.t.Fatalf("the page never showed %s\nlast exception: %s\n%s", what, lastException, html)
+			}
 			b.t.Fatalf("the page never showed %s\n%s", what, html)
 		}
 	}
