@@ -434,7 +434,9 @@ A supervisor is one ordinary session, Claude Code or Codex, that looks after the
 
 One limit is not enforced by this: the supervisor can *ask* a worker thread to merge or delete. What a worker may do is decided by that worker's own rules. Messages from a supervisor are marked as such, so a worker's instructions can treat them differently from a person's.
 
-**When it runs.** It never polls. The core wakes it by sending it one message when something happens in its scope: a turn ended, a question was asked, a turn failed, a usage limit was hit. Its own thread is excluded. Events that arrive while it is busy, or within a short quiet period after the first, are folded into one message.
+**When it runs.** It never polls. hataori wakes it by sending it one message when something happens in its scope: a turn ended, a question was asked, a turn failed, a usage limit was hit. Its own thread is excluded. Events that arrive while it is busy, or within a short quiet period after the first, are folded into one message.
+
+**Where this runs.** Waking, the budget and the loop guard below are one client of the control API inside the daemon, as the chat front end is: it reads events from a position, keeps its position, and wakes the supervisor with `Send` to the supervisor's thread. The core has no supervisor code; to the core the supervisor's thread is an ordinary thread and its tools are an ordinary limited `Caller`.
 
 **How its cost is bounded.**
 
@@ -657,7 +659,7 @@ It has the criterion of the later phases below, with three additions that the da
 
 ### After phase 1
 
-The order below is a recommendation (section 10). Each later phase also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter; the plugin phase may also add hook points. Appendix E has the acceptance criteria of each.
+The order below is a recommendation (section 10). Each later phase also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter; the supervisor phase may also let the control socket bind a connection to a limited `Caller` (which plugins use too, section 7.3) and let a session be started confined (no shell, only the listed tools, section 7.1); the plugin phase may also add hook points. Appendix E has the acceptance criteria of each.
 
 **People in chat, and cleanup.** Slash commands, buttons for questions, lamps, pings, attach by hand (`hataori attach`, the agent's terminal on the host), and removing workspaces behind the proof in section 4.6. This is what lets c-lord be switched off. The dashboard's sign-in link from chat comes with it. A second chat link (`/attach <number>`, section 5.2) is built with thread numbers (#215), not in this phase.
 
@@ -1437,7 +1439,7 @@ type Factory func(settings []byte) (Adapter, error)
 
 ## Appendix E: acceptance criteria after phase 1
 
-Every phase here also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter; the plugin phase may also add hook points.
+Every phase here also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter; the supervisor phase may also let the control socket bind a connection to a limited `Caller` (which plugins use too, section 7.3) and let a session be started confined (no shell, only the listed tools, section 7.1); the plugin phase may also add hook points.
 
 ### People in chat, and cleanup
 
