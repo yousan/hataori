@@ -19,6 +19,26 @@ English for code, comments, commit messages, issues, pull requests and docs.
 - One branch per issue, one pull request per branch. Reference the issue (`Closes #N`).
 - Do not push to `main` directly.
 
+## Claiming an issue
+
+Several people and agents pick issues, and some agents share one GitHub account, so claim an issue before you work on it.
+
+Before starting, check all three. If any fails, pick another issue or ask on it.
+
+```sh
+gh issue view N --json state --jq .state                      # must be OPEN
+gh issue view N --json labels --jq '.labels[].name'           # must not list "in progress"
+gh pr list --state open --search "N in:body" --json number,title   # must not show a pull request for #N
+```
+
+When starting:
+
+1. Add the label: `gh issue edit N --add-label "in progress"`.
+2. Comment who works on it: `gh issue comment N --body "Working on this: <who>"`. A person names themselves; an agent names its session or chat thread, not only the account.
+3. Push the branch early and open a draft pull request that says `Closes #N`: `gh pr create --draft`.
+
+When stopping without finishing, remove the label (`gh issue edit N --remove-label "in progress"`) and comment why, so the next person knows where it stands.
+
 ## Build and test
 
 Run all of these before you push. CI runs the same.
