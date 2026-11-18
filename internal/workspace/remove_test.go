@@ -164,6 +164,22 @@ func TestRefuseDetachedHEADWithUnpushedCommit(t *testing.T) {
 	wantRefusal(t, x.check(), DetachedHEAD, "")
 }
 
+// With reflogs off, the detached HEAD is the only thing naming the commit
+// (rev-list --all includes HEAD).
+func TestRefuseDetachedHEADWithoutReflog(t *testing.T) {
+	x := newRemoval(t)
+	x.git(x.clone, "config", "core.logAllRefUpdates", "false")
+	if err := os.RemoveAll(filepath.Join(x.clone, ".git", "logs")); err != nil {
+		t.Fatal(err)
+	}
+	x.git(x.clone, "checkout", "-q", "--detach")
+	x.commit(x.clone, "b")
+	if _, err := os.Lstat(filepath.Join(x.clone, ".git", "logs", "HEAD")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("HEAD has a reflog: %v", err)
+	}
+	wantRefusal(t, x.check(), DetachedHEAD, "")
+}
+
 func TestRefuseStash(t *testing.T) {
 	x := newRemoval(t)
 	x.write("a", "changed\n")
@@ -173,9 +189,23 @@ func TestRefuseStash(t *testing.T) {
 
 func TestRefuseCommitOnlyInReflog(t *testing.T) {
 	x := newRemoval(t)
+	x.git(x.clone, "checkout", "-q", "-b", "gone")
+	x.commit(x.clone, "b")
+	x.git(x.clone, "checkout", "-q", "main")
+	x.git(x.clone, "branch", "-q", "-D", "gone") // HEAD's reflog keeps it
+	wantRefusal(t, x.check(), ReflogOnly, "")
+}
+
+// After a reset, ORIG_HEAD names the commit, also with reflogs off.
+func TestRefuseCommitOnlyAtORIG_HEAD(t *testing.T) {
+	x := newRemoval(t)
+	x.git(x.clone, "config", "core.logAllRefUpdates", "false")
+	if err := os.RemoveAll(filepath.Join(x.clone, ".git", "logs")); err != nil {
+		t.Fatal(err)
+	}
 	x.commit(x.clone, "b")
 	x.git(x.clone, "reset", "-q", "--hard", "HEAD~1")
-	wantRefusal(t, x.check(), ReflogOnly, "")
+	wantRefusal(t, x.check(), OtherRef, "")
 }
 
 // The remote-tracking ref says the commit is pushed; the remote no longer
@@ -235,6 +265,21 @@ func TestRefuseNestedRepositoryWithUnpushedCommit(t *testing.T) {
 	x.git(x.clone, "commit", "-q", "-m", "nested")
 	x.git(x.clone, "push", "-q")
 	wantRefusal(t, x.check(), UnpushedRef, "nested")
+}
+
+// A bare repository in an ignored, disposable directory has no .git.
+func TestRefuseNestedBareRepository(t *testing.T) {
+	x := newRemoval(t)
+	x.r.Disposable = []string{"cache"}
+	os.Mkdir(filepath.Join(x.clone, "cache"), 0o700)
+	own := filepath.Join(x.clone, "cache", "own.git")
+	x.git(x.tmp, "init", "-q", "--bare", own)
+	work := filepath.Join(x.tmp, "own-work")
+	os.Mkdir(work, 0o700)
+	x.git(work, "init", "-q", "-b", "main")
+	x.commit(work, "o")
+	x.git(work, "push", "-q", own, "main") // own.git has no remote
+	wantRefusal(t, x.check(), UnpushedRef, filepath.Join("cache", "own.git"))
 }
 
 func TestRefuseRemoteThatIsAnotherWorkspace(t *testing.T) {
@@ -455,7 +500,7 @@ func TestPurgeDeletesOnlyOldTrash(t *testing.T) {
 	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 	old := now.Add(-48 * time.Hour).Format(trashStamp)
 	recent := now.Add(-time.Hour).Format(trashStamp)
-	for _, name := range []string{old + "-00000000-a", recent + "-00000000-b", "not-from-removal", "2026-c", "XXXXXXXXXXXXXXXX-d"} {
+	for _, name := range []string{old + "-00000000-a", recent + "-00000000-b", "not-from-removal", "2026-c", "XXXXXXXXXXXXXXXX-d", old + "-backup", "20261399T000000Z-00000000-e"} {
 		os.MkdirAll(filepath.Join(trash, name, "d"), 0o700)
 		os.WriteFile(filepath.Join(trash, name, "d", "f"), []byte("x"), 0o600)
 	}
@@ -477,10 +522,34 @@ func TestPurgeDeletesOnlyOldTrash(t *testing.T) {
 	for _, e := range entries {
 		left = append(left, e.Name())
 	}
-	if want := []string{"2026-c", recent + "-00000000-b", "XXXXXXXXXXXXXXXX-d", "not-from-removal"}; fmt.Sprint(left) != fmt.Sprint(want) {
+	if want := []string{"2026-c", old + "-backup", recent + "-00000000-b", "20261399T000000Z-00000000-e", "XXXXXXXXXXXXXXXX-d", "not-from-removal"}; fmt.Sprint(left) != fmt.Sprint(want) {
 		t.Fatalf("left %v, want %v", left, want)
 	}
 	if _, err := os.Stat(filepath.Join(tmp, "outside")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A trash/ that is a link leads out of the root: nothing is moved there,
+// and nothing there is purged.
+func TestTrashThatIsALinkIsRefused(t *testing.T) {
+	x := newRemoval(t)
+	elsewhere := filepath.Join(x.tmp, "elsewhere")
+	old := filepath.Join(elsewhere, "20200101T000000Z-00000000-x")
+	os.MkdirAll(old, 0o700)
+	if err := os.Symlink(elsewhere, filepath.Join(x.root, TrashDir)); err != nil {
+		t.Fatal(err)
+	}
+	_, err := x.r.Remove(context.Background(), x.clone)
+	wantRefusal(t, err, NotWorkspace, "")
+	if _, err := os.Lstat(x.clone); err != nil {
+		t.Fatal(err)
+	}
+	x.r.Retention = time.Hour
+	if _, err := x.r.Purge(); err == nil {
+		t.Fatal("purge followed the link")
+	}
+	if _, err := os.Lstat(old); err != nil {
 		t.Fatal(err)
 	}
 }

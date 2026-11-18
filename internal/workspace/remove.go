@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -64,8 +65,8 @@ type Refusal struct {
 	// workspace's own repository, else a submodule, a nested repository or
 	// the git directory of a submodule with no checkout.
 	Repo string
-	// Kind names what Repo is: "", "submodule", "nested repository" or
-	// "submodule without checkout".
+	// Kind names what Repo is: "", "submodule", "nested repository",
+	// "nested bare repository" or "submodule without checkout".
 	Kind   string
 	Detail string
 }
@@ -122,12 +123,23 @@ func (r Remover) Remove(ctx context.Context, dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	before, err := os.Lstat(abs)
+	if err != nil {
+		return "", &Refusal{Reason: NotWorkspace, Detail: err.Error()}
+	}
 	if err := r.check(ctx, abs, root); err != nil {
 		return "", err
 	}
-	trash := filepath.Join(root, TrashDir)
-	if err := os.MkdirAll(trash, 0o700); err != nil {
-		return "", &Refusal{Reason: Unreadable, Detail: err.Error()}
+	trash, err := realDir(filepath.Join(root, TrashDir), true)
+	if err != nil {
+		return "", &Refusal{Reason: NotWorkspace, Detail: err.Error()}
+	}
+	// The directory checked is the one renamed: one put in its place
+	// meanwhile is refused. What changes inside it after the check is
+	// still in trash for the retention.
+	after, err := os.Lstat(abs)
+	if err != nil || !os.SameFile(before, after) {
+		return "", &Refusal{Reason: NotWorkspace, Detail: abs + " was replaced during the check"}
 	}
 	var b [4]byte
 	rand.Read(b[:])
@@ -137,6 +149,28 @@ func (r Remover) Remove(ctx context.Context, dir string) (string, error) {
 	}
 	return to, nil
 }
+
+// realDir returns dir when it is a directory itself, not a link to one,
+// making it first when make is set.
+func realDir(dir string, make bool) (string, error) {
+	if make {
+		if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+			return "", err
+		}
+	}
+	st, err := os.Lstat(dir)
+	if err != nil {
+		return "", err
+	}
+	if !st.IsDir() {
+		return "", fmt.Errorf("%s is not a directory", dir)
+	}
+	return dir, nil
+}
+
+// trashName matches the names Remove gives: the time, eight hex digits and
+// the workspace's last segment.
+var trashName = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}-[A-Za-z0-9._%-]+$`)
 
 // Purge deletes the entries of trash/ that were moved there longer than
 // Retention ago, by the time in their names, and returns them. An entry
@@ -149,11 +183,14 @@ func (r Remover) Purge() ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("workspace: purge: %w", err)
 	}
-	trash := filepath.Join(root, TrashDir)
-	entries, err := os.ReadDir(trash)
+	trash, err := realDir(filepath.Join(root, TrashDir), false)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
+	if err != nil {
+		return nil, fmt.Errorf("workspace: purge: %w", err)
+	}
+	entries, err := os.ReadDir(trash)
 	if err != nil {
 		return nil, fmt.Errorf("workspace: purge: %w", err)
 	}
@@ -161,7 +198,7 @@ func (r Remover) Purge() ([]string, error) {
 	var purged []string
 	for _, e := range entries {
 		name := e.Name()
-		if len(name) <= len(trashStamp) || name[len(trashStamp)] != '-' {
+		if !trashName.MatchString(name) {
 			continue
 		}
 		moved, err := time.Parse(trashStamp, name[:len(trashStamp)])
@@ -302,14 +339,20 @@ func (c *checker) refuse(rp repo, reason Reason, detail string) error {
 }
 
 // find walks the workspace and returns every repository in it: the
-// workspace's own, each directory below it that has a .git, and each git
-// directory under a repository's .git/modules, whether checked out or
-// not. A directory it cannot read refuses.
+// workspace's own, each directory below it that has a .git or is a git
+// directory itself (a bare repository), and each git directory under a
+// repository's .git/modules, whether checked out or not. A directory it
+// cannot read refuses.
 func (c *checker) find() ([]repo, error) {
 	var repos []repo
 	err := filepath.WalkDir(c.top, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return c.unreadable(p, err)
+		}
+		if d.IsDir() && p != c.top && d.Name() != ".git" && isGitDir(p) {
+			rel, _ := filepath.Rel(c.top, p)
+			repos = append(repos, repo{dir: p, gitDir: true, rel: rel, kind: "nested bare repository"})
+			return filepath.SkipDir
 		}
 		if d.Name() != ".git" || p == c.top {
 			return nil
@@ -348,6 +391,9 @@ func (c *checker) find() ([]repo, error) {
 	// checked-out one is checked twice over, which costs only time.
 	var modules []repo
 	for _, rp := range repos {
+		if rp.gitDir {
+			continue // a bare repository: no submodules
+		}
 		gitDir := filepath.Join(rp.dir, ".git")
 		if st, err := os.Lstat(gitDir); err != nil {
 			return nil, c.unreadable(gitDir, err)
@@ -409,6 +455,10 @@ func (c *checker) unreadable(p string, err error) error {
 func (c *checker) open(rp repo) (*reader, error) {
 	g := &reader{dir: rp.dir, env: append(c.r.Maker.gitEnv(),
 		"GIT_OPTIONAL_LOCKS=0",
+		// Replacements and grafts could make a commit look like an
+		// ancestor of a remote's.
+		"GIT_NO_REPLACE_OBJECTS=1",
+		"GIT_GRAFT_FILE="+os.DevNull,
 		"GIT_NO_LAZY_FETCH=1",
 		"GIT_CEILING_DIRECTORIES="+filepath.Dir(rp.dir),
 		"LC_ALL=C")}
@@ -573,7 +623,13 @@ func (c *checker) commits(g *reader, rp repo) error {
 	unpushed := func(revs ...string) (string, error) {
 		return local.input(c.ctx, tips, append([]string{"rev-list", "-n1"}, append(revs, "--stdin")...)...)
 	}
-	first, err := unpushed("--all", "--reflog")
+	// HEAD and the other pseudo-refs are named: without a reflog, a
+	// detached HEAD or ORIG_HEAD is on no ref.
+	pseudo, err := c.pseudoRefs(g)
+	if err != nil {
+		return err
+	}
+	first, err := unpushed(append([]string{"--all", "--reflog"}, pseudo...)...)
 	if err != nil || first == "" {
 		return err
 	}
@@ -587,10 +643,6 @@ func (c *checker) commits(g *reader, rp repo) error {
 	if err != nil {
 		return err
 	}
-	head, code, err := g.run(c.ctx, "rev-parse", "--quiet", "--verify", "HEAD^{commit}")
-	if err != nil && code != 1 { // 1: no commit yet
-		return err
-	}
 	places := []struct {
 		reason Reason
 		revs   []string
@@ -599,9 +651,9 @@ func (c *checker) commits(g *reader, rp repo) error {
 		{DetachedHEAD, nil},
 		{Stash, stash},
 		{RemoteGone, []string{"--remotes"}},
-		{OtherRef, []string{"--all"}},
+		{OtherRef, append([]string{"--all"}, pseudo...)},
 	}
-	if len(head) > 0 {
+	if len(pseudo) > 0 && pseudo[0] == "HEAD" {
 		places[1].revs = []string{"HEAD"}
 	}
 	for _, p := range places {
@@ -617,6 +669,22 @@ func (c *checker) commits(g *reader, rp repo) error {
 		}
 	}
 	return c.refuse(rp, ReflogOnly, "commit "+first)
+}
+
+// pseudoRefs are those of HEAD, ORIG_HEAD, MERGE_HEAD, CHERRY_PICK_HEAD,
+// REVERT_HEAD and REBASE_HEAD that name a commit, in that order.
+func (c *checker) pseudoRefs(g *reader) ([]string, error) {
+	var refs []string
+	for _, ref := range []string{"HEAD", "ORIG_HEAD", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD"} {
+		_, code, err := g.run(c.ctx, "rev-parse", "--quiet", "--verify", "--end-of-options", ref+"^{commit}")
+		if err != nil && code != 1 { // 1: absent, or no commit yet
+			return nil, err
+		}
+		if err == nil {
+			refs = append(refs, ref)
+		}
+	}
+	return refs, nil
 }
 
 // stashCommits are the commits of every stash entry.
@@ -646,8 +714,11 @@ func (c *checker) ask(g *reader, urls []string) (string, string, error) {
 	if objects, err = filepath.Abs(objects); err != nil {
 		return "", "", err
 	}
-	base := filepath.Join(c.root, scratchDir)
-	if err := os.MkdirAll(base, 0o700); err != nil {
+	if _, err := realDir(filepath.Join(c.root, "state"), true); err != nil {
+		return "", "", err
+	}
+	base, err := realDir(filepath.Join(c.root, scratchDir), true)
+	if err != nil {
 		return "", "", err
 	}
 	var b [8]byte
@@ -656,6 +727,8 @@ func (c *checker) ask(g *reader, urls []string) (string, string, error) {
 	scratch := filepath.Join(base, hex.EncodeToString(b[:])+"-"+strconv.Itoa(c.n))
 	s := reader{dir: scratch, env: append(c.r.Maker.gitEnv(),
 		"GIT_ALLOW_PROTOCOL=https:http:ssh:git:file",
+		"GIT_NO_REPLACE_OBJECTS=1",
+		"GIT_GRAFT_FILE="+os.DevNull,
 		"GIT_CEILING_DIRECTORIES="+base,
 		"LC_ALL=C")}
 	if _, _, err := (reader{dir: base, env: s.env}).run(c.ctx, "init", "--quiet", "--bare", "--", scratch); err != nil {
