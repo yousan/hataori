@@ -43,6 +43,7 @@ func (r *fakeRunner) Answer(_ context.Context, _, _ int64, req string, _ control
 	return r.record("answer " + req)
 }
 func (r *fakeRunner) Interrupt(context.Context, int64) error { return r.record("interrupt") }
+func (r *fakeRunner) Device(context.Context, int64) string   { return "" }
 func (r *fakeRunner) Resume(_ context.Context, _ int64, _ control.Principal, _ string, _ string, in control.Input) error {
 	return r.record("resume " + in.Text)
 }

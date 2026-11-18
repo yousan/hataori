@@ -220,6 +220,10 @@ type ThreadInfo struct {
 	// From the usage events, since 1.8.
 	Context *Context    `json:"context,omitempty"` // the last context use reported; absent until one is
 	Tokens  *TokenCount `json:"tokens,omitempty"`  // absent until the agent reports usage
+	// Of the thread's current session, since 1.12: the terminal its agent
+	// runs in, such as /dev/pts/3; absent on pipes and while no process
+	// runs.
+	Terminal string `json:"terminal,omitempty"`
 }
 
 // Context is a session's context use, in tokens.

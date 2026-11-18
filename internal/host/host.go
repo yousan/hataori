@@ -30,16 +30,17 @@ const drainGoneTimeout = 30 * time.Second
 
 // host is one running session host.
 type host struct {
-	dir   string
-	spec  Spec
-	cmd   *exec.Cmd
-	input io.Writer // the terminal or the command's stdin
-	inMu  sync.Mutex
-	tty   *os.File    // the terminal's controlling side, or nil on pipes
-	term  *boundedLog // the terminal's raw log, or nil on pipes
-	run   string      // this run of the host; positions in term count from its start
-	cols  int
-	rows  int
+	dir     string
+	spec    Spec
+	cmd     *exec.Cmd
+	input   io.Writer // the terminal or the command's stdin
+	inMu    sync.Mutex
+	tty     *os.File    // the terminal's controlling side, or nil on pipes
+	ptyName string      // the name of the terminal the command runs in, such as /dev/pts/3; "" on pipes
+	term    *boundedLog // the terminal's raw log, or nil on pipes
+	run     string      // this run of the host; positions in term count from its start
+	cols    int
+	rows    int
 
 	follows atomic.Int32 // follow requests being served
 	ln      *net.UnixListener
@@ -187,14 +188,15 @@ func (h *host) start() (*sync.WaitGroup, error) {
 		if err != nil {
 			return nil, err
 		}
-		// pty.StartWithSize puts the command in a new session, with the
-		// terminal as its controlling terminal; its process group is its pid.
-		m, err := pty.StartWithSize(cmd, size)
+		// As pty.StartWithSize does, keeping the terminal's name: the
+		// command runs in a new session, with the terminal as its
+		// controlling terminal; its process group is its pid.
+		m, name, err := startInTerminal(cmd, size)
 		if err != nil {
 			tty.Close()
 			return nil, fmt.Errorf("host: start %s: %w", h.spec.Argv[0], err)
 		}
-		h.tty, h.input, h.term = m, m, tty
+		h.tty, h.input, h.term, h.ptyName = m, m, tty, name
 		h.cols, h.rows = int(size.Cols), int(size.Rows)
 		readers.Add(1)
 		go func() {
@@ -347,6 +349,29 @@ func (h *host) serve() {
 	}
 }
 
+// startInTerminal starts cmd on a new pseudo-terminal of the given size, in
+// a new session with the terminal as its controlling terminal, and returns
+// the terminal's controlling side and the name of the side the command
+// holds.
+func startInTerminal(cmd *exec.Cmd, size *pty.Winsize) (*os.File, string, error) {
+	m, t, err := pty.Open()
+	if err != nil {
+		return nil, "", err
+	}
+	defer t.Close() // the command holds its own copy once started
+	if err := pty.Setsize(m, size); err != nil {
+		m.Close()
+		return nil, "", err
+	}
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = t, t, t
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
+	if err := cmd.Start(); err != nil {
+		m.Close()
+		return nil, "", err
+	}
+	return m, t.Name(), nil
+}
+
 // request is one call on the host's socket; response its answer.
 type request struct {
 	Op        string        `json:"op"`
@@ -373,7 +398,8 @@ type response struct {
 	Reset   bool          `json:"reset,omitempty"`   // follow: Data is the end of the log, not a continuation
 	Cols    int           `json:"cols,omitempty"`    // follow: the terminal's size
 	Rows    int           `json:"rows,omitempty"`
-	End     bool          `json:"end,omitempty"` // follow: the terminal is closed and everything was sent
+	End     bool          `json:"end,omitempty"`    // follow: the terminal is closed and everything was sent
+	Device  string        `json:"device,omitempty"` // status: the terminal the command runs in; empty on pipes
 }
 
 func (h *host) serveConn(c *net.UnixConn) {
@@ -436,7 +462,7 @@ func (h *host) handle(req request) response {
 		}
 		return response{OK: true}
 	case "status":
-		return response{OK: true, PID: h.cmd.Process.Pid}
+		return response{OK: true, PID: h.cmd.Process.Pid, Device: h.ptyName}
 	case "tail":
 		return response{OK: true, Data: h.tail(int(req.Interrupt))}
 	case "waiting":

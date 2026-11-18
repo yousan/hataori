@@ -85,6 +85,9 @@ type Runner interface {
 	// Terminal streams a session's terminal output, as control.API.Terminal
 	// says, until ctx ends. A session on pipes is ErrNotFound.
 	Terminal(ctx context.Context, sessionID int64, run string, after uint64) (<-chan control.TerminalChunk, error)
+	// Device returns the name of the terminal a session's agent runs in,
+	// such as /dev/pts/3; "" when it runs on pipes or no process runs.
+	Device(ctx context.Context, sessionID int64) string
 }
 
 // Launch is what Runner.Start needs.
@@ -348,16 +351,20 @@ func (a *api) Threads(ctx context.Context, f control.Filter) ([]control.ThreadIn
 }
 
 // summary fills the fields of t that come from its sessions, turns and
-// events: the current session's agent, model and effort, the number of
-// turns, the background of the last turn_ended event, and the last line of
-// output unless the caller may not read text.
+// events: the current session's agent, model, effort and terminal, the
+// number of turns, the background of the last turn_ended event, and the
+// last line of output unless the caller may not read text.
 func (a *api) summary(ctx context.Context, t *control.ThreadInfo) error {
 	db := a.c.Store.DB
-	err := db.QueryRowContext(ctx, `SELECT s.agent, s.model, s.effort,
+	var sid int64
+	err := db.QueryRowContext(ctx, `SELECT s.id, s.agent, s.model, s.effort,
 		(SELECT count(*) FROM turns u JOIN sessions v ON v.id = u.session_id WHERE v.thread_id = s.thread_id)
-		FROM sessions s WHERE s.thread_id = ? ORDER BY s.id DESC LIMIT 1`, t.Number).Scan(&t.Agent, &t.Model, &t.Effort, &t.Turns)
+		FROM sessions s WHERE s.thread_id = ? ORDER BY s.id DESC LIMIT 1`, t.Number).Scan(&sid, &t.Agent, &t.Model, &t.Effort, &t.Turns)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("core: thread summary: %w", err)
+	}
+	if err == nil && hasProcess(t.State) {
+		t.Terminal = a.c.Runner.Device(ctx, sid)
 	}
 	var (
 		turn, used, size sql.NullInt64
@@ -397,6 +404,16 @@ func (a *api) summary(ctx context.Context, t *control.ThreadInfo) error {
 		}
 	}
 	return nil
+}
+
+// hasProcess reports whether a thread in state s may have an agent
+// process running: not asleep, closed, removed or failed.
+func hasProcess(s control.State) bool {
+	switch s {
+	case control.Creating, control.Idle, control.Running, control.Waiting:
+		return true
+	}
+	return false
 }
 
 // now is the machine's clock.

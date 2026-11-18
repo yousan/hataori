@@ -30,6 +30,33 @@ func (r *Runner) Terminal(ctx context.Context, id int64, run string, after uint6
 	return out, nil
 }
 
+// Device returns the name of the terminal that session id's agent runs in,
+// as its running host reports it; "" when the session runs on pipes, when
+// no host runs, or when the host does not answer in time.
+func (r *Runner) Device(ctx context.Context, id int64) string {
+	dir := StateDir(r.Root, id)
+	spec, ok, err := host.ReadSpec(dir)
+	if err != nil || !ok || !spec.Terminal || host.Gone(dir) || hostLost(dir) {
+		return ""
+	}
+	c, err := host.Dial(dir)
+	if err != nil {
+		return ""
+	}
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(ctx, deviceTimeout)
+	defer cancel()
+	d, err := c.Device(ctx)
+	if err != nil {
+		return ""
+	}
+	return d
+}
+
+// deviceTimeout bounds how long Device waits for a host, so that a host
+// that does not answer cannot hold up a list of threads.
+const deviceTimeout = time.Second
+
 func (r *Runner) followTerminal(ctx context.Context, dir, run string, after uint64, out chan<- control.TerminalChunk) {
 	defer close(out)
 	send := func(ch control.TerminalChunk) bool {
