@@ -10,8 +10,8 @@ const probeRetry = 2000;
 
 // ThreadPane is a thread's pane: its live terminal, or its events when the
 // session has no terminal.
-export function ThreadPane(props: { x: ThreadInfo; subscribe: (f: (e: Event) => void) => () => void }) {
-  const { x, subscribe } = props;
+export function ThreadPane(props: { x: ThreadInfo; subscribe: (f: (e: Event) => void) => () => void; opens: number }) {
+  const { x, subscribe, opens } = props;
   const [terminal, setTerminal] = useState<boolean | null>(null);
   const { scope, key } = x.id;
 
@@ -42,7 +42,7 @@ export function ThreadPane(props: { x: ThreadInfo; subscribe: (f: (e: Event) => 
           {t("pane.noProcess")}
         </p>
       )}
-      {terminal ? <TerminalView x={x} /> : <EventsView x={x} subscribe={subscribe} />}
+      {terminal ? <TerminalView x={x} /> : <EventsView x={x} subscribe={subscribe} opens={opens} />}
     </div>
   );
 }

@@ -18,8 +18,8 @@ import {
 
 // Attention is why a thread needs attention.
 export type Attention =
-  | { kind: "question"; text?: string }
-  | { kind: "approval"; text?: string }
+  | { kind: "question"; text?: string; choices?: string[] }
+  | { kind: "approval"; text?: string; choices?: string[] }
   | { kind: "failure"; reason?: string };
 
 export interface Live {
@@ -39,6 +39,10 @@ export interface Dashboard {
   // subscribe calls f with each event the stream delivers from now on,
   // until the returned function is called. One stream serves the page.
   subscribe: (f: (e: Event) => void) => () => void;
+  // opens counts the times the stream has opened. A view that reads
+  // history reads it again after each, so that no event between its read
+  // and the stream's start is missed.
+  opens: number;
 }
 
 // refreshDelay gathers the events that come together into one read.
@@ -61,24 +65,24 @@ function needsAttention(t: ThreadInfo): boolean {
 }
 
 // attentionOf reads what a waiting or failed thread is waiting on.
+// A waiting thread whose request the server did not return (one that
+// closed as it was read) has nothing to show yet. A failed thread's reason
+// is that of its latest state change, when that is the change to failed;
+// an older failure's reason is never shown as the current one.
 export function attentionOf(d: ThreadDetail): Attention | undefined {
   if (d.state === "waiting") {
     const r = d.requests?.[0];
-    if (r?.kind === 1) return { kind: "approval", text: r.text };
-    return { kind: "question", text: r?.text };
+    if (!r) return undefined;
+    const choices = r.choices?.map((c) => c.label);
+    if (r.kind === 1) return { kind: "approval", text: r.text, choices };
+    return { kind: "question", text: r.text, choices };
   }
   if (d.state === "failed") {
     const evs = d.events ?? [];
     for (let i = evs.length - 1; i >= 0; i--) {
       const e = evs[i];
-      if (e.kind === "state" && e.data?.to === "failed") {
-        return { kind: "failure", reason: reasonOf(e) };
-      }
-    }
-    for (let i = evs.length - 1; i >= 0; i--) {
-      const e = evs[i];
-      if (e.kind === "turn_ended" && e.data?.outcome === "failure") {
-        return { kind: "failure", reason: reasonOf(e) };
+      if (e.kind === "state") {
+        return { kind: "failure", reason: e.data?.to === "failed" ? reasonOf(e) : undefined };
       }
     }
     return { kind: "failure" };
@@ -118,6 +122,7 @@ export function useDashboard(): Dashboard {
     live: { connected: false, pos: null },
     signedOut: false,
     limits: [],
+    opens: 0,
   });
   const reads = useRef(0);
   const listeners = useRef(new Set<(e: Event) => void>());
@@ -202,7 +207,7 @@ export function useDashboard(): Dashboard {
       last = after;
       source = new EventSource(`${eventsPath}?after=${after}`);
       source.onopen = () => {
-        setState((s) => ({ ...s, live: { ...s.live, connected: true } }));
+        setState((s) => ({ ...s, live: { ...s.live, connected: true }, opens: s.opens + 1 }));
         later(); // what changed while the stream was down
       };
       source.onmessage = (m) => {

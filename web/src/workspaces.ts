@@ -1,7 +1,7 @@
 // useWorkspaces reads the workspace of each thread from the server: when
-// the thread first shows, when its state, turns or last change move, and,
-// while the table is shown, every minute, since a person may change a
-// workspace by hand. Each read runs git on the host, so at most a few run
+// the thread first shows, when its state, turns or last change move, when
+// it is selected, and, while the table or the details panel is shown,
+// every minute, since a person may change a workspace by hand. Each read runs git on the host, so at most a few run
 // at once, and of a thread's reads only the newest answer counts.
 
 import { useEffect, useRef, useState } from "react";
@@ -16,7 +16,7 @@ function moment(x: ThreadInfo): string {
   return `${x.state}|${x.updated}|${x.turns ?? 0}`;
 }
 
-export function useWorkspaces(threads: ThreadInfo[] | null, shown: boolean): ReadonlyMap<number, Workspace> {
+export function useWorkspaces(threads: ThreadInfo[] | null, shown: boolean, selected: number | null): ReadonlyMap<number, Workspace> {
   const [states, setStates] = useState<ReadonlyMap<number, Workspace>>(new Map());
   const read = useRef(new Map<number, string>()); // the moment each thread was last asked at
   const asked = useRef(new Map<number, number>()); // the newest read of each thread
@@ -67,6 +67,11 @@ export function useWorkspaces(threads: ThreadInfo[] | null, shown: boolean): Rea
       }
     }
   }, [threads]);
+
+  useEffect(() => {
+    const x = latest.current.find((y) => y.number === selected);
+    if (x) ask(x);
+  }, [selected]);
 
   useEffect(() => {
     if (!shown) return;
