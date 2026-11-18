@@ -1,0 +1,105 @@
+/* Light and dark themes. No web fonts: the page loads nothing but its own
+   files. */
+
+:root {
+  --bg: #ffffff;
+  --fg: #1f2328;
+  --muted: #59636e;
+  --bar: #f6f8fa;
+  --line: #d1d9e0;
+  --accent: #0969da;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: #0d1117;
+  --fg: #e6edf3;
+  --muted: #9198a1;
+  --bar: #151b23;
+  --line: #3d444d;
+  --accent: #4493f8;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: #0d1117;
+    --fg: #e6edf3;
+    --muted: #9198a1;
+    --bar: #151b23;
+    --line: #3d444d;
+    --accent: #4493f8;
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background: var(--bar);
+  border-bottom: 1px solid var(--line);
+}
+
+.title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.mark {
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 6px;
+}
+
+.theme {
+  margin-left: auto;
+  font: inherit;
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.theme:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.main {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+}
+
+.empty {
+  color: var(--muted);
+}
