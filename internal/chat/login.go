@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -20,8 +21,9 @@ import (
 
 // LoginRelay is the login relay as the front end uses it (relay.Relay).
 type LoginRelay interface {
-	Start(ctx context.Context, caller control.Principal, agentName string) error
-	Code(caller control.Principal, agentName, code string) error
+	// from is the "<client>:<id>" of who asks; the relay resolves it.
+	Start(ctx context.Context, from, agentName string) error
+	Code(from, agentName, code string) error
 }
 
 // maxListed is how many stopped threads the owner's message names.
@@ -107,9 +109,21 @@ func (f *FrontEnd) LoginUpdate(u relay.Update) {
 	}
 }
 
+// ownerConv opens the owner's direct conversation on this service, at the
+// owner's first id here.
+func (f *FrontEnd) ownerConv(ctx context.Context) (surface.Conversation, error) {
+	ids := f.People.IDs(f.People.Owner(), f.Name)
+	if len(ids) == 0 {
+		return surface.Conversation{}, errNoOwnerID
+	}
+	return f.Driver.OpenDirect(ctx, ids[0])
+}
+
+var errNoOwnerID = errors.New("the owner has no id on this service")
+
 // postDirect posts text in the owner's direct conversation.
 func (f *FrontEnd) postDirect(ctx context.Context, text string) {
-	conv, err := f.Driver.OpenDirect(ctx, string(f.Owner))
+	conv, err := f.ownerConv(ctx)
 	if err == nil {
 		_, err = f.Driver.Post(ctx, conv, "", surface.Message{Text: text})
 	}
@@ -120,7 +134,7 @@ func (f *FrontEnd) postDirect(ctx context.Context, text string) {
 
 // direct handles a direct message: from the owner, a code for the relay.
 func (f *FrontEnd) direct(in surface.Inbound) {
-	if control.Principal(in.Author.ID) != f.Owner || in.Author.Kind == surface.Bot {
+	if in.Author.Kind == surface.Bot || !f.owner(in.Author) {
 		if in.Author.Kind != surface.Bot {
 			f.Log.Warn("direct message ignored", "reason", "not from the owner", "author", in.Author.ID)
 		}
@@ -149,7 +163,7 @@ func (f *FrontEnd) direct(in surface.Inbound) {
 		return
 	}
 	// The relay tells how the code went (a refusal, or the end).
-	if err := f.Relay.Code(f.Owner, agent, code); err != nil {
+	if err := f.Relay.Code(f.from(in.Author), agent, code); err != nil {
 		f.Log.Warn("chat: the relay took no code", "agent", agent, "err", err)
 		f.postDirect(f.context(), "The code was not taken: "+err.Error())
 	}
@@ -158,10 +172,10 @@ func (f *FrontEnd) direct(in surface.Inbound) {
 // Choice handles a button: the login message's "New link".
 func (f *FrontEnd) Choice(s surface.Selection) {
 	agent, ok := strings.CutPrefix(s.Token, "login:")
-	if !ok || control.Principal(s.Author.ID) != f.Owner || f.Relay == nil {
+	if !ok || !f.owner(s.Author) || f.Relay == nil {
 		return
 	}
-	if err := f.Relay.Start(f.context(), f.Owner, agent); err != nil {
+	if err := f.Relay.Start(f.context(), f.from(s.Author), agent); err != nil {
 		f.Log.Warn("chat: a new sign-in link failed", "agent", agent, "err", err)
 		f.postDirect(f.context(), "No new link: "+err.Error())
 	}
@@ -332,7 +346,7 @@ func (f *FrontEnd) runLogins(ctx context.Context) {
 func (f *FrontEnd) showOutage(ctx context.Context, o *outage, m surface.Message, shown map[int64]string) error {
 	key := m.Text + "\x00" + fmt.Sprint(len(m.Choices))
 	if o.dm.ID == "" {
-		conv, err := f.Driver.OpenDirect(ctx, string(f.Owner))
+		conv, err := f.ownerConv(ctx)
 		if err != nil {
 			return err
 		}
@@ -362,7 +376,7 @@ func (f *FrontEnd) loginMessage(ctx context.Context, o outage) surface.Message {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s on %s is logged out.\n", o.agent, f.Instance)
 	fmt.Fprintf(&b, "Stopped threads (%d):\n", len(o.threads))
-	api := f.API(control.Caller{Principal: f.Owner, Scopes: f.scopeList(), May: control.OpRead})
+	api := f.API(control.Caller{Principal: f.ownerPrincipal(), Scopes: f.scopeList(), May: control.OpRead})
 	for i, t := range o.threads {
 		if i == maxListed {
 			fmt.Fprintf(&b, "…and %d more.\n", len(o.threads)-maxListed)

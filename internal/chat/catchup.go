@@ -183,7 +183,7 @@ func (f *FrontEnd) toCatchUp(ctx context.Context) ([]surface.Conversation, error
 			}
 		}
 	}
-	api := f.API(control.Caller{Principal: f.Owner, Scopes: f.scopeList(), May: control.OpRead})
+	api := f.API(control.Caller{Principal: f.ownerPrincipal(), Scopes: f.scopeList(), May: control.OpRead})
 	threads, err := api.Threads(ctx, control.Filter{})
 	if err != nil {
 		f.Log.Error("chat: catch-up: listing threads", "err", err)

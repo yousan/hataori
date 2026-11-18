@@ -99,7 +99,8 @@ Names in `drivers`, `adapters` and `scopes[].client` start with a lowercase lett
 Who may act is written by person. A person has a name and ids, one per account on each chat service; a webhook or another automated poster is a person too, with the webhook's id.
 
 - The owner may act in every scope; anyone else only in the scopes whose `people` name them.
-- An author whose id no person lists is a **guest**. A guest's messages never reach the agent: a guest starts no thread, sends no input, answers nothing and stops nothing. Logs show a guest as `<client>:<id>`.
+- An author whose id no person lists is a **guest**. A guest's messages never reach the agent: a guest starts no thread, sends no input, answers nothing and stops nothing, and gets no reply. Each refusal writes one log line, `control call refused` with `reason="a guest"`, the client and the id; a person acting outside their scopes gets `reason="the person may not act in the scope"` and their name.
+- hataori decides this in one place, its core, for every chat service; a second service needs no list of its own, only its ids under the people.
 - Ids are linked to people only here, by whoever edits this file. Nothing said in chat changes who a person is.
 
 **The old form.** A config without `people` is read as before: `owner` is the owner's id, and each scope's `posters` are ids on that scope's client. It is converted when the daemon starts, so it allows the same authors: the owner becomes a person named `owner` with the owner's id on every configured driver, and each poster becomes a person named `<client>/<id>`, allowed in the scopes that list it. The daemon logs one line saying the config uses the old form. To move, add `people`, name the owner by person, and replace each scope's `posters` by `people`:

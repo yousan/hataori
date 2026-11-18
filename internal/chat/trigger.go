@@ -3,6 +3,8 @@ package chat
 import (
 	"strings"
 	"unicode"
+
+	"github.com/yousan/hataori/internal/control"
 )
 
 // order is what a trigger message asks for.
@@ -13,9 +15,8 @@ type order struct {
 	Prompt string
 }
 
-// Efforts are the effort values hataori knows. An agent adapter maps each
-// to what its agent takes.
-var Efforts = []string{"low", "medium", "high", "xhigh", "max"}
+// Efforts are the effort values hataori knows (control.Efforts).
+var Efforts = control.Efforts
 
 // options are the names a trigger line may carry as name:value.
 var options = map[string]bool{"repo": true, "model": true, "effort": true}

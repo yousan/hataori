@@ -25,7 +25,7 @@ import (
 
 // Errors returned by the API. They are wrapped with details.
 var (
-	ErrForbidden = errors.New("not allowed")
+	ErrForbidden = control.ErrForbidden
 	ErrDisabled  = errors.New("scope is not enabled")
 	ErrBusy      = errors.New("a turn is running")
 	ErrNotFound  = errors.New("not found")
@@ -514,6 +514,9 @@ func (a *api) Start(ctx context.Context, r control.StartRequest) (control.Thread
 	if !ok || !sc.Enabled {
 		a.c.Log.Warn("start refused", "scope", r.Scope, "reason", "scope is not enabled")
 		return control.ThreadID{}, fmt.Errorf("core: start in %q: %w", r.Scope, ErrDisabled)
+	}
+	if r.Effort != "" && !slices.Contains(control.Efforts, r.Effort) {
+		return control.ThreadID{}, fmt.Errorf("core: start in %q: effort %q: %w", r.Scope, r.Effort, control.ErrUnknownEffort)
 	}
 	// The key is per scope, so a caller cannot reach another scope's thread
 	// by reusing its key. Starts with one key run one at a time, so the

@@ -24,14 +24,14 @@ type fakeRelay struct {
 	codes  []string
 }
 
-func (r *fakeRelay) Start(_ context.Context, caller control.Principal, agent string) error {
+func (r *fakeRelay) Start(_ context.Context, caller, agent string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.starts = append(r.starts, string(caller)+" "+agent)
 	return nil
 }
 
-func (r *fakeRelay) Code(caller control.Principal, agent, code string) error {
+func (r *fakeRelay) Code(caller, agent, code string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.codes = append(r.codes, string(caller)+" "+agent+" "+code)
@@ -185,7 +185,7 @@ func TestTheOwnersCodeGoesToTheRelayAndTheLinkStaysInTheDirectConversation(t *te
 		t.Fatalf("alert %+v, want the button", m)
 	}
 	f.fe.Message(f.driver.InjectDirect(owner, "CODE-123"))
-	if _, codes := r.got(); len(codes) != 1 || codes[0] != owner+" agent CODE-123" {
+	if _, codes := r.got(); len(codes) != 1 || codes[0] != "chat:"+owner+" agent CODE-123" {
 		t.Fatalf("codes handed to the relay: %v", codes)
 	}
 	f.fe.LoginUpdate(relay.Update{Agent: "agent", Done: relay.LoggedIn})
@@ -282,7 +282,7 @@ func TestExpiredLinkKeepsItsButtonAlsoAfterARestart(t *testing.T) {
 	posts, _ := f.dmPosts()
 	f.fe.Choice(surface.Selection{Ref: posts[0].Ref, Author: fake.Person("someone"), Token: m.Choices[0].Token})
 	f.fe.Choice(surface.Selection{Ref: posts[0].Ref, Author: fake.Person(owner), Token: m.Choices[0].Token})
-	if starts, _ := r.got(); len(starts) != 1 || starts[0] != owner+" agent" {
+	if starts, _ := r.got(); len(starts) != 1 || starts[0] != "chat:"+owner+" agent" {
 		t.Fatalf("relay starts %v", starts)
 	}
 	fresh := link + "&fresh"
@@ -328,7 +328,7 @@ func TestARefusedCodeAndTheNextOne(t *testing.T) {
 	f.fe.Message(f.driver.InjectDirect(owner, "WRONG"))
 	f.fe.LoginUpdate(relay.Update{Agent: "agent", Refused: "Invalid code."})
 	f.fe.Message(f.driver.InjectDirect(owner, "RIGHT"))
-	if _, codes := r.got(); strings.Join(codes, "|") != owner+" agent WRONG|"+owner+" agent RIGHT" {
+	if _, codes := r.got(); strings.Join(codes, "|") != "chat:"+owner+" agent WRONG|chat:"+owner+" agent RIGHT" {
 		t.Fatalf("codes %v", codes)
 	}
 	posts, _ := f.dmPosts()

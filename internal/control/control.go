@@ -8,8 +8,22 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 )
+
+// Errors a client may act on; the core wraps them with details.
+var (
+	// ErrForbidden: the caller may not make the call, such as a guest's
+	// input (design, section 5.1).
+	ErrForbidden = errors.New("not allowed")
+	// ErrUnknownEffort: a Start asked for an effort not in Efforts.
+	ErrUnknownEffort = errors.New("unknown effort")
+)
+
+// Efforts are the effort values hataori knows. An agent adapter maps each
+// to what its agent takes.
+var Efforts = []string{"low", "medium", "high", "xhigh", "max"}
 
 // API is the core's single entry point. Implementations are bound to one
 // Caller and refuse any call the Caller may not make.

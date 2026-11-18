@@ -44,7 +44,7 @@ func (f *FrontEnd) show(ctx context.Context) error {
 	}
 	sort.Strings(scopes)
 	r := &reader{
-		api:   f.API(control.Caller{Principal: f.Owner, Scopes: scopes, May: control.OpRead}),
+		api:   f.API(control.Caller{Principal: f.ownerPrincipal(), Scopes: scopes, May: control.OpRead}),
 		first: map[control.ThreadID]uint64{},
 		turn:  map[control.ThreadID]string{},
 		quiet: map[control.ThreadID]*quiet{},
