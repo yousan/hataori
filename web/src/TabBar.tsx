@@ -1,15 +1,17 @@
 import { useEffect, useRef } from "react";
-import type { ThreadInfo } from "./api";
+import type { HostTerminal, ThreadInfo } from "./api";
+import { hostLabel } from "./hostTerminals";
 import { t } from "./catalog";
 import { age, mark, stateName } from "./format";
 import type { Layout } from "./layout";
-import { allTab, nextSplit, type Split, type TabKey, threadOf } from "./tabs";
+import { allTab, hostOf, nextSplit, type Split, type TabKey, threadOf } from "./tabs";
 import type { Theme } from "./theme";
 
 interface Props {
   open: readonly TabKey[];
   active: TabKey;
   thread: (n: number) => ThreadInfo | undefined;
+  host: (device: string) => HostTerminal | undefined;
   now: number;
   onView: (k: TabKey) => void;
   onClose: (k: TabKey) => void;
@@ -33,18 +35,23 @@ export function tabID(k: TabKey): string {
   return `tab-${k.replace(":", "-")}`;
 }
 
+// A host terminal's tab has no mark, no elapsed time and no badge:
+// hataori judges no state of it.
 function Tab(props: {
   k: TabKey;
   x: ThreadInfo | undefined;
+  h: HostTerminal | undefined;
   active: boolean;
   now: number;
   onView: (k: TabKey) => void;
   onClose: (k: TabKey) => void;
   onKey: (e: React.KeyboardEvent, k: TabKey) => void;
 }) {
-  const { k, x, active, now, onView, onClose, onKey } = props;
+  const { k, x, h, active, now, onView, onClose, onKey } = props;
   const n = threadOf(k);
-  const name = n === null ? t("tabs.all") : x ? x.title : t("thread.number", { n });
+  const device = hostOf(k);
+  const name =
+    n !== null ? (x ? x.title : t("thread.number", { n })) : device !== null ? (h ? hostLabel(h) : device) : t("tabs.all");
   const b = badge(x);
   return (
     <div className={active ? "tab active" : "tab"} data-tab={k} role="presentation">
@@ -81,7 +88,7 @@ function Tab(props: {
 }
 
 export function TabBar(props: Props) {
-  const { open, active, thread, now, onView, onClose, split, onSplit, layout, onLayout, theme, onTheme } = props;
+  const { open, active, thread, host, now, onView, onClose, split, onSplit, layout, onLayout, theme, onTheme } = props;
   const next: Theme = theme === "dark" ? "light" : "dark";
   const bar = useRef<HTMLDivElement>(null);
   const focusing = useRef(false); // the active tab is to take the focus once it shows
@@ -135,11 +142,13 @@ export function TabBar(props: Props) {
       <div className="tabs" role="tablist" aria-label={t("tabs.label")} ref={bar}>
         {open.map((k) => {
           const n = threadOf(k);
+          const device = hostOf(k);
           return (
             <Tab
               key={k}
               k={k}
               x={n === null ? undefined : thread(n)}
+              h={device === null ? undefined : host(device)}
               active={k === active}
               now={now}
               onView={onView}

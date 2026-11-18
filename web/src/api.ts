@@ -91,6 +91,39 @@ export function limits(): Promise<AgentLimits[]> {
 
 export const eventsPath = "/api/events";
 
+// HostTerminal is a terminal on the host that hataori does not own
+// (docs/protocol.md). hataori judges no state of it and sends it nothing.
+export interface HostTerminal {
+  device: string;
+  process?: string;
+  activity?: string;
+  tmux?: {
+    pane: string;
+    session: string;
+    window: string;
+    window_name?: string;
+    index: string;
+    dir?: string;
+    attached: boolean;
+  };
+}
+
+// HostTerminalsOff is thrown when the server does not list the host's
+// terminals: the feature is off, or the caller is not the owner.
+export class HostTerminalsOff extends Error {}
+
+export async function hostTerminals(): Promise<HostTerminal[]> {
+  const r = await fetch("/api/hostterminals", { credentials: "same-origin", cache: "no-store" });
+  if (r.status === 401) throw new SignedOut();
+  if (r.status === 403) throw new HostTerminalsOff();
+  if (!r.ok) throw new Error(`hostterminals: ${r.status}`);
+  return (await r.json()) as HostTerminal[];
+}
+
+export function hostScreenPath(pane: string): string {
+  return `/api/hostscreen?${new URLSearchParams({ pane })}`;
+}
+
 // WorkspaceState is what a thread's workspace holds (docs/protocol.md).
 export interface WorkspaceState {
   branch: string; // empty when no branch is checked out

@@ -13,6 +13,16 @@ function bytes(data: string | undefined): Uint8Array {
   return b;
 }
 
+// openReadOnly makes a terminal in el that sends nothing back: stdin is
+// disabled, so xterm.js turns neither keys, a paste nor its answers to
+// terminal queries into data, and nothing listens for data it would send.
+// Every terminal the page draws is made here.
+export function openReadOnly(el: HTMLElement): Terminal {
+  const term = new Terminal({ disableStdin: true, cursorBlink: false, scrollback: 5000, convertEol: false });
+  term.open(el);
+  return term;
+}
+
 // TerminalView draws a session's live terminal, read-only.
 //
 // Read-only means nothing goes back: the terminal is made with stdin
@@ -27,8 +37,7 @@ export function TerminalView({ x }: { x: ThreadInfo }) {
 
   useEffect(() => {
     if (!host.current) return;
-    const term = new Terminal({ disableStdin: true, cursorBlink: false, scrollback: 5000, convertEol: false });
-    term.open(host.current);
+    const term = openReadOnly(host.current);
     const source = new EventSource(terminalPath({ scope, key }));
     // xterm.js parses what it is given later, while reset and resize act at
     // once: each chunk waits for the bytes before it to be drawn, so a reset

@@ -64,6 +64,7 @@ type hostTerminalRig struct {
 	pane    string   // the pane's id, such as %0
 	device  string   // the pane's terminal
 	outside string   // the terminal outside tmux
+	input   string   // a file holding every byte the pane's command gets as input
 }
 
 func newHostTerminalRig(t *testing.T) hostTerminalRig {
@@ -98,7 +99,11 @@ func newHostTerminalRig(t *testing.T) hostTerminalRig {
 			os.Remove(p)
 		}
 	})
-	tmux("new-session", "-d", "-s", "work", "-n", "editor", "-x", "80", "-y", "24", "sh -c 'echo pane-marker; exec sleep 600'")
+	// The pane's command keeps every byte it gets as input in a file, so a
+	// test sees any that reached it, echoed or not.
+	r.input = filepath.Join(t.TempDir(), "pane-input")
+	tmux("new-session", "-d", "-s", "work", "-n", "editor", "-x", "80", "-y", "24",
+		fmt.Sprintf(`sh -c 'printf "pane-marker 幅の広い文字\n"; exec cat > "%s"'`, r.input))
 	got := strings.Fields(tmux("list-panes", "-a", "-F", "#{pane_id} #{pane_tty}"))
 	if len(got) != 2 {
 		t.Fatalf("panes: %q", got)
