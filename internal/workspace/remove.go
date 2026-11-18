@@ -111,6 +111,9 @@ type Remover struct {
 	Timeout time.Duration
 	// Now is the clock; time.Now when nil.
 	Now func() time.Time
+
+	// objectLimit replaces objectEntryLimit when not 0, for tests.
+	objectLimit int
 }
 
 func (r Remover) now() time.Time {
@@ -858,6 +861,10 @@ func (c *checker) localRemote(u, dir string) (string, Reason) {
 // remote's own file and five more levels.
 const alternateDepth = 5
 
+// objectEntryLimit bounds how many entries one check lists below a
+// remote's objects directories.
+const objectEntryLimit = 1 << 20
+
 // alternates names why the objects git serves for a remote whose paths are
 // reads come from inside a root, or "". For each one it walks the objects
 // directory and the objects/info/alternates git follows from there, in
@@ -867,6 +874,10 @@ const alternateDepth = 5
 // resolved or is not a directory, or a file nested deeper than git reads,
 // is an error: what git serves then cannot be told.
 func (c *checker) alternates(reads []string) (Reason, error) {
+	budget := objectEntryLimit
+	if c.r.objectLimit != 0 {
+		budget = c.r.objectLimit
+	}
 	for _, r := range reads {
 		objects, reason, err := c.walk(r + "/objects")
 		if missing(err) {
@@ -874,8 +885,11 @@ func (c *checker) alternates(reads []string) (Reason, error) {
 		} else if err != nil || reason != "" {
 			return reason, err
 		}
+		if reason, err := c.objectLinks(objects, &budget); err != nil || reason != "" {
+			return reason, err
+		}
 		seen := map[string]bool{objects: true}
-		if reason, err := c.readAlternates(objects, 0, seen); err != nil || reason != "" {
+		if reason, err := c.readAlternates(objects, 0, seen, &budget); err != nil || reason != "" {
 			return reason, err
 		}
 	}
@@ -885,7 +899,7 @@ func (c *checker) alternates(reads []string) (Reason, error) {
 // readAlternates follows objects/info/alternates of the objects directory
 // objects at depth as git does: depth first, each entry linked and its own
 // alternates read before the next, a directory seen before skipped.
-func (c *checker) readAlternates(objects string, depth int, seen map[string]bool) (Reason, error) {
+func (c *checker) readAlternates(objects string, depth int, seen map[string]bool, budget *int) (Reason, error) {
 	file, reason, err := c.walk(objects + "/info/alternates")
 	if missing(err) {
 		return "", nil
@@ -920,11 +934,117 @@ func (c *checker) readAlternates(objects string, depth int, seen map[string]bool
 			continue
 		}
 		seen[alt] = true
-		if reason, err := c.readAlternates(alt, depth+1, seen); err != nil || reason != "" {
+		if reason, err := c.objectLinks(alt, budget); err != nil || reason != "" {
+			return reason, err
+		}
+		if reason, err := c.readAlternates(alt, depth+1, seen, budget); err != nil || reason != "" {
 			return reason, err
 		}
 	}
 	return "", nil
+}
+
+// objectLinks names why a file git may read as an object below the
+// resolved objects directory objects comes from inside a root, or "".
+// git reads every file in pack/ (and, through a multi-pack-index, possibly
+// below it) and in the lower-case fan-out directories, through links;
+// info/ holds the alternates and the commit-graph chain. Each of those
+// directories that is a link, and each link in them, is walked as walk
+// does; pack/ and info/ are looked at all the way down, the fan-out
+// directories only one level and only names a loose object can have, as
+// git reads them. Nothing else is
+// followed. Listing more than budget entries in all is an error: what git
+// reads then is not told.
+func (c *checker) objectLinks(objects string, budget *int) (Reason, error) {
+	seen := map[string]int{}
+	return c.eachEntry(objects, budget, func(e fs.DirEntry) (Reason, error) {
+		name := e.Name()
+		if name != "pack" && name != "info" && !fanOut(name) {
+			return "", nil // git reads nothing there
+		}
+		return c.linksBelow(filepath.Join(objects, name), e, budget, !fanOut(name), seen)
+	})
+}
+
+// linksBelow walks p, the entry e of a directory, when it is a link, and
+// then the links in what it is or leads to, when that is a directory:
+// below it as well when deep. A directory is looked at once at each
+// depth: one first reached from a fan-out directory is looked at again
+// when pack/ or info/ reaches it.
+func (c *checker) linksBelow(p string, e fs.DirEntry, budget *int, deep bool, seen map[string]int) (Reason, error) {
+	dir := p
+	if e.Type()&fs.ModeSymlink != 0 {
+		resolved, reason, err := c.walk(p)
+		if err != nil || reason != "" {
+			return reason, err
+		}
+		dir = resolved
+	}
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return "", err
+	}
+	level := 1
+	if deep {
+		level = 2
+	}
+	if !fi.IsDir() || seen[dir] >= level {
+		return "", nil
+	}
+	seen[dir] = level
+	return c.eachEntry(dir, budget, func(f fs.DirEntry) (Reason, error) {
+		q := filepath.Join(dir, f.Name())
+		switch {
+		case deep && (f.IsDir() || f.Type()&fs.ModeSymlink != 0):
+			return c.linksBelow(q, f, budget, true, seen)
+		case f.Type()&fs.ModeSymlink != 0 && lowerHex(f.Name()):
+			_, reason, err := c.walk(q) // a loose object
+			return reason, err
+		}
+		return "", nil
+	})
+}
+
+// eachEntry calls fn with each entry of dir until it names a reason or
+// fails, reading the directory in batches and counting each entry against
+// budget.
+func (c *checker) eachEntry(dir string, budget *int, fn func(fs.DirEntry) (Reason, error)) (Reason, error) {
+	f, err := os.Open(dir)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	for {
+		batch, err := f.ReadDir(1024)
+		if *budget -= len(batch); *budget < 0 {
+			return "", errors.New("too many entries below the objects directories")
+		}
+		for _, e := range batch {
+			if reason, err := fn(e); err != nil || reason != "" {
+				return reason, err
+			}
+		}
+		if errors.Is(err, io.EOF) {
+			return "", nil
+		} else if err != nil {
+			return "", err
+		}
+		if err := c.ctx.Err(); err != nil {
+			return "", err
+		}
+	}
+}
+
+// fanOut reports a name git reads loose objects from: two lower-case hex
+// digits.
+func fanOut(name string) bool {
+	return len(name) == 2 && lowerHex(name)
+}
+
+// lowerHex reports a name of lower-case hex digits only, as git names
+// fan-out directories and loose objects.
+func lowerHex(name string) bool {
+	return name != "" && strings.IndexFunc(name, func(r rune) bool { return !('0' <= r && r <= '9' || 'a' <= r && r <= 'f') }) < 0
 }
 
 // walk resolves the absolute path p one component at a time, as the
