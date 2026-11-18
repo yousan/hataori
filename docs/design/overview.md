@@ -11,6 +11,7 @@ How to read it:
 - Claims about the agent CLIs were checked on 2026-11-12 against Claude Code 2.1.322 and codex-cli 0.163.0 on Linux, by driving the real programs. Appendix B lists each check.
 - Section 3 first recommended `claude -p`. The maintainer decided against it; sections 3.4 and 3.5 describe the path chosen instead, and the earlier checks stay in the document as the record.
 - OpenClaw facts (section 7.3) come from its documentation for version 2026.10.6, read on 2026-11-12.
+- Slack and Microsoft Teams facts in section 8, and the source notes in Appendix B's Codex rows, come from documentation and source code read on 2026-11-18 (Appendix B); they were not run.
 - Anything marked **(unverified)** was not checked by running it.
 
 ## 1. Summary
@@ -667,19 +668,22 @@ The order below is a recommendation (section 10). Each later phase also has this
 
 **Codex.** The second agent adapter (section 3.4).
 
-**Slack.** Go has no official Slack SDK (official ones are JavaScript, Python and Java); a community library with Socket Mode is assumed **(unverified)**. Socket Mode needs no inbound endpoint.
+**Slack.** Go has no official Slack SDK (official ones are for Java, JavaScript, Python and Deno). The adapter uses `github.com/slack-go/slack` (BSD-2-Clause, actively released; v0.36.0 on 2026-11-14), which Slack lists among community-developed tools, and its `socketmode` package. It covers Socket Mode, Block Kit buttons, `chat.update` (`UpdateMessageContext`), thread replies (`MsgOptionTS`) and the current file upload flow (`UploadFileContext`). Socket Mode needs no inbound endpoint. Catch-up (`Since`) reads `conversations.replies`, which allows 50+ requests per minute (Tier 3) for an app installed as an internal (customer-built) app and for a Marketplace app; a commercially distributed app outside the Marketplace gets 1 request per minute and 15 messages per request, which is too little for catch-up. hataori is therefore installed as an internal app in each workspace. `chat.update` is also Tier 3, so progress-line edits are paced. These facts come from Slack's documentation and the library's source (Appendix B, "Documentation read on 2026-11-18"); the library was not run.
 
-**Microsoft Teams.** Microsoft's bot SDKs are C#, TypeScript and Python; the older Bot Framework SDK is archived. There is nothing for Go, so the adapter is written against the HTTP protocol. By hand **(the list is from memory, unverified)**:
+**Microsoft Teams.** Microsoft's bot SDKs are C#, TypeScript and Python; the older Bot Framework SDK is archived. There is nothing for Go, so the adapter is written against the HTTP protocol. By hand (from Microsoft's documentation, Appendix B, "Documentation read on 2026-11-18"; nothing was run):
 
 - an HTTPS endpoint that receives activities, and validation of the signed token on each one;
 - getting and refreshing the service token for outbound calls;
-- the activity types hataori needs: message, message update, invoke (button press), conversation update;
+- inbound activity types: message, invoke (button press), conversation update **(unverified)**; `messageUpdate` only tells that a person edited a message and is ignored. hataori edits and deletes its own posts with `PUT` and `DELETE` on `/v3/conversations/{conversationId}/activities/{activityId}`;
+- a button press (`invoke`, name `adaptiveCard/action`) is answered in the HTTP response with a status and a JSON body; every activity is answered within 25 seconds;
 - Adaptive Cards for choices;
 - conversation references, so hataori can post without an inbound activity;
-- file upload and download;
-- pacing and retry.
+- catch-up of missed replies through Microsoft Graph (`GET /teams/{team-id}/channels/{channel-id}/messages/{message-id}/replies`), with a Graph token and the `ChannelMessage.Read.Group` permission; the Bot Framework API cannot read messages;
+- receiving every reply in a thread, which needs the `ChannelMessage.Read.Group` resource-specific consent: by default a bot in a channel gets only the messages that @mention it, and Teams never delivers messages written by other bots, even with that consent;
+- files in channel threads through Microsoft Graph (the team's SharePoint storage); the bot's own file flow (file consent card, pre-authorized download URL) works in personal chat only;
+- pacing and retry **(unverified)**.
 
-Unlike Discord and Slack Socket Mode, Teams calls hataori. The host needs a public HTTPS address, which is a deployment decision.
+Teams calls hataori at a public HTTPS address, which is a deployment decision. Teams also has a socket mode (public preview, new bots only, not recommended for production by Microsoft); from Go it needs the SignalR hub protocol written by hand, so hataori does not use it in this phase.
 
 **Plugins.** Section 7.3. Where this goes in the order is open (section 10).
 
@@ -954,15 +958,15 @@ The method list comes from `codex app-server generate-json-schema` of the instal
 | Login | `account/read`: account type `chatgpt`. `account/rateLimits/read` returned both usage windows. |
 | Working directory | `thread/start` with `cwd`: the thread reported that directory and commands ran in it. |
 | Approval | With `approvalPolicy: "untrusted"`, a command produced `item/commandExecution/requestApproval`. `decline` was reported to the model; `accept` ran the command. |
-| Interrupt | `turn/interrupt`: `turn/completed` with `status: "interrupted"` at once. The command and its sandbox wrapper were still running 12 s later, and were gone after the app-server exited. The next `turn/start` worked. |
+| Interrupt | `turn/interrupt`: `turn/completed` with `status: "interrupted"` at once. The command and its sandbox wrapper were still running 12 s later, and were gone after the app-server exited. The next `turn/start` worked. The experimental `thread/backgroundTerminals/clean` asks the app-server to stop a thread's background terminals; whether it stops the command left by `turn/interrupt` is not checked. |
 | Message during a turn | `turn/steer` with the running turn's id was taken into the turn. |
 | Long turn | One turn of 889 s. |
 | Resume | A new app-server with `thread/resume` answered from the old conversation. |
-| Question | The model's question arrived as an agent message with `questions` and `delivery: "async"`, and the turn went on waiting. No `item/tool/requestUserInput` request was seen. |
+| Question | The model's question arrived as an agent message with `questions` and `delivery: "async"`, and the turn went on waiting. No `item/tool/requestUserInput` request was seen. In the default collaboration mode the model asks with `request_user_input_async`: the question is an agent message with `questions` and `delivery: "async"`, and the answer is sent as a user message (`turn/steer` during the turn, `turn/start` after it). `item/tool/requestUserInput` is used only in Plan mode or with the feature `DefaultModeRequestUserInput`. The codec handles both. |
 | Final answer | Agent messages carry `phase`: `commentary` or `final_answer`. |
-| Second client | With `--listen unix://<path>` (the socket's directory must be private to the user), `codex resume --remote unix://<path> <thread>` showed the thread in the terminal UI. A raw client through `app-server proxy` got no reply to `initialize`; the framing it needs was not found. |
+| Second client | With `--listen unix://<path>` (the socket's directory must be private to the user), `codex resume --remote unix://<path> <thread>` showed the thread in the terminal UI. A raw client through `app-server proxy` got no reply to `initialize`. `--listen unix://` serves WebSocket over the Unix socket: a client sends an HTTP upgrade first, then one JSON-RPC message per text frame. Whether `app-server proxy` adds that framing for its stdio side was not checked. |
 
-Not checked: turns of hours; behaviour at a usage limit; two clients driving one thread; turns the agent starts itself.
+Not checked: turns of hours; behaviour at a usage limit; two clients driving one thread; turns the agent starts itself; whether `thread/backgroundTerminals/clean` stops the command left running after `turn/interrupt`.
 
 ### Documentation read on 2026-11-12
 
@@ -972,6 +976,27 @@ Not checked: turns of hours; behaviour at a usage limit; two clients driving one
 - Permissions: trust is keyed on the repository root, and trusting a parent directory does not extend to a repository nested in it.
 - Channels reference: a channel is an MCP server started by Claude Code; `notifications/claude/channel` pushes an event into the session; replies go through a tool the channel offers; permission requests can be relayed; custom channels need `--dangerously-load-development-channels`, which shows a warning dialog and is ignored with `-p`; notifications are not acknowledged.
 - Agent view: `claude --bg` sessions run under a supervisor; `claude agents --json` reports their state; no way to send input to a running session other than interactively is described.
+
+### Documentation read on 2026-11-18
+
+Read for section 8 (Slack, Microsoft Teams) and for the Codex rows above. Nothing here was run.
+
+- Slack tools, https://docs.slack.dev/tools/: official Bolt frameworks for Java, JavaScript and Python, and SDKs for Deno, Java, Node and Python; none for Go.
+- Slack community-developed tools, https://docs.slack.dev/tools/community-developed-tools/: lists `slack-go/slack` under Go.
+- `slack-go/slack` v0.36.0, https://github.com/slack-go/slack/releases/tag/v0.36.0 (published 2026-11-14); licence https://github.com/slack-go/slack/blob/v0.36.0/LICENSE (BSD-2-Clause); Socket Mode client https://github.com/slack-go/slack/tree/v0.36.0/socketmode. In that tag, `UpdateMessageContext` and `MsgOptionTS` are in `chat.go`, and `UploadFileContext` in `files.go` uses `files.getUploadURLExternal` and `files.completeUploadExternal`.
+- Slack interactivity, https://docs.slack.dev/interactivity/handling-user-interaction/: the HTTP acknowledgment of an interaction "must be sent within 3 seconds of receiving the payload", or the user sees an error; the page does not mention Socket Mode.
+- Slack Socket Mode, https://docs.slack.dev/apis/events-api/using-socket-mode/: each envelope, interactive payloads included, is acknowledged by sending back its `envelope_id`; this page states no time limit.
+- Slack `conversations.replies`, https://docs.slack.dev/reference/methods/conversations.replies/, and `chat.update`, https://docs.slack.dev/reference/methods/chat.update/: Tier 3, 50+ per minute.
+- Slack rate limit change for non-Marketplace apps, https://docs.slack.dev/changelog/2025/05/29/rate-limit-changes-for-non-marketplace-apps/: for commercially distributed apps outside the Marketplace, `conversations.history` and `conversations.replies` allow 1 request per minute and at most 15 objects; internal customer-built apps keep 50+ per minute and up to 1,000 objects, and "This change will not impact Marketplace apps."
+- Teams without an SDK, https://learn.microsoft.com/en-us/microsoftteams/platform/agents-in-teams/connect-agent-without-sdk: the token checks on each inbound request (`401` when one fails); the service token by client credentials; update and delete with `PUT` and `DELETE` on `{serviceUrl}/v3/conversations/{conversationId}/activities/{activityId}`; "For an invoke activity (`"type": "invoke"`), return the invoke response as the HTTP response, with its status code and JSON body. For any other activity, return `200 OK` once you've handled it. Respond within 25 seconds."; socket mode is in public preview, only for newly created bots, and an HTTPS endpoint is recommended for production; it is SignalR ("You can't use a plain WebSocket library unless you implement the SignalR hub protocol yourself"), with Microsoft-supported clients for JavaScript and .NET only, one socket per geo (`amer`, `emea`, `apac`), each replaced before its token expires.
+- Teams conversations, https://learn.microsoft.com/en-us/microsoftteams/platform/bots/build-conversational-capability#update-and-delete-messages-sent-from-bot: `messageUpdate` with `eventType: "editMessage"` notifies that a sent message was edited.
+- Bot Framework Connector API reference, https://learn.microsoft.com/en-us/azure/bot-service/rest-api/bot-framework-rest-connector-api-reference: the conversation operations create, send, reply, update and delete activities, list conversations and members, upload attachments and send history; none reads the messages of a conversation.
+- Microsoft Graph, list channel message replies, https://learn.microsoft.com/en-us/graph/api/chatmessage-list-replies: `GET /teams/{team-id}/channels/{channel-id}/messages/{message-id}/replies`; application permission `ChannelMessage.Read.Group` (resource-specific consent), or `ChannelMessage.Read.All`.
+- Teams channel and group conversations, https://learn.microsoft.com/en-us/microsoftteams/platform/bots/how-to/conversations/channel-and-group-conversations, and receiving all messages, https://learn.microsoft.com/en-us/microsoftteams/platform/agents-in-teams/enable-receive-all-chat-messages: by default a bot in a channel gets only the messages that @mention it, not replies to its own messages without one; the resource-specific consent `ChannelMessage.Read.Group` delivers all user messages in the team's channels; "Teams doesn't deliver messages authored by other agents or bots, including the Workflows (Power Automate) bot", even with that consent.
+- Teams files, https://learn.microsoft.com/en-us/microsoftteams/platform/bots/how-to/bots-filesv4: the file accessor works in personal chat ("Not explicitly supported" in group chat and channel); bot file consent in personal chat only; "Send or retrieve files with Graph" in all three; channel files are in the team's SharePoint site; a bot reads a received file from a short-lived, pre-authorized `downloadUrl`.
+- Codex Unix socket transport, https://github.com/openai/codex/blob/main/codex-rs/app-server-transport/src/transport/unix_socket.rs: each connection is accepted with `tokio_tungstenite::accept_hdr_async_with_config`, a WebSocket upgrade; https://github.com/openai/codex/blob/main/codex-rs/app-server-transport/src/transport/websocket.rs reads each text frame as one message.
+- Codex questions: https://github.com/openai/codex/blob/main/codex-rs/protocol/src/config_types.rs (`allows_request_user_input` is true only for `ModeKind::Plan`), https://github.com/openai/codex/blob/main/codex-rs/tools/src/tool_config.rs (or in the default mode with the feature `DefaultModeRequestUserInput`), https://github.com/openai/codex/blob/main/codex-rs/core/src/tools/handlers/request_user_input_async.rs (the `request_user_input_async` tool emits an agent message with `questions` and `delivery: Async`), https://github.com/openai/codex/blob/main/codex-rs/prompts/src/model_messages.rs (its description: "any reply arrives asynchronously as a new user message").
+- Codex methods, https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/src/protocol/common.rs: `thread/backgroundTerminals/clean`, `…/list` and `…/terminate`, each `#[experimental]`, with `threadId` in the params.
 
 ## Appendix C: c-lord bug issues by group
 
@@ -1484,11 +1509,11 @@ Every phase here also has this criterion: the change touches no core package, ex
 ### Slack
 
 - [ ] Phase 1's criteria for start, continue, questions, restart and catch-up pass on Slack.
-- [ ] Interactions are acknowledged within Slack's deadline while the work continues.
+- [ ] Each Socket Mode envelope, including a button press, is acknowledged with its `envelope_id` within 3 seconds while the work continues. (3 seconds is Slack's deadline for acknowledging an interaction over HTTP; that Socket Mode has the same deadline is **(unverified)**.)
 
 ### Microsoft Teams
 
-- [ ] Phase 1's criteria for start, continue, questions, restart and catch-up pass on Teams.
+- [ ] Phase 1's criteria for start, continue, questions, restart and catch-up pass on Teams, with every order that phase 1 sends through a webhook sent instead through the control API (`hataori spawn`, `hataori send`) and by a person in the channel. Teams never delivers posts by other bots to hataori, so none of these criteria depends on one; posts through a webhook are assumed to be the same **(unverified)**.
 - [ ] An activity with an invalid or missing token is rejected.
 
 ### Plugins
