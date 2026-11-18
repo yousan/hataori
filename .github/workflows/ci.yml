@@ -66,7 +66,9 @@ jobs:
       - run: npm run build
       - name: the committed build is the fresh one
         run: |
-          changed="$(git status --porcelain --untracked-files=all -- ../internal/dashboard/page)"
+          # Ignored files too: one the build writes but Git ignores would be
+          # missing from a clean checkout's binary.
+          changed="$(git status --porcelain --untracked-files=all --ignored=matching -- ../internal/dashboard/page)"
           if [ -n "$changed" ]; then
             echo "internal/dashboard/page differs from a fresh build of web/."
             echo "Build it with Node $(cat .nvmrc) (npm ci && npm run build) and commit the result:"

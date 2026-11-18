@@ -1,11 +1,9 @@
-import { useEffect, useState } from "react";
 import { t } from "./catalog";
-import { applyTheme, initialTheme, type Theme } from "./theme";
+import { type Theme, useTheme } from "./theme";
 
 // App is the page's empty shell. The panels come with their own issues.
 export function App() {
-  const [theme, setTheme] = useState<Theme>(initialTheme);
-  useEffect(() => applyTheme(theme), [theme]);
+  const [theme, setTheme] = useTheme();
   const next: Theme = theme === "dark" ? "light" : "dark";
 
   return (
