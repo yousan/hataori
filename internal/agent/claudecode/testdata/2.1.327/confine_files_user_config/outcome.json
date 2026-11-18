@@ -1,0 +1,10 @@
+{
+ "variant": "files",
+ "cwd": "/tmp/capture-work",
+ "outside": "/tmp/capture-work",
+ "session": "00000000-0000-4000-8000-000000000330",
+ "answer": "Edit\nGlob\nGrep\nRead\nWrite\nmcp__sv__ping\n\nI have no skills. Some tools may be deferred and not yet loaded, so this list may be incomplete.",
+ "calls": [],
+ "files_in_cwd": [],
+ "files_outside": []
+}

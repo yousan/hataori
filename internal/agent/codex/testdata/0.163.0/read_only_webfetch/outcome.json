@@ -1,0 +1,29 @@
+{
+ "sandbox": "read-only",
+ "config": [],
+ "cwd": "/tmp/capture-work",
+ "outside": "/tmp/capture-work",
+ "thread_sandbox": {
+  "type": "readOnly",
+  "networkAccess": false
+ },
+ "thread_approval": "never",
+ "items": [
+  {
+   "type": "userMessage"
+  },
+  {
+   "type": "commandExecution",
+   "command": "/usr/bin/zsh -lc 'curl -L https://example.com/'",
+   "exitCode": 6,
+   "status": "failed",
+   "output": "  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current\n                                 Dload  Upload   Total   Spent    Left  Speed\n\r  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0curl: (6) Could not resolve host: example.com\n"
+  },
+  {
+   "type": "agentMessage",
+   "text": "curl: (6) Could not resolve host: example.com"
+  }
+ ],
+ "files_in_cwd": [],
+ "files_outside": []
+}

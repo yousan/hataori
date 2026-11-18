@@ -1,0 +1,37 @@
+{
+ "sandbox": "workspace-write",
+ "config": [
+  "-c",
+  "sandbox_workspace_write.exclude_slash_tmp=true",
+  "-c",
+  "sandbox_workspace_write.exclude_tmpdir_env_var=true"
+ ],
+ "cwd": "/tmp/capture-work",
+ "outside": "/tmp/capture-work",
+ "thread_sandbox": {
+  "type": "workspaceWrite",
+  "writableRoots": [],
+  "networkAccess": false,
+  "excludeTmpdirEnvVar": true,
+  "excludeSlashTmp": true
+ },
+ "thread_approval": "never",
+ "items": [
+  {
+   "type": "userMessage"
+  },
+  {
+   "type": "commandExecution",
+   "command": "/usr/bin/zsh -lc 'echo confined'",
+   "exitCode": 0,
+   "status": "completed",
+   "output": "confined\n"
+  },
+  {
+   "type": "agentMessage",
+   "text": "confined"
+  }
+ ],
+ "files_in_cwd": [],
+ "files_outside": []
+}
