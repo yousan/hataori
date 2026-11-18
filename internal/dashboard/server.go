@@ -39,7 +39,7 @@ const SignInPath = "/signin"
 // Config is how one instance serves its dashboard.
 type Config struct {
 	// Listen is the TCP address to listen on; DefaultListen when empty. An
-	// address that is not loopback needs TLS or Proxy.
+	// address that is not loopback needs TLS, also behind a proxy.
 	Listen string
 	// URL is the address people open, such as "https://dash.example.com".
 	// Sign-in links start with it, and a request whose Host or Origin is
@@ -49,7 +49,8 @@ type Config struct {
 	TLS *tls.Certificate
 	// Proxy is the IP address of a reverse proxy in front that serves the
 	// dashboard over TLS at URL. A connection from any other address is
-	// refused.
+	// refused. Without TLS here, the proxy must be on this machine: Listen
+	// is then loopback.
 	Proxy string
 
 	LinkTTL    time.Duration // how long a sign-in link works; 5 minutes when zero
@@ -119,8 +120,15 @@ func Listen(cfg Config, api control.API, log *slog.Logger) (*Server, error) {
 			return nil, configError("proxy", "%q is not an IP address: name the address the reverse proxy connects from", cfg.Proxy)
 		}
 	}
-	if !isLoopback(host) && cfg.TLS == nil && cfg.Proxy == "" {
-		return nil, configError("listen", "%q is not a loopback address, and the dashboard is served neither with TLS (%q and %q) nor behind a reverse proxy (%q): it would send sign-in links and sessions in the clear",
+	// A reverse proxy speaking plain HTTP to the dashboard is allowed only on
+	// this machine: on any other hop the links and sessions would cross the
+	// network in the clear, so a proxy elsewhere needs the dashboard's TLS too.
+	if !isLoopback(host) && cfg.TLS == nil {
+		if cfg.Proxy != "" {
+			return nil, configError("listen", "%q is not a loopback address: a reverse proxy (%q) on another machine would get sign-in links and sessions in the clear; listen on loopback with the proxy on this machine, or serve with TLS (%q and %q)",
+				listen, "dashboard.proxy", "dashboard.tls_cert", "dashboard.tls_key")
+		}
+		return nil, configError("listen", "%q is not a loopback address, and the dashboard is served neither with TLS (%q and %q) nor behind a reverse proxy on this machine (%q): it would send sign-in links and sessions in the clear",
 			listen, "dashboard.tls_cert", "dashboard.tls_key", "dashboard.proxy")
 	}
 	if cfg.URL != "" {
@@ -330,6 +338,11 @@ func (s *Server) refuse(w http.ResponseWriter, r *http.Request, code int, why st
 // signIn turns a sign-in link into a session. The link is used up whether
 // or not it was still valid.
 func (s *Server) signIn(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodHead { // a link checker must not use the link up
+		w.Header().Set("Allow", "GET")
+		http.Error(w, "open the link with GET", http.StatusMethodNotAllowed)
+		return
+	}
 	if !s.take(s.links, r.URL.Query().Get("t")) {
 		http.Error(w, "this sign-in link was used or has expired: ask for a new one", http.StatusUnauthorized)
 		return

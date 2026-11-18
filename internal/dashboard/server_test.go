@@ -165,6 +165,16 @@ func TestALinkWorksOnce(t *testing.T) {
 	if resp := do(t, s, req{path: "/signin"}); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("no token: %s, want 401", resp.Status)
 	}
+
+	// A HEAD, such as a link checker's, does not use a link up.
+	link, _ = s.NewLink(context.Background())
+	p = pathOf(t, link)
+	if resp := do(t, s, req{method: http.MethodHead, path: p}); resp.StatusCode != http.StatusMethodNotAllowed || len(resp.Cookies()) != 0 {
+		t.Fatalf("HEAD: %s, cookies %v", resp.Status, resp.Cookies())
+	}
+	if resp := do(t, s, req{path: p}); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("GET after a HEAD: %s", resp.Status)
+	}
 }
 
 func TestAnExpiredLinkIsRefused(t *testing.T) {
@@ -245,6 +255,8 @@ func TestNotLoopbackNeedsTLSOrAProxy(t *testing.T) {
 		{Config{Listen: "127.0.0.1:0", URL: "https://dash.example.com"}, "is https"},
 		{Config{Listen: "127.0.0.1:0", URL: "https://dash.example.com/path"}, "is not an address"},
 		{Config{Listen: "nonsense"}, "is not a host and port"},
+		// A proxy on another machine would get links and sessions in the clear.
+		{Config{Listen: "0.0.0.0:0", Proxy: "192.0.2.1", URL: "https://dash.example.com"}, "on another machine"},
 	} {
 		if _, err := Listen(c.cfg, nil, slog.Default()); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%+v: %v, want %q", c.cfg, err, c.want)

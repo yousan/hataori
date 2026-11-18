@@ -150,11 +150,11 @@ The section may be empty (`{}`): the dashboard then listens on `127.0.0.1:7466`.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `listen` | string | `"127.0.0.1:7466"` | The host and port to listen on. An address that is not loopback needs `tls_cert` and `tls_key`, or `proxy`; without them the daemon does not start. |
+| `listen` | string | `"127.0.0.1:7466"` | The host and port to listen on. An address that is not loopback needs `tls_cert` and `tls_key`, also behind a proxy; without them the daemon does not start. |
 | `url` | string | made from `listen` | The address people open, such as `"https://dash.example.com"`: a scheme and a host, nothing else. Sign-in links start with it, and a request whose `Host` or `Origin` is any other address is refused. Required with `proxy`, or when `listen` names every address. |
 | `tls_cert` | string | empty | The name of a PEM certificate file in `<root>/config/`. With `tls_key`, the dashboard serves HTTPS itself. |
 | `tls_key` | string | empty | The name of its PEM private key file in `<root>/config/`. |
-| `proxy` | string | empty | The IP address of a reverse proxy in front that serves the dashboard over HTTPS at `url`. Connections from any other address are refused. The proxy must pass the `Host` it was asked for. |
+| `proxy` | string | empty | The IP address of a reverse proxy in front that serves the dashboard over HTTPS at `url`. Connections from any other address are refused. The proxy must pass the `Host` it was asked for. Without `tls_cert` and `tls_key` the proxy must run on this machine, with `listen` on loopback, so that links and sessions never cross the network in the clear. |
 
 Only `GET` and `HEAD` are served. The session cookie cannot be read by scripts, and it is sent only over HTTPS when the dashboard is served with TLS or behind the proxy.
 
