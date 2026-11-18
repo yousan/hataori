@@ -24,6 +24,7 @@ import (
 //	GET /api/terminal?scope=S&key=K           a stream of TerminalChunk (Server-Sent Events)
 //	GET /api/hostscreen?pane=P                a stream of a tmux pane's screen (Server-Sent Events)
 //	GET /api/limits                           [AgentLimits]
+//	GET /api/workspace?scope=S&key=K          WorkspaceState
 //
 // The event stream sends each event as one message whose id is the event's
 // position, and the caught_up mark as a message of type caught_up. A page
@@ -35,6 +36,10 @@ const (
 	ThreadPath  = "/api/thread"
 	EventsPath  = "/api/events"
 	LimitsPath  = "/api/limits"
+	// WorkspacePath answers with the thread's WorkspaceState. A thread
+	// outside the caller's scopes answers as one that does not exist, and a
+	// workspace that cannot be read is an error, never zeros.
+	WorkspacePath = "/api/workspace"
 )
 
 // Defaults and caps of /api/thread.
@@ -75,6 +80,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET "+TerminalPath, s.terminal)
 	s.mux.HandleFunc("GET "+HostScreenPath, s.hostScreen)
 	s.mux.HandleFunc("GET "+LimitsPath, s.limits)
+	s.mux.HandleFunc("GET "+WorkspacePath, s.workspace)
 }
 
 func (s *Server) limits(w http.ResponseWriter, r *http.Request) {
@@ -87,6 +93,33 @@ func (s *Server) limits(w http.ResponseWriter, r *http.Request) {
 		ls = []control.AgentLimits{}
 	}
 	writeJSON(w, ls)
+}
+
+// workspaceTimeout bounds how long the route waits for git in a workspace:
+// a stalled command answers as a workspace that cannot be read.
+const workspaceTimeout = 10 * time.Second
+
+func (s *Server) workspace(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	id := control.ThreadID{Scope: q.Get("scope"), Key: q.Get("key")}
+	if id.Scope == "" || id.Key == "" {
+		http.Error(w, "scope and key are required", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), workspaceTimeout)
+	defer cancel()
+	st, err := api(r).Workspace(ctx, id)
+	switch {
+	case errors.Is(err, control.ErrForbidden) || errors.Is(err, errNotFound):
+		// The same answer for both, so a thread outside the caller's
+		// scopes cannot be told from no thread.
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+	case err != nil:
+		s.Log.Warn("dashboard workspace", "scope", id.Scope, "key", id.Key, "err", err)
+		http.Error(w, "the workspace cannot be read", http.StatusInternalServerError)
+	default:
+		writeJSON(w, st)
+	}
 }
 
 // apiError answers err with its status: 403 for a call the caller may not
