@@ -69,7 +69,7 @@ func newBrowser(t *testing.T) *browser {
 	}
 	cmd := exec.Command(chromePath(t), "--headless=new", "--no-sandbox", "--disable-gpu", "--no-first-run",
 		"--no-default-browser-check", "--disable-background-networking", "--disable-extensions",
-		"--user-data-dir="+dir, "--remote-debugging-port=0", "about:blank")
+		"--window-size=1400,900", "--user-data-dir="+dir, "--remote-debugging-port=0", "about:blank")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // the browser and its helpers, in one group
 	if err := cmd.Start(); err != nil {
 		os.RemoveAll(dir)
