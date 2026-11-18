@@ -175,6 +175,14 @@ func (x *reader) commitStep() batch {
 // does after a restart, with codec, and warms it.
 func (x *reader) rebuild(codec agent.Codec) *live {
 	x.t.Helper()
+	lv := x.load(codec)
+	x.r.warm(lv)
+	return lv
+}
+
+// load makes the session's live state from the store, with codec.
+func (x *reader) load(codec agent.Codec) *live {
+	x.t.Helper()
 	lv := &live{id: x.lv.id, dir: x.lv.dir, codec: codec, files: map[string]int64{}}
 	db := x.r.Store.DB
 	if err := db.QueryRow(`SELECT log_offset, log_start FROM sessions WHERE id = ?`, lv.id).Scan(&lv.offset, &lv.start); err != nil {
@@ -191,7 +199,6 @@ func (x *reader) rebuild(codec agent.Codec) *live {
 		lv.files[p] = o
 	}
 	rows.Close()
-	x.r.warm(lv)
 	return lv
 }
 
@@ -229,6 +236,44 @@ func TestRebuiltCodecHoldsTheCommittedRequests(t *testing.T) {
 	lv := x.rebuild(claudeCodec(t))
 	if _, err := lv.codec.Answer(agent.Answer{Request: "c4", Choices: []string{"red"}}); err != nil {
 		t.Fatalf("the rebuilt codec does not hold the open question: %v", err)
+	}
+}
+
+// After a sleep the woken agent's codec reads only what came after the
+// skip; a codec rebuilt later is given the same, not the lines of the agent
+// put to sleep nor those written while it was stopped.
+func TestWarmAfterASleepGivesOnlyTheWokenAgentsLines(t *testing.T) {
+	x := storedReader(t, fakeTerminalCodec(t))
+	transcript := filepath.Join(x.lv.dir, "transcript.jsonl")
+	x.hooks(hookLine("h1", `{"t":"ready","session":"s","transcript":"`+transcript+`"}`),
+		hookLine("h2", `{"t":"turn","by":"caller"}`))
+	x.appendTo(transcript, []byte(`{"t":"text","text":"one"}`))
+	x.commitStep()
+	// Written while the session was put to sleep, then skipped.
+	x.appendTo(transcript, []byte(`{"t":"text","text":"skipped"}`))
+	x.hooks(hookLine("h3", `{"t":"end","status":"completed"}`))
+	if err := x.r.skipRest(context.Background(), x.lv.id, x.lv.dir); err != nil {
+		t.Fatal(err)
+	}
+	// The woken agent, with a new codec.
+	x.lv = x.load(fakeTerminalCodec(t))
+	x.hooks(hookLine("h4", `{"t":"ready","session":"s","transcript":"`+transcript+`"}`),
+		hookLine("h5", `{"t":"turn","by":"caller"}`))
+	x.appendTo(transcript, []byte(`{"t":"text","text":"two"}`))
+	x.commitStep()
+
+	rec := &lineRecorder{Codec: fakeTerminalCodec(t)}
+	x.rebuild(rec)
+	var got []string
+	for _, l := range rec.got {
+		for _, w := range []string{"h1", "h2", "h3", "h4", "h5", "one", "skipped", "two"} {
+			if strings.Contains(l, `"`+w+`"`) {
+				got = append(got, w)
+			}
+		}
+	}
+	if want := "two h4 h5"; strings.Join(got, " ") != want {
+		t.Fatalf("replayed %q, want %q", strings.Join(got, " "), want)
 	}
 }
 

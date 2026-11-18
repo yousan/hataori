@@ -234,7 +234,8 @@ func TestTriggerThreadsKeptOnUpgrade(t *testing.T) {
 }
 
 // A database from before session_reads opens, keeps its sessions and
-// offsets, and takes ranges after the step.
+// offsets, its followed files start at 0 as they were read then, and it
+// takes ranges after the step.
 func TestSessionReadsAddedOnUpgrade(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "db")
@@ -264,9 +265,9 @@ func TestSessionReadsAddedOnUpgrade(t *testing.T) {
 	if v, _ := s.Version(ctx); v != len(migrations) {
 		t.Fatalf("version %d, want %d", v, len(migrations))
 	}
-	var log, file int64
-	if err := s.DB.QueryRowContext(ctx, `SELECT log_offset, (SELECT offset FROM session_files WHERE session_id = 1) FROM sessions WHERE id = 1`).Scan(&log, &file); err != nil || log != 120 || file != 300 {
-		t.Fatalf("offsets %d %d (%v), want 120 300", log, file, err)
+	var log, file, start int64
+	if err := s.DB.QueryRowContext(ctx, `SELECT log_offset, f.offset, f.start FROM sessions, session_files f WHERE id = 1 AND f.session_id = 1`).Scan(&log, &file, &start); err != nil || log != 120 || file != 300 || start != 0 {
+		t.Fatalf("offsets %d %d, file start %d (%v), want 120 300 0", log, file, start, err)
 	}
 	var n int
 	if err := s.DB.QueryRowContext(ctx, `SELECT count(*) FROM session_reads`).Scan(&n); err != nil || n != 0 {

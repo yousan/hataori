@@ -323,10 +323,16 @@ func (r *Runner) skipRest(ctx context.Context, id int64, dir string) error {
 		}
 		rows.Close()
 		for _, p := range paths {
-			if _, err := tx.ExecContext(ctx, `UPDATE session_files SET offset = ? WHERE session_id = ? AND path = ?`,
-				end(p), id, p); err != nil {
+			n := end(p)
+			if _, err := tx.ExecContext(ctx, `UPDATE session_files SET offset = ?, start = ? WHERE session_id = ? AND path = ?`,
+				n, n, id, p); err != nil {
 				return err
 			}
+		}
+		// The ranges read so far are the last agent's; the next one's codec
+		// is given none of them.
+		if _, err := tx.ExecContext(ctx, `DELETE FROM session_reads WHERE session_id = ?`, id); err != nil {
+			return err
 		}
 		return nil
 	})
@@ -676,14 +682,15 @@ func saveRead(ctx context.Context, tx *store.Tx, session int64, b batch) error {
 
 // warm feeds the codec what was read before the stored offsets, in the
 // order the steps read it (session_reads). Lines that no stored range
-// covers, read before ranges were stored, come first: the host's log from
-// where the current agent's lines begin, then each followed file from its
-// start, as they were replayed then. Ranges of the log before that are an
-// earlier agent's and are not given.
+// covers, read before ranges were stored, come first: the host's log, then
+// each followed file, each from where the current agent's lines begin in
+// it, as they were replayed then. What is before that is an earlier
+// agent's, or was skipped while the session was put to sleep, and is not
+// given.
 // It returns the replies to hook calls it produced: one that was never sent
 // because the daemon died first still has its call waiting at the host.
 func (r *Runner) warm(lv *live) []agent.HookReply {
-	reads, err := r.storedReads(lv)
+	starts, reads, err := r.storedReads(lv)
 	if err != nil {
 		// Without the ranges the order is not known; the lines are still
 		// given, in the order used before ranges were stored.
@@ -723,7 +730,7 @@ func (r *Runner) warm(lv *live) []agent.HookReply {
 	file := func([]byte) agent.Source { return agent.File }
 	give(source, content(logPath), lv.start, upTo("", lv.offset))
 	for p, off := range lv.files {
-		give(file, content(p), 0, upTo(p, off))
+		give(file, content(p), starts[p], upTo(p, off))
 	}
 	for _, rd := range reads {
 		if rd.path == "" {
@@ -735,31 +742,46 @@ func (r *Runner) warm(lv *live) []agent.HookReply {
 	return replies
 }
 
-// storedReads returns the session's stored ranges in order, those of the
-// log only from where the current agent's lines begin, and none past the
-// stored offsets.
-func (r *Runner) storedReads(lv *live) ([]readRange, error) {
-	rows, err := r.Store.DB.Query(`SELECT path, start, end FROM session_reads WHERE session_id = ? ORDER BY n`, lv.id)
+// storedReads returns where the current agent's lines begin in each
+// followed file, and the session's stored ranges in order, only from where
+// the current agent's lines begin and none past the stored offsets.
+func (r *Runner) storedReads(lv *live) (map[string]int64, []readRange, error) {
+	starts := map[string]int64{"": lv.start}
+	rows, err := r.Store.DB.Query(`SELECT path, start FROM session_files WHERE session_id = ?`, lv.id)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	for rows.Next() {
+		var p string
+		var s int64
+		if err := rows.Scan(&p, &s); err != nil {
+			rows.Close()
+			return nil, nil, err
+		}
+		starts[p] = s
+	}
+	rows.Close()
+	rows, err = r.Store.DB.Query(`SELECT path, start, end FROM session_reads WHERE session_id = ? ORDER BY n`, lv.id)
+	if err != nil {
+		return nil, nil, err
 	}
 	defer rows.Close()
 	var out []readRange
 	for rows.Next() {
 		var rd readRange
 		if err := rows.Scan(&rd.path, &rd.start, &rd.end); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		limit, ok := lv.offset, rd.path == ""
 		if !ok {
 			limit, ok = lv.files[rd.path]
 		}
-		if !ok || (rd.path == "" && rd.start < lv.start) || rd.end > limit {
+		if !ok || rd.start < starts[rd.path] || rd.end > limit {
 			continue
 		}
 		out = append(out, rd)
 	}
-	return out, rows.Err()
+	return starts, out, rows.Err()
 }
 
 // hostLost reports whether the host of dir is gone without recording an

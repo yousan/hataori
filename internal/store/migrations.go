@@ -259,6 +259,10 @@ var migrations = []Migration{
 			end        INTEGER NOT NULL,
 			PRIMARY KEY (session_id, n)
 		)`,
+		// Where the current agent's lines begin in a followed file, as
+		// sessions.log_start for the log: a woken agent's codec does not read
+		// what its file held before.
+		`ALTER TABLE session_files ADD COLUMN start INTEGER NOT NULL DEFAULT 0`,
 	)},
 }
 
