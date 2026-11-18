@@ -26,7 +26,7 @@ func (dying) Deliver(context.Context, int64, int64, control.Input) error { retur
 func (dying) Answer(context.Context, int64, int64, string, control.Answer) error {
 	return die()
 }
-func (dying) Resume(context.Context, int64, control.Principal, string, control.Input) error {
+func (dying) Resume(context.Context, int64, control.Principal, string, string, control.Input) error {
 	return die()
 }
 

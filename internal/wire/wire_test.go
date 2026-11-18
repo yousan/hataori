@@ -27,7 +27,7 @@ func (nopRunner) Interrupt(context.Context, int64) error                     { r
 func (nopRunner) Answer(context.Context, int64, int64, string, control.Answer) error {
 	return nil
 }
-func (nopRunner) Resume(context.Context, int64, control.Principal, string, control.Input) error {
+func (nopRunner) Resume(context.Context, int64, control.Principal, string, string, control.Input) error {
 	return nil
 }
 

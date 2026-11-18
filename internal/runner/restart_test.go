@@ -289,6 +289,13 @@ func TestDaemonKilledAroundTheFirstInput(t *testing.T) {
 				if got["turn_started"] != 1 || got["turn_ended"] != 1 || got["text"] != 1 {
 					t.Errorf("events %v", got)
 				}
+				// The turn names who gave the input, also when the input was
+				// handed over by the daemon that came after.
+				var principal, from string
+				st.DB.QueryRow(`SELECT principal, from_id FROM turns`).Scan(&principal, &from)
+				if principal != "owner" || from != ownerFrom {
+					t.Errorf("the turn records %q from %q, want owner from %s", principal, from, ownerFrom)
+				}
 			})
 		}
 	})

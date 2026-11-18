@@ -80,7 +80,8 @@ type Runner interface {
 	// Resume starts the agent of an asleep session again with its
 	// conversation, and sends it in as a Send of principal and key once it
 	// reports that it is ready.
-	Resume(ctx context.Context, sessionID int64, principal control.Principal, key string, in control.Input) error
+	// from is the "<client>:<id>" the input came from, if relayed.
+	Resume(ctx context.Context, sessionID int64, principal control.Principal, from, key string, in control.Input) error
 }
 
 // Launch is what Runner.Start needs.
@@ -92,6 +93,7 @@ type Launch struct {
 	Model     string
 	Effort    string
 	Principal control.Principal
+	From      string // the "<client>:<id>" the input came from, if relayed
 	Key       string
 	Input     control.Input
 	// Context is what the thread said before, for a session that replaces
@@ -107,6 +109,7 @@ type Launch struct {
 // launches the agent, and keeps the input until a turn reports its id.
 type FirstInput struct {
 	Principal control.Principal `json:"principal"`
+	From      string            `json:"from,omitempty"`
 	Key       string            `json:"key"`
 	Text      string            `json:"text"`
 	Sent      bool              `json:"sent,omitempty"`    // the turn was started for it, and it was handed to the codec
@@ -553,7 +556,7 @@ func (a *api) Start(ctx context.Context, r control.StartRequest) (control.Thread
 			return fmt.Errorf("core: create thread: %w", err)
 		}
 		thread, _ := res.LastInsertId()
-		fi, _ := json.Marshal(FirstInput{Principal: a.caller.Principal, Key: r.Key, Text: r.Input.Text})
+		fi, _ := json.Marshal(FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: r.Key, Text: r.Input.Text})
 		res, err = tx.ExecContext(ctx,
 			`INSERT INTO sessions (thread_id, agent, state, model, effort, first_input, launch, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
@@ -562,8 +565,12 @@ func (a *api) Start(ctx context.Context, r control.StartRequest) (control.Thread
 			return fmt.Errorf("core: create session: %w", err)
 		}
 		sessionID, _ = res.LastInsertId()
-		data, _ := json.Marshal(map[string]any{"thread": thread, "session": sessionID, "repo": r.Repo,
-			"principal": string(a.caller.Principal), "model": model, "effort": effort})
+		d := map[string]any{"thread": thread, "session": sessionID, "repo": r.Repo,
+			"principal": string(a.caller.Principal), "model": model, "effort": effort}
+		if a.caller.From != "" {
+			d["from"] = a.caller.From
+		}
+		data, _ := json.Marshal(d)
 		_, err = tx.Append(ctx, control.Event{Thread: id, Kind: "thread_created", Data: data})
 		return err
 	})
@@ -576,7 +583,7 @@ func (a *api) Start(ctx context.Context, r control.StartRequest) (control.Thread
 	}
 
 	if err := a.c.launch(ctx, Launch{Session: sessionID, Thread: id, Agent: a.c.Agent,
-		Model: model, Effort: effort, Principal: a.caller.Principal, Key: r.Key, Input: r.Input}, r.Repo); err != nil {
+		Model: model, Effort: effort, Principal: a.caller.Principal, From: a.caller.From, Key: r.Key, Input: r.Input}, r.Repo); err != nil {
 		return id, err
 	}
 	return id, nil
@@ -587,7 +594,7 @@ func (a *api) Start(ctx context.Context, r control.StartRequest) (control.Thread
 func (c *Core) launch(ctx context.Context, l Launch, repo string) error {
 	var err error
 	record := func(f FirstInput) error {
-		f.Principal, f.Key, f.Text, f.Context = l.Principal, l.Key, l.Input.Text, l.Context
+		f.Principal, f.From, f.Key, f.Text, f.Context = l.Principal, l.From, l.Key, l.Input.Text, l.Context
 		fi, _ := json.Marshal(f)
 		_, err := c.Store.DB.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, string(fi), l.Session)
 		return err
@@ -623,8 +630,8 @@ func (c *Core) launch(ctx context.Context, l Launch, repo string) error {
 
 // resume starts the agent of a woken session. A failure is recorded as the
 // session's end.
-func (c *Core) resume(ctx context.Context, sid int64, principal control.Principal, key string, in control.Input) error {
-	if err := c.Runner.Resume(ctx, sid, principal, key, in); err != nil {
+func (c *Core) resume(ctx context.Context, sid int64, principal control.Principal, from, key string, in control.Input) error {
+	if err := c.Runner.Resume(ctx, sid, principal, from, key, in); err != nil {
 		if ferr := c.Machine.Apply(ctx, sid, session.Input{Kind: session.Exit, Reason: "resume: " + err.Error()}); ferr != nil {
 			c.Log.Error("recording a failed resume", "session", sid, "err", ferr)
 		}
@@ -666,9 +673,9 @@ func (c *Core) Recover(ctx context.Context) error {
 	for _, x := range found {
 		in := control.Input{Text: x.f.Text}
 		if x.f.Wake {
-			err = c.resume(ctx, x.l.Session, x.f.Principal, x.f.Key, in)
+			err = c.resume(ctx, x.l.Session, x.f.Principal, x.f.From, x.f.Key, in)
 		} else {
-			x.l.Dir, x.l.Principal, x.l.Key, x.l.Input, x.l.Context = x.f.Dir, x.f.Principal, x.f.Key, in, x.f.Context
+			x.l.Dir, x.l.Principal, x.l.From, x.l.Key, x.l.Input, x.l.Context = x.f.Dir, x.f.Principal, x.f.From, x.f.Key, in, x.f.Context
 			x.l.placed = x.f.Placed
 			err = c.launch(ctx, x.l, x.repo)
 		}
@@ -828,7 +835,7 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 			if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Wake}); err != nil {
 				return err
 			}
-			fi, _ := json.Marshal(FirstInput{Principal: a.caller.Principal, Key: key, Text: in.Text, Wake: true})
+			fi, _ := json.Marshal(FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: key, Text: in.Text, Wake: true})
 			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ?, launch = 1 WHERE id = ?`, string(fi), sid); err != nil {
 				return fmt.Errorf("core: wake: %w", err)
 			}
@@ -844,7 +851,7 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 			}
 			if err == nil {
 				answer = req
-				if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal,
+				if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal, From: a.caller.From,
 					Key: key, Text: in.Text, Request: req}); err != nil {
 					return err
 				}
@@ -852,7 +859,7 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 				return err
 			}
 		}
-		if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Send, Principal: a.caller.Principal, Key: key, Text: in.Text}); err != nil {
+		if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Send, Principal: a.caller.Principal, From: a.caller.From, Key: key, Text: in.Text}); err != nil {
 			return err
 		}
 		pending, err = pend(ctx, tx, sid, "", in)
@@ -865,7 +872,7 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 		return a.c.Runner.Answer(ctx, sid, pending, answer, control.Answer{Text: in.Text})
 	}
 	if wake {
-		if err := a.c.resume(ctx, sid, a.caller.Principal, key, in); err != nil {
+		if err := a.c.resume(ctx, sid, a.caller.Principal, a.caller.From, key, in); err != nil {
 			return fmt.Errorf("core: send to %v: %w", id, err)
 		}
 		return nil
@@ -908,7 +915,7 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 	// The machine refuses it, atomically, if it was closed since.
 	var pending int64
 	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
-		if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal,
+		if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal, From: a.caller.From,
 			Key: "answer:" + string(req), Text: ans.Text, Request: agentReq}); err != nil {
 			return err
 		}

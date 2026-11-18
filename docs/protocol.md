@@ -14,7 +14,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **1.5**. Both hellos carry it.
+The protocol version is `major.minor`, now **1.6**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 1.0`.
 - With the same major number and different minor numbers they work together.
@@ -311,7 +311,8 @@ The `data` of each event kind. Integers are the instance's own numbers for threa
 | `thread` | integer | required | the thread's number |
 | `session` | integer | required | its first session |
 | `repo` | string | required | the repository |
-| `principal` | string | required | who started it |
+| `principal` | string | required | the person who started it; before 1.6, the id the caller gave |
+| `from` | string | optional | the `<client>:<id>` the input came from, such as a chat message's author; absent for a caller with no such id, such as the `hataori` command; since 1.6 |
 | `model` | string | required | the model asked for, or the scope's default |
 | `effort` | string | required | the effort asked for, or the scope's default |
 
@@ -334,7 +335,8 @@ The session's state changed.
 | `session` | integer | required | the session |
 | `turn` | integer | required | the turn |
 | `by` | string | required | `caller`, `agent` (by itself, after a background task) or `terminal` (a person at the agent's terminal) |
-| `principal` | string | optional | the caller, for `by: caller` |
+| `principal` | string | optional | the caller's person, for `by: caller` |
+| `from` | string | optional | the `<client>:<id>` the input that started it came from, for `by: caller`, as in `thread_created`; since 1.6 |
 | `key` | string | optional | the key of the call that started it, for `by: caller` (for chat, the message's id); since 1.1 |
 
 ### Event `turn_ended`
@@ -347,6 +349,7 @@ Exactly one per turn.
 | `turn` | integer | required | the turn |
 | `by` | string | required | who started it, as in `turn_started` |
 | `principal` | string | optional | as in `turn_started` |
+| `from` | string | optional | as in `turn_started`; since 1.6 |
 | `outcome` | string | required | `completion`, `blocked` (on a question) or `failure` |
 | `reason` | string | optional | for a failure: `limit`, `login`, `api_error`, `crashed`, `interrupted`, `not delivered`, ... |
 | `background` | integer | required | background tasks still running; a reader that wants "really finished" waits for 0 |

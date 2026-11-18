@@ -228,6 +228,11 @@ var migrations = []Migration{
 		`UPDATE chat_triggers SET thread = COALESCE((SELECT json_extract(CAST(data AS TEXT), '$.key') FROM inbox
 			WHERE inbox.key = 'start:' || chat_triggers.channel || char(0) || chat_triggers.message), '')`,
 	)},
+	// The "<client>:<id>" the input that started a turn came from, beside
+	// the person in principal (design, section 6.2).
+	{Name: "turns.from_id", Up: execAll(
+		`ALTER TABLE turns ADD COLUMN from_id TEXT NOT NULL DEFAULT ''`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

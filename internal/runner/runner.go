@@ -143,7 +143,7 @@ func (r *Runner) Start(ctx context.Context, l core.Launch) error {
 	}
 	spec := agent.Spec{Dir: l.Dir, StateDir: StateDir(r.Root, l.Session), Model: l.Model, Effort: l.Effort,
 		Instructions: r.Instructions, Approvals: agent.AllowAll}
-	first := firstInput{Principal: l.Principal, Key: l.Key, Text: l.Input.Text, Context: l.Context}
+	first := firstInput{Principal: l.Principal, From: l.From, Key: l.Key, Text: l.Input.Text, Context: l.Context}
 	if err := r.launch(ctx, l.Session, l.Agent, ad, spec, first); err != nil {
 		return err
 	}
@@ -238,7 +238,7 @@ func (r *Runner) at(point string) {
 
 // Resume starts the agent of an asleep session again, resuming its
 // conversation, and sends in once the agent reports that it is ready.
-func (r *Runner) Resume(ctx context.Context, id int64, principal control.Principal, key string, in control.Input) error {
+func (r *Runner) Resume(ctx context.Context, id int64, principal control.Principal, from, key string, in control.Input) error {
 	// The agent that was put to sleep must be gone, and read to its end,
 	// before another starts in the same state directory.
 	r.mu.Lock()
@@ -293,7 +293,7 @@ func (r *Runner) Resume(ctx context.Context, id int64, principal control.Princip
 	}
 	spec := s.Spec
 	spec.ResumeID = resumeID
-	if err := r.launch(ctx, id, s.Agent, ad, spec, firstInput{Principal: principal, Key: key, Text: in.Text, Wake: true}); err != nil {
+	if err := r.launch(ctx, id, s.Agent, ad, spec, firstInput{Principal: principal, From: from, Key: key, Text: in.Text, Wake: true}); err != nil {
 		return err
 	}
 	return r.follow(id, ad, spec, wake)
@@ -990,7 +990,7 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 		}
 		switch {
 		case !f.Sent && control.State(state) == control.Idle:
-			if err := r.Machine.ApplyTx(ctx, tx, lv.id, session.Input{Kind: session.Send, Principal: f.Principal, Key: f.Key, Text: f.Text}); err != nil {
+			if err := r.Machine.ApplyTx(ctx, tx, lv.id, session.Input{Kind: session.Send, Principal: f.Principal, From: f.From, Key: f.Key, Text: f.Text}); err != nil {
 				return err
 			}
 			f.Sent = true
@@ -1256,7 +1256,7 @@ func (r *Runner) replace(lv *live) {
 	if fi != "" {
 		json.Unmarshal([]byte(fi), &first)
 	}
-	l.Dir, l.Principal, l.Key, l.Input = lv.spec.Dir, first.Principal, first.Key, control.Input{Text: first.Text}
+	l.Dir, l.Principal, l.From, l.Key, l.Input = lv.spec.Dir, first.Principal, first.From, first.Key, control.Input{Text: first.Text}
 	if l.Context, err = r.earlier(ctx, l.Thread); err != nil {
 		r.Log.Error("the thread's earlier context", "session", l.Session, "err", err) // the new session starts without it
 	}
