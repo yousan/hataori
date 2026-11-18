@@ -192,6 +192,18 @@ func (c *Client) SignInLink(ctx context.Context) (string, error) {
 	return out, err
 }
 
+func (c *Client) HostTerminals(ctx context.Context) ([]control.HostTerminal, error) {
+	var out []control.HostTerminal
+	err := c.call(ctx, "HostTerminals", hostTerminalsArgs{}, &out)
+	return out, err
+}
+
+func (c *Client) HostScreen(ctx context.Context, pane string) (string, error) {
+	var out string
+	err := c.call(ctx, "HostScreen", hostScreenArgs{Pane: pane}, &out)
+	return out, err
+}
+
 // Events follows the daemon's events on a connection of its own. When the
 // connection breaks, it connects again and resumes after the last event it
 // delivered, so a reader sees no gap and no repeat. The first request is

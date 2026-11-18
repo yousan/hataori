@@ -157,6 +157,10 @@ type Core struct {
 	// SignIn makes dashboard sign-in links; nil when the instance has no
 	// dashboard.
 	SignIn SignIn
+	// HostTerms lists and reads the terminals hataori does not own. Nil
+	// when the config leaves them off: HostTerminals and HostScreen are
+	// then refused for every caller.
+	HostTerms HostTerms
 
 	locks keyedMutex
 }
@@ -194,6 +198,14 @@ func (k *keyedMutex) lock(key string) func() {
 		}
 		k.mu.Unlock()
 	}
+}
+
+// HostTerms lists and reads the terminals on the host, leaving out those
+// a process under one of owned uses. It changes nothing. Screen's ok is
+// false for a pane that List would not return.
+type HostTerms interface {
+	List(ctx context.Context, owned []int) ([]control.HostTerminal, error)
+	Screen(ctx context.Context, pane string, owned []int) (screen string, ok bool, err error)
 }
 
 // SignIn makes single-use dashboard sign-in links.
@@ -1119,4 +1131,60 @@ func (a *api) SignInLink(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("core: SignInLink: %w", ErrNoDashboard)
 	}
 	return a.c.SignIn.NewLink(ctx)
+}
+
+// checkHost allows HostTerminals and HostScreen: only when they are on, and
+// only to the owner's caller with OpHost.
+func (a *api) checkHost(name string) error {
+	if a.c.HostTerms != nil && a.c.People != nil && a.c.People.Owner() != "" &&
+		a.caller.Principal == control.Principal(a.c.People.Owner()) {
+		return a.check(control.OpHost, name, "")
+	}
+	a.c.Log.Warn("control call refused", "op", name, "principal", string(a.caller.Principal))
+	return fmt.Errorf("core: %s: %w", name, ErrForbidden)
+}
+
+// hostPIDs are the session hosts that may hold a terminal now.
+func (c *Core) hostPIDs(ctx context.Context) ([]int, error) {
+	rows, err := c.Store.DB.QueryContext(ctx, `SELECT host_pid FROM sessions WHERE host_pid > 0 AND state NOT IN (?, ?, ?)`,
+		string(control.Asleep), string(control.Closed), string(control.Removed))
+	if err != nil {
+		return nil, fmt.Errorf("core: %w", err)
+	}
+	defer rows.Close()
+	var pids []int
+	for rows.Next() {
+		var pid int
+		if err := rows.Scan(&pid); err != nil {
+			return nil, fmt.Errorf("core: %w", err)
+		}
+		pids = append(pids, pid)
+	}
+	return pids, rows.Err()
+}
+
+func (a *api) HostTerminals(ctx context.Context) ([]control.HostTerminal, error) {
+	if err := a.checkHost("HostTerminals"); err != nil {
+		return nil, err
+	}
+	owned, err := a.c.hostPIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return a.c.HostTerms.List(ctx, owned)
+}
+
+func (a *api) HostScreen(ctx context.Context, pane string) (string, error) {
+	if err := a.checkHost("HostScreen"); err != nil {
+		return "", err
+	}
+	owned, err := a.c.hostPIDs(ctx)
+	if err != nil {
+		return "", err
+	}
+	screen, ok, err := a.c.HostTerms.Screen(ctx, pane, owned)
+	if err == nil && !ok {
+		err = fmt.Errorf("core: HostScreen: tmux pane %q: %w", pane, ErrNotFound)
+	}
+	return screen, err
 }

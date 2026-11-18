@@ -20,6 +20,7 @@ import (
 	"github.com/yousan/hataori/internal/core"
 	"github.com/yousan/hataori/internal/dashboard"
 	"github.com/yousan/hataori/internal/host"
+	"github.com/yousan/hataori/internal/hostterm"
 	"github.com/yousan/hataori/internal/instance"
 	"github.com/yousan/hataori/internal/relay"
 	"github.com/yousan/hataori/internal/runner"
@@ -128,6 +129,10 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	// The socket's connections are the owner's, and only they may make a
 	// dashboard sign-in link.
 	owner := control.OpRead | control.OpStart | control.OpSend | control.OpAnswer | control.OpStop | control.OpSignIn
+	if cfg.HostTerminals { // off unless the config turns it on; only the owner gets it
+		c.HostTerms = &hostterm.Lister{Own: filepath.Base(exe)}
+		owner |= control.OpHost
+	}
 	srv, err := wire.Listen(abs, c.As(control.Caller{Principal: control.Principal(cfg.Owner), Scopes: keys, May: owner}), lg)
 	if err != nil {
 		return err

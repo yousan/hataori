@@ -16,7 +16,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **1.9**. Both hellos carry it.
+The protocol version is `major.minor`, now **1.10**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 1.0`.
 - With the same major number and different minor numbers they work together.
@@ -209,6 +209,27 @@ A session whose host has ended (an asleep session, for one) sends the end of its
 
 Result: `TerminalChunk`
 
+### Operation `HostTerminals`
+
+Since 1.10. The terminals on the host that hataori does not own, for display only: every pane of the daemon user's default tmux server, then every other terminal a process holds. Panes of a tmux server on another socket (`tmux -L`, `-S`) are listed as other terminals, without a screen. A terminal used by a session host's command is left out; it is shown as its thread. hataori never judges these terminals' state and never sends them anything.
+
+Only the instance's owner may call it, and only when the config's `host_terminals` is `true`; every other call is answered `forbidden`. It takes no arguments. The result is an array, empty when there is no terminal.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+
+Result: [`HostTerminal`]
+
+### Operation `HostScreen`
+
+Since 1.10. The visible screen of one tmux pane, as text, one line per row. Allowed as `HostTerminals` is. hataori runs only `tmux list-panes` and `tmux capture-pane`, which change nothing; a hook the user set in their own tmux for these commands (`after-list-panes`, `after-capture-pane`) still runs, as it does when the user runs them. A pane that `HostTerminals` would not list is answered `not_found`.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `pane` | string | required | the pane, as `TmuxPane.pane` |
+
+Result: string
+
 ## Types
 
 ### Type `ThreadID`
@@ -348,6 +369,31 @@ Since 1.9.
 | `cols` | integer | required | the terminal's width |
 | `rows` | integer | required | the terminal's height |
 | `data` | string | optional | the raw bytes the terminal was sent, in base64; uninterpreted |
+
+### Type `HostTerminal`
+
+Since 1.10.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `device` | string | required | the terminal device, such as `/dev/pts/3` or `/dev/ttys003` |
+| `process` | string | optional | the command of its foreground process |
+| `activity` | time | optional | its last output, when known; for tmux, the window's last activity |
+| `tmux` | `TmuxPane` | optional | where it is in tmux; absent for a terminal outside tmux |
+
+### Type `TmuxPane`
+
+Since 1.10. A tab in a name or a directory is given as a space.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `pane` | string | required | the pane's id, such as `%3`; what `HostScreen` takes |
+| `session` | string | required | the tmux session's name |
+| `window` | string | required | the window's index |
+| `window_name` | string | optional | the window's name |
+| `index` | string | required | the pane's index in its window |
+| `dir` | string | optional | the pane's current directory |
+| `attached` | boolean | required | a tmux client shows the session now |
 
 ### Type `Event`
 

@@ -307,3 +307,18 @@ func TestSecondProcessIsRefused(t *testing.T) {
 	}
 	in.Close()
 }
+
+// The host's terminals stay off unless the config turns them on.
+func TestHostTerminalsOffByDefault(t *testing.T) {
+	c, err := ParseConfig([]byte(validConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.HostTerminals {
+		t.Error("host_terminals is on without the key")
+	}
+	on := strings.Replace(validConfig, "{", `{"host_terminals": true,`, 1)
+	if c, err = ParseConfig([]byte(on)); err != nil || !c.HostTerminals {
+		t.Errorf("host_terminals: true gives %v, %v", c, err)
+	}
+}

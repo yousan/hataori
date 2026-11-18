@@ -27,7 +27,7 @@ import (
 
 // Version is the protocol version this build speaks: major.minor. Two
 // sides work together when their major numbers are equal (docs/protocol.md).
-const Version = "1.9"
+const Version = "1.10"
 
 type hello struct {
 	Version string `json:"version"`
@@ -89,6 +89,10 @@ type (
 		ID    control.ThreadID `json:"id"`
 		Run   string           `json:"run"`
 		After uint64           `json:"after"`
+	}
+	hostTerminalsArgs struct{}
+	hostScreenArgs    struct {
+		Pane string `json:"pane"`
 	}
 )
 
@@ -160,6 +164,16 @@ var operations = map[string]operation{
 		return api.SignInLink(ctx)
 	}},
 	"Terminal": {terminalArgs{}, control.TerminalChunk{}, nil},
+	"HostTerminals": {hostTerminalsArgs{}, []control.HostTerminal{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		return api.HostTerminals(ctx)
+	}},
+	"HostScreen": {hostScreenArgs{}, "", func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a hostScreenArgs
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return api.HostScreen(ctx, a.Pane)
+	}},
 }
 
 // The error codes on the wire, for the errors a client can act on.
