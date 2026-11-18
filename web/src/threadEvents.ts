@@ -1,6 +1,7 @@
 // A thread's events as the page shows them: its last ones from the server,
 // then each as the page's one event stream delivers it, each once, in
-// order.
+// order. The history is read again each time the stream opens, so an
+// event written between a read and the stream's start is not lost.
 
 import { useEffect, useState } from "react";
 import { type Event, sameThread, type ThreadID, thread } from "./api";
@@ -12,57 +13,67 @@ export interface ThreadEventsOptions {
   keep?: number; // at most this many, the newest; all when absent
 }
 
+// historyRetry is how long a view waits before it reads the history again
+// after a failed read.
+const historyRetry = 2000;
+
+// merge is have and list together: each event once, by position, in order,
+// of the kinds asked for, at most keep of the newest.
+function merge(have: Event[], list: Event[], opts: ThreadEventsOptions): Event[] {
+  const byPos = new Map(have.map((e) => [e.pos, e]));
+  let added = false;
+  for (const e of list) {
+    if (byPos.has(e.pos) || (opts.kinds && !opts.kinds.has(e.kind))) continue;
+    byPos.set(e.pos, e);
+    added = true;
+  }
+  if (!added) return have;
+  const all = [...byPos.values()].sort((a, b) => a.pos - b.pos);
+  return opts.keep && all.length > opts.keep ? all.slice(all.length - opts.keep) : all;
+}
+
 export function useThreadEvents(
   id: ThreadID,
   subscribe: (f: (e: Event) => void) => () => void,
+  opens: number,
   opts: ThreadEventsOptions,
-): Event[] {
+): { events: Event[]; read: boolean } {
   const [events, setEvents] = useState<Event[]>([]);
+  const [read, setRead] = useState(false);
   const { scope, key } = id;
-  const { history, kinds, keep } = opts;
 
+  // The stream: from now on, for this thread.
+  useEffect(() => {
+    setEvents([]);
+    setRead(false);
+    return subscribe((e) => {
+      if (sameThread(e.thread, { scope, key })) setEvents((have) => merge(have, [e], opts));
+    });
+  }, [scope, key, subscribe, opts]);
+
+  // The history: now, again after the stream opens, and again after a
+  // failed read.
   useEffect(() => {
     let gone = false;
-    setEvents([]);
-    const early: Event[] = []; // what the stream brings while the history is read
-    let ready = false;
-    // add appends the events of list that come after those shown, each
-    // once, in order: the history and the stream may both carry one.
-    const add = (list: Event[]) =>
-      setEvents((have) => {
-        let last = have.length ? have[have.length - 1].pos : 0;
-        const more: Event[] = [];
-        for (const e of [...list].sort((a, b) => a.pos - b.pos)) {
-          if (e.pos <= last) continue;
-          last = e.pos;
-          if (!kinds || kinds.has(e.kind)) more.push(e);
-        }
-        if (!more.length) return have;
-        const all = [...have, ...more];
-        return keep && all.length > keep ? all.slice(all.length - keep) : all;
-      });
-    const stop = subscribe((e) => {
-      if (!sameThread(e.thread, { scope, key })) return;
-      if (ready) add([e]);
-      else early.push(e);
-    });
-    thread({ scope, key }, history)
-      .then((d) => {
-        if (gone) return;
-        ready = true;
-        add([...(d.events ?? []), ...early]);
-      })
-      .catch(() => {
-        ready = true;
-        add(early);
-      });
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const fetchHistory = () =>
+      thread({ scope, key }, opts.history)
+        .then((d) => {
+          if (gone) return;
+          setEvents((have) => merge(have, d.events ?? [], opts));
+          setRead(true);
+        })
+        .catch(() => {
+          if (!gone) retry = setTimeout(fetchHistory, historyRetry);
+        });
+    fetchHistory();
     return () => {
       gone = true;
-      stop();
+      clearTimeout(retry);
     };
-  }, [scope, key, subscribe, history, kinds, keep]);
+  }, [scope, key, opens, opts]);
 
-  return events;
+  return { events, read };
 }
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
@@ -94,5 +105,5 @@ export function eventLine(e: Event): string {
     case "input":
       return t("events.input");
   }
-  return e.kind;
+  return t("events.other", { kind: e.kind });
 }

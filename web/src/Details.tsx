@@ -35,7 +35,7 @@ function Waiting({ a }: { a: Attention }) {
   return (
     <section className="details-top question" data-block="question">
       <h3>{t(a.kind === "approval" ? "details.approval" : "details.question")}</h3>
-      <p data-field="question">{a.text || t("details.questionHidden")}</p>
+      <p data-field="question">{a.text || t(a.kind === "approval" ? "details.approvalHidden" : "details.questionHidden")}</p>
       {a.choices && a.choices.length > 0 && (
         <>
           <h4>{t("details.choices")}</h4>
@@ -50,13 +50,13 @@ function Waiting({ a }: { a: Attention }) {
   );
 }
 
-function Recent({ x, subscribe }: { x: ThreadInfo; subscribe: (f: (e: Event) => void) => () => void }) {
-  const events = useThreadEvents(x.id, subscribe, eventOptions);
+function Recent({ x, subscribe, opens }: { x: ThreadInfo; subscribe: (f: (e: Event) => void) => () => void; opens: number }) {
+  const { events, read } = useThreadEvents(x.id, subscribe, opens, eventOptions);
   return (
     <section data-block="events">
       <h3>{t("details.events")}</h3>
       {events.length === 0 ? (
-        <p className="empty">{t("details.noEvents")}</p>
+        read && <p className="empty">{t("details.noEvents")}</p>
       ) : (
         <ol className="recent">
           {[...events].reverse().map((e) => (
@@ -76,12 +76,13 @@ interface Props {
   attention: Attention | undefined;
   workspace: Workspace | undefined;
   subscribe: (f: (e: Event) => void) => () => void;
+  opens: number;
 }
 
 // Details is the panel on the right for the active tab's thread. Every
 // value comes from the control API; one it leaves out is a dash. It only
 // shows: nothing in it answers, sends or changes anything.
-export function Details({ x, attention, workspace, subscribe }: Props) {
+export function Details({ x, attention, workspace, subscribe, opens }: Props) {
   if (!x) return <p className="empty">{t("details.none")}</p>;
   const ws = workspace && workspace !== "unreadable" ? workspace : undefined;
   const pct = x.context && x.context.size > 0 ? Math.round((100 * x.context.used) / x.context.size) : null;
@@ -96,7 +97,8 @@ export function Details({ x, attention, workspace, subscribe }: Props) {
           <Field name="scope" label={t("details.scope")} value={x.id.scope || dash()} />
           <Field name="startedBy" label={t("details.startedBy")} value={x.started_by || dash()} />
           <Field name="created" label={t("details.created")} value={new Date(x.created).toLocaleString()} time={x.created} />
-          <Field name="turns" label={t("details.turns")} value={n(x.turns)} />
+          {/* turns is left out for none: that is zero, not unknown */}
+          <Field name="turns" label={t("details.turns")} value={numbers.format(x.turns ?? 0)} />
         </dl>
       </section>
       <section data-block="agent">
@@ -130,7 +132,7 @@ export function Details({ x, attention, workspace, subscribe }: Props) {
           <Field name="terminal" label={t("details.terminal")} value={x.terminal || dash()} />
         </dl>
       </section>
-      <Recent key={x.number} x={x} subscribe={subscribe} />
+      <Recent key={x.number} x={x} subscribe={subscribe} opens={opens} />
     </div>
   );
 }

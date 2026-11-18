@@ -11,9 +11,9 @@ const options = { history: historyEvents, kinds: shownKinds };
 // EventsView shows a session that has no terminal, such as a Codex
 // session: its text, tool and turn events in order, the last ones of the
 // thread first, then each as the page's event stream delivers it.
-export function EventsView(props: { x: ThreadInfo; subscribe: (f: (e: Event) => void) => () => void }) {
-  const { x, subscribe } = props;
-  const events = useThreadEvents(x.id, subscribe, options);
+export function EventsView(props: { x: ThreadInfo; subscribe: (f: (e: Event) => void) => () => void; opens: number }) {
+  const { x, subscribe, opens } = props;
+  const { events } = useThreadEvents(x.id, subscribe, opens, options);
   return (
     <ol className="events-view" data-events={x.number}>
       {events.map((e) => (

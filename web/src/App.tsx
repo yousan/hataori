@@ -44,8 +44,8 @@ export function App() {
     }
   };
   const thread = (n: number) => d.threads?.find((x) => x.number === n);
-  const workspaces = useWorkspaces(d.threads, panes(tabs, split).includes(allTab));
   const current = threadOf(active(tabs));
+  const workspaces = useWorkspaces(d.threads, panes(tabs, split).includes(allTab) || layout.details, current);
 
   const paneThread = (k: TabKey) => {
     const n = threadOf(k);
@@ -116,7 +116,7 @@ export function App() {
                         onOpen={(n) => setTabs((s) => view(s, threadTab(n)))}
                       />
                     ) : paneThread(k) ? (
-                      <ThreadPane key={k} x={paneThread(k)!} subscribe={d.subscribe} />
+                      <ThreadPane key={k} x={paneThread(k)!} subscribe={d.subscribe} opens={d.opens} />
                     ) : (
                       <p className="empty">{t("pane.later")}</p>
                     )}
@@ -135,6 +135,7 @@ export function App() {
               attention={current === null ? undefined : d.attention.get(current)}
               workspace={current === null ? undefined : workspaces.get(current)}
               subscribe={d.subscribe}
+              opens={d.opens}
             />
           </aside>
         )}

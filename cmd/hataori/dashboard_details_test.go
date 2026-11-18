@@ -176,11 +176,8 @@ func TestDashboardDetailsPanel(t *testing.T) {
 		m := map[string]string{
 			"state": string(x.State), "scope": x.ID.Scope, "startedBy": or(string(x.StartedBy)),
 			"agent": or(x.Agent), "model": or(x.Model), "effort": or(x.Effort), "repo": or(x.Repo), "terminal": or(x.Terminal),
-			"turns": dash, "background": dash, "context": dash, "tokensTurn": dash, "tokensToday": dash,
+			"turns": grouped(int64(x.Turns)), "background": dash, "context": dash, "tokensTurn": dash, "tokensToday": dash,
 			"branch": dash, "lines": dash, "uncommitted": dash, "unpushed": dash,
-		}
-		if x.Turns != 0 {
-			m["turns"] = grouped(int64(x.Turns))
 		}
 		if x.Background != 0 {
 			m["background"] = grouped(int64(x.Background))
@@ -270,6 +267,20 @@ func TestDashboardDetailsPanel(t *testing.T) {
 			t.Fatalf("the sparse thread's %s shows %q, want a dash", f, field(f))
 		}
 	}
+
+	// A workspace changed by hand shows when its thread is selected again,
+	// with no table on the screen.
+	fullDir := ""
+	for _, d := range func() []string { ds, _ := filepath.Glob(filepath.Join(root, "state", "sessions", "*")); return ds }() {
+		if spec, ok, _ := host.ReadSpec(d); ok {
+			if _, err := os.Stat(filepath.Join(spec.Dir, "a.txt")); err == nil {
+				fullDir = spec.Dir
+			}
+		}
+	}
+	os.WriteFile(filepath.Join(fullDir, "d.txt"), nil, 0o600)
+	open(nFull)
+	b.until("the hand-made change in the panel", `document.querySelector('.details [data-field=uncommitted] dd')?.textContent === '4'`)
 
 	// 3. Recent events follow the stream: the panel lists the thread's last
 	// events, newest first, also those of a turn after it opened.
