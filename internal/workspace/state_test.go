@@ -258,3 +258,51 @@ func TestStateWhenGitFails(t *testing.T) {
 		t.Errorf("numbers with the error: %+v", st)
 	}
 }
+
+// A filter driver's clean command could write anything; the check runs none.
+func TestStateRunsNoFilter(t *testing.T) {
+	f := newRepo(t)
+	record := filepath.Join(f.home, "filter-ran")
+	f.git(f.clone, "config", "filter.rec.clean", "sh -c 'echo ran >> "+record+"; cat'")
+	f.git(f.clone, "config", "filter.rec.process", "sh -c 'echo ran >> "+record+"; exit 1'")
+	f.write(".gitattributes", "a filter=rec\n")
+	f.write("a", "one\nTWO\nthree\n")
+	os.Remove(record)
+	st := f.mustState()
+	if _, err := os.Stat(record); err == nil {
+		t.Fatal("a filter ran")
+	}
+	if st.Added != 1 || st.Removed != 1 || st.Uncommitted != 2 {
+		t.Errorf("%+v", st)
+	}
+}
+
+// A partial clone would fetch the objects it lacks from the remote.
+func TestStateRefusesAPartialClone(t *testing.T) {
+	f := newRepo(t)
+	f.git(f.clone, "config", "remote.origin.promisor", "true")
+	if st, err := f.state(); err == nil || st != (control.WorkspaceState{}) {
+		t.Fatalf("%+v, %v", st, err)
+	}
+}
+
+// A branch whose upstream is configured but gone has no known base.
+func TestStateWithAGoneUpstream(t *testing.T) {
+	f := newRepo(t)
+	f.git(f.clone, "remote", "set-head", "origin", "--delete")
+	f.git(f.clone, "checkout", "-q", "-b", "feature")
+	f.git(f.clone, "config", "branch.feature.remote", "origin")
+	f.git(f.clone, "config", "branch.feature.merge", "refs/heads/feature")
+	if st, err := f.state(); err == nil || st != (control.WorkspaceState{}) {
+		t.Fatalf("%+v, %v", st, err)
+	}
+	// With no upstream at all, the base is HEAD.
+	f.git(f.clone, "config", "--unset", "branch.feature.merge")
+	f.git(f.clone, "config", "--unset", "branch.feature.remote")
+	// Deleting origin/HEAD removed the only remote-tracking reflog, so
+	// Fetched is not known.
+	head := f.git(f.clone, "rev-parse", "HEAD")
+	if st := f.mustState(); st != (control.WorkspaceState{Branch: "feature", Base: head}) {
+		t.Errorf("%+v", st)
+	}
+}

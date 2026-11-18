@@ -1036,7 +1036,7 @@ type WorkspaceState struct {
 	Removed     int
 	Uncommitted int        // modified, staged and untracked files, each once; ignored files not counted
 	Unpushed    int        // commits reachable from HEAD or a local branch and from no remote-tracking ref
-	Fetched     *time.Time // the last fetch, or the clone; nil when the repository does not say
+	Fetched     *time.Time // the last fetch, push or clone; nil when the repository does not say
 	// PullRequest is added only if the research finds a source (section 7.2).
 }
 

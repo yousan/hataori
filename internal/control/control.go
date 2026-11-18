@@ -171,8 +171,8 @@ type WorkspaceState struct {
 	// Unpushed counts commits reachable from HEAD or a local branch and from
 	// no remote-tracking ref.
 	Unpushed int `json:"unpushed"`
-	// Fetched is when the remote-tracking refs were last updated, by a fetch
-	// or by the clone; absent when the repository does not say.
+	// Fetched is when the remote-tracking refs were last updated, by a
+	// fetch, a push or the clone; absent when the repository does not say.
 	Fetched *time.Time `json:"fetched,omitempty"`
 }
 

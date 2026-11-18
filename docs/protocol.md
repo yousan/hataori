@@ -172,7 +172,7 @@ Result: `Event`
 
 ### Operation `Workspace`
 
-What the thread's workspace holds that may exist nowhere else, as numbers; since 1.4. It changes nothing in the workspace, and it does not ask the remote: commits are compared with the remote-tracking refs as last fetched. A workspace the daemon cannot read, or a git failure, is an error, never zeros.
+What the thread's workspace holds that may exist nowhere else, as numbers; since 1.4. It changes nothing in the workspace, and it does not ask the remote: commits are compared with the remote-tracking refs as last fetched. A workspace the daemon cannot read, a partial clone (which git would complete from the remote), a configured upstream that cannot be read, or a git failure, is an error, never zeros.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -270,7 +270,7 @@ Since 1.4.
 | `removed` | integer | required | lines removed, counted as `added` |
 | `uncommitted` | integer | required | files modified, staged or untracked, each once; ignored files are not counted, and untracked files add no lines |
 | `unpushed` | integer | required | commits reachable from the checked-out commit or a local branch and from no remote-tracking ref |
-| `fetched` | time | optional | when the remote-tracking refs were last updated, by a fetch or by the clone; absent when the repository does not say |
+| `fetched` | time | optional | when the remote-tracking refs were last updated, by a fetch, a push or the clone; absent when the repository does not say |
 
 ### Type `Event`
 

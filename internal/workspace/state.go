@@ -23,10 +23,19 @@ import (
 // were last updated. It implements the core's Workspaces.
 //
 // It changes nothing in dir: git runs with optional locks off, so not even
-// the index's cached file times are written, and it never asks a remote.
+// the index's cached file times are written, no filter driver runs, and it
+// never asks a remote: a partial clone is refused.
 // A directory that is not the top of a repository, and any git failure,
 // is an error: the numbers are never guessed.
 func (m Maker) State(ctx context.Context, dir string) (control.WorkspaceState, error) {
+	st, err := m.state(ctx, dir)
+	if err != nil {
+		return control.WorkspaceState{}, err // nothing half read
+	}
+	return st, nil
+}
+
+func (m Maker) state(ctx context.Context, dir string) (control.WorkspaceState, error) {
 	var st control.WorkspaceState
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -37,6 +46,9 @@ func (m Maker) State(ctx context.Context, dir string) (control.WorkspaceState, e
 	}
 	g := reader{dir: abs, env: append(m.gitEnv(),
 		"GIT_OPTIONAL_LOCKS=0",
+		// A partial clone would fetch missing objects (refused below; this
+		// is for a git that knows the variable).
+		"GIT_NO_LAZY_FETCH=1",
 		// git looks for the repository in dir only, never in a directory above.
 		"GIT_CEILING_DIRECTORIES="+filepath.Dir(abs),
 		"LC_ALL=C")}
@@ -51,6 +63,9 @@ func (m Maker) State(ctx context.Context, dir string) (control.WorkspaceState, e
 	if top != abs {
 		return st, fmt.Errorf("workspace: %s is not the top of a repository", dir)
 	}
+	if err := g.disarm(ctx); err != nil {
+		return st, err
+	}
 	head, err := g.line(ctx, "rev-parse", "--verify", "--end-of-options", "HEAD^{commit}")
 	if err != nil {
 		return st, err
@@ -63,7 +78,7 @@ func (m Maker) State(ctx context.Context, dir string) (control.WorkspaceState, e
 		st.Branch = strings.TrimSpace(string(out))
 	}
 
-	if st.Base, err = g.base(ctx, head); err != nil {
+	if st.Base, err = g.base(ctx, head, st.Branch); err != nil {
 		return st, err
 	}
 	out, _, err := g.run(ctx, "diff", "--numstat", "-z", "-M", "--no-ext-diff", "--no-textconv", "--end-of-options", st.Base, "--")
@@ -95,14 +110,50 @@ func (m Maker) State(ctx context.Context, dir string) (control.WorkspaceState, e
 
 // reader runs git in one repository, read-only.
 type reader struct {
-	dir string
-	env []string
+	dir   string
+	env   []string
+	extra []string // options for every git command after the first
+}
+
+// disarm reads the repository's configuration and refuses what would make
+// git write or ask a remote: a partial clone, which fetches missing objects
+// on demand. It turns off every filter driver, whose clean command diff and
+// status would run on changed files and which can do anything.
+func (g *reader) disarm(ctx context.Context) error {
+	out, code, err := g.run(ctx, "config", "--null", "--get-regexp", `^(filter\..*\.(clean|process)|extensions\.partialclone|remote\..*\.promisor)$`)
+	if err != nil && code == 1 { // none is set
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, kv := range strings.Split(string(out), "\x00") {
+		key, value, _ := strings.Cut(kv, "\n")
+		switch {
+		case key == "":
+		case key == "extensions.partialclone",
+			strings.HasSuffix(key, ".promisor") && isTrue(value):
+			return fmt.Errorf("workspace: %s is a partial clone, which git may complete from the remote", g.dir)
+		case strings.HasPrefix(key, "filter."):
+			name := key[len("filter."):strings.LastIndex(key, ".")]
+			g.extra = append(g.extra, "-c", "filter."+name+".clean=", "-c", "filter."+name+".process=")
+		}
+	}
+	return nil
+}
+
+func isTrue(v string) bool {
+	switch strings.ToLower(v) {
+	case "", "true", "yes", "on", "1": // a key with no value is true
+		return true
+	}
+	return false
 }
 
 // run runs git and returns its output, and its exit code when it ran and
 // failed.
 func (g reader) run(ctx context.Context, args ...string) ([]byte, int, error) {
-	full := append([]string{"-C", g.dir, "-c", "core.fsmonitor=false"}, args...)
+	full := append(append([]string{"-C", g.dir, "-c", "core.fsmonitor=false"}, g.extra...), args...)
 	cmd := gitCommand(ctx, full...)
 	cmd.Env = g.env
 	var stdout, stderr bytes.Buffer
@@ -133,29 +184,38 @@ func (g reader) line(ctx context.Context, args ...string) (string, error) {
 
 // base is the commit the branch started from: where HEAD meets the
 // remote's default branch, or else the branch's upstream. With neither,
-// nothing is known to have come from elsewhere, and it is HEAD.
-func (g reader) base(ctx context.Context, head string) (string, error) {
-	for _, ref := range []string{"refs/remotes/origin/HEAD", "@{upstream}"} {
-		// Exit 1 with --quiet: the ref does not exist.
-		target, code, err := g.run(ctx, "rev-parse", "--quiet", "--verify", "--end-of-options", ref+"^{commit}")
-		if err != nil && code == 1 {
-			continue
-		}
-		if err != nil && ref == "@{upstream}" && code == 128 {
-			// No upstream is configured, or HEAD is detached.
-			continue
-		}
-		if err != nil {
-			return "", err
-		}
-		return g.line(ctx, "merge-base", "--end-of-options", head, strings.TrimSpace(string(target)))
+// nothing is known to have come from elsewhere, and it is HEAD. An upstream
+// that is configured but cannot be read is an error.
+func (g reader) base(ctx context.Context, head, branch string) (string, error) {
+	// Exit 1 with --quiet: origin/HEAD does not exist.
+	target, code, err := g.run(ctx, "rev-parse", "--quiet", "--verify", "--end-of-options", "refs/remotes/origin/HEAD^{commit}")
+	if err != nil && code != 1 {
+		return "", err
 	}
-	return head, nil
+	if err != nil && branch != "" {
+		up, _, uerr := g.run(ctx, "for-each-ref", "--format=%(upstream)", "--end-of-options", "refs/heads/"+branch)
+		if uerr != nil {
+			return "", uerr
+		}
+		if u := strings.TrimSpace(string(up)); u != "" {
+			t, err := g.line(ctx, "rev-parse", "--verify", "--end-of-options", u+"^{commit}")
+			if err != nil {
+				return "", err
+			}
+			target = []byte(t)
+		}
+	} else if err != nil {
+		target = nil
+	}
+	if len(target) == 0 {
+		return head, nil
+	}
+	return g.line(ctx, "merge-base", "--end-of-options", head, strings.TrimSpace(string(target)))
 }
 
 // fetched is the latest of the last fetch (FETCH_HEAD) and the newest entry
-// of any remote-tracking ref's reflog, which the clone writes. nil when
-// there is neither.
+// of any remote-tracking ref's reflog, which the clone, a fetch and a push
+// write. nil when there is neither.
 func (g reader) fetched(ctx context.Context) (*time.Time, error) {
 	var latest time.Time
 	fetchHead, err := g.gitPath(ctx, "FETCH_HEAD")
