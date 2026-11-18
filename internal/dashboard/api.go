@@ -47,6 +47,16 @@ var keepAlive = 15 * time.Second
 // that stops reading loses its stream, and the follower behind it ends.
 var writeTimeout = 30 * time.Second
 
+// writeBy is the deadline of one write to a stream: writeTimeout from now,
+// and never after the session expires.
+func writeBy(exp time.Time) time.Time {
+	d := time.Now().Add(writeTimeout)
+	if exp.Before(d) {
+		return exp
+	}
+	return d
+}
+
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET "+ThreadsPath, s.threads)
 	s.mux.HandleFunc("GET "+ThreadPath, s.thread)
@@ -144,7 +154,8 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The stream ends when its session does: the page must sign in again.
-	ctx, cancel := context.WithDeadline(r.Context(), sessionExpiry(r))
+	exp := sessionExpiry(r)
+	ctx, cancel := context.WithDeadline(r.Context(), exp)
 	defer cancel()
 	evs, err := s.API.Events(ctx, control.Filter{}, after)
 	if err != nil {
@@ -159,7 +170,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rc := http.NewResponseController(w)
-	rc.SetWriteDeadline(time.Now().Add(writeTimeout))
+	rc.SetWriteDeadline(writeBy(exp))
 	fmt.Fprint(w, "retry: 1000\n\n")
 	rc.Flush()
 	tick := time.NewTicker(keepAlive)
@@ -170,7 +181,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			rc.SetWriteDeadline(time.Now().Add(writeTimeout))
+			rc.SetWriteDeadline(writeBy(exp))
 			if _, err := fmt.Fprint(w, ": keep-alive\n\n"); err != nil {
 				return
 			}
@@ -183,7 +194,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 				s.Log.Warn("dashboard event", "pos", e.Pos, "err", err)
 				return
 			}
-			rc.SetWriteDeadline(time.Now().Add(writeTimeout))
+			rc.SetWriteDeadline(writeBy(exp))
 			if e.Kind == control.CaughtUp {
 				fmt.Fprint(w, "event: caught_up\n")
 			}
