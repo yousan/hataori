@@ -1,0 +1,50 @@
+{
+ "sandbox": "workspace-write",
+ "config": [
+  "-c",
+  "sandbox_workspace_write.exclude_slash_tmp=true",
+  "-c",
+  "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+  "--disable",
+  "shell_tool",
+  "--disable",
+  "unified_exec",
+  "--disable",
+  "multi_agent",
+  "--disable",
+  "goals",
+  "--disable",
+  "sleep_tool",
+  "--disable",
+  "apps",
+  "--disable",
+  "plugins",
+  "--disable",
+  "hooks",
+  "-c",
+  "web_search=\"disabled\"",
+  "-c",
+  "agents.max_depth=0"
+ ],
+ "cwd": "/tmp/capture-work",
+ "outside": "/tmp/capture-work",
+ "thread_sandbox": {
+  "type": "workspaceWrite",
+  "writableRoots": [],
+  "networkAccess": false,
+  "excludeTmpdirEnvVar": true,
+  "excludeSlashTmp": true
+ },
+ "thread_approval": "never",
+ "items": [
+  {
+   "type": "userMessage"
+  },
+  {
+   "type": "agentMessage",
+   "text": "no-tool"
+  }
+ ],
+ "files_in_cwd": [],
+ "files_outside": []
+}

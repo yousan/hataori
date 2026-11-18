@@ -1,0 +1,29 @@
+{
+ "sandbox": "read-only",
+ "config": [],
+ "cwd": "/tmp/capture-work",
+ "outside": "/tmp/capture-work",
+ "thread_sandbox": {
+  "type": "readOnly",
+  "networkAccess": false
+ },
+ "thread_approval": "never",
+ "items": [
+  {
+   "type": "userMessage"
+  },
+  {
+   "type": "commandExecution",
+   "command": "/usr/bin/zsh -lc 'echo confined'",
+   "exitCode": 0,
+   "status": "completed",
+   "output": "confined\n"
+  },
+  {
+   "type": "agentMessage",
+   "text": "confined"
+  }
+ ],
+ "files_in_cwd": [],
+ "files_outside": []
+}

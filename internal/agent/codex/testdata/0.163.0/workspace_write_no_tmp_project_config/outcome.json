@@ -1,0 +1,51 @@
+{
+ "sandbox": "workspace-write",
+ "config": [
+  "-c",
+  "sandbox_workspace_write.exclude_slash_tmp=true",
+  "-c",
+  "sandbox_workspace_write.exclude_tmpdir_env_var=true"
+ ],
+ "cwd": "/tmp/capture-work",
+ "outside": "/tmp/capture-work",
+ "thread_sandbox": {
+  "type": "workspaceWrite",
+  "writableRoots": [],
+  "networkAccess": false,
+  "excludeTmpdirEnvVar": true,
+  "excludeSlashTmp": true
+ },
+ "thread_approval": "never",
+ "items": [
+  {
+   "type": "userMessage"
+  },
+  {
+   "type": "commandExecution",
+   "command": "/usr/bin/zsh -lc 'mkdir -p /tmp/capture-work && printf hi > /tmp/capture-work/x.txt'",
+   "exitCode": 1,
+   "status": "failed",
+   "output": "zsh:1: read-only file system: /tmp/capture-work/x.txt\n"
+  },
+  {
+   "type": "mcpToolCall",
+   "status": "failed",
+   "server": "project",
+   "tool": "ping",
+   "error": {
+    "message": "MCP tool call requires approval, but approval policy is never"
+   }
+  },
+  {
+   "type": "agentMessage",
+   "text": "File creation failed: `zsh:1: read-only file system: /tmp/capture-work/x.txt`\n\nPing failed: `MCP tool call requires approval, but approval policy is never`"
+  }
+ ],
+ "written": false,
+ "files_in_cwd": [
+  ".codex"
+ ],
+ "files_outside": [
+  "mcp_project.py"
+ ]
+}

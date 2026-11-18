@@ -1,0 +1,16 @@
+{
+ "variant": "files",
+ "cwd": "/tmp/capture-work",
+ "outside": "/tmp/capture-work",
+ "session": "00000000-0000-4000-8000-000000000416",
+ "answer": "The Write call failed. The tool rejected `/tmp/capture-work/x.txt` because it is outside the working directory (`/tmp/capture-work`), and the file tools are restricted to that directory. I did not create the file. I didn't use another tool to get around the restriction. If you want the file in the working directory instead, or want the path changed, tell me which.",
+ "calls": [
+  {
+   "event": "PreToolUse",
+   "tool": "Write"
+  }
+ ],
+ "written": false,
+ "files_in_cwd": [],
+ "files_outside": []
+}

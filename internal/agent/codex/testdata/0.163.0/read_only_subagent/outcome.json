@@ -1,0 +1,22 @@
+{
+ "sandbox": "read-only",
+ "config": [],
+ "cwd": "/tmp/capture-work",
+ "outside": "/tmp/capture-work",
+ "thread_sandbox": {
+  "type": "readOnly",
+  "networkAccess": false
+ },
+ "thread_approval": "never",
+ "items": [
+  {
+   "type": "userMessage"
+  },
+  {
+   "type": "agentMessage",
+   "text": "Provide one of: message or items"
+  }
+ ],
+ "files_in_cwd": [],
+ "files_outside": []
+}

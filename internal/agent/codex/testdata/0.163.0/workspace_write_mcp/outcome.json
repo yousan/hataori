@@ -1,0 +1,31 @@
+{
+ "sandbox": "workspace-write",
+ "config": [],
+ "cwd": "/tmp/capture-work",
+ "outside": "/tmp/capture-work",
+ "thread_sandbox": {
+  "type": "workspaceWrite",
+  "writableRoots": [],
+  "networkAccess": false,
+  "excludeTmpdirEnvVar": false,
+  "excludeSlashTmp": false
+ },
+ "thread_approval": "never",
+ "items": [
+  {
+   "type": "userMessage"
+  },
+  {
+   "type": "mcpToolCall",
+   "status": "completed",
+   "server": "sv",
+   "tool": "ping"
+  },
+  {
+   "type": "agentMessage",
+   "text": "pong from sv"
+  }
+ ],
+ "files_in_cwd": [],
+ "files_outside": []
+}

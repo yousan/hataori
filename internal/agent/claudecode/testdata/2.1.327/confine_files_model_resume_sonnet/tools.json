@@ -1,0 +1,21 @@
+{
+ "tools": [
+  "Edit",
+  "Glob",
+  "Grep",
+  "Read",
+  "Write",
+  "DeferredToolPlaceholder",
+  "mcp__sv__ping",
+  "advisor"
+ ],
+ "other_tools": 0,
+ "deferred": [
+  "EndConversation"
+ ],
+ "other_deferred": 0,
+ "skills": [],
+ "other_skills": 0,
+ "agents": [],
+ "other_agents": 0
+}

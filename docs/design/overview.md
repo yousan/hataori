@@ -8,7 +8,7 @@ How to read it:
 
 - Issue numbers written `c-lord#123` are issues of `yousan/c-lord`.
 - c-lord facts come from its docs and code at v1.4.420.
-- Claims about the agent CLIs were checked on 2026-11-12 against Claude Code 2.1.322 and codex-cli 0.163.0 on Linux, by driving the real programs. Appendix B lists each check.
+- Claims about the agent CLIs were checked on 2026-11-12 against Claude Code 2.1.322 and codex-cli 0.163.0 on Linux, by driving the real programs, and the supervisor's confinement (section 7.1) on 2026-11-18 against Claude Code 2.1.327 and codex-cli 0.163.0. Appendix B lists each check.
 - Section 3 first recommended `claude -p`. The maintainer decided against it; sections 3.4 and 3.5 describe the path chosen instead, and the earlier checks stay in the document as the record.
 - OpenClaw facts (section 7.3) come from its documentation for version 2026.10.6, read on 2026-11-12.
 - Slack and Microsoft Teams facts in section 8, and the source notes in Appendix B's Codex rows, come from documentation and source code read on 2026-11-18 (Appendix B); they were not run.
@@ -431,7 +431,9 @@ A supervisor is one ordinary session, Claude Code or Codex, that looks after the
 
 - Interrupt a busy thread. `Send` is refused with "busy" and the supervisor gets the turn-end event later. Interrupting is a separate tool, and each use of it is put to a person as an approval in the supervisor's own thread.
 - Merge, delete or reset. The control API has no such operations, so there is nothing to grant.
-- Touch other workspaces directly. Its session runs without a shell and with file tools confined to its own directory. Checked for Claude Code (in a `-p` run): with `--restricted --strict-mcp-config --mcp-config <file>` the session had no Bash and no WebFetch, loaded only the listed MCP servers, and a write outside its directory was refused. That mode still leaves subagent and wake-up tools, so the tool list is also narrowed with `--tools` **(not run)**. The Codex equivalent is its read-only or workspace-only sandbox **(not run)**.
+- Touch other workspaces directly. Its session runs without a shell and with file tools confined to its own directory. Checked against the real CLIs in their interactive or app-server mode (Appendix B, "Confining a supervisor session"):
+  - *Claude Code 2.1.327:* `--restricted --strict-mcp-config --mcp-config <file> --tools "Read,Write,Edit,Glob,Grep"`. A shell command, a web fetch, a subagent and a wake-up were not available. A write and a read outside its directory were refused. A write inside it and a call to the listed MCP server were allowed. Under `--tools ""` only the MCP tools are left, and nothing can write a file. The confinement held across `--resume` with the same flags and across a model switch. Project settings, `--settings`, the user's own settings, skills and plugins, and `--plugin-dir` added no tool back. Two limits: the flags must be given at every launch, since a `--resume` without them had a shell again; and `/model` typed in the session wrote the model into the user's settings file. hataori therefore changes a supervisor's model by relaunching with `--model`, never with `/model`.
+  - *Codex 0.163.0:* neither sandbox removes the shell, the subagent tool or web search, and neither confines reads: `read-only` and `workspace-write` confine writes and the network only. The setting under which every attempt but the MCP call and the write inside was refused or not available is `sandbox: "workspace-write"` with `approvalPolicy: "never"` and `-c sandbox_workspace_write.exclude_slash_tmp=true -c sandbox_workspace_write.exclude_tmpdir_env_var=true --disable shell_tool --disable unified_exec --disable multi_agent --disable goals --disable sleep_tool --disable apps --disable plugins --disable hooks -c web_search="disabled" -c agents.max_depth=0`, with the MCP server's `default_tools_approval_mode = "approve"`. Without the two `exclude_*` settings a write to `/tmp` is allowed. Under this setting the session has no way to read a file. Still open for the Codex phase: which of the `--disable` flags are each needed, a resume and a model switch, and whether a project's `.codex/config.toml` can add tools when a parent directory is not trusted. That file did load an MCP server in the check, and Codex recorded the directory as trusted in the user's configuration.
 
 One limit is not enforced by this: the supervisor can *ask* a worker thread to merge or delete. What a worker may do is decided by that worker's own rules. Messages from a supervisor are marked as such, so a worker's instructions can treat them differently from a person's.
 
@@ -912,7 +914,7 @@ Claude Code 2.1.322 and codex-cli 0.163.0, Linux, 2026-11-12. Each agent was sta
 | `--bare` | With the same login and no API key: `Not logged in · Please run /login`. |
 | `--restricted --strict-mcp-config --mcp-config <file>` | The tool list had no Bash and no WebFetch (21 tools instead of 48), only the listed MCP servers were loaded, and a write to a path outside the working directory was refused. Subagent, skill, web search and wake-up tools were still listed. |
 
-Not checked: turns of hours; what the stream shows at a real usage limit or an expired login; `/compact` in `-p`; plan approval; two processes on one session at once; MCP tools given with `--mcp-config` and their approval requests; `--tools`; events for background subagents.
+Not checked: turns of hours; what the stream shows at a real usage limit or an expired login; `/compact` in `-p`; plan approval; two processes on one session at once; MCP tools given with `--mcp-config` and their approval requests; events for background subagents. (`--tools` was checked later, interactively: "Confining a supervisor session" below.)
 
 ### Claude Code, interactive in a terminal, with hooks
 
@@ -967,6 +969,53 @@ The method list comes from `codex app-server generate-json-schema` of the instal
 | Second client | With `--listen unix://<path>` (the socket's directory must be private to the user), `codex resume --remote unix://<path> <thread>` showed the thread in the terminal UI. A raw client through `app-server proxy` got no reply to `initialize`. `--listen unix://` serves WebSocket over the Unix socket: a client sends an HTTP upgrade first, then one JSON-RPC message per text frame. Whether `app-server proxy` adds that framing for its stdio side was not checked. |
 
 Not checked: turns of hours; behaviour at a usage limit; two clients driving one thread; turns the agent starts itself; whether `thread/backgroundTerminals/clean` stops the command left running after `turn/interrupt`.
+
+### Confining a supervisor session (#268)
+
+Claude Code 2.1.327 and codex-cli 0.163.0, Linux, 2026-11-18. Every attempt ran in a new empty temporary directory; "outside" is a second one. One MCP server was given, a stdio server with one tool that only answers. The captures, and the scripts that took them, are in `internal/agent/claudecode/testdata/2.1.327/confine_*` and `internal/agent/codex/testdata/0.163.0/`. Results: *allowed*; *refused* (the tool was there and the attempt failed); *not available* (the tool was not in the session's list).
+
+**Claude Code**, interactive in a terminal, `--settings <file> --setting-sources project,local --model haiku --permission-mode default --restricted --strict-mcp-config --mcp-config <file>`, plus `--tools` as below. The `--settings` hook answered every permission request with allow, so a refusal is the CLI's confinement, not an unanswered prompt. The tool list is the one the session sent to the model.
+
+| Attempt | `--tools ""` | `--tools "Read,Write,Edit,Glob,Grep"` |
+|---|---|---|
+| Tool list | `mcp__sv__ping` (and `advisor`, a server-side tool, and `DeferredToolPlaceholder`); no deferred tools, skills or agent types | the five file tools and `mcp__sv__ping`, the same two extras |
+| Shell command (`Bash`) | not available | not available |
+| Web fetch (`WebFetch`) | not available | not available |
+| Subagent (`Agent`) | not available | not available |
+| Wake-up or background task (`CronCreate`, `ScheduleWakeup`, `Monitor`) | not available | not available |
+| Write outside the directory | not available | refused: `<path> is outside <cwd>; --restricted confines the file tools to the working directory.` No `PostToolUse` or `PostToolUseFailure` hook followed. |
+| Read outside the directory | not available | refused, the same message |
+| Write inside the directory | not available | allowed |
+| Call to the listed MCP server | allowed | allowed |
+| `--resume` with the same flags, then `Bash` | | not available |
+| `--resume` without the flags, then `Bash` | | allowed: the flags belong to the launch |
+| `/model sonnet` in the session, then `Bash` and `Agent` | | not available; the tool list unchanged. The CLI wrote `"model": "sonnet"` into the user's settings file. |
+| `--resume` with `--model sonnet`, then `Agent` | | not available |
+| Project settings allowing `Bash`, a project hook, `.mcp.json`, a skill, an agent and a command | | none loaded; the hook did not run |
+| `--settings` allowing `Bash`, `WebFetch`, `Agent`, `CronCreate`, with `defaultMode: bypassPermissions` | | `Bash` not available |
+| The user's own settings, skills and plugins (no `--setting-sources`) | | nothing added |
+| A plugin with an MCP server and a skill, given with `--plugin-dir` | | nothing added |
+
+Without `--tools` (the set of section 7.1 before this check): `Agent`, `ScheduleWakeup`, `Skill`, `ToolSearch`, `ListAgents`, `AskUserQuestion` and the file tools were listed, with 16 deferred tools (`WebSearch`, `CronList`, `PushNotification`, `SendMessage`, `TaskStop` among them), 17 skills and 6 agent types.
+
+**Codex**, `codex app-server` (stdio), `thread/start` with `approvalPolicy: "never"`, `ephemeral: true` and the sandbox below, the MCP server given with `-c` and `default_tools_approval_mode = "approve"`. The prompt asked for one real attempt, since the model otherwise often declined without trying. "Locked" is `workspace-write` with `exclude_slash_tmp` and `exclude_tmpdir_env_var`, `--disable shell_tool --disable unified_exec --disable multi_agent --disable goals --disable sleep_tool --disable apps --disable plugins --disable hooks`, `-c web_search="disabled"` and `-c agents.max_depth=0`.
+
+| Attempt | `read-only` | `workspace-write` | `workspace-write`, `/tmp` and `$TMPDIR` excluded | Locked |
+|---|---|---|---|---|
+| A command can run at all | yes | yes | yes | no |
+| Shell command | allowed | allowed | allowed | not available |
+| Web fetch | refused: `curl` could not resolve the host | refused, the same | refused, the same | not available. With only the shell off, web search answered. |
+| Subagent (`spawn_agent`) | allowed (the tool was there; see the capture notes) | allowed | allowed | not available. `--disable multi_agent` alone left it. |
+| Background task (`sleep 600 &`) | allowed; gone after the app-server exited | allowed, the same | allowed, the same | not available |
+| Write outside the directory | refused: `writing is blocked by read-only sandbox` | **allowed** (the outside directory was under `/tmp`) | refused: `writing outside of the project` | refused, the same |
+| Read outside the directory | allowed | allowed | allowed | not available (no tool reads a file) |
+| Write inside the directory | refused | allowed | allowed | allowed |
+| Call to the listed MCP server | allowed | allowed | allowed | allowed. Without `default_tools_approval_mode`, refused: `MCP tool call requires approval, but approval policy is never`. |
+| A project `.codex/config.toml` with `danger-full-access` and an MCP server | | | the thread kept its sandbox: the write outside was refused. The project's server was loaded, and its call refused for want of an approval. | the same |
+
+Codex also wrote the project directory into the user's `~/.codex/config.toml` as trusted (the file was put back). A parent of it was trusted there, which may be why the project's configuration was loaded at all. `experimentalFeature/list` still reported `unified_exec` on after `--disable unified_exec`.
+
+Not run: a Codex resume and model switch (not needed until the Codex phase); which of the Codex `--disable` flags are each needed; Codex with a project directory whose parents are not trusted (it needs a change to the user's Codex configuration); Claude Code managed settings (they need a file outside the user's directories); what a person can do by typing at the terminal (`/add-dir`, `/cd`, `!`), which is not the model's confinement.
 
 ### Documentation read on 2026-11-12
 

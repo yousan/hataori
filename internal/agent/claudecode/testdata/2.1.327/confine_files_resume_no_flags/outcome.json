@@ -1,0 +1,19 @@
+{
+ "variant": "files",
+ "cwd": "/tmp/capture-work",
+ "outside": "/tmp/capture-work",
+ "session": "00000000-0000-4000-8000-000000000197",
+ "answer": "confined",
+ "calls": [
+  {
+   "event": "PreToolUse",
+   "tool": "Bash"
+  },
+  {
+   "event": "PostToolUse",
+   "tool": "Bash"
+  }
+ ],
+ "files_in_cwd": [],
+ "files_outside": []
+}

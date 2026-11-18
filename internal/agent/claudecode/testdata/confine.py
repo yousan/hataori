@@ -34,6 +34,7 @@ import tempfile
 import time
 import uuid
 
+sys.dont_write_bytecode = True  # no __pycache__ in testdata
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import capture  # noqa: E402
 from capture import Session, clean_env, settings_file  # noqa: E402
@@ -291,20 +292,83 @@ def resume(out, work, variant):
         shutil.rmtree(cwd, ignore_errors=True)
 
 
+def screen_text(s):
+    import re
+    b = open(s.term.name, "rb").read().decode("utf-8", "replace")
+    return re.sub(r"\x1b\[[0-9;?<>=]*[A-Za-z~]|\x1b\][^\x07]*\x07|\x1b[()][A-Z0-9]|\x1b[=>78]", "", b)
+
+
 def model_switch(out, work, variant):
-    """/model in the running session, then a shell attempt and a subagent attempt."""
+    """/model in the running session, then a shell attempt and a subagent
+    attempt. The command is typed, its menu closed with Escape, and the
+    screen read until it reports the new model."""
     def after(s, result):
-        s.typed("/model sonnet")
-        time.sleep(4)
+        before = len(screen_text(s))
+        for ch in "/model sonnet":
+            s.write(ch.encode())
+            time.sleep(0.05)
+        time.sleep(1.0)
+        s.write(b"\r")
+        # 2.1.327 asks "Switch model?" with the cursor on "Yes, switch to
+        # Sonnet"; Enter confirms it.
+        deadline = time.time() + 20
+        while time.time() < deadline and "Entertoconfirm" not in "".join(screen_text(s)[before:].split()):
+            time.sleep(0.5)
+        time.sleep(1)
+        s.write(b"\r")
+        time.sleep(3)
+        result["model_screen"] = " ".join(screen_text(s)[before:].split())[-300:]
         n = len(s.calls("Stop"))
         s.typed(ONLY + ATTEMPTS["shell"][0])
         s.wait("Stop", n + 1, timeout=240)
         n = len(s.calls("Stop"))
         s.typed(ONLY + ATTEMPTS["subagent"][0])
         s.wait("Stop", n + 1, timeout=240)
-        result["models"] = [s.payload(x).get("model") for x in s.calls("SessionStart")]
-    return Attempt(out, work, "confine_%s_model_switch" % variant, variant, "Reply with just the word: ok",
-                   after=after).run()
+    user = os.path.expanduser("~/.claude/settings.json")
+    saved = open(user, "rb").read() if os.path.exists(user) else None
+    try:
+        Attempt(out, work, "confine_%s_model_switch" % variant, variant, "Reply with just the word: ok",
+                after=after).run()
+    finally:
+        restore_model(user, saved)
+
+
+def restore_model(user, saved):
+    """2.1.327 saves the model chosen with /model in the user's settings
+    file, --restricted and --setting-sources notwithstanding. Put the file
+    back when the "model" value is its only change; otherwise say so."""
+    if saved is None or not os.path.exists(user):
+        return
+    now = open(user, "rb").read()
+    if now == saved:
+        return
+    try:
+        a, b = json.loads(saved), json.loads(now)
+    except ValueError:
+        a, b = None, None
+    if a is not None and {k: v for k, v in a.items() if k != "model"} == \
+            {k: v for k, v in b.items() if k != "model"}:
+        with open(user, "wb") as f:
+            f.write(saved)
+        print("note: /model changed the user's settings; put back", file=sys.stderr)
+    else:
+        print("note: %s changed in another way; left as it is" % user, file=sys.stderr)
+
+
+def model_resume(out, work, variant):
+    """The same flags with another --model on resume."""
+    cwd = tempfile.mkdtemp(prefix="capture-")
+    sid = str(uuid.uuid4())
+    settings = settings_file(work)
+    try:
+        Attempt(out, work, "confine_%s_model_resume_first" % variant, variant, "Reply with just the word: ok",
+                args=claude(settings, variant, work, "--session-id", sid), cwd=cwd).run()
+        args = claude(settings, variant, work, "--resume", sid)
+        args[args.index("--model") + 1] = "sonnet"
+        Attempt(out, work, "confine_%s_model_resume_sonnet" % variant, variant,
+                ONLY + ATTEMPTS["subagent"][0], args=args, cwd=cwd).run()
+    finally:
+        shutil.rmtree(cwd, ignore_errors=True)
 
 
 def project_settings(cwd, outside):
@@ -415,6 +479,7 @@ def main():
     plan += [
         ("files_resume", lambda: resume(out, work, "files")),
         ("files_model_switch", lambda: model_switch(out, work, "files")),
+        ("files_model_resume", lambda: model_resume(out, work, "files")),
         ("files_project_settings", lambda: project(out, work, "files")),
         ("files_user_level", lambda: user_level(out, work, "files")),
         ("files_plugin_dir", lambda: plugin_dir(out, work, "files")),

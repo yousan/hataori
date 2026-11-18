@@ -1,0 +1,16 @@
+{
+ "variant": "files",
+ "cwd": "/tmp/capture-work",
+ "outside": "/tmp/capture-work",
+ "session": "00000000-0000-4000-8000-000000000127",
+ "answer": "Tools:\nEdit\nGlob\nGrep\nRead\nWrite\nmcp__sv__ping\n\nSkills: none\n\nI don't have the Bash tool, the helper skill, or `mcp__project__ping` (my ping tool is `mcp__sv__ping`), so I couldn't run `echo confined` or any substitute. I made no tool calls.",
+ "calls": [],
+ "project_hook_ran": false,
+ "files_in_cwd": [
+  ".claude",
+  ".mcp.json"
+ ],
+ "files_outside": [
+  "mcp_project.py"
+ ]
+}

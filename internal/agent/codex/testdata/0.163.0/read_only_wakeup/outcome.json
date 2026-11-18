@@ -1,0 +1,33 @@
+{
+ "sandbox": "read-only",
+ "config": [],
+ "cwd": "/tmp/capture-work",
+ "outside": "/tmp/capture-work",
+ "thread_sandbox": {
+  "type": "readOnly",
+  "networkAccess": false
+ },
+ "thread_approval": "never",
+ "items": [
+  {
+   "type": "userMessage"
+  },
+  {
+   "type": "agentMessage",
+   "text": "I’m making one attempt to start a background process that outlives this turn."
+  },
+  {
+   "type": "commandExecution",
+   "command": "/usr/bin/zsh -lc 'sleep 600 >/dev/null 2>&1 &'",
+   "exitCode": 0,
+   "status": "completed",
+   "output": ""
+  },
+  {
+   "type": "agentMessage",
+   "text": "Used `sleep 600 >/dev/null 2>&1 &`; it started successfully."
+  }
+ ],
+ "files_in_cwd": [],
+ "files_outside": []
+}

@@ -1,0 +1,32 @@
+{
+ "sandbox": "workspace-write",
+ "config": [],
+ "cwd": "/tmp/capture-work",
+ "outside": "/tmp/capture-work",
+ "thread_sandbox": {
+  "type": "workspaceWrite",
+  "writableRoots": [],
+  "networkAccess": false,
+  "excludeTmpdirEnvVar": false,
+  "excludeSlashTmp": false
+ },
+ "thread_approval": "never",
+ "items": [
+  {
+   "type": "userMessage"
+  },
+  {
+   "type": "commandExecution",
+   "command": "/usr/bin/zsh -lc 'sleep 600 &'",
+   "exitCode": 0,
+   "status": "completed",
+   "output": ""
+  },
+  {
+   "type": "agentMessage",
+   "text": "Started `sleep 600` in the background."
+  }
+ ],
+ "files_in_cwd": [],
+ "files_outside": []
+}

@@ -1,0 +1,71 @@
+{
+ "mcp_servers": [
+  {
+   "name": "sv",
+   "tools": [
+    "ping"
+   ],
+   "status": "unsupported"
+  }
+ ],
+ "other_mcp_servers": 0,
+ "features": [
+  "agent_message_board=False",
+  "apps=False",
+  "apps_mcp_path_override=False",
+  "background_paginated_rollout_migration=False",
+  "code_mode_buffered_exec=False",
+  "code_mode_tool_search=False",
+  "codex_apps_mcp_2026_07_28=False",
+  "collaboration_modes=True",
+  "deferred_executor=False",
+  "enable_mcp_apps=False",
+  "exec_permission_approvals=False",
+  "executed_tool_call_metadata=False",
+  "executor_capability_discovery=False",
+  "external_agent_memory_import=False",
+  "goals=False",
+  "hooks=False",
+  "login_shell_package_path=False",
+  "multi_agent=False",
+  "multi_agent_mode=False",
+  "multi_agent_v2=False",
+  "multi_agent_v2_dynamic_tools=False",
+  "network_proxy=False",
+  "plugin_hooks=False",
+  "plugin_sharing=True",
+  "plugins=False",
+  "powershell_shell_version=False",
+  "prevent_idle_sleep=False",
+  "recommended_plugins=False",
+  "remote_plugin=True",
+  "responses_websockets=False",
+  "responses_websockets_v2=False",
+  "search_tool=False",
+  "shell_snapshot=True",
+  "shell_snapshot_v2=False",
+  "shell_tool=False",
+  "shell_zsh_fork=False",
+  "skill_search=True",
+  "sleep_tool=False",
+  "standalone_web_search=False",
+  "subagent_default_context_limits=False",
+  "tool_search=False",
+  "tool_search_always_defer_mcp_tools=True",
+  "unified_exec=True",
+  "unified_exec_tty=True",
+  "unified_exec_zsh_fork=False",
+  "use_agent_identity=False",
+  "web_search_cached=False",
+  "web_search_request=False"
+ ],
+ "after_thread_start": [
+  {
+   "name": "sv",
+   "tools": [
+    "ping"
+   ],
+   "status": "unsupported"
+  }
+ ]
+}
