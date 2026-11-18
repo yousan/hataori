@@ -21,8 +21,11 @@ transcript) plus:
   outcome.json  what the attempt left behind: tool calls seen in the hooks,
                 refusals, and the files the attempt was asked to write
 
-Nothing is written to the user's settings. Project settings are written
-only inside the scenario's own temporary directory. The output is not
+The script writes no settings of the user's. Project settings are written
+only inside the scenario's own temporary directory. One CLI command does
+write the user's settings: /model saves the model there (model_switch). The
+script puts the file back when the model is its only change (see
+restore_model); otherwise it leaves the file and says so. The output is not
 scrubbed: run scrub.py on it, and never commit RAW_DIR.
 """
 
@@ -337,7 +340,11 @@ def restore_model(user, saved):
     """2.1.327 saves the model chosen with /model in the user's settings
     file, --restricted and --setting-sources notwithstanding. Put the file
     back when the "model" value is its only change; otherwise say so."""
-    if saved is None or not os.path.exists(user):
+    if saved is None:
+        if os.path.exists(user):
+            print("note: the CLI created %s; left as it is" % user, file=sys.stderr)
+        return
+    if not os.path.exists(user):
         return
     now = open(user, "rb").read()
     if now == saved:
@@ -348,8 +355,14 @@ def restore_model(user, saved):
         a, b = None, None
     if a is not None and {k: v for k, v in a.items() if k != "model"} == \
             {k: v for k, v in b.items() if k != "model"}:
-        with open(user, "wb") as f:
+        tmp = user + ".confine-tmp"
+        with open(tmp, "wb") as f:
             f.write(saved)
+        if open(user, "rb").read() != now:  # changed again meanwhile: leave it
+            os.remove(tmp)
+            print("note: %s changed meanwhile; left as it is" % user, file=sys.stderr)
+            return
+        os.replace(tmp, user)  # atomic: never a half-written file
         print("note: /model changed the user's settings; put back", file=sys.stderr)
     else:
         print("note: %s changed in another way; left as it is" % user, file=sys.stderr)

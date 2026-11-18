@@ -21,9 +21,12 @@ RAW_DIR/<name>/ gets:
                   not make counted rather than named
   outcome.json    the items seen, and the files the attempt was asked to write
 
-The user's ~/.codex is read, as every Codex start reads it, and never
-written by this script: settings come only through `-c` and through files
-inside the scenario's own temporary directory. --scrub writes a committable
+The user's ~/.codex is read, as every Codex start reads it. Settings come
+only through `-c` and through files inside the scenario's own temporary
+directory. Codex itself writes one thing there: a project directory is
+recorded as trusted in ~/.codex/config.toml. The script puts that file back
+when that entry is its only change (see undo_trust); otherwise it leaves
+the file and says so. --scrub writes a committable
 copy with claudecode/testdata/scrub.py's rules.
 """
 
@@ -231,7 +234,10 @@ def undo_trust(saved, dirs):
     the file back when that entry, for a directory this run made, is the
     only change; otherwise leave it and say so."""
     now = read_bytes(USER_CONFIG)
-    if now == saved or saved is None or now is None:
+    if saved is None and now is not None:
+        print("note: Codex created %s; left as it is" % USER_CONFIG, file=sys.stderr)
+        return False
+    if now == saved or now is None:
         return False
     rest = now
     for d in dirs:
@@ -240,8 +246,19 @@ def undo_trust(saved, dirs):
     if rest.rstrip(b"\n") != saved.rstrip(b"\n"):
         print("note: %s changed in another way; left as it is" % USER_CONFIG, file=sys.stderr)
         return False
-    with open(USER_CONFIG, "wb") as f:
+    return put_back(USER_CONFIG, now, saved)
+
+
+def put_back(path, seen, saved):
+    """Replace path with saved, atomically, only if it still holds seen."""
+    tmp = path + ".confine-tmp"
+    with open(tmp, "wb") as f:
         f.write(saved)
+    if read_bytes(path) != seen:  # changed again meanwhile: leave it
+        os.remove(tmp)
+        print("note: %s changed meanwhile; left as it is" % path, file=sys.stderr)
+        return False
+    os.replace(tmp, path)
     return True
 
 
