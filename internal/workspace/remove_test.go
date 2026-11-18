@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -419,6 +420,134 @@ func (x *removal) worktreeGitDir(common string) string {
 
 // git applies url.<base>.insteadOf to the address the check fetches as
 // well: a rule that sends it to another workspace makes it not count.
+// A remote outside the root can keep its objects in the workspace through
+// its own objects/info/alternates: git serves them as the remote's, and
+// they go with the workspace. The workspace has a commit only there.
+func TestRefuseRemoteBorrowingFromTheWorkspace(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		reason Reason
+		remote func(x *removal) string
+	}{
+		{"absolute", RemoteIsLocal, func(x *removal) string {
+			return x.shared(x.clone, "r.git")
+		}},
+		{"relative", RemoteIsLocal, func(x *removal) string {
+			r := x.shared(x.clone, "r.git")
+			rel, err := filepath.Rel(filepath.Join(r, "objects"), filepath.Join(x.clone, ".git", "objects"))
+			if err != nil {
+				x.t.Fatal(err)
+			}
+			x.alternates(r, rel+"\n")
+			return r
+		}},
+		// ".." after a symlink goes up from the link's target. As text
+		// this is <tmp>/l/root/..., outside the root.
+		{"dot-dot after a symlink", RemoteIsLocal, func(x *removal) string {
+			r := x.shared(x.clone, "r.git")
+			x.alternates(r, x.dotDotLink()+"/../root/"+Dir+"/c/s/k/.git/objects\n")
+			return r
+		}},
+		// remote -> a repository outside the root -> the workspace.
+		{"chain", RemoteIsLocal, func(x *removal) string {
+			return x.shared(x.shared(x.clone, "m.git"), "r.git")
+		}},
+		// git reads # lines as comments and unquotes a C-quoted path.
+		{"quoted", RemoteIsLocal, func(x *removal) string {
+			r := x.shared(x.clone, "r.git")
+			objects := filepath.Join(x.clone, ".git", "objects")
+			x.alternates(r, "# a comment\n\n\""+strings.Replace(objects, "/objects", "\\057objects", 1)+"\"\n")
+			return r
+		}},
+		// After the closing quote git skips one byte, whatever it is,
+		// and reads the next path from there.
+		{"path after a quoted one", RemoteIsLocal, func(x *removal) string {
+			r := x.shared(x.clone, "r.git")
+			x.alternates(r, "\""+filepath.Join(x.bare, "objects")+"\"X"+filepath.Join(x.clone, ".git", "objects")+"\n")
+			return r
+		}},
+		// A quoted path git cannot unquote is read as it is: a relative
+		// path, quotes and all, that does not exist.
+		{"badly quoted", RemoteUnresolved, func(x *removal) string {
+			r := x.shared(x.clone, "r.git")
+			x.alternates(r, "\""+filepath.Join(x.clone, ".git", "objects")+"\\q\"\n")
+			return r
+		}},
+		// An alternate that does not exist cannot be told: it may be a
+		// workspace that is already gone.
+		{"missing alternate", RemoteUnresolved, func(x *removal) string {
+			r := x.shared(x.clone, "r.git")
+			x.alternates(r, filepath.Join(x.tmp, "gone", "objects")+"\n")
+			return r
+		}},
+		// git reads alternates six levels deep and ignores the rest.
+		{"deeper than git reads", RemoteUnresolved, func(x *removal) string {
+			r := x.clone
+			for i := 0; i < 7; i++ {
+				r = x.shared(r, "c"+strconv.Itoa(i)+".git")
+			}
+			return r
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			x := newRemoval(t)
+			x.commit(x.clone, "w") // on no remote but the one below
+			x.git(x.clone, "remote", "set-url", "origin", tc.remote(x))
+			wantRefusal(t, x.check(), tc.reason, "")
+		})
+	}
+}
+
+// Alternates outside the root, a comment naming the workspace, and a loop
+// between two remotes: the remote counts.
+func TestRemoteWithAlternatesOutsideTheRootCounts(t *testing.T) {
+	x := newRemoval(t)
+	a := x.shared(x.bare, "a.git")
+	b := x.shared(x.bare, "b.git")
+	x.alternates(a, filepath.Join(x.bare, "objects")+"\n"+filepath.Join(b, "objects")+"\n# "+filepath.Join(x.clone, ".git", "objects")+"\n")
+	x.alternates(b, filepath.Join(a, "objects")+"\n")
+	x.git(x.clone, "remote", "set-url", "origin", a)
+	if err := x.check(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// git follows alternates six levels deep: a chain that long to a
+// repository outside the root counts.
+func TestRemoteWithSixLevelsOfAlternatesCounts(t *testing.T) {
+	x := newRemoval(t)
+	r := x.bare
+	for i := 0; i < 6; i++ {
+		r = x.shared(r, "c"+strconv.Itoa(i)+".git")
+	}
+	x.git(x.clone, "remote", "set-url", "origin", r)
+	if err := x.check(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// shared is a bare clone of src at <tmp>/<name>, outside the root, that
+// borrows src's objects through its alternates. Its alternates name only
+// src's objects: git clone --shared would also copy src's own alternates.
+func (x *removal) shared(src, name string) string {
+	x.t.Helper()
+	dst := filepath.Join(x.tmp, name)
+	x.git(x.tmp, "clone", "-q", "--bare", "--shared", src, dst)
+	objects := filepath.Join(src, ".git", "objects")
+	if _, err := os.Stat(objects); err != nil {
+		objects = filepath.Join(src, "objects")
+	}
+	x.alternates(dst, objects+"\n")
+	return dst
+}
+
+func (x *removal) alternates(repo, content string) {
+	x.t.Helper()
+	if err := os.WriteFile(filepath.Join(repo, "objects", "info", "alternates"), []byte(content), 0o600); err != nil {
+		x.t.Fatal(err)
+	}
+}
+
 func TestRefuseRemoteRewrittenAgain(t *testing.T) {
 	x := newRemoval(t)
 	b := filepath.Join(x.root, Dir, "c", "s", "other", "b.git")

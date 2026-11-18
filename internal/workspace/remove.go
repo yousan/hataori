@@ -840,12 +840,164 @@ func (c *checker) localRemote(u, dir string) (string, Reason) {
 			return u, reason
 		}
 	}
+	// git serves the objects of the remote's alternates as its own.
+	if reason, err := c.alternates(reads); err != nil {
+		return u, RemoteUnresolved
+	} else if reason != "" {
+		return u, reason
+	}
 	if strings.HasPrefix(u, "file://") {
 		return u, ""
 	}
 	// The scratch repository fetches from elsewhere: a relative or ~/
 	// path is given as the path git would read in the repository.
 	return p, ""
+}
+
+// alternateDepth is how deep git follows objects/info/alternates: the
+// remote's own file and five more levels.
+const alternateDepth = 5
+
+// alternates names why the objects git serves for a remote whose paths are
+// reads come from inside a root, following each one's objects/info/
+// alternates the way git does, or "". An alternate that cannot be resolved,
+// or one nested deeper than git reads, is an error: what git serves then
+// cannot be told.
+func (c *checker) alternates(reads []string) (Reason, error) {
+	type dir struct {
+		objects string
+		depth   int
+	}
+	var queue []dir
+	seen := map[string]bool{}
+	for _, r := range reads {
+		objects, err := filepath.EvalSymlinks(r + "/objects")
+		if missing(err) {
+			continue
+		} else if err != nil {
+			return "", err
+		}
+		if !seen[objects] {
+			seen[objects] = true
+			queue = append(queue, dir{objects, 0})
+		}
+	}
+	// Breadth first, each directory is read at the least depth git can
+	// reach it by.
+	for len(queue) > 0 {
+		d := queue[0]
+		queue = queue[1:]
+		b, err := os.ReadFile(d.objects + "/info/alternates")
+		if missing(err) {
+			continue
+		} else if err != nil {
+			return "", err
+		}
+		entries := parseAlternates(string(b))
+		if len(entries) > 0 && d.depth > alternateDepth {
+			return "", errors.New("alternates nested deeper than git reads them: " + d.objects)
+		}
+		for _, e := range entries {
+			// A relative path is relative to the resolved objects
+			// directory, and the result is resolved as the kernel does.
+			if !filepath.IsAbs(e) {
+				e = d.objects + "/" + e
+			}
+			alt, err := filepath.EvalSymlinks(e)
+			if err != nil {
+				return "", err
+			}
+			if reason := c.inRoot(alt); reason != "" {
+				return reason, nil
+			}
+			if !seen[alt] {
+				seen[alt] = true
+				queue = append(queue, dir{alt, d.depth + 1})
+			}
+		}
+	}
+	return "", nil
+}
+
+// parseAlternates splits an objects/info/alternates file as git does: one
+// path per line, "#" starts a comment line, and a line starting with a
+// double quote is a C-quoted path, after which one more byte is skipped. A
+// quoted path git cannot unquote is taken as it is, quotes and all.
+func parseAlternates(s string) []string {
+	var entries []string
+	for len(s) > 0 {
+		var entry string
+		if s[0] == '"' {
+			if v, n, ok := unquoteC(s); ok {
+				entry, s = v, s[n:]
+				if len(s) > 0 {
+					s = s[1:]
+				}
+				if entry != "" {
+					entries = append(entries, entry)
+				}
+				continue
+			}
+		}
+		line, rest, _ := strings.Cut(s, "\n")
+		if line != "" && line[0] != '#' {
+			entry = line
+			entries = append(entries, entry)
+		}
+		s = rest
+	}
+	return entries
+}
+
+// unquoteC unquotes a C-quoted string at the start of s the way git does,
+// returning it and the number of bytes it took, closing quote included.
+func unquoteC(s string) (string, int, bool) {
+	var b strings.Builder
+	for i := 1; i < len(s); i++ {
+		switch ch := s[i]; ch {
+		case '"':
+			return b.String(), i + 1, true
+		case '\\':
+			i++
+			if i >= len(s) {
+				return "", 0, false
+			}
+			switch e := s[i]; e {
+			case '"', '\\':
+				b.WriteByte(e)
+			case 'a':
+				b.WriteByte('\a')
+			case 'b':
+				b.WriteByte('\b')
+			case 'f':
+				b.WriteByte('\f')
+			case 'n':
+				b.WriteByte('\n')
+			case 'r':
+				b.WriteByte('\r')
+			case 't':
+				b.WriteByte('\t')
+			case 'v':
+				b.WriteByte('\v')
+			case '0', '1', '2', '3':
+				if i+2 >= len(s) || s[i+1] < '0' || s[i+1] > '7' || s[i+2] < '0' || s[i+2] > '7' {
+					return "", 0, false
+				}
+				b.WriteByte((e-'0')<<6 | (s[i+1]-'0')<<3 | (s[i+2] - '0'))
+				i += 2
+			default:
+				return "", 0, false
+			}
+		default:
+			b.WriteByte(ch)
+		}
+	}
+	return "", 0, false
+}
+
+// missing reports an error that says a path is not there.
+func missing(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
 }
 
 // inRoot names why a resolved path does not count, or "".
