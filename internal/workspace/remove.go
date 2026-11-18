@@ -859,68 +859,139 @@ func (c *checker) localRemote(u, dir string) (string, Reason) {
 const alternateDepth = 5
 
 // alternates names why the objects git serves for a remote whose paths are
-// reads come from inside a root, from each one's objects directory and the
-// objects/info/alternates git follows from there, or "". An alternate that cannot be resolved,
-// or one nested deeper than git reads, is an error: what git serves then
-// cannot be told.
+// reads come from inside a root, or "". For each one it walks the objects
+// directory and the objects/info/alternates git follows from there, in
+// git's order. A path counts as inside a root when it passes through one
+// on the way, not only when it ends there: a link through a workspace
+// breaks when the workspace is moved. An alternate that cannot be
+// resolved or is not a directory, or a file nested deeper than git reads,
+// is an error: what git serves then cannot be told.
 func (c *checker) alternates(reads []string) (Reason, error) {
-	type dir struct {
-		objects string
-		depth   int
-	}
-	var queue []dir
-	seen := map[string]bool{}
 	for _, r := range reads {
-		objects, err := filepath.EvalSymlinks(r + "/objects")
+		objects, reason, err := c.walk(r + "/objects")
 		if missing(err) {
 			continue
-		} else if err != nil {
-			return "", err
+		} else if err != nil || reason != "" {
+			return reason, err
 		}
-		// The objects directory itself may lead into a root.
-		if reason := c.inRoot(objects); reason != "" {
-			return reason, nil
-		}
-		if !seen[objects] {
-			seen[objects] = true
-			queue = append(queue, dir{objects, 0})
-		}
-	}
-	// Breadth first, each directory is read at the least depth git can
-	// reach it by.
-	for len(queue) > 0 {
-		d := queue[0]
-		queue = queue[1:]
-		b, err := os.ReadFile(d.objects + "/info/alternates")
-		if missing(err) {
-			continue
-		} else if err != nil {
-			return "", err
-		}
-		entries := parseAlternates(string(b))
-		if len(entries) > 0 && d.depth > alternateDepth {
-			return "", errors.New("alternates nested deeper than git reads them: " + d.objects)
-		}
-		for _, e := range entries {
-			// A relative path is relative to the resolved objects
-			// directory, and the result is resolved as the kernel does.
-			if !filepath.IsAbs(e) {
-				e = d.objects + "/" + e
-			}
-			alt, err := filepath.EvalSymlinks(e)
-			if err != nil {
-				return "", err
-			}
-			if reason := c.inRoot(alt); reason != "" {
-				return reason, nil
-			}
-			if !seen[alt] {
-				seen[alt] = true
-				queue = append(queue, dir{alt, d.depth + 1})
-			}
+		seen := map[string]bool{objects: true}
+		if reason, err := c.readAlternates(objects, 0, seen); err != nil || reason != "" {
+			return reason, err
 		}
 	}
 	return "", nil
+}
+
+// readAlternates follows objects/info/alternates of the objects directory
+// objects at depth as git does: depth first, each entry linked and its own
+// alternates read before the next, a directory seen before skipped.
+func (c *checker) readAlternates(objects string, depth int, seen map[string]bool) (Reason, error) {
+	file, reason, err := c.walk(objects + "/info/alternates")
+	if missing(err) {
+		return "", nil
+	} else if err != nil || reason != "" {
+		return reason, err
+	}
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return "", err
+	}
+	if len(b) == 0 {
+		return "", nil
+	}
+	if depth > alternateDepth {
+		return "", errors.New("alternates nested deeper than git reads them: " + objects)
+	}
+	for _, e := range parseAlternates(string(b)) {
+		// A relative path is relative to the resolved objects directory.
+		if !filepath.IsAbs(e) {
+			e = objects + "/" + e
+		}
+		alt, reason, err := c.walk(e)
+		if err != nil || reason != "" {
+			return reason, err
+		}
+		if fi, err := os.Stat(alt); err != nil {
+			return "", err
+		} else if !fi.IsDir() {
+			return "", errors.New("alternate " + alt + " is not a directory")
+		}
+		if seen[alt] {
+			continue
+		}
+		seen[alt] = true
+		if reason, err := c.readAlternates(alt, depth+1, seen); err != nil || reason != "" {
+			return reason, err
+		}
+	}
+	return "", nil
+}
+
+// walk resolves the absolute path p one component at a time, as the
+// kernel does: a link is followed where it stands, ".." goes up from what
+// is resolved so far, and a component after a file is ENOTDIR. It names
+// the reason when any directory or link on the way is inside a root, the
+// workspaces before any other: such a path does not count even when it
+// cannot be resolved to the end.
+func (c *checker) walk(p string) (string, Reason, error) {
+	var hit Reason
+	resolved, err := c.walkFrom(p, func(next string) {
+		if reason := c.inRoot(next); reason == RemoteIsLocal || reason != "" && hit == "" {
+			hit = reason
+		}
+	})
+	if hit != "" {
+		return "", hit, nil
+	}
+	return resolved, "", err
+}
+
+// walkFrom resolves p and calls on with every directory or link it
+// passes, resolved up to it.
+func (c *checker) walkFrom(p string, on func(next string)) (string, error) {
+	if !filepath.IsAbs(p) {
+		return "", errors.New("relative path " + p)
+	}
+	cur, rest, links := "/", p, 0
+	for {
+		rest = strings.TrimLeft(rest, "/")
+		if rest == "" {
+			return cur, nil
+		}
+		var name string
+		name, rest, _ = strings.Cut(rest, "/")
+		switch name {
+		case ".":
+			continue
+		case "..":
+			cur = filepath.Dir(cur)
+			continue
+		}
+		next := filepath.Join(cur, name)
+		on(next)
+		fi, err := os.Lstat(next)
+		if err != nil {
+			return "", err
+		}
+		if fi.Mode()&fs.ModeSymlink != 0 {
+			if links++; links > 40 {
+				return "", errors.New("too many links in " + p)
+			}
+			target, err := os.Readlink(next)
+			if err != nil {
+				return "", err
+			}
+			if filepath.IsAbs(target) {
+				cur = "/"
+			}
+			rest = target + "/" + rest
+			continue
+		}
+		if !fi.IsDir() && strings.Trim(rest, "/") != "" {
+			return "", &fs.PathError{Op: "walk", Path: next, Err: syscall.ENOTDIR}
+		}
+		cur = next
+	}
 }
 
 // parseAlternates splits an objects/info/alternates file as git does: one
