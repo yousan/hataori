@@ -153,13 +153,21 @@ func (f *FrontEnd) Connected() {
 		if retry <= 0 {
 			retry = 5 * time.Second
 		}
-		time.AfterFunc(retry, func() {
-			if ctx.Err() == nil {
-				f.Connected()
+		f.bg.Add(1)
+		go func() {
+			defer f.bg.Done()
+			select {
+			case <-ctx.Done():
+			case <-time.After(retry):
+				if ctx.Err() == nil {
+					f.Connected()
+				}
 			}
-		})
+		}()
 	}
+	f.bg.Add(1)
 	go func() {
+		defer f.bg.Done()
 		for _, c := range convs {
 			if ctx.Err() != nil {
 				return

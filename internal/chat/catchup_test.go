@@ -16,6 +16,7 @@ import (
 func (f *front) connect(t *testing.T) (stop func()) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
+	f.fe.ctx = ctx // as Run sets it: the catch-up ends with it
 	var wg sync.WaitGroup
 	wg.Add(2)
 	up := make(chan struct{}, 1)
@@ -23,7 +24,7 @@ func (f *front) connect(t *testing.T) (stop func()) {
 	go func() { defer wg.Done(); f.fe.runCatchUp(ctx) }()
 	<-up
 	var once sync.Once
-	stop = func() { once.Do(func() { cancel(); wg.Wait() }) }
+	stop = func() { once.Do(func() { cancel(); wg.Wait(); f.fe.bg.Wait() }) }
 	t.Cleanup(stop)
 	return stop
 }
