@@ -21,7 +21,7 @@
 //	{"t":"text","text":T,"final":true|false}   (on a terminal: in the transcript)
 //	{"t":"tool","id":I,"name":N,"parent":P,"end":false|true}   (P: the subagent it runs in)
 //	{"t":"subagent","id":I,"name":N,"end":false|true}
-//	{"t":"ask","id":I,"text":Q}                 (on a terminal: a waiting hook call)
+//	{"t":"ask","id":I,"text":Q,"choices":[C...]} (on a terminal: a waiting hook call; choices only when it has some)
 //	{"t":"file","path":P,"more":[P...],"caption":C}
 //	{"t":"usage","in":N,"output":N,"cache_read":N,"cache_write":N,"context_used":N,"context_size":N,"model":M}
 //	{"t":"limits","at":MS,"every":S,"windows":[{"name":N,"minutes":M,"used":U,"resets":R}...]}
@@ -43,7 +43,10 @@
 //	reply TEXT          say TEXT; the last reply is the final answer
 //	whoami              reply "model M effort E", as the program was started
 //	tool NAME DURATION  run a tool (a child process) for DURATION
-//	ask QUESTION        ask, wait for the answer, then reply "answer: A"
+//	ask QUESTION [-- CHOICE | CHOICE...]
+//	                    ask, with its choices if any, wait for the answer,
+//	                    then reply "answer: A"; an answer of choices is
+//	                    their tokens joined by ", "
 //	background DURATION end the turn with one background task, then start a
 //	                    turn by itself after DURATION
 //	fail REASON         end the turn as failed with REASON

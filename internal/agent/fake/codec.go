@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -50,6 +51,7 @@ type report struct {
 	Transcript string   `json:"transcript"`
 	By         string   `json:"by"`
 	Text       string   `json:"text"`
+	Choices    []string `json:"choices"` // ask: its options, in order
 	Final      bool     `json:"final"`
 	ID         string   `json:"id"`
 	Name       string   `json:"name"`
@@ -204,7 +206,7 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 			c.asked = map[string]string{}
 		}
 		c.asked[id] = r.ID
-		a = c.events(agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: id, Text: r.Text}})
+		a = c.events(agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: id, Text: r.Text, Choices: r.Choices}})
 	case "usage":
 		a = c.events(agent.Event{Kind: agent.Usage, Usage: &agent.UsageCount{Model: r.Model, Input: r.In, Output: r.Output,
 			CacheRead: r.CacheRead, CacheWrite: r.CacheWrite, ContextUsed: r.ContextUsed, ContextSize: r.ContextSize}})
@@ -316,7 +318,7 @@ func (c *codec) write(in agent.Input) agent.Actions {
 var ErrNotAsked = errors.New(Name + ": no such question is open")
 
 // Answer replies to the hook call on a terminal, or writes the answer on
-// pipes.
+// pipes. An answer of chosen options is their tokens, joined by ", ".
 func (c *codec) Answer(a agent.Answer) (agent.Actions, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -325,10 +327,14 @@ func (c *codec) Answer(a agent.Answer) (agent.Actions, error) {
 		return agent.Actions{}, ErrNotAsked
 	}
 	delete(c.asked, a.Request)
-	if c.terminal {
-		return agent.Actions{Reply: []agent.HookReply{{Call: a.Request, Body: []byte(a.Text)}}}, nil
+	text := a.Text
+	if text == "" && len(a.Choices) > 0 {
+		text = strings.Join(a.Choices, ", ")
 	}
-	b, _ := json.Marshal(map[string]any{"answer": map[string]string{"id": q, "text": a.Text}})
+	if c.terminal {
+		return agent.Actions{Reply: []agent.HookReply{{Call: a.Request, Body: []byte(text)}}}, nil
+	}
+	b, _ := json.Marshal(map[string]any{"answer": map[string]string{"id": q, "text": text}})
 	return agent.Actions{Write: [][]byte{append(b, '\n')}}, nil
 }
 
