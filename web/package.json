@@ -7,7 +7,7 @@
   },
   "scripts": {
     "build": "vite build",
-    "check": "tsc --noEmit && node scripts/lint-strings.mjs && node scripts/lint-strings.mjs --expect-fail scripts/testdata/outside.tsx scripts/testdata/index.html"
+    "check": "tsc --noEmit && node scripts/lint-strings.mjs && node scripts/lint-strings.mjs --expect-fail scripts/testdata/outside.tsx scripts/testdata/index.html scripts/testdata/catalog-fixture.ts"
   },
   "dependencies": {
     "@xterm/xterm": "6.0.0",

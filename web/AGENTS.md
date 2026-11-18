@@ -1,6 +1,6 @@
 # The dashboard's page
 
-The read-only dashboard's page (design, section 7.2): TypeScript and React, built with Vite.
+The read-only dashboard's page (design, section 7.2): TypeScript and React, built with Vite. The page is in English and Japanese; choose with `?lang=ja` or `?lang=en`, and the choice is kept in this browser; without a choice, the page follows the browser's language.
 
 - **The build is committed.** `npm run build` writes `internal/dashboard/page/`, which the `hataori` binary embeds, so `go build` needs no Node. Commit the build with the change to `web/` that made it; CI builds again and fails when the two differ.
 - **Build with the pinned Node** (`.nvmrc`; `engines` refuses another) after `npm ci --ignore-scripts`. Every package is pinned to an exact version in `package.json` and in `package-lock.json`. Add one with `npm install --save-exact --ignore-scripts`, a release at least two weeks old.

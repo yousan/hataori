@@ -525,7 +525,7 @@ Appendix D lists the new operations and fields as a proposal. Each is a minor pr
 
 - The server is part of the `hataori` binary and is a client of the control API with a read-only `Caller`.
 - The page is TypeScript, React and xterm.js, built with Vite. The built files are committed and embedded with `go:embed`, so `go build` needs no Node. CI builds them again and fails when the result differs from what is committed.
-- The UI is in English. Every string is in one catalog, so another language, Japanese first, is a catalog added on its own.
+- The UI is in English and Japanese. Every string is in a catalog; choose a language with `?lang=ja` or `?lang=en`, and the choice is kept in this browser; without a choice, the page follows the browser's language.
 - A native window later (Wails or Electron) wraps the same pages. Not designed here.
 
 **Tests.** As the repository's rules say, and one end-to-end test with a fake agent: the dashboard lists a thread, shows a turn's start and end from the event stream, and after a reconnect shows no gap and no repeat.

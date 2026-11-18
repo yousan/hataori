@@ -183,9 +183,198 @@ const en = {
 export type Key = keyof typeof en;
 export type Catalog = { readonly [K in Key]: string };
 
-// lang is the language the page is shown in, and catalog its strings.
-export const lang = "en";
-const catalog: Catalog = en;
+const ja: Catalog = {
+  "app.title": "hataori ダッシュボード",
+  "app.readOnly": "読み取り専用",
+  "app.signedOut": "サインインしていないか、セッションが終了しました。新しいサインインリンクを開いてください。",
+  "shell.empty": "表示する内容はまだありません。",
+  "theme.toLight": "ライトテーマに切り替え",
+  "theme.toDark": "ダークテーマに切り替え",
+  "theme.light": "ライト",
+  "theme.dark": "ダーク",
+  "tree.label": "スレッド",
+  "tree.filter": "タイトル、番号、端末で絞り込み",
+  "tree.attention": "要確認",
+  "tree.threads": "スレッド",
+  "tree.none": "スレッドはありません。",
+  "tree.noMatch": "条件に一致するスレッドはありません。",
+  "tree.density": "行の密度",
+  "tree.dense": "コンパクト",
+  "tree.normal": "標準",
+  "tree.counts": "状態ごとのスレッド数",
+  "thread.number": "#{n}",
+  "thread.context": "コンテキスト {pct}%",
+  "thread.noAgent": "•",
+  "thread.question": "質問: {text}",
+  "thread.questionHidden": "質問への回答待ち",
+  "thread.approval": "承認待ち",
+  "thread.approvalText": "承認: {text}",
+  "thread.failure": "失敗: {reason}",
+  "thread.failureUnknown": "失敗",
+  "age.seconds": "{n}秒",
+  "age.minutes": "{n}分",
+  "age.hours": "{n}時間",
+  "age.days": "{n}日",
+  "state.creating": "作成中",
+  "state.idle": "待機中",
+  "state.running": "実行中",
+  "state.waiting": "応答待ち",
+  "state.asleep": "休止中",
+  "state.closed": "終了済み",
+  "state.removed": "削除済み",
+  "state.failed": "失敗",
+  "state.count": "{state} {n}",
+  "tabs.label": "開いているタブ",
+  "tabs.all": "すべてのスレッド",
+  "tabs.close": "タブ {name} を閉じる",
+  "tabs.closeMark": "×",
+  "tabs.question": "質問",
+  "tabs.failed": "失敗",
+  "tabs.tree": "ツリー",
+  "tabs.showTree": "ツリーを表示",
+  "tabs.hideTree": "ツリーを非表示",
+  "tabs.split": "分割 {n}",
+  "tabs.splitNext": "ペインを{n}つ並べて表示",
+  "tabs.details": "詳細",
+  "tabs.showDetails": "詳細を表示",
+  "tabs.hideDetails": "詳細を非表示",
+  "pane.thread": "#{n} {title}",
+  "pane.empty": "表示履歴はありません。",
+  "pane.noProcess": "プロセスなし",
+  "events.textHidden": "（テキスト）",
+  "events.toolStarted": "ツール {tool}",
+  "events.toolEnded": "ツール {tool} 完了",
+  "events.turnStarted": "ターン開始",
+  "events.turnEnded": "ターン終了: {outcome}",
+  "events.turnEndedWhy": "ターン終了: {outcome} ({reason})",
+  "events.state": "状態: {from} → {to}",
+  "events.stateWhy": "状態: {from} → {to} ({reason})",
+  "events.request": "質問: {text}",
+  "events.requestHidden": "質問",
+  "events.answer": "回答",
+  "events.input": "入力",
+  "events.other": "{kind}",
+  "pane.later": "このペインの内容は後から追加されます。",
+  "table.label": "すべてのスレッド",
+  "table.state": "状態",
+  "table.number": "番号",
+  "table.title": "タイトル",
+  "table.agent": "エージェントとモデル",
+  "table.age": "状態と経過時間",
+  "table.context": "コンテキスト",
+  "table.tokens": "今日のトークン数",
+  "table.branch": "ブランチ",
+  "table.changes": "変更",
+  "table.unpushed": "未プッシュ",
+  "table.last": "最後の出力",
+  "table.none": "—",
+  "table.open": "スレッド #{n} を開く",
+  "table.agentModel": "{agent} · {model}",
+  "table.stateAge": "{state} · {age}",
+  "table.percent": "{pct}%",
+  "table.changesValue": "+{added} −{removed} · {files} ファイル",
+  "details.label": "詳細",
+  "details.none": "詳細を見るにはスレッドを開いてください。",
+  "details.question": "質問",
+  "details.approval": "承認",
+  "details.choices": "選択肢",
+  "details.questionHidden": "質問への回答待ちです。",
+  "details.approvalHidden": "承認待ちです。",
+  "details.failure": "失敗",
+  "details.failureUnknown": "理由は示されていません。",
+  "details.thread": "スレッド",
+  "details.agent": "エージェント",
+  "details.workspace": "ワークスペース",
+  "details.events": "最近のイベント",
+  "details.noEvents": "イベントはまだありません。",
+  "details.state": "状態",
+  "details.scope": "スコープ",
+  "details.startedBy": "開始者",
+  "details.created": "開始日時",
+  "details.turns": "ターン数",
+  "details.kind": "エージェント",
+  "details.model": "モデル",
+  "details.effort": "推論の深さ",
+  "details.context": "コンテキスト",
+  "details.contextValue": "{pct}% ({used} / {size})",
+  "details.tokensTurn": "直近のターンで報告されたトークン数",
+  "details.tokensToday": "今日のトークン数",
+  "details.background": "直近のターン終了時のバックグラウンドタスク",
+  "details.repo": "リポジトリ",
+  "details.branch": "ブランチ",
+  "details.lines": "変更行",
+  "details.linesValue": "+{added} −{removed}",
+  "details.uncommitted": "未コミットのファイル",
+  "details.unpushed": "未プッシュのコミット",
+  "details.terminal": "端末",
+  "narrow.label": "スレッド",
+  "narrow.attention": "要確認",
+  "narrow.running": "実行中",
+  "narrow.rest": "その他のスレッド ({n})",
+  "narrow.none": "スレッドはありません。",
+  "narrow.back": "一覧に戻る",
+  "narrow.thread": "#{n} {title}",
+  "host.tmux": "ホスト上の tmux",
+  "host.others": "ホスト上の他の端末",
+  "host.none": "ありません。",
+  "host.paneLabel": "{session}:{window} {process}",
+  "host.otherLabel": "{device} {process}",
+  "host.window": "{index}: {name}",
+  "host.notJudged": "hataori はこの端末を所有しておらず、状態を判定せずに表示します。",
+  "host.noScreen": "この端末の画面は読み取れないため、ホストからの情報のみ表示します。",
+  "host.gone": "この端末はホスト上にありません。",
+  "host.session": "tmux セッション",
+  "host.windowField": "ウィンドウ",
+  "host.pane": "ペイン",
+  "host.paneValue": "{pane} (インデックス {index})",
+  "host.device": "端末",
+  "host.process": "プロセス",
+  "host.dir": "ディレクトリ",
+  "host.activity": "最終アクティビティ",
+  "host.attached": "アタッチ",
+  "host.yes": "はい",
+  "host.no": "いいえ",
+  "status.label": "ステータス",
+  "status.noSelection": "スレッドが選択されていません",
+  "status.live": "接続中 · イベント {pos}",
+  "status.liveStarting": "接続中",
+  "status.offline": "オフライン · 最終イベント {pos}",
+  "status.offlineNone": "オフライン",
+  "limits.label": "エージェントごとの残り使用量",
+  "limits.window": "{window} {used}% 使用",
+  "limits.resets": "· {time} にリセット",
+  "limits.asOf": "{time} 時点",
+  "limits.hours": "{n}時間",
+  "limits.days": "{n}日",
+};
+
+// chooseLanguage uses the URL choice, then the saved choice, then the browser preference.
+function chooseLanguage(): "en" | "ja" {
+  const requested = new URLSearchParams(window.location.search).get("lang");
+  if (requested === "en" || requested === "ja") {
+    try {
+      localStorage.setItem("hataori.lang", requested);
+    } catch {
+      // Storage is optional.
+    }
+    return requested;
+  }
+  try {
+    const saved = localStorage.getItem("hataori.lang");
+    if (saved === "en" || saved === "ja") return saved;
+  } catch {
+    // Use the browser preference.
+  }
+  const languages = navigator.languages?.length ? navigator.languages : [navigator.language];
+  for (const language of languages) {
+    if (/^ja(?:-|$)/i.test(language)) return "ja";
+    if (/^en(?:-|$)/i.test(language)) return "en";
+  }
+  return "en";
+}
+
+export const lang = chooseLanguage();
+const catalog: Catalog = lang === "ja" ? ja : en;
 
 // t is the string of key in the page's language, with each {name} replaced
 // by vars[name].
