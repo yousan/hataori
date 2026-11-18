@@ -325,13 +325,28 @@ body {
   font-size: 12px;
 }
 
-.flag {
+.flag,
+.why {
   color: var(--st-waiting);
   font-weight: 600;
 }
 
-.row[data-state="failed"] .flag {
+.why {
+  padding-left: 22px;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row[data-state="failed"] .flag,
+.row[data-state="failed"] .why {
   color: var(--st-failed);
+}
+
+.row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .attention {

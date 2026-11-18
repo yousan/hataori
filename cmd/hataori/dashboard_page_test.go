@@ -241,11 +241,19 @@ func TestDashboardTreeAndStatusBar(t *testing.T) {
 	b.until("the three threads", `document.querySelectorAll('[data-section=threads] .row').length === 3`)
 
 	// 1. The question, in needs attention; answered, it leaves.
-	b.until("the question in needs attention", fmt.Sprintf(
-		`[...document.querySelectorAll('[data-section=attention] .row')].some(r => r.dataset.thread == %d && r.textContent.includes('Proceed with the deploy?'))`, n1))
+	// The question has a line of its own, apart from the title, and keeps it
+	// in the normal density.
+	question := fmt.Sprintf(`(() => {
+		const w = document.querySelector('[data-section=attention] .row[data-thread="%d"] .why');
+		return !!w && w.textContent === 'Question: Proceed with the deploy?' && getComputedStyle(w).display !== 'none';
+	})()`, n1)
+	b.until("the question in needs attention", question)
 	if got := b.rows("attention"); !reflect.DeepEqual(got, []int64{n1}) {
 		t.Fatalf("needs attention: threads %v, want [%d]", got, n1)
 	}
+	b.eval(`document.querySelector('[data-density=normal]').click(), true`, nil)
+	b.until("the question in the normal density", question)
+	b.eval(`document.querySelector('[data-density=dense]').click(), true`, nil)
 	d, err := c.Thread(ctx, asking, 0, 0)
 	if err != nil || len(d.Requests) != 1 {
 		t.Fatalf("the question: %+v, %v", d.Requests, err)
@@ -325,8 +333,11 @@ func TestDashboardTreeAndStatusBar(t *testing.T) {
 	b.eval(`document.querySelector('[data-density=dense]').click(), true`, nil)
 	b.until("dense rows again", shown)
 
-	// The status bar shows the selected thread, with its terminal.
-	b.eval(fmt.Sprintf(`document.querySelector('[data-section=threads] .row[data-thread="%d"]').click(), true`, n2), nil)
+	// The status bar shows the selected thread, with its terminal. A row is
+	// selected from the keyboard as well.
+	b.eval(fmt.Sprintf(`document.querySelector('[data-section=threads] .row[data-thread="%d"]').focus(), true`, n2), nil)
+	b.call("Input.dispatchKeyEvent", map[string]any{"type": "keyDown", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13})
+	b.call("Input.dispatchKeyEvent", map[string]any{"type": "keyUp", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13})
 	b.until("the selected thread in the status bar", fmt.Sprintf(
 		`document.querySelector('.status-item').dataset.selected == %d && document.querySelector('.status-item').textContent.includes(%q)`, n2, term))
 
@@ -343,17 +354,36 @@ func TestDashboardTreeAndStatusBar(t *testing.T) {
 		}
 		return pos
 	}
-	liveAt := func(pos uint64) string {
-		return fmt.Sprintf(`document.querySelector('.live').dataset.live === 'on' && document.querySelector('.live').dataset.pos == %d && document.querySelector('.live').textContent.includes(%q)`, pos, strconv.FormatUint(pos, 10))
+	// liveAtLast waits for the mark to be on at the last event, reading
+	// both again each time, as events may still come.
+	liveAtLast := func(what string) {
+		t.Helper()
+		var page struct {
+			On   bool
+			Pos  string
+			Text string
+		}
+		var want uint64
+		for deadline := time.Now().Add(20 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+			want = last()
+			b.eval(`(() => { const l = document.querySelector('.live'); return {on: l.dataset.live === 'on', pos: l.dataset.pos, text: l.textContent}; })()`, &page)
+			p := strconv.FormatUint(want, 10)
+			if page.On && page.Pos == p && strings.Contains(page.Text, p) {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: the live mark %+v, the last event %d", what, page, want)
+			}
+		}
 	}
-	b.until("the live mark at the last event", liveAt(last()))
+	liveAtLast("the live mark at the last event")
 	if err := c.Send(ctx, ts["reply done"].ID, "k-again", control.Input{Text: "reply again"}, control.Refuse); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, "the new turn to end", 15*time.Second, func() bool {
 		return threads()["reply done"].Turns == 2 && threads()["reply done"].State == control.Idle
 	})
-	b.until("the live mark at the new last event", liveAt(last()))
+	liveAtLast("the live mark at the new last event")
 	c.Close()
 	stop()
 	b.until("the live mark off", `document.querySelector('.live').dataset.live === 'off'`)

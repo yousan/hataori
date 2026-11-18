@@ -32,6 +32,7 @@ const en = {
   "thread.question": "Question: {text}",
   "thread.questionHidden": "Waiting on a question",
   "thread.approval": "Waiting on an approval",
+  "thread.approvalText": "Approval: {text}",
   "thread.failure": "Failed: {reason}",
   "thread.failureUnknown": "Failed",
 

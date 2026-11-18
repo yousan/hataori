@@ -23,28 +23,39 @@ function attentionText(a: Attention): string {
     case "question":
       return a.text ? t("thread.question", { text: a.text }) : t("thread.questionHidden");
     case "approval":
-      return a.text ? t("thread.question", { text: a.text }) : t("thread.approval");
+      return a.text ? t("thread.approvalText", { text: a.text }) : t("thread.approval");
     case "failure":
       return a.reason ? t("thread.failure", { reason: a.reason }) : t("thread.failureUnknown");
   }
 }
 
+// Row is one thread. In needs attention, what it waits on has a line of
+// its own, shown in either density; elsewhere it is on the second line.
 function Row(props: {
   x: ThreadInfo;
   attention?: Attention;
+  why: boolean;
   now: number;
   selected: boolean;
   onSelect: (n: number) => void;
 }) {
-  const { x, attention, now, selected, onSelect } = props;
+  const { x, attention, why, now, selected, onSelect } = props;
   const ctx = contextUse(x);
   return (
     <li
       className={selected ? "row selected" : "row"}
       data-thread={x.number}
       data-state={x.state}
+      role="option"
+      tabIndex={0}
       aria-selected={selected}
       onClick={() => onSelect(x.number)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(x.number);
+        }
+      }}
     >
       <div className="line1">
         <span className={`agent-mark state-${x.state}`} title={stateName(x.state)}>
@@ -54,10 +65,11 @@ function Row(props: {
         <span className="title">{x.title}</span>
         <span className="age">{age(x.updated, now)}</span>
       </div>
+      {why && attention && <div className="why">{attentionText(attention)}</div>}
       <div className="line2">
         {x.model && <span className="model">{x.model}</span>}
         {ctx && <span className="ctx">{ctx}</span>}
-        {attention ? (
+        {attention && !why ? (
           <span className="flag">{attentionText(attention)}</span>
         ) : (
           x.last && <span className="last">{x.last}</span>
@@ -82,8 +94,16 @@ export function Tree(props: Props) {
   const counts = new Map<State, number>();
   for (const x of all) counts.set(x.state, (counts.get(x.state) ?? 0) + 1);
 
-  const row = (x: ThreadInfo) => (
-    <Row key={x.number} x={x} attention={attention.get(x.number)} now={now} selected={selected === x.number} onSelect={onSelect} />
+  const row = (why: boolean) => (x: ThreadInfo) => (
+    <Row
+      key={x.number}
+      x={x}
+      attention={attention.get(x.number)}
+      why={why}
+      now={now}
+      selected={selected === x.number}
+      onSelect={onSelect}
+    />
   );
 
   return (
@@ -109,7 +129,9 @@ export function Tree(props: Props) {
         {waiting.length > 0 && (
           <section className="attention" data-section="attention">
             <h2>{t("tree.attention")}</h2>
-            <ul>{waiting.map(row)}</ul>
+            <ul role="listbox" aria-label={t("tree.attention")}>
+              {waiting.map(row(true))}
+            </ul>
           </section>
         )}
         <section className="threads" data-section="threads">
@@ -126,7 +148,9 @@ export function Tree(props: Props) {
                   ))}
                 </span>
               </h3>
-              <ul>{list.map(row)}</ul>
+              <ul role="listbox" aria-label={scope}>
+                {list.map(row(false))}
+              </ul>
             </div>
           ))}
         </section>

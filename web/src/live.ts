@@ -29,6 +29,9 @@ export interface Dashboard {
 
 // refreshDelay gathers the events that come together into one read.
 const refreshDelay = 150;
+// retryDelay is how long the page waits before it tries again to read the
+// list it starts from.
+const retryDelay = 2000;
 // reopenDelay is how long the page waits before it opens a stream that the
 // server refused again.
 const reopenDelay = 2000;
@@ -73,9 +76,20 @@ function reasonOf(e: Event): string | undefined {
 
 // lastPosition is the position of the newest event of any of ts: the
 // stream starts after it, so the page does not read the whole log again.
+// The page takes its picture from the reads, not from the events, and
+// reads again once the stream is open, so an event written while these
+// are read changes nothing it shows. A thread that went away meanwhile
+// counts as none.
 async function lastPosition(ts: ThreadInfo[]): Promise<number> {
-  const ds = await Promise.all(ts.map((x) => thread(x.id, 1)));
-  return ds.reduce((p, d) => Math.max(p, d.events?.[d.events.length - 1]?.pos ?? 0), 0);
+  const ds = await Promise.all(
+    ts.map((x) =>
+      thread(x.id, 1).catch((err) => {
+        if (err instanceof SignedOut) throw err;
+        return null;
+      }),
+    ),
+  );
+  return ds.reduce((p, d) => Math.max(p, d?.events?.[d.events.length - 1]?.pos ?? 0), 0);
 }
 
 export function useDashboard(): Dashboard {
@@ -90,7 +104,8 @@ export function useDashboard(): Dashboard {
   useEffect(() => {
     let closed = false;
     let source: EventSource | null = null;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined; // a read to come
+    let retry: ReturnType<typeof setTimeout> | undefined; // a start to try again
     let last = 0; // the position to go on after
     let out = false; // the session has ended
 
@@ -118,9 +133,14 @@ export function useDashboard(): Dashboard {
         if (err instanceof SignedOut) signedOut();
       }
     };
+    // later reads once after the events of the next refreshDelay, however
+    // many come: a steady flow of events does not hold the read back.
     const later = () => {
-      clearTimeout(timer);
-      timer = setTimeout(read, refreshDelay);
+      if (timer !== undefined) return;
+      timer = setTimeout(() => {
+        timer = undefined;
+        read();
+      }, refreshDelay);
     };
     const at = (pos: number) => {
       last = Math.max(last, pos);
@@ -156,7 +176,9 @@ export function useDashboard(): Dashboard {
       };
     };
 
-    (async () => {
+    // begin finds where the stream starts and opens it; until it can, it
+    // tries again.
+    const begin = async () => {
       try {
         const first = await threads();
         const after = await lastPosition(first);
@@ -165,12 +187,15 @@ export function useDashboard(): Dashboard {
         await read();
       } catch (err) {
         if (err instanceof SignedOut) signedOut();
+        else if (!closed) retry = setTimeout(begin, retryDelay);
       }
-    })();
+    };
+    begin();
 
     return () => {
       closed = true;
       clearTimeout(timer);
+      clearTimeout(retry);
       source?.close();
     };
   }, []);
