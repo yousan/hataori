@@ -68,6 +68,10 @@ func (workspaceDirs) Adopt(context.Context, control.ThreadID, core.Placement) (s
 	return "", false, nil
 }
 
+func (workspaceDirs) State(context.Context, string) (control.WorkspaceState, error) {
+	return control.WorkspaceState{}, nil
+}
+
 func (w workspaceDirs) Make(_ context.Context, id control.ThreadID, _ string, _ func(core.Placement) error) (string, error) {
 	d := filepath.Join(string(w), id.Scope, id.Key)
 	return d, os.MkdirAll(d, 0o700)

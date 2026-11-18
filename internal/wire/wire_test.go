@@ -40,6 +40,10 @@ func (dirs) Adopt(context.Context, control.ThreadID, core.Placement) (string, bo
 	return "", false, nil
 }
 
+func (dirs) State(context.Context, string) (control.WorkspaceState, error) {
+	return control.WorkspaceState{Branch: "main"}, nil
+}
+
 const all = control.OpRead | control.OpStart | control.OpSend | control.OpAnswer | control.OpStop
 
 // newCore returns a core in a new root, and the owner's API in process.
@@ -116,6 +120,10 @@ func cases(t *testing.T, c *core.Core, api control.API) []string {
 	note("threads", states, err)
 	d, err := api.Thread(ctx, id, 6)
 	note("thread", []string{string(d.State), d.Recent}, err)
+	ws, err := api.Workspace(ctx, id)
+	note("workspace", []string{ws.Branch}, err)
+	_, err = api.Workspace(ctx, control.ThreadID{Scope: "s", Key: "none"})
+	note("workspace of no thread", nil, err)
 
 	evctx, cancel := context.WithCancel(ctx)
 	defer cancel()

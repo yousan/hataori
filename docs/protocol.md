@@ -14,7 +14,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **1.3**. Both hellos carry it.
+The protocol version is `major.minor`, now **1.4**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 1.0`.
 - With the same major number and different minor numbers they work together.
@@ -170,6 +170,16 @@ The events after a position, then new ones as they are written. Once the events 
 
 Result: `Event`
 
+### Operation `Workspace`
+
+What the thread's workspace holds that may exist nowhere else, as numbers; since 1.4. It changes nothing in the workspace, and it does not ask the remote: commits are compared with the remote-tracking refs as last fetched. A workspace the daemon cannot read, or a git failure, is an error, never zeros.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `id` | `ThreadID` | required | the thread |
+
+Result: `WorkspaceState`
+
 ## Types
 
 ### Type `ThreadID`
@@ -247,6 +257,20 @@ The fields of `ThreadInfo`, and:
 |---|---|---|---|
 | `label` | string | required | what is shown |
 | `token` | string | required | what `Answer.choices` carries back |
+
+### Type `WorkspaceState`
+
+Since 1.4.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `branch` | string | required | the checked-out branch; empty when no branch is checked out |
+| `base` | string | required | the commit the branch started from: where it meets the remote's default branch, or else its upstream; the checked-out commit when there is neither |
+| `added` | integer | required | lines added against `base`: commits, staged and unstaged changes of tracked files |
+| `removed` | integer | required | lines removed, counted as `added` |
+| `uncommitted` | integer | required | files modified, staged or untracked, each once; ignored files are not counted, and untracked files add no lines |
+| `unpushed` | integer | required | commits reachable from the checked-out commit or a local branch and from no remote-tracking ref |
+| `fetched` | time | optional | when the remote-tracking refs were last updated, by a fetch or by the clone; absent when the repository does not say |
 
 ### Type `Event`
 

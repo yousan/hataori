@@ -36,6 +36,11 @@ type API interface {
 	// one Event of kind CaughtUp, whose Pos is the last position delivered
 	// (or after). The mark is not stored and belongs to no thread.
 	Events(ctx context.Context, f Filter, after uint64) (<-chan Event, error)
+
+	// Workspace reads the state of a thread's workspace and changes nothing.
+	// It answers from the remote-tracking refs as last fetched; it does not
+	// ask the remote.
+	Workspace(ctx context.Context, id ThreadID) (WorkspaceState, error)
 }
 
 // Caller is who is asking. An API value is bound to one Caller,
@@ -55,7 +60,7 @@ type Ops uint8
 
 // The operations of the API, as members of Ops.
 const (
-	OpRead   Ops = 1 << iota // Threads, Thread, Events
+	OpRead   Ops = 1 << iota // Threads, Thread, Events, Workspace
 	OpStart                  // Start
 	OpSend                   // Send
 	OpAnswer                 // Answer
@@ -148,6 +153,27 @@ type ThreadDetail struct {
 	ThreadInfo
 	Requests []Request `json:"requests"` // open questions and approvals
 	Recent   string    `json:"recent"`   // the last output, cut to the size asked for
+}
+
+// WorkspaceState is what a thread's workspace holds that may exist nowhere
+// else, as numbers. It is read from the workspace's own repository.
+type WorkspaceState struct {
+	Branch string `json:"branch"` // the checked-out branch; empty when HEAD is detached
+	Base   string `json:"base"`   // the commit the branch started from
+	// Added and Removed count lines against Base: commits, staged and
+	// unstaged changes of tracked files. Untracked files are counted in
+	// Uncommitted only.
+	Added   int `json:"added"`
+	Removed int `json:"removed"`
+	// Uncommitted counts files that are modified, staged or untracked, each
+	// once. Ignored files are not counted.
+	Uncommitted int `json:"uncommitted"`
+	// Unpushed counts commits reachable from HEAD or a local branch and from
+	// no remote-tracking ref.
+	Unpushed int `json:"unpushed"`
+	// Fetched is when the remote-tracking refs were last updated, by a fetch
+	// or by the clone; absent when the repository does not say.
+	Fetched *time.Time `json:"fetched,omitempty"`
 }
 
 // RequestKind tells a question from an approval.

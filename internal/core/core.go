@@ -50,6 +50,8 @@ type Workspaces interface {
 	// died before it recorded what Make returned. ok is false when nothing
 	// is there yet. Any other directory is refused. Adopt changes nothing.
 	Adopt(ctx context.Context, thread control.ThreadID, p Placement) (dir string, ok bool, err error)
+	// State reads what the workspace at dir holds, and changes nothing.
+	State(ctx context.Context, dir string) (control.WorkspaceState, error)
 }
 
 // Placement identifies a directory a Make put in place: where, and the
@@ -552,6 +554,78 @@ func (c *Core) Recover(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// Workspace reads the state of the thread's workspace. The workspace is the
+// one its newest session that has one runs in.
+func (a *api) Workspace(ctx context.Context, id control.ThreadID) (control.WorkspaceState, error) {
+	if err := a.check(control.OpRead, "Workspace", id.Scope); err != nil {
+		return control.WorkspaceState{}, err
+	}
+	dir, err := a.c.workspaceDir(ctx, id)
+	if err != nil {
+		return control.WorkspaceState{}, err
+	}
+	st, err := a.c.Workspaces.State(ctx, dir)
+	if err != nil {
+		return control.WorkspaceState{}, fmt.Errorf("core: workspace of %v: %w", id, err)
+	}
+	return st, nil
+}
+
+// workspaceDir is the directory of the thread's workspace, as its newest
+// session that knows one recorded it: in its first input while it starts,
+// in its spec once its agent was launched.
+func (c *Core) workspaceDir(ctx context.Context, id control.ThreadID) (string, error) {
+	var n int
+	if err := c.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM threads WHERE scope = ? AND key = ?`, id.Scope, id.Key).Scan(&n); err != nil {
+		return "", fmt.Errorf("core: thread %v: %w", id, err)
+	}
+	if n == 0 {
+		return "", fmt.Errorf("core: thread %v: %w", id, ErrNotFound)
+	}
+	rows, err := c.Store.DB.QueryContext(ctx, `
+		SELECT s.id, s.first_input, s.spec FROM sessions s JOIN threads t ON t.id = s.thread_id
+		WHERE t.scope = ? AND t.key = ? ORDER BY s.id DESC`, id.Scope, id.Key)
+	if err != nil {
+		return "", fmt.Errorf("core: thread %v: %w", id, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			sid       int64
+			fi, spec  string
+			first     FirstInput
+			specified struct {
+				Spec struct {
+					Dir string `json:"dir"`
+				} `json:"spec"`
+			}
+		)
+		if err := rows.Scan(&sid, &fi, &spec); err != nil {
+			return "", fmt.Errorf("core: thread %v: %w", id, err)
+		}
+		if fi != "" {
+			if err := json.Unmarshal([]byte(fi), &first); err != nil {
+				return "", fmt.Errorf("core: session %d: first input: %w", sid, err)
+			}
+		}
+		if first.Dir != "" {
+			return first.Dir, nil
+		}
+		if spec != "" {
+			if err := json.Unmarshal([]byte(spec), &specified); err != nil {
+				return "", fmt.Errorf("core: session %d: spec: %w", sid, err)
+			}
+		}
+		if specified.Spec.Dir != "" {
+			return specified.Spec.Dir, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("core: thread %v: %w", id, err)
+	}
+	return "", fmt.Errorf("core: thread %v has no workspace yet", id)
 }
 
 // started returns the thread a Start key created, if it was used before.
