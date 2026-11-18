@@ -11,7 +11,8 @@
    "source",
    "transcript_path"
   ],
-  "has_pr_field": false
+  "has_key_pr": false,
+  "mentions_pull_url": false
  },
  {
   "hook_event_name": "UserPromptSubmit",
@@ -26,7 +27,8 @@
    "session_id",
    "transcript_path"
   ],
-  "has_pr_field": true
+  "has_key_pr": false,
+  "mentions_pull_url": false
  },
  {
   "hook_event_name": "PreToolUse",
@@ -44,7 +46,8 @@
    "tool_use_id",
    "transcript_path"
   ],
-  "has_pr_field": true
+  "has_key_pr": false,
+  "mentions_pull_url": false
  },
  {
   "hook_event_name": "PostToolUse",
@@ -64,7 +67,8 @@
    "tool_use_id",
    "transcript_path"
   ],
-  "has_pr_field": true
+  "has_key_pr": false,
+  "mentions_pull_url": true
  },
  {
   "hook_event_name": "Stop",
@@ -83,7 +87,8 @@
    "stop_hook_active",
    "transcript_path"
   ],
-  "has_pr_field": true
+  "has_key_pr": false,
+  "mentions_pull_url": true
  },
  {
   "hook_event_name": "UserPromptSubmit",
@@ -98,7 +103,8 @@
    "session_id",
    "transcript_path"
   ],
-  "has_pr_field": true
+  "has_key_pr": false,
+  "mentions_pull_url": false
  },
  {
   "hook_event_name": "Stop",
@@ -117,7 +123,8 @@
    "stop_hook_active",
    "transcript_path"
   ],
-  "has_pr_field": true
+  "has_key_pr": false,
+  "mentions_pull_url": false
  },
  {
   "hook_event_name": "Notification",
@@ -132,7 +139,8 @@
    "session_id",
    "transcript_path"
   ],
-  "has_pr_field": true
+  "has_key_pr": false,
+  "mentions_pull_url": false
  },
  {
   "hook_event_name": "UserPromptSubmit",
@@ -147,7 +155,8 @@
    "session_id",
    "transcript_path"
   ],
-  "has_pr_field": true
+  "has_key_pr": false,
+  "mentions_pull_url": false
  },
  {
   "hook_event_name": "Stop",
@@ -166,7 +175,8 @@
    "stop_hook_active",
    "transcript_path"
   ],
-  "has_pr_field": true
+  "has_key_pr": false,
+  "mentions_pull_url": false
  },
  {
   "hook_event_name": "Notification",
@@ -181,7 +191,8 @@
    "session_id",
    "transcript_path"
   ],
-  "has_pr_field": true
+  "has_key_pr": false,
+  "mentions_pull_url": false
  },
  {
   "hook_event_name": "UserPromptSubmit",
@@ -196,7 +207,8 @@
    "session_id",
    "transcript_path"
   ],
-  "has_pr_field": true
+  "has_key_pr": false,
+  "mentions_pull_url": false
  },
  {
   "hook_event_name": "Stop",
@@ -215,7 +227,8 @@
    "stop_hook_active",
    "transcript_path"
   ],
-  "has_pr_field": true
+  "has_key_pr": false,
+  "mentions_pull_url": false
  },
  {
   "hook_event_name": "UserPromptSubmit",
@@ -230,7 +243,8 @@
    "session_id",
    "transcript_path"
   ],
-  "has_pr_field": true
+  "has_key_pr": false,
+  "mentions_pull_url": false
  },
  {
   "hook_event_name": "PreToolUse",
@@ -248,7 +262,8 @@
    "tool_use_id",
    "transcript_path"
   ],
-  "has_pr_field": true
+  "has_key_pr": false,
+  "mentions_pull_url": false
  },
  {
   "hook_event_name": "PostToolUse",
@@ -268,7 +283,8 @@
    "tool_use_id",
    "transcript_path"
   ],
-  "has_pr_field": true
+  "has_key_pr": false,
+  "mentions_pull_url": false
  },
  {
   "hook_event_name": "Stop",
@@ -287,7 +303,8 @@
    "stop_hook_active",
    "transcript_path"
   ],
-  "has_pr_field": true
+  "has_key_pr": false,
+  "mentions_pull_url": false
  },
  {
   "hook_event_name": "SessionEnd",
@@ -301,7 +318,8 @@
    "session_id",
    "transcript_path"
   ],
-  "has_pr_field": true
+  "has_key_pr": false,
+  "mentions_pull_url": false
  },
  {
   "hook_event_name": "SessionStart",
@@ -315,6 +333,116 @@
    "source",
    "transcript_path"
   ],
-  "has_pr_field": false
+  "has_key_pr": false,
+  "mentions_pull_url": false
+ },
+ {
+  "hook_event_name": "SessionEnd",
+  "tool_name": null,
+  "keys": [
+   "cwd",
+   "hook_event_name",
+   "reason",
+   "scratchpad_dir",
+   "session_id",
+   "transcript_path"
+  ],
+  "has_key_pr": false,
+  "mentions_pull_url": false
+ },
+ {
+  "hook_event_name": "SessionStart",
+  "tool_name": null,
+  "keys": [
+   "cwd",
+   "hook_event_name",
+   "model",
+   "scratchpad_dir",
+   "session_id",
+   "source",
+   "transcript_path"
+  ],
+  "has_key_pr": false,
+  "mentions_pull_url": false
+ },
+ {
+  "hook_event_name": "SessionEnd",
+  "tool_name": null,
+  "keys": [
+   "cwd",
+   "hook_event_name",
+   "reason",
+   "scratchpad_dir",
+   "session_id",
+   "transcript_path"
+  ],
+  "has_key_pr": false,
+  "mentions_pull_url": false
+ },
+ {
+  "hook_event_name": "SessionStart",
+  "tool_name": null,
+  "keys": [
+   "cwd",
+   "hook_event_name",
+   "model",
+   "scratchpad_dir",
+   "session_id",
+   "source",
+   "transcript_path"
+  ],
+  "has_key_pr": false,
+  "mentions_pull_url": false
+ },
+ {
+  "hook_event_name": "UserPromptSubmit",
+  "tool_name": null,
+  "keys": [
+   "cwd",
+   "hook_event_name",
+   "permission_mode",
+   "prompt",
+   "prompt_id",
+   "scratchpad_dir",
+   "session_id",
+   "transcript_path"
+  ],
+  "has_key_pr": false,
+  "mentions_pull_url": false
+ },
+ {
+  "hook_event_name": "Stop",
+  "tool_name": null,
+  "keys": [
+   "background_tasks",
+   "cwd",
+   "effort",
+   "hook_event_name",
+   "last_assistant_message",
+   "permission_mode",
+   "prompt_id",
+   "scratchpad_dir",
+   "session_crons",
+   "session_id",
+   "stop_hook_active",
+   "transcript_path"
+  ],
+  "has_key_pr": false,
+  "mentions_pull_url": false
+ },
+ {
+  "hook_event_name": "SessionEnd",
+  "tool_name": null,
+  "keys": [
+   "cwd",
+   "hook_event_name",
+   "prompt_id",
+   "reason",
+   "scratchpad_dir",
+   "session_id",
+   "transcript_path"
+  ],
+  "has_key_pr": false,
+  "mentions_pull_url": false
  }
 ]

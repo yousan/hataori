@@ -46,16 +46,18 @@ The status line command's stdin has a `pr` object. With the scratch clone on #22
 }
 ```
 
-The footer showed `PR #224` at the same time. That session had not created the pull request and had not run any `gh pr` command: it found the pull request for the checked-out branch by itself. The `gh` wrapper logged only `gh auth token` and `gh auth token --hostname github.com` at start, so Claude Code takes `gh`'s token and calls the code host's API itself, not through `gh pr`.
+The footer showed `PR #224` at the same time. That session had not created the pull request and had not run any `gh pr` command: it found the pull request for the checked-out branch by itself. The `gh` wrapper logged only `gh auth token` and `gh auth token --hostname github.com` at start, so the lookup does not go through `gh pr` or `gh api`; Claude Code reads `gh`'s token. How it then reaches the code host was not traced. Either way it is Claude Code calling the code host, not something the workspace holds.
+
+After `gh pr ready 224`, a new session on the same branch had `"review_state": "pending"` ([capture](pull-request-source/captures/claude-statusline-open-ready.json)).
 
 On the branch of #131, which is merged, `pr` was absent from all three status line runs, including one after a turn ([capture](pull-request-source/captures/claude-statusline-merged-branch.json)). The [status line docs](https://code.claude.com/docs/en/statusline) say the same: `pr.number`, `pr.url` are the "Open pull request for the current branch … Absent … until a pull request or merge request is found, or once it merges or closes", and `pr.review_state` is one of `approved`, `pending`, `changes_requested` or `draft`, and "may be independently absent even when `pr` is present".
 
-The branch is looked up at start, not when it changes. In one running session the clone was switched from #224's branch to #131's (`pr` disappeared), then back, first by `git switch` outside the session and then by the session itself running `git checkout research/192-pull-request-source`. For about four minutes and five status line runs after that, `pr` stayed absent and the wrapper logged no `gh` call. A new session in the same directory had `pr` again on its second status line run.
+A branch change inside a session was not picked up. In one running session the clone was switched from #224's branch to #131's (`pr` disappeared), then back, first by `git switch` outside the session and then by the session itself running `git checkout research/192-pull-request-source`. For about four minutes and five status line runs after that, `pr` stayed absent and the wrapper logged no `gh` call. A new session in the same directory had `pr` again on its second status line run. Whether a running session ever looks again (after a longer wait, or when the pull request is merged) was not tested.
 
 - **Number and URL:** yes.
-- **Open, draft, merged:** open and draft yes (`review_state: "draft"`; any other value means open and not a draft). Merged and closed no: `pr` is absent, the same as "no pull request".
-- **Opened outside the session:** yes, for the branch checked out when the session starts. Not seen after a branch change inside the session.
-- **Only interactive:** the status line runs only in the interactive terminal, and a `statusLine` setting that hataori passes with `--settings` replaces the user's own.
+- **Open, draft, merged:** open and draft yes: `draft` for #224 as a draft, `pending` after it was marked ready. Other values were not seen, and the docs allow `review_state` to be absent, which leaves draft unknown. Merged and closed no: `pr` is absent, the same as "no pull request".
+- **Opened outside the session:** yes, for the branch checked out when the session started. Not seen after a branch change inside the session.
+- **Only interactive:** `claude -p --settings <scratch>/settings.json "Say ok."` printed `ok` and never ran the status line command (its log stayed empty). The user settings on the test host have their own `statusLine`; the one passed with `--settings` ran instead, so hataori using this would replace the user's status line.
 
 ### Transcript: `pr-link` records
 
@@ -71,11 +73,11 @@ Found with `grep '"type":"pr-link"' <transcript>.jsonl`. The same record, with a
 
 - **Number and URL:** yes, and the repository.
 - **Open, draft, merged:** no. The record has no state, and it was written for a draft.
-- **Opened outside the session:** no. Seen only in the session that ran `gh pr create`; not for a pull request the session viewed or found by its branch.
+- **Opened outside the session:** not seen. Of the two sessions tested, only the one that ran `gh pr create` has the record; the one that viewed a pull request and found another by its branch has none. Other ways a session might get the record were not tested.
 
 ### Hooks
 
-No hook input names a pull request ([capture](pull-request-source/captures/claude-hook-inputs.json)): across `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse` and `Stop` there is no `pr` field. The [hooks docs](https://code.claude.com/docs/en/hooks) list no pull request field or event. A `PostToolUse` for `Bash` carries the command's output, so a pull request appears there only as text that `gh` printed.
+No hook input names a pull request ([capture](pull-request-source/captures/claude-hook-inputs.json)): across `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse` and `Stop` there is no `pr` key. Only a `PostToolUse` and a `Stop` contain a `/pull/` URL, in the command's output and in the last assistant message. The [hooks docs](https://code.claude.com/docs/en/hooks) list no pull request field or event. A `PostToolUse` for `Bash` carries the command's output, so a pull request appears there only as text that `gh` printed.
 
 - **Number and URL:** only by parsing a command's output.
 - **Open, draft, merged:** only if the command printed it.
@@ -85,7 +87,7 @@ No hook input names a pull request ([capture](pull-request-source/captures/claud
 
 `codex exec --json` emitted `thread.started`, `turn.started`, `item.started` and `item.completed` for a `command_execution`, `item.completed` for an `agent_message`, and `turn.completed` ([capture](pull-request-source/captures/codex-exec-events.json)). The pull request appears only in the command's `aggregated_output`.
 
-The session's rollout file under `~/.codex/sessions` ([capture](pull-request-source/captures/codex-rollout-records.json)): `session_meta.git` has `branch`, `commit_hash` and `repository_url`, and nothing else. Only the tool call's output mentions `pull/224`. None of the 731 rollout files on the test host has a key with `pull` or `pr_` in it (`grep -ho '"[a-z_]*pull[a-z_]*"\|"pr_[a-z_]*"'`).
+The session's rollout file under `~/.codex/sessions` ([capture](pull-request-source/captures/codex-rollout-records.json)): `session_meta.git` has `branch`, `commit_hash` and `repository_url`, and nothing else. Only the tool call's output mentions `pull/224`, as a `custom_tool_call_output` and in the `item_completed` event for the same command. None of the 731 rollout files on the test host has a key with `pull` or `pr_` in it (`grep -ho '"[a-z_]*pull[a-z_]*"\|"pr_[a-z_]*"'`).
 
 The source at tag `rust-v0.163.0` ([openai/codex](https://github.com/openai/codex/tree/rust-v0.163.0)) agrees:
 
@@ -107,7 +109,7 @@ After `gh pr create` in the workspace that opened #224:
 
 In a fresh clone, `gh pr checkout 224` added `[branch "research/192-pull-request-source"]` with `remote = origin` and `merge = refs/heads/research/192-pull-request-source`, and the reflog gained `checkout: moving from main to research/192-pull-request-source`. No number. In gh 2.74.2's [`pkg/cmd/pr/checkout/checkout.go`](https://github.com/cli/cli/blob/v2.74.2/pkg/cmd/pr/checkout/checkout.go), `cmdsForMissingRemote` sets `branch.<name>.merge` to `refs/pull/<N>/head` only when the pull request's head repository is not a configured remote (a fork) and the maintainer cannot push to it. Only then does git config carry the number, and only for a pull request checked out with `gh`.
 
-The code host keeps `refs/pull/<N>/head`, and `refs/pull/<N>/merge` while the pull request can merge: `git ls-remote origin 'refs/pull/224/*' 'refs/pull/131/*'` listed `refs/pull/131/head`, `refs/pull/224/head` and `refs/pull/224/merge`. That is a call to the code host, a default fetch does not bring these refs, and the ref names say nothing about draft.
+The code host has the refs: `git ls-remote origin 'refs/pull/224/*' 'refs/pull/131/*'` listed `refs/pull/131/head` (merged), `refs/pull/224/head` and `refs/pull/224/merge` (open). That is a call to the code host. The clone's fetch refspec is only `+refs/heads/*:refs/remotes/origin/*` (`git config --get-all remote.origin.fetch`), so a fetch does not bring them, and the ref names say nothing about draft.
 
 - **Number and URL:** no, except the fork case above (number only, no URL host or state).
 - **Open, draft, merged:** no.
@@ -117,7 +119,7 @@ The code host keeps `refs/pull/<N>/head`, and `refs/pull/<N>/merge` while the pu
 
 | Source | Number and URL | Open / draft / merged | Opened outside the session |
 |---|---|---|---|
-| Claude Code status line `pr` | yes | open and draft; merged or closed look like none | yes, for the branch at session start |
+| Claude Code status line `pr` | yes | open and draft (`review_state`); merged or closed look like none | yes, for the branch at session start |
 | Claude Code transcript `pr-link` | yes | no state | no |
 | Claude Code hooks | output text only | output text only | no |
 | Codex events and rollout | output text only | output text only | no |
@@ -126,4 +128,4 @@ The code host keeps `refs/pull/<N>/head`, and `refs/pull/<N>/merge` while the pu
 
 ## Recommendation
 
-**No source; leave the field out.** The only source that names a pull request with any state and works for one opened elsewhere is Claude Code's status line `pr`. It is Claude Code calling the code host with `gh`'s token, it exists only for interactive Claude Code sessions (none for Codex), it is looked up when the session starts and was not refreshed after a branch change, a merged or closed pull request is indistinguishable from none, and using it means hataori replaces the user's own `statusLine`. The other sources either have no state (`pr-link`, undocumented, only for a pull request the session created) or are free text in a command's output. None of them meets "a field with no source is left out" for both agents. #212 can be closed as not planned unless the design accepts a Claude Code only field fed by the status line.
+**No source; leave the field out.** The only source that names a pull request with any state and works for one opened elsewhere is Claude Code's status line `pr`. It is Claude Code calling the code host with `gh`'s token, it exists only for interactive Claude Code sessions (none for Codex), it was found when the session started and not after a branch change, a merged or closed pull request is indistinguishable from none, and using it means hataori replaces the user's own `statusLine`. The other sources either have no state (`pr-link`, undocumented, seen only for a pull request the session created) or are free text in a command's output. None of them meets "a field with no source is left out" for both agents. #212 can be closed as not planned unless the design accepts a Claude Code only field fed by the status line.
