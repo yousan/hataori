@@ -28,6 +28,7 @@ import (
 
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/people"
 	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
 )
@@ -69,8 +70,10 @@ type Update struct {
 type Relay struct {
 	Store    *store.Store
 	Adapters map[string]agent.Adapter // by registered name
-	Owner    control.Principal
-	Notify   func(Update) // the owner's client; called from the relay's goroutines. Without one, outages start no flow
+	// People finds the owner: only the owner's id may start a flow or give
+	// a code (design, section 4.7).
+	People *people.Directory
+	Notify func(Update) // the owner's client; called from the relay's goroutines. Without one, outages start no flow
 	// Spec gives the spec whose config directory the agent's login command
 	// uses; the zero Spec when nil.
 	Spec    func(agentName string) agent.Spec
@@ -150,22 +153,30 @@ func (r *Relay) Run(ctx context.Context) error {
 	return nil
 }
 
-// Start starts a new login flow for the agent, as caller, ending any flow
-// of the agent that runs. It is the owner's way to try again.
-func (r *Relay) Start(ctx context.Context, caller control.Principal, agentName string) error {
-	if caller != r.Owner || r.Owner == "" {
-		r.Log.Warn("login relay refused", "op", "start", "principal", string(caller))
+// isOwner reports whether from, a "<client>:<id>", is one of the owner's ids.
+func (r *Relay) isOwner(from string) bool {
+	name, ok := r.People.Resolve(from)
+	return ok && name == r.People.Owner()
+}
+
+// Start starts a new login flow for the agent, for from, the
+// "<client>:<id>" of who asks, ending any flow of the agent that runs. It is
+// the owner's way to try again.
+func (r *Relay) Start(ctx context.Context, from, agentName string) error {
+	if !r.isOwner(from) {
+		r.Log.Warn("login relay refused", "op", "start", "from", from)
 		return ErrForbidden
 	}
 	return r.start(ctx, agentName)
 }
 
-// Code hands a code to the agent's login command, as caller. It is refused,
+// Code hands a code to the agent's login command, from from, the
+// "<client>:<id>" of who sent it. It is refused,
 // and nothing is written, unless the command has asked for a code and the
 // code is one word without spaces.
-func (r *Relay) Code(caller control.Principal, agentName, code string) error {
-	if caller != r.Owner || r.Owner == "" {
-		r.Log.Warn("login relay refused", "op", "code", "principal", string(caller))
+func (r *Relay) Code(from, agentName, code string) error {
+	if !r.isOwner(from) {
+		r.Log.Warn("login relay refused", "op", "code", "from", from)
 		return ErrForbidden
 	}
 	if code == "" || strings.IndexFunc(code, func(c rune) bool { return unicode.IsSpace(c) || !unicode.IsPrint(c) }) >= 0 {

@@ -126,9 +126,9 @@ func newFront(t *testing.T, ws workspaces, opts ...func(*FrontEnd)) *front {
 	lg := slog.New(slog.NewTextHandler(lb, nil))
 	d := fake.New()
 	r := &starts{}
-	fe := &FrontEnd{Name: "chat", Driver: d, Trigger: "!go", Owner: owner, Log: lg,
+	fe := &FrontEnd{Name: "chat", Driver: d, Trigger: "!go", People: testPeople(), Log: lg,
 		Outbox: &Outbox{Store: st, Client: "chat", Driver: d, Log: lg, Retry: 5 * time.Millisecond},
-		Scopes: map[string]Scope{channel: {Enabled: true, Posters: []control.Principal{hook}}, "off": {}}}
+		Scopes: map[string]Scope{channel: {Enabled: true}, "off": {}}}
 	c := &core.Core{Store: st, Machine: &session.Machine{Store: st}, Log: lg, Agent: "agent", Runner: r, Workspaces: ws,
 		People: testPeople(),
 		Scopes: map[string]core.Scope{channel: {Enabled: true, Owner: "chat"}, "off": {Owner: "chat"}},
@@ -226,10 +226,16 @@ func TestThreadOfAnotherClientOpensInTheChannel(t *testing.T) {
 }
 
 // failStart is the core for a front end whose Start fails, as when the
-// daemon stops after the thread was opened.
-type failStart struct{ control.API }
+// daemon stops after the core asked for the thread and it was opened.
+type failStart struct {
+	control.API
+	fe *FrontEnd
+}
 
-func (failStart) Start(context.Context, control.StartRequest) (control.ThreadID, error) {
+func (s failStart) Start(ctx context.Context, r control.StartRequest) (control.ThreadID, error) {
+	if _, err := s.fe.NewThread(ctx, r.Scope, r.Key, r.Input.Text); err != nil {
+		return control.ThreadID{}, err
+	}
 	return control.ThreadID{}, errors.New("stopped")
 }
 
@@ -238,14 +244,15 @@ func (failStart) Start(context.Context, control.StartRequest) (control.ThreadID,
 func TestTriggerAfterARestartOpensNoSecondThread(t *testing.T) {
 	f := newFront(t, workspaces{})
 	api := f.fe.API
-	f.fe.API = func(c control.Caller) control.API { return failStart{api(c)} }
+	fe := f.fe
+	f.fe.API = func(c control.Caller) control.API { return failStart{api(c), fe} }
 	in := f.deliver(chanConv, fake.Webhook(hook), "!go repo:https://example.com/r.git first")
 	if ths := f.threads(); len(ths) != 1 || len(f.runner.all()) != 0 {
 		t.Fatalf("opened %+v, started %+v; want a thread and no start", ths, f.runner.all())
 	}
 	// A new front end on the same store, as after a restart.
 	old := f.fe
-	f.fe = &FrontEnd{Name: old.Name, Driver: old.Driver, Trigger: old.Trigger, Owner: old.Owner, Log: old.Log,
+	f.fe = &FrontEnd{Name: old.Name, Driver: old.Driver, Trigger: old.Trigger, People: old.People, Log: old.Log,
 		Outbox: old.Outbox, Scopes: old.Scopes, API: api}
 	f.fe.Message(in)
 	f.fe.Message(in)
@@ -287,7 +294,8 @@ func TestRefusedTriggersStartNothingAndLogOneLine(t *testing.T) {
 		author surface.Author
 		want   string
 	}{
-		{"author not allowed", chanConv, fake.Webhook("stranger"), "the author is not allowed"},
+		// A guest: the core refuses the Start, and logs it with the id.
+		{"author not allowed", chanConv, fake.Webhook("stranger"), `reason="a guest" client=chat id=stranger`},
 		{"bot account", chanConv, fake.Bot(hook), "the author is a bot account"},
 		{"scope not enabled", surface.Conversation{Channel: "off"}, fake.Person(owner), "the scope is not enabled"},
 	} {

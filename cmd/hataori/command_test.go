@@ -47,6 +47,9 @@ func TestMain(m *testing.M) {
 	if err := surface.Register(fakeSurface, fakeDriver); err != nil {
 		panic(err)
 	}
+	if err := surface.Register(secondSurface, fakeDriver); err != nil {
+		panic(err)
+	}
 	if err := surface.Register(remoteSurface, remoteDriver); err != nil {
 		panic(err)
 	}

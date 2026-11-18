@@ -132,15 +132,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	}
 	// The login relay (section 4.7). It starts flows only once a client of
 	// the owner takes its updates: the chat front end sets Notify.
-	// The relay compares the id a front end passes with the owner's id on
-	// the first driver; an old-form config gives the owner the same id on
-	// every driver.
-	var relayOwner control.Principal
-	for _, name := range sortedKeys(cfg.Drivers) {
-		relayOwner = ownerID(cfg, name)
-		break
-	}
-	lr := &relay.Relay{Store: st, Adapters: adapters, Owner: relayOwner, Off: !cfg.LoginRelay, Log: lg}
+	lr := &relay.Relay{Store: st, Adapters: adapters, People: cfg.People, Off: !cfg.LoginRelay, Log: lg}
 	var fronts []*chat.FrontEnd
 	if len(cfg.Drivers) > 0 {
 		confDir, err := in.Root.OpenRoot("config")
@@ -186,24 +178,6 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	return err
 }
 
-func sortedKeys(m map[string][]byte) []string {
-	var ks []string
-	for k := range m {
-		ks = append(ks, k)
-	}
-	sort.Strings(ks)
-	return ks
-}
-
-// ownerID returns the owner's first id on client, without its prefix, or
-// "" when the owner has none there.
-func ownerID(cfg *instance.Config, client string) control.Principal {
-	if ids := cfg.People.IDs(cfg.Owner, client); len(ids) > 0 {
-		return control.Principal(ids[0])
-	}
-	return ""
-}
-
 // frontEndHook, when a test sets it, sees each front end before it runs,
 // for a clock of the test's own.
 var frontEndHook func(*chat.FrontEnd)
@@ -233,16 +207,10 @@ func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.St
 			if s.Client != name {
 				continue
 			}
-			var posters []control.Principal
-			for _, person := range s.People {
-				for _, id := range cfg.People.IDs(person, name) {
-					posters = append(posters, control.Principal(id))
-				}
-			}
-			scopes[s.Key] = chat.Scope{Enabled: s.Enabled, Posters: posters}
+			scopes[s.Key] = chat.Scope{Enabled: s.Enabled}
 		}
 		client := name
-		fe := &chat.FrontEnd{Name: name, Driver: d, API: c.As, Trigger: cfg.Trigger, Owner: ownerID(cfg, name),
+		fe := &chat.FrontEnd{Name: name, Driver: d, API: c.As, Trigger: cfg.Trigger, People: cfg.People,
 			Scopes: scopes, Log: lg.With("client", name), Instance: filepath.Base(root),
 			Outbox:  &chat.Outbox{Store: st, Client: name, Driver: d, Log: lg.With("client", name)},
 			FileDir: filepath.Join(root, "state", "chat", name, "files"),

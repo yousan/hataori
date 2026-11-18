@@ -21,6 +21,7 @@ import (
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/agent/fake"
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/people"
 	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
 )
@@ -46,9 +47,9 @@ func daemonRole(root string) int {
 	cfg, _ := json.Marshal(fake.Config{Command: []string{os.Args[0], "role", "fake"}, Env: []string{"PATH=" + os.Getenv("PATH")},
 		ConfigDir: filepath.Join(root, "agent-config"), Login: fake.Login{Code: goodCode, Linger: true}})
 	ad, _ := fake.New(cfg)
-	r := &Relay{Store: st, Adapters: map[string]agent.Adapter{"fake": ad}, Owner: "owner",
+	r := &Relay{Store: st, Adapters: map[string]agent.Adapter{"fake": ad}, People: people.New([]people.Person{{Name: "owner", IDs: []string{"chat:owner"}}}, "owner", nil),
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Notify: func(Update) {}}
-	if err := r.Start(context.Background(), "owner", "fake"); err != nil {
+	if err := r.Start(context.Background(), "chat:owner", "fake"); err != nil {
 		return 1
 	}
 	r.mu.Lock()
@@ -98,7 +99,7 @@ func newFixtureWith(t *testing.T, l fake.Login, timeout time.Duration, set func(
 	logPath := filepath.Join(root, "state", "daemon.log")
 	lf, _ := os.Create(logPath)
 	f := &fixture{t: t, root: root, st: st, m: &session.Machine{Store: st}, updates: make(chan Update, 32), logPath: logPath, logFile: lf}
-	f.relay = &Relay{Store: st, Adapters: map[string]agent.Adapter{"fake": ad}, Owner: "owner", Timeout: timeout,
+	f.relay = &Relay{Store: st, Adapters: map[string]agent.Adapter{"fake": ad}, People: people.New([]people.Person{{Name: "owner", IDs: []string{"chat:owner"}}}, "owner", nil), Timeout: timeout,
 		Log: slog.New(slog.NewTextHandler(lf, nil)), Notify: func(u Update) { f.updates <- u }}
 	if _, err := st.DB.Exec(`INSERT INTO threads (id, scope, key, started_by, state, created_at, updated_at) VALUES (1, 's', 'k', 'p', 'idle', 0, 0)`); err != nil {
 		t.Fatal(err)
@@ -147,7 +148,7 @@ func (f *fixture) code(code string) {
 	f.t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		err := f.relay.Code("owner", "fake", code)
+		err := f.relay.Code("chat:owner", "fake", code)
 		if err == nil {
 			return
 		}
@@ -248,7 +249,7 @@ func TestCodeOnlyWhenAskedAndOneWord(t *testing.T) {
 	f.turn(agent.Failed, agent.Login)
 	f.next("the link")
 	for _, c := range []string{"two words", "", "tab\there", "line\nbreak"} {
-		if err := f.relay.Code("owner", "fake", c); !errors.Is(err, ErrNotACode) {
+		if err := f.relay.Code("chat:owner", "fake", c); !errors.Is(err, ErrNotACode) {
 			t.Errorf("code %q: %v", c, err)
 		}
 	}
@@ -261,23 +262,23 @@ func TestCodeOnlyWhenAskedAndOneWord(t *testing.T) {
 	g := newFixture(t, fake.Login{Code: goodCode, NoLink: true}, 0)
 	g.turn(agent.Failed, agent.Login)
 	time.Sleep(200 * time.Millisecond)
-	if err := g.relay.Code("owner", "fake", goodCode); !errors.Is(err, ErrNotWaiting) {
+	if err := g.relay.Code("chat:owner", "fake", goodCode); !errors.Is(err, ErrNotWaiting) {
 		t.Fatalf("a code before the command asked: %v", err)
 	}
 	// Nor does an agent without a flow.
-	if err := g.relay.Code("owner", "other", goodCode); !errors.Is(err, ErrNotWaiting) {
+	if err := g.relay.Code("chat:owner", "other", goodCode); !errors.Is(err, ErrNotWaiting) {
 		t.Fatalf("a code for no flow: %v", err)
 	}
 }
 
 func TestOnlyTheOwner(t *testing.T) {
 	f := newFixture(t, fake.Login{Code: goodCode}, 0)
-	if err := f.relay.Start(context.Background(), "mallory", "fake"); !errors.Is(err, ErrForbidden) {
+	if err := f.relay.Start(context.Background(), "chat:mallory", "fake"); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("start by another: %v", err)
 	}
 	f.turn(agent.Failed, agent.Login)
 	f.next("the link")
-	if err := f.relay.Code("mallory", "fake", goodCode); !errors.Is(err, ErrForbidden) {
+	if err := f.relay.Code("chat:mallory", "fake", goodCode); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("code by another: %v", err)
 	}
 }
@@ -293,7 +294,7 @@ func TestTimeLimit(t *testing.T) {
 	if err := syscall.Kill(-pgid, 0); !errors.Is(err, syscall.ESRCH) {
 		t.Fatalf("a process of the login command remains: %v", err)
 	}
-	if err := f.relay.Start(context.Background(), "owner", "fake"); err != nil {
+	if err := f.relay.Start(context.Background(), "chat:owner", "fake"); err != nil {
 		t.Fatal(err)
 	}
 	if again := f.next("a new link").Link; again == "" || again == first {
@@ -350,7 +351,7 @@ func TestConcurrentStarts(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 4 {
 		wg.Add(1)
-		go func() { defer wg.Done(); f.relay.Start(context.Background(), "owner", "fake") }()
+		go func() { defer wg.Done(); f.relay.Start(context.Background(), "chat:owner", "fake") }()
 	}
 	wg.Wait()
 	ps, _ := filepath.Glob("/proc/[0-9]*/cmdline")

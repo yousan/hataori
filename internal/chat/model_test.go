@@ -120,7 +120,7 @@ func TestModelAndEffortFromTheTriggerLineOrTheDefaults(t *testing.T) {
 		InterruptGrace: 5 * time.Second, Poll: 20 * time.Millisecond}
 	t.Cleanup(func() { r.Close(); st.Close() })
 	d := fake.New()
-	fe := &FrontEnd{Name: "chat", Driver: d, Trigger: "!go", Owner: owner, Log: lg,
+	fe := &FrontEnd{Name: "chat", Driver: d, Trigger: "!go", People: testPeople(), Log: lg,
 		Outbox: &Outbox{Store: st, Client: "chat", Driver: d, Log: lg, Retry: 5 * time.Millisecond},
 		Scopes: map[string]Scope{"withdefaults": {Enabled: true}, "without": {Enabled: true}}}
 	work := workspaceDirs(filepath.Join(root, "work"))

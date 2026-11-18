@@ -22,6 +22,9 @@ import (
 // fake's settings name the driver a test made, {"id": ...}.
 const fakeSurface = "fake-surface"
 
+// secondSurface is a second chat service, the same fake under another name.
+const secondSurface = "fake-two"
+
 var (
 	drivers sync.Map // id → *fakesurface.Driver
 )

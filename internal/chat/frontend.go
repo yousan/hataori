@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,13 +18,11 @@ import (
 	"github.com/yousan/hataori/internal/surface"
 )
 
-// Scope is the chat front end's config of one scope, a channel.
+// Scope is the chat front end's config of one scope, a channel. Who may
+// act in it is not the front end's to decide: the core checks every input
+// against the people config (design, section 5.1).
 type Scope struct {
 	Enabled bool
-	// Posters may start threads besides the owner: principals, which for
-	// chat are the authors' ids on the service (a webhook's id for a
-	// webhook post).
-	Posters []control.Principal
 }
 
 // FrontEnd shows threads in one chat service. It is the surface.Sink of its
@@ -36,9 +33,13 @@ type FrontEnd struct {
 	Outbox  *Outbox
 	API     func(control.Caller) control.API // the core, as one caller
 	Trigger string                           // the word that starts a thread
-	Owner   control.Principal
-	Scopes  map[string]Scope // by channel
-	Log     *slog.Logger
+	// People is the instance's people config. The front end uses it only
+	// to find the owner: whether a direct message is the owner's, and the
+	// owner's id on this service to send the login alert to. It checks no
+	// input against it.
+	People *people.Directory
+	Scopes map[string]Scope // by channel
+	Log    *slog.Logger
 
 	// The progress line: posted after QuietAfter (90s) of a turn without
 	// output, edited at most every EditEvery (15s), checked every Tick (1s).
@@ -113,15 +114,37 @@ func (f *FrontEnd) context() context.Context {
 }
 
 // NewThread opens a chat thread in the channel scope and returns its id.
-// The core calls it for a thread another client starts; a trigger's thread
-// is opened from the trigger message instead (threadOf).
-func (f *FrontEnd) NewThread(ctx context.Context, scope, _, title string) (string, error) {
+// The core calls it once a Start is allowed. For a trigger's Start, whose
+// key is the trigger message's id, the thread is opened from the trigger
+// message (threadOf); for one another client makes, in the channel.
+func (f *FrontEnd) NewThread(ctx context.Context, scope, key, title string) (string, error) {
+	var n int
+	err := f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM chat_triggers WHERE client = ? AND channel = ? AND message = ?`,
+		f.Name, scope, key).Scan(&n)
+	if err != nil {
+		return "", err
+	}
+	if n > 0 {
+		return f.threadOf(ctx, surface.MessageRef{Conv: surface.Conversation{Channel: scope}, ID: key}, title)
+	}
 	conv, err := f.Driver.OpenThread(ctx, surface.Conversation{Channel: scope}, title)
 	if err != nil {
 		return "", err
 	}
 	return conv.Thread, nil
 }
+
+// from is the id the core resolves an author's input by.
+func (f *FrontEnd) from(a surface.Author) string { return people.Join(f.Name, a.ID) }
+
+// owner reports whether author is the owner, by the people config.
+func (f *FrontEnd) owner(a surface.Author) bool {
+	name, ok := f.People.Resolve(f.from(a))
+	return ok && name == f.People.Owner()
+}
+
+// ownerPrincipal is the principal of the front end's own reads.
+func (f *FrontEnd) ownerPrincipal() control.Principal { return control.Principal(f.People.Owner()) }
 
 // Message handles an inbound message. In a channel, a trigger starts a
 // thread; in a thread, a message is a follow-up; a direct message may be
@@ -165,16 +188,15 @@ func (f *FrontEnd) handle(in surface.Inbound) error {
 		f.Log.Warn("trigger ignored", "reason", reason, "scope", channel,
 			"author", in.Author.ID, "message", in.Ref.ID)
 	}
+	// Whether the author may start a thread is the core's to decide, in
+	// Start; a refused trigger opens nothing.
 	sc, known := f.Scopes[channel]
-	switch who := control.Principal(in.Author.ID); {
+	switch {
 	case in.Author.Kind == surface.Bot:
 		refuse("the author is a bot account")
 		return nil
 	case !known || !sc.Enabled:
 		refuse("the scope is not enabled")
-		return nil
-	case who != f.Owner && !slices.Contains(sc.Posters, who):
-		refuse("the author is not allowed")
 		return nil
 	case o.Repo == "":
 		refuse("no repo:<url> on the trigger line")
@@ -191,19 +213,22 @@ func (f *FrontEnd) handle(in surface.Inbound) error {
 	if o, ok = parseTrigger(f.Trigger, text); !ok {
 		return nil // stored by a concurrent delivery of another text
 	}
-	if o.Effort != "" && !slices.Contains(Efforts, o.Effort) {
-		refuse("unknown effort " + strconv.Quote(o.Effort))
-		// Not about an event: the row is keyed by event 0 and the
-		// trigger's number, so a second delivery writes it once.
-		err := f.Outbox.Write(ctx, Row{Event: 0, Part: int(n), Conv: in.Ref.Conv, Message: surface.Message{
-			Text:    "Nothing was started: effort " + strconv.Quote(o.Effort) + " is not one of " + strings.Join(Efforts, ", ") + ".",
-			ReplyTo: &in.Ref}})
-		if err != nil {
-			f.Log.Error("trigger: writing the refusal", "message", in.Ref.ID, "err", err)
-		}
-		return err
+	return f.start(ctx, in, o, n)
+}
+
+// refuseEffort answers a trigger whose effort the core does not know. It
+// is not about an event: the row is keyed by event 0 and the trigger's
+// number n, so a second delivery writes it once.
+func (f *FrontEnd) refuseEffort(ctx context.Context, in surface.Inbound, o order, n int64) error {
+	f.Log.Warn("trigger ignored", "reason", "unknown effort "+strconv.Quote(o.Effort), "scope", in.Ref.Conv.Channel,
+		"author", in.Author.ID, "message", in.Ref.ID)
+	err := f.Outbox.Write(ctx, Row{Event: 0, Part: int(n), Conv: in.Ref.Conv, Message: surface.Message{
+		Text:    "Nothing was started: effort " + strconv.Quote(o.Effort) + " is not one of " + strings.Join(Efforts, ", ") + ".",
+		ReplyTo: &in.Ref}})
+	if err != nil {
+		f.Log.Error("trigger: writing the refusal", "message", in.Ref.ID, "err", err)
 	}
-	return f.start(ctx, in, o)
+	return err
 }
 
 // stored returns the text of a trigger message as it was first received.
@@ -233,17 +258,20 @@ func (f *FrontEnd) remember(ctx context.Context, ref surface.MessageRef, text st
 	return text, n, err
 }
 
-func (f *FrontEnd) start(ctx context.Context, in surface.Inbound, o order) error {
+func (f *FrontEnd) start(ctx context.Context, in surface.Inbound, o order, n int64) error {
 	channel := in.Ref.Conv.Channel
-	thread, err := f.threadOf(ctx, in.Ref, o.Prompt)
-	if err != nil {
-		f.Log.Error("trigger: opening its thread", "scope", channel, "message", in.Ref.ID, "err", err)
-		return err
-	}
-	api := f.API(control.Caller{From: people.Join(f.Name, in.Author.ID), Scopes: []string{channel},
+	api := f.API(control.Caller{From: f.from(in.Author), Scopes: []string{channel},
 		May: control.OpRead | control.OpStart})
-	id, startErr := api.Start(ctx, control.StartRequest{Key: in.Ref.ID, Scope: channel, Thread: thread, Repo: o.Repo,
+	// No thread is named: once the core allows the Start, it asks this
+	// front end for one (NewThread), which opens it from the trigger.
+	id, startErr := api.Start(ctx, control.StartRequest{Key: in.Ref.ID, Scope: channel, Repo: o.Repo,
 		Model: o.Model, Effort: o.Effort, Input: control.Input{Text: o.Prompt}})
+	switch {
+	case errors.Is(startErr, control.ErrForbidden):
+		return nil // the core logged it; nothing is shown to the author
+	case errors.Is(startErr, control.ErrUnknownEffort):
+		return f.refuseEffort(ctx, in, o, n)
+	}
 	if id.Key == "" {
 		f.Log.Error("trigger: start failed", "scope", channel, "message", in.Ref.ID, "err", startErr)
 		return startErr
@@ -341,12 +369,10 @@ func (f *FrontEnd) followUp(in surface.Inbound) error {
 	}
 	ctx := f.context()
 	conv := in.Ref.Conv
-	sc, known := f.Scopes[conv.Channel]
-	if !known {
+	if _, known := f.Scopes[conv.Channel]; !known {
 		return nil
 	}
-	who := control.Principal(in.Author.ID)
-	api := f.API(control.Caller{From: people.Join(f.Name, in.Author.ID), Scopes: []string{conv.Channel},
+	api := f.API(control.Caller{From: f.from(in.Author), Scopes: []string{conv.Channel},
 		May: control.OpRead | control.OpSend})
 	id := control.ThreadID{Scope: conv.Channel, Key: conv.Thread}
 	ts, err := api.Threads(ctx, control.Filter{Thread: id})
@@ -363,14 +389,14 @@ func (f *FrontEnd) followUp(in surface.Inbound) error {
 			"thread", conv.Thread, "message", in.Ref.ID)
 		return nil
 	}
-	if who != f.Owner && !slices.Contains(sc.Posters, who) {
-		f.Log.Warn("follow-up ignored", "reason", "the author is not allowed", "scope", conv.Channel,
-			"thread", conv.Thread, "author", in.Author.ID, "message", in.Ref.ID)
-		return nil
-	}
 	// The key makes a second delivery one input; a running turn gets it
-	// delivered, an open question gets it as the answer (the core decides).
-	if err := api.Send(ctx, id, in.Ref.ID, control.Input{Text: in.Text}, control.Deliver); err != nil {
+	// delivered, an open question gets it as the answer. Whether the author
+	// may give input at all, the core decides too.
+	err = api.Send(ctx, id, in.Ref.ID, control.Input{Text: in.Text}, control.Deliver)
+	if errors.Is(err, control.ErrForbidden) {
+		return nil // the core logged it
+	}
+	if err != nil {
 		f.Log.Error("follow-up: send failed", "scope", conv.Channel, "thread", conv.Thread, "message", in.Ref.ID, "err", err)
 		return err
 	}
