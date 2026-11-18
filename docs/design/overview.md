@@ -1052,7 +1052,7 @@ type Codec interface {
 	Open() Actions                          // what to do first, if anything
 	// One reported line. src is Output, Hook, File, or Screen: the agent's
 	// terminal output, given only to a codec whose Open asked for it, and
-	// only until the session reports SessionReady.
+	// only until the codec says StopScreen.
 	Decode(src Source, line []byte) Actions
 	Input(in Input) (Actions, error)        // a user message; TurnStarted returns its ID
 	Answer(a Answer) (Actions, error)       // to an approval or a question
@@ -1070,9 +1070,13 @@ type Actions struct {
 	Follow []string    // files to start following, such as a transcript
 	Inputs []string    // the Input.IDs of the messages Write carries
 	// WatchScreen, from Open only: give Decode the terminal (Source Screen)
-	// until SessionReady, for a start-up dialog no hook reports.
+	// until StopScreen, for what no hook reports (a start-up dialog, whether
+	// the agent reads keys yet). A codec rebuilt after a restart never
+	// watches.
 	WatchScreen bool
-	StopScreen  bool // ends that watch early: the codec needs the screen no more
+	// StopScreen, from any call, ends that watch: the codec needs the screen
+	// no more. SessionReady does not end it; a codec that watches ends it.
+	StopScreen bool
 }
 
 // Input is a user message. ID is opaque to the codec; the TurnStarted of

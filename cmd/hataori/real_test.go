@@ -36,8 +36,11 @@ import (
 // captures do: --setting-sources project,local (the person's settings,
 // hooks and plugins are not loaded; the adapter's --settings holds only its
 // hooks), no CLAUDE.md, no auto-memory, no connectors, the model haiku. The
-// workspace is a new clone in a new temporary directory. The long turn
-// waits on a command, so the model is asked for little.
+// workspace is a new clone in a new temporary directory. The clone's own
+// project settings switch on the full-screen interface, as a person's
+// settings may: with it the CLI reports SessionStart before it reads keys
+// (#178). The long turn waits on a command, so the model is asked for
+// little.
 func TestRealClaudeCode(t *testing.T) {
 	if os.Getenv("HATAORI_REAL_CLAUDE") != "1" {
 		t.Skip("set HATAORI_REAL_CLAUDE=1 to run the check against the real CLI")
@@ -63,7 +66,7 @@ func TestRealClaudeCode(t *testing.T) {
 	})
 	p.deadline = time.Now().Add(40 * time.Minute)
 	p.start(t)
-	repo := bareRepo(t)
+	repo := bareRepoWith(t, map[string]string{".claude/settings.json": realProjectSettings})
 
 	var th surface.Conversation
 	ok := true
@@ -109,6 +112,12 @@ func TestRealClaudeCode(t *testing.T) {
 		tty, _ := os.ReadFile(filepath.Join(runner.StateDir(p.root, 1), host.TerminalLog))
 		if !bytes.Contains(tty, []byte("trust")) || !bytes.Contains(tty, []byte("folder")) {
 			t.Fatal("the terminal showed no folder-trust dialog: the clone was not new to the CLI")
+		}
+		if !bytes.Contains(tty, []byte("\x1b[?1049h")) {
+			t.Fatal("no full-screen interface: the clone's settings did not take")
+		}
+		if bytes.Contains(tty, []byte("^[[200~")) {
+			t.Fatal("the terminal echoed the paste: it was written before the CLI read keys")
 		}
 	})
 	step("2 a turn", func(t *testing.T) {
@@ -333,6 +342,12 @@ func (p *procRoot) dump(t *testing.T, conv surface.Conversation) {
 const realWrapper = `#!/bin/sh
 export CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 ENABLE_CLAUDEAI_MCP_SERVERS=false BROWSER=true
 exec claude --setting-sources project,local "$@"
+`
+
+// realProjectSettings are the clone's own settings: the full-screen
+// interface, which a person's settings may choose. Nothing in them runs a
+// command.
+const realProjectSettings = `{"tui": "fullscreen"}
 `
 
 // userSettings is the modification time and checksum of the person's

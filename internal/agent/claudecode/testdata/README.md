@@ -4,6 +4,7 @@ Real output of the interactive `claude` CLI, for testing the adapter's codec. Th
 
 - `2.1.322/`: Claude Code 2.1.322, captured on 2026-11-12 (also in `2.1.322/VERSION`), on Linux, with the model `haiku` (it reports itself as `claude-haiku-5-5`).
 - `2.1.326/`: Claude Code 2.1.326, captured on 2026-11-17 (also in `2.1.326/VERSION`), on Linux, with the model `haiku`: `subagent_tools`, taken for #142, and `trust_answered`, taken for #56 (see below).
+- `2.1.327/`: Claude Code 2.1.327, on 2026-11-18 (also in `2.1.327/VERSION`), on Linux: `first_enter_lost`, a real start of a session that hataori ran, taken for #178 (see below).
 - `capture.py` took them; `scrub.py` made them committable. `captures_test.go` in the package fails when a capture holds a home directory path, an e-mail address, an unscrubbed UUID or something shaped like a token.
 
 ## How they were taken
@@ -135,4 +136,15 @@ None of these trusts a directory for an interactive session in advance:
 - The security documentation (code.claude.com/docs/en/security): the trust dialog appears in an interactive session for a folder not trusted. In the home directory, trust is held for the session only, and "there is no setting to persist it".
 - The permissions documentation (code.claude.com/docs/en/permissions): trusting a parent folder does not cover a nested repository, so a clone inside a trusted directory still gets the dialog.
 - The environment-variable documentation (code.claude.com/docs/en/env-vars): the only trust-related variable is `CLAUDE_CODE_DISABLE_ULTRAREVIEW_TRUST_CHECK`, for `claude ultrareview` alone. The binary also holds `CLAUDE_CODE_IGNORE_PERSISTED_TRUST`, which does the opposite, and variables of background sessions; none of them is documented for this.
+
+## The first Enter lost (2.1.327, taken for #178)
+
+`2.1.327/first_enter_lost/` is not from `capture.py`. It is a session that hataori ran with the CLI under a person's own settings: no `--setting-sources`, so their status line, hooks, plugins, Remote Control and the full-screen interface (`tui: fullscreen`) were all loaded; the model `opus`; the session host's 24×80 terminal; a new workspace, so the trust dialog came first. Its terminal log and its `SessionStart` hook were cut and scrubbed by hand: the workspace path became `/tmp/capture-work/sessions/first_enter_lost`, the chat ids became zeros, and the plan's name, the usage figures and the Remote Control link were replaced. Nothing else was changed.
+
+| File | What it is |
+|---|---|
+| `screen-before.raw` | The terminal up to the moment `SessionStart` was reported: the trust dialog, answered by the codec, and taken down; bracketed paste switched off (`ESC[?2004l`). |
+| `echo.raw` | What came next: hataori's paste, written at `SessionStart`, echoed by the terminal's line discipline (`^[[200~…^[[201~`, and the Enter as `\r\n`). The CLI did not read keys yet. |
+| `screen-after.raw` | The rest: the CLI switches bracketed paste on, enters the full-screen interface and draws its input box, holding the pasted text and an empty line below it, where the Enter went. No `UserPromptSubmit` followed; the turn ended "not delivered". |
+| `hooks/01-SessionStart.json` | The `SessionStart` hook (`source: startup`). |
 

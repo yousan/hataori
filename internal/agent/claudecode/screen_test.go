@@ -14,8 +14,12 @@ import (
 // The workspace the trust capture was taken in, as scrubbed.
 const trustDir = "/tmp/capture-work/sessions/trust"
 
+// screenCodec returns a codec for the workspace dir, opened as for a new
+// start: watching the screen.
 func screenCodec(dir string) *codec {
-	return (&Adapter{}).NewCodec(agent.Spec{Dir: dir}).(*codec)
+	c := (&Adapter{}).NewCodec(agent.Spec{Dir: dir}).(*codec)
+	c.Open()
+	return c
 }
 
 // settle gives the codec the screen, then ticks as the runner does until
@@ -122,17 +126,14 @@ func TestOtherScreensGetNoKey(t *testing.T) {
 	}
 }
 
-// After the first hook call, the session is past any dialog: the screen is
-// not read and no key is sent, whatever it shows.
+// After the first hook call, the session is past any dialog: no key is
+// sent for it, whatever the screen shows.
 func TestNoKeyAfterTheStart(t *testing.T) {
 	c := screenCodec(trustDir)
 	start := readScreen(t, "testdata/2.1.322/plain/hooks/01-SessionStart.json")
 	c.Decode(agent.Hook, envelope("c1", "plain/hooks/01-SessionStart.json", start))
 	if got, _ := settle(c, readScreen(t, "testdata/2.1.322/trust/terminal.raw"), time.Now()); got != "" {
 		t.Fatalf("keys %q after SessionStart", got)
-	}
-	if len(c.scr.seen) != 0 {
-		t.Fatal("the screen was kept after SessionStart")
 	}
 }
 
@@ -182,7 +183,9 @@ func TestUnreadableScreenGetsNoKey(t *testing.T) {
 	}
 }
 
-// The codec ends the watch once it has confirmed, and at the first hook.
+// Confirming the dialog does not end the watch: the first input needs the
+// screen (first_enter_test.go). The session's end does, and so does too
+// much screen.
 func TestScreenWatchEnds(t *testing.T) {
 	c := screenCodec("/tmp/capture-work/sessions/trust_answered")
 	dir := "testdata/2.1.326/trust_answered/"
@@ -192,16 +195,19 @@ func TestScreenWatchEnds(t *testing.T) {
 	}
 	_, now := settle(c, first, time.Now())
 	a := merge(c.Decode(agent.Screen, readScreen(t, dir+"screen-08.raw")), Actions{})
-	for i := 0; i <= 4 && !a.StopScreen; i++ {
+	for i := 0; i <= 4; i++ {
 		a = merge(a, c.Tick(now.Add(time.Duration(i)*time.Second)))
 	}
-	if keysOf(a) != "enter" || !a.StopScreen {
-		t.Fatalf("keys %q, stop %t: want enter and the end of the watch", keysOf(a), a.StopScreen)
+	if keysOf(a) != "enter" || a.StopScreen {
+		t.Fatalf("keys %q, stop %t: want enter, and the watch going on", keysOf(a), a.StopScreen)
+	}
+	end := readScreen(t, dir+"hooks/02-SessionEnd.json")
+	if !c.Decode(agent.Hook, envelope("e1", "trust_answered/hooks/02-SessionEnd.json", end)).StopScreen {
+		t.Fatal("the session's end does not end the watch")
 	}
 
 	c = screenCodec(trustDir)
-	start := readScreen(t, "testdata/2.1.322/plain/hooks/01-SessionStart.json")
-	if !c.Decode(agent.Hook, envelope("c1", "plain/hooks/01-SessionStart.json", start)).StopScreen {
-		t.Fatal("the first hook does not end the watch")
+	if !c.Decode(agent.Screen, bytes.Repeat([]byte("x"), maxScreen+1)).StopScreen {
+		t.Fatal("more than maxScreen does not end the watch")
 	}
 }

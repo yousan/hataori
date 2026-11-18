@@ -50,9 +50,11 @@ type codec struct {
 	hookTimeout time.Duration       // after it the CLI gives up on a waiting hook
 	lines       map[string]bool     // uuids of transcript lines already read
 
-	// The screen, read only before the first hook call (screen.go).
+	// The screen (screen.go), from Open until the first input is reported.
 	started bool        // a hook was called: the CLI is past any start-up dialog
-	scr     screenState // the trust dialog
+	watch   bool        // the screen is watched: Open asked for it and the watch has not ended
+	wrote   bool        // input was pasted since Open
+	scr     screenState // the trust dialog, and the input box for the first input
 }
 
 // turnText is what the codec knows about the text of one prompt's turn.
@@ -107,9 +109,16 @@ type payload struct {
 
 const askTool = "AskUserQuestion"
 
-// Open asks for the screen, for the folder-trust dialog of a workspace
-// never opened before; the runner gives it only until the session starts.
-func (c *codec) Open() Actions { return Actions{WatchScreen: true} }
+// Open asks for the screen: for the folder-trust dialog of a workspace
+// never opened before, and for the first input, which waits until the CLI
+// shows it can take a paste. The watch ends once the first input is
+// reported or has failed (screen.go).
+func (c *codec) Open() Actions {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.watch = true
+	return Actions{WatchScreen: true}
+}
 
 // Input records what hataori pastes, so that the prompt it produces is
 // known as the caller's. Writing it to the terminal is not done here yet.
@@ -118,10 +127,12 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 	defer c.mu.Unlock()
 	if in.Written {
 		// Pasted before a restart: its prompt is still to come.
+		// Nothing is written for it, Enter neither: if the restart came
+		// between the paste and its Enter, it ends "not delivered".
 		text := normalize(cleanPaste(in.Text))
 		c.pasted = append(c.pasted, queued{id: in.ID, text: text})
 		if c.sent == nil {
-			c.sent = &sentInput{text: text, id: in.ID}
+			c.sent = &sentInput{text: text, typed: cleanPaste(in.Text), id: in.ID, pressed: true}
 		}
 		return Actions{}, nil
 	}
@@ -150,18 +161,20 @@ func cleanPaste(text string) string {
 }
 
 // flush writes the next queued input when the CLI can take it: after the
-// session reported its start, with no turn running and no input waiting to
-// be reported. Input is one bracketed paste and Enter; it counts as
-// delivered only when UserPromptSubmit reports the same text.
+// session reported its start, once the screen shows the CLI takes pastes
+// (screen.go), with no turn running and no input waiting to be reported.
+// Input is one bracketed paste; Tick presses Enter after it (tickInput).
+// It counts as delivered only when UserPromptSubmit reports the same text.
 func (c *codec) flush() Actions {
-	if !c.ready || c.running || c.sent != nil || len(c.queue) == 0 {
+	if !c.ready || c.running || c.sent != nil || len(c.queue) == 0 || !c.pasteReady() {
 		return Actions{}
 	}
 	q := c.queue[0]
 	c.queue = c.queue[1:]
-	c.sent = &sentInput{text: normalize(q.text), id: q.id}
+	c.sent = &sentInput{text: normalize(q.text), typed: q.text, id: q.id}
 	c.pasted = append(c.pasted, queued{id: q.id, text: normalize(q.text)})
-	a := Actions{Write: [][]byte{[]byte(pasteStart + q.text + pasteEnd), []byte(confirm)}}
+	c.wrote = true
+	a := Actions{Write: [][]byte{[]byte(pasteStart + q.text + pasteEnd)}}
 	if q.id != "" {
 		a.Inputs = []string{q.id}
 	}
@@ -170,30 +183,51 @@ func (c *codec) flush() Actions {
 
 // sentInput is input written and not yet reported by a hook.
 type sentInput struct {
-	text string
-	id   string    // its Input.ID
-	at   time.Time // the first Tick after writing it
+	text    string    // normalized, as compared with the prompt
+	typed   string    // as pasted
+	id      string    // its Input.ID
+	at      time.Time // the first Tick after pasting it
+	pressed bool      // Enter was pressed for it
+	entered time.Time // when Enter was last pressed for it
+	again   int       // times Enter was pressed again
 }
 
-// Tick acts on the codec's deadlines: input the CLI never reported, and
-// questions whose hook has passed its timeout.
+// pasteSettle is how long Enter waits after the paste. An Enter that comes
+// with the paste can be taken as part of it.
+const pasteSettle = 400 * time.Millisecond
+
+// Tick acts on the codec's deadlines: Enter after a paste, input the CLI
+// never reported, and questions whose hook has passed its timeout.
 func (c *codec) Tick(now time.Time) Actions {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.number(merge(merge(c.tickScreen(now), c.tickInput(now)), c.tickRequests(now)))
+	a := merge(merge(c.tickScreen(now), c.tickInput(now)), c.tickRequests(now))
+	return c.number(merge(a, c.endWatch(false)))
 }
 
-// tickInput ends the wait for input the CLI never reported: after the
-// input timeout the turn it was to start ends as failed, "not delivered".
+// tickInput presses Enter once the paste has had pasteSettle, presses it
+// again while the input box still holds the text (screen.go), and ends the
+// wait for input the CLI never reported: after the input timeout the turn
+// it was to start ends as failed, "not delivered".
 func (c *codec) tickInput(now time.Time) Actions {
 	if c.sent == nil {
-		return Actions{}
+		return c.holdPaste(now)
 	}
 	if c.sent.at.IsZero() {
-		c.sent.at = now
+		c.sent.at = now // not before the paste: Write happens before the next Tick
 		return Actions{}
 	}
 	if now.Sub(c.sent.at) < c.inputTimeout() {
+		switch {
+		case !c.ready || c.running || now.Sub(c.sent.at) < pasteSettle:
+			// Not during a turn, such as one typed at the terminal.
+		case !c.sent.pressed:
+			c.sent.pressed, c.sent.entered = true, now
+			return Actions{Write: [][]byte{[]byte(confirm)}}
+		case c.stillInBox(now):
+			c.sent.entered, c.sent.again = now, c.sent.again+1
+			return Actions{Write: [][]byte{[]byte(confirm)}}
+		}
 		return Actions{}
 	}
 	for i, p := range c.pasted {
@@ -229,12 +263,8 @@ func (c *codec) Interrupt() Actions {
 func (c *codec) Decode(src agent.Source, line []byte) Actions {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	before := c.started
-	a := c.number(c.decode(src, line))
-	if c.started && !before {
-		a.StopScreen = true // past any start-up dialog: the screen is not needed
-	}
-	return a
+	a := c.decode(src, line)
+	return c.number(merge(a, c.endWatch(false)))
 }
 
 func (c *codec) decode(src agent.Source, line []byte) Actions {

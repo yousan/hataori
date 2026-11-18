@@ -328,17 +328,47 @@ func TestBlockedAtStart(t *testing.T) {
 // it sent. The fake writes to its screen after the answer and shows its
 // dialog again after the start; its codec panics if the screen reaches it
 // after it stopped watching or after the start.
-func TestScreenUntilTheStart(t *testing.T) {
+// The screen goes to a codec that asked for it until the codec ends the
+// watch, past the session's start: the fake watches on until its first
+// turn ends, and panics if given the screen after that.
+func TestScreenUntilTheCodecStops(t *testing.T) {
 	f := newFixture(t, options{terminal: true, dialog: "fake: trust this folder? Enter"})
 	f.start("reply hello")
 	waitFor(t, "the end of the turn", 15*time.Second, f.has("turn_ended", 1))
 	if texts := f.eventData("text"); len(texts) != 1 || texts[0]["text"] != "hello" {
 		t.Fatalf("texts %v", texts)
 	}
-	tty := readFile(t, filepath.Join(StateDir(f.root, 1), host.TerminalLog))
-	if !bytes.Contains(tty, []byte("(shown again after the start)")) {
-		t.Fatalf("the dialog was not shown again after the start: %q", tty)
+	lv, err := f.run.get(1)
+	if err != nil {
+		t.Fatal(err)
 	}
+	lv.mu.Lock()
+	watching, codec := lv.screen, lv.codec
+	lv.mu.Unlock()
+	if !fake.SawScreenAfterStart(codec) {
+		t.Fatal("the codec was not given the screen after the start")
+	}
+	if watching {
+		t.Fatal("the runner still watches the screen after the codec ended the watch")
+	}
+}
+
+// A codec rebuilt after a failed commit was not opened, so the runner
+// stops giving the screen: the rebuilt fake never ends a watch it did not
+// ask for, and panics if given the screen.
+func TestNoScreenForARebuiltCodec(t *testing.T) {
+	f := newFixture(t, options{terminal: true, dialog: "fake: trust this folder? Enter", poll: 200 * time.Millisecond})
+	// The tool's start fails to commit; its end comes a second later, after
+	// steps that read the screen.
+	if _, err := f.st.DB.Exec(`CREATE TRIGGER fail_tool BEFORE INSERT ON events WHEN NEW.kind = 'tool_started' BEGIN SELECT RAISE(ABORT, 'test: no tool'); END`); err != nil {
+		t.Fatal(err)
+	}
+	f.start("tool Bash 1s\nreply hello")
+	waitFor(t, "a failed commit", 15*time.Second, func() bool { return strings.Contains(f.log.String(), "test: no tool") })
+	if _, err := f.st.DB.Exec(`DROP TRIGGER fail_tool`); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the end of the turn", 15*time.Second, f.has("turn_ended", 1))
 	lv, err := f.run.get(1)
 	if err != nil {
 		t.Fatal(err)
@@ -347,7 +377,7 @@ func TestScreenUntilTheStart(t *testing.T) {
 	watching := lv.screen
 	lv.mu.Unlock()
 	if watching {
-		t.Fatal("the runner still watches the screen after the start")
+		t.Fatal("the runner watches the screen for a codec that was not opened")
 	}
 }
 

@@ -19,15 +19,27 @@ func started(t *testing.T) *codec {
 	return c
 }
 
-func TestInputIsOnePasteAndEnter(t *testing.T) {
+// Input is one paste, and Enter on a Tick at least pasteSettle after it:
+// an Enter that comes with the paste can be taken as part of it (#178).
+func TestInputIsOnePasteThenEnter(t *testing.T) {
 	for _, text := range []string{"x", strings.Repeat("長い入力 ", 100<<10/13)} {
-		a, err := started(t).Input(agent.Input{Text: text})
+		c := started(t)
+		a, err := c.Input(agent.Input{Text: text})
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := [][]byte{[]byte(pasteStart + text + pasteEnd), []byte(confirm)}
-		if len(a.Write) != 2 || !bytes.Equal(a.Write[0], want[0]) || !bytes.Equal(a.Write[1], want[1]) {
-			t.Fatalf("%d bytes of text: writes %q...", len(text), a.Write)
+		if len(a.Write) != 1 || !bytes.Equal(a.Write[0], []byte(pasteStart+text+pasteEnd)) {
+			t.Fatalf("%d bytes of text: writes %.40q...", len(text), a.Write)
+		}
+		now := time.Now()
+		if a := merge(c.Tick(now), c.Tick(now.Add(pasteSettle-time.Millisecond))); len(a.Write) != 0 {
+			t.Fatalf("Enter %q within %v of the paste", a.Write, pasteSettle)
+		}
+		if a := c.Tick(now.Add(pasteSettle)); len(a.Write) != 1 || string(a.Write[0]) != confirm {
+			t.Fatalf("after %v: writes %q, want Enter", pasteSettle, a.Write)
+		}
+		if a := c.Tick(now.Add(time.Minute / 4)); len(a.Write) != 0 {
+			t.Fatalf("Enter again %q without the screen", a.Write)
 		}
 	}
 }
@@ -94,7 +106,7 @@ func TestNoInputBeforeStart(t *testing.T) {
 		t.Fatalf("written before the start: %q", a.Write)
 	}
 	a := decodeFile(t, c, "start", "plain/hooks/01-SessionStart.json")
-	if len(a.Write) != 2 || !bytes.Contains(a.Write[0], []byte("early")) {
+	if len(a.Write) != 1 || !bytes.Contains(a.Write[0], []byte("early")) {
 		t.Fatalf("not written at the start: %q", a.Write)
 	}
 }
@@ -106,7 +118,7 @@ func TestInputHeldDuringATurn(t *testing.T) {
 		t.Fatalf("written during a turn: %q", a.Write)
 	}
 	a := decodeFile(t, c, "s", "plain/hooks/03-Stop.json")
-	if len(a.Write) != 2 || !bytes.Contains(a.Write[0], []byte("later")) {
+	if len(a.Write) != 1 || !bytes.Contains(a.Write[0], []byte("later")) {
 		t.Fatalf("not written when the turn ended: %q", a.Write)
 	}
 }
@@ -172,7 +184,7 @@ func TestHeldInputNamedWhenWritten(t *testing.T) {
 	decodeFile(t, c, "u", "plain/hooks/02-UserPromptSubmit.json")
 	c.Input(agent.Input{ID: "in-5", Text: "later"})
 	a := decodeFile(t, c, "s", "plain/hooks/03-Stop.json")
-	if len(a.Write) != 2 || len(a.Inputs) != 1 || a.Inputs[0] != "in-5" {
+	if len(a.Write) != 1 || len(a.Inputs) != 1 || a.Inputs[0] != "in-5" {
 		t.Fatalf("written when the turn ended: %q, inputs %q", a.Write, a.Inputs)
 	}
 }
