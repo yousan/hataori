@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -59,14 +61,37 @@ func chromePath(t *testing.T) string {
 // newBrowser starts a headless browser on an empty page.
 func newBrowser(t *testing.T) *browser {
 	t.Helper()
-	dir := t.TempDir()
+	// The profile is removed once every process of the browser is gone:
+	// its helpers write there until they end.
+	dir, err := os.MkdirTemp("", "hataori-chrome-")
+	if err != nil {
+		t.Fatal(err)
+	}
 	cmd := exec.Command(chromePath(t), "--headless=new", "--no-sandbox", "--disable-gpu", "--no-first-run",
 		"--no-default-browser-check", "--disable-background-networking", "--disable-extensions",
 		"--user-data-dir="+dir, "--remote-debugging-port=0", "about:blank")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // the browser and its helpers, in one group
 	if err := cmd.Start(); err != nil {
+		os.RemoveAll(dir)
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
+	t.Cleanup(func() {
+		pgid := cmd.Process.Pid
+		syscall.Kill(-pgid, syscall.SIGKILL)
+		cmd.Wait()
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+			if errors.Is(syscall.Kill(-pgid, 0), syscall.ESRCH) {
+				break
+			}
+		}
+		for i := 0; i < 50; i++ {
+			if os.RemoveAll(dir) == nil {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Logf("the browser's profile %s was not removed", dir)
+	})
 	var port string
 	eventually(t, "the browser to listen", 30*time.Second, func() bool {
 		b, err := os.ReadFile(filepath.Join(dir, "DevToolsActivePort"))
