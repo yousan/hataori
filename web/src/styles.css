@@ -745,3 +745,85 @@ body {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
+
+/* The details panel. */
+.details-body section {
+  margin-bottom: 14px;
+}
+
+.details-body h3 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.details-body h4 {
+  margin: 6px 0 2px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.details-body dl {
+  margin: 0;
+}
+
+.field {
+  display: flex;
+  gap: 8px;
+  padding: 1px 0;
+}
+
+.field dt {
+  flex: none;
+  width: 120px;
+  color: var(--muted);
+}
+
+.field dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.details-top {
+  padding: 8px;
+  border-radius: 4px;
+  border: 1px solid var(--st-waiting);
+}
+
+.details-top.failure {
+  border-color: var(--st-failed);
+}
+
+.details-top p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.choices {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.recent {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 12px;
+}
+
+.recent li {
+  display: flex;
+  gap: 6px;
+}
+
+.recent time {
+  flex: none;
+  color: var(--muted);
+}
+
+.recent-line {
+  overflow-wrap: anywhere;
+}

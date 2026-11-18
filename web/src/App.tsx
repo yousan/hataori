@@ -6,6 +6,7 @@ import { StatusBar } from "./StatusBar";
 import { TabBar, tabID } from "./TabBar";
 import { ThreadPane } from "./ThreadPane";
 import { AllThreads } from "./AllThreads";
+import { Details } from "./Details";
 import { useWorkspaces } from "./workspaces";
 import { active, allTab, close, initialTabs, panes, type Split, type TabKey, type Tabs, threadOf, threadTab, view } from "./tabs";
 import { useTheme } from "./theme";
@@ -129,7 +130,12 @@ export function App() {
         </div>
         {layout.details && (
           <aside className="details" aria-label={t("details.label")}>
-            <p className="empty">{t("details.later")}</p>
+            <Details
+              x={current === null ? undefined : thread(current)}
+              attention={current === null ? undefined : d.attention.get(current)}
+              workspace={current === null ? undefined : workspaces.get(current)}
+              subscribe={d.subscribe}
+            />
           </aside>
         )}
       </div>

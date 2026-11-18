@@ -34,6 +34,7 @@ export interface Request {
   id: string;
   kind: number; // 0 a question, 1 an approval
   text?: string;
+  choices?: { label: string; token: string }[] | null;
 }
 
 export interface Event {

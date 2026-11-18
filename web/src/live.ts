@@ -18,8 +18,8 @@ import {
 
 // Attention is why a thread needs attention.
 export type Attention =
-  | { kind: "question"; text?: string }
-  | { kind: "approval"; text?: string }
+  | { kind: "question"; text?: string; choices?: string[] }
+  | { kind: "approval"; text?: string; choices?: string[] }
   | { kind: "failure"; reason?: string };
 
 export interface Live {
@@ -64,8 +64,9 @@ function needsAttention(t: ThreadInfo): boolean {
 export function attentionOf(d: ThreadDetail): Attention | undefined {
   if (d.state === "waiting") {
     const r = d.requests?.[0];
-    if (r?.kind === 1) return { kind: "approval", text: r.text };
-    return { kind: "question", text: r?.text };
+    const choices = r?.choices?.map((c) => c.label);
+    if (r?.kind === 1) return { kind: "approval", text: r.text, choices };
+    return { kind: "question", text: r?.text, choices };
   }
   if (d.state === "failed") {
     const evs = d.events ?? [];
