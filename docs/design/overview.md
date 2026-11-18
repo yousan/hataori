@@ -154,7 +154,7 @@ For every version of an agent CLI: decode against captures of that version's rea
 
 ### 4.1 Three objects
 
-- **Thread:** one line of work. Identified by `(scope, key)`. Both are opaque strings that a client gives the core: for a chat surface the scope is a channel and the key is the surface's thread. The core never looks inside them.
+- **Thread:** one line of work. Identified by its **number**, which hataori gives it (`threads.id`), unique in the instance. It belongs to exactly one scope, an opaque string from the config; the scope decides who may act in the thread, its default model and where it may be shown. It is shown in chat through any number of **links** (section 5.2). The core never looks inside a scope or a link.
 - **Session:** one agent conversation, identified by the agent's own session id, and the process that currently serves it (or none).
 - **Workspace:** one directory, a clone of one repository, owned by exactly one thread.
 
@@ -271,7 +271,9 @@ Everything that can be asked of the core is one interface. In-process clients ca
 | `Stop` | interrupt the running turn |
 | `Events` | events after a position, then live ones |
 
-Every call is made as a `Caller`: who it is, which scopes it may see, and which operations it may use. The core checks each call against it. A scope has one owner, the client that gives it its threads; when another client starts a thread there, the core asks the owner for the thread's key, and a chat front end answers by opening a chat thread. Appendix D has the Go declarations.
+Every call is made as a `Caller`: who it is, which scopes it may see, and which operations it may use. The core checks each call against it. A scope has one owner, the client that gives it its threads; when a thread is started there, the core asks the owner for the thread's first link, and a chat front end answers by opening a chat thread. Appendix D has the Go declarations.
+
+**A thread is named by its number** in every operation and event: `Thread`, `Send`, `Stop`, `Link` and the dashboard's operations take it, `Start` returns it, and every event carries it with the thread's scope. Chat ids appear only in links. A client that knows only a chat conversation finds the number through the link: `Threads` with a filter that names the link (client, channel, thread) returns the one thread linked there, or nothing. `Link` (section 5.2) adds a link to a thread.
 
 **Whose input reaches the agent.** A client that relays input from a chat service says where it came from: `Caller.From`, an id of the form `<client>:<id>` (section 5.5). The core resolves that id to a person; the client does not. Then, for `Start`, `Send`, `Answer` and `Stop`, the core allows the call only when the person is the owner or is listed in the scope of the thread (for `Start`, the scope asked for; for `Answer`, the scope of the request's thread). An id that no person lists is a guest, and a guest is refused every one of the four. A refusal changes nothing and writes one log line with the operation, the scope, the client and the id, and the person when there is one. This is the only check of who may give input, for every client: a chat front end, a second surface, a driver in another process, the `hataori` command. A caller that the daemon authenticates itself, such as the OS user on the control socket, which is the owner, names the person directly and has no `From`. Reads (`Threads`, `Thread`, `Events`) are checked against the caller's scopes as before; they give the agent nothing.
 
@@ -289,6 +291,14 @@ The driver's calls are: run and deliver inbound messages, button presses and com
 
 The driver splits long text, picks buttons or a menu, and maps a status to whatever the surface has (a reaction, an edit). Its limits let the front end avoid asking for what a surface cannot do.
 
+**Links.** A link is where a thread is shown in chat: the client's name, the channel, and the thread on that service (the conversation), with who made it and when. A thread has any number of links, at most one per conversation, and a conversation links to at most one thread. An inbound message in a conversation is resolved to a thread through its link: the front end looks the link up (by `Threads`, or from what it keeps of its own links) and sends to that number. A message in a conversation with no link is not for hataori, as today.
+
+- **The first link** is made when the thread starts: the scope's owner opens the chat thread, from the trigger message when there is one, and the core stores it with the thread in the same transaction.
+- **A second link is attached by hand**, from the channel that should show the thread: `/attach <number>` there, or `<trigger> attach <number>` on a surface without commands. The front end opens a chat thread in that channel, titled like the thread, and calls `Link`. hataori never opens a link in another channel by itself. *Why:* the person who attaches is looking at the channel that will show the work, so nobody gets a copy of a conversation they did not ask for; an automatic link would post every thread of a scope into every channel allowed to show it, and would need a rule for which channel of several; attaching also works for threads that started before the channel was allowed.
+- **A link in another channel needs the config.** A thread belongs to one scope, and a link outside the scope's own channel is made only when the scope's config lists that channel in `show_in`, as `<client>:<channel>`. Without the entry no link is made, nothing is posted there, and the refusal is logged with the thread, the client and the channel. So a thread is never copied into a channel with a wider audience by accident.
+- **The same people.** `Link` is checked like `Send`: the person (section 5.5) must be allowed in the thread's scope; the channel the link is in does not widen or narrow that. Every input through any link goes through the same check.
+- **Every link reads the same conversation.** Besides the agent's output, each link shows the input and answers given through the other links, from the `input` and `answer` events, which name the link and the person they came through: one line each, `<person>: <text>`. The link the input came through does not get it again. A message that did not reach the agent (a guest's, one refused, one in a closed thread) produces no event and is not copied to any link.
+
 ### 5.3 Agent adapter
 
 An agent adapter has two parts. The first says how to start the agent for a session, new or resumed: the command, whether it needs a terminal or pipes, and any files to put in the session's state directory first (for Claude Code, the settings file that registers its hooks). It also says whether the agent is installed and logged in, and, if the agent can be logged in again from chat, how to run its login command and how to read the link it prints. The second is a **codec**: it turns one reported line into events, whether the line came from the agent's output, from a hook call or from a file the codec asked to follow; and it turns a user message, an answer or an interrupt into bytes for the agent's input or into the reply to a waiting hook. The codec does no I/O.
@@ -305,7 +315,7 @@ Whatever call of the codec produced it, the actions that write a message name it
 
 No, not as written. The agent side is unchanged. The surface side was a plug-in that the core called: the core itself received every inbound chat event (the `Sink` interface), owned the outbox, and pushed finished messages to one surface per thread. Nothing in it could list threads, read a thread's state, or follow events, which is all a dashboard does and most of what a supervisor does. And a thread was identified by `(surface, channel, thread)`, which the core had to understand.
 
-What changed: the control API (5.1) now sits between. The methods of the old surface interface survive as the driver (5.2), but `Sink` is implemented by the chat front end, the outbox moved to it, and the core identifies a thread by two opaque strings. The supervisor's tools and the dashboard's server are two more clients, and so is the `hataori` command.
+What changed: the control API (5.1) now sits between. The methods of the old surface interface survive as the driver (5.2), but `Sink` is implemented by the chat front end, the outbox moved to it, and the core identifies a thread by its own number; chat ids are only in its links. The supervisor's tools and the dashboard's server are two more clients, and so is the `hataori` command.
 
 ### 5.5 People
 
@@ -348,7 +358,7 @@ So a running instance accepts exactly whom it accepts today, and the daemon logs
 │   ├── hataori.db            SQLite, WAL, one writer (the daemon)
 │   ├── log/
 │   └── sessions/<id>/        events.ndjson, terminal log, host socket, agent settings, attachments
-├── workspaces/<surface>/<channel>/<thread>/   the thread's scope and key, as path segments
+├── workspaces/<number>/   the thread's workspace; threads made before links keep their stored path
 ├── mirrors/      one bare mirror per remote
 └── trash/        removed workspaces, kept for the retention period
 ```
@@ -363,16 +373,27 @@ One database file. A schema version table and forward-only migrations (c-lord ha
 
 | Table | Holds |
 |---|---|
-| `threads` | `(scope, key)`, short number, title, who started it, state |
+| `threads` | number (`id`), scope, title, who started it, state, workspace path |
+| `links` | thread number, client, channel, conversation thread, who made it, when; unique per conversation |
 | `workspaces` | path, remote, state |
 | `sessions` | agent name, agent session id, state, model, host pid, log offset, last sequence |
 | `turns` | who started it, the message that triggered it, start, end, status, reason |
 | `inbox` | accepted calls by their key; for chat, the catch-up cursor per conversation |
 | `events` | the numbered event log that clients read from a position |
-| `outbox` | the chat front end's pending and sent posts by `(event, part)`, with the surface message id |
+| `outbox` | the chat front end's pending and sent posts by `(event, link, part)`, with the surface message id |
 | `requests` | open questions and approvals, their message, their answer |
 | `bindings` | channel to repository, and per-thread overrides |
 | `settings` | model and other choices per scope |
+
+**Moving to thread numbers.** One forward migration, in one transaction, recorded so it runs once. Part of it needs the config (which client owns each scope), so it runs when the daemon starts, after the schema migrations and before anything reads a thread.
+
+- `threads`: `UNIQUE (scope, key)` is dropped and `key` is no longer an identity. Each thread's workspace path is stored in `threads`, copied from where its sessions recorded it.
+- `links`: each existing thread gets one link, its current chat conversation: the scope's client from the config, the scope as the channel, the key as the thread. A thread whose scope is no longer in the config gets no link, is logged, and stays reachable by number.
+- `events`: a `thread_id` column is added and filled from `(scope, thread)`; the scope stays for reads by scope. Events are not rewritten otherwise.
+- `outbox`: each row gets the link of its conversation; rows keep their `(event, part)` and their surface message ids, so nothing is posted twice.
+- Catch-up cursors stay per conversation; a cursor of a thread's conversation now belongs to its link.
+- `inbox` keys and `chat_triggers` stay as they are; a trigger delivered again finds its thread through the link of the conversation it opened.
+- **No workspace is moved.** A thread made before the migration keeps its directory; only new threads use `workspaces/<number>/`. The path is always read from the database, never computed from ids.
 
 Who is allowed is in the config file, not in the database: the people, their ids, the owner and each scope's people (section 5.5). The database keeps who gave each input: `threads.started_by` and `turns.principal` hold the person, and `turns` gains `from_id`, the `<client>:<id>` the input came from. The events `thread_created`, `turn_started` and `turn_ended` carry both, as `principal` and `from`; `from` is absent for a caller with no `From`, such as the `hataori` command.
 
@@ -662,7 +683,7 @@ Unlike Discord and Slack Socket Mode, Teams calls hataori. The host needs a publ
 
 ## 9. Future work, not designed here
 
-**Surfaces without threads.** The core takes a thread as an opaque key, so a surface with no native threads only needs a front end that makes the keys up. The intended rules: a reply to a hataori message continues that message's thread; any other message goes to the thread used last; `/new` starts one; every hataori message begins with the thread's name. If the bot cannot see what a message replies to, one chat is one thread. A surface whose threads expire (LINE OpenChat: 24 hours or two weeks) counts as having none.
+**Surfaces without threads.** The core names a thread by its number and a link is opaque to it, so a surface with no native threads only needs a front end that makes the links' keys up. The intended rules: a reply to a hataori message continues that message's thread; any other message goes to the thread used last; `/new` starts one; every hataori message begins with the thread's name. If the bot cannot see what a message replies to, one chat is one thread. A surface whose threads expire (LINE OpenChat: 24 hours or two weeks) counts as having none.
 
 ## 10. Decisions
 
@@ -672,6 +693,7 @@ Unlike Discord and Slack Socket Mode, Teams calls hataori. The host needs a publ
 
 ### Decided
 
+- **A thread is named by hataori's own number, and chat threads link to it** (#215; the maintainer, 2026-11-18). The number is the identity in the control API, events and storage; a chat conversation is a link, and a thread has any number of them. A second link is attached by hand with `/attach <number>` from the channel that should show it, and only in a channel the scope's `show_in` allows. Every link shows the input and answers of the others; what did not reach the agent is not copied. Existing threads get their conversation as their first link; no workspace moves. Sections 5.1, 5.2 and 6.2.
 - **hataori manages people, and the core decides whose input reaches the agent** (#216; the maintainer, 2026-11-18). The config lists people, each with a name and ids `<client>:<id>`; the owner and each scope's people are named by person; an id no person lists is a guest and can never start, send, answer or stop. The core resolves the id and checks the scope for `Start`, `Send`, `Answer` and `Stop` from every client; the chat front end has no allow list. Ids are linked to people only in the config. An old config's `owner` and `posters` are converted at start so that the same authors are accepted. Sections 5.1, 5.2 and 5.5.
 - **A new workspace gets past the folder-trust dialog by keys** (#56; the maintainer, 2026-11-12). Claude Code 2.1.326 has no supported way to trust a directory in advance, and writing the trust record into its state file was rejected: that file also holds the account. Only the captured dialog is known, by its text. The line is chosen by its text, and keys are sent only before `SessionStart`. Any other screen gets no key, and the start fails as `blocked at start` (section 3.5).
 - **Claude Code is not driven through `claude -p`.** Decided by the maintainer; section 3.4. Live attach comes back with the terminal, so the earlier question about take-over between turns is closed.
@@ -985,9 +1007,16 @@ type API interface {
 
 	Start(ctx context.Context, r StartRequest) (ThreadID, error)
 	// key makes Send safe to repeat; for chat, the surface's message id.
+	// in.Link names the link the input came through, if any.
 	Send(ctx context.Context, id ThreadID, key string, in Input, busy Busy) error
 	Answer(ctx context.Context, req RequestID, a Answer) error
 	Stop(ctx context.Context, id ThreadID) error
+
+	// Link shows the thread in one more conversation. It is checked like
+	// Send, and refused when l.Channel is neither the scope's own channel
+	// nor in its show_in. Linking a conversation twice to the same thread
+	// changes nothing; to another thread, it is refused.
+	Link(ctx context.Context, id ThreadID, l LinkRef) error
 
 	// Events delivers events after a position, then live ones. Between the
 	// two it delivers one mark of kind CaughtUp, which is not stored, so a
@@ -1013,8 +1042,7 @@ type Caller struct {
 
 type StartRequest struct {
 	Key    string // safe to repeat: the same key starts nothing twice
-	Scope  string // opaque; for chat, a channel
-	Thread string // opaque key, or empty to let the scope's owner make one
+	Scope  string // from the config; for chat, the scope's own channel
 	Repo   string
 	Input  Input
 	Model  string
@@ -1024,14 +1052,30 @@ type StartRequest struct {
 // Busy says what Send does when a turn is running.
 type Busy int // Refuse, Deliver, Interrupt
 
-// ScopeOwner is the client that gives a scope its threads. When a Start has
-// no Thread, the core asks the owner for the key, after the call is allowed;
-// key is the Start's key. A chat front end opens a chat thread, from the
-// trigger message when key is one, and returns its id.
+// ThreadID is the thread's number, threads.id.
+type ThreadID int64
+
+// LinkRef is where a thread is shown: a conversation of one client.
+type LinkRef struct {
+	Client  string
+	Channel string
+	Thread  string
+}
+
+// Filter gains Link: Threads with a Link returns the thread linked there,
+// or none. Input gains Link, the conversation it came through. ThreadInfo gains Scope and Links; Event carries Thread (the
+// number) and Scope.
+
+// ScopeOwner is the client that gives a scope its threads. The core asks
+// the owner for a new thread's first link, after the Start is allowed; key
+// is the Start's key. A chat front end opens a chat thread, from the
+// trigger message when key is one, and returns where.
 type ScopeOwner interface {
-	NewThread(ctx context.Context, scope, key, title string) (thread string, err error)
+	NewThread(ctx context.Context, scope, key, title string) (LinkRef, error)
 }
 ```
+
+Changing `ThreadID` from a scope and a key to a number changes how every thread and event is encoded, so it is a new major protocol version; the issue that implements it sets the version and the golden files. `Link`, `LinkRef` and the `link` field of `input` and `answer` events come with it.
 
 Sleep, close and remove join the interface with the phase that needs them.
 
@@ -1039,7 +1083,7 @@ The types carry lowercase JSON names, and the data of every event kind is declar
 
 ### Control API: additions for the dashboard (proposal)
 
-Section 7.2. Not declared yet: each item lands with the issue that implements it, which also changes [docs/protocol.md](../protocol.md) and its golden files. Every item is a new optional field or a new operation, so each is a minor version. Names may still change.
+Section 7.2. `ThreadID` in these operations is the thread's number, as above. Not declared yet: each item lands with the issue that implements it, which also changes [docs/protocol.md](../protocol.md) and its golden files. Every item is a new optional field or a new operation, so each is a minor version. Names may still change.
 
 ```go
 // New operations of API.
