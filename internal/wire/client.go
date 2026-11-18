@@ -197,7 +197,7 @@ func (c *Client) SignInLink(ctx context.Context) (string, error) {
 // delivered, so a reader sees no gap and no repeat. The first request is
 // made before Events returns, so a refusal is returned as an error.
 func (c *Client) Events(ctx context.Context, f control.Filter, after uint64) (<-chan control.Event, error) {
-	conn, dec, err := c.openStream(ctx, f, after)
+	conn, dec, err := c.openStream(ctx, "Events", eventsArgs{Filter: f, After: after})
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +215,7 @@ func (c *Client) Events(ctx context.Context, f control.Filter, after uint64) (<-
 					return
 				case <-time.After(100 * time.Millisecond):
 				}
-				if conn, dec, err = c.openStream(ctx, f, after); err == nil {
+				if conn, dec, err = c.openStream(ctx, "Events", eventsArgs{Filter: f, After: after}); err == nil {
 					break
 				}
 				var re *remoteError
@@ -228,16 +228,74 @@ func (c *Client) Events(ctx context.Context, f control.Filter, after uint64) (<-
 	return out, nil
 }
 
-func (c *Client) openStream(ctx context.Context, f control.Filter, after uint64) (net.Conn, *json.Decoder, error) {
+// Terminal follows a thread's terminal output on a connection of its own.
+// When the connection breaks, it connects again and asks from the last
+// run and position it delivered, so a reader gets no byte twice and none
+// missing, or a chunk marked Reset when those are no longer kept. The
+// first request is made before Terminal returns, so a refusal is returned
+// as an error. It sends nothing to the terminal.
+func (c *Client) Terminal(ctx context.Context, id control.ThreadID, run string, after uint64) (<-chan control.TerminalChunk, error) {
+	conn, dec, err := c.openStream(ctx, "Terminal", terminalArgs{ID: id, Run: run, After: after})
+	if err != nil {
+		return nil, err
+	}
+	out := make(chan control.TerminalChunk)
+	go func() {
+		defer close(out)
+		for {
+			run, after = c.pumpTerminal(ctx, conn, dec, out, run, after)
+			if ctx.Err() != nil {
+				return
+			}
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(100 * time.Millisecond):
+				}
+				if conn, dec, err = c.openStream(ctx, "Terminal", terminalArgs{ID: id, Run: run, After: after}); err == nil {
+					break
+				}
+				var re *remoteError
+				if errors.As(err, &re) {
+					return
+				}
+			}
+		}
+	}()
+	return out, nil
+}
+
+// pumpTerminal delivers chunks from one connection until it breaks or ctx
+// ends, and returns the run and position of the last chunk delivered.
+func (c *Client) pumpTerminal(ctx context.Context, conn net.Conn, dec *json.Decoder, out chan<- control.TerminalChunk, run string, after uint64) (string, uint64) {
+	defer conn.Close()
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stop()
+	for {
+		var resp response
+		if err := dec.Decode(&resp); err != nil || resp.Terminal == nil {
+			return run, after
+		}
+		select {
+		case out <- *resp.Terminal:
+			run, after = resp.Terminal.Run, resp.Terminal.Pos
+		case <-ctx.Done():
+			return run, after
+		}
+	}
+}
+
+func (c *Client) openStream(ctx context.Context, op string, args any) (net.Conn, *json.Decoder, error) {
 	conn, dec, err := c.connect(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
-	raw, _ := json.Marshal(eventsArgs{Filter: f, After: after})
+	raw, _ := json.Marshal(args)
 	var resp response
-	err = json.NewEncoder(conn).Encode(request{ID: 1, Op: "Events", Args: raw})
+	err = json.NewEncoder(conn).Encode(request{ID: 1, Op: op, Args: raw})
 	if err == nil {
 		err = dec.Decode(&resp)
 	}

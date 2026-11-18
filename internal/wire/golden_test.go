@@ -87,6 +87,7 @@ func examples(t *testing.T) map[string]any {
 		"Events":     eventsArgs{Filter: control.Filter{}, After: 41},
 		"Workspace":  workspaceArgs{ID: exampleID},
 		"SignInLink": signInLinkArgs{},
+		"Terminal":   terminalArgs{ID: exampleID, Run: "5f0c9a1e7b3d4c2a8e6f1b0d9c7a5e3f", After: 1024},
 	}
 	results := map[string]any{
 		"Threads": []control.ThreadInfo{exampleInfo},
@@ -100,6 +101,8 @@ func examples(t *testing.T) map[string]any {
 			Added: 12, Removed: 3, Uncommitted: 2, Unpushed: 1, Fetched: &exampleTime},
 		"SignInLink": "https://dashboard.example.com/signin?t=Q2hhbmdlIG1lIGV2ZXJ5IHRpbWU",
 	}
+	ex["terminal.json"] = response{ID: 1, Terminal: &control.TerminalChunk{Run: "5f0c9a1e7b3d4c2a8e6f1b0d9c7a5e3f",
+		Pos: 1046, Reset: false, Cols: 120, Rows: 40, Data: []byte("\x1b[32mok\x1b[0m tests pass\r\n")}}
 	for op := range operations {
 		a, ok := args[op]
 		if !ok {

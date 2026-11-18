@@ -45,6 +45,12 @@ func (r *fakeRunner) Interrupt(context.Context, int64) error { return r.record("
 func (r *fakeRunner) Resume(_ context.Context, _ int64, _ control.Principal, _ string, _ string, in control.Input) error {
 	return r.record("resume " + in.Text)
 }
+func (r *fakeRunner) Terminal(_ context.Context, sid int64, _ string, _ uint64) (<-chan control.TerminalChunk, error) {
+	r.record(fmt.Sprint("terminal ", sid))
+	ch := make(chan control.TerminalChunk)
+	close(ch)
+	return ch, nil
+}
 func (r *fakeRunner) Calls() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -175,6 +181,7 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 		// Every other operation is allowed to "other scope": only the
 		// socket's owner connection has OpSignIn.
 		"SignInLink": func(a control.API) error { _, err := a.SignInLink(ctx); return err },
+		"Terminal":   func(a control.API) error { _, err := a.Terminal(ctx, id, "", 0); return err },
 	}
 	if len(ops) != reflect.TypeFor[control.API]().NumMethod() {
 		t.Fatal("the test does not cover every operation")
@@ -194,6 +201,24 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 	}
 	if count(t, f.core.Store, "events") != events || count(t, f.core.Store, "threads") != threads || f.runner.Calls() != calls {
 		t.Fatal("a refused call changed something")
+	}
+}
+
+// Terminal asks the runner for the thread's current session.
+func TestTerminalOfAThread(t *testing.T) {
+	f := newFixture(t, fakeOwner{key: "new"})
+	id, sid := f.running(t, "t1")
+	ch, err := f.owner.Terminal(context.Background(), id, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range ch {
+	}
+	if !strings.HasSuffix(f.runner.Calls(), fmt.Sprint("terminal ", sid)) {
+		t.Fatalf("runner calls: %s", f.runner.Calls())
+	}
+	if _, err := f.owner.Terminal(context.Background(), control.ThreadID{Scope: "s", Key: "none"}, "", 0); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("no such thread: %v", err)
 	}
 }
 

@@ -242,6 +242,12 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 			return 3, true
 		case "unknown":
 			p.report(map[string]any{"t": "mystery"})
+		case "screen":
+			if p.terminal { // on pipes there is no screen; stdout carries reports
+				p.mu.Lock()
+				fmt.Fprint(p.out, arg+"\r\n")
+				p.mu.Unlock()
+			}
 		case "subagent":
 			// subagent ID [NAME [TOOL...]]: the tools run in it, one after another.
 			f := strings.Fields(arg)

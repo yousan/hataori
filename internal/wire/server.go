@@ -171,7 +171,7 @@ func (s *Server) serveConn(ctx context.Context, c *net.UnixConn) {
 		s.mu.Unlock()
 	}()
 	err = p.serve(ctx, dec, func(req request) bool {
-		if req.Op != "Events" {
+		if req.Op != "Events" && req.Op != "Terminal" {
 			return false
 		}
 		s.mu.Lock()
@@ -210,19 +210,43 @@ func (s *Server) call(ctx context.Context, req request) (any, error) {
 	})
 }
 
-// stream sends events until the client goes away.
+// stream sends events, or terminal output, until the client goes away.
+// Whatever the client sends on the stream is read and dropped.
 func (s *Server) stream(ctx context.Context, c net.Conn, dec *json.Decoder, enc *json.Encoder, req request) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	var a eventsArgs
-	if err := json.Unmarshal(req.Args, &a); err != nil {
-		enc.Encode(response{ID: req.ID, Error: encodeError(err)})
-		return
-	}
-	evs, err := s.API.Events(ctx, a.Filter, a.After)
-	if err != nil {
-		enc.Encode(response{ID: req.ID, Error: encodeError(err)})
-		return
+	var next func() (response, bool)
+	switch req.Op {
+	case "Events":
+		var a eventsArgs
+		if err := json.Unmarshal(req.Args, &a); err != nil {
+			enc.Encode(response{ID: req.ID, Error: encodeError(err)})
+			return
+		}
+		evs, err := s.API.Events(ctx, a.Filter, a.After)
+		if err != nil {
+			enc.Encode(response{ID: req.ID, Error: encodeError(err)})
+			return
+		}
+		next = func() (response, bool) {
+			e, ok := <-evs
+			return response{ID: req.ID, Event: &e}, ok
+		}
+	case "Terminal":
+		var a terminalArgs
+		if err := json.Unmarshal(req.Args, &a); err != nil {
+			enc.Encode(response{ID: req.ID, Error: encodeError(err)})
+			return
+		}
+		chunks, err := s.API.Terminal(ctx, a.ID, a.Run, a.After)
+		if err != nil {
+			enc.Encode(response{ID: req.ID, Error: encodeError(err)})
+			return
+		}
+		next = func() (response, bool) {
+			ch, ok := <-chunks
+			return response{ID: req.ID, Terminal: &ch}, ok
+		}
 	}
 	if err := enc.Encode(response{ID: req.ID}); err != nil { // accepted
 		return
@@ -231,8 +255,12 @@ func (s *Server) stream(ctx context.Context, c net.Conn, dec *json.Decoder, enc 
 		io.Copy(io.Discard, c)
 		cancel()
 	}()
-	for e := range evs {
-		if err := enc.Encode(response{ID: req.ID, Event: &e}); err != nil {
+	for {
+		resp, ok := next()
+		if !ok {
+			return
+		}
+		if err := enc.Encode(resp); err != nil {
 			return
 		}
 	}

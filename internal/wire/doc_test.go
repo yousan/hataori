@@ -40,6 +40,9 @@ func typeName(t reflect.Type) string {
 	case t == rawType:
 		return "any"
 	}
+	if t.Kind() == reflect.Slice && t.Elem().Kind() == reflect.Uint8 {
+		return "string" // JSON carries []byte as base64
+	}
 	switch t.Kind() {
 	case reflect.Pointer:
 		return typeName(t.Elem())

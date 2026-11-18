@@ -181,13 +181,8 @@ func (h *host) start() (*sync.WaitGroup, error) {
 	var readers sync.WaitGroup
 
 	if h.spec.Terminal {
-		size := &pty.Winsize{Rows: h.spec.Rows, Cols: h.spec.Cols}
-		if size.Rows == 0 {
-			size.Rows = 24
-		}
-		if size.Cols == 0 {
-			size.Cols = 80
-		}
+		size := &pty.Winsize{}
+		size.Cols, size.Rows = h.spec.Size()
 		tty, err := openBounded(filepath.Join(h.dir, TerminalLog), h.spec.LogLimit)
 		if err != nil {
 			return nil, err

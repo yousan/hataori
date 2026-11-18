@@ -11,10 +11,12 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 - After the hellos, **either side may send requests**. A request has `op` set; a response has no `op`. Each side numbers its own requests, and a response carries the `id` of the request it answers. Several requests may be outstanding at once, and the answers may come in any order.
 - The client sends the operations below. The daemon may send the client requests of its own; there are none in this version, and plugin hooks and scope owners in other processes will use them. A side that gets a request whose `op` it does not know answers with the error code `not_supported` and carries on.
 - An `Events` request turns the connection into a stream: the daemon answers it once with an empty `response`, then sends one `response` with `event` set per event, until the client closes the connection. A client follows events on a connection of its own.
+- A `Terminal` request does the same with terminal output: an empty `response`, then one `response` with `terminal` set per chunk. Since 1.9.
+- On a stream the daemon reads nothing the client sends: no request on that connection is answered or carried out, and nothing reaches a terminal.
 
 ## Versions
 
-The protocol version is `major.minor`, now **1.8**. Both hellos carry it.
+The protocol version is `major.minor`, now **1.9**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 1.0`.
 - With the same major number and different minor numbers they work together.
@@ -64,6 +66,7 @@ Events are stored, and a reader reads them from a position, possibly long after 
 | `result` | any | optional | the operation's result; absent when it has none or failed |
 | `error` | `WireError` | optional | the operation failed |
 | `event` | `Event` | optional | one event of an `Events` stream |
+| `terminal` | `TerminalChunk` | optional | one chunk of a `Terminal` stream; since 1.9 |
 
 ### Type `WireError`
 
@@ -189,6 +192,22 @@ Makes a link that signs the owner in to the instance's dashboard. The link works
 |---|---|---|---|
 
 Result: string
+
+### Operation `Terminal`
+
+The terminal output of the thread's current session, then new output as the session writes it; since 1.9. It turns the connection into a stream, as `Events` does, and takes no input.
+
+Positions count the bytes the session host wrote since its run started; the host keeps the end of them. The first chunk continues after `after` of `run`. When `after` is 0, `run` is another run, or the bytes after `after` are no longer kept, the first chunk is the end of the kept log with `reset` set, and the reader redraws. Every later chunk continues the one before it, or, when the stream had to start again, has `reset` set.
+
+A session whose host has ended (an asleep session, for one) sends the end of its last run's log with `reset` set and an empty `run`, then nothing until it runs again; then the new run's output, starting with a chunk marked `reset`. When the thread gets a new session, because the agent could not resume the old one, the stream goes on with the new session, from a chunk marked `reset`. A session that runs on pipes has no terminal and is `not_found`. A reader that falls far behind is cut off by the session host; the daemon then asks again from the last position, so the reader gets either a continuation or a `reset`.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `id` | `ThreadID` | required | the thread |
+| `run` | string | required | the run that `after` counts in; empty for none |
+| `after` | integer | required | the position to continue after; 0 for the end of the log |
+
+Result: `TerminalChunk`
 
 ## Types
 
@@ -316,6 +335,19 @@ Since 1.4.
 | `uncommitted` | integer | required | files modified, staged or untracked, each once; ignored files are not counted, and untracked files add no lines |
 | `unpushed` | integer | required | commits reachable from the checked-out commit or a local branch and from no remote-tracking ref |
 | `fetched` | time | optional | when the remote-tracking refs were last updated, by a fetch, a push or the clone; absent when the repository does not say |
+
+### Type `TerminalChunk`
+
+Since 1.9.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `run` | string | required | the session host's run, an opaque id; a new run starts a new count; empty when no host runs |
+| `pos` | integer | required | the position after `data`; 0 when `run` is empty |
+| `reset` | boolean | required | `data` is the end of the log, not a continuation: redraw |
+| `cols` | integer | required | the terminal's width |
+| `rows` | integer | required | the terminal's height |
+| `data` | string | optional | the raw bytes the terminal was sent, in base64; uninterpreted |
 
 ### Type `Event`
 

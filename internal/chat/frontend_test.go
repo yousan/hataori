@@ -55,6 +55,9 @@ func (r *starts) Interrupt(context.Context, int64) error { return nil }
 func (r *starts) Resume(context.Context, int64, control.Principal, string, string, control.Input) error {
 	return nil
 }
+func (r *starts) Terminal(context.Context, int64, string, uint64) (<-chan control.TerminalChunk, error) {
+	return nil, core.ErrNotFound
+}
 func (r *starts) all() []core.Launch {
 	r.mu.Lock()
 	defer r.mu.Unlock()
