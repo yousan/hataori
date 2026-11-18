@@ -16,6 +16,7 @@ same way in every file:
   home directory     -> /home/user        (also in Claude Code's dashed form)
   user name          -> user
   host name          -> host
+  TMPDIR, if not /tmp -> /tmp          (also in Claude Code's dashed form)
   capture temp dirs  -> capture-work, capture-config
   UUIDs              -> 00000000-0000-4000-8000-00000000000N, numbered in order of appearance
   e-mail addresses   -> userN@example.com
@@ -35,6 +36,7 @@ import re
 import shutil
 import socket
 import sys
+import tempfile
 
 UUID = re.compile(rb"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 EMAIL = re.compile(rb"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
@@ -61,6 +63,13 @@ class Scrubber:
             (host.split(b".")[0], b"host"),
             (user, b"user"),
         ], key=lambda kv: -len(kv[0]))
+        # The temporary directory the capture ran in, when it is not /tmp
+        # (TMPDIR set to a directory of its own): its path can name the
+        # machine's directories, and Claude Code's dashed form of it too.
+        tmp = os.path.realpath(tempfile.gettempdir()).encode()
+        self.temp = []
+        if tmp != b"/tmp":
+            self.temp = [(tmp, b"/tmp"), (re.sub(rb"[^A-Za-z0-9]", b"-", tmp), b"-tmp")]
         self.uuids = {}
         self.emails = {}
 
@@ -79,6 +88,8 @@ class Scrubber:
         return self.emails[v]
 
     def bytes(self, b):
+        for old, new in self.temp:  # before the UUIDs inside it are renumbered
+            b = b.replace(old, new)
         b = TEMP.sub(lambda m: b"capture-config" if m.group(1) else b"capture-work", b)
         b = UUID.sub(self._uuid, b)
         b = EMAIL.sub(self._email, b)

@@ -300,6 +300,16 @@ def subagent_tools(out, work):
         "Then reply with just: sub-ok'. Then reply with just what it said.", timeout=300))
 
 
+def usage(out, work):
+    def steps(s):
+        # One turn of several model calls (a tool call between them), then
+        # one turn of a single call.
+        s.turn("Run the Bash command `echo one` with the Bash tool, then the Bash command `echo two` "
+               "as a second tool call. Then reply with just: done")
+        s.turn("Reply with just the word: ok")
+    run(out, work, "usage", steps)
+
+
 def paste(out, work):
     body = "".join("%02d - 長い貼り付けのテスト `code` \"quoted\" $HOME line;\n" % i for i in range(100))
     run(out, work, "paste", lambda s: s.turn(
@@ -502,7 +512,7 @@ def main():
     with open(os.path.join(out, "VERSION"), "w") as f:
         f.write("%s\n%s\n" % (ver, time.strftime("%Y-%m-%d")))
     order = ["plain", "tools", "question", "background", "subagent", "paste", "interrupt", "compact",
-             "failure", "trust", "login", "login_terminal", "resume_missing", "clear", "sleep", "subagent_tools"]
+             "failure", "trust", "login", "login_terminal", "resume_missing", "clear", "sleep", "subagent_tools", "usage"]
     for name in order:
         if want and name not in want and not (name == "plain" and "resume" in want):
             continue
