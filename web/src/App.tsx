@@ -3,7 +3,7 @@ import { t } from "./catalog";
 import { useLayout } from "./layout";
 import { useDashboard, useNow } from "./live";
 import { StatusBar } from "./StatusBar";
-import { TabBar } from "./TabBar";
+import { TabBar, tabID } from "./TabBar";
 import { active, close, initialTabs, panes, type Split, type TabKey, type Tabs, threadOf, threadTab, view } from "./tabs";
 import { useTheme } from "./theme";
 import { type Density, Tree } from "./Tree";
@@ -87,7 +87,14 @@ export function App() {
           />
           <main className="panes" data-split={split}>
             {panes(tabs, split).map((k, i) => (
-              <section key={i} className={i === 0 ? "pane active" : "pane"} data-pane={i} data-tab={k ?? ""}>
+              <section
+                key={i}
+                className={i === 0 ? "pane active" : "pane"}
+                data-pane={i}
+                data-tab={k ?? ""}
+                role={i === 0 ? "tabpanel" : undefined}
+                aria-labelledby={i === 0 && k ? tabID(k) : undefined}
+              >
                 {k ? (
                   <>
                     <h2 className="pane-name">{paneName(k)}</h2>

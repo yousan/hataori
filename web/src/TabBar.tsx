@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import type { ThreadInfo } from "./api";
 import { t } from "./catalog";
 import { age, mark, stateName } from "./format";
@@ -27,6 +28,11 @@ function badge(x: ThreadInfo | undefined): "question" | "failed" | null {
   return null;
 }
 
+// tabID is the element id of k's tab, which its pane names.
+export function tabID(k: TabKey): string {
+  return `tab-${k.replace(":", "-")}`;
+}
+
 function Tab(props: {
   k: TabKey;
   x: ThreadInfo | undefined;
@@ -34,14 +40,24 @@ function Tab(props: {
   now: number;
   onView: (k: TabKey) => void;
   onClose: (k: TabKey) => void;
+  onKey: (e: React.KeyboardEvent, k: TabKey) => void;
 }) {
-  const { k, x, active, now, onView, onClose } = props;
+  const { k, x, active, now, onView, onClose, onKey } = props;
   const n = threadOf(k);
   const name = n === null ? t("tabs.all") : x ? x.title : t("thread.number", { n });
   const b = badge(x);
   return (
     <div className={active ? "tab active" : "tab"} data-tab={k} role="presentation">
-      <button type="button" role="tab" className="tab-main" aria-selected={active} onClick={() => onView(k)}>
+      <button
+        type="button"
+        role="tab"
+        id={tabID(k)}
+        className="tab-main"
+        aria-selected={active}
+        tabIndex={active ? 0 : -1}
+        onClick={() => onView(k)}
+        onKeyDown={(e) => onKey(e, k)}
+      >
         {n !== null && x && (
           <span className={`agent-mark state-${x.state}`} title={stateName(x.state)}>
             {mark(x)}
@@ -56,7 +72,7 @@ function Tab(props: {
         )}
       </button>
       {k !== allTab && (
-        <button type="button" className="tab-close" aria-label={t("tabs.close", { name })} title={t("tabs.close", { name })} onClick={() => onClose(k)}>
+        <button type="button" className="tab-close" tabIndex={active ? 0 : -1} aria-label={t("tabs.close", { name })} title={t("tabs.close", { name })} onClick={() => onClose(k)}>
           {t("tabs.closeMark")}
         </button>
       )}
@@ -67,12 +83,70 @@ function Tab(props: {
 export function TabBar(props: Props) {
   const { open, active, thread, now, onView, onClose, split, onSplit, layout, onLayout, theme, onTheme } = props;
   const next: Theme = theme === "dark" ? "light" : "dark";
+  const bar = useRef<HTMLDivElement>(null);
+  const focusing = useRef(false); // the active tab is to take the focus once it shows
+
+  // After the keyboard moved or closed a tab, the active tab takes the focus.
+  useEffect(() => {
+    if (!focusing.current) return;
+    focusing.current = false;
+    bar.current?.querySelector<HTMLElement>(".tab-main[aria-selected=true]")?.focus();
+  }, [active, open]);
+
+  // onKey moves along the tabs with the arrow keys, Home and End, as a tab
+  // list does, and closes the tab with Delete.
+  const onKey = (e: React.KeyboardEvent, k: TabKey) => {
+    const i = open.indexOf(k);
+    let to: TabKey | undefined;
+    switch (e.key) {
+      case "ArrowRight":
+        to = open[(i + 1) % open.length];
+        break;
+      case "ArrowLeft":
+        to = open[(i - 1 + open.length) % open.length];
+        break;
+      case "Home":
+        to = open[0];
+        break;
+      case "End":
+        to = open[open.length - 1];
+        break;
+      case "Delete":
+        if (k !== allTab) {
+          e.preventDefault();
+          focusing.current = true;
+          onClose(k);
+        }
+        return;
+      default:
+        return;
+    }
+    e.preventDefault();
+    focusing.current = true;
+    onView(to);
+  };
+  const closeFocused = (k: TabKey) => {
+    focusing.current = true;
+    onClose(k);
+  };
+
   return (
     <div className="tabbar">
-      <div className="tabs" role="tablist" aria-label={t("tabs.label")}>
+      <div className="tabs" role="tablist" aria-label={t("tabs.label")} ref={bar}>
         {open.map((k) => {
           const n = threadOf(k);
-          return <Tab key={k} k={k} x={n === null ? undefined : thread(n)} active={k === active} now={now} onView={onView} onClose={onClose} />;
+          return (
+            <Tab
+              key={k}
+              k={k}
+              x={n === null ? undefined : thread(n)}
+              active={k === active}
+              now={now}
+              onView={onView}
+              onClose={closeFocused}
+              onKey={onKey}
+            />
+          );
         })}
       </div>
       <div className="tools">

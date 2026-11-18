@@ -52,7 +52,8 @@ func TestDashboardTabsAndPanes(t *testing.T) {
 	}
 	setConfig(t, root, func(cfg map[string]any) {
 		ad := cfg["adapters"].(map[string]any)[fake.Name].(map[string]any)
-		ad["command"] = []string{"sh", "-c", `if [ -e "` + once + `" ]; then rm -f "` + once + `"; exit 3; fi; exec "$0" "$@"`, os.Args[0], "fake"}
+		// The path is an argument, not shell code.
+		ad["command"] = []string{"sh", "-c", `once=$1; shift; if [ -e "$once" ]; then rm -f "$once"; exit 3; fi; exec "$@"`, "sh", once, os.Args[0], "fake"}
 	})
 	runDaemon(t, root)
 	c, err := wire.Dial(root)
@@ -125,8 +126,11 @@ func TestDashboardTabsAndPanes(t *testing.T) {
 	b.until("no badge on the running thread", badge(nR, ""))
 	b.until("the running thread's elapsed time", fmt.Sprintf(`!!document.querySelector('.tab[data-tab="%s"] .elapsed') && !document.querySelector('.tab[data-tab="%s"] .elapsed')`, tab(nR), tab(nI)))
 	d, err := c.Thread(ctx, asking, 0, 0)
-	if err != nil || len(d.Requests) != 1 {
-		t.Fatalf("the question: %+v, %v", d.Requests, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Requests) != 1 {
+		t.Fatalf("the question: %+v", d.Requests)
 	}
 	if err := c.Answer(ctx, control.RequestID(d.Requests[0].ID), control.Answer{Text: "yes"}); err != nil {
 		t.Fatal(err)
@@ -151,10 +155,31 @@ func TestDashboardTabsAndPanes(t *testing.T) {
 	b.click(`[data-tool=split]`)
 	b.until("back to one pane", panesAre(tab(nR)))
 
+	// From the keyboard: the arrows move along the tabs and view them, and
+	// the active tab has the focus; Delete closes a thread's tab, not All
+	// threads.
+	key := func(k string) {
+		t.Helper()
+		b.call("Input.dispatchKeyEvent", map[string]any{"type": "keyDown", "key": k, "code": k})
+		b.call("Input.dispatchKeyEvent", map[string]any{"type": "keyUp", "key": k, "code": k})
+	}
+	focused := func(k string) string {
+		return fmt.Sprintf(`document.activeElement?.closest('.tab')?.dataset.tab === %q && document.activeElement.getAttribute('aria-selected') === 'true'`, k)
+	}
+	b.eval(fmt.Sprintf(`document.querySelector('.tab[data-tab="%s"] .tab-main').focus(), true`, tab(nR)), nil)
+	key("ArrowLeft")
+	b.until("the tab to the left, viewed and focused", focused(tab(nI)))
+	key("Home")
+	b.until("All threads, viewed and focused", focused("all"))
+	key("Delete")
+	b.until("All threads still there after Delete", focused("all"))
+	key("End")
+	b.until("the last tab, viewed and focused", focused(tab(nR)))
+
 	// Closing the active tab makes the one viewed before it active; closing
 	// every thread's tab leaves All threads, active.
-	b.click(fmt.Sprintf(`.tab[data-tab="%s"] .tab-close`, tab(nR)))
-	b.until("the tab viewed before, active", panesAre(tab(nQ)))
+	key("Delete")
+	b.until("the tab viewed before, active and focused", panesAre("all")+" && "+focused("all"))
 	for _, n := range []int64{nQ, nF, nI} {
 		b.click(fmt.Sprintf(`.tab[data-tab="%s"] .tab-close`, tab(n)))
 	}
