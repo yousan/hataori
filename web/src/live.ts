@@ -121,12 +121,22 @@ export function useDashboard(): Dashboard {
       const n = ++reads.current;
       try {
         const ts = await threads();
-        const details = await Promise.all(ts.filter(needsAttention).map((x) => thread(x.id, detailEvents)));
+        // A thread that goes away between the list and its detail keeps
+        // the list good: it shows without what it waits on until the next
+        // read.
+        const details = await Promise.all(
+          ts.filter(needsAttention).map((x) =>
+            thread(x.id, detailEvents).catch((err) => {
+              if (err instanceof SignedOut) throw err;
+              return null;
+            }),
+          ),
+        );
         if (closed || n !== reads.current) return;
         const attention = new Map<number, Attention>();
         for (const d of details) {
-          const a = attentionOf(d);
-          if (a) attention.set(d.number, a);
+          const a = d && attentionOf(d);
+          if (d && a) attention.set(d.number, a);
         }
         setState((s) => ({ ...s, threads: ts, attention }));
       } catch (err) {

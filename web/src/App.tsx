@@ -1,8 +1,11 @@
 import { useState } from "react";
 import { t } from "./catalog";
+import { useLayout } from "./layout";
 import { useDashboard, useNow } from "./live";
 import { StatusBar } from "./StatusBar";
-import { type Theme, useTheme } from "./theme";
+import { TabBar, tabID } from "./TabBar";
+import { active, close, initialTabs, panes, type Split, type TabKey, type Tabs, threadOf, threadTab, view } from "./tabs";
+import { useTheme } from "./theme";
 import { type Density, Tree } from "./Tree";
 
 const densityKey = "hataori.density";
@@ -15,16 +18,18 @@ function savedDensity(): Density {
   }
 }
 
-// App is the page: the tree on the left, the main area, the status bar.
-// The tabs, panes and details panel come with their own issues.
+// App is the page: the tree on the left, the tab bar over the panes, the
+// details panel on the right, the status bar at the bottom. What a pane and
+// the details panel show comes with their own issues.
 export function App() {
   const [theme, setTheme] = useTheme();
-  const next: Theme = theme === "dark" ? "light" : "dark";
   const d = useDashboard();
-  const now = useNow(15000);
+  const now = useNow(1000);
   const [filter, setFilter] = useState("");
   const [density, setDensity] = useState<Density>(savedDensity);
-  const [selected, setSelected] = useState<number | null>(null);
+  const [tabs, setTabs] = useState<Tabs>(initialTabs);
+  const [split, setSplit] = useState<Split>(1);
+  const [layout, setLayout] = useLayout();
 
   const pickDensity = (x: Density) => {
     setDensity(x);
@@ -34,43 +39,82 @@ export function App() {
       // Not kept; the page still switches.
     }
   };
+  const thread = (n: number) => d.threads?.find((x) => x.number === n);
+  const current = threadOf(active(tabs));
+
+  const paneName = (k: TabKey) => {
+    const n = threadOf(k);
+    if (n === null) return t("tabs.all");
+    const x = thread(n);
+    return x ? t("pane.thread", { n, title: x.title }) : t("thread.number", { n });
+  };
 
   return (
     <div className="shell">
-      <header className="bar">
-        <h1 className="title">{t("app.title")}</h1>
-        <button
-          type="button"
-          className="theme"
-          title={t(next === "dark" ? "theme.toDark" : "theme.toLight")}
-          aria-label={t(next === "dark" ? "theme.toDark" : "theme.toLight")}
-          onClick={() => setTheme(next)}
-        >
-          {t(next === "dark" ? "theme.dark" : "theme.light")}
-        </button>
-      </header>
       {d.signedOut && (
         <p className="signed-out" role="alert">
           {t("app.signedOut")}
         </p>
       )}
       <div className="body">
-        <Tree
-          threads={d.threads}
-          attention={d.attention}
-          now={now}
-          filter={filter}
-          onFilter={setFilter}
-          density={density}
-          onDensity={pickDensity}
-          selected={selected}
-          onSelect={setSelected}
-        />
-        <main className="main">
-          <p className="empty">{t("shell.empty")}</p>
-        </main>
+        {layout.tree && (
+          <Tree
+            threads={d.threads}
+            attention={d.attention}
+            now={now}
+            filter={filter}
+            onFilter={setFilter}
+            density={density}
+            onDensity={pickDensity}
+            selected={current}
+            onSelect={(n) => setTabs((s) => view(s, threadTab(n)))}
+          />
+        )}
+        <div className="center">
+          <TabBar
+            open={tabs.open}
+            active={active(tabs)}
+            thread={thread}
+            now={now}
+            onView={(k) => setTabs((s) => view(s, k))}
+            onClose={(k) => setTabs((s) => close(s, k))}
+            split={split}
+            onSplit={setSplit}
+            layout={layout}
+            onLayout={setLayout}
+            theme={theme}
+            onTheme={setTheme}
+          />
+          <main className="panes" data-split={split}>
+            {panes(tabs, split).map((k, i) => (
+              <section
+                key={i}
+                className={i === 0 ? "pane active" : "pane"}
+                data-pane={i}
+                data-tab={k ?? ""}
+                role={i === 0 ? "tabpanel" : undefined}
+                aria-labelledby={i === 0 && k ? tabID(k) : undefined}
+              >
+                {k ? (
+                  <>
+                    <h2 className="pane-name">{paneName(k)}</h2>
+                    <p className="empty">{t("pane.later")}</p>
+                  </>
+                ) : (
+                  <p className="empty">{t("pane.empty")}</p>
+                )}
+              </section>
+            ))}
+          </main>
+        </div>
+        {layout.details && (
+          <aside className="details" aria-label={t("details.label")}>
+            <p className="empty">{t("details.later")}</p>
+          </aside>
+        )}
       </div>
-      <StatusBar selected={d.threads?.find((x) => x.number === selected)} live={d.live} />
+      <StatusBar selected={current === null ? undefined : thread(current)} live={d.live} />
     </div>
   );
 }
+
