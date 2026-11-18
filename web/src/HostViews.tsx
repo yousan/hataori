@@ -6,6 +6,26 @@ import { openReadOnly } from "./TerminalView";
 
 const dash = () => t("table.none");
 
+// wide are the code points a terminal draws two cells wide: East Asian
+// wide and full-width forms, and emoji.
+const wide: readonly [number, number][] = [
+  [0x1100, 0x115f], [0x2e80, 0x303e], [0x3041, 0x33ff], [0x3400, 0x4dbf], [0x4e00, 0x9fff], [0xa000, 0xa4cf],
+  [0xac00, 0xd7a3], [0xf900, 0xfaff], [0xfe30, 0xfe4f], [0xff00, 0xff60], [0xffe0, 0xffe6],
+  [0x1f300, 0x1f64f], [0x1f900, 0x1f9ff], [0x20000, 0x2fffd], [0x30000, 0x3fffd],
+];
+
+// cells is how many terminal cells a line takes: two for a wide character,
+// none for a combining mark, one for any other.
+function cells(line: string): number {
+  let n = 0;
+  for (const ch of line) {
+    const c = ch.codePointAt(0)!;
+    if (/\p{Mn}|\p{Me}/u.test(ch) || c === 0x200d || (c >= 0xfe00 && c <= 0xfe0f)) continue;
+    n += wide.some(([a, b]) => c >= a && c <= b) ? 2 : 1;
+  }
+  return n;
+}
+
 // HostScreen draws a tmux pane's screen, as the server reads it, in the
 // same read-only terminal as a session's: nothing goes back to the pane.
 function HostScreen({ h }: { h: HostTerminal }) {
@@ -15,6 +35,19 @@ function HostScreen({ h }: { h: HostTerminal }) {
     if (!el.current || !pane) return;
     const term = openReadOnly(el.current);
     const source = new EventSource(hostScreenPath(pane));
+    // Each message is the whole screen. It is drawn after the one before
+    // has been, as a session's chunks are, so two never mix.
+    let drawn = Promise.resolve();
+    let gone = false;
+    const draw = (screen: string) =>
+      new Promise<void>((done) => {
+        if (gone) return done();
+        const lines = screen.split("\n");
+        const cols = Math.max(20, ...lines.map(cells));
+        term.reset();
+        if (cols !== term.cols || lines.length !== term.rows) term.resize(cols, Math.max(1, lines.length));
+        term.write(lines.join("\r\n"), done);
+      });
     source.onmessage = (m) => {
       let screen: string;
       try {
@@ -22,13 +55,10 @@ function HostScreen({ h }: { h: HostTerminal }) {
       } catch {
         return;
       }
-      const lines = screen.split("\n");
-      const cols = Math.max(20, ...lines.map((l) => l.length));
-      term.reset(); // each message is the whole screen
-      if (cols !== term.cols || lines.length !== term.rows) term.resize(cols, Math.max(1, lines.length));
-      term.write(lines.join("\r\n"));
+      drawn = drawn.then(() => draw(screen));
     };
     return () => {
+      gone = true;
       source.close();
       term.dispose();
     };

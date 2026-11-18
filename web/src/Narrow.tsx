@@ -81,7 +81,7 @@ export function NarrowList({ threads, attention, now, onOpen, hosts, onOpenHost 
 // its screen or what the host says of it, its details, and a way back.
 export function NarrowHost({ h, device, now, onBack }: { h: HostTerminal | undefined; device: string; now: number; onBack: () => void }) {
   return (
-    <div className="narrow-thread" data-narrow-host={device}>
+    <div className="narrow-thread" data-narrow-host={h?.device ?? device}>
       <div className="narrow-bar">
         <button type="button" className="narrow-back" onClick={onBack}>
           {t("narrow.back")}

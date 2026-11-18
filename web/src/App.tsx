@@ -9,7 +9,7 @@ import { AllThreads } from "./AllThreads";
 import { Details } from "./Details";
 import { NarrowHost, NarrowList, NarrowThread, useNarrow } from "./Narrow";
 import { useWorkspaces } from "./workspaces";
-import { hostLabel, useHostTerminals } from "./hostTerminals";
+import { hostID, hostLabel, useHostTerminals } from "./hostTerminals";
 import { HostDetails, HostPane } from "./HostViews";
 import { active, allTab, close, hostOf, hostTab, initialTabs, panes, type Split, type TabKey, type Tabs, threadOf, threadTab, view } from "./tabs";
 import { useTheme } from "./theme";
@@ -49,7 +49,7 @@ export function App() {
   const thread = (n: number) => d.threads?.find((x) => x.number === n);
   const current = threadOf(active(tabs));
   const hosts = useHostTerminals();
-  const host = (device: string) => hosts?.find((h) => h.device === device);
+  const host = (id: string) => hosts?.find((h) => hostID(h) === id);
   const currentHost = hostOf(active(tabs));
   const openHost = (device: string) => setTabs((s) => view(s, hostTab(device)));
   const workspaces = useWorkspaces(d.threads, panes(tabs, split).includes(allTab) || layout.details, current);
@@ -104,6 +104,7 @@ export function App() {
   };
   const openNarrowHost = (device: string) => {
     openHost(device);
+    setOpened(null); // a host terminal is no thread: no thread's state under it
     setOpenedHost(device);
     history.pushState({ hataoriHost: device }, "");
   };
@@ -155,7 +156,7 @@ export function App() {
             <NarrowList threads={d.threads} attention={d.attention} now={now} onOpen={openNarrow} hosts={hosts} onOpenHost={openNarrowHost} />
           )}
         </div>
-        <StatusBar selected={x} live={d.live} limits={d.limits} now={now} />
+        <StatusBar selected={openedHost !== null ? undefined : x} live={d.live} limits={d.limits} now={now} />
       </div>
     );
   }

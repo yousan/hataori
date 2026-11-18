@@ -58,7 +58,7 @@ func (b *browser) noStateFor(device, what string) {
 	b.t.Helper()
 	var n int
 	b.eval(fmt.Sprintf(`(() => {
-		const els = [...document.querySelectorAll('[data-host=%[1]q], .tab[data-tab="host:%[1]s"], [data-host-details=%[1]q], [data-host-meta=%[1]q]')];
+		const els = [...document.querySelectorAll('[data-host=%[1]q], .tab[data-tab^="host:%[1]s"], [data-host-details=%[1]q], [data-host-meta=%[1]q]')];
 		return els.reduce((n, e) => n + e.querySelectorAll('.agent-mark, .dot, .badge, [data-badge], [data-state], .state-text, .flag, .why').length + (e.matches('[data-state]') ? 1 : 0), 0);
 	})()`, device), &n)
 	if n != 0 {
@@ -120,7 +120,8 @@ func TestDashboardHostTerminalsInThePage(t *testing.T) {
 
 	// 2. The pane opened from the tree: its screen and its details.
 	b.click(`.tree ` + hostRow(rig.device))
-	b.until("the pane's screen", fmt.Sprintf(`[...document.querySelectorAll('.pane.active [data-host-screen=%q] .xterm-rows > div')].some(d => d.textContent.includes('pane-marker'))`, rig.pane))
+	// The screen, with a line of wide characters on one row.
+	b.until("the pane's screen", fmt.Sprintf(`[...document.querySelectorAll('.pane.active [data-host-screen=%q] .xterm-rows > div')].some(d => d.textContent.replace(/\s+/g, ' ').includes('pane-marker 幅の広い文字'))`, rig.pane))
 	var details map[string]string
 	b.eval(fmt.Sprintf(`Object.fromEntries([...document.querySelectorAll('.details [data-host-details=%q] [data-field]')].map(f => [f.dataset.field, (f.querySelector('dd') ?? f).textContent]))`, rig.device), &details)
 	if details["session"] != "work" || details["window"] != "0: editor" || details["device"] != rig.device || !strings.Contains(details["pane"], rig.pane) ||
@@ -148,7 +149,7 @@ func TestDashboardHostTerminalsInThePage(t *testing.T) {
 	b.call("Input.insertText", map[string]any{"text": "inserted-text"})
 	b.eval(fmt.Sprintf(`(() => { const ta = document.querySelector('.pane.active [data-host-screen=%q] textarea'); const dt = new DataTransfer(); dt.setData('text/plain', 'pasted-text');
 		ta.dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true})); return true; })()`, rig.pane), nil)
-	time.Sleep(time.Second)
+	time.Sleep(2 * time.Second)
 	b.eval(`1`, nil)
 	page, _ := url.Parse(link)
 	for _, e := range b.events[before:] {
@@ -191,6 +192,10 @@ func TestDashboardHostTerminalsInThePage(t *testing.T) {
 		if strings.Contains(string(screen), typed) {
 			t.Fatalf("%q reached the pane:\n%s", typed, screen)
 		}
+	}
+	// Echoed or not: the pane's command got no byte at all.
+	if got, err := os.ReadFile(rig.input); err != nil || len(got) != 0 {
+		t.Fatalf("the pane's command got input %q (%v)", got, err)
 	}
 	if strings.Contains(logged(), "dropped") {
 		t.Fatalf("the server dropped input from the page:\n%s", logged())

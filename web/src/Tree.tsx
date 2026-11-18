@@ -1,5 +1,5 @@
 import { type HostTerminal, type State, states, type ThreadInfo } from "./api";
-import { hostMatches } from "./hostTerminals";
+import { hostID, hostMatches } from "./hostTerminals";
 import { t } from "./catalog";
 import { age, contextUse, mark, matches, stateName } from "./format";
 import type { Attention } from "./live";
@@ -183,14 +183,15 @@ function HostRow(props: { h: HostTerminal; now: number; selected: boolean; onOpe
     <li
       className={selected ? "row host-row selected" : "row host-row"}
       data-host={h.device}
+      data-host-id={hostID(h)}
       role="option"
       tabIndex={0}
       aria-selected={selected}
-      onClick={() => onOpen(h.device)}
+      onClick={() => onOpen(hostID(h))}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          onOpen(h.device);
+          onOpen(hostID(h));
         }
       }}
     >
@@ -227,7 +228,7 @@ export function HostSections(props: {
     list.push(h);
     sessions.set(h.tmux!.session, list);
   }
-  const row = (h: HostTerminal) => <HostRow key={h.device} h={h} now={now} selected={selected === h.device} onOpen={onOpen} />;
+  const row = (h: HostTerminal) => <HostRow key={hostID(h)} h={h} now={now} selected={selected === hostID(h)} onOpen={onOpen} />;
   const tmux = (
     <>
       {panes.length === 0 && <p className="none">{t("host.none")}</p>}

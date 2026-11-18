@@ -9,6 +9,17 @@ import { t } from "./catalog";
 
 const every = 10000;
 
+// hostID names a host terminal for the page: its device, and for a tmux
+// pane the pane's id too, so that a tab of a pane that went away never
+// shows another terminal that later gets the same device.
+export function hostID(h: HostTerminal): string {
+  return h.tmux ? `${h.device}#${h.tmux.pane}` : h.device;
+}
+
+// offEvery is how often the page asks again after the server said the
+// feature is off, so that turning it on shows without a reload.
+const offEvery = 60000;
+
 export function useHostTerminals(): HostTerminal[] | null {
   const [list, setList] = useState<HostTerminal[] | null>(null);
   useEffect(() => {
@@ -24,7 +35,8 @@ export function useHostTerminals(): HostTerminal[] | null {
         .catch((err) => {
           if (gone) return;
           if (err instanceof HostTerminalsOff) {
-            setList(null); // off: not asked again until the page loads again
+            setList(null); // off: nothing is shown; asked again now and then
+            timer = setTimeout(read, offEvery);
             return;
           }
           timer = setTimeout(read, every);
