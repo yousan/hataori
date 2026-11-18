@@ -566,7 +566,7 @@ hataori does not depend on OpenClaw. An OpenClaw plugin that talks to hataori is
 
 **What the operator grants.** The plugin's config entry names the scopes it may see and act in, and may narrow the operations, events and hooks below what the manifest asks for. The plugin's `Caller` is what the manifest asks for and the config grants, and nothing more. Any other call is refused by the core's one authorization function (section 4.4), and the refusal is logged.
 
-Message text (input to the agent, the agent's text, outgoing posts) reaches a plugin only with an explicit `conversation` grant, as with OpenClaw's `allowConversationAccess`. Without it, the plugin gets events and hook calls with the text left out. No client can read the login relay's link and code (section 4.7), so no plugin can either.
+Message text (input to the agent, the agent's text, outgoing posts) reaches a plugin only with an explicit `conversation` grant, as with OpenClaw's `allowConversationAccess`. Without it, the plugin gets events and hook calls with the text left out. Thread titles are left out too: a title is the first line of the first prompt, so a person wrote it. Such a plugin knows a thread by its id and number. No client can read the login relay's link and code (section 4.7), so no plugin can either.
 
 **Hooks.** A hook is a call from hataori to a plugin at a fixed point, which the plugin answers. The kinds are OpenClaw's:
 
@@ -1210,16 +1210,17 @@ type Caller struct {
 	Scopes    []string  // the scopes it may see and act in
 	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost
 	// NoText leaves text written by a person or an agent out of what the
-	// caller reads: ThreadInfo.Last, ThreadDetail.Recent, the text of its
-	// requests, and the text fields of events (section 7.3). The thread's
-	// title, taken from its first prompt, is not left out.
+	// caller reads: ThreadInfo.Title and ThreadInfo.Last,
+	// ThreadDetail.Recent, the text of its requests, and the text fields of
+	// events (section 7.3).
 	NoText bool
 }
 
 // Fields of ThreadInfo, and so of ThreadDetail, besides its id, number,
-// title, repository, state, who started it and when (section 7.2).
+// repository, state, who started it and when (section 7.2).
 type ThreadInfo struct {
 	// ...
+	Title      string // the first line of the first prompt; text, so optional since protocol 2.0
 	Agent      string // the agent's registered name
 	Model      string // as the agent reports it; as asked for until then
 	Effort     string // the same
@@ -1290,7 +1291,7 @@ The types carry lowercase JSON names, and the data of every event kind is declar
 
 ### Control API: additions for the dashboard (proposal)
 
-Section 7.2. `ThreadID` in these operations is the thread's number, as above. Not declared yet: each item lands with the issue that implements it, which also changes [docs/protocol.md](../protocol.md) and its golden files. Every item is a new optional field or a new operation, so each is a minor version. Names may still change.
+Section 7.2. `ThreadID` in these operations is the thread's number, as above. Not declared yet: each item lands with the issue that implements it, which also changes [docs/protocol.md](../protocol.md) and its golden files. Every item is a new optional field or a new operation, so each is a minor version, unless the table below says otherwise. Names may still change.
 
 ```go
 // New operations of API.
@@ -1328,6 +1329,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `SignInLink` for a chat caller, the session belonging to its person | minor: an operation allowed to one more caller, no encoding change; landed in 1.11 |
 | `ThreadInfo.terminal` | minor: new optional field; landed in 1.12 |
 | `Limits` | minor: new operation; landed in 1.13 |
+| `ThreadInfo.title` left out for `Caller.NoText` (#236) | major: a required field becomes optional; 2.0 |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 
 Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event. In protocol 1.9: `Terminal`, which turns its connection into a stream as `Events` does. In protocol 1.12: `ThreadInfo.terminal`, the terminal device its session host opened, for the tree's filter, the status bar and the details panel (#285); `HostTerminals` still leaves these terminals out.

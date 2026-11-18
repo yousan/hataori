@@ -90,11 +90,14 @@ func TestThreadInfoTurnsBackgroundAndLast(t *testing.T) {
 	}
 
 	quiet := f.core.As(control.Caller{Principal: "plugin", Scopes: []string{"s"}, May: control.OpRead, NoText: true})
-	if got := f.info(t, quiet, id); got.Last != "" || got.Turns != 2 || got.Model == "" {
+	if f.info(t, f.owner, id).Title == "" {
+		t.Fatal("the owner gets no title")
+	}
+	if got := f.info(t, quiet, id); got.Last != "" || got.Title != "" || got.Turns != 2 || got.Model == "" {
 		t.Fatalf("a caller that may not read text: %+v", got)
 	}
 	d, err := quiet.Thread(ctx, id, 100, 10)
-	if err != nil || d.Last != "" || d.Recent != "" {
+	if err != nil || d.Last != "" || d.Title != "" || d.Recent != "" {
 		t.Fatalf("a caller that may not read text: %+v, %v", d, err)
 	}
 	for _, e := range d.Events {

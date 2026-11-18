@@ -27,7 +27,7 @@ import (
 
 // Version is the protocol version this build speaks: major.minor. Two
 // sides work together when their major numbers are equal (docs/protocol.md).
-const Version = "1.13"
+const Version = "2.0"
 
 type hello struct {
 	Version string `json:"version"`

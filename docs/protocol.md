@@ -16,7 +16,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **1.13**. Both hellos carry it.
+The protocol version is `major.minor`, now **2.0**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 1.0`.
 - With the same major number and different minor numbers they work together.
@@ -279,7 +279,7 @@ A field left empty matches everything the caller may see.
 |---|---|---|---|
 | `id` | `ThreadID` | required | the thread |
 | `number` | integer | required | a short number, unique in the instance |
-| `title` | string | required | from the first line of the first prompt |
+| `title` | string | optional | from the first line of the first prompt; text; absent for a caller that may not read text; optional since 2.0, required before |
 | `repo` | string | required | the repository of its workspace |
 | `state` | string | required | `creating`, `idle`, `running`, `waiting`, `asleep`, `closed`, `removed` or `failed` |
 | `started_by` | string | required | the principal that started it |
@@ -303,7 +303,7 @@ The fields of `ThreadInfo`, and:
 |---|---|---|---|
 | `id` | `ThreadID` | required | as in `ThreadInfo` |
 | `number` | integer | required | as in `ThreadInfo` |
-| `title` | string | required | as in `ThreadInfo` |
+| `title` | string | optional | as in `ThreadInfo` |
 | `repo` | string | required | as in `ThreadInfo` |
 | `state` | string | required | as in `ThreadInfo` |
 | `started_by` | string | required | as in `ThreadInfo` |

@@ -72,7 +72,7 @@ func examples(t *testing.T) map[string]any {
 	t.Helper()
 	ex := map[string]any{
 		"hello.json":         hello{Version: Version},
-		"hello-refusal.json": hello{Version: Version, Error: versionError("2.0", Version).Error()},
+		"hello-refusal.json": hello{Version: Version, Error: versionError("3.0", Version).Error()},
 		"response-error.json": response{ID: 5, Error: &wireError{Code: "not_supported",
 			Message: `wire: operation "Unheard": not supported`}},
 	}
