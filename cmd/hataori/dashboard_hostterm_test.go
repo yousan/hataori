@@ -30,6 +30,10 @@ import (
 // hataori's own processes, and the copy has another name than the test
 // binary, so the host's terminal list does not take it for hataori's.
 func orphanTerminal(file string) int {
+	// Its own pid first, so the test can end it whatever happens next.
+	if err := os.WriteFile(file+".holder", []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		return 1
+	}
 	cmd := exec.Command("sleep", "600")
 	f, err := pty.Start(cmd)
 	if err != nil {
@@ -81,14 +85,20 @@ func newHostTerminalRig(t *testing.T) hostTerminalRig {
 		}
 		return strings.TrimSpace(string(out))
 	}
-	tmux("new-session", "-d", "-s", "work", "-n", "editor", "-x", "80", "-y", "24", "sh -c 'echo pane-marker; exec sleep 600'")
-	socketPath := tmux("display-message", "-p", "#{socket_path}")
-	t.Cleanup(func() { // only this test's own server, and its socket
-		cmd := exec.Command("tmux", append(append([]string{}, r.socket...), "kill-server")...)
-		cmd.Env = append(os.Environ(), "TMUX=")
-		cmd.Run()
-		os.Remove(socketPath)
+	// The cleanup comes first, so a failure below leaves nothing behind:
+	// only this test's own server, and its socket.
+	t.Cleanup(func() {
+		path := exec.Command("tmux", append(append([]string{}, r.socket...), "display-message", "-p", "#{socket_path}")...)
+		path.Env = append(os.Environ(), "TMUX=")
+		out, _ := path.Output()
+		kill := exec.Command("tmux", append(append([]string{}, r.socket...), "kill-server")...)
+		kill.Env = append(os.Environ(), "TMUX=")
+		kill.Run()
+		if p := strings.TrimSpace(string(out)); p != "" {
+			os.Remove(p)
+		}
 	})
+	tmux("new-session", "-d", "-s", "work", "-n", "editor", "-x", "80", "-y", "24", "sh -c 'echo pane-marker; exec sleep 600'")
 	got := strings.Fields(tmux("list-panes", "-a", "-F", "#{pane_id} #{pane_tty}"))
 	if len(got) != 2 {
 		t.Fatalf("panes: %q", got)
@@ -105,6 +115,18 @@ func newHostTerminalRig(t *testing.T) hostTerminalRig {
 		t.Fatal(err)
 	}
 	file := filepath.Join(dir, "pids")
+	// The cleanup comes first too: it ends the holder and its command from
+	// what they wrote, whatever got written.
+	t.Cleanup(func() {
+		for _, f := range []string{file, file + ".holder"} {
+			b, _ := os.ReadFile(f)
+			for _, w := range strings.Fields(string(b)) {
+				if pid, err := strconv.Atoi(w); err == nil && pid > 1 {
+					syscall.Kill(pid, syscall.SIGKILL) // only the processes it started
+				}
+			}
+		}
+	})
 	if out, err := exec.Command("sh", "-c", `"$0" orphan-terminal "$1" </dev/null >/dev/null 2>&1 &`, holder, file).CombinedOutput(); err != nil {
 		t.Fatalf("terminal holder: %v\n%s", err, out)
 	}
@@ -117,10 +139,7 @@ func newHostTerminalRig(t *testing.T) hostTerminalRig {
 		_, err = fmt.Sscan(string(b), &holderPID, &pid)
 		return err == nil && pid > 1
 	})
-	t.Cleanup(func() { // only the two processes it started
-		syscall.Kill(pid, syscall.SIGKILL)
-		syscall.Kill(holderPID, syscall.SIGKILL)
-	})
+	_ = holderPID
 	out, _ := exec.Command("ps", "-o", "tty=", "-p", strconv.Itoa(pid)).Output()
 	tty := strings.TrimSpace(string(out))
 	if tty == "" || tty == "?" || tty == "??" {
@@ -187,16 +206,22 @@ func TestDashboardHostTerminalsRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	devices := func(ts []control.HostTerminal) []string {
-		var ds []string
+	// The test's own pane and terminal, field by field, as HostTerminals
+	// gives them. The host's other terminals may come and go between the
+	// two reads, so they are not compared.
+	find := func(ts []control.HostTerminal, dev string) string {
 		for _, h := range ts {
-			ds = append(ds, h.Device)
+			if h.Device == dev {
+				b, _ := json.Marshal(h)
+				return string(b)
+			}
 		}
-		slices.Sort(ds)
-		return ds
+		return ""
 	}
-	if !slices.Equal(devices(got), devices(want)) {
-		t.Fatalf("the route lists %q, HostTerminals %q", devices(got), devices(want))
+	for _, dev := range []string{rig.device, rig.outside} {
+		if g, w := find(got, dev), find(want, dev); g == "" || g != w {
+			t.Fatalf("%s: the route gives %s, HostTerminals %s", dev, g, w)
+		}
 	}
 	for _, h := range got {
 		switch h.Device {
@@ -237,6 +262,7 @@ func TestDashboardHostTerminalsRoute(t *testing.T) {
 
 	// 2. Not the owner: one fixed 403.
 	dashboardHook = func(cl *control.Caller) { cl.Scopes, cl.Principal = []string{"s"}, "grace" }
+	t.Cleanup(func() { dashboardHook = nil })
 	codeOther, bodyOther, _ := hostTerminalsOf(t, base, cookie)
 	if codeOther != http.StatusForbidden || bodyOther != http.StatusText(http.StatusForbidden)+"\n" {
 		t.Fatalf("not the owner: %d %q, want a fixed 403", codeOther, bodyOther)
