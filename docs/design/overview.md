@@ -1206,6 +1206,7 @@ type ThreadInfo struct {
 	Background int    // the background of the thread's last turn_ended event
 	Context    *Context    // the last context use reported; absent until one is
 	Tokens     *TokenCount // absent until the agent reports usage
+	Terminal   string      // the terminal its current session's agent runs in, such as /dev/pts/3; absent on pipes and with no process
 }
 
 type Context struct{ Used, Size int64 } // tokens
@@ -1303,9 +1304,10 @@ Remaining usage per agent (an operation `Limits`, with the agent, the window, th
 | `HostTerminals`, `HostScreen`, with `Ops` gaining `OpHost` | minor: new operations; landed in 1.10 |
 | `SignInLink`, with `Ops` gaining `OpSignIn` | minor: new operation; landed in 1.7 |
 | `SignInLink` for a chat caller, the session belonging to its person | minor: an operation allowed to one more caller, no encoding change; landed in 1.11 |
+| `ThreadInfo.terminal` | minor: new optional field; landed in 1.12 |
 | `Limits`; `WorkspaceState.PullRequest` | minor, and only after their research |
 
-Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event. In protocol 1.9: `Terminal`, which turns its connection into a stream as `Events` does.
+Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event. In protocol 1.9: `Terminal`, which turns its connection into a stream as `Events` does. In protocol 1.12: `ThreadInfo.terminal`, the terminal device its session host opened, for the tree's filter, the status bar and the details panel (#285); `HostTerminals` still leaves these terminals out.
 
 ### Surface driver
 

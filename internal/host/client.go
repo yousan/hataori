@@ -2,6 +2,7 @@ package host
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,7 +26,15 @@ type Client struct {
 // Dial connects to the host in stateDir. When the command has already
 // exited, the error wraps os.ErrNotExist or syscall.ECONNREFUSED.
 func Dial(stateDir string) (*Client, error) {
-	c, err := net.DialTimeout("unix", SocketPath(stateDir), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return DialContext(ctx, stateDir)
+}
+
+// DialContext is Dial, giving up when ctx ends.
+func DialContext(ctx context.Context, stateDir string) (*Client, error) {
+	var d net.Dialer
+	c, err := d.DialContext(ctx, "unix", SocketPath(stateDir))
 	if err != nil {
 		return nil, fmt.Errorf("host: connect: %w", err)
 	}
@@ -69,6 +78,20 @@ func (c *Client) Tail(n int) ([]byte, error) {
 func (c *Client) PID() (int, error) {
 	resp, err := c.call(request{Op: "status"})
 	return resp.PID, err
+}
+
+// Device returns the name of the terminal the command runs in, such as
+// /dev/pts/3 or /dev/ttys003; "" when it runs on pipes.
+// It gives up at ctx's deadline, or after a second when ctx has none.
+func (c *Client) Device(ctx context.Context) (string, error) {
+	by, ok := ctx.Deadline()
+	if !ok {
+		by = time.Now().Add(time.Second)
+	}
+	c.conn.SetDeadline(by)
+	defer c.conn.SetDeadline(time.Time{})
+	resp, err := c.call(request{Op: "status"})
+	return resp.Device, err
 }
 
 // Gone reports whether the host of stateDir has finished: its socket is

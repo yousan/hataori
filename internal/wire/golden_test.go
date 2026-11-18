@@ -30,7 +30,7 @@ var (
 	exampleInfo = control.ThreadInfo{ID: exampleID, Number: 7, Title: "Fix the build", Repo: "https://example.com/repo.git",
 		State: control.Running, StartedBy: "webhook:W1", Created: exampleTime, Updated: exampleTime,
 		Agent: "claude-code", Model: "opus", Effort: "high", Turns: 12, Last: "Running the tests...", Background: 1,
-		Context: &control.Context{Used: 45000, Size: 200000}, Tokens: &control.TokenCount{Turn: 2450, Today: 98000}}
+		Context: &control.Context{Used: 45000, Size: 200000}, Tokens: &control.TokenCount{Turn: 2450, Today: 98000}, Terminal: "/dev/pts/3"}
 )
 
 // eventData is an example of every event kind's data.

@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/yousan/hataori/internal/agent"
@@ -141,5 +142,49 @@ func TestThreadRecentEvents(t *testing.T) {
 	}
 	if d, _ := f.owner.Thread(ctx, id, 0, 1000); len(d.Events) != len(all) {
 		t.Fatalf("%d events, want all %d", len(d.Events), len(all))
+	}
+}
+
+// The terminal comes from the runner for a thread that may have a process.
+// Hosts are asked at once, within one bound: hosts that do not answer
+// delay a list by that bound, not by one bound each.
+func TestThreadTerminalsAreAskedAtOnceWithinABound(t *testing.T) {
+	f := newFixture(t, fakeOwner{})
+	var ids []control.ThreadID
+	var answering int64
+	for i, key := range []string{"t1", "t2", "t3", "t4"} {
+		id, sid := f.running(t, key)
+		ids = append(ids, id)
+		if i == 0 {
+			answering = sid
+		}
+	}
+	f.runner.device = func(ctx context.Context, sid int64) string {
+		if sid == answering {
+			return "/dev/pts/1"
+		}
+		<-ctx.Done() // a host that does not answer
+		return ""
+	}
+	start := time.Now()
+	ts, err := f.owner.Threads(context.Background(), control.Filter{})
+	if err != nil || len(ts) != len(ids) {
+		t.Fatalf("threads: %v, %v", ts, err)
+	}
+	if took := time.Since(start); took > terminalsTimeout+terminalsTimeout/2 {
+		t.Fatalf("Threads took %v with three hosts not answering; the bound is %v", took, terminalsTimeout)
+	}
+	for _, ti := range ts {
+		want := ""
+		if ti.ID == ids[0] {
+			want = "/dev/pts/1"
+		}
+		if ti.Terminal != want {
+			t.Fatalf("thread %v: terminal %q, want %q", ti.ID, ti.Terminal, want)
+		}
+	}
+	d, err := f.owner.Thread(context.Background(), ids[0], 0, 0)
+	if err != nil || d.Terminal != "/dev/pts/1" {
+		t.Fatalf("Thread: terminal %q (%v)", d.Terminal, err)
 	}
 }

@@ -85,6 +85,9 @@ type Runner interface {
 	// Terminal streams a session's terminal output, as control.API.Terminal
 	// says, until ctx ends. A session on pipes is ErrNotFound.
 	Terminal(ctx context.Context, sessionID int64, run string, after uint64) (<-chan control.TerminalChunk, error)
+	// Device returns the name of the terminal a session's agent runs in,
+	// such as /dev/pts/3; "" when it runs on pipes or no process runs.
+	Device(ctx context.Context, sessionID int64) string
 }
 
 // Launch is what Runner.Start needs.
@@ -339,25 +342,56 @@ func (a *api) Threads(ctx context.Context, f control.Filter) ([]control.ThreadIn
 		return nil, err
 	}
 	rows.Close() // the store has one connection: summary needs it
+	sids := make([]int64, len(out))
 	for i := range out {
-		if err := a.summary(ctx, &out[i]); err != nil {
+		if sids[i], err = a.summary(ctx, &out[i]); err != nil {
 			return nil, err
 		}
 	}
+	a.c.terminals(ctx, out, sids)
 	return out, nil
 }
+
+// terminals fills the terminal of each thread in ts that may have a process,
+// asking the runner about the session in sids at the same index. The
+// sessions' hosts are asked at once, within one bound, so that hosts that
+// do not answer delay a list by that bound at most.
+func (c *Core) terminals(ctx context.Context, ts []control.ThreadInfo, sids []int64) {
+	ctx, cancel := context.WithTimeout(ctx, terminalsTimeout)
+	defer cancel()
+	var wg sync.WaitGroup
+	for i := range ts {
+		if sids[i] == 0 || !hasProcess(ts[i].State) {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ts[i].Terminal = c.Runner.Device(ctx, sids[i])
+		}()
+	}
+	wg.Wait()
+}
+
+// terminalsTimeout bounds how long terminals waits for the sessions' hosts.
+const terminalsTimeout = time.Second
 
 // summary fills the fields of t that come from its sessions, turns and
 // events: the current session's agent, model and effort, the number of
 // turns, the background of the last turn_ended event, and the last line of
-// output unless the caller may not read text.
-func (a *api) summary(ctx context.Context, t *control.ThreadInfo) error {
+// output unless the caller may not read text. It returns the current
+// session, 0 for none; terminals fills the terminal.
+func (a *api) summary(ctx context.Context, t *control.ThreadInfo) (int64, error) {
 	db := a.c.Store.DB
-	err := db.QueryRowContext(ctx, `SELECT s.agent, s.model, s.effort,
+	var sid int64
+	err := db.QueryRowContext(ctx, `SELECT s.id, s.agent, s.model, s.effort,
 		(SELECT count(*) FROM turns u JOIN sessions v ON v.id = u.session_id WHERE v.thread_id = s.thread_id)
-		FROM sessions s WHERE s.thread_id = ? ORDER BY s.id DESC LIMIT 1`, t.Number).Scan(&t.Agent, &t.Model, &t.Effort, &t.Turns)
+		FROM sessions s WHERE s.thread_id = ? ORDER BY s.id DESC LIMIT 1`, t.Number).Scan(&sid, &t.Agent, &t.Model, &t.Effort, &t.Turns)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("core: thread summary: %w", err)
+		return 0, fmt.Errorf("core: thread summary: %w", err)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		sid = 0
 	}
 	var (
 		turn, used, size sql.NullInt64
@@ -367,7 +401,7 @@ func (a *api) summary(ctx context.Context, t *control.ThreadInfo) error {
 	err = db.QueryRowContext(ctx, `SELECT tokens_turn, tokens_today, tokens_day, context_used, context_size FROM threads WHERE id = ?`,
 		t.Number).Scan(&turn, &today, &day, &used, &size)
 	if err != nil {
-		return fmt.Errorf("core: thread summary: %w", err)
+		return 0, fmt.Errorf("core: thread summary: %w", err)
 	}
 	if turn.Valid {
 		t.Tokens = &control.TokenCount{Turn: turn.Int64}
@@ -382,7 +416,7 @@ func (a *api) summary(ctx context.Context, t *control.ThreadInfo) error {
 	err = db.QueryRowContext(ctx, `SELECT data FROM events WHERE scope = ? AND thread = ? AND kind = 'turn_ended'
 		ORDER BY pos DESC LIMIT 1`, t.ID.Scope, t.ID.Key).Scan(&data)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("core: thread summary: %w", err)
+		return 0, fmt.Errorf("core: thread summary: %w", err)
 	}
 	if err == nil {
 		var e struct {
@@ -393,10 +427,20 @@ func (a *api) summary(ctx context.Context, t *control.ThreadInfo) error {
 	}
 	if !a.caller.NoText {
 		if t.Last, err = a.c.lastLine(ctx, t.ID); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	return nil
+	return sid, nil
+}
+
+// hasProcess reports whether a thread in state s may have an agent
+// process running: not asleep, closed, removed or failed.
+func hasProcess(s control.State) bool {
+	switch s {
+	case control.Creating, control.Idle, control.Running, control.Waiting:
+		return true
+	}
+	return false
 }
 
 // now is the machine's clock.
@@ -475,10 +519,13 @@ func (a *api) Thread(ctx context.Context, id control.ThreadID, recent, events in
 	if err != nil {
 		return control.ThreadDetail{}, err
 	}
-	if err := a.summary(ctx, &t); err != nil {
+	sid, err := a.summary(ctx, &t)
+	if err != nil {
 		return control.ThreadDetail{}, err
 	}
-	d := control.ThreadDetail{ThreadInfo: t}
+	ts := []control.ThreadInfo{t}
+	a.c.terminals(ctx, ts, []int64{sid})
+	d := control.ThreadDetail{ThreadInfo: ts[0]}
 	if t.State == control.Waiting {
 		if r, ok, err := a.c.openRequest(ctx, a.c.Store.DB, id); err != nil {
 			return d, err
