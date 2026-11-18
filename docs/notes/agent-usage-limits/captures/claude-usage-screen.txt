@@ -1,0 +1,22 @@
+  Settings  Status   Config   Usage   Stats
+  Current week (all models)
+  ███████████                                        22% used
+  Resets Nov 20, 5pm (<time zone>)
+  Current week (Fable)
+                                                     0% used
+  Resets Nov 20, 5pm (<time zone>)
+  What's contributing to your usage?
+  Approximate · sessions on this computer only
+  ✽ Scanning local sessions…
+  Usage credits
+  Usage credits are off · /usage-credits to turn them on
+  Session
+  Estimated cost:         $0.0773
+  Total duration (API):   2s
+  Total duration (wall):  54s
+  Total code changes:     0 lines added, 0 lines removed
+  Usage by model:
+  claude-haiku-5-5:       2.3k input, 30 output, 0 cache read, 0 cache write ($0.0002)
+  claude-sonnet-5-5:      2 input, 4 output, 28.1k cache read, 18.6k cache write ($0.0771)
+  Prompt cache (main):    1 request · 60% of input tokens from cache · no misses · warm (1h TTL, last activity 34s ago)
+  ←/→ to switch · Esc to close

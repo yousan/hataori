@@ -1,0 +1,74 @@
+{
+ "fetchedAtMs": 1794986802088,
+ "accountUuid": "<accountUuid>",
+ "utilization": {
+  "five_hour": null,
+  "seven_day": {
+   "utilization": 22,
+   "resets_at": "2026-11-20T08:00:00.493184+00:00",
+   "limit_dollars": null,
+   "used_dollars": null,
+   "remaining_dollars": null,
+   "locked_reason": null
+  },
+  "limits": [
+   {
+    "kind": "weekly_all",
+    "group": "weekly",
+    "percent": 22,
+    "severity": "normal",
+    "resets_at": "2026-11-20T08:00:00.493184+00:00",
+    "scope": null,
+    "is_active": true
+   },
+   {
+    "kind": "weekly_scoped",
+    "group": "weekly",
+    "percent": 0,
+    "severity": "normal",
+    "resets_at": "2026-11-20T08:00:00+00:00",
+    "scope": {
+     "model": {
+      "id": null,
+      "display_name": "Fable"
+     },
+     "surface": null
+    },
+    "is_active": false
+   }
+  ],
+  "(other keys)": [
+   "amber_cistern",
+   "amber_cistern_offer",
+   "amber_gauge",
+   "amber_ladder",
+   "brass_thimble",
+   "cedar_ember",
+   "cinder_cove",
+   "copper_kite",
+   "extra_usage",
+   "granite_teacup",
+   "harbor_lantern",
+   "iguana_necktie",
+   "indicator",
+   "juniper_tide",
+   "maple_sundial",
+   "member_dashboard_available",
+   "nimbus_quill",
+   "omelette_promotional",
+   "pace",
+   "promo_credits",
+   "seven_day_breakdown",
+   "seven_day_cowork",
+   "seven_day_oauth_apps",
+   "seven_day_omelette",
+   "seven_day_opus",
+   "seven_day_sonnet",
+   "spend",
+   "starry_waterfall",
+   "tangelo",
+   "wattle_ember",
+   "weekly_scoped_shares"
+  ]
+ }
+}
