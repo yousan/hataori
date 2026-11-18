@@ -659,7 +659,7 @@ It has the criterion of the later phases below, with three additions that the da
 
 The order below is a recommendation (section 10). Each later phase also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter; the plugin phase may also add hook points. Appendix E has the acceptance criteria of each.
 
-**People in chat, and cleanup.** Slash commands, buttons for questions, lamps, pings, attach by hand, and removing workspaces behind the proof in section 4.6. This is what lets c-lord be switched off. The dashboard's sign-in link from chat comes with it.
+**People in chat, and cleanup.** Slash commands, buttons for questions, lamps, pings, attach by hand (`hataori attach`, the agent's terminal on the host), and removing workspaces behind the proof in section 4.6. This is what lets c-lord be switched off. The dashboard's sign-in link from chat comes with it. A second chat link (`/attach <number>`, section 5.2) is built with thread numbers (#215), not in this phase.
 
 **Supervisor.** Section 7.1.
 
@@ -1435,7 +1435,8 @@ Every phase here also has this criterion: the change touches no core package, ex
 - [ ] A question appears with buttons; pressing one delivers the answer, also when the daemon was restarted in between.
 - [ ] The sender's message carries a lamp for working, done and error, and the sender is pinged once when the turn ends.
 - [ ] `hataori attach` opens the conversation in the agent's terminal UI, and a turn typed there is known to the next turn from chat.
-- [ ] Removal refuses, with the reason, for each of: modified file, untracked file, ignored file not listed as disposable, unpushed commit, stash, commit only in the reflog, submodule with an unpushed commit, nested repository, remote that is another workspace, git error. It removes a clean, pushed workspace. Each test fails when its check is removed.
+- [ ] Removal refuses, with the reason, for each of: modified file, untracked file, ignored file not listed as disposable, unpushed commit, stash, commit only in the reflog, submodule with an unpushed commit, submodule with no checkout whose commit is only under `.git/modules`, nested repository, remote that is another workspace or lies under a hataori root, process using the directory, git error, timeout. It removes a clean, pushed workspace. Each test fails when its check is removed.
+- [ ] A person asks for a dashboard sign-in link in chat and gets it in a direct message only; the session belongs to that person and sees only their scopes. The link is found in no channel, database or log file.
 
 ### Dashboard, read-only
 
