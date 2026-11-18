@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -147,6 +148,14 @@ func (r Remover) Remove(ctx context.Context, dir string) (string, error) {
 	if err := renameNoReplace(abs, to); err != nil {
 		return "", &Refusal{Reason: NotWorkspace, Detail: "rename into trash: " + err.Error()}
 	}
+	// A directory swapped in between the last look and the rename is put
+	// back where it was.
+	if moved, err := os.Lstat(to); err != nil || !os.SameFile(before, moved) {
+		if err := renameNoReplace(to, abs); err != nil {
+			return "", &Refusal{Reason: NotWorkspace, Detail: abs + " was replaced during the removal and is left at " + to}
+		}
+		return "", &Refusal{Reason: NotWorkspace, Detail: abs + " was replaced during the removal"}
+	}
 	return to, nil
 }
 
@@ -190,7 +199,26 @@ func (r Remover) Purge() ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("workspace: purge: %w", err)
 	}
-	entries, err := os.ReadDir(trash)
+	// Everything below goes through the directory opened here, which a
+	// later swap of the path does not change, and never out of it.
+	seen, err := os.Lstat(trash)
+	if err != nil {
+		return nil, fmt.Errorf("workspace: purge: %w", err)
+	}
+	tr, err := os.OpenRoot(trash)
+	if err != nil {
+		return nil, fmt.Errorf("workspace: purge: %w", err)
+	}
+	defer tr.Close()
+	if opened, err := tr.Stat("."); err != nil || !os.SameFile(seen, opened) {
+		return nil, fmt.Errorf("workspace: purge: %s changed while it was opened", trash)
+	}
+	dir, err := tr.Open(".")
+	if err != nil {
+		return nil, fmt.Errorf("workspace: purge: %w", err)
+	}
+	entries, err := dir.ReadDir(-1)
+	dir.Close()
 	if err != nil {
 		return nil, fmt.Errorf("workspace: purge: %w", err)
 	}
@@ -206,7 +234,7 @@ func (r Remover) Purge() ([]string, error) {
 			continue
 		}
 		p := filepath.Join(trash, name)
-		if err := os.RemoveAll(p); err != nil {
+		if err := tr.RemoveAll(name); err != nil {
 			return purged, fmt.Errorf("workspace: purge: %w", err)
 		}
 		purged = append(purged, p)
@@ -765,7 +793,7 @@ func (c *checker) ask(g *reader, urls []string) (string, string, error) {
 // instance's workspaces, or under this or another hataori root. "" for any
 // other address.
 func (c *checker) localRemote(u, dir string) Reason {
-	p, ok := localPath(u, dir)
+	p, ok := c.localPath(u, dir)
 	if !ok {
 		return ""
 	}
@@ -790,7 +818,7 @@ func (c *checker) localRemote(u, dir string) Reason {
 // localPath is the directory a remote address names on this machine, the
 // way git reads it: a file:// URL, or a path with no scheme and no
 // host: before its first slash. A relative path is relative to dir.
-func localPath(u, dir string) (string, bool) {
+func (c *checker) localPath(u, dir string) (string, bool) {
 	var p string
 	switch {
 	case strings.HasPrefix(u, "file://"):
@@ -798,6 +826,13 @@ func localPath(u, dir string) (string, bool) {
 		if i := strings.IndexByte(p, '/'); i > 0 { // file://host/path
 			p = p[i:]
 		}
+		// git decodes %XX in a URL's path. One it cannot decode is taken
+		// as it is, under the instance's workspaces: it does not count.
+		decoded, err := url.PathUnescape(p)
+		if err != nil {
+			return filepath.Join(c.root, Dir), true
+		}
+		p = decoded
 	case strings.Contains(u, "://"):
 		return "", false
 	default:

@@ -297,6 +297,10 @@ func TestRefuseRemoteUnderAHataoriRoot(t *testing.T) {
 	x.git(x.clone, "remote", "set-url", "origin", "file://"+mirror)
 	wantRefusal(t, x.check(), RemoteInRoot, "")
 
+	// git decodes the URL's path: %72 is "r", and the root is in it.
+	x.git(x.clone, "remote", "set-url", "origin", "file://"+strings.Replace(mirror, "/root/mirrors/", "/%72oot/mirrors/", 1))
+	wantRefusal(t, x.check(), RemoteInRoot, "")
+
 	// Under another instance's root.
 	x.git(x.clone, "remote", "set-url", "origin", x.bare)
 	if err := x.check(); err != nil {
