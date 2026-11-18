@@ -12,10 +12,12 @@ package dashboard
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -55,6 +57,10 @@ type Config struct {
 
 	LinkTTL    time.Duration // how long a sign-in link works; 5 minutes when zero
 	SessionTTL time.Duration // how long a session lasts; 12 hours when zero
+	// SessionKey signs session cookies, so that a session outlives a
+	// restart of the daemon. At least 32 bytes; when empty a random key is
+	// made, and sessions end with the process.
+	SessionKey []byte
 }
 
 // Server is one instance's dashboard.
@@ -74,9 +80,10 @@ type Server struct {
 	mux        *http.ServeMux
 	srv        *http.Server
 
-	mu       sync.Mutex
-	links    map[[32]byte]time.Time // by hash of the token: when it expires
-	sessions map[[32]byte]time.Time
+	key []byte // signs sessions
+
+	mu    sync.Mutex
+	links map[[32]byte]time.Time // by hash of the token: when it expires
 }
 
 // configError is a config error naming its key.
@@ -108,7 +115,15 @@ func Listen(cfg Config, api control.API, log *slog.Logger) (*Server, error) {
 	}
 	s := &Server{API: api, Log: log, secure: cfg.TLS != nil || cfg.Proxy != "",
 		linkTTL: cfg.LinkTTL, sessionTTL: cfg.SessionTTL, now: time.Now,
-		links: map[[32]byte]time.Time{}, sessions: map[[32]byte]time.Time{}}
+		links: map[[32]byte]time.Time{}, key: cfg.SessionKey}
+	if len(s.key) == 0 {
+		s.key = make([]byte, 32)
+		if _, err := rand.Read(s.key); err != nil {
+			return nil, fmt.Errorf("dashboard: %w", err)
+		}
+	} else if len(s.key) < 32 {
+		return nil, errors.New("dashboard: the session key is shorter than 32 bytes")
+	}
 	if s.linkTTL <= 0 {
 		s.linkTTL = 5 * time.Minute
 	}
@@ -176,6 +191,7 @@ func Listen(cfg Config, api control.API, log *slog.Logger) (*Server, error) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		fmt.Fprintln(w, "Signed in to the hataori dashboard.")
 	})
+	s.routes()
 	s.srv = &http.Server{Handler: s, ReadHeaderTimeout: 10 * time.Second,
 		ErrorLog: slog.NewLogLogger(log.Handler(), slog.LevelWarn)}
 	return s, nil
@@ -240,7 +256,6 @@ func (s *Server) NewLink(context.Context) (string, error) {
 	now := s.now()
 	s.mu.Lock()
 	sweep(s.links, now)
-	sweep(s.sessions, now)
 	s.links[sum] = now.Add(s.linkTTL)
 	s.mu.Unlock()
 	return s.base.String() + SignInPath + "?t=" + token, nil
@@ -275,17 +290,51 @@ func (s *Server) take(m map[[32]byte]time.Time, token string) bool {
 	return ok && s.now().Before(exp)
 }
 
-// valid reports whether token is a session that has not expired.
-func (s *Server) valid(token string) bool {
-	sum := sha256.Sum256([]byte(token))
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	exp, ok := s.sessions[sum]
-	if ok && !s.now().Before(exp) {
-		delete(s.sessions, sum)
-		return false
+// A session is a cookie the server signed: its expiry and a random nonce,
+// and an HMAC of them under the session key. The server keeps no list of
+// sessions, so one outlives a restart of the daemon that keeps its key.
+const sessionLabel = "hataori dashboard session\x00"
+
+// newSession returns a session that expires at exp.
+func (s *Server) newSession(exp time.Time) (string, error) {
+	var payload [24]byte
+	binary.BigEndian.PutUint64(payload[:8], uint64(exp.Unix()))
+	if _, err := rand.Read(payload[8:]); err != nil {
+		return "", fmt.Errorf("dashboard: %w", err)
 	}
-	return ok
+	return base64.RawURLEncoding.EncodeToString(payload[:]) + "." + base64.RawURLEncoding.EncodeToString(s.sign(payload[:])), nil
+}
+
+func (s *Server) sign(payload []byte) []byte {
+	m := hmac.New(sha256.New, s.key)
+	m.Write([]byte(sessionLabel))
+	m.Write(payload)
+	return m.Sum(nil)
+}
+
+// valid reports whether token is a session this key signed that has not
+// expired, and when it expires.
+func (s *Server) valid(token string) (time.Time, bool) {
+	p, sig, ok := strings.Cut(token, ".")
+	if !ok {
+		return time.Time{}, false
+	}
+	payload, err1 := base64.RawURLEncoding.DecodeString(p)
+	mac, err2 := base64.RawURLEncoding.DecodeString(sig)
+	if err1 != nil || err2 != nil || len(payload) != 24 || !hmac.Equal(mac, s.sign(payload)) {
+		return time.Time{}, false
+	}
+	exp := time.Unix(int64(binary.BigEndian.Uint64(payload[:8])), 0)
+	return exp, s.now().Before(exp)
+}
+
+type expiryKey struct{}
+
+// sessionExpiry is when the session of a request that passed ServeHTTP's
+// checks expires.
+func sessionExpiry(r *http.Request) time.Time {
+	exp, _ := r.Context().Value(expiryKey{}).(time.Time)
+	return exp
 }
 
 // ServeHTTP checks every request, then hands it to its route.
@@ -322,10 +371,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path != SignInPath {
 		c, err := r.Cookie(s.cookie)
-		if err != nil || !s.valid(c.Value) {
+		if err != nil {
 			http.Error(w, "not signed in", http.StatusUnauthorized)
 			return
 		}
+		exp, ok := s.valid(c.Value)
+		if !ok {
+			http.Error(w, "not signed in", http.StatusUnauthorized)
+			return
+		}
+		r = r.WithContext(context.WithValue(r.Context(), expiryKey{}, exp))
 	}
 	s.mux.ServeHTTP(w, r)
 }
@@ -347,14 +402,11 @@ func (s *Server) signIn(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "this sign-in link was used or has expired: ask for a new one", http.StatusUnauthorized)
 		return
 	}
-	token, sum, err := secret()
+	token, err := s.newSession(s.now().Add(s.sessionTTL))
 	if err != nil {
 		http.Error(w, "cannot make a session", http.StatusInternalServerError)
 		return
 	}
-	s.mu.Lock()
-	s.sessions[sum] = s.now().Add(s.sessionTTL)
-	s.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: s.cookie, Value: token, Path: "/", MaxAge: int(s.sessionTTL / time.Second),
 		HttpOnly: true, Secure: s.secure, SameSite: http.SameSiteLaxMode})
 	http.Redirect(w, r, "/", http.StatusSeeOther)
