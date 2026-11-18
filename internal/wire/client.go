@@ -156,9 +156,9 @@ func (c *Client) Threads(ctx context.Context, f control.Filter) ([]control.Threa
 	return out, err
 }
 
-func (c *Client) Thread(ctx context.Context, id control.ThreadID, recent int) (control.ThreadDetail, error) {
+func (c *Client) Thread(ctx context.Context, id control.ThreadID, recent, events int) (control.ThreadDetail, error) {
 	var out control.ThreadDetail
-	err := c.call(ctx, "Thread", threadArgs{ID: id, Recent: recent}, &out)
+	err := c.call(ctx, "Thread", threadArgs{ID: id, Recent: recent, Events: events}, &out)
 	return out, err
 }
 

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
@@ -136,6 +137,43 @@ func (s *Store) Events(ctx context.Context, f control.Filter, after uint64, limi
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("store: read events: %w", err)
 	}
+	return out, nil
+}
+
+// Last returns the last n committed events of a thread that keep accepts,
+// newest last.
+func (s *Store) Last(ctx context.Context, id control.ThreadID, n int, keep func(control.Event) bool) ([]control.Event, error) {
+	if n <= 0 {
+		return nil, nil
+	}
+	rows, err := s.DB.QueryContext(ctx, `SELECT pos, time, kind, data FROM events
+		WHERE scope = ? AND thread = ? ORDER BY pos DESC`, id.Scope, id.Key)
+	if err != nil {
+		return nil, fmt.Errorf("store: read events: %w", err)
+	}
+	defer rows.Close()
+	var out []control.Event
+	for len(out) < n && rows.Next() {
+		var (
+			e    = control.Event{Thread: id}
+			ms   int64
+			kind string
+			data []byte
+		)
+		if err := rows.Scan(&e.Pos, &ms, &kind, &data); err != nil {
+			return nil, fmt.Errorf("store: read events: %w", err)
+		}
+		e.Time = time.UnixMilli(ms)
+		e.Kind = control.EventKind(kind)
+		e.Data = json.RawMessage(data)
+		if keep(e) {
+			out = append(out, e)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: read events: %w", err)
+	}
+	slices.Reverse(out)
 	return out, nil
 }
 

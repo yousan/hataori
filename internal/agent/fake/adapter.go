@@ -47,6 +47,10 @@ type Config struct {
 	// the start. The codec watches the screen for it, answers it with
 	// Enter, and watches on until its first turn ends.
 	Dialog string `json:"dialog"`
+	// ReportModel and ReportEffort, when set, are what the program reports
+	// when it is ready, instead of the model and effort it was asked for.
+	ReportModel  string `json:"report_model"`
+	ReportEffort string `json:"report_effort"`
 }
 
 // Adapter is the fake agent.
@@ -119,6 +123,12 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 	}
 	if a.c.ConfigDir != "" {
 		argv = append(argv, "--config", a.c.ConfigDir)
+	}
+	if a.c.ReportModel != "" {
+		argv = append(argv, "--report-model", a.c.ReportModel)
+	}
+	if a.c.ReportEffort != "" {
+		argv = append(argv, "--report-effort", a.c.ReportEffort)
 	}
 	if a.c.Terminal && a.c.Dialog != "" {
 		argv = append(argv, "--dialog", a.c.Dialog)

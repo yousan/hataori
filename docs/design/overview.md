@@ -1002,8 +1002,10 @@ Declared in `internal/control`, `internal/surface` and `internal/agent`; the pac
 
 type API interface {
 	Threads(ctx context.Context, f Filter) ([]ThreadInfo, error)
-	// Thread returns state, open requests and the last output, capped at recent bytes.
-	Thread(ctx context.Context, id ThreadID, recent int) (ThreadDetail, error)
+	// Thread returns state, open requests and the last output, capped at
+	// recent bytes, and the thread's last events, at most events of them
+	// (and at most MaxEvents), newest last.
+	Thread(ctx context.Context, id ThreadID, recent, events int) (ThreadDetail, error)
 
 	Start(ctx context.Context, r StartRequest) (ThreadID, error)
 	// key makes Send safe to repeat; for chat, the surface's message id.
@@ -1051,6 +1053,30 @@ type Caller struct {
 	Principal Principal // a person's name (section 5.5)
 	Scopes    []string  // the scopes it may see and act in
 	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop
+	// NoText leaves text written by a person or an agent out of what the
+	// caller reads: ThreadInfo.Last, ThreadDetail.Recent, the text of its
+	// requests, and the text fields of events (section 7.3). The thread's
+	// title, taken from its first prompt, is not left out.
+	NoText bool
+}
+
+// Fields of ThreadInfo, and so of ThreadDetail, besides its id, number,
+// title, repository, state, who started it and when (section 7.2).
+type ThreadInfo struct {
+	// ...
+	Agent      string // the agent's registered name
+	Model      string // as the agent reports it; as asked for until then
+	Effort     string // the same
+	Turns      int    // turns started in this thread
+	Last       string // the last line of output, at most LastMax bytes; text, so optional
+	Background int    // the background of the thread's last turn_ended event
+}
+
+type ThreadDetail struct {
+	ThreadInfo
+	Requests []Request
+	Recent   string
+	Events   []Event // the last events asked for, newest last
 }
 
 // Start, Send, Answer and Stop are refused unless Principal is the owner or
@@ -1129,21 +1155,12 @@ type API interface {
 // New optional fields of ThreadInfo, and so of ThreadDetail.
 type ThreadInfo struct {
 	// ...the fields above, and:
-	Agent      string      // the agent's registered name
-	Model      string      // as the agent reports it; as asked for until then
-	Effort     string      // the same
-	Turns      int         // turns run in this thread
-	Last       string      // the last line of output, capped; text, so optional
-	Background int         // background tasks still running after the last turn
-	Context    *Context    // absent until the agent reports it
-	Tokens     *TokenCount // absent until the agent reports usage
+	Context *Context    // absent until the agent reports it
+	Tokens  *TokenCount // absent until the agent reports usage
 }
 
 type Context struct{ Used, Size int64 } // tokens
 type TokenCount struct{ Turn, Today int64 } // today: the instance's time zone
-
-// Thread takes an optional count of recent events, which ThreadDetail.Events
-// carries, newest last.
 
 // WorkspaceState: declared above, with Workspace.
 
@@ -1174,12 +1191,13 @@ The `usage` event gains optional fields, all counts of tokens for the turn so fa
 
 | Change | Protocol |
 |---|---|
-| `ThreadInfo`: `agent`, `model`, `effort`, `turns`, `last`, `background`, `context`, `tokens` | minor: optional fields |
-| `Thread`: argument `events`; `ThreadDetail`: `events` | minor: optional fields |
+| `ThreadInfo`: `context`, `tokens` | minor: optional fields |
 | `usage` event: the fields above | minor: optional fields |
 | `Workspace`, `Terminal`, `HostTerminals`, `HostScreen`, `SignInLink` | minor: new operations |
 | `Terminal` turns its connection into a stream, as `Events` does | part of the new operation |
 | `Limits`; `WorkspaceState.PullRequest` | minor, and only after their research |
+
+Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`.
 
 ### Surface driver
 

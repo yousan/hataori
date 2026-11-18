@@ -157,7 +157,7 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 			fmt.Fprintf(stderr, "hataori: no thread of this instance has the key %q\n", pos[0])
 			return exitNoThread
 		}
-		d, err := c.Thread(ctx, t.ID, 0)
+		d, err := c.Thread(ctx, t.ID, 0, 0)
 		if err != nil {
 			return fail(err)
 		}
@@ -196,12 +196,16 @@ type line struct {
 	Title    string    `json:"title"`
 	Repo     string    `json:"repo"`
 	Updated  time.Time `json:"updated"`
+	Agent    string    `json:"agent,omitempty"`
+	Model    string    `json:"model,omitempty"`
+	Effort   string    `json:"effort,omitempty"`
+	Turns    int       `json:"turns"`
 	Requests int       `json:"requests,omitempty"` // open questions, for thread
 }
 
 func threadLine(t control.ThreadInfo) line {
 	return line{Scope: t.ID.Scope, Key: t.ID.Key, Number: t.Number, State: string(t.State), Title: t.Title,
-		Repo: t.Repo, Updated: t.Updated}
+		Repo: t.Repo, Updated: t.Updated, Agent: t.Agent, Model: t.Model, Effort: t.Effort, Turns: t.Turns}
 }
 
 // find returns the thread whose key is key, in any scope of the instance.
