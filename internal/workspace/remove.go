@@ -144,20 +144,30 @@ func (r Remover) Remove(ctx context.Context, dir string) (string, error) {
 	}
 	var b [4]byte
 	rand.Read(b[:])
-	to := filepath.Join(trash, r.now().UTC().Format(trashStamp)+"-"+hex.EncodeToString(b[:])+"-"+Segment(filepath.Base(abs)))
-	if err := renameNoReplace(abs, to); err != nil {
+	name := r.now().UTC().Format(trashStamp) + "-" + hex.EncodeToString(b[:]) + "-" + Segment(filepath.Base(abs))
+	// First under a name the purge never takes: a directory that turns out
+	// not to be the checked one and cannot be put back stays there.
+	pending := filepath.Join(trash, pendingPrefix+name)
+	if err := renameNoReplace(abs, pending); err != nil {
 		return "", &Refusal{Reason: NotWorkspace, Detail: "rename into trash: " + err.Error()}
 	}
 	// A directory swapped in between the last look and the rename is put
 	// back where it was.
-	if moved, err := os.Lstat(to); err != nil || !os.SameFile(before, moved) {
-		if err := renameNoReplace(to, abs); err != nil {
-			return "", &Refusal{Reason: NotWorkspace, Detail: abs + " was replaced during the removal and is left at " + to}
+	if moved, err := os.Lstat(pending); err != nil || !os.SameFile(before, moved) {
+		if err := renameNoReplace(pending, abs); err != nil {
+			return "", &Refusal{Reason: NotWorkspace, Detail: abs + " was replaced during the removal and is left at " + pending}
 		}
 		return "", &Refusal{Reason: NotWorkspace, Detail: abs + " was replaced during the removal"}
 	}
+	to := filepath.Join(trash, name)
+	if err := renameNoReplace(pending, to); err != nil {
+		return "", &Refusal{Reason: NotWorkspace, Detail: "the workspace is at " + pending + ": " + err.Error()}
+	}
 	return to, nil
 }
+
+// pendingPrefix starts the name of a workspace on its way into trash.
+const pendingPrefix = "pending-"
 
 // realDir returns dir when it is a directory itself, not a link to one,
 // making it first when make is set.

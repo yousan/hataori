@@ -504,7 +504,7 @@ func TestPurgeDeletesOnlyOldTrash(t *testing.T) {
 	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 	old := now.Add(-48 * time.Hour).Format(trashStamp)
 	recent := now.Add(-time.Hour).Format(trashStamp)
-	for _, name := range []string{old + "-00000000-a", recent + "-00000000-b", "not-from-removal", "2026-c", "XXXXXXXXXXXXXXXX-d", old + "-backup", "20261399T000000Z-00000000-e"} {
+	for _, name := range []string{old + "-00000000-a", recent + "-00000000-b", "not-from-removal", "2026-c", "XXXXXXXXXXXXXXXX-d", old + "-backup", "20261399T000000Z-00000000-e", "pending-" + old + "-00000000-f"} {
 		os.MkdirAll(filepath.Join(trash, name, "d"), 0o700)
 		os.WriteFile(filepath.Join(trash, name, "d", "f"), []byte("x"), 0o600)
 	}
@@ -526,7 +526,7 @@ func TestPurgeDeletesOnlyOldTrash(t *testing.T) {
 	for _, e := range entries {
 		left = append(left, e.Name())
 	}
-	if want := []string{"2026-c", old + "-backup", recent + "-00000000-b", "20261399T000000Z-00000000-e", "XXXXXXXXXXXXXXXX-d", "not-from-removal"}; fmt.Sprint(left) != fmt.Sprint(want) {
+	if want := []string{"2026-c", old + "-backup", recent + "-00000000-b", "20261399T000000Z-00000000-e", "XXXXXXXXXXXXXXXX-d", "not-from-removal", "pending-" + old + "-00000000-f"}; fmt.Sprint(left) != fmt.Sprint(want) {
 		t.Fatalf("left %v, want %v", left, want)
 	}
 	if _, err := os.Stat(filepath.Join(tmp, "outside")); err != nil {
