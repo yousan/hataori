@@ -147,7 +147,38 @@ function lintHTML(file) {
   return found;
 }
 
+// Check translations using the same literal values that TypeScript checks for keys.
+function lintCatalog(file) {
+  const src = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+  const objects = new Map();
+  for (const statement of src.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const decl of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(decl.name) || !decl.initializer) continue;
+      const init = ts.isAsExpression(decl.initializer) ? decl.initializer.expression : decl.initializer;
+      if (ts.isObjectLiteralExpression(init)) objects.set(decl.name.text, init);
+    }
+  }
+  const english = objects.get("en");
+  const japanese = objects.get("ja");
+  if (!english || !japanese) return [`${relative(root, file)}:1: missing catalog`];
+  const entries = (obj) => new Map(obj.properties.filter(ts.isPropertyAssignment).map((p) => [p.name.text, p.initializer]));
+  const en = entries(english);
+  const found = [];
+  for (const [key, value] of entries(japanese)) {
+    const original = en.get(key);
+    if (!original || !ts.isStringLiteral(original) || !ts.isStringLiteral(value)) continue;
+    const placeholders = (text) => [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join(",");
+    if (!value.text.trim() || placeholders(value.text) !== placeholders(original.text)) {
+      const line = src.getLineAndCharacterOfPosition(value.getStart(src)).line + 1;
+      found.push(`${relative(root, file)}:${line}: empty translation or mismatched placeholders for ${key}`);
+    }
+  }
+  return found;
+}
+
 function lint(file) {
+  if (resolve(file) === catalog || file.endsWith("catalog-fixture.ts")) return lintCatalog(file);
   if (file.endsWith(".html")) return lintHTML(file);
   if (/\.(ts|tsx|mts|cts)$/.test(file) && !file.endsWith(".d.ts") && resolve(file) !== catalog) return lintSource(file);
   return [];
@@ -172,6 +203,6 @@ if (expectFail) {
 const found = files.flatMap(lint);
 for (const f of found) console.error(f);
 if (found.length) {
-  console.error(`\n${found.length} user-visible string(s) outside the catalog: add them to src/catalog.ts and use t("key").`);
+  console.error(`\n${found.length} string lint error(s); see diagnostics above.`);
   process.exit(1);
 }
