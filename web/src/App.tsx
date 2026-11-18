@@ -4,6 +4,7 @@ import { useLayout } from "./layout";
 import { useDashboard, useNow } from "./live";
 import { StatusBar } from "./StatusBar";
 import { TabBar, tabID } from "./TabBar";
+import { ThreadPane } from "./ThreadPane";
 import { active, close, initialTabs, panes, type Split, type TabKey, type Tabs, threadOf, threadTab, view } from "./tabs";
 import { useTheme } from "./theme";
 import { type Density, Tree } from "./Tree";
@@ -42,6 +43,10 @@ export function App() {
   const thread = (n: number) => d.threads?.find((x) => x.number === n);
   const current = threadOf(active(tabs));
 
+  const paneThread = (k: TabKey) => {
+    const n = threadOf(k);
+    return n === null ? undefined : thread(n);
+  };
   const paneName = (k: TabKey) => {
     const n = threadOf(k);
     if (n === null) return t("tabs.all");
@@ -98,7 +103,11 @@ export function App() {
                 {k ? (
                   <>
                     <h2 className="pane-name">{paneName(k)}</h2>
-                    <p className="empty">{t("pane.later")}</p>
+                    {paneThread(k) ? (
+                      <ThreadPane key={k} x={paneThread(k)!} subscribe={d.subscribe} />
+                    ) : (
+                      <p className="empty">{t("pane.later")}</p>
+                    )}
                   </>
                 ) : (
                   <p className="empty">{t("pane.empty")}</p>

@@ -68,6 +68,13 @@ const en = {
 
   "pane.thread": "#{n} {title}",
   "pane.empty": "Nothing viewed before.",
+  "pane.noProcess": "no process",
+  "events.textHidden": "(text)",
+  "events.toolStarted": "tool {tool}",
+  "events.toolEnded": "tool {tool} done",
+  "events.turnStarted": "turn started",
+  "events.turnEnded": "turn ended: {outcome}",
+  "events.turnEndedWhy": "turn ended: {outcome} ({reason})",
   "pane.later": "This pane's content comes later.",
   "details.label": "Details",
   "details.later": "Details come later.",

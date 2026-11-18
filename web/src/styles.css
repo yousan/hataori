@@ -575,3 +575,63 @@ body {
   padding: 12px;
   overflow: auto;
 }
+
+/* A thread's pane: its terminal, or its events. */
+.pane.active,
+.pane {
+  display: flex;
+  flex-direction: column;
+}
+
+.thread-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-view {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.xterm-host {
+  display: inline-block;
+}
+
+.no-process {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.events-view {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.ev {
+  display: flex;
+  gap: 8px;
+}
+
+.ev-time {
+  flex: none;
+  color: var(--muted);
+}
+
+.ev-line {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ev-turn_started .ev-line,
+.ev-turn_ended .ev-line,
+.ev-tool_started .ev-line,
+.ev-tool_ended .ev-line {
+  color: var(--muted);
+}
