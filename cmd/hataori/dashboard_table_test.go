@@ -243,12 +243,19 @@ func TestDashboardAllThreadsTable(t *testing.T) {
 	b.until("the full thread's tab, opened and active", fmt.Sprintf(`%s === 'thread:%d' && %s === 'all,thread:%d,thread:%d'`, activeTab, nFull, openTabs, nSparse, nFull))
 	clickRow(nSparse)
 	b.until("the sparse thread's tab selected, not opened again", fmt.Sprintf(`%s === 'thread:%d' && %s === 'all,thread:%d,thread:%d'`, activeTab, nSparse, openTabs, nSparse, nFull))
+	// From the keyboard: the row's open button, focused, takes Enter.
+	b.click(`.tab[data-tab=all] .tab-main`)
+	b.until("the table", `!!document.querySelector('.all-threads')`)
+	b.eval(fmt.Sprintf(`document.querySelector('.all-threads tr[data-thread="%d"] .row-open').focus(), true`, nFull), nil)
+	b.call("Input.dispatchKeyEvent", map[string]any{"type": "keyDown", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13, "text": "\r"})
+	b.call("Input.dispatchKeyEvent", map[string]any{"type": "keyUp", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13})
+	b.until("the full thread's tab selected from the keyboard", fmt.Sprintf(`%s === 'thread:%d' && %s === 'all,thread:%d,thread:%d'`, activeTab, nFull, openTabs, nSparse, nFull))
 	b.click(`.tab[data-tab=all] .tab-main`)
 	b.until("the table", `!!document.querySelector('.all-threads')`)
 
 	// 3. A state change in the event stream shows in the row within two
 	// seconds of the event.
-	changed := func(n int64, state control.State, after time.Time) {
+	changed := func(id control.ThreadID, n int64, state control.State, after time.Time) {
 		t.Helper()
 		var seen time.Time
 		for deadline := time.Now().Add(20 * time.Second); ; time.Sleep(20 * time.Millisecond) {
@@ -265,7 +272,7 @@ func TestDashboardAllThreadsTable(t *testing.T) {
 		_, out, _ := cli(t, "events", "--root", root)
 		var at time.Time
 		for _, e := range lines(t, out) {
-			if e["kind"] != "state" {
+			if th, _ := e["thread"].(map[string]any); e["kind"] != "state" || th["scope"] != id.Scope || th["key"] != id.Key {
 				continue
 			}
 			d, _ := e["data"].(map[string]any)
@@ -291,7 +298,7 @@ func TestDashboardAllThreadsTable(t *testing.T) {
 	if err := c.Send(ctx, full, "k-ask", control.Input{Text: "ask Go on?"}, control.Refuse); err != nil {
 		t.Fatal(err)
 	}
-	changed(nFull, control.Waiting, before)
+	changed(full, nFull, control.Waiting, before)
 	d, err := c.Thread(ctx, full, 0, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -303,7 +310,7 @@ func TestDashboardAllThreadsTable(t *testing.T) {
 	if err := c.Answer(ctx, control.RequestID(d.Requests[0].ID), control.Answer{Text: "yes"}); err != nil {
 		t.Fatal(err)
 	}
-	changed(nFull, control.Idle, before)
+	changed(full, nFull, control.Idle, before)
 
 	var v []string
 	b.eval(`window.__csp`, &v)

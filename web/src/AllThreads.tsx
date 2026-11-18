@@ -39,22 +39,27 @@ function Row(props: { x: ThreadInfo; w: Workspace | undefined; now: number; sele
       className={selected ? "selected" : undefined}
       data-thread={x.number}
       data-state={x.state}
-      tabIndex={0}
-      aria-selected={selected}
+      aria-current={selected ? "true" : undefined}
       onClick={() => onOpen(x.number)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onOpen(x.number);
-        }
-      }}
     >
       <td data-col="state">
         <span className={`dot state-${x.state}`} title={stateName(x.state)} />
       </td>
-      <td data-col="number">{t("thread.number", { n: x.number })}</td>
+      <td data-col="number">
+        <button
+          type="button"
+          className="row-open"
+          aria-label={t("table.open", { n: x.number })}
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpen(x.number);
+          }}
+        >
+          {t("thread.number", { n: x.number })}
+        </button>
+      </td>
       <td data-col="title" className="cell-title">
-        {x.title}
+        {x.title || dash()}
       </td>
       <td data-col="agent">{t("table.agentModel", { agent: x.agent || dash(), model: x.model || dash() })}</td>
       <td data-col="age" data-since={x.updated}>
@@ -64,7 +69,14 @@ function Row(props: { x: ThreadInfo; w: Workspace | undefined; now: number; sele
         {pct === null ? (
           dash()
         ) : (
-          <span className="ctx-bar" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
+          <span
+            className="ctx-bar"
+            role="meter"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.min(100, Math.max(0, pct))}
+            aria-valuetext={t("table.percent", { pct })}
+          >
             <span className="ctx-fill" style={{ width: `${Math.min(100, pct)}%` }} />
             <span className="ctx-text">{t("table.percent", { pct })}</span>
           </span>

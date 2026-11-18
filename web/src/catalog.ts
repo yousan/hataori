@@ -89,6 +89,7 @@ const en = {
   "table.unpushed": "Unpushed",
   "table.last": "Last output",
   "table.none": "—",
+  "table.open": "Open thread #{n}",
   "table.agentModel": "{agent} · {model}",
   "table.stateAge": "{state} · {age}",
   "table.percent": "{pct}%",

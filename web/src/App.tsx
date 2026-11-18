@@ -43,7 +43,7 @@ export function App() {
     }
   };
   const thread = (n: number) => d.threads?.find((x) => x.number === n);
-  const workspaces = useWorkspaces(d.threads);
+  const workspaces = useWorkspaces(d.threads, panes(tabs, split).includes(allTab));
   const current = threadOf(active(tabs));
 
   const paneThread = (k: TabKey) => {
