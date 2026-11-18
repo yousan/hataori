@@ -660,6 +660,166 @@ func (x *removal) alternates(repo, content string) {
 	}
 }
 
+// A remote outside the root can keep its objects in the workspace through
+// a link below its objects directory: git reads pack/ and the fan-out
+// directories through links. The workspace has a commit only there.
+func TestRefuseRemoteWithObjectsLinkedIntoTheWorkspace(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		reason Reason
+		remote func(x *removal) string
+	}{
+		{"pack directory", RemoteIsLocal, func(x *removal) string {
+			r := x.namingRemote("r.git")
+			x.repack()
+			os.Remove(filepath.Join(r, "objects", "pack")) // empty, made by git init under x.tmp
+			x.symlink(filepath.Join(x.clone, ".git", "objects", "pack"), filepath.Join(r, "objects", "pack"))
+			return r
+		}},
+		{"pack file", RemoteIsLocal, func(x *removal) string {
+			r := x.namingRemote("r.git")
+			x.repack()
+			for _, f := range x.packFiles() {
+				x.symlink(f, filepath.Join(r, "objects", "pack", filepath.Base(f)))
+			}
+			return r
+		}},
+		{"fan-out directory", RemoteIsLocal, func(x *removal) string {
+			r := x.namingRemote("r.git")
+			dir, _ := x.looseHead()
+			x.symlink(dir, filepath.Join(r, "objects", filepath.Base(dir)))
+			return r
+		}},
+		{"loose object", RemoteIsLocal, func(x *removal) string {
+			r := x.namingRemote("r.git")
+			dir, file := x.looseHead()
+			x.symlink(filepath.Join(dir, file), filepath.Join(r, "objects", filepath.Base(dir), file))
+			return r
+		}},
+		// The remote's alternate, outside the root, has the link.
+		{"in an alternate", RemoteIsLocal, func(x *removal) string {
+			r := x.namingRemote("r.git")
+			alt := x.bareRepo("alt.git")
+			x.alternates(r, filepath.Join(alt, "objects")+"\n")
+			dir, _ := x.looseHead()
+			x.symlink(dir, filepath.Join(alt, "objects", filepath.Base(dir)))
+			return r
+		}},
+		// pack/ is a link outside the root, and a file in what it leads
+		// to is a link into the workspace.
+		{"through a linked pack directory", RemoteIsLocal, func(x *removal) string {
+			r := x.namingRemote("r.git")
+			x.repack()
+			outside := filepath.Join(x.tmp, "pack-outside")
+			os.Mkdir(outside, 0o700)
+			for _, f := range x.packFiles() {
+				x.symlink(f, filepath.Join(outside, filepath.Base(f)))
+			}
+			os.Remove(filepath.Join(r, "objects", "pack"))
+			x.symlink(outside, filepath.Join(r, "objects", "pack"))
+			return r
+		}},
+		// info/ holds the commit-graph, and its chain in commit-graphs/.
+		{"commit-graph chain", RemoteIsLocal, func(x *removal) string {
+			r := x.namingRemote("r.git")
+			graph := filepath.Join(x.clone, ".git", "objects", "info", "graph")
+			os.WriteFile(graph, nil, 0o600)
+			x.symlink(graph, filepath.Join(r, "objects", "info", "commit-graphs", "graph-x.graph"))
+			return r
+		}},
+		// A link that cannot be resolved cannot be told.
+		{"dangling link", RemoteUnresolved, func(x *removal) string {
+			r := x.namingRemote("r.git")
+			dir, file := x.looseHead()
+			os.Mkdir(filepath.Join(r, "objects", filepath.Base(dir)), 0o700)
+			x.symlink(filepath.Join(x.tmp, "gone"), filepath.Join(r, "objects", filepath.Base(dir), file))
+			return r
+		}},
+		{"too many entries", RemoteUnresolved, func(x *removal) string {
+			r := x.namingRemote("r.git")
+			for i := 0; i < 3; i++ {
+				os.WriteFile(filepath.Join(r, "objects", "pack", "f"+strconv.Itoa(i)), nil, 0o600)
+			}
+			old := objectEntryLimit
+			objectEntryLimit = 2
+			x.t.Cleanup(func() { objectEntryLimit = old })
+			return r
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			x := newRemoval(t)
+			x.commit(x.clone, "w") // on no remote but the one below
+			x.git(x.clone, "remote", "set-url", "origin", tc.remote(x))
+			wantRefusal(t, x.check(), tc.reason, "")
+		})
+	}
+}
+
+// Links below the objects directory that lead outside the root, and links
+// into the workspace where git does not read (an upper-case fan-out
+// directory, a directory below pack/, a name git does not use): the
+// remote counts.
+func TestRemoteWithObjectsLinkedOutsideTheRootCounts(t *testing.T) {
+	x := newRemoval(t)
+	r := x.shared(x.bare, "r.git")
+	objects := filepath.Join(r, "objects")
+	copied := filepath.Join(x.tmp, "objects-outside")
+	if err := os.CopyFS(copied, os.DirFS(filepath.Join(x.bare, "objects"))); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(filepath.Join(objects, "pack"))
+	x.symlink(filepath.Join(copied, "pack"), filepath.Join(objects, "pack"))
+	ws := filepath.Join(x.clone, ".git", "objects")
+	x.symlink(ws, filepath.Join(objects, "AB"))
+	x.symlink(ws, filepath.Join(objects, "unused"))
+	os.Mkdir(filepath.Join(copied, "pack", "sub"), 0o700)
+	x.symlink(ws, filepath.Join(copied, "pack", "sub", "x.pack"))
+	x.git(x.clone, "remote", "set-url", "origin", r)
+	if err := x.check(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// namingRemote is an empty bare repository at <tmp>/<name> whose main names
+// the workspace's HEAD: it has the ref but none of the objects.
+func (x *removal) namingRemote(name string) string {
+	x.t.Helper()
+	r := x.bareRepo(name)
+	head := strings.TrimSpace(x.git(x.clone, "rev-parse", "HEAD"))
+	if err := os.WriteFile(filepath.Join(r, "refs", "heads", "main"), []byte(head+"\n"), 0o600); err != nil {
+		x.t.Fatal(err)
+	}
+	return r
+}
+
+// repack packs the workspace's objects.
+func (x *removal) repack() {
+	x.t.Helper()
+	x.git(x.clone, "repack", "-q", "-a", "-d")
+}
+
+// packFiles are the files of the workspace's packs.
+func (x *removal) packFiles() []string {
+	x.t.Helper()
+	files, err := filepath.Glob(filepath.Join(x.clone, ".git", "objects", "pack", "pack-*"))
+	if err != nil || len(files) == 0 {
+		x.t.Fatalf("no pack files: %v", err)
+	}
+	return files
+}
+
+// looseHead is the fan-out directory and file name of the workspace's HEAD
+// commit, a loose object.
+func (x *removal) looseHead() (string, string) {
+	x.t.Helper()
+	head := strings.TrimSpace(x.git(x.clone, "rev-parse", "HEAD"))
+	dir := filepath.Join(x.clone, ".git", "objects", head[:2])
+	if _, err := os.Stat(filepath.Join(dir, head[2:])); err != nil {
+		x.t.Fatal(err)
+	}
+	return dir, head[2:]
+}
+
 func TestRefuseRemoteRewrittenAgain(t *testing.T) {
 	x := newRemoval(t)
 	b := filepath.Join(x.root, Dir, "c", "s", "other", "b.git")

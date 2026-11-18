@@ -858,6 +858,10 @@ func (c *checker) localRemote(u, dir string) (string, Reason) {
 // remote's own file and five more levels.
 const alternateDepth = 5
 
+// objectEntryLimit bounds how many entries one check lists below a
+// remote's objects directories.
+var objectEntryLimit = 1 << 20
+
 // alternates names why the objects git serves for a remote whose paths are
 // reads come from inside a root, or "". For each one it walks the objects
 // directory and the objects/info/alternates git follows from there, in
@@ -867,6 +871,7 @@ const alternateDepth = 5
 // resolved or is not a directory, or a file nested deeper than git reads,
 // is an error: what git serves then cannot be told.
 func (c *checker) alternates(reads []string) (Reason, error) {
+	budget := objectEntryLimit
 	for _, r := range reads {
 		objects, reason, err := c.walk(r + "/objects")
 		if missing(err) {
@@ -874,8 +879,11 @@ func (c *checker) alternates(reads []string) (Reason, error) {
 		} else if err != nil || reason != "" {
 			return reason, err
 		}
+		if reason, err := c.objectLinks(objects, &budget); err != nil || reason != "" {
+			return reason, err
+		}
 		seen := map[string]bool{objects: true}
-		if reason, err := c.readAlternates(objects, 0, seen); err != nil || reason != "" {
+		if reason, err := c.readAlternates(objects, 0, seen, &budget); err != nil || reason != "" {
 			return reason, err
 		}
 	}
@@ -885,7 +893,7 @@ func (c *checker) alternates(reads []string) (Reason, error) {
 // readAlternates follows objects/info/alternates of the objects directory
 // objects at depth as git does: depth first, each entry linked and its own
 // alternates read before the next, a directory seen before skipped.
-func (c *checker) readAlternates(objects string, depth int, seen map[string]bool) (Reason, error) {
+func (c *checker) readAlternates(objects string, depth int, seen map[string]bool, budget *int) (Reason, error) {
 	file, reason, err := c.walk(objects + "/info/alternates")
 	if missing(err) {
 		return "", nil
@@ -920,11 +928,96 @@ func (c *checker) readAlternates(objects string, depth int, seen map[string]bool
 			continue
 		}
 		seen[alt] = true
-		if reason, err := c.readAlternates(alt, depth+1, seen); err != nil || reason != "" {
+		if reason, err := c.objectLinks(alt, budget); err != nil || reason != "" {
+			return reason, err
+		}
+		if reason, err := c.readAlternates(alt, depth+1, seen, budget); err != nil || reason != "" {
 			return reason, err
 		}
 	}
 	return "", nil
+}
+
+// objectLinks names why a file git may read as an object below the
+// resolved objects directory objects comes from inside a root, or "".
+// git reads every file in pack/ and the lower-case fan-out directories,
+// through links; info/ holds the alternates and the commit-graph. Each of
+// those directories that is a link, and each link in them, is walked as
+// walk does; nothing else is followed. Listing more than budget entries in
+// all is an error: what git reads then is not told.
+func (c *checker) objectLinks(objects string, budget *int) (Reason, error) {
+	return c.eachEntry(objects, budget, func(e fs.DirEntry) (Reason, error) {
+		name := e.Name()
+		if name != "pack" && name != "info" && !fanOut(name) {
+			return "", nil // git reads nothing there
+		}
+		dir := filepath.Join(objects, name)
+		if e.Type()&fs.ModeSymlink != 0 {
+			resolved, reason, err := c.walk(dir)
+			if err != nil || reason != "" {
+				return reason, err
+			}
+			dir = resolved
+		}
+		if fi, err := os.Stat(dir); err != nil {
+			return "", err
+		} else if !fi.IsDir() {
+			return "", nil // git reads no objects from a file there
+		}
+		return c.linksIn(dir, budget, name == "info")
+	})
+}
+
+// linksIn walks every link directly in dir; in info/ also those in
+// commit-graphs/.
+func (c *checker) linksIn(dir string, budget *int, info bool) (Reason, error) {
+	return c.eachEntry(dir, budget, func(e fs.DirEntry) (Reason, error) {
+		p := filepath.Join(dir, e.Name())
+		switch {
+		case e.Type()&fs.ModeSymlink != 0:
+			_, reason, err := c.walk(p)
+			return reason, err
+		case info && e.Name() == "commit-graphs" && e.IsDir():
+			return c.linksIn(p, budget, false)
+		}
+		return "", nil
+	})
+}
+
+// eachEntry calls fn with each entry of dir until it names a reason or
+// fails, reading the directory in batches and counting each entry against
+// budget.
+func (c *checker) eachEntry(dir string, budget *int, fn func(fs.DirEntry) (Reason, error)) (Reason, error) {
+	f, err := os.Open(dir)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	for {
+		batch, err := f.ReadDir(1024)
+		if *budget -= len(batch); *budget < 0 {
+			return "", fmt.Errorf("more than %d entries below the objects directories", objectEntryLimit)
+		}
+		for _, e := range batch {
+			if reason, err := fn(e); err != nil || reason != "" {
+				return reason, err
+			}
+		}
+		if errors.Is(err, io.EOF) {
+			return "", nil
+		} else if err != nil {
+			return "", err
+		}
+		if err := c.ctx.Err(); err != nil {
+			return "", err
+		}
+	}
+}
+
+// fanOut reports a name git reads loose objects from: two lower-case hex
+// digits.
+func fanOut(name string) bool {
+	return len(name) == 2 && strings.IndexFunc(name, func(r rune) bool { return !('0' <= r && r <= '9' || 'a' <= r && r <= 'f') }) < 0
 }
 
 // walk resolves the absolute path p one component at a time, as the
