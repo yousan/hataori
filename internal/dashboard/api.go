@@ -95,7 +95,7 @@ func writeJSON(w http.ResponseWriter, v any) {
 }
 
 func (s *Server) threads(w http.ResponseWriter, r *http.Request) {
-	ts, err := s.API.Threads(r.Context(), control.Filter{})
+	ts, err := api(r).Threads(r.Context(), control.Filter{})
 	if err != nil {
 		s.apiError(w, err)
 		return
@@ -134,7 +134,7 @@ func (s *Server) thread(w http.ResponseWriter, r *http.Request) {
 		var events int
 		if events, err = count(r, "events", defaultEvents, control.MaxEvents); err == nil {
 			var d control.ThreadDetail
-			if d, err = s.API.Thread(r.Context(), id, recent, events); err != nil {
+			if d, err = api(r).Thread(r.Context(), id, recent, events); err != nil {
 				s.apiError(w, err)
 				return
 			}
@@ -165,7 +165,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	stream(s, w, r, func(ctx context.Context) (<-chan control.Event, error) {
-		return s.API.Events(ctx, control.Filter{}, after)
+		return api(r).Events(ctx, control.Filter{}, after)
 	}, s.apiError, func(e control.Event) message {
 		m := message{id: strconv.FormatUint(e.Pos, 10), data: e}
 		if e.Kind == control.CaughtUp {

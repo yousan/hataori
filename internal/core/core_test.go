@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -238,24 +239,27 @@ func TestWorkspaceOfAThread(t *testing.T) {
 	}
 }
 
-type fakeSignIn struct{}
+// fakeSignIn records the people it made links for.
+type fakeSignIn struct{ people *[]string }
 
-func (fakeSignIn) NewLink(context.Context) (string, error) {
+func (f fakeSignIn) NewLink(_ context.Context, person string) (string, error) {
+	*f.people = append(*f.people, person)
 	return "https://dash.example.com/signin?t=x", nil
 }
 
 // SignInLink needs OpSignIn, which a caller with every other operation,
-// such as the dashboard's or a chat front end's, does not have.
-func TestSignInLinkOnlyForTheSocketOwner(t *testing.T) {
+// such as the dashboard's, does not have.
+func TestSignInLinkNeedsOpSignIn(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, fakeOwner{})
 	socket := f.core.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all | control.OpSignIn})
 	if _, err := socket.SignInLink(ctx); !errors.Is(err, ErrNoDashboard) {
 		t.Fatalf("without a dashboard: %v", err)
 	}
-	f.core.SignIn = fakeSignIn{}
-	if link, err := socket.SignInLink(ctx); err != nil || link == "" {
-		t.Fatalf("the socket's owner: %q, %v", link, err)
+	var made []string
+	f.core.SignIn = fakeSignIn{&made}
+	if link, err := socket.SignInLink(ctx); err != nil || link == "" || !slices.Equal(made, []string{"owner"}) {
+		t.Fatalf("the socket's owner: %q, %v, links for %q", link, err, made)
 	}
 	for _, c := range []control.Caller{
 		{Principal: "owner", Scopes: []string{"s"}, May: all},
@@ -264,6 +268,47 @@ func TestSignInLinkOnlyForTheSocketOwner(t *testing.T) {
 		if _, err := f.core.As(c).SignInLink(ctx); !errors.Is(err, ErrForbidden) {
 			t.Errorf("caller %+v: %v", c, err)
 		}
+	}
+}
+
+// A chat front end asks for a link for the person who asked: the core
+// resolves the id and makes the link for that person when they may sign
+// in, today the owner only. A guest and anyone else are refused, get no
+// link, and the refusal is one log line with the client and the id.
+func TestSignInLinkForAPersonInChat(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{})
+	f.core.People = people.New([]people.Person{{Name: "ada", IDs: []string{"chat:111"}}, {Name: "grace", IDs: []string{"chat:333"}}},
+		"ada", map[string][]string{"s": {"grace"}})
+	var made []string
+	f.core.SignIn = fakeSignIn{&made}
+	chat := func(from string) control.API {
+		return f.core.As(control.Caller{From: from, Principal: "ada", Scopes: []string{"s"}, May: all | control.OpSignIn})
+	}
+	if link, err := chat("chat:111").SignInLink(ctx); err != nil || link == "" || !slices.Equal(made, []string{"ada"}) {
+		t.Fatalf("the owner in chat: %q, %v, links for %q", link, err, made)
+	}
+	for _, c := range []struct{ from, reason string }{
+		{"chat:999", "a guest"},
+		{"chat:333", "may not sign in"}, // grace may act in "s", but not sign in
+	} {
+		f.log.Reset()
+		made = nil
+		if _, err := chat(c.from).SignInLink(ctx); !errors.Is(err, ErrForbidden) {
+			t.Errorf("%s: %v", c.from, err)
+		}
+		if len(made) != 0 {
+			t.Errorf("%s: links made for %q", c.from, made)
+		}
+		_, id, _ := strings.Cut(c.from, ":")
+		logged := f.log.String()
+		if strings.Count(logged, "\n") != 1 || !strings.Contains(logged, "op=SignInLink") || !strings.Contains(logged, "client=chat") ||
+			!strings.Contains(logged, "id="+id) || !strings.Contains(logged, c.reason) {
+			t.Errorf("%s: logged %q", c.from, logged)
+		}
+	}
+	if !f.core.MaySignIn("ada") || f.core.MaySignIn("grace") || f.core.MaySignIn("") {
+		t.Fatal("MaySignIn is not the owner only")
 	}
 }
 

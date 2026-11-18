@@ -208,9 +208,18 @@ type HostTerms interface {
 	Screen(ctx context.Context, pane string, owned []int) (screen string, ok bool, err error)
 }
 
-// SignIn makes single-use dashboard sign-in links.
+// SignIn makes single-use dashboard sign-in links. The session a link
+// opens belongs to person.
 type SignIn interface {
-	NewLink(ctx context.Context) (string, error)
+	NewLink(ctx context.Context, person string) (string, error)
+}
+
+// MaySignIn reports whether person may get a dashboard sign-in link, and
+// so whether a dashboard session of theirs is honoured. It is the one rule
+// of who may sign in to the dashboard, for links asked for on the control
+// socket and in chat alike: today the owner only (design, section 10).
+func (c *Core) MaySignIn(person string) bool {
+	return person != "" && person == c.People.Owner()
 }
 
 // ErrNoDashboard is returned by SignInLink when the instance has no
@@ -253,7 +262,13 @@ func (a *api) act(op control.Ops, name, scope string) error {
 	if a.c.People.May(string(a.caller.Principal), scope) {
 		return nil
 	}
-	reason := "the person may not act in the scope"
+	return a.refused(name, scope, "the person may not act in the scope")
+}
+
+// refused logs one line for a call refused because of the caller's person,
+// with the client and the id it came from, and returns ErrForbidden. A
+// caller without a person is a guest, whatever reason says.
+func (a *api) refused(name, scope, reason string) error {
 	if a.caller.Principal == "" {
 		reason = "a guest"
 	}
@@ -265,6 +280,9 @@ func (a *api) act(op control.Ops, name, scope string) error {
 		attrs = append(attrs, "person", string(a.caller.Principal))
 	}
 	a.c.Log.Warn("control call refused", attrs...)
+	if scope == "" {
+		return fmt.Errorf("core: %s: %w", name, ErrForbidden)
+	}
 	return fmt.Errorf("core: %s in scope %q: %w", name, scope, ErrForbidden)
 }
 
@@ -1127,10 +1145,14 @@ func (a *api) SignInLink(ctx context.Context) (string, error) {
 	if err := a.check(control.OpSignIn, "SignInLink", ""); err != nil {
 		return "", err
 	}
+	person := string(a.caller.Principal)
+	if !a.c.MaySignIn(person) {
+		return "", a.refused("SignInLink", "", "the person may not sign in to the dashboard")
+	}
 	if a.c.SignIn == nil {
 		return "", fmt.Errorf("core: SignInLink: %w", ErrNoDashboard)
 	}
-	return a.c.SignIn.NewLink(ctx)
+	return a.c.SignIn.NewLink(ctx, person)
 }
 
 // checkHost allows HostTerminals and HostScreen: only when they are on, and

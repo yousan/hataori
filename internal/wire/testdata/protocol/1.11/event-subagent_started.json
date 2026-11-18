@@ -1,0 +1,1 @@
+{"id":1,"event":{"pos":42,"thread":{"scope":"C0123","key":"T0456"},"time":"2026-01-02T03:04:05.678Z","kind":"subagent_started","data":{"id":"agent_1","name":"general-purpose","session":3}}}

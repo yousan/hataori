@@ -93,7 +93,7 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	stream(s, w, r, func(ctx context.Context) (<-chan control.TerminalChunk, error) {
-		return s.API.Terminal(ctx, id, run, after)
+		return api(r).Terminal(ctx, id, run, after)
 	}, s.notFound, func(c control.TerminalChunk) message {
 		return message{id: strconv.FormatUint(c.Pos, 10) + ":" + c.Run, data: c}
 	})
@@ -131,8 +131,9 @@ func (s *Server) hostScreen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n := 0
+	a := api(r)
 	stream(s, w, r, func(ctx context.Context) (<-chan string, error) {
-		screen, err := s.API.HostScreen(ctx, pane) // before the answer: a refusal is a 404
+		screen, err := a.HostScreen(ctx, pane) // before the answer: a refusal is a 404
 		if err != nil {
 			return nil, err
 		}
@@ -156,7 +157,7 @@ func (s *Server) hostScreen(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				var err error
-				if screen, err = s.API.HostScreen(ctx, pane); err != nil {
+				if screen, err = a.HostScreen(ctx, pane); err != nil {
 					if ctx.Err() == nil && !errors.Is(err, errNotFound) {
 						s.Log.Warn("dashboard host screen", "pane", pane, "err", err)
 					}

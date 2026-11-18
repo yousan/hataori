@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +23,7 @@ import (
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/instance"
+	"github.com/yousan/hataori/internal/people"
 	"github.com/yousan/hataori/internal/wire"
 )
 
@@ -664,25 +666,21 @@ func TestDashboardTerminalStream(t *testing.T) {
 	}
 }
 
-// The dashboard's caller may read the host's terminals only when the
-// config turns them on.
-func TestDashboardHostTerminalsOnlyWhenOn(t *testing.T) {
+// A dashboard session's caller reads only: every scope for the owner, the
+// scopes listing them for anyone else, and the host's terminals only for
+// the owner and only when the config turns them on.
+func TestDashboardCallerOfAPerson(t *testing.T) {
+	dir := people.New([]people.Person{{Name: "ada"}, {Name: "grace"}}, "ada", map[string][]string{"x": {"grace"}})
+	scopes := []string{"s", "x"}
 	for _, on := range []bool{false, true} {
-		root := newRoot(t)
-		p := filepath.Join(root, instance.ConfigFile)
-		b, _ := os.ReadFile(p)
-		var cfg map[string]any
-		json.Unmarshal(b, &cfg)
-		cfg["dashboard"] = map[string]any{"listen": "127.0.0.1:0"}
-		cfg["host_terminals"] = on
-		b, _ = json.Marshal(cfg)
-		os.WriteFile(p, b, 0o600)
-		var got control.Caller
-		dashboardHook = func(c *control.Caller) { got = *c }
-		runDaemon(t, root)()
-		dashboardHook = nil
-		if got.May.Has(control.OpHost) != on || !got.May.Has(control.OpRead) || got.May.Has(control.OpSend) {
-			t.Fatalf("host_terminals %v: the dashboard may %b", on, got.May)
+		owner := dashboardCaller(dir, scopes, on, "ada")
+		if owner.Principal != "ada" || !slices.Equal(owner.Scopes, scopes) || owner.May.Has(control.OpHost) != on ||
+			!owner.May.Has(control.OpRead) || owner.May.Has(control.OpSend) || owner.May.Has(control.OpSignIn) {
+			t.Fatalf("host_terminals %v: the owner's dashboard caller %+v", on, owner)
+		}
+		other := dashboardCaller(dir, scopes, on, "grace")
+		if other.Principal != "grace" || !slices.Equal(other.Scopes, []string{"x"}) || other.May != control.OpRead {
+			t.Fatalf("host_terminals %v: grace's dashboard caller %+v", on, other)
 		}
 	}
 }

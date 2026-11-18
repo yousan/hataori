@@ -16,7 +16,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **1.10**. Both hellos carry it.
+The protocol version is `major.minor`, now **1.11**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 1.0`.
 - With the same major number and different minor numbers they work together.
@@ -186,7 +186,9 @@ Result: `WorkspaceState`
 
 ### Operation `SignInLink`
 
-Makes a link that signs the owner in to the instance's dashboard. The link works once and only for a few minutes. Only the owner's connection on this socket may call it; a client of the control API inside the daemon, such as a chat front end or the dashboard itself, is refused with `forbidden`. An instance without a dashboard answers with `error`. Since 1.7.
+Makes a link that signs a person in to the instance's dashboard. The link works once and only for a few minutes, and the dashboard session it opens belongs to the person it was made for: that session sees only the threads of the scopes the person may act in, every scope for the owner. Since 1.7.
+
+On this socket the link is the owner's: every connection acts as the owner. Since 1.11 a chat front end inside the daemon may also ask, for the person who asked in chat: the daemon resolves the author's id to a person and makes the link only for a person who may sign in, which is the owner alone in this version. A guest, and a person who may not sign in, are refused with `forbidden` and get no link. The dashboard's own client is always refused. An instance without a dashboard answers with `error`. The link and its token are not written to the event log or to any log.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
