@@ -211,7 +211,7 @@ Result: `TerminalChunk`
 
 ### Operation `HostTerminals`
 
-Since 1.10. The terminals on the host that hataori does not own, for display only: every tmux pane, then every other terminal a process holds. A terminal used by a session host's command is left out; it is shown as its thread. hataori never judges these terminals' state and never sends them anything.
+Since 1.10. The terminals on the host that hataori does not own, for display only: every pane of the daemon user's default tmux server, then every other terminal a process holds. Panes of a tmux server on another socket (`tmux -L`, `-S`) are listed as other terminals, without a screen. A terminal used by a session host's command is left out; it is shown as its thread. hataori never judges these terminals' state and never sends them anything.
 
 Only the instance's owner may call it, and only when the config's `host_terminals` is `true`; every other call is answered `forbidden`. It takes no arguments. The result is an array, empty when there is no terminal.
 
@@ -222,7 +222,7 @@ Result: [`HostTerminal`]
 
 ### Operation `HostScreen`
 
-Since 1.10. The visible screen of one tmux pane, as text, one line per row. Allowed as `HostTerminals` is. A pane that `HostTerminals` would not list is answered `not_found`.
+Since 1.10. The visible screen of one tmux pane, as text, one line per row. Allowed as `HostTerminals` is. hataori runs only `tmux list-panes` and `tmux capture-pane`, which change nothing; a hook the user set in their own tmux for these commands (`after-list-panes`, `after-capture-pane`) still runs, as it does when the user runs them. A pane that `HostTerminals` would not list is answered `not_found`.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|

@@ -77,20 +77,23 @@ func (l *Lister) exec(ctx context.Context, c command, extra ...string) ([]byte, 
 	return out, nil
 }
 
-// List returns the terminals on the host, tmux panes first, leaving out
+// List returns the terminals on the host, the default tmux server's panes
+// (or those of the server Tmux names) first, leaving out
 // every terminal that a process under one of owned uses: the session hosts'
 // own terminals. Without a tmux server, or without tmux, there are no panes.
 func (l *Lister) List(ctx context.Context, owned []int) ([]control.HostTerminal, error) {
+	// The panes first: every process of a listed pane then is in the
+	// process table read after, so none escapes the check for owned ones.
+	panes, err := l.panes(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out, err := l.exec(ctx, psCmd)
 	if err != nil {
 		return nil, err
 	}
 	procs := parsePS(out)
 	hidden := ownedDevices(procs, slices.Concat(owned, ownPIDs(procs, l.Own)))
-	panes, err := l.panes(ctx)
-	if err != nil {
-		return nil, err
-	}
 	list := []control.HostTerminal{} // an empty list, not null, on the wire
 	inTmux := map[string]bool{}
 	for _, p := range panes {
