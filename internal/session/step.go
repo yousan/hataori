@@ -42,7 +42,8 @@ func (k InputKind) String() string {
 // Input is one thing that happened to a session.
 type Input struct {
 	Kind      InputKind
-	Principal control.Principal // Send, Answer: who
+	Principal control.Principal // Send, Answer: who, a person
+	From      string            // Send, Answer: the "<client>:<id>" it came from, if relayed
 	Key       string            // Send, Answer: the call's safe-to-repeat key
 	Text      string            // Send, Answer
 	Request   string            // Answer: the agent's id of the request answered
@@ -87,6 +88,7 @@ type Snapshot struct {
 type OpenTurn struct {
 	By        string // ByCaller, ByAgent or ByTerminal
 	Principal control.Principal
+	From      string // the "<client>:<id>" the input that started it came from
 }
 
 // Out is one event Step produces, before it has a position.
@@ -135,6 +137,9 @@ func Step(s Snapshot, in Input) (Result, error) {
 		if s.Turn.Principal != "" {
 			d["principal"] = string(s.Turn.Principal)
 		}
+		if s.Turn.From != "" {
+			d["from"] = s.Turn.From
+		}
 		if e.Reason != "" {
 			d["reason"] = e.Reason
 		}
@@ -145,6 +150,9 @@ func Step(s Snapshot, in Input) (Result, error) {
 		d := map[string]any{"by": t.By}
 		if t.Principal != "" {
 			d["principal"] = string(t.Principal)
+		}
+		if t.From != "" {
+			d["from"] = t.From
 		}
 		if key != "" {
 			d["key"] = key
@@ -158,7 +166,7 @@ func Step(s Snapshot, in Input) (Result, error) {
 		switch {
 		case s.State == control.Idle:
 			to(control.Running, "")
-			start(OpenTurn{By: ByCaller, Principal: in.Principal}, in.Key)
+			start(OpenTurn{By: ByCaller, Principal: in.Principal, From: in.From}, in.Key)
 			r.Out = append(r.Out, Out{Kind: KindInput, Data: map[string]any{"text": in.Text}})
 		case inTurn:
 			r.Out = append(r.Out, Out{Kind: KindInput, Data: map[string]any{"text": in.Text}})
@@ -170,7 +178,7 @@ func Step(s Snapshot, in Input) (Result, error) {
 			return refuse()
 		}
 		to(control.Running, "")
-		start(OpenTurn{By: ByCaller, Principal: in.Principal}, in.Key)
+		start(OpenTurn{By: ByCaller, Principal: in.Principal, From: in.From}, in.Key)
 		r.Out = append(r.Out, Out{Kind: KindAnswer, Data: map[string]any{"text": in.Text}})
 	case Close:
 		if s.State != control.Asleep {

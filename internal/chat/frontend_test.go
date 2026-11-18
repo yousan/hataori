@@ -52,7 +52,7 @@ func (r *starts) Answer(_ context.Context, _, _ int64, req string, a control.Ans
 	return nil
 }
 func (r *starts) Interrupt(context.Context, int64) error { return nil }
-func (r *starts) Resume(context.Context, int64, control.Principal, string, control.Input) error {
+func (r *starts) Resume(context.Context, int64, control.Principal, string, string, control.Input) error {
 	return nil
 }
 func (r *starts) all() []core.Launch {

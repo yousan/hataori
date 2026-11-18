@@ -65,8 +65,8 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 	snap := Snapshot{State: control.State(state)}
 	var turnID int64
 	var t OpenTurn
-	err = tx.QueryRowContext(ctx, `SELECT id, started_by, principal FROM turns WHERE session_id = ? AND ended_at IS NULL`,
-		sessionID).Scan(&turnID, &t.By, &t.Principal)
+	err = tx.QueryRowContext(ctx, `SELECT id, started_by, principal, from_id FROM turns WHERE session_id = ? AND ended_at IS NULL`,
+		sessionID).Scan(&turnID, &t.By, &t.Principal, &t.From)
 	switch {
 	case err == nil:
 		snap.Turn = &t
@@ -110,8 +110,8 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 	}
 	endedTurn := turnID
 	if r.Start != nil {
-		res, err := tx.ExecContext(ctx, `INSERT INTO turns (session_id, started_by, principal, trigger, started_at) VALUES (?, ?, ?, ?, ?)`,
-			sessionID, r.Start.By, string(r.Start.Principal), r.Key, now)
+		res, err := tx.ExecContext(ctx, `INSERT INTO turns (session_id, started_by, principal, from_id, trigger, started_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			sessionID, r.Start.By, string(r.Start.Principal), r.Start.From, r.Key, now)
 		if err != nil {
 			return err
 		}

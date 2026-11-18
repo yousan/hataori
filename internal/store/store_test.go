@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -194,9 +195,9 @@ func TestConcurrentWritersAreNeverLocked(t *testing.T) {
 func TestTriggerThreadsKeptOnUpgrade(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "db")
-	last := len(migrations) - 1
-	if migrations[last].Name != "chat_triggers.thread" {
-		t.Fatalf("the last step is %q", migrations[last].Name)
+	last := slices.IndexFunc(migrations, func(m Migration) bool { return m.Name == "chat_triggers.thread" })
+	if last < 0 {
+		t.Fatal("no step chat_triggers.thread")
 	}
 	s, err := open(ctx, path, migrations[:last])
 	if err != nil {

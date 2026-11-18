@@ -166,15 +166,19 @@ func build(root string, o options, log io.Writer) (*store.Store, *core.Core, *Ru
 		Host: host.Command{Path: os.Args[0], Args: []string{"role", "host"}}, Root: root, Log: lg,
 		Instructions: o.instructions, StartTimeout: o.startTimeout, InterruptGrace: 5 * time.Second, Poll: cmp.Or(o.poll, 20*time.Millisecond),
 		IdlePeriod: o.idlePeriod, ContextBytes: o.contextBytes}
-	c := &core.Core{Store: st, Machine: m, People: people.New(nil, "owner", nil), Scopes: map[string]core.Scope{"s": {Enabled: true, Owner: "chat"}},
+	c := &core.Core{Store: st, Machine: m, People: people.New([]people.Person{{Name: "owner", IDs: []string{ownerFrom}}}, "owner", nil), Scopes: map[string]core.Scope{"s": {Enabled: true, Owner: "chat"}},
 		Workspaces: workDir{root: filepath.Join(root, "work"), die: o.dieWhenPlaced}, Runner: r, Agent: "fake", Log: lg}
 	return st, c, r, nil
 }
 
 const all = control.OpRead | control.OpStart | control.OpSend | control.OpAnswer | control.OpStop
 
+// ownerFrom is the owner's id: the tests' calls are relayed from it, as a
+// chat front end's are.
+const ownerFrom = "chat:1"
+
 func owner(c *core.Core) control.API {
-	return c.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all})
+	return c.As(control.Caller{From: ownerFrom, Scopes: []string{"s"}, May: all})
 }
 
 var thread = control.ThreadID{Scope: "s", Key: "t1"}
@@ -278,6 +282,24 @@ func (f *fixture) eventData(kind string) []map[string]any {
 func forms(t *testing.T, f func(t *testing.T, terminal bool)) {
 	for _, terminal := range []bool{false, true} {
 		t.Run(fmt.Sprint("terminal=", terminal), func(t *testing.T) { f(t, terminal) })
+	}
+}
+
+// The thread and its turn record the person and the id the input came from.
+func TestRecordsKeepThePersonAndTheID(t *testing.T) {
+	f := newFixture(t, options{})
+	f.start("reply hello")
+	waitFor(t, "the end of the turn", 15*time.Second, f.has("turn_ended", 1))
+	for _, kind := range []string{"thread_created", "turn_started", "turn_ended"} {
+		d := f.eventData(kind)
+		if len(d) != 1 || d[0]["principal"] != "owner" || d[0]["from"] != ownerFrom {
+			t.Errorf("%s: %v", kind, d)
+		}
+	}
+	var from string
+	f.st.DB.QueryRow(`SELECT from_id FROM turns`).Scan(&from)
+	if from != ownerFrom {
+		t.Errorf("turns.from_id = %q", from)
 	}
 }
 

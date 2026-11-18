@@ -34,10 +34,10 @@ var (
 
 // eventData is an example of every event kind's data.
 var eventData = map[control.EventKind]string{
-	"thread_created":    `{"effort":"high","model":"opus","principal":"webhook:W1","repo":"https://example.com/repo.git","session":3,"thread":7}`,
+	"thread_created":    `{"effort":"high","from":"discord:W1","model":"opus","principal":"dispatch","repo":"https://example.com/repo.git","session":3,"thread":7}`,
 	"state":             `{"detail":"last lines of the terminal","from":"running","reason":"interrupted","session":3,"to":"asleep"}`,
-	"turn_started":      `{"by":"caller","key":"M0789","principal":"webhook:W1","session":3,"turn":12}`,
-	"turn_ended":        `{"background":0,"by":"caller","outcome":"failure","principal":"webhook:W1","reason":"limit","session":3,"turn":12}`,
+	"turn_started":      `{"by":"caller","from":"discord:W1","key":"M0789","principal":"dispatch","session":3,"turn":12}`,
+	"turn_ended":        `{"background":0,"by":"caller","from":"discord:W1","outcome":"failure","principal":"dispatch","reason":"limit","session":3,"turn":12}`,
 	"input":             `{"session":3,"text":"Run the tests.","turn":12}`,
 	"answer":            `{"session":3,"text":"blue","turn":13}`,
 	"text":              `{"final":true,"session":3,"text":"All tests pass."}`,
