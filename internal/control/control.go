@@ -74,6 +74,13 @@ type API interface {
 	// resume), the stream goes on with it, from a chunk marked Reset. A
 	// session without a terminal (on pipes) is ErrNotFound. It takes no input.
 	Terminal(ctx context.Context, id ThreadID, run string, after uint64) (<-chan TerminalChunk, error)
+
+	// HostTerminals lists the terminals on the host that no session host
+	// owns: tmux panes, then other terminals. HostScreen returns the screen
+	// of one tmux pane, by TmuxPane.Pane. Both are for display only and need
+	// OpHost.
+	HostTerminals(ctx context.Context) ([]HostTerminal, error)
+	HostScreen(ctx context.Context, pane string) (string, error)
 }
 
 // Caller is who is asking. An API value is bound to one Caller,
@@ -90,7 +97,7 @@ type Caller struct {
 	From      string
 	Principal Principal // a person's name
 	Scopes    []string  // the scopes it may see and act in
-	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn
+	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost
 	// NoText leaves text written by a person or an agent out of what the
 	// caller reads: ThreadInfo.Last, ThreadDetail.Recent, the text of its
 	// requests, and the text fields of events (Field.Text). The thread's
@@ -113,6 +120,10 @@ const (
 	OpAnswer                 // Answer
 	OpStop                   // Stop
 	OpSignIn                 // SignInLink: only the owner's connection on the control socket
+	// OpHost may list and read the terminals hataori does not own
+	// (HostTerminals, HostScreen). Only the owner is given it, and only when
+	// the config turns them on.
+	OpHost
 )
 
 // Has reports whether every operation in o is in ops.
@@ -313,4 +324,24 @@ type Event struct {
 // from the trigger message when key is one, and returns its id.
 type ScopeOwner interface {
 	NewThread(ctx context.Context, scope, key, title string) (thread string, err error)
+}
+
+// HostTerminal is a terminal on the host that hataori does not own.
+// hataori shows it and never judges its state or sends it anything.
+type HostTerminal struct {
+	Device   string     `json:"device"`             // the terminal device, such as /dev/pts/3
+	Process  string     `json:"process,omitempty"`  // the command of its foreground process
+	Activity *time.Time `json:"activity,omitempty"` // its last output, when known
+	Tmux     *TmuxPane  `json:"tmux,omitempty"`     // absent for a terminal outside tmux
+}
+
+// TmuxPane is where a HostTerminal is in tmux.
+type TmuxPane struct {
+	Pane       string `json:"pane"`                  // the pane's id, such as %3; what HostScreen takes
+	Session    string `json:"session"`               // the session's name
+	Window     string `json:"window"`                // the window's index
+	WindowName string `json:"window_name,omitempty"` // the window's name
+	Index      string `json:"index"`                 // the pane's index in its window
+	Dir        string `json:"dir,omitempty"`         // the pane's current directory
+	Attached   bool   `json:"attached"`              // a client shows the session now
 }

@@ -42,6 +42,10 @@ type Config struct {
 	// command for the owner (section 4.7); "login_relay": false switches it
 	// off, and the alert stays.
 	LoginRelay bool
+	// HostTerminals is whether the owner may list and read the terminals on
+	// the host that hataori does not own (section 7.2); "host_terminals",
+	// off when absent.
+	HostTerminals bool
 
 	// Dashboard is how the instance serves its dashboard (section 7.2);
 	// nil when the config has no "dashboard" section.
@@ -91,6 +95,7 @@ type fileConfig struct {
 	Effort     string                     `json:"effort"`
 	Context    *int                       `json:"context_bytes"`
 	LoginRelay *bool                      `json:"login_relay"`
+	HostTerms  bool                       `json:"host_terminals"`
 	Scopes     []fileScope                `json:"scopes"`
 	Dashboard  *fileDashboard             `json:"dashboard"`
 	Drivers    map[string]json.RawMessage `json:"drivers"`
@@ -129,13 +134,14 @@ func ParseConfig(data []byte) (*Config, error) {
 	}
 
 	c := &Config{
-		LoginRelay: f.LoginRelay == nil || *f.LoginRelay,
-		Owner:      strings.TrimSpace(f.Owner),
-		Trigger:    strings.TrimSpace(f.Trigger),
-		Model:      strings.TrimSpace(f.Model),
-		Effort:     strings.TrimSpace(f.Effort),
-		Drivers:    raw(f.Drivers),
-		Adapters:   raw(f.Adapters),
+		LoginRelay:    f.LoginRelay == nil || *f.LoginRelay,
+		HostTerminals: f.HostTerms,
+		Owner:         strings.TrimSpace(f.Owner),
+		Trigger:       strings.TrimSpace(f.Trigger),
+		Model:         strings.TrimSpace(f.Model),
+		Effort:        strings.TrimSpace(f.Effort),
+		Drivers:       raw(f.Drivers),
+		Adapters:      raw(f.Adapters),
 	}
 	if c.Owner == "" {
 		return nil, missing("owner")

@@ -1046,6 +1046,31 @@ type API interface {
 	// ErrNotFound. It takes no input, and the stream's connection carries
 	// none.
 	Terminal(ctx context.Context, id ThreadID, run string, after uint64) (<-chan TerminalChunk, error)
+
+	// HostTerminals lists the terminals on the host that no session host
+	// owns: tmux panes, then other terminals. HostScreen returns one tmux
+	// pane's screen, by TmuxPane.Pane. Display only; both need OpHost, and
+	// the core answers only the owner, and only when the config's
+	// host_terminals is true (section 7.2). Since protocol 1.10.
+	HostTerminals(ctx context.Context) ([]HostTerminal, error)
+	HostScreen(ctx context.Context, pane string) (string, error)
+}
+
+type HostTerminal struct {
+	Device   string     // the terminal device
+	Process  string     // the command of its foreground process
+	Activity *time.Time // last output, when known
+	Tmux     *TmuxPane  // absent for a terminal outside tmux
+}
+
+type TmuxPane struct {
+	Pane       string // the pane's id, such as %3; what HostScreen takes
+	Session    string
+	Window     string // the window's index
+	WindowName string
+	Index      string // the pane's index in its window
+	Dir        string
+	Attached   bool
 }
 
 type TerminalChunk struct {
@@ -1078,7 +1103,7 @@ type Caller struct {
 	From      string
 	Principal Principal // a person's name (section 5.5)
 	Scopes    []string  // the scopes it may see and act in
-	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn
+	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost
 	// NoText leaves text written by a person or an agent out of what the
 	// caller reads: ThreadInfo.Last, ThreadDetail.Recent, the text of its
 	// requests, and the text fields of events (section 7.3). The thread's
@@ -1170,42 +1195,27 @@ type API interface {
 
 	// Terminal: declared above, since protocol 1.9 (#198).
 
-	// HostTerminals lists the terminals on the host that no session host owns.
-	// HostScreen returns one tmux pane's screen. Both need OpHost.
-	HostTerminals(ctx context.Context) ([]HostTerminal, error)
-	HostScreen(ctx context.Context, pane string) (string, error)
+	// HostTerminals, HostScreen: declared above, since protocol 1.10 (#199),
+	// with OpHost.
 
 	// SignInLink: declared above, since protocol 1.7 (#200). Only the
 	// owner's connection on the control socket has OpSignIn; the
 	// dashboard's own Caller has OpRead only.
 }
 
-// Ops gains OpHost: may list and read terminals that hataori does not own.
-// Only the owner is given it, and only when the config turns them on.
-
 // WorkspaceState: declared above, with Workspace.
 
 // TerminalChunk: declared above, with Terminal.
 
-type HostTerminal struct {
-	Device   string    // the terminal device
-	Process  string    // the foreground command
-	Activity time.Time // last output, when known
-	Tmux     *TmuxPane // absent for a terminal outside tmux
-}
-
-type TmuxPane struct {
-	Session, Window, Pane string
-	Dir                   string
-	Attached              bool
-}
+// HostTerminal, TmuxPane: declared above, with HostTerminals.
 ```
 
 Remaining usage per agent (an operation `Limits`, with the agent, the window, the share used and the reset time) is added only if its research finds a source.
 
 | Change | Protocol |
 |---|---|
-| `Workspace`, `HostTerminals`, `HostScreen` | minor: new operations |
+| `Workspace` | minor: new operation |
+| `HostTerminals`, `HostScreen`, with `Ops` gaining `OpHost` | minor: new operations; landed in 1.10 |
 | `SignInLink`, with `Ops` gaining `OpSignIn` | minor: new operation; landed in 1.7 |
 | `Limits`; `WorkspaceState.PullRequest` | minor, and only after their research |
 

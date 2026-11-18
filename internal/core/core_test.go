@@ -180,8 +180,10 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 		"Workspace": func(a control.API) error { _, err := a.Workspace(ctx, id); return err },
 		// Every other operation is allowed to "other scope": only the
 		// socket's owner connection has OpSignIn.
-		"SignInLink": func(a control.API) error { _, err := a.SignInLink(ctx); return err },
-		"Terminal":   func(a control.API) error { _, err := a.Terminal(ctx, id, "", 0); return err },
+		"SignInLink":    func(a control.API) error { _, err := a.SignInLink(ctx); return err },
+		"Terminal":      func(a control.API) error { _, err := a.Terminal(ctx, id, "", 0); return err },
+		"HostTerminals": func(a control.API) error { _, err := a.HostTerminals(ctx); return err },
+		"HostScreen":    func(a control.API) error { _, err := a.HostScreen(ctx, "%0"); return err },
 	}
 	if len(ops) != reflect.TypeFor[control.API]().NumMethod() {
 		t.Fatal("the test does not cover every operation")

@@ -1,0 +1,1 @@
+%0	tab\there	0	win	name	0	/dev/pts/61	sleep	0	1794987642	/

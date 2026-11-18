@@ -16,6 +16,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # The host terminal tests start a tmux server of their own.
+      - name: install tmux
+        run: command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
       - name: gofmt
         run: |
           unformatted="$(gofmt -l .)"
@@ -28,3 +31,20 @@ jobs:
       - name: build without cgo
         run: CGO_ENABLED=0 go build ./...
       - run: go test ./...
+
+  # The same code runs on macOS (design, section 6.4). The packages listed
+  # below still fail there (#237) and are left out until they are fixed.
+  test-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: install tmux
+        run: command -v tmux >/dev/null || brew install tmux
+      - run: go vet ./...
+      - name: build without cgo
+        run: CGO_ENABLED=0 go build ./...
+      - name: go test
+        run: go test $(go list ./... | grep -v -E '/internal/(chat|host|relay|runner)$')
