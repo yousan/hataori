@@ -340,6 +340,7 @@ func startOutcome(ctx context.Context, api control.API, id control.ThreadID) (fi
 	if err != nil {
 		return 0, "", err
 	}
+	defer stopEvents(cancel, evs)
 	for e := range evs {
 		if e.Kind == control.CaughtUp {
 			break

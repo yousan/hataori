@@ -5,6 +5,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"github.com/yousan/hataori/internal/control"
@@ -30,6 +31,7 @@ type Store struct {
 
 	mu   sync.Mutex
 	wake chan struct{} // closed when events are committed
+	conn *connector
 }
 
 // Migration is one forward-only step of the schema. Each is applied in its
@@ -51,12 +53,16 @@ func open(ctx context.Context, path string, steps []Migration) (*Store, error) {
 	q.Set("_txlock", "immediate")
 	// Escape the path so that '?', '#' or '%' in a root stay part of it.
 	esc := strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(path)
-	db, err := sql.Open("sqlite", "file:"+esc+"?"+q.Encode())
+	dsn := "file:" + esc + "?" + q.Encode()
+	probe, err := sql.Open("sqlite", dsn) // only for its driver: sql.Open connects to nothing
 	if err != nil {
 		return nil, fmt.Errorf("store: open %s: %w", path, err)
 	}
+	c := &connector{drv: probe.Driver(), dsn: dsn}
+	probe.Close()
+	db := sql.OpenDB(c)
 	db.SetMaxOpenConns(1)
-	s := &Store{DB: db, wake: make(chan struct{}), CheckEvent: control.CheckEvent}
+	s := &Store{DB: db, wake: make(chan struct{}), CheckEvent: control.CheckEvent, conn: c}
 	if err := s.migrate(ctx, steps); err != nil {
 		db.Close()
 		return nil, err
@@ -64,8 +70,48 @@ func open(ctx context.Context, path string, steps []Migration) (*Store, error) {
 	return s, nil
 }
 
-// Close closes the database.
-func (s *Store) Close() error { return s.DB.Close() }
+// Close closes the database. When it returns, no connection is open and
+// none is being opened, so nothing touches the database's files any more.
+func (s *Store) Close() error {
+	if s.conn != nil {
+		s.conn.close()
+	}
+	return s.DB.Close()
+}
+
+// connector opens the database's connections, and none once close was
+// called. database/sql may open a connection on a goroutine of its own,
+// as when a query cancelled by its context leaves its connection unusable
+// while another call waits for one; sql.DB.Close does not wait for that,
+// so the open could create the file again after the database was closed
+// and its directory removed.
+type connector struct {
+	drv driver.Driver
+	dsn string
+
+	mu     sync.RWMutex // held for reading while a connection opens
+	closed bool
+}
+
+var errClosed = errors.New("store: closed")
+
+func (c *connector) Connect(context.Context) (driver.Conn, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.closed {
+		return nil, errClosed
+	}
+	return c.drv.Open(c.dsn)
+}
+
+func (c *connector) Driver() driver.Driver { return c.drv }
+
+// close waits for the connections being opened and refuses any later one.
+func (c *connector) close() {
+	c.mu.Lock()
+	c.closed = true
+	c.mu.Unlock()
+}
 
 // Version returns the schema version of the database; 0 for a new one.
 func (s *Store) Version(ctx context.Context) (int, error) {
