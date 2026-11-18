@@ -940,45 +940,52 @@ func (c *checker) readAlternates(objects string, depth int, seen map[string]bool
 
 // objectLinks names why a file git may read as an object below the
 // resolved objects directory objects comes from inside a root, or "".
-// git reads every file in pack/ and the lower-case fan-out directories,
-// through links; info/ holds the alternates and the commit-graph. Each of
-// those directories that is a link, and each link in them, is walked as
-// walk does; nothing else is followed. Listing more than budget entries in
-// all is an error: what git reads then is not told.
+// git reads every file in pack/ (and, through a multi-pack-index, possibly
+// below it) and in the lower-case fan-out directories, through links;
+// info/ holds the alternates and the commit-graph chain. Each of those
+// directories that is a link, and each link in them, is walked as walk
+// does; pack/ and info/ are looked at all the way down, the fan-out
+// directories only one level and only names a loose object can have, as
+// git reads them. Nothing else is
+// followed. Listing more than budget entries in all is an error: what git
+// reads then is not told.
 func (c *checker) objectLinks(objects string, budget *int) (Reason, error) {
+	seen := map[string]bool{}
 	return c.eachEntry(objects, budget, func(e fs.DirEntry) (Reason, error) {
 		name := e.Name()
 		if name != "pack" && name != "info" && !fanOut(name) {
 			return "", nil // git reads nothing there
 		}
-		dir := filepath.Join(objects, name)
-		if e.Type()&fs.ModeSymlink != 0 {
-			resolved, reason, err := c.walk(dir)
-			if err != nil || reason != "" {
-				return reason, err
-			}
-			dir = resolved
-		}
-		if fi, err := os.Stat(dir); err != nil {
-			return "", err
-		} else if !fi.IsDir() {
-			return "", nil // git reads no objects from a file there
-		}
-		return c.linksIn(dir, budget, name == "info")
+		return c.linksBelow(filepath.Join(objects, name), e, budget, !fanOut(name), seen)
 	})
 }
 
-// linksIn walks every link directly in dir; in info/ also those in
-// commit-graphs/.
-func (c *checker) linksIn(dir string, budget *int, info bool) (Reason, error) {
-	return c.eachEntry(dir, budget, func(e fs.DirEntry) (Reason, error) {
-		p := filepath.Join(dir, e.Name())
-		switch {
-		case e.Type()&fs.ModeSymlink != 0:
-			_, reason, err := c.walk(p)
+// linksBelow walks p, the entry e of a directory, when it is a link, and
+// then the links in what it is or leads to, when that is a directory:
+// below it as well when deep. A directory is looked at once.
+func (c *checker) linksBelow(p string, e fs.DirEntry, budget *int, deep bool, seen map[string]bool) (Reason, error) {
+	dir := p
+	if e.Type()&fs.ModeSymlink != 0 {
+		resolved, reason, err := c.walk(p)
+		if err != nil || reason != "" {
 			return reason, err
-		case info && e.Name() == "commit-graphs" && e.IsDir():
-			return c.linksIn(p, budget, false)
+		}
+		dir = resolved
+	}
+	if fi, err := os.Stat(dir); err != nil {
+		return "", err
+	} else if !fi.IsDir() || seen[dir] {
+		return "", nil
+	}
+	seen[dir] = true
+	return c.eachEntry(dir, budget, func(f fs.DirEntry) (Reason, error) {
+		q := filepath.Join(dir, f.Name())
+		switch {
+		case deep && (f.IsDir() || f.Type()&fs.ModeSymlink != 0):
+			return c.linksBelow(q, f, budget, true, seen)
+		case f.Type()&fs.ModeSymlink != 0 && lowerHex(f.Name()):
+			_, reason, err := c.walk(q) // a loose object
+			return reason, err
 		}
 		return "", nil
 	})
@@ -1017,7 +1024,13 @@ func (c *checker) eachEntry(dir string, budget *int, fn func(fs.DirEntry) (Reaso
 // fanOut reports a name git reads loose objects from: two lower-case hex
 // digits.
 func fanOut(name string) bool {
-	return len(name) == 2 && strings.IndexFunc(name, func(r rune) bool { return !('0' <= r && r <= '9' || 'a' <= r && r <= 'f') }) < 0
+	return len(name) == 2 && lowerHex(name)
+}
+
+// lowerHex reports a name of lower-case hex digits only, as git names
+// fan-out directories and loose objects.
+func lowerHex(name string) bool {
+	return name != "" && strings.IndexFunc(name, func(r rune) bool { return !('0' <= r && r <= '9' || 'a' <= r && r <= 'f') }) < 0
 }
 
 // walk resolves the absolute path p one component at a time, as the

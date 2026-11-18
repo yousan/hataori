@@ -719,6 +719,27 @@ func TestRefuseRemoteWithObjectsLinkedIntoTheWorkspace(t *testing.T) {
 			x.symlink(outside, filepath.Join(r, "objects", "pack"))
 			return r
 		}},
+		// A multi-pack-index may name a pack below pack/: a link there
+		// does not count either.
+		{"below pack/", RemoteIsLocal, func(x *removal) string {
+			r := x.namingRemote("r.git")
+			x.repack()
+			for _, f := range x.packFiles() {
+				x.symlink(f, filepath.Join(r, "objects", "pack", "sub", filepath.Base(f)))
+			}
+			return r
+		}},
+		// info/commit-graphs is a link outside the root, and a file in
+		// what it leads to is a link into the workspace.
+		{"through a linked commit-graphs directory", RemoteIsLocal, func(x *removal) string {
+			r := x.namingRemote("r.git")
+			graph := filepath.Join(x.clone, ".git", "objects", "info", "graph")
+			os.WriteFile(graph, nil, 0o600)
+			outside := filepath.Join(x.tmp, "graphs-outside")
+			x.symlink(graph, filepath.Join(outside, "graph-x.graph"))
+			x.symlink(outside, filepath.Join(r, "objects", "info", "commit-graphs"))
+			return r
+		}},
 		// info/ holds the commit-graph, and its chain in commit-graphs/.
 		{"commit-graph chain", RemoteIsLocal, func(x *removal) string {
 			r := x.namingRemote("r.git")
@@ -755,25 +776,26 @@ func TestRefuseRemoteWithObjectsLinkedIntoTheWorkspace(t *testing.T) {
 	}
 }
 
-// Links below the objects directory that lead outside the root, and links
-// into the workspace where git does not read (an upper-case fan-out
-// directory, a directory below pack/, a name git does not use): the
-// remote counts.
+// The remote's objects are only in a pack outside the root, which its
+// pack/ links to; links into the workspace where git does not read (an
+// upper-case fan-out directory, a directory below a fan-out directory, a
+// name git does not use) are left alone, and a link loop below pack/ is
+// looked at once: the remote counts.
 func TestRemoteWithObjectsLinkedOutsideTheRootCounts(t *testing.T) {
 	x := newRemoval(t)
-	r := x.shared(x.bare, "r.git")
+	outside := filepath.Join(x.tmp, "outside.git")
+	x.git(x.tmp, "clone", "-q", "--bare", "--no-local", x.bare, outside)
+	x.git(outside, "repack", "-q", "-a", "-d")
+	r := x.namingRemote("r.git")
 	objects := filepath.Join(r, "objects")
-	copied := filepath.Join(x.tmp, "objects-outside")
-	if err := os.CopyFS(copied, os.DirFS(filepath.Join(x.bare, "objects"))); err != nil {
-		t.Fatal(err)
-	}
-	os.Remove(filepath.Join(objects, "pack"))
-	x.symlink(filepath.Join(copied, "pack"), filepath.Join(objects, "pack"))
+	os.Remove(filepath.Join(objects, "pack")) // empty, made by git init under x.tmp
+	x.symlink(filepath.Join(outside, "objects", "pack"), filepath.Join(objects, "pack"))
+	x.git(r, "cat-file", "-e", "main^{commit}")                       // git reads it through the link
+	x.symlink(".", filepath.Join(outside, "objects", "pack", "loop")) // looked at once
 	ws := filepath.Join(x.clone, ".git", "objects")
 	x.symlink(ws, filepath.Join(objects, "AB"))
 	x.symlink(ws, filepath.Join(objects, "unused"))
-	os.Mkdir(filepath.Join(copied, "pack", "sub"), 0o700)
-	x.symlink(ws, filepath.Join(copied, "pack", "sub", "x.pack"))
+	x.symlink(ws, filepath.Join(objects, "ab", "sub"))
 	x.git(x.clone, "remote", "set-url", "origin", r)
 	if err := x.check(); err != nil {
 		t.Fatal(err)
