@@ -45,7 +45,7 @@ type Config struct {
 	// no hook reports: the program shows it, and after an Enter writes a
 	// line and then reports its start; it shows the dialog once more after
 	// the start. The codec watches the screen for it, answers it with
-	// Enter, and stops watching.
+	// Enter, and watches on until its first turn ends.
 	Dialog string `json:"dialog"`
 }
 

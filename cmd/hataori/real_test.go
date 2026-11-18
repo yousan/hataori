@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -36,8 +37,11 @@ import (
 // captures do: --setting-sources project,local (the person's settings,
 // hooks and plugins are not loaded; the adapter's --settings holds only its
 // hooks), no CLAUDE.md, no auto-memory, no connectors, the model haiku. The
-// workspace is a new clone in a new temporary directory. The long turn
-// waits on a command, so the model is asked for little.
+// workspace is a new clone in a new temporary directory. The wrapper adds
+// the full-screen interface to the adapter's --settings, as a person's
+// settings may: with it the CLI reports SessionStart before it reads keys
+// (#178). The long turn waits on a command, so the model is asked for
+// little.
 func TestRealClaudeCode(t *testing.T) {
 	if os.Getenv("HATAORI_REAL_CLAUDE") != "1" {
 		t.Skip("set HATAORI_REAL_CLAUDE=1 to run the check against the real CLI")
@@ -109,6 +113,12 @@ func TestRealClaudeCode(t *testing.T) {
 		tty, _ := os.ReadFile(filepath.Join(runner.StateDir(p.root, 1), host.TerminalLog))
 		if !bytes.Contains(tty, []byte("trust")) || !bytes.Contains(tty, []byte("folder")) {
 			t.Fatal("the terminal showed no folder-trust dialog: the clone was not new to the CLI")
+		}
+		if !bytes.Contains(tty, []byte("\x1b[?1049h")) {
+			t.Fatal("no full-screen interface: the CLI did not take tui from --settings")
+		}
+		if bytes.Contains(tty, []byte("^[[200~")) {
+			t.Fatal("the terminal echoed the paste: it was written before the CLI read keys")
 		}
 	})
 	step("2 a turn", func(t *testing.T) {
@@ -316,6 +326,13 @@ func (p *procRoot) dump(t *testing.T, conv surface.Conversation) {
 		}
 		rows.Close()
 	}
+	// The end of each session's terminal, as text: what the CLI showed.
+	logs, _ := filepath.Glob(filepath.Join(p.root, "state", "sessions", "*", host.TerminalLog))
+	for _, f := range logs {
+		b, _ := os.ReadFile(f)
+		text := plainText(b)
+		t.Logf("terminal %s, the end:\n%s", f, text[max(0, len(text)-3000):])
+	}
 	for _, c := range p.driver.Calls(conv) {
 		if c.Op == fakesurface.OpPost {
 			t.Logf("post %.300q", c.Message.Text)
@@ -327,11 +344,32 @@ func (p *procRoot) dump(t *testing.T, conv surface.Conversation) {
 	t.Logf("daemon log, the end:\n%s", l[max(0, len(l)-4000):])
 }
 
+// escapes are the terminal's control sequences: CSI, OSC (ended by BEL or
+// ST) and the two-byte ones the CLI sends.
+var escapes = regexp.MustCompile(`\x1b\[[0-9;?<>=]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[78=>]`)
+
+// plainText is terminal output with its control sequences as spaces.
+func plainText(b []byte) []byte { return escapes.ReplaceAll(b, []byte(" ")) }
+
 // realWrapper runs the CLI with the person's own context kept out. The
 // adapter adds --settings (its hooks), --permission-mode, the session and
-// the model.
+// the model. The wrapper passes a copy of the adapter's settings file with
+// the full-screen interface added, which a person's settings may choose;
+// nothing in it runs a command.
 const realWrapper = `#!/bin/sh
 export CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 ENABLE_CLAUDEAI_MCP_SERVERS=false BROWSER=true
+n=$# prev=
+while [ "$n" -gt 0 ]; do
+	a=$1
+	shift
+	n=$((n - 1))
+	if [ "$prev" = --settings ]; then
+		{ printf '{"tui":"fullscreen",'; tail -c +2 "$a"; } > "$a.check.json" || exit 1
+		a=$a.check.json
+	fi
+	set -- "$@" "$a"
+	prev=$a
+done
 exec claude --setting-sources project,local "$@"
 `
 

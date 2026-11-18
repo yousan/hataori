@@ -1,19 +1,32 @@
 package claudecode
 
 import (
+	"bytes"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 )
 
-// The folder-trust dialog (design, section 3.5) is the one screen the codec
-// reads. The first start in a repository shows it, and no hook runs until it
-// is answered. The codec knows only this dialog, by its text as captured,
-// and answers it by keys before the session starts: once the screen has
-// settled, it moves the cursor one line at a time toward the line that says
-// yes, found by its text, and confirms once the cursor is on it. Any other screen gets no key, and the
-// start fails on its timeout.
+// The codec reads the screen from Open until the first input is reported,
+// for two things no hook tells.
+//
+// The folder-trust dialog (design, section 3.5): the first start in a
+// repository shows it, and no hook runs until it is answered. The codec
+// knows only this dialog, by its text as captured, and answers it by keys
+// before the session starts: once the screen has settled, it moves the
+// cursor one line at a time toward the line that says yes, found by its
+// text, and confirms once the cursor is on it. Any other screen gets no
+// key, and the start fails on its timeout.
+//
+// The first input (#178): SessionStart is reported before the CLI reads its
+// terminal as keys. Input written in between reaches the terminal's line
+// discipline: the paste lands in the input box later, but its Enter turns
+// into a new line (seen with 2.1.327, under the user's own settings). So
+// the first paste waits until the screen shows the CLI switching bracketed
+// paste on after the dialog, as its input box does; Enter follows on a
+// Tick after pasteSettle; and while the box still shows the text, Enter is
+// pressed again.
 
 // trustHeader is the dialog's text above its choices, with the workspace's
 // path in place of %s, its lines joined by single spaces.
@@ -37,9 +50,27 @@ var (
 	keyEnter = []byte("\r")
 )
 
-// maxScreen bounds what the codec keeps of the screen before the start;
-// past it, it stops looking.
+// maxScreen bounds what the codec keeps of the screen; past it, it stops
+// looking.
 const maxScreen = 256 << 10
+
+// Bracketed paste switched on and off, as the CLI tells the terminal.
+var (
+	pasteOn  = []byte("\x1b[?2004h")
+	pasteOff = []byte("\x1b[?2004l")
+)
+
+// pasteWait is how long the first input waits for the screen to show the
+// CLI takes pastes. After it the input is pasted all the same, as it was
+// before the codec waited.
+const pasteWait = 10 * time.Second
+
+// againWait is how long after Enter the input box may still show the text
+// before Enter is pressed again; maxAgain bounds how often.
+const (
+	againWait = 2 * time.Second
+	maxAgain  = 2
+)
 
 // trustDialog reads the screen as the trust dialog for the workspace dir:
 // the line the cursor is on and the line that says yes, counted among the
@@ -140,6 +171,10 @@ func trimLines(screen []string) []string {
 var inertModes = map[string]bool{"12": true, "25": true, "1000": true, "1002": true, "1003": true, "1004": true,
 	"1005": true, "1006": true, "1015": true, "1016": true, "2004": true, "2031": true}
 
+// altScreen is the private mode of the alternate screen that saves the
+// cursor and clears the screen: xterm's 1049.
+const altScreen = "1049"
+
 // inertOSC are the operating system commands that change nothing shown: a
 // title (0, 1, 2), a link around text (8), and a query (7501, seen).
 var inertOSC = map[string]bool{"0": true, "1": true, "2": true, "8": true, "7501": true}
@@ -168,14 +203,16 @@ func inertSGR(params string) bool {
 // feed, backspace, saving and restoring the cursor, and the cursor
 // movements and erasures of ECMA-48. Colours, cursor shape, terminal
 // queries, titles, links and the modes that do not change what is shown
-// are skipped. Anything else that could change the screen (a reset, the
-// alternate screen, scrolling, inserting or deleting lines or characters)
-// makes ok false: such a screen is not read. The grid has no height: it
+// are skipped. The alternate screen (1049, as the CLI's full-screen
+// interface uses it) is a grid of its own. Anything else that could change
+// the screen (a reset, scrolling, inserting or deleting lines or
+// characters) makes ok false: such a screen is not read. The grid has no height: it
 // grows as the cursor goes down, and a cursor position counts from its top.
 func renderScreen(b []byte) (screen []string, ok bool) {
-	var grid [][]rune
+	var grid, mainGrid [][]rune
 	row, col := 0, 0
 	savedRow, savedCol := 0, 0
+	alt, mainRow, mainCol := false, 0, 0 // on the alternate screen; the main screen and its cursor
 	put := func(r rune) {
 		for len(grid) <= row {
 			grid = append(grid, nil)
@@ -221,8 +258,16 @@ func renderScreen(b []byte) (screen []string, ok bool) {
 				switch final {
 				case 'h', 'l':
 					for _, m := range strings.Split(p, ";") {
-						if !inertModes[m] {
-							return nil, false // the alternate screen, a clear, or a mode not known
+						switch {
+						case inertModes[m]:
+						case m == altScreen && final == 'h' && !alt:
+							// The cursor saved, a blank screen of its own.
+							alt, mainGrid, mainRow, mainCol = true, grid, row, col
+							grid = nil
+						case m == altScreen && final == 'l' && alt:
+							alt, grid, row, col = false, mainGrid, mainRow, mainCol
+						default:
+							return nil, false // a clear, or a mode not known
 						}
 					}
 					continue
@@ -397,42 +442,137 @@ func gridLines(grid [][]rune) []string {
 // (seen with 2.1.326).
 const screenSettle = 2 * time.Second
 
-// screenState is what the codec keeps of the screen before the start.
+// screenState is what the codec keeps of the screen while it watches.
 type screenState struct {
 	seen    []byte    // the terminal's output so far
 	changed bool      // output came since the last tick
+	still   time.Time // the tick that last saw the screen change
 	quiet   time.Time // since when the screen has not changed; zero until it changed after the last key
-	done    bool      // the dialog was confirmed, or the codec stopped looking
+	done    bool      // the dialog was confirmed, or the codec stopped looking for it
 	moved   int       // moves sent
 	from    int       // the cursor line the last move was sent from
+	mark    int       // how much of seen came before the dialog was confirmed
+	held    time.Time // the first tick that held the first input back
+	anyway  bool      // pasteWait passed: the first input goes without the screen's word
 }
 
-// screen keeps more of the terminal's output. Keys are sent by Tick, once
-// the screen has settled.
+// screen keeps more of the terminal's output, and writes the first input
+// if the screen now shows the CLI takes it. Keys for the dialog are sent by
+// Tick, once the screen has settled.
 func (c *codec) screen(b []byte) Actions {
 	s := &c.scr
-	if c.started || s.done {
+	if !c.watch {
 		return Actions{}
 	}
 	s.seen = append(s.seen, b...)
 	s.changed = true
 	if len(s.seen) > maxScreen {
-		s.done, s.seen = true, nil
-		return Actions{StopScreen: true}
+		return c.endWatch(true)
 	}
-	return Actions{}
+	return c.flush()
 }
 
-// tickScreen returns the key the trust dialog needs now, if the screen
-// shows it and has not changed for screenSettle. A move is sent only once
-// the screen shows where the last one took the cursor.
+// endWatch ends the watch of the screen once the first input is reported
+// or has failed, or the session ended; with force, now. Input held for the
+// screen is written then.
+func (c *codec) endWatch(force bool) Actions {
+	if !c.watch || !(force || c.closed || (c.wrote && c.sent == nil)) {
+		return Actions{}
+	}
+	c.watch, c.scr = false, screenState{}
+	return merge(Actions{StopScreen: true}, c.flush())
+}
+
+// pasteReady reports whether input may be pasted, as far as the screen
+// goes: when the screen is not watched, when it shows bracketed paste
+// switched on since the dialog was confirmed and not off since, or after
+// pasteWait.
+func (c *codec) pasteReady() bool {
+	s := &c.scr
+	if !c.watch || s.anyway {
+		return true
+	}
+	on := bytes.LastIndex(s.seen, pasteOn)
+	return on >= s.mark && on > bytes.LastIndex(s.seen, pasteOff)
+}
+
+// holdPaste counts pasteWait for input that only the screen holds back,
+// and writes it once that has passed.
+func (c *codec) holdPaste(now time.Time) Actions {
+	s := &c.scr
+	if !c.watch || !c.ready || c.running || len(c.queue) == 0 || c.pasteReady() {
+		return Actions{}
+	}
+	if s.held.IsZero() {
+		s.held = now
+		return Actions{}
+	}
+	if now.Sub(s.held) < pasteWait {
+		return Actions{}
+	}
+	s.anyway = true
+	return c.flush()
+}
+
+// stillInBox reports whether Enter should be pressed again for the input
+// just sent: the screen is watched, has not changed for screenSettle, Enter
+// was pressed at least againWait ago and fewer than maxAgain times again,
+// and the input box still holds the text.
+func (c *codec) stillInBox(now time.Time) bool {
+	s := &c.scr
+	if !c.watch || c.sent.again >= maxAgain || now.Sub(c.sent.entered) < againWait ||
+		s.changed || s.still.IsZero() || now.Sub(s.still) < screenSettle {
+		return false
+	}
+	screen, ok := renderScreen(s.seen)
+	return ok && boxHolds(screen, c.sent.typed)
+}
+
+// boxHolds reports whether the screen's input box, the last line that
+// starts with the prompt mark and the lines below it up to a rule, with a
+// rule above it, shows text: the same words, or the CLI's placeholder for
+// a long paste.
+func boxHolds(screen []string, text string) bool {
+	rule := func(l string) bool {
+		l = strings.TrimSpace(l)
+		return l != "" && strings.Trim(l, "─") == ""
+	}
+	for i := len(screen) - 1; i >= 0; i-- {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(screen[i]), cursorMark)
+		if !ok {
+			continue
+		}
+		if i == 0 || !rule(screen[i-1]) {
+			return false
+		}
+		words := strings.Fields(rest)
+		j := i + 1
+		for ; j < len(screen) && !rule(screen[j]); j++ {
+			words = append(words, strings.Fields(screen[j])...)
+		}
+		if j == len(screen) {
+			return false // no rule below: not the box
+		}
+		got := strings.Join(words, " ")
+		return got != "" && (got == strings.Join(strings.Fields(text), " ") || strings.HasPrefix(got, "[Pasted text #"))
+	}
+	return false
+}
+
+// tickScreen notes when the screen last changed, and returns the key the
+// trust dialog needs now, if the screen shows it and has not changed for
+// screenSettle. A move is sent only once the screen shows where the last
+// one took the cursor.
 func (c *codec) tickScreen(now time.Time) Actions {
 	s := &c.scr
-	if c.started || s.done || len(s.seen) == 0 {
+	if !c.watch || len(s.seen) == 0 {
 		return Actions{}
 	}
 	if s.changed {
-		s.changed, s.quiet = false, now
+		s.changed, s.quiet, s.still = false, now, now
+		return Actions{}
+	}
+	if c.started || s.done {
 		return Actions{}
 	}
 	if s.quiet.IsZero() || now.Sub(s.quiet) < screenSettle {
@@ -440,8 +580,8 @@ func (c *codec) tickScreen(now time.Time) Actions {
 	}
 	screen, ok := renderScreen(s.seen)
 	if !ok {
-		s.done, s.seen = true, nil // a screen it cannot read: no key, ever
-		return Actions{StopScreen: true}
+		s.done = true // a screen it cannot read: no key, ever
+		return Actions{}
 	}
 	cursor, yes, ok := trustDialog(screen, c.spec.Dir)
 	if !ok || (s.moved > 0 && cursor == s.from) {
@@ -450,11 +590,11 @@ func (c *codec) tickScreen(now time.Time) Actions {
 	s.quiet = time.Time{} // the next key waits for the screen to change and settle again
 	switch {
 	case cursor == yes:
-		s.done, s.seen = true, nil
-		return Actions{Write: [][]byte{keyEnter}, StopScreen: true}
+		s.done, s.mark = true, len(s.seen)
+		return Actions{Write: [][]byte{keyEnter}}
 	case s.moved >= 2: // two choices: never more than one move is needed
-		s.done, s.seen = true, nil
-		return Actions{StopScreen: true}
+		s.done = true
+		return Actions{}
 	case cursor < yes:
 		s.moved, s.from = s.moved+1, cursor
 		return Actions{Write: [][]byte{keyDown}}

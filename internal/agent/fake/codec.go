@@ -23,9 +23,12 @@ type codec struct {
 	timeout  time.Duration     // for waiting; DefaultInputTimeout when zero
 
 	dialog   string // the start-up dialog to answer, if any
-	screen   []byte // the screen so far, before the start
+	screen   []byte // the screen so far
 	answered bool   // Enter was sent for the dialog
-	started  bool   // a hook was called: the screen must not come any more
+	started  bool   // a hook was called: the dialog is past
+	opened   bool   // Open was called: a codec rebuilt after a restart is not
+	stopped  bool   // the watch ended: the screen must not come any more
+	seenOnce bool   // the screen showed the dialog again after the start
 }
 
 // written is an input written and not yet reported.
@@ -69,27 +72,42 @@ type call struct {
 }
 
 // Open watches the screen when the fake shows a start-up dialog.
-func (c *codec) Open() agent.Actions { return agent.Actions{WatchScreen: c.dialog != ""} }
+func (c *codec) Open() agent.Actions {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.opened = true
+	return agent.Actions{WatchScreen: c.dialog != ""}
+}
 
-// onScreen answers the dialog with Enter, once, when the screen shows it,
-// and stops watching. The screen after that, after the start, or without a
-// dialog to watch for, must never reach the codec.
+// onScreen answers the dialog with Enter, once, when the screen shows it
+// before the start. It watches on, as the Claude Code codec does for its
+// first input, until its first turn ends. The screen after that, or
+// without a dialog to watch for, must never reach the codec.
 func (c *codec) onScreen(b []byte) agent.Actions {
-	if c.dialog == "" {
+	if c.dialog == "" || !c.opened {
 		panic("fake: the codec was given the screen without asking for it")
 	}
-	if c.started {
-		panic("fake: the codec was given the screen after the start")
-	}
-	if c.answered {
+	if c.stopped {
 		panic("fake: the codec was given the screen after it stopped watching")
 	}
 	c.screen = append(c.screen, b...)
-	if !bytes.Contains(c.screen, []byte(c.dialog)) {
+	if c.started && bytes.Contains(c.screen, []byte(c.dialog+" (shown again after the start)")) {
+		c.seenOnce = true
+	}
+	if c.answered || c.started || !bytes.Contains(c.screen, []byte(c.dialog)) {
 		return agent.Actions{}
 	}
 	c.answered = true
-	return agent.Actions{Write: [][]byte{[]byte("\r")}, StopScreen: true}
+	return agent.Actions{Write: [][]byte{[]byte("\r")}}
+}
+
+// SawScreenAfterStart reports whether the codec was given the screen the
+// fake program shows after its start.
+func SawScreenAfterStart(c agent.Codec) bool {
+	f := c.(*codec)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.seenOnce
 }
 
 // Decode reads one line. In the terminal form only hook calls and the
@@ -178,6 +196,9 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 		}
 		a = c.events(e)
 		a = merge(a, c.ended())
+		if c.opened && c.dialog != "" && !c.stopped { // only a watch it asked for
+			c.stopped, a.StopScreen = true, true // the first turn ended: the screen is not needed
+		}
 	case "interrupted":
 		a = merge(c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted}), c.ended())
 	case "cannot-resume":
@@ -213,6 +234,7 @@ func (c *codec) ended() agent.Actions {
 }
 
 func merge(a, b agent.Actions) agent.Actions {
+	a.StopScreen = a.StopScreen || b.StopScreen
 	a.Events = append(a.Events, b.Events...)
 	a.Write = append(a.Write, b.Write...)
 	a.Reply = append(a.Reply, b.Reply...)

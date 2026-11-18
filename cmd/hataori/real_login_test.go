@@ -38,3 +38,11 @@ func TestRealCheckLeavesTheLoginAlone(t *testing.T) {
 		t.Error("the adapter's section in real_test.go holds more than the command")
 	}
 }
+
+// The failure dump keeps the text after an OSC ended by ST, not only BEL.
+func TestPlainTextEndsOSCAtST(t *testing.T) {
+	got := string(plainText([]byte("a\x1b]8;;https://x\x1b\\link\x1b]8;;\x1b\\ b\x1b[1mc\x07")))
+	if got != "a link  b c\x07" {
+		t.Fatalf("plain text %q", got)
+	}
+}

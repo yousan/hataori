@@ -66,7 +66,7 @@ HATAORI_REAL_CLAUDE=1 go test -count=1 -run TestRealClaudeCode -v -timeout 50m .
 
 It runs `hataori run` as a process of its own, with the Claude Code adapter registered in the binary, the fake chat surface, and the installed CLI. It takes about 13 minutes, most of it one turn that waits on a command. Each criterion of #62 is one named step:
 
-1. **First start in a new clone.** A trigger clones a new local repository into a new temporary directory. The adapter answers the folder-trust dialog, and the first turn's answer is posted.
+1. **First start in a new clone.** A trigger clones a new local repository into a new temporary directory. The adapter answers the folder-trust dialog, and the first turn's answer is posted. The wrapper adds the full-screen interface (`tui: fullscreen`) to a copy of the adapter's `--settings` file; the step fails if the terminal shows no full-screen interface, or shows the first paste echoed by the terminal (written before the CLI read keys, #178).
 2. **A turn.** That turn ends once, as a completion by the caller.
 3. **A follow-up with the same session id.** A message in the thread runs in the same agent session.
 4. **A question and its answer.** `AskUserQuestion` is posted in the thread and the turn ends `blocked`. The next message is recorded as the answer, and the agent's reply uses it.
@@ -82,9 +82,13 @@ Steps 10 and 11 run even when an earlier step failed. A failed step logs the thr
 
 The CLI runs through a wrapper (`realWrapper` in the test): `--setting-sources project,local`, and `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` and `ENABLE_CLAUDEAI_MCP_SERVERS=false`. The user's settings, hooks, plugins, CLAUDE.md, memory and connectors stay out. The adapter adds its own `--settings` (its hooks) and the model `haiku`.
 
+What that leaves out: a person's own settings change how the CLI starts. #178 (the first input of every new thread never submitted) passed this check on 2.1.326 because the settings that bring it on were never loaded. With `tui: fullscreen` in a person's settings, the CLI reports `SessionStart`, takes its screen down, and only then starts reading keys in the full-screen interface; input written in between reaches the terminal's line discipline, and its Enter becomes a new line. The check now brings the full-screen interface in, through the wrapper's copy of the adapter's settings file. It does not put it in the clone's own `.claude/settings.json`: the first try did, and the folder-trust dialog was never answered (the run kept too little of the screen to show why). The rest of a person's settings (a status line, their hooks, plugins, Remote Control) still stay out, because the check must not read or change `~/.claude`: a start with those is covered only by the captured start in `testdata/2.1.327/first_enter_lost` and by a smoke test of a real deployment.
+
 The login is left alone. The check runs the CLI with whatever login it has, the same way for every kind of login: it passes the CLI nothing about the login and switches the login relay off. `TestRealCheckLeavesTheLoginAlone`, which runs in CI, fails if the check's source names a credential, a key, an account file, a login command or a kind of login, or names the config directory for anything but finding the settings file it compares. A key given only in the environment is not passed on (the adapter passes `pass_env` variables only, and the check sets none), so a login like that needs `pass_env` in a real config, not in this check.
 
 Last passed: 2026-11-17, Claude Code 2.1.326, logged in with a subscription. The maintainer's machine has that login; the check does not look. All 11 steps passed in 12.6 minutes, and the 10-minute turn took 10 m 12 s.
+
+Last run: 2026-11-18, Claude Code 2.1.327, logged in with a subscription, with the full-screen interface (#178). Steps 1 to 5 passed, the first start's answer after 11 s; the terminal showed the full-screen interface and no echoed paste. Step 6 failed on the answer only: the turn ran both sleeps one after the other and ended `completion` after 10 m 9 s, but the model answered "long done" followed by a note, and the step wants exactly "long done". Steps 7 to 9 were skipped; 10 and 11 passed.
 
 ### New captures
 

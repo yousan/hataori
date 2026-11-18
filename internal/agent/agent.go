@@ -78,8 +78,8 @@ const (
 	// Screen is the agent's terminal output, the bytes as the terminal got
 	// them and not cut into lines, each call carrying what came after the
 	// last. It is given only to a codec whose Open asked for it
-	// (Actions.WatchScreen), and only until the session reports
-	// SessionReady; after that the terminal is never read again.
+	// (Actions.WatchScreen), and only until the codec ends the watch
+	// (Actions.StopScreen); after that the terminal is never read again.
 	Screen
 )
 
@@ -111,11 +111,14 @@ type Actions struct {
 	// call produced it: the caller records them as written before it writes.
 	Inputs []string
 	// WatchScreen, from Open only, asks for the terminal's output (Source
-	// Screen) until the session reports SessionReady: for a start-up
-	// dialog that no hook reports. Elsewhere it is ignored.
+	// Screen) until the codec says StopScreen: for what no hook reports,
+	// such as a start-up dialog, or whether the agent reads keys yet.
+	// Elsewhere it is ignored. A codec rebuilt after a restart is not
+	// opened, so it never watches.
 	WatchScreen bool
-	// StopScreen ends the watch before SessionReady: the codec needs the
-	// screen no more, as once it has answered the dialog.
+	// StopScreen ends the watch, from any call: the codec needs the screen
+	// no more. A codec that watches must end the watch itself; the session
+	// reporting SessionReady does not.
 	StopScreen bool
 }
 

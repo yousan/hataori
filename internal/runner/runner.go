@@ -11,8 +11,8 @@
 //
 // The runner names no agent. It reads an agent's terminal only for a codec
 // whose Open asked to watch it (agent.Actions.WatchScreen), and only until
-// the session reports SessionReady; otherwise the end of a terminal log is
-// asked of the host only to be shown to a person.
+// the codec ends the watch (agent.Actions.StopScreen); otherwise the end of
+// a terminal log is asked of the host only to be shown to a person.
 package runner
 
 import (
@@ -79,7 +79,7 @@ type live struct {
 	upTo    int64 // the last pending input there was at the reconnect; later ones are handed over by their call
 	failed  bool  // the start timed out; the session is being stopped
 	asleep  bool  // put to sleep: its agent is being stopped, and nothing more is read
-	screen  bool  // the codec watches the terminal; until the session reports SessionReady
+	screen  bool  // the codec watches the terminal; until it says StopScreen
 	seenTo  int64 // how much of the terminal the codec was given
 
 	mu     sync.Mutex // the codec, the offsets and the actions, one at a time
@@ -848,6 +848,7 @@ func (r *Runner) stepLocked(lv *live) bool {
 		// that has not seen them.
 		r.Log.Error("commit", "session", lv.id, "err", err)
 		lv.codec = lv.adapter.NewCodec(lv.spec)
+		lv.screen = false // the new codec is not opened: it does not watch
 		r.warm(lv)
 		// What the old codec knew of input: what was written, and what it
 		// held to write later.
@@ -897,21 +898,10 @@ func (r *Runner) stepLocked(lv *live) bool {
 }
 
 // watchScreen gives the codec what the agent wrote to its terminal since
-// the last step, while it watches the screen. Once the session has reported
-// SessionReady, now or before, it stops for good: the terminal is not read
-// again.
+// the last step, while it watches the screen. Once the codec has said
+// StopScreen, the terminal is not read again.
 func (r *Runner) watchScreen(lv *live, b *batch) {
 	if !lv.screen {
-		return
-	}
-	for _, e := range b.events {
-		if e.Kind == agent.SessionReady {
-			lv.screen = false
-			return
-		}
-	}
-	if lv.ready {
-		lv.screen = false
 		return
 	}
 	data, next := host.Screen(lv.dir, lv.seenTo)
