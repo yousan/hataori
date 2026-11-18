@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"errors"
 	"sync/atomic"
@@ -9,42 +10,57 @@ import (
 	"time"
 )
 
-// slowDriver's Open waits until release is closed, as a connection that
-// database/sql opens on its own goroutine may still be opening.
+// hold is how long a test waits to see that a call does not return while
+// what it must wait for is held.
+const hold = 200 * time.Millisecond
+
+// returnsNot fails the test if done delivers within hold.
+func returnsNot(t *testing.T, done <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-done:
+		t.Fatal(what)
+	case <-time.After(hold):
+	}
+}
+
+type nopConn struct{ driver.Conn }
+
+func (nopConn) Close() error { return nil }
+
+// slowDriver's first Open waits until release is closed, as a connection
+// that database/sql opens on a goroutine of its own may still be opening.
 type slowDriver struct {
-	inside  chan struct{} // closed once Open has started
+	inside  chan struct{} // closed once the first Open has started
 	release chan struct{}
 	opens   atomic.Int32
-	done    atomic.Bool // the Open that was released has returned
 }
 
 func (d *slowDriver) Open(string) (driver.Conn, error) {
 	if d.opens.Add(1) == 1 {
 		close(d.inside)
 		<-d.release
-		d.done.Store(true)
 	}
-	return nil, errors.New("slow driver: no connection")
+	return nopConn{}, nil
 }
 
-// Closing waits for a connection that is being opened, and no connection
-// is opened after it.
+// Closing waits for a connection that is being opened and then for it to
+// be closed, and opens none after.
 func TestCloseWaitsForAConnectionBeingOpened(t *testing.T) {
 	d := &slowDriver{inside: make(chan struct{}), release: make(chan struct{})}
 	c := &connector{drv: d}
-	go c.Connect(context.Background())
+	got := make(chan driver.Conn)
+	go func() { k, _ := c.Connect(context.Background()); got <- k }()
 	<-d.inside
-	closed := make(chan bool)
-	go func() { c.close(); closed <- d.done.Load() }()
-	select {
-	case <-closed:
-		t.Fatal("close returned while a connection was still being opened")
-	case <-time.After(200 * time.Millisecond): // the open is held this long
-	}
+	closing, closed := make(chan struct{}), make(chan struct{})
+	go func() { c.refuse(); close(closing); c.wait(); close(closed) }()
+	<-closing
+	returnsNot(t, closed, "closing returned while a connection was being opened")
 	close(d.release)
-	if openDone := <-closed; !openDone {
-		t.Fatal("close returned before the open did")
-	}
+	k := <-got
+	returnsNot(t, closed, "closing returned while a connection it opened was open")
+	k.Close()
+	<-closed
 	if _, err := c.Connect(context.Background()); !errors.Is(err, errClosed) {
 		t.Fatalf("Connect after close: %v, want errClosed", err)
 	}
@@ -53,18 +69,57 @@ func TestCloseWaitsForAConnectionBeingOpened(t *testing.T) {
 	}
 }
 
-// A closed store's connector opens no connection, so nothing creates the
-// database file again.
-func TestClosedStoreOpensNothing(t *testing.T) {
-	root := newRoot(t)
-	s, err := Open(context.Background(), root)
+// Close waits for a connection in use: a transaction still open holds it
+// until it ends.
+func TestCloseWaitsForAConnectionInUse(t *testing.T) {
+	s, err := Open(context.Background(), newRoot(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Close(); err != nil {
+	tx, err := s.DB.BeginTx(context.Background(), nil)
+	if err != nil {
 		t.Fatal(err)
 	}
+	closing, closed := make(chan struct{}), make(chan struct{})
+	go func() { close(closing); s.Close(); close(closed) }()
+	<-closing
+	returnsNot(t, closed, "Close returned while a transaction held its connection")
+	tx.Rollback()
+	<-closed
 	if _, err := s.conn.Connect(context.Background()); !errors.Is(err, errClosed) {
 		t.Fatalf("Connect after Close: %v, want errClosed", err)
+	}
+}
+
+// countedConn claims exactly the optional interfaces of the SQLite
+// driver's connection, so database/sql uses it as it would the driver's.
+// The driver's Exec and Query (driver.Execer, driver.Queryer) are left out:
+// database/sql uses ExecContext and QueryContext when a connection has them.
+func TestCountedConnHasTheDriversInterfaces(t *testing.T) {
+	probe, err := sql.Open("sqlite", "file:"+newRoot(t)+"/x.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer probe.Close()
+	raw, err := probe.Driver().Open("file:" + newRoot(t) + "/x.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	k := &countedConn{conn: raw, c: &connector{}}
+	checks := map[string]func(driver.Conn) bool{
+		"ConnBeginTx":        func(c driver.Conn) bool { _, ok := c.(driver.ConnBeginTx); return ok },
+		"ConnPrepareContext": func(c driver.Conn) bool { _, ok := c.(driver.ConnPrepareContext); return ok },
+		"ExecerContext":      func(c driver.Conn) bool { _, ok := c.(driver.ExecerContext); return ok },
+		"QueryerContext":     func(c driver.Conn) bool { _, ok := c.(driver.QueryerContext); return ok },
+		"Pinger":             func(c driver.Conn) bool { _, ok := c.(driver.Pinger); return ok },
+		"SessionResetter":    func(c driver.Conn) bool { _, ok := c.(driver.SessionResetter); return ok },
+		"Validator":          func(c driver.Conn) bool { _, ok := c.(driver.Validator); return ok },
+		"NamedValueChecker":  func(c driver.Conn) bool { _, ok := c.(driver.NamedValueChecker); return ok },
+	}
+	for name, has := range checks {
+		if has(raw) != has(k) {
+			t.Errorf("%s: the driver's connection %t, countedConn %t", name, has(raw), has(k))
+		}
 	}
 }

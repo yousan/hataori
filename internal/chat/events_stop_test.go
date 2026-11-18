@@ -17,10 +17,12 @@ import (
 // be reading when its caller cancels.
 type heldEvents struct {
 	control.API
-	send     []control.Event
-	release  chan struct{}
-	stopped  atomic.Bool
-	onEvents func() // called when a subscription starts, if set
+	send      []control.Event
+	release   chan struct{}
+	stopped   atomic.Bool
+	onEvents  func()        // called when a subscription starts, if set
+	cancelled chan struct{} // closed once a subscription saw its context end
+	once      sync.Once
 }
 
 func (h *heldEvents) Events(ctx context.Context, f control.Filter, after uint64) (<-chan control.Event, error) {
@@ -37,6 +39,7 @@ func (h *heldEvents) Events(ctx context.Context, f control.Filter, after uint64)
 			}
 		}
 		<-ctx.Done()
+		h.once.Do(func() { close(h.cancelled) })
 		<-h.release
 		h.stopped.Store(true)
 	}()
@@ -44,12 +47,19 @@ func (h *heldEvents) Events(ctx context.Context, f control.Filter, after uint64)
 }
 
 // returnsAfterItsSubscription runs fn, which must not return before the
-// subscription it started has stopped. fn returning while it is held fails
-// the test; otherwise the subscription is let go after hold.
+// subscription it started has stopped. Once the subscription has seen its
+// context end, fn is on its way out: fn returning while the subscription is
+// held fails the test; otherwise the subscription is let go after hold.
 func returnsAfterItsSubscription(t *testing.T, h *heldEvents, fn func()) {
 	t.Helper()
-	done := make(chan bool)
+	h.cancelled = make(chan struct{})
+	done := make(chan bool, 1)
 	go func() { fn(); done <- h.stopped.Load() }()
+	select {
+	case <-done:
+		t.Fatal("returned before its subscription saw its context end")
+	case <-h.cancelled:
+	}
 	const hold = 200 * time.Millisecond
 	select {
 	case <-done:

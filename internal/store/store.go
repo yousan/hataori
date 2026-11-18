@@ -70,48 +70,145 @@ func open(ctx context.Context, path string, steps []Migration) (*Store, error) {
 	return s, nil
 }
 
-// Close closes the database. When it returns, no connection is open and
-// none is being opened, so nothing touches the database's files any more.
+// Close closes the database. It returns once every connection is closed,
+// a connection still in use once its holder releases it, and refuses to
+// open any later one: after it, nothing touches the database's files.
 func (s *Store) Close() error {
-	if s.conn != nil {
-		s.conn.close()
+	if s.conn == nil {
+		return s.DB.Close()
 	}
-	return s.DB.Close()
+	s.conn.refuse()
+	err := s.DB.Close()
+	s.conn.wait()
+	return err
 }
 
-// connector opens the database's connections, and none once close was
-// called. database/sql may open a connection on a goroutine of its own,
-// as when a query cancelled by its context leaves its connection unusable
-// while another call waits for one; sql.DB.Close does not wait for that,
-// so the open could create the file again after the database was closed
-// and its directory removed.
+// connector opens the database's connections, counts those open, and opens
+// none once refuse was called. database/sql may open a connection on a
+// goroutine of its own, as when a query cancelled by its context leaves its
+// connection unusable while another call waits for one, and it closes a
+// connection in use only when it is released; sql.DB.Close waits for
+// neither. Without the count, a connection could create the database file
+// again after the store was closed and its directory removed.
 type connector struct {
 	drv driver.Driver
 	dsn string
 
-	mu     sync.RWMutex // held for reading while a connection opens
-	closed bool
+	mu      sync.Mutex
+	closed  bool
+	opening int // Connect calls under way
+	open    int // connections opened and not closed
+	idle    *sync.Cond
 }
 
 var errClosed = errors.New("store: closed")
 
+func (c *connector) cond() *sync.Cond {
+	if c.idle == nil {
+		c.idle = sync.NewCond(&c.mu)
+	}
+	return c.idle
+}
+
 func (c *connector) Connect(context.Context) (driver.Conn, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
 	if c.closed {
+		c.mu.Unlock()
 		return nil, errClosed
 	}
-	return c.drv.Open(c.dsn)
+	c.opening++
+	c.mu.Unlock()
+	dc, err := c.drv.Open(c.dsn)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.opening--
+	if err == nil {
+		c.open++
+		dc = &countedConn{conn: dc, c: c}
+	}
+	c.cond().Broadcast()
+	return dc, err
 }
 
 func (c *connector) Driver() driver.Driver { return c.drv }
 
-// close waits for the connections being opened and refuses any later one.
-func (c *connector) close() {
+// refuse makes every later Connect fail without opening anything.
+func (c *connector) refuse() {
 	c.mu.Lock()
 	c.closed = true
 	c.mu.Unlock()
 }
+
+// wait returns once no connection is being opened and none is open.
+func (c *connector) wait() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for c.opening > 0 || c.open > 0 {
+		c.cond().Wait()
+	}
+}
+
+func (c *connector) closedOne() {
+	c.mu.Lock()
+	c.open--
+	c.cond().Broadcast()
+	c.mu.Unlock()
+}
+
+// countedConn is a connection that tells its connector when it is closed.
+// It has the methods of the SQLite driver's connection that database/sql
+// uses, and passes each on.
+type countedConn struct {
+	conn driver.Conn
+	c    *connector
+	once sync.Once
+}
+
+func (k *countedConn) Close() error {
+	err := k.conn.Close()
+	k.once.Do(k.c.closedOne)
+	return err
+}
+
+func (k *countedConn) Prepare(q string) (driver.Stmt, error) { return k.conn.Prepare(q) }
+
+func (k *countedConn) Begin() (driver.Tx, error) { return k.conn.Begin() }
+
+func (k *countedConn) BeginTx(ctx context.Context, o driver.TxOptions) (driver.Tx, error) {
+	return k.conn.(driver.ConnBeginTx).BeginTx(ctx, o)
+}
+
+func (k *countedConn) PrepareContext(ctx context.Context, q string) (driver.Stmt, error) {
+	return k.conn.(driver.ConnPrepareContext).PrepareContext(ctx, q)
+}
+
+func (k *countedConn) ExecContext(ctx context.Context, q string, args []driver.NamedValue) (driver.Result, error) {
+	return k.conn.(driver.ExecerContext).ExecContext(ctx, q, args)
+}
+
+func (k *countedConn) QueryContext(ctx context.Context, q string, args []driver.NamedValue) (driver.Rows, error) {
+	return k.conn.(driver.QueryerContext).QueryContext(ctx, q, args)
+}
+
+func (k *countedConn) Ping(ctx context.Context) error { return k.conn.(driver.Pinger).Ping(ctx) }
+
+func (k *countedConn) ResetSession(ctx context.Context) error {
+	return k.conn.(driver.SessionResetter).ResetSession(ctx)
+}
+
+func (k *countedConn) IsValid() bool { return k.conn.(driver.Validator).IsValid() }
+
+// The driver's connection has these; countedConn passes them on, so it
+// must not claim any the driver's connection lacks.
+var (
+	_ driver.ConnBeginTx        = (*countedConn)(nil)
+	_ driver.ConnPrepareContext = (*countedConn)(nil)
+	_ driver.ExecerContext      = (*countedConn)(nil)
+	_ driver.QueryerContext     = (*countedConn)(nil)
+	_ driver.Pinger             = (*countedConn)(nil)
+	_ driver.SessionResetter    = (*countedConn)(nil)
+	_ driver.Validator          = (*countedConn)(nil)
+)
 
 // Version returns the schema version of the database; 0 for a new one.
 func (s *Store) Version(ctx context.Context) (int, error) {
