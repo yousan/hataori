@@ -1,0 +1,37 @@
+import type { State, ThreadInfo } from "./api";
+import { type Key, t } from "./catalog";
+
+// stateName is a state as the page shows it.
+export function stateName(s: State): string {
+  return t(`state.${s}` as Key);
+}
+
+// age is how long ago iso was, short: 45s, 12m, 3h, 2d.
+export function age(iso: string, now: number): string {
+  const s = Math.max(0, Math.floor((now - Date.parse(iso)) / 1000));
+  if (s < 60) return t("age.seconds", { n: s });
+  if (s < 3600) return t("age.minutes", { n: Math.floor(s / 60) });
+  if (s < 86400) return t("age.hours", { n: Math.floor(s / 3600) });
+  return t("age.days", { n: Math.floor(s / 86400) });
+}
+
+// contextUse is the context use in percent, or "" when not reported.
+export function contextUse(x: ThreadInfo): string {
+  if (!x.context || x.context.size <= 0) return "";
+  return t("thread.context", { pct: Math.round((100 * x.context.used) / x.context.size) });
+}
+
+// mark is the agent's mark: the first letter of its name.
+export function mark(x: ThreadInfo): string {
+  return x.agent ? x.agent.slice(0, 1).toUpperCase() : t("thread.noAgent");
+}
+
+// matches reports whether x matches the filter q: its title, its number
+// (with or without #) or its terminal. An empty filter matches every thread.
+export function matches(x: ThreadInfo, q: string): boolean {
+  const f = q.trim().toLowerCase();
+  if (f === "") return true;
+  if (x.title.toLowerCase().includes(f)) return true;
+  if (String(x.number) === f.replace(/^#/, "")) return true;
+  return !!x.terminal && x.terminal.toLowerCase().includes(f);
+}

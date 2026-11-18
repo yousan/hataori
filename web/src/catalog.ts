@@ -2,16 +2,61 @@
 // scripts/lint-strings.mjs fails on a user-visible string anywhere else.
 //
 // Another language is one more catalog of the type Catalog: the type makes
-// it name every key that English has, and nothing else.
+// it name every key that English has, and nothing else. A string may name
+// values in braces, such as {n}; t fills them in.
 
 const en = {
   "app.title": "hataori dashboard",
   "app.readOnly": "read-only",
+  "app.signedOut": "Not signed in, or the session has ended. Open a new sign-in link.",
   "shell.empty": "Nothing to show yet.",
   "theme.toLight": "Switch to the light theme",
   "theme.toDark": "Switch to the dark theme",
   "theme.light": "Light",
   "theme.dark": "Dark",
+
+  "tree.label": "Threads",
+  "tree.filter": "Filter by title, number or terminal",
+  "tree.attention": "Needs attention",
+  "tree.threads": "Threads",
+  "tree.none": "No threads.",
+  "tree.noMatch": "No thread matches the filter.",
+  "tree.density": "Row density",
+  "tree.dense": "Dense",
+  "tree.normal": "Normal",
+  "tree.counts": "Threads per state",
+
+  "thread.number": "#{n}",
+  "thread.context": "{pct}% context",
+  "thread.noAgent": "•",
+  "thread.question": "Question: {text}",
+  "thread.questionHidden": "Waiting on a question",
+  "thread.approval": "Waiting on an approval",
+  "thread.approvalText": "Approval: {text}",
+  "thread.failure": "Failed: {reason}",
+  "thread.failureUnknown": "Failed",
+
+  "age.seconds": "{n}s",
+  "age.minutes": "{n}m",
+  "age.hours": "{n}h",
+  "age.days": "{n}d",
+
+  "state.creating": "creating",
+  "state.idle": "idle",
+  "state.running": "running",
+  "state.waiting": "waiting",
+  "state.asleep": "asleep",
+  "state.closed": "closed",
+  "state.removed": "removed",
+  "state.failed": "failed",
+  "state.count": "{state} {n}",
+
+  "status.label": "Status",
+  "status.noSelection": "No thread selected",
+  "status.live": "live · event {pos}",
+  "status.liveStarting": "live",
+  "status.offline": "offline · last event {pos}",
+  "status.offlineNone": "offline",
 } as const;
 
 export type Key = keyof typeof en;
@@ -21,7 +66,10 @@ export type Catalog = { readonly [K in Key]: string };
 export const lang = "en";
 const catalog: Catalog = en;
 
-// t is the string of key in the page's language.
-export function t(key: Key): string {
-  return catalog[key];
+// t is the string of key in the page's language, with each {name} replaced
+// by vars[name].
+export function t(key: Key, vars?: { readonly [name: string]: string | number }): string {
+  const s = catalog[key];
+  if (!vars) return s;
+  return s.replace(/\{(\w+)\}/g, (m, name: string) => (name in vars ? String(vars[name]) : m));
 }
