@@ -100,6 +100,9 @@ func TestThreadInfoTurnsBackgroundAndLast(t *testing.T) {
 	if err != nil || d.Last != "" || d.Title != "" || d.Recent != "" {
 		t.Fatalf("a caller that may not read text: %+v, %v", d, err)
 	}
+	if b, _ := json.Marshal(d); strings.Contains(string(b), `"title"`) {
+		t.Fatalf("the title is encoded for a caller that may not read text: %s", b)
+	}
 	for _, e := range d.Events {
 		if e.Kind == "text" && strings.Contains(string(e.Data), `"text"`) {
 			t.Fatalf("a caller that may not read text got %s", e.Data)

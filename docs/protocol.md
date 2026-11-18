@@ -30,7 +30,7 @@ What a change does to the version:
 | A new operation, or a new request the daemon sends | minor |
 | A new error code | minor |
 | Removing or renaming an operation, a field, an event kind or an error code | major |
-| Making an optional field required | major |
+| Making an optional field required, or a required field optional | major |
 | Changing a field's type, or what a field or a value means | major |
 
 So a reader must ignore what it does not know: a field it does not know, an event kind it does not know, a request it does not know (answered `not_supported`). The project's own client does: it skips an event of a kind it does not know.
