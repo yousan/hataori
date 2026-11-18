@@ -303,6 +303,25 @@ def screen_text(s):
     return re.sub(r"\x1b\[[0-9;?<>=]*[A-Za-z~]|\x1b\][^\x07]*\x07|\x1b[()][A-Z0-9]|\x1b[=>78]", "", b)
 
 
+def own_config_dir(var, user_dir, files):
+    """The absolute, resolved directory named by var, or None when it is
+    unset, empty, the user's own directory, or holds one of files that
+    resolves to the user's own file."""
+    cfg = os.environ.get(var)
+    if not cfg:
+        return None
+    cfg = os.path.realpath(cfg)
+    user = os.path.realpath(os.path.expanduser(user_dir))
+    if cfg == user or not os.path.isdir(cfg):
+        return None
+    for f in files:
+        for theirs in (os.path.join(user, f), os.path.expanduser("~/" + f)):
+            p = os.path.join(cfg, f)
+            if os.path.exists(p) and os.path.exists(theirs) and os.path.samefile(p, theirs):
+                return None
+    return cfg
+
+
 def model_switch(out, work, variant):
     """/model in the running session, then a shell attempt and a subagent
     attempt. The command is typed, its menu closed with Escape, and the
@@ -331,10 +350,9 @@ def model_switch(out, work, variant):
         s.wait("Stop", n + 1, timeout=240)
     # 2.1.327 saves the model chosen with /model in the user-level
     # settings file, --restricted and --setting-sources notwithstanding.
-    cfg = os.environ.get("CLAUDE_CONFIG_DIR")
-    own = os.path.realpath(os.path.expanduser("~/.claude"))
+    cfg = own_config_dir("CLAUDE_CONFIG_DIR", "~/.claude", ("settings.json", ".claude.json"))
     name = "confine_%s_model_switch" % variant
-    if not cfg or os.path.realpath(cfg) == own:
+    if not cfg:
         d = os.path.join(out, name)
         os.makedirs(d, exist_ok=True)
         why = ("not run: confirming /model writes the user-level settings file; "
