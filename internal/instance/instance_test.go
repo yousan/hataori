@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -118,14 +119,124 @@ func TestConfigErrorsNameTheKey(t *testing.T) {
 
 func TestConfigIgnoresSpacesAroundValues(t *testing.T) {
 	c, err := ParseConfig([]byte(`{"owner": " o ", "trigger": "\t!go ", "idle": " 30m ",
-		"scopes": [{"key": " c1 ", "client": " chat ", "model": " m ", "effort": " high", "posters": [" hook-1 "]}]}`))
+		"scopes": [{"key": " c1 ", "client": " chat ", "model": " m ", "effort": " high", "posters": [" hook-1 "]}], "drivers": {"chat": {}}}`))
 	if err != nil {
 		t.Fatalf("ParseConfig: %v", err)
 	}
 	s := c.Scopes[0]
-	if c.Owner != "o" || c.Trigger != "!go" || c.Idle != 30*time.Minute ||
-		s.Key != "c1" || s.Client != "chat" || s.Model != "m" || s.Effort != "high" || s.Posters[0] != "hook-1" {
+	if name, _ := c.People.Resolve("chat:hook-1"); !slices.Equal(c.People.IDs(OldOwner, "chat"), []string{"o"}) || c.Trigger != "!go" || c.Idle != 30*time.Minute ||
+		s.Key != "c1" || s.Client != "chat" || s.Model != "m" || s.Effort != "high" || !c.People.May(name, "c1") {
 		t.Fatalf("spaces changed a value: %+v", c)
+	}
+}
+
+const peopleConfig = `{"trigger": "!go", "idle": "30m", "owner": " ada ",
+	"people": [
+		{"name": "ada", "ids": ["chat:1", " other:U1 "]},
+		{"name": "grace", "ids": ["chat:2"]},
+		{"name": "hook", "ids": ["chat:9"]}
+	],
+	"scopes": [{"key": "c1", "client": "chat", "people": ["grace", " hook "]}, {"key": "c2", "client": "chat"}],
+	"drivers": {"chat": {}, "other": {}}}`
+
+// The owner may act everywhere, a scope's people in that scope only, and
+// an id no person lists nowhere.
+func TestPeopleConfig(t *testing.T) {
+	c, err := ParseConfig([]byte(peopleConfig))
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if c.OldForm || c.Owner != "ada" {
+		t.Fatalf("owner %q, old form %v", c.Owner, c.OldForm)
+	}
+	for _, tc := range []struct {
+		id, scope string
+		may       bool
+	}{
+		{"chat:1", "c1", true}, {"other:U1", "c2", true}, {"chat:2", "c1", true}, {"chat:2", "c2", false},
+		{"chat:9", "c1", true}, {"other:2", "c1", false}, {"chat:3", "c1", false}, {"2", "c1", false},
+	} {
+		name, _ := c.People.Resolve(tc.id)
+		if got := c.People.May(name, tc.scope); got != tc.may {
+			t.Errorf("%s in %s: may = %v, want %v", tc.id, tc.scope, got, tc.may)
+		}
+	}
+	if ids := c.People.IDs("ada", "other"); len(ids) != 1 || ids[0] != "U1" {
+		t.Errorf("ada's ids on other: %v", ids)
+	}
+}
+
+func TestPeopleConfigErrorsNameTheKey(t *testing.T) {
+	base := `{"trigger": "!go", "idle": "30m", "owner": "ada", `
+	for _, tc := range []struct {
+		name, rest, key string
+	}{
+		{"no name", `"people": [{"ids": ["chat:1"]}]}`, `"people[0].name"`},
+		{"colon in name", `"people": [{"name": "chat:1"}]}`, `"people[0].name"`},
+		{"name twice", `"people": [{"name": "ada"}, {"name": "ada"}]}`, `"people[1].name"`},
+		{"id without client", `"people": [{"name": "ada", "ids": ["1"]}]}`, `"people[0].ids[0]"`},
+		{"id with empty part", `"people": [{"name": "ada", "ids": ["chat:"]}]}`, `"people[0].ids[0]"`},
+		{"bad client", `"people": [{"name": "ada", "ids": ["Chat:1"]}]}`, `"people[0].ids[0]"`},
+		{"id twice", `"people": [{"name": "ada", "ids": ["chat:1"]}, {"name": "b", "ids": ["chat:1"]}]}`, `"people[1].ids[0]"`},
+		{"owner unknown", `"people": [{"name": "grace"}]}`, `"owner"`},
+		{"scope person unknown", `"people": [{"name": "ada"}], "scopes": [{"key": "c1", "client": "chat", "people": ["x"]}]}`, `"scopes[0].people[0]"`},
+		{"posters with people", `"people": [{"name": "ada"}], "scopes": [{"key": "c1", "client": "chat", "posters": ["1"]}]}`, `"scopes[0].posters"`},
+		{"people without people", `"scopes": [{"key": "c1", "client": "chat", "people": ["ada"]}]}`, `"scopes[0].people"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseConfig([]byte(base + tc.rest))
+			if err == nil {
+				t.Fatal("ParseConfig succeeded")
+			}
+			if msg := err.Error(); strings.Contains(msg, "\n") || !strings.Contains(msg, tc.key) {
+				t.Fatalf("error %q is not one line naming %s", msg, tc.key)
+			}
+		})
+	}
+}
+
+// An old-form config allows exactly the authors it allowed before: the
+// owner's id on every driver in every scope, and each poster on its
+// scope's client in its scope; nothing else.
+func TestOldFormAllowsTheSameAuthors(t *testing.T) {
+	c, err := ParseConfig([]byte(`{"owner": "1", "trigger": "!go", "idle": "30m",
+		"scopes": [
+			{"key": "c1", "client": "chat", "posters": ["2", "3", "1"]},
+			{"key": "c2", "client": "chat", "posters": ["3"]},
+			{"key": "c3", "client": "other", "posters": ["2"]}
+		],
+		"drivers": {"chat": {}, "other": {}}}`))
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if !c.OldForm {
+		t.Fatal("not read as the old form")
+	}
+	// What the old front ends allowed: the author's id is the owner's, or
+	// one of the scope's posters, compared by the scope's client.
+	old := func(client, local, scope string) bool {
+		if local == "1" {
+			return true
+		}
+		posters := map[string][]string{"c1": {"2", "3", "1"}, "c2": {"3"}, "c3": {"2"}}
+		clients := map[string]string{"c1": "chat", "c2": "chat", "c3": "other"}
+		return clients[scope] == client && slices.Contains(posters[scope], local)
+	}
+	for _, client := range []string{"chat", "other", "third"} {
+		for _, local := range []string{"1", "2", "3", "4"} {
+			for _, scope := range []string{"c1", "c2", "c3", "c4"} {
+				if client == "third" && local == "1" {
+					continue // no such driver: the old config compared nothing there
+				}
+				name, _ := c.People.Resolve(client + ":" + local)
+				if got, want := c.People.May(name, scope), old(client, local, scope); got != want {
+					t.Errorf("%s:%s in %s: may = %v, before %v", client, local, scope, got, want)
+				}
+			}
+		}
+	}
+	if name, ok := c.People.Resolve("third:1"); ok {
+		t.Errorf("third:1 is %q; the owner has ids only on configured drivers", name)
 	}
 }
 

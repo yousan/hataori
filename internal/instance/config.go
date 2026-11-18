@@ -8,9 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/yousan/hataori/internal/people"
 	"github.com/yousan/hataori/internal/registry"
 )
 
@@ -19,7 +22,13 @@ const ConfigFile = "config/hataori.json"
 
 // Config is an instance's config, parsed once at start-up.
 type Config struct {
-	Owner   string        // the principal that owns the instance
+	Owner string // the name of the person who owns the instance
+	// People resolves ids to people and says who may act in a scope
+	// (design, section 5.5). Never nil.
+	People *people.Directory
+	// OldForm is set when the config has no "people": its owner and
+	// posters were raw ids, converted into People.
+	OldForm bool
 	Trigger string        // the word that starts a thread
 	Idle    time.Duration // idle period before a session is put to sleep
 	Model   string        // default model of a scope without one; empty for the agent's own default
@@ -47,12 +56,13 @@ type Scope struct {
 	Enabled bool     // whether threads may be started in it
 	Model   string   // default model; empty for the agent's own default
 	Effort  string   // default effort; empty for the agent's own default
-	Posters []string // principals that may post besides the owner
+	People  []string // names of the people who may act here besides the owner
 }
 
 // The config as written in the file.
 type fileConfig struct {
 	Owner      string                     `json:"owner"`
+	People     *[]filePerson              `json:"people"`
 	Trigger    string                     `json:"trigger"`
 	Idle       string                     `json:"idle"`
 	Model      string                     `json:"model"`
@@ -70,7 +80,13 @@ type fileScope struct {
 	Enabled bool     `json:"enabled"`
 	Model   string   `json:"model"`
 	Effort  string   `json:"effort"`
+	People  []string `json:"people"`
 	Posters []string `json:"posters"`
+}
+
+type filePerson struct {
+	Name string   `json:"name"`
+	IDs  []string `json:"ids"`
 }
 
 // ParseConfig parses a config. Every error is one line that names the key.
@@ -144,11 +160,6 @@ func ParseConfig(data []byte) (*Config, error) {
 		if err := registry.ValidName(sc.Client); err != nil {
 			return nil, fmt.Errorf("config: key %q: %v", key+".client", err)
 		}
-		for _, p := range s.Posters {
-			if p = strings.TrimSpace(p); p != "" {
-				sc.Posters = append(sc.Posters, p)
-			}
-		}
 		c.Scopes = append(c.Scopes, sc)
 	}
 	for _, section := range []struct {
@@ -161,7 +172,138 @@ func ParseConfig(data []byte) (*Config, error) {
 			}
 		}
 	}
+	if f.People == nil {
+		err = c.oldForm(f.Scopes)
+	} else {
+		err = c.people(*f.People, f.Scopes)
+	}
+	if err != nil {
+		return nil, err
+	}
 	return c, nil
+}
+
+// people reads the people, the owner and each scope's people.
+func (c *Config) people(list []filePerson, scopes []fileScope) error {
+	var ps []people.Person
+	names, owners := map[string]bool{}, map[string]string{} // id → name
+	for i, fp := range list {
+		key := fmt.Sprintf("people[%d]", i)
+		p := people.Person{Name: strings.TrimSpace(fp.Name)}
+		switch {
+		case p.Name == "":
+			return missing(key + ".name")
+		case strings.Contains(p.Name, ":"):
+			return fmt.Errorf("config: key %q: name %q has a colon; a name is a word, an id is <client>:<id>", key+".name", p.Name)
+		case names[p.Name]:
+			return fmt.Errorf("config: key %q: person %q is listed twice", key+".name", p.Name)
+		}
+		names[p.Name] = true
+		for j, id := range fp.IDs {
+			idKey := fmt.Sprintf("%s.ids[%d]", key, j)
+			if id = strings.TrimSpace(id); id == "" {
+				continue
+			}
+			client, _, ok := people.Split(id)
+			if !ok {
+				return fmt.Errorf("config: key %q: %q is not an id of the form <client>:<id>", idKey, id)
+			}
+			if err := registry.ValidName(client); err != nil {
+				return fmt.Errorf("config: key %q: %v", idKey, err)
+			}
+			if other, dup := owners[id]; dup {
+				return fmt.Errorf("config: key %q: id %q is listed already, under %q", idKey, id, other)
+			}
+			owners[id] = p.Name
+			p.IDs = append(p.IDs, id)
+		}
+		ps = append(ps, p)
+	}
+	if c.Owner == "" {
+		return missing("owner")
+	}
+	if !names[c.Owner] {
+		return fmt.Errorf("config: key %q: %q is not the name of a person under \"people\"", "owner", c.Owner)
+	}
+	byScope := map[string][]string{}
+	for i, s := range scopes {
+		key := fmt.Sprintf("scopes[%d]", i)
+		if len(s.Posters) > 0 {
+			return fmt.Errorf("config: key %q: a config with \"people\" names who may post in %q, not their ids", key+".posters", key+".people")
+		}
+		for j, n := range s.People {
+			if n = strings.TrimSpace(n); n == "" {
+				continue
+			}
+			if !names[n] {
+				return fmt.Errorf("config: key %q: %q is not the name of a person under \"people\"", fmt.Sprintf("%s.people[%d]", key, j), n)
+			}
+			c.Scopes[i].People = append(c.Scopes[i].People, n)
+		}
+		byScope[c.Scopes[i].Key] = c.Scopes[i].People
+	}
+	c.People = people.New(ps, c.Owner, byScope)
+	return nil
+}
+
+// OldOwner is the name the owner of an old-form config gets.
+const OldOwner = "owner"
+
+// oldForm converts a config without "people", whose owner and posters are
+// raw ids, so that it allows exactly the authors it allowed before: the
+// owner, whose id every driver compared, on every driver, and each poster
+// on the scope's client, in that scope (design, section 5.5). A poster is
+// named after its id, as "<client>/<id>": a client name has no "/", so no
+// two ids get one name.
+func (c *Config) oldForm(scopes []fileScope) error {
+	c.OldForm = true
+	raw := c.Owner
+	if raw == "" {
+		return missing("owner")
+	}
+	var drivers []string
+	for name := range c.Drivers {
+		drivers = append(drivers, name)
+	}
+	sort.Strings(drivers)
+	owner := people.Person{Name: OldOwner}
+	isOwner := map[string]bool{}
+	for _, d := range drivers {
+		id := people.Join(d, raw)
+		owner.IDs = append(owner.IDs, id)
+		isOwner[id] = true
+	}
+	ps := []people.Person{owner}
+	listed := map[string]bool{}
+	byScope := map[string][]string{}
+	for i, s := range scopes {
+		key := fmt.Sprintf("scopes[%d]", i)
+		if len(s.People) > 0 {
+			return fmt.Errorf("config: key %q: names people, but the config has no \"people\"", key+".people")
+		}
+		sc := &c.Scopes[i]
+		for _, p := range s.Posters {
+			if p = strings.TrimSpace(p); p == "" {
+				continue
+			}
+			id := people.Join(sc.Client, p)
+			if isOwner[id] {
+				continue // the owner may act everywhere already
+			}
+			name := sc.Client + "/" + p
+			if !listed[id] {
+				listed[id] = true
+				ps = append(ps, people.Person{Name: name, IDs: []string{id}})
+			}
+			if !slices.Contains(sc.People, name) {
+				sc.People = append(sc.People, name)
+			}
+		}
+		byScope[sc.Key] = sc.People
+	}
+	c.Owner = OldOwner
+	c.People = people.New(ps, c.Owner, byScope)
+	return nil
 }
 
 // rejectNull refuses a null anywhere outside the opaque sections, since

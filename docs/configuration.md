@@ -31,15 +31,20 @@ The config file is `<root>/config/hataori.json`. It is read once when the daemon
 - Spaces around string values are ignored.
 - Every error names the key it is about.
 
-A complete example for one Discord channel and Claude Code:
+A complete example for one Discord channel and Claude Code, with the owner, one more person and a webhook that posts orders:
 
 ```json
 {
-  "owner": "<your Discord user id>",
+  "owner": "ada",
+  "people": [
+    {"name": "ada",      "ids": ["discord:<ada's Discord user id>"]},
+    {"name": "grace",    "ids": ["discord:<grace's Discord user id>"]},
+    {"name": "dispatch", "ids": ["discord:<the webhook's id>"]}
+  ],
   "trigger": "!hataori",
   "idle": "30m",
   "scopes": [
-    {"key": "<channel id>", "client": "discord", "enabled": true}
+    {"key": "<channel id>", "client": "discord", "enabled": true, "people": ["grace", "dispatch"]}
   ],
   "drivers": {
     "discord": {"bot_id": "<the bot's user id>", "token_file": "discord-token"}
@@ -54,7 +59,8 @@ A complete example for one Discord channel and Claude Code:
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `owner` | string | required | The person who owns the instance. For Discord, their user id. The owner may start threads in every enabled scope and post into every thread, and gets the login alert by direct message. |
+| `owner` | string | required | The name of the person, under `people`, who owns the instance. The owner may start threads in every enabled scope and post into every thread, and gets the login alert by direct message. In the old form (no `people`), the owner's id itself; see [People](#people). |
+| `people` | array | none | The people hataori knows, one object each (below). Without this key the config is read in the old form. |
 | `trigger` | string | required | The word that starts a thread. A message in an enabled channel that starts with this word, followed by a space or a line break, is an order (see [Orders](#orders)). |
 | `idle` | duration | required | How long a session may sit without a turn before its agent process is stopped. The next message resumes the same conversation. A positive Go duration, such as `"30m"` or `"2h"`. |
 | `model` | string | empty | The model of a thread whose order and scope name none. Empty leaves it to the agent's own default. |
@@ -78,7 +84,41 @@ Names in `drivers`, `adapters` and `scopes[].client` start with a lowercase lett
 | `enabled` | boolean | `false` | Whether orders in this scope start threads. |
 | `model` | string | empty | The model of threads started here whose order names none. |
 | `effort` | string | empty | The effort of threads started here whose order names none. |
-| `posters` | array of strings | empty | Who may start threads here and post into them besides the owner. For Discord, user ids, or the id of a webhook for posts made through that webhook. Empty strings are ignored. |
+| `people` | array of strings | empty | Names of the people, under `people`, who may start threads here and post into them besides the owner. Empty strings are ignored. |
+| `posters` | array of strings | empty | The old form only: ids, on this scope's client, of who may post here besides the owner. For Discord, user ids, or the id of a webhook for posts made through that webhook. Refused in a config with `people`. |
+
+### `people[]`
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `name` | string | required | The person's name, as `owner` and `scopes[].people` write it. Any word without a colon. Each name may be listed once. |
+| `ids` | array of strings | empty | The ids by which chat services know the person, each `<client>:<id>`: the driver's name, a colon and the service's own id of the author. For Discord, `discord:<user id>`, or `discord:<webhook id>` for posts made through a webhook. One id may be listed once, under one person. Empty strings are ignored. |
+
+### People
+
+Who may act is written by person. A person has a name and ids, one per account on each chat service; a webhook or another automated poster is a person too, with the webhook's id.
+
+- The owner may act in every scope; anyone else only in the scopes whose `people` name them.
+- An author whose id no person lists is a **guest**. A guest's messages never reach the agent: a guest starts no thread, sends no input, answers nothing and stops nothing. Logs show a guest as `<client>:<id>`.
+- Ids are linked to people only here, by whoever edits this file. Nothing said in chat changes who a person is.
+
+**The old form.** A config without `people` is read as before: `owner` is the owner's id, and each scope's `posters` are ids on that scope's client. It is converted when the daemon starts, so it allows the same authors: the owner becomes a person named `owner` with the owner's id on every configured driver, and each poster becomes a person named `<client>/<id>`, allowed in the scopes that list it. The daemon logs one line saying the config uses the old form. To move, add `people`, name the owner by person, and replace each scope's `posters` by `people`:
+
+```json
+"owner": "1234",
+"scopes": [{"key": "<channel id>", "client": "discord", "enabled": true, "posters": ["5678"]}]
+```
+
+becomes
+
+```json
+"owner": "ada",
+"people": [
+  {"name": "ada",      "ids": ["discord:1234"]},
+  {"name": "dispatch", "ids": ["discord:5678"]}
+],
+"scopes": [{"key": "<channel id>", "client": "discord", "enabled": true, "people": ["dispatch"]}]
+```
 
 ### `drivers.discord`
 
@@ -160,6 +200,6 @@ An order is a message in an enabled channel (not in a thread):
 - The options are `name:value` words on the first line, after the trigger word. The prompt is everything after the last option, and may span many lines.
 - `repo:` is required. It is a URL with the scheme `https`, `http`, `ssh`, `git` or `file`, or the `user@host:path` form.
 - `effort:` is one of `low`, `medium`, `high`, `xhigh`, `max`. Any other value gets a reply saying nothing was started.
-- The author must be the owner or one of the scope's `posters`. Posts by bot accounts are ignored; posts through a webhook are accepted when the webhook's id is a poster.
+- The author must be the owner or one of the scope's `people`. Posts by bot accounts are ignored; posts through a webhook are accepted when the webhook's id belongs to one of the scope's people.
 
-hataori opens a thread on the message, clones the repository into the thread's working directory, starts the agent there and posts its replies into the thread. Later messages in that thread from the owner or a poster go to the same agent session. An order that is refused for any reason other than the effort value starts nothing and writes one log line.
+hataori opens a thread on the message, clones the repository into the thread's working directory, starts the agent there and posts its replies into the thread. Later messages in that thread from the owner or one of the scope's people go to the same agent session. An order that is refused for any reason other than the effort value starts nothing and writes one log line.
