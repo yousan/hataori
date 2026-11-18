@@ -16,8 +16,9 @@ import (
 
 // ErrCursor is what Since returns, wrapped, when the service cannot serve
 // the conversation from the cursor: the cursor is not a message id, or the
-// conversation is gone or out of the bot's reach. It is not "no messages":
-// that is an empty result and no error.
+// conversation is out of the bot's reach. It is not "no messages": that is
+// an empty result and no error. A conversation that no longer exists is
+// surface.ErrGone instead.
 var ErrCursor = errors.New("discord: the service cannot serve messages from this cursor")
 
 // Discord's JSON error codes for a conversation that is gone or hidden.
@@ -103,10 +104,13 @@ func (d *Driver) canRead(ctx context.Context, ch, msg snowflake.ID) error {
 }
 
 // cursorError marks a refusal that means the conversation cannot be read
-// from the cursor.
+// from the cursor, and Unknown Channel as a conversation that is gone.
 func cursorError(err error) error {
 	var e *Error
-	if errors.As(err, &e) && (e.Code == codeUnknownChannel || e.Code == codeMissingAccess || e.Code == codeMissingPerms ||
+	if errors.As(err, &e) && e.Code == codeUnknownChannel {
+		return fmt.Errorf("%w: %w", surface.ErrGone, err)
+	}
+	if errors.As(err, &e) && (e.Code == codeMissingAccess || e.Code == codeMissingPerms ||
 		e.Code == codeInvalidForm || e.Status == http.StatusNotFound) {
 		return fmt.Errorf("%w: %w", ErrCursor, err)
 	}

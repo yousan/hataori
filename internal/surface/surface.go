@@ -7,11 +7,17 @@ package surface
 
 import (
 	"context"
+	"errors"
 	"os"
 	"time"
 
 	"github.com/yousan/hataori/internal/registry"
 )
+
+// ErrGone is what a driver returns, wrapped, when a conversation no longer
+// exists on the service, as when it was deleted. Asking again will not
+// bring it back.
+var ErrGone = errors.New("the conversation is gone")
 
 // Driver is one chat service.
 type Driver interface {
@@ -20,7 +26,8 @@ type Driver interface {
 	Run(ctx context.Context, sink Sink) error
 
 	// Since returns the messages in a conversation after cursor,
-	// for catching up after an outage.
+	// for catching up after an outage. When the conversation no longer
+	// exists on the service, the error wraps ErrGone.
 	Since(ctx context.Context, conv Conversation, cursor string) ([]Inbound, error)
 
 	// OpenThread opens a thread in parent.Channel and returns it. When
