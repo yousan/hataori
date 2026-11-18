@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -258,6 +259,21 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 				p.report(map[string]any{"t": "tool", "id": tid, "name": tool, "parent": id, "end": true})
 			}
 			p.report(map[string]any{"t": "subagent", "id": id, "name": name, "end": true})
+		case "usage":
+			// usage INPUT OUTPUT CACHE_READ CACHE_WRITE CONTEXT_USED CONTEXT_SIZE [MODEL]
+			f := strings.Fields(arg)
+			var n [6]int64
+			for i := range n {
+				if i < len(f) {
+					n[i], _ = strconv.ParseInt(f[i], 10, 64)
+				}
+			}
+			model := ""
+			if len(f) > 6 {
+				model = f[6]
+			}
+			p.report(map[string]any{"t": "usage", "in": n[0], "output": n[1], "cache_read": n[2], "cache_write": n[3],
+				"context_used": n[4], "context_size": n[5], "model": model})
 		case "file":
 			// file PATH [PATH...] [-- CAPTION]
 			paths, caption, _ := strings.Cut(arg, " -- ")

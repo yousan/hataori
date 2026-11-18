@@ -1,0 +1,94 @@
+package core
+
+import (
+	"context"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/yousan/hataori/internal/agent"
+	"github.com/yousan/hataori/internal/control"
+)
+
+// fixedClock is a clock a test sets.
+type fixedClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *fixedClock) now() time.Time  { c.mu.Lock(); defer c.mu.Unlock(); return c.t }
+func (c *fixedClock) set(t time.Time) { c.mu.Lock(); c.t = t; c.mu.Unlock() }
+
+func usage(in, out, cr, cw, used, size int64) agent.Event {
+	return agent.Event{Kind: agent.Usage, Usage: &agent.UsageCount{Input: in, Output: out, CacheRead: cr, CacheWrite: cw,
+		ContextUsed: used, ContextSize: size}}
+}
+
+// A thread whose agent never reported usage has no tokens and no context;
+// then tokens.turn is the last turn's total, tokens.today the sum of the
+// turns, and context the last one reported.
+func TestThreadTokensAndContext(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{})
+	id, sid := f.running(t, "t1")
+	if got := f.info(t, f.owner, id); got.Tokens != nil || got.Context != nil {
+		t.Fatalf("before any usage: tokens %+v, context %+v", got.Tokens, got.Context)
+	}
+	// Each report is the turn's total so far.
+	f.agentEvent(t, sid, 2, usage(10, 5, 0, 0, 1000, 200000))
+	f.agentEvent(t, sid, 3, usage(30, 20, 100, 50, 1200, 200000)) // 200
+	f.agentEvent(t, sid, 4, agent.Event{Kind: agent.TurnEnded, Status: agent.Completed})
+	if err := f.owner.Send(ctx, id, "second", control.Input{Text: "again"}, control.Refuse); err != nil {
+		t.Fatal(err)
+	}
+	f.agentEvent(t, sid, 5, agent.Event{Kind: agent.TurnStarted})
+	f.agentEvent(t, sid, 6, usage(40, 30, 0, 0, 1300, 200000)) // 70
+	f.agentEvent(t, sid, 7, usage(1, 1, 0, 0, 0, 0))           // went down, and no context: adds nothing
+	f.agentEvent(t, sid, 8, usage(50, 30, 0, 0, 0, 0))         // 80
+	f.agentEvent(t, sid, 9, agent.Event{Kind: agent.TurnEnded, Status: agent.Completed})
+
+	got := f.info(t, f.owner, id)
+	if got.Tokens == nil || *got.Tokens != (control.TokenCount{Turn: 80, Today: 280}) {
+		t.Fatalf("tokens %+v, want turn 80 today 280", got.Tokens)
+	}
+	if got.Context == nil || *got.Context != (control.Context{Used: 1300, Size: 200000}) {
+		t.Fatalf("context %+v", got.Context)
+	}
+	d, err := f.owner.Thread(ctx, id, 0, 0)
+	if err != nil || d.Tokens == nil || *d.Tokens != *got.Tokens {
+		t.Fatalf("Thread: %+v, %v", d.Tokens, err)
+	}
+	// Another thread's usage is not this one's.
+	other, _ := f.running(t, "t2")
+	if got := f.info(t, f.owner, other); got.Tokens != nil {
+		t.Fatalf("the other thread: %+v", got.Tokens)
+	}
+}
+
+// Usage reported before midnight in the time zone does not count toward
+// the next day, even within a turn that goes on past midnight.
+func TestTokensTodayStartsAtMidnight(t *testing.T) {
+	zone := time.FixedZone("test", 9*60*60)
+	clock := &fixedClock{t: time.Date(2026, 3, 4, 23, 58, 0, 0, zone)}
+	f := newFixture(t, fakeOwner{})
+	f.core.Machine.Now, f.core.Machine.Zone = clock.now, zone
+	id, sid := f.running(t, "t1")
+	f.agentEvent(t, sid, 2, usage(100, 0, 0, 0, 0, 0))
+	if got := f.info(t, f.owner, id); got.Tokens.Today != 100 {
+		t.Fatalf("before midnight: %+v", got.Tokens)
+	}
+	clock.set(time.Date(2026, 3, 5, 0, 0, 0, 0, zone)) // midnight, nothing reported yet
+	if got := f.info(t, f.owner, id); *got.Tokens != (control.TokenCount{Turn: 100, Today: 0}) {
+		t.Fatalf("at midnight: %+v", got.Tokens)
+	}
+	clock.set(time.Date(2026, 3, 5, 0, 1, 0, 0, zone))
+	f.agentEvent(t, sid, 3, usage(130, 20, 0, 0, 0, 0)) // the same turn: 50 more
+	if got := f.info(t, f.owner, id); *got.Tokens != (control.TokenCount{Turn: 150, Today: 50}) {
+		t.Fatalf("after midnight: %+v", got.Tokens)
+	}
+	// The event's time is the clock's, so a reader can tell the days apart too.
+	evs, _ := f.core.Store.Last(context.Background(), id, 1, func(e control.Event) bool { return e.Kind == "usage" })
+	if len(evs) != 1 || !evs[0].Time.Equal(clock.now()) {
+		t.Fatalf("usage event %+v", evs)
+	}
+}

@@ -191,6 +191,22 @@ type ThreadInfo struct {
 	Turns      int    `json:"turns,omitempty"`      // turns started in this thread
 	Last       string `json:"last,omitempty"`       // the last line of output, at most LastMax bytes; text
 	Background int    `json:"background,omitempty"` // background of the thread's last turn_ended event
+	// From the usage events, since 1.7.
+	Context *Context    `json:"context,omitempty"` // the last context use reported; absent until one is
+	Tokens  *TokenCount `json:"tokens,omitempty"`  // absent until the agent reports usage
+}
+
+// Context is a session's context use, in tokens.
+type Context struct {
+	Used int64 `json:"used"`
+	Size int64 `json:"size"` // the context window
+}
+
+// TokenCount counts tokens: input, output, cache reads and cache writes
+// together.
+type TokenCount struct {
+	Turn  int64 `json:"turn"`  // of the last turn that reported usage
+	Today int64 `json:"today"` // of every turn today, in the daemon's local time zone
 }
 
 // LastMax is the most bytes ThreadInfo.Last holds.

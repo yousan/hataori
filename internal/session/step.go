@@ -76,6 +76,7 @@ const (
 	KindTurnEnded   control.EventKind = "turn_ended"
 	KindInput       control.EventKind = "input"
 	KindAnswer      control.EventKind = "answer"
+	KindUsage       control.EventKind = "usage"
 )
 
 // Snapshot is what Step needs to know about a session.
@@ -361,6 +362,16 @@ func agentOut(e agent.Event) Out {
 		}
 		if e.Caption != "" {
 			d["caption"] = e.Caption
+		}
+	case agent.Usage:
+		if u := e.Usage; u != nil {
+			d["input"], d["output"], d["cache_read"], d["cache_write"] = u.Input, u.Output, u.CacheRead, u.CacheWrite
+			if u.Model != "" {
+				d["model"] = u.Model
+			}
+			if u.ContextSize > 0 {
+				d["context_used"], d["context_size"] = u.ContextUsed, u.ContextSize
+			}
 		}
 	}
 	return Out{Kind: agentKinds[e.Kind], Data: d}

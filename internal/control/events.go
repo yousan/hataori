@@ -52,11 +52,12 @@ var EventKinds = map[EventKind][]Field{
 	"request":           {req("session", Integer), req("request", String), req("approval", Boolean), text("text", String), text("choices", Array)},
 	"request_withdrawn": {req("session", Integer), req("request", String)},
 	"file_out":          {req("session", Integer), req("file", String), opt("more", Array), text("caption", String)},
-	"usage":             {req("session", Integer)},
-	"login_lost":        {req("agent", String), req("outage", Integer), req("thread", Integer)},
-	"login_restored":    {req("agent", String), req("outage", Integer), req("threads", Array), req("scopes", Array)},
-	"session_replaced":  {req("session", Integer), req("new_session", Integer), req("reason", String)},
-	CaughtUp:            {},
+	"usage": {req("session", Integer), opt("turn", Integer), opt("model", String), opt("input", Integer), opt("output", Integer),
+		opt("cache_read", Integer), opt("cache_write", Integer), opt("context_used", Integer), opt("context_size", Integer)},
+	"login_lost":       {req("agent", String), req("outage", Integer), req("thread", Integer)},
+	"login_restored":   {req("agent", String), req("outage", Integer), req("threads", Array), req("scopes", Array)},
+	"session_replaced": {req("session", Integer), req("new_session", Integer), req("reason", String)},
+	CaughtUp:           {},
 }
 
 // KindNames returns the event kinds, sorted.

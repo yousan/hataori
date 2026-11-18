@@ -16,6 +16,11 @@ import (
 // Machine applies Step to sessions in a store.
 type Machine struct {
 	Store *store.Store
+	// Now is the clock; time.Now when nil. Zone is the time zone whose
+	// calendar day the tokens of a thread are counted in; time.Local when
+	// nil.
+	Now  func() time.Time
+	Zone *time.Location
 
 	// beforeCommit, when set, runs inside the transaction after everything
 	// is written; an error rolls it all back. For tests.
@@ -78,7 +83,12 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 	if err != nil {
 		return err
 	}
-	now := time.Now().UnixMilli()
+	clock := time.Now
+	if m.Now != nil {
+		clock = m.Now
+	}
+	at := clock()
+	now := at.UnixMilli()
 
 	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET state = ?, updated_at = ? WHERE id = ?`,
 		string(r.State), now, sessionID); err != nil {
@@ -135,12 +145,21 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 			data["turn"] = endedTurn
 		case KindTurnStarted, KindInput, KindAnswer:
 			data["turn"] = turnID
+		case KindUsage:
+			if turnID != 0 {
+				data["turn"] = turnID
+			}
 		}
 		b, err := json.Marshal(data)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Append(ctx, control.Event{Thread: id, Kind: o.Kind, Data: b}); err != nil {
+		if _, err := tx.Append(ctx, control.Event{Thread: id, Time: at, Kind: o.Kind, Data: b}); err != nil {
+			return err
+		}
+	}
+	if in.Kind == AgentEvent && in.Agent.Kind == agent.Usage && in.Agent.Usage != nil {
+		if err := recordUsage(ctx, tx, thread, turnID, *in.Agent.Usage, DayOf(at, m.Zone)); err != nil {
 			return err
 		}
 	}
@@ -149,6 +168,46 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 	}
 	if r.End != nil {
 		return recordLogin(ctx, tx, agentName, thread, id, *r.End)
+	}
+	return nil
+}
+
+// DayOf is the calendar day of t in zone (time.Local when nil), as the
+// threads table keeps it.
+func DayOf(t time.Time, zone *time.Location) string {
+	if zone == nil {
+		zone = time.Local
+	}
+	return t.In(zone).Format(time.DateOnly)
+}
+
+// recordUsage keeps the thread's token counts. The agent reports each
+// count as the total of the turn so far, so what a report adds is its
+// total less the turn's last one, and that is counted in the day of the
+// report: a turn that runs past midnight counts in both days. A report
+// outside a turn counts as a turn of its own.
+func recordUsage(ctx context.Context, tx *store.Tx, thread, turn int64, u agent.UsageCount, day string) error {
+	total := u.Input + u.Output + u.CacheRead + u.CacheWrite
+	var before int64
+	if turn != 0 {
+		if err := tx.QueryRowContext(ctx, `SELECT tokens FROM turns WHERE id = ?`, turn).Scan(&before); err != nil {
+			return fmt.Errorf("session: usage: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE turns SET tokens = ? WHERE id = ?`, max(total, before), turn); err != nil {
+			return fmt.Errorf("session: usage: %w", err)
+		}
+	}
+	added := max(total-before, 0) // a count that went down adds nothing, and the turn keeps its highest
+	if _, err := tx.ExecContext(ctx, `UPDATE threads SET tokens_turn = ?,
+		tokens_today = CASE WHEN tokens_day = ? THEN tokens_today + ? ELSE ? END, tokens_day = ? WHERE id = ?`,
+		total, day, added, added, day, thread); err != nil {
+		return fmt.Errorf("session: usage: %w", err)
+	}
+	if u.ContextSize > 0 {
+		if _, err := tx.ExecContext(ctx, `UPDATE threads SET context_used = ?, context_size = ? WHERE id = ?`,
+			u.ContextUsed, u.ContextSize, thread); err != nil {
+			return fmt.Errorf("session: usage: %w", err)
+		}
 	}
 	return nil
 }

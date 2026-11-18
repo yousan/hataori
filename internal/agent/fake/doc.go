@@ -22,6 +22,7 @@
 //	{"t":"subagent","id":I,"name":N,"end":false|true}
 //	{"t":"ask","id":I,"text":Q}                 (on a terminal: a waiting hook call)
 //	{"t":"file","path":P,"more":[P...],"caption":C}
+//	{"t":"usage","in":N,"output":N,"cache_read":N,"cache_write":N,"context_used":N,"context_size":N,"model":M}
 //	{"t":"end","status":"completed"|"failed"|"interrupted","reason":R,"background":N}
 //	{"t":"interrupted"}                          (transcript only)
 //	{"t":"cannot-resume","session":S}            (then it exits)
@@ -50,6 +51,8 @@
 //	                    report a subagent's start, its tools, and its end
 //	file PATH [PATH...] [-- CAPTION]
 //	                    hand over files, with a caption
+//	usage IN OUT CACHE_READ CACHE_WRITE CONTEXT_USED CONTEXT_SIZE [MODEL]
+//	                    report the turn's tokens so far and the context use
 //
 // With --conversations DIR the program keeps one file per session it starts
 // in DIR, and a resume whose file is gone reports "cannot-resume".

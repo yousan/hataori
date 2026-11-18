@@ -258,6 +258,20 @@ type Event struct {
 	Status     EndStatus // TurnEnded
 	Reason     Reason    // TurnEnded when failed; SessionEnded: why, as the agent says or CannotResume, WrongSession
 	Background int       // TurnEnded: background tasks still running
+
+	Usage *UsageCount // Usage: the counts the agent reports
+}
+
+// UsageCount is what a Usage event reports: tokens of the running turn so
+// far, each count the total since the turn started, and the context use.
+type UsageCount struct {
+	Model       string // the model the tokens were used with; "" when not said
+	Input       int64
+	Output      int64
+	CacheRead   int64
+	CacheWrite  int64
+	ContextUsed int64 // tokens in the context now; with ContextSize
+	ContextSize int64 // the context window; 0 when the agent does not say
 }
 
 // RequestInfo is a question or approval the agent asks.
