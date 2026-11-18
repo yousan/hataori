@@ -1,0 +1,360 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"runtime"
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
+
+	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/wire"
+)
+
+// browser is a headless Chrome driven over the DevTools protocol: the
+// dashboard's page as a person's browser runs it, against a real daemon.
+type browser struct {
+	t    *testing.T
+	conn *websocket.Conn
+	id   int
+}
+
+// chromePath finds Chrome or Chromium. Without one the test is skipped,
+// except in CI, where it fails.
+func chromePath(t *testing.T) string {
+	t.Helper()
+	if p := os.Getenv("HATAORI_TEST_CHROME"); p != "" {
+		return p
+	}
+	for _, name := range []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"} {
+		if p, err := exec.LookPath(name); err == nil {
+			return p
+		}
+	}
+	if runtime.GOOS == "darwin" {
+		for _, p := range []string{"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Chromium.app/Contents/MacOS/Chromium"} {
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
+		}
+	}
+	if os.Getenv("CI") != "" {
+		t.Fatal("no Chrome or Chromium to run the dashboard's page in; set HATAORI_TEST_CHROME")
+	}
+	t.Skip("no Chrome or Chromium; set HATAORI_TEST_CHROME to run the dashboard's page")
+	return ""
+}
+
+// newBrowser starts a headless browser on an empty page.
+func newBrowser(t *testing.T) *browser {
+	t.Helper()
+	dir := t.TempDir()
+	cmd := exec.Command(chromePath(t), "--headless=new", "--no-sandbox", "--disable-gpu", "--no-first-run",
+		"--no-default-browser-check", "--disable-background-networking", "--disable-extensions",
+		"--user-data-dir="+dir, "--remote-debugging-port=0", "about:blank")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
+	var port string
+	eventually(t, "the browser to listen", 30*time.Second, func() bool {
+		b, err := os.ReadFile(filepath.Join(dir, "DevToolsActivePort"))
+		if err != nil {
+			return false
+		}
+		port, _, _ = strings.Cut(string(b), "\n")
+		return port != ""
+	})
+	var targets []struct{ Type, WebSocketDebuggerURL string }
+	eventually(t, "the browser's page", 10*time.Second, func() bool {
+		resp, err := http.Get("http://127.0.0.1:" + port + "/json/list")
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		json.NewDecoder(resp.Body).Decode(&targets)
+		return slices.ContainsFunc(targets, func(x struct{ Type, WebSocketDebuggerURL string }) bool { return x.Type == "page" })
+	})
+	i := slices.IndexFunc(targets, func(x struct{ Type, WebSocketDebuggerURL string }) bool { return x.Type == "page" })
+	conn, _, err := websocket.DefaultDialer.Dial(targets[i].WebSocketDebuggerURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	return &browser{t: t, conn: conn}
+}
+
+// call sends one DevTools command and returns its result.
+func (b *browser) call(method string, params any) json.RawMessage {
+	b.t.Helper()
+	b.id++
+	b.conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
+	b.conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	if err := b.conn.WriteJSON(map[string]any{"id": b.id, "method": method, "params": params}); err != nil {
+		b.t.Fatal(err)
+	}
+	for {
+		var m struct {
+			ID     int             `json:"id"`
+			Result json.RawMessage `json:"result"`
+			Error  *struct{ Message string }
+		}
+		if err := b.conn.ReadJSON(&m); err != nil {
+			b.t.Fatalf("%s: %v", method, err)
+		}
+		if m.ID != b.id {
+			continue // an event
+		}
+		if m.Error != nil {
+			b.t.Fatalf("%s: %s", method, m.Error.Message)
+		}
+		return m.Result
+	}
+}
+
+// eval runs expr in the page and decodes its value into v.
+func (b *browser) eval(expr string, v any) {
+	b.t.Helper()
+	var r struct {
+		Result           struct{ Value json.RawMessage }
+		ExceptionDetails *struct{ Text string }
+	}
+	json.Unmarshal(b.call("Runtime.evaluate", map[string]any{"expression": expr, "returnByValue": true, "awaitPromise": true}), &r)
+	if r.ExceptionDetails != nil {
+		b.t.Fatalf("%s: %s", expr, r.ExceptionDetails.Text)
+	}
+	if v != nil {
+		if err := json.Unmarshal(r.Result.Value, v); err != nil {
+			b.t.Fatalf("%s: %s: %v", expr, r.Result.Value, err)
+		}
+	}
+}
+
+// until waits for expr, a JavaScript expression, to be true in the page.
+func (b *browser) until(what, expr string) {
+	b.t.Helper()
+	var ok bool
+	for deadline := time.Now().Add(20 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		b.eval("!!("+expr+")", &ok)
+		if ok {
+			return
+		}
+		if time.Now().After(deadline) {
+			var html string
+			b.eval("document.body.innerHTML", &html)
+			b.t.Fatalf("the page never showed %s\n%s", what, html)
+		}
+	}
+}
+
+// rows is the thread numbers the rows of a section show, in order.
+func (b *browser) rows(section string) []int64 {
+	b.t.Helper()
+	var ns []int64
+	b.eval(fmt.Sprintf(`[...document.querySelectorAll('[data-section=%q] .row')].map(r => +r.dataset.thread)`, section), &ns)
+	return ns
+}
+
+// filter types q into the filter box, as a person would.
+func (b *browser) filter(q string) {
+	b.t.Helper()
+	b.eval(fmt.Sprintf(`(() => {
+		const el = document.querySelector('.filter');
+		Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, %q);
+		el.dispatchEvent(new Event('input', {bubbles: true}));
+		return true;
+	})()`, q), nil)
+}
+
+func js(v any) string { b, _ := json.Marshal(v); return string(b) }
+
+// The tree and the status bar, driven by the real server: a question
+// enters needs attention and leaves it when answered; the footer counts
+// the threads per state; the filter matches title, number and terminal;
+// the normal density hides every row's second line; the live mark shows
+// the last event's position and turns off when the stream goes down.
+func TestDashboardTreeAndStatusBar(t *testing.T) {
+	root := terminalRoot(t) // the fake agent in terminals; the page's caller sees scope s
+	stop := runDaemon(t, root)
+	c, err := wire.Dial(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	ctx := context.Background()
+	repo := bareRepo(t)
+	start := func(key, text string) control.ThreadID {
+		t.Helper()
+		id, err := c.Start(ctx, control.StartRequest{Key: "k-" + key, Scope: "s", Thread: key, Repo: repo, Input: control.Input{Text: text}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	asking := start("t1", "ask Proceed with the deploy?")
+	start("t2", "reply done")
+	start("t3", "tool long 10m")
+	if _, err := c.Start(ctx, control.StartRequest{Key: "k-other", Scope: "x", Thread: "t4", Repo: repo, Input: control.Input{Text: "reply elsewhere"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	base, cookie := dashSignIn(t, root)
+	// threads is the page's caller's threads, from the server, by title.
+	threads := func() map[string]control.ThreadInfo {
+		t.Helper()
+		code, body := dashGet(t, base, cookie, "/api/threads")
+		var ts []control.ThreadInfo
+		if err := json.Unmarshal([]byte(body), &ts); code != http.StatusOK || err != nil {
+			t.Fatalf("/api/threads: %d %s", code, body)
+		}
+		m := map[string]control.ThreadInfo{}
+		for _, x := range ts {
+			m[x.Title] = x
+		}
+		return m
+	}
+	var ts map[string]control.ThreadInfo
+	eventually(t, "the threads to settle", 20*time.Second, func() bool {
+		ts = threads()
+		return len(ts) == 3 && ts["ask Proceed with the deploy?"].State == control.Waiting &&
+			ts["reply done"].State == control.Idle && ts["tool long 10m"].State == control.Running
+	})
+	n1, n2, n3 := ts["ask Proceed with the deploy?"].Number, ts["reply done"].Number, ts["tool long 10m"].Number
+
+	b := newBrowser(t)
+	link, err := c.SignInLink(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.call("Page.navigate", map[string]any{"url": link})
+	b.until("the three threads", `document.querySelectorAll('[data-section=threads] .row').length === 3`)
+
+	// 1. The question, in needs attention; answered, it leaves.
+	b.until("the question in needs attention", fmt.Sprintf(
+		`[...document.querySelectorAll('[data-section=attention] .row')].some(r => r.dataset.thread == %d && r.textContent.includes('Proceed with the deploy?'))`, n1))
+	if got := b.rows("attention"); !reflect.DeepEqual(got, []int64{n1}) {
+		t.Fatalf("needs attention: threads %v, want [%d]", got, n1)
+	}
+	d, err := c.Thread(ctx, asking, 0, 0)
+	if err != nil || len(d.Requests) != 1 {
+		t.Fatalf("the question: %+v, %v", d.Requests, err)
+	}
+	if err := c.Answer(ctx, control.RequestID(d.Requests[0].ID), control.Answer{Text: "yes"}); err != nil {
+		t.Fatal(err)
+	}
+	b.until("the answered thread to leave needs attention", `!document.querySelector('[data-section=attention]')`)
+
+	// 2. The footer counts the threads in each state, as the server has them.
+	countsMatch := func() bool {
+		want := map[string]int{}
+		for _, x := range threads() {
+			want[string(x.State)]++
+		}
+		var got map[string]int
+		b.eval(`Object.fromEntries([...document.querySelectorAll('.counts [data-count]')].map(li => [li.dataset.count, +li.dataset.n]))`, &got)
+		var text string
+		b.eval(`document.querySelector('.counts').textContent`, &text)
+		for s, n := range want {
+			if !strings.Contains(text, s+" "+strconv.Itoa(n)) {
+				return false
+			}
+		}
+		return reflect.DeepEqual(got, want)
+	}
+	eventually(t, "the footer to count the threads per state", 20*time.Second, countsMatch)
+
+	// 3. The filter: title, number, terminal; empty shows everything.
+	ts = threads()
+	term := ts["reply done"].Terminal
+	if term == "" {
+		t.Fatalf("thread %d has no terminal: %+v", n2, ts["reply done"])
+	}
+	// expect is the threads, in the page's order, that the filter q
+	// should show: the title holds q, the number is q (with or without #),
+	// or the terminal holds q.
+	expect := func(q string) []int64 {
+		var out []int64
+		for _, x := range ts {
+			f := strings.ToLower(q)
+			if strings.Contains(strings.ToLower(x.Title), f) || strconv.FormatInt(x.Number, 10) == strings.TrimPrefix(f, "#") ||
+				(x.Terminal != "" && strings.Contains(strings.ToLower(x.Terminal), f)) {
+				out = append(out, x.Number)
+			}
+		}
+		slices.Sort(out)
+		return out
+	}
+	for _, f := range []struct {
+		q   string
+		hit int64 // a thread the filter must show
+	}{
+		{"DEPLOY", n1},
+		{"#" + strconv.FormatInt(n2, 10), n2},
+		{strconv.FormatInt(n3, 10), n3},
+		{term, n2},
+	} {
+		want := expect(f.q)
+		if !slices.Contains(want, f.hit) || len(want) == 3 {
+			t.Fatalf("filter %q: the case does not single out thread %d: %v", f.q, f.hit, want)
+		}
+		b.filter(f.q)
+		b.until(fmt.Sprintf("filter %q", f.q), fmt.Sprintf(
+			`JSON.stringify([...document.querySelectorAll('[data-section=threads] .row')].map(r => +r.dataset.thread)) === %q`, js(want)))
+	}
+	b.filter("")
+	b.until("every thread with an empty filter", fmt.Sprintf(
+		`JSON.stringify([...document.querySelectorAll('[data-section=threads] .row')].map(r => +r.dataset.thread)) === %q`, js([]int64{n1, n2, n3})))
+
+	// 4. Normal density hides the second line of every row; dense shows it.
+	hidden := `[...document.querySelectorAll('.row')].every(r => getComputedStyle(r.querySelector('.line2')).display === 'none')`
+	shown := `[...document.querySelectorAll('.row')].every(r => getComputedStyle(r.querySelector('.line2')).display !== 'none')`
+	b.until("dense rows with their second line", shown)
+	b.eval(`document.querySelector('[data-density=normal]').click(), true`, nil)
+	b.until("normal rows without a second line", hidden)
+	b.eval(`document.querySelector('[data-density=dense]').click(), true`, nil)
+	b.until("dense rows again", shown)
+
+	// The status bar shows the selected thread, with its terminal.
+	b.eval(fmt.Sprintf(`document.querySelector('[data-section=threads] .row[data-thread="%d"]').click(), true`, n2), nil)
+	b.until("the selected thread in the status bar", fmt.Sprintf(
+		`document.querySelector('.status-item').dataset.selected == %d && document.querySelector('.status-item').textContent.includes(%q)`, n2, term))
+
+	// 5. The live mark: the position of the last event of the caller's
+	// threads, also after a new one; off when the stream is down.
+	last := func() uint64 {
+		t.Helper()
+		_, out, _ := cli(t, "events", "--root", root)
+		var pos uint64
+		for _, e := range lines(t, out) {
+			if th, _ := e["thread"].(map[string]any); th["scope"] == "s" {
+				pos = max(pos, uint64(e["pos"].(float64)))
+			}
+		}
+		return pos
+	}
+	liveAt := func(pos uint64) string {
+		return fmt.Sprintf(`document.querySelector('.live').dataset.live === 'on' && document.querySelector('.live').dataset.pos == %d && document.querySelector('.live').textContent.includes(%q)`, pos, strconv.FormatUint(pos, 10))
+	}
+	b.until("the live mark at the last event", liveAt(last()))
+	if err := c.Send(ctx, ts["reply done"].ID, "k-again", control.Input{Text: "reply again"}, control.Refuse); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the new turn to end", 15*time.Second, func() bool {
+		return threads()["reply done"].Turns == 2 && threads()["reply done"].State == control.Idle
+	})
+	b.until("the live mark at the new last event", liveAt(last()))
+	c.Close()
+	stop()
+	b.until("the live mark off", `document.querySelector('.live').dataset.live === 'off'`)
+}
