@@ -7,7 +7,7 @@
 const en = {
   "app.title": "hataori dashboard",
   "app.readOnly": "read-only",
-  "shell.empty": "Nothing to show yet.",
+  "shell.empty": "Nothing to show here yet.",
   "theme.toLight": "Switch to the light theme",
   "theme.toDark": "Switch to the dark theme",
   "theme.light": "Light",
