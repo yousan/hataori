@@ -88,8 +88,8 @@ var errTooBig = errors.New("over the size limit")
 // the copy's path. It opens real without blocking and without following a
 // link at its end, then checks that the file it opened is real, inside
 // roots; it copies at most max bytes (0: no limit), and a longer file gives
-// errTooBig and its size. Where the system has no /proc to name the file
-// opened, the file is refused.
+// errTooBig and its size. Where the system cannot name the file opened,
+// the file is refused.
 func (f *FrontEnd) copyFile(real string, roots []string, name string, max int64) (string, int64, error) {
 	if f.FileDir == "" {
 		return "", 0, errors.New("no FileDir to copy into")
@@ -109,8 +109,8 @@ func (f *FrontEnd) copyFile(real string, roots []string, name string, max int64)
 	}
 	// What was opened, as the kernel names it, so that a directory on the
 	// way replaced by a link meanwhile is seen.
-	// Without /proc this cannot be checked, and the file is refused.
-	opened, err := os.Readlink(fmt.Sprintf("/proc/self/fd/%d", src.Fd()))
+	// Where this cannot be asked, the file is refused.
+	opened, err := openedPath(src)
 	if err != nil || opened != real {
 		return "", 0, errors.New("the path changed while it was checked")
 	}

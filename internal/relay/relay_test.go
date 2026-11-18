@@ -354,10 +354,9 @@ func TestConcurrentStarts(t *testing.T) {
 		go func() { defer wg.Done(); f.relay.Start(context.Background(), "chat:owner", "fake") }()
 	}
 	wg.Wait()
-	ps, _ := filepath.Glob("/proc/[0-9]*/cmdline")
 	n := 0
-	for _, p := range ps {
-		if isLoginOf(p, f.root) {
+	for _, args := range commandLines(t) {
+		if strings.Contains(args, " login --config "+filepath.Join(f.root, "agent-config")) {
 			n++
 		}
 	}
@@ -366,11 +365,15 @@ func TestConcurrentStarts(t *testing.T) {
 	}
 }
 
-// isLoginOf reports whether the process of the cmdline file p is a login
-// command of this test's fake, by its command line.
-func isLoginOf(p, root string) bool {
-	b, _ := os.ReadFile(p)
-	return bytes.Contains(b, []byte("login\x00--config\x00"+filepath.Join(root, "agent-config")))
+// commandLines returns the command line of every process, its arguments
+// joined by spaces. It asks ps, as macOS has no /proc.
+func commandLines(t *testing.T) []string {
+	t.Helper()
+	out, err := exec.Command("ps", "-A", "-ww", "-o", "args=").Output()
+	if err != nil {
+		t.Fatal("ps:", err)
+	}
+	return strings.Split(string(out), "\n")
 }
 
 // A daemon that dies takes its login command with it.
