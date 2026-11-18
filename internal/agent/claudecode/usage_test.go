@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yousan/hataori/internal/agent"
 )
@@ -152,8 +153,108 @@ func TestUsageSumsEachTurn(t *testing.T) {
 	checkTurns(t, "transcript first", a)
 }
 
-// A turn's lines read only after its Stop, while the next turn runs, are
-// not reported: the core would add them to the running turn.
+// lastAssistant is the index of the last assistant line of ls.
+func lastAssistant(t *testing.T, ls [][]byte) int {
+	t.Helper()
+	for i := len(ls) - 1; i >= 0; i-- {
+		var tl transcriptLine
+		json.Unmarshal(ls[i], &tl)
+		if tl.Type == "assistant" {
+			return i
+		}
+	}
+	t.Fatal("no assistant line")
+	return 0
+}
+
+func ends(a Actions) int {
+	n := 0
+	for _, e := range a.Events {
+		if e.Kind == agent.TurnEnded {
+			n++
+		}
+	}
+	return n
+}
+
+// The runner reads hook calls before the transcript, so a Stop can come
+// before the line of the final message, which the CLI wrote first. The
+// turn's end waits for that line, and its usage counts.
+func TestStopBeforeTheFinalMessage(t *testing.T) {
+	first, second := usageTranscript(t)
+	i := lastAssistant(t, first)
+	c := newTestCodec()
+	a := merge(usageHook(t, c, 1), usageHook(t, c, 2))
+	a = merge(a, feedLines(c, first[:i]))
+	for n := 3; n <= 7; n++ {
+		a = merge(a, usageHook(t, c, n))
+	}
+	if ends(a) != 0 {
+		t.Fatal("the turn ended before its final message was read")
+	}
+	a = merge(a, feedLines(c, first[i:]))
+	if ends(a) != 1 {
+		t.Fatal("the final message's line did not end the turn")
+	}
+	j := lastAssistant(t, second)
+	a = merge(a, usageHook(t, c, 8))
+	a = merge(a, feedLines(c, second[:j]))
+	a = merge(a, usageHook(t, c, 9))
+	a = merge(a, feedLines(c, second[j:]))
+	a = merge(a, usageHook(t, c, 10))
+	checkTurns(t, "stop first", a)
+	if got := texts(a); len(got) != 2 || got[0] != (textEv{"done", true}) || got[1] != (textEv{"ok", true}) {
+		t.Fatalf("texts %+v", got)
+	}
+}
+
+// A Stop whose final message never shows up ends its turn after stopWait,
+// or at the next hook call, whichever comes first.
+func TestHeldStopEnds(t *testing.T) {
+	first, _ := usageTranscript(t)
+	i := lastAssistant(t, first)
+	hold := func() *codec {
+		c := newTestCodec()
+		usageHook(t, c, 1)
+		usageHook(t, c, 2)
+		feedLines(c, first[:i])
+		var a Actions
+		for n := 3; n <= 7; n++ {
+			a = merge(a, usageHook(t, c, n))
+		}
+		if ends(a) != 0 {
+			t.Fatal("the Stop was not held")
+		}
+		return c
+	}
+
+	c := hold()
+	now := time.Now()
+	if a := merge(c.Tick(now), c.Tick(now.Add(stopWait/2))); ends(a) != 0 {
+		t.Fatal("ended before stopWait")
+	}
+	a := c.Tick(now.Add(stopWait))
+	if ends(a) != 1 {
+		t.Fatal("not ended after stopWait")
+	}
+	if got := texts(a); len(got) != 1 || got[0] != (textEv{"done", true}) {
+		t.Fatalf("texts %+v", got)
+	}
+
+	c = hold()
+	a = usageHook(t, c, 8) // the next prompt
+	var kinds []agent.Kind
+	for _, e := range a.Events {
+		kinds = append(kinds, e.Kind)
+	}
+	if len(kinds) < 2 || kinds[len(kinds)-2] != agent.TurnEnded || kinds[len(kinds)-1] != agent.TurnStarted {
+		t.Fatalf("events %v, want the held end before the next turn's start", kinds)
+	}
+}
+
+// A turn's lines read only after its Stop, when the transcript had not
+// reached the turn at all, are not reported: the core would add them to
+// the turn running then.
 func TestUsageAfterTheTurnEnded(t *testing.T) {
 	first, _ := usageTranscript(t)
 	c := newTestCodec()

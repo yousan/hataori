@@ -37,6 +37,7 @@ type codec struct {
 	turns      map[string]*turnText // by prompt id
 	closed     bool                 // SessionEnd was reported
 	oddUsage   bool                 // usage of a shape the codec does not know was reported once
+	held       *heldStop            // a Stop waiting for its final message in the transcript
 
 	// Input.
 	ready         bool          // the session reported its start
@@ -71,7 +72,22 @@ type turnText struct {
 	usage    map[string]tokens // the usage of each model message of the turn, by message id
 	model    string            // the model of the latest of them
 	reported agent.UsageCount  // the last Usage event produced for the turn
+	lastText string            // the latest assistant text the transcript gave, even after the turn's end
 }
+
+// heldStop is what a Stop produced, held until the transcript line of the
+// final message is read, so that the message's usage is reported before
+// the turn ends. The CLI writes that line before it calls Stop, but the
+// runner may read the hook first.
+type heldStop struct {
+	prompt string
+	final  string
+	a      Actions
+	at     time.Time // the first Tick after the Stop
+}
+
+// stopWait is how long a Stop waits for its final message's line.
+const stopWait = time.Second
 
 // tokens is the usage of one model message, as the transcript gives it.
 type tokens struct {
@@ -228,7 +244,7 @@ const pasteSettle = 400 * time.Millisecond
 func (c *codec) Tick(now time.Time) Actions {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	a := merge(merge(c.tickScreen(now), c.tickInput(now)), c.tickRequests(now))
+	a := merge(merge(merge(c.tickStop(now), c.tickScreen(now)), c.tickInput(now)), c.tickRequests(now))
 	return c.number(merge(a, c.endWatch(false)))
 }
 
@@ -298,7 +314,11 @@ func (c *codec) decode(src agent.Source, line []byte) Actions {
 	switch src {
 	case agent.File:
 		a := c.decodeTranscript(line)
-		return merge(a, c.track(c.current, a)) // the prompt of the line just read
+		a = merge(a, c.track(c.current, a)) // the prompt of the line just read
+		if c.held != nil && c.turn(c.held.prompt).lastText == c.held.final {
+			a = merge(a, c.releaseStop())
+		}
+		return a
 	case agent.Screen:
 		return c.screen(line)
 	case agent.Hook:
@@ -314,6 +334,8 @@ func (c *codec) decode(src agent.Source, line []byte) Actions {
 		return Actions{} // the same call again
 	}
 	c.seen[k.Hook] = true
+	// A Stop still held ends its turn before anything that follows it.
+	early := c.releaseStop()
 	var p payload
 	if err := json.Unmarshal(k.Payload, &p); err != nil {
 		return c.events(agent.Event{Kind: agent.Unknown, Text: string(line)})
@@ -369,7 +391,7 @@ func (c *codec) decode(src agent.Source, line []byte) Actions {
 	} else {
 		h = merge(replay, h)
 	}
-	h = merge(h, c.track(p.PromptID, h))
+	h = merge(early, merge(h, c.track(p.PromptID, h)))
 	h.Follow = append(follow, h.Follow...)
 	return h
 }
@@ -476,6 +498,9 @@ func (c *codec) decodeTranscript(raw []byte) Actions {
 		for _, b := range blocks {
 			switch {
 			case b.Type == "text" && strings.TrimSpace(b.Text) != "":
+				if c.current != "" {
+					c.turn(c.current).lastText = b.Text
+				}
 				out = merge(out, c.item(textItem{text: b.Text}))
 			case b.Type == "tool_use" && c.current != "":
 				// Text before a tool call is not the final answer.
@@ -500,8 +525,9 @@ const synthetic = "<synthetic>"
 // skipped, and reported as one Unknown event for the whole session.
 //
 // The transcript gives no context window, so context use is never filled.
-// Usage read after the turn's end is not reported: the core would count it
-// toward the turn running then.
+// A Stop read before its final message waits for it (heldStop); usage read
+// after the turn's end is reported is not: the core would count it toward
+// the turn running then.
 func (c *codec) usageOf(l transcriptLine) Actions {
 	if len(l.Message.Usage) == 0 || string(l.Message.Usage) == "null" || l.Message.Model == synthetic {
 		return Actions{}
@@ -536,9 +562,9 @@ func (c *codec) usageOf(l transcriptLine) Actions {
 }
 
 // reportUsage produces a Usage event with the totals of t's turn, unless
-// they are the ones reported last or the turn has ended.
+// they are the ones reported last or the turn's end has been reported.
 func (c *codec) reportUsage(t *turnText) Actions {
-	if len(t.usage) == 0 || t.ended {
+	if len(t.usage) == 0 || (t.ended && (c.held == nil || c.turns[c.held.prompt] != t)) {
 		return Actions{}
 	}
 	n := agent.UsageCount{Model: t.model}
@@ -651,10 +677,17 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 				running++
 			}
 		}
-		return merge(merge(withdrawn, c.end(p.PromptID, p.LastMessage)), c.events(
+		a := merge(merge(withdrawn, c.end(p.PromptID, p.LastMessage)), c.events(
 			agent.Event{Kind: agent.Text, Text: p.LastMessage, Final: true},
 			agent.Event{Kind: agent.TurnEnded, Status: agent.Completed, Background: running},
 		))
+		// Only once the transcript has reached the prompt: without it no line
+		// will come in time.
+		if p.PromptID != "" && p.PromptID == c.current && p.LastMessage != "" && c.turn(p.PromptID).lastText != p.LastMessage {
+			c.held = &heldStop{prompt: p.PromptID, final: p.LastMessage, a: a}
+			return Actions{}
+		}
+		return a
 	case "StopFailure":
 		return merge(merge(c.withdrawAll(), c.end(p.PromptID, "")), c.events(
 			agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: failureReason(p.Error), Text: p.LastMessage}))
@@ -779,4 +812,28 @@ func (c *codec) number(a Actions) Actions {
 		a.Events[i].Seq = c.seq
 	}
 	return a
+}
+
+// releaseStop produces what the held Stop produced, if one is held.
+func (c *codec) releaseStop() Actions {
+	h := c.held
+	if h == nil {
+		return Actions{}
+	}
+	c.held = nil
+	return merge(h.a, c.track(h.prompt, h.a))
+}
+
+// tickStop gives up waiting for the final message's line after stopWait.
+func (c *codec) tickStop(now time.Time) Actions {
+	switch {
+	case c.held == nil:
+		return Actions{}
+	case c.held.at.IsZero():
+		c.held.at = now
+		return Actions{}
+	case now.Sub(c.held.at) < stopWait:
+		return Actions{}
+	}
+	return c.releaseStop()
 }
