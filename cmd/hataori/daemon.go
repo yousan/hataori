@@ -154,7 +154,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	}
 	// The login relay (section 4.7). It starts flows only once a client of
 	// the owner takes its updates: the chat front end sets Notify.
-	lr := &relay.Relay{Store: st, Adapters: adapters, People: cfg.People, Off: !cfg.LoginRelay, Log: lg}
+	lr := &relay.Relay{Store: st, Adapters: adapters, People: cfg.People, Off: !cfg.LoginRelay, Log: lg, Guard: []string{exe, "login-guard"}}
 	var fronts []*chat.FrontEnd
 	if len(cfg.Drivers) > 0 {
 		confDir, err := in.Root.OpenRoot("config")
