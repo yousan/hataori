@@ -1,25 +1,27 @@
 package runner
 
 import (
-	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
 
-// hosts returns the pids of the session host processes of stateDir.
+// hosts returns the pids of the session host processes of stateDir. It
+// asks ps, as macOS has no /proc.
 func hosts(t *testing.T, stateDir string) []string {
 	t.Helper()
-	cmdlines, _ := filepath.Glob("/proc/[0-9]*/cmdline")
+	out, err := exec.Command("ps", "-A", "-ww", "-o", "pid=", "-o", "args=").Output()
+	if err != nil {
+		t.Fatal("ps:", err)
+	}
 	var pids []string
-	for _, p := range cmdlines {
-		b, err := os.ReadFile(p)
-		if err != nil {
-			continue
-		}
-		if bytes.HasSuffix(b, []byte("\x00role\x00host\x00"+stateDir+"\x00")) {
-			pids = append(pids, filepath.Base(filepath.Dir(p)))
+	for _, line := range strings.Split(string(out), "\n") {
+		pid, args, _ := strings.Cut(strings.TrimSpace(line), " ")
+		if strings.HasSuffix(args, " role host "+stateDir) {
+			pids = append(pids, pid)
 		}
 	}
 	return pids

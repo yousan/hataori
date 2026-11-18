@@ -28,7 +28,12 @@ func init() {
 			}
 		}
 		fmt.Printf("up %d\n", depth)
-		select {}
+		// Not select {}: with nothing else to run, a Go program built
+		// without cgo (as on macOS) ends there with "all goroutines are
+		// asleep", exit code 2.
+		for {
+			time.Sleep(time.Hour)
+		}
 	}
 	// lastwords: on SIGINT, write a last line and exit 130.
 	extraRoles["lastwords"] = func([]string) int {

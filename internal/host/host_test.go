@@ -155,7 +155,12 @@ func read(t *testing.T, dir, name string) []byte {
 func self(args ...string) []string { return append([]string{os.Args[0], "role"}, args...) }
 
 func TestDirectoryAndEnvironment(t *testing.T) {
-	work := t.TempDir()
+	// The command sees its directory with links resolved: on macOS the
+	// temporary directory is under /var, a link to /private/var.
+	work, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	env := []string{"ONE=1", "TWO=two words", "EMPTY="}
 	for _, terminal := range []bool{false, true} {
 		t.Run(fmt.Sprint("terminal=", terminal), func(t *testing.T) {
