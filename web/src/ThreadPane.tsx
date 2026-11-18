@@ -4,6 +4,10 @@ import { t } from "./catalog";
 import { EventsView } from "./EventsView";
 import { TerminalView } from "./TerminalView";
 
+// probeRetry is how long a pane waits before it asks again whether its
+// session has a terminal.
+const probeRetry = 2000;
+
 // ThreadPane is a thread's pane: its live terminal, or its events when the
 // session has no terminal.
 export function ThreadPane(props: { x: ThreadInfo; subscribe: (f: (e: Event) => void) => () => void }) {
@@ -11,14 +15,22 @@ export function ThreadPane(props: { x: ThreadInfo; subscribe: (f: (e: Event) => 
   const [terminal, setTerminal] = useState<boolean | null>(null);
   const { scope, key } = x.id;
 
+  // Only an answer of the server decides the view; a failed probe, such as
+  // while the daemon restarts, is tried again.
   useEffect(() => {
     let gone = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
     setTerminal(null);
-    hasTerminal({ scope, key })
-      .then((ok) => !gone && setTerminal(ok))
-      .catch(() => !gone && setTerminal(false));
+    const probe = () =>
+      hasTerminal({ scope, key })
+        .then((ok) => !gone && setTerminal(ok))
+        .catch(() => {
+          if (!gone) retry = setTimeout(probe, probeRetry);
+        });
+    probe();
     return () => {
       gone = true;
+      clearTimeout(retry);
     };
   }, [scope, key]);
 

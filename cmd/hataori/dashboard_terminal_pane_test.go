@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -37,6 +38,7 @@ type paneRig struct {
 	id   control.ThreadID
 	n    int64
 	log  func() string
+	base string // the sign-in link the browser opened
 }
 
 func newPaneRig(t *testing.T, root string, input string, settled func(control.ThreadInfo) bool) *paneRig {
@@ -64,6 +66,7 @@ func newPaneRig(t *testing.T, root string, input string, settled func(control.Th
 	if err != nil {
 		t.Fatal(err)
 	}
+	r.base = link
 	b.call("Page.navigate", map[string]any{"url": link})
 	b.until("the thread in the tree", fmt.Sprintf(`!!document.querySelector('[data-section=threads] .row[data-thread="%d"]')`, r.n))
 	b.eval(fmt.Sprintf(`document.querySelector('[data-section=threads] .row[data-thread="%d"]').click(), true`, r.n), nil)
@@ -167,6 +170,7 @@ func TestDashboardTerminalPaneIsReadOnly(t *testing.T) {
 
 	// Every request of the page: a GET or HEAD of its own routes, with no
 	// body, and nothing typed in its address.
+	page, _ := url.Parse(r.base)
 	routes := []string{"/", "/signin", "/favicon.ico", "/api/threads", "/api/thread", "/api/events", "/api/terminal", "/api/limits"}
 	requests := 0
 	for _, e := range b.events {
@@ -179,6 +183,7 @@ func TestDashboardTerminalPaneIsReadOnly(t *testing.T) {
 					URL, Method string
 					HasPostData bool
 					PostData    string
+					Headers     map[string]string
 				}
 			}
 			json.Unmarshal(e.Params, &p)
@@ -194,13 +199,68 @@ func TestDashboardTerminalPaneIsReadOnly(t *testing.T) {
 			if (q.Method != "GET" && q.Method != "HEAD") || q.HasPostData || q.PostData != "" {
 				t.Fatalf("the page sent %s %s with a body %v %q", q.Method, q.URL, q.HasPostData, q.PostData)
 			}
+			if u.Scheme != page.Scheme || u.Host != page.Host {
+				t.Fatalf("the page asked another origin: %s", q.URL)
+			}
 			if !slices.Contains(routes, u.Path) && !strings.HasPrefix(u.Path, "/assets/") {
 				t.Fatalf("the page asked for %s", q.URL)
 			}
-			for _, typed := range []string{"typed", "inserted", "pasted", esc, "\r", "\x03"} {
-				if strings.Contains(q.URL, typed) || strings.Contains(q.URL, url.QueryEscape(typed)) {
-					t.Fatalf("a request carries what was typed (%q): %s", typed, q.URL)
+			// Nothing can ride in the address or a header: each route takes
+			// only its own parameters, with this thread's id or a number,
+			// and the headers are those a browser sends by itself.
+			number := regexp.MustCompile(`^[0-9]+$`)
+			for name, vs := range u.Query() {
+				allowed := map[string][]string{"/api/thread": {"scope", "key", "recent", "events"},
+					"/api/terminal": {"scope", "key"}, "/api/events": {"after"}, "/signin": {"t"}}[u.Path]
+				if !slices.Contains(allowed, name) || len(vs) != 1 {
+					t.Fatalf("a request has a parameter %q it does not need: %s", name, q.URL)
 				}
+				v := vs[0]
+				switch name {
+				case "scope":
+					if v != r.id.Scope {
+						t.Fatalf("a request names scope %q: %s", v, q.URL)
+					}
+				case "key":
+					if v != r.id.Key {
+						t.Fatalf("a request names key %q: %s", v, q.URL)
+					}
+				case "recent", "events", "after":
+					if !number.MatchString(v) {
+						t.Fatalf("a request's %s is %q: %s", name, v, q.URL)
+					}
+				}
+			}
+			browserHeaders := []string{"accept", "accept-encoding", "accept-language", "cache-control", "pragma", "user-agent",
+				"upgrade-insecure-requests", "referer", "origin", "last-event-id", "cookie", "range", "if-none-match", "if-modified-since", "priority"}
+			for h, v := range q.Headers {
+				h = strings.ToLower(h)
+				if strings.HasPrefix(h, "sec-") || slices.Contains(browserHeaders, h) {
+					if h == "last-event-id" && !regexp.MustCompile(`^[0-9]+(:[0-9a-f]*)?$`).MatchString(v) {
+						t.Fatalf("a request's Last-Event-ID is %q", v)
+					}
+					continue
+				}
+				t.Fatalf("a request has a header %s: %q (%s)", h, v, q.URL)
+			}
+			// The address, decoded until nothing more decodes, holds no byte
+			// of what was typed and no answer to a query (each begins with
+			// ESC, or is a control character).
+			plain := u.Path + "?" + u.RawQuery
+			for {
+				d, err := url.QueryUnescape(plain)
+				if err != nil || d == plain {
+					break
+				}
+				plain = d
+			}
+			for _, typed := range []string{"typed", "inserted", "pasted", "[?", ";2c", "rgb:"} {
+				if strings.Contains(plain, typed) {
+					t.Fatalf("a request carries what was typed or answered (%q): %s", typed, q.URL)
+				}
+			}
+			if strings.ContainsFunc(plain, func(c rune) bool { return c < 0x20 || c == 0x7f }) {
+				t.Fatalf("a request carries a control character: %s", q.URL)
 			}
 		}
 	}

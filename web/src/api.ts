@@ -106,11 +106,14 @@ export function terminalPath(id: ThreadID): string {
 
 // hasTerminal reports whether a thread's session has a terminal stream:
 // a session on pipes answers 404. It asks with HEAD, which answers with
-// the stream's status and sends no chunk.
+// the stream's status and sends no chunk. Any other answer, or none, is an
+// error: the caller asks again.
 export async function hasTerminal(id: ThreadID): Promise<boolean> {
   const r = await fetch(terminalPath(id), { method: "HEAD", credentials: "same-origin", cache: "no-store" });
   if (r.status === 401) throw new SignedOut();
-  return r.ok;
+  if (r.status === 404) return false;
+  if (!r.ok) throw new Error(`terminal: ${r.status}`);
+  return true;
 }
 
 export function sameThread(a: ThreadID, b: ThreadID): boolean {

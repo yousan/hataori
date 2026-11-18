@@ -38,10 +38,18 @@ export function EventsView(props: { x: ThreadInfo; subscribe: (f: (e: Event) => 
     let gone = false;
     const early: Event[] = []; // what the stream brings while the history is read
     let ready = false;
+    // add appends the events of list that come after those shown, each
+    // once, in order: the history and the stream may both carry one.
     const add = (list: Event[]) =>
       setEvents((have) => {
-        const last = have.length ? have[have.length - 1].pos : 0;
-        return [...have, ...list.filter((e) => e.pos > last && shownKinds.has(e.kind))];
+        let last = have.length ? have[have.length - 1].pos : 0;
+        const more: Event[] = [];
+        for (const e of [...list].sort((a, b) => a.pos - b.pos)) {
+          if (e.pos <= last) continue;
+          last = e.pos;
+          if (shownKinds.has(e.kind)) more.push(e);
+        }
+        return more.length ? [...have, ...more] : have;
       });
     const stop = subscribe((e) => {
       if (!sameThread(e.thread, { scope, key })) return;
@@ -52,7 +60,7 @@ export function EventsView(props: { x: ThreadInfo; subscribe: (f: (e: Event) => 
       .then((d) => {
         if (gone) return;
         ready = true;
-        add([...(d.events ?? []), ...early].sort((a, b) => a.pos - b.pos));
+        add([...(d.events ?? []), ...early]);
       })
       .catch(() => {
         ready = true;

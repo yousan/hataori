@@ -30,6 +30,21 @@ export function TerminalView({ x }: { x: ThreadInfo }) {
     const term = new Terminal({ disableStdin: true, cursorBlink: false, scrollback: 5000, convertEol: false });
     term.open(host.current);
     const source = new EventSource(terminalPath({ scope, key }));
+    // xterm.js parses what it is given later, while reset and resize act at
+    // once: each chunk waits for the bytes before it to be drawn, so a reset
+    // never lands under output that came before it.
+    let drawn = Promise.resolve();
+    let gone = false;
+    const draw = (c: TerminalChunk) =>
+      new Promise<void>((done) => {
+        if (gone) return done();
+        if (c.reset) term.reset(); // the end of the log, not a continuation: draw it afresh
+        if (c.cols > 0 && c.rows > 0 && (c.cols !== term.cols || c.rows !== term.rows)) term.resize(c.cols, c.rows);
+        setNoProcess(c.run === "");
+        const b = bytes(c.data);
+        if (b.length > 0) term.write(b, done);
+        else done();
+      });
     source.onmessage = (m) => {
       let c: TerminalChunk;
       try {
@@ -37,13 +52,10 @@ export function TerminalView({ x }: { x: ThreadInfo }) {
       } catch {
         return;
       }
-      if (c.reset) term.reset(); // the end of the log, not a continuation: draw it afresh
-      if (c.cols > 0 && c.rows > 0 && (c.cols !== term.cols || c.rows !== term.rows)) term.resize(c.cols, c.rows);
-      const b = bytes(c.data);
-      if (b.length > 0) term.write(b);
-      setNoProcess(c.run === "");
+      drawn = drawn.then(() => draw(c));
     };
     return () => {
+      gone = true;
       source.close();
       term.dispose();
     };
