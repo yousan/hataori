@@ -139,8 +139,14 @@ func TestOnlyTheFixedCommandsRun(t *testing.T) {
 		}
 	}
 	sock := startTmux(t, "sh -c 'echo fixed; exec sleep 600'")
+	// tmux 3.4 takes a tab in a window's name and prints it as it is;
+	// later versions refuse the name.
+	tabWindow := true
 	if out, err := exec.Command("tmux", slices.Concat(sock, []string{"new-window", "-d", "-t", "hataori-test:", "-n", "a\tb", "exec sleep 600"})...).CombinedOutput(); err != nil {
-		t.Fatal(err, string(out))
+		if !strings.Contains(string(out), "invalid window name") {
+			t.Fatal(err, string(out))
+		}
+		tabWindow = false
 	}
 	rec := &recorder{}
 	l := &Lister{Tmux: sock, run: rec.run}
@@ -156,7 +162,7 @@ func TestOnlyTheFixedCommandsRun(t *testing.T) {
 		}
 		if ht.Tmux.Window == "0" {
 			pane = ht.Tmux.Pane
-		} else if ht.Tmux.WindowName != "a b" || !strings.HasPrefix(ht.Device, "/dev/") || ht.Process != "sleep" {
+		} else if !tabWindow || ht.Tmux.WindowName != "a b" || !strings.HasPrefix(ht.Device, "/dev/") || ht.Tmux.Index != "0" {
 			t.Errorf("a tab in the window's name: %+v %+v", ht, ht.Tmux)
 		}
 	}
