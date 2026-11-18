@@ -39,6 +39,8 @@ func TestMain(m *testing.M) {
 			os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 		case "fake":
 			os.Exit(fake.Main(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+		case "orphan-terminal":
+			os.Exit(orphanTerminal(os.Args[2]))
 		}
 	}
 	if err := agent.Register(fake.Name, fake.New); err != nil {

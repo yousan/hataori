@@ -25,6 +25,7 @@ import (
 //	GET /api/hostscreen?pane=P                a stream of a tmux pane's screen (Server-Sent Events)
 //	GET /api/limits                           [AgentLimits]
 //	GET /api/workspace?scope=S&key=K          WorkspaceState
+//	GET /api/hostterminals                    [HostTerminal]
 //
 // The event stream sends each event as one message whose id is the event's
 // position, and the caught_up mark as a message of type caught_up. A page
@@ -40,6 +41,10 @@ const (
 	// outside the caller's scopes answers as one that does not exist, and a
 	// workspace that cannot be read is an error, never zeros.
 	WorkspacePath = "/api/workspace"
+	// HostTerminalsPath answers with the terminals on the host that hataori
+	// does not own. When host terminals are off, or the caller is not the
+	// owner, it answers one fixed 403 and nothing more.
+	HostTerminalsPath = "/api/hostterminals"
 )
 
 // Defaults and caps of /api/thread.
@@ -81,6 +86,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET "+HostScreenPath, s.hostScreen)
 	s.mux.HandleFunc("GET "+LimitsPath, s.limits)
 	s.mux.HandleFunc("GET "+WorkspacePath, s.workspace)
+	s.mux.HandleFunc("GET "+HostTerminalsPath, s.hostTerminals)
 }
 
 func (s *Server) limits(w http.ResponseWriter, r *http.Request) {
@@ -119,6 +125,29 @@ func (s *Server) workspace(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "the workspace cannot be read", http.StatusInternalServerError)
 	default:
 		writeJSON(w, st)
+	}
+}
+
+// hostTerminalsTimeout bounds how long the route waits for tmux and the
+// process table.
+const hostTerminalsTimeout = 10 * time.Second
+
+func (s *Server) hostTerminals(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), hostTerminalsTimeout)
+	defer cancel()
+	ts, err := api(r).HostTerminals(ctx)
+	switch {
+	case errors.Is(err, control.ErrForbidden):
+		// Off, or not the owner: the same answer, which says no more.
+		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+	case err != nil:
+		s.Log.Warn("dashboard host terminals", "err", err)
+		http.Error(w, "the host's terminals cannot be read", http.StatusInternalServerError)
+	default:
+		if ts == nil {
+			ts = []control.HostTerminal{}
+		}
+		writeJSON(w, ts)
 	}
 }
 
