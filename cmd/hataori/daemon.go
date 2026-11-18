@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"syscall"
 
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/chat"
@@ -193,11 +194,24 @@ var dashboardHook func(*control.Caller)
 // session outlives a restart. Removing it ends every session.
 const sessionKeyFile = "state/dashboard-session.key"
 
-// sessionKey reads the dashboard's session key, and makes it the first time.
+// sessionKey reads the dashboard's session key, and makes it the first
+// time. Whoever reads the key can make sessions, so a key file that others
+// may read is refused, as the config is. The instance lock is held, so no
+// other daemon makes it at the same time.
 func sessionKey(root *os.Root) ([]byte, error) {
-	f, err := root.OpenFile(sessionKeyFile, os.O_RDONLY, 0)
+	f, err := root.OpenFile(sessionKeyFile, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err == nil {
 		defer f.Close()
+		st, err := f.Stat()
+		if err != nil {
+			return nil, fmt.Errorf("dashboard: %s: %w", sessionKeyFile, err)
+		}
+		if !st.Mode().IsRegular() {
+			return nil, fmt.Errorf("dashboard: %s is not a regular file", sessionKeyFile)
+		}
+		if st.Mode().Perm()&0o077 != 0 {
+			return nil, fmt.Errorf("dashboard: %s is accessible to other users (mode %04o); run chmod 600 on it, or remove it to end every session", sessionKeyFile, st.Mode().Perm())
+		}
 		b, err := io.ReadAll(io.LimitReader(f, 1024))
 		if err != nil {
 			return nil, fmt.Errorf("dashboard: %s: %w", sessionKeyFile, err)
@@ -214,15 +228,31 @@ func sessionKey(root *os.Root) ([]byte, error) {
 	if _, err := rand.Read(key); err != nil {
 		return nil, fmt.Errorf("dashboard: %w", err)
 	}
-	f, err = root.OpenFile(sessionKeyFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	// Written whole under another name, then renamed, so that a crash
+	// leaves no short key behind.
+	tmp := sessionKeyFile + ".new"
+	if err := root.Remove(tmp); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("dashboard: %w", err)
+	}
+	f, err = root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("dashboard: %w", err)
 	}
-	if _, err := f.Write(key); err != nil {
-		f.Close()
+	_, err = f.Write(key)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = root.Rename(tmp, sessionKeyFile)
+	}
+	if err != nil {
+		root.Remove(tmp)
 		return nil, fmt.Errorf("dashboard: %w", err)
 	}
-	return key, f.Close()
+	return key, nil
 }
 
 // frontEndHook, when a test sets it, sees each front end before it runs,

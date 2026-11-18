@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,6 +42,10 @@ const (
 // keepAlive is how often an idle event stream sends a comment, so that a
 // proxy or a browser does not close it.
 var keepAlive = 15 * time.Second
+
+// writeTimeout is how long one write to an event stream may take. A page
+// that stops reading loses its stream, and the follower behind it ends.
+var writeTimeout = 30 * time.Second
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET "+ThreadsPath, s.threads)
@@ -138,7 +143,9 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not a position", http.StatusBadRequest)
 		return
 	}
-	ctx := r.Context()
+	// The stream ends when its session does: the page must sign in again.
+	ctx, cancel := context.WithDeadline(r.Context(), sessionExpiry(r))
+	defer cancel()
 	evs, err := s.API.Events(ctx, control.Filter{}, after)
 	if err != nil {
 		s.apiError(w, err)
@@ -152,15 +159,18 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rc := http.NewResponseController(w)
+	rc.SetWriteDeadline(time.Now().Add(writeTimeout))
 	fmt.Fprint(w, "retry: 1000\n\n")
 	rc.Flush()
 	tick := time.NewTicker(keepAlive)
 	defer tick.Stop()
 	for {
+		rc.SetWriteDeadline(time.Time{})
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
+			rc.SetWriteDeadline(time.Now().Add(writeTimeout))
 			if _, err := fmt.Fprint(w, ": keep-alive\n\n"); err != nil {
 				return
 			}
@@ -173,6 +183,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 				s.Log.Warn("dashboard event", "pos", e.Pos, "err", err)
 				return
 			}
+			rc.SetWriteDeadline(time.Now().Add(writeTimeout))
 			if e.Kind == control.CaughtUp {
 				fmt.Fprint(w, "event: caught_up\n")
 			}

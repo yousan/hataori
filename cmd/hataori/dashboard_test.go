@@ -431,3 +431,28 @@ func TestDashboardSendsOnlyWhatTheCallerMayRead(t *testing.T) {
 		}
 	}
 }
+
+// A session key that other users may read is refused: whoever reads it can
+// make sessions.
+func TestDaemonRefusesAReadableSessionKey(t *testing.T) {
+	root := newRoot(t)
+	withDashboard(t, root, map[string]any{"listen": "127.0.0.1:0"})
+	runDaemon(t, root)() // makes the key, then stops
+	key := filepath.Join(root, sessionKeyFile)
+	if st, err := os.Stat(key); err != nil || st.Mode().Perm() != 0o600 || st.Size() != 32 {
+		t.Fatalf("key file: %v %v", st, err)
+	}
+	if _, err := os.Stat(key + ".new"); !os.IsNotExist(err) {
+		t.Fatalf("the temporary key file is left: %v", err)
+	}
+	os.Chmod(key, 0o640)
+	// A daemon that starts anyway is stopped after a while, and fails the test.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var errOut bytes.Buffer
+	code := runCtx(ctx, []string{"run", "--root", root}, io.Discard, &errOut)
+	t.Cleanup(func() { killSessions(root) })
+	if code != exitError || !strings.Contains(errOut.String(), "accessible to other users") {
+		t.Fatalf("run: exit %d, %q", code, errOut.String())
+	}
+}

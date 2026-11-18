@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"math/big"
@@ -18,6 +19,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/yousan/hataori/internal/control"
 )
 
 // start serves cfg and returns the server and its address.
@@ -337,4 +340,77 @@ func selfSigned(t *testing.T) *tls.Certificate {
 		t.Fatal(err)
 	}
 	return &tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
+}
+
+// streamAPI is a control API whose Events sends big events as fast as it
+// may until its context ends, and then reports that it ended.
+type streamAPI struct {
+	control.API
+	ended chan struct{}
+}
+
+func (a streamAPI) Events(ctx context.Context, _ control.Filter, _ uint64) (<-chan control.Event, error) {
+	out := make(chan control.Event)
+	data, _ := json.Marshal(map[string]string{"text": strings.Repeat("x", 64<<10)})
+	go func() {
+		defer close(a.ended)
+		defer close(out)
+		for pos := uint64(1); ; pos++ {
+			select {
+			case out <- control.Event{Pos: pos, Kind: "text", Data: data}:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out, nil
+}
+
+// openStream opens the event stream and returns its body.
+func openStream(t *testing.T, s *Server, c *http.Cookie) io.ReadCloser {
+	t.Helper()
+	hr, _ := http.NewRequest(http.MethodGet, "http://"+s.ln.Addr().String()+EventsPath, nil)
+	hr.Host = s.base.Host
+	hr.AddCookie(c)
+	resp, err := client(s).Do(hr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stream: %s", resp.Status)
+	}
+	return resp.Body
+}
+
+// A stream ends when its session expires.
+func TestAStreamEndsWithItsSession(t *testing.T) {
+	ended := make(chan struct{})
+	s := start(t, Config{SessionTTL: 2 * time.Second})
+	s.API = streamAPI{ended: ended}
+	body := openStream(t, s, signIn(t, s))
+	defer body.Close()
+	go io.Copy(io.Discard, body)
+	select {
+	case <-ended:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the stream outlived its session")
+	}
+}
+
+// A page that stops reading loses its stream, and the follower behind it
+// ends.
+func TestAStalledStreamEnds(t *testing.T) {
+	old := writeTimeout
+	writeTimeout = 500 * time.Millisecond
+	t.Cleanup(func() { writeTimeout = old })
+	ended := make(chan struct{})
+	s := start(t, Config{})
+	s.API = streamAPI{ended: ended}
+	body := openStream(t, s, signIn(t, s))
+	defer body.Close() // never read
+	select {
+	case <-ended:
+	case <-time.After(15 * time.Second):
+		t.Fatal("a stream nobody reads went on")
+	}
 }

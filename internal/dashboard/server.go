@@ -313,19 +313,28 @@ func (s *Server) sign(payload []byte) []byte {
 }
 
 // valid reports whether token is a session this key signed that has not
-// expired.
-func (s *Server) valid(token string) bool {
+// expired, and when it expires.
+func (s *Server) valid(token string) (time.Time, bool) {
 	p, sig, ok := strings.Cut(token, ".")
 	if !ok {
-		return false
+		return time.Time{}, false
 	}
 	payload, err1 := base64.RawURLEncoding.DecodeString(p)
 	mac, err2 := base64.RawURLEncoding.DecodeString(sig)
 	if err1 != nil || err2 != nil || len(payload) != 24 || !hmac.Equal(mac, s.sign(payload)) {
-		return false
+		return time.Time{}, false
 	}
 	exp := time.Unix(int64(binary.BigEndian.Uint64(payload[:8])), 0)
-	return s.now().Before(exp)
+	return exp, s.now().Before(exp)
+}
+
+type expiryKey struct{}
+
+// sessionExpiry is when the session of a request that passed ServeHTTP's
+// checks expires.
+func sessionExpiry(r *http.Request) time.Time {
+	exp, _ := r.Context().Value(expiryKey{}).(time.Time)
+	return exp
 }
 
 // ServeHTTP checks every request, then hands it to its route.
@@ -362,10 +371,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path != SignInPath {
 		c, err := r.Cookie(s.cookie)
-		if err != nil || !s.valid(c.Value) {
+		if err != nil {
 			http.Error(w, "not signed in", http.StatusUnauthorized)
 			return
 		}
+		exp, ok := s.valid(c.Value)
+		if !ok {
+			http.Error(w, "not signed in", http.StatusUnauthorized)
+			return
+		}
+		r = r.WithContext(context.WithValue(r.Context(), expiryKey{}, exp))
 	}
 	s.mux.ServeHTTP(w, r)
 }
