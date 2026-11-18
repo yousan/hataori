@@ -23,10 +23,12 @@ RAW_DIR/<name>/ gets:
 
 The user's ~/.codex is read, as every Codex start reads it. Settings come
 only through `-c` and through files inside the scenario's own temporary
-directory. Codex itself writes one thing there: a project directory is
-recorded as trusted in ~/.codex/config.toml. The script puts that file back
-when that entry is its only change (see undo_trust); otherwise it leaves
-the file and says so. --scrub writes a committable
+directory. The script writes nothing there and changes nothing back. The
+app-server records a directory that holds .codex/config.toml as a trusted
+project in the user's config.toml, so the project_config scenarios run only
+with CODEX_HOME set to a directory other than the user's own (credentials
+are never copied into it); otherwise they are recorded as not run.
+--scrub writes a committable
 copy with claudecode/testdata/scrub.py's rules.
 """
 
@@ -92,7 +94,7 @@ def clean_env():
 
 
 class Server:
-    def __init__(self, work, extra=()):
+    def __init__(self, work, extra=(), env=None):
         server = mcp_server(work, "sv")
         args = ["codex", "app-server",
                 "-c", "mcp_servers.sv.command=%s" % json.dumps(sys.executable),
@@ -101,7 +103,7 @@ class Server:
                 # "never" otherwise refuses every MCP call.
                 "-c", 'mcp_servers.sv.default_tools_approval_mode="approve"', *extra]
         self.p = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                  stderr=subprocess.DEVNULL, env=clean_env(), cwd=work)
+                                  stderr=subprocess.DEVNULL, env=dict(clean_env(), **(env or {})), cwd=work)
         self.q = queue.Queue()
         self.n = 0
         threading.Thread(target=self._read, daemon=True).start()
@@ -217,52 +219,7 @@ def scrub_item(m):
     return m
 
 
-USER_CONFIG = os.path.expanduser("~/.codex/config.toml")
-
-
-def read_bytes(path):
-    try:
-        with open(path, "rb") as f:
-            return f.read()
-    except OSError:
-        return None
-
-
-def undo_trust(saved, dirs):
-    """0.163.0 records a directory that holds a .codex/config.toml as a
-    trusted project in the user's config when a thread starts there. Put
-    the file back when that entry, for a directory this run made, is the
-    only change; otherwise leave it and say so."""
-    now = read_bytes(USER_CONFIG)
-    if saved is None and now is not None:
-        print("note: Codex created %s; left as it is" % USER_CONFIG, file=sys.stderr)
-        return False
-    if now == saved or now is None:
-        return False
-    rest = now
-    for d in dirs:
-        block = ('[projects."%s"]\ntrust_level = "trusted"\n' % d).encode()
-        rest = rest.replace(b"\n" + block, b"").replace(block, b"")
-    if rest.rstrip(b"\n") != saved.rstrip(b"\n"):
-        print("note: %s changed in another way; left as it is" % USER_CONFIG, file=sys.stderr)
-        return False
-    return put_back(USER_CONFIG, now, saved)
-
-
-def put_back(path, seen, saved):
-    """Replace path with saved, atomically, only if it still holds seen."""
-    tmp = path + ".confine-tmp"
-    with open(tmp, "wb") as f:
-        f.write(saved)
-    if read_bytes(path) != seen:  # changed again meanwhile: leave it
-        os.remove(tmp)
-        print("note: %s changed meanwhile; left as it is" % path, file=sys.stderr)
-        return False
-    os.replace(tmp, path)
-    return True
-
-
-def run(out, name, sandbox, prompt, extra=(), before=None, check=None, timeout=300):
+def run(out, name, sandbox, prompt, extra=(), before=None, check=None, timeout=300, env=None):
     d = os.path.join(out, name)
     os.makedirs(d)
     work = tempfile.mkdtemp(prefix="capture-")
@@ -270,7 +227,6 @@ def run(out, name, sandbox, prompt, extra=(), before=None, check=None, timeout=3
     outside = tempfile.mkdtemp(prefix="capture-")
     if before:
         before(cwd, outside)
-    saved = read_bytes(USER_CONFIG)
     msgs = []
     result = {"sandbox": sandbox, "config": list(extra), "cwd": cwd, "outside": outside}
 
@@ -278,7 +234,7 @@ def run(out, name, sandbox, prompt, extra=(), before=None, check=None, timeout=3
         k = scrub_item(m)
         if k is not None:
             msgs.append(k)
-    s = Server(work, extra)
+    s = Server(work, extra, env)
     try:
         s.call("initialize", {"clientInfo": {"name": "confine", "version": "0"}})
         s.send("initialized", notify=True)
@@ -299,7 +255,6 @@ def run(out, name, sandbox, prompt, extra=(), before=None, check=None, timeout=3
         st = locals().get("st", {})
     finally:
         s.close()
-        result["user_config_trust_undone"] = undo_trust(saved, [cwd, os.path.realpath(cwd)])
     items = []
     for m in msgs:
         if m.get("method") != "item/completed":
@@ -409,12 +364,26 @@ def main():
     plan.append(("locked_project_config", "workspace-write",
                  ONLY + "Create the file {outside}/x.txt containing the word hi, then call the ping tool of "
                  "the MCP server project. Reply with what happened.", LOCKED, project_config, written("out")))
+    home = os.environ.get("CODEX_HOME")
+    isolated = bool(home) and os.path.realpath(home) != os.path.realpath(os.path.expanduser("~/.codex"))
     for name, sb, prompt, extra, before, check in plan:
         if want and name not in want:
             continue
         print("scenario", name, file=sys.stderr, flush=True)
+        env = None
+        if before is project_config:
+            if not isolated:
+                # 0.163.0 writes the directory into the user's config.toml as trusted.
+                why = ("not run: the app-server records the project as trusted in the user's "
+                       "config.toml; set CODEX_HOME to a directory of its own to run it")
+                os.makedirs(os.path.join(out, name), exist_ok=True)
+                with open(os.path.join(out, name, "outcome.json"), "w") as f:
+                    json.dump({"sandbox": sb, "not_run": why}, f, indent=1)
+                print("  ", why, file=sys.stderr, flush=True)
+                continue
+            env = {"CODEX_HOME": home}
         try:
-            r = run(out, name, sb, prompt, extra, before, check)
+            r = run(out, name, sb, prompt, extra, before, check, env=env)
             print("  ", json.dumps({k: r.get(k) for k in ("written", "error")}), file=sys.stderr, flush=True)
         except Exception as e:
             print("scenario %s failed: %s" % (name, e), file=sys.stderr, flush=True)

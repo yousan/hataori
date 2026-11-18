@@ -21,11 +21,12 @@ transcript) plus:
   outcome.json  what the attempt left behind: tool calls seen in the hooks,
                 refusals, and the files the attempt was asked to write
 
-The script writes no settings of the user's. Project settings are written
-only inside the scenario's own temporary directory. One CLI command does
-write the user's settings: /model saves the model there (model_switch). The
-script puts the file back when the model is its only change (see
-restore_model); otherwise it leaves the file and says so. The output is not
+The script writes no settings of the user's, and changes none back.
+Project settings are written only inside the scenario's own temporary
+directory. Confirming /model makes the CLI save the model in the user-level
+settings file, so model_switch runs only with CLAUDE_CONFIG_DIR set to a
+directory other than the user's own (credentials are never copied into it);
+otherwise it is recorded as not run. The output is not
 scrubbed: run scrub.py on it, and never commit RAW_DIR.
 """
 
@@ -175,11 +176,12 @@ def public(names, known=None):
 
 class Attempt:
     def __init__(self, out, work, name, variant, prompt, check=None, args=None, cwd=None,
-                 before=None, after=None, sources=True):
+                 before=None, after=None, sources=True, env=None):
         self.out, self.work, self.name = out, work, name
         self.variant, self.prompt, self.check = variant, prompt, check
         self.args, self.cwd, self.before, self.after = args, cwd, before, after
         self.sources = sources
+        self.env = env
 
     def run(self):
         cwd = self.cwd or tempfile.mkdtemp(prefix="capture-")
@@ -192,7 +194,7 @@ class Attempt:
         sid = str(uuid.uuid4())
         args = self.args or claude(settings, self.variant, self.work, "--session-id", sid,
                                    sources=self.sources)
-        s = Session(self.out, self.name, args, cwd, clean_env())
+        s = Session(self.out, self.name, args, cwd, clean_env(self.env))
         result = {"variant": self.variant, "cwd": cwd, "outside": outside, "session": sid}
         try:
             s.wait("SessionStart", timeout=60)
@@ -327,45 +329,22 @@ def model_switch(out, work, variant):
         n = len(s.calls("Stop"))
         s.typed(ONLY + ATTEMPTS["subagent"][0])
         s.wait("Stop", n + 1, timeout=240)
-    user = os.path.expanduser("~/.claude/settings.json")
-    saved = open(user, "rb").read() if os.path.exists(user) else None
-    try:
-        Attempt(out, work, "confine_%s_model_switch" % variant, variant, "Reply with just the word: ok",
-                after=after).run()
-    finally:
-        restore_model(user, saved)
-
-
-def restore_model(user, saved):
-    """2.1.327 saves the model chosen with /model in the user's settings
-    file, --restricted and --setting-sources notwithstanding. Put the file
-    back when the "model" value is its only change; otherwise say so."""
-    if saved is None:
-        if os.path.exists(user):
-            print("note: the CLI created %s; left as it is" % user, file=sys.stderr)
+    # 2.1.327 saves the model chosen with /model in the user-level
+    # settings file, --restricted and --setting-sources notwithstanding.
+    cfg = os.environ.get("CLAUDE_CONFIG_DIR")
+    own = os.path.realpath(os.path.expanduser("~/.claude"))
+    name = "confine_%s_model_switch" % variant
+    if not cfg or os.path.realpath(cfg) == own:
+        d = os.path.join(out, name)
+        os.makedirs(d, exist_ok=True)
+        why = ("not run: confirming /model writes the user-level settings file; "
+               "set CLAUDE_CONFIG_DIR to a directory of its own to run it")
+        with open(os.path.join(d, "outcome.json"), "w") as f:
+            json.dump({"variant": variant, "not_run": why}, f, indent=1)
+        print("scenario %s %s" % (name, why), file=sys.stderr)
         return
-    if not os.path.exists(user):
-        return
-    now = open(user, "rb").read()
-    if now == saved:
-        return
-    try:
-        a, b = json.loads(saved), json.loads(now)
-    except ValueError:
-        a, b = None, None
-    if a is not None and {k: v for k, v in a.items() if k != "model"} == \
-            {k: v for k, v in b.items() if k != "model"}:
-        tmp = user + ".confine-tmp"
-        with open(tmp, "wb") as f:
-            f.write(saved)
-        if open(user, "rb").read() != now:  # changed again meanwhile: leave it
-            os.remove(tmp)
-            print("note: %s changed meanwhile; left as it is" % user, file=sys.stderr)
-            return
-        os.replace(tmp, user)  # atomic: never a half-written file
-        print("note: /model changed the user's settings; put back", file=sys.stderr)
-    else:
-        print("note: %s changed in another way; left as it is" % user, file=sys.stderr)
+    Attempt(out, work, name, variant, "Reply with just the word: ok", after=after,
+            env={"CLAUDE_CONFIG_DIR": cfg}).run()
 
 
 def model_resume(out, work, variant):
