@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -51,6 +53,10 @@ type Config struct {
 	// nil when the config has no "dashboard" section.
 	Dashboard *Dashboard
 
+	// Cleanup is how workspaces are removed (section 4.6): the "cleanup"
+	// section, with its defaults when absent.
+	Cleanup Cleanup
+
 	// Drivers and Adapters hold each driver's and adapter's own section of
 	// the config, by registered name, unparsed.
 	Drivers  map[string][]byte
@@ -77,6 +83,28 @@ type Dashboard struct {
 	Proxy   string // "proxy": the IP address of the reverse proxy in front
 }
 
+// Cleanup is the "cleanup" section of the config.
+type Cleanup struct {
+	// Disposable lists the patterns of ignored files that are not work;
+	// "disposable". Any other ignored file stops a removal.
+	Disposable []string
+	// TrashRetention is how long a removed workspace stays in trash/;
+	// "trash_retention", seven days when absent.
+	TrashRetention time.Duration
+	// OtherRoots are the roots of the other hataori instances on this host;
+	// "other_roots". A remote under one does not count for a removal.
+	OtherRoots []string
+}
+
+// DefaultTrashRetention is the trash retention of a config that names none.
+const DefaultTrashRetention = 7 * 24 * time.Hour
+
+type fileCleanup struct {
+	Disposable     []string `json:"disposable"`
+	TrashRetention string   `json:"trash_retention"`
+	OtherRoots     []string `json:"other_roots"`
+}
+
 type fileDashboard struct {
 	Listen  string `json:"listen"`
 	URL     string `json:"url"`
@@ -98,6 +126,7 @@ type fileConfig struct {
 	HostTerms  bool                       `json:"host_terminals"`
 	Scopes     []fileScope                `json:"scopes"`
 	Dashboard  *fileDashboard             `json:"dashboard"`
+	Cleanup    *fileCleanup               `json:"cleanup"`
 	Drivers    map[string]json.RawMessage `json:"drivers"`
 	Adapters   map[string]json.RawMessage `json:"adapters"`
 }
@@ -174,6 +203,10 @@ func ParseConfig(data []byte) (*Config, error) {
 		}
 	}
 
+	if c.Cleanup, err = cleanup(f.Cleanup); err != nil {
+		return nil, err
+	}
+
 	seen := map[string]bool{}
 	for i, s := range f.Scopes {
 		key := fmt.Sprintf("scopes[%d]", i)
@@ -216,6 +249,39 @@ func ParseConfig(data []byte) (*Config, error) {
 	}
 	if err != nil {
 		return nil, err
+	}
+	return c, nil
+}
+
+// cleanup reads the "cleanup" section.
+func cleanup(f *fileCleanup) (Cleanup, error) {
+	c := Cleanup{TrashRetention: DefaultTrashRetention}
+	if f == nil {
+		return c, nil
+	}
+	for i, p := range f.Disposable {
+		key := fmt.Sprintf("cleanup.disposable[%d]", i)
+		if p = strings.TrimSpace(p); strings.Trim(p, "/") == "" {
+			return c, fmt.Errorf("config: key %q: a pattern may not be empty", key)
+		}
+		if _, err := path.Match(p, ""); err != nil {
+			return c, fmt.Errorf("config: key %q: %q is not a pattern: %v", key, p, err)
+		}
+		c.Disposable = append(c.Disposable, p)
+	}
+	if r := strings.TrimSpace(f.TrashRetention); r != "" {
+		d, err := time.ParseDuration(r)
+		if err != nil || d <= 0 {
+			return c, fmt.Errorf("config: key %q: %q is not a positive duration such as \"168h\"", "cleanup.trash_retention", r)
+		}
+		c.TrashRetention = d
+	}
+	for i, r := range f.OtherRoots {
+		key := fmt.Sprintf("cleanup.other_roots[%d]", i)
+		if r = strings.TrimSpace(r); !filepath.IsAbs(r) {
+			return c, fmt.Errorf("config: key %q: %q is not an absolute path", key, r)
+		}
+		c.OtherRoots = append(c.OtherRoots, filepath.Clean(r))
 	}
 	return c, nil
 }

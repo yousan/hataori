@@ -12,7 +12,8 @@ import (
 	"testing"
 )
 
-// Phase 1 has no workspace removal. Every potentially destructive call must
+// Workspace removal lives in internal/workspace/remove.go only, behind the
+// proof of design section 4.6. Every other potentially destructive call must
 // explain why it cannot touch a workspace, even in docs or a nested module.
 func TestRemovalsAreAllowListed(t *testing.T) {
 	const list = "testdata/removals.txt"
@@ -149,6 +150,10 @@ func removalOperations(call *ast.CallExpr, osName string, gitCall bool, slices m
 	case *ast.SelectorExpr:
 		if pkg, ok := fun.X.(*ast.Ident); ok && osName != "" && pkg.Name == osName {
 			name = fun.Sel.Name
+		} else if fun.Sel.Name == "Remove" || fun.Sel.Name == "RemoveAll" {
+			// A method of that name, such as os.Root's: the type is not
+			// known here, so every one is listed.
+			operations = append(operations, "."+fun.Sel.Name)
 		}
 	case *ast.Ident:
 		if osName == "." {

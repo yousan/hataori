@@ -15,6 +15,7 @@ One instance is one directory, its root. hataori reads and writes only under it.
   state/              created by hataori: database, lock, sessions, control socket
   workspaces/         created by hataori: one clone per thread
   mirrors/            created by hataori: one bare mirror per repository
+  trash/              created by hataori: removed workspaces, kept for the retention
 ```
 
 - The root is given by `--root DIR`, or by the environment variable `HATAORI_ROOT` when `--root` is not given. Every command except `version`, `host` and `hook` needs one.
@@ -72,6 +73,7 @@ A complete example for one Discord channel and Claude Code, with the owner, one 
 | `adapters` | object | empty | One section per coding agent, by name. This binary has one: `claude-code` (below). Exactly one adapter must be named. |
 | `host_terminals` | boolean | `false` | With `true`, the owner may list the terminals on the host that hataori does not own (tmux panes and other terminals) and read the screens of the panes of the default tmux server, for display only, through the control API's `HostTerminals` and `HostScreen`. hataori never sends these terminals anything. With `false`, both are refused for everyone. |
 | `dashboard` | object | absent | The read-only web dashboard (below). Without this section the daemon serves none. |
+| `cleanup` | object | absent | How workspaces are removed (below). Without this section no ignored file is disposable and trash is kept for seven days. |
 
 Model and effort are chosen in this order: the order's `model:` / `effort:`, then the scope's, then the top-level key, then the agent's own default.
 
@@ -159,6 +161,18 @@ The section may be empty (`{}`): the dashboard then listens on `127.0.0.1:7466`.
 | `proxy` | string | empty | The IP address of a reverse proxy in front that serves the dashboard over HTTPS at `url`. Connections from any other address are refused. The proxy must pass the `Host` it was asked for. Without `tls_cert` and `tls_key` the proxy must run on this machine, with `listen` on loopback, so that links and sessions never cross the network in the clear. |
 
 Only `GET` and `HEAD` are served. The session cookie cannot be read by scripts, and it is sent only over HTTPS when the dashboard is served with TLS or behind the proxy.
+
+### `cleanup`
+
+A workspace is removed only when nothing in it exists nowhere else ([design, section 4.6](design/overview.md#46-cleanup-without-losing-work)), and removal is a rename into `<root>/trash/` on the same file system. The removal is refused, naming the reason, when any of these holds or cannot be told: a modified, staged or untracked file; a file marked assume-unchanged or skip-worktree; an ignored file that no `disposable` pattern matches; a linked worktree; a commit reachable from a ref, `HEAD`, the stash or a reflog that no remote has when it is asked at that moment (remote-tracking refs are not trusted); the same in every submodule, also one with no checkout, and in every nested repository; a process using the directory. A remote in `workspaces/`, or under this root or one of `other_roots`, does not count as a remote.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `disposable` | array of strings | empty | Patterns of ignored files that are not work, such as `"node_modules"` or `"*.pyc"`. A pattern without a slash matches any path segment, so it covers everything under a directory of that name; a pattern with a slash matches the path from the top of the repository, or a leading part of it (`"build/out"` covers everything under `build/out`). Patterns use Go's `path.Match` syntax (`*`, `?`, `[...]`); `**` is not special. |
+| `trash_retention` | duration | `"168h"` | How long a removed workspace stays in `trash/` before it is deleted. A positive Go duration. Only entries the removal put there are ever deleted. |
+| `other_roots` | array of strings | empty | Absolute paths of the roots of other hataori instances on this host. A remote under one of them does not count. |
+
+Processes are found with `lsof`, on Linux and on macOS alike; without `lsof` every removal is refused. Unless hataori runs as root, `lsof` sees only the processes of the user hataori runs as.
 
 ## Environment variables
 
