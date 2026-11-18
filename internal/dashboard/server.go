@@ -82,6 +82,9 @@ type Server struct {
 
 	key []byte // signs sessions
 
+	// Stream timings; tests shorten them.
+	keepAlive, writeTimeout, hostScreenInterval time.Duration
+
 	mu    sync.Mutex
 	links map[[32]byte]time.Time // by hash of the token: when it expires
 }
@@ -115,7 +118,8 @@ func Listen(cfg Config, api control.API, log *slog.Logger) (*Server, error) {
 	}
 	s := &Server{API: api, Log: log, secure: cfg.TLS != nil || cfg.Proxy != "",
 		linkTTL: cfg.LinkTTL, sessionTTL: cfg.SessionTTL, now: time.Now,
-		links: map[[32]byte]time.Time{}, key: cfg.SessionKey}
+		links: map[[32]byte]time.Time{}, key: cfg.SessionKey,
+		keepAlive: defaultKeepAlive, writeTimeout: defaultWriteTimeout, hostScreenInterval: defaultHostScreenInterval}
 	if len(s.key) == 0 {
 		s.key = make([]byte, 32)
 		if _, err := rand.Read(s.key); err != nil {

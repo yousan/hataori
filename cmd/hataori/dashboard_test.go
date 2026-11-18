@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -17,7 +18,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yousan/hataori/internal/agent/fake"
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/instance"
 	"github.com/yousan/hataori/internal/wire"
 )
@@ -126,6 +129,14 @@ func freePort(t *testing.T) string {
 // function is called; that function waits for it to end.
 func runDaemon(t *testing.T, root string) (stop func()) {
 	t.Helper()
+	stop, _ = runDaemonLog(t, root)
+	return stop
+}
+
+// runDaemonLog is runDaemon, and returns what the daemon logged so far,
+// whenever it is called.
+func runDaemonLog(t *testing.T, root string) (stop func(), logged func() string) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	var log bytes.Buffer
@@ -150,7 +161,7 @@ func runDaemon(t *testing.T, root string) (stop func()) {
 		}
 		return err == nil
 	})
-	return stop
+	return stop, func() string { mu.Lock(); defer mu.Unlock(); return log.String() }
 }
 
 // dashSignIn signs in with a link from `hataori signin` and returns the
@@ -191,6 +202,8 @@ func dashGet(t *testing.T, base string, c *http.Cookie, path string) (int, strin
 
 // sseEvent is one message of the dashboard's event stream.
 type sseEvent struct {
+	sid   string // the message's id as sent
+	data  string // its data as sent
 	id    uint64
 	kind  string // "caught_up" for the mark, else empty
 	event control.Event
@@ -202,11 +215,22 @@ type sseEvent struct {
 // stop is called. Messages arrive on the returned channel.
 func dashStream(t *testing.T, base string, c *http.Cookie, lastID uint64) (<-chan sseEvent, func()) {
 	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
-	r, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/events", nil)
-	r.AddCookie(c)
+	id := ""
 	if lastID > 0 {
-		r.Header.Set("Last-Event-ID", strconv.FormatUint(lastID, 10))
+		id = strconv.FormatUint(lastID, 10)
+	}
+	return openSSE(t, base+"/api/events", c, id)
+}
+
+// openSSE reads a Server-Sent Events stream at u, resuming after lastID
+// when it is not empty.
+func openSSE(t *testing.T, u string, c *http.Cookie, lastID string) (<-chan sseEvent, func()) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	r, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	r.AddCookie(c)
+	if lastID != "" {
+		r.Header.Set("Last-Event-ID", lastID)
 	}
 	resp, err := http.DefaultClient.Do(r)
 	if err != nil {
@@ -233,15 +257,17 @@ func dashStream(t *testing.T, base string, c *http.Cookie, lastID uint64) (<-cha
 				block = append(block, l)
 				switch {
 				case strings.HasPrefix(l, "id: "):
-					m.id, _ = strconv.ParseUint(l[4:], 10, 64)
+					m.sid = l[4:]
+					m.id, _ = strconv.ParseUint(m.sid, 10, 64)
 				case strings.HasPrefix(l, "event: "):
 					m.kind = l[7:]
 				case strings.HasPrefix(l, "data: "):
-					json.Unmarshal([]byte(l[6:]), &m.event)
+					m.data = l[6:]
+					json.Unmarshal([]byte(m.data), &m.event)
 				}
 				continue
 			}
-			if m.id != 0 || m.kind != "" {
+			if m.sid != "" || m.kind != "" {
 				m.raw, m.at = strings.Join(block, "\n"), time.Now()
 				out <- m
 			}
@@ -454,5 +480,209 @@ func TestDaemonRefusesAReadableSessionKey(t *testing.T) {
 	t.Cleanup(func() { killSessions(root) })
 	if code != exitError || !strings.Contains(errOut.String(), "accessible to other users") {
 		t.Fatalf("run: exit %d, %q", code, errOut.String())
+	}
+}
+
+// terminalRoot is newRoot with the fake agent on a terminal, scopes s and
+// x, and a dashboard whose caller has only s.
+func terminalRoot(t *testing.T) string {
+	t.Helper()
+	root := newRoot(t)
+	p := filepath.Join(root, instance.ConfigFile)
+	b, _ := os.ReadFile(p)
+	var cfg map[string]any
+	json.Unmarshal(b, &cfg)
+	ad := cfg["adapters"].(map[string]any)[fake.Name].(map[string]any)
+	ad["terminal"], ad["hataori"] = true, os.Args[0] // its hooks run as this binary
+	cfg["scopes"] = []map[string]any{{"key": "s", "client": "chat", "enabled": true}, {"key": "x", "client": "chat", "enabled": true}}
+	cfg["dashboard"] = map[string]any{"listen": "127.0.0.1:0"}
+	b, _ = json.Marshal(cfg)
+	os.WriteFile(p, b, 0o600)
+	dashboardHook = func(c *control.Caller) { c.Scopes = []string{"s"} }
+	t.Cleanup(func() { dashboardHook = nil })
+	return root
+}
+
+// terminalStream opens a thread's terminal stream, resuming after lastID
+// when it is not empty.
+func terminalStream(t *testing.T, base string, c *http.Cookie, id control.ThreadID, lastID string) (<-chan sseEvent, func()) {
+	t.Helper()
+	return openSSE(t, base+"/api/terminal?"+url.Values{"scope": {id.Scope}, "key": {id.Key}}.Encode(), c, lastID)
+}
+
+// chunk is the terminal chunk a message carries.
+func chunk(t *testing.T, m sseEvent) control.TerminalChunk {
+	t.Helper()
+	var c control.TerminalChunk
+	if err := json.Unmarshal([]byte(m.data), &c); err != nil {
+		t.Fatalf("not a terminal chunk: %s", m.raw)
+	}
+	if want := strconv.FormatUint(c.Pos, 10) + ":" + c.Run; m.sid != want {
+		t.Fatalf("message id %q, want %q", m.sid, want)
+	}
+	return c
+}
+
+// readTo reads continuing chunks after run and pos until the output read
+// holds want, and returns it, the position and the last message's id.
+func readTo(t *testing.T, ch <-chan sseEvent, run string, pos uint64, want string) (string, uint64, string) {
+	t.Helper()
+	var got, last string
+	for !strings.Contains(got, want) {
+		m := next(t, ch, 15*time.Second)
+		c := chunk(t, m)
+		if c.Reset || c.Run != run || c.Pos != pos+uint64(len(c.Data)) {
+			t.Fatalf("chunk of run %q at %d with %d bytes (reset %v) does not continue %d of run %q", c.Run, c.Pos, len(c.Data), c.Reset, pos, run)
+		}
+		got, pos, last = got+string(c.Data), c.Pos, m.sid
+	}
+	return got, pos, last
+}
+
+// The terminal route sends the reset first, then output in order, resumes
+// from the page's last position, takes no input, and answers a thread
+// outside the caller's scopes as one that does not exist.
+func TestDashboardTerminalStream(t *testing.T) {
+	root := terminalRoot(t)
+	_, logged := runDaemonLog(t, root)
+	base, cookie := dashSignIn(t, root)
+	ctx := context.Background()
+	c, err := wire.Dial(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	repo := bareRepo(t)
+	id, err := c.Start(ctx, control.StartRequest{Key: "k1", Scope: "s", Thread: "t1", Repo: repo,
+		Input: control.Input{Text: "screen first-line\nreply one"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Start(ctx, control.StartRequest{Key: "k2", Scope: "x", Thread: "t2", Repo: repo,
+		Input: control.Input{Text: "screen other-scope"}}); err != nil {
+		t.Fatal(err)
+	}
+	ended := func(n int) {
+		t.Helper()
+		eventually(t, "the turns to end", 15*time.Second, func() bool {
+			_, out, _ := cli(t, "events", "--root", root)
+			return strings.Count(out, `"kind":"turn_ended"`) >= n
+		})
+	}
+	ended(2)
+
+	// The reset first, then the output in order.
+	ch, closeStream := terminalStream(t, base, cookie, id, "")
+	first := chunk(t, next(t, ch, 15*time.Second))
+	if !first.Reset || first.Run == "" || first.Cols == 0 {
+		t.Fatalf("first chunk: %+v", first)
+	}
+	got := string(first.Data)
+	run, pos := first.Run, first.Pos
+	var last string
+	if !strings.Contains(got, "first-line") {
+		var more string
+		more, pos, last = readTo(t, ch, run, pos, "first-line")
+		got += more
+	}
+	if err := c.Send(ctx, id, "k3", control.Input{Text: "screen second-line\nreply two"}, control.Deliver); err != nil {
+		t.Fatal(err)
+	}
+	_, pos, last = readTo(t, ch, run, pos, "second-line")
+	closeStream()
+
+	// Resumed from the last id: what came while away, once.
+	if err := c.Send(ctx, id, "k4", control.Input{Text: "screen third-line\nreply three"}, control.Deliver); err != nil {
+		t.Fatal(err)
+	}
+	ended(4)
+	ch, _ = terminalStream(t, base, cookie, id, last)
+	again, _, _ := readTo(t, ch, run, pos, "third-line")
+	if strings.Contains(again, "second-line") {
+		t.Fatalf("output read before came again: %q", again)
+	}
+
+	// Nothing the page sends reaches the session.
+	send := func(method string, header map[string]string) int {
+		t.Helper()
+		u := base + "/api/terminal?" + url.Values{"scope": {"s"}, "key": {"t1"}}.Encode()
+		rctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		// A bracketed paste and Enter: what the fake agent takes as a prompt
+		// when it reaches its terminal, so it would run a turn.
+		r, _ := http.NewRequestWithContext(rctx, method, u, strings.NewReader("\x1b[200~reply rogue-keys\x1b[201~\r"))
+		r.AddCookie(cookie)
+		for k, v := range header {
+			r.Header.Set(k, v)
+		}
+		resp, err := http.DefaultClient.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if code := send(http.MethodGet, nil); code != http.StatusBadRequest {
+		t.Fatalf("GET with a body: %d", code)
+	}
+	if code := send(http.MethodGet, map[string]string{"Connection": "Upgrade", "Upgrade": "websocket",
+		"Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ=="}); code != http.StatusBadRequest {
+		t.Fatalf("a WebSocket upgrade: %d", code)
+	}
+	for _, m := range []string{http.MethodPost, http.MethodPut} {
+		if code := send(m, nil); code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s: %d", m, code)
+		}
+	}
+	time.Sleep(500 * time.Millisecond)
+	for _, w := range []string{"input to a terminal dropped", "upgrade of a terminal stream dropped"} {
+		if !strings.Contains(logged(), w) {
+			t.Errorf("the daemon did not log %q", w)
+		}
+	}
+	_, out, _ := cli(t, "events", "--root", root)
+	if n, m := strings.Count(out, `"kind":"input"`), strings.Count(out, `"kind":"turn_started"`); n != 4 || m != 4 || strings.Contains(out, "rogue") {
+		t.Fatalf("%d inputs and %d turns (want 4), events %s", n, m, out)
+	}
+	logs, _ := filepath.Glob(filepath.Join(root, "state", "sessions", "*", host.TerminalLog))
+	for _, l := range logs {
+		if b, _ := os.ReadFile(l); bytes.Contains(b, []byte("rogue")) {
+			t.Fatalf("the page's bytes reached a terminal: %s", l)
+		}
+	}
+	if len(logs) == 0 {
+		t.Fatal("no terminal log to check")
+	}
+
+	// Another scope's thread answers as no thread does.
+	_, none := dashGet(t, base, cookie, "/api/terminal?scope=s&key=no-such-thread")
+	for _, q := range []string{"scope=x&key=t2", "scope=s&key=no-such-thread"} {
+		code, body := dashGet(t, base, cookie, "/api/terminal?"+q)
+		if code != http.StatusNotFound || body != none {
+			t.Fatalf("%s: %d %q", q, code, body)
+		}
+	}
+}
+
+// The dashboard's caller may read the host's terminals only when the
+// config turns them on.
+func TestDashboardHostTerminalsOnlyWhenOn(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		root := newRoot(t)
+		p := filepath.Join(root, instance.ConfigFile)
+		b, _ := os.ReadFile(p)
+		var cfg map[string]any
+		json.Unmarshal(b, &cfg)
+		cfg["dashboard"] = map[string]any{"listen": "127.0.0.1:0"}
+		cfg["host_terminals"] = on
+		b, _ = json.Marshal(cfg)
+		os.WriteFile(p, b, 0o600)
+		var got control.Caller
+		dashboardHook = func(c *control.Caller) { got = *c }
+		runDaemon(t, root)()
+		dashboardHook = nil
+		if got.May.Has(control.OpHost) != on || !got.May.Has(control.OpRead) || got.May.Has(control.OpSend) {
+			t.Fatalf("host_terminals %v: the dashboard may %b", on, got.May)
+		}
 	}
 }

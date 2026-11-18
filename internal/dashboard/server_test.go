@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"bufio"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -9,6 +10,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"math/big"
@@ -21,10 +23,12 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/core"
 )
 
-// start serves cfg and returns the server and its address.
-func start(t *testing.T, cfg Config) *Server {
+// start serves cfg and returns the server. Each tune changes the server
+// before it serves.
+func start(t *testing.T, cfg Config, tune ...func(*Server)) *Server {
 	t.Helper()
 	if cfg.Listen == "" {
 		cfg.Listen = "127.0.0.1:0"
@@ -37,6 +41,9 @@ func start(t *testing.T, cfg Config) *Server {
 	// A route that names no method: only the server's own check keeps it read-only.
 	s.Handle("/any", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "any") }))
 	s.Handle("GET /terminal/{id}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "stream") }))
+	for _, f := range tune {
+		f(s)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { s.Serve(ctx); close(done) }()
@@ -385,8 +392,7 @@ func openStream(t *testing.T, s *Server, c *http.Cookie) io.ReadCloser {
 // A stream ends when its session expires.
 func TestAStreamEndsWithItsSession(t *testing.T) {
 	ended := make(chan struct{})
-	s := start(t, Config{SessionTTL: 2 * time.Second})
-	s.API = streamAPI{ended: ended}
+	s := start(t, Config{SessionTTL: 2 * time.Second}, func(s *Server) { s.API = streamAPI{ended: ended} })
 	body := openStream(t, s, signIn(t, s))
 	defer body.Close()
 	go io.Copy(io.Discard, body)
@@ -400,17 +406,204 @@ func TestAStreamEndsWithItsSession(t *testing.T) {
 // A page that stops reading loses its stream, and the follower behind it
 // ends.
 func TestAStalledStreamEnds(t *testing.T) {
-	old := writeTimeout
-	writeTimeout = 500 * time.Millisecond
-	t.Cleanup(func() { writeTimeout = old })
 	ended := make(chan struct{})
-	s := start(t, Config{})
-	s.API = streamAPI{ended: ended}
+	s := start(t, Config{}, func(s *Server) { s.API, s.writeTimeout = streamAPI{ended: ended}, 500*time.Millisecond })
 	body := openStream(t, s, signIn(t, s))
 	defer body.Close() // never read
 	select {
 	case <-ended:
 	case <-time.After(15 * time.Second):
 		t.Fatal("a stream nobody reads went on")
+	}
+}
+
+// screenAPI is a control API whose HostScreen answers pane %1 with the
+// screen the test sets, %8 as no pane, and every other pane as forbidden.
+type screenAPI struct {
+	control.API
+	mu     sync.Mutex
+	screen string
+	gone   bool
+	reads  int
+}
+
+func (a *screenAPI) set(screen string, gone bool) {
+	a.mu.Lock()
+	a.screen, a.gone = screen, gone
+	a.mu.Unlock()
+}
+
+func (a *screenAPI) HostScreen(_ context.Context, pane string) (string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.reads++
+	switch {
+	case pane == "%1" && !a.gone:
+		return a.screen, nil
+	case pane == "%1" || pane == "%8":
+		return "", fmt.Errorf("core: HostScreen: tmux pane %q: %w", pane, core.ErrNotFound)
+	}
+	return "", fmt.Errorf("core: HostScreen: %w", control.ErrForbidden)
+}
+
+// logTo makes s log into a buffer and returns what it logged so far.
+func logTo(s *Server) func() string {
+	var mu sync.Mutex
+	var b strings.Builder
+	s.Log = slog.New(slog.NewTextHandler(lockedWriter{&mu, &b}, nil))
+	return func() string { mu.Lock(); defer mu.Unlock(); return b.String() }
+}
+
+type lockedWriter struct {
+	mu *sync.Mutex
+	w  io.Writer
+}
+
+func (l lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
+}
+
+// screens reads the pane stream's screens as they come.
+func screens(t *testing.T, body io.Reader) <-chan string {
+	out := make(chan string, 100)
+	go func() {
+		defer close(out)
+		sc := bufio.NewScanner(body)
+		for sc.Scan() {
+			if d, ok := strings.CutPrefix(sc.Text(), "data: "); ok {
+				var h struct{ Screen string }
+				json.Unmarshal([]byte(d), &h)
+				out <- h.Screen
+			}
+		}
+	}()
+	return out
+}
+
+func nextScreen(t *testing.T, ch <-chan string) (string, bool) {
+	t.Helper()
+	select {
+	case s, ok := <-ch:
+		return s, ok
+	case <-time.After(5 * time.Second):
+		t.Fatal("no screen")
+	}
+	return "", false
+}
+
+// The pane stream sends the screen, then the screen again only when it
+// changes, takes no input, ends when the pane goes, and answers a pane the
+// caller may not read as one that does not exist.
+func TestHostScreenStream(t *testing.T) {
+	api := &screenAPI{screen: "first screen"}
+	var logged func() string
+	s := start(t, Config{}, func(s *Server) {
+		s.API, s.hostScreenInterval = api, 20*time.Millisecond
+		logged = logTo(s)
+	})
+	c := signIn(t, s)
+
+	get := func(pane, body string, header map[string]string) *http.Response {
+		t.Helper()
+		var rd io.Reader
+		if body != "" {
+			rd = strings.NewReader(body)
+		}
+		hr, _ := http.NewRequest(http.MethodGet, "http://"+s.ln.Addr().String()+HostScreenPath+"?"+url.Values{"pane": {pane}}.Encode(), rd)
+		hr.Host = s.base.Host
+		hr.AddCookie(c)
+		for k, v := range header {
+			hr.Header.Set(k, v)
+		}
+		resp, err := client(s).Do(hr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	for _, try := range []struct {
+		body   string
+		header map[string]string
+	}{{"rogue-keys", nil}, {"", map[string]string{"Connection": "Upgrade", "Upgrade": "websocket"}}} {
+		resp := get("%1", try.body, try.header)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("input on the pane route: %s", resp.Status)
+		}
+	}
+	resp := get("%1", "", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("pane %%1: %s", resp.Status)
+	}
+	ch := screens(t, resp.Body)
+	if got, _ := nextScreen(t, ch); got != "first screen" {
+		t.Fatalf("first: %q", got)
+	}
+	api.mu.Lock()
+	reads := api.reads
+	api.mu.Unlock()
+	for ; ; time.Sleep(10 * time.Millisecond) { // a few unchanged reads
+		api.mu.Lock()
+		n := api.reads
+		api.mu.Unlock()
+		if n >= reads+3 {
+			break
+		}
+	}
+	api.set("second screen", false)
+	if got, _ := nextScreen(t, ch); got != "second screen" {
+		t.Fatalf("an unchanged screen was sent again, or the change was not: %q", got)
+	}
+	api.set("", true)
+	if got, ok := nextScreen(t, ch); ok {
+		t.Fatalf("the stream went on after the pane went: %q", got)
+	}
+	resp.Body.Close()
+	for _, w := range []string{"input to a terminal dropped", "upgrade of a terminal stream dropped"} {
+		if !strings.Contains(logged(), w) {
+			t.Errorf("not logged: %q", w)
+		}
+	}
+
+	var bodies []string
+	for _, pane := range []string{"%8", "%9"} {
+		resp := get(pane, "", nil)
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("pane %s: %s", pane, resp.Status)
+		}
+		bodies = append(bodies, string(b))
+	}
+	if bodies[0] != bodies[1] {
+		t.Fatalf("a forbidden pane can be told from no pane: %q, %q", bodies[0], bodies[1])
+	}
+}
+
+// A request that declares a body and sends only part of it gets its
+// refusal at once, opens nothing, and its connection is closed.
+func TestAPartBodyHoldsNothingOpen(t *testing.T) {
+	api := &screenAPI{screen: "x"}
+	s := start(t, Config{}, func(s *Server) { s.API = api })
+	c := signIn(t, s)
+	for _, path := range []string{TerminalPath + "?scope=s&key=t1", HostScreenPath + "?pane=%251"} {
+		conn, err := net.Dial("tcp", s.ln.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: %s\r\nCookie: %s=%s\r\nContent-Length: 100\r\n\r\nrogue", path, s.base.Host, c.Name, c.Value)
+		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		b, err := io.ReadAll(conn) // ends only when the server closes the connection
+		conn.Close()
+		if err != nil || !strings.HasPrefix(string(b), "HTTP/1.1 400") {
+			t.Fatalf("%s: %v, %q", path, err, b)
+		}
+	}
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if api.reads != 0 {
+		t.Fatal("a pane was read for a request that sent a body")
 	}
 }
