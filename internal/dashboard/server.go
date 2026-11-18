@@ -267,8 +267,8 @@ func (s *Server) Close() error { return s.srv.Close() }
 // and opens a session of person. The token is kept only as its hash, and
 // is not logged.
 func (s *Server) NewLink(_ context.Context, person string) (string, error) {
-	if person == "" || len(person) > maxPerson {
-		return "", fmt.Errorf("dashboard: a sign-in link needs a person's name of at most %d bytes", maxPerson)
+	if person == "" {
+		return "", errors.New("dashboard: a sign-in link needs a person")
 	}
 	token, sum, err := secret()
 	if err != nil {
@@ -322,9 +322,6 @@ const sessionLabel = "hataori dashboard session 2\x00"
 // sessionHead is the length of a session's payload before the person.
 const sessionHead = 24
 
-// maxPerson is the longest person's name a session carries.
-const maxPerson = 256
-
 // newSession returns a session of person that expires at exp.
 func (s *Server) newSession(exp time.Time, person string) (string, error) {
 	payload := make([]byte, sessionHead, sessionHead+len(person))
@@ -352,8 +349,7 @@ func (s *Server) valid(token string) (exp time.Time, person string, ok bool) {
 	}
 	payload, err1 := base64.RawURLEncoding.DecodeString(p)
 	mac, err2 := base64.RawURLEncoding.DecodeString(sig)
-	if err1 != nil || err2 != nil || len(payload) <= sessionHead || len(payload) > sessionHead+maxPerson ||
-		!hmac.Equal(mac, s.sign(payload)) {
+	if err1 != nil || err2 != nil || len(payload) <= sessionHead || !hmac.Equal(mac, s.sign(payload)) {
 		return time.Time{}, "", false
 	}
 	exp = time.Unix(int64(binary.BigEndian.Uint64(payload[:8])), 0)

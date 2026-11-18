@@ -1029,8 +1029,9 @@ type API interface {
 	// the caller's person, and the session it opens belongs to that person:
 	// its Caller has the scopes that person may act in (every scope for the
 	// owner) and OpRead. It needs OpSignIn, which the owner's connection on
-	// the control socket and a chat front end's caller have, never the
-	// dashboard's. Who may get a link is one rule in the core, today the
+	// the control socket has, and which a chat front end gives the caller it
+	// makes for a person who asks in chat (the command comes with #259);
+	// the dashboard's caller never has it. Who may get a link is one rule in the core, today the
 	// owner only (section 10); a guest and anyone else are refused and
 	// logged with the client and the id. The token is never logged or
 	// stored as an event. Since protocol 1.7; for a chat caller since 1.11.
@@ -1206,7 +1207,8 @@ type API interface {
 
 	// SignInLink: declared above, since protocol 1.7 (#200); for a chat
 	// caller with From since 1.11 (#252). The control socket's connections
-	// and chat front ends have OpSignIn; a dashboard session's Caller has
+	// have OpSignIn, and so will the chat front end's caller for a person's
+	// request (#259); a dashboard session's Caller has
 	// OpRead only, and OpHost for the owner when host terminals are on.
 }
 

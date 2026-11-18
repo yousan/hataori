@@ -207,7 +207,8 @@ func TestALinkWorksOnce(t *testing.T) {
 func TestASessionBelongsToItsPerson(t *testing.T) {
 	var mu sync.Mutex
 	var asked []string
-	allowed := map[string]bool{"ada": true, "grace": true}
+	long := strings.Repeat("a", 1000) // the config sets no limit on a name
+	allowed := map[string]bool{"ada": true, "grace": true, long: true}
 	s := start(t, Config{}, func(s *Server) {
 		s.For = func(person string) (control.API, bool) {
 			mu.Lock()
@@ -216,7 +217,7 @@ func TestASessionBelongsToItsPerson(t *testing.T) {
 			return noAPI{}, allowed[person]
 		}
 	})
-	for _, person := range []string{"ada", "grace"} {
+	for _, person := range []string{"ada", "grace", long} {
 		link, err := s.NewLink(context.Background(), person)
 		if err != nil {
 			t.Fatal(err)

@@ -61,9 +61,9 @@ type API interface {
 	// SignInLink makes a single-use, short-lived dashboard sign-in link for
 	// the caller's person, and the session it opens belongs to that person.
 	// It needs OpSignIn, which the owner's connection on the control socket
-	// and a chat front end's caller for a person who asked are given; the
-	// person must be one who may sign in, today the owner only. A guest is
-	// refused.
+	// has, and which a chat front end gives the caller it makes for a person
+	// who asked in chat; the dashboard's caller never has it. The person
+	// must be one who may sign in, today the owner only. A guest is refused.
 	SignInLink(ctx context.Context) (string, error)
 
 	// Terminal streams the terminal output of the thread's current session,
@@ -122,7 +122,7 @@ const (
 	OpSend                   // Send
 	OpAnswer                 // Answer
 	OpStop                   // Stop
-	OpSignIn                 // SignInLink: the control socket's connections and chat front ends, never the dashboard
+	OpSignIn                 // SignInLink: the control socket's connections, and a chat front end's caller for a person who asked; never the dashboard
 	// OpHost may list and read the terminals hataori does not own
 	// (HostTerminals, HostScreen). Only the owner is given it, and only when
 	// the config turns them on.
