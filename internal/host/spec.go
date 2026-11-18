@@ -41,6 +41,34 @@ type Spec struct {
 	LogLimit int64    `json:"log_limit,omitempty"` // bound of terminal.log and stderr.log; DefaultLogLimit when zero
 }
 
+// Size returns the terminal's size, with the defaults for a zero field.
+func (s Spec) Size() (cols, rows uint16) {
+	cols, rows = s.Cols, s.Rows
+	if cols == 0 {
+		cols = 80
+	}
+	if rows == 0 {
+		rows = 24
+	}
+	return cols, rows
+}
+
+// ReadSpec returns the Spec written into stateDir for its host. ok is false
+// when none was written there yet.
+func ReadSpec(stateDir string) (s Spec, ok bool, err error) {
+	b, err := os.ReadFile(filepath.Join(stateDir, SpecFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return s, false, nil
+	}
+	if err != nil {
+		return s, false, fmt.Errorf("host: %w", err)
+	}
+	if err := json.Unmarshal(b, &s); err != nil {
+		return s, false, fmt.Errorf("host: %s: %w", SpecFile, err)
+	}
+	return s, true, nil
+}
+
 // DefaultLogLimit bounds the raw logs when Spec.LogLimit is zero.
 const DefaultLogLimit = 8 << 20
 

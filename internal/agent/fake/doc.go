@@ -9,7 +9,8 @@
 // Escape interrupts), reports each event by running `hataori hook` with the
 // object as the payload (`--wait` for a question, whose answer the hook
 // prints), and writes its text to a transcript file that it names in its
-// first report. It never writes anything a reader needs to its terminal.
+// first report. It never writes anything a reader needs to its terminal;
+// only the script command "screen" writes there, for a person to look at.
 //
 // # Wire format
 //
@@ -47,6 +48,7 @@
 //	fail REASON         end the turn as failed with REASON
 //	exit                exit at once, without ending the turn
 //	unknown             report a line of a kind no codec knows
+//	screen TEXT         write TEXT and a line end to the terminal; nothing on pipes
 //	subagent ID [NAME [TOOL...]]
 //	                    report a subagent's start, its tools, and its end
 //	file PATH [PATH...] [-- CAPTION]

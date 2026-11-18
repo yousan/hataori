@@ -540,4 +540,11 @@ func TestNoAgentNameAndNoTerminalLog(t *testing.T) {
 			t.Errorf("runner.go contains %q", bad)
 		}
 	}
+	// terminal.go passes the terminal on to a person, and names no agent.
+	src = readFile(t, "terminal.go")
+	for _, bad := range []string{"claude", "Claude", "codex", "Codex", "fake"} {
+		if bytes.Contains(src, []byte(bad)) {
+			t.Errorf("terminal.go contains %q", bad)
+		}
+	}
 }

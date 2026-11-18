@@ -62,6 +62,18 @@ type API interface {
 	// the owner. It needs OpSignIn, which only the owner's connection on the
 	// control socket is given.
 	SignInLink(ctx context.Context) (string, error)
+
+	// Terminal streams the terminal output of the thread's current session,
+	// until ctx ends. The first chunk continues after position after of run,
+	// or, when after is 0, belongs to another run of the session host or is
+	// no longer kept, is the end of the kept log with Reset set. Each later
+	// chunk continues the one before it, or starts again with Reset. A
+	// session whose host has ended gets the end of the last run's log with
+	// Reset and an empty Run, then nothing until it runs again. When the
+	// thread gets a new session (one replacing a session that could not
+	// resume), the stream goes on with it, from a chunk marked Reset. A
+	// session without a terminal (on pipes) is ErrNotFound. It takes no input.
+	Terminal(ctx context.Context, id ThreadID, run string, after uint64) (<-chan TerminalChunk, error)
 }
 
 // Caller is who is asking. An API value is bound to one Caller,
@@ -95,7 +107,7 @@ type Ops uint8
 
 // The operations of the API, as members of Ops.
 const (
-	OpRead   Ops = 1 << iota // Threads, Thread, Events, Workspace
+	OpRead   Ops = 1 << iota // Threads, Thread, Events, Workspace, Terminal
 	OpStart                  // Start
 	OpSend                   // Send
 	OpAnswer                 // Answer
@@ -242,6 +254,17 @@ type WorkspaceState struct {
 	// Fetched is when the remote-tracking refs were last updated, by a
 	// fetch, a push or the clone; absent when the repository does not say.
 	Fetched *time.Time `json:"fetched,omitempty"`
+}
+
+// TerminalChunk is one piece of a session's terminal output. Positions
+// count the bytes the session host wrote since its run started.
+type TerminalChunk struct {
+	Run   string `json:"run"`   // the session host's run; a new run starts a new count; empty when no host runs
+	Pos   uint64 `json:"pos"`   // the position after Data; 0 when Run is empty
+	Reset bool   `json:"reset"` // Data is the end of the log, not a continuation: redraw
+	Cols  int    `json:"cols"`  // the terminal's size
+	Rows  int    `json:"rows"`
+	Data  []byte `json:"data,omitempty"` // the raw bytes; text, so optional
 }
 
 // RequestKind tells a question from an approval.

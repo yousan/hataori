@@ -1,0 +1,1 @@
+{"id":1,"event":{"pos":42,"thread":{"scope":"C0123","key":"T0456"},"time":"2026-01-02T03:04:05.678Z","kind":"usage","data":{"cache_read":1200,"cache_write":300,"context_size":200000,"context_used":45000,"input":800,"model":"opus","output":150,"session":3,"turn":12}}}

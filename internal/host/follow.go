@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -18,6 +19,10 @@ const followLimit = 1 << 20
 
 // followWriteTimeout bounds one write to a follower's connection.
 const followWriteTimeout = 30 * time.Second
+
+// followFirstTimeout bounds how long a follower waits for the host's first
+// answer.
+const followFirstTimeout = 10 * time.Second
 
 // followFlushTimeout bounds how long the host, once the command has ended
 // and the terminal log is closed, waits for followers to be sent the rest.
@@ -180,6 +185,13 @@ func (h *host) follow(c *net.UnixConn, enc *json.Encoder, req request) {
 	}
 }
 
+// KeptTerminal returns the terminal log kept in stateDir, as the last host
+// there left it, for a person to look at. It is nil when there is none.
+func KeptTerminal(stateDir string) []byte {
+	b, _ := os.ReadFile(filepath.Join(stateDir, TerminalLog))
+	return b
+}
+
 // TerminalChunk is one message of a terminal stream.
 type TerminalChunk struct {
 	Run   string // the host's run; a new run starts a new count
@@ -215,11 +227,15 @@ func FollowTerminal(stateDir, run string, after uint64) (*TerminalStream, error)
 		c.Close()
 		return nil, err
 	}
+	// The first answer comes at once; a host that does not give it is
+	// stuck, and the caller must not wait for it.
+	c.conn.SetReadDeadline(time.Now().Add(followFirstTimeout))
 	first, err := s.read()
 	if err != nil {
 		c.Close()
 		return nil, err
 	}
+	c.conn.SetReadDeadline(time.Time{})
 	s.first, s.cols, s.rows = &first, first.Cols, first.Rows
 	return s, nil
 }

@@ -1034,6 +1034,27 @@ type API interface {
 	// It is the check of section 4.6 as numbers, answering from the
 	// remote-tracking refs as last fetched; it does not ask the remote.
 	Workspace(ctx context.Context, id ThreadID) (WorkspaceState, error)
+
+	// Terminal streams the terminal output of the thread's current session
+	// from its session host, read-only, until ctx ends (section 7.2). The
+	// first chunk continues after position after of run, or, when after is
+	// 0, belongs to another run or is no longer kept, is the end of the kept
+	// log with Reset set. A session whose host has ended sends the end of the
+	// last run's log with Reset and an empty Run, then nothing until it runs
+	// again. When the thread gets a new session, the stream goes on with it,
+	// from a chunk marked Reset. A session on pipes has no terminal:
+	// ErrNotFound. It takes no input, and the stream's connection carries
+	// none.
+	Terminal(ctx context.Context, id ThreadID, run string, after uint64) (<-chan TerminalChunk, error)
+}
+
+type TerminalChunk struct {
+	Run   string // the session host's run, opaque; a new run starts a new count; empty when no host runs
+	Pos   uint64 // the byte position after Data, counted since the run started; 0 when Run is empty
+	Reset bool   // Data is the end of the log, not a continuation: redraw
+	Cols  int    // the terminal's size
+	Rows  int
+	Data  []byte // raw and uninterpreted; text, so optional
 }
 
 type WorkspaceState struct {
@@ -1147,10 +1168,7 @@ type API interface {
 
 	// Workspace: declared above, since protocol 1.4 (#196).
 
-	// Terminal streams a session's terminal output. It first sends the end of
-	// the kept log, with Reset set, when after is 0, belongs to another run of
-	// the session host, or is no longer kept. It takes no input.
-	Terminal(ctx context.Context, id ThreadID, run string, after uint64) (<-chan TerminalChunk, error)
+	// Terminal: declared above, since protocol 1.9 (#198).
 
 	// HostTerminals lists the terminals on the host that no session host owns.
 	// HostScreen returns one tmux pane's screen. Both need OpHost.
@@ -1167,14 +1185,7 @@ type API interface {
 
 // WorkspaceState: declared above, with Workspace.
 
-type TerminalChunk struct {
-	Run   string // the session host's run; a new run starts a new count
-	Pos   uint64 // the byte position after Data, counted since the run started
-	Reset bool   // Data is the end of the log, not a continuation: redraw
-	Cols  int
-	Rows  int
-	Data  []byte
-}
+// TerminalChunk: declared above, with Terminal.
 
 type HostTerminal struct {
 	Device   string    // the terminal device
@@ -1194,12 +1205,11 @@ Remaining usage per agent (an operation `Limits`, with the agent, the window, th
 
 | Change | Protocol |
 |---|---|
-| `Workspace`, `Terminal`, `HostTerminals`, `HostScreen` | minor: new operations |
+| `Workspace`, `HostTerminals`, `HostScreen` | minor: new operations |
 | `SignInLink`, with `Ops` gaining `OpSignIn` | minor: new operation; landed in 1.7 |
-| `Terminal` turns its connection into a stream, as `Events` does | part of the new operation |
 | `Limits`; `WorkspaceState.PullRequest` | minor, and only after their research |
 
-Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event.
+Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event. In protocol 1.9: `Terminal`, which turns its connection into a stream as `Events` does.
 
 ### Surface driver
 

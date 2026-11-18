@@ -4,8 +4,8 @@
 //
 // A connection starts with a hello from each side carrying the protocol
 // version. Then either side may send requests, and the other answers each
-// one. An Events request from the client turns the connection into a
-// stream of events until the client closes it. docs/protocol.md is the
+// one. An Events or a Terminal request from the client turns the
+// connection into a stream until the client closes it. docs/protocol.md is the
 // description of the protocol.
 package wire
 
@@ -27,7 +27,7 @@ import (
 
 // Version is the protocol version this build speaks: major.minor. Two
 // sides work together when their major numbers are equal (docs/protocol.md).
-const Version = "1.8"
+const Version = "1.9"
 
 type hello struct {
 	Version string `json:"version"`
@@ -45,6 +45,8 @@ type response struct {
 	Result json.RawMessage `json:"result,omitempty"`
 	Error  *wireError      `json:"error,omitempty"`
 	Event  *control.Event  `json:"event,omitempty"`
+	// Terminal is one chunk of a Terminal stream.
+	Terminal *control.TerminalChunk `json:"terminal,omitempty"`
 }
 
 type wireError struct {
@@ -83,11 +85,16 @@ type (
 		After  uint64         `json:"after"`
 	}
 	signInLinkArgs struct{}
+	terminalArgs   struct {
+		ID    control.ThreadID `json:"id"`
+		Run   string           `json:"run"`
+		After uint64           `json:"after"`
+	}
 )
 
 // operation is one operation of the control API on the wire: the type of
-// its arguments and of its result, and how the server runs it. Events has
-// no run: it turns the connection into a stream of Event messages.
+// its arguments and of its result, and how the server runs it. Events and
+// Terminal have no run: each turns the connection into a stream.
 type operation struct {
 	args, result any
 	run          func(ctx context.Context, api control.API, args func(any) error) (any, error)
@@ -152,6 +159,7 @@ var operations = map[string]operation{
 		}
 		return api.SignInLink(ctx)
 	}},
+	"Terminal": {terminalArgs{}, control.TerminalChunk{}, nil},
 }
 
 // The error codes on the wire, for the errors a client can act on.

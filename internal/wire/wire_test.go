@@ -31,6 +31,10 @@ func (nopRunner) Resume(context.Context, int64, control.Principal, string, strin
 	return nil
 }
 
+func (nopRunner) Terminal(context.Context, int64, string, uint64) (<-chan control.TerminalChunk, error) {
+	return nil, core.ErrNotFound
+}
+
 type dirs struct{}
 
 func (dirs) Make(context.Context, control.ThreadID, string, func(core.Placement) error) (string, error) {

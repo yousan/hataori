@@ -82,6 +82,9 @@ type Runner interface {
 	// reports that it is ready.
 	// from is the "<client>:<id>" the input came from, if relayed.
 	Resume(ctx context.Context, sessionID int64, principal control.Principal, from, key string, in control.Input) error
+	// Terminal streams a session's terminal output, as control.API.Terminal
+	// says, until ctx ends. A session on pipes is ErrNotFound.
+	Terminal(ctx context.Context, sessionID int64, run string, after uint64) (<-chan control.TerminalChunk, error)
 }
 
 // Launch is what Runner.Start needs.
@@ -743,6 +746,62 @@ func (a *api) Workspace(ctx context.Context, id control.ThreadID) (control.Works
 		return control.WorkspaceState{}, fmt.Errorf("core: workspace of %v: %w", id, err)
 	}
 	return st, nil
+}
+
+// terminalSessionCheck is how often a Terminal stream looks whether the
+// thread has a new current session, as after a session was replaced.
+const terminalSessionCheck = 500 * time.Millisecond
+
+// Terminal streams the terminal of the thread's current session. When the
+// thread gets a new session, the stream goes on with it, starting with a
+// chunk marked Reset; it ends when the new session has no terminal.
+func (a *api) Terminal(ctx context.Context, id control.ThreadID, run string, after uint64) (<-chan control.TerminalChunk, error) {
+	if err := a.check(control.OpRead, "Terminal", id.Scope); err != nil {
+		return nil, err
+	}
+	sid, _, err := a.c.current(ctx, a.c.Store.DB, id)
+	if err != nil {
+		return nil, err
+	}
+	sctx, stop := context.WithCancel(ctx)
+	in, err := a.c.Runner.Terminal(sctx, sid, run, after)
+	if err != nil {
+		stop()
+		return nil, err
+	}
+	out := make(chan control.TerminalChunk)
+	go func() {
+		defer func() { stop(); close(out) }()
+		tick := time.NewTicker(terminalSessionCheck)
+		defer tick.Stop()
+		for {
+			select {
+			case ch, ok := <-in:
+				if !ok {
+					return
+				}
+				select {
+				case out <- ch:
+				case <-ctx.Done():
+					return
+				}
+			case <-tick.C:
+				now, _, err := a.c.current(ctx, a.c.Store.DB, id)
+				if err != nil || now == sid {
+					continue
+				}
+				stop() // the old session's stream ends; its chunks are dropped
+				sctx, stop = context.WithCancel(ctx)
+				if in, err = a.c.Runner.Terminal(sctx, now, "", 0); err != nil {
+					return
+				}
+				sid = now
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out, nil
 }
 
 // workspaceDir is the directory of the thread's workspace, as its newest
