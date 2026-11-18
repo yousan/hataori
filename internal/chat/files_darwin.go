@@ -13,8 +13,11 @@ import (
 // /System/Volumes/Data/private/var); the one that is real is returned
 // when the kernel gives it.
 func openedPath(f *os.File, real string) (string, error) {
-	return getPath(f, unix.F_GETPATH) // TEMPORARY: without the fallback, to see the test fail
-
+	p, err := getPath(f, unix.F_GETPATH)
+	if err != nil || p == real {
+		return p, err
+	}
+	return getPath(f, unix.F_GETPATH_NOFIRMLINK)
 }
 
 func getPath(f *os.File, cmd uintptr) (string, error) {
