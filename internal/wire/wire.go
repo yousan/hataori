@@ -27,7 +27,7 @@ import (
 
 // Version is the protocol version this build speaks: major.minor. Two
 // sides work together when their major numbers are equal (docs/protocol.md).
-const Version = "1.6"
+const Version = "1.7"
 
 type hello struct {
 	Version string `json:"version"`
@@ -82,6 +82,7 @@ type (
 		Filter control.Filter `json:"filter"`
 		After  uint64         `json:"after"`
 	}
+	signInLinkArgs struct{}
 )
 
 // operation is one operation of the control API on the wire: the type of
@@ -145,6 +146,12 @@ var operations = map[string]operation{
 		return api.Workspace(ctx, a.ID)
 	}},
 	"Events": {eventsArgs{}, control.Event{}, nil},
+	"SignInLink": {signInLinkArgs{}, "", func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		if err := args(&signInLinkArgs{}); err != nil {
+			return nil, err
+		}
+		return api.SignInLink(ctx)
+	}},
 }
 
 // The error codes on the wire, for the errors a client can act on.

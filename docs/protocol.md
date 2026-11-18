@@ -14,7 +14,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **1.6**. Both hellos carry it.
+The protocol version is `major.minor`, now **1.7**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 1.0`.
 - With the same major number and different minor numbers they work together.
@@ -180,6 +180,15 @@ What the thread's workspace holds that may exist nowhere else, as numbers; since
 | `id` | `ThreadID` | required | the thread |
 
 Result: `WorkspaceState`
+
+### Operation `SignInLink`
+
+Makes a link that signs the owner in to the instance's dashboard. The link works once and only for a few minutes. Only the owner's connection on this socket may call it; a client of the control API inside the daemon, such as a chat front end or the dashboard itself, is refused with `forbidden`. An instance without a dashboard answers with `error`. Since 1.7.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+
+Result: string
 
 ## Types
 

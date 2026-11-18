@@ -80,11 +80,12 @@ func examples(t *testing.T) map[string]any {
 		"Thread":  threadArgs{ID: exampleID, Recent: 2000, Events: 5},
 		"Start": control.StartRequest{Key: "M0789", Scope: "C0123", Repo: "https://example.com/repo.git",
 			Input: control.Input{Text: "Fix the build."}, Model: "opus", Effort: "high"},
-		"Send":      sendArgs{ID: exampleID, Key: "M0790", Input: control.Input{Text: "And the docs."}, Busy: control.Deliver},
-		"Answer":    answerArgs{Request: "3:toolu_2", Answer: control.Answer{Text: "blue", Choices: []string{"blue"}}},
-		"Stop":      stopArgs{ID: exampleID},
-		"Events":    eventsArgs{Filter: control.Filter{}, After: 41},
-		"Workspace": workspaceArgs{ID: exampleID},
+		"Send":       sendArgs{ID: exampleID, Key: "M0790", Input: control.Input{Text: "And the docs."}, Busy: control.Deliver},
+		"Answer":     answerArgs{Request: "3:toolu_2", Answer: control.Answer{Text: "blue", Choices: []string{"blue"}}},
+		"Stop":       stopArgs{ID: exampleID},
+		"Events":     eventsArgs{Filter: control.Filter{}, After: 41},
+		"Workspace":  workspaceArgs{ID: exampleID},
+		"SignInLink": signInLinkArgs{},
 	}
 	results := map[string]any{
 		"Threads": []control.ThreadInfo{exampleInfo},
@@ -96,6 +97,7 @@ func examples(t *testing.T) map[string]any {
 		"Start": exampleID,
 		"Workspace": control.WorkspaceState{Branch: "fix-build", Base: "9fceb02d0ae598e95dc970b74767f19372d61af8",
 			Added: 12, Removed: 3, Uncommitted: 2, Unpushed: 1, Fetched: &exampleTime},
+		"SignInLink": "https://dashboard.example.com/signin?t=Q2hhbmdlIG1lIGV2ZXJ5IHRpbWU",
 	}
 	for op := range operations {
 		a, ok := args[op]

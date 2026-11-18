@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"github.com/yousan/hataori/internal/chat"
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
+	"github.com/yousan/hataori/internal/dashboard"
 	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/instance"
 	"github.com/yousan/hataori/internal/relay"
@@ -93,7 +95,30 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		Workspaces: workspace.Maker{Root: abs, Client: func(scope string) string { return clients[scope] }},
 		Runner:     r, Agent: agentName, Model: cfg.Model, Effort: cfg.Effort, Log: lg}
 
-	owner := control.OpRead | control.OpStart | control.OpSend | control.OpAnswer | control.OpStop
+	// The dashboard is a client with a read-only Caller (section 7.2). It
+	// listens before anything else serves, so a config it refuses stops the
+	// daemon with the reason.
+	var dash *dashboard.Server
+	if d := cfg.Dashboard; d != nil {
+		dc := dashboard.Config{Listen: d.Listen, URL: d.URL, Proxy: d.Proxy}
+		if d.TLSCert != "" {
+			cert, err := loadCert(in.Root, d.TLSCert, d.TLSKey)
+			if err != nil {
+				return err
+			}
+			dc.TLS = &cert
+		}
+		dash, err = dashboard.Listen(dc, c.As(control.Caller{Principal: control.Principal(cfg.Owner), Scopes: keys, May: control.OpRead}), lg)
+		if err != nil {
+			return err
+		}
+		defer dash.Close()
+		c.SignIn = dash
+	}
+
+	// The socket's connections are the owner's, and only they may make a
+	// dashboard sign-in link.
+	owner := control.OpRead | control.OpStart | control.OpSend | control.OpAnswer | control.OpStop | control.OpSignIn
 	srv, err := wire.Listen(abs, c.As(control.Caller{Principal: control.Principal(cfg.Owner), Scopes: keys, May: owner}), lg)
 	if err != nil {
 		return err
@@ -145,6 +170,14 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 			lg.Error("login relay", "err", err)
 		}
 	}()
+	if dash != nil {
+		go func() {
+			if err := dash.Serve(ctx); err != nil {
+				lg.Error("dashboard", "err", err)
+			}
+		}()
+		lg.Info("dashboard listens", "url", dash.URL())
+	}
 	lg.Info("hataori runs", "root", abs, "agent", agentName)
 	err = srv.Serve(ctx)
 	if errors.Is(err, context.Canceled) || ctx.Err() != nil {
@@ -234,4 +267,30 @@ func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.St
 		}
 	}
 	return fronts, nil
+}
+
+// loadCert reads the dashboard's certificate and key from the config
+// directory.
+func loadCert(root *os.Root, certFile, keyFile string) (tls.Certificate, error) {
+	read := func(key, name string) ([]byte, error) {
+		f, err := root.Open(filepath.Join("config", name))
+		if err != nil {
+			return nil, fmt.Errorf("config: key %q: %w", key, err)
+		}
+		defer f.Close()
+		return io.ReadAll(f)
+	}
+	certPEM, err := read("dashboard.tls_cert", certFile)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	keyPEM, err := read("dashboard.tls_key", keyFile)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("config: keys %q and %q: %w", "dashboard.tls_cert", "dashboard.tls_key", err)
+	}
+	return cert, nil
 }

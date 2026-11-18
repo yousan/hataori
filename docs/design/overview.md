@@ -1025,6 +1025,11 @@ type API interface {
 	// reader can stop after the stored events.
 	Events(ctx context.Context, f Filter, after uint64) (<-chan Event, error)
 
+	// SignInLink makes a single-use, short-lived dashboard sign-in link for
+	// the owner. It needs OpSignIn, which only the owner's connection on the
+	// control socket is given. Since protocol 1.7.
+	SignInLink(ctx context.Context) (string, error)
+
 	// Workspace reads the state of a thread's workspace and changes nothing.
 	// It is the check of section 4.6 as numbers, answering from the
 	// remote-tracking refs as last fetched; it does not ask the remote.
@@ -1052,7 +1057,7 @@ type Caller struct {
 	From      string
 	Principal Principal // a person's name (section 5.5)
 	Scopes    []string  // the scopes it may see and act in
-	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop
+	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn
 	// NoText leaves text written by a person or an agent out of what the
 	// caller reads: ThreadInfo.Last, ThreadDetail.Recent, the text of its
 	// requests, and the text fields of events (section 7.3). The thread's
@@ -1144,9 +1149,9 @@ type API interface {
 	HostTerminals(ctx context.Context) ([]HostTerminal, error)
 	HostScreen(ctx context.Context, pane string) (string, error)
 
-	// SignInLink makes a single-use dashboard sign-in link for the owner.
-	// Only the owner's connection on the control socket may call it.
-	SignInLink(ctx context.Context) (string, error)
+	// SignInLink: declared above, since protocol 1.7 (#200). Only the
+	// owner's connection on the control socket has OpSignIn; the
+	// dashboard's own Caller has OpRead only.
 }
 
 // Ops gains OpHost: may list and read terminals that hataori does not own.
@@ -1193,7 +1198,8 @@ The `usage` event gains optional fields, all counts of tokens for the turn so fa
 |---|---|
 | `ThreadInfo`: `context`, `tokens` | minor: optional fields |
 | `usage` event: the fields above | minor: optional fields |
-| `Workspace`, `Terminal`, `HostTerminals`, `HostScreen`, `SignInLink` | minor: new operations |
+| `Workspace`, `Terminal`, `HostTerminals`, `HostScreen` | minor: new operations |
+| `SignInLink`, with `Ops` gaining `OpSignIn` | minor: new operation; landed in 1.7 |
 | `Terminal` turns its connection into a stream, as `Events` does | part of the new operation |
 | `Limits`; `WorkspaceState.PullRequest` | minor, and only after their research |
 
