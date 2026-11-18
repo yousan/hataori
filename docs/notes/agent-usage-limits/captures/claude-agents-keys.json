@@ -1,0 +1,16 @@
+{
+ "command": "claude agents --json --all",
+ "version": "2.1.327",
+ "entries": 13,
+ "keys": [
+  "cwd",
+  "kind",
+  "name",
+  "pid",
+  "sessionId",
+  "startedAt",
+  "status",
+  "waitingFor"
+ ],
+ "keys_matching_rate_usage_limit": []
+}
