@@ -91,6 +91,29 @@ func TestCloseWaitsForAConnectionInUse(t *testing.T) {
 	}
 }
 
+type failingClose struct{ driver.Conn }
+
+func (failingClose) Close() error { return errors.New("close failed") }
+
+type failingDriver struct{}
+
+func (failingDriver) Open(string) (driver.Conn, error) { return failingClose{}, nil }
+
+// A connection whose close fails counts as closed, and the error comes
+// back from closing.
+func TestCloseReturnsAFailedConnectionClose(t *testing.T) {
+	c := &connector{drv: failingDriver{}}
+	k, err := c.Connect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	k.Close()
+	c.refuse()
+	if err := c.wait(); err == nil || err.Error() != "close failed" {
+		t.Fatalf("wait: %v, want the close's error", err)
+	}
+}
+
 // countedConn claims exactly the optional interfaces of the SQLite
 // driver's connection, so database/sql uses it as it would the driver's.
 // The driver's Exec and Query (driver.Execer, driver.Queryer) are left out:

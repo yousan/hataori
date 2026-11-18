@@ -72,15 +72,18 @@ func open(ctx context.Context, path string, steps []Migration) (*Store, error) {
 
 // Close closes the database. It returns once every connection is closed,
 // a connection still in use once its holder releases it, and refuses to
-// open any later one: after it, nothing touches the database's files.
+// open any later one: after it, nothing touches the database's files. So
+// a caller ends its transactions and closes its rows and connections
+// first: one it still holds keeps Close waiting. A connection whose close
+// failed counts as closed, since nothing can close it again; the error is
+// returned.
 func (s *Store) Close() error {
 	if s.conn == nil {
 		return s.DB.Close()
 	}
 	s.conn.refuse()
 	err := s.DB.Close()
-	s.conn.wait()
-	return err
+	return errors.Join(err, s.conn.wait())
 }
 
 // connector opens the database's connections, counts those open, and opens
@@ -94,11 +97,12 @@ type connector struct {
 	drv driver.Driver
 	dsn string
 
-	mu      sync.Mutex
-	closed  bool
-	opening int // Connect calls under way
-	open    int // connections opened and not closed
-	idle    *sync.Cond
+	mu       sync.Mutex
+	closed   bool
+	opening  int   // Connect calls under way
+	open     int   // connections opened and not closed
+	closeErr error // what closing the connections failed with
+	idle     *sync.Cond
 }
 
 var errClosed = errors.New("store: closed")
@@ -139,18 +143,23 @@ func (c *connector) refuse() {
 	c.mu.Unlock()
 }
 
-// wait returns once no connection is being opened and none is open.
-func (c *connector) wait() {
+// wait returns once no connection is being opened and none is open, with
+// the errors closing them gave.
+func (c *connector) wait() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for c.opening > 0 || c.open > 0 {
 		c.cond().Wait()
 	}
+	return c.closeErr
 }
 
-func (c *connector) closedOne() {
+func (c *connector) closedOne(err error) {
 	c.mu.Lock()
 	c.open--
+	if err != nil {
+		c.closeErr = errors.Join(c.closeErr, err)
+	}
 	c.cond().Broadcast()
 	c.mu.Unlock()
 }
@@ -166,7 +175,7 @@ type countedConn struct {
 
 func (k *countedConn) Close() error {
 	err := k.conn.Close()
-	k.once.Do(k.c.closedOne)
+	k.once.Do(func() { k.c.closedOne(err) })
 	return err
 }
 
