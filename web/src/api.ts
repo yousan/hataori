@@ -90,6 +90,24 @@ export function limits(): Promise<AgentLimits[]> {
 
 export const eventsPath = "/api/events";
 
+// WorkspaceState is what a thread's workspace holds (docs/protocol.md).
+export interface WorkspaceState {
+  branch: string; // empty when no branch is checked out
+  base: string;
+  added: number;
+  removed: number;
+  uncommitted: number;
+  unpushed: number;
+  fetched?: string;
+}
+
+// workspace reads a thread's workspace. A thread that is gone, or a
+// workspace that cannot be read, is an error: the page shows no numbers
+// for it rather than zeros.
+export async function workspace(id: ThreadID): Promise<WorkspaceState> {
+  return get<WorkspaceState>(`/api/workspace?${new URLSearchParams({ scope: id.scope, key: id.key })}`);
+}
+
 // TerminalChunk is one message of a terminal stream (docs/protocol.md).
 export interface TerminalChunk {
   run: string; // empty when no host runs
