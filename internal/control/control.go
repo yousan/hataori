@@ -16,8 +16,10 @@ import (
 type API interface {
 	// Threads lists the threads the caller may see that match f.
 	Threads(ctx context.Context, f Filter) ([]ThreadInfo, error)
-	// Thread returns state, open requests and the last output, capped at recent bytes.
-	Thread(ctx context.Context, id ThreadID, recent int) (ThreadDetail, error)
+	// Thread returns state, open requests and the last output, capped at
+	// recent bytes, and the thread's last events, at most events of them
+	// (and at most MaxEvents), newest last.
+	Thread(ctx context.Context, id ThreadID, recent, events int) (ThreadDetail, error)
 
 	// Start starts a thread in a scope. A repeated r.Key starts nothing and
 	// returns the thread the first call started.
@@ -49,6 +51,10 @@ type Caller struct {
 	Principal Principal // a person, a webhook, a supervisor, a dashboard user
 	Scopes    []string  // the scopes it may see and act in
 	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop
+	// NoText leaves text written by a person or an agent out of what the
+	// caller reads: ThreadInfo.Last, ThreadDetail.Recent, the text of its
+	// requests, and the text fields of events (Field.Text).
+	NoText bool
 }
 
 // Principal is an opaque identity, given by the client that authenticated
@@ -146,13 +152,29 @@ type ThreadInfo struct {
 	StartedBy Principal `json:"started_by"`
 	Created   time.Time `json:"created"`
 	Updated   time.Time `json:"updated"`
+
+	// Of the thread's current session, since 1.4.
+	Agent  string `json:"agent,omitempty"`  // the agent's registered name
+	Model  string `json:"model,omitempty"`  // as the agent reports it; as asked for until then
+	Effort string `json:"effort,omitempty"` // the same
+	// Of the whole thread, since 1.4.
+	Turns      int    `json:"turns,omitempty"`      // turns started in this thread
+	Last       string `json:"last,omitempty"`       // the last line of output, at most LastMax bytes; text
+	Background int    `json:"background,omitempty"` // background of the thread's last turn_ended event
 }
+
+// LastMax is the most bytes ThreadInfo.Last holds.
+const LastMax = 200
+
+// MaxEvents is the most events Thread returns.
+const MaxEvents = 100
 
 // ThreadDetail is the result of Thread.
 type ThreadDetail struct {
 	ThreadInfo
-	Requests []Request `json:"requests"` // open questions and approvals
-	Recent   string    `json:"recent"`   // the last output, cut to the size asked for
+	Requests []Request `json:"requests"`         // open questions and approvals
+	Recent   string    `json:"recent"`           // the last output, cut to the size asked for
+	Events   []Event   `json:"events,omitempty"` // the last events asked for, newest last; since 1.4
 }
 
 // WorkspaceState is what a thread's workspace holds that may exist nowhere

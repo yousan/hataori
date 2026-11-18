@@ -64,6 +64,11 @@
 // its input to end; --quit ends cleanly at the first code without logging
 // in.
 //
+// With --report-model M and --report-effort E (Config.ReportModel and
+// ReportEffort) the program reports M and E when it is ready, instead of
+// the model and effort it was started with; whoami still replies with the
+// ones it was started with.
+//
 // The spec's instructions are the start-up script: a line "never-start"
 // makes the program never report that it is ready, and "input-delay D"
 // makes it wait D before it takes each input.

@@ -118,7 +118,7 @@ func cases(t *testing.T, c *core.Core, api control.API) []string {
 		states = append(states, th.ID.Key+"="+string(th.State)+"/"+th.Title)
 	}
 	note("threads", states, err)
-	d, err := api.Thread(ctx, id, 6)
+	d, err := api.Thread(ctx, id, 6, 0)
 	note("thread", []string{string(d.State), d.Recent}, err)
 	ws, err := api.Workspace(ctx, id)
 	note("workspace", []string{ws.Branch}, err)

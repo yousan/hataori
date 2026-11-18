@@ -3,6 +3,7 @@ package fake
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -31,6 +32,8 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	resume := fs.String("resume", "", "")
 	model := fs.String("model", "", "")
 	effort := fs.String("effort", "", "")
+	reportModel := fs.String("report-model", "", "the model to report instead of the one asked for")
+	reportEffort := fs.String("report-effort", "", "the effort to report instead of the one asked for")
 	transcript := fs.String("transcript", "", "")
 	hook := fs.String("hook", "", "the hataori binary, for `hataori hook`")
 	neverStart := fs.Bool("never-start", false, "")
@@ -103,7 +106,8 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
-	p.report(map[string]any{"t": "ready", "session": id, "model": *model, "effort": *effort, "resume": *resume, "transcript": *transcript})
+	p.report(map[string]any{"t": "ready", "session": id, "model": cmp.Or(*reportModel, *model), "effort": cmp.Or(*reportEffort, *effort),
+		"resume": *resume, "transcript": *transcript})
 	if *terminal && *dialog != "" {
 		fmt.Fprint(stdout, *dialog+" (shown again after the start)\r\n")
 	}

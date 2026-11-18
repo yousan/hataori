@@ -155,7 +155,7 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 	}
 	ops := map[string]func(control.API) error{
 		"Threads": func(a control.API) error { _, err := a.Threads(ctx, control.Filter{Scope: "s"}); return err },
-		"Thread":  func(a control.API) error { _, err := a.Thread(ctx, id, 10); return err },
+		"Thread":  func(a control.API) error { _, err := a.Thread(ctx, id, 10, 0); return err },
 		"Start": func(a control.API) error {
 			_, err := a.Start(ctx, control.StartRequest{Key: "k2", Scope: "s", Thread: "t2"})
 			return err
@@ -291,7 +291,7 @@ func TestThreadDetail(t *testing.T) {
 	f.agentEvent(t, sid, 3, agent.Event{Kind: agent.Text, Text: "second part"})
 	f.agentEvent(t, sid, 4, agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: "r1", Text: "which?", Choices: []string{"a", "b"}}})
 
-	d, err := f.owner.Thread(ctx, id, 15)
+	d, err := f.owner.Thread(ctx, id, 15, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +397,7 @@ func TestQuestionIsAnsweredOnce(t *testing.T) {
 	id, sid := f.running(t, "t1")
 	f.agentEvent(t, sid, 2, agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: "r1", Text: "which?"}})
 
-	if d, _ := f.owner.Thread(ctx, id, 0); d.State != control.Waiting {
+	if d, _ := f.owner.Thread(ctx, id, 0, 0); d.State != control.Waiting {
 		t.Fatalf("state %s, want waiting", d.State)
 	}
 	if s := requestState(t, f, "r1"); s != "open" {
@@ -410,7 +410,7 @@ func TestQuestionIsAnsweredOnce(t *testing.T) {
 	if err := f.owner.Answer(ctx, session.RequestHandle(sid, "r1"), control.Answer{Text: "a"}); err != nil {
 		t.Fatal(err)
 	}
-	if d, _ := f.owner.Thread(ctx, id, 0); d.State != control.Running {
+	if d, _ := f.owner.Thread(ctx, id, 0, 0); d.State != control.Running {
 		t.Fatalf("after the answer: %s", d.State)
 	}
 	calls := f.runner.Calls()

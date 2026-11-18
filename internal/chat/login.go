@@ -369,7 +369,7 @@ func (f *FrontEnd) loginMessage(ctx context.Context, o outage) surface.Message {
 			break
 		}
 		name := t.Key
-		if d, err := api.Thread(ctx, t, 0); err == nil {
+		if d, err := api.Thread(ctx, t, 0, 0); err == nil {
 			name = fmt.Sprintf("#%d %s", d.Number, d.Title)
 		}
 		fmt.Fprintf(&b, "- %s\n", name)

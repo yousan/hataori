@@ -60,6 +60,7 @@ type (
 	threadArgs struct {
 		ID     control.ThreadID `json:"id"`
 		Recent int              `json:"recent"`
+		Events int              `json:"events,omitempty"` // since 1.4
 	}
 	sendArgs struct {
 		ID    control.ThreadID `json:"id"`
@@ -106,7 +107,7 @@ var operations = map[string]operation{
 		if err := args(&a); err != nil {
 			return nil, err
 		}
-		return api.Thread(ctx, a.ID, a.Recent)
+		return api.Thread(ctx, a.ID, a.Recent, a.Events)
 	}},
 	"Start": {control.StartRequest{}, control.ThreadID{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
 		var a control.StartRequest

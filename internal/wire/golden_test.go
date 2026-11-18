@@ -28,7 +28,8 @@ var (
 	exampleTime = time.Date(2026, 1, 2, 3, 4, 5, 678000000, time.UTC)
 	exampleID   = control.ThreadID{Scope: "C0123", Key: "T0456"}
 	exampleInfo = control.ThreadInfo{ID: exampleID, Number: 7, Title: "Fix the build", Repo: "https://example.com/repo.git",
-		State: control.Running, StartedBy: "webhook:W1", Created: exampleTime, Updated: exampleTime}
+		State: control.Running, StartedBy: "webhook:W1", Created: exampleTime, Updated: exampleTime,
+		Agent: "claude-code", Model: "opus", Effort: "high", Turns: 12, Last: "Running the tests...", Background: 1}
 )
 
 // eventData is an example of every event kind's data.
@@ -76,7 +77,7 @@ func examples(t *testing.T) map[string]any {
 	}
 	args := map[string]any{
 		"Threads": threadsArgs{Filter: control.Filter{Scope: "C0123"}},
-		"Thread":  threadArgs{ID: exampleID, Recent: 2000},
+		"Thread":  threadArgs{ID: exampleID, Recent: 2000, Events: 5},
 		"Start": control.StartRequest{Key: "M0789", Scope: "C0123", Repo: "https://example.com/repo.git",
 			Input: control.Input{Text: "Fix the build."}, Model: "opus", Effort: "high"},
 		"Send":      sendArgs{ID: exampleID, Key: "M0790", Input: control.Input{Text: "And the docs."}, Busy: control.Deliver},
@@ -89,7 +90,9 @@ func examples(t *testing.T) map[string]any {
 		"Threads": []control.ThreadInfo{exampleInfo},
 		"Thread": control.ThreadDetail{ThreadInfo: exampleInfo, Recent: "Running the tests...",
 			Requests: []control.Request{{ID: "3:toolu_2", Kind: control.Question, Text: "Which colour?",
-				Choices: []control.Choice{{Label: "red", Token: "red"}, {Label: "blue", Token: "blue"}}}}},
+				Choices: []control.Choice{{Label: "red", Token: "red"}, {Label: "blue", Token: "blue"}}}},
+			Events: []control.Event{{Pos: 42, Thread: exampleID, Time: exampleTime, Kind: "text",
+				Data: raw(`{"final":false,"session":3,"text":"Running the tests..."}`)}}},
 		"Start": exampleID,
 		"Workspace": control.WorkspaceState{Branch: "fix-build", Base: "9fceb02d0ae598e95dc970b74767f19372d61af8",
 			Added: 12, Removed: 3, Uncommitted: 2, Unpushed: 1, Fetched: &exampleTime},

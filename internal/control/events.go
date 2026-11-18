@@ -104,6 +104,26 @@ func CheckEvent(e Event) error {
 	return nil
 }
 
+// WithoutText returns e with the text fields of its kind left out of its
+// data, for a caller that may not read text (Caller.NoText).
+func WithoutText(e Event) Event {
+	var m map[string]json.RawMessage
+	if len(e.Data) == 0 || json.Unmarshal(e.Data, &m) != nil {
+		return e
+	}
+	cut := false
+	for _, f := range EventKinds[e.Kind] {
+		if _, ok := m[f.Name]; ok && f.Text {
+			delete(m, f.Name)
+			cut = true
+		}
+	}
+	if cut {
+		e.Data, _ = json.Marshal(m)
+	}
+	return e
+}
+
 func hasType(v any, t FieldType) bool {
 	switch t {
 	case String:

@@ -254,7 +254,88 @@ func (a *api) Threads(ctx context.Context, f control.Filter) ([]control.ThreadIn
 		}
 		out = append(out, t)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close() // the store has one connection: summary needs it
+	for i := range out {
+		if err := a.summary(ctx, &out[i]); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// summary fills the fields of t that come from its sessions, turns and
+// events: the current session's agent, model and effort, the number of
+// turns, the background of the last turn_ended event, and the last line of
+// output unless the caller may not read text.
+func (a *api) summary(ctx context.Context, t *control.ThreadInfo) error {
+	db := a.c.Store.DB
+	err := db.QueryRowContext(ctx, `SELECT s.agent, s.model, s.effort,
+		(SELECT count(*) FROM turns u JOIN sessions v ON v.id = u.session_id WHERE v.thread_id = s.thread_id)
+		FROM sessions s WHERE s.thread_id = ? ORDER BY s.id DESC LIMIT 1`, t.Number).Scan(&t.Agent, &t.Model, &t.Effort, &t.Turns)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("core: thread summary: %w", err)
+	}
+	var data []byte
+	err = db.QueryRowContext(ctx, `SELECT data FROM events WHERE scope = ? AND thread = ? AND kind = 'turn_ended'
+		ORDER BY pos DESC LIMIT 1`, t.ID.Scope, t.ID.Key).Scan(&data)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("core: thread summary: %w", err)
+	}
+	if err == nil {
+		var e struct {
+			Background int `json:"background"`
+		}
+		json.Unmarshal(data, &e)
+		t.Background = e.Background
+	}
+	if !a.caller.NoText {
+		if t.Last, err = a.c.lastLine(ctx, t.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// lastLine returns the last line of the thread's text output that is not
+// blank, trimmed and cut to control.LastMax bytes at a character boundary.
+func (c *Core) lastLine(ctx context.Context, id control.ThreadID) (string, error) {
+	rows, err := c.Store.DB.QueryContext(ctx,
+		`SELECT data FROM events WHERE scope = ? AND thread = ? AND kind = 'text' ORDER BY pos DESC LIMIT 20`, id.Scope, id.Key)
+	if err != nil {
+		return "", fmt.Errorf("core: last line: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var data []byte
+		if err := rows.Scan(&data); err != nil {
+			return "", fmt.Errorf("core: last line: %w", err)
+		}
+		var e struct {
+			Text string `json:"text"`
+		}
+		json.Unmarshal(data, &e)
+		lines := strings.Split(e.Text, "\n")
+		for i := len(lines) - 1; i >= 0; i-- {
+			if l := strings.TrimSpace(lines[i]); l != "" {
+				return cut(l, control.LastMax), nil
+			}
+		}
+	}
+	return "", rows.Err()
+}
+
+// cut cuts s to at most n bytes at a character boundary.
+func cut(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 const threadSelect = `SELECT id, scope, key, title, repo, started_by, state, created_at, updated_at FROM threads`
@@ -276,7 +357,7 @@ func scanThread(row interface{ Scan(...any) error }) (control.ThreadInfo, error)
 	return t, nil
 }
 
-func (a *api) Thread(ctx context.Context, id control.ThreadID, recent int) (control.ThreadDetail, error) {
+func (a *api) Thread(ctx context.Context, id control.ThreadID, recent, events int) (control.ThreadDetail, error) {
 	if err := a.check(control.OpRead, "Thread", id.Scope); err != nil {
 		return control.ThreadDetail{}, err
 	}
@@ -284,15 +365,29 @@ func (a *api) Thread(ctx context.Context, id control.ThreadID, recent int) (cont
 	if err != nil {
 		return control.ThreadDetail{}, err
 	}
+	if err := a.summary(ctx, &t); err != nil {
+		return control.ThreadDetail{}, err
+	}
 	d := control.ThreadDetail{ThreadInfo: t}
 	if t.State == control.Waiting {
 		if r, ok, err := a.c.openRequest(ctx, a.c.Store.DB, id); err != nil {
 			return d, err
 		} else if ok {
+			if a.caller.NoText {
+				r.Text, r.Choices = "", nil
+			}
 			d.Requests = []control.Request{r}
 		}
 	}
-	d.Recent, err = a.c.recentText(ctx, id, recent)
+	if !a.caller.NoText {
+		if d.Recent, err = a.c.recentText(ctx, id, recent); err != nil {
+			return d, err
+		}
+	}
+	d.Events, err = a.c.Store.Last(ctx, id, min(events, control.MaxEvents), a.mayRead)
+	for i := range d.Events {
+		d.Events[i] = a.readable(d.Events[i])
+	}
 	return d, err
 }
 
@@ -370,14 +465,7 @@ func (c *Core) recentText(ctx context.Context, id control.ThreadID, max int) (st
 // boundary.
 func title(prompt string) string {
 	line, _, _ := strings.Cut(strings.TrimSpace(prompt), "\n")
-	if len(line) > 80 {
-		n := 80
-		for n > 0 && !utf8.RuneStart(line[n]) {
-			n--
-		}
-		line = line[:n]
-	}
-	return strings.TrimSpace(line)
+	return strings.TrimSpace(cut(line, 80))
 }
 
 func (a *api) Start(ctx context.Context, r control.StartRequest) (control.ThreadID, error) {
@@ -834,6 +922,15 @@ func (a *api) mayRead(e control.Event) bool {
 	return true
 }
 
+// readable is e as the caller may read it: without its text when the
+// caller may not read text.
+func (a *api) readable(e control.Event) control.Event {
+	if a.caller.NoText {
+		return control.WithoutText(e)
+	}
+	return e
+}
+
 func (a *api) Events(ctx context.Context, f control.Filter, after uint64) (<-chan control.Event, error) {
 	if _, err := a.filterScope("Events", f); err != nil {
 		return nil, err
@@ -858,6 +955,7 @@ func (a *api) Events(ctx context.Context, f control.Filter, after uint64) (<-cha
 			if e.Kind != control.CaughtUp && !a.mayRead(e) {
 				continue
 			}
+			e = a.readable(e)
 			select {
 			case out <- e:
 			case <-ctx.Done():
