@@ -44,14 +44,20 @@ func TestThreadTokensAndContext(t *testing.T) {
 	f.agentEvent(t, sid, 5, agent.Event{Kind: agent.TurnStarted})
 	f.agentEvent(t, sid, 6, usage(40, 30, 0, 0, 1300, 200000)) // 70
 	f.agentEvent(t, sid, 7, usage(1, 1, 0, 0, 0, 0))           // went down, and no context: adds nothing
-	f.agentEvent(t, sid, 8, usage(50, 30, 0, 0, 0, 0))         // 80
+	if got := f.info(t, f.owner, id); got.Tokens == nil || *got.Tokens != (control.TokenCount{Turn: 70, Today: 270}) {
+		t.Fatalf("after a count that went down: %+v", got.Tokens)
+	}
+	f.agentEvent(t, sid, 8, usage(50, 30, 0, 0, 0, 0)) // 80
 	f.agentEvent(t, sid, 9, agent.Event{Kind: agent.TurnEnded, Status: agent.Completed})
+	// Reports outside a turn count toward no turn; their context is kept.
+	f.agentEvent(t, sid, 10, usage(100, 0, 0, 0, 0, 0))
+	f.agentEvent(t, sid, 11, usage(150, 0, 0, 0, 1400, 200000))
 
 	got := f.info(t, f.owner, id)
 	if got.Tokens == nil || *got.Tokens != (control.TokenCount{Turn: 80, Today: 280}) {
 		t.Fatalf("tokens %+v, want turn 80 today 280", got.Tokens)
 	}
-	if got.Context == nil || *got.Context != (control.Context{Used: 1300, Size: 200000}) {
+	if got.Context == nil || *got.Context != (control.Context{Used: 1400, Size: 200000}) {
 		t.Fatalf("context %+v", got.Context)
 	}
 	d, err := f.owner.Thread(ctx, id, 0, 0)

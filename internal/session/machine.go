@@ -183,31 +183,35 @@ func DayOf(t time.Time, zone *time.Location) string {
 
 // recordUsage keeps the thread's token counts. The agent reports each
 // count as the total of the turn so far, so what a report adds is its
-// total less the turn's last one, and that is counted in the day of the
-// report: a turn that runs past midnight counts in both days. A report
-// outside a turn counts as a turn of its own.
+// total less the turn's highest before it, and that is counted in the day
+// of the report: a turn that runs past midnight counts in both days. A
+// count that goes down adds nothing, and the turn keeps its highest. A
+// report outside a turn belongs to no turn's total: only its context use
+// is kept.
 func recordUsage(ctx context.Context, tx *store.Tx, thread, turn int64, u agent.UsageCount, day string) error {
-	total := u.Input + u.Output + u.CacheRead + u.CacheWrite
-	var before int64
-	if turn != 0 {
-		if err := tx.QueryRowContext(ctx, `SELECT tokens FROM turns WHERE id = ?`, turn).Scan(&before); err != nil {
-			return fmt.Errorf("session: usage: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE turns SET tokens = ? WHERE id = ?`, max(total, before), turn); err != nil {
-			return fmt.Errorf("session: usage: %w", err)
-		}
-	}
-	added := max(total-before, 0) // a count that went down adds nothing, and the turn keeps its highest
-	if _, err := tx.ExecContext(ctx, `UPDATE threads SET tokens_turn = ?,
-		tokens_today = CASE WHEN tokens_day = ? THEN tokens_today + ? ELSE ? END, tokens_day = ? WHERE id = ?`,
-		total, day, added, added, day, thread); err != nil {
-		return fmt.Errorf("session: usage: %w", err)
-	}
 	if u.ContextSize > 0 {
 		if _, err := tx.ExecContext(ctx, `UPDATE threads SET context_used = ?, context_size = ? WHERE id = ?`,
 			u.ContextUsed, u.ContextSize, thread); err != nil {
 			return fmt.Errorf("session: usage: %w", err)
 		}
+	}
+	if turn == 0 {
+		return nil
+	}
+	total := u.Input + u.Output + u.CacheRead + u.CacheWrite
+	var before int64
+	if err := tx.QueryRowContext(ctx, `SELECT tokens FROM turns WHERE id = ?`, turn).Scan(&before); err != nil {
+		return fmt.Errorf("session: usage: %w", err)
+	}
+	highest := max(total, before)
+	if _, err := tx.ExecContext(ctx, `UPDATE turns SET tokens = ? WHERE id = ?`, highest, turn); err != nil {
+		return fmt.Errorf("session: usage: %w", err)
+	}
+	added := highest - before
+	if _, err := tx.ExecContext(ctx, `UPDATE threads SET tokens_turn = ?,
+		tokens_today = CASE WHEN tokens_day = ? THEN tokens_today + ? ELSE ? END, tokens_day = ? WHERE id = ?`,
+		highest, day, added, added, day, thread); err != nil {
+		return fmt.Errorf("session: usage: %w", err)
 	}
 	return nil
 }

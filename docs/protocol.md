@@ -284,8 +284,8 @@ Tokens counted from the `usage` events: input, output, cache reads and cache wri
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
-| `turn` | integer | required | the total of the last turn that reported usage |
-| `today` | integer | required | the tokens of every turn of the thread reported today, in the daemon's local time zone; a turn that runs past midnight counts in both days |
+| `turn` | integer | required | the highest total reported in the last turn that reported usage |
+| `today` | integer | required | the tokens of every turn of the thread reported today, in the daemon's local time zone; a report adds its total less the turn's highest before it, so a count that goes down adds nothing and a turn that runs past midnight counts in both days |
 
 ### Type `Request`
 
@@ -476,7 +476,7 @@ What the agent reports about the tokens of the running turn. Each count is the t
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `session` | integer | required | the session |
-| `turn` | integer | optional | the turn; absent for a report outside a turn; since 1.7 |
+| `turn` | integer | optional | the turn; absent for a report outside a turn, whose counts go toward no `ThreadInfo.tokens`; since 1.7 |
 | `model` | string | optional | the model the tokens were used with, when the agent says; since 1.7 |
 | `input` | integer | optional | input tokens of the turn so far; since 1.7 |
 | `output` | integer | optional | output tokens of the turn so far; since 1.7 |
