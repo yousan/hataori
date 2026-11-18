@@ -290,6 +290,105 @@ func TestRefuseRemoteThatIsAnotherWorkspace(t *testing.T) {
 	wantRefusal(t, x.check(), RemoteIsLocal, "")
 }
 
+func (x *removal) symlink(target, name string) string {
+	x.t.Helper()
+	if err := os.MkdirAll(filepath.Dir(name), 0o700); err != nil {
+		x.t.Fatal(err)
+	}
+	if err := os.Symlink(target, name); err != nil {
+		x.t.Fatal(err)
+	}
+	return name
+}
+
+// A local remote address is resolved the way git resolves it. Each
+// address below leads git to the sibling workspace's repository, at
+// <root>/workspaces/c/s/other/b.git, or cannot be resolved, so it does not
+// count.
+func TestRefuseLocalRemoteResolvedLikeGit(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		reason Reason
+		addr   func(x *removal, b string) string
+	}{
+		// ".." after a symlink goes up from the link's target. As text
+		// this is <tmp>/l/root/..., outside the root.
+		{"dot-dot after a symlink", RemoteIsLocal, func(x *removal, b string) string {
+			return x.dotDotLink() + "/../root/" + Dir + "/c/s/other/b.git"
+		}},
+		{"file URL with dot-dot after a symlink", RemoteIsLocal, func(x *removal, b string) string {
+			return "file://" + x.dotDotLink() + "/../root/" + Dir + "/c/s/other/b.git"
+		}},
+		// git tries <path>.git when <path> does not exist.
+		{"name without .git", RemoteIsLocal, func(x *removal, b string) string {
+			return x.symlink(filepath.Dir(b), filepath.Join(x.tmp, "link2")) + "/b"
+		}},
+		// git follows a .git file, in a directory or as the path itself.
+		{"directory with a .git file", RemoteIsLocal, func(x *removal, b string) string {
+			g := filepath.Join(x.tmp, "g")
+			os.Mkdir(g, 0o700)
+			os.WriteFile(filepath.Join(g, ".git"), []byte("gitdir: "+b+"\n"), 0o600)
+			return g
+		}},
+		{"relative .git file", RemoteIsLocal, func(x *removal, b string) string {
+			g := filepath.Join(x.tmp, "g")
+			os.Mkdir(g, 0o700)
+			os.WriteFile(filepath.Join(g, ".git"), []byte("gitdir: ../root/"+Dir+"/c/s/other/b.git\n"), 0o600)
+			return g
+		}},
+		{"a .git file", RemoteIsLocal, func(x *removal, b string) string {
+			g := filepath.Join(x.tmp, "gitfile")
+			os.WriteFile(g, []byte("gitdir: "+b+"\n"), 0o600)
+			return g
+		}},
+		// git expands a leading ~/ to $HOME, which is x.tmp.
+		{"home", RemoteIsLocal, func(x *removal, b string) string {
+			return "~/root/" + Dir + "/c/s/other/b.git"
+		}},
+		{"another user's home", RemoteUnresolved, func(x *removal, b string) string {
+			return "~nobody/root/" + Dir + "/c/s/other/b.git"
+		}},
+		{"symlink loop", RemoteUnresolved, func(x *removal, b string) string {
+			loop := filepath.Join(x.tmp, "loop")
+			return x.symlink(loop, loop) + "/b.git"
+		}},
+		{"undecodable file URL", RemoteUnresolved, func(x *removal, b string) string {
+			return "file://" + x.tmp + "/%zz"
+		}},
+		// git reads a relative path from the repository. From the scratch
+		// repository, <root>/state/removal/<name>, these five ".." lead
+		// out of the temporary directory and the path names b.git; from
+		// the workspace they lead to it, and nothing is there.
+		{"relative path", GitError, func(x *removal, b string) string {
+			return "../../../../../" + filepath.Base(x.tmp) + "/root/" + Dir + "/c/s/other/b.git"
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			x := newRemoval(t)
+			b := filepath.Join(x.root, Dir, "c", "s", "other", "b.git")
+			x.git(x.tmp, "clone", "-q", "--bare", x.bare, b)
+			x.git(x.clone, "remote", "set-url", "origin", tc.addr(x, b))
+			wantRefusal(t, x.check(), tc.reason, "")
+		})
+	}
+}
+
+// A ~/ address outside every root counts: it is $HOME's.
+func TestRemoteByHomeOutsideTheRootCounts(t *testing.T) {
+	x := newRemoval(t)
+	x.git(x.clone, "remote", "set-url", "origin", "~/remote/repo.git") // HOME is x.tmp
+	if err := x.check(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// dotDotLink is <tmp>/l/link, a symlink to <tmp>/nested.
+func (x *removal) dotDotLink() string {
+	nested := filepath.Join(x.tmp, "nested")
+	os.Mkdir(nested, 0o700)
+	return x.symlink(nested, filepath.Join(x.tmp, "l", "link"))
+}
+
 func TestRefuseRemoteUnderAHataoriRoot(t *testing.T) {
 	x := newRemoval(t)
 	mirror := filepath.Join(x.root, "mirrors", "repo.git")

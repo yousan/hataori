@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/url"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 )
@@ -54,8 +56,11 @@ const (
 	ReflogOnly    Reason = "commit only in a reflog"
 	RemoteIsLocal Reason = "remote is another workspace"
 	RemoteInRoot  Reason = "remote under a hataori root"
-	InUse         Reason = "process using the directory"
-	UnknownUse    Reason = "cannot tell whether a process uses the directory"
+	// RemoteUnresolved is a local remote address that cannot be resolved
+	// the way git resolves it.
+	RemoteUnresolved Reason = "local remote address that cannot be resolved"
+	InUse            Reason = "process using the directory"
+	UnknownUse       Reason = "cannot tell whether a process uses the directory"
 )
 
 // Refusal is why a workspace may not be removed. Every error Check and
@@ -638,13 +643,14 @@ func (c *checker) commits(g *reader, rp repo) error {
 		if err != nil {
 			return err
 		}
-		if reason := c.localRemote(u, rp.dir); reason != "" {
+		addr, reason := c.localRemote(u, rp.dir)
+		if reason != "" {
 			if skipped == nil {
 				skipped = &Refusal{Reason: reason, Repo: rp.rel, Kind: rp.kind, Detail: "remote " + name + " is " + redact(u)}
 			}
 			continue
 		}
-		urls = append(urls, u)
+		urls = append(urls, addr)
 	}
 
 	tips, scratch, err := c.ask(g, urls)
@@ -799,17 +805,37 @@ func (c *checker) ask(g *reader, urls []string) (string, string, error) {
 	return tips.String(), scratch, nil
 }
 
-// localRemote names why a remote address does not count: a path in the
-// instance's workspaces, or under this or another hataori root. "" for any
-// other address.
-func (c *checker) localRemote(u, dir string) Reason {
-	p, ok := c.localPath(u, dir)
-	if !ok {
-		return ""
+// localRemote says whether a remote address counts, and returns the
+// address to fetch it by. A local one does not count when git would read a
+// repository in the instance's workspaces, or under this or another hataori
+// root, or when it cannot be resolved the way git resolves it.
+func (c *checker) localRemote(u, dir string) (string, Reason) {
+	p, local := c.localPath(u, dir)
+	switch {
+	case !local:
+		return u, ""
+	case p == "":
+		return u, RemoteUnresolved
 	}
-	if resolved, err := filepath.EvalSymlinks(p); err == nil {
-		p = resolved
+	reads, err := gitReads(p)
+	if err != nil {
+		return u, RemoteUnresolved
 	}
+	for _, r := range reads {
+		if reason := c.inRoot(r); reason != "" {
+			return u, reason
+		}
+	}
+	if strings.HasPrefix(u, "file://") {
+		return u, ""
+	}
+	// The scratch repository fetches from elsewhere: a relative or ~/
+	// path is given as the path git would read in the repository.
+	return p, ""
+}
+
+// inRoot names why a resolved path does not count, or "".
+func (c *checker) inRoot(p string) Reason {
 	if p == filepath.Join(c.root, Dir) || within(p, filepath.Join(c.root, Dir)) {
 		return RemoteIsLocal
 	}
@@ -825,37 +851,123 @@ func (c *checker) localRemote(u, dir string) Reason {
 	return ""
 }
 
-// localPath is the directory a remote address names on this machine, the
-// way git reads it: a file:// URL, or a path with no scheme and no
-// host: before its first slash. A relative path is relative to dir.
-func (c *checker) localPath(u, dir string) (string, bool) {
-	var p string
+// localPath is the path a remote address names on this machine, the way
+// git reads it: a file:// URL, or a path with no scheme and no host:
+// before its first slash. A relative path is joined to dir, and a leading
+// ~/ to $HOME, as text: nothing is cleaned, because ".." after a symlink
+// goes up from the link's target. local is false for a remote address,
+// and the path is "" for a local one that cannot be told.
+func (c *checker) localPath(u, dir string) (p string, local bool) {
 	switch {
 	case strings.HasPrefix(u, "file://"):
 		p = strings.TrimPrefix(u, "file://")
 		if i := strings.IndexByte(p, '/'); i > 0 { // file://host/path
 			p = p[i:]
 		}
-		// git decodes %XX in a URL's path. One it cannot decode is taken
-		// as it is, under the instance's workspaces: it does not count.
+		// git decodes %XX in a URL's path.
 		decoded, err := url.PathUnescape(p)
-		if err != nil {
-			return filepath.Join(c.root, Dir), true
+		if err != nil || !strings.HasPrefix(decoded, "/") {
+			return "", true
 		}
-		p = decoded
+		return decoded, true
 	case strings.Contains(u, "://"):
 		return "", false
-	default:
-		colon, slash := strings.IndexByte(u, ':'), strings.IndexByte(u, '/')
-		if colon >= 0 && (slash < 0 || colon < slash) {
-			return "", false // [user@]host:path
+	}
+	colon, slash := strings.IndexByte(u, ':'), strings.IndexByte(u, '/')
+	if colon >= 0 && (slash < 0 || colon < slash) {
+		return "", false // [user@]host:path
+	}
+	switch {
+	case u == "~" || strings.HasPrefix(u, "~/"):
+		// upload-pack expands it with the HOME git runs with.
+		home := ""
+		for _, kv := range c.r.Maker.gitEnv() {
+			if v, ok := strings.CutPrefix(kv, "HOME="); ok {
+				home = v
+			}
 		}
-		p = u
+		if !filepath.IsAbs(home) {
+			return "", true
+		}
+		return home + "/" + strings.TrimPrefix(u[1:], "/"), true
+	case strings.HasPrefix(u, "~"): // ~user
+		return "", true
+	case filepath.IsAbs(u):
+		return u, true
+	case !filepath.IsAbs(dir):
+		return "", true
 	}
-	if !filepath.IsAbs(p) {
-		p = filepath.Join(dir, p)
+	return dir + "/" + u, true
+}
+
+// gitReads lists, resolved, every path git may read the repository at p
+// from: p itself (a git directory, a .git file or a bundle), and p/.git,
+// p.git/.git and p.git, which upload-pack also tries, and the git
+// directory a .git file among them names. A path that does not exist is
+// left out, as git leaves it out; one that cannot be resolved is an error.
+func gitReads(p string) ([]string, error) {
+	var reads []string
+	resolve := func(q string) (string, bool, error) {
+		r, err := filepath.EvalSymlinks(q)
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+			return "", false, nil
+		}
+		return r, err == nil, err
 	}
-	return filepath.Clean(p), true
+	for _, suffix := range []string{"", "/.git", ".git/.git", ".git"} {
+		q := p + suffix
+		r, ok, err := resolve(q)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		reads = append(reads, r)
+		gitdir, err := readGitfile(r)
+		if err != nil {
+			return nil, err
+		}
+		if gitdir == "" {
+			continue
+		}
+		// git reads a relative gitdir from the directory the path names,
+		// before it is resolved.
+		if !filepath.IsAbs(gitdir) {
+			gitdir = q[:strings.LastIndexByte(q, '/')+1] + gitdir
+		}
+		if r, ok, err = resolve(gitdir); err != nil {
+			return nil, err
+		} else if ok {
+			reads = append(reads, r)
+		}
+	}
+	return reads, nil
+}
+
+// readGitfile returns the git directory a .git file names, or "" for a
+// directory or any other file.
+func readGitfile(p string) (string, error) {
+	fi, err := os.Stat(p)
+	if err != nil || !fi.Mode().IsRegular() {
+		return "", err
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, 1<<16+1))
+	if err != nil {
+		return "", err
+	}
+	if !bytes.HasPrefix(b, []byte("gitdir: ")) {
+		return "", nil
+	}
+	if len(b) > 1<<16 {
+		return "", errors.New("long .git file " + p)
+	}
+	return strings.TrimRight(string(b[len("gitdir: "):]), "\r\n"), nil
 }
 
 // processes is step 4: no process has a file or its working directory in
