@@ -840,12 +840,239 @@ func (c *checker) localRemote(u, dir string) (string, Reason) {
 			return u, reason
 		}
 	}
+	// git serves the objects of the remote's alternates as its own.
+	if reason, err := c.alternates(reads); err != nil {
+		return u, RemoteUnresolved
+	} else if reason != "" {
+		return u, reason
+	}
 	if strings.HasPrefix(u, "file://") {
 		return u, ""
 	}
 	// The scratch repository fetches from elsewhere: a relative or ~/
 	// path is given as the path git would read in the repository.
 	return p, ""
+}
+
+// alternateDepth is how deep git follows objects/info/alternates: the
+// remote's own file and five more levels.
+const alternateDepth = 5
+
+// alternates names why the objects git serves for a remote whose paths are
+// reads come from inside a root, or "". For each one it walks the objects
+// directory and the objects/info/alternates git follows from there, in
+// git's order. A path counts as inside a root when it passes through one
+// on the way, not only when it ends there: a link through a workspace
+// breaks when the workspace is moved. An alternate that cannot be
+// resolved or is not a directory, or a file nested deeper than git reads,
+// is an error: what git serves then cannot be told.
+func (c *checker) alternates(reads []string) (Reason, error) {
+	for _, r := range reads {
+		objects, reason, err := c.walk(r + "/objects")
+		if missing(err) {
+			continue
+		} else if err != nil || reason != "" {
+			return reason, err
+		}
+		seen := map[string]bool{objects: true}
+		if reason, err := c.readAlternates(objects, 0, seen); err != nil || reason != "" {
+			return reason, err
+		}
+	}
+	return "", nil
+}
+
+// readAlternates follows objects/info/alternates of the objects directory
+// objects at depth as git does: depth first, each entry linked and its own
+// alternates read before the next, a directory seen before skipped.
+func (c *checker) readAlternates(objects string, depth int, seen map[string]bool) (Reason, error) {
+	file, reason, err := c.walk(objects + "/info/alternates")
+	if missing(err) {
+		return "", nil
+	} else if err != nil || reason != "" {
+		return reason, err
+	}
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return "", err
+	}
+	if len(b) == 0 {
+		return "", nil
+	}
+	if depth > alternateDepth {
+		return "", errors.New("alternates nested deeper than git reads them: " + objects)
+	}
+	for _, e := range parseAlternates(string(b)) {
+		// A relative path is relative to the resolved objects directory.
+		if !filepath.IsAbs(e) {
+			e = objects + "/" + e
+		}
+		alt, reason, err := c.walk(e)
+		if err != nil || reason != "" {
+			return reason, err
+		}
+		if fi, err := os.Stat(alt); err != nil {
+			return "", err
+		} else if !fi.IsDir() {
+			return "", errors.New("alternate " + alt + " is not a directory")
+		}
+		if seen[alt] {
+			continue
+		}
+		seen[alt] = true
+		if reason, err := c.readAlternates(alt, depth+1, seen); err != nil || reason != "" {
+			return reason, err
+		}
+	}
+	return "", nil
+}
+
+// walk resolves the absolute path p one component at a time, as the
+// kernel does: a link is followed where it stands, ".." goes up from what
+// is resolved so far, and a component after a file is ENOTDIR. It names
+// the reason when any directory or link on the way is inside a root, the
+// workspaces before any other: such a path does not count even when it
+// cannot be resolved to the end.
+func (c *checker) walk(p string) (string, Reason, error) {
+	var hit Reason
+	resolved, err := c.walkFrom(p, func(next string) {
+		if reason := c.inRoot(next); reason == RemoteIsLocal || reason != "" && hit == "" {
+			hit = reason
+		}
+	})
+	if hit != "" {
+		return "", hit, nil
+	}
+	return resolved, "", err
+}
+
+// walkFrom resolves p and calls on with every directory or link it
+// passes, resolved up to it.
+func (c *checker) walkFrom(p string, on func(next string)) (string, error) {
+	if !filepath.IsAbs(p) {
+		return "", errors.New("relative path " + p)
+	}
+	cur, rest, links := "/", p, 0
+	for {
+		rest = strings.TrimLeft(rest, "/")
+		if rest == "" {
+			return cur, nil
+		}
+		var name string
+		name, rest, _ = strings.Cut(rest, "/")
+		switch name {
+		case ".":
+			continue
+		case "..":
+			cur = filepath.Dir(cur)
+			continue
+		}
+		next := filepath.Join(cur, name)
+		on(next)
+		fi, err := os.Lstat(next)
+		if err != nil {
+			return "", err
+		}
+		if fi.Mode()&fs.ModeSymlink != 0 {
+			if links++; links > 40 {
+				return "", errors.New("too many links in " + p)
+			}
+			target, err := os.Readlink(next)
+			if err != nil {
+				return "", err
+			}
+			if filepath.IsAbs(target) {
+				cur = "/"
+			}
+			rest = target + "/" + rest
+			continue
+		}
+		if !fi.IsDir() && strings.Trim(rest, "/") != "" {
+			return "", &fs.PathError{Op: "walk", Path: next, Err: syscall.ENOTDIR}
+		}
+		cur = next
+	}
+}
+
+// parseAlternates splits an objects/info/alternates file as git does: one
+// path per line, "#" starts a comment line, and a line starting with a
+// double quote is a C-quoted path, after which one more byte is skipped. A
+// quoted path git cannot unquote is taken as it is, quotes and all.
+func parseAlternates(s string) []string {
+	var entries []string
+	for len(s) > 0 {
+		var entry string
+		if s[0] == '"' {
+			if v, n, ok := unquoteC(s); ok {
+				entry, s = v, s[n:]
+				if len(s) > 0 {
+					s = s[1:]
+				}
+				if entry != "" {
+					entries = append(entries, entry)
+				}
+				continue
+			}
+		}
+		line, rest, _ := strings.Cut(s, "\n")
+		if line != "" && line[0] != '#' {
+			entry = line
+			entries = append(entries, entry)
+		}
+		s = rest
+	}
+	return entries
+}
+
+// unquoteC unquotes a C-quoted string at the start of s the way git does,
+// returning it and the number of bytes it took, closing quote included.
+func unquoteC(s string) (string, int, bool) {
+	var b strings.Builder
+	for i := 1; i < len(s); i++ {
+		switch ch := s[i]; ch {
+		case '"':
+			return b.String(), i + 1, true
+		case '\\':
+			i++
+			if i >= len(s) {
+				return "", 0, false
+			}
+			switch e := s[i]; e {
+			case '"', '\\':
+				b.WriteByte(e)
+			case 'a':
+				b.WriteByte('\a')
+			case 'b':
+				b.WriteByte('\b')
+			case 'f':
+				b.WriteByte('\f')
+			case 'n':
+				b.WriteByte('\n')
+			case 'r':
+				b.WriteByte('\r')
+			case 't':
+				b.WriteByte('\t')
+			case 'v':
+				b.WriteByte('\v')
+			case '0', '1', '2', '3':
+				if i+2 >= len(s) || s[i+1] < '0' || s[i+1] > '7' || s[i+2] < '0' || s[i+2] > '7' {
+					return "", 0, false
+				}
+				b.WriteByte((e-'0')<<6 | (s[i+1]-'0')<<3 | (s[i+2] - '0'))
+				i += 2
+			default:
+				return "", 0, false
+			}
+		default:
+			b.WriteByte(ch)
+		}
+	}
+	return "", 0, false
+}
+
+// missing reports an error that says a path is not there.
+func missing(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
 }
 
 // inRoot names why a resolved path does not count, or "".

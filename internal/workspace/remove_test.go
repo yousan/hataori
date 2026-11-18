@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -419,6 +420,246 @@ func (x *removal) worktreeGitDir(common string) string {
 
 // git applies url.<base>.insteadOf to the address the check fetches as
 // well: a rule that sends it to another workspace makes it not count.
+// A remote outside the root can keep its objects in the workspace through
+// its own objects/info/alternates: git serves them as the remote's, and
+// they go with the workspace. The workspace has a commit only there.
+func TestRefuseRemoteBorrowingFromTheWorkspace(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		reason Reason
+		remote func(x *removal) string
+	}{
+		{"absolute", RemoteIsLocal, func(x *removal) string {
+			return x.shared(x.clone, "r.git")
+		}},
+		{"relative", RemoteIsLocal, func(x *removal) string {
+			r := x.shared(x.clone, "r.git")
+			rel, err := filepath.Rel(filepath.Join(r, "objects"), filepath.Join(x.clone, ".git", "objects"))
+			if err != nil {
+				x.t.Fatal(err)
+			}
+			x.alternates(r, rel+"\n")
+			return r
+		}},
+		// ".." after a symlink goes up from the link's target. As text
+		// this is <tmp>/l/root/..., outside the root.
+		{"dot-dot after a symlink", RemoteIsLocal, func(x *removal) string {
+			r := x.shared(x.clone, "r.git")
+			x.alternates(r, x.dotDotLink()+"/../root/"+Dir+"/c/s/k/.git/objects\n")
+			return r
+		}},
+		// remote -> a repository outside the root -> the workspace.
+		{"chain", RemoteIsLocal, func(x *removal) string {
+			return x.shared(x.shared(x.clone, "m.git"), "r.git")
+		}},
+		// git reads # lines as comments and unquotes a C-quoted path.
+		// \057 is "/": the path leads through <tmp>/l2, a link outside
+		// the root, into the workspace's .git.
+		{"quoted", RemoteIsLocal, func(x *removal) string {
+			r := x.shared(x.clone, "r.git")
+			l2 := x.symlink(filepath.Join(x.clone, ".git"), filepath.Join(x.tmp, "l2"))
+			x.alternates(r, "# a comment\n\n\""+l2+"\\057objects\"\n")
+			return r
+		}},
+		// After the closing quote git skips one byte, whatever it is,
+		// and reads the next path from there.
+		{"path after a quoted one", RemoteIsLocal, func(x *removal) string {
+			r := x.shared(x.clone, "r.git")
+			x.alternates(r, "\""+filepath.Join(x.bare, "objects")+"\"X"+filepath.Join(x.clone, ".git", "objects")+"\n")
+			return r
+		}},
+		// A quoted path git cannot unquote is read as it is: a relative
+		// path, quotes and all, that does not exist.
+		{"badly quoted", RemoteUnresolved, func(x *removal) string {
+			r := x.shared(x.clone, "r.git")
+			x.alternates(r, "\""+filepath.Join(x.clone, ".git", "objects")+"\\q\"\n")
+			return r
+		}},
+		// An alternate that does not exist cannot be told: it may be a
+		// workspace that is already gone.
+		{"missing alternate", RemoteUnresolved, func(x *removal) string {
+			r := x.shared(x.clone, "r.git")
+			x.alternates(r, filepath.Join(x.tmp, "gone", "objects")+"\n")
+			return r
+		}},
+		// The remote's own objects directory is a symlink into the
+		// workspace.
+		{"objects directory", RemoteIsLocal, func(x *removal) string {
+			r := filepath.Join(x.tmp, "r.git")
+			x.git(x.tmp, "clone", "-q", "--bare", x.clone, r)
+			if err := os.RemoveAll(filepath.Join(r, "objects")); err != nil { // under x.tmp, made just above
+				x.t.Fatal(err)
+			}
+			x.symlink(filepath.Join(x.clone, ".git", "objects"), filepath.Join(r, "objects"))
+			return r
+		}},
+		// git reads alternates six levels deep: the sixth still leads to
+		// the workspace.
+		{"six levels deep", RemoteIsLocal, func(x *removal) string {
+			r := x.clone
+			for i := 0; i < 6; i++ {
+				r = x.shared(r, "c"+strconv.Itoa(i)+".git")
+			}
+			return r
+		}},
+		// A link inside the workspace on the way to objects outside the
+		// root breaks when the workspace is moved: an alternate, the
+		// objects directory, or the alternates file itself.
+		{"alternate through a link in the workspace", RemoteIsLocal, func(x *removal) string {
+			r := x.shared(x.clone, "r.git")
+			x.alternates(r, x.symlink(x.objectsCopy(), filepath.Join(x.clone, ".git", "lnk"))+"\n")
+			return r
+		}},
+		{"objects directory through a link in the workspace", RemoteIsLocal, func(x *removal) string {
+			r := filepath.Join(x.tmp, "r.git")
+			x.git(x.tmp, "clone", "-q", "--bare", x.clone, r)
+			if err := os.RemoveAll(filepath.Join(r, "objects")); err != nil { // under x.tmp, made just above
+				x.t.Fatal(err)
+			}
+			x.symlink(x.symlink(x.objectsCopy(), filepath.Join(x.clone, ".git", "lnk")), filepath.Join(r, "objects"))
+			return r
+		}},
+		{"alternates file through a link in the workspace", RemoteIsLocal, func(x *removal) string {
+			r := x.shared(x.clone, "r.git")
+			file := filepath.Join(x.clone, ".git", "alt")
+			os.WriteFile(file, []byte(x.objectsCopy()+"\n"), 0o600)
+			alternates := filepath.Join(r, "objects", "info", "alternates")
+			os.Remove(alternates) // under x.tmp, written by shared
+			x.symlink(file, alternates)
+			return r
+		}},
+		// git takes only a directory as an alternate, and does not go up
+		// from a file.
+		{"alternate that is a file", RemoteUnresolved, func(x *removal) string {
+			r := x.shared(x.clone, "r.git")
+			f := filepath.Join(x.tmp, "afile")
+			os.WriteFile(f, nil, 0o600)
+			x.alternates(r, f+"\n")
+			return r
+		}},
+		{"dot-dot after a file", RemoteUnresolved, func(x *removal) string {
+			r := x.shared(x.clone, "r.git")
+			f := filepath.Join(x.tmp, "afile")
+			os.WriteFile(f, nil, 0o600)
+			x.alternates(r, f+"/../remote/repo.git/objects\n")
+			return r
+		}},
+		// git goes depth first and skips what it has seen: b is reached
+		// through a1..a5 at the sixth level, where its alternates are not
+		// read, and the direct entry for b is then skipped. What b's
+		// alternates hold is never served.
+		{"depth first, as git", RemoteUnresolved, func(x *removal) string {
+			r := x.shared(x.clone, "r.git")
+			b := x.bareRepo("b.git")
+			x.alternates(b, filepath.Join(x.bare, "objects")+"\n")
+			next := b
+			for i := 5; i >= 1; i-- {
+				a := x.bareRepo("a" + strconv.Itoa(i) + ".git")
+				x.alternates(a, filepath.Join(next, "objects")+"\n")
+				next = a
+			}
+			x.alternates(r, filepath.Join(next, "objects")+"\n"+filepath.Join(b, "objects")+"\n")
+			return r
+		}},
+		// git reads alternates six levels deep and ignores the rest.
+		{"deeper than git reads", RemoteUnresolved, func(x *removal) string {
+			r := x.clone
+			for i := 0; i < 7; i++ {
+				r = x.shared(r, "c"+strconv.Itoa(i)+".git")
+			}
+			return r
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			x := newRemoval(t)
+			x.commit(x.clone, "w") // on no remote but the one below
+			x.git(x.clone, "remote", "set-url", "origin", tc.remote(x))
+			wantRefusal(t, x.check(), tc.reason, "")
+		})
+	}
+}
+
+// Alternates outside the root, a comment naming the workspace, and a loop
+// between two of the remote's alternates: the remote counts.
+func TestRemoteWithAlternatesOutsideTheRootCounts(t *testing.T) {
+	x := newRemoval(t)
+	r := x.shared(x.bare, "r.git")
+	a := x.bareRepo("a.git")
+	b := x.bareRepo("b.git")
+	x.alternates(r, filepath.Join(a, "objects")+"\n# "+filepath.Join(x.clone, ".git", "objects")+"\n")
+	x.alternates(a, filepath.Join(x.bare, "objects")+"\n"+filepath.Join(b, "objects")+"\n")
+	x.alternates(b, filepath.Join(a, "objects")+"\n")
+	x.git(x.clone, "remote", "set-url", "origin", r)
+	if err := x.check(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// git follows alternates six levels deep: a chain that long to a
+// repository outside the root counts.
+func TestRemoteWithSixLevelsOfAlternatesCounts(t *testing.T) {
+	x := newRemoval(t)
+	r := x.bare
+	for i := 0; i < 6; i++ {
+		r = x.shared(r, "c"+strconv.Itoa(i)+".git")
+	}
+	x.git(x.clone, "remote", "set-url", "origin", r)
+	if err := x.check(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// shared is a bare repository at <tmp>/<name>, outside the root, whose
+// main names src's HEAD and whose alternates name only src's objects. It
+// is made by hand, not by git clone --shared: that would also copy src's
+// own alternates, and newer git refuses to clone from a chain deeper than
+// it reads.
+func (x *removal) shared(src, name string) string {
+	x.t.Helper()
+	dst := x.bareRepo(name)
+	objects := filepath.Join(src, ".git", "objects")
+	if _, err := os.Stat(objects); err != nil {
+		objects = filepath.Join(src, "objects")
+	}
+	x.alternates(dst, objects+"\n")
+	head := ""
+	if b, err := os.ReadFile(filepath.Join(src, "refs", "heads", "main")); err == nil {
+		head = strings.TrimSpace(string(b)) // one made here
+	} else {
+		head = strings.TrimSpace(x.git(src, "rev-parse", "HEAD"))
+	}
+	if err := os.WriteFile(filepath.Join(dst, "refs", "heads", "main"), []byte(head+"\n"), 0o600); err != nil {
+		x.t.Fatal(err)
+	}
+	return dst
+}
+
+// bareRepo is an empty bare repository at <tmp>/<name>.
+func (x *removal) bareRepo(name string) string {
+	x.t.Helper()
+	r := filepath.Join(x.tmp, name)
+	x.git(x.tmp, "init", "-q", "--bare", "-b", "main", r)
+	return r
+}
+
+// objectsCopy is a copy of the workspace's objects at <tmp>/objects-copy,
+// outside the root.
+func (x *removal) objectsCopy() string {
+	x.t.Helper()
+	dst := filepath.Join(x.tmp, "objects-copy")
+	if err := os.CopyFS(dst, os.DirFS(filepath.Join(x.clone, ".git", "objects"))); err != nil {
+		x.t.Fatal(err)
+	}
+	return dst
+}
+
+func (x *removal) alternates(repo, content string) {
+	x.t.Helper()
+	if err := os.WriteFile(filepath.Join(repo, "objects", "info", "alternates"), []byte(content), 0o600); err != nil {
+		x.t.Fatal(err)
+	}
+}
+
 func TestRefuseRemoteRewrittenAgain(t *testing.T) {
 	x := newRemoval(t)
 	b := filepath.Join(x.root, Dir, "c", "s", "other", "b.git")
