@@ -120,7 +120,7 @@ func TestModelAndEffortFromTheTriggerLineOrTheDefaults(t *testing.T) {
 		Outbox: &Outbox{Store: st, Client: "chat", Driver: d, Log: lg, Retry: 5 * time.Millisecond},
 		Scopes: map[string]Scope{"withdefaults": {Enabled: true}, "without": {Enabled: true}}}
 	work := workspaceDirs(filepath.Join(root, "work"))
-	c := &core.Core{Store: st, Machine: m, Runner: r, Agent: "fake", Log: lg, Workspaces: work,
+	c := &core.Core{Store: st, Machine: m, Runner: r, Agent: "fake", Log: lg, Workspaces: work, People: testPeople(),
 		Model: "instance-model", Effort: "low",
 		Scopes: map[string]core.Scope{"withdefaults": {Enabled: true, Owner: "chat", Model: "scope-model", Effort: "medium"},
 			"without": {Enabled: true, Owner: "chat"}},

@@ -12,6 +12,7 @@ import (
 
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
+	"github.com/yousan/hataori/internal/people"
 	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/surface"
 	"github.com/yousan/hataori/internal/surface/fake"
@@ -107,6 +108,12 @@ const (
 
 var chanConv = surface.Conversation{Channel: channel}
 
+// testPeople has the owner, and the hook as one of the channel's people.
+func testPeople() *people.Directory {
+	return people.New([]people.Person{{Name: "owner", IDs: []string{"chat:" + owner}}, {Name: "hook", IDs: []string{"chat:" + hook}}},
+		"owner", map[string][]string{channel: {"hook"}})
+}
+
 func newFront(t *testing.T, ws workspaces, opts ...func(*FrontEnd)) *front {
 	t.Helper()
 	st := openStore(t, t.TempDir())
@@ -119,6 +126,7 @@ func newFront(t *testing.T, ws workspaces, opts ...func(*FrontEnd)) *front {
 		Outbox: &Outbox{Store: st, Client: "chat", Driver: d, Log: lg, Retry: 5 * time.Millisecond},
 		Scopes: map[string]Scope{channel: {Enabled: true, Posters: []control.Principal{hook}}, "off": {}}}
 	c := &core.Core{Store: st, Machine: &session.Machine{Store: st}, Log: lg, Agent: "agent", Runner: r, Workspaces: ws,
+		People: testPeople(),
 		Scopes: map[string]core.Scope{channel: {Enabled: true, Owner: "chat"}, "off": {Owner: "chat"}},
 		Owners: map[string]control.ScopeOwner{"chat": fe}}
 	fe.API = c.As
@@ -161,7 +169,7 @@ func TestTriggerStartsAThread(t *testing.T) {
 	}
 	l := f.runner.all()
 	if len(l) != 1 || l[0].Key != in.Ref.ID || l[0].Input.Text != prompt || l[0].Thread.Key != ths[0].Opened.Thread ||
-		l[0].Principal != hook {
+		l[0].Principal != "hook" {
 		t.Fatalf("started %+v", l)
 	}
 	waitFor(t, "the prompt in the thread", func() bool { return len(postsIn(f.driver, ths[0].Opened)) == 1 })
@@ -201,7 +209,7 @@ func TestSameMessageTwiceStartsOneThreadAndEditsChangeNothing(t *testing.T) {
 // the channel alone.
 func TestThreadOfAnotherClientOpensInTheChannel(t *testing.T) {
 	f := newFront(t, workspaces{})
-	api := f.fe.API(control.Caller{Principal: owner, Scopes: []string{channel}, May: control.OpRead | control.OpStart})
+	api := f.fe.API(control.Caller{Principal: "owner", Scopes: []string{channel}, May: control.OpRead | control.OpStart})
 	id, err := api.Start(context.Background(), control.StartRequest{Key: "k1", Scope: channel,
 		Repo: "https://example.com/r.git", Input: control.Input{Text: "From elsewhere"}})
 	if err != nil {

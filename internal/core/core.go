@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/people"
 	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
 )
@@ -132,10 +133,13 @@ func pend(ctx context.Context, tx *store.Tx, sid int64, req string, v any) (int6
 // Core is the core of one instance. It has no operations of its own: use
 // As to get an API bound to a caller.
 type Core struct {
-	Store      *store.Store
-	Machine    *session.Machine
-	Scopes     map[string]Scope              // by scope key
-	Owners     map[string]control.ScopeOwner // by client name
+	Store   *store.Store
+	Machine *session.Machine
+	Scopes  map[string]Scope              // by scope key
+	Owners  map[string]control.ScopeOwner // by client name
+	// People resolves a caller's From to a person and says who may act in
+	// a scope. Without it no input is allowed.
+	People     *people.Directory
 	Workspaces Workspaces
 	Runner     Runner
 	Agent      string // the registered name of the agent new sessions use
@@ -182,8 +186,12 @@ func (k *keyedMutex) lock(key string) func() {
 }
 
 // As returns the API as seen by caller. It is the only way to reach an
-// operation.
+// operation. A caller's From is resolved to its person here.
 func (c *Core) As(caller control.Caller) control.API {
+	if caller.From != "" {
+		name, _ := c.People.Resolve(caller.From) // "" for a guest
+		caller.Principal = control.Principal(name)
+	}
 	return &api{c: c, caller: caller}
 }
 
@@ -200,6 +208,31 @@ func (a *api) check(op control.Ops, name, scope string) error {
 		return nil
 	}
 	a.c.Log.Warn("control call refused", "op", name, "principal", string(a.caller.Principal), "scope", scope)
+	return fmt.Errorf("core: %s in scope %q: %w", name, scope, ErrForbidden)
+}
+
+// act checks a call that gives the agent input, or stops it: check, and
+// the caller's person must be allowed in scope. It is the one place that
+// decides whose input reaches the agent (design, section 5.1).
+func (a *api) act(op control.Ops, name, scope string) error {
+	if err := a.check(op, name, scope); err != nil {
+		return err
+	}
+	if a.c.People.May(string(a.caller.Principal), scope) {
+		return nil
+	}
+	reason := "the person may not act in the scope"
+	if a.caller.Principal == "" {
+		reason = "a guest"
+	}
+	attrs := []any{"op", name, "scope", scope, "reason", reason}
+	if client, id, ok := people.Split(a.caller.From); ok {
+		attrs = append(attrs, "client", client, "id", id)
+	}
+	if a.caller.Principal != "" {
+		attrs = append(attrs, "person", string(a.caller.Principal))
+	}
+	a.c.Log.Warn("control call refused", attrs...)
 	return fmt.Errorf("core: %s in scope %q: %w", name, scope, ErrForbidden)
 }
 
@@ -379,7 +412,7 @@ func title(prompt string) string {
 }
 
 func (a *api) Start(ctx context.Context, r control.StartRequest) (control.ThreadID, error) {
-	if err := a.check(control.OpStart, "Start", r.Scope); err != nil {
+	if err := a.act(control.OpStart, "Start", r.Scope); err != nil {
 		return control.ThreadID{}, err
 	}
 	sc, ok := a.c.Scopes[r.Scope]
@@ -402,7 +435,7 @@ func (a *api) Start(ctx context.Context, r control.StartRequest) (control.Thread
 		if !ok {
 			return control.ThreadID{}, fmt.Errorf("core: start in %q: no owner %q", r.Scope, sc.Owner)
 		}
-		key, err := owner.NewThread(ctx, r.Scope, title(r.Input.Text))
+		key, err := owner.NewThread(ctx, r.Scope, r.Key, title(r.Input.Text))
 		if err != nil {
 			return control.ThreadID{}, fmt.Errorf("core: start in %q: owner: %w", r.Scope, err)
 		}
@@ -590,7 +623,7 @@ func (c *Core) current(ctx context.Context, q querier, id control.ThreadID) (int
 }
 
 func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in control.Input, busy control.Busy) error {
-	if err := a.check(control.OpSend, "Send", id.Scope); err != nil {
+	if err := a.act(control.OpSend, "Send", id.Scope); err != nil {
 		return err
 	}
 	var (
@@ -702,7 +735,7 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 		a.c.Log.Warn("control call refused", "op", "Answer", "principal", string(a.caller.Principal), "request", string(req), "reason", err)
 		return fmt.Errorf("core: answer %q: %w", req, err)
 	}
-	if err := a.check(control.OpAnswer, "Answer", id.Scope); err != nil {
+	if err := a.act(control.OpAnswer, "Answer", id.Scope); err != nil {
 		return err
 	}
 	if state != session.RequestOpen {
@@ -729,7 +762,7 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 }
 
 func (a *api) Stop(ctx context.Context, id control.ThreadID) error {
-	if err := a.check(control.OpStop, "Stop", id.Scope); err != nil {
+	if err := a.act(control.OpStop, "Stop", id.Scope); err != nil {
 		return err
 	}
 	sid, state, err := a.c.current(ctx, a.c.Store.DB, id)

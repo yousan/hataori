@@ -40,14 +40,23 @@ type API interface {
 
 // Caller is who is asking. An API value is bound to one Caller,
 // and the core checks every call against it.
+//
+// Start, Send, Answer and Stop are refused unless the Principal is the
+// owner or one of the people of the thread's scope.
 type Caller struct {
-	Principal Principal // a person, a webhook, a supervisor, a dashboard user
+	// From is the "<client>:<id>" a relayed input came from, such as a
+	// chat message's author. The core resolves it to a person and uses that
+	// person as the Principal, whatever Principal says; an id no person
+	// lists is a guest, with no Principal. Empty for a caller the daemon
+	// authenticated itself.
+	From      string
+	Principal Principal // a person's name
 	Scopes    []string  // the scopes it may see and act in
 	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop
 }
 
-// Principal is an opaque identity, given by the client that authenticated
-// it. The core compares principals; it never looks inside one.
+// Principal is the name of a person of the instance's config. The core
+// compares principals; it never looks inside one.
 type Principal string
 
 // Ops is a set of operations a Caller may use.
@@ -190,9 +199,10 @@ type Event struct {
 	Data   json.RawMessage `json:"data,omitempty"` // the fields of Kind; see EventKinds
 }
 
-// ScopeOwner is the client that gives a scope its threads. When another client
-// starts a thread there, the core asks the owner for the key; a chat front end
-// opens a chat thread and returns its id.
+// ScopeOwner is the client that gives a scope its threads. When a Start has
+// no Thread, the core asks the owner for the key, after the call is
+// allowed; key is the Start's key. A chat front end opens a chat thread,
+// from the trigger message when key is one, and returns its id.
 type ScopeOwner interface {
-	NewThread(ctx context.Context, scope, title string) (key string, err error)
+	NewThread(ctx context.Context, scope, key, title string) (thread string, err error)
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
+	"github.com/yousan/hataori/internal/people"
 	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
 )
@@ -52,7 +53,8 @@ func newCore(t *testing.T, root string) (*core.Core, control.API) {
 	}
 	t.Cleanup(func() { st.Close() })
 	c := &core.Core{
-		Store: st, Machine: &session.Machine{Store: st},
+		People: people.New(nil, "owner", nil),
+		Store:  st, Machine: &session.Machine{Store: st},
 		Scopes:     map[string]core.Scope{"s": {Enabled: true, Owner: "chat"}, "off": {Owner: "chat"}},
 		Workspaces: dirs{}, Runner: nopRunner{}, Agent: "fake",
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),

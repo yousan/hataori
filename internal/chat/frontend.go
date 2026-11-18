@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/people"
 	"github.com/yousan/hataori/internal/store"
 	"github.com/yousan/hataori/internal/surface"
 )
@@ -114,7 +115,7 @@ func (f *FrontEnd) context() context.Context {
 // NewThread opens a chat thread in the channel scope and returns its id.
 // The core calls it for a thread another client starts; a trigger's thread
 // is opened from the trigger message instead (threadOf).
-func (f *FrontEnd) NewThread(ctx context.Context, scope, title string) (string, error) {
+func (f *FrontEnd) NewThread(ctx context.Context, scope, _, title string) (string, error) {
 	conv, err := f.Driver.OpenThread(ctx, surface.Conversation{Channel: scope}, title)
 	if err != nil {
 		return "", err
@@ -239,7 +240,7 @@ func (f *FrontEnd) start(ctx context.Context, in surface.Inbound, o order) error
 		f.Log.Error("trigger: opening its thread", "scope", channel, "message", in.Ref.ID, "err", err)
 		return err
 	}
-	api := f.API(control.Caller{Principal: control.Principal(in.Author.ID), Scopes: []string{channel},
+	api := f.API(control.Caller{From: people.Join(f.Name, in.Author.ID), Scopes: []string{channel},
 		May: control.OpRead | control.OpStart})
 	id, startErr := api.Start(ctx, control.StartRequest{Key: in.Ref.ID, Scope: channel, Thread: thread, Repo: o.Repo,
 		Model: o.Model, Effort: o.Effort, Input: control.Input{Text: o.Prompt}})
@@ -345,7 +346,8 @@ func (f *FrontEnd) followUp(in surface.Inbound) error {
 		return nil
 	}
 	who := control.Principal(in.Author.ID)
-	api := f.API(control.Caller{Principal: who, Scopes: []string{conv.Channel}, May: control.OpRead | control.OpSend})
+	api := f.API(control.Caller{From: people.Join(f.Name, in.Author.ID), Scopes: []string{conv.Channel},
+		May: control.OpRead | control.OpSend})
 	id := control.ThreadID{Scope: conv.Channel, Key: conv.Thread}
 	ts, err := api.Threads(ctx, control.Filter{Thread: id})
 	if err != nil {

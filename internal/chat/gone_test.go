@@ -56,7 +56,7 @@ func TestGoneConversationIsAskedForOnce(t *testing.T) {
 	})
 	id := f.runningThread(t)
 	g.setGone(conv(id))
-	api := f.fe.API(control.Caller{Principal: owner, Scopes: []string{channel}, May: control.OpRead})
+	api := f.fe.API(control.Caller{Principal: "owner", Scopes: []string{channel}, May: control.OpRead})
 	before, err := api.Threads(context.Background(), control.Filter{})
 	if err != nil || len(before) != 1 {
 		t.Fatalf("threads %+v %v", before, err)

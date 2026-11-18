@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/people"
 	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
 )
@@ -54,7 +56,9 @@ type fakeOwner struct {
 	err error
 }
 
-func (o fakeOwner) NewThread(context.Context, string, string) (string, error) { return o.key, o.err }
+func (o fakeOwner) NewThread(context.Context, string, string, string) (string, error) {
+	return o.key, o.err
+}
 
 type fakeWorkspaces struct{}
 
@@ -93,6 +97,7 @@ func newFixture(t *testing.T, owner fakeOwner) *fixture {
 			"off": {Enabled: false, Owner: "chat"},
 		},
 		Owners:     map[string]control.ScopeOwner{"chat": owner},
+		People:     people.New(nil, "owner", nil),
 		Workspaces: fakeWorkspaces{},
 		Runner:     f.runner,
 		Agent:      "fake",
@@ -321,7 +326,7 @@ func TestStartKeyIsPerScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	other := f.core.As(control.Caller{Principal: "y", Scopes: []string{"s2"}, May: all})
+	other := f.core.As(control.Caller{Principal: "owner", Scopes: []string{"s2"}, May: all})
 	b, err := other.Start(ctx, control.StartRequest{Key: "k1", Scope: "s2", Thread: "t2"})
 	if err != nil || b == a || b.Scope != "s2" {
 		t.Fatalf("Start in another scope with the same key: %v, %v", b, err)
@@ -470,5 +475,80 @@ func TestTitleCutAtACharacter(t *testing.T) {
 	short := strings.Repeat("あ", 26) + "ab" // 80 bytes
 	if got := title(short + "\nmore"); got != short {
 		t.Fatalf("title %q, want %q", got, short)
+	}
+}
+
+// countingOwner counts the threads it is asked for.
+type countingOwner struct{ n int }
+
+func (o *countingOwner) NewThread(context.Context, string, string, string) (string, error) {
+	o.n++
+	return fmt.Sprintf("new-%d", o.n), nil
+}
+
+// Input reaches the agent only from the owner or one of the people of the
+// thread's scope; a guest and a person of another scope are refused each
+// of Start, Send, Answer and Stop, change nothing, and are logged with
+// their client and id.
+func TestOnlyThePeopleOfTheScopeAct(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{key: "new"})
+	f.core.People = people.New([]people.Person{
+		{Name: "owner", IDs: []string{"chat:1"}},
+		{Name: "grace", IDs: []string{"chat:2"}},
+		{Name: "other", IDs: []string{"chat:3"}},
+	}, "owner", map[string][]string{"s": {"grace"}, "s2": {"other"}})
+	owner := &countingOwner{}
+	f.core.Owners["chat"] = owner
+	id, sid := f.running(t, "t1")
+	f.agentEvent(t, sid, 2, agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: "r1"}})
+
+	ops := map[string]func(control.API) error{
+		"Start": func(a control.API) error {
+			_, err := a.Start(ctx, control.StartRequest{Key: "k2", Scope: "s", Input: control.Input{Text: "x"}})
+			return err
+		},
+		"Send": func(a control.API) error { return a.Send(ctx, id, "m9", control.Input{Text: "x"}, control.Deliver) },
+		"Answer": func(a control.API) error {
+			return a.Answer(ctx, session.RequestHandle(sid, "r1"), control.Answer{Text: "x"})
+		},
+		"Stop": func(a control.API) error { return a.Stop(ctx, id) },
+	}
+	caller := func(from string) control.API {
+		// A Principal given with a From is not trusted.
+		return f.core.As(control.Caller{From: from, Principal: "owner", Scopes: []string{"s", "s2"}, May: all})
+	}
+	before := func() string {
+		return fmt.Sprint(count(t, f.core.Store, "events"), count(t, f.core.Store, "threads"), count(t, f.core.Store, "inbox"),
+			f.runner.Calls(), owner.n)
+	}
+	was := before()
+	for _, who := range []struct{ from, logged string }{
+		{"chat:9", `reason="a guest" client=chat id=9`},
+		{"other:1", `reason="a guest" client=other id=1`}, // the owner's id on another client
+		{"chat:3", `reason="the person may not act in the scope" client=chat id=3 person=other`},
+	} {
+		for name, op := range ops {
+			f.log.Reset()
+			if err := op(caller(who.from)); !errors.Is(err, ErrForbidden) {
+				t.Errorf("%s from %s: %v, want refused", name, who.from, err)
+			}
+			if got := f.log.String(); strings.Count(got, "\n") != 1 || !strings.Contains(got, "op="+name) || !strings.Contains(got, who.logged) {
+				t.Errorf("%s from %s logged %q", name, who.from, got)
+			}
+		}
+	}
+	if now := before(); now != was {
+		t.Fatalf("refused calls changed something: %s, was %s", now, was)
+	}
+	for _, from := range []string{"chat:2", "chat:1"} {
+		for _, name := range []string{"Send", "Answer", "Stop", "Start"} {
+			if err := ops[name](caller(from)); errors.Is(err, ErrForbidden) {
+				t.Errorf("%s from %s refused: %v", name, from, err)
+			}
+		}
+	}
+	if owner.n != 1 {
+		t.Fatalf("the scope owner was asked for %d threads, want 1", owner.n)
 	}
 }
