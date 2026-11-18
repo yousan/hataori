@@ -59,12 +59,6 @@ func TestMain(m *testing.M) {
 
 func bareRepo(t *testing.T) string {
 	t.Helper()
-	return bareRepoWith(t, nil)
-}
-
-// bareRepoWith is bareRepo with more files in its first commit, by path.
-func bareRepoWith(t *testing.T, files map[string]string) string {
-	t.Helper()
 	dir := t.TempDir()
 	work, bare := filepath.Join(dir, "work"), filepath.Join(dir, "repo.git")
 	git := func(cwd string, args ...string) {
@@ -79,11 +73,7 @@ func bareRepoWith(t *testing.T, files map[string]string) string {
 	os.Mkdir(work, 0o700)
 	git(work, "init", "-q")
 	os.WriteFile(filepath.Join(work, "README"), []byte("hello\n"), 0o600)
-	for p, body := range files {
-		os.MkdirAll(filepath.Dir(filepath.Join(work, p)), 0o700)
-		os.WriteFile(filepath.Join(work, p), []byte(body), 0o600)
-	}
-	git(work, "add", "-A")
+	git(work, "add", "README")
 	git(work, "commit", "-q", "-m", "first")
 	git(dir, "clone", "-q", "--bare", work, bare)
 	return "file://" + bare
