@@ -1,0 +1,1 @@
+{"id":1,"result":[{"device":"/dev/pts/3","process":"vim","activity":"2026-01-02T03:04:05.678Z","tmux":{"pane":"%3","session":"work","window":"1","window_name":"editor","index":"0","dir":"/home/alice/src","attached":true}},{"device":"/dev/pts/5","process":"bash"}]}

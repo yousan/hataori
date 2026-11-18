@@ -193,6 +193,9 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 		"Terminal":      func(a control.API) error { _, err := a.Terminal(ctx, id, "", 0); return err },
 		"HostTerminals": func(a control.API) error { _, err := a.HostTerminals(ctx); return err },
 		"HostScreen":    func(a control.API) error { _, err := a.HostScreen(ctx, "%0"); return err },
+		// Limits needs OpRead and no scope, so "other scope" may call it
+		// (TestLimitsKeepTheNewestPerAgent).
+		"Limits": func(a control.API) error { _, err := a.Limits(ctx); return err },
 	}
 	if len(ops) != reflect.TypeFor[control.API]().NumMethod() {
 		t.Fatal("the test does not cover every operation")
@@ -201,6 +204,9 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 	for cname, c := range callers {
 		a := f.core.As(c)
 		for name, op := range ops {
+			if name == "Limits" && cname == "other scope" {
+				continue
+			}
 			f.log.Reset()
 			if err := op(a); !errors.Is(err, ErrForbidden) {
 				t.Errorf("%s by a caller with %s: %v", name, cname, err)

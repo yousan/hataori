@@ -280,6 +280,29 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 			}
 			p.report(map[string]any{"t": "usage", "in": n[0], "output": n[1], "cache_read": n[2], "cache_write": n[3],
 				"context_used": n[4], "context_size": n[5], "model": model})
+		case "limits":
+			// limits AGE EVERY [NAME:MINUTES:USED:RESETS...], seconds; RESETS is Unix seconds, 0 for none
+			f := strings.Fields(arg)
+			var age, every int64
+			if len(f) > 0 {
+				age, _ = strconv.ParseInt(f[0], 10, 64)
+			}
+			if len(f) > 1 {
+				every, _ = strconv.ParseInt(f[1], 10, 64)
+			}
+			windows := []map[string]any{}
+			for _, w := range f[min(2, len(f)):] {
+				parts := strings.SplitN(w, ":", 4)
+				for len(parts) < 4 {
+					parts = append(parts, "0")
+				}
+				m, _ := strconv.ParseInt(parts[1], 10, 64)
+				u, _ := strconv.Atoi(parts[2])
+				r, _ := strconv.ParseInt(parts[3], 10, 64)
+				windows = append(windows, map[string]any{"name": parts[0], "minutes": m, "used": u, "resets": r})
+			}
+			p.report(map[string]any{"t": "limits", "at": time.Now().Add(-time.Duration(age) * time.Second).UnixMilli(),
+				"every": every, "windows": windows})
 		case "file":
 			// file PATH [PATH...] [-- CAPTION]
 			paths, caption, _ := strings.Cut(arg, " -- ")

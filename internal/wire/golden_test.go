@@ -90,6 +90,7 @@ func examples(t *testing.T) map[string]any {
 		"Terminal":      terminalArgs{ID: exampleID, Run: "5f0c9a1e7b3d4c2a8e6f1b0d9c7a5e3f", After: 1024},
 		"HostTerminals": hostTerminalsArgs{},
 		"HostScreen":    hostScreenArgs{Pane: "%3"},
+		"Limits":        limitsArgs{},
 	}
 	results := map[string]any{
 		"Threads": []control.ThreadInfo{exampleInfo},
@@ -108,6 +109,9 @@ func examples(t *testing.T) map[string]any {
 			{Device: "/dev/pts/5", Process: "bash"},
 		},
 		"HostScreen": "$ make\nok\n",
+		"Limits": []control.AgentLimits{{Agent: "claude-code", At: exampleTime, Every: 300, Windows: []control.LimitWindow{
+			{Name: "five_hour", Minutes: 300, Used: 4, Resets: &exampleTime},
+			{Name: "seven_day", Minutes: 10080, Used: 21, Resets: &exampleTime}}}},
 	}
 	ex["terminal.json"] = response{ID: 1, Terminal: &control.TerminalChunk{Run: "5f0c9a1e7b3d4c2a8e6f1b0d9c7a5e3f",
 		Pos: 1046, Reset: false, Cols: 120, Rows: 40, Data: []byte("\x1b[32mok\x1b[0m tests pass\r\n")}}

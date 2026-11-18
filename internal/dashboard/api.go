@@ -23,6 +23,7 @@ import (
 //	GET /api/events[?after=N]                 a stream of Event (Server-Sent Events)
 //	GET /api/terminal?scope=S&key=K           a stream of TerminalChunk (Server-Sent Events)
 //	GET /api/hostscreen?pane=P                a stream of a tmux pane's screen (Server-Sent Events)
+//	GET /api/limits                           [AgentLimits]
 //
 // The event stream sends each event as one message whose id is the event's
 // position, and the caught_up mark as a message of type caught_up. A page
@@ -33,6 +34,7 @@ const (
 	ThreadsPath = "/api/threads"
 	ThreadPath  = "/api/thread"
 	EventsPath  = "/api/events"
+	LimitsPath  = "/api/limits"
 )
 
 // Defaults and caps of /api/thread.
@@ -72,6 +74,19 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET "+EventsPath, s.events)
 	s.mux.HandleFunc("GET "+TerminalPath, s.terminal)
 	s.mux.HandleFunc("GET "+HostScreenPath, s.hostScreen)
+	s.mux.HandleFunc("GET "+LimitsPath, s.limits)
+}
+
+func (s *Server) limits(w http.ResponseWriter, r *http.Request) {
+	ls, err := api(r).Limits(r.Context())
+	if err != nil {
+		s.apiError(w, err)
+		return
+	}
+	if ls == nil {
+		ls = []control.AgentLimits{}
+	}
+	writeJSON(w, ls)
 }
 
 // apiError answers err with its status: 403 for a call the caller may not

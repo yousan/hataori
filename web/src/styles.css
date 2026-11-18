@@ -400,6 +400,30 @@ body {
   color: var(--st);
 }
 
+.limits,
+.limit,
+.limit-window {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.limits {
+  gap: 12px;
+}
+
+.limit-agent {
+  color: var(--muted);
+}
+
+.limit[data-stale="yes"] .limit-window {
+  color: var(--muted);
+}
+
+.limit-as-of {
+  color: var(--st-waiting, var(--muted));
+}
+
 .muted {
   color: var(--muted);
 }

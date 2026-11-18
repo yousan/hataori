@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/yousan/hataori/internal/agent"
 )
 
 // Hook events the codec reads. Each is registered with the command
@@ -31,11 +33,11 @@ type hookMatcher struct {
 }
 
 // settings is the file passed with --settings: a hook for every event the
-// codec reads. A waiting hook runs `hataori hook --wait` with the configured
+// codec reads, and the status line (statusline.go). A waiting hook runs `hataori hook --wait` with the configured
 // timeout, and Claude Code is told the same timeout. A PreToolUse of
 // AskUserQuestion is therefore reported twice, once waiting; the codec
 // reads the waiting one.
-func (a *Adapter) settings() ([]byte, error) {
+func (a *Adapter) settings(spec agent.Spec) ([]byte, error) {
 	secs := int(a.hookTimeout.Seconds())
 	hooks := map[string][]hookMatcher{}
 	plain := shellQuote(a.hataori) + " hook"
@@ -62,7 +64,9 @@ func (a *Adapter) settings() ([]byte, error) {
 	// The user's own vim mode would make Escape leave insert mode instead
 	// of stopping the turn; settings given with --settings take precedence
 	// over the user's global choice, so the session runs in normal mode.
-	return json.MarshalIndent(map[string]any{"hooks": hooks, "editorMode": "normal"}, "", "  ")
+	// The status line hands on the remaining usage, and shows the user's.
+	return json.MarshalIndent(map[string]any{"hooks": hooks, "editorMode": "normal",
+		"statusLine": a.statusLineSetting(spec.Dir, spec.StateDir)}, "", "  ")
 }
 
 // shellQuote quotes s for the shell Claude Code runs a hook command in.

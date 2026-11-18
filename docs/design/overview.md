@@ -497,7 +497,7 @@ Not in the dashboard: diffs, boards of cards, a browser inside the page. Other t
 | the live terminal of a session | new operation `Terminal`, a read-only stream from the session host |
 | terminals hataori does not own | new operations `HostTerminals` and `HostScreen` |
 | pull request | no known source: research first |
-| remaining usage per agent, reset time | no known source: research first |
+| remaining usage per agent, reset time | new operation `Limits`: Claude Code's status line input, Codex's `account/rateLimits/read` (research #191) |
 
 Appendix D lists the new operations and fields as a proposal. Each is a minor protocol change.
 
@@ -1137,6 +1137,28 @@ type API interface {
 	// host_terminals is true (section 7.2). Since protocol 1.10.
 	HostTerminals(ctx context.Context) ([]HostTerminal, error)
 	HostScreen(ctx context.Context, pane string) (string, error)
+
+	// Limits returns each agent's remaining usage as its sessions last
+	// reported it; an agent that reports none has no entry. It needs
+	// OpRead and no scope: the usage is the account's. Since protocol 1.13.
+	Limits(ctx context.Context) ([]AgentLimits, error)
+}
+
+// AgentLimits: At is when the report was made, Every how often the
+// agent's sessions report while one runs. Older than Every, a report is
+// not current, and the dashboard shows it with its time.
+type AgentLimits struct {
+	Agent   string
+	At      time.Time
+	Every   int64 // seconds
+	Windows []LimitWindow
+}
+
+type LimitWindow struct {
+	Name    string     // the agent's name for it: five_hour, seven_day, primary, secondary
+	Minutes int64      // its length; 0 when the agent does not say
+	Used    int        // percent
+	Resets  *time.Time // nil when the agent does not say
 }
 
 type HostTerminal struct {
@@ -1296,7 +1318,7 @@ type API interface {
 // HostTerminal, TmuxPane: declared above, with HostTerminals.
 ```
 
-Remaining usage per agent (an operation `Limits`, with the agent, the window, the share used and the reset time) is added only if its research finds a source.
+Remaining usage per agent is `Limits`, declared above (#211), from the sources the research found (#191, [docs/notes/agent-usage-limits.md](../notes/agent-usage-limits.md)). An adapter reports it as an agent event of kind `Limits`; the session machine keeps the newest report per agent in the same transaction and writes no control event, since it belongs to no thread. Claude Code: hataori's `--settings` sets `statusLine` to `hataori statusline`, which hands the input's `rate_limits` to the session host when they change and every 5 minutes, refreshes at least once a minute, and runs and prints the status line the user would have had (the workspace's local and shared settings, then the user's own; only read, never written), so the user's line still shows. Codex: the decoder of `account/rateLimits/read` is in `internal/agent/codex`; the Codex adapter reads it at start and after each turn when it comes (section 8).
 
 | Change | Protocol |
 |---|---|
@@ -1305,7 +1327,8 @@ Remaining usage per agent (an operation `Limits`, with the agent, the window, th
 | `SignInLink`, with `Ops` gaining `OpSignIn` | minor: new operation; landed in 1.7 |
 | `SignInLink` for a chat caller, the session belonging to its person | minor: an operation allowed to one more caller, no encoding change; landed in 1.11 |
 | `ThreadInfo.terminal` | minor: new optional field; landed in 1.12 |
-| `Limits`; `WorkspaceState.PullRequest` | minor, and only after their research |
+| `Limits` | minor: new operation; landed in 1.13 |
+| `WorkspaceState.PullRequest` | minor, and only after its research |
 
 Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event. In protocol 1.9: `Terminal`, which turns its connection into a stream as `Events` does. In protocol 1.12: `ThreadInfo.terminal`, the terminal device its session host opened, for the tree's filter, the status bar and the details panel (#285); `HostTerminals` still leaves these terminals out.
 
@@ -1497,7 +1520,7 @@ type Spec struct {
 
 // Event is one thing the agent did. Kind is one of SessionReady, TurnStarted,
 // Text, ToolStarted, ToolEnded, SubagentStarted, SubagentEnded, Request,
-// RequestWithdrawn, FileOut, Usage, TurnEnded, SessionEnded, Unknown.
+// RequestWithdrawn, FileOut, Usage, TurnEnded, SessionEnded, Limits, Unknown.
 type Event struct {
 	Seq  uint64
 	Kind Kind
@@ -1506,7 +1529,9 @@ type Event struct {
 	// request id and its questions, the subagent a tool runs in (Parent),
 	// the files handed over with their caption (File, More, Caption),
 	// the end status and reason, the background tasks still running,
-	// the tokens of the turn so far and the context use (Usage).
+	// the tokens of the turn so far and the context use (Usage), the
+	// account's remaining usage with when the agent gave it and how often
+	// the adapter reports it (Limits: LimitReport{At, Every, Windows}).
 	// SessionEnded has a reason: the agent's own, CannotResume ("cannot
 	// resume") when a resumed session's conversation is gone, or
 	// WrongSession when a resume reported another session id. SessionReady

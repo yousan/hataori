@@ -167,7 +167,7 @@ func TestDashboardTerminalPaneIsReadOnly(t *testing.T) {
 
 	// Every request of the page: a GET or HEAD of its own routes, with no
 	// body, and nothing typed in its address.
-	routes := []string{"/", "/signin", "/favicon.ico", "/api/threads", "/api/thread", "/api/events", "/api/terminal"}
+	routes := []string{"/", "/signin", "/favicon.ico", "/api/threads", "/api/thread", "/api/events", "/api/terminal", "/api/limits"}
 	requests := 0
 	for _, e := range b.events {
 		switch e.Method {

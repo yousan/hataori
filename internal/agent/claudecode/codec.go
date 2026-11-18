@@ -129,10 +129,12 @@ type payload struct {
 	BackgroundTasks []struct {
 		Status string `json:"status"`
 	} `json:"background_tasks"`
-	Error     string `json:"error"`
-	Reason    string `json:"reason"` // SessionEnd
-	AgentID   string `json:"agent_id"`
-	AgentType string `json:"agent_type"`
+	Error  string `json:"error"`
+	Reason string `json:"reason"` // SessionEnd
+	// RateLimits is what the status line handed on (statusLineEvent).
+	RateLimits json.RawMessage `json:"rate_limits"`
+	AgentID    string          `json:"agent_id"`
+	AgentType  string          `json:"agent_type"`
 }
 
 const askTool = "AskUserQuestion"
@@ -627,6 +629,11 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 		return Actions{}
 	}
 	switch p.Event {
+	case statusLineEvent:
+		if r := decodeLimits(p.RateLimits, time.UnixMilli(k.At)); r != nil {
+			return c.events(agent.Event{Kind: agent.Limits, Limits: r})
+		}
+		return Actions{}
 	case "SessionStart":
 		ready := agent.Event{Kind: agent.SessionReady, SessionID: p.SessionID, Model: p.Model, Effort: p.Effort.Level}
 		switch p.Source {

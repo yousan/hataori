@@ -4,7 +4,17 @@
 // source; the page infers no state from the events themselves.
 
 import { useEffect, useRef, useState } from "react";
-import { type Event, eventsPath, SignedOut, type ThreadDetail, type ThreadInfo, thread, threads } from "./api";
+import {
+  type AgentLimits,
+  type Event,
+  eventsPath,
+  limits,
+  SignedOut,
+  type ThreadDetail,
+  type ThreadInfo,
+  thread,
+  threads,
+} from "./api";
 
 // Attention is why a thread needs attention.
 export type Attention =
@@ -25,6 +35,7 @@ export interface Dashboard {
   attention: ReadonlyMap<number, Attention>; // by thread number
   live: Live;
   signedOut: boolean;
+  limits: AgentLimits[]; // each agent's remaining usage; none until read
   // subscribe calls f with each event the stream delivers from now on,
   // until the returned function is called. One stream serves the page.
   subscribe: (f: (e: Event) => void) => () => void;
@@ -38,6 +49,9 @@ const retryDelay = 2000;
 // reopenDelay is how long the page waits before it opens a stream that the
 // server refused again.
 const reopenDelay = 2000;
+// limitsInterval is how often the page reads the remaining usage again:
+// it changes without an event.
+const limitsInterval = 60000;
 // detailEvents is how many of a thread's last events are read for its
 // failure reason.
 const detailEvents = 20;
@@ -103,6 +117,7 @@ export function useDashboard(): Dashboard {
     attention: new Map(),
     live: { connected: false, pos: null },
     signedOut: false,
+    limits: [],
   });
   const reads = useRef(0);
   const listeners = useRef(new Set<(e: Event) => void>());
@@ -132,6 +147,7 @@ export function useDashboard(): Dashboard {
     const read = async () => {
       const n = ++reads.current;
       try {
+        readLimits();
         const ts = await threads();
         // A thread that goes away between the list and its detail keeps
         // the list good: it shows without what it waits on until the next
@@ -151,6 +167,19 @@ export function useDashboard(): Dashboard {
           if (d && a) attention.set(d.number, a);
         }
         setState((s) => ({ ...s, threads: ts, attention }));
+      } catch (err) {
+        if (err instanceof SignedOut) signedOut();
+      }
+    };
+    // readLimits reads the remaining usage apart from the threads: a server
+    // that cannot answer it holds nothing else back, and the last usage read
+    // stays. Only the newest read is kept.
+    let limitReads = 0;
+    const readLimits = async () => {
+      const n = ++limitReads;
+      try {
+        const ls = await limits();
+        if (!closed && n === limitReads) setState((s) => ({ ...s, limits: ls }));
       } catch (err) {
         if (err instanceof SignedOut) signedOut();
       }
@@ -219,9 +248,11 @@ export function useDashboard(): Dashboard {
       }
     };
     begin();
+    const poll = setInterval(readLimits, limitsInterval);
 
     return () => {
       closed = true;
+      clearInterval(poll);
       clearTimeout(timer);
       clearTimeout(retry);
       source?.close();

@@ -122,7 +122,7 @@ export function App() {
           </aside>
         )}
       </div>
-      <StatusBar selected={current === null ? undefined : thread(current)} live={d.live} />
+      <StatusBar selected={current === null ? undefined : thread(current)} live={d.live} limits={d.limits} now={now} />
     </div>
   );
 }
