@@ -59,7 +59,7 @@ func daemonRole(root string) int {
 				default:
 				}
 			}
-		}} // TEMPORARY: no guard, to see the test fail
+		}, Guard: []string{os.Args[0], "role", "guard"}}
 	if err := r.Start(context.Background(), "chat:owner", "fake"); err != nil {
 		return 1
 	}
