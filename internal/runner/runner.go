@@ -816,30 +816,7 @@ func (r *Runner) stepLocked(lv *live) bool {
 		return !host.Gone(lv.dir) && !hostLost(lv.dir)
 	}
 	exited := host.Gone(lv.dir) || hostLost(lv.dir) // looked at before reading, so nothing written before the exit is missed
-	b := batch{offset: lv.offset, files: map[string]int64{}}
-	if data, err := os.ReadFile(filepath.Join(lv.dir, host.EventsFile)); err == nil {
-		end := complete(data, lv.offset)
-		for _, l := range lines(data, lv.offset, end) {
-			r.decode(lv, &b, source(l), l)
-		}
-		b.offset = end
-	}
-	for p, off := range lv.files {
-		b.files[p] = off
-	}
-	for i := 0; i < len(lv.files)+1; i++ { // a followed file may name another
-		for p, off := range b.files {
-			data, err := os.ReadFile(p)
-			if err != nil {
-				continue
-			}
-			end := complete(data, off)
-			for _, l := range lines(data, off, end) {
-				r.decode(lv, &b, agent.File, l)
-			}
-			b.files[p] = end
-		}
-	}
+	b := r.read(lv)
 	r.watchScreen(lv, &b)
 	first, err := r.commit(lv, b)
 	if err != nil {
@@ -895,6 +872,44 @@ func (r *Runner) stepLocked(lv *live) bool {
 	}
 	r.checkStart(lv)
 	return true
+}
+
+// read decodes what is new in the files the codec follows, then in the
+// host's log of hook calls and output, then in the files those calls named
+// and anything new in the others. An agent writes a line of its transcript
+// before it reports what follows it, such as a turn's last message before
+// the turn's end, so a line written before a hook call is decoded first
+// even when both are new in one step.
+func (r *Runner) read(lv *live) batch {
+	b := batch{offset: lv.offset, files: map[string]int64{}}
+	for p, off := range lv.files {
+		b.files[p] = off
+	}
+	readFiles := func() {
+		for i := 0; i < len(b.files)+1; i++ { // a followed file may name another
+			for p, off := range b.files {
+				data, err := os.ReadFile(p)
+				if err != nil {
+					continue
+				}
+				end := complete(data, off)
+				for _, l := range lines(data, off, end) {
+					r.decode(lv, &b, agent.File, l)
+				}
+				b.files[p] = end
+			}
+		}
+	}
+	readFiles()
+	if data, err := os.ReadFile(filepath.Join(lv.dir, host.EventsFile)); err == nil {
+		end := complete(data, lv.offset)
+		for _, l := range lines(data, lv.offset, end) {
+			r.decode(lv, &b, source(l), l)
+		}
+		b.offset = end
+	}
+	readFiles()
+	return b
 }
 
 // watchScreen gives the codec what the agent wrote to its terminal since
