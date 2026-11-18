@@ -226,7 +226,8 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 		case "ask":
 			p.asked++
 			id := fmt.Sprintf("q%d", p.asked)
-			answer, ok := p.ask(id, arg)
+			question, choices := askArgs(arg)
+			answer, ok := p.ask(id, question, choices)
 			if !ok {
 				p.interrupted(end)
 				return 0, false
@@ -319,9 +320,28 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 	return 0, false
 }
 
-// ask asks a question and waits for its answer, or for an interrupt.
-func (p *program) ask(id, text string) (string, bool) {
+// askArgs splits the argument of "ask": the question, then, after " -- ",
+// its choices separated by "|". A question without " -- " has none.
+func askArgs(arg string) (question string, choices []string) {
+	question, rest, ok := strings.Cut(arg, " -- ")
+	if !ok {
+		return arg, nil
+	}
+	for _, c := range strings.Split(rest, "|") {
+		if c = strings.TrimSpace(c); c != "" {
+			choices = append(choices, c)
+		}
+	}
+	return question, choices
+}
+
+// ask asks a question, with its choices if any, and waits for its answer,
+// or for an interrupt.
+func (p *program) ask(id, text string, choices []string) (string, bool) {
 	v := map[string]any{"t": "ask", "id": id, "text": text}
+	if len(choices) > 0 {
+		v["choices"] = choices
+	}
 	if !p.terminal {
 		ch := make(chan string, 1)
 		p.mu.Lock()

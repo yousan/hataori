@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -369,6 +370,55 @@ func TestInterrupt(t *testing.T) {
 				if e.Kind == agent.TurnEnded && e.Status != agent.Interrupted {
 					t.Fatalf("%s: %s", script, s.after())
 				}
+			}
+		}
+	})
+}
+
+// A question can name choices: they reach the codec's request in order,
+// and an answer of a choice is the reply. A question without " -- " has
+// none.
+func TestAskWithChoices(t *testing.T) {
+	forms(t, func(t *testing.T, terminal bool) {
+		for _, tc := range []struct {
+			script, question string
+			choices          []string
+			answer           agent.Answer
+			reply            string
+		}{
+			{"ask Which colour? -- red | green | blue", "Which colour?", []string{"red", "green", "blue"}, agent.Answer{Choices: []string{"green"}}, "answer: green"},
+			// Text and choices together: the choices win, as with Claude Code.
+			{"ask Which ones? -- red | green | blue", "Which ones?", []string{"red", "green", "blue"}, agent.Answer{Text: "other", Choices: []string{"red", "blue"}}, "answer: red, blue"},
+			{"ask Which colour?", "Which colour?", nil, agent.Answer{Text: "teal"}, "answer: teal"},
+		} {
+			s := start(t, adapter(t, terminal), agent.Spec{})
+			s.until("ready", s.has(agent.SessionReady))
+			s.send(tc.script)
+			s.until("the question", s.has(agent.Request))
+			var r *agent.RequestInfo
+			for _, e := range s.events {
+				if e.Kind == agent.Request {
+					r = e.Request
+				}
+			}
+			if r.Text != tc.question || !slices.Equal(r.Choices, tc.choices) {
+				t.Fatalf("%q: request %q with choices %q, want %q with %q", tc.script, r.Text, r.Choices, tc.question, tc.choices)
+			}
+			tc.answer.Request = r.ID
+			a, err := s.codec.Answer(tc.answer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.do(a)
+			s.until("the end", s.has(agent.TurnEnded))
+			var final string
+			for _, e := range s.events {
+				if e.Kind == agent.Text && e.Final {
+					final = e.Text
+				}
+			}
+			if final != tc.reply {
+				t.Fatalf("%q: replied %q, want %q", tc.script, final, tc.reply)
 			}
 		}
 	})
