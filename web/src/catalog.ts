@@ -136,6 +136,14 @@ const en = {
   "details.unpushed": "Unpushed commits",
   "details.terminal": "Terminal",
 
+  "narrow.label": "Threads",
+  "narrow.attention": "Needs attention",
+  "narrow.running": "Running",
+  "narrow.rest": "Other threads ({n})",
+  "narrow.none": "No threads.",
+  "narrow.back": "Back to the list",
+  "narrow.thread": "#{n} {title}",
+
   "status.label": "Status",
   "status.noSelection": "No thread selected",
   "status.live": "live · event {pos}",

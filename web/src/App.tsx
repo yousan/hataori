@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { t } from "./catalog";
 import { useLayout } from "./layout";
 import { useDashboard, useNow } from "./live";
@@ -7,6 +7,7 @@ import { TabBar, tabID } from "./TabBar";
 import { ThreadPane } from "./ThreadPane";
 import { AllThreads } from "./AllThreads";
 import { Details } from "./Details";
+import { NarrowList, NarrowThread, useNarrow } from "./Narrow";
 import { useWorkspaces } from "./workspaces";
 import { active, allTab, close, initialTabs, panes, type Split, type TabKey, type Tabs, threadOf, threadTab, view } from "./tabs";
 import { useTheme } from "./theme";
@@ -58,8 +59,80 @@ export function App() {
     return x ? t("pane.thread", { n, title: x.title }) : t("thread.number", { n });
   };
 
+  // On a narrow screen the same page is a list; a thread opened from it is
+  // one entry of the browser's history, so Back returns to the list.
+  // The thread a history entry names: a reload keeps the thread open. The
+  // opened thread is the active tab's, so both layouts show the same one.
+  const narrow = useNarrow();
+  const entry = (): number | null => {
+    const n = (history.state as { hataoriThread?: unknown } | null)?.hataoriThread;
+    return typeof n === "number" ? n : null;
+  };
+  const [opened, setOpened] = useState<number | null>(entry);
+  const show = (n: number | null) => {
+    setOpened(n);
+    if (n !== null) setTabs((s) => view(s, threadTab(n)));
+  };
+  useEffect(() => {
+    if (opened !== null) setTabs((s) => view(s, threadTab(opened)));
+    const popped = () => show(entry());
+    addEventListener("popstate", popped);
+    return () => removeEventListener("popstate", popped);
+  }, []);
+  const openNarrow = (n: number) => {
+    show(n);
+    history.pushState({ hataoriThread: n }, "");
+  };
+  const backNarrow = () => {
+    if (entry() !== null) history.back();
+    else setOpened(null);
+  };
+  // A thread chosen in the wide layout is the one the narrow layout shows.
+  useEffect(() => {
+    if (narrow && opened !== null && current !== null && current !== opened) {
+      setOpened(current);
+      history.replaceState({ hataoriThread: current }, "");
+    }
+  }, [narrow]);
+  // A thread that has gone from the list closes, and so does its entry.
+  useEffect(() => {
+    if (opened !== null && d.threads !== null && !d.threads.some((x) => x.number === opened)) {
+      setOpened(null);
+      history.replaceState(null, "");
+    }
+  }, [opened, d.threads]);
+
+  if (narrow) {
+    const x = opened === null ? undefined : thread(opened);
+    const loading = opened !== null && d.threads === null;
+    return (
+      <div className="shell narrow" data-layout="narrow">
+        {d.signedOut && (
+          <p className="signed-out" role="alert">
+            {t("app.signedOut")}
+          </p>
+        )}
+        <div className="narrow-body">
+          {loading ? null : x ? (
+            <NarrowThread
+              x={x}
+              attention={d.attention.get(x.number)}
+              workspace={workspaces.get(x.number)}
+              subscribe={d.subscribe}
+              opens={d.opens}
+              onBack={backNarrow}
+            />
+          ) : (
+            <NarrowList threads={d.threads} attention={d.attention} now={now} onOpen={openNarrow} />
+          )}
+        </div>
+        <StatusBar selected={x} live={d.live} limits={d.limits} now={now} />
+      </div>
+    );
+  }
+
   return (
-    <div className="shell">
+    <div className="shell" data-layout="wide">
       {d.signedOut && (
         <p className="signed-out" role="alert">
           {t("app.signedOut")}
