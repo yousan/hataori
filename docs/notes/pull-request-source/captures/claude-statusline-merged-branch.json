@@ -1,0 +1,26 @@
+{
+ "branch": "52-channels-spike (its pull request #131 is merged)",
+ "version": "2.1.327",
+ "workspace.repo": "OWNER/REPO",
+ "has_pr": false,
+ "top_level_keys": [
+  "context_window",
+  "cost",
+  "cwd",
+  "effort",
+  "exceeds_200k_tokens",
+  "fast_mode",
+  "model",
+  "output_style",
+  "prompt_cache",
+  "prompt_id",
+  "rate_limits",
+  "scratchpad_dir",
+  "session_id",
+  "session_name",
+  "thinking",
+  "transcript_path",
+  "version",
+  "workspace"
+ ]
+}

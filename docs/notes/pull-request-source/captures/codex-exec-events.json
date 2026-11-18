@@ -1,0 +1,50 @@
+[
+ {
+  "type": "thread.started",
+  "item_type": null,
+  "item_keys": []
+ },
+ {
+  "type": "turn.started",
+  "item_type": null,
+  "item_keys": []
+ },
+ {
+  "type": "item.started",
+  "item_type": "command_execution",
+  "item_keys": [
+   "aggregated_output",
+   "command",
+   "exit_code",
+   "id",
+   "status",
+   "type"
+  ]
+ },
+ {
+  "type": "item.completed",
+  "item_type": "command_execution",
+  "item_keys": [
+   "aggregated_output",
+   "command",
+   "exit_code",
+   "id",
+   "status",
+   "type"
+  ]
+ },
+ {
+  "type": "item.completed",
+  "item_type": "agent_message",
+  "item_keys": [
+   "id",
+   "text",
+   "type"
+  ]
+ },
+ {
+  "type": "turn.completed",
+  "item_type": null,
+  "item_keys": []
+ }
+]

@@ -1,0 +1,40 @@
+{
+ "session_id": "<omitted>",
+ "transcript_path": "<omitted>",
+ "cwd": "<path>",
+ "scratchpad_dir": "<omitted>",
+ "effort": {
+  "level": "medium"
+ },
+ "model": {
+  "id": "claude-sonnet-5-5",
+  "display_name": "Sonnet 5.5"
+ },
+ "workspace": {
+  "current_dir": "<path>",
+  "project_dir": "<path>",
+  "added_dirs": [],
+  "repo": {
+   "host": "github.com",
+   "owner": "OWNER",
+   "name": "REPO"
+  }
+ },
+ "version": "2.1.327",
+ "output_style": {
+  "name": "default"
+ },
+ "cost": "<omitted>",
+ "context_window": "<omitted>",
+ "exceeds_200k_tokens": false,
+ "fast_mode": false,
+ "thinking": {
+  "enabled": true
+ },
+ "rate_limits": "<omitted>",
+ "pr": {
+  "number": 224,
+  "url": "https://github.com/OWNER/REPO/pull/224",
+  "review_state": "draft"
+ }
+}
