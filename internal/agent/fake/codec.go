@@ -318,7 +318,8 @@ func (c *codec) write(in agent.Input) agent.Actions {
 var ErrNotAsked = errors.New(Name + ": no such question is open")
 
 // Answer replies to the hook call on a terminal, or writes the answer on
-// pipes. An answer of chosen options is their tokens, joined by ", ".
+// pipes. An answer with chosen options is their tokens, joined by ", ",
+// as the Claude Code adapter answers: the choices win over any text.
 func (c *codec) Answer(a agent.Answer) (agent.Actions, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -328,7 +329,7 @@ func (c *codec) Answer(a agent.Answer) (agent.Actions, error) {
 	}
 	delete(c.asked, a.Request)
 	text := a.Text
-	if text == "" && len(a.Choices) > 0 {
+	if len(a.Choices) > 0 {
 		text = strings.Join(a.Choices, ", ")
 	}
 	if c.terminal {

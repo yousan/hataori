@@ -387,6 +387,8 @@ func TestAskWithChoices(t *testing.T) {
 			reply            string
 		}{
 			{"ask Which colour? -- red | green | blue", "Which colour?", []string{"red", "green", "blue"}, agent.Answer{Choices: []string{"green"}}, "answer: green"},
+			// Text and choices together: the choices win, as with Claude Code.
+			{"ask Which ones? -- red | green | blue", "Which ones?", []string{"red", "green", "blue"}, agent.Answer{Text: "other", Choices: []string{"red", "blue"}}, "answer: red, blue"},
 			{"ask Which colour?", "Which colour?", nil, agent.Answer{Text: "teal"}, "answer: teal"},
 		} {
 			s := start(t, adapter(t, terminal), agent.Spec{})

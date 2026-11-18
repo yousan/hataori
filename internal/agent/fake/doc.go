@@ -45,8 +45,10 @@
 //	tool NAME DURATION  run a tool (a child process) for DURATION
 //	ask QUESTION [-- CHOICE | CHOICE...]
 //	                    ask, with its choices if any, wait for the answer,
-//	                    then reply "answer: A"; an answer of choices is
-//	                    their tokens joined by ", "
+//	                    then reply "answer: A"; an answer with choices is
+//	                    their tokens joined by ", " (any text is ignored);
+//	                    the first " -- " starts the choices, which are
+//	                    trimmed, and empty ones are dropped
 //	background DURATION end the turn with one background task, then start a
 //	                    turn by itself after DURATION
 //	fail REASON         end the turn as failed with REASON
