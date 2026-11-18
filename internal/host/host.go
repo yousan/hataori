@@ -462,7 +462,13 @@ func (h *host) handle(req request) response {
 		}
 		return response{OK: true}
 	case "status":
-		return response{OK: true, PID: h.cmd.Process.Pid, Device: h.ptyName}
+		device := h.ptyName
+		select {
+		case <-h.done: // the command has exited; its terminal only drains
+			device = ""
+		default:
+		}
+		return response{OK: true, PID: h.cmd.Process.Pid, Device: device}
 	case "tail":
 		return response{OK: true, Data: h.tail(int(req.Interrupt))}
 	case "waiting":

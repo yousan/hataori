@@ -284,7 +284,7 @@ A field left empty matches everything the caller may see.
 | `background` | integer | optional | the `background` of the thread's last `turn_ended` event; absent for 0 or before its first turn ends; since 1.5 |
 | `context` | `Context` | optional | the last context use the agent reported; absent until it reports one; since 1.8 |
 | `tokens` | `TokenCount` | optional | the thread's tokens; absent until the agent reports usage; since 1.8 |
-| `terminal` | string | optional | the terminal device the agent of its current session runs in, as its session host opened it, such as `/dev/pts/3` or `/dev/ttys003`; absent for a session on pipes, and while the thread is asleep, closed, removed or failed or its session host does not answer; not text; since 1.12 |
+| `terminal` | string | optional | the terminal device the agent of its current session runs in, as its session host opened it, such as `/dev/pts/3` or `/dev/ttys003`; absent for a session on pipes, while the thread is asleep, closed, removed or failed, once the agent's command has exited, while its session host does not answer within a second, and for a session host started before 1.12 until the session's next start; not text; since 1.12 |
 
 ### Type `ThreadDetail`
 

@@ -32,20 +32,22 @@ func (r *Runner) Terminal(ctx context.Context, id int64, run string, after uint6
 
 // Device returns the name of the terminal that session id's agent runs in,
 // as its running host reports it; "" when the session runs on pipes, when
-// no host runs, or when the host does not answer in time.
+// no host runs or its command has exited, when the host does not answer in
+// time, and for a host started by a daemon before protocol 1.12, which
+// does not report it.
 func (r *Runner) Device(ctx context.Context, id int64) string {
 	dir := StateDir(r.Root, id)
 	spec, ok, err := host.ReadSpec(dir)
 	if err != nil || !ok || !spec.Terminal || host.Gone(dir) || hostLost(dir) {
 		return ""
 	}
-	c, err := host.Dial(dir)
+	ctx, cancel := context.WithTimeout(ctx, deviceTimeout)
+	defer cancel()
+	c, err := host.DialContext(ctx, dir)
 	if err != nil {
 		return ""
 	}
 	defer c.Close()
-	ctx, cancel := context.WithTimeout(ctx, deviceTimeout)
-	defer cancel()
 	d, err := c.Device(ctx)
 	if err != nil {
 		return ""

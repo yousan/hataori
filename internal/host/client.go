@@ -26,7 +26,15 @@ type Client struct {
 // Dial connects to the host in stateDir. When the command has already
 // exited, the error wraps os.ErrNotExist or syscall.ECONNREFUSED.
 func Dial(stateDir string) (*Client, error) {
-	c, err := net.DialTimeout("unix", SocketPath(stateDir), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return DialContext(ctx, stateDir)
+}
+
+// DialContext is Dial, giving up when ctx ends.
+func DialContext(ctx context.Context, stateDir string) (*Client, error) {
+	var d net.Dialer
+	c, err := d.DialContext(ctx, "unix", SocketPath(stateDir))
 	if err != nil {
 		return nil, fmt.Errorf("host: connect: %w", err)
 	}
