@@ -95,6 +95,10 @@ func (s *Server) limits(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, ls)
 }
 
+// workspaceTimeout bounds how long the route waits for git in a workspace:
+// a stalled command answers as a workspace that cannot be read.
+const workspaceTimeout = 10 * time.Second
+
 func (s *Server) workspace(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	id := control.ThreadID{Scope: q.Get("scope"), Key: q.Get("key")}
@@ -102,7 +106,9 @@ func (s *Server) workspace(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "scope and key are required", http.StatusBadRequest)
 		return
 	}
-	st, err := api(r).Workspace(r.Context(), id)
+	ctx, cancel := context.WithTimeout(r.Context(), workspaceTimeout)
+	defer cancel()
+	st, err := api(r).Workspace(ctx, id)
 	switch {
 	case errors.Is(err, control.ErrForbidden) || errors.Is(err, errNotFound):
 		// The same answer for both, so a thread outside the caller's

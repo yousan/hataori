@@ -58,7 +58,7 @@ func rawGet(t *testing.T, method, base, path string, c *http.Cookie, hostHeader,
 	if origin != "" {
 		r.Header.Set("Origin", origin)
 	}
-	resp, err := http.DefaultClient.Do(r)
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,8 @@ func TestDashboardWorkspaceRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
 	repo := bareRepo(t)
 	id, err := c.Start(ctx, control.StartRequest{Key: "k1", Scope: "s", Thread: "t1", Repo: repo, Input: control.Input{Text: "reply one"}})
 	if err != nil {
@@ -164,10 +165,16 @@ func TestDashboardWorkspaceRoute(t *testing.T) {
 	if _, err := c.Workspace(ctx, id); err == nil {
 		t.Fatal("Workspace read a broken repository: the check would test nothing")
 	}
-	code, body := dashGet(t, base, cookie, path(id))
+	code, body := rawGet(t, "GET", base, path(id), cookie, "", "")
 	var zeros control.WorkspaceState
 	if code < 500 || json.Unmarshal([]byte(body), &zeros) == nil {
 		t.Fatalf("a broken workspace: %d %s, want an error and no state", code, body)
+	}
+	if strings.Contains(body, ws) || strings.Contains(body, filepath.Base(ws)) || strings.Contains(body, "fatal") || strings.Contains(body, "HEAD") {
+		t.Fatalf("the error tells more than that the workspace cannot be read: %q", body)
+	}
+	if code, body := rawGet(t, "HEAD", base, path(id), cookie, "", ""); code < 500 || body != "" {
+		t.Fatalf("HEAD of a broken workspace: %d %q, want an error and no body", code, body)
 	}
 	os.WriteFile(head, good, 0o600)
 	state("repaired")
