@@ -363,12 +363,24 @@ func TestRefuseLocalRemoteResolvedLikeGit(t *testing.T) {
 		{"undecodable file URL", RemoteUnresolved, func(x *removal, b string) string {
 			return "file://" + x.tmp + "/%zz"
 		}},
-		// git reads a relative path from the repository. From the scratch
-		// repository, <root>/state/removal/<name>, these five ".." lead
-		// out of the temporary directory and the path names b.git; from
-		// the workspace they lead to it, and nothing is there.
-		{"relative path", GitError, func(x *removal, b string) string {
-			return "../../../../../" + filepath.Base(x.tmp) + "/root/" + Dir + "/c/s/other/b.git"
+		// upload-pack drops trailing slashes before it tries <path>.git.
+		{"trailing slash", RemoteIsLocal, func(x *removal, b string) string {
+			return x.symlink(filepath.Dir(b), filepath.Join(x.tmp, "link2")) + "/b/"
+		}},
+		// git decodes the whole URL before it takes the host: the path
+		// starts at the decoded slash.
+		{"file URL with an encoded slash in the host", RemoteIsLocal, func(x *removal, b string) string {
+			return "file://x%2F" + b[1:]
+		}},
+		// Nothing there that git would read, or a .git file naming
+		// nothing: what git does instead cannot be told.
+		{"nothing at the address", RemoteUnresolved, func(x *removal, b string) string {
+			return filepath.Join(x.tmp, "missing.git")
+		}},
+		{".git file naming nothing", RemoteUnresolved, func(x *removal, b string) string {
+			g := filepath.Join(x.tmp, "gitfile")
+			os.WriteFile(g, []byte("gitdir: "+filepath.Join(x.tmp, "missing.git")+"\n"), 0o600)
+			return g
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -408,13 +420,35 @@ func TestRefuseRemoteRewrittenAgain(t *testing.T) {
 	x.git(x.tmp, "clone", "-q", "--bare", x.bare, b)
 	first, second := filepath.Join(x.tmp, "first.git"), filepath.Join(x.tmp, "second.git")
 	// The workspace's git rewrites first to second, once; the fetch would
-	// rewrite second to b.
+	// rewrite second, an empty repository outside the root, to b.
+	x.git(x.tmp, "init", "-q", "--bare", second)
 	global := filepath.Join(x.tmp, "gitconfig")
 	x.git(x.tmp, "config", "--file", global, "url."+second+".insteadOf", first)
 	x.git(x.tmp, "config", "--file", global, "url."+b+".insteadOf", second)
 	x.r.Maker.Environ = func() []string { return append(x.env(), "GIT_CONFIG_GLOBAL="+global) }
 	x.git(x.clone, "remote", "set-url", "origin", first)
 	wantRefusal(t, x.check(), RemoteUnresolved, "")
+
+	// It is left out like any remote that does not count: another
+	// remote with every commit lets the removal through.
+	x.git(x.clone, "remote", "add", "backup", x.bare)
+	if err := x.check(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// git reads a relative path from the repository, not from where the check
+// fetches. From the workspace, <tmp>/root/workspaces/c/s/k, the five ".."
+// lead to <tmp>; from the scratch repository, <root>/state/removal/<name>,
+// they lead out of it, where nothing is.
+func TestRemoteByRelativePathCounts(t *testing.T) {
+	x := newRemoval(t)
+	base := filepath.Base(x.tmp)
+	x.git(x.tmp, "clone", "-q", "--bare", x.bare, filepath.Join(x.tmp, base, "rel.git"))
+	x.git(x.clone, "remote", "set-url", "origin", "../../../../../"+base+"/rel.git")
+	if err := x.check(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // dotDotLink is <tmp>/l/link, a symlink to <tmp>/nested.
@@ -460,7 +494,11 @@ func TestRefuseProcessUsingTheDirectory(t *testing.T) {
 
 func TestRefuseGitError(t *testing.T) {
 	x := newRemoval(t)
-	x.git(x.clone, "remote", "set-url", "origin", filepath.Join(x.tmp, "missing.git"))
+	// A directory that is not a repository: git fails to fetch from it.
+	// Nothing at all there is RemoteUnresolved.
+	notRepo := filepath.Join(x.tmp, "not-a-repository")
+	os.Mkdir(notRepo, 0o700)
+	x.git(x.clone, "remote", "set-url", "origin", notRepo)
 	wantRefusal(t, x.check(), GitError, "")
 }
 

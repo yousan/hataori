@@ -653,12 +653,15 @@ func (c *checker) commits(g *reader, rp repo) error {
 		urls = append(urls, addr)
 	}
 
-	tips, scratch, err := c.ask(g, rp, urls)
+	tips, scratch, rewritten, err := c.ask(g, rp, urls)
 	if scratch != "" {
 		defer os.RemoveAll(scratch)
 	}
 	if err != nil {
 		return err
+	}
+	if skipped == nil {
+		skipped = rewritten
 	}
 	// The remotes' objects are read from the scratch repository; nothing is
 	// written into this one.
@@ -750,25 +753,25 @@ func (c *checker) stashCommits(g *reader) ([]string, error) {
 // so that only what it lacks is downloaded. It returns one "^<commit>"
 // line per commit a remote ref names, and the scratch repository, which
 // the caller removes.
-func (c *checker) ask(g *reader, rp repo, urls []string) (string, string, error) {
+func (c *checker) ask(g *reader, rp repo, urls []string) (tips, scratch string, rewritten *Refusal, err error) {
 	objects, err := g.gitPath(c.ctx, "objects")
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	if objects, err = filepath.Abs(objects); err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	if _, err := realDir(filepath.Join(c.root, "state"), true); err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	base, err := realDir(filepath.Join(c.root, scratchDir), true)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	var b [8]byte
 	rand.Read(b[:])
 	c.n++
-	scratch := filepath.Join(base, hex.EncodeToString(b[:])+"-"+strconv.Itoa(c.n))
+	scratch = filepath.Join(base, hex.EncodeToString(b[:])+"-"+strconv.Itoa(c.n))
 	s := reader{dir: scratch, env: append(c.r.Maker.gitEnv(),
 		"GIT_ALLOW_PROTOCOL=https:http:ssh:git:file",
 		"GIT_NO_REPLACE_OBJECTS=1",
@@ -776,40 +779,44 @@ func (c *checker) ask(g *reader, rp repo, urls []string) (string, string, error)
 		"GIT_CEILING_DIRECTORIES="+base,
 		"LC_ALL=C")}
 	if _, _, err := (reader{dir: base, env: s.env}).run(c.ctx, "init", "--quiet", "--bare", "--", scratch); err != nil {
-		return "", scratch, err
+		return "", scratch, nil, err
 	}
 	if err := os.WriteFile(filepath.Join(scratch, "objects", "info", "alternates"), []byte(objects+"\n"), 0o600); err != nil {
-		return "", scratch, err
+		return "", scratch, nil, err
 	}
 	for i, u := range urls {
 		// git rewrites the address again by url.<base>.insteadOf: what
 		// was checked must be what is fetched.
+		// One that would be rewritten does not count.
 		if got, err := s.line(c.ctx, "ls-remote", "--get-url", "--", u); err != nil {
-			return "", scratch, err
+			return "", scratch, nil, err
 		} else if got != u {
-			return "", scratch, c.refuse(rp, RemoteUnresolved, "remote "+redact(u)+" is rewritten to "+redact(got))
+			if rewritten == nil {
+				rewritten = &Refusal{Reason: RemoteUnresolved, Repo: rp.rel, Kind: rp.kind, Detail: "remote " + redact(u) + " is rewritten to " + redact(got)}
+			}
+			continue
 		}
 		if _, _, err := s.run(c.ctx, "-c", "gc.auto=0", "-c", "maintenance.auto=false",
 			"fetch", "--quiet", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules",
 			"--", u, fmt.Sprintf("+refs/*:refs/r%d/*", i)); err != nil {
-			return "", scratch, err
+			return "", scratch, nil, err
 		}
 	}
 	out, _, err := s.run(c.ctx, "for-each-ref", "--format=%(objectname) %(objecttype) %(*objectname) %(*objecttype)")
 	if err != nil {
-		return "", scratch, err
+		return "", scratch, nil, err
 	}
-	var tips strings.Builder
+	var list strings.Builder
 	for _, l := range strings.Split(string(out), "\n") {
 		f := strings.Fields(l)
 		switch {
 		case len(f) >= 2 && f[1] == "commit":
-			fmt.Fprintf(&tips, "^%s\n", f[0])
+			fmt.Fprintf(&list, "^%s\n", f[0])
 		case len(f) == 4 && f[3] == "commit":
-			fmt.Fprintf(&tips, "^%s\n", f[2])
+			fmt.Fprintf(&list, "^%s\n", f[2])
 		}
 	}
-	return tips.String(), scratch, nil
+	return list.String(), scratch, rewritten, nil
 }
 
 // localRemote says whether a remote address counts, and returns the
@@ -867,16 +874,23 @@ func (c *checker) inRoot(p string) Reason {
 func (c *checker) localPath(u, dir string) (p string, local bool) {
 	switch {
 	case strings.HasPrefix(u, "file://"):
-		p = strings.TrimPrefix(u, "file://")
-		if i := strings.IndexByte(p, '/'); i > 0 { // file://host/path
-			p = p[i:]
-		}
-		// git decodes %XX in a URL's path.
-		decoded, err := url.PathUnescape(p)
-		if err != nil || !strings.HasPrefix(decoded, "/") {
+		// git decodes %XX in the whole URL, then takes the host up to
+		// the first slash (after a bracketed host's "]").
+		p, err := url.PathUnescape(strings.TrimPrefix(u, "file://"))
+		if err != nil {
 			return "", true
 		}
-		return decoded, true
+		from := 0
+		if strings.HasPrefix(p, "[") {
+			if end := strings.IndexByte(p, ']'); end > 0 {
+				from = end
+			}
+		}
+		i := strings.IndexByte(p[from:], '/')
+		if i < 0 {
+			return "", true
+		}
+		return p[from+i:], true
 	case strings.Contains(u, "://"):
 		return "", false
 	}
@@ -910,9 +924,14 @@ func (c *checker) localPath(u, dir string) (p string, local bool) {
 // gitReads lists, resolved, every path git may read the repository at p
 // from: p itself (a git directory, a .git file or a bundle), and p/.git,
 // p.git/.git and p.git, which upload-pack also tries, and the git
-// directory a .git file among them names. A path that does not exist is
-// left out, as git leaves it out; one that cannot be resolved is an error.
+// directory a .git file among them names. Trailing slashes are dropped
+// first, as upload-pack drops them. A path that does not exist is left
+// out, as git leaves it out; one that cannot be resolved is an error, and
+// so is finding nothing: git may still read something there.
 func gitReads(p string) ([]string, error) {
+	for len(p) > 1 && strings.HasSuffix(p, "/") {
+		p = p[:len(p)-1]
+	}
 	var reads []string
 	resolve := func(q string) (string, bool, error) {
 		r, err := filepath.EvalSymlinks(q)
@@ -945,13 +964,19 @@ func gitReads(p string) ([]string, error) {
 		if !filepath.IsAbs(gitdir) {
 			gitdir = q[:strings.LastIndexByte(q, '/')+1] + gitdir
 		}
+		// A .git file naming nothing that exists is not followed by git
+		// either, but it cannot be told what git would read instead.
 		if r, ok, err = resolve(gitdir); err != nil {
 			return nil, err
-		} else if ok {
-			if reads, err = withCommonDir(reads, r); err != nil {
-				return nil, err
-			}
+		} else if !ok {
+			return nil, errors.New(".git file " + q + " names nothing")
 		}
+		if reads, err = withCommonDir(reads, r); err != nil {
+			return nil, err
+		}
+	}
+	if len(reads) == 0 {
+		return nil, errors.New("nothing at " + p)
 	}
 	return reads, nil
 }
