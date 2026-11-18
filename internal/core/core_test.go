@@ -172,6 +172,9 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 		"Stop":      func(a control.API) error { return a.Stop(ctx, id) },
 		"Events":    func(a control.API) error { _, err := a.Events(ctx, control.Filter{Scope: "s"}, 0); return err },
 		"Workspace": func(a control.API) error { _, err := a.Workspace(ctx, id); return err },
+		// Every other operation is allowed to "other scope": only the
+		// socket's owner connection has OpSignIn.
+		"SignInLink": func(a control.API) error { _, err := a.SignInLink(ctx); return err },
 	}
 	if len(ops) != reflect.TypeFor[control.API]().NumMethod() {
 		t.Fatal("the test does not cover every operation")
@@ -205,6 +208,35 @@ func TestWorkspaceOfAThread(t *testing.T) {
 	}
 	if _, err := f.owner.Workspace(ctx, control.ThreadID{Scope: "s", Key: "none"}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Workspace of no thread: %v", err)
+	}
+}
+
+type fakeSignIn struct{}
+
+func (fakeSignIn) NewLink(context.Context) (string, error) {
+	return "https://dash.example.com/signin?t=x", nil
+}
+
+// SignInLink needs OpSignIn, which a caller with every other operation,
+// such as the dashboard's or a chat front end's, does not have.
+func TestSignInLinkOnlyForTheSocketOwner(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{})
+	socket := f.core.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all | control.OpSignIn})
+	if _, err := socket.SignInLink(ctx); !errors.Is(err, ErrNoDashboard) {
+		t.Fatalf("without a dashboard: %v", err)
+	}
+	f.core.SignIn = fakeSignIn{}
+	if link, err := socket.SignInLink(ctx); err != nil || link == "" {
+		t.Fatalf("the socket's owner: %q, %v", link, err)
+	}
+	for _, c := range []control.Caller{
+		{Principal: "owner", Scopes: []string{"s"}, May: all},
+		{Principal: "owner", Scopes: []string{"s"}, May: control.OpRead},
+	} {
+		if _, err := f.core.As(c).SignInLink(ctx); !errors.Is(err, ErrForbidden) {
+			t.Errorf("caller %+v: %v", c, err)
+		}
 	}
 }
 

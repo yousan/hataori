@@ -151,6 +151,9 @@ type Core struct {
 	Model      string // default model of a scope without one
 	Effort     string // default effort of a scope without one
 	Log        *slog.Logger
+	// SignIn makes dashboard sign-in links; nil when the instance has no
+	// dashboard.
+	SignIn SignIn
 
 	locks keyedMutex
 }
@@ -189,6 +192,15 @@ func (k *keyedMutex) lock(key string) func() {
 		k.mu.Unlock()
 	}
 }
+
+// SignIn makes single-use dashboard sign-in links.
+type SignIn interface {
+	NewLink(ctx context.Context) (string, error)
+}
+
+// ErrNoDashboard is returned by SignInLink when the instance has no
+// dashboard.
+var ErrNoDashboard = errors.New("the instance has no dashboard: add a \"dashboard\" section to its config")
 
 // As returns the API as seen by caller. It is the only way to reach an
 // operation. A caller's From is resolved to its person here.
@@ -1008,4 +1020,14 @@ func (a *api) Events(ctx context.Context, f control.Filter, after uint64) (<-cha
 		}
 	}()
 	return out, nil
+}
+
+func (a *api) SignInLink(ctx context.Context) (string, error) {
+	if err := a.check(control.OpSignIn, "SignInLink", ""); err != nil {
+		return "", err
+	}
+	if a.c.SignIn == nil {
+		return "", fmt.Errorf("core: SignInLink: %w", ErrNoDashboard)
+	}
+	return a.c.SignIn.NewLink(ctx)
 }

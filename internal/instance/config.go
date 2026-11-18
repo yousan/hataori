@@ -43,6 +43,10 @@ type Config struct {
 	// off, and the alert stays.
 	LoginRelay bool
 
+	// Dashboard is how the instance serves its dashboard (section 7.2);
+	// nil when the config has no "dashboard" section.
+	Dashboard *Dashboard
+
 	// Drivers and Adapters hold each driver's and adapter's own section of
 	// the config, by registered name, unparsed.
 	Drivers  map[string][]byte
@@ -59,6 +63,24 @@ type Scope struct {
 	People  []string // names of the people who may act here besides the owner
 }
 
+// Dashboard is the "dashboard" section of the config. Whether the
+// addresses fit together is checked when the dashboard starts.
+type Dashboard struct {
+	Listen  string // "listen": the address to listen on; loopback when empty
+	URL     string // "url": the address people open; made from Listen when empty
+	TLSCert string // "tls_cert": a PEM certificate file under config/, with "tls_key"
+	TLSKey  string // "tls_key": its PEM private key file under config/
+	Proxy   string // "proxy": the IP address of the reverse proxy in front
+}
+
+type fileDashboard struct {
+	Listen  string `json:"listen"`
+	URL     string `json:"url"`
+	TLSCert string `json:"tls_cert"`
+	TLSKey  string `json:"tls_key"`
+	Proxy   string `json:"proxy"`
+}
+
 // The config as written in the file.
 type fileConfig struct {
 	Owner      string                     `json:"owner"`
@@ -70,6 +92,7 @@ type fileConfig struct {
 	Context    *int                       `json:"context_bytes"`
 	LoginRelay *bool                      `json:"login_relay"`
 	Scopes     []fileScope                `json:"scopes"`
+	Dashboard  *fileDashboard             `json:"dashboard"`
 	Drivers    map[string]json.RawMessage `json:"drivers"`
 	Adapters   map[string]json.RawMessage `json:"adapters"`
 }
@@ -135,6 +158,14 @@ func ParseConfig(data []byte) (*Config, error) {
 			return nil, fmt.Errorf("config: key %q: %d is not a positive number of bytes", "context_bytes", *f.Context)
 		}
 		c.ContextBytes = *f.Context
+	}
+
+	if d := f.Dashboard; d != nil {
+		c.Dashboard = &Dashboard{Listen: strings.TrimSpace(d.Listen), URL: strings.TrimSpace(d.URL),
+			TLSCert: strings.TrimSpace(d.TLSCert), TLSKey: strings.TrimSpace(d.TLSKey), Proxy: strings.TrimSpace(d.Proxy)}
+		if (c.Dashboard.TLSCert == "") != (c.Dashboard.TLSKey == "") {
+			return nil, errors.New(`config: keys "dashboard.tls_cert" and "dashboard.tls_key" go together: give both or neither`)
+		}
 	}
 
 	seen := map[string]bool{}

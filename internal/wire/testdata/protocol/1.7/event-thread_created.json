@@ -1,0 +1,1 @@
+{"id":1,"event":{"pos":42,"thread":{"scope":"C0123","key":"T0456"},"time":"2026-01-02T03:04:05.678Z","kind":"thread_created","data":{"effort":"high","from":"discord:W1","model":"opus","principal":"dispatch","repo":"https://example.com/repo.git","session":3,"thread":7}}}

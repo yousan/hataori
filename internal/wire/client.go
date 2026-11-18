@@ -186,6 +186,12 @@ func (c *Client) Workspace(ctx context.Context, id control.ThreadID) (control.Wo
 	return out, err
 }
 
+func (c *Client) SignInLink(ctx context.Context) (string, error) {
+	var out string
+	err := c.call(ctx, "SignInLink", signInLinkArgs{}, &out)
+	return out, err
+}
+
 // Events follows the daemon's events on a connection of its own. When the
 // connection breaks, it connects again and resumes after the last event it
 // delivered, so a reader sees no gap and no repeat. The first request is

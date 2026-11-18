@@ -43,6 +43,11 @@ type API interface {
 	// It answers from the remote-tracking refs as last fetched; it does not
 	// ask the remote.
 	Workspace(ctx context.Context, id ThreadID) (WorkspaceState, error)
+
+	// SignInLink makes a single-use, short-lived dashboard sign-in link for
+	// the owner. It needs OpSignIn, which only the owner's connection on the
+	// control socket is given.
+	SignInLink(ctx context.Context) (string, error)
 }
 
 // Caller is who is asking. An API value is bound to one Caller,
@@ -59,7 +64,7 @@ type Caller struct {
 	From      string
 	Principal Principal // a person's name
 	Scopes    []string  // the scopes it may see and act in
-	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop
+	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn
 	// NoText leaves text written by a person or an agent out of what the
 	// caller reads: ThreadInfo.Last, ThreadDetail.Recent, the text of its
 	// requests, and the text fields of events (Field.Text). The thread's
@@ -81,6 +86,7 @@ const (
 	OpSend                   // Send
 	OpAnswer                 // Answer
 	OpStop                   // Stop
+	OpSignIn                 // SignInLink: only the owner's connection on the control socket
 )
 
 // Has reports whether every operation in o is in ops.

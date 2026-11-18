@@ -70,6 +70,7 @@ A complete example for one Discord channel and Claude Code, with the owner, one 
 | `scopes` | array | empty | The channels hataori serves, one object each (below). A channel that is not listed, or not enabled, starts nothing. |
 | `drivers` | object | empty | One section per chat surface, by name. This binary has one: `discord` (below). A name it does not have is refused at start. |
 | `adapters` | object | empty | One section per coding agent, by name. This binary has one: `claude-code` (below). Exactly one adapter must be named. |
+| `dashboard` | object | absent | The read-only web dashboard (below). Without this section the daemon serves none. |
 
 Model and effort are chosen in this order: the order's `model:` / `effort:`, then the scope's, then the top-level key, then the agent's own default.
 
@@ -143,6 +144,20 @@ The section may be empty (`{}`).
 
 Unknown keys are refused.
 
+### `dashboard`
+
+The section may be empty (`{}`): the dashboard then listens on `127.0.0.1:7466`. It shows nothing yet but whether you are signed in. Sign in by opening the link that `hataori signin` prints; it works once, within five minutes, and the session lasts twelve hours or until the daemon restarts.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `listen` | string | `"127.0.0.1:7466"` | The host and port to listen on. An address that is not loopback needs `tls_cert` and `tls_key`, or `proxy`; without them the daemon does not start. |
+| `url` | string | made from `listen` | The address people open, such as `"https://dash.example.com"`: a scheme and a host, nothing else. Sign-in links start with it, and a request whose `Host` or `Origin` is any other address is refused. Required with `proxy`, or when `listen` names every address. |
+| `tls_cert` | string | empty | The name of a PEM certificate file in `<root>/config/`. With `tls_key`, the dashboard serves HTTPS itself. |
+| `tls_key` | string | empty | The name of its PEM private key file in `<root>/config/`. |
+| `proxy` | string | empty | The IP address of a reverse proxy in front that serves the dashboard over HTTPS at `url`. Connections from any other address are refused. The proxy must pass the `Host` it was asked for. |
+
+Only `GET` and `HEAD` are served. The session cookie cannot be read by scripts, and it is sent only over HTTPS when the dashboard is served with TLS or behind the proxy.
+
 ## Environment variables
 
 hataori reads these:
@@ -165,6 +180,7 @@ hataori threads [--root DIR]
 hataori thread  [--root DIR] KEY
 hataori events  [--root DIR] [--after N] [--follow]
 hataori stop    [--root DIR] KEY
+hataori signin  [--root DIR]
 hataori version
 ```
 
@@ -175,6 +191,7 @@ hataori version
 | `thread KEY` | Prints one thread and its state. Exits with 3 when no thread has that key. |
 | `events` | Prints the event log, one JSON object per line. |
 | `stop KEY` | Interrupts the thread's running turn. |
+| `signin` | Prints `{"link": ...}`: a link that signs the owner in to the dashboard, once, within five minutes. Fails when the config has no `dashboard`. |
 | `version` | Prints the version. |
 
 | Flag | Default | Meaning |

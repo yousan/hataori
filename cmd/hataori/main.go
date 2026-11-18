@@ -7,6 +7,7 @@
 //	hataori thread [--root DIR] KEY             the thread with KEY, or exit 3
 //	hataori events [--root DIR] [--after N] [--follow]
 //	hataori stop [--root DIR] KEY               interrupt the thread's running turn
+//	hataori signin [--root DIR]                 a single-use dashboard sign-in link
 //	hataori version
 //
 // The root is --root, or $HATAORI_ROOT. Output is one JSON object per line.
@@ -64,7 +65,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return runCtx(context.Background(), args, stdout, stderr)
 }
 
-const usage = "usage: hataori run|threads|thread KEY|events [--after N] [--follow]|stop KEY [--root DIR] | hataori version | hataori host <state-dir> | hataori hook [--wait] [--timeout DURATION]"
+const usage = "usage: hataori run|threads|thread KEY|events [--after N] [--follow]|stop KEY|signin [--root DIR] | hataori version | hataori host <state-dir> | hataori hook [--wait] [--timeout DURATION]"
 
 func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -88,7 +89,7 @@ func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 	case "hook":
 		return host.HookMain(args[1:], os.Stdin, stdout, stderr, os.Getenv)
-	case "run", "threads", "thread", "events", "stop":
+	case "run", "threads", "thread", "events", "stop", "signin":
 		return command(ctx, args[0], args[1:], stdout, stderr)
 	}
 	fmt.Fprintln(stderr, usage)
@@ -168,6 +169,14 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 		}
 	case "events":
 		return events(ctx, c, *after, *follow, enc, fail)
+	case "signin":
+		link, err := c.SignInLink(ctx)
+		if err != nil {
+			return fail(err)
+		}
+		if err := enc.Encode(map[string]string{"link": link}); err != nil {
+			return fail(err)
+		}
 	case "stop":
 		t, ok, err := find(ctx, c, pos[0])
 		if err != nil {
