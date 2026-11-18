@@ -180,6 +180,12 @@ func (c *Client) Stop(ctx context.Context, id control.ThreadID) error {
 	return c.call(ctx, "Stop", stopArgs{ID: id}, nil)
 }
 
+func (c *Client) Workspace(ctx context.Context, id control.ThreadID) (control.WorkspaceState, error) {
+	var out control.WorkspaceState
+	err := c.call(ctx, "Workspace", workspaceArgs{ID: id}, &out)
+	return out, err
+}
+
 // Events follows the daemon's events on a connection of its own. When the
 // connection breaks, it connects again and resumes after the last event it
 // delivered, so a reader sees no gap and no repeat. The first request is

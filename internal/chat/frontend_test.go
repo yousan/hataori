@@ -66,6 +66,10 @@ func (workspaces) Adopt(context.Context, control.ThreadID, core.Placement) (stri
 	return "", false, nil
 }
 
+func (workspaces) State(context.Context, string) (control.WorkspaceState, error) {
+	return control.WorkspaceState{}, nil
+}
+
 func (w workspaces) Make(context.Context, control.ThreadID, string, func(core.Placement) error) (string, error) {
 	return "dir", w.err
 }

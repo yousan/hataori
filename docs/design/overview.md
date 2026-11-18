@@ -1022,6 +1022,22 @@ type API interface {
 	// two it delivers one mark of kind CaughtUp, which is not stored, so a
 	// reader can stop after the stored events.
 	Events(ctx context.Context, f Filter, after uint64) (<-chan Event, error)
+
+	// Workspace reads the state of a thread's workspace and changes nothing.
+	// It is the check of section 4.6 as numbers, answering from the
+	// remote-tracking refs as last fetched; it does not ask the remote.
+	Workspace(ctx context.Context, id ThreadID) (WorkspaceState, error)
+}
+
+type WorkspaceState struct {
+	Branch      string     // empty when HEAD is detached
+	Base        string     // the commit the branch started from: where it meets origin/HEAD, else its upstream, else HEAD
+	Added       int        // lines, against Base, staged and unstaged changes of tracked files included
+	Removed     int
+	Uncommitted int        // modified, staged and untracked files, each once; ignored files not counted
+	Unpushed    int        // commits reachable from HEAD or a local branch and from no remote-tracking ref
+	Fetched     *time.Time // the last fetch, push or clone; nil when the repository does not say
+	// PullRequest is added only if the research finds a source (section 7.2).
 }
 
 // Caller is who is asking. An API value is bound to one Caller,
@@ -1090,10 +1106,7 @@ Section 7.2. `ThreadID` in these operations is the thread's number, as above. No
 type API interface {
 	// ...the operations above, and:
 
-	// Workspace reads the state of a thread's workspace and changes nothing.
-	// It is the check of section 4.6, answering from the remote refs as last
-	// fetched.
-	Workspace(ctx context.Context, id ThreadID) (WorkspaceState, error)
+	// Workspace: declared above, since protocol 1.4 (#196).
 
 	// Terminal streams a session's terminal output. It first sends the end of
 	// the kept log, with Reset set, when after is 0, belongs to another run of
@@ -1132,16 +1145,7 @@ type TokenCount struct{ Turn, Today int64 } // today: the instance's time zone
 // Thread takes an optional count of recent events, which ThreadDetail.Events
 // carries, newest last.
 
-type WorkspaceState struct {
-	Branch      string
-	Base        string // the commit the branch started from
-	Added       int    // lines, against Base, uncommitted changes included
-	Removed     int
-	Uncommitted int // modified, staged and untracked files
-	Unpushed    int // commits on no remote-tracking ref
-	Fetched     time.Time
-	// PullRequest is added only if the research finds a source (section 7.2).
-}
+// WorkspaceState: declared above, with Workspace.
 
 type TerminalChunk struct {
 	Run   string // the session host's run; a new run starts a new count

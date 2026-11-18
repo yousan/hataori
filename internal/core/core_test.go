@@ -66,6 +66,12 @@ func (fakeWorkspaces) Adopt(context.Context, control.ThreadID, Placement) (strin
 	return "", false, nil
 }
 
+// State reports one more uncommitted file than the length of dir, so a test
+// sees which directory was asked about.
+func (fakeWorkspaces) State(_ context.Context, dir string) (control.WorkspaceState, error) {
+	return control.WorkspaceState{Branch: "main", Uncommitted: len(dir) + 1}, nil
+}
+
 const all = control.OpRead | control.OpStart | control.OpSend | control.OpAnswer | control.OpStop
 
 type fixture struct {
@@ -158,8 +164,9 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 		"Answer": func(a control.API) error {
 			return a.Answer(ctx, session.RequestHandle(sid, "r1"), control.Answer{Text: "x"})
 		},
-		"Stop":   func(a control.API) error { return a.Stop(ctx, id) },
-		"Events": func(a control.API) error { _, err := a.Events(ctx, control.Filter{Scope: "s"}, 0); return err },
+		"Stop":      func(a control.API) error { return a.Stop(ctx, id) },
+		"Events":    func(a control.API) error { _, err := a.Events(ctx, control.Filter{Scope: "s"}, 0); return err },
+		"Workspace": func(a control.API) error { _, err := a.Workspace(ctx, id); return err },
 	}
 	if len(ops) != reflect.TypeFor[control.API]().NumMethod() {
 		t.Fatal("the test does not cover every operation")
@@ -179,6 +186,20 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 	}
 	if count(t, f.core.Store, "events") != events || count(t, f.core.Store, "threads") != threads || f.runner.Calls() != calls {
 		t.Fatal("a refused call changed something")
+	}
+}
+
+// Workspace reads the directory the thread's session runs in.
+func TestWorkspaceOfAThread(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{key: "new"})
+	id, _ := f.running(t, "t1")
+	st, err := f.owner.Workspace(ctx, id)
+	if err != nil || st.Branch != "main" || st.Uncommitted != len("dir")+1 {
+		t.Fatalf("Workspace: %+v, %v", st, err)
+	}
+	if _, err := f.owner.Workspace(ctx, control.ThreadID{Scope: "s", Key: "none"}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Workspace of no thread: %v", err)
 	}
 }
 

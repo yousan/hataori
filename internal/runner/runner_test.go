@@ -123,6 +123,10 @@ func (w workDir) Adopt(_ context.Context, th control.ThreadID, p core.Placement)
 	return target, true, nil
 }
 
+func (workDir) State(context.Context, string) (control.WorkspaceState, error) {
+	return control.WorkspaceState{}, nil
+}
+
 type options struct {
 	terminal      bool
 	instructions  string
