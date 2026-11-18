@@ -36,6 +36,7 @@ type codec struct {
 	current    string               // prompt id of the transcript's latest user line
 	turns      map[string]*turnText // by prompt id
 	closed     bool                 // SessionEnd was reported
+	oddUsage   bool                 // usage of a shape the codec does not know was reported once
 
 	// Input.
 	ready         bool          // the session reported its start
@@ -66,6 +67,32 @@ type turnText struct {
 	final   string     // the final answer Stop reported
 	held    string     // the latest assistant text, held back: it may be the final answer
 	pending []textItem // read from the transcript before any hook named the prompt
+
+	usage    map[string]tokens // the usage of each model message of the turn, by message id
+	model    string            // the model of the latest of them
+	reported agent.UsageCount  // the last Usage event produced for the turn
+}
+
+// tokens is the usage of one model message, as the transcript gives it.
+type tokens struct {
+	Input      *int64 `json:"input_tokens"`
+	Output     *int64 `json:"output_tokens"`
+	CacheRead  *int64 `json:"cache_read_input_tokens"`
+	CacheWrite *int64 `json:"cache_creation_input_tokens"`
+}
+
+// known says whether t has the shape the codec reads: input and output
+// counts, and no count below zero.
+func (t tokens) known() bool {
+	if t.Input == nil || t.Output == nil {
+		return false
+	}
+	for _, n := range []*int64{t.Input, t.Output, t.CacheRead, t.CacheWrite} {
+		if n != nil && *n < 0 {
+			return false
+		}
+	}
+	return true
 }
 
 type textItem struct {
@@ -314,6 +341,7 @@ func (c *codec) decode(src agent.Source, line []byte) Actions {
 				replay = merge(replay, c.applyText(t, it))
 			}
 			t.pending = nil
+			replay = merge(replay, c.reportUsage(t))
 		}
 	}
 	// Text still held when a new prompt starts or the session ends was not
@@ -396,7 +424,10 @@ type transcriptLine struct {
 	PromptID    string `json:"promptId"`
 	IsSidechain bool   `json:"isSidechain"`
 	Message     struct {
+		ID      string          `json:"id"`
+		Model   string          `json:"model"`
 		Content json.RawMessage `json:"content"`
+		Usage   json.RawMessage `json:"usage"`
 	} `json:"message"`
 }
 
@@ -451,8 +482,81 @@ func (c *codec) decodeTranscript(raw []byte) Actions {
 				out = merge(out, c.release(c.turn(c.current)))
 			}
 		}
+		out = merge(out, c.usageOf(l))
 	}
 	return out
+}
+
+// synthetic is the model of the assistant lines the CLI writes itself, such
+// as an API error, without calling a model.
+const synthetic = "<synthetic>"
+
+// usageOf keeps the usage of an assistant line for the turn of the
+// current prompt, and reports the turn's totals when they changed.
+//
+// The CLI writes one model message as several lines, one per content
+// block, each with the message's id and usage; a message counts once, with
+// the usage of its latest line. Usage of a shape the codec does not know is
+// skipped, and reported as one Unknown event for the whole session.
+//
+// The transcript gives no context window, so context use is never filled.
+// Usage read after the turn's end is not reported: the core would count it
+// toward the turn running then.
+func (c *codec) usageOf(l transcriptLine) Actions {
+	if len(l.Message.Usage) == 0 || string(l.Message.Usage) == "null" || l.Message.Model == synthetic {
+		return Actions{}
+	}
+	var u tokens
+	if err := json.Unmarshal(l.Message.Usage, &u); err != nil || !u.known() {
+		if c.oddUsage {
+			return Actions{}
+		}
+		c.oddUsage = true
+		return c.events(agent.Event{Kind: agent.Unknown, Text: "usage of an unknown shape: " + string(l.Message.Usage)})
+	}
+	if c.current == "" {
+		return Actions{}
+	}
+	key := l.Message.ID
+	if key == "" {
+		key = "line:" + l.UUID
+	}
+	t := c.turn(c.current)
+	if t.usage == nil {
+		t.usage = map[string]tokens{}
+	}
+	t.usage[key] = u
+	if l.Message.Model != "" {
+		t.model = l.Message.Model
+	}
+	if !t.known {
+		return Actions{} // reported when a hook names the prompt
+	}
+	return c.reportUsage(t)
+}
+
+// reportUsage produces a Usage event with the totals of t's turn, unless
+// they are the ones reported last or the turn has ended.
+func (c *codec) reportUsage(t *turnText) Actions {
+	if len(t.usage) == 0 || t.ended {
+		return Actions{}
+	}
+	n := agent.UsageCount{Model: t.model}
+	for _, u := range t.usage {
+		n.Input += *u.Input
+		n.Output += *u.Output
+		if u.CacheRead != nil {
+			n.CacheRead += *u.CacheRead
+		}
+		if u.CacheWrite != nil {
+			n.CacheWrite += *u.CacheWrite
+		}
+	}
+	if n == t.reported {
+		return Actions{}
+	}
+	t.reported = n
+	return c.events(agent.Event{Kind: agent.Usage, Usage: &n})
 }
 
 func (c *codec) item(it textItem) Actions {

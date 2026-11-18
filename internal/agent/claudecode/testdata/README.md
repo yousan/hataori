@@ -4,7 +4,7 @@ Real output of the interactive `claude` CLI, for testing the adapter's codec. Th
 
 - `2.1.322/`: Claude Code 2.1.322, captured on 2026-11-12 (also in `2.1.322/VERSION`), on Linux, with the model `haiku` (it reports itself as `claude-haiku-5-5`).
 - `2.1.326/`: Claude Code 2.1.326, captured on 2026-11-17 (also in `2.1.326/VERSION`), on Linux, with the model `haiku`: `subagent_tools`, taken for #142, and `trust_answered`, taken for #56 (see below).
-- `2.1.327/`: Claude Code 2.1.327, on 2026-11-18 (also in `2.1.327/VERSION`), on Linux: `first_enter_lost`, a real start of a session that hataori ran, taken for #178 (see below).
+- `2.1.327/`: Claude Code 2.1.327, on 2026-11-18 (also in `2.1.327/VERSION`), on Linux: `first_enter_lost`, a real start of a session that hataori ran, taken for #178, and `usage`, taken by `capture.py` for #195 (see below).
 - `capture.py` took them; `scrub.py` made them committable. `captures_test.go` in the package fails when a capture holds a home directory path, an e-mail address, an unscrubbed UUID or something shaped like a token.
 
 ## How they were taken
@@ -148,3 +148,18 @@ None of these trusts a directory for an interactive session in advance:
 | `screen-after.raw` | The rest: the CLI switches bracketed paste on, enters the full-screen interface and draws its input box, holding the pasted text and an empty line below it, where the Enter went. No `UserPromptSubmit` followed; the turn ended "not delivered". |
 | `hooks/01-SessionStart.json` | The `SessionStart` hook (`source: startup`). |
 
+## Usage per turn (2.1.327, taken for #195)
+
+`2.1.327/usage/`, by `capture.py RAW_DIR usage` with the setup above, model `haiku`, and `TMPDIR` set to a directory of its own; `scrub.py` now maps that directory back to `/tmp`, in its dashed form too.
+
+| Turn | Prompt | Hooks | Transcript |
+|---|---|---|---|
+| 1 | run `echo one` and `echo two` with the Bash tool, as two calls, then reply `done` | `UserPromptSubmit`, `PreToolUse` ×2, `PostToolUse` ×2, `Stop` | two model messages: the first, with both tool calls, written as two lines that carry the same `message.id` and the same `usage`; the second, the answer |
+| 2 | reply with the word `ok` | `UserPromptSubmit`, `Stop` | one model message |
+
+What it shows:
+
+- Usage is in the transcript only, on assistant lines (`message.usage`: `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, with `message.model`). Assistant lines carry no `promptId`; the user line before them does.
+- No hook payload carries usage, the model of a message, or the context window, and the transcript gives no context window either. The `cost-state` line holds the session's totals per model, larger than the sum of the messages: it also counts the CLI's own requests.
+- The final message's line was written 130 ms (turn 1) and 180 ms (turn 2) before the `Stop` hook was called.
+- The line the CLI writes for an API error (`2.1.322/failure`) has the model `<synthetic>` and zero counts.

@@ -785,7 +785,7 @@ Unlike Discord and Slack Socket Mode, Teams calls hataori. The host needs a publ
 | Lamp on the triggering message (working, done, error) | keep | Derived from the state machine. |
 | Stall lamps after 10 s and 30 s of silence | change | Driven by tool start and end reports and by process liveness, not by file silence. |
 | Quiet-gap progress line, edited in place | keep | From tool events. |
-| Turn footer: context use, model, versions | keep | From the usage the agent records per turn (source on the Claude Code path unverified). |
+| Turn footer: context use, model, versions | keep | From the usage the agent records per turn. On the Claude Code path, tokens and model come from the transcript; it gives no context window. |
 | Thread name `W<N> │ #issue topic` | change | The tmux window number becomes a short thread number that `hataori attach` accepts. |
 | Issue or pull request number in the thread name; manual rename wins | keep | |
 | Thread-name lamp, automatic topic, re-title | drop | Opt-in in c-lord; a source of rate limiting. |
@@ -1180,7 +1180,7 @@ Changing `ThreadID` from a scope and a key to a number changes how every thread 
 
 Sleep, close and remove join the interface with the phase that needs them.
 
-The types carry lowercase JSON names, and the data of every event kind is declared in `control.EventKinds`; the store refuses an event that does not match. A `turn_started` event carries the key of the call that started the turn, so a chat front end can reply to the message that started it. A `subagent_started` event carries the subagent's name, and a `tool_started` event the subagent the tool runs in (`agent.Event.Parent`), so a front end can count a subagent's tool calls. A `file_out` event carries every file of one hand-over (`More`) and its caption (`Caption`). A `usage` event carries the counts of `agent.Event.Usage`, each the running turn's total so far, and the turn; the core keeps the thread's `Tokens` and `Context` from them in the same transaction. How all of this is encoded on the socket, and when the protocol version changes, is in [docs/protocol.md](../protocol.md).
+The types carry lowercase JSON names, and the data of every event kind is declared in `control.EventKinds`; the store refuses an event that does not match. A `turn_started` event carries the key of the call that started the turn, so a chat front end can reply to the message that started it. A `subagent_started` event carries the subagent's name, and a `tool_started` event the subagent the tool runs in (`agent.Event.Parent`), so a front end can count a subagent's tool calls. A `file_out` event carries every file of one hand-over (`More`) and its caption (`Caption`). A `usage` event carries the counts of `agent.Event.Usage`, each the running turn's total so far, and the turn; the core keeps the thread's `Tokens` and `Context` from them in the same transaction. The Claude Code adapter fills the counts and `Model` from the usage of each model message in the transcript, and leaves the context use out: neither its transcript nor its hooks give the context window. How all of this is encoded on the socket, and when the protocol version changes, is in [docs/protocol.md](../protocol.md).
 
 ### Control API: additions for the dashboard (proposal)
 
