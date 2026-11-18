@@ -14,7 +14,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **1.7**. Both hellos carry it.
+The protocol version is `major.minor`, now **1.8**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 1.0`.
 - With the same major number and different minor numbers they work together.
@@ -240,8 +240,8 @@ A field left empty matches everything the caller may see.
 | `turns` | integer | optional | the turns started in the thread, in all its sessions; absent for none; since 1.5 |
 | `last` | string | optional | the last line that is not blank of its last `text` event that has one, trimmed, at most 200 bytes; text; since 1.5 |
 | `background` | integer | optional | the `background` of the thread's last `turn_ended` event; absent for 0 or before its first turn ends; since 1.5 |
-| `context` | `Context` | optional | the last context use the agent reported; absent until it reports one; since 1.7 |
-| `tokens` | `TokenCount` | optional | the thread's tokens; absent until the agent reports usage; since 1.7 |
+| `context` | `Context` | optional | the last context use the agent reported; absent until it reports one; since 1.8 |
+| `tokens` | `TokenCount` | optional | the thread's tokens; absent until the agent reports usage; since 1.8 |
 
 ### Type `ThreadDetail`
 
@@ -271,7 +271,7 @@ The fields of `ThreadInfo`, and:
 
 ### Type `Context`
 
-A context use, in tokens; since 1.7.
+A context use, in tokens; since 1.8.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -280,7 +280,7 @@ A context use, in tokens; since 1.7.
 
 ### Type `TokenCount`
 
-Tokens counted from the `usage` events: input, output, cache reads and cache writes together; since 1.7.
+Tokens counted from the `usage` events: input, output, cache reads and cache writes together; since 1.8.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -476,14 +476,14 @@ What the agent reports about the tokens of the running turn. Each count is the t
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `session` | integer | required | the session |
-| `turn` | integer | optional | the turn; absent for a report outside a turn, whose counts go toward no `ThreadInfo.tokens`; since 1.7 |
-| `model` | string | optional | the model the tokens were used with, when the agent says; since 1.7 |
-| `input` | integer | optional | input tokens of the turn so far; since 1.7 |
-| `output` | integer | optional | output tokens of the turn so far; since 1.7 |
-| `cache_read` | integer | optional | tokens read from the prompt cache in the turn so far; since 1.7 |
-| `cache_write` | integer | optional | tokens written to the prompt cache in the turn so far; since 1.7 |
-| `context_used` | integer | optional | tokens in the context now, with `context_size`; since 1.7 |
-| `context_size` | integer | optional | the context window, when the agent says; since 1.7 |
+| `turn` | integer | optional | the turn; absent for a report outside a turn, whose counts go toward no `ThreadInfo.tokens`; since 1.8 |
+| `model` | string | optional | the model the tokens were used with, when the agent says; since 1.8 |
+| `input` | integer | optional | input tokens of the turn so far; since 1.8 |
+| `output` | integer | optional | output tokens of the turn so far; since 1.8 |
+| `cache_read` | integer | optional | tokens read from the prompt cache in the turn so far; since 1.8 |
+| `cache_write` | integer | optional | tokens written to the prompt cache in the turn so far; since 1.8 |
+| `context_used` | integer | optional | tokens in the context now, with `context_size`; since 1.8 |
+| `context_size` | integer | optional | the context window, when the agent says; since 1.8 |
 
 ### Event `login_lost`
 

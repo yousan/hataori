@@ -191,7 +191,7 @@ type ThreadInfo struct {
 	Turns      int    `json:"turns,omitempty"`      // turns started in this thread
 	Last       string `json:"last,omitempty"`       // the last line of output, at most LastMax bytes; text
 	Background int    `json:"background,omitempty"` // background of the thread's last turn_ended event
-	// From the usage events, since 1.7.
+	// From the usage events, since 1.8.
 	Context *Context    `json:"context,omitempty"` // the last context use reported; absent until one is
 	Tokens  *TokenCount `json:"tokens,omitempty"`  // absent until the agent reports usage
 }
