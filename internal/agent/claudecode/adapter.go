@@ -108,7 +108,7 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 	if !filepath.IsAbs(spec.StateDir) {
 		return agent.Launch{}, fmt.Errorf("%s: state directory %q is not an absolute path", Name, spec.StateDir)
 	}
-	settings, err := a.settings()
+	settings, err := a.settings(spec)
 	if err != nil {
 		return agent.Launch{}, err
 	}

@@ -49,6 +49,22 @@ export interface ThreadDetail extends ThreadInfo {
   events?: Event[];
 }
 
+// AgentLimits is an agent's remaining usage as its sessions last reported
+// it; a report older than every seconds is not current.
+export interface AgentLimits {
+  agent: string;
+  at: string;
+  every: number;
+  windows: LimitWindow[];
+}
+
+export interface LimitWindow {
+  name: string;
+  minutes?: number;
+  used: number; // percent
+  resets?: string;
+}
+
 // SignedOut is thrown when the server answers 401: the session has ended.
 export class SignedOut extends Error {}
 
@@ -66,6 +82,10 @@ export function threads(): Promise<ThreadInfo[]> {
 export function thread(id: ThreadID, events: number): Promise<ThreadDetail> {
   const q = new URLSearchParams({ scope: id.scope, key: id.key, recent: "0", events: String(events) });
   return get<ThreadDetail>(`/api/thread?${q}`);
+}
+
+export function limits(): Promise<AgentLimits[]> {
+  return get<AgentLimits[]>("/api/limits");
 }
 
 export const eventsPath = "/api/events";

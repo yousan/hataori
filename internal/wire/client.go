@@ -355,3 +355,9 @@ func (c *Client) pump(ctx context.Context, conn net.Conn, dec *json.Decoder, out
 		}
 	}
 }
+
+func (c *Client) Limits(ctx context.Context) ([]control.AgentLimits, error) {
+	var out []control.AgentLimits
+	err := c.call(ctx, "Limits", limitsArgs{}, &out)
+	return out, err
+}

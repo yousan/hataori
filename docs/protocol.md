@@ -16,7 +16,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **1.12**. Both hellos carry it.
+The protocol version is `major.minor`, now **1.13**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 1.0`.
 - With the same major number and different minor numbers they work together.
@@ -232,6 +232,15 @@ Since 1.10. The visible screen of one tmux pane, as text, one line per row. Allo
 
 Result: string
 
+### Operation `Limits`
+
+Since 1.13. The remaining usage of each agent, as its sessions last reported it: one entry per agent that has reported, by its registered name. An agent that has not, because nothing it gives says so, has no entry. A later report replaces an earlier one, whichever of the agent's sessions made it; it changes no thread and writes no event. The usage is the agent's account's, so it needs the `Threads` permission and no scope. It takes no arguments.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+
+Result: [`AgentLimits`]
+
 ## Types
 
 ### Type `ThreadID`
@@ -398,6 +407,28 @@ Since 1.10. A tab in a name or a directory is given as a space.
 | `index` | string | required | the pane's index in its window |
 | `dir` | string | optional | the pane's current directory |
 | `attached` | boolean | required | a tmux client shows the session now |
+
+### Type `AgentLimits`
+
+Since 1.13. A report older than `every` seconds is not current: a reader shows it with its time, since the agent's sessions would have reported again by then if one ran.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `agent` | string | required | the agent's registered name |
+| `at` | time | required | when the report was made |
+| `every` | integer | required | seconds: how often the agent's sessions report while one runs |
+| `windows` | [`LimitWindow`] | required | as the agent reports them, in its order; may be empty |
+
+### Type `LimitWindow`
+
+Since 1.13.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `name` | string | required | the agent's name for the window, such as `five_hour`, `seven_day`, `primary` |
+| `minutes` | integer | optional | its length; absent when the agent does not say |
+| `used` | integer | required | the share used, in percent, 0 to 100 |
+| `resets` | time | optional | when it starts again; absent when the agent does not say |
 
 ### Type `Event`
 

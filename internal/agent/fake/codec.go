@@ -64,6 +64,15 @@ type report struct {
 	Input      string   `json:"input"`
 	// usage; "input" is the turn's input id above, so the counts are "in"
 	Tokens
+	// limits
+	At      int64 `json:"at"`    // Unix ms
+	Every   int64 `json:"every"` // seconds
+	Windows []struct {
+		Name    string `json:"name"`
+		Minutes int64  `json:"minutes"`
+		Used    int    `json:"used"`
+		Resets  int64  `json:"resets"` // Unix seconds; 0 for none
+	} `json:"windows"`
 }
 
 // Tokens are the counts of a usage report.
@@ -199,6 +208,16 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 	case "usage":
 		a = c.events(agent.Event{Kind: agent.Usage, Usage: &agent.UsageCount{Model: r.Model, Input: r.In, Output: r.Output,
 			CacheRead: r.CacheRead, CacheWrite: r.CacheWrite, ContextUsed: r.ContextUsed, ContextSize: r.ContextSize}})
+	case "limits":
+		l := &agent.LimitReport{At: time.UnixMilli(r.At), Every: time.Duration(r.Every) * time.Second}
+		for _, w := range r.Windows {
+			lw := agent.LimitWindow{Name: w.Name, Minutes: w.Minutes, Used: w.Used}
+			if w.Resets > 0 {
+				lw.Resets = time.Unix(w.Resets, 0)
+			}
+			l.Windows = append(l.Windows, lw)
+		}
+		a = c.events(agent.Event{Kind: agent.Limits, Limits: l})
 	case "file":
 		a = c.events(agent.Event{Kind: agent.FileOut, File: r.Path, More: r.More, Caption: r.Caption})
 	case "end":

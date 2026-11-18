@@ -1,5 +1,5 @@
-import type { State, ThreadInfo } from "./api";
-import { type Key, t } from "./catalog";
+import type { LimitWindow, State, ThreadInfo } from "./api";
+import { type Key, lang, t } from "./catalog";
 
 // stateName is a state as the page shows it.
 export function stateName(s: State): string {
@@ -34,4 +34,19 @@ export function matches(x: ThreadInfo, q: string): boolean {
   if (x.title.toLowerCase().includes(f)) return true;
   if (String(x.number) === f.replace(/^#/, "")) return true;
   return !!x.terminal && x.terminal.toLowerCase().includes(f);
+}
+
+// windowName is a usage window as the page shows it: its length when the
+// agent gives one (5h, 7d), else the agent's name for it.
+export function windowName(w: LimitWindow): string {
+  const m = w.minutes ?? 0;
+  if (m > 0 && m % 1440 === 0) return t("limits.days", { n: m / 1440 });
+  if (m > 0 && m % 60 === 0) return t("limits.hours", { n: m / 60 });
+  return w.name;
+}
+
+// when is a time as the status bar shows it: the day and the time of day,
+// in the browser's time zone.
+export function when(iso: string): string {
+  return new Date(iso).toLocaleString(lang, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }

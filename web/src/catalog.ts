@@ -78,6 +78,13 @@ const en = {
   "status.liveStarting": "live",
   "status.offline": "offline · last event {pos}",
   "status.offlineNone": "offline",
+
+  "limits.label": "Remaining usage per agent",
+  "limits.window": "{window} {used}% used",
+  "limits.resets": "· resets {time}",
+  "limits.asOf": "as of {time}",
+  "limits.hours": "{n}h",
+  "limits.days": "{n}d",
 } as const;
 
 export type Key = keyof typeof en;

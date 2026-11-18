@@ -65,7 +65,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return runCtx(context.Background(), args, stdout, stderr)
 }
 
-const usage = "usage: hataori run|threads|thread KEY|events [--after N] [--follow]|stop KEY|signin [--root DIR] | hataori version | hataori host <state-dir> | hataori hook [--wait] [--timeout DURATION]"
+const usage = "usage: hataori run|threads|thread KEY|events [--after N] [--follow]|stop KEY|signin [--root DIR] | hataori version | hataori host <state-dir> | hataori hook [--wait] [--timeout DURATION] | hataori statusline --last FILE [--run COMMAND]"
 
 func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -89,6 +89,8 @@ func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 	case "hook":
 		return host.HookMain(args[1:], os.Stdin, stdout, stderr, os.Getenv)
+	case "statusline":
+		return claudecode.StatusLineMain(args[1:], os.Stdin, stdout, stderr, os.Getenv)
 	case "run", "threads", "thread", "events", "stop", "signin":
 		return command(ctx, args[0], args[1:], stdout, stderr)
 	}

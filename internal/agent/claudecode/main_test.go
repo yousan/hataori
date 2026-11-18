@@ -11,8 +11,8 @@ import (
 	"github.com/yousan/hataori/internal/host"
 )
 
-// The test binary is also the session host, the hook command and an idle
-// agent: `<test binary> role <name> args...`.
+// The test binary is also the session host, the hook command, the status
+// line command and an idle agent: `<test binary> role <name> args...`.
 func TestMain(m *testing.M) {
 	if len(os.Args) > 2 && os.Args[1] == "role" {
 		switch os.Args[2] {
@@ -23,6 +23,8 @@ func TestMain(m *testing.M) {
 			os.Exit(0)
 		case "hook":
 			os.Exit(host.HookMain(os.Args[3:], os.Stdin, os.Stdout, os.Stderr, os.Getenv))
+		case "statusline":
+			os.Exit(StatusLineMain(os.Args[3:], os.Stdin, os.Stdout, os.Stderr, os.Getenv))
 		case "login-pure":
 			os.Exit(loginPure())
 		case "idle":
