@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
-import type { Event, ThreadInfo } from "./api";
+import type { Event, HostTerminal, ThreadInfo } from "./api";
+import { hostLabel } from "./hostTerminals";
+import { HostDetails, HostPane } from "./HostViews";
 import { t } from "./catalog";
 import { Details, Waiting } from "./Details";
 import type { Attention } from "./live";
 import { ThreadPane } from "./ThreadPane";
-import { Row } from "./Tree";
+import { HostSections, Row } from "./Tree";
 import type { Workspace } from "./workspaces";
 
 // narrowQuery is when the page becomes a list: a phone held upright, or a
@@ -28,13 +30,15 @@ interface ListProps {
   attention: ReadonlyMap<number, Attention>;
   now: number;
   onOpen: (n: number) => void;
+  hosts: HostTerminal[] | null; // null when the server does not list them
+  onOpenHost: (device: string) => void;
 }
 
 // NarrowList is the page on a narrow screen: the threads that need
 // attention (waiting or failed, by their state, also before what they wait
 // on is read), then those running, then the rest folded. The rows are the
 // tree's.
-export function NarrowList({ threads, attention, now, onOpen }: ListProps) {
+export function NarrowList({ threads, attention, now, onOpen, hosts, onOpenHost }: ListProps) {
   const all = threads ?? [];
   const needs = (x: ThreadInfo) => x.state === "waiting" || x.state === "failed";
   const waiting = all.filter(needs);
@@ -68,7 +72,27 @@ export function NarrowList({ threads, attention, now, onOpen }: ListProps) {
           {rows(rest, false, t("narrow.rest", { n: rest.length }))}
         </details>
       )}
+      {hosts && <HostSections hosts={hosts} filter="" now={now} selected={null} onOpen={onOpenHost} fold />}
     </nav>
+  );
+}
+
+// NarrowHost is a terminal hataori does not own, opened from the list:
+// its screen or what the host says of it, its details, and a way back.
+export function NarrowHost({ h, device, now, onBack }: { h: HostTerminal | undefined; device: string; now: number; onBack: () => void }) {
+  return (
+    <div className="narrow-thread" data-narrow-host={device}>
+      <div className="narrow-bar">
+        <button type="button" className="narrow-back" onClick={onBack}>
+          {t("narrow.back")}
+        </button>
+        <h2 className="narrow-title">{h ? hostLabel(h) : device}</h2>
+      </div>
+      <div className="narrow-pane">
+        <HostPane h={h} now={now} />
+      </div>
+      {h && h.tmux && <HostDetails h={h} now={now} />}
+    </div>
   );
 }
 

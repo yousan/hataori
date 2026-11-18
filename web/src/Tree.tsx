@@ -1,4 +1,5 @@
-import { type State, states, type ThreadInfo } from "./api";
+import { type HostTerminal, type State, states, type ThreadInfo } from "./api";
+import { hostMatches } from "./hostTerminals";
 import { t } from "./catalog";
 import { age, contextUse, mark, matches, stateName } from "./format";
 import type { Attention } from "./live";
@@ -15,6 +16,11 @@ interface Props {
   onDensity: (d: Density) => void;
   selected: number | null;
   onSelect: (n: number) => void;
+  // The host's terminals hataori does not own; null when the server does
+  // not list them, and then neither section is shown.
+  hosts: HostTerminal[] | null;
+  selectedHost: string | null;
+  onOpenHost: (device: string) => void;
 }
 
 // attentionText is what a thread that needs attention waits on.
@@ -80,7 +86,7 @@ export function Row(props: {
 }
 
 export function Tree(props: Props) {
-  const { threads, attention, now, filter, onFilter, density, onDensity, selected, onSelect } = props;
+  const { threads, attention, now, filter, onFilter, density, onDensity, selected, onSelect, hosts, selectedHost, onOpenHost } = props;
   const all = threads ?? [];
   const shown = all.filter((x) => matches(x, filter));
   const waiting = shown.filter((x) => attention.has(x.number));
@@ -154,6 +160,7 @@ export function Tree(props: Props) {
             </div>
           ))}
         </section>
+        {hosts && <HostSections hosts={hosts} filter={filter} now={now} selected={selectedHost} onOpen={onOpenHost} />}
       </div>
       <ul className="counts" aria-label={t("tree.counts")}>
         {states
@@ -166,5 +173,108 @@ export function Tree(props: Props) {
           ))}
       </ul>
     </nav>
+  );
+}
+
+function HostRow(props: { h: HostTerminal; now: number; selected: boolean; onOpen: (device: string) => void }) {
+  const { h, now, selected, onOpen } = props;
+  const p = h.tmux;
+  return (
+    <li
+      className={selected ? "row host-row selected" : "row host-row"}
+      data-host={h.device}
+      role="option"
+      tabIndex={0}
+      aria-selected={selected}
+      onClick={() => onOpen(h.device)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen(h.device);
+        }
+      }}
+    >
+      <div className="line1">
+        <span className="title">{p ? (p.window_name ? t("host.window", { index: p.window, name: p.window_name }) : p.window) : h.device}</span>
+        <span className="num">{h.process || t("table.none")}</span>
+      </div>
+      <div className="line2">
+        {p && <span className="device">{h.device}</span>}
+        {h.activity && <span className="age">{age(h.activity, now)}</span>}
+      </div>
+    </li>
+  );
+}
+
+// HostSections are the tree's sections of terminals on the host that
+// hataori does not own: tmux panes by session, then other terminals. They
+// show no state: hataori judges none.
+export function HostSections(props: {
+  hosts: HostTerminal[];
+  filter: string;
+  now: number;
+  selected: string | null;
+  onOpen: (device: string) => void;
+  fold?: boolean; // fold each section, as the narrow list does
+}) {
+  const { hosts, filter, now, selected, onOpen, fold } = props;
+  const shown = hosts.filter((h) => hostMatches(h, filter));
+  const panes = shown.filter((h) => h.tmux);
+  const others = shown.filter((h) => !h.tmux);
+  const sessions = new Map<string, HostTerminal[]>();
+  for (const h of panes) {
+    const list = sessions.get(h.tmux!.session) ?? [];
+    list.push(h);
+    sessions.set(h.tmux!.session, list);
+  }
+  const row = (h: HostTerminal) => <HostRow key={h.device} h={h} now={now} selected={selected === h.device} onOpen={onOpen} />;
+  const tmux = (
+    <>
+      {panes.length === 0 && <p className="none">{t("host.none")}</p>}
+      {[...sessions].map(([session, list]) => (
+        <div className="scope" key={session} data-session={session}>
+          <h3>
+            <span className="scope-name">{session}</span>
+          </h3>
+          <ul role="listbox" aria-label={session}>
+            {list.map(row)}
+          </ul>
+        </div>
+      ))}
+    </>
+  );
+  const other = (
+    <>
+      {others.length === 0 && <p className="none">{t("host.none")}</p>}
+      <ul role="listbox" aria-label={t("host.others")}>
+        {others.map(row)}
+      </ul>
+    </>
+  );
+  if (fold) {
+    return (
+      <>
+        <details data-section="tmux">
+          <summary>{t("host.tmux")}</summary>
+          {tmux}
+        </details>
+        <details data-section="others">
+          <summary>{t("host.others")}</summary>
+          {other}
+        </details>
+      </>
+    );
+  }
+  return (
+    <>
+      <section data-section="tmux">
+        <h2>{t("host.tmux")}</h2>
+        {tmux}
+      </section>
+      <section data-section="others">
+        <h2>{t("host.others")}</h2>
+        {other}
+      </section>
+    </>
   );
 }

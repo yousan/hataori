@@ -926,3 +926,14 @@ body {
 .shell.narrow .field dt {
   width: 40%;
 }
+
+/* Terminals hataori does not own: no state is shown for them. */
+.host-row .title {
+  flex: 1;
+}
+
+.host-note {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-style: italic;
+}

@@ -3,7 +3,7 @@
 // threads opened from the tree. The panes show the active tab and, when
 // split, the tabs viewed before it.
 
-export type TabKey = "all" | `thread:${number}`;
+export type TabKey = "all" | `thread:${number}` | `host:${string}`;
 
 export const allTab: TabKey = "all";
 
@@ -11,9 +11,20 @@ export function threadTab(n: number): TabKey {
   return `thread:${n}`;
 }
 
-// threadOf is the thread number of a thread's tab, or null for "All threads".
+// threadOf is the thread number of a thread's tab, or null for any other.
 export function threadOf(k: TabKey): number | null {
-  return k === allTab ? null : Number(k.slice("thread:".length));
+  return k.startsWith("thread:") ? Number(k.slice("thread:".length)) : null;
+}
+
+// hostTab is the tab of a terminal on the host that hataori does not own,
+// by its device.
+export function hostTab(device: string): TabKey {
+  return `host:${device}`;
+}
+
+// hostOf is the device of a host terminal's tab, or null for any other.
+export function hostOf(k: TabKey): string | null {
+  return k.startsWith("host:") ? k.slice("host:".length) : null;
 }
 
 export type Split = 1 | 2 | 3;

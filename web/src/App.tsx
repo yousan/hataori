@@ -7,9 +7,11 @@ import { TabBar, tabID } from "./TabBar";
 import { ThreadPane } from "./ThreadPane";
 import { AllThreads } from "./AllThreads";
 import { Details } from "./Details";
-import { NarrowList, NarrowThread, useNarrow } from "./Narrow";
+import { NarrowHost, NarrowList, NarrowThread, useNarrow } from "./Narrow";
 import { useWorkspaces } from "./workspaces";
-import { active, allTab, close, initialTabs, panes, type Split, type TabKey, type Tabs, threadOf, threadTab, view } from "./tabs";
+import { hostLabel, useHostTerminals } from "./hostTerminals";
+import { HostDetails, HostPane } from "./HostViews";
+import { active, allTab, close, hostOf, hostTab, initialTabs, panes, type Split, type TabKey, type Tabs, threadOf, threadTab, view } from "./tabs";
 import { useTheme } from "./theme";
 import { type Density, Tree } from "./Tree";
 
@@ -46,6 +48,10 @@ export function App() {
   };
   const thread = (n: number) => d.threads?.find((x) => x.number === n);
   const current = threadOf(active(tabs));
+  const hosts = useHostTerminals();
+  const host = (device: string) => hosts?.find((h) => h.device === device);
+  const currentHost = hostOf(active(tabs));
+  const openHost = (device: string) => setTabs((s) => view(s, hostTab(device)));
   const workspaces = useWorkspaces(d.threads, panes(tabs, split).includes(allTab) || layout.details, current);
 
   const paneThread = (k: TabKey) => {
@@ -54,6 +60,11 @@ export function App() {
   };
   const paneName = (k: TabKey) => {
     const n = threadOf(k);
+    const device = hostOf(k);
+    if (device !== null) {
+      const h = host(device);
+      return h ? hostLabel(h) : device;
+    }
     if (n === null) return t("tabs.all");
     const x = thread(n);
     return x ? t("pane.thread", { n, title: x.title }) : t("thread.number", { n });
@@ -68,14 +79,22 @@ export function App() {
     const n = (history.state as { hataoriThread?: unknown } | null)?.hataoriThread;
     return typeof n === "number" ? n : null;
   };
+  const entryHost = (): string | null => {
+    const h = (history.state as { hataoriHost?: unknown } | null)?.hataoriHost;
+    return typeof h === "string" ? h : null;
+  };
   const [opened, setOpened] = useState<number | null>(entry);
+  const [openedHost, setOpenedHost] = useState<string | null>(entryHost);
   const show = (n: number | null) => {
     setOpened(n);
     if (n !== null) setTabs((s) => view(s, threadTab(n)));
   };
   useEffect(() => {
     if (opened !== null) setTabs((s) => view(s, threadTab(opened)));
-    const popped = () => show(entry());
+    const popped = () => {
+      show(entry());
+      setOpenedHost(entryHost());
+    };
     addEventListener("popstate", popped);
     return () => removeEventListener("popstate", popped);
   }, []);
@@ -83,9 +102,17 @@ export function App() {
     show(n);
     history.pushState({ hataoriThread: n }, "");
   };
+  const openNarrowHost = (device: string) => {
+    openHost(device);
+    setOpenedHost(device);
+    history.pushState({ hataoriHost: device }, "");
+  };
   const backNarrow = () => {
-    if (entry() !== null) history.back();
-    else setOpened(null);
+    if (entry() !== null || entryHost() !== null) history.back();
+    else {
+      setOpened(null);
+      setOpenedHost(null);
+    }
   };
   // A thread chosen in the wide layout is the one the narrow layout shows.
   useEffect(() => {
@@ -113,7 +140,9 @@ export function App() {
           </p>
         )}
         <div className="narrow-body">
-          {loading ? null : x ? (
+          {openedHost !== null ? (
+            <NarrowHost h={host(openedHost)} device={openedHost} now={now} onBack={backNarrow} />
+          ) : loading ? null : x ? (
             <NarrowThread
               x={x}
               attention={d.attention.get(x.number)}
@@ -123,7 +152,7 @@ export function App() {
               onBack={backNarrow}
             />
           ) : (
-            <NarrowList threads={d.threads} attention={d.attention} now={now} onOpen={openNarrow} />
+            <NarrowList threads={d.threads} attention={d.attention} now={now} onOpen={openNarrow} hosts={hosts} onOpenHost={openNarrowHost} />
           )}
         </div>
         <StatusBar selected={x} live={d.live} limits={d.limits} now={now} />
@@ -150,6 +179,9 @@ export function App() {
             onDensity={pickDensity}
             selected={current}
             onSelect={(n) => setTabs((s) => view(s, threadTab(n)))}
+            hosts={hosts}
+            selectedHost={currentHost}
+            onOpenHost={openHost}
           />
         )}
         <div className="center">
@@ -157,6 +189,7 @@ export function App() {
             open={tabs.open}
             active={active(tabs)}
             thread={thread}
+            host={host}
             now={now}
             onView={(k) => setTabs((s) => view(s, k))}
             onClose={(k) => setTabs((s) => close(s, k))}
@@ -188,6 +221,8 @@ export function App() {
                         selected={current}
                         onOpen={(n) => setTabs((s) => view(s, threadTab(n)))}
                       />
+                    ) : hostOf(k) !== null ? (
+                      <HostPane h={host(hostOf(k)!)} now={now} />
                     ) : paneThread(k) ? (
                       <ThreadPane key={k} x={paneThread(k)!} subscribe={d.subscribe} opens={d.opens} />
                     ) : (
@@ -203,6 +238,9 @@ export function App() {
         </div>
         {layout.details && (
           <aside className="details" aria-label={t("details.label")}>
+            {currentHost !== null ? (
+              host(currentHost) ? <HostDetails h={host(currentHost)!} now={now} /> : <p className="empty">{t("host.gone")}</p>
+            ) : (
             <Details
               x={current === null ? undefined : thread(current)}
               attention={current === null ? undefined : d.attention.get(current)}
@@ -210,6 +248,7 @@ export function App() {
               subscribe={d.subscribe}
               opens={d.opens}
             />
+            )}
           </aside>
         )}
       </div>
