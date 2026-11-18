@@ -907,13 +907,16 @@ body {
 
 .shell.narrow .status {
   flex-wrap: wrap;
-  overflow: hidden;
 }
 
 .shell.narrow .status-item,
-.shell.narrow .status-right {
+.shell.narrow .status-right,
+.shell.narrow .limits,
+.shell.narrow .limit {
   flex-wrap: wrap;
   min-width: 0;
+  overflow: visible;
+  white-space: normal;
 }
 
 .shell.narrow .details-top {

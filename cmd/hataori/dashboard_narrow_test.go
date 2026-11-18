@@ -41,7 +41,10 @@ func (b *browser) noSideScroll(what string) {
 		for (const e of document.querySelectorAll('body *')) {
 			const r = e.getBoundingClientRect();
 			if (r.width === 0 || r.height === 0 || getComputedStyle(e).visibility === 'hidden') continue;
-			if (e.scrollWidth > e.clientWidth + 1 && !terminalBox(e) && !inTerminal(e) && getComputedStyle(e).overflowX !== 'hidden') bad.push('scrolls sideways: ' + e.tagName + '.' + e.className + ' ' + e.scrollWidth + '>' + e.clientWidth);
+			// Text cut with an ellipsis is cut on purpose; anything else that
+			// is wider than its box scrolls sideways or is cut off.
+			const ellipsis = getComputedStyle(e).textOverflow === 'ellipsis';
+			if (e.scrollWidth > e.clientWidth + 1 && !terminalBox(e) && !inTerminal(e) && !ellipsis) bad.push((getComputedStyle(e).overflowX === 'hidden' ? 'cut off: ' : 'scrolls sideways: ') + e.tagName + '.' + e.className + ' ' + e.scrollWidth + '>' + e.clientWidth);
 			if (!inTerminal(e) && (r.right > innerWidth + 0.5 || r.left < -0.5)) bad.push('beyond: ' + e.tagName + '.' + e.className + ' ' + Math.round(r.left) + '..' + Math.round(r.right));
 		}
 		return bad.slice(0, 5);
@@ -111,10 +114,10 @@ func TestDashboardNarrowList(t *testing.T) {
 	})
 	starts := []string{
 		"reply never", // 0: fails
-		"reply done",  // 1: idle
-		"ask Which colour? -- red | green | blue", // 2: a question
-		"tool long 10m",   // 3: running
-		"reply also done", // 4: idle
+		"limits 0 300 five_hour:300:4:1795000000 seven_day:10080:21:1795161600\nreply done", // 1: idle, with usage limits in the status bar
+		"ask Which colour? -- red | green | blue",                                           // 2: a question
+		"tool long 10m", // 3: running
+		"reply also done, and this first line is long enough to be wider than a phone held upright", // 4: idle, a long title
 	}
 	want := []control.State{control.Failed, control.Idle, control.Waiting, control.Running, control.Idle}
 	c, ids, b := narrowRig(t, root, starts, func(c *wire.Client, ids []control.ThreadID) bool {
@@ -201,6 +204,33 @@ func TestDashboardNarrowList(t *testing.T) {
 	b.click(fmt.Sprintf(`.narrow-list .row[data-thread="%d"]`, num[3]))
 	b.until("the running thread's terminal", fmt.Sprintf(`!!document.querySelector('[data-narrow-thread="%d"] .narrow-pane .xterm')`, num[3]))
 	b.noSideScroll("a running thread")
+	b.click(`.narrow-back`)
+	b.until("the list again", listShown)
+
+	b.until("the usage limits in the status bar", `!!document.querySelector('.status .limit[data-agent=fake] [data-window=seven_day]')`)
+	b.noSideScroll("the list with usage limits and a long title")
+
+	// A reload with a thread open keeps it open; Back and Forward move
+	// between the list and threads, and the wide page shows the same one.
+	threadShown := func(n int64) string {
+		return fmt.Sprintf(`!!document.querySelector('[data-narrow-thread="%d"]')`, n)
+	}
+	b.click(fmt.Sprintf(`.narrow-list .row[data-thread="%d"]`, num[2]))
+	b.until("the question", threadShown(num[2]))
+	b.call("Page.reload", map[string]any{})
+	b.until("the question again after a reload", threadShown(num[2]))
+	b.eval(`history.back(), true`, nil)
+	b.until("the list after Back", listShown)
+	b.eval(`history.forward(), true`, nil)
+	b.until("the question after Forward", threadShown(num[2]))
+	b.call("Emulation.clearDeviceMetricsOverride", map[string]any{})
+	activeTab := `document.querySelector('.tabbar .tab-main[aria-selected=true]')?.closest('.tab').dataset.tab`
+	b.until("the same thread's tab in the wide page", fmt.Sprintf(`document.querySelector('.shell')?.dataset.layout === 'wide' && %s === 'thread:%d'`, activeTab, num[2]))
+	// A thread chosen in the wide page is the one the narrow page shows.
+	b.click(fmt.Sprintf(`[data-section=threads] .row[data-thread="%d"]`, num[3]))
+	b.until("the running thread's tab", fmt.Sprintf(`%s === 'thread:%d'`, activeTab, num[3]))
+	b.phone()
+	b.until("the running thread in the narrow page", threadShown(num[3]))
 	b.click(`.narrow-back`)
 	b.until("the list again", listShown)
 

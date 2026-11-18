@@ -31,15 +31,17 @@ interface ListProps {
 }
 
 // NarrowList is the page on a narrow screen: the threads that need
-// attention, then those running, then the rest folded. The rows are the
+// attention (waiting or failed, by their state, also before what they wait
+// on is read), then those running, then the rest folded. The rows are the
 // tree's.
 export function NarrowList({ threads, attention, now, onOpen }: ListProps) {
   const all = threads ?? [];
-  const waiting = all.filter((x) => attention.has(x.number));
-  const running = all.filter((x) => !attention.has(x.number) && x.state === "running");
-  const rest = all.filter((x) => !attention.has(x.number) && x.state !== "running");
-  const rows = (list: ThreadInfo[], why: boolean) => (
-    <ul role="listbox">
+  const needs = (x: ThreadInfo) => x.state === "waiting" || x.state === "failed";
+  const waiting = all.filter(needs);
+  const running = all.filter((x) => x.state === "running");
+  const rest = all.filter((x) => !needs(x) && x.state !== "running");
+  const rows = (list: ThreadInfo[], why: boolean, label: string) => (
+    <ul role="listbox" aria-label={label}>
       {list.map((x) => (
         <Row key={x.number} x={x} attention={attention.get(x.number)} why={why} now={now} selected={false} onSelect={onOpen} />
       ))}
@@ -51,19 +53,19 @@ export function NarrowList({ threads, attention, now, onOpen }: ListProps) {
       {waiting.length > 0 && (
         <section data-section="attention">
           <h2>{t("narrow.attention")}</h2>
-          {rows(waiting, true)}
+          {rows(waiting, true, t("narrow.attention"))}
         </section>
       )}
       {running.length > 0 && (
         <section data-section="running">
           <h2>{t("narrow.running")}</h2>
-          {rows(running, false)}
+          {rows(running, false, t("narrow.running"))}
         </section>
       )}
       {rest.length > 0 && (
         <details data-section="rest">
           <summary>{t("narrow.rest", { n: rest.length })}</summary>
-          {rows(rest, false)}
+          {rows(rest, false, t("narrow.rest", { n: rest.length }))}
         </details>
       )}
     </nav>

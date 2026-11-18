@@ -61,28 +61,50 @@ export function App() {
 
   // On a narrow screen the same page is a list; a thread opened from it is
   // one entry of the browser's history, so Back returns to the list.
+  // The thread a history entry names: a reload keeps the thread open. The
+  // opened thread is the active tab's, so both layouts show the same one.
   const narrow = useNarrow();
-  const [opened, setOpened] = useState<number | null>(null);
+  const entry = (): number | null => {
+    const n = (history.state as { hataoriThread?: unknown } | null)?.hataoriThread;
+    return typeof n === "number" ? n : null;
+  };
+  const [opened, setOpened] = useState<number | null>(entry);
+  const show = (n: number | null) => {
+    setOpened(n);
+    if (n !== null) setTabs((s) => view(s, threadTab(n)));
+  };
   useEffect(() => {
-    const popped = (e: PopStateEvent) => {
-      const n = (e.state as { hataoriThread?: unknown } | null)?.hataoriThread;
-      setOpened(typeof n === "number" ? n : null);
-    };
+    if (opened !== null) setTabs((s) => view(s, threadTab(opened)));
+    const popped = () => show(entry());
     addEventListener("popstate", popped);
     return () => removeEventListener("popstate", popped);
   }, []);
   const openNarrow = (n: number) => {
-    setTabs((s) => view(s, threadTab(n)));
-    setOpened(n);
+    show(n);
     history.pushState({ hataoriThread: n }, "");
   };
   const backNarrow = () => {
-    if ((history.state as { hataoriThread?: unknown } | null)?.hataoriThread !== undefined) history.back();
+    if (entry() !== null) history.back();
     else setOpened(null);
   };
+  // A thread chosen in the wide layout is the one the narrow layout shows.
+  useEffect(() => {
+    if (narrow && opened !== null && current !== null && current !== opened) {
+      setOpened(current);
+      history.replaceState({ hataoriThread: current }, "");
+    }
+  }, [narrow]);
+  // A thread that has gone from the list closes, and so does its entry.
+  useEffect(() => {
+    if (opened !== null && d.threads !== null && !d.threads.some((x) => x.number === opened)) {
+      setOpened(null);
+      history.replaceState(null, "");
+    }
+  }, [opened, d.threads]);
 
   if (narrow) {
     const x = opened === null ? undefined : thread(opened);
+    const loading = opened !== null && d.threads === null;
     return (
       <div className="shell narrow" data-layout="narrow">
         {d.signedOut && (
@@ -91,7 +113,7 @@ export function App() {
           </p>
         )}
         <div className="narrow-body">
-          {x ? (
+          {loading ? null : x ? (
             <NarrowThread
               x={x}
               attention={d.attention.get(x.number)}
