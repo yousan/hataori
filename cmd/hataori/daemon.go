@@ -138,7 +138,11 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	// dashboard sign-in link.
 	owner := control.OpRead | control.OpStart | control.OpSend | control.OpAnswer | control.OpStop | control.OpSignIn
 	if cfg.HostTerminals { // off unless the config turns it on; only the owner gets it
-		c.HostTerms = &hostterm.Lister{Own: filepath.Base(exe)}
+		lister := &hostterm.Lister{Own: filepath.Base(exe)}
+		if hostTermsHook != nil {
+			hostTermsHook(lister)
+		}
+		c.HostTerms = lister
 		owner |= control.OpHost
 	}
 	srv, err := wire.Listen(abs, c.As(control.Caller{Principal: control.Principal(cfg.Owner), Scopes: keys, May: owner}), lg)
@@ -222,6 +226,10 @@ func dashboardCaller(dir *people.Directory, scopes []string, hostTerminals bool,
 
 // dashboardHook, when a test sets it, changes the dashboard's Caller.
 var dashboardHook func(*control.Caller)
+
+// hostTermsHook, when a test sets it, changes how the daemon lists the
+// host's terminals, such as to read a tmux server of the test's own.
+var hostTermsHook func(*hostterm.Lister)
 
 // coreHook, when a test sets it, is given the daemon's core, so that the
 // test can call it as an in-process client such as a chat front end.
