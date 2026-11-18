@@ -90,6 +90,32 @@ export function limits(): Promise<AgentLimits[]> {
 
 export const eventsPath = "/api/events";
 
+// TerminalChunk is one message of a terminal stream (docs/protocol.md).
+export interface TerminalChunk {
+  run: string; // empty when no host runs
+  pos: number;
+  reset: boolean;
+  cols: number;
+  rows: number;
+  data?: string; // base64
+}
+
+export function terminalPath(id: ThreadID): string {
+  return `/api/terminal?${new URLSearchParams({ scope: id.scope, key: id.key })}`;
+}
+
+// hasTerminal reports whether a thread's session has a terminal stream:
+// a session on pipes answers 404. It asks with HEAD, which answers with
+// the stream's status and sends no chunk. Any other answer, or none, is an
+// error: the caller asks again.
+export async function hasTerminal(id: ThreadID): Promise<boolean> {
+  const r = await fetch(terminalPath(id), { method: "HEAD", credentials: "same-origin", cache: "no-store" });
+  if (r.status === 401) throw new SignedOut();
+  if (r.status === 404) return false;
+  if (!r.ok) throw new Error(`terminal: ${r.status}`);
+  return true;
+}
+
 export function sameThread(a: ThreadID, b: ThreadID): boolean {
   return a.scope === b.scope && a.key === b.key;
 }

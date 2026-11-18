@@ -13,10 +13,17 @@ import (
 //go:embed all:page
 var pageFiles embed.FS
 
+// styleElements lets the page add <style> elements of its own. xterm.js
+// (the terminal pane) writes the terminal's theme and cell sizes into
+// <style> elements it makes at run time, and supports no nonce, so no hash
+// or nonce can name them. Only style elements are allowed: scripts,
+// connections, images, fonts and style attributes stay on 'self'.
+const styleElements = "style-src-elem 'self' 'unsafe-inline'"
+
 // contentSecurityPolicy is sent with every response. The page loads
 // nothing but its own server's files: no CDN, no web fonts, no inline
 // script, and no other site may frame it.
-const contentSecurityPolicy = "default-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'"
+const contentSecurityPolicy = "default-src 'self'; " + styleElements + "; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'"
 
 // page is the built page's files, index.html at the root.
 func page() fs.FS {

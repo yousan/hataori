@@ -36,6 +36,9 @@ export interface Dashboard {
   live: Live;
   signedOut: boolean;
   limits: AgentLimits[]; // each agent's remaining usage; none until read
+  // subscribe calls f with each event the stream delivers from now on,
+  // until the returned function is called. One stream serves the page.
+  subscribe: (f: (e: Event) => void) => () => void;
 }
 
 // refreshDelay gathers the events that come together into one read.
@@ -106,8 +109,10 @@ async function lastPosition(ts: ThreadInfo[]): Promise<number> {
   return ds.reduce((p, d) => Math.max(p, d?.events?.[d.events.length - 1]?.pos ?? 0), 0);
 }
 
+type State = Omit<Dashboard, "subscribe">;
+
 export function useDashboard(): Dashboard {
-  const [state, setState] = useState<Dashboard>({
+  const [state, setState] = useState<State>({
     threads: null,
     attention: new Map(),
     live: { connected: false, pos: null },
@@ -115,6 +120,13 @@ export function useDashboard(): Dashboard {
     limits: [],
   });
   const reads = useRef(0);
+  const listeners = useRef(new Set<(e: Event) => void>());
+  const subscribe = useRef((f: (e: Event) => void) => {
+    listeners.current.add(f);
+    return () => {
+      listeners.current.delete(f);
+    };
+  }).current;
 
   useEffect(() => {
     let closed = false;
@@ -196,6 +208,12 @@ export function useDashboard(): Dashboard {
       source.onmessage = (m) => {
         const pos = Number(m.lastEventId);
         if (Number.isFinite(pos)) at(pos);
+        try {
+          const e = JSON.parse(m.data) as Event;
+          for (const f of listeners.current) f(e);
+        } catch {
+          // Not an event: nothing to pass on.
+        }
         later();
       };
       source.addEventListener("caught_up", (m) => {
@@ -241,7 +259,7 @@ export function useDashboard(): Dashboard {
     };
   }, []);
 
-  return state;
+  return { ...state, subscribe };
 }
 
 // useNow is the time, renewed every interval milliseconds.

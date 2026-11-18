@@ -30,6 +30,15 @@ type browser struct {
 	t    *testing.T
 	conn *websocket.Conn
 	id   int
+	// events are the DevTools events read so far, in order, such as the
+	// page's requests once Network.enable is called.
+	events []cdpEvent
+}
+
+// cdpEvent is one DevTools event.
+type cdpEvent struct {
+	Method string
+	Params json.RawMessage
 }
 
 // chromePath finds Chrome or Chromium. Without one the test is skipped,
@@ -132,14 +141,20 @@ func (b *browser) call(method string, params any) json.RawMessage {
 	for {
 		var m struct {
 			ID     int             `json:"id"`
+			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
 			Result json.RawMessage `json:"result"`
 			Error  *struct{ Message string }
 		}
 		if err := b.conn.ReadJSON(&m); err != nil {
 			b.t.Fatalf("%s: %v", method, err)
 		}
+		if m.ID == 0 && m.Method != "" {
+			b.events = append(b.events, cdpEvent{m.Method, m.Params})
+			continue
+		}
 		if m.ID != b.id {
-			continue // an event
+			continue
 		}
 		if m.Error != nil {
 			b.t.Fatalf("%s: %s", method, m.Error.Message)

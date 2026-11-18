@@ -95,6 +95,9 @@ func TestThePageLoadsNothingElse(t *testing.T) {
 	for _, d := range strings.Split(contentSecurityPolicy, ";") {
 		f := strings.Fields(d)
 		directives[strings.Join(f, " ")] = true
+		if strings.Join(f, " ") == styleElements {
+			continue // the one exception, for xterm.js's own <style> elements
+		}
 		if len(f) > 1 && f[1] != "'self'" && f[1] != "'none'" || len(f) > 2 {
 			t.Errorf("directive %q allows more than the page's own server", d)
 		}
