@@ -48,10 +48,12 @@ func init() {
 
 func commandPID(t *testing.T, dir string) int {
 	t.Helper()
-	pid, err := strconv.Atoi(strings.TrimSpace(string(read(t, dir, PIDFile))))
-	if err != nil {
-		t.Fatal(err)
-	}
+	var pid int
+	waitFor(t, "the command PID", func() bool {
+		var err error
+		pid, err = strconv.Atoi(strings.TrimSpace(string(read(t, dir, PIDFile))))
+		return err == nil && pid > 0
+	})
 	return pid
 }
 

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -80,6 +81,10 @@ type Relay struct {
 	Timeout time.Duration // for the owner's code; 10 minutes when zero
 	Off     bool          // the config switched the relay off: outages do not start flows
 	Log     *slog.Logger
+	// Guard is the argv prefix that runs the login command under GuardMain
+	// outside Linux, so it ends when the daemon dies. When empty, nothing
+	// ends it there when the daemon dies.
+	Guard []string
 
 	startMu sync.Mutex // one start at a time, so that no flow is left untracked
 	mu      sync.Mutex
@@ -229,11 +234,27 @@ func (r *Relay) start(ctx context.Context, agentName string) error {
 	}
 	r.end(agentName, Stopped)
 
-	cmd := exec.Command(l.Argv[0], l.Argv[1:]...)
+	argv := l.Argv
+	var guardRead, guardWrite *os.File
+	if useGuard() && len(r.Guard) > 0 {
+		guardRead, guardWrite, err = os.Pipe()
+		if err != nil {
+			return err
+		}
+		defer guardRead.Close()
+		argv = append(append([]string{}, r.Guard...), l.Argv...)
+	}
+	cmd := exec.Command(argv[0], argv[1:]...)
+	if guardRead != nil {
+		cmd.ExtraFiles = []*os.File{guardRead}
+	}
 	cmd.Env = l.Env
 	cmd.SysProcAttr = procAttr() // its own group, so that all of it can be stopped
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		if guardWrite != nil {
+			guardWrite.Close()
+		}
 		return err
 	}
 	pr, pw := io.Pipe()
@@ -241,6 +262,9 @@ func (r *Relay) start(ctx context.Context, agentName string) error {
 	f := &flow{agent: agentName, login: lf, adapter: ad, cmd: cmd, stdin: stdin, exited: make(chan struct{}),
 		read: make(chan struct{}), expires: time.Now().Add(r.timeout())}
 	if err := r.Store.DB.QueryRowContext(ctx, `SELECT coalesce(max(pos), 0) FROM events`).Scan(&f.since); err != nil {
+		if guardWrite != nil {
+			guardWrite.Close()
+		}
 		return err
 	}
 	// The command is started and waited for by one goroutine that keeps its
@@ -257,12 +281,21 @@ func (r *Relay) start(ctx context.Context, agentName string) error {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
 		if err := cmd.Start(); err != nil {
+			if guardWrite != nil {
+				guardWrite.Close()
+			}
 			pw.Close()
 			started <- err
 			return
 		}
+		if guardRead != nil {
+			guardRead.Close()
+		}
 		started <- nil
 		err := cmd.Wait()
+		if guardWrite != nil {
+			guardWrite.Close()
+		}
 		pw.Close()
 		<-f.read // every line it printed is decoded before the end is decided
 		r.finish(f, err)
