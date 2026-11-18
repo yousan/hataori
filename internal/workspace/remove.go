@@ -111,6 +111,9 @@ type Remover struct {
 	Timeout time.Duration
 	// Now is the clock; time.Now when nil.
 	Now func() time.Time
+
+	// objectLimit replaces objectEntryLimit when not 0, for tests.
+	objectLimit int
 }
 
 func (r Remover) now() time.Time {
@@ -860,7 +863,7 @@ const alternateDepth = 5
 
 // objectEntryLimit bounds how many entries one check lists below a
 // remote's objects directories.
-var objectEntryLimit = 1 << 20
+const objectEntryLimit = 1 << 20
 
 // alternates names why the objects git serves for a remote whose paths are
 // reads come from inside a root, or "". For each one it walks the objects
@@ -872,6 +875,9 @@ var objectEntryLimit = 1 << 20
 // is an error: what git serves then cannot be told.
 func (c *checker) alternates(reads []string) (Reason, error) {
 	budget := objectEntryLimit
+	if c.r.objectLimit != 0 {
+		budget = c.r.objectLimit
+	}
 	for _, r := range reads {
 		objects, reason, err := c.walk(r + "/objects")
 		if missing(err) {
@@ -950,7 +956,7 @@ func (c *checker) readAlternates(objects string, depth int, seen map[string]bool
 // followed. Listing more than budget entries in all is an error: what git
 // reads then is not told.
 func (c *checker) objectLinks(objects string, budget *int) (Reason, error) {
-	seen := map[string]bool{}
+	seen := map[string]int{}
 	return c.eachEntry(objects, budget, func(e fs.DirEntry) (Reason, error) {
 		name := e.Name()
 		if name != "pack" && name != "info" && !fanOut(name) {
@@ -962,8 +968,10 @@ func (c *checker) objectLinks(objects string, budget *int) (Reason, error) {
 
 // linksBelow walks p, the entry e of a directory, when it is a link, and
 // then the links in what it is or leads to, when that is a directory:
-// below it as well when deep. A directory is looked at once.
-func (c *checker) linksBelow(p string, e fs.DirEntry, budget *int, deep bool, seen map[string]bool) (Reason, error) {
+// below it as well when deep. A directory is looked at once at each
+// depth: one first reached from a fan-out directory is looked at again
+// when pack/ or info/ reaches it.
+func (c *checker) linksBelow(p string, e fs.DirEntry, budget *int, deep bool, seen map[string]int) (Reason, error) {
 	dir := p
 	if e.Type()&fs.ModeSymlink != 0 {
 		resolved, reason, err := c.walk(p)
@@ -972,12 +980,18 @@ func (c *checker) linksBelow(p string, e fs.DirEntry, budget *int, deep bool, se
 		}
 		dir = resolved
 	}
-	if fi, err := os.Stat(dir); err != nil {
+	fi, err := os.Stat(dir)
+	if err != nil {
 		return "", err
-	} else if !fi.IsDir() || seen[dir] {
+	}
+	level := 1
+	if deep {
+		level = 2
+	}
+	if !fi.IsDir() || seen[dir] >= level {
 		return "", nil
 	}
-	seen[dir] = true
+	seen[dir] = level
 	return c.eachEntry(dir, budget, func(f fs.DirEntry) (Reason, error) {
 		q := filepath.Join(dir, f.Name())
 		switch {
@@ -1003,7 +1017,7 @@ func (c *checker) eachEntry(dir string, budget *int, fn func(fs.DirEntry) (Reaso
 	for {
 		batch, err := f.ReadDir(1024)
 		if *budget -= len(batch); *budget < 0 {
-			return "", fmt.Errorf("more than %d entries below the objects directories", objectEntryLimit)
+			return "", errors.New("too many entries below the objects directories")
 		}
 		for _, e := range batch {
 			if reason, err := fn(e); err != nil || reason != "" {

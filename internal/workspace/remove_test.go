@@ -719,9 +719,26 @@ func TestRefuseRemoteWithObjectsLinkedIntoTheWorkspace(t *testing.T) {
 			x.symlink(outside, filepath.Join(r, "objects", "pack"))
 			return r
 		}},
+		// Every fan-out directory and pack/ link to one directory outside
+		// the root, which has the workspace's pack files: looked at from
+		// a fan-out directory first, it is still looked at as pack/.
+		{"pack and fan-out directories leading to one place", RemoteIsLocal, func(x *removal) string {
+			r := x.namingRemote("r.git")
+			x.repack()
+			shared := filepath.Join(x.tmp, "shared")
+			for _, f := range x.packFiles() {
+				x.symlink(f, filepath.Join(shared, filepath.Base(f)))
+			}
+			for i := 0; i < 256; i++ {
+				x.symlink(shared, filepath.Join(r, "objects", fmt.Sprintf("%02x", i)))
+			}
+			os.Remove(filepath.Join(r, "objects", "pack"))
+			x.symlink(shared, filepath.Join(r, "objects", "pack"))
+			return r
+		}},
 		// A multi-pack-index may name a pack below pack/: a link there
 		// does not count either.
-		{"below pack/", RemoteIsLocal, func(x *removal) string {
+		{"below pack", RemoteIsLocal, func(x *removal) string {
 			r := x.namingRemote("r.git")
 			x.repack()
 			for _, f := range x.packFiles() {
@@ -761,9 +778,7 @@ func TestRefuseRemoteWithObjectsLinkedIntoTheWorkspace(t *testing.T) {
 			for i := 0; i < 3; i++ {
 				os.WriteFile(filepath.Join(r, "objects", "pack", "f"+strconv.Itoa(i)), nil, 0o600)
 			}
-			old := objectEntryLimit
-			objectEntryLimit = 2
-			x.t.Cleanup(func() { objectEntryLimit = old })
+			x.r.objectLimit = 2
 			return r
 		}},
 	} {
@@ -777,10 +792,11 @@ func TestRefuseRemoteWithObjectsLinkedIntoTheWorkspace(t *testing.T) {
 }
 
 // The remote's objects are only in a pack outside the root, which its
-// pack/ links to; links into the workspace where git does not read (an
-// upper-case fan-out directory, a directory below a fan-out directory, a
-// name git does not use) are left alone, and a link loop below pack/ is
-// looked at once: the remote counts.
+// pack/ links to. Links into the workspace where git does not read are
+// left alone: an upper-case fan-out directory, a name git does not use
+// in objects/, a link in a fan-out directory with a name no loose object
+// has, and one in a hex-named directory below a fan-out directory. A link
+// loop below pack/ is looked at once. The remote counts.
 func TestRemoteWithObjectsLinkedOutsideTheRootCounts(t *testing.T) {
 	x := newRemoval(t)
 	outside := filepath.Join(x.tmp, "outside.git")
@@ -796,6 +812,7 @@ func TestRemoteWithObjectsLinkedOutsideTheRootCounts(t *testing.T) {
 	x.symlink(ws, filepath.Join(objects, "AB"))
 	x.symlink(ws, filepath.Join(objects, "unused"))
 	x.symlink(ws, filepath.Join(objects, "ab", "sub"))
+	x.symlink(ws, filepath.Join(objects, "ab", "cd", "ef"))
 	x.git(x.clone, "remote", "set-url", "origin", r)
 	if err := x.check(); err != nil {
 		t.Fatal(err)
