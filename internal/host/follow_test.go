@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -220,5 +221,68 @@ func TestFollowOnPipes(t *testing.T) {
 	dir := startHost(t, Spec{Argv: self("echo"), Env: []string{}})
 	if _, err := FollowTerminal(dir, "", 0); err == nil || !strings.Contains(err.Error(), "no terminal") {
 		t.Fatalf("follow on pipes: %v", err)
+	}
+}
+
+func TestFollowerGetsTheEnd(t *testing.T) {
+	// More than the socket's buffers hold, and less than followLimit.
+	dir := startHost(t, Spec{Argv: self("flood", "50000"), Env: []string{}, Terminal: true, LogLimit: 16 << 10})
+	s, first := follow(t, dir, "", 0)
+	c, err := Dial(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.Input([]byte("go\n\x04")); err != nil { // then end of input: the command exits
+		t.Fatal(err)
+	}
+	// Start reading only after the command has ended: what is still held
+	// for the follower must reach it before the host exits.
+	waitFor(t, "the command to exit", func() bool {
+		b, err := os.ReadFile(dir + "/" + PIDFile)
+		pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+		return err == nil && pid > 0 && syscall.Kill(pid, 0) != nil
+	})
+	time.Sleep(200 * time.Millisecond)
+	s.conn.SetReadDeadline(time.Now().Add(20 * time.Second))
+	got, pos := first.Data, first.Pos
+	for {
+		ch, err := s.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("after %d bytes: %v", len(got), err)
+		}
+		got, pos = append(got, ch.Data...), ch.Pos
+	}
+	if uint64(len(got)) != pos || !bytes.Contains(got[max(0, len(got)-64):], []byte("flooded\r\n")) {
+		t.Fatalf("the stream ended at %d with %d bytes, last %q", pos, len(got), got[max(0, len(got)-64):])
+	}
+}
+
+func TestOversizedWriteKeepsTheLogContinuous(t *testing.T) {
+	l, err := openBounded(t.TempDir()+"/log", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	var all []byte
+	for i, n := range []int{60, 30, 250, 10} {
+		p := bytes.Repeat([]byte{byte('a' + i)}, n)
+		for j := range p {
+			p[j] += byte(j % 2) // so that a shift shows
+		}
+		if _, err := l.Write(p); err != nil {
+			t.Fatal(err)
+		}
+		all = append(all, p...)
+		b, err := os.ReadFile(l.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.HasSuffix(all, b) || l.pos != uint64(len(all)) {
+			t.Fatalf("after write %d: the log is not the end of what was written", i)
+		}
 	}
 }

@@ -19,6 +19,10 @@ const followLimit = 1 << 20
 // followWriteTimeout bounds one write to a follower's connection.
 const followWriteTimeout = 30 * time.Second
 
+// followFlushTimeout bounds how long the host, once the command has ended
+// and the terminal log is closed, waits for followers to be sent the rest.
+const followFlushTimeout = 2 * time.Second
+
 // follower is one reader of a boundedLog's new output.
 type follower struct {
 	mu    sync.Mutex

@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -39,8 +40,10 @@ type host struct {
 	run   string      // this run of the host; positions in term count from its start
 	cols  int
 	rows  int
-	ln    *net.UnixListener
-	sock  string
+
+	follows atomic.Int32 // follow requests being served
+	ln      *net.UnixListener
+	sock    string
 
 	events *lineLog
 	calls  callTable
@@ -125,6 +128,11 @@ func Run(stateDir string) (err error) {
 	select {
 	case <-drained:
 	case <-time.After(limit):
+	}
+	// The terminal log is closed now; let its followers send what is left
+	// and the end, for a bounded time.
+	for deadline := time.Now().Add(followFlushTimeout); h.follows.Load() > 0 && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
 	}
 	h.stopMu.Lock()
 	h.closing = true // a stop asked for from now on finds the command gone
@@ -393,7 +401,9 @@ func (h *host) serveConn(c *net.UnixConn) {
 			return // a call has its own connection
 		}
 		if req.Op == "follow" {
+			h.follows.Add(1)
 			h.follow(c, enc, req)
+			h.follows.Add(-1)
 			return // the connection is the stream now
 		}
 		if req.Op == "stop" {
