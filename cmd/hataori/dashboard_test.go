@@ -608,7 +608,9 @@ func TestDashboardTerminalStream(t *testing.T) {
 		u := base + "/api/terminal?" + url.Values{"scope": {"s"}, "key": {"t1"}}.Encode()
 		rctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
-		r, _ := http.NewRequestWithContext(rctx, method, u, strings.NewReader("rogue-keys\r"))
+		// A bracketed paste and Enter: what the fake agent takes as a prompt
+		// when it reaches its terminal, so it would run a turn.
+		r, _ := http.NewRequestWithContext(rctx, method, u, strings.NewReader("\x1b[200~reply rogue-keys\x1b[201~\r"))
 		r.AddCookie(cookie)
 		for k, v := range header {
 			r.Header.Set(k, v)
@@ -620,11 +622,11 @@ func TestDashboardTerminalStream(t *testing.T) {
 		resp.Body.Close()
 		return resp.StatusCode
 	}
-	if code := send(http.MethodGet, nil); code != http.StatusOK {
+	if code := send(http.MethodGet, nil); code != http.StatusBadRequest {
 		t.Fatalf("GET with a body: %d", code)
 	}
 	if code := send(http.MethodGet, map[string]string{"Connection": "Upgrade", "Upgrade": "websocket",
-		"Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ=="}); code != http.StatusOK {
+		"Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ=="}); code != http.StatusBadRequest {
 		t.Fatalf("a WebSocket upgrade: %d", code)
 	}
 	for _, m := range []string{http.MethodPost, http.MethodPut} {
@@ -639,8 +641,8 @@ func TestDashboardTerminalStream(t *testing.T) {
 		}
 	}
 	_, out, _ := cli(t, "events", "--root", root)
-	if n := strings.Count(out, `"kind":"input"`); n != 4 || strings.Contains(out, "rogue") {
-		t.Fatalf("%d inputs (want 4), events %s", n, out)
+	if n, m := strings.Count(out, `"kind":"input"`), strings.Count(out, `"kind":"turn_started"`); n != 4 || m != 4 || strings.Contains(out, "rogue") {
+		t.Fatalf("%d inputs and %d turns (want 4), events %s", n, m, out)
 	}
 	logs, _ := filepath.Glob(filepath.Join(root, "state", "sessions", "*", host.TerminalLog))
 	for _, l := range logs {

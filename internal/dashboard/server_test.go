@@ -523,7 +523,17 @@ func TestHostScreenStream(t *testing.T) {
 		}
 		return resp
 	}
-	resp := get("%1", "rogue-keys", map[string]string{"Connection": "Upgrade", "Upgrade": "websocket"})
+	for _, try := range []struct {
+		body   string
+		header map[string]string
+	}{{"rogue-keys", nil}, {"", map[string]string{"Connection": "Upgrade", "Upgrade": "websocket"}}} {
+		resp := get("%1", try.body, try.header)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("input on the pane route: %s", resp.Status)
+		}
+	}
+	resp := get("%1", "", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("pane %%1: %s", resp.Status)
 	}
@@ -569,5 +579,31 @@ func TestHostScreenStream(t *testing.T) {
 	}
 	if bodies[0] != bodies[1] {
 		t.Fatalf("a forbidden pane can be told from no pane: %q, %q", bodies[0], bodies[1])
+	}
+}
+
+// A request that declares a body and sends only part of it gets its
+// refusal at once, opens nothing, and its connection is closed.
+func TestAPartBodyHoldsNothingOpen(t *testing.T) {
+	api := &screenAPI{screen: "x"}
+	s := start(t, Config{}, func(s *Server) { s.API = api })
+	c := signIn(t, s)
+	for _, path := range []string{TerminalPath + "?scope=s&key=t1", HostScreenPath + "?pane=%251"} {
+		conn, err := net.Dial("tcp", s.ln.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: %s\r\nCookie: %s=%s\r\nContent-Length: 100\r\n\r\nrogue", path, s.base.Host, c.Name, c.Value)
+		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		b, err := io.ReadAll(conn) // ends only when the server closes the connection
+		conn.Close()
+		if err != nil || !strings.HasPrefix(string(b), "HTTP/1.1 400") {
+			t.Fatalf("%s: %v, %q", path, err, b)
+		}
+	}
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if api.reads != 0 {
+		t.Fatal("a pane was read for a request that sent a body")
 	}
 }

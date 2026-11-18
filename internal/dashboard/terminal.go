@@ -22,10 +22,10 @@ import (
 // Last-Event-ID goes on after the last byte it drew, or gets a reset when
 // that is no longer kept.
 //
-// The route only sends. Server-Sent Events have no way back, a request body
-// or an Upgrade (a WebSocket) on it is dropped and logged, and any other
-// method is refused before it gets here: no byte from the page reaches a
-// terminal. A thread outside the caller's scopes answers as one that does
+// The route only sends. Server-Sent Events have no way back; a request
+// with a body or an Upgrade (a WebSocket) is logged and refused unread,
+// before anything is opened, and any other method is refused before it gets
+// here: no byte from the page reaches a terminal. A thread outside the caller's scopes answers as one that does
 // not exist.
 const TerminalPath = "/api/terminal"
 
@@ -46,15 +46,26 @@ func terminalPosition(r *http.Request) (run string, after uint64, err error) {
 	return run, after, nil
 }
 
-// dropInput logs and drops whatever a page tried to send on the terminal
-// route. Nothing of it is read.
-func (s *Server) dropInput(r *http.Request, id control.ThreadID) {
-	if r.ContentLength != 0 || len(r.TransferEncoding) > 0 {
+// dropInput refuses a request that tries to send something on a terminal
+// route, and logs it. The body is not read, and the connection is closed
+// after the answer, so a body sent in part holds nothing open.
+func (s *Server) dropInput(w http.ResponseWriter, r *http.Request, id control.ThreadID) bool {
+	body := r.ContentLength != 0 || len(r.TransferEncoding) > 0
+	up := r.Header.Get("Upgrade")
+	if !body && up == "" {
+		return false
+	}
+	if body {
 		s.Log.Warn("dashboard: input to a terminal dropped", "scope", id.Scope, "key", id.Key, "bytes", r.ContentLength)
 	}
-	if up := r.Header.Get("Upgrade"); up != "" {
+	if up != "" {
 		s.Log.Warn("dashboard: upgrade of a terminal stream dropped", "scope", id.Scope, "key", id.Key, "upgrade", up)
 	}
+	// The server would otherwise wait for the rest of the body to drain it.
+	http.NewResponseController(w).SetReadDeadline(time.Now())
+	w.Header().Set("Connection", "close")
+	http.Error(w, "this route takes no input", http.StatusBadRequest)
+	return true
 }
 
 // notFound answers every failure to open a terminal the same way, so that
@@ -69,7 +80,9 @@ func (s *Server) notFound(w http.ResponseWriter, err error) {
 func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	id := control.ThreadID{Scope: q.Get("scope"), Key: q.Get("key")}
-	s.dropInput(r, id)
+	if s.dropInput(w, r, id) {
+		return
+	}
 	if id.Scope == "" || id.Key == "" {
 		http.Error(w, "scope and key are required", http.StatusBadRequest)
 		return
@@ -110,7 +123,9 @@ type hostScreen struct {
 
 func (s *Server) hostScreen(w http.ResponseWriter, r *http.Request) {
 	pane := r.URL.Query().Get("pane")
-	s.dropInput(r, control.ThreadID{Key: pane})
+	if s.dropInput(w, r, control.ThreadID{Key: pane}) {
+		return
+	}
 	if pane == "" {
 		http.Error(w, "pane is required", http.StatusBadRequest)
 		return
