@@ -19,9 +19,12 @@ import (
 // later; one that is handled twice (live and caught up) is one input,
 // because the core takes each message id once.
 type inbound struct {
-	mu      sync.Mutex
-	convs   map[surface.Conversation]*sync.Mutex // one message at a time per conversation
-	behind  map[surface.Conversation]bool        // a message failed: only catch-up moves the cursor
+	mu     sync.Mutex
+	convs  map[surface.Conversation]*sync.Mutex // one message at a time per conversation
+	behind map[surface.Conversation]bool        // a message failed: only catch-up moves the cursor
+	// gone: the driver said the conversation no longer exists. It is not
+	// caught up again while the front end runs.
+	gone    map[surface.Conversation]bool
 	pending chan struct{}
 	// unsure: the open threads could not be listed, so every thread counts
 	// as behind until they are.
@@ -34,7 +37,7 @@ type inbound struct {
 func (f *FrontEnd) inboundState() *inbound {
 	f.inboundOnce.Do(func() {
 		f.in = &inbound{convs: map[surface.Conversation]*sync.Mutex{}, behind: map[surface.Conversation]bool{},
-			pending: make(chan struct{}, 1)}
+			gone: map[surface.Conversation]bool{}, pending: make(chan struct{}, 1)}
 	})
 	return f.in
 }
@@ -74,6 +77,25 @@ func (s *inbound) firstConnected() int64 {
 		s.since = time.Now().UnixMilli()
 	}
 	return s.since
+}
+
+// setGone marks c as gone and no longer behind. It reports whether c was
+// not marked gone before.
+func (s *inbound) setGone(c surface.Conversation) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.behind, c)
+	if s.gone[c] {
+		return false
+	}
+	s.gone[c] = true
+	return true
+}
+
+func (s *inbound) isGone(c surface.Conversation) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.gone[c]
 }
 
 func (s *inbound) isBehind(c surface.Conversation) bool {
@@ -178,10 +200,15 @@ func (f *FrontEnd) toCatchUp(ctx context.Context) ([]surface.Conversation, error
 }
 
 // catchUp handles the messages of conv after its cursor, in order, and
-// stops at the first that cannot be handled.
+// stops at the first that cannot be handled. A conversation the driver
+// says is gone is not asked for again.
 func (f *FrontEnd) catchUp(ctx context.Context, conv surface.Conversation) {
 	s := f.inboundState()
 	defer s.lock(conv)()
+	if s.isGone(conv) {
+		s.setGone(conv)
+		return
+	}
 	cursor, since, ok, err := f.cursor(ctx, conv)
 	if err != nil {
 		f.Log.Error("chat: catch-up: reading the cursor", "channel", conv.Channel, "thread", conv.Thread, "err", err)
@@ -199,6 +226,12 @@ func (f *FrontEnd) catchUp(ctx context.Context, conv surface.Conversation) {
 		cursor, since = "", s.firstConnected()
 	}
 	msgs, err := f.Driver.Since(ctx, conv, cursor)
+	if errors.Is(err, surface.ErrGone) {
+		if s.setGone(conv) {
+			f.Log.Warn("chat: catch-up: the conversation is gone; it is not caught up again", "channel", conv.Channel, "thread", conv.Thread, "err", err)
+		}
+		return
+	}
 	if err != nil {
 		f.Log.Warn("chat: catch-up: the driver gave no messages", "channel", conv.Channel, "thread", conv.Thread, "err", err)
 		s.setBehind(conv, true)

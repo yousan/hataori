@@ -123,15 +123,7 @@ func TestSinceCursorErrors(t *testing.T) {
 		t.Fatalf("a cursor that is no id: %v", err)
 	}
 
-	// The conversation is gone (the capture), and nothing after the cursor
-	// (the last page): an error, and no error.
-	gone := capture(t, "bot/rest-history-unknown-channel.json")
-	r.serve(t, "GET "+strings.Split(gone["request"].(map[string]any)["path"].(string), "?")[0], "bot/rest-history-unknown-channel.json")
-	_, err = d.Since(context.Background(), surface.Conversation{Channel: "1", Thread: "1"}, "1000000000000000001")
-	var e *Error
-	if !errors.Is(err, ErrCursor) || !errors.As(err, &e) || e.Code != 10003 {
-		t.Fatalf("a conversation that is gone: %v", err)
-	}
+	// Nothing after the cursor (the last page) is no error.
 	last := capture(t, "bot/rest-history-page-3.json")
 	r.serve(t, "GET "+strings.Split(last["request"].(map[string]any)["path"].(string), "?")[0], "bot/rest-history-page-3.json")
 	th := strings.Split(last["request"].(map[string]any)["path"].(string), "/")[2]
@@ -146,6 +138,29 @@ func TestSinceCursorErrors(t *testing.T) {
 	_, err = d.Since(context.Background(), surface.Conversation{Channel: "1", Thread: th}, "1000000000000000002")
 	if !errors.Is(err, ErrCursor) {
 		t.Fatalf("a refused cursor: %v", err)
+	}
+}
+
+// A conversation that no longer exists (the capture: 404 Unknown Channel,
+// code 10003) is gone, not a cursor the service cannot serve: when reading
+// the history, and when looking a channel up first.
+func TestSinceUnknownChannelIsGone(t *testing.T) {
+	const name = "bot/rest-history-unknown-channel.json"
+	ch := strings.Split(capture(t, name)["request"].(map[string]any)["path"].(string), "/")[2]
+	for _, c := range []struct {
+		conv  surface.Conversation
+		route string
+	}{
+		{surface.Conversation{Channel: "1000000000000000002", Thread: ch}, "GET /channels/" + ch + "/messages"},
+		{surface.Conversation{Channel: ch}, "GET /channels/" + ch},
+	} {
+		r := newFakeREST(t)
+		r.serve(t, c.route, name)
+		_, err := testDriver(t, botID(t), r, nil).Since(context.Background(), c.conv, "1000000000000000001")
+		var e *Error
+		if !errors.Is(err, surface.ErrGone) || errors.Is(err, ErrCursor) || !errors.As(err, &e) || e.Code != 10003 {
+			t.Errorf("%s: %v, want surface.ErrGone and not ErrCursor", c.route, err)
+		}
 	}
 }
 
