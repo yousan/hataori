@@ -1025,7 +1025,11 @@ func readGitfile(p string) (string, error) {
 	if len(b) > 1<<16 {
 		return "", errors.New("long .git file " + p)
 	}
-	return strings.TrimRight(string(b[len("gitdir: "):]), "\r\n"), nil
+	gitdir := strings.TrimRight(string(b[len("gitdir: "):]), "\r\n")
+	if gitdir == "" {
+		return "", errors.New(".git file " + p + " names nothing")
+	}
+	return gitdir, nil
 }
 
 // processes is step 4: no process has a file or its working directory in

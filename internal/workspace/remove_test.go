@@ -377,6 +377,11 @@ func TestRefuseLocalRemoteResolvedLikeGit(t *testing.T) {
 		{"nothing at the address", RemoteUnresolved, func(x *removal, b string) string {
 			return filepath.Join(x.tmp, "missing.git")
 		}},
+		{"empty .git file", RemoteUnresolved, func(x *removal, b string) string {
+			g := filepath.Join(x.tmp, "gitfile")
+			os.WriteFile(g, []byte("gitdir: \n"), 0o600)
+			return g
+		}},
 		{".git file naming nothing", RemoteUnresolved, func(x *removal, b string) string {
 			g := filepath.Join(x.tmp, "gitfile")
 			os.WriteFile(g, []byte("gitdir: "+filepath.Join(x.tmp, "missing.git")+"\n"), 0o600)
