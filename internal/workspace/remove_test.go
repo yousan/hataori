@@ -480,6 +480,26 @@ func TestRefuseRemoteBorrowingFromTheWorkspace(t *testing.T) {
 			x.alternates(r, filepath.Join(x.tmp, "gone", "objects")+"\n")
 			return r
 		}},
+		// The remote's own objects directory is a symlink into the
+		// workspace.
+		{"objects directory", RemoteIsLocal, func(x *removal) string {
+			r := filepath.Join(x.tmp, "r.git")
+			x.git(x.tmp, "clone", "-q", "--bare", x.clone, r)
+			if err := os.RemoveAll(filepath.Join(r, "objects")); err != nil { // under x.tmp, made just above
+				x.t.Fatal(err)
+			}
+			x.symlink(filepath.Join(x.clone, ".git", "objects"), filepath.Join(r, "objects"))
+			return r
+		}},
+		// git reads alternates six levels deep: the sixth still leads to
+		// the workspace.
+		{"six levels deep", RemoteIsLocal, func(x *removal) string {
+			r := x.clone
+			for i := 0; i < 6; i++ {
+				r = x.shared(r, "c"+strconv.Itoa(i)+".git")
+			}
+			return r
+		}},
 		// git reads alternates six levels deep and ignores the rest.
 		{"deeper than git reads", RemoteUnresolved, func(x *removal) string {
 			r := x.clone

@@ -859,8 +859,8 @@ func (c *checker) localRemote(u, dir string) (string, Reason) {
 const alternateDepth = 5
 
 // alternates names why the objects git serves for a remote whose paths are
-// reads come from inside a root, following each one's objects/info/
-// alternates the way git does, or "". An alternate that cannot be resolved,
+// reads come from inside a root, from each one's objects directory and the
+// objects/info/alternates git follows from there, or "". An alternate that cannot be resolved,
 // or one nested deeper than git reads, is an error: what git serves then
 // cannot be told.
 func (c *checker) alternates(reads []string) (Reason, error) {
@@ -876,6 +876,10 @@ func (c *checker) alternates(reads []string) (Reason, error) {
 			continue
 		} else if err != nil {
 			return "", err
+		}
+		// The objects directory itself may lead into a root.
+		if reason := c.inRoot(objects); reason != "" {
+			return reason, nil
 		}
 		if !seen[objects] {
 			seen[objects] = true
