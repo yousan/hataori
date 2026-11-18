@@ -147,7 +147,7 @@ Unknown keys are refused.
 
 ### `dashboard`
 
-The section may be empty (`{}`): the dashboard then listens on `127.0.0.1:7466`. It shows nothing yet but whether you are signed in. Sign in by opening the link that `hataori signin` prints; it works once, within five minutes, and the session lasts twelve hours or until the daemon restarts.
+The section may be empty (`{}`): the dashboard then listens on `127.0.0.1:7466`. It has no page yet; it serves the thread list, one thread and the event stream as JSON to a signed-in session. Sign in by opening the link that `hataori signin` prints; it works once, within five minutes, and the session lasts twelve hours, across restarts of the daemon. Sessions are signed with a key the daemon keeps in `state/dashboard-session.key`; removing that file ends every session at the next start.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|

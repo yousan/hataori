@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -108,7 +109,14 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 			}
 			dc.TLS = &cert
 		}
-		dash, err = dashboard.Listen(dc, c.As(control.Caller{Principal: control.Principal(cfg.Owner), Scopes: keys, May: control.OpRead}), lg)
+		if dc.SessionKey, err = sessionKey(in.Root); err != nil {
+			return err
+		}
+		caller := control.Caller{Principal: control.Principal(cfg.Owner), Scopes: keys, May: control.OpRead}
+		if dashboardHook != nil {
+			dashboardHook(&caller)
+		}
+		dash, err = dashboard.Listen(dc, c.As(caller), lg)
 		if err != nil {
 			return err
 		}
@@ -176,6 +184,45 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		return nil
 	}
 	return err
+}
+
+// dashboardHook, when a test sets it, changes the dashboard's Caller.
+var dashboardHook func(*control.Caller)
+
+// sessionKeyFile holds the key that signs dashboard sessions, so that a
+// session outlives a restart. Removing it ends every session.
+const sessionKeyFile = "state/dashboard-session.key"
+
+// sessionKey reads the dashboard's session key, and makes it the first time.
+func sessionKey(root *os.Root) ([]byte, error) {
+	f, err := root.OpenFile(sessionKeyFile, os.O_RDONLY, 0)
+	if err == nil {
+		defer f.Close()
+		b, err := io.ReadAll(io.LimitReader(f, 1024))
+		if err != nil {
+			return nil, fmt.Errorf("dashboard: %s: %w", sessionKeyFile, err)
+		}
+		if len(b) < 32 {
+			return nil, fmt.Errorf("dashboard: %s is shorter than 32 bytes: remove it to make a new one", sessionKeyFile)
+		}
+		return b, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("dashboard: %w", err)
+	}
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, fmt.Errorf("dashboard: %w", err)
+	}
+	f, err = root.OpenFile(sessionKeyFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("dashboard: %w", err)
+	}
+	if _, err := f.Write(key); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("dashboard: %w", err)
+	}
+	return key, f.Close()
 }
 
 // frontEndHook, when a test sets it, sees each front end before it runs,
