@@ -355,7 +355,7 @@ For macOS specifically: the service manager is launchd, not systemd; the host pr
 
 ## 7. Supervisor, dashboard and plugins
 
-All three are wanted, all come after phase 1, and all are clients of the control API. The supervisor and the dashboard add no concept to the core; plugins add hook points (section 7.3).
+All three are wanted and all are clients of the control API. The supervisor and plugins come after phase 1; the read-only dashboard is built alongside it (section 8). The supervisor and the dashboard add no concept to the core; plugins add hook points (section 7.3).
 
 ### 7.1 Supervisor agent
 
@@ -391,18 +391,83 @@ One limit is not enforced by this: the supervisor can *ask* a worker thread to m
 
 ### 7.2 Dashboard
 
-Every thread side by side with its live state and recent output, like tiled terminal panes. The unit is the thread, not the pane, so it does not depend on how hataori talks to the agent. A session that runs in a terminal, as Claude Code's do, can also show that terminal live in its tile.
+A web page that shows every thread a person may see: its state, its numbers, and its terminal, live. It changes nothing. The maintainer chose the layout and started the work on 2026-11-18, in parallel with the remaining phases (section 10).
 
-- **Served by hataori**, as a client of the control API: `Threads` for the grid, `Thread` for a tile's content, `Events` from a position for live updates. A page that reconnects asks for events after the last one it saw, so it shows no gap and no repeat.
-- **Read-only first.** The first version makes no call that changes anything. Sending, answering and stopping come later through the same API and the same checks.
-- **A native window later** (Wails or Electron) wraps the same pages. Not designed here.
+The unit is the thread, not the terminal, so the page does not depend on how hataori talks to the agent. A Claude Code session runs in a terminal and shows it live; a Codex session has none and shows its output rebuilt from events.
 
-**Authentication is required, also on a private network.**
+**Layout.** One page in five parts.
 
-- No route, including the event stream, answers without a signed-in session.
-- Sign-in is a short-lived, single-use link. A person asks for it in chat and gets it privately, or the operator prints one on the host. The dashboard session then belongs to that chat identity, so there are no extra passwords and no surface-specific login. Other ways (the chat service's own sign-in) can be added.
+- **Tree, on the left.** A filter box on top, matching title, number and terminal. Under it a *needs attention* block: the threads waiting on a question or failed, each with the question or the failure reason. Then three sections:
+  1. *Threads*, grouped by scope. A scope's header shows one state dot per thread. A thread's row shows the agent's mark coloured by state, its number and title, and its age; a second line shows the model, the context use in percent and the last line of output, with a question or a failure highlighted.
+  2. *tmux on the host*, sessions that hataori does not own: session, then window. A row shows the window, its process, its terminal device and its last activity.
+  3. *Other terminals on the host* that hataori does not own: terminal device and process.
+
+  A footer counts the threads per state.
+- **Tab bar, above the main area.** An "All threads" tab is pinned first; the items opened from the tree follow. A tab shows the agent's mark coloured by state, the title, the time since the turn started while one runs, a badge for an open question or a failure, and a close button. The tabs are flat; the active one has the terminal's background. At the right end: show or hide the tree, split, show or hide the details, light or dark. Split goes from one pane to two to three, side by side; the extra panes show the tabs viewed before.
+- **Main panes.** The selected session's terminal, live and read-only. A Codex session: its output rebuilt from events. An asleep session: its last screen, marked "no process".
+- **Details panel, on the right, shown on demand.** On top, the open question or the failure reason. Then:
+  - *thread*: state, scope, who started it, when, number of turns;
+  - *agent*: kind, model, effort, context use, tokens this turn and today, background tasks running;
+  - *workspace*: repository, branch, lines added and removed, uncommitted files, unpushed commits, pull request, terminal device;
+  - *recent events*, with their times.
+
+  For a terminal hataori does not own: tmux session, window and pane, terminal device, process, directory, last activity, and a line saying that hataori does not judge its state.
+- **Status bar, at the bottom.** On the left, the selected item: number, state, model, context use, terminal device. On the right: the remaining usage of each agent with its reset time, a live mark with the position of the last event read, and "read-only".
+
+The **"All threads" tab** is a table with one row per thread, grouped by scope: state, number, title, agent and model, state with its age, context use as a bar, tokens today, branch, changes (lines added and removed, uncommitted files), unpushed commits, pull request, last output. Clicking a row opens the thread's tab.
+
+Rows are dense by default; the normal density hides the second line of a tree row. On a narrow screen the same page becomes a list: needs attention first, then running, then the rest folded. There is no separate app.
+
+Not in the dashboard: diffs, boards of cards, a browser inside the page. Other tools do these well.
+
+**Read-only.** The first version makes no call that changes anything, and no terminal view takes input. A question's choices are shown, not offered as buttons. Sending, answering and stopping come later, through the same API and the same checks.
+
+**Where the data comes from.** Everything goes through the control API, versioned as [docs/protocol.md](../protocol.md) says. The dashboard reads no database, no state directory and no workspace by itself.
+
+| Shown | Source |
+|---|---|
+| threads, state, number, title, scope, who started it, when | `Threads` (exists) |
+| open question, failure reason, last output | `Thread` (exists), the `request` and `turn_ended` events |
+| live updates, the live mark | `Events` from a position (exists) |
+| recent events of one thread | new optional argument of `Thread` |
+| agent, model, effort, number of turns, last line, background tasks | new optional fields of `ThreadInfo` |
+| tokens this turn and today, context use | new optional fields of the `usage` event, which the core sums into `ThreadInfo` |
+| branch, lines added and removed against the branch point, uncommitted files, unpushed commits | new operation `Workspace` |
+| the live terminal of a session | new operation `Terminal`, a read-only stream from the session host |
+| terminals hataori does not own | new operations `HostTerminals` and `HostScreen` |
+| pull request | no known source: research first |
+| remaining usage per agent, reset time | no known source: research first |
+
+Appendix D lists the new operations and fields as a proposal. Each is a minor protocol change.
+
+- **Model and effort** are what the agent reports when it reports them, and what was asked for until then. **Tokens today** are counted per calendar day in the instance's time zone.
+- **Workspace state** is the same check that section 4.6 needs, built once and used by both. The dashboard's use only reads, and it answers from the remote refs as last fetched, with the time of that fetch, because it is asked often. Removal still asks the remote at that moment.
+- **The live terminal.** The session host already keeps the terminal's raw output in a bounded log (section 4.3). It also counts every byte it writes, so a byte keeps its position when the log is trimmed. `Terminal` first sends the end of the log with the terminal's size and the position after it, then output as it comes. A viewer that reconnects asks from its last position; when that is no longer kept, it gets the end of the log again and redraws. The host still interprets nothing. The page draws the bytes with a terminal emulator and drops everything the emulator would send back, keys and answers to terminal queries alike: no byte goes from the page to any terminal.
+- **Pull request and remaining usage** each wait for a research issue. For remaining usage: what Claude Code and Codex (`codex app-server`) report about remaining usage and reset times, run against the real CLIs. For pull requests: whether a thread's pull request can be found without hataori calling a code host. A field with no source is left out, not guessed.
+
+**Terminals hataori does not own.** This widens the dashboard beyond hataori's own threads. The rules:
+
+- Display only. hataori shows a screen and metadata, never sends a key, and never infers a state from them; the details panel says so.
+- Owner only, and off unless the instance's config turns it on.
+- tmux panes are listed with tmux's own commands, which report session, window, pane, terminal device, current command, directory and last activity. A pane's screen is read with `capture-pane` while a tab shows it.
+- Other terminals are found from the process table through `ps`, not `/proc`, so the same code runs on Linux and macOS (section 6.4). A program that does not hold a terminal cannot read its screen, so only metadata is shown for these.
+- A terminal that a session host owns is shown once, as its thread.
+
+**Sign-in and network.**
+
+- No route answers without a signed-in session, including the event stream and the terminal streams.
+- Sign-in is a short-lived, single-use link. In the first version the operator prints one on the host with a `hataori` command (through `SignInLink`, Appendix D), and the session belongs to the owner. A link that a person asks for in chat and gets privately comes with the "people in chat" phase; that session belongs to the chat identity, so there are no extra passwords and no surface-specific login. Other ways (the chat service's own sign-in) can be added.
 - A person sees a thread only if their `Caller` includes its scope. The channel decides who can read a thread in chat, and the dashboard must not widen that. The first version is owner-only.
-- The server checks `Host` and `Origin` on every request, so a web page elsewhere cannot reach it through the user's browser. Cookies are not readable by scripts. Anything beyond loopback should be served over TLS.
+- The server listens on loopback by default. Any other address needs TLS, either hataori's own or a reverse proxy in front that the config names; without one of them the dashboard does not start. The server checks `Host` and `Origin` on every request against the configured address, so a web page elsewhere cannot reach it through the user's browser. Cookies are not readable by scripts.
+
+**How it is built.**
+
+- The server is part of the `hataori` binary and is a client of the control API with a read-only `Caller`.
+- The page is TypeScript, React and xterm.js, built with Vite. The built files are committed and embedded with `go:embed`, so `go build` needs no Node. CI builds them again and fails when the result differs from what is committed.
+- The UI is in English. Every string is in one catalog, so another language, Japanese first, is a catalog added on its own.
+- A native window later (Wails or Electron) wraps the same pages. Not designed here.
+
+**Tests.** As the repository's rules say, and one end-to-end test with a fake agent: the dashboard lists a thread, shows a turn's start and end from the event stream, and after a reconnect shows no gap and no repeat.
 
 ### 7.3 Plugins
 
@@ -528,13 +593,17 @@ Acceptance:
 - [ ] No core package imports a driver, an agent adapter or a client, or contains the name of a surface or an agent (checked in CI).
 - [ ] For one week, every order the deployment's manager sends runs on hataori and none on c-lord.
 
+### Alongside phase 1: the read-only dashboard
+
+Section 7.2. It starts now and runs in parallel with the rest of phase 1 and with the phases after it (decided 2026-11-18, section 10). It does not hold up phase 1: phase 1's acceptance does not wait for it, and its issues are tracked apart.
+
+It has the criterion of the later phases below, with three additions that the dashboard needs in core packages: the new operations and fields of Appendix D, the workspace check of section 4.6 (read-only use), and the session host's byte count for the terminal stream. Its acceptance criteria are in Appendix E.
+
 ### After phase 1
 
 The order below is a recommendation (section 10). Each later phase also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter; the plugin phase may also add hook points. Appendix E has the acceptance criteria of each.
 
-**People in chat, and cleanup.** Slash commands, buttons for questions, lamps, pings, attach by hand, and removing workspaces behind the proof in section 4.6. This is what lets c-lord be switched off.
-
-**Dashboard, read-only.** Section 7.2.
+**People in chat, and cleanup.** Slash commands, buttons for questions, lamps, pings, attach by hand, and removing workspaces behind the proof in section 4.6. This is what lets c-lord be switched off. The dashboard's sign-in link from chat comes with it.
 
 **Supervisor.** Section 7.1.
 
@@ -575,9 +644,13 @@ Unlike Discord and Slack Socket Mode, Teams calls hataori. The host needs a publ
 - **Phase 1 is only the dispatched orders.** Nothing a person types into chat directly is in it. c-lord stays for hands-on threads until the next phase.
 - **Dropped:** the HTTP API (replaced by the `hataori` command, the control API and webhook triggers), scheduled tasks and notifications, docker container tracking, table images, the status board (replaced by the dashboard). Scheduled tasks come back first if they are missed.
 - **One bot identity per instance**, including a second host.
-- **Order after phase 1:** people in chat and cleanup, then the dashboard, then the supervisor, then Codex, Slack, Teams.
+- **The read-only dashboard starts now**, in parallel with the rest of phase 1 and the later phases (the maintainer, 2026-11-18). This replaces its earlier place in the order, after people in chat. Phase 1's acceptance does not wait for it. Section 8.
+- **Order after phase 1:** people in chat and cleanup, then the supervisor, then Codex, Slack, Teams.
+- **The dashboard's layout** is a tree of threads and host terminals, tabs with up to three panes side by side, a details panel and a status bar; the same page becomes a list on a narrow screen (the maintainer, 2026-11-18). It also shows terminals on the host that hataori does not own, for the owner only and for display only; no state is inferred from them and no key is sent to them. Section 7.2.
 - **A supervisor has no shell:** control API tools and files in its own directory only.
-- **Dashboard sign-in is a link issued in chat**, owner-only at first.
+- **Dashboard sign-in is a single-use link**, owner-only at first. In the first version the operator prints it with a `hataori` command on the host; the link issued in chat comes with the "people in chat" phase (2026-11-18).
+- **The dashboard's page is TypeScript, React and xterm.js, built with Vite**, with the built files committed and embedded, so building hataori needs no Node (2026-11-18).
+- **A dashboard field with no source is left out, not guessed.** Pull requests and remaining usage wait for research (2026-11-18).
 - **Existing c-lord threads do not move.** Both run side by side on different channels.
 - **The login alert and relay are in phase 1** (section 4.7), for Claude Code. They are the only use of direct messages and the only button in phase 1.
 - **Plugins are separate programs shaped like OpenClaw's plugins:** a manifest, registration and hooks, with OpenClaw's hook names and timing where the meaning is the same. hataori does not depend on OpenClaw. Tools used inside a session are not hataori plugins. Section 7.3.
@@ -919,6 +992,102 @@ Sleep, close and remove join the interface with the phase that needs them.
 
 The types carry lowercase JSON names, and the data of every event kind is declared in `control.EventKinds`; the store refuses an event that does not match. A `turn_started` event carries the key of the call that started the turn, so a chat front end can reply to the message that started it. A `subagent_started` event carries the subagent's name, and a `tool_started` event the subagent the tool runs in (`agent.Event.Parent`), so a front end can count a subagent's tool calls. A `file_out` event carries every file of one hand-over (`More`) and its caption (`Caption`). How all of this is encoded on the socket, and when the protocol version changes, is in [docs/protocol.md](../protocol.md).
 
+### Control API: additions for the dashboard (proposal)
+
+Section 7.2. Not declared yet: each item lands with the issue that implements it, which also changes [docs/protocol.md](../protocol.md) and its golden files. Every item is a new optional field or a new operation, so each is a minor version. Names may still change.
+
+```go
+// New operations of API.
+type API interface {
+	// ...the operations above, and:
+
+	// Workspace reads the state of a thread's workspace and changes nothing.
+	// It is the check of section 4.6, answering from the remote refs as last
+	// fetched.
+	Workspace(ctx context.Context, id ThreadID) (WorkspaceState, error)
+
+	// Terminal streams a session's terminal output. It first sends the end of
+	// the kept log, with Reset set, when after is 0, belongs to another run of
+	// the session host, or is no longer kept. It takes no input.
+	Terminal(ctx context.Context, id ThreadID, run string, after uint64) (<-chan TerminalChunk, error)
+
+	// HostTerminals lists the terminals on the host that no session host owns.
+	// HostScreen returns one tmux pane's screen. Both need OpHost.
+	HostTerminals(ctx context.Context) ([]HostTerminal, error)
+	HostScreen(ctx context.Context, pane string) (string, error)
+
+	// SignInLink makes a single-use dashboard sign-in link for the owner.
+	// Only the owner's connection on the control socket may call it.
+	SignInLink(ctx context.Context) (string, error)
+}
+
+// Ops gains OpHost: may list and read terminals that hataori does not own.
+// Only the owner is given it, and only when the config turns them on.
+
+// New optional fields of ThreadInfo, and so of ThreadDetail.
+type ThreadInfo struct {
+	// ...the fields above, and:
+	Agent      string      // the agent's registered name
+	Model      string      // as the agent reports it; as asked for until then
+	Effort     string      // the same
+	Turns      int         // turns run in this thread
+	Last       string      // the last line of output, capped; text, so optional
+	Background int         // background tasks still running after the last turn
+	Context    *Context    // absent until the agent reports it
+	Tokens     *TokenCount // absent until the agent reports usage
+}
+
+type Context struct{ Used, Size int64 } // tokens
+type TokenCount struct{ Turn, Today int64 } // today: the instance's time zone
+
+// Thread takes an optional count of recent events, which ThreadDetail.Events
+// carries, newest last.
+
+type WorkspaceState struct {
+	Branch      string
+	Base        string // the commit the branch started from
+	Added       int    // lines, against Base, uncommitted changes included
+	Removed     int
+	Uncommitted int // modified, staged and untracked files
+	Unpushed    int // commits on no remote-tracking ref
+	Fetched     time.Time
+	// PullRequest is added only if the research finds a source (section 7.2).
+}
+
+type TerminalChunk struct {
+	Run   string // the session host's run; a new run starts a new count
+	Pos   uint64 // the byte position after Data, counted since the run started
+	Reset bool   // Data is the end of the log, not a continuation: redraw
+	Cols  int
+	Rows  int
+	Data  []byte
+}
+
+type HostTerminal struct {
+	Device   string    // the terminal device
+	Process  string    // the foreground command
+	Activity time.Time // last output, when known
+	Tmux     *TmuxPane // absent for a terminal outside tmux
+}
+
+type TmuxPane struct {
+	Session, Window, Pane string
+	Dir                   string
+	Attached              bool
+}
+```
+
+The `usage` event gains optional fields, all counts of tokens for the turn so far: `turn`, `model`, `input`, `output`, `cache_read`, `cache_write`, `context_used`, `context_size`. The core sums them into `ThreadInfo.Tokens` and keeps the latest `Context`. Remaining usage per agent (an operation `Limits`, with the agent, the window, the share used and the reset time) is added only if its research finds a source.
+
+| Change | Protocol |
+|---|---|
+| `ThreadInfo`: `agent`, `model`, `effort`, `turns`, `last`, `background`, `context`, `tokens` | minor: optional fields |
+| `Thread`: argument `events`; `ThreadDetail`: `events` | minor: optional fields |
+| `usage` event: the fields above | minor: optional fields |
+| `Workspace`, `Terminal`, `HostTerminals`, `HostScreen`, `SignInLink` | minor: new operations |
+| `Terminal` turns its connection into a stream, as `Events` does | part of the new operation |
+| `Limits`; `WorkspaceState.PullRequest` | minor, and only after their research |
+
 ### Surface driver
 
 ```go
@@ -1136,10 +1305,12 @@ Every phase here also has this criterion: the change touches no core package, ex
 
 ### Dashboard, read-only
 
-- [ ] Without a signed-in session every route, including the event stream, answers 401. A request with an unknown `Host` is refused.
-- [ ] Each thread in the user's scopes is a tile whose state and last output follow the events within 2 seconds. A thread outside those scopes is never sent to the browser.
-- [ ] After a daemon restart the open page catches up with no gap and no repeat.
-- [ ] Every request that is not a read is refused.
+- [ ] Without a signed-in session every route, including the event stream and the terminal streams, answers 401. A request with an unknown `Host` or a foreign `Origin` is refused. With a listening address other than loopback and neither TLS nor a named reverse proxy, the dashboard does not start.
+- [ ] Each thread in the user's scopes is in the tree and in the "All threads" table, and its state and last output follow the events within 2 seconds. A thread outside those scopes is never sent to the browser.
+- [ ] After a daemon restart the open page catches up with no gap and no repeat (the end-to-end test with a fake agent).
+- [ ] Every request that is not a read is refused, and no byte from the page reaches any terminal.
+- [ ] Terminals hataori does not own are listed only for the owner and only when the config turns them on, on Linux and on macOS, and no key is sent to them.
+- [ ] `go build` works without Node, and CI fails when the committed build of the page differs from a fresh one.
 
 ### Supervisor
 
