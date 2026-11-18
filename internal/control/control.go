@@ -154,11 +154,11 @@ type ThreadInfo struct {
 	Created   time.Time `json:"created"`
 	Updated   time.Time `json:"updated"`
 
-	// Of the thread's current session, since 1.4.
+	// Of the thread's current session, since 1.5.
 	Agent  string `json:"agent,omitempty"`  // the agent's registered name
 	Model  string `json:"model,omitempty"`  // as the agent reports it; as asked for until then
 	Effort string `json:"effort,omitempty"` // the same
-	// Of the whole thread, since 1.4.
+	// Of the whole thread, since 1.5.
 	Turns      int    `json:"turns,omitempty"`      // turns started in this thread
 	Last       string `json:"last,omitempty"`       // the last line of output, at most LastMax bytes; text
 	Background int    `json:"background,omitempty"` // background of the thread's last turn_ended event
@@ -175,7 +175,7 @@ type ThreadDetail struct {
 	ThreadInfo
 	Requests []Request `json:"requests"`         // open questions and approvals
 	Recent   string    `json:"recent"`           // the last output, cut to the size asked for
-	Events   []Event   `json:"events,omitempty"` // the last events asked for, newest last; since 1.4
+	Events   []Event   `json:"events,omitempty"` // the last events asked for, newest last; since 1.5
 }
 
 // WorkspaceState is what a thread's workspace holds that may exist nowhere

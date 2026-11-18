@@ -14,7 +14,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **1.4**. Both hellos carry it.
+The protocol version is `major.minor`, now **1.5**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 1.0`.
 - With the same major number and different minor numbers they work together.
@@ -106,7 +106,7 @@ One thread's state, open requests, last output and last events.
 |---|---|---|---|
 | `id` | `ThreadID` | required | the thread |
 | `recent` | integer | required | how many bytes of its last output to return |
-| `events` | integer | optional | how many of its last events to return, at most 100; absent or 0 for none; since 1.4 |
+| `events` | integer | optional | how many of its last events to return, at most 100; absent or 0 for none; since 1.5 |
 
 Result: `ThreadDetail`
 
@@ -225,12 +225,12 @@ A field left empty matches everything the caller may see.
 | `started_by` | string | required | the principal that started it |
 | `created` | time | required | when it was started |
 | `updated` | time | required | when its state last changed |
-| `agent` | string | optional | the registered name of the agent of its current session; since 1.4 |
-| `model` | string | optional | the model of its current session: as the agent reports it, and as asked for (or the scope's default) until it does; since 1.4 |
-| `effort` | string | optional | the effort, in the same way as `model`; since 1.4 |
-| `turns` | integer | optional | the turns started in the thread, in all its sessions; absent for none; since 1.4 |
-| `last` | string | optional | the last line that is not blank of its last `text` event that has one, trimmed, at most 200 bytes; text; since 1.4 |
-| `background` | integer | optional | the `background` of the thread's last `turn_ended` event; absent for 0 or before its first turn ends; since 1.4 |
+| `agent` | string | optional | the registered name of the agent of its current session; since 1.5 |
+| `model` | string | optional | the model of its current session: as the agent reports it, and as asked for (or the scope's default) until it does; since 1.5 |
+| `effort` | string | optional | the effort, in the same way as `model`; since 1.5 |
+| `turns` | integer | optional | the turns started in the thread, in all its sessions; absent for none; since 1.5 |
+| `last` | string | optional | the last line that is not blank of its last `text` event that has one, trimmed, at most 200 bytes; text; since 1.5 |
+| `background` | integer | optional | the `background` of the thread's last `turn_ended` event; absent for 0 or before its first turn ends; since 1.5 |
 
 ### Type `ThreadDetail`
 
@@ -254,7 +254,7 @@ The fields of `ThreadInfo`, and:
 | `background` | integer | optional | as in `ThreadInfo` |
 | `requests` | [`Request`] | required | the open questions and approvals; may be `null` |
 | `recent` | string | required | the end of its last output, at most the bytes asked for |
-| `events` | [`Event`] | optional | its last events, as many as `events` asked for, newest last, each as `Events` delivers it; since 1.4 |
+| `events` | [`Event`] | optional | its last events, as many as `events` asked for, newest last, each as `Events` delivers it; since 1.5 |
 
 ### Type `Request`
 

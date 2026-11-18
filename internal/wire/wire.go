@@ -27,7 +27,7 @@ import (
 
 // Version is the protocol version this build speaks: major.minor. Two
 // sides work together when their major numbers are equal (docs/protocol.md).
-const Version = "1.4"
+const Version = "1.5"
 
 type hello struct {
 	Version string `json:"version"`
@@ -60,7 +60,7 @@ type (
 	threadArgs struct {
 		ID     control.ThreadID `json:"id"`
 		Recent int              `json:"recent"`
-		Events int              `json:"events,omitempty"` // since 1.4
+		Events int              `json:"events,omitempty"` // since 1.5
 	}
 	sendArgs struct {
 		ID    control.ThreadID `json:"id"`
