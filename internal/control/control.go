@@ -84,6 +84,12 @@ type API interface {
 	// OpHost.
 	HostTerminals(ctx context.Context) ([]HostTerminal, error)
 	HostScreen(ctx context.Context, pane string) (string, error)
+
+	// Limits returns the remaining usage of each agent whose sessions
+	// report it, as the last report said, one entry per agent by name. An
+	// agent that reports none has no entry. It needs OpRead; the usage is
+	// the agent's account's, not a scope's.
+	Limits(ctx context.Context) ([]AgentLimits, error)
 }
 
 // Caller is who is asking. An API value is bound to one Caller,
@@ -117,7 +123,7 @@ type Ops uint8
 
 // The operations of the API, as members of Ops.
 const (
-	OpRead   Ops = 1 << iota // Threads, Thread, Events, Workspace, Terminal
+	OpRead   Ops = 1 << iota // Threads, Thread, Events, Workspace, Terminal, Limits
 	OpStart                  // Start
 	OpSend                   // Send
 	OpAnswer                 // Answer
@@ -351,4 +357,23 @@ type TmuxPane struct {
 	Index      string `json:"index"`                 // the pane's index in its window
 	Dir        string `json:"dir,omitempty"`         // the pane's current directory
 	Attached   bool   `json:"attached"`              // a client shows the session now
+}
+
+// AgentLimits is an agent's remaining usage, as one of its sessions last
+// reported it. At is when that report was made. Every is how often the
+// agent's sessions report it while one runs: a report older than Every is
+// not current, so a reader shows it with its time.
+type AgentLimits struct {
+	Agent   string        `json:"agent"`   // the agent's registered name
+	At      time.Time     `json:"at"`      // when it was reported
+	Every   int64         `json:"every"`   // seconds
+	Windows []LimitWindow `json:"windows"` // as the agent reports them, in its order
+}
+
+// LimitWindow is one usage window of an agent.
+type LimitWindow struct {
+	Name    string     `json:"name"`              // the agent's name for it, such as seven_day or primary
+	Minutes int64      `json:"minutes,omitempty"` // its length; absent when the agent does not say
+	Used    int        `json:"used"`              // the share used, in percent: 0 to 100
+	Resets  *time.Time `json:"resets,omitempty"`  // when it starts again; absent when the agent does not say
 }

@@ -27,7 +27,7 @@ import (
 
 // Version is the protocol version this build speaks: major.minor. Two
 // sides work together when their major numbers are equal (docs/protocol.md).
-const Version = "1.12"
+const Version = "1.13"
 
 type hello struct {
 	Version string `json:"version"`
@@ -91,6 +91,7 @@ type (
 		After uint64           `json:"after"`
 	}
 	hostTerminalsArgs struct{}
+	limitsArgs        struct{}
 	hostScreenArgs    struct {
 		Pane string `json:"pane"`
 	}
@@ -166,6 +167,9 @@ var operations = map[string]operation{
 	"Terminal": {terminalArgs{}, control.TerminalChunk{}, nil},
 	"HostTerminals": {hostTerminalsArgs{}, []control.HostTerminal{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
 		return api.HostTerminals(ctx)
+	}},
+	"Limits": {limitsArgs{}, []control.AgentLimits{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		return api.Limits(ctx)
 	}},
 	"HostScreen": {hostScreenArgs{}, "", func(ctx context.Context, api control.API, args func(any) error) (any, error) {
 		var a hostScreenArgs

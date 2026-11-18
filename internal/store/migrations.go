@@ -264,6 +264,17 @@ var migrations = []Migration{
 		// what its file held before.
 		`ALTER TABLE session_files ADD COLUMN start INTEGER NOT NULL DEFAULT 0`,
 	)},
+	{Name: "agent limits", Up: execAll(
+		// The newest remaining usage each agent reported, from any of its
+		// sessions: the windows as JSON, when it was reported and how often
+		// its sessions report it.
+		`CREATE TABLE agent_limits (
+			agent   TEXT PRIMARY KEY,
+			at      INTEGER NOT NULL, -- Unix ms
+			every   INTEGER NOT NULL, -- ms
+			windows TEXT NOT NULL
+		)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

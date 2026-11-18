@@ -188,6 +188,9 @@ const (
 	Usage
 	TurnEnded
 	SessionEnded
+	// Limits is the remaining usage of the agent's account. It belongs to
+	// no turn and changes no state; the core keeps the newest per agent.
+	Limits
 )
 
 // Starter says who started a turn.
@@ -260,6 +263,26 @@ type Event struct {
 	Background int       // TurnEnded: background tasks still running
 
 	Usage *UsageCount // Usage: the counts the agent reports
+
+	Limits *LimitReport // Limits: the windows the agent reports
+}
+
+// LimitReport is what a Limits event reports. At is when the agent gave
+// the value, which a codec takes from the line it read, not from a clock;
+// Every is how often the adapter's sessions report it while they run.
+type LimitReport struct {
+	At      time.Time
+	Every   time.Duration
+	Windows []LimitWindow
+}
+
+// LimitWindow is one usage window as the agent names it. Minutes and
+// Resets are zero when the agent does not say.
+type LimitWindow struct {
+	Name    string
+	Minutes int64
+	Used    int // percent, 0 to 100
+	Resets  time.Time
 }
 
 // UsageCount is what a Usage event reports: tokens of the running turn so

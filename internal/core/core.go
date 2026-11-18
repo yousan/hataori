@@ -810,6 +810,35 @@ func (c *Core) Recover(ctx context.Context) error {
 
 // Workspace reads the state of the thread's workspace. The workspace is the
 // one its newest session that has one runs in.
+// Limits returns what the session machine kept in agent_limits, by agent.
+func (a *api) Limits(ctx context.Context) ([]control.AgentLimits, error) {
+	if err := a.check(control.OpRead, "Limits", ""); err != nil {
+		return nil, err
+	}
+	rows, err := a.c.Store.DB.QueryContext(ctx, `SELECT agent, at, every, windows FROM agent_limits ORDER BY agent`)
+	if err != nil {
+		return nil, fmt.Errorf("core: limits: %w", err)
+	}
+	defer rows.Close()
+	out := []control.AgentLimits{}
+	for rows.Next() {
+		var (
+			l         control.AgentLimits
+			at, every int64
+			ws        []byte
+		)
+		if err := rows.Scan(&l.Agent, &at, &every, &ws); err != nil {
+			return nil, fmt.Errorf("core: limits: %w", err)
+		}
+		if err := json.Unmarshal(ws, &l.Windows); err != nil {
+			return nil, fmt.Errorf("core: limits of %s: %w", l.Agent, err)
+		}
+		l.At, l.Every = time.UnixMilli(at), every/1000
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
 func (a *api) Workspace(ctx context.Context, id control.ThreadID) (control.WorkspaceState, error) {
 	if err := a.check(control.OpRead, "Workspace", id.Scope); err != nil {
 		return control.WorkspaceState{}, err

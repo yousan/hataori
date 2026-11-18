@@ -66,6 +66,9 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 	if in.Kind == AgentEvent && in.Agent.Seq <= lastSeq {
 		return nil // seen before
 	}
+	if in.Kind == AgentEvent && in.Agent.Kind == agent.Limits {
+		return recordLimits(ctx, tx, sessionID, agentName, in.Agent)
+	}
 
 	snap := Snapshot{State: control.State(state)}
 	var turnID int64
@@ -212,6 +215,39 @@ func recordUsage(ctx context.Context, tx *store.Tx, thread, turn int64, u agent.
 		tokens_today = CASE WHEN tokens_day = ? THEN tokens_today + ? ELSE ? END, tokens_day = ? WHERE id = ?`,
 		highest, day, added, added, day, thread); err != nil {
 		return fmt.Errorf("session: usage: %w", err)
+	}
+	return nil
+}
+
+// recordLimits keeps an agent's remaining usage, unless a report made
+// later, by another of its sessions, is kept already. It belongs to no turn
+// and changes no state, so it writes no event.
+func recordLimits(ctx context.Context, tx *store.Tx, sessionID int64, agentName string, e agent.Event) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET last_seq = ? WHERE id = ?`, e.Seq, sessionID); err != nil {
+		return err
+	}
+	if e.Limits == nil {
+		return nil
+	}
+	l := *e.Limits
+	ws := []control.LimitWindow{}
+	for _, w := range l.Windows {
+		cw := control.LimitWindow{Name: w.Name, Minutes: w.Minutes, Used: w.Used}
+		if !w.Resets.IsZero() {
+			r := w.Resets
+			cw.Resets = &r
+		}
+		ws = append(ws, cw)
+	}
+	b, err := json.Marshal(ws)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_limits (agent, at, every, windows) VALUES (?, ?, ?, ?)
+		ON CONFLICT (agent) DO UPDATE SET at = excluded.at, every = excluded.every, windows = excluded.windows
+		WHERE excluded.at >= agent_limits.at`,
+		agentName, l.At.UnixMilli(), l.Every.Milliseconds(), string(b)); err != nil {
+		return fmt.Errorf("session: limits: %w", err)
 	}
 	return nil
 }
