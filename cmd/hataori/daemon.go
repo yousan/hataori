@@ -22,6 +22,7 @@ import (
 	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/hostterm"
 	"github.com/yousan/hataori/internal/instance"
+	"github.com/yousan/hataori/internal/people"
 	"github.com/yousan/hataori/internal/relay"
 	"github.com/yousan/hataori/internal/runner"
 	"github.com/yousan/hataori/internal/session"
@@ -97,6 +98,9 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	c := &core.Core{Store: st, Machine: m, Scopes: scopes, Owners: map[string]control.ScopeOwner{}, People: cfg.People,
 		Workspaces: workspace.Maker{Root: abs, Client: func(scope string) string { return clients[scope] }},
 		Runner:     r, Agent: agentName, Model: cfg.Model, Effort: cfg.Effort, Log: lg}
+	if coreHook != nil {
+		coreHook(c)
+	}
 
 	// The dashboard is a client with a read-only Caller (section 7.2). It
 	// listens before anything else serves, so a config it refuses stops the
@@ -114,16 +118,15 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		if dc.SessionKey, err = sessionKey(in.Root); err != nil {
 			return err
 		}
-		// Owner only, so the owner's terminals on the host too when the
-		// config turns them on.
-		caller := control.Caller{Principal: control.Principal(cfg.Owner), Scopes: keys, May: control.OpRead}
-		if cfg.HostTerminals {
-			caller.May |= control.OpHost
+		// A session's requests are made as its person, while the core still
+		// lets that person sign in.
+		forPerson := func(person string) (control.API, bool) {
+			if !c.MaySignIn(person) {
+				return nil, false
+			}
+			return c.As(dashboardCaller(cfg.People, keys, cfg.HostTerminals, person)), true
 		}
-		if dashboardHook != nil {
-			dashboardHook(&caller)
-		}
-		dash, err = dashboard.Listen(dc, c.As(caller), lg)
+		dash, err = dashboard.Listen(dc, forPerson, lg)
 		if err != nil {
 			return err
 		}
@@ -197,8 +200,32 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	return err
 }
 
+// dashboardCaller is the read-only Caller of a dashboard session of person:
+// the scopes that person may act in, every scope for the owner (section
+// 7.2). Only the owner reads the host's terminals, and only when the config
+// turns them on.
+func dashboardCaller(dir *people.Directory, scopes []string, hostTerminals bool, person string) control.Caller {
+	caller := control.Caller{Principal: control.Principal(person), May: control.OpRead}
+	for _, s := range scopes {
+		if dir.May(person, s) {
+			caller.Scopes = append(caller.Scopes, s)
+		}
+	}
+	if hostTerminals && person == dir.Owner() {
+		caller.May |= control.OpHost
+	}
+	if dashboardHook != nil {
+		dashboardHook(&caller)
+	}
+	return caller
+}
+
 // dashboardHook, when a test sets it, changes the dashboard's Caller.
 var dashboardHook func(*control.Caller)
+
+// coreHook, when a test sets it, is given the daemon's core, so that the
+// test can call it as an in-process client such as a chat front end.
+var coreHook func(*core.Core)
 
 // sessionKeyFile holds the key that signs dashboard sessions, so that a
 // session outlives a restart. Removing it ends every session.

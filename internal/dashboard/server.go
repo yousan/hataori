@@ -6,8 +6,10 @@
 // comes from the named reverse proxy, when one is named; the Host is the
 // dashboard's address; an Origin, when sent, is the dashboard's own; the
 // method is GET or HEAD; and, for every route but the sign-in link itself,
-// the request carries a signed-in session. A session is made only by a
-// single-use, short-lived link that the owner gets with SignInLink.
+// the request carries a signed-in session of a person who may still sign
+// in. A session is made only by a single-use, short-lived link that a
+// person gets with SignInLink, and belongs to that person: its requests are
+// made with the control API bound to that person's Caller.
 package dashboard
 
 import (
@@ -65,8 +67,11 @@ type Config struct {
 
 // Server is one instance's dashboard.
 type Server struct {
-	// API is the control API, bound to a read-only Caller.
-	API control.API
+	// For returns the control API that a signed-in person's requests are
+	// made with, bound to a read-only Caller of that person. ok is false
+	// when the person may no longer sign in; their session then answers as
+	// none.
+	For func(person string) (api control.API, ok bool)
 	Log *slog.Logger
 
 	ln         net.Listener
@@ -86,7 +91,14 @@ type Server struct {
 	keepAlive, writeTimeout, hostScreenInterval time.Duration
 
 	mu    sync.Mutex
-	links map[[32]byte]time.Time // by hash of the token: when it expires
+	links map[[32]byte]link // by hash of the token
+}
+
+// link is a sign-in link not used yet: whose session it opens, and when it
+// expires.
+type link struct {
+	person string
+	exp    time.Time
 }
 
 // configError is a config error naming its key.
@@ -107,7 +119,7 @@ func isLoopback(host string) bool {
 // Listen checks cfg and starts listening. It refuses to listen on an address
 // other than loopback unless the dashboard is served over TLS, its own or a
 // named reverse proxy's, and the error says so.
-func Listen(cfg Config, api control.API, log *slog.Logger) (*Server, error) {
+func Listen(cfg Config, api func(person string) (control.API, bool), log *slog.Logger) (*Server, error) {
 	listen := cfg.Listen
 	if listen == "" {
 		listen = DefaultListen
@@ -116,9 +128,9 @@ func Listen(cfg Config, api control.API, log *slog.Logger) (*Server, error) {
 	if err != nil {
 		return nil, configError("listen", "%q is not a host and port such as %q", listen, DefaultListen)
 	}
-	s := &Server{API: api, Log: log, secure: cfg.TLS != nil || cfg.Proxy != "",
+	s := &Server{For: api, Log: log, secure: cfg.TLS != nil || cfg.Proxy != "",
 		linkTTL: cfg.LinkTTL, sessionTTL: cfg.SessionTTL, now: time.Now,
-		links: map[[32]byte]time.Time{}, key: cfg.SessionKey,
+		links: map[[32]byte]link{}, key: cfg.SessionKey,
 		keepAlive: defaultKeepAlive, writeTimeout: defaultWriteTimeout, hostScreenInterval: defaultHostScreenInterval}
 	if len(s.key) == 0 {
 		s.key = make([]byte, 32)
@@ -251,8 +263,13 @@ func (s *Server) Serve(ctx context.Context) error {
 // Close stops the server and closes its connections.
 func (s *Server) Close() error { return s.srv.Close() }
 
-// NewLink makes a sign-in link that works once, within the link lifetime.
-func (s *Server) NewLink(context.Context) (string, error) {
+// NewLink makes a sign-in link that works once, within the link lifetime,
+// and opens a session of person. The token is kept only as its hash, and
+// is not logged.
+func (s *Server) NewLink(_ context.Context, person string) (string, error) {
+	if person == "" {
+		return "", errors.New("dashboard: a sign-in link needs a person")
+	}
 	token, sum, err := secret()
 	if err != nil {
 		return "", err
@@ -260,7 +277,7 @@ func (s *Server) NewLink(context.Context) (string, error) {
 	now := s.now()
 	s.mu.Lock()
 	sweep(s.links, now)
-	s.links[sum] = now.Add(s.linkTTL)
+	s.links[sum] = link{person: person, exp: now.Add(s.linkTTL)}
 	s.mu.Unlock()
 	return s.base.String() + SignInPath + "?t=" + token, nil
 }
@@ -275,38 +292,45 @@ func secret() (string, [32]byte, error) {
 	return token, sha256.Sum256([]byte(token)), nil
 }
 
-func sweep(m map[[32]byte]time.Time, now time.Time) {
-	for k, exp := range m {
-		if !now.Before(exp) {
+func sweep(m map[[32]byte]link, now time.Time) {
+	for k, l := range m {
+		if !now.Before(l.exp) {
 			delete(m, k)
 		}
 	}
 }
 
-// take removes token from m and reports whether it was there and had not
-// expired.
-func (s *Server) take(m map[[32]byte]time.Time, token string) bool {
+// take removes token from m and returns the person of its session; ok is
+// false when it was not there or had expired.
+func (s *Server) take(m map[[32]byte]link, token string) (person string, ok bool) {
 	sum := sha256.Sum256([]byte(token))
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	exp, ok := m[sum]
+	l, ok := m[sum]
 	delete(m, sum)
-	return ok && s.now().Before(exp)
+	return l.person, ok && s.now().Before(l.exp)
 }
 
-// A session is a cookie the server signed: its expiry and a random nonce,
-// and an HMAC of them under the session key. The server keeps no list of
-// sessions, so one outlives a restart of the daemon that keeps its key.
-const sessionLabel = "hataori dashboard session\x00"
+// A session is a cookie the server signed: its expiry, a random nonce and
+// the person it belongs to, and an HMAC of them under the session key. The
+// server keeps no list of sessions, so one outlives a restart of the
+// daemon that keeps its key. The label names the payload's layout: a
+// session of the earlier layout, which carried no person, no longer
+// verifies.
+const sessionLabel = "hataori dashboard session 2\x00"
 
-// newSession returns a session that expires at exp.
-func (s *Server) newSession(exp time.Time) (string, error) {
-	var payload [24]byte
+// sessionHead is the length of a session's payload before the person.
+const sessionHead = 24
+
+// newSession returns a session of person that expires at exp.
+func (s *Server) newSession(exp time.Time, person string) (string, error) {
+	payload := make([]byte, sessionHead, sessionHead+len(person))
 	binary.BigEndian.PutUint64(payload[:8], uint64(exp.Unix()))
-	if _, err := rand.Read(payload[8:]); err != nil {
+	if _, err := rand.Read(payload[8:sessionHead]); err != nil {
 		return "", fmt.Errorf("dashboard: %w", err)
 	}
-	return base64.RawURLEncoding.EncodeToString(payload[:]) + "." + base64.RawURLEncoding.EncodeToString(s.sign(payload[:])), nil
+	payload = append(payload, person...)
+	return base64.RawURLEncoding.EncodeToString(payload) + "." + base64.RawURLEncoding.EncodeToString(s.sign(payload)), nil
 }
 
 func (s *Server) sign(payload []byte) []byte {
@@ -317,28 +341,41 @@ func (s *Server) sign(payload []byte) []byte {
 }
 
 // valid reports whether token is a session this key signed that has not
-// expired, and when it expires.
-func (s *Server) valid(token string) (time.Time, bool) {
+// expired, when it expires, and whose it is.
+func (s *Server) valid(token string) (exp time.Time, person string, ok bool) {
 	p, sig, ok := strings.Cut(token, ".")
 	if !ok {
-		return time.Time{}, false
+		return time.Time{}, "", false
 	}
 	payload, err1 := base64.RawURLEncoding.DecodeString(p)
 	mac, err2 := base64.RawURLEncoding.DecodeString(sig)
-	if err1 != nil || err2 != nil || len(payload) != 24 || !hmac.Equal(mac, s.sign(payload)) {
-		return time.Time{}, false
+	if err1 != nil || err2 != nil || len(payload) <= sessionHead || !hmac.Equal(mac, s.sign(payload)) {
+		return time.Time{}, "", false
 	}
-	exp := time.Unix(int64(binary.BigEndian.Uint64(payload[:8])), 0)
-	return exp, s.now().Before(exp)
+	exp = time.Unix(int64(binary.BigEndian.Uint64(payload[:8])), 0)
+	return exp, string(payload[sessionHead:]), s.now().Before(exp)
 }
 
-type expiryKey struct{}
+type sessionKey struct{}
+
+// session is what ServeHTTP learned of a request's signed-in session.
+type session struct {
+	exp time.Time
+	api control.API
+}
 
 // sessionExpiry is when the session of a request that passed ServeHTTP's
 // checks expires.
 func sessionExpiry(r *http.Request) time.Time {
-	exp, _ := r.Context().Value(expiryKey{}).(time.Time)
-	return exp
+	ss, _ := r.Context().Value(sessionKey{}).(session)
+	return ss.exp
+}
+
+// api is the control API of the person whose session made a request that
+// passed ServeHTTP's checks.
+func api(r *http.Request) control.API {
+	ss, _ := r.Context().Value(sessionKey{}).(session)
+	return ss.api
 }
 
 // ServeHTTP checks every request, then hands it to its route.
@@ -379,12 +416,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "not signed in", http.StatusUnauthorized)
 			return
 		}
-		exp, ok := s.valid(c.Value)
-		if !ok {
+		exp, person, ok := s.valid(c.Value)
+		var a control.API
+		if ok {
+			a, ok = s.For(person)
+		}
+		if !ok || a == nil {
 			http.Error(w, "not signed in", http.StatusUnauthorized)
 			return
 		}
-		r = r.WithContext(context.WithValue(r.Context(), expiryKey{}, exp))
+		r = r.WithContext(context.WithValue(r.Context(), sessionKey{}, session{exp: exp, api: a}))
 	}
 	s.mux.ServeHTTP(w, r)
 }
@@ -402,11 +443,12 @@ func (s *Server) signIn(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "open the link with GET", http.StatusMethodNotAllowed)
 		return
 	}
-	if !s.take(s.links, r.URL.Query().Get("t")) {
+	person, ok := s.take(s.links, r.URL.Query().Get("t"))
+	if !ok {
 		http.Error(w, "this sign-in link was used or has expired: ask for a new one", http.StatusUnauthorized)
 		return
 	}
-	token, err := s.newSession(s.now().Add(s.sessionTTL))
+	token, err := s.newSession(s.now().Add(s.sessionTTL), person)
 	if err != nil {
 		http.Error(w, "cannot make a session", http.StatusInternalServerError)
 		return

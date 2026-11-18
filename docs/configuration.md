@@ -148,7 +148,7 @@ Unknown keys are refused.
 
 ### `dashboard`
 
-The section may be empty (`{}`): the dashboard then listens on `127.0.0.1:7466`. It has no page yet; it serves the thread list, one thread, the event stream, each session's live terminal and, with `host_terminals` on, the screens of tmux panes, read-only, to a signed-in session. Sign in by opening the link that `hataori signin` prints; it works once, within five minutes, and the session lasts twelve hours, across restarts of the daemon. Sessions are signed with a key the daemon keeps in `state/dashboard-session.key`; removing that file ends every session at the next start.
+The section may be empty (`{}`): the dashboard then listens on `127.0.0.1:7466`. It has no page yet; it serves the thread list, one thread, the event stream, each session's live terminal and, with `host_terminals` on, the screens of tmux panes, read-only, to a signed-in session. Sign in by opening the link that `hataori signin` prints; it works once, within five minutes, and the session lasts twelve hours, across restarts of the daemon. Sessions are signed with a key the daemon keeps in `state/dashboard-session.key`; removing that file ends every session at the next start. A session belongs to the person whose link opened it and shows only the scopes that person may act in, every scope for the owner. Only the owner may get a link, on the host or, once the chat command exists, in chat; a session ends early when its person may no longer get one. Sessions made by a version before this one are not recognised: sign in again.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|

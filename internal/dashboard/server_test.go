@@ -5,10 +5,14 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -33,7 +38,7 @@ func start(t *testing.T, cfg Config, tune ...func(*Server)) *Server {
 	if cfg.Listen == "" {
 		cfg.Listen = "127.0.0.1:0"
 	}
-	s, err := Listen(cfg, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s, err := Listen(cfg, only(noAPI{}), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,6 +54,14 @@ func start(t *testing.T, cfg Config, tune ...func(*Server)) *Server {
 	go func() { s.Serve(ctx); close(done) }()
 	t.Cleanup(func() { cancel(); <-done })
 	return s
+}
+
+// noAPI is a control API whose operations no test calls.
+type noAPI struct{ control.API }
+
+// only gives a's sessions to the owner, and none to anyone else.
+func only(a control.API) func(string) (control.API, bool) {
+	return func(person string) (control.API, bool) { return a, person == "owner" }
 }
 
 // client follows no redirect and sends each request to the server's
@@ -110,7 +123,7 @@ func do(t *testing.T, s *Server, r req) *http.Response {
 // signIn uses a new link and returns the session cookie.
 func signIn(t *testing.T, s *Server) *http.Cookie {
 	t.Helper()
-	link, err := s.NewLink(context.Background())
+	link, err := s.NewLink(context.Background(), "owner")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +174,7 @@ func TestEveryRouteNeedsASession(t *testing.T) {
 
 func TestALinkWorksOnce(t *testing.T) {
 	s := start(t, Config{})
-	link, _ := s.NewLink(context.Background())
+	link, _ := s.NewLink(context.Background(), "owner")
 	p := pathOf(t, link)
 	if resp := do(t, s, req{path: p}); resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("first use: %s", resp.Status)
@@ -177,7 +190,7 @@ func TestALinkWorksOnce(t *testing.T) {
 	}
 
 	// A HEAD, such as a link checker's, does not use a link up.
-	link, _ = s.NewLink(context.Background())
+	link, _ = s.NewLink(context.Background(), "owner")
 	p = pathOf(t, link)
 	if resp := do(t, s, req{method: http.MethodHead, path: p}); resp.StatusCode != http.StatusMethodNotAllowed || len(resp.Cookies()) != 0 {
 		t.Fatalf("HEAD: %s, cookies %v", resp.Status, resp.Cookies())
@@ -187,12 +200,71 @@ func TestALinkWorksOnce(t *testing.T) {
 	}
 }
 
+// A session belongs to the person its link was made for: its requests are
+// made with that person's API, and it answers as none once that person may
+// no longer sign in. A session of the earlier layout, without a person, is
+// refused.
+func TestASessionBelongsToItsPerson(t *testing.T) {
+	var mu sync.Mutex
+	var asked []string
+	long := strings.Repeat("a", 1000) // the config sets no limit on a name
+	allowed := map[string]bool{"ada": true, "grace": true, long: true}
+	s := start(t, Config{}, func(s *Server) {
+		s.For = func(person string) (control.API, bool) {
+			mu.Lock()
+			defer mu.Unlock()
+			asked = append(asked, person)
+			return noAPI{}, allowed[person]
+		}
+	})
+	for _, person := range []string{"ada", "grace", long} {
+		link, err := s.NewLink(context.Background(), person)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp := do(t, s, req{path: pathOf(t, link)})
+		if resp.StatusCode != http.StatusSeeOther || len(resp.Cookies()) != 1 {
+			t.Fatalf("%s: sign-in %s", person, resp.Status)
+		}
+		c := resp.Cookies()[0]
+		mu.Lock()
+		asked = nil
+		mu.Unlock()
+		if resp := do(t, s, req{path: "/", cookie: c}); resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s signed in: %s", person, resp.Status)
+		}
+		mu.Lock()
+		if !reflect.DeepEqual(asked, []string{person}) {
+			t.Fatalf("%s's request asked for the API of %q", person, asked)
+		}
+		allowed[person] = false
+		mu.Unlock()
+		if resp := do(t, s, req{path: "/", cookie: c}); resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("%s may no longer sign in: %s, want 401", person, resp.Status)
+		}
+	}
+	if _, err := s.NewLink(context.Background(), ""); err == nil {
+		t.Fatal("a link for nobody was made")
+	}
+
+	// The earlier layout: expiry and nonce, signed under the earlier label.
+	var payload [24]byte
+	binary.BigEndian.PutUint64(payload[:8], uint64(time.Now().Add(time.Hour).Unix()))
+	m := hmac.New(sha256.New, s.key)
+	m.Write([]byte("hataori dashboard session\x00"))
+	m.Write(payload[:])
+	old := base64.RawURLEncoding.EncodeToString(payload[:]) + "." + base64.RawURLEncoding.EncodeToString(m.Sum(nil))
+	if resp := do(t, s, req{path: "/", cookie: &http.Cookie{Name: s.cookie, Value: old}}); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("a session without a person: %s, want 401", resp.Status)
+	}
+}
+
 func TestAnExpiredLinkIsRefused(t *testing.T) {
 	s := start(t, Config{})
 	var mu sync.Mutex
 	now := time.Now()
 	s.now = func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
-	link, _ := s.NewLink(context.Background())
+	link, _ := s.NewLink(context.Background(), "owner")
 	mu.Lock()
 	now = now.Add(s.linkTTL)
 	mu.Unlock()
@@ -303,7 +375,7 @@ func TestBehindAProxy(t *testing.T) {
 	if s.URL() != "https://dash.example.com" {
 		t.Fatalf("URL %s", s.URL())
 	}
-	link, _ := s.NewLink(context.Background())
+	link, _ := s.NewLink(context.Background(), "owner")
 	if !strings.HasPrefix(link, "https://dash.example.com/signin?t=") {
 		t.Fatalf("link %s", link)
 	}
@@ -392,7 +464,7 @@ func openStream(t *testing.T, s *Server, c *http.Cookie) io.ReadCloser {
 // A stream ends when its session expires.
 func TestAStreamEndsWithItsSession(t *testing.T) {
 	ended := make(chan struct{})
-	s := start(t, Config{SessionTTL: 2 * time.Second}, func(s *Server) { s.API = streamAPI{ended: ended} })
+	s := start(t, Config{SessionTTL: 2 * time.Second}, func(s *Server) { s.For = only(streamAPI{ended: ended}) })
 	body := openStream(t, s, signIn(t, s))
 	defer body.Close()
 	go io.Copy(io.Discard, body)
@@ -407,7 +479,7 @@ func TestAStreamEndsWithItsSession(t *testing.T) {
 // ends.
 func TestAStalledStreamEnds(t *testing.T) {
 	ended := make(chan struct{})
-	s := start(t, Config{}, func(s *Server) { s.API, s.writeTimeout = streamAPI{ended: ended}, 500*time.Millisecond })
+	s := start(t, Config{}, func(s *Server) { s.For, s.writeTimeout = only(streamAPI{ended: ended}), 500*time.Millisecond })
 	body := openStream(t, s, signIn(t, s))
 	defer body.Close() // never read
 	select {
@@ -500,7 +572,7 @@ func TestHostScreenStream(t *testing.T) {
 	api := &screenAPI{screen: "first screen"}
 	var logged func() string
 	s := start(t, Config{}, func(s *Server) {
-		s.API, s.hostScreenInterval = api, 20*time.Millisecond
+		s.For, s.hostScreenInterval = only(api), 20*time.Millisecond
 		logged = logTo(s)
 	})
 	c := signIn(t, s)
@@ -586,7 +658,7 @@ func TestHostScreenStream(t *testing.T) {
 // refusal at once, opens nothing, and its connection is closed.
 func TestAPartBodyHoldsNothingOpen(t *testing.T) {
 	api := &screenAPI{screen: "x"}
-	s := start(t, Config{}, func(s *Server) { s.API = api })
+	s := start(t, Config{}, func(s *Server) { s.For = only(api) })
 	c := signIn(t, s)
 	for _, path := range []string{TerminalPath + "?scope=s&key=t1", HostScreenPath + "?pane=%251"} {
 		conn, err := net.Dial("tcp", s.ln.Addr().String())

@@ -1026,8 +1026,15 @@ type API interface {
 	Events(ctx context.Context, f Filter, after uint64) (<-chan Event, error)
 
 	// SignInLink makes a single-use, short-lived dashboard sign-in link for
-	// the owner. It needs OpSignIn, which only the owner's connection on the
-	// control socket is given. Since protocol 1.7.
+	// the caller's person, and the session it opens belongs to that person:
+	// its Caller has the scopes that person may act in (every scope for the
+	// owner) and OpRead. It needs OpSignIn, which the owner's connection on
+	// the control socket has, and which a chat front end gives the caller it
+	// makes for a person who asks in chat (the command comes with #259);
+	// the dashboard's caller never has it. Who may get a link is one rule in the core, today the
+	// owner only (section 10); a guest and anyone else are refused and
+	// logged with the client and the id. The token is never logged or
+	// stored as an event. Since protocol 1.7; for a chat caller since 1.11.
 	SignInLink(ctx context.Context) (string, error)
 
 	// Workspace reads the state of a thread's workspace and changes nothing.
@@ -1198,9 +1205,11 @@ type API interface {
 	// HostTerminals, HostScreen: declared above, since protocol 1.10 (#199),
 	// with OpHost.
 
-	// SignInLink: declared above, since protocol 1.7 (#200). Only the
-	// owner's connection on the control socket has OpSignIn; the
-	// dashboard's own Caller has OpRead only.
+	// SignInLink: declared above, since protocol 1.7 (#200); for a chat
+	// caller with From since 1.11 (#252). The control socket's connections
+	// have OpSignIn, and so will the chat front end's caller for a person's
+	// request (#259); a dashboard session's Caller has
+	// OpRead only, and OpHost for the owner when host terminals are on.
 }
 
 // WorkspaceState: declared above, with Workspace.
@@ -1217,6 +1226,7 @@ Remaining usage per agent (an operation `Limits`, with the agent, the window, th
 | `Workspace` | minor: new operation |
 | `HostTerminals`, `HostScreen`, with `Ops` gaining `OpHost` | minor: new operations; landed in 1.10 |
 | `SignInLink`, with `Ops` gaining `OpSignIn` | minor: new operation; landed in 1.7 |
+| `SignInLink` for a chat caller, the session belonging to its person | minor: an operation allowed to one more caller, no encoding change; landed in 1.11 |
 | `Limits`; `WorkspaceState.PullRequest` | minor, and only after their research |
 
 Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event. In protocol 1.9: `Terminal`, which turns its connection into a stream as `Events` does.
