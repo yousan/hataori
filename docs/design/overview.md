@@ -1075,7 +1075,15 @@ type ThreadInfo struct {
 	Turns      int    // turns started in this thread
 	Last       string // the last line of output, at most LastMax bytes; text, so optional
 	Background int    // the background of the thread's last turn_ended event
+	Context    *Context    // the last context use reported; absent until one is
+	Tokens     *TokenCount // absent until the agent reports usage
 }
+
+type Context struct{ Used, Size int64 } // tokens
+// Tokens are input, output, cache reads and writes together. Today counts
+// what each report added in the day it came, in the daemon's local time
+// zone, so a turn past midnight counts in both days.
+type TokenCount struct{ Turn, Today int64 }
 
 type ThreadDetail struct {
 	ThreadInfo
@@ -1126,7 +1134,7 @@ Changing `ThreadID` from a scope and a key to a number changes how every thread 
 
 Sleep, close and remove join the interface with the phase that needs them.
 
-The types carry lowercase JSON names, and the data of every event kind is declared in `control.EventKinds`; the store refuses an event that does not match. A `turn_started` event carries the key of the call that started the turn, so a chat front end can reply to the message that started it. A `subagent_started` event carries the subagent's name, and a `tool_started` event the subagent the tool runs in (`agent.Event.Parent`), so a front end can count a subagent's tool calls. A `file_out` event carries every file of one hand-over (`More`) and its caption (`Caption`). How all of this is encoded on the socket, and when the protocol version changes, is in [docs/protocol.md](../protocol.md).
+The types carry lowercase JSON names, and the data of every event kind is declared in `control.EventKinds`; the store refuses an event that does not match. A `turn_started` event carries the key of the call that started the turn, so a chat front end can reply to the message that started it. A `subagent_started` event carries the subagent's name, and a `tool_started` event the subagent the tool runs in (`agent.Event.Parent`), so a front end can count a subagent's tool calls. A `file_out` event carries every file of one hand-over (`More`) and its caption (`Caption`). A `usage` event carries the counts of `agent.Event.Usage`, each the running turn's total so far, and the turn; the core keeps the thread's `Tokens` and `Context` from them in the same transaction. How all of this is encoded on the socket, and when the protocol version changes, is in [docs/protocol.md](../protocol.md).
 
 ### Control API: additions for the dashboard (proposal)
 
@@ -1157,16 +1165,6 @@ type API interface {
 // Ops gains OpHost: may list and read terminals that hataori does not own.
 // Only the owner is given it, and only when the config turns them on.
 
-// New optional fields of ThreadInfo, and so of ThreadDetail.
-type ThreadInfo struct {
-	// ...the fields above, and:
-	Context *Context    // absent until the agent reports it
-	Tokens  *TokenCount // absent until the agent reports usage
-}
-
-type Context struct{ Used, Size int64 } // tokens
-type TokenCount struct{ Turn, Today int64 } // today: the instance's time zone
-
 // WorkspaceState: declared above, with Workspace.
 
 type TerminalChunk struct {
@@ -1192,18 +1190,16 @@ type TmuxPane struct {
 }
 ```
 
-The `usage` event gains optional fields, all counts of tokens for the turn so far: `turn`, `model`, `input`, `output`, `cache_read`, `cache_write`, `context_used`, `context_size`. The core sums them into `ThreadInfo.Tokens` and keeps the latest `Context`. Remaining usage per agent (an operation `Limits`, with the agent, the window, the share used and the reset time) is added only if its research finds a source.
+Remaining usage per agent (an operation `Limits`, with the agent, the window, the share used and the reset time) is added only if its research finds a source.
 
 | Change | Protocol |
 |---|---|
-| `ThreadInfo`: `context`, `tokens` | minor: optional fields |
-| `usage` event: the fields above | minor: optional fields |
 | `Workspace`, `Terminal`, `HostTerminals`, `HostScreen` | minor: new operations |
 | `SignInLink`, with `Ops` gaining `OpSignIn` | minor: new operation; landed in 1.7 |
 | `Terminal` turns its connection into a stream, as `Events` does | part of the new operation |
 | `Limits`; `WorkspaceState.PullRequest` | minor, and only after their research |
 
-Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`.
+Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event.
 
 ### Surface driver
 
@@ -1395,7 +1391,8 @@ type Event struct {
 	// who started a turn and the Input.ID of the message it reports, the
 	// request id and its questions, the subagent a tool runs in (Parent),
 	// the files handed over with their caption (File, More, Caption),
-	// the end status and reason, the background tasks still running.
+	// the end status and reason, the background tasks still running,
+	// the tokens of the turn so far and the context use (Usage).
 	// SessionEnded has a reason: the agent's own, CannotResume ("cannot
 	// resume") when a resumed session's conversation is gone, or
 	// WrongSession when a resume reported another session id. SessionReady

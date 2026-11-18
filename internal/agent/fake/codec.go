@@ -62,6 +62,18 @@ type report struct {
 	Reason     string   `json:"reason"`
 	Background int      `json:"background"`
 	Input      string   `json:"input"`
+	// usage; "input" is the turn's input id above, so the counts are "in"
+	Tokens
+}
+
+// Tokens are the counts of a usage report.
+type Tokens struct {
+	In          int64 `json:"in"`
+	Output      int64 `json:"output"`
+	CacheRead   int64 `json:"cache_read"`
+	CacheWrite  int64 `json:"cache_write"`
+	ContextUsed int64 `json:"context_used"`
+	ContextSize int64 `json:"context_size"`
 }
 
 // call is a hook call as the session host records it.
@@ -184,6 +196,9 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 		}
 		c.asked[id] = r.ID
 		a = c.events(agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: id, Text: r.Text}})
+	case "usage":
+		a = c.events(agent.Event{Kind: agent.Usage, Usage: &agent.UsageCount{Model: r.Model, Input: r.In, Output: r.Output,
+			CacheRead: r.CacheRead, CacheWrite: r.CacheWrite, ContextUsed: r.ContextUsed, ContextSize: r.ContextSize}})
 	case "file":
 		a = c.events(agent.Event{Kind: agent.FileOut, File: r.Path, More: r.More, Caption: r.Caption})
 	case "end":

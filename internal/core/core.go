@@ -326,6 +326,25 @@ func (a *api) summary(ctx context.Context, t *control.ThreadInfo) error {
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("core: thread summary: %w", err)
 	}
+	var (
+		turn, used, size sql.NullInt64
+		today            int64
+		day              string
+	)
+	err = db.QueryRowContext(ctx, `SELECT tokens_turn, tokens_today, tokens_day, context_used, context_size FROM threads WHERE id = ?`,
+		t.Number).Scan(&turn, &today, &day, &used, &size)
+	if err != nil {
+		return fmt.Errorf("core: thread summary: %w", err)
+	}
+	if turn.Valid {
+		t.Tokens = &control.TokenCount{Turn: turn.Int64}
+		if now := a.c.now(); day == session.DayOf(now, a.c.Machine.Zone) {
+			t.Tokens.Today = today
+		}
+	}
+	if used.Valid && size.Valid {
+		t.Context = &control.Context{Used: used.Int64, Size: size.Int64}
+	}
 	var data []byte
 	err = db.QueryRowContext(ctx, `SELECT data FROM events WHERE scope = ? AND thread = ? AND kind = 'turn_ended'
 		ORDER BY pos DESC LIMIT 1`, t.ID.Scope, t.ID.Key).Scan(&data)
@@ -345,6 +364,14 @@ func (a *api) summary(ctx context.Context, t *control.ThreadInfo) error {
 		}
 	}
 	return nil
+}
+
+// now is the machine's clock.
+func (c *Core) now() time.Time {
+	if c.Machine.Now != nil {
+		return c.Machine.Now()
+	}
+	return time.Now()
 }
 
 // lastLine returns the last line of the thread's text output that is not

@@ -233,6 +233,19 @@ var migrations = []Migration{
 	{Name: "turns.from_id", Up: execAll(
 		`ALTER TABLE turns ADD COLUMN from_id TEXT NOT NULL DEFAULT ''`,
 	)},
+	{Name: "token counts", Up: execAll(
+		// tokens: the highest total of tokens reported in the turn (input, output,
+		// cache reads and writes), which the agent reports as the turn's so far.
+		`ALTER TABLE turns ADD COLUMN tokens INTEGER NOT NULL DEFAULT 0`,
+		// tokens_turn: the last reported turn total, NULL until a report.
+		// tokens_today: the tokens counted in the day tokens_day (YYYY-MM-DD).
+		// context_used, context_size: the last context use reported.
+		`ALTER TABLE threads ADD COLUMN tokens_turn INTEGER`,
+		`ALTER TABLE threads ADD COLUMN tokens_day TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE threads ADD COLUMN tokens_today INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE threads ADD COLUMN context_used INTEGER`,
+		`ALTER TABLE threads ADD COLUMN context_size INTEGER`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

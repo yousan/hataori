@@ -29,7 +29,8 @@ var (
 	exampleID   = control.ThreadID{Scope: "C0123", Key: "T0456"}
 	exampleInfo = control.ThreadInfo{ID: exampleID, Number: 7, Title: "Fix the build", Repo: "https://example.com/repo.git",
 		State: control.Running, StartedBy: "webhook:W1", Created: exampleTime, Updated: exampleTime,
-		Agent: "claude-code", Model: "opus", Effort: "high", Turns: 12, Last: "Running the tests...", Background: 1}
+		Agent: "claude-code", Model: "opus", Effort: "high", Turns: 12, Last: "Running the tests...", Background: 1,
+		Context: &control.Context{Used: 45000, Size: 200000}, Tokens: &control.TokenCount{Turn: 2450, Today: 98000}}
 )
 
 // eventData is an example of every event kind's data.
@@ -48,7 +49,7 @@ var eventData = map[control.EventKind]string{
 	"request":           `{"approval":false,"choices":["red","blue"],"request":"3:toolu_2","session":3,"text":"Which colour?"}`,
 	"request_withdrawn": `{"request":"3:toolu_2","session":3}`,
 	"file_out":          `{"caption":"The report and its data.","file":"/srv/hataori/state/sessions/3/out/report.pdf","more":["/srv/hataori/state/sessions/3/out/data.csv"],"session":3}`,
-	"usage":             `{"session":3}`,
+	"usage":             `{"cache_read":1200,"cache_write":300,"context_size":200000,"context_used":45000,"input":800,"model":"opus","output":150,"session":3,"turn":12}`,
 	"login_lost":        `{"agent":"claude-code","outage":1,"thread":7}`,
 	"login_restored":    `{"agent":"claude-code","outage":1,"scopes":["C0123"],"threads":[{"scope":"C0123","key":"T0456"}]}`,
 	"session_replaced":  `{"new_session":4,"reason":"cannot resume","session":3}`,
