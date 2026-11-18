@@ -23,6 +23,7 @@ import (
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
 	"github.com/yousan/hataori/internal/host"
+	"github.com/yousan/hataori/internal/people"
 	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
 )
@@ -165,7 +166,7 @@ func build(root string, o options, log io.Writer) (*store.Store, *core.Core, *Ru
 		Host: host.Command{Path: os.Args[0], Args: []string{"role", "host"}}, Root: root, Log: lg,
 		Instructions: o.instructions, StartTimeout: o.startTimeout, InterruptGrace: 5 * time.Second, Poll: cmp.Or(o.poll, 20*time.Millisecond),
 		IdlePeriod: o.idlePeriod, ContextBytes: o.contextBytes}
-	c := &core.Core{Store: st, Machine: m, Scopes: map[string]core.Scope{"s": {Enabled: true, Owner: "chat"}},
+	c := &core.Core{Store: st, Machine: m, People: people.New(nil, "owner", nil), Scopes: map[string]core.Scope{"s": {Enabled: true, Owner: "chat"}},
 		Workspaces: workDir{root: filepath.Join(root, "work"), die: o.dieWhenPlaced}, Runner: r, Agent: "fake", Log: lg}
 	return st, c, r, nil
 }

@@ -22,7 +22,7 @@ func (f *front) runningThread(t *testing.T) control.ThreadID {
 		Agent: agent.Event{Seq: 1, Kind: agent.SessionReady}}); err != nil {
 		t.Fatal(err)
 	}
-	owner := f.fe.API(control.Caller{Principal: owner, Scopes: []string{channel}, May: control.OpSend})
+	owner := f.fe.API(control.Caller{Principal: "owner", Scopes: []string{channel}, May: control.OpSend})
 	if err := owner.Send(context.Background(), id, "first", control.Input{Text: "first input"}, control.Refuse); err != nil {
 		t.Fatal(err)
 	}

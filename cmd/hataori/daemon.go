@@ -89,7 +89,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		keys = append(keys, s.Key)
 	}
 	sort.Strings(keys)
-	c := &core.Core{Store: st, Machine: m, Scopes: scopes, Owners: map[string]control.ScopeOwner{},
+	c := &core.Core{Store: st, Machine: m, Scopes: scopes, Owners: map[string]control.ScopeOwner{}, People: cfg.People,
 		Workspaces: workspace.Maker{Root: abs, Client: func(scope string) string { return clients[scope] }},
 		Runner:     r, Agent: agentName, Model: cfg.Model, Effort: cfg.Effort, Log: lg}
 
