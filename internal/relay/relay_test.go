@@ -28,6 +28,9 @@ import (
 
 // The test binary is also the fake agent and its login command.
 func TestMain(m *testing.M) {
+	if len(os.Args) > 2 && os.Args[1] == "role" && os.Args[2] == "guard" {
+		os.Exit(GuardMain(os.Args[3:]))
+	}
 	if len(os.Args) > 2 && os.Args[1] == "role" && os.Args[2] == "fake" {
 		os.Exit(fake.Main(os.Args[3:], os.Stdin, os.Stdout, os.Stderr))
 	}
@@ -47,11 +50,26 @@ func daemonRole(root string) int {
 	cfg, _ := json.Marshal(fake.Config{Command: []string{os.Args[0], "role", "fake"}, Env: []string{"PATH=" + os.Getenv("PATH")},
 		ConfigDir: filepath.Join(root, "agent-config"), Login: fake.Login{Code: goodCode, Linger: true}})
 	ad, _ := fake.New(cfg)
+	link := make(chan struct{}, 1)
 	r := &Relay{Store: st, Adapters: map[string]agent.Adapter{"fake": ad}, People: people.New([]people.Person{{Name: "owner", IDs: []string{"chat:owner"}}}, "owner", nil),
-		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Notify: func(Update) {}}
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Notify: func(u Update) {
+			if u.Link != "" {
+				select {
+				case link <- struct{}{}:
+				default:
+				}
+			}
+		}, Guard: []string{os.Args[0], "role", "guard"}}
 	if err := r.Start(context.Background(), "chat:owner", "fake"); err != nil {
 		return 1
 	}
+	select {
+	case <-link:
+	case <-time.After(10 * time.Second):
+		return 1
+	}
+	// This makes the losing order usual; correctness does not depend on it.
+	time.Sleep(200 * time.Millisecond)
 	r.mu.Lock()
 	pid := r.flows["fake"].cmd.Process.Pid
 	r.mu.Unlock()
@@ -402,5 +420,72 @@ func TestDaemonDeathEndsTheLogin(t *testing.T) {
 			syscall.Kill(-pid, syscall.SIGKILL) // only the group this test made
 			t.Fatal("the login command outlived its daemon")
 		}
+	}
+}
+
+// The guard kills the login group when the daemon pipe closes.
+func TestGuardDaemonDeath(t *testing.T) {
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer read.Close()
+	cmd := exec.Command(os.Args[0], "role", "guard", "sh", "-c", "echo ready; exec sleep 60")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.ExtraFiles = []*os.File{read}
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	read.Close()
+	if _, err := bufio.NewReader(out).ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	write.Close()
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("guard did not exit")
+	}
+	for deadline := time.Now().Add(5 * time.Second); syscall.Kill(-cmd.Process.Pid, 0) == nil; time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("login group outlived its daemon")
+		}
+	}
+}
+
+// The guard preserves the child's exit code.
+func TestGuardExitCode(t *testing.T) {
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer read.Close()
+	defer write.Close()
+	cmd := exec.Command(os.Args[0], "role", "guard", "sh", "-c", "exit 23")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.ExtraFiles = []*os.File{read}
+	err = cmd.Run()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 23 {
+		t.Fatalf("guard exit: %v, want exit code 23", err)
+	}
+}
+
+// A guard outside its own group refuses to start its child.
+func TestGuardRequiresOwnGroup(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "role", "guard", "sh", "-c", "echo started")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	err := cmd.Run()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 1 || out.Len() != 0 {
+		t.Fatalf("guard exit: %v, output: %q; want exit 1 and no child output", err, out.String())
 	}
 }

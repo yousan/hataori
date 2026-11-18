@@ -32,6 +32,7 @@ import (
 	"github.com/yousan/hataori/internal/agent/claudecode"
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/host"
+	"github.com/yousan/hataori/internal/relay"
 	"github.com/yousan/hataori/internal/surface"
 	"github.com/yousan/hataori/internal/surface/discord"
 	"github.com/yousan/hataori/internal/version"
@@ -78,6 +79,8 @@ func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, version.String())
 			return 0
 		}
+	case "login-guard":
+		return relay.GuardMain(args[1:])
 	case "host":
 		if len(args) == 2 {
 			// Started by the daemon through host.Start; its output goes nowhere.
