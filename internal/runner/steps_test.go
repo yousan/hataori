@@ -262,18 +262,29 @@ func TestWarmAfterASleepGivesOnlyTheWokenAgentsLines(t *testing.T) {
 	x.appendTo(transcript, []byte(`{"t":"text","text":"two"}`))
 	x.commitStep()
 
-	rec := &lineRecorder{Codec: fakeTerminalCodec(t)}
-	x.rebuild(rec)
-	var got []string
-	for _, l := range rec.got {
-		for _, w := range []string{"h1", "h2", "h3", "h4", "h5", "one", "skipped", "two"} {
-			if strings.Contains(l, `"`+w+`"`) {
-				got = append(got, w)
+	replayed := func() string {
+		rec := &lineRecorder{Codec: fakeTerminalCodec(t)}
+		x.rebuild(rec)
+		var got []string
+		for _, l := range rec.got {
+			for _, w := range []string{"h1", "h2", "h3", "h4", "h5", "one", "skipped", "two"} {
+				if strings.Contains(l, `"`+w+`"`) {
+					got = append(got, w)
+				}
 			}
 		}
+		return strings.Join(got, " ")
 	}
-	if want := "two h4 h5"; strings.Join(got, " ") != want {
-		t.Fatalf("replayed %q, want %q", strings.Join(got, " "), want)
+	if got, want := replayed(), "two h4 h5"; got != want {
+		t.Fatalf("replayed %q, want %q", got, want)
+	}
+	// Without the stored ranges (the query fails), the lines still begin
+	// where the woken agent's do, in the order used before ranges.
+	if _, err := x.r.Store.DB.Exec(`DROP TABLE session_reads`); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := replayed(), "h4 h5 two"; got != want {
+		t.Fatalf("without the ranges, replayed %q, want %q", got, want)
 	}
 }
 
@@ -372,6 +383,18 @@ func checkRanges(t *testing.T, st *store.Store) {
 		offsets[p] = o
 	}
 	rows.Close()
+	starts := map[string]int64{}
+	rows, err = st.DB.Query(`SELECT '', log_start FROM sessions UNION ALL SELECT path, start FROM session_files`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var p string
+		var s int64
+		rows.Scan(&p, &s)
+		starts[p] = s
+	}
+	rows.Close()
 	ends := map[string]int64{}
 	rows, err = st.DB.Query(`SELECT path, start, end FROM session_reads ORDER BY session_id, n`)
 	if err != nil {
@@ -384,6 +407,8 @@ func checkRanges(t *testing.T, st *store.Store) {
 		rows.Scan(&p, &s, &e)
 		if prev, ok := ends[p]; ok && s != prev {
 			t.Errorf("%q: a range starts at %d after one that ended at %d", p, s, prev)
+		} else if !ok && s != starts[p] {
+			t.Errorf("%q: the first range starts at %d, the lines at %d", p, s, starts[p])
 		}
 		ends[p] = e
 	}

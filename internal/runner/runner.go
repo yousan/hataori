@@ -693,7 +693,8 @@ func (r *Runner) warm(lv *live) []agent.HookReply {
 	starts, reads, err := r.storedReads(lv)
 	if err != nil {
 		// Without the ranges the order is not known; the lines are still
-		// given, in the order used before ranges were stored.
+		// given, from where the current agent's begin if that is known, in
+		// the order used before ranges were stored.
 		r.Log.Error("warm: stored reads", "session", lv.id, "err", err)
 		reads = nil
 	}
@@ -763,14 +764,14 @@ func (r *Runner) storedReads(lv *live) (map[string]int64, []readRange, error) {
 	rows.Close()
 	rows, err = r.Store.DB.Query(`SELECT path, start, end FROM session_reads WHERE session_id = ? ORDER BY n`, lv.id)
 	if err != nil {
-		return nil, nil, err
+		return starts, nil, err // the starts still hold without the ranges
 	}
 	defer rows.Close()
 	var out []readRange
 	for rows.Next() {
 		var rd readRange
 		if err := rows.Scan(&rd.path, &rd.start, &rd.end); err != nil {
-			return nil, nil, err
+			return starts, nil, err
 		}
 		limit, ok := lv.offset, rd.path == ""
 		if !ok {
