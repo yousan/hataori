@@ -34,7 +34,11 @@ type host struct {
 	cmd   *exec.Cmd
 	input io.Writer // the terminal or the command's stdin
 	inMu  sync.Mutex
-	tty   *os.File // the terminal's controlling side, or nil on pipes
+	tty   *os.File    // the terminal's controlling side, or nil on pipes
+	term  *boundedLog // the terminal's raw log, or nil on pipes
+	run   string      // this run of the host; positions in term count from its start
+	cols  int
+	rows  int
 	ln    *net.UnixListener
 	sock  string
 
@@ -74,7 +78,7 @@ func Run(stateDir string) (err error) {
 	if err != nil {
 		return fmt.Errorf("host: %w", err)
 	}
-	h := &host{dir: stateDir, done: make(chan struct{}), log: hl}
+	h := &host{dir: stateDir, done: make(chan struct{}), log: hl, run: newRun()}
 	if err := json.Unmarshal(b, &h.spec); err != nil {
 		return fmt.Errorf("host: %s: %w", SpecFile, err)
 	}
@@ -187,7 +191,8 @@ func (h *host) start() (*sync.WaitGroup, error) {
 			tty.Close()
 			return nil, fmt.Errorf("host: start %s: %w", h.spec.Argv[0], err)
 		}
-		h.tty, h.input = m, m
+		h.tty, h.input, h.term = m, m, tty
+		h.cols, h.rows = int(size.Cols), int(size.Rows)
 		readers.Add(1)
 		go func() {
 			defer readers.Done()
@@ -347,6 +352,8 @@ type request struct {
 	Wait      bool          `json:"wait,omitempty"`      // call: keep it open for an answer
 	Interrupt time.Duration `json:"interrupt,omitempty"` // stop: grace after SIGINT
 	Terminate time.Duration `json:"terminate,omitempty"` // stop: grace after SIGTERM
+	Run       string        `json:"run,omitempty"`       // follow: the run that After counts in
+	After     uint64        `json:"after,omitempty"`     // follow: the position to continue after
 }
 
 type response struct {
@@ -358,6 +365,12 @@ type response struct {
 	Data    []byte        `json:"data,omitempty"`    // call: the answer
 	Calls   []WaitingCall `json:"calls,omitempty"`   // waiting: the calls that wait
 	Signals string        `json:"signals,omitempty"` // stop: the signals sent, in order
+	Run     string        `json:"run,omitempty"`     // follow: the host's run
+	Pos     uint64        `json:"pos,omitempty"`     // follow: the position after Data
+	Reset   bool          `json:"reset,omitempty"`   // follow: Data is the end of the log, not a continuation
+	Cols    int           `json:"cols,omitempty"`    // follow: the terminal's size
+	Rows    int           `json:"rows,omitempty"`
+	End     bool          `json:"end,omitempty"` // follow: the terminal is closed and everything was sent
 }
 
 func (h *host) serveConn(c *net.UnixConn) {
@@ -378,6 +391,10 @@ func (h *host) serveConn(c *net.UnixConn) {
 				h.log.dropped("writing the answer of a call", err)
 			}
 			return // a call has its own connection
+		}
+		if req.Op == "follow" {
+			h.follow(c, enc, req)
+			return // the connection is the stream now
 		}
 		if req.Op == "stop" {
 			resp, registered := h.stop(req)

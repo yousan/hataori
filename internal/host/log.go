@@ -9,12 +9,19 @@ import (
 // boundedLog is an append-only file kept under limit bytes: when a write
 // would pass the limit, the oldest part is dropped so that about half the
 // limit remains.
+//
+// It counts the bytes written to it since it was opened: the end of the file
+// is always at position pos, so a byte keeps its position when the file is
+// trimmed. Followers get every byte written after they started following.
 type boundedLog struct {
-	mu    sync.Mutex
-	path  string
-	limit int64
-	f     *os.File
-	size  int64
+	mu        sync.Mutex
+	path      string
+	limit     int64
+	f         *os.File
+	size      int64
+	pos       uint64 // bytes written since the log was opened
+	followers map[*follower]struct{}
+	closed    bool
 }
 
 func openBounded(path string, limit int64) (*boundedLog, error) {
@@ -33,7 +40,7 @@ func openBounded(path string, limit int64) (*boundedLog, error) {
 func (l *boundedLog) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	n := len(p)
+	n, all := len(p), p
 	if int64(len(p)) > l.limit { // only its end fits
 		p = p[int64(len(p))-l.limit/2:]
 	}
@@ -46,8 +53,11 @@ func (l *boundedLog) Write(p []byte) (int, error) {
 	}
 	m, err := l.f.Write(p)
 	l.size += int64(m)
+	written := n - (len(p) - m) // what the file now ends with, dropped part included
+	l.pos += uint64(written)
+	l.deliver(all[:written])
 	if err != nil {
-		return m, err
+		return written, err
 	}
 	return n, nil
 }
@@ -92,6 +102,11 @@ func (l *boundedLog) trim(keep int64) error {
 func (l *boundedLog) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.closed = true
+	for f := range l.followers {
+		f.end()
+	}
+	l.followers = nil
 	return l.f.Close()
 }
 
