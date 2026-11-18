@@ -62,11 +62,12 @@ type codec struct {
 // Prompt ids tie the two sources together: every hook of a turn carries
 // prompt_id, and the transcript's user lines carry the same promptId.
 type turnText struct {
-	known   bool       // a hook named this prompt: the turn is this session's
-	ended   bool       // its end was reported
-	final   string     // the final answer Stop reported
-	held    string     // the latest assistant text, held back: it may be the final answer
-	pending []textItem // read from the transcript before any hook named the prompt
+	known       bool       // a hook named this prompt: the turn is this session's
+	ended       bool       // its end was reported
+	interrupted bool       // it ended with the transcript's interrupt line
+	final       string     // the final answer Stop reported
+	held        string     // the latest assistant text, held back: it may be the final answer
+	pending     []textItem // read from the transcript before any hook named the prompt
 
 	usage    map[string]tokens // the usage of each model message of the turn, by message id
 	model    string            // the model of the latest of them
@@ -580,7 +581,7 @@ func (c *codec) applyText(t *turnText, it textItem) Actions {
 			return Actions{}
 		}
 		a := merge(c.withdrawAll(), c.release(t))
-		t.ended = true
+		t.ended, t.interrupted = true, true
 		return merge(a, c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted}))
 	}
 	if t.ended {
@@ -622,6 +623,9 @@ func (c *codec) end(prompt, final string) Actions {
 }
 
 func (c *codec) decodeHook(k call, p payload) Actions {
+	if (p.Event == "PreToolUse" || p.Event == "PermissionRequest") && c.abandoned(p) {
+		return Actions{}
+	}
 	switch p.Event {
 	case "SessionStart":
 		ready := agent.Event{Kind: agent.SessionReady, SessionID: p.SessionID, Model: p.Model, Effort: p.Effort.Level}
@@ -701,6 +705,20 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 		return merge(c.withdrawAll(), c.events(end))
 	}
 	return c.events(agent.Event{Kind: agent.Unknown, Text: p.Event})
+}
+
+// abandoned says whether a call comes from the main agent of a turn that
+// was already interrupted. The runner gives the transcript before the hook
+// calls of one step, so an interrupt written just after a call can be read
+// first; the CLI has given that call up, and it opens nothing: no question,
+// no tool, no approval. A subagent's calls (agent_id) go on after the main
+// turn's end, so they are not judged by it.
+func (c *codec) abandoned(p payload) bool {
+	if p.AgentID != "" || p.PromptID == "" {
+		return false
+	}
+	t := c.turns[p.PromptID]
+	return t != nil && t.interrupted
 }
 
 // CompactTool is the tool name a compaction is reported under: it is

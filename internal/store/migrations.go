@@ -246,6 +246,24 @@ var migrations = []Migration{
 		`ALTER TABLE threads ADD COLUMN context_used INTEGER`,
 		`ALTER TABLE threads ADD COLUMN context_size INTEGER`,
 	)},
+	{Name: "session_reads", Up: execAll(
+		// What the runner gave a session's codec, in order: one row per
+		// range of complete lines read from the host's log (path '') or a
+		// followed file, written in the same commit as their events. A
+		// codec rebuilt later is given the same ranges in the same order.
+		`CREATE TABLE session_reads (
+			session_id INTEGER NOT NULL REFERENCES sessions (id),
+			n          INTEGER NOT NULL, -- the read's place, from 1, in its session
+			path       TEXT NOT NULL,
+			start      INTEGER NOT NULL, -- offsets in that file, the end excluded
+			end        INTEGER NOT NULL,
+			PRIMARY KEY (session_id, n)
+		)`,
+		// Where the current agent's lines begin in a followed file, as
+		// sessions.log_start for the log: a woken agent's codec does not read
+		// what its file held before.
+		`ALTER TABLE session_files ADD COLUMN start INTEGER NOT NULL DEFAULT 0`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

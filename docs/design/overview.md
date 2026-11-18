@@ -1366,7 +1366,13 @@ type Codec interface {
 	Open() Actions                          // what to do first, if anything
 	// One reported line. src is Output, Hook, File, or Screen: the agent's
 	// terminal output, given only to a codec whose Open asked for it, and
-	// only until the codec says StopScreen.
+	// only until the codec says StopScreen. In each step the runner gives
+	// the followed files' new lines, then the host's log, then files just
+	// named, so a line can come before a hook call made just before it; a
+	// codec rebuilt after a restart or a failed commit gets the committed
+	// lines step by step in the same order (the store keeps each step's
+	// ranges). The Claude Code codec opens nothing for a call of a turn
+	// already interrupted.
 	Decode(src Source, line []byte) Actions
 	Input(in Input) (Actions, error)        // a user message; TurnStarted returns its ID
 	Answer(a Answer) (Actions, error)       // to an approval or a question
