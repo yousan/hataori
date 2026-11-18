@@ -56,7 +56,7 @@ func TestOpenNewThenAgain(t *testing.T) {
 		t.Fatalf("journal_mode = %q", mode)
 	}
 	want := tables(t, s)
-	if want != "chat_cursors,chat_inbound,chat_logins,chat_outbox,chat_triggers,events,inbox,login_outage_threads,login_outages,pending_inputs,requests,schema_version,session_files,sessions,sqlite_sequence,threads,turns,workspaces" {
+	if want != "chat_cursors,chat_inbound,chat_logins,chat_outbox,chat_triggers,events,inbox,login_outage_threads,login_outages,pending_inputs,requests,schema_version,session_files,session_reads,sessions,sqlite_sequence,threads,turns,workspaces" {
 		t.Fatalf("tables = %s", want)
 	}
 	s.Close()
@@ -230,5 +230,49 @@ func TestTriggerThreadsKeptOnUpgrade(t *testing.T) {
 	}
 	if got["m1"] != "th1" || got["m2"] != "" || len(got) != 2 {
 		t.Fatalf("threads %v, want m1 in th1 and m2 in none", got)
+	}
+}
+
+// A database from before session_reads opens, keeps its sessions and
+// offsets, and takes ranges after the step.
+func TestSessionReadsAddedOnUpgrade(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "db")
+	step := slices.IndexFunc(migrations, func(m Migration) bool { return m.Name == "session_reads" })
+	if step < 0 {
+		t.Fatal("no step session_reads")
+	}
+	s, err := open(ctx, path, migrations[:step])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO threads (id, scope, key, started_by, state, created_at, updated_at) VALUES (1, 's', 't1', 'owner', 'idle', 0, 0)`,
+		`INSERT INTO sessions (id, thread_id, agent, state, log_offset, created_at, updated_at) VALUES (1, 1, 'a', 'idle', 120, 0, 0)`,
+		`INSERT INTO session_files (session_id, path, offset) VALUES (1, 'transcript', 300)`,
+	} {
+		if _, err := s.DB.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Close()
+	s, err = open(ctx, path, migrations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if v, _ := s.Version(ctx); v != len(migrations) {
+		t.Fatalf("version %d, want %d", v, len(migrations))
+	}
+	var log, file int64
+	if err := s.DB.QueryRowContext(ctx, `SELECT log_offset, (SELECT offset FROM session_files WHERE session_id = 1) FROM sessions WHERE id = 1`).Scan(&log, &file); err != nil || log != 120 || file != 300 {
+		t.Fatalf("offsets %d %d (%v), want 120 300", log, file, err)
+	}
+	var n int
+	if err := s.DB.QueryRowContext(ctx, `SELECT count(*) FROM session_reads`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("%d ranges (%v), want none", n, err)
+	}
+	if _, err := s.DB.ExecContext(ctx, `INSERT INTO session_reads (session_id, n, path, start, end) VALUES (1, 1, '', 120, 180)`); err != nil {
+		t.Fatal(err)
 	}
 }

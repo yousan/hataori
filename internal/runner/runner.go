@@ -644,24 +644,122 @@ func (r *Runner) dropPending(pending int64) {
 	}
 }
 
-// warm feeds the codec what was read before the stored offsets.
+// saveRead stores how far a step read, and the ranges it read after the
+// session's earlier ones, in the transaction that stores its events.
+func saveRead(ctx context.Context, tx *store.Tx, session int64, b batch) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET log_offset = ? WHERE id = ?`, b.offset, session); err != nil {
+		return err
+	}
+	for p, o := range b.files {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO session_files (session_id, path, offset) VALUES (?, ?, ?)
+			ON CONFLICT (session_id, path) DO UPDATE SET offset = excluded.offset`, session, p, o); err != nil {
+			return err
+		}
+	}
+	reads := b.reads
+	if len(reads) == 0 {
+		return nil
+	}
+	var n int64
+	if err := tx.QueryRowContext(ctx, `SELECT coalesce(max(n), 0) FROM session_reads WHERE session_id = ?`, session).Scan(&n); err != nil {
+		return err
+	}
+	for _, rd := range reads {
+		n++
+		if _, err := tx.ExecContext(ctx, `INSERT INTO session_reads (session_id, n, path, start, end) VALUES (?, ?, ?, ?, ?)`,
+			session, n, rd.path, rd.start, rd.end); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// warm feeds the codec what was read before the stored offsets, in the
+// order the steps read it (session_reads). Lines that no stored range
+// covers, read before ranges were stored, come first: the host's log from
+// where the current agent's lines begin, then each followed file from its
+// start, as they were replayed then. Ranges of the log before that are an
+// earlier agent's and are not given.
 // It returns the replies to hook calls it produced: one that was never sent
 // because the daemon died first still has its call waiting at the host.
 func (r *Runner) warm(lv *live) []agent.HookReply {
-	var replies []agent.HookReply
-	if b, err := os.ReadFile(filepath.Join(lv.dir, host.EventsFile)); err == nil {
-		for _, l := range lines(b, lv.start, lv.offset) {
-			replies = append(replies, lv.codec.Decode(source(l), l).Reply...)
+	reads, err := r.storedReads(lv)
+	if err != nil {
+		// Without the ranges the order is not known; the lines are still
+		// given, in the order used before ranges were stored.
+		r.Log.Error("warm: stored reads", "session", lv.id, "err", err)
+		reads = nil
+	}
+	logPath := filepath.Join(lv.dir, host.EventsFile)
+	data := map[string][]byte{}
+	content := func(p string) []byte {
+		if b, ok := data[p]; ok {
+			return b
+		}
+		b, _ := os.ReadFile(p)
+		data[p] = b
+		return b
+	}
+	// Where each source's stored ranges begin; what is before is replayed
+	// as it was before ranges were stored.
+	first := map[string]int64{}
+	for _, rd := range reads {
+		if _, ok := first[rd.path]; !ok {
+			first[rd.path] = rd.start
 		}
 	}
+	upTo := func(p string, end int64) int64 {
+		if f, ok := first[p]; ok && f < end {
+			return f
+		}
+		return end
+	}
+	var replies []agent.HookReply
+	give := func(src func([]byte) agent.Source, b []byte, from, to int64) {
+		for _, l := range lines(b, from, to) {
+			replies = append(replies, lv.codec.Decode(src(l), l).Reply...)
+		}
+	}
+	file := func([]byte) agent.Source { return agent.File }
+	give(source, content(logPath), lv.start, upTo("", lv.offset))
 	for p, off := range lv.files {
-		if b, err := os.ReadFile(p); err == nil {
-			for _, l := range lines(b, 0, off) {
-				replies = append(replies, lv.codec.Decode(agent.File, l).Reply...)
-			}
+		give(file, content(p), 0, upTo(p, off))
+	}
+	for _, rd := range reads {
+		if rd.path == "" {
+			give(source, content(logPath), rd.start, rd.end)
+		} else {
+			give(file, content(rd.path), rd.start, rd.end)
 		}
 	}
 	return replies
+}
+
+// storedReads returns the session's stored ranges in order, those of the
+// log only from where the current agent's lines begin, and none past the
+// stored offsets.
+func (r *Runner) storedReads(lv *live) ([]readRange, error) {
+	rows, err := r.Store.DB.Query(`SELECT path, start, end FROM session_reads WHERE session_id = ? ORDER BY n`, lv.id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []readRange
+	for rows.Next() {
+		var rd readRange
+		if err := rows.Scan(&rd.path, &rd.start, &rd.end); err != nil {
+			return nil, err
+		}
+		limit, ok := lv.offset, rd.path == ""
+		if !ok {
+			limit, ok = lv.files[rd.path]
+		}
+		if !ok || (rd.path == "" && rd.start < lv.start) || rd.end > limit {
+			continue
+		}
+		out = append(out, rd)
+	}
+	return out, rows.Err()
 }
 
 // hostLost reports whether the host of dir is gone without recording an
@@ -799,6 +897,16 @@ type batch struct {
 	actions []agent.Actions
 	offset  int64
 	files   map[string]int64
+	reads   []readRange // what was given to the codec, in order
+}
+
+// readRange is complete lines of the host's log (path "") or of a followed
+// file, from start to end, given to the codec at once. The ranges a step
+// read are stored with its events, so that a codec rebuilt later is given
+// the lines in the same order (warm).
+type readRange struct {
+	path       string
+	start, end int64
 }
 
 // step reads what is new, commits it, and carries out the codec's actions.
@@ -893,6 +1001,9 @@ func (r *Runner) read(lv *live) batch {
 					continue
 				}
 				end := complete(data, off)
+				if end > off {
+					b.reads = append(b.reads, readRange{path: p, start: off, end: end})
+				}
 				for _, l := range lines(data, off, end) {
 					r.decode(lv, &b, agent.File, l)
 				}
@@ -903,6 +1014,9 @@ func (r *Runner) read(lv *live) batch {
 	readFiles()
 	if data, err := os.ReadFile(filepath.Join(lv.dir, host.EventsFile)); err == nil {
 		end := complete(data, lv.offset)
+		if end > lv.offset {
+			b.reads = append(b.reads, readRange{start: lv.offset, end: end})
+		}
 		for _, l := range lines(data, lv.offset, end) {
 			r.decode(lv, &b, source(l), l)
 		}
@@ -979,14 +1093,8 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 				}
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET log_offset = ? WHERE id = ?`, b.offset, lv.id); err != nil {
+		if err := saveRead(ctx, tx, lv.id, b); err != nil {
 			return err
-		}
-		for p, o := range b.files {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO session_files (session_id, path, offset) VALUES (?, ?, ?)
-				ON CONFLICT (session_id, path) DO UPDATE SET offset = excluded.offset`, lv.id, p, o); err != nil {
-				return err
-			}
 		}
 		// The first input goes once the agent is ready.
 		var state, fi string
