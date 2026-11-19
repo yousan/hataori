@@ -131,8 +131,8 @@ func TestConfinedLaunch(t *testing.T) {
 		if !slices.Equal(got, want) {
 			t.Fatalf("argv\n%q\nwant\n%q", got, want)
 		}
-		if !slices.Equal(l.Env, plain.Env) {
-			t.Fatalf("env %q, want the ordinary %q", l.Env, plain.Env)
+		if want := append(slices.Clone(plain.Env), ConfinedEnv...); !slices.Equal(l.Env, want) {
+			t.Fatalf("env %q, want the ordinary one and %q", l.Env, ConfinedEnv)
 		}
 		var cfg map[string]map[string]struct {
 			Type, Command string
@@ -260,5 +260,53 @@ func TestConfinedFlagsAreTheCheckedOnes(t *testing.T) {
 	}
 	if !ran {
 		t.Errorf("mcp: calls %v; want the server's tool to run", o.Calls)
+	}
+}
+
+// A confined session may write its own directory, so the status line of a
+// project settings file there is not taken into its launch, where it would
+// run unconfined at the next start; the user's own status line still is.
+// An ordinary session takes both, as before.
+func TestConfinedLaunchTakesNoStatusLineFromItsDirectory(t *testing.T) {
+	a := newAdapter(t, `{"hataori": "/opt/hataori/bin/hataori"}`)
+	home := t.TempDir()
+	a.environ = func() []string { return []string{"HOME=" + home} }
+	s := spec(t)
+	write := func(dir, command string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := json.Marshal(map[string]any{"statusLine": map[string]any{"type": "command", "command": command}})
+		if err := os.WriteFile(filepath.Join(dir, ".claude", "settings.local.json"), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(s.Dir, "touch planted")
+	settings := func(s agent.Spec) string {
+		t.Helper()
+		l, err := a.Launch(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(l.Files[SettingsFile])
+	}
+	if got := settings(s); !strings.Contains(got, "touch planted") {
+		t.Fatalf("an ordinary session lost its project's status line: %s", got)
+	}
+	s.Confine = &agent.Confinement{}
+	if got := settings(s); strings.Contains(got, "touch planted") || strings.Contains(got, "--run") {
+		t.Fatalf("a confined session runs the status line of its own directory: %s", got)
+	}
+	// The user's own, in the config directory, which the session cannot write.
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(map[string]any{"statusLine": map[string]any{"type": "command", "command": "users-own-line"}})
+	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := settings(s); !strings.Contains(got, "users-own-line") || strings.Contains(got, "touch planted") {
+		t.Fatalf("a confined session's status line: %s; want the user's own only", got)
 	}
 }

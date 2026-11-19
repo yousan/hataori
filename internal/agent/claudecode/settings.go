@@ -65,8 +65,15 @@ func (a *Adapter) settings(spec agent.Spec) ([]byte, error) {
 	// of stopping the turn; settings given with --settings take precedence
 	// over the user's global choice, so the session runs in normal mode.
 	// The status line hands on the remaining usage, and shows the user's.
+	// A confined session may write its own directory, so a status line
+	// there would be a command of its own, run unconfined at its next
+	// launch: it gets the user's own status line only.
+	project := spec.Dir
+	if spec.Confine != nil {
+		project = ""
+	}
 	return json.MarshalIndent(map[string]any{"hooks": hooks, "editorMode": "normal",
-		"statusLine": a.statusLineSetting(spec.Dir, spec.StateDir)}, "", "  ")
+		"statusLine": a.statusLineSetting(project, spec.StateDir)}, "", "  ")
 }
 
 // shellQuote quotes s for the shell Claude Code runs a hook command in.

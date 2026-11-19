@@ -101,6 +101,10 @@ const (
 // (design, Appendix B, "Confining a supervisor session").
 const ConfinedTools = "Read,Write,Edit,Glob,Grep"
 
+// ConfinedEnv is added to a confined session's environment: no CLAUDE.md
+// files and no automatic memory, as the real checks run the CLI.
+var ConfinedEnv = []string{"CLAUDE_CODE_DISABLE_CLAUDE_MDS=1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1"}
+
 // CheapModel is the model of a supervisor whose config names none.
 func (a *Adapter) CheapModel() string { return "haiku" }
 
@@ -152,6 +156,10 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 		files[MCPConfigFile] = mcp
 		l.Argv = append(l.Argv, "--restricted", "--strict-mcp-config", "--mcp-config", stateFile(spec, MCPConfigFile),
 			"--tools", ConfinedTools)
+		// Nor does it load instructions from files it can write, such as a
+		// CLAUDE.md in its directory whose imports name files outside it,
+		// or keep a memory outside its directory.
+		l.Env = append(l.Env, ConfinedEnv...)
 		l.Confined = true
 	}
 	return l, nil
