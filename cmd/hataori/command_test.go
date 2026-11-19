@@ -147,8 +147,10 @@ func killSessions(root string) {
 }
 
 // pidFileSlack is how much later than its pid file a process may seem to
-// have started: the precision of the two clocks compared.
-const pidFileSlack = 100 * time.Millisecond
+// have started: a file's time is a few milliseconds coarse, and Linux
+// gives a start in ticks of 10. A pid given to another process within it
+// would still be signalled.
+const pidFileSlack = 20 * time.Millisecond
 
 // sessionPID returns the pid that the pid file at path names, and whether
 // its group may be killed: only while the pid is still the process the
@@ -509,15 +511,18 @@ func TestKillSessionsOnlyTheSessionsProcesses(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, host.PIDFile), []byte(strconv.Itoa(agent.Process.Pid)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// The host's pid file is stale: written a minute before its pid went
-	// to a process the test did not start as the session's.
+	// The host's pid file is stale: written 50 ms before its pid went to a
+	// process the test did not start as the session's.
 	other, otherDone := sleeper()
 	stale := filepath.Join(dir, host.HostPIDFile)
 	if err := os.WriteFile(stale, []byte(strconv.Itoa(other.Process.Pid)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	before := time.Now().Add(-time.Minute)
-	if err := os.Chtimes(stale, before, before); err != nil {
+	start, ok := processStart(other.Process.Pid)
+	if !ok {
+		t.Fatal("the other process's start cannot be read")
+	}
+	if err := os.Chtimes(stale, start.Add(-50*time.Millisecond), start.Add(-50*time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}
 
