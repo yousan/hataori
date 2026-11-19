@@ -73,7 +73,7 @@ func TestInputCommands(t *testing.T) {
 	want := [][]string{
 		{"tmux", "-L", "x", "send-keys", "-t", "%4", "Up"},
 		{"tmux", "-L", "x", "load-buffer", "-b", buf, "-"},
-		{"tmux", "-L", "x", "paste-buffer", "-d", "-b", buf, "-t", "%4"},
+		{"tmux", "-L", "x", "paste-buffer", "-d", "-b", buf, "-t", "%4", "-S"}, // typed text goes as it is
 		{"tmux", "-L", "x", "send-keys", "-t", "%4", "C-c"},
 		{"tmux", "-L", "x", "load-buffer", "-b", buf, "-"},
 		{"tmux", "-L", "x", "paste-buffer", "-d", "-b", buf, "-t", "%4", "-p"},
@@ -123,6 +123,30 @@ func TestInputCommands(t *testing.T) {
 			t.Errorf("%s: the error holds the text: %v", name, err)
 		}
 	}
+
+	// A server before tmux 3.7 refuses -S: the text is pasted again without
+	// it, and so is every later one.
+	f.rec.argvs = nil
+	f.answer = func(argv []string) ([]byte, error) {
+		if argv[3] == "paste-buffer" && argv[len(argv)-1] == "-S" {
+			return nil, errors.New("hostterm: tmux paste-buffer: exit status 1: command paste-buffer: unknown flag -S")
+		}
+		return nil, nil
+	}
+	if err := l.Keys(ctx, "%4", buf, []control.HostKey{{Text: marker}, {Text: marker}}); err != nil {
+		t.Fatal(err)
+	}
+	want = [][]string{
+		{"tmux", "-L", "x", "load-buffer", "-b", buf, "-"},
+		{"tmux", "-L", "x", "paste-buffer", "-d", "-b", buf, "-t", "%4", "-S"},
+		{"tmux", "-L", "x", "paste-buffer", "-d", "-b", buf, "-t", "%4"},
+		{"tmux", "-L", "x", "load-buffer", "-b", buf, "-"},
+		{"tmux", "-L", "x", "paste-buffer", "-d", "-b", buf, "-t", "%4"},
+	}
+	if !slices.EqualFunc(f.rec.argvs, want, slices.Equal) {
+		t.Errorf("with an older tmux, ran\n%q\nwant\n%q", f.rec.argvs, want)
+	}
+	l.noRawPaste.Store(false)
 
 	// A paste that fails deletes the buffer, and so does a load that fails.
 	for _, failing := range []string{"paste-buffer", "load-buffer"} {
@@ -224,7 +248,7 @@ func ownTmux(t *testing.T) (sock []string, tmux func(args ...string) (string, er
 		}
 		t.Skip("no tmux")
 	}
-	dir, err := os.MkdirTemp("", "ht") // short: a socket path is limited
+	dir, err := os.MkdirTemp("/tmp", "ht") // short on macOS too: a socket path is limited
 	if err != nil {
 		t.Fatal(err)
 	}

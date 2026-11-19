@@ -22,6 +22,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
@@ -65,6 +66,10 @@ type Lister struct {
 	// instance uses, such as "hataori-input-<instance>-". Only a buffer
 	// whose name starts with it is ever deleted. Empty: Operate refuses.
 	Buffers string
+
+	// noRawPaste is set once tmux has said it does not know paste-buffer's
+	// -S: a server before 3.7, which pastes control characters as they are.
+	noRawPaste atomic.Bool
 
 	// run runs one command with stdin on its standard input and returns
 	// its standard output; nil runs it.

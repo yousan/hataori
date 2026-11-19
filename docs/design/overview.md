@@ -1261,6 +1261,8 @@ Run on 2026-11-19 against tmux 3.4 on Linux, on a tmux server of its own (`-L`, 
 | The default of `window-size` | `latest` |
 | `attach-session -f` in the manual page | the client flags include `ignore-size`; `-r` is `read-only,ignore-size` |
 
+Later, for #362: on tmux 3.4, `send-keys` typed a name it cannot encode (`S-Tab`, `S-a`, `C-{`) into the pane as its letters and dropped some (`C-Enter`, `C-BSpace`), and an argument ending in `;` ended the command (`M-;` typed `M-`; `M-\;` sent `ESC ;`); `paste-buffer -S` was refused with "unknown flag -S" and the buffer kept. On tmux 3.8 (macOS CI), `paste-buffer` without `-S` gave a DEL as `^?`: tmux 3.7 passes a paste through vis(3) unless given `-S`.
+
 ### Claude Code plugins, and hooks in a tmux pane (#384)
 
 Run on 2026-11-19 against Claude Code 2.1.328 and tmux 3.4 on Linux. Every run of Claude Code had a throwaway directory as both `HOME` and `CLAUDE_CONFIG_DIR`, and no login. The real configuration was never used. Its plugin files were compared before and after the runs: the only change was the refresh time of the official marketplace, written by another session that uses the real configuration (the throwaway sessions wrote their own refresh into the throwaway directory, at another time). In the throwaway `.claude.json`, onboarding was marked done and the two test directories trusted. A plugin `probe`, in a marketplace that is a local directory, registered `SessionStart`, `UserPromptSubmit`, `PermissionRequest`, `Stop` and `SessionEnd`, each running a script that wrote its environment, its chain of parent processes, what tmux said of its pane, and its payload to a file of its own for each call. The sessions ran in panes of a tmux server of its own (`-L`, no configuration file). With no login no turn reached the model, so `PermissionRequest` and `Stop` never fired.
@@ -1586,8 +1588,9 @@ type HostOperation interface {
 // with them or with one character, as far as tmux encodes each), passed
 // to send-keys. Otherwise Text is
 // written to the pane through a buffer of the operation's own (load-buffer
-// from standard input, then paste-buffer -d), with Paste as a paste
-// (paste-buffer -p). hataori logs and stores neither; Text is in the
+// from standard input, then paste-buffer -d, with -S since tmux 3.7 so
+// that control characters go as they are), with Paste as a paste
+// (paste-buffer -p, as tmux pastes it). hataori logs and stores neither; Text is in the
 // buffer for one paste, and the buffer is deleted after a failed paste,
 // at the end of the operation and at the daemon's start.
 type HostKey struct {

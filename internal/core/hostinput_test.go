@@ -390,7 +390,7 @@ func TestOperateHostStoresNothingTyped(t *testing.T) {
 		}
 		t.Skip("no tmux")
 	}
-	tmpdir, err := os.MkdirTemp("", "hc")
+	tmpdir, err := os.MkdirTemp("/tmp", "hc") // short on macOS too: a socket path is limited
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -174,8 +174,20 @@ func (l *Lister) paste(ctx context.Context, pane, buffer string, k control.HostK
 		if k.Paste {
 			args = append(args, "-p")
 		}
+		// Since 3.7 tmux pastes a buffer's control characters as ^X unless
+		// given -S; typed text goes as it is, a paste as tmux pastes it.
+		// An older server refuses -S before it does anything.
+		raw := !k.Paste && !l.noRawPaste.Load()
 		cctx, cancel := whole(ctx)
-		_, err = l.exec(cctx, pasteBufferCmd, args...)
+		if raw {
+			_, err = l.exec(cctx, pasteBufferCmd, append(args, "-S")...)
+			if err != nil && strings.Contains(err.Error(), "unknown flag -S") {
+				l.noRawPaste.Store(true)
+				_, err = l.exec(cctx, pasteBufferCmd, args...)
+			}
+		} else {
+			_, err = l.exec(cctx, pasteBufferCmd, args...)
+		}
 		cancel()
 	}
 	if err != nil {

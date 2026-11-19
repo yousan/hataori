@@ -29,7 +29,7 @@ func TestDaemonHostInput(t *testing.T) {
 		}
 		t.Skip("no tmux")
 	}
-	tmpdir, err := os.MkdirTemp("", "hd")
+	tmpdir, err := os.MkdirTemp("/tmp", "hd") // short on macOS too: a socket path is limited
 	if err != nil {
 		t.Fatal(err)
 	}
