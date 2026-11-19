@@ -10,7 +10,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 - Each message is one JSON object on one line.
 - Each side sends a `hello` first. The daemon reads the client's hello before it answers with its own. When the daemon refuses the client, its hello carries `error` and the daemon closes the connection.
 - After the hellos, **either side may send requests**. A request has `op` set; a response has no `op`. Each side numbers its own requests, and a response carries the `id` of the request it answers. Several requests may be outstanding at once, and the answers may come in any order.
-- The client sends the operations below. The daemon may send the client requests of its own (Requests the daemon sends, below): since 3.13, to a plugin, its hooks and the notices that it started and is stopping. A side that gets a request whose `op` it does not know answers with the error code `not_supported` and carries on.
+- The client sends the operations below. The daemon may send the client requests of its own (Requests the daemon sends, below): since 3.14, to a plugin, its hooks and the notices that it started and is stopping. A side that gets a request whose `op` it does not know answers with the error code `not_supported` and carries on.
 - An `Events` request turns the connection into a stream: the daemon answers it once with an empty `response`, then sends one `response` with `event` set per event, until the client closes the connection. A client follows events on a connection of its own.
 - A `Terminal` request does the same with terminal output: an empty `response`, then one `response` with `terminal` set per chunk. Since 1.9.
 - On an `Events` or a `Terminal` stream the daemon reads nothing the client sends: no request on that connection is answered or carried out, and nothing reaches a terminal.
@@ -18,7 +18,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.13**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.14**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -366,6 +366,16 @@ Since 3.11, and only on an `OperateHost` stream; elsewhere it is answered `not_s
 
 Result: none
 
+### Operation `HostView`
+
+Since 3.13. One tmux pane's screen, as `HostScreen` gives it, and where its cursor is, read right after the screen. Allowed as `HostScreen` is, and refused alike to a caller that may not read text. The dashboard reads it for a pane being operated (`OperateHost`), so that the page draws the cursor where tmux has it. hataori runs `tmux display-message -p` for the cursor, which changes nothing. A pane that `HostTerminals` would not list, and one that goes between the two reads, is answered `not_found`.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `pane` | string | required | the pane, as `TmuxPane.pane` |
+
+Result: `HostView`
+
 ### Operation `AttachTerminal`
 
 Since 2.1. Readies a thread's agent for a terminal on the host, for `hataori attach`. Only the instance's owner may call it; every other caller is answered `forbidden` and the refusal is logged. A thread that is closed, removed or failed, and a thread whose agent runs without a terminal (on pipes), are answered `refused` and nothing changes. An asleep thread is woken first, with no input: its agent resumes its conversation and the thread becomes idle, as after a message, but no turn starts. The answer comes once the session host listens, and at most after 90 seconds.
@@ -389,7 +399,7 @@ Result: [`AgentLimits`]
 
 ## Requests the daemon sends
 
-Since 3.13. The daemon sends these to a plugin, on a connection made with the plugin's token that is not a stream: the oldest such connection that is still open. A connection that becomes a stream takes none from then on, so a plugin keeps one connection for requests, as the project's client does, and follows events on others. A plugin that does not know one answers `not_supported`, as for any request.
+Since 3.14. The daemon sends these to a plugin, on a connection made with the plugin's token that is not a stream: the oldest such connection that is still open. A connection that becomes a stream takes none from then on, so a plugin keeps one connection for requests, as the project's client does, and follows events on others. A plugin that does not know one answers `not_supported`, as for any request.
 
 ### Request `hook`
 
@@ -632,6 +642,16 @@ Since 1.10. A tab in a name or a directory is given as a space.
 | `dir` | string | optional | the pane's current directory |
 | `attached` | boolean | required | a tmux client shows the session now |
 
+### Type `HostView`
+
+Since 3.13.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `screen` | string | optional | the visible screen, one line per row, as `HostScreen` gives it; text, so optional |
+| `cursor_x` | integer | required | the cursor's column, from 0 |
+| `cursor_y` | integer | required | the cursor's row, from 0 at the top of the screen |
+
 ### Type `HostOperation`
 
 Since 3.11. `OperateHost`'s result.
@@ -654,7 +674,7 @@ A key name is tmux's name for the key, after modifiers, each of `C-`, `M-` and `
 
 ### Type `HookAnswer`
 
-Since 3.13. A plugin's answer to `hook`.
+Since 3.14. A plugin's answer to `hook`.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -664,7 +684,7 @@ Since 3.13. A plugin's answer to `hook`.
 
 ### Type `GrantedHook`
 
-Since 3.13. One hook point of a plugin's grant.
+Since 3.14. One hook point of a plugin's grant.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|

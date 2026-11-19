@@ -291,6 +291,16 @@ func (c *Client) HostTerminals(ctx context.Context) ([]control.HostTerminal, err
 	return out, err
 }
 
+// HostView needs a daemon of 3.13 or later.
+func (c *Client) HostView(ctx context.Context, pane string) (control.HostView, error) {
+	var out control.HostView
+	err := c.callSince(ctx, viewSince, "a host pane's cursor", "HostView", hostScreenArgs{Pane: pane}, &out)
+	return out, err
+}
+
+// viewSince is the first version whose daemon knows HostView.
+const viewSince = "3.13"
+
 func (c *Client) HostScreen(ctx context.Context, pane string) (string, error) {
 	var out string
 	err := c.call(ctx, "HostScreen", hostScreenArgs{Pane: pane}, &out)

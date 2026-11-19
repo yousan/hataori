@@ -532,3 +532,31 @@ func anyKeysForTest() map[string]bool {
 	}
 	return m
 }
+
+// View reads the screen and where the cursor is, on a server of its own;
+// a pane that is not there is not read.
+func TestViewReadsTheCursor(t *testing.T) {
+	sock, tmux := ownTmux(t)
+	if _, err := tmux("new-session", "-d", "-s", "view", "-x", "80", "-y", "24", "sh", "-c", "printf 'one\\ntwo-xyz'; exec sleep 600"); err != nil {
+		t.Fatal(err)
+	}
+	pane, err := tmux("display-message", "-p", "-t", "view:0", "#{pane_id}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pane = strings.TrimSpace(pane)
+	l := &Lister{Tmux: sock}
+	ctx := context.Background()
+	var v control.HostView
+	waitFor(t, "the printed lines", func() bool {
+		var ok bool
+		v, ok, err = l.View(ctx, pane, nil)
+		return err == nil && ok && strings.Contains(v.Screen, "two-xyz")
+	})
+	if v.CursorX != 7 || v.CursorY != 1 {
+		t.Errorf("cursor %d,%d, want 7,1:\n%s", v.CursorX, v.CursorY, v.Screen)
+	}
+	if _, ok, err := l.View(ctx, "%999", nil); ok || err != nil {
+		t.Errorf("a pane that is not there: %v %v", ok, err)
+	}
+}

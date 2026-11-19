@@ -24,6 +24,9 @@ func (h *hostFake) List(context.Context, []int) ([]control.HostTerminal, error) 
 func (h *hostFake) Screen(context.Context, string, []int) (string, bool, error) {
 	return "", false, nil
 }
+func (h *hostFake) View(context.Context, string, []int) (control.HostView, bool, error) {
+	return control.HostView{}, false, nil
+}
 func (h *hostFake) Check(_ context.Context, pane string, _ []int, _ bool) (*control.TmuxPane, bool, error) {
 	if pane != "%1" {
 		return nil, false, nil

@@ -158,7 +158,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	// daemon with the reason.
 	var dash *dashboard.Server
 	if d := cfg.Dashboard; d != nil {
-		var dc dashboard.Config
+		dc := dashboard.Config{HostInput: cfg.HostInput}
 		if l := d.Local; l != nil {
 			dc.Local = &dashboard.Local{Listen: l.Listen, URL: l.URL, Key: "dashboard."}
 		}
@@ -186,7 +186,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 			if !c.MaySignIn(person) {
 				return nil, false
 			}
-			return c.As(dashboardCaller(cfg.People, keys, cfg.HostTerminals, person)), true
+			return c.As(dashboardCaller(cfg.People, keys, cfg.HostTerminals, cfg.HostInput, person)), true
 		}
 		dash, err = dashboard.Listen(dc, forPerson, lg)
 		if err != nil {
@@ -471,8 +471,10 @@ var purgeEvery time.Duration
 // dashboardCaller is the read-only Caller of a dashboard session of person:
 // the scopes that person may act in, every scope for the owner (section
 // 7.2). Only the owner reads the host's terminals, and only when the config
-// turns them on.
-func dashboardCaller(dir *people.Directory, scopes []string, hostTerminals bool, person string) control.Caller {
+// turns them on; only the owner types into a host tmux pane, and only when
+// the config turns host input on (the dashboard asks for a passkey check
+// first on the web listener).
+func dashboardCaller(dir *people.Directory, scopes []string, hostTerminals, hostInput bool, person string) control.Caller {
 	caller := control.Caller{Principal: control.Principal(person), May: control.OpRead}
 	for _, s := range scopes {
 		if dir.May(person, s) {
@@ -481,6 +483,9 @@ func dashboardCaller(dir *people.Directory, scopes []string, hostTerminals bool,
 	}
 	if hostTerminals && person == dir.Owner() {
 		caller.May |= control.OpHost
+		if hostInput {
+			caller.May |= control.OpHostInput
+		}
 	}
 	if dashboardHook != nil {
 		dashboardHook(&caller)

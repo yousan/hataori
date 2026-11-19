@@ -1496,6 +1496,10 @@ type API interface {
 	// host_terminals is true (section 7.2). Since protocol 1.10.
 	HostTerminals(ctx context.Context) ([]HostTerminal, error)
 	HostScreen(ctx context.Context, pane string) (string, error)
+	// HostView is HostScreen with the cursor's position, read right after
+	// the screen; allowed as HostScreen is. The dashboard reads it for a
+	// pane being operated. Since protocol 3.13.
+	HostView(ctx context.Context, pane string) (HostView, error)
 
 	// OperateHost lets the caller type into one tmux pane on the host that
 	// no session host owns, by TmuxPane.Pane (section 7.2). It needs
@@ -1567,6 +1571,13 @@ type TmuxPane struct {
 	Index      string // the pane's index in its window
 	Dir        string
 	Attached   bool
+}
+
+// HostView: Screen as HostScreen gives it; CursorX and CursorY from 0, the
+// row counted from the top of the screen.
+type HostView struct {
+	Screen           string
+	CursorX, CursorY int
 }
 
 // HostOperation is one pane being operated. It ends when ctx ends, when
@@ -1709,7 +1720,7 @@ type Limit struct {
 // is one the point does not allow; a failure blocks or skips by the
 // handler's on_failure, else its point's. Calls are logged without text.
 // A point with no handler calls nothing and waits for nothing. Since
-// protocol 3.13.
+// protocol 3.14.
 type Hooks interface {
 	Run(ctx context.Context, c HookCall) HookResult
 }
@@ -1883,6 +1894,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `SetName`, with `Ops` gaining `OpName`, `Scopes` and `ScopeInfo`, and the `named` event (#405) | minor: new operations and event kind; 3.5 |
 | `ThreadInfo.Name`, the chat thread's own name (#406) | minor: new optional field; 3.7 |
 | `OperateHost`, with `Ops` gaining `OpHostInput`, `HostKeys` and `End` on its stream, and the `ended` error code (section 7.2, #362) | minor: new operation, whose connection becomes a stream both ways; 3.11 |
+| `HostView`, a pane's screen with its cursor, for the dashboard's screen of a pane being operated (section 7.2, #363) | minor: new operation; 3.13 |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 
 Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event. In protocol 1.9: `Terminal`, which turns its connection into a stream as `Events` does. In protocol 1.12: `ThreadInfo.terminal`, the terminal device its session host opened, for the tree's filter, the status bar and the details panel (#285); `HostTerminals` still leaves these terminals out.

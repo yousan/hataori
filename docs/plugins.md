@@ -49,7 +49,7 @@ The operator can change the failure policy per plugin and point (`on_failure` in
 
 ### How a hook is called
 
-Since protocol 3.13. At a point, the daemon sends a `hook` request to each plugin whose grant has the point and the thread's scope, one after another: by priority, higher first, then in the config's order. Each gets the text as the one before left it, and answers `continue`, `continue` with a new `text` where the point may change it, or `stop` with a `reason` where the point may stop it. Without the `conversation` grant the request has no text.
+Since protocol 3.14. At a point, the daemon sends a `hook` request to each plugin whose grant has the point and the thread's scope, one after another: by priority, higher first, then in the config's order. Each gets the text as the one before left it, and answers `continue`, `continue` with a new `text` where the point may change it, or `stop` with a `reason` where the point may stop it. Without the `conversation` grant the request has no text.
 
 A handler fails, and its policy (`block` or `skip`) applies, when:
 

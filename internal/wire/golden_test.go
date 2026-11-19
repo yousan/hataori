@@ -103,6 +103,7 @@ func examples(t *testing.T) map[string]any {
 		"Terminal":       terminalArgs{ID: exampleID, Run: "5f0c9a1e7b3d4c2a8e6f1b0d9c7a5e3f", After: 1024},
 		"HostTerminals":  hostTerminalsArgs{},
 		"HostScreen":     hostScreenArgs{Pane: "%3"},
+		"HostView":       hostScreenArgs{Pane: "%3"},
 		"Limits":         limitsArgs{},
 		"AttachTerminal": attachTerminalArgs{ID: exampleID},
 		"OperateHost":    operateHostArgs{Pane: "%3"},
@@ -132,6 +133,7 @@ func examples(t *testing.T) map[string]any {
 			{Device: "/dev/pts/5", Process: "bash"},
 		},
 		"HostScreen":     "$ make\nok\n",
+		"HostView":       control.HostView{Screen: "$ make\nok\n$ ", CursorX: 2, CursorY: 2},
 		"OperateHost":    hostOperation{Idle: 300},
 		"AttachTerminal": control.Attachment{Socket: "/srv/hataori/state/sessions/7/host.sock", Number: 7},
 		"Limits": []control.AgentLimits{{Agent: "claude-code", At: exampleTime, Every: 300, Windows: []control.LimitWindow{
@@ -153,7 +155,7 @@ func examples(t *testing.T) map[string]any {
 		}
 		ex["response-"+op+".json"] = resp
 	}
-	// The requests the daemon sends a client, and their answers. Since 3.13.
+	// The requests the daemon sends a client, and their answers. Since 3.14.
 	changed := "Run the tests, then fix the build."
 	daemonArgs := map[string]any{
 		control.OpHook: control.HookRequest{Point: "before_agent_run", Thread: exampleID, Scope: "C0123", Text: "Run the tests.", Left: 15000},
