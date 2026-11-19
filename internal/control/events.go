@@ -45,6 +45,11 @@ var EventKinds = map[EventKind][]Field{
 	"turn_started": {req("session", Integer), req("turn", Integer), req("by", String), opt("principal", String), opt("from", String), opt("key", String)},
 	"turn_ended": {req("session", Integer), req("turn", Integer), req("by", String), opt("principal", String), opt("from", String),
 		req("outcome", String), opt("reason", String), req("background", Integer)},
+	// The chat front end's (#352): a row of its outbox was posted, or a
+	// plugin's message_sending handler cancelled it.
+	"post_sent": {req("link", Object), req("event", Integer), req("part", Integer), req("message", String), text("text", String)},
+	"post_cancelled": {req("link", Object), req("event", Integer), req("part", Integer), req("plugin", String),
+		opt("failed", Boolean), opt("edit", Boolean), text("reason", String)},
 	"input": {req("session", Integer), req("turn", Integer), text("text", String), opt("principal", String), opt("from", String),
 		opt("link", Object), text("before", String), text("after", String)},
 	"answer": {req("session", Integer), req("turn", Integer), text("text", String), opt("principal", String), opt("from", String),
