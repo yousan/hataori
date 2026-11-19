@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
+	"github.com/yousan/hataori/internal/instance"
 	"github.com/yousan/hataori/internal/supervisor"
 	"github.com/yousan/hataori/internal/wire"
 )
@@ -594,5 +597,142 @@ func TestWakeNotByAnEarlierSupervisor(t *testing.T) {
 	got := wt.woken(t, owner, sv.ID, 1)
 	if !strings.Contains(got[0], fmt.Sprintf("\nThread %d: reply alpha\n", a)) || strings.Contains(got[0], fmt.Sprintf("Thread %d", first.ID)) {
 		t.Fatalf("the new supervisor's digest; want thread %d and not the earlier supervisor %d:\n%s", a, first.ID, got[0])
+	}
+}
+
+// A wake that a supervisor's thread took, closed before the waker stored
+// its position, goes to the thread that replaces it under a key of its
+// own: the core takes a send's key once per scope, and a thread whose
+// resume failed takes it without reading the digest (#443).
+func TestWakeReachesTheReplacingSupervisor(t *testing.T) {
+	wt := newWakeTest(t)
+	stopped := errors.New("stopped here")
+	h := func(at string) error {
+		if at == "sent" {
+			return stopped
+		}
+		return nil
+	}
+	wt.hook.Store(&h)
+	stop, owner, first := wt.start(t)
+	ctx := context.Background()
+	a, pos := wt.worker(t, owner, "c1", "a", "reply alpha")
+	wt.read(t, pos)
+	wt.quiet(t)
+	wt.woken(t, owner, first.ID, 1)
+	var sending sql.NullInt64
+	wt.db.QueryRow(`SELECT send_to FROM supervisor_wakes WHERE scope = 'c1'`).Scan(&sending)
+	if !sending.Valid {
+		t.Fatal("no stored wake after the send: the hook did not stop the waker before it stored its position")
+	}
+	if err := owner.CloseThread(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	stop()
+	db := wt.db
+	b := func() { // on the daemon's goroutine: no t.Fatal
+		for deadline := time.Now().Add(15 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+			var n int
+			db.QueryRow(`SELECT count(*) FROM threads WHERE scope = 'c1' AND confined = 1`).Scan(&n)
+			if n == 2 {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Error("timed out waiting for the supervisor's new thread")
+				return
+			}
+		}
+	}
+	wt.before.Store(&b)
+	stop, owner, sv := wt.start(t)
+	defer stop()
+	if sv.ID == first.ID {
+		t.Fatalf("the closed supervisor %d was not replaced", first.ID)
+	}
+	got := wt.woken(t, owner, sv.ID, 1)
+	if !strings.Contains(got[0], fmt.Sprintf("\nThread %d: reply alpha\n", a)) {
+		t.Fatalf("the new supervisor's digest:\n%s", got[0])
+	}
+	eventually(t, "the wake to be stored as done", 10*time.Second, func() bool {
+		db.QueryRow(`SELECT send_to FROM supervisor_wakes WHERE scope = 'c1'`).Scan(&sending)
+		return !sending.Valid
+	})
+}
+
+// A worker's turn that ended while the daemon was down, before the scope
+// named a supervisor, is written when the daemon reconnects its session:
+// the first daemon that runs with the supervisor wrote it, so it wakes the
+// supervisor (#445).
+func TestWakeByATurnEndWrittenAtTheFirstStart(t *testing.T) {
+	wt := newWakeTest(t, func(cfg map[string]any) {
+		delete(cfg["scopes"].([]map[string]any)[0], "supervisor")
+	})
+	stop := runDaemon(t, wt.r.root)
+	owner, err := wire.Dial(wt.r.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt.db = wt.r.db(t)
+	a, err := owner.Start(context.Background(), control.StartRequest{Key: "a", Scope: "c1", Thread: "t-a", Repo: wt.repo,
+		Input: control.Input{Text: "tool wait 2s\nreply alpha"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the worker's tool", 20*time.Second, func() bool {
+		var n int
+		wt.db.QueryRow(`SELECT count(*) FROM events WHERE thread_id = ? AND kind = 'tool_started'`, int64(a)).Scan(&n)
+		return n == 1
+	})
+	owner.Close()
+	stop()
+	time.Sleep(3 * time.Second) // the turn ends while no daemon runs
+	var n int
+	wt.db.QueryRow(`SELECT count(*) FROM events WHERE thread_id = ? AND kind = 'turn_ended'`, int64(a)).Scan(&n)
+	if n != 0 {
+		t.Fatal("the worker's turn end was written before the restart")
+	}
+	// The scope names a supervisor now.
+	path := filepath.Join(wt.r.root, instance.ConfigFile)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg["scopes"].([]any)[0].(map[string]any)["supervisor"] = map[string]any{}
+	if b, err = json.Marshal(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The waker starts only once the reconnected session has written the
+	// turn end, as it may well do: without the position taken at the start,
+	// the waker's first run would begin after it.
+	db := wt.db
+	written := func() { // on the daemon's goroutine: no t.Fatal
+		for deadline := time.Now().Add(15 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+			var n int
+			db.QueryRow(`SELECT count(*) FROM events WHERE thread_id = ? AND kind = 'turn_ended'`, int64(a)).Scan(&n)
+			if n == 1 {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Error("timed out waiting for the reconnected worker's turn end")
+				return
+			}
+		}
+	}
+	wt.before.Store(&written)
+	stop, owner, sv := wt.start(t)
+	defer stop()
+	pos := wt.ended(t, a, 1)
+	wt.read(t, pos)
+	wt.quiet(t)
+	got := wt.woken(t, owner, sv.ID, 1)
+	if !strings.Contains(got[0], fmt.Sprintf("\nThread %d: tool wait 2s\n", a)) {
+		t.Fatalf("the digest of the turn end written at the start:\n%s", got[0])
 	}
 }

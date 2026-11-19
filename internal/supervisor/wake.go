@@ -20,10 +20,59 @@ import (
 )
 
 // WakeKeyPrefix starts the key of every Send that wakes a supervisor; the
-// rest is the position of the last event the wake covers. A reader of the
-// supervisor's events tells a wake from a person's input by it, in
-// turn_started's key.
+// rest is the position of the last event the wake covers, a "-", and the
+// supervisor's thread it is sent to (WakeKey). A reader of the supervisor's
+// events tells a wake from a person's input by it, in turn_started's key.
 const WakeKeyPrefix = "hataori-wake-"
+
+// WakeKey is the key of the wake that covers the events up to to, sent to
+// the supervisor's thread sv. The core takes a send's key once per scope,
+// so the thread is part of it: a wake that a supervisor's thread took
+// without reading it, as when its resume failed, goes to the thread that
+// replaces it under a key of its own (#443).
+func WakeKey(sv control.ThreadID, to uint64) string {
+	return WakeKeyPrefix + strconv.FormatUint(to, 10) + "-" + strconv.FormatInt(int64(sv), 10)
+}
+
+// ParseWakeKey returns the position a wake's key covers and the thread it
+// names; a key from before WakeKey named no thread, and has 0.
+func ParseWakeKey(key string) (to uint64, sv control.ThreadID, ok bool) {
+	rest, found := strings.CutPrefix(key, WakeKeyPrefix)
+	if !found {
+		return 0, 0, false
+	}
+	pos, thread, two := strings.Cut(rest, "-")
+	to, err := strconv.ParseUint(pos, 10, 64)
+	if err != nil {
+		return 0, 0, false
+	}
+	if two {
+		n, err := strconv.ParseInt(thread, 10, 64)
+		if err != nil || n <= 0 {
+			return 0, 0, false
+		}
+		sv = control.ThreadID(n)
+	}
+	return to, sv, true
+}
+
+// keyFor is the key a stored wake is sent with to sv: its own, unless it
+// names another thread, which a replacement then takes under its own key.
+// A key from before WakeKey names no thread: sentTo tells which thread
+// took it, if one did.
+func keyFor(stored string, sv control.ThreadID, sentTo func(key string) (control.ThreadID, bool, error)) (string, error) {
+	to, thread, ok := ParseWakeKey(stored)
+	if !ok || thread == sv {
+		return stored, nil
+	}
+	if thread == 0 {
+		took, taken, err := sentTo(stored)
+		if err != nil || !taken || took == sv {
+			return stored, err
+		}
+	}
+	return WakeKey(sv, to), nil
+}
 
 // TurnEnded is the event kind that wakes a supervisor.
 const TurnEnded control.EventKind = "turn_ended"
@@ -173,7 +222,7 @@ func (w *Waker) run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	r := &waking{w: w, ended: map[control.ThreadID]control.Event{}, own: map[control.ThreadID]bool{},
-		api: w.Core.As(control.Caller{Principal: w.Owner, Scopes: []string{w.Scope}, May: control.OpRead | control.OpSend})}
+		api: w.Core.As(control.Caller{Principal: w.Owner, Scopes: []string{w.Scope}, May: control.OpRead | control.OpSend, NoAnswer: true})}
 	if err := r.load(ctx); err != nil {
 		return err
 	}
@@ -320,6 +369,19 @@ func (r *waking) attempt(ctx context.Context) error {
 			return err
 		}
 	}
+	key, err := keyFor(r.sending.key, sv, func(key string) (control.ThreadID, bool, error) {
+		return r.w.Core.SentTo(ctx, r.w.Scope, key)
+	})
+	if err != nil {
+		return err
+	}
+	if key != r.sending.key {
+		// Stored for a thread that is no longer the supervisor's.
+		r.sending.key = key
+		if err := r.store(ctx); err != nil {
+			return err
+		}
+	}
 	err = r.api.Send(ctx, sv, r.sending.key, control.Input{Text: r.sending.text}, control.Refuse)
 	switch {
 	case err == nil:
@@ -367,9 +429,9 @@ func (r *waking) hook(step string) error {
 
 // ready looks up the supervisor's thread and reports whether it may be
 // woken now: idle or asleep. Running, it is not sent to, so that a wake
-// never goes in while its turn may ask a question: a Send to a thread
-// waiting on one would be the answer, and Send refuses only a running
-// thread. None yet, starting, waiting, failed or closed, it is not sent
+// never goes in while its turn may ask a question; should the turn start
+// and ask one before the Send, the waker's caller (NoAnswer) has the Send
+// refused as busy instead of taken as the answer. None yet, starting, waiting, failed or closed, it is not sent
 // to either. In each case the wake waits for the thread's next turn end
 // or change of state.
 func (r *waking) ready(ctx context.Context) (control.ThreadID, bool, error) {
@@ -420,7 +482,7 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	return &wake{to: r.read, key: WakeKeyPrefix + strconv.FormatUint(r.read, 10), text: text, threads: threads}, true, nil
+	return &wake{to: r.read, key: WakeKey(r.sv, r.read), text: text, threads: threads}, true, nil
 }
 
 // holdStep is the longest a gate's hold waits on one timer: a timer does
@@ -492,12 +554,7 @@ func (r *waking) load(ctx context.Context) error {
 	)
 	err := db.QueryRowContext(ctx, selectWake, scope).Scan(&pos, &to, &key, &text)
 	if errors.Is(err, sql.ErrNoRows) {
-		err = r.w.Core.Store.Update(ctx, func(tx *store.Tx) error {
-			_, err := tx.ExecContext(ctx, `INSERT INTO supervisor_wakes (scope, pos)
-				SELECT ?, coalesce(max(pos), 0) FROM events WHERE true ON CONFLICT (scope) DO NOTHING`, scope)
-			return err
-		})
-		if err == nil {
+		if err = Begin(ctx, r.w.Core, scope); err == nil {
 			err = db.QueryRowContext(ctx, selectWake, scope).Scan(&pos, &to, &key, &text)
 		}
 	}
@@ -507,6 +564,24 @@ func (r *waking) load(ctx context.Context) error {
 	r.pos = uint64(pos)
 	if to.Valid {
 		r.sending = &wake{to: uint64(to.Int64), key: key.String, text: text.String}
+	}
+	return nil
+}
+
+// Begin stores where the waker of scope starts reading, the first time it
+// is asked: after the events already stored, so that what happened before
+// the scope named its supervisor wakes nothing. A scope with a position
+// keeps it. The daemon calls it for each such scope before it reconnects
+// or recovers anything, so that every event it writes can wake the
+// supervisor (#445).
+func Begin(ctx context.Context, c *core.Core, scope string) error {
+	err := c.Store.Update(ctx, func(tx *store.Tx) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO supervisor_wakes (scope, pos)
+			SELECT ?, coalesce(max(pos), 0) FROM events WHERE true ON CONFLICT (scope) DO NOTHING`, scope)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("supervisor: the waker's position: %w", err)
 	}
 	return nil
 }

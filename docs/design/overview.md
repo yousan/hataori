@@ -532,7 +532,10 @@ A supervisor is one ordinary session, Claude Code or Codex, that looks after the
 | list threads | `Threads` |
 | read one thread: state, open question, latest output | `Thread`, output capped |
 | send to a thread | `Send` with `Refuse` when busy |
+| ask to interrupt a thread | `AskInterrupt`, approved by a person |
 | start a thread | `Start` |
+
+**How an interrupt is approved** (#272; decision 4 of #267). The supervisor asks with a reason and receives a request id immediately. The request is shown in the supervisor's chat thread with Approve and Refuse buttons; a person of the scope, other than the asker, answers it. Approval sends the marked reason as the supervisor, whose person must still be allowed in the scope, while interrupting only the session and turn that were running when asked. If that turn ended, nothing is sent or interrupted. One line in the chat thread says how it ended: interrupted, the turn had already ended, or refused. An approved interrupt ends the worker's turn, and that turn end wakes the supervisor as any other; a refusal or an approval after the turn ended is said in the supervisor's chat thread. The request survives a daemon restart.
 
 **What it cannot do.**
 
@@ -550,7 +553,7 @@ One limit is not enforced by this: the supervisor can *ask* a worker thread to m
 
 **When it runs.** It never polls. hataori wakes it by sending it one message when something happens in its scope: a turn ended, a question was asked, a turn failed, a usage limit was hit. Its own thread is excluded. Events that arrive while it is busy, or within a short quiet period after the first, are folded into one message.
 
-**How it is woken** (#271; decision 5 of #267). Each scope that names a supervisor has one waker in the daemon (`supervisor.Waker`). It reads the scope's events from its position, kept in the store (`supervisor_wakes`); a scope seen for the first time starts after the events already stored. What wakes is a `turn_ended` of a thread of the scope that is no supervisor's thread, neither the current one nor one a person closed and the daemon replaced: completed, blocked on a question, or failed, a usage limit included (`reason` `limit`). Other kinds, and other scopes, wake nothing. The first such event opens the quiet period (`scopes[].supervisor.quiet`, 30 s); the turn ends until it is over, and those while the supervisor's turn runs, are folded, each thread once with its latest turn end. The waker then gives the supervisor's thread one message, the digest, with `Send` and `Refuse`, as the owner. The digest names each thread, by number: its title, how its turn ended with the reason, its background count and its last output, cut to `output_max` bytes (1 KB) at a character and quoted line by line; at most `threads_max` threads (20), then one line counting the others. Its format is fixed by a golden file. A wake is sent only to a supervisor thread that is idle or asleep, looked up before the digest is made and again after: one that is running, starting, waiting on a question, failed, closed or not there yet is not sent to, and the events wait for its next turn end or change of state, which makes the digest again with what came since. So the turn ends during one supervisor turn start exactly one more. A running one is not sent to, though `Send` would refuse it, because `Send` refuses only a running thread: a turn that asks a question between the look-up and the send would take the digest as its answer. If the thread starts a turn in that moment anyway, `Send` refuses the wake as busy, it is not accepted, and it waits the same way. The wake is stored, with its text and its key (`hataori-wake-<position>`), before it is sent, and the position once it was accepted: a daemon that died in between sends the stored text under the same key again, which the core ignores if it was accepted, and events up to the stored position are not folded again; so each event wakes the supervisor once across restarts, not twice and not never. Before a wake is made, one `supervisor.Gate` is given its threads, each with its `turn_ended` event, and returns those that may wake it; nothing is sent when it returns none. It is where the budget (#273) and the loop guard (#274) plug in. A wake refused as busy after the gate admitted it is made again later, and the gate is asked again, so wakes are counted from the supervisor's `turn_started` events with the wake's key, not from the gate's calls. A wake's input names the owner as its principal; its `turn_started` has the wake's key, which tells it from a person's input.
+**How it is woken** (#271; decision 5 of #267). Each scope that names a supervisor has one waker in the daemon (`supervisor.Waker`). It reads the scope's events from its position, kept in the store (`supervisor_wakes`); a scope seen for the first time starts after the events already stored when the daemon starts, before it reconnects or recovers any session (`supervisor.Begin`), so that a turn end it writes then, as of a worker whose turn ended while it was down, wakes the supervisor (#445). What wakes is a `turn_ended` of a thread of the scope that is no supervisor's thread, neither the current one nor one a person closed and the daemon replaced: completed, blocked on a question, or failed, a usage limit included (`reason` `limit`). Other kinds, and other scopes, wake nothing. The first such event opens the quiet period (`scopes[].supervisor.quiet`, 30 s); the turn ends until it is over, and those while the supervisor's turn runs, are folded, each thread once with its latest turn end. The waker then gives the supervisor's thread one message, the digest, with `Send` and `Refuse`, as the owner. The digest names each thread, by number: its title, how its turn ended with the reason, its background count and its last output, cut to `output_max` bytes (1 KB) at a character and quoted line by line; at most `threads_max` threads (20), then one line counting the others. Its format is fixed by a golden file. A wake is sent only to a supervisor thread that is idle or asleep, looked up before the digest is made and again after: one that is running, starting, waiting on a question, failed, closed or not there yet is not sent to, and the events wait for its next turn end or change of state, which makes the digest again with what came since. So the turn ends during one supervisor turn start exactly one more. A running one is not sent to, though `Send` would refuse it, because `Send` refuses only a running thread: a turn that asks a question between the look-up and the send would take the digest as its answer. For that moment, the waker's caller has `NoAnswer`: its `Send` to a thread waiting on a question is refused as busy, in the transaction that would take the input, and the wake waits as above (#441). If the thread starts a turn in that moment anyway, `Send` refuses the wake as busy, it is not accepted, and it waits the same way. The wake is stored, with its text and its key (`hataori-wake-<position>-<thread>`: the core takes a send's key once per scope, so the key names the supervisor's thread too, and a stored wake that goes to a thread replacing the one it was made for is sent under that thread's own key, since a thread whose resume failed took the key without reading the digest, #443; a key from before, with the position only, is sent again under its own form only to the thread the core says took it, `core.Core.SentTo`), before it is sent, and the position once it was accepted: a daemon that died in between sends the stored text under the same key again, which the core ignores if it was accepted, and events up to the stored position are not folded again; so each event wakes the supervisor once across restarts, not twice and not never. The one exception: a supervisor thread that took a wake and was closed before the waker stored its position may have read it or not (its resume may have failed), and its replacement is given the wake again, under its own key. Before a wake is made, one `supervisor.Gate` is given its threads, each with its `turn_ended` event, and returns those that may wake it; nothing is sent when it returns none. It is where the budget (#273) and the loop guard (#274) plug in. A wake refused as busy after the gate admitted it is made again later, and the gate is asked again, so wakes are counted from the supervisor's `turn_started` events with the wake's key, not from the gate's calls. A wake's input names the owner as its principal; its `turn_started` has the wake's key, which tells it from a person's input.
 
 **Where this runs.** Waking, the budget and the loop guard below are one client of the control API inside the daemon, as the chat front end is: it reads events from a position, keeps its position, and wakes the supervisor with `Send` to the supervisor's thread. The core has no supervisor code; to the core the supervisor's thread is an ordinary thread and its tools are an ordinary limited `Caller`.
 
@@ -1258,6 +1261,8 @@ Run on 2026-11-19 against tmux 3.4 on Linux, on a tmux server of its own (`-L`, 
 | The default of `window-size` | `latest` |
 | `attach-session -f` in the manual page | the client flags include `ignore-size`; `-r` is `read-only,ignore-size` |
 
+Later, for #362: on tmux 3.4, `send-keys` typed a name it cannot encode (`S-Tab`, `S-a`, `C-{`) into the pane as its letters and dropped some (`C-Enter`, `C-BSpace`), and an argument ending in `;` ended the command (`M-;` typed `M-`; `M-\;` sent `ESC ;`); `paste-buffer -S` was refused with "unknown flag -S" and the buffer kept. On tmux 3.8 (macOS CI), `paste-buffer` without `-S` gave a DEL as `^?`: tmux 3.7 passes a paste through vis(3) unless given `-S`.
+
 ### Claude Code plugins, and hooks in a tmux pane (#384)
 
 Run on 2026-11-19 against Claude Code 2.1.328 and tmux 3.4 on Linux. Every run of Claude Code had a throwaway directory as both `HOME` and `CLAUDE_CONFIG_DIR`, and no login. The real configuration was never used. Its plugin files were compared before and after the runs: the only change was the refresh time of the official marketplace, written by another session that uses the real configuration (the throwaway sessions wrote their own refresh into the throwaway directory, at another time). In the throwaway `.claude.json`, onboarding was marked done and the two test directories trusted. A plugin `probe`, in a marketplace that is a local directory, registered `SessionStart`, `UserPromptSubmit`, `PermissionRequest`, `Stop` and `SessionEnd`, each running a script that wrote its environment, its chain of parent processes, what tmux said of its pane, and its payload to a file of its own for each call. The sessions ran in panes of a tmux server of its own (`-L`, no configuration file). With no login no turn reached the model, so `PermissionRequest` and `Stop` never fired.
@@ -1406,6 +1411,14 @@ type API interface {
 	// in.Link names the link the input came through, if any.
 	Send(ctx context.Context, id ThreadID, key string, in Input, busy Busy) error
 	Answer(ctx context.Context, req RequestID, a Answer) error
+	// AskInterrupt asks a person to approve interrupting the running turn of
+	// thread id, with reason. It stores an approval request in the caller's
+	// AsksIn thread and returns its id at once; nothing is interrupted until
+	// a person approves it with Answer. A repeated key returns the original
+	// request; an empty key makes no repeat check. An open request for the
+	// same running turn is returned instead of a second one. The caller's
+	// AsksIn thread cannot be the target (ErrForbidden). Since protocol 3.10.
+	AskInterrupt(ctx context.Context, id ThreadID, key string, reason string) (RequestID, error)
 	Stop(ctx context.Context, id ThreadID) error
 
 	// CloseThread ends the agent process of an idle, asleep or failed thread
@@ -1444,15 +1457,17 @@ type API interface {
 	// its Caller has the scopes that person may act in (every scope for the
 	// owner) and OpRead. It needs OpSignIn, which the owner's connection on
 	// the control socket has, and which a chat front end gives the caller it
-	// makes for a person who asks in chat (the command comes with #259);
+	// makes for a person who asks in chat with /dashboard (#259), and sends
+	// the link to in a direct message, never through its outbox;
 	// the dashboard's caller never has it. Who may get a link is one rule in the core, today the
 	// owner only (section 10); a guest and anyone else are refused and
 	// logged with the client and the id. The token is never logged or
 	// stored as an event. way names the dashboard's listener the link is
 	// for, and the session it opens works only there: WayLocal, WayWeb, or
 	// empty for the loopback listener when the instance has one and the web
-	// listener otherwise (section 7.2). Since protocol 1.7; for a chat
-	// caller since 1.11; way since 3.2.
+	// listener otherwise (section 7.2). On an instance without a dashboard
+	// it is ErrNoDashboard. Since protocol 1.7; for a chat caller since
+	// 1.11; way since 3.2.
 	SignInLink(ctx context.Context, way Way) (string, error)
 
 	// Workspace reads the state of a thread's workspace and changes nothing.
@@ -1479,6 +1494,17 @@ type API interface {
 	// host_terminals is true (section 7.2). Since protocol 1.10.
 	HostTerminals(ctx context.Context) ([]HostTerminal, error)
 	HostScreen(ctx context.Context, pane string) (string, error)
+
+	// OperateHost lets the caller type into one tmux pane on the host that
+	// no session host owns, by TmuxPane.Pane (section 7.2). It needs
+	// OpHostInput, which the core honours only for the owner and only when
+	// the config's host_input (which needs host_terminals) is true. It
+	// refuses a pane in which one of hataori's own processes runs, and a
+	// pane already being operated (ErrBusy, naming since when and by whom).
+	// It logs the start and the end with the person, the pane and the
+	// reason, and never a key. On the socket its connection becomes a
+	// stream both ways (below). Since protocol 3.11.
+	OperateHost(ctx context.Context, pane string) (HostOperation, error)
 
 	// Limits returns each agent's remaining usage as its sessions last
 	// reported it; an agent that reports none has no entry. It needs
@@ -1541,6 +1567,38 @@ type TmuxPane struct {
 	Attached   bool
 }
 
+// HostOperation is one pane being operated. It ends when ctx ends, when
+// End is called, when no key came for Idle, when the pane goes or comes
+// to run one of hataori's processes, or when the daemon stops. Done is
+// then closed and Reason says which: "closed", "ended", "idle", "pane
+// gone", "hataori's own" or "stopping" (control.HostClosed and the rest).
+// The socket's client says "disconnected" when its connection breaks
+// without the daemon's last message.
+type HostOperation interface {
+	Send(ctx context.Context, keys []HostKey) error // in order; ErrEnded once it ended
+	Idle() time.Duration                             // the config's host_input_idle
+	Done() <-chan struct{}
+	Reason() string
+	End()
+}
+
+// HostKey is one input to a pane. Key is one of a fixed list of tmux key
+// names (control.ValidHostKey: Enter, Tab, BTab, BSpace, Escape, the
+// arrows, Home, End, PPage, NPage, IC, DC, F1 to F12, and C-, M- and S-
+// with them or with one character, as far as tmux encodes each), passed
+// to send-keys. Otherwise Text is
+// written to the pane through a buffer of the operation's own (load-buffer
+// from standard input, then paste-buffer -d, with -S since tmux 3.7 so
+// that control characters go as they are), with Paste as a paste
+// (paste-buffer -p, as tmux pastes it). hataori logs and stores neither; Text is in the
+// buffer for one paste, and the buffer is deleted after a failed paste,
+// at the end of the operation and at the daemon's start.
+type HostKey struct {
+	Key   string
+	Text  string
+	Paste bool
+}
+
 type TerminalChunk struct {
 	Run   string // the session host's run, opaque; a new run starts a new count; empty when no host runs
 	Pos   uint64 // the byte position after Data, counted since the run started; 0 when Run is empty
@@ -1564,6 +1622,9 @@ type WorkspaceState struct {
 // Caller is who is asking. An API value is bound to one Caller,
 // and the core checks every call against it.
 type Caller struct {
+	// AsksIn is where approvals the caller asks for are shown and answered.
+	// The daemon sets it when it binds the caller; zero: it cannot ask.
+	AsksIn ThreadID
 	// From is the "<client>:<id>" a relayed input came from, such as a chat
 	// message's author. The core resolves it to a person and sets Principal;
 	// an id no person lists is a guest, with no Principal. Empty for a
@@ -1571,7 +1632,7 @@ type Caller struct {
 	From      string
 	Principal Principal // a person's name (section 5.5)
 	Scopes    []string  // the scopes it may see and act in
-	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName
+	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName, OpAsk, OpHostInput
 	// NoText leaves text written by a person or an agent out of what the
 	// caller reads: ThreadInfo.Title and ThreadInfo.Last,
 	// ThreadDetail.Recent, the text of its requests, and the text fields of
@@ -1581,6 +1642,11 @@ type Caller struct {
 	// Busy it gives; Deliver or Interrupt to a running thread is refused
 	// with ErrBusy and logged. A supervisor's caller has it (section 7.1).
 	RefuseBusy bool
+	// NoAnswer refuses the caller's Send with ErrBusy when the thread waits
+	// on a question, instead of taking it as the answer, in the
+	// transaction that would take the input. The supervisor's waker has it
+	// (section 7.1, #441).
+	NoAnswer bool
 	// Mark is a line the core puts before the text of every input of the
 	// caller's Start and Send, except a Send that answers an open question;
 	// the title is made without it. Set by the
@@ -1598,8 +1664,8 @@ type Caller struct {
 // carries a token that the daemon issued (wire.Server.Issue, since
 // protocol 2.2): then it is bound to the API of the Caller the token was
 // issued for. wire.Server.Revoke forgets a token and closes its
-// connections. supervisor.Caller(scope) is a supervisor's Caller: From
-// "supervisor:<scope>", Scopes [scope], OpRead|OpStart|OpSend, RefuseBusy,
+// connections. supervisor.Caller(scope, thread) is a supervisor's Caller: From
+// "supervisor:<scope>", Scopes [scope], OpRead|OpStart|OpSend|OpAsk, AsksIn thread, RefuseBusy,
 // and the Mark of section 7.1. wire.Server.Restore binds a token issued by
 // an earlier run of the daemon again, for a client that still runs with it
 // (#270).
@@ -1709,52 +1775,23 @@ type API interface {
 
 	// SignInLink: declared above, since protocol 1.7 (#200); for a chat
 	// caller with From since 1.11 (#252). The control socket's connections
-	// have OpSignIn, and so will the chat front end's caller for a person's
-	// request (#259); a dashboard session's Caller has
+	// have OpSignIn, and so has the chat front end's caller for a person's
+	// /dashboard (#259); a dashboard session's Caller has
 	// OpRead only, OpHost for the owner when host terminals are on, and
 	// OpHostInput for the owner when host input is on.
 
 	// SignInLink's way: declared above, since protocol 3.2 (#359). A chat
-	// front end asks for WayWeb when there is a web listener (#259).
+	// front end asks for WayWeb when there is a web listener (#259,
+	// FrontEnd.SignInWay).
 
-	// OperateHost lets the caller type into one tmux pane on the host that
-	// no session host owns, by HostTerminals' TmuxPane.Pane (section 7.2).
-	// It needs OpHostInput, which the core grants only to the owner and
-	// only when the config's host_input and host_terminals are both true.
-	// It refuses a pane in which one of hataori's own processes runs, and a
-	// pane already being operated (ErrBusy, naming since when and by whom).
-	// It logs the start and the end with the person, the pane and the
-	// reason, and never a key.
-	OperateHost(ctx context.Context, pane string) (HostOperation, error)
+	// OperateHost: declared above, since protocol 3.11 (#362), with
+	// OpHostInput, which the owner's connection on the control socket has
+	// when host input is on.
 }
 
 // Way: declared above, with SignInLink.
 
-// HostOperation is one pane being operated. It ends when ctx ends, when
-// End is called, when no key came for Idle, when the pane goes or comes
-// to run one of hataori's processes, or when the daemon stops. Done is
-// then closed and Reason says which: "ended", "idle", "pane gone",
-// "hataori's own" or "stopping".
-type HostOperation interface {
-	Send(ctx context.Context, keys []HostKey) error // in order; ErrEnded once it ended
-	Idle() time.Duration                             // the config's host_input_idle
-	Done() <-chan struct{}
-	Reason() string
-	End()
-}
-
-// HostKey is one input to a pane. Key is one of a fixed list of tmux key
-// names (Enter, Tab, BTab, BSpace, Escape, the arrows, Home, End, PPage,
-// NPage, IC, DC, F1 to F12, and C-, M- and S- with them or with one
-// character), passed to send-keys. Otherwise Text is written to the pane
-// through a buffer of the operation's own (load-buffer from standard
-// input, then paste-buffer -d), with Paste as a paste (paste-buffer -p).
-// hataori logs and stores neither; Text is in the buffer for one paste.
-type HostKey struct {
-	Key   string
-	Text  string
-	Paste bool
-}
+// HostOperation, HostKey: declared above, with OperateHost.
 
 // WorkspaceState: declared above, with Workspace.
 
@@ -1763,7 +1800,7 @@ type HostKey struct {
 // HostTerminal, TmuxPane: declared above, with HostTerminals.
 ```
 
-On the socket, `OperateHost` turns its connection into a stream in both directions, after its reply: the client sends batches of keys and may send an end; the daemon answers each batch and sends one message with the reason when the operation ends. A connection that closes ends the operation.
+On the socket, `OperateHost` turns its connection into a stream in both directions, after its reply: the client sends batches of keys (`HostKeys`) and may send an end (`End`); the daemon answers each batch and sends one message with the reason (`ended`) when the operation ends. A connection that closes ends the operation. The daemon gives the core the tmux lister as `core.Core.HostInput` when host input is on, with the idle period and its own context's end as `Stopping`, and deletes the buffers an earlier run left before it listens; each instance's buffers have a name of their own.
 
 Remaining usage per agent is `Limits`, declared above (#211), from the sources the research found (#191, [docs/notes/agent-usage-limits.md](../notes/agent-usage-limits.md)). An adapter reports it as an agent event of kind `Limits`; the session machine keeps the newest report per agent in the same transaction and writes no control event, since it belongs to no thread. Claude Code: hataori's `--settings` sets `statusLine` to `hataori statusline`, which hands the input's `rate_limits` to the session host when they change and every 5 minutes, refreshes at least once a minute, and runs and prints the status line the user would have had (the workspace's local and shared settings, then the user's own; only read, never written), so the user's line still shows. Codex: the decoder of `account/rateLimits/read` is in `internal/agent/codex`; the Codex adapter reads it at start and after each turn when it comes (section 8).
 
@@ -1782,7 +1819,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `ThreadEvents` (#336) | minor: new operation; 3.3 |
 | `SetName`, with `Ops` gaining `OpName`, `Scopes` and `ScopeInfo`, and the `named` event (#405) | minor: new operations and event kind; 3.5 |
 | `ThreadInfo.Name`, the chat thread's own name (#406) | minor: new optional field; 3.7 |
-| `OperateHost`, with `Ops` gaining `OpHostInput` (section 7.2) | minor: new operation, whose connection becomes a stream both ways |
+| `OperateHost`, with `Ops` gaining `OpHostInput`, `HostKeys` and `End` on its stream, and the `ended` error code (section 7.2, #362) | minor: new operation, whose connection becomes a stream both ways; 3.11 |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 
 Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event. In protocol 1.9: `Terminal`, which turns its connection into a stream as `Events` does. In protocol 1.12: `ThreadInfo.terminal`, the terminal device its session host opened, for the tree's filter, the status bar and the details panel (#285); `HostTerminals` still leaves these terminals out.

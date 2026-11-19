@@ -120,13 +120,14 @@ func (fakeWorkspaces) State(_ context.Context, dir string) (control.WorkspaceSta
 	return control.WorkspaceState{Branch: "main", Uncommitted: len(dir) + 1}, nil
 }
 
-const all = control.OpRead | control.OpStart | control.OpSend | control.OpAnswer | control.OpStop
+const all = control.OpRead | control.OpStart | control.OpSend | control.OpAnswer | control.OpStop | control.OpAsk
 
 type fixture struct {
 	core   *Core
 	runner *fakeRunner
 	log    *bytes.Buffer
 	owner  control.API
+	root   string
 }
 
 func newFixture(t *testing.T, owner fakeOwner) *fixture {
@@ -138,7 +139,7 @@ func newFixture(t *testing.T, owner fakeOwner) *fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	f := &fixture{runner: &fakeRunner{}, log: &bytes.Buffer{}}
+	f := &fixture{runner: &fakeRunner{}, log: &bytes.Buffer{}, root: root}
 	f.runner.machine = &session.Machine{Store: st}
 	f.core = &Core{
 		Store:   st,
@@ -227,7 +228,8 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 			_, err := a.Start(ctx, control.StartRequest{Key: "k2", Scope: "s", Thread: "t2"})
 			return err
 		},
-		"Send": func(a control.API) error { return a.Send(ctx, id, "m9", control.Input{Text: "x"}, control.Deliver) },
+		"Send":         func(a control.API) error { return a.Send(ctx, id, "m9", control.Input{Text: "x"}, control.Deliver) },
+		"AskInterrupt": func(a control.API) error { _, err := a.AskInterrupt(ctx, id, "key", "reason"); return err },
 		"Answer": func(a control.API) error {
 			return a.Answer(ctx, session.RequestHandle(sid, "r1"), control.Answer{Text: "x"})
 		},
@@ -242,6 +244,8 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 		"Terminal":      func(a control.API) error { _, err := a.Terminal(ctx, id, "", 0); return err },
 		"HostTerminals": func(a control.API) error { _, err := a.HostTerminals(ctx); return err },
 		"HostScreen":    func(a control.API) error { _, err := a.HostScreen(ctx, "%0"); return err },
+		// Only the owner's caller with OpHostInput may (hostinput_test.go).
+		"OperateHost": func(a control.API) error { _, err := a.OperateHost(ctx, "%0"); return err },
 		// Limits needs OpRead and no scope, so "other scope" may call it
 		// (TestLimitsKeepTheNewestPerAgent).
 		"Limits": func(a control.API) error { _, err := a.Limits(ctx); return err },
@@ -697,6 +701,68 @@ func TestSendAnswersTheOpenQuestion(t *testing.T) {
 	f.core.Store.DB.QueryRow(`SELECT json_extract(data, '$.text') FROM events WHERE kind = 'answer'`).Scan(&text)
 	if text != "blue" {
 		t.Fatalf("answer event text %q", text)
+	}
+}
+
+// A caller with NoAnswer never answers an open question with its Send: it
+// is refused as busy, the question stays open, no answer is recorded, and
+// the key is not taken, so the same Send goes in once the thread is idle
+// again (#441).
+func TestNoAnswerCallerIsRefusedByAnOpenQuestion(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{})
+	id, sid := f.running(t, "t1")
+	f.agentEvent(t, sid, 2, agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: "r1", Text: "which?"}})
+	calls := f.runner.Calls()
+	waker := f.core.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: control.OpRead | control.OpSend, NoAnswer: true})
+
+	err := waker.Send(ctx, id, "wake-1", control.Input{Text: "digest"}, control.Refuse)
+	if !errors.Is(err, ErrBusy) {
+		t.Fatalf("send to a thread waiting on a question: %v, want ErrBusy", err)
+	}
+	if got := f.runner.Calls(); got != calls {
+		t.Fatalf("runner calls after the refusal: %q", strings.TrimPrefix(got, calls))
+	}
+	if s := requestState(t, f, "r1"); s != "open" {
+		t.Fatalf("request is %s, want open", s)
+	}
+	var answers int
+	f.core.Store.DB.QueryRow(`SELECT count(*) FROM events WHERE kind = 'answer'`).Scan(&answers)
+	if answers != 0 {
+		t.Fatalf("%d answers recorded", answers)
+	}
+	// The person answers; the same key is then taken as new input.
+	if err := f.owner.Send(ctx, id, "m1", control.Input{Text: "blue"}, control.Refuse); err != nil {
+		t.Fatal(err)
+	}
+	if s := requestState(t, f, "r1"); s != "answered" {
+		t.Fatalf("request is %s after the person's answer", s)
+	}
+	f.agentEvent(t, sid, 3, agent.Event{Kind: agent.TurnEnded})
+	calls = f.runner.Calls()
+	if err := waker.Send(ctx, id, "wake-1", control.Input{Text: "digest"}, control.Refuse); err != nil {
+		t.Fatalf("the same send once the thread is idle: %v", err)
+	}
+	if got := f.runner.Calls(); got == calls {
+		t.Fatal("the same send once the thread is idle did not reach the runner: its key was taken by the refusal")
+	}
+}
+
+// SentTo tells which thread a Send took a key for, and that no Send took
+// another key (#443).
+func TestSentTo(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{})
+	id, sid := f.running(t, "t1")
+	f.agentEvent(t, sid, 2, agent.Event{Kind: agent.TurnEnded})
+	if err := f.owner.Send(ctx, id, "k1", control.Input{Text: "x"}, control.Refuse); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := f.core.SentTo(ctx, "s", "k1"); err != nil || !ok || got != id {
+		t.Fatalf("SentTo(k1) = %d, %v, %v; want %d", got, ok, err, id)
+	}
+	if _, ok, err := f.core.SentTo(ctx, "s", "k2"); err != nil || ok {
+		t.Fatalf("SentTo(k2) = %v, %v; want no thread", ok, err)
 	}
 }
 

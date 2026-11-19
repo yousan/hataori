@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -31,6 +32,12 @@ var (
 	// ErrLinkedElsewhere: a Link of a conversation that is linked to
 	// another thread. Since 3.4.
 	ErrLinkedElsewhere = errors.New("the conversation shows another thread")
+	// ErrNoDashboard: a SignInLink on an instance that has no dashboard.
+	// On the socket it has no code of its own, as before.
+	ErrNoDashboard = errors.New("the instance has no dashboard: add a \"dashboard\" section to its config")
+	// ErrEnded: a HostOperation's Send after the operation ended. Nothing
+	// was sent. Since 3.11.
+	ErrEnded = errors.New("the operation has ended")
 )
 
 // Efforts are the effort values hataori knows. An agent adapter maps each
@@ -74,6 +81,17 @@ type API interface {
 	Send(ctx context.Context, id ThreadID, key string, in Input, busy Busy) error
 	// Answer answers an open question or approval.
 	Answer(ctx context.Context, req RequestID, a Answer) error
+	// AskInterrupt asks a person to approve interrupting the running turn of
+	// thread id, with reason. It stores an approval request in the caller's
+	// AsksIn thread and returns its id at once; nothing is interrupted until
+	// a person approves it with Answer. It needs OpAsk, the caller's person
+	// allowed in id's scope, and AsksIn a thread of that scope. A thread
+	// without a running turn is refused (send instead). A repeated key
+	// returns the original request; an empty key makes no repeat check. An
+	// open request for the same running turn is returned instead of a second
+	// one. The caller's AsksIn thread cannot be the target (ErrForbidden).
+	// Since protocol 3.10.
+	AskInterrupt(ctx context.Context, id ThreadID, key string, reason string) (RequestID, error)
 	// Stop interrupts the thread's running turn.
 	Stop(ctx context.Context, id ThreadID) error
 	// CloseThread ends the agent process of an idle, asleep or failed thread and
@@ -150,6 +168,16 @@ type API interface {
 	HostTerminals(ctx context.Context) ([]HostTerminal, error)
 	HostScreen(ctx context.Context, pane string) (string, error)
 
+	// OperateHost lets the caller type into one tmux pane on the host that
+	// no session host owns, by TmuxPane.Pane (design, section 7.2). It
+	// needs OpHostInput, which the core honours only for the owner and only
+	// when the config's host_input is on. A pane in which one of hataori's
+	// own processes runs is refused, and a pane being operated already is
+	// ErrBusy, naming since when and by whom. The start and the end are
+	// logged with the person, the pane and the reason; no key ever is.
+	// Since 3.11.
+	OperateHost(ctx context.Context, pane string) (HostOperation, error)
+
 	// AttachTerminal readies the thread's agent for a person's terminal on
 	// the host (`hataori attach`): an asleep thread is woken first, with no
 	// input, and the result names the socket of the session host that the
@@ -172,6 +200,9 @@ type API interface {
 // Start, Send, Answer, Stop, Close and Remove are refused unless the
 // Principal is the owner or one of the people of the thread's scope.
 type Caller struct {
+	// AsksIn is where approval requests are shown. The daemon sets it when
+	// binding the caller; zero forbids asking.
+	AsksIn ThreadID
 	// From is the "<client>:<id>" a relayed input came from, such as a
 	// chat message's author. The core resolves it to a person and uses that
 	// person as the Principal, whatever Principal says; an id no person
@@ -180,7 +211,7 @@ type Caller struct {
 	From      string
 	Principal Principal // a person's name
 	Scopes    []string  // the scopes it may see and act in
-	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove
+	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName, OpAsk, OpHostInput
 	// NoText leaves text written by a person or an agent out of what the
 	// caller reads: ThreadInfo.Title and ThreadInfo.Last,
 	// ThreadDetail.Recent, the text of its requests, and the text fields of
@@ -191,6 +222,12 @@ type Caller struct {
 	// interrupts it. A Send with Deliver or Interrupt to a running thread is
 	// refused with ErrBusy and logged.
 	RefuseBusy bool
+	// NoAnswer makes the caller's Send refused with ErrBusy, like one with
+	// Refuse to a running thread, when the thread waits on a question,
+	// instead of being its answer. The state is read in the transaction
+	// that would take the input. The supervisor's waker has it, so that a
+	// wake never answers the supervisor's own question.
+	NoAnswer bool
 	// Mark, when set, is a line the core puts before the text of every
 	// input of the caller's Start and Send, so that the agent sees who it
 	// came from. The client cannot leave it out: the daemon sets it when it
@@ -235,6 +272,11 @@ const (
 	// OpName may record the names the chat service shows (SetName): a chat
 	// front end's caller, and the owner's connection on the control socket.
 	OpName
+	OpAsk // AskInterrupt
+	// OpHostInput may type into a tmux pane on the host that hataori does
+	// not own (OperateHost). The core honours it only for the owner, and
+	// only when the config's host_input is on. Since 3.11.
+	OpHostInput
 )
 
 // Way is one of the dashboard's listeners, each a way of reaching it with
@@ -514,6 +556,105 @@ type TmuxPane struct {
 	Index      string `json:"index"`                 // the pane's index in its window
 	Dir        string `json:"dir,omitempty"`         // the pane's current directory
 	Attached   bool   `json:"attached"`              // a client shows the session now
+}
+
+// HostOperation is one tmux pane being operated (OperateHost). It ends
+// when the context OperateHost was given ends, when End is called, when no
+// key came for Idle, when the pane goes or comes to run one of hataori's
+// processes, or when the daemon stops. Done is then closed and Reason says
+// which: one of the HostEnd values. Since 3.11.
+type HostOperation interface {
+	// Send gives the pane keys, in order. A batch that is refused, or not
+	// sent because the pane's command cannot be read, changes nothing and
+	// the operation goes on; once the operation has ended, Send is
+	// ErrEnded.
+	Send(ctx context.Context, keys []HostKey) error
+	Idle() time.Duration // the config's host_input_idle
+	Done() <-chan struct{}
+	Reason() string // empty until Done is closed
+	End()
+}
+
+// Why a HostOperation ended.
+const (
+	HostEnded    = "ended"         // End was called
+	HostClosed   = "closed"        // the context ended: the connection or the tab closed
+	HostIdle     = "idle"          // no key came for Idle
+	HostGone     = "pane gone"     // tmux no longer lists the pane
+	HostOwn      = "hataori's own" // one of hataori's processes runs in the pane
+	HostStopping = "stopping"      // the daemon stops
+)
+
+// HostKey is one input to an operated pane: either Key, one of the tmux
+// key names ValidHostKey accepts, which tmux encodes for the pane's modes;
+// or Text, which goes through a tmux buffer of the operation's own and is
+// never on a command line, as a paste when Paste is set. hataori logs and
+// stores neither. Since 3.11.
+type HostKey struct {
+	Key   string `json:"key,omitempty"`
+	Text  string `json:"text,omitempty"` // text, so optional
+	Paste bool   `json:"paste,omitempty"`
+}
+
+// The tmux key names a HostKey's Key may be, by the modifiers tmux 3.4
+// encodes for each. tmux types a name it cannot encode, such as S-Tab or
+// S-a, into the pane as its letters, and drops some, such as C-Enter; those
+// are refused.
+var (
+	// anyModKeys take any of C-, M- and S-.
+	anyModKeys = map[string]bool{
+		"Up": true, "Down": true, "Left": true, "Right": true, "Home": true, "End": true,
+		"PPage": true, "NPage": true, "IC": true, "DC": true,
+		"F1": true, "F2": true, "F3": true, "F4": true, "F5": true, "F6": true,
+		"F7": true, "F8": true, "F9": true, "F10": true, "F11": true, "F12": true,
+	}
+	// metaKeys take M- only; Tab takes C- too.
+	metaKeys = map[string]bool{"Enter": true, "BSpace": true, "Escape": true, "BTab": true, "Tab": true}
+)
+
+// ValidHostKey reports whether name is a key name hataori passes to tmux's
+// send-keys: modifiers, each of C-, M- and S- at most once and in any
+// order, then one of
+//   - Up, Down, Left, Right, Home, End, PPage, NPage, IC, DC, F1 to F12,
+//     with any modifiers;
+//   - Tab, with C- or M-; Enter, BSpace, Escape, BTab, with M- only;
+//   - one printable ASCII character other than a space, with M-, or with
+//     C- when it is a letter or one of @ [ \ ] ^ _ ?; never with S-, and
+//     never alone: a character alone is text, not a key.
+func ValidHostKey(name string) bool {
+	var c, m, s bool
+	for len(name) > 2 && name[1] == '-' {
+		var mod *bool
+		switch name[0] {
+		case 'C':
+			mod = &c
+		case 'M':
+			mod = &m
+		case 'S':
+			mod = &s
+		default:
+			return false
+		}
+		if *mod {
+			return false
+		}
+		*mod = true
+		name = name[2:]
+	}
+	switch {
+	case anyModKeys[name]:
+		return true
+	case name == "Tab":
+		return !s
+	case metaKeys[name]:
+		return !c && !s
+	case len(name) != 1 || name[0] <= ' ' || name[0] >= 0x7f || s || !c && !m:
+		return false
+	case c:
+		ch := name[0]
+		return 'a' <= ch && ch <= 'z' || 'A' <= ch && ch <= 'Z' || strings.IndexByte(`@[\]^_?`, ch) >= 0
+	}
+	return true
 }
 
 // AgentLimits is an agent's remaining usage, as one of its sessions last

@@ -270,6 +270,7 @@ export function App() {
                         selected={current}
                         onOpen={(n) => setTabs((s) => view(s, threadTab(n)))}
                         show={showing}
+                        scopes={d.scopes}
                       />
                     ) : hostOf(k) !== null ? (
                       <HostPane h={host(hostOf(k)!)} now={now} fit />

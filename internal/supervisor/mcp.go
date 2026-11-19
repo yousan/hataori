@@ -15,6 +15,7 @@ import (
 
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
+	"github.com/yousan/hataori/internal/session"
 )
 
 // MCP is `hataori mcp`: an MCP server on stdio whose tools are the control
@@ -43,10 +44,11 @@ const DefaultOutputMax = 4096
 
 // The tools, in the order tools/list gives them.
 const (
-	ToolList  = "list_threads"
-	ToolRead  = "read_thread"
-	ToolSend  = "send_to_thread"
-	ToolStart = "start_thread"
+	ToolList      = "list_threads"
+	ToolRead      = "read_thread"
+	ToolSend      = "send_to_thread"
+	ToolInterrupt = "interrupt_thread"
+	ToolStart     = "start_thread"
 )
 
 // protocols are the MCP versions the server speaks, newest first.
@@ -103,6 +105,7 @@ var tools = []tool{
 	{ToolSend, "Send a message to a thread of this channel. A thread that is running a turn refuses it with \"busy\"; " +
 		"you are told when its turn ends, and can send then. A thread waiting on a question takes the message as the answer.",
 		object(map[string]any{"number": number, "text": map[string]any{"type": "string", "description": "the message"}}, "number", "text")},
+	{ToolInterrupt, "Ask a person in this channel to approve interrupting a thread that is running a turn. This returns at once and interrupts nothing by itself. Once approved, the thread's turn is stopped and it gets the reason as a message from the supervisor. A thread not running is refused with not busy; send instead.", object(map[string]any{"number": number, "reason": map[string]any{"type": "string", "description": "the reason to give the thread"}}, "number", "reason")},
 	{ToolStart, "Start a new thread in this channel, with its own workspace cloned from a repository.",
 		object(map[string]any{
 			"repo":   map[string]any{"type": "string", "description": "the repository to clone"},
@@ -162,7 +165,7 @@ func (m *MCP) handle(ctx context.Context, msg rpcMessage) (any, *rpcError) {
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "hataori", "version": m.Version},
 			"instructions": "Tools for the threads of this channel. You can list, read, start and send; " +
-				"you cannot interrupt a running turn. Your messages reach a thread marked as the supervisor's.",
+				"you can ask a person to approve interrupting a running turn. Your messages reach a thread marked as the supervisor's.",
 		}, nil
 	case "ping":
 		return map[string]any{}, nil
@@ -214,6 +217,7 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 	var a struct {
 		Number *int64 `json:"number"`
 		Text   string `json:"text"`
+		Reason string `json:"reason"`
 		Repo   string `json:"repo"`
 		Model  string `json:"model"`
 		Effort string `json:"effort"`
@@ -224,7 +228,7 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 		}
 	}
 	switch name {
-	case ToolList, ToolRead, ToolSend, ToolStart:
+	case ToolList, ToolRead, ToolSend, ToolInterrupt, ToolStart:
 	default:
 		return "", fmt.Errorf("no tool %q", name)
 	}
@@ -263,6 +267,18 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 			return "", reason(err)
 		}
 		return detail(d, m.outputMax()), nil
+	}
+	if name == ToolInterrupt {
+		if strings.TrimSpace(a.Reason) == "" {
+			return "", errors.New("bad arguments: reason is required")
+		}
+		if _, err := api.AskInterrupt(ctx, id, newKey(), a.Reason); err != nil {
+			if errors.Is(err, session.ErrRefused) {
+				return "", fmt.Errorf("not busy: %v", err)
+			}
+			return "", reason(err)
+		}
+		return "asked a person: nothing is interrupted until a person in this channel approves it. An approved interrupt ends the worker's turn, and that turn end wakes the supervisor as any other; a refusal or an approval after the turn ended is said in the supervisor's chat thread.", nil
 	}
 	if strings.TrimSpace(a.Text) == "" {
 		return "", errors.New("bad arguments: text is required")

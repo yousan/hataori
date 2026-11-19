@@ -30,11 +30,12 @@ func ID(scope string) string { return people.Join(Client, scope) }
 // threads only; reading, starting and sending only; a send never goes into
 // or interrupts a running turn; and every input marked. The daemon chooses
 // it, never the client.
-func Caller(scope string) control.Caller {
+func Caller(scope string, thread control.ThreadID) control.Caller {
 	return control.Caller{
 		From:       ID(scope),
+		AsksIn:     thread,
 		Scopes:     []string{scope},
-		May:        control.OpRead | control.OpStart | control.OpSend,
+		May:        control.OpRead | control.OpStart | control.OpSend | control.OpAsk,
 		RefuseBusy: true,
 		Mark:       Mark,
 	}

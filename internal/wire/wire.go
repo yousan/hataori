@@ -27,7 +27,7 @@ import (
 
 // Version is the protocol version this build speaks: major.minor. Two
 // sides work together when their major numbers are equal (docs/protocol.md).
-const Version = "3.9"
+const Version = "3.11"
 
 type hello struct {
 	Version string `json:"version"`
@@ -50,6 +50,9 @@ type response struct {
 	Event  *control.Event  `json:"event,omitempty"`
 	// Terminal is one chunk of a Terminal stream.
 	Terminal *control.TerminalChunk `json:"terminal,omitempty"`
+	// Ended is the reason an OperateHost stream's operation ended, in the
+	// last message of the stream. Since 3.11.
+	Ended string `json:"ended,omitempty"`
 }
 
 type wireError struct {
@@ -82,6 +85,11 @@ type (
 		Key   string           `json:"key"`
 		Input control.Input    `json:"input"`
 		Busy  control.Busy     `json:"busy"`
+	}
+	askInterruptArgs struct {
+		ID     control.ThreadID `json:"id"`
+		Key    string           `json:"key"`
+		Reason string           `json:"reason"`
 	}
 	answerArgs struct {
 		Request control.RequestID `json:"request"`
@@ -123,11 +131,25 @@ type (
 	hostScreenArgs    struct {
 		Pane string `json:"pane"`
 	}
+	operateHostArgs struct { // since 3.11
+		Pane string `json:"pane"`
+	}
+	hostKeysArgs struct { // since 3.11, on an OperateHost stream only
+		Keys []control.HostKey `json:"keys"`
+	}
+	endArgs struct{} // since 3.11, on an OperateHost stream only
 )
 
+// hostOperation is OperateHost's result. Since 3.11.
+type hostOperation struct {
+	Idle int64 `json:"idle"` // seconds without a key after which the operation ends
+}
+
 // operation is one operation of the control API on the wire: the type of
-// its arguments and of its result, and how the server runs it. Events and
-// Terminal have no run: each turns the connection into a stream.
+// its arguments and of its result, and how the server runs it. Events,
+// Terminal and OperateHost have no run: each turns the connection into a
+// stream. HostKeys and End have none either: they are sent only on an
+// OperateHost stream.
 type operation struct {
 	args, result any
 	run          func(ctx context.Context, api control.API, args func(any) error) (any, error)
@@ -187,6 +209,13 @@ var operations = map[string]operation{
 			return nil, err
 		}
 		return nil, api.Answer(ctx, a.Request, a.Answer)
+	}},
+	"AskInterrupt": {askInterruptArgs{}, control.RequestID(""), func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a askInterruptArgs
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return api.AskInterrupt(ctx, a.ID, a.Key, a.Reason)
 	}},
 	"Stop": {stopArgs{}, nil, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
 		var a stopArgs
@@ -252,6 +281,9 @@ var operations = map[string]operation{
 		}
 		return api.HostScreen(ctx, a.Pane)
 	}},
+	"OperateHost": {operateHostArgs{}, hostOperation{}, nil},
+	"HostKeys":    {hostKeysArgs{}, nil, nil},
+	"End":         {endArgs{}, nil, nil},
 }
 
 // The error codes on the wire, for the errors a client can act on.
@@ -269,6 +301,7 @@ var codes = []struct {
 	{"closed", core.ErrClosed},                       // since 2.3
 	{"removal_refused", core.ErrRemovalRefused},      // since 2.3
 	{"linked_elsewhere", control.ErrLinkedElsewhere}, // since 3.4
+	{"ended", control.ErrEnded},                      // since 3.11
 	{"not_supported", ErrNotSupported},
 }
 

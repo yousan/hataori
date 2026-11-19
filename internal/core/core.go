@@ -228,11 +228,23 @@ type Core struct {
 	// when the config leaves them off: HostTerminals and HostScreen are
 	// then refused for every caller.
 	HostTerms HostTerms
+	// HostInput types into tmux panes on the host that hataori does not
+	// own. Nil when the config's host_input is off: OperateHost is then
+	// refused for every caller, as it is without HostTerms.
+	HostInput HostInput
+	// HostInputIdle ends an operation of a pane after this long without a
+	// key; DefaultHostInputIdle when 0.
+	HostInputIdle time.Duration
+	// Stopping is closed when the daemon stops: every operation of a pane
+	// ends with control.HostStopping, and OperateHost is refused. Nil
+	// never closes.
+	Stopping <-chan struct{}
 	// Remover removes the workspaces of closed threads. It is the only way
 	// the core removes a workspace; nil refuses every Remove.
 	Remover Remover
 
-	locks keyedMutex
+	locks   keyedMutex
+	hostOps hostOpSet
 }
 
 // keyedMutex serializes work per key.
@@ -294,8 +306,8 @@ func (c *Core) MaySignIn(person string) bool {
 }
 
 // ErrNoDashboard is returned by SignInLink when the instance has no
-// dashboard.
-var ErrNoDashboard = errors.New("the instance has no dashboard: add a \"dashboard\" section to its config")
+// dashboard (control.ErrNoDashboard).
+var ErrNoDashboard = control.ErrNoDashboard
 
 // As returns the API as seen by caller. It is the only way to reach an
 // operation. A caller's From is resolved to its person here.
@@ -697,9 +709,33 @@ func (a *api) Thread(ctx context.Context, id control.ThreadID, recent, events in
 			if a.caller.NoText {
 				r.Text, r.Choices = "", nil
 			}
-			d.Requests = []control.Request{r}
+			d.Requests = append(d.Requests, r)
 		}
 	}
+	rows, err := a.c.Store.DB.QueryContext(ctx, `SELECT handle, target, reason FROM approvals WHERE asks_in = ? AND state = 'open' ORDER BY id`, id)
+	if err != nil {
+		return d, err
+	}
+	for rows.Next() {
+		var r control.Request
+		var target int64
+		var reason string
+		if err := rows.Scan(&r.ID, &target, &reason); err != nil {
+			rows.Close()
+			return d, err
+		}
+		r.Kind = control.Approval
+		if !a.caller.NoText {
+			r.Text = fmt.Sprintf("Interrupt thread %d? %s", target, reason)
+		}
+		r.Choices = []control.Choice{{Label: "Approve", Token: "approve"}, {Label: "Refuse", Token: "refuse"}}
+		d.Requests = append(d.Requests, r)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return d, err
+	}
+	rows.Close()
 	if !a.caller.NoText {
 		if d.Recent, err = a.c.recentText(ctx, id, recent); err != nil {
 			return d, err
@@ -1018,6 +1054,26 @@ func (c *Core) Confined(ctx context.Context, id control.ThreadID) (bool, error) 
 	return confined, nil
 }
 
+// SentTo returns the thread that a Send in scope took key for, and false
+// when no Send took it. It is no operation of the control API: the
+// supervisor's waker asks it about a wake's key from before the key named
+// its thread (#443).
+func (c *Core) SentTo(ctx context.Context, scope, key string) (control.ThreadID, bool, error) {
+	var data []byte
+	err := c.Store.DB.QueryRowContext(ctx, `SELECT data FROM inbox WHERE key = ?`, "send:"+scope+"\x00"+key).Scan(&data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("core: send key: %w", err)
+	}
+	var d struct{ Thread control.ThreadID }
+	if err := json.Unmarshal(data, &d); err != nil {
+		return 0, false, fmt.Errorf("core: send key: %w", err)
+	}
+	return d.Thread, true, nil
+}
+
 // sameConfinement refuses a key that started a thread before whose
 // confinement is not the one asked for now: an ordinary Start never
 // returns a confined thread, and StartConfined never an ordinary one.
@@ -1321,6 +1377,14 @@ func (c *Core) current(ctx context.Context, q querier, id control.ThreadID) (int
 }
 
 func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in control.Input, busy control.Busy) error {
+	return a.send(ctx, id, key, in, busy, nil)
+}
+
+type sendGuard struct{ session, turn int64 }
+
+var errGuardEnded = errors.New("the requested turn ended")
+
+func (a *api) send(ctx context.Context, id control.ThreadID, key string, in control.Input, busy control.Busy, guard *sendGuard) error {
 	scope, err := a.actThread(ctx, control.OpSend, "Send", id)
 	if err != nil {
 		return err
@@ -1350,7 +1414,7 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 		if err != nil {
 			return err
 		}
-		if state == control.Closed || state == control.Removed {
+		if guard == nil && (state == control.Closed || state == control.Removed) {
 			// Nothing is accepted: a message does not wake a closed thread.
 			return fmt.Errorf("core: send to %v: %w", id, ErrClosed)
 		}
@@ -1362,6 +1426,16 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 			ok, err := tx.Accept(ctx, "send:"+scope+"\x00"+key, data)
 			if err != nil || !ok {
 				return err // a repeated key is ignored, whatever Busy says
+			}
+		}
+		if guard != nil {
+			var turn int64
+			err := tx.QueryRowContext(ctx, `SELECT id FROM turns WHERE session_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1`, sid).Scan(&turn)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			if errors.Is(err, sql.ErrNoRows) || sid != guard.session || state != control.Running || turn != guard.turn {
+				return errGuardEnded
 			}
 		}
 		if state == control.Running {
@@ -1387,6 +1461,10 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 				return fmt.Errorf("core: wake: %w", err)
 			}
 			return nil
+		}
+		if state == control.Waiting && a.caller.NoAnswer {
+			// The key is not taken: the transaction is rolled back.
+			return fmt.Errorf("core: send to %v: waiting on a question: %w", id, ErrBusy)
 		}
 		if state == control.Waiting {
 			// The input is the answer to the open question.
@@ -1448,7 +1526,7 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 		JOIN sessions s ON s.id = r.session_id JOIN threads t ON t.id = s.thread_id
 		WHERE r.handle = ?`, string(req)).Scan(&scope, &thread, &sid, &agentReq, &state)
 	if errors.Is(err, sql.ErrNoRows) {
-		err = ErrNotFound
+		return a.answerApproval(ctx, req, ans)
 	}
 	if err != nil {
 		a.c.Log.Warn("control call refused", "op", "Answer", "principal", string(a.caller.Principal), "request", string(req), "reason", err)
