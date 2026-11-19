@@ -399,7 +399,11 @@ func transcriptHolds(t *testing.T, id, word string) bool {
 		t.Fatalf("no transcript of the conversation %s", id)
 	}
 	for _, f := range files {
-		if b, err := os.ReadFile(f); err == nil && bytes.Contains(b, []byte(word)) {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err) // unread, it could hold the word
+		}
+		if bytes.Contains(b, []byte(word)) {
 			return true
 		}
 	}
