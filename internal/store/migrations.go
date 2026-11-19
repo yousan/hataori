@@ -443,6 +443,12 @@ var migrations = []Migration{
 			opened_at INTEGER NOT NULL  -- unix milliseconds
 		)`,
 	)},
+	// A thread taken in from a window a person started (design, section
+	// 4.8): its workspace is that session's directory, which hataori did
+	// not make and never removes.
+	{Name: "threads.foreign", Up: execAll(
+		`ALTER TABLE threads ADD COLUMN foreign_workspace INTEGER NOT NULL DEFAULT 0`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

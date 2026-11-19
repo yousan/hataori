@@ -261,6 +261,12 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 		},
 		// Only the owner's caller with OpAttach may (attach_test.go).
 		"AttachTerminal": func(a control.API) error { _, err := a.AttachTerminal(ctx, id); return err },
+		// Only the owner's caller with OpTakeIn may (takein_test.go).
+		"TakeIn": func(a control.API) error {
+			_, err := a.TakeIn(ctx, control.TakeInRequest{Window: "tmux:/tmp/tmux-1000/default,4242,%0", Scope: "s", Key: "k3"})
+			return err
+		},
+		"Release": func(a control.API) error { return a.Release(ctx, id) },
 	}
 	if len(ops) != reflect.TypeFor[control.API]().NumMethod() {
 		t.Fatal("the test does not cover every operation")

@@ -1,0 +1,4 @@
+%0	build	0	sleep	0	/dev/ttys003	sleep	0	1795119335	/work dir
+%1	build	1	my editor	0	/dev/ttys004	bash	0	1795119335	/work dir
+%2	build	1	my editor	1	/dev/ttys005	bash	0	1795119335	/work dir
+%3	tab\there	0	win	0	/dev/ttys006	sleep	0	1795119335	/

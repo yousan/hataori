@@ -232,6 +232,10 @@ type Core struct {
 	// when the config leaves them off: HostTerminals and HostScreen are
 	// then refused for every caller.
 	HostTerms HostTerms
+	// Windows has the last report of each window a person started, from
+	// the hooks of the plugin they installed; nil when nothing takes the
+	// reports. TakeIn is then refused: there is no window to take in.
+	Windows Windows
 	// HostInput types into tmux panes on the host that hataori does not
 	// own. Nil when the config's host_input is off: OperateHost is then
 	// refused for every caller, as it is without HostTerms.
