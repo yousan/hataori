@@ -5,6 +5,7 @@ import { HostDetails, HostPane } from "./HostViews";
 import { t } from "./catalog";
 import { Details, Waiting } from "./Details";
 import type { Attention } from "./live";
+import { type Show, ShowChoice, shows } from "./show";
 import { ThreadPane } from "./ThreadPane";
 import { HostSections, Row } from "./Tree";
 import type { Workspace } from "./workspaces";
@@ -32,14 +33,19 @@ interface ListProps {
   onOpen: (n: number) => void;
   hosts: HostTerminal[] | null; // null when the server does not list them
   onOpenHost: (device: string) => void;
+  show: Show; // the active threads or all of them
+  onShow: (s: Show) => void;
+  hidden: number; // how many threads the choice hides
 }
 
 // NarrowList is the page on a narrow screen: the threads that need
 // attention (waiting or failed, by their state, also before what they wait
 // on is read), then those running, then the rest folded. The rows are the
-// tree's.
-export function NarrowList({ threads, attention, now, onOpen, hosts, onOpenHost }: ListProps) {
-  const all = threads ?? [];
+// tree's. The choice between the active threads and all of them is the
+// wide page's, kept in the same place.
+export function NarrowList({ threads, attention, now, onOpen, hosts, onOpenHost, show, onShow, hidden }: ListProps) {
+  const every = threads ?? [];
+  const all = every.filter((x) => shows(show, x));
   const needs = (x: ThreadInfo) => x.state === "waiting" || x.state === "failed";
   const waiting = all.filter(needs);
   const running = all.filter((x) => x.state === "running");
@@ -53,7 +59,11 @@ export function NarrowList({ threads, attention, now, onOpen, hosts, onOpenHost 
   );
   return (
     <nav className="narrow-list tree density-dense" aria-label={t("narrow.label")}>
-      {threads !== null && all.length === 0 && <p className="none">{t("narrow.none")}</p>}
+      <div className="narrow-show">
+        <ShowChoice show={show} onShow={onShow} hidden={hidden} />
+      </div>
+      {threads !== null && every.length === 0 && <p className="none">{t("narrow.none")}</p>}
+      {every.length > 0 && all.length === 0 && <p className="none">{t("tree.noActive", { n: hidden })}</p>}
       {waiting.length > 0 && (
         <section data-section="attention">
           <h2>{t("narrow.attention")}</h2>
