@@ -1,0 +1,264 @@
+package claudecode
+
+import (
+	"bytes"
+	"encoding/json"
+	"flag"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/yousan/hataori/internal/agent"
+)
+
+var update = flag.Bool("update", false, "rewrite the golden files of the launch")
+
+// ordinaryLaunches is the launch of three ordinary specs, a new session
+// with everything set, one with nothing set and a resumed one, with the
+// new session's random id replaced. The paths are made up: Launch reads
+// nothing at them but a user's status line, which they do not have.
+func ordinaryLaunches(t *testing.T) []byte {
+	t.Helper()
+	a := newAdapter(t, `{"hataori": "/opt/hataori/bin/hataori", "pass_env": ["ANTHROPIC_API_KEY"]}`)
+	a.environ = func() []string {
+		return []string{"PATH=/usr/bin:/bin", "HOME=/nonexistent/home", "LANG=C.UTF-8", "ANTHROPIC_API_KEY=k", "SECRET=s"}
+	}
+	specs := []agent.Spec{
+		{Dir: "/nonexistent/workspaces/7", StateDir: "/nonexistent/state/sessions/7", Model: "opus", Effort: "high", Instructions: "Be brief."},
+		{Dir: "/nonexistent/workspaces/8", StateDir: "/nonexistent/state/sessions/8"},
+		{Dir: "/nonexistent/workspaces/7", StateDir: "/nonexistent/state/sessions/7", ResumeID: "00000000-0000-4000-8000-000000000007", Model: "opus"},
+	}
+	type file struct {
+		Name string
+		Text string
+	}
+	type launch struct {
+		Argv     []string
+		Env      []string
+		Terminal bool
+		Files    []file
+		Confined bool `json:",omitempty"`
+	}
+	var out []launch
+	for _, s := range specs {
+		l, err := a.Launch(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range l.Argv {
+			if i > 0 && l.Argv[i-1] == "--session-id" {
+				l.Argv[i] = "<new session id>"
+			}
+		}
+		got := launch{Argv: l.Argv, Env: l.Env, Terminal: l.Terminal}
+		for _, name := range []string{SettingsFile, InstructionsFile, MCPConfigFile} {
+			if b, ok := l.Files[name]; ok {
+				got.Files = append(got.Files, file{name, string(b)})
+			}
+		}
+		if len(got.Files) != len(l.Files) {
+			t.Fatalf("launch has files %v", l.Files)
+		}
+		got.Confined = l.Confined
+		out = append(out, got)
+	}
+	b, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append(b, '\n')
+}
+
+// The launch of a session that is not confined is what it was before
+// confinement existed, byte for byte: the golden file was written by the
+// adapter of the commit before it.
+func TestOrdinaryLaunchUnchanged(t *testing.T) {
+	const golden = "testdata/launch/ordinary.json"
+	got := ordinaryLaunches(t)
+	if *update {
+		if err := os.MkdirAll(filepath.Dir(golden), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(golden, got, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("the ordinary launch changed:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// A confined spec's launch is the ordinary launch with the flags that
+// confined Claude Code 2.1.327 (design, Appendix B) and an MCP config of
+// the spec's servers only, on every launch of the spec, a resumed one too.
+func TestConfinedLaunch(t *testing.T) {
+	a := newAdapter(t, `{"hataori": "/opt/hataori/bin/hataori"}`)
+	s := spec(t)
+	s.Confine = &agent.Confinement{MCP: []agent.MCPServer{{Name: "hataori",
+		Argv: []string{"/opt/hataori/bin/hataori", "mcp", "--scope", "C1", "--root", "/srv/root"}, Env: []string{"HATAORI_TOKEN=t0k=en"}}}}
+	for _, resume := range []string{"", "00000000-0000-4000-8000-000000000001"} {
+		s.ResumeID = resume
+		ordinary := s
+		ordinary.Confine = nil
+		plain, err := a.Launch(ordinary)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l, err := a.Launch(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !l.Confined {
+			t.Fatal("the launch does not say it is confined")
+		}
+		mcp := filepath.Join(s.StateDir, MCPConfigFile)
+		want := append(slices.Clone(plain.Argv), "--restricted", "--strict-mcp-config", "--mcp-config", mcp, "--tools", "Read,Write,Edit,Glob,Grep")
+		got := slices.Clone(l.Argv)
+		if resume == "" { // two new sessions have two random ids
+			i := slices.Index(got, "--session-id")
+			j := slices.Index(want, "--session-id")
+			if i < 0 || i != j {
+				t.Fatalf("argv %v", got)
+			}
+			got[i+1], want[j+1] = "", ""
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("argv\n%q\nwant\n%q", got, want)
+		}
+		if !slices.Equal(l.Env, plain.Env) {
+			t.Fatalf("env %q, want the ordinary %q", l.Env, plain.Env)
+		}
+		var cfg map[string]map[string]struct {
+			Type, Command string
+			Args          []string
+			Env           map[string]string
+		}
+		if err := json.Unmarshal(l.Files[MCPConfigFile], &cfg); err != nil {
+			t.Fatal(err)
+		}
+		srv, ok := cfg["mcpServers"]["hataori"]
+		if len(cfg) != 1 || len(cfg["mcpServers"]) != 1 || !ok || srv.Type != "stdio" || srv.Command != "/opt/hataori/bin/hataori" ||
+			!slices.Equal(srv.Args, []string{"mcp", "--scope", "C1", "--root", "/srv/root"}) || len(srv.Env) != 1 || srv.Env["HATAORI_TOKEN"] != "t0k=en" {
+			t.Fatalf("MCP config %s", l.Files[MCPConfigFile])
+		}
+		for name := range plain.Files {
+			if !bytes.Equal(l.Files[name], plain.Files[name]) {
+				t.Fatalf("file %s differs from the ordinary launch's", name)
+			}
+		}
+	}
+
+	// A confined spec with no servers still has none but its own: an
+	// empty list, and --strict-mcp-config keeps the user's and the project's out.
+	s.Confine = &agent.Confinement{}
+	l, err := a.Launch(s)
+	if err != nil || !l.Confined || string(l.Files[MCPConfigFile]) != "{\n  \"mcpServers\": {}\n}" {
+		t.Fatalf("no servers: %v %s", err, l.Files[MCPConfigFile])
+	}
+	for _, bad := range []agent.MCPServer{{Name: "", Argv: []string{"x"}}, {Name: "x"}, {Name: "x", Argv: []string{"x"}, Env: []string{"NOEQUALS"}}} {
+		s.Confine = &agent.Confinement{MCP: []agent.MCPServer{bad}}
+		if _, err := a.Launch(s); err == nil {
+			t.Errorf("server %+v accepted", bad)
+		}
+	}
+	s.Confine = &agent.Confinement{MCP: []agent.MCPServer{{Name: "a", Argv: []string{"x"}}, {Name: "a", Argv: []string{"y"}}}}
+	if _, err := a.Launch(s); err == nil {
+		t.Error("two servers of one name accepted")
+	}
+}
+
+// The confined launch's flags are the set #268 checked against the real
+// CLI, and its captures show each escape refused under them: a command, a
+// web fetch, a subagent and a wake-up were not available, a write and a read
+// outside the directory were refused, also after a resume with the same
+// flags, and the call to the listed MCP server was allowed.
+func TestConfinedFlagsAreTheCheckedOnes(t *testing.T) {
+	script, err := os.ReadFile("testdata/confine.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{`FILE_TOOLS = "` + ConfinedTools + `"`,
+		`base = ["--restricted", "--strict-mcp-config", "--mcp-config", mcp_config(work)]`,
+		`return base + ["--tools", FILE_TOOLS]`} {
+		if !bytes.Contains(script, []byte(line)) {
+			t.Fatalf("confine.py no longer has %s: the captures were taken with other flags than the launch's", line)
+		}
+	}
+	type outcome struct {
+		Variant      string
+		Calls        []struct{ Event, Tool string }
+		Written      *bool
+		FilesOutside []string `json:"files_outside"`
+	}
+	read := func(name string) ([]string, outcome) {
+		t.Helper()
+		dir := filepath.Join("testdata", "2.1.327", "confine_files_"+name)
+		var tools struct{ Tools []string }
+		var o outcome
+		for f, v := range map[string]any{"tools.json": &tools, "outcome.json": &o} {
+			b, err := os.ReadFile(filepath.Join(dir, f))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(b, v); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if o.Variant != "files" {
+			t.Fatalf("%s was taken with the flags of %q", name, o.Variant)
+		}
+		return tools.Tools, o
+	}
+	// Not available: no tool for it in the list the model got, and no call.
+	for name, absent := range map[string][]string{
+		"shell":             {"Bash"},
+		"webfetch":          {"WebFetch", "WebSearch"},
+		"subagent":          {"Agent", "Task"},
+		"wakeup":            {"CronCreate", "ScheduleWakeup", "Monitor"},
+		"resume_same_flags": {"Bash"},
+	} {
+		tools, o := read(name)
+		for _, tool := range tools {
+			if slices.Contains(absent, tool) {
+				t.Errorf("%s: the session had %s", name, tool)
+			}
+		}
+		if len(o.Calls) != 0 {
+			t.Errorf("%s: calls %v", name, o.Calls)
+		}
+	}
+	// Refused: the tool was called, and no post-call hook followed it.
+	for name, tool := range map[string]string{"write_outside": "Write", "read_outside": "Read"} {
+		_, o := read(name)
+		called := false
+		for _, c := range o.Calls {
+			if c.Tool == tool && c.Event == "PreToolUse" {
+				called = true
+			}
+			if strings.HasPrefix(c.Event, "PostToolUse") {
+				t.Errorf("%s: %s %s ran", name, c.Event, c.Tool)
+			}
+		}
+		if !called {
+			t.Errorf("%s: %s was not tried", name, tool)
+		}
+	}
+	if _, o := read("write_outside"); o.Written == nil || *o.Written || len(o.FilesOutside) != 0 {
+		t.Errorf("write_outside: written %v, outside %v", o.Written, o.FilesOutside)
+	}
+	// Allowed: the listed MCP server's tool ran.
+	_, o := read("mcp")
+	ran := false
+	for _, c := range o.Calls {
+		ran = ran || c.Event == "PostToolUse" && c.Tool == "mcp__sv__ping"
+	}
+	if !ran {
+		t.Errorf("mcp: calls %v; want the server's tool to run", o.Calls)
+	}
+}

@@ -170,6 +170,59 @@ func (m Maker) Adopt(ctx context.Context, thread control.ThreadID, p core.Placem
 	return target, true, nil
 }
 
+// ConfinedDir holds the directories of the threads started confined, such
+// as a supervisor's (design, section 7.1), relative to the instance root.
+// It is outside Dir, so no workspace is in one and none is in a workspace,
+// and the Remover, which removes only below Dir, never removes one.
+const ConfinedDir = "confined"
+
+// ConfinedPath returns where Empty makes the directory of thread:
+// <root>/confined/<number>.
+func ConfinedPath(root string, thread control.ThreadID) string {
+	return filepath.Join(root, ConfinedDir, strconv.FormatInt(int64(thread), 10))
+}
+
+// Empty makes the directory of a thread started confined: empty, not a
+// clone. A directory already at its place is taken only when it is a
+// directory itself, not a link, and empty, as one an Empty made before the
+// daemon died; anything else is refused and left as it is. It implements
+// the core's Workspaces.
+func (m Maker) Empty(ctx context.Context, thread control.ThreadID) (string, error) {
+	if thread <= 0 {
+		return "", fmt.Errorf("workspace: no thread %d", thread)
+	}
+	parent := filepath.Join(m.Root, ConfinedDir)
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return "", fmt.Errorf("workspace: %w", err)
+	}
+	if st, err := os.Lstat(parent); err != nil || !st.IsDir() {
+		return "", fmt.Errorf("workspace: %s is not a directory", parent)
+	}
+	dir := ConfinedPath(m.Root, thread)
+	err := os.Mkdir(dir, 0o700)
+	if err == nil {
+		return dir, nil
+	}
+	if !errors.Is(err, os.ErrExist) {
+		return "", fmt.Errorf("workspace: %w", err)
+	}
+	st, err := os.Lstat(dir)
+	if err != nil {
+		return "", fmt.Errorf("workspace: %w", err)
+	}
+	if !st.IsDir() {
+		return "", fmt.Errorf("%w: %s is not a directory", ErrExists, dir)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", fmt.Errorf("workspace: %w", err)
+	}
+	if len(entries) > 0 {
+		return "", fmt.Errorf("%w: %s is not empty", ErrExists, dir)
+	}
+	return dir, nil
+}
+
 // identity is the device and inode of st.
 func identity(st os.FileInfo) (dev, ino uint64, ok bool) {
 	sys, ok := st.Sys().(*syscall.Stat_t)

@@ -27,6 +27,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -58,6 +59,13 @@ type Runner struct {
 	// for an agent that runs in one; the session host's 80×24 when zero.
 	// Every launch takes them: a new session, a resumed one, one begun again.
 	Cols, Rows uint16
+	// Confine gives each launch of a session whose thread was started
+	// confined its MCP servers, with what they need for that launch such as
+	// a token, and instructions to append. It is called at every launch: a
+	// new session, a resumed one, one begun again. Without it, or when it
+	// fails, the launch fails: a confined session is never started
+	// unconfined, and never with what another launch was given.
+	Confine func(ctx context.Context, l ConfinedLaunch) (Confined, error)
 
 	mu   sync.Mutex
 	live map[int64]*live
@@ -138,6 +146,37 @@ type storedSpec struct {
 	Spec  agent.Spec `json:"spec"`
 }
 
+// ConfinedLaunch is one launch of a session whose thread was started
+// confined, as Runner.Confine is told it.
+type ConfinedLaunch struct {
+	Session  int64
+	Thread   control.ThreadID
+	Scope    string
+	StateDir string
+}
+
+// Confined is what Runner.Confine gives one launch.
+type Confined struct {
+	MCP          []agent.MCPServer // the session's only MCP servers
+	Instructions string            // appended to the spec's
+}
+
+// confinement returns the thread and scope of session id, and whether its
+// thread was started confined.
+func (r *Runner) confinement(ctx context.Context, id int64) (control.ThreadID, string, bool, error) {
+	var (
+		thread   int64
+		scope    string
+		confined bool
+	)
+	err := r.Store.DB.QueryRowContext(ctx, `SELECT t.id, t.scope, t.confined FROM sessions s JOIN threads t ON t.id = s.thread_id
+		WHERE s.id = ?`, id).Scan(&thread, &scope, &confined)
+	if err != nil {
+		return 0, "", false, fmt.Errorf("runner: session %d: %w", id, err)
+	}
+	return control.ThreadID(thread), scope, confined, nil
+}
+
 // Start starts the agent of a new session through a session host. The
 // first input is sent once the agent reports that it is ready.
 func (r *Runner) Start(ctx context.Context, l core.Launch) error {
@@ -155,15 +194,45 @@ func (r *Runner) Start(ctx context.Context, l core.Launch) error {
 }
 
 // launch writes what the agent asks for into the session's state directory,
-// stores the spec and the first input, and starts the session host.
+// stores the spec and the first input, and starts the session host. A
+// session whose thread was started confined is launched confined, whatever
+// spec says, or not at all.
 func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agent.Adapter, spec agent.Spec, first firstInput) error {
 	dir := spec.StateDir
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("runner: %w", err)
 	}
-	launch, err := ad.Launch(spec)
+	thread, scope, confined, err := r.confinement(ctx, id)
+	if err != nil {
+		return err
+	}
+	if confined && spec.Confine == nil {
+		spec.Confine = &agent.Confinement{}
+	}
+	// What the adapter gets: the spec, with what this launch alone is given.
+	// The stored spec keeps the confinement, not the MCP servers, whose
+	// credentials hold for this launch only.
+	run := spec
+	if spec.Confine != nil {
+		spec.Confine = &agent.Confinement{}
+		if r.Confine == nil {
+			return fmt.Errorf("runner: session %d is confined, and nothing gives it its MCP servers; it was not started", id)
+		}
+		c, err := r.Confine(ctx, ConfinedLaunch{Session: id, Thread: thread, Scope: scope, StateDir: dir})
+		if err != nil {
+			return fmt.Errorf("runner: session %d: confinement: %w", id, err)
+		}
+		run.Confine = &agent.Confinement{MCP: c.MCP}
+		if c.Instructions != "" {
+			run.Instructions = strings.TrimSpace(run.Instructions + "\n\n" + c.Instructions)
+		}
+	}
+	launch, err := ad.Launch(run)
 	if err != nil {
 		return fmt.Errorf("runner: %w", err)
+	}
+	if run.Confine != nil && !launch.Confined {
+		return fmt.Errorf("runner: the agent %q cannot start a confined session; it was not started", agentName)
 	}
 	for name, b := range launch.Files {
 		if !filepath.IsLocal(name) {

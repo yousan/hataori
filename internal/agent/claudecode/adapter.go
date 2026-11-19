@@ -92,7 +92,19 @@ func New(settings []byte) (agent.Adapter, error) {
 const (
 	SettingsFile     = "claude-settings.json"
 	InstructionsFile = "claude-instructions.md"
+	MCPConfigFile    = "claude-mcp.json" // a confined session's only MCP servers
 )
+
+// ConfinedTools are the built-in tools a confined session keeps: the file
+// tools, which --restricted confines to the working directory. The set and
+// the flags of Launch are the ones checked against Claude Code 2.1.327
+// (design, Appendix B, "Confining a supervisor session").
+const ConfinedTools = "Read,Write,Edit,Glob,Grep"
+
+// CheapModel is the model of a supervisor whose config names none.
+func (a *Adapter) CheapModel() string { return "haiku" }
+
+var _ agent.CheapModel = (*Adapter)(nil)
 
 // baseEnv is the fixed list of variables passed from the daemon's
 // environment. Nothing else is, unless the config's pass_env names it.
@@ -129,7 +141,52 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 		files[InstructionsFile] = []byte(spec.Instructions)
 		argv = append(argv, "--append-system-prompt-file", stateFile(spec, InstructionsFile))
 	}
-	return agent.Launch{Argv: argv, Env: a.env(spec), Terminal: true, Files: files}, nil
+	l := agent.Launch{Argv: argv, Env: a.env(spec), Terminal: true, Files: files}
+	if spec.Confine != nil {
+		// The flags belong to each launch: a --resume without them has a
+		// shell again (Appendix B), so every launch of the spec has them.
+		mcp, err := mcpConfig(spec.Confine.MCP)
+		if err != nil {
+			return agent.Launch{}, err
+		}
+		files[MCPConfigFile] = mcp
+		l.Argv = append(l.Argv, "--restricted", "--strict-mcp-config", "--mcp-config", stateFile(spec, MCPConfigFile),
+			"--tools", ConfinedTools)
+		l.Confined = true
+	}
+	return l, nil
+}
+
+// mcpConfig is the file given with --mcp-config: the servers, each on stdio.
+func mcpConfig(servers []agent.MCPServer) ([]byte, error) {
+	type server struct {
+		Type    string            `json:"type"`
+		Command string            `json:"command"`
+		Args    []string          `json:"args"`
+		Env     map[string]string `json:"env,omitempty"`
+	}
+	all := map[string]server{}
+	for _, s := range servers {
+		if s.Name == "" || len(s.Argv) == 0 {
+			return nil, fmt.Errorf("%s: an MCP server needs a name and a command", Name)
+		}
+		if _, dup := all[s.Name]; dup {
+			return nil, fmt.Errorf("%s: MCP server %q is named twice", Name, s.Name)
+		}
+		v := server{Type: "stdio", Command: s.Argv[0], Args: append([]string{}, s.Argv[1:]...)}
+		for _, kv := range s.Env {
+			k, val, ok := strings.Cut(kv, "=")
+			if !ok || k == "" {
+				return nil, fmt.Errorf("%s: MCP server %q: %q is not NAME=value", Name, s.Name, kv)
+			}
+			if v.Env == nil {
+				v.Env = map[string]string{}
+			}
+			v.Env[k] = val
+		}
+		all[s.Name] = v
+	}
+	return json.MarshalIndent(map[string]any{"mcpServers": all}, "", "  ")
 }
 
 func stateFile(spec agent.Spec, name string) string {

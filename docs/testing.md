@@ -90,6 +90,24 @@ Last passed: 2026-11-17, Claude Code 2.1.326, logged in with a subscription. The
 
 Last run: 2026-11-18, Claude Code 2.1.327, logged in with a subscription, with the full-screen interface (#178). Steps 1 to 5 passed, the first start's answer after 11 s; the terminal showed the full-screen interface and no echoed paste. Step 6 failed on the answer only: the turn ran both sleeps one after the other and ended `completion` after 10 m 9 s, but the model answered "long done" followed by a note, and the step wants exactly "long done". Steps 7 to 9 were skipped; 10 and 11 passed.
 
+### The supervisor check
+
+```sh
+HATAORI_REAL_CLAUDE=1 go test -count=1 -run TestRealClaudeCodeSupervisor -v -timeout 30m ./cmd/hataori
+```
+
+It runs the daemon as the phase 1 check does, through the same wrapper, with one channel that names a supervisor (#270, design section 7.1). Each step is named:
+
+1. **The daemon starts the supervisor.** Its thread is opened in the channel by itself, on the adapter's cheapest model, in an empty directory, and its first turn ends.
+2. **A worker thread.** An order clones a repository into a workspace.
+3. **The attempts.** The supervisor is asked, one turn each: to run a command with `Bash`; to write a file outside its directory; to start a subagent; to delete the worker's workspace; and to call hataori's `list_threads`. The step judges what happened, not the answers: no `Bash` call started and the command's file is not there; the file outside is not there; no subagent started; the workspace's files and repository are whole; the tool call ran, and an answer names the worker's thread.
+4. **Asleep, then resumed.** With a 20-second idle period the supervisor is put to sleep; the attempts of step 3 then run again in its resumed session, still its only session.
+5. **The user's settings file unchanged**, as step 11 of the phase 1 check.
+
+`TestRealCheckLeavesTheLoginAlone` holds this check's source to the same rules as the phase 1 check's.
+
+Last run: not yet run against the real CLI. The confinement it relies on was checked by #268 with the same flags (Appendix B); `TestConfinedFlagsAreTheCheckedOnes` ties the adapter's flags to those captures.
+
 ### New captures
 
 `internal/agent/claudecode/testdata/capture.py` records hook calls, transcripts and terminal output from the real CLI, and `scrub.py` makes them committable. Their README says how each capture was taken. Run `go test ./internal/agent/claudecode` before committing: it fails on a capture that still holds a home path, an e-mail address, an id or a token.

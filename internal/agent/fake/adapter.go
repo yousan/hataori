@@ -51,6 +51,13 @@ type Config struct {
 	// when it is ready, instead of the model and effort it was asked for.
 	ReportModel  string `json:"report_model"`
 	ReportEffort string `json:"report_effort"`
+	// Confines makes the fake take a confined spec: it confines nothing,
+	// but starts the spec's MCP servers for the script command "mcp", as an
+	// agent would. Without it a confined spec's launch is not confined, and
+	// the runner refuses it.
+	Confines bool `json:"confines"`
+	// Cheap is the model the fake names as its cheapest; none when empty.
+	Cheap string `json:"cheap_model"`
 }
 
 // Adapter is the fake agent.
@@ -94,6 +101,15 @@ func (a *Adapter) Probe(context.Context) (agent.Health, error) {
 // TranscriptFile is where the terminal form writes its text, in the
 // session's state directory.
 const TranscriptFile = "fake-transcript.jsonl"
+
+// MCPConfigFile holds a confined spec's MCP servers, in the session's state
+// directory, as agent.MCPServer values in JSON.
+const MCPConfigFile = "fake-mcp.json"
+
+// CheapModel is the configured cheap_model.
+func (a *Adapter) CheapModel() string { return a.c.Cheap }
+
+var _ agent.CheapModel = (*Adapter)(nil)
 
 // Launch runs the program with the spec's model, effort and resume id.
 func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
@@ -139,7 +155,17 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 			"--transcript", filepath.Join(spec.StateDir, TranscriptFile))
 		env = append(env, host.HookEnv(spec.StateDir))
 	}
-	return agent.Launch{Argv: argv, Env: env, Terminal: a.c.Terminal}, nil
+	l := agent.Launch{Argv: argv, Env: env, Terminal: a.c.Terminal}
+	if spec.Confine != nil && a.c.Confines {
+		b, err := json.Marshal(spec.Confine.MCP)
+		if err != nil {
+			return agent.Launch{}, err
+		}
+		l.Files = map[string][]byte{MCPConfigFile: b}
+		l.Argv = append(l.Argv, "--mcp-config", filepath.Join(spec.StateDir, MCPConfigFile))
+		l.Confined = true
+	}
+	return l, nil
 }
 
 // NewCodec returns the codec of one session.

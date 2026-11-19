@@ -14,12 +14,14 @@ One instance is one directory, its root. hataori reads and writes only under it.
     <token file>      the Discord bot token (you write it)
   state/              created by hataori: database, lock, sessions, control socket
   workspaces/         created by hataori: one clone per thread
+  confined/           created by hataori: one empty directory per supervisor thread
   mirrors/            created by hataori: one bare mirror per repository
   trash/              created by hataori: removed workspaces, kept for the retention
 ```
 
 - The root is given by `--root DIR`, or by the environment variable `HATAORI_ROOT` when `--root` is not given. Every command except `version`, `host` and `hook` needs one.
 - `hataori run` creates `state/`, `workspaces/` and `mirrors/` (mode 0700) if they are missing, and holds a lock in `state/`. A second daemon on the same root refuses to start.
+- A supervisor's thread (`scopes[].supervisor`) has no clone: its working directory is `confined/<number>/`, made empty, outside `workspaces/`. Nothing in hataori removes it, `hataori remove` included.
 - A thread's working directory is `workspaces/<number>/`, by the thread's number. A thread started before thread numbers keeps the directory it was made in, `workspaces/<client>/<scope>/<thread>/`; hataori reads each thread's directory from its database and never moves one.
 - Two instances with different roots on one host are independent. Give each its own config and its own bot; do not share or link one instance's `config/` into another.
 
@@ -92,6 +94,24 @@ Names in `drivers`, `adapters` and `scopes[].client` start with a lowercase lett
 | `effort` | string | empty | The effort of threads started here whose order names none. |
 | `people` | array of strings | empty | Names of the people, under `people`, who may start threads here and post into them besides the owner. Empty strings are ignored. |
 | `posters` | array of strings | empty | The old form only: ids, on this scope's client, of who may post here besides the owner. For Discord, user ids, or the id of a webhook for posts made through that webhook. Refused in a config with `people`. |
+| `supervisor` | object | absent | The scope's supervisor (below). Without it the scope has none, and nothing changes. |
+
+### `scopes[].supervisor`
+
+A supervisor is one more thread of the scope, started by the daemon (design, section 7.1). Its agent has no shell, file tools only in its own empty directory, and as its only other tools the control API of its own scope, through `hataori mcp`. The section may be empty (`{}`).
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `agent` | string | the instance's adapter | The adapter that runs it. It must be the one adapter under `adapters`; another is refused at start. Only Claude Code can start a supervisor today: with another adapter its thread fails, with that reason, and no agent process starts. |
+| `model` | string | the adapter's cheapest | Its model. Claude Code's cheapest is `haiku`. An adapter that names no cheapest model gets the scope's model, as any thread. |
+| `effort` | string | the scope's | Its effort, as `effort` above. |
+| `instructions` | string | empty | Appended to the agent's own instructions at each start of its session. |
+
+- **Its thread.** When the daemon starts, it opens the supervisor's thread in the scope's own channel, as the owner, with the title "Supervisor of this channel" and a first message that asks the agent to say it is ready. After a restart it finds that thread again and starts no second one. People write to it there like in any thread. A scope that is not enabled gets no supervisor thread.
+- **A new one.** A supervisor's thread that failed, as when its agent could not start, stays failed, also across restarts; the daemon logs it at each start. Close it (`hataori close NUMBER`), and the next start of the daemon opens a new one. The same holds for a supervisor's thread the owner closed for any other reason. To have no supervisor, remove the section instead.
+- **Its tools need a person.** Its tools act as the id `supervisor:<scope key>`. List that id under a person of its own and that person in the scope's `people`; until then it may read the scope's threads but not start or send, and the daemon logs one line at start saying so. Removing the entry turns it off again.
+- **Its token.** Each of its sessions gets a token of its own for the control socket, kept in the session's state directory and in the agent's MCP config there, outside its working directory. The daemon binds it again after a restart, so a supervisor that keeps running keeps its tools.
+- Its session sleeps and resumes like any other; every start and resume is confined. When a scope no longer names a supervisor, its thread stays, and a message to it fails the resume instead of starting it unconfined.
 
 ### `people[]`
 
@@ -275,6 +295,7 @@ hataori reads these:
 | `HATAORI_ROOT` | The instance root when `--root` is not given. |
 | `XDG_RUNTIME_DIR` | Used for the control socket when `<root>/state/control.sock` is too long for a Unix socket. Then the system temporary directory is tried. The chosen path is written into `<root>/state/control.sock.path`, where the commands find it. |
 | `HATAORI_HOST_SOCKET` | Internal. hataori sets it for Claude Code so that `hataori hook` reaches its session. Do not set it yourself. |
+| `HATAORI_TOKEN` | Internal. The token of a supervisor's session, which hataori puts in that session's MCP config for `hataori mcp`. Do not set it yourself. |
 
 Claude Code does not inherit the daemon's whole environment. It gets only `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`, `TMPDIR`, `XDG_RUNTIME_DIR`, `XDG_CONFIG_HOME`, `CLAUDE_CONFIG_DIR`, the variables named in `pass_env`, and `TERM=xterm-256color`.
 
@@ -319,7 +340,7 @@ Flags may come before or after `NUMBER`. Exit codes: 0 success, 1 error (for exa
 
 `threads`, `thread`, `events`, `stop`, `close`, `remove` and `signin` talk to the running daemon over its control socket, and only the OS user that runs the daemon may use them. The format of what they print is in [protocol.md](protocol.md).
 
-Two more commands are internal, run by hataori itself, and not for people: `hataori host <state-dir>` runs one agent session, and `hataori hook [--wait] [--timeout DURATION]` is the command Claude Code's hooks call.
+Three more commands are internal, run by hataori itself, and not for people: `hataori host <state-dir>` runs one agent session, `hataori hook [--wait] [--timeout DURATION]` is the command Claude Code's hooks call, and `hataori mcp --scope SCOPE --root DIR` is a supervisor's MCP server, which its agent starts with its token in `HATAORI_TOKEN`.
 
 ## Orders
 

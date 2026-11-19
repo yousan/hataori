@@ -60,6 +60,10 @@ type Workspaces interface {
 	Adopt(ctx context.Context, thread control.ThreadID, p Placement) (dir string, ok bool, err error)
 	// State reads what the workspace at dir holds, and changes nothing.
 	State(ctx context.Context, dir string) (control.WorkspaceState, error)
+	// Empty makes the directory of a thread started confined: empty, no
+	// repository, and outside every workspace. One that a daemon which died
+	// made and did not record is taken again while it is still empty.
+	Empty(ctx context.Context, thread control.ThreadID) (dir string, err error)
 }
 
 // Placement identifies a directory a Make put in place: where, and the
@@ -146,6 +150,10 @@ type Launch struct {
 	// Context is what the thread said before, for a session that replaces
 	// one whose conversation the agent no longer has; empty otherwise.
 	Context string
+	// Confined: the thread was started confined (StartConfined). Its
+	// directory is made by Workspaces.Empty, not cloned; the runner reads
+	// the thread's confinement for every launch itself.
+	Confined bool
 
 	placed *Placement // a workspace a Make placed before the daemon died
 }
@@ -749,6 +757,29 @@ func title(prompt string) string {
 }
 
 func (a *api) Start(ctx context.Context, r control.StartRequest) (control.ThreadID, error) {
+	return a.start(ctx, r, false)
+}
+
+// ErrConfinedKey is returned by Start and StartConfined when the key
+// started a thread before that is confined while the call's is not, or the
+// other way round: the thread the key names is not the one asked for.
+var ErrConfinedKey = errors.New("the key started a thread that differs in confinement")
+
+// StartConfined is Start, as caller, for a thread whose sessions all run
+// confined (design, section 7.1): with no shell, file tools only in its own
+// directory and only the MCP servers the runner gives each launch. Its
+// directory is made empty by Workspaces.Empty instead of a clone, so r.Repo
+// must be empty. It is not an operation of the control API: only a client
+// inside the daemon starts such a thread.
+func (c *Core) StartConfined(ctx context.Context, caller control.Caller, r control.StartRequest) (control.ThreadID, error) {
+	if r.Repo != "" {
+		return 0, fmt.Errorf("core: start in %q: a confined thread has no repository", r.Scope)
+	}
+	return c.As(caller).(*api).start(ctx, r, true)
+}
+
+// start is Start, and StartConfined when confined is set.
+func (a *api) start(ctx context.Context, r control.StartRequest, confined bool) (control.ThreadID, error) {
 	if err := a.act(control.OpStart, "Start", r.Scope); err != nil {
 		return 0, err
 	}
@@ -769,7 +800,10 @@ func (a *api) Start(ctx context.Context, r control.StartRequest) (control.Thread
 	inboxKey := "start:" + r.Scope + "\x00" + r.Key
 	defer a.c.locks.lock(inboxKey)()
 	if id, ok, err := a.c.started(ctx, inboxKey); err != nil || ok {
-		return id, err
+		if err != nil {
+			return id, err
+		}
+		return id, a.c.sameConfinement(ctx, id, confined)
 	}
 
 	// The first link: in the scope's own channel, of the scope's owner.
@@ -799,8 +833,8 @@ func (a *api) Start(ctx context.Context, r control.StartRequest) (control.Thread
 	err := a.c.Store.Update(ctx, func(tx *store.Tx) error {
 		now := time.Now().UnixMilli()
 		res, err := tx.ExecContext(ctx,
-			`INSERT INTO threads (scope, key, title, repo, started_by, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			r.Scope, link.Thread, name, r.Repo, string(a.caller.Principal), string(control.Creating), now, now)
+			`INSERT INTO threads (scope, key, title, repo, started_by, state, created_at, updated_at, confined) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			r.Scope, link.Thread, name, r.Repo, string(a.caller.Principal), string(control.Creating), now, now, confined)
 		if err != nil {
 			return fmt.Errorf("core: create thread: %w", err)
 		}
@@ -840,17 +874,82 @@ func (a *api) Start(ctx context.Context, r control.StartRequest) (control.Thread
 	})
 	if errors.Is(err, errDup) { // a concurrent call with the same key won
 		id, _, err := a.c.started(ctx, inboxKey)
-		return id, err
+		if err != nil {
+			return id, err
+		}
+		return id, a.c.sameConfinement(ctx, id, confined)
 	}
 	if err != nil {
 		return 0, err
 	}
 
 	if err := a.c.launch(ctx, Launch{Session: sessionID, Thread: id, Agent: a.c.Agent,
-		Model: model, Effort: effort, Principal: a.caller.Principal, From: a.caller.From, Key: r.Key, Input: r.Input}, r.Repo); err != nil {
+		Model: model, Effort: effort, Principal: a.caller.Principal, From: a.caller.From, Key: r.Key, Input: r.Input,
+		Confined: confined}, r.Repo); err != nil {
 		return id, err
 	}
 	return id, nil
+}
+
+// ConfinedSession is a session of a thread started confined.
+type ConfinedSession struct {
+	Session int64
+	Thread  control.ThreadID
+	Scope   string
+}
+
+// LiveConfined returns the sessions of threads started confined whose agent
+// may be running or about to run: creating, idle, running or waiting.
+func (c *Core) LiveConfined(ctx context.Context) ([]ConfinedSession, error) {
+	rows, err := c.Store.DB.QueryContext(ctx, `SELECT s.id, t.id, t.scope FROM sessions s JOIN threads t ON t.id = s.thread_id
+		WHERE t.confined = 1 AND s.state IN (?, ?, ?, ?) ORDER BY s.id`,
+		string(control.Creating), string(control.Idle), string(control.Running), string(control.Waiting))
+	if err != nil {
+		return nil, fmt.Errorf("core: confined sessions: %w", err)
+	}
+	defer rows.Close()
+	var out []ConfinedSession
+	for rows.Next() {
+		var s ConfinedSession
+		if err := rows.Scan(&s.Session, &s.Thread, &s.Scope); err != nil {
+			return nil, fmt.Errorf("core: confined sessions: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// LastConfined returns the newest thread of scope that was started
+// confined, and its state; 0 when there is none.
+func (c *Core) LastConfined(ctx context.Context, scope string) (control.ThreadID, control.State, error) {
+	var (
+		id    int64
+		state string
+	)
+	err := c.Store.DB.QueryRowContext(ctx, `SELECT id, state FROM threads WHERE scope = ? AND confined = 1 ORDER BY id DESC LIMIT 1`,
+		scope).Scan(&id, &state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, "", nil
+	}
+	if err != nil {
+		return 0, "", fmt.Errorf("core: confined threads of %q: %w", scope, err)
+	}
+	return control.ThreadID(id), control.State(state), nil
+}
+
+// sameConfinement refuses a key that started a thread before whose
+// confinement is not the one asked for now: an ordinary Start never
+// returns a confined thread, and StartConfined never an ordinary one.
+func (c *Core) sameConfinement(ctx context.Context, id control.ThreadID, confined bool) error {
+	var was bool
+	if err := c.Store.DB.QueryRowContext(ctx, `SELECT confined FROM threads WHERE id = ?`, int64(id)).Scan(&was); err != nil {
+		return fmt.Errorf("core: thread %d: %w", id, err)
+	}
+	if was != confined {
+		c.Log.Warn("start refused", "thread", int64(id), "reason", ErrConfinedKey.Error())
+		return fmt.Errorf("core: start: thread %d: %w", id, ErrConfinedKey)
+	}
+	return nil
 }
 
 // launch makes the workspace of a new session, unless l.Dir names it, and
@@ -872,7 +971,13 @@ func (c *Core) launch(ctx context.Context, l Launch, repo string) error {
 			return err
 		})
 	}
-	if l.Dir == "" && l.placed != nil {
+	if l.Dir == "" && l.Confined {
+		// No clone: an empty directory of its own.
+		if l.Dir, err = c.Workspaces.Empty(ctx, l.Thread); err == nil {
+			err = record(FirstInput{Dir: l.Dir})
+		}
+	}
+	if l.Dir == "" && l.placed != nil && err == nil {
 		// A Make before the daemon died may have put it in place.
 		var ok bool
 		if l.Dir, ok, err = c.Workspaces.Adopt(ctx, l.Thread, *l.placed); err == nil && ok {
@@ -918,7 +1023,7 @@ func (c *Core) resume(ctx context.Context, sid int64, principal control.Principa
 // never launched. Input and answers for running agents are handed over by
 // the runner when it reconnects. Call it after the runner has reconnected.
 func (c *Core) Recover(ctx context.Context) error {
-	rows, err := c.Store.DB.QueryContext(ctx, `SELECT s.id, s.agent, s.model, s.effort, s.first_input, t.id, t.repo
+	rows, err := c.Store.DB.QueryContext(ctx, `SELECT s.id, s.agent, s.model, s.effort, s.first_input, t.id, t.repo, t.confined
 		FROM sessions s JOIN threads t ON t.id = s.thread_id WHERE s.state = ? AND s.launch IN (1, 2) ORDER BY s.id`, string(control.Creating))
 	if err != nil {
 		return fmt.Errorf("core: recover: %w", err)
@@ -932,7 +1037,7 @@ func (c *Core) Recover(ctx context.Context) error {
 	for rows.Next() {
 		var x todo
 		var fi string
-		if err := rows.Scan(&x.l.Session, &x.l.Agent, &x.l.Model, &x.l.Effort, &fi, &x.l.Thread, &x.repo); err != nil {
+		if err := rows.Scan(&x.l.Session, &x.l.Agent, &x.l.Model, &x.l.Effort, &fi, &x.l.Thread, &x.repo, &x.l.Confined); err != nil {
 			rows.Close()
 			return fmt.Errorf("core: recover: %w", err)
 		}
