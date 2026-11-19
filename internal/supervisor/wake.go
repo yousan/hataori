@@ -554,12 +554,7 @@ func (r *waking) load(ctx context.Context) error {
 	)
 	err := db.QueryRowContext(ctx, selectWake, scope).Scan(&pos, &to, &key, &text)
 	if errors.Is(err, sql.ErrNoRows) {
-		err = r.w.Core.Store.Update(ctx, func(tx *store.Tx) error {
-			_, err := tx.ExecContext(ctx, `INSERT INTO supervisor_wakes (scope, pos)
-				SELECT ?, coalesce(max(pos), 0) FROM events WHERE true ON CONFLICT (scope) DO NOTHING`, scope)
-			return err
-		})
-		if err == nil {
+		if err = Begin(ctx, r.w.Core, scope); err == nil {
 			err = db.QueryRowContext(ctx, selectWake, scope).Scan(&pos, &to, &key, &text)
 		}
 	}
@@ -569,6 +564,24 @@ func (r *waking) load(ctx context.Context) error {
 	r.pos = uint64(pos)
 	if to.Valid {
 		r.sending = &wake{to: uint64(to.Int64), key: key.String, text: text.String}
+	}
+	return nil
+}
+
+// Begin stores where the waker of scope starts reading, the first time it
+// is asked: after the events already stored, so that what happened before
+// the scope named its supervisor wakes nothing. A scope with a position
+// keeps it. The daemon calls it for each such scope before it reconnects
+// or recovers anything, so that every event it writes can wake the
+// supervisor (#445).
+func Begin(ctx context.Context, c *core.Core, scope string) error {
+	err := c.Store.Update(ctx, func(tx *store.Tx) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO supervisor_wakes (scope, pos)
+			SELECT ?, coalesce(max(pos), 0) FROM events WHERE true ON CONFLICT (scope) DO NOTHING`, scope)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("supervisor: the waker's position: %w", err)
 	}
 	return nil
 }

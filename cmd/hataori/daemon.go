@@ -246,6 +246,14 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 				"scope", scope, "id", supervisor.ID(scope))
 		}
 	}
+	// Before anything reconnects or recovers: where each scope's waker
+	// starts reading, the first time it has a supervisor, so that a turn end
+	// written from here on wakes it.
+	for scope := range supervisors {
+		if err := supervisor.Begin(ctx, c, scope); err != nil {
+			return err
+		}
+	}
 	// Before the socket serves: the MCP servers of supervisor sessions that
 	// kept running connect again with their tokens.
 	if err := sv.Restore(ctx); err != nil {
