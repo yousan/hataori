@@ -82,6 +82,16 @@ func (c *Core) remove(ctx context.Context, id control.ThreadID, principal contro
 		c.refuseRemoval(ctx, id, sid, principal, trigger, NotClosed, "", "", string(state))
 		return fmt.Errorf("core: remove %v: the thread is %s, not closed: %w", id, state, session.ErrRefused)
 	}
+	// The directory of a session a person started may hold the only copy of
+	// their work, and hataori did not make it: it is never removed.
+	if foreign, err := c.foreignWorkspace(ctx, id); err != nil || foreign {
+		detail := ""
+		if err != nil {
+			detail = err.Error()
+		}
+		c.refuseRemoval(ctx, id, sid, principal, trigger, NotHataoris, "", "", detail)
+		return fmt.Errorf("core: remove %v: %w: %s", id, ErrRemovalRefused, NotHataoris)
+	}
 	if c.Remover == nil {
 		c.refuseRemoval(ctx, id, sid, principal, trigger, NoRemover, "", "", "")
 		return fmt.Errorf("core: remove %v: %w: %s", id, ErrRemovalRefused, NoRemover)

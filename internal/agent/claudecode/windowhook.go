@@ -3,6 +3,7 @@ package claudecode
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -32,8 +33,11 @@ hataori runs ($` + host.HookEnvVar + ` set) it does nothing. In a session
 a person started in a tmux pane, it tells the daemon of the instance at DIR
 the pane, the session id, the directory and the event's name, and nothing
 of the session's text. It prints nothing and exits 0 within a second,
-whether the daemon answers or not; --wait and --timeout are accepted, and
-it waits for nothing.
+whether the daemon answers or not.
+
+In a pane that was taken in (hataori take), the hook of the Claude Code
+process that was taken in does what hataori hook does, with the thread's
+session host: --wait waits for the answer, up to --timeout, and prints it.
 `
 
 // windowHook is `hataori hook --window`, with what it reads from the host.
@@ -42,12 +46,16 @@ type windowHook struct {
 	ppid     int
 	terminal func(ctx context.Context, pid int) (proc int, device string, ok bool, err error)
 	send     func(ctx context.Context, root string, r window.Report) error
+	// stdout gets the answer of a call relayed for a window taken in;
+	// nothing when nil.
+	stdout io.Writer
 }
 
 // WindowHookMain is `hataori hook --window`. args are the arguments after
 // "hook".
 func WindowHookMain(args []string, stdin io.Reader, stderr io.Writer, getenv func(string) string) int {
-	return windowHook{getenv: getenv, ppid: os.Getppid(), terminal: hostterm.TerminalOf, send: window.Send}.main(args, stdin, stderr)
+	return windowHook{getenv: getenv, ppid: os.Getppid(), terminal: hostterm.TerminalOf, send: window.Send,
+		stdout: os.Stdout}.main(args, stdin, stderr)
 }
 
 // The fields of a hook payload that a report takes. Nothing else of the
@@ -64,9 +72,10 @@ func (h windowHook) main(args []string, stdin io.Reader, stderr io.Writer) int {
 	fs.SetOutput(io.Discard)
 	isWindow := fs.Bool("window", false, "")
 	root := fs.String("root", "", "")
-	fs.Bool("wait", false, "")
-	fs.Duration("timeout", time.Hour, "")
-	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || !*isWindow || *root == "" {
+	wait := fs.Bool("wait", false, "")
+	timeout := fs.Duration("timeout", time.Hour, "")
+	fs.String("agent", Name, "") // the adapter whose hook this is; hataori names it
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || !*isWindow || *root == "" || *timeout <= 0 {
 		fmt.Fprint(stderr, WindowHookUsage)
 		return host.HookUsage
 	}
@@ -84,12 +93,18 @@ func (h windowHook) main(args []string, stdin io.Reader, stderr io.Writer) int {
 	if !ok {
 		return host.HookOK
 	}
-	var p windowPayload
-	if json.Unmarshal(payload, &p) != nil || p.Session == "" || p.Event == "" {
-		return host.HookOK
-	}
 	pid, device, ok, err := h.terminal(ctx, h.ppid)
 	if err != nil || !ok {
+		return host.HookOK
+	}
+	// A window taken in: the process that was taken in reports to its
+	// thread's session host, as hataori's own sessions do.
+	if rec, taken, err := window.ReadRecord(*root, server, pane); err == nil && taken && rec.PID == pid {
+		cancel() // the call has its own time: --timeout
+		return relay(rec.Socket, payload, *wait, *timeout, h.stdout)
+	}
+	var p windowPayload
+	if json.Unmarshal(payload, &p) != nil || p.Session == "" || p.Event == "" {
 		return host.HookOK
 	}
 	model, _ := p.Model.(string)
@@ -102,6 +117,25 @@ func (h windowHook) main(args []string, stdin io.Reader, stderr io.Writer) int {
 		Interactive: h.getenv("CLAUDE_CODE_ENTRYPOINT") == "cli",
 	})
 	return host.HookOK // whatever happened: any other status shows the person an error
+}
+
+// relay hands payload to the session host on socket, as `hataori hook`
+// does, and prints the answer of a waiting call to stdout.
+func relay(socket string, payload []byte, wait bool, timeout time.Duration, stdout io.Writer) int {
+	answer, err := host.Call(socket, payload, wait, timeout)
+	switch {
+	case errors.Is(err, host.ErrTimeout):
+		return host.HookTimeout
+	case err != nil:
+		return host.HookGone
+	}
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	if n, err := stdout.Write(answer); err != nil || n != len(answer) {
+		return host.HookOutput
+	}
+	return host.HookOK
 }
 
 // tmuxWindow names the tmux pane from TMUX ("<socket>,<server pid>,<session

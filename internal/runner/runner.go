@@ -35,6 +35,7 @@ import (
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
 	"github.com/yousan/hataori/internal/holder"
+	"github.com/yousan/hataori/internal/holder/tmux"
 	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
@@ -70,6 +71,9 @@ type Runner struct {
 	// dialog may name and the session may be let past it for
 	// (agent.Spec.TrustFiles). It is called at every launch; nil gives none.
 	TrustFiles func(scope string) []string
+	// Tmux holds the tmux windows people started that were taken in
+	// (TakeIn); a tmux.Holder running "tmux" from PATH when nil.
+	Tmux *tmux.Holder
 
 	mu   sync.Mutex
 	live map[int64]*live
@@ -97,6 +101,10 @@ type live struct {
 	asleep  bool  // put to sleep: its agent is being stopped, and nothing more is read
 	screen  bool  // the codec watches the terminal; until it says StopScreen
 	seenTo  int64 // how much of the terminal the codec was given
+	// taken is the window a person started that the session was taken in
+	// from; nil for a session hataori's own host holds. Its input goes to
+	// that window, and nothing ends the window's process.
+	taken *takenIn
 
 	mu     sync.Mutex // the codec, the offsets and the actions, one at a time
 	seq    uint64
@@ -387,6 +395,7 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 	}
 	spec := s.Spec
 	spec.ResumeID = resumeID
+	spec.TakenIn = false // resumed, it is launched by hataori's own host
 	spec, err := r.launch(ctx, id, s.Agent, ad, spec, first)
 	if err != nil {
 		return err
@@ -509,6 +518,14 @@ func (r *Runner) stopSleepers(ctx context.Context) error {
 	rows.Close()
 	for _, id := range ids {
 		dir := StateDir(r.Root, id)
+		if t, ok := takenOf(dir); ok {
+			// A window taken in whose release or close the daemon did not
+			// finish: its hooks report again, and its relay host goes.
+			if err := r.letGo(ctx, id, dir, t, nil); err != nil {
+				r.Log.Error("letting a window taken in go", "session", id, "err", err)
+			}
+			continue
+		}
 		if r.alive(dir).State != holder.Running {
 			continue
 		}
@@ -524,6 +541,9 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) err
 	resumed := m == reconnect
 	lv := &live{id: id, dir: spec.StateDir, adapter: ad, codec: ad.NewCodec(spec), spec: spec,
 		files: map[string]int64{}, stop: make(chan struct{}), done: make(chan struct{}), started: time.Now()}
+	if t, ok := takenOf(spec.StateDir); ok {
+		lv.taken = &t
+	}
 	var created int64
 	err := r.Store.DB.QueryRow(`SELECT last_seq, log_offset, log_start, created_at FROM sessions WHERE id = ?`, id).
 		Scan(&lv.seq, &lv.offset, &lv.start, &created)
@@ -1365,7 +1385,11 @@ func (r *Runner) act(lv *live, a agent.Actions) error {
 	var first error
 	ctx, w := context.Background(), r.window(lv.dir)
 	if len(a.Keys) > 0 {
-		if err := r.hold().Input(ctx, w, a.Keys); err != nil {
+		in := func() error { return r.hold().Input(ctx, w, a.Keys) }
+		if lv.taken != nil {
+			in = func() error { return r.tmuxHolder().Input(ctx, lv.taken.Window, a.Keys) }
+		}
+		if err := in(); err != nil {
 			r.Log.Error("input", "session", lv.id, "err", err)
 			first = err
 		}
@@ -1407,7 +1431,7 @@ func (r *Runner) exit(lv *live) {
 func (r *Runner) checkIdle(lv *live) {
 	lv.mu.Lock()
 	defer lv.mu.Unlock()
-	if lv.asleep || lv.failed {
+	if lv.asleep || lv.failed || lv.taken != nil { // a window taken in runs as its person keeps it
 		return
 	}
 	ctx := context.Background()
@@ -1554,6 +1578,13 @@ func (r *Runner) Shut(ctx context.Context, id int64, reason string) error {
 	}
 	dir := StateDir(r.Root, id)
 	running := func() bool { return r.alive(dir).State == holder.Running }
+	if t, ok := takenOf(dir); ok {
+		// A window taken in: its relay host goes, and the window is left
+		// as it is, its hooks reporting again.
+		if err := r.letGo(ctx, id, dir, t, nil); err != nil {
+			return fmt.Errorf("runner: session %d is closed, but letting its window go: %w", id, err)
+		}
+	}
 	if running() {
 		if _, err := r.stop(dir, time.Second, 2*time.Second); err != nil {
 			return fmt.Errorf("runner: session %d is closed, but stopping its agent: %w", id, err)
@@ -1748,6 +1779,12 @@ func (r *Runner) Interrupt(ctx context.Context, id, named int64) error {
 				return
 			}
 			time.Sleep(r.poll())
+		}
+		if lv.taken != nil {
+			// A window a person started: nothing hataori does ends its
+			// process. The turn ends when the agent reports it.
+			r.Log.Warn("the turn did not end after the interrupt; the window taken in is left running", "session", id)
+			return
 		}
 		r.Log.Warn("the turn did not end after the interrupt; stopping the session", "session", id)
 		r.stop(lv.dir, time.Second, 2*time.Second)

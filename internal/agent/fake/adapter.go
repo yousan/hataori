@@ -178,8 +178,11 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 func (a *Adapter) NewCodec(spec agent.Spec) agent.Codec {
 	d, _ := time.ParseDuration(a.c.InputTimeout) // checked in New
 	c := &codec{terminal: a.c.Terminal, followed: map[string]bool{}, timeout: d}
-	if a.c.Terminal {
+	if a.c.Terminal && !spec.TakenIn { // a session taken in is past any dialog
 		c.dialog = a.c.Dialog
+	}
+	if spec.TakenIn {
+		c.takenIn, c.session, c.model, c.started = true, spec.ResumeID, spec.Model, true
 	}
 	return c
 }

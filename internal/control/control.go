@@ -186,6 +186,23 @@ type API interface {
 	// Since 3.11.
 	OperateHost(ctx context.Context, pane string) (HostOperation, error)
 
+	// TakeIn makes a thread of a window that a person started (design,
+	// section 4.8): the window's last report (HostTerminal.Reported) must
+	// be of an interactive session, the window must not be taken in
+	// already, and its holder's check must pass, or nothing changes. The
+	// thread is made in req.Scope as Start makes one, with its first link,
+	// and its session is the window's; its workspace is the session's
+	// directory, recorded as not hataori's, so no removal touches it. From
+	// the window's next hook on, it reports to the thread, and the scope's
+	// rules answer its permission requests. It needs OpTakeIn, which only
+	// the owner's connection on the control socket has. Since 3.17.
+	TakeIn(ctx context.Context, req TakeInRequest) (ThreadID, error)
+
+	// Release ends a take-in: the thread goes asleep, its window's hooks
+	// only report again, and the window is left as it is. A thread that is
+	// not idle is refused. It needs OpTakeIn. Since 3.17.
+	Release(ctx context.Context, id ThreadID) error
+
 	// AttachTerminal readies the thread's agent for a person's terminal on
 	// the host (`hataori attach`): an asleep thread is woken first, with no
 	// input, and the result names the socket of the session host that the
@@ -219,7 +236,7 @@ type Caller struct {
 	From      string
 	Principal Principal // a person's name
 	Scopes    []string  // the scopes it may see and act in
-	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName, OpAsk, OpHostInput
+	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName, OpAsk, OpHostInput, OpTakeIn
 	// NoText leaves text written by a person or an agent out of what the
 	// caller reads: ThreadInfo.Title and ThreadInfo.Last,
 	// ThreadDetail.Recent, the text of its requests, and the text fields of
@@ -306,6 +323,10 @@ const (
 	// not own (OperateHost). The core honours it only for the owner, and
 	// only when the config's host_input is on. Since 3.11.
 	OpHostInput
+	// OpTakeIn may take in a window a person started, and let it go
+	// (TakeIn, Release): the owner's connection on the control socket
+	// only. Since 3.17.
+	OpTakeIn
 )
 
 // Way is one of the dashboard's listeners, each a way of reaching it with
@@ -334,6 +355,13 @@ type LinkRef struct {
 	Client  string `json:"client"`  // the client's name, such as a chat front end's
 	Channel string `json:"channel"` // opaque; for chat, a channel
 	Thread  string `json:"thread"`  // opaque; for chat, the service's thread
+}
+
+// TakeInRequest is the argument of API.TakeIn. Since 3.17.
+type TakeInRequest struct {
+	Window string `json:"window"` // the window, as HostTerminal.Reported.Window names it
+	Scope  string `json:"scope"`  // the scope the thread is made in
+	Key    string `json:"key"`    // makes the call safe to repeat: a second call with it returns the same thread
 }
 
 // StartRequest is the argument of API.Start.

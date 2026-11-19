@@ -225,6 +225,10 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		} else {
 			defer reports.Close()
 			c.HostTerms = reports.Terms(terms)
+			// A window that reported can be taken in as a thread, by the
+			// owner on the control socket only (design, section 4.8).
+			c.Windows = reports
+			owner |= control.OpTakeIn
 		}
 		owner |= control.OpHost
 		if cfg.HostInput { // off unless the config turns it on; only the owner gets it

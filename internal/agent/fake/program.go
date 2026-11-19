@@ -37,6 +37,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	reportEffort := fs.String("report-effort", "", "the effort to report instead of the one asked for")
 	transcript := fs.String("transcript", "", "")
 	hook := fs.String("hook", "", "the hataori binary, for `hataori hook`")
+	windowRoot := fs.String("window", "", "started by a person in their own window: report with `hataori hook --window` to the instance at this root")
 	neverStart := fs.Bool("never-start", false, "")
 	inputDelay := fs.Duration("input-delay", 0, "wait this long before taking each input")
 	conversations := fs.String("conversations", "", "a directory with one file per session started")
@@ -47,7 +48,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
-	p := &program{out: stdout, hook: *hook, terminal: *terminal, answers: map[string]chan string{}, configDir: *configDir,
+	p := &program{out: stdout, hook: *hook, terminal: *terminal, window: *windowRoot, answers: map[string]chan string{}, configDir: *configDir,
 		model: *model, effort: *effort, mcp: &mcpClient{config: *mcpConfig}}
 	if a, b, ok := strings.Cut(*relay, ","); ok {
 		p.relay = [2]string{a, b}
@@ -100,6 +101,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if *resume != "" {
 		id = *resume
 	}
+	p.session, p.transcriptPath = id, *transcript
 	if *conversations != "" {
 		f := filepath.Join(*conversations, filepath.Base(id))
 		if *resume != "" {
@@ -148,15 +150,22 @@ type program struct {
 	transcript *os.File
 	hook       string
 	terminal   bool
-	asked      int
-	answers    map[string]chan string
-	interrupts chan struct{}
-	configDir  string
-	model      string // as started, for whoami
-	effort     string
-	turns      int        // turns started since the program started
-	mcp        *mcpClient // the confined spec's MCP server
-	relay      [2]string  // the two threads it relays between; empty for none
+	// window is the instance's root when a person started the program in
+	// their own window: every report then names the session, the directory
+	// and the transcript, as Claude Code's hooks do, and goes through
+	// `hataori hook --window`.
+	window         string
+	session        string
+	transcriptPath string
+	asked          int
+	answers        map[string]chan string
+	interrupts     chan struct{}
+	configDir      string
+	model          string // as started, for whoami
+	effort         string
+	turns          int        // turns started since the program started
+	mcp            *mcpClient // the confined spec's MCP server
+	relay          [2]string  // the two threads it relays between; empty for none
 }
 
 // A relay refused as busy is sent again after relayWait, at most relayTries
@@ -206,6 +215,12 @@ func (p *program) report(v map[string]any) string {
 		return ""
 	}
 	args := []string{"hook"}
+	if p.window != "" {
+		args = append(args, "--window", "--agent", Name, "--root", p.window)
+		wd, _ := os.Getwd()
+		v["session"], v["cwd"], v["transcript"], v["interactive"] = p.session, wd, p.transcriptPath, true
+		b, _ = json.Marshal(v)
+	}
 	if v["t"] == "ask" {
 		args = append(args, "--wait", "--timeout", "1h")
 	}
