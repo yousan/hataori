@@ -210,6 +210,9 @@ func (s *Server) serveConn(ctx context.Context, c *net.UnixConn) {
 		s.mu.Lock()
 		delete(s.peers, p) // the connection is a stream now
 		s.mu.Unlock()
+		// And takes no more requests of the daemon's: Done is closed before
+		// the stream starts, not when it ends.
+		p.close(io.EOF)
 		if req.Op == "OperateHost" {
 			operate(ctx, api, c, dec, enc, req)
 		} else {

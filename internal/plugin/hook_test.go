@@ -1,10 +1,14 @@
 package plugin
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"math"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,8 +21,15 @@ import (
 	"github.com/yousan/hataori/internal/wire"
 )
 
-// stub is an API that the tests' plugins never call.
+// stub is an API that the tests' plugins never call, but for Events,
+// which streams nothing until the stream ends.
 type stub struct{ control.API }
+
+func (stub) Events(ctx context.Context, _ control.Filter, _ uint64) (<-chan control.Event, error) {
+	ch := make(chan control.Event)
+	go func() { <-ctx.Done(); close(ch) }()
+	return ch, nil
+}
 
 type logBuffer struct {
 	mu sync.Mutex
@@ -495,5 +506,98 @@ func TestBindAs(t *testing.T) {
 		if _, ok := kinds[p]; !ok {
 			t.Errorf("point %s has no kind", p)
 		}
+	}
+}
+
+// raw connects as plugin id without the project's client, so that a test
+// can send what that client never does. It returns the connection, after
+// the hellos, and a reader of the daemon's lines.
+func (f *hookFixture) raw(id string) (net.Conn, *bufio.Reader) {
+	f.t.Helper()
+	path, err := wire.SocketPath(f.root)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	c, err := net.Dial("unix", path)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	f.t.Cleanup(func() { c.Close() })
+	fmt.Fprintf(c, `{"version":%q,"token":%q}`+"\n", wire.Version, f.tokens[id])
+	r := bufio.NewReader(c)
+	if _, err := r.ReadBytes('\n'); err != nil {
+		f.t.Fatal(err)
+	}
+	return c, r
+}
+
+// Priorities at the ends of the integers keep their order.
+func TestExtremePriorities(t *testing.T) {
+	// In this order a comparison by subtraction overflows: MaxInt - (-1).
+	f := newHookFixture(t, grant("hi", "message_sending", math.MaxInt, true), grant("lo", "message_sending", -1, true),
+		grant("min", "message_sending", math.MinInt, true))
+	for _, id := range []string{"lo", "hi", "min"} {
+		f.connect(id, hookHandler(func(r control.HookRequest, _ json.RawMessage) (any, error) {
+			return control.HookAnswer{Action: control.HookContinue, Text: ptr(r.Text + "|" + id)}, nil
+		}))
+	}
+	if res := f.d.Run(context.Background(), control.HookCall{Point: "message_sending", Scope: "s", Text: "x"}); res.Text != "x|hi|lo|min" {
+		t.Fatalf("result %+v, want x|hi|lo|min", res)
+	}
+}
+
+// A plugin's oldest connection that becomes an event stream takes no hook
+// from then on, though the stream goes on: the next one does.
+func TestAStreamTakesNoHook(t *testing.T) {
+	f := newHookFixture(t, grant("p", "before_agent_run", 0, true))
+	c, r := f.raw("p")
+	// The daemon's first request on it, plugin_started, is left unanswered.
+	fmt.Fprintf(c, `{"id":1,"op":"Events","args":{"filter":{},"after":0}}`+"\n")
+	if l, err := r.ReadBytes('\n'); err != nil || !strings.Contains(string(l), "plugin_started") && !strings.Contains(string(l), `"id":1`) {
+		t.Fatalf("%s, %v", l, err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); f.d.conn("p") != nil; time.Sleep(2 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the stream is still a connection for hooks")
+		}
+	}
+	f.connect("p", hookHandler(func(control.HookRequest, json.RawMessage) (any, error) {
+		return control.HookAnswer{Action: control.HookContinue}, nil
+	}))
+	if res := f.d.Run(context.Background(), control.HookCall{Point: "before_agent_run", Scope: "s", Text: "x"}); res.Stopped {
+		t.Fatalf("result %+v, want x passing through the second connection", res)
+	}
+}
+
+// An error code a plugin makes up, which may be any text, reaches neither
+// the result nor the log.
+func TestAMadeUpErrorCode(t *testing.T) {
+	const marker = "MARKER-31c0-code"
+	f := newHookFixture(t, grant("p", "before_agent_run", 0, true))
+	c, r := f.raw("p")
+	go func() {
+		for {
+			l, err := r.ReadBytes('\n')
+			if err != nil {
+				return
+			}
+			var m struct {
+				ID uint64 `json:"id"`
+			}
+			json.Unmarshal(l, &m)
+			fmt.Fprintf(c, `{"id":%d,"error":{"code":%q,"message":%q}}`+"\n", m.ID, marker, marker)
+		}
+	}()
+	for deadline := time.Now().Add(5 * time.Second); f.d.conn("p") == nil; time.Sleep(2 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("not connected")
+		}
+	}
+	res := f.d.Run(context.Background(), control.HookCall{Point: "before_agent_run", Scope: "s", Text: "x"})
+	if !res.Stopped || !res.Failed || strings.Contains(res.Reason, "MARKER") || !strings.Contains(res.Reason, "error code error") {
+		t.Fatalf("result %+v", res)
+	}
+	if l := f.log.String(); strings.Contains(l, "MARKER") {
+		t.Fatalf("the log has the plugin's code:\n%s", l)
 	}
 }

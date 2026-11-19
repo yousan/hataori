@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -204,7 +205,7 @@ func (d *Dispatcher) Run(ctx context.Context, c control.HookCall) control.HookRe
 			}
 		}
 	}
-	slices.SortStableFunc(hs, func(a, b handler) int { return b.h.Priority - a.h.Priority })
+	slices.SortStableFunc(hs, func(a, b handler) int { return cmp.Compare(b.h.Priority, a.h.Priority) })
 	res := control.HookResult{Text: c.Text}
 	for _, x := range hs {
 		began := time.Now()
