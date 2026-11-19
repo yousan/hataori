@@ -84,13 +84,15 @@ func TestLinkOnlyWhereShowInAllows(t *testing.T) {
 		!strings.Contains(got, "thread=1") {
 		t.Fatalf("logged %q", got)
 	}
-	// Also for a caller that may not see the thread's scope.
+	// A caller that may not see the thread's scope is answered as for a
+	// thread that does not exist (#479), and the line names the thread and
+	// its scope.
 	f.log.Reset()
 	stranger := f.core.As(control.Caller{Principal: "owner", Scopes: []string{"elsewhere"}, May: all})
-	if _, err := stranger.Link(ctx, a, control.LinkRef{Client: "two", Channel: "d2"}); !errors.Is(err, ErrForbidden) {
+	if _, err := stranger.Link(ctx, a, control.LinkRef{Client: "two", Channel: "d2"}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Link by a caller of another scope: %v", err)
 	}
-	if got := f.log.String(); !strings.Contains(got, "link refused") || !strings.Contains(got, "thread=1 client=two channel=d2") {
+	if got := f.log.String(); strings.Count(got, "\n") != 1 || !strings.Contains(got, "op=Link") || !strings.Contains(got, "thread=1 thread_scope=s") {
 		t.Fatalf("logged %q", got)
 	}
 	if n := len(links(t, f, a)); n != before || owner.n != opened+1 {

@@ -148,7 +148,7 @@ Each hook is the command `hataori hook`. It hands its payload to the session hos
 - **A hook that waits for a person.** Command hooks time out after 600 seconds by default (documented). A question may wait for hours, so the hook's timeout must be raised, and what happens when it still expires must be known **(unverified)**.
 - **Input while a turn is running** was not checked on this path **(unverified)**. Until it is, hataori holds such input and pastes it when the turn ends.
 - **Paste depends on the terminal UI's input box.** It was checked in the default editing mode only; the user's own settings (vim mode) are **unverified**.
-- **A tab in a paste arrives as four spaces.** Claude Code 2.1.328's input box turned each tab of a bracketed paste into four spaces, on its own pseudo-terminal and through tmux alike (Appendix B). The codec compares the pasted text with the prompt the hook reports after trimming and line-ending changes only, so an input with a tab is never matched: the agent runs it, the turn is reported as typed at the terminal, and the input later fails as `not delivered` (#393).
+- **A tab in a paste arrives as four spaces.** Claude Code 2.1.328's input box turned each tab of a bracketed paste into four spaces, on its own pseudo-terminal and through tmux alike (Appendix B). The codec compares the pasted text with the prompt the hook reports after taking a long paste out of its `pasted_content` tag (section 3.4), trimming, line-ending changes and each tab as four spaces, so such an input is matched and delivered (#393, `testdata/2.1.328/paste_tabs`). A prompt that differs from the paste in any other way is still not counted as the input.
 - **Whether the usage-limit menu still needs an answer** on screen when a limit is hit is **unverified**; c-lord answers it by keys.
 - **Codex `app-server` is marked experimental** in its own help text. Captures per version, unknown messages skipped.
 - **Codex interrupt leaves the command running** (observed). hataori ends it with `thread/backgroundTerminals/clean` (#317 `interrupt`). This ends every background terminal of the thread, including commands moved to the background in earlier turns.
@@ -1681,12 +1681,16 @@ type Caller struct {
 	// caller the daemon authenticated itself.
 	From      string
 	Principal Principal // a person's name (section 5.5)
-	Scopes    []string  // the scopes it may see and act in
+	Scopes    []string  // the scopes it may see and act in; a thread of another is answered as none (ErrNotFound)
 	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName, OpAsk, OpHostInput, OpTakeIn
 	// NoText leaves text written by a person or an agent out of what the
-	// caller reads: ThreadInfo.Title and ThreadInfo.Last,
-	// ThreadDetail.Recent, the text of its requests, and the text fields of
-	// events (section 7.3).
+	// caller reads: ThreadInfo.Title, ThreadInfo.Last and ThreadInfo.Name,
+	// ThreadDetail.Recent, the text of its requests and a question's
+	// choices, a scope's name read from chat (ScopeInfo.Name, when the
+	// config gives none), and the text fields of events (section 7.3). It
+	// also refuses the reads that show a terminal, whose screen holds such
+	// text: Terminal, and HostScreen and HostView of every pane, before any
+	// pane is read.
 	NoText bool
 	// RefuseBusy makes every Send of the caller one with Refuse, whatever
 	// Busy it gives; Deliver or Interrupt to a running thread is refused

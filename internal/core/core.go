@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -384,7 +385,10 @@ func (a *api) granted(name, scope string) error {
 		attrs = append(attrs, "from", a.caller.From)
 	}
 	a.c.Log.Warn("control call refused", attrs...)
-	if scope == "" {
+	// The answer names the scope only when it is one of the caller's: a
+	// thread's or a request's scope the caller may not see is in the log
+	// line alone (#479).
+	if scope == "" || !slices.Contains(a.caller.Scopes, scope) {
 		return fmt.Errorf("core: %s: not granted: %w", name, ErrForbidden)
 	}
 	return fmt.Errorf("core: %s in scope %q: not granted: %w", name, scope, ErrForbidden)
@@ -564,7 +568,7 @@ func (c *Core) scopeOf(ctx context.Context, q querier, id control.ThreadID) (str
 	var scope string
 	err := q.QueryRowContext(ctx, `SELECT scope FROM threads WHERE id = ?`, int64(id)).Scan(&scope)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("core: thread %d: %w", id, ErrNotFound)
+		return "", noThreadErr(id)
 	}
 	if err != nil {
 		return "", fmt.Errorf("core: thread %d: %w", id, err)
@@ -585,7 +589,10 @@ func (a *api) checkThread(ctx context.Context, op control.Ops, name string, id c
 // threadScope is the scope of thread id for operation name. A caller not
 // granted the operation is refused first, whether the thread exists or
 // not, so that it learns nothing of the thread; the refusal is logged
-// with the thread's scope when there is one.
+// with the thread's scope when there is one. A thread of a scope that is
+// not one of the caller's is answered as a thread that does not exist,
+// ErrNotFound with the same message, so that the caller learns neither
+// that it exists nor its scope (#479); the log line names the scope.
 func (a *api) threadScope(ctx context.Context, name string, id control.ThreadID) (string, error) {
 	scope, err := a.c.scopeOf(ctx, a.c.Store.DB, id)
 	if err != nil && !errors.Is(err, ErrNotFound) {
@@ -594,7 +601,29 @@ func (a *api) threadScope(ctx context.Context, name string, id control.ThreadID)
 	if gerr := a.granted(name, scope); gerr != nil {
 		return "", gerr
 	}
+	if err == nil && !slices.Contains(a.caller.Scopes, scope) {
+		a.hidden(name, "thread", strconv.FormatInt(int64(id), 10), scope)
+		return "", noThreadErr(id)
+	}
 	return scope, err
+}
+
+// noThreadErr is the error for thread id when there is no such thread, as
+// scopeOf returns it.
+func noThreadErr(id control.ThreadID) error {
+	return fmt.Errorf("core: thread %d: %w", id, ErrNotFound)
+}
+
+// hidden logs a call that names something (a thread, a request, a link) of
+// scope, which is not one of the caller's: the call is answered as if it
+// did not exist.
+func (a *api) hidden(name, what, which, scope string) {
+	attrs := []any{"op", name, "principal", string(a.caller.Principal), what, which, "thread_scope", scope,
+		"reason", "a scope the caller may not see"}
+	if client, cid, ok := people.Split(a.caller.From); ok {
+		attrs = append(attrs, "client", client, "id", cid)
+	}
+	a.c.Log.Warn("control call refused", attrs...)
 }
 
 // actThread is checkThread for a call that gives the agent input, or stops
@@ -1790,6 +1819,10 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 	if err != nil {
 		a.c.Log.Warn("control call refused", "op", "Answer", "principal", string(a.caller.Principal), "request", string(req), "reason", err)
 		return fmt.Errorf("core: answer %q: %w", req, err)
+	}
+	if !slices.Contains(a.caller.Scopes, scope) {
+		a.hidden("Answer", "request", string(req), scope)
+		return noRequestErr(req)
 	}
 	if err := a.act(control.OpAnswer, "Answer", scope); err != nil {
 		return err
