@@ -27,7 +27,7 @@ func TestVersions(t *testing.T) {
 		t.Fatalf("a call with a newer minor version: %v", err)
 	}
 	c.Close()
-	for _, v := range []string{"3.0", "1.10"} {
+	for _, v := range []string{"3.0", "1.13"} {
 		_, err := dialPath(srv.Path(), v)
 		if err == nil || !strings.Contains(err.Error(), "client speaks "+v) || !strings.Contains(err.Error(), "daemon speaks "+Version) {
 			t.Errorf("client %s: %v", v, err)
