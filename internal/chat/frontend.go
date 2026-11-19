@@ -177,10 +177,10 @@ func (f *FrontEnd) handle(in surface.Inbound) error {
 	if in.Service {
 		return nil
 	}
-	if c, ok := f.textCommand(in); ok {
-		return f.command(f.context(), c)
-	}
 	if in.Ref.Conv.Thread != "" {
+		if c, ok := f.textCommand(in); ok {
+			return f.command(f.context(), c)
+		}
 		return f.followUp(in)
 	}
 	ctx := f.context()
@@ -193,6 +193,9 @@ func (f *FrontEnd) handle(in surface.Inbound) error {
 		return err
 	}
 	if !seen {
+		if c, ok := f.textCommand(in); ok {
+			return f.command(ctx, c)
+		}
 		text = in.Text
 	}
 	o, ok := parseTrigger(f.Trigger, text)

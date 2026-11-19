@@ -135,3 +135,20 @@ func TestRepeatedStartCommandStartsOneThread(t *testing.T) {
 		t.Errorf("the channel shows %q", got)
 	}
 }
+
+// A stop command delivered again stops nothing more: not a turn started
+// since the first.
+func TestRepeatedStopCommandStopsOnce(t *testing.T) {
+	f := newFront(t, workspaces{})
+	f.deliver(chanConv, fake.Webhook(hook), "!go repo:https://example.com/r.git first")
+	th := f.threads()[0].Opened
+	f.fe.Outbox.Store.DB.Exec(`UPDATE sessions SET state = 'running'`)
+	c := f.command(th, fake.Webhook(hook), "s1", stopCommand)
+	f.fe.Command(c)
+	f.runner.mu.Lock()
+	stops := f.runner.stops
+	f.runner.mu.Unlock()
+	if stops != 1 {
+		t.Fatalf("%d interrupts, want 1", stops)
+	}
+}

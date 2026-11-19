@@ -23,6 +23,7 @@ type starts struct {
 	mu    sync.Mutex
 	l     []core.Launch
 	calls []string // deliver TEXT, answer REQUEST TEXT
+	stops int      // Interrupt calls
 }
 
 func (r *starts) record(s string) {
@@ -51,7 +52,12 @@ func (r *starts) Answer(_ context.Context, _, _ int64, req string, a control.Ans
 	r.record("answer " + req + " " + a.Text)
 	return nil
 }
-func (r *starts) Interrupt(context.Context, int64) error    { return nil }
+func (r *starts) Interrupt(context.Context, int64) error {
+	r.mu.Lock()
+	r.stops++
+	r.mu.Unlock()
+	return nil
+}
 func (r *starts) Shut(context.Context, int64, string) error { return nil }
 func (r *starts) Device(context.Context, int64) string      { return "" }
 func (r *starts) Resume(context.Context, int64, control.Principal, string, string, control.Input) error {

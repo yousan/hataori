@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/surface"
@@ -124,8 +125,32 @@ func (f *FrontEnd) newWords(o order) order {
 }
 
 // answer answers command c in place, once however often c is delivered.
+// A command with no Reply waits for no answer, and gets none: posted in
+// the conversation, an answer meant for one person would be shown to all.
 func (f *FrontEnd) answer(ctx context.Context, c surface.Command, text string) error {
+	if c.Reply == nil {
+		f.Log.Warn("command answer dropped", "reason", "the command waits for no answer", "command", c.Name,
+			"channel", c.Conv.Channel, "id", c.ID)
+		return nil
+	}
 	return f.notice(ctx, c.Conv, c.ID, 0, surface.Message{Text: text, ReplyTo: c.Reply})
+}
+
+// once records key in channel and reports whether it was new; with record
+// false it forgets key again.
+func (f *FrontEnd) once(ctx context.Context, channel, key string, record bool) (bool, error) {
+	db := f.Outbox.Store.DB
+	if !record {
+		_, err := db.ExecContext(ctx, `DELETE FROM chat_notices WHERE client = ? AND channel = ? AND message = ?`, f.Name, channel, key)
+		return false, err
+	}
+	res, err := db.ExecContext(ctx, `INSERT INTO chat_notices (client, channel, message, received_at) VALUES (?, ?, ?, ?)
+		ON CONFLICT DO NOTHING`, f.Name, channel, key, time.Now().UnixMilli())
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 // ignored logs one line for a command that does nothing.
@@ -182,12 +207,19 @@ func (f *FrontEnd) stopTurn(ctx context.Context, c surface.Command) error {
 	if !ok {
 		return f.answer(ctx, c, "This is no hataori thread: nothing was stopped.")
 	}
+	// A stop delivered again must not stop a turn started since: each
+	// command stops once.
+	first, err := f.once(ctx, c.Conv.Channel, "stop:"+c.ID, true)
+	if err != nil || !first {
+		return err
+	}
 	api := f.API(control.Caller{From: f.from(c.Author), Scopes: f.scopesIn(c.Conv.Channel), May: control.OpRead | control.OpStop})
 	err = api.Stop(ctx, t.ID)
 	switch {
 	case errors.Is(err, control.ErrForbidden):
 		return nil // the core logged it; nothing is shown
 	case err != nil:
+		f.once(ctx, c.Conv.Channel, "stop:"+c.ID, false) // to be tried again
 		f.answer(ctx, c, "Not stopped: an error, which is in the log.")
 		return err
 	case t.State == control.Running:

@@ -1582,8 +1582,8 @@ type Caller struct {
 	// daemon when it binds the caller, never by the client.
 	Mark string
 	// ReadAsPerson checks the caller's reads like its input: the person
-	// From resolves to must be allowed in a scope to read its threads and
-	// events, else the read is refused and logged; a list of every scope
+	// From resolves to must be allowed in a scope to read its threads,
+	// events and name, else the read is refused and logged; a list of every scope
 	// leaves those scopes out. The chat front end's caller for a /status
 	// command has it (#256).
 	ReadAsPerson bool

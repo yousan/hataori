@@ -1478,7 +1478,7 @@ func (a *api) mayRead(e control.Event) bool {
 		json.Unmarshal(e.Data, &d) // data that is not an object names no scopes
 	}
 	for _, s := range d.Scopes {
-		if !slices.Contains(a.caller.Scopes, s) {
+		if !slices.Contains(a.caller.Scopes, s) || !a.personSees(s) {
 			return false
 		}
 	}
