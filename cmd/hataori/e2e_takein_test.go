@@ -76,7 +76,7 @@ func newTakeRigIn(t *testing.T, root string, inShell bool) *takeRig {
 		}
 		t.Skip("no tmux")
 	}
-	g := &takeRig{sock: []string{"-L", fmt.Sprintf("hataori-take-test-%d", os.Getpid()), "-f", "/dev/null"}}
+	g := &takeRig{sock: takeSocket()}
 	// The cleanup comes first: only this test's own server, and its socket.
 	t.Cleanup(func() {
 		path := exec.Command("tmux", append(append([]string{}, g.sock...), "display-message", "-p", "#{socket_path}")...)
@@ -135,6 +135,12 @@ func (g *takeRig) shellPID() int {
 	return pid
 }
 
+// takeSocket is what comes before every tmux command for the test's own
+// server: known before the daemon starts, which lists that server's panes.
+func takeSocket() []string {
+	return []string{"-L", fmt.Sprintf("hataori-take-test-%d", os.Getpid()), "-f", "/dev/null"}
+}
+
 // state is what a take-in and a release must leave as it is: the pane's
 // command, size and options, and the processes on its terminal.
 func (g *takeRig) state(t *testing.T) string {
@@ -182,7 +188,7 @@ func TestTakeInAWindowAndReleaseIt(t *testing.T) {
 			Env: []string{"PATH=" + os.Getenv("PATH")}, Terminal: true, Hataori: os.Args[0]}}
 	})
 	g := &takeRig{}
-	hostTermsHook = func(l *hostterm.Lister) { l.Tmux = g.sock }
+	hostTermsHook = func(l *hostterm.Lister) { l.Tmux = takeSocket() }
 	t.Cleanup(func() { hostTermsHook = nil })
 	startDaemon(t, r.root)
 	r.connected(t)
@@ -329,7 +335,7 @@ func TestTakeInSendsNothingToTheShell(t *testing.T) {
 			Env: []string{"PATH=" + os.Getenv("PATH")}, Terminal: true, Hataori: os.Args[0]}}
 	})
 	g := &takeRig{}
-	hostTermsHook = func(l *hostterm.Lister) { l.Tmux = g.sock }
+	hostTermsHook = func(l *hostterm.Lister) { l.Tmux = takeSocket() }
 	t.Cleanup(func() { hostTermsHook = nil })
 	startDaemon(t, r.root)
 	r.connected(t)
