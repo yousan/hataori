@@ -284,10 +284,13 @@ func (k *keyedMutex) lock(key string) func() {
 
 // HostTerms lists and reads the terminals on the host, leaving out those
 // a process under one of owned uses. It changes nothing. Screen's ok is
-// false for a pane that List would not return.
+// false for a pane that List would not return. Check is HostInput's Check:
+// HostScreen uses it to tell a pane that shows one of hataori's sessions,
+// such as one running `hataori attach`.
 type HostTerms interface {
 	List(ctx context.Context, owned []int) ([]control.HostTerminal, error)
 	Screen(ctx context.Context, pane string, owned []int) (screen string, ok bool, err error)
+	Check(ctx context.Context, pane string, owned []int, procs bool) (p *control.TmuxPane, own bool, err error)
 }
 
 // SignIn makes single-use dashboard sign-in links. The session a link
@@ -1259,10 +1262,16 @@ const terminalSessionCheck = 500 * time.Millisecond
 
 // Terminal streams the terminal of the thread's current session. When the
 // thread gets a new session, the stream goes on with it, starting with a
-// chunk marked Reset; it ends when the new session has no terminal.
+// chunk marked Reset; it ends when the new session has no terminal. A
+// caller that may not read text (NoText) is refused: the terminal shows
+// the prompts and the agent's output.
 func (a *api) Terminal(ctx context.Context, id control.ThreadID, run string, after uint64) (<-chan control.TerminalChunk, error) {
-	if _, err := a.checkThread(ctx, control.OpRead, "Terminal", id); err != nil {
+	scope, err := a.checkThread(ctx, control.OpRead, "Terminal", id)
+	if err != nil {
 		return nil, err
+	}
+	if a.caller.NoText {
+		return nil, a.refused("Terminal", scope, "the caller may not read text")
 	}
 	sid, _, err := a.c.current(ctx, a.c.Store.DB, id)
 	if err != nil {
@@ -1699,6 +1708,10 @@ func (a *api) HostTerminals(ctx context.Context) ([]control.HostTerminal, error)
 	return a.c.HostTerms.List(ctx, owned)
 }
 
+// HostScreen reads one tmux pane's screen. For a caller that may not read
+// text (NoText), a pane in which one of hataori's processes runs shows a
+// session's screen and is refused; it is looked at before and after the
+// screen is read, and a look that fails refuses too.
 func (a *api) HostScreen(ctx context.Context, pane string) (string, error) {
 	if err := a.checkHost("HostScreen"); err != nil {
 		return "", err
@@ -1707,11 +1720,41 @@ func (a *api) HostScreen(ctx context.Context, pane string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := a.noSessionScreen(ctx, pane, owned); err != nil {
+		return "", err
+	}
 	screen, ok, err := a.c.HostTerms.Screen(ctx, pane, owned)
 	if err == nil && !ok {
 		err = fmt.Errorf("core: HostScreen: tmux pane %q: %w", pane, ErrNotFound)
 	}
-	return screen, err
+	if err != nil {
+		return "", err
+	}
+	if err := a.noSessionScreen(ctx, pane, owned); err != nil {
+		return "", err
+	}
+	return screen, nil
+}
+
+// noSessionScreen refuses a NoText caller's HostScreen of a pane in which
+// one of hataori's processes runs, and when that cannot be told.
+func (a *api) noSessionScreen(ctx context.Context, pane string, owned []int) error {
+	if !a.caller.NoText {
+		return nil
+	}
+	cctx, cancel := context.WithTimeout(ctx, hostCmdTimeout)
+	_, own, err := a.c.HostTerms.Check(cctx, pane, owned, true)
+	cancel()
+	switch {
+	case err != nil && ctx.Err() != nil: // the caller went away: not a refusal
+		return fmt.Errorf("core: HostScreen: %w", ctx.Err())
+	case err != nil:
+		a.refused("HostScreen", "", "the caller may not read text, and whether the pane shows a session could not be told")
+		return fmt.Errorf("core: HostScreen: tmux pane %q: %w: %w", pane, err, ErrForbidden)
+	case own:
+		return a.refused("HostScreen", "", "the caller may not read text, and the pane shows a session")
+	}
+	return nil
 }
 
 // attachTimeout bounds how long AttachTerminal waits for the session host

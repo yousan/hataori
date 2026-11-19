@@ -16,7 +16,15 @@ import (
 	"github.com/yousan/hataori/internal/hostterm"
 )
 
-type fakeHostTerms struct{ owned [][]int }
+type fakeHostTerms struct {
+	owned [][]int
+	// own is the panes in which one of hataori's processes runs; ownAfter
+	// those in which one starts once the screen has been read. checkErr
+	// fails every Check.
+	own, ownAfter map[string]bool
+	checkErr      error
+	screened      bool
+}
 
 func (h *fakeHostTerms) List(_ context.Context, owned []int) ([]control.HostTerminal, error) {
 	h.owned = append(h.owned, owned)
@@ -25,7 +33,15 @@ func (h *fakeHostTerms) List(_ context.Context, owned []int) ([]control.HostTerm
 
 func (h *fakeHostTerms) Screen(_ context.Context, pane string, owned []int) (string, bool, error) {
 	h.owned = append(h.owned, owned)
+	h.screened = true
 	return "screen", pane == "%1", nil
+}
+
+func (h *fakeHostTerms) Check(_ context.Context, pane string, _ []int, _ bool) (*control.TmuxPane, bool, error) {
+	if h.checkErr != nil {
+		return nil, false, h.checkErr
+	}
+	return &control.TmuxPane{Pane: pane}, h.own[pane] || h.screened && h.ownAfter[pane], nil
 }
 
 func hostOps(ctx context.Context) map[string]func(control.API) error {
