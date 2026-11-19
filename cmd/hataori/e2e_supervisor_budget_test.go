@@ -132,12 +132,19 @@ func TestBudgetTokens(t *testing.T) {
 		!strings.Contains(got[0], "until "+nextDay.Format("2006-01-02 15:04 MST")) {
 		t.Fatalf("the notice: %s", got[0])
 	}
-	wt.until(nextDay.Add(-time.Minute))
+	wt.until(nextDay.Add(-time.Hour))
 	time.Sleep(300 * time.Millisecond)
 	if got := wt.wakes(t, sv.ID); len(got) != 0 {
 		t.Fatalf("woken before the next day: %q", got)
 	}
-	wt.until(nextDay)
+	// The host sleeps through the last hour: no timer counts that, but the
+	// hold ends within a minute by the wall clock.
+	wt.clock().sleep(time.Hour)
+	time.Sleep(300 * time.Millisecond)
+	if got := wt.wakes(t, sv.ID); len(got) != 0 {
+		t.Fatalf("woken before a timer fired: %q", got)
+	}
+	wt.clock().advance(time.Minute)
 	wt.woken(t, owner, sv.ID, 1)
 	wt.noticed(t, sv, 1)
 }

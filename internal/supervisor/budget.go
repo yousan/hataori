@@ -23,6 +23,7 @@ type Limits struct {
 
 // Used is what a scope's supervisor used in the current windows.
 type Used struct {
+	Now    time.Time // when it was counted
 	Hour   time.Time // the start of the current hour, in the zone
 	Day    time.Time // the start of the current day, in the zone
 	Turns  int       // turn_started events of the scope's supervisor threads this hour
@@ -60,7 +61,8 @@ type Budget struct {
 	Tell func(ctx context.Context, thread control.ThreadID, key, text string) error
 	Log  *slog.Logger
 
-	mu      sync.Mutex // held while a send or start is counted and made
+	calls   sync.Mutex // held while a send or start is counted and made: one at a time
+	mu      sync.Mutex // guards granted and hour, briefly
 	granted int        // sends and starts allowed in hour, which the log may not show yet
 	hour    time.Time
 }
@@ -79,16 +81,20 @@ func (b *Budget) now() time.Time {
 	return c.Now().In(z)
 }
 
-// windows returns the starts of the current hour and day.
+// windows returns the starts of the current hour and day. The hour is
+// taken from the instant, not from its wall clock time, so that the hour
+// repeated when the clocks go back is an hour of its own.
 func windows(now time.Time) (hour, day time.Time) {
 	y, m, d := now.Date()
-	return time.Date(y, m, d, now.Hour(), 0, 0, 0, now.Location()), time.Date(y, m, d, 0, 0, 0, 0, now.Location())
+	into := time.Duration(now.Minute())*time.Minute + time.Duration(now.Second())*time.Second + time.Duration(now.Nanosecond())
+	return now.Add(-into), time.Date(y, m, d, 0, 0, 0, 0, now.Location())
 }
 
 // Used counts what the supervisor used in the current windows.
 func (b *Budget) Used(ctx context.Context) (Used, error) {
 	var u Used
-	u.Hour, u.Day = windows(b.now())
+	u.Now = b.now()
+	u.Hour, u.Day = windows(u.Now)
 	db := b.Core.Store.DB
 	hourMs, nextHourMs := u.Hour.UnixMilli(), u.Hour.Add(time.Hour).UnixMilli()
 	err := db.QueryRowContext(ctx, `SELECT count(*) FROM events WHERE kind = 'turn_started' AND time >= ? AND time < ?
@@ -108,7 +114,7 @@ func (b *Budget) Used(ctx context.Context) (Used, error) {
 	if u.Tokens, err = b.tokens(ctx, u.Day); err != nil {
 		return u, err
 	}
-	b.mu.Lock() // not held by a caller of Used: take is the only one, and counts itself
+	b.mu.Lock()
 	if b.hour.Equal(u.Hour) {
 		u.Sends = max(u.Sends, b.granted)
 	}
@@ -162,49 +168,52 @@ func (b *Budget) tokens(ctx context.Context, day time.Time) (int64, error) {
 	return sum, rows.Err()
 }
 
-// over returns what of u reaches the limits, and when the last of their
-// windows ends; nothing and the zero time when none does.
-func (l Limits) over(u Used) ([]string, time.Time) {
-	var what []string
-	var until time.Time
+// over returns what of u reaches the limits, the names of those limits,
+// and when the last of their windows ends; nothing and the zero time when
+// none does, or when that end is not after u.Now.
+func (l Limits) over(u Used) (what, kinds []string, until time.Time) {
 	end := func(t time.Time) {
 		if t.After(until) {
 			until = t
 		}
 	}
 	if l.Turns > 0 && u.Turns >= l.Turns {
-		what = append(what, fmt.Sprintf("%d of %d turns this hour", u.Turns, l.Turns))
+		what, kinds = append(what, fmt.Sprintf("%d of %d turns this hour", u.Turns, l.Turns)), append(kinds, "turns")
 		end(u.Hour.Add(time.Hour))
 	}
 	if l.Sends > 0 && u.Sends >= l.Sends {
-		what = append(what, fmt.Sprintf("%d of %d sends and starts this hour", u.Sends, l.Sends))
+		what, kinds = append(what, fmt.Sprintf("%d of %d sends and starts this hour", u.Sends, l.Sends)), append(kinds, "sends")
 		end(u.Hour.Add(time.Hour))
 	}
 	if l.Tokens > 0 && u.Tokens >= l.Tokens {
-		what = append(what, fmt.Sprintf("%d of %d tokens today", u.Tokens, l.Tokens))
+		what, kinds = append(what, fmt.Sprintf("%d of %d tokens today", u.Tokens, l.Tokens)), append(kinds, "tokens")
 		end(time.Date(u.Day.Year(), u.Day.Month(), u.Day.Day()+1, 0, 0, 0, 0, u.Day.Location()))
 	}
-	return what, until
+	if !until.After(u.Now) {
+		return nil, nil, time.Time{}
+	}
+	return what, kinds, until
 }
 
 // Admit holds a wake while the budget is used up, until the windows of
 // every limit reached have ended, and tells a person so, once for that
-// end. It is the budget's Gate.
+// end and those limits. It is the budget's Gate.
 func (b *Budget) Admit(ctx context.Context, scope string, threads []Ended) ([]Ended, time.Time, error) {
 	u, err := b.Used(ctx)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	what, until := b.Limits.over(u)
+	what, kinds, until := b.Limits.over(u)
 	if until.IsZero() {
 		return threads, time.Time{}, nil
 	}
-	b.tell(ctx, u, what, until)
+	b.tell(ctx, u, what, kinds, until)
 	return nil, until, nil
 }
 
 // NoticeKeyPrefix starts the key of a budget notice; the rest is the end
-// of the windows it is about, in RFC 3339 and UTC.
+// of the windows it is about, in RFC 3339 and UTC, and the limits reached,
+// so that a limit reached later in the same hold is told too.
 const NoticeKeyPrefix = "hataori-budget-"
 
 // Notice is the line that tells a person the budget is used up: what
@@ -220,13 +229,13 @@ func Notice(what []string, until time.Time, refused bool, refusedUntil time.Time
 }
 
 // tell puts the notice of u in the scope's supervisor thread, once for
-// until, the end of its hold.
-func (b *Budget) tell(ctx context.Context, u Used, what []string, until time.Time) {
+// until, the end of its hold, and the limits reached.
+func (b *Budget) tell(ctx context.Context, u Used, what, kinds []string, until time.Time) {
 	refused := b.Limits.Sends > 0 && u.Sends >= b.Limits.Sends
 	text := Notice(what, until, refused, u.Hour.Add(time.Hour))
 	sv, _, err := b.Core.LastConfined(ctx, b.Scope)
 	if err == nil && sv != 0 && b.Tell != nil {
-		err = b.Tell(ctx, sv, NoticeKeyPrefix+until.UTC().Format(time.RFC3339), text)
+		err = b.Tell(ctx, sv, NoticeKeyPrefix+until.UTC().Format(time.RFC3339)+"-"+strings.Join(kinds, "+"), text)
 	}
 	if err != nil {
 		b.Log.Error("supervisor budget: telling a person", "scope", b.Scope, "err", err)
@@ -265,21 +274,24 @@ func (l *limited) Send(ctx context.Context, id control.ThreadID, key string, in 
 }
 
 // take makes call, a send or a start, unless the sends limit is reached.
-// Calls are made one at a time, so that two cannot both take the last one.
+// Calls are made one at a time, so that two cannot both take the last one;
+// the waker's count does not wait for them.
 func (b *Budget) take(ctx context.Context, call func() error) error {
+	b.calls.Lock()
+	defer b.calls.Unlock()
 	u, err := b.Used(ctx)
 	if err != nil {
 		return err
 	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	if !b.hour.Equal(u.Hour) {
 		b.hour, b.granted = u.Hour, 0
 	}
 	u.Sends = max(u.Sends, b.granted)
+	b.mu.Unlock()
 	if u.Sends >= b.Limits.Sends {
-		what, until := b.Limits.over(u)
-		b.tell(ctx, u, what, until)
+		what, kinds, until := b.Limits.over(u)
+		b.tell(ctx, u, what, kinds, until)
 		b.Log.Warn("control call refused", "op", "Send or Start", "scope", b.Scope, "reason", "over budget")
 		return fmt.Errorf("over budget: %d of %d sends and starts this hour; none until %s: %w",
 			u.Sends, b.Limits.Sends, u.Hour.Add(time.Hour).Format("15:04 MST"), control.ErrForbidden)
@@ -287,6 +299,10 @@ func (b *Budget) take(ctx context.Context, call func() error) error {
 	if err := call(); err != nil {
 		return err
 	}
-	b.granted = u.Sends + 1
+	b.mu.Lock()
+	if b.hour.Equal(u.Hour) {
+		b.granted = u.Sends + 1
+	}
+	b.mu.Unlock()
 	return nil
 }

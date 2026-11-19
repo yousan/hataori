@@ -148,7 +148,8 @@ type waking struct {
 	own     map[control.ThreadID]bool          // whether a thread is a supervisor's, as asked
 	quiet   <-chan time.Time                   // the quiet period, while it runs
 	retry   <-chan time.Time                   // a send to try again after an error
-	later   <-chan time.Time                   // the end of a gate's hold
+	later   <-chan time.Time                   // a step towards the end of a gate's hold
+	until   time.Time                          // the end of a gate's hold; zero for none
 	held    bool                               // waits for the supervisor's thread to change
 }
 
@@ -209,6 +210,10 @@ func (w *Waker) run(ctx context.Context) error {
 			err = r.attempt(ctx)
 		case <-r.later:
 			r.later = nil
+			if r.hold() {
+				continue
+			}
+			r.until = time.Time{}
 			err = r.attempt(ctx)
 		}
 		if err != nil {
@@ -384,7 +389,8 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 		if !until.IsZero() {
 			// Held: the turn ends wait for it, with what comes meanwhile.
 			if r.later == nil {
-				r.later = r.w.clock().After(max(until.Sub(r.w.clock().Now()), 0))
+				r.until = until
+				r.hold()
 			}
 			return nil, false, nil
 		}
@@ -399,6 +405,21 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 		return nil, false, err
 	}
 	return &wake{to: r.read, key: WakeKeyPrefix + strconv.FormatUint(r.read, 10), text: text}, true, nil
+}
+
+// holdStep is the longest a gate's hold waits on one timer: a timer does
+// not count the time the host slept, the wall clock does.
+const holdStep = time.Minute
+
+// hold waits, a step at a time, for the end of the gate's hold, and
+// reports whether it has not come yet by the wall clock.
+func (r *waking) hold() bool {
+	left := r.until.Sub(r.w.clock().Now())
+	if left <= 0 {
+		return false
+	}
+	r.later = r.w.clock().After(min(left, holdStep))
+	return true
 }
 
 // Fold folds e into ended, each thread's last turn end, and reports

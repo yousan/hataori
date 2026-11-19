@@ -23,7 +23,8 @@ import (
 // starts at wakeBase and goes on across restarts.
 type wakeClock struct {
 	mu     sync.Mutex
-	now    time.Duration
+	now    time.Duration // what the timers go by
+	slept  time.Duration // what the wall clock is ahead of them, as after the host slept
 	timers []wakeTimer
 }
 
@@ -38,7 +39,15 @@ var wakeBase = func() time.Time {
 func (c *wakeClock) Now() time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return wakeBase.Add(c.now)
+	return wakeBase.Add(c.now + c.slept)
+}
+
+// sleep moves the wall clock forward by d and fires no timer, as a host
+// that slept: a timer does not count the time asleep.
+func (c *wakeClock) sleep(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.slept += d
 }
 
 // reset drops the timers, those of a waker that stopped.
