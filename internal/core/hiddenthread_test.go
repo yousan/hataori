@@ -90,6 +90,7 @@ func TestOperationOnAThreadOfAnotherScope(t *testing.T) {
 		"Stop":         func(a control.API, x target) error { return a.Stop(ctx, x.thread, 0) },
 		"Close":        func(a control.API, x target) error { return a.CloseThread(ctx, x.thread) },
 		"Remove":       func(a control.API, x target) error { return a.RemoveThread(ctx, x.thread) },
+		"Release":      func(a control.API, x target) error { return a.Release(ctx, x.thread) },
 		"Link": func(a control.API, x target) error {
 			_, err := a.Link(ctx, x.thread, control.LinkRef{Client: "chat", Channel: "s", Thread: "c2"})
 			return err
@@ -139,7 +140,7 @@ func TestOperationOnAThreadOfAnotherScope(t *testing.T) {
 		return code + ": " + msg
 	}
 
-	may := all | control.OpClose | control.OpRemove | control.OpAttach | control.OpName
+	may := all | control.OpClose | control.OpRemove | control.OpAttach | control.OpName | control.OpTakeIn
 	callers := map[string]control.Caller{
 		// One of another scope, allowed every operation there.
 		"another scope's": {Principal: "owner", Scopes: []string{"s"}, May: may},

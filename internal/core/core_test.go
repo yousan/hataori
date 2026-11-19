@@ -275,7 +275,7 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 	// a caller of another scope gets the answer for a thread that does not
 	// exist (#479).
 	namesThread := []string{"Thread", "ThreadEvents", "Workspace", "Terminal", "AttachTerminal", "Send", "AskInterrupt",
-		"Answer", "Stop", "CloseThread", "RemoveThread", "Link"}
+		"Answer", "Stop", "CloseThread", "RemoveThread", "Link", "Release"}
 	events, threads, calls := count(t, f.core.Store, "events"), count(t, f.core.Store, "threads"), f.runner.Calls()
 	for cname, c := range callers {
 		a := f.core.As(c)
