@@ -21,7 +21,9 @@ import (
 // section 7.1). A cycle on thread W is a turn of W started by the
 // supervisor's input, its end, and the supervisor's wake that told it: a
 // wake (a supervisor turn whose key starts with WakeKeyPrefix) that covers
-// such a turn end. Several such ends in one wake are one cycle.
+// such a turn end. Only a turn that started after the last reset counts,
+// so a person's message delivered into one takes it out. Several such ends
+// in one wake are one cycle.
 //
 // What a person does resets W's count: in W, an input or an answer from
 // anyone but the supervisor, or a turn typed at W's terminal; in a
@@ -200,9 +202,15 @@ func (g *LoopGuard) count(ctx context.Context, w control.ThreadID, svReset uint6
 	}
 	reset := max(uint64(inW), svReset)
 
-	// The ends of w's turns that the supervisor started, since the reset.
-	ends, err := positions(ctx, db, `SELECT pos FROM events WHERE thread_id = ? AND kind = 'turn_ended' AND pos > ?
-		AND json_extract(data, '$.from') = ? ORDER BY pos`, int64(w), int64(reset), from)
+	// The ends of w's turns that the supervisor started since the reset:
+	// started, not only ended, after it, so that a person's message
+	// delivered into such a turn takes that turn out of the count (#454).
+	ends, err := positions(ctx, db, `SELECT e.pos FROM events e WHERE e.thread_id = ? AND e.kind = 'turn_ended' AND e.pos > ?
+		AND json_extract(e.data, '$.from') = ?
+		AND EXISTS (SELECT 1 FROM events s WHERE s.thread_id = e.thread_id AND s.kind = 'turn_started' AND s.pos > ? AND s.pos < e.pos
+			AND json_extract(s.data, '$.session') = json_extract(e.data, '$.session')
+			AND json_extract(s.data, '$.turn') = json_extract(e.data, '$.turn'))
+		ORDER BY e.pos`, int64(w), int64(reset), from, int64(reset))
 	if err != nil || len(ends) == 0 {
 		return 0, reset, err
 	}
