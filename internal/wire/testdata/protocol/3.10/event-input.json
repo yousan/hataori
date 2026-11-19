@@ -1,0 +1,1 @@
+{"id":1,"event":{"pos":42,"thread":7,"scope":"C0123","time":"2026-01-02T03:04:05.678Z","kind":"input","data":{"from":"discord:W1","link":{"channel":"C0123","client":"discord","thread":"T0456"},"principal":"dispatch","session":3,"text":"Run the tests.","turn":12}}}

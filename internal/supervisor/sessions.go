@@ -117,7 +117,7 @@ func (s *Sessions) Confine(ctx context.Context, l runner.ConfinedLaunch) (runner
 // new one; without, it is left without. The token of an older session of
 // the same thread, as one a session replaced, is revoked.
 func (s *Sessions) bind(session int64, thread control.ThreadID, scope, stateDir string, issue bool) (string, error) {
-	api := s.API(scope)
+	api := s.API(scope, thread)
 	file := filepath.Join(stateDir, TokenFile)
 	b, err := os.ReadFile(file)
 	token := strings.TrimSpace(string(b))
@@ -158,8 +158,8 @@ func (s *Sessions) bind(session int64, thread control.ThreadID, scope, stateDir 
 
 // API is what the connection of scope's supervisor is bound to: its
 // Caller, with its sends and starts counted against the scope's budget.
-func (s *Sessions) API(scope string) control.API {
-	api := s.Core.As(Caller(scope))
+func (s *Sessions) API(scope string, thread control.ThreadID) control.API {
+	api := s.Core.As(Caller(scope, thread))
 	if b := s.Budgets[scope]; b != nil {
 		api = b.API(api)
 	}

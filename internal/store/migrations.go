@@ -412,6 +412,9 @@ var migrations = []Migration{
 			PRIMARY KEY (client, channel, thread)
 		)`,
 	)},
+	{Name: "approvals", Up: execAll(
+		`CREATE TABLE approvals (id INTEGER PRIMARY KEY, handle TEXT NOT NULL UNIQUE, asks_in INTEGER NOT NULL REFERENCES threads(id), action TEXT NOT NULL, target INTEGER NOT NULL REFERENCES threads(id), session_id INTEGER NOT NULL, turn_id INTEGER NOT NULL, reason TEXT NOT NULL, marked TEXT NOT NULL, principal TEXT NOT NULL, from_id TEXT NOT NULL, ask_key TEXT, state TEXT NOT NULL, opened_at INTEGER NOT NULL, closed_at INTEGER, UNIQUE(asks_in, ask_key))`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

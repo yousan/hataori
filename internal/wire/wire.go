@@ -27,7 +27,7 @@ import (
 
 // Version is the protocol version this build speaks: major.minor. Two
 // sides work together when their major numbers are equal (docs/protocol.md).
-const Version = "3.9"
+const Version = "3.10"
 
 type hello struct {
 	Version string `json:"version"`
@@ -82,6 +82,11 @@ type (
 		Key   string           `json:"key"`
 		Input control.Input    `json:"input"`
 		Busy  control.Busy     `json:"busy"`
+	}
+	askInterruptArgs struct {
+		ID     control.ThreadID `json:"id"`
+		Key    string           `json:"key"`
+		Reason string           `json:"reason"`
 	}
 	answerArgs struct {
 		Request control.RequestID `json:"request"`
@@ -187,6 +192,13 @@ var operations = map[string]operation{
 			return nil, err
 		}
 		return nil, api.Answer(ctx, a.Request, a.Answer)
+	}},
+	"AskInterrupt": {askInterruptArgs{}, control.RequestID(""), func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a askInterruptArgs
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return api.AskInterrupt(ctx, a.ID, a.Key, a.Reason)
 	}},
 	"Stop": {stopArgs{}, nil, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
 		var a stopArgs

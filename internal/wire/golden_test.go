@@ -36,6 +36,8 @@ var (
 
 // eventData is an example of every event kind's data.
 var eventData = map[control.EventKind]string{
+	"approval_asked":    `{"request":"approval-1","action":"interrupt","target":8,"turn":12,"reason":"urgent","principal":"sv1","from":"supervisor:C0123"}`,
+	"approval_answered": `{"request":"approval-1","allow":true,"outcome":"interrupted","target":8,"principal":"alice","from":"discord:W1","link":{"client":"discord","channel":"C0123","thread":"T0456"}}`,
 	"thread_created":    `{"effort":"high","from":"discord:W1","model":"opus","principal":"dispatch","repo":"https://example.com/repo.git","session":3,"thread":7}`,
 	"state":             `{"detail":"last lines of the terminal","from":"running","reason":"interrupted","session":3,"to":"asleep"}`,
 	"turn_started":      `{"by":"caller","from":"discord:W1","key":"M0789","principal":"dispatch","session":3,"turn":12}`,
@@ -89,6 +91,7 @@ func examples(t *testing.T) map[string]any {
 		"Start": control.StartRequest{Agent: "codex", Key: "M0789", Scope: "C0123", Repo: "https://example.com/repo.git",
 			Input: control.Input{Text: "Fix the build."}, Model: "opus", Effort: "high"},
 		"Send":           sendArgs{ID: exampleID, Key: "M0790", Input: control.Input{Text: "And the docs.", Link: &exampleLink}, Busy: control.Deliver},
+		"AskInterrupt":   askInterruptArgs{ID: exampleID, Key: "ask-1", Reason: "urgent"},
 		"Answer":         answerArgs{Request: "3:toolu_2", Answer: control.Answer{Text: "blue", Choices: []string{"blue"}, Link: &exampleLink}},
 		"Stop":           stopArgs{ID: exampleID},
 		"Close":          closeArgs{ID: exampleID},
@@ -112,9 +115,10 @@ func examples(t *testing.T) map[string]any {
 				Data: raw(`{"final":false,"session":3,"text":"Running the tests..."}`)}}},
 		"ThreadEvents": []control.Event{{Pos: 41, Thread: exampleID, Scope: "C0123", Time: exampleTime, Kind: "input",
 			Data: raw(`{"from":"discord:U0456","principal":"alice","session":3,"text":"Fix the build.","turn":1}`)}},
-		"Scopes": []control.ScopeInfo{{Key: "C0123", Name: "#builds"}, {Key: "C0456"}},
-		"Start":  exampleID,
-		"Link":   control.LinkRef{Client: "discord", Channel: "C0999", Thread: "T0999"},
+		"Scopes":       []control.ScopeInfo{{Key: "C0123", Name: "#builds"}, {Key: "C0456"}},
+		"Start":        exampleID,
+		"AskInterrupt": control.RequestID("approval-1"),
+		"Link":         control.LinkRef{Client: "discord", Channel: "C0999", Thread: "T0999"},
 		"Workspace": control.WorkspaceState{Branch: "fix-build", Base: "9fceb02d0ae598e95dc970b74767f19372d61af8",
 			Added: 12, Removed: 3, Uncommitted: 2, Unpushed: 1, Fetched: &exampleTime},
 		"SignInLink": "https://dashboard.example.com/signin#t=Q2hhbmdlIG1lIGV2ZXJ5IHRpbWU",

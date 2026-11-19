@@ -169,18 +169,20 @@ func (f *FrontEnd) show(ctx context.Context) error {
 
 // eventData holds the fields of the event kinds the front end shows.
 type eventData struct {
-	Text     string   `json:"text"`
-	Final    bool     `json:"final"`
-	Approval bool     `json:"approval"`
-	Choices  []string `json:"choices"`
-	Outcome  string   `json:"outcome"`
-	Reason   string   `json:"reason"`
-	Key      string   `json:"key"`
-	Session  int64    `json:"session"`
-	File     string   `json:"file"`
-	More     []string `json:"more"`
-	Caption  string   `json:"caption"`
-	By       string   `json:"by"` // turn_started: who started the turn
+	Text      string   `json:"text"`
+	Target    int64    `json:"target"`
+	Principal string   `json:"principal"`
+	Final     bool     `json:"final"`
+	Approval  bool     `json:"approval"`
+	Choices   []string `json:"choices"`
+	Outcome   string   `json:"outcome"`
+	Reason    string   `json:"reason"`
+	Key       string   `json:"key"`
+	Session   int64    `json:"session"`
+	File      string   `json:"file"`
+	More      []string `json:"more"`
+	Caption   string   `json:"caption"`
+	By        string   `json:"by"` // turn_started: who started the turn
 	// input, answer: the link it came through, since 3.6
 	Link *control.LinkRef `json:"link"`
 	// request, answer, request_withdrawn: the request; answer since 3.8
@@ -215,7 +217,7 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		var d eventData
 		json.Unmarshal(e.Data, &d)
 		return f.questionDone(ctx, r, e, conv, d.Request)
-	case "thread_created", "turn_started", "text", "request", "turn_ended", "file_out":
+	case "thread_created", "turn_started", "text", "request", "turn_ended", "file_out", "approval_asked", "approval_answered":
 	default:
 		return nil, nil // a kind the front end does not show, or does not know
 	}
@@ -228,6 +230,24 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 	}
 	row := func(m surface.Message) []Row { return []Row{{Event: e.Pos, Conv: conv, Message: m}} }
 	switch e.Kind {
+	case "approval_asked":
+		text := strings.TrimSpace(fmt.Sprintf("Interrupt thread %d? %s", d.Target, d.Reason))
+		choices := []string{"Approve", "Refuse"}
+		if !f.withButtons(choices, false) {
+			return row(surface.Message{Text: text + "\nThis chat service shows no buttons, so this cannot be approved here."}), nil
+		}
+		return row(f.questionMessage(d.Request, text, choices, false)), nil
+	case "approval_answered":
+		var text string
+		switch d.Outcome {
+		case "interrupted":
+			text = fmt.Sprintf("Approved by %s: thread %d's turn was interrupted, and it got the reason.", d.Principal, d.Target)
+		case "ended":
+			text = fmt.Sprintf("Approved by %s, but thread %d's turn had already ended: nothing was interrupted.", d.Principal, d.Target)
+		case "refused":
+			text = fmt.Sprintf("Refused by %s: thread %d was not interrupted.", d.Principal, d.Target)
+		}
+		return row(surface.Message{Text: text}), nil
 	case "thread_created":
 		r.first[e.Thread] = e.Pos
 	case "turn_started":
