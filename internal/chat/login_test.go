@@ -357,3 +357,27 @@ func TestARefusedCodeAndTheNextOne(t *testing.T) {
 		t.Fatalf("last reply %q", posts[len(posts)-1].Message.Text)
 	}
 }
+
+func TestDeviceLoginMessage(t *testing.T) {
+	r := &fakeRelay{}
+	f := newFront(t, workspaces{}, withRelay(r))
+	a, _ := f.twoThreads(t)
+	f.running(t)
+	f.lost(t, a, 1)
+	expires := time.Date(2026, 1, 1, 12, 34, 0, 0, time.UTC)
+	f.fe.LoginUpdate(relay.Update{Agent: "agent", Link: link, ShowCode: "ABCD-12345", Expires: expires, NoCode: true})
+	m := f.waitFirst(t, "device code", func(m surface.Message) bool { return strings.Contains(m.Text, "ABCD-12345") })
+	for _, want := range []string{"Sign in at " + link, "Code to enter there: ABCD-12345", "Nothing to send back here: the login ends by itself once you have signed in, until 12:34 UTC."} {
+		if !strings.Contains(m.Text, want) {
+			t.Errorf("missing %q in %q", want, m.Text)
+		}
+	}
+	f.fe.Message(f.driver.InjectDirect(owner, "ABCD-12345"))
+	posts, _ := f.dmPosts()
+	if posts[len(posts)-1].Message.Text != "Not waiting for a code." {
+		t.Fatalf("posts: %+v", posts)
+	}
+	if _, codes := r.got(); len(codes) != 0 {
+		t.Fatalf("codes: %v", codes)
+	}
+}

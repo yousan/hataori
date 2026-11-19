@@ -7,6 +7,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/yousan/hataori/internal/registry"
@@ -25,6 +26,10 @@ type Adapter interface {
 	NewCodec(spec Spec) Codec
 }
 
+// ErrNoCodeBack is returned by LoginCode, for every code, when the login
+// takes no code back: the owner only enters ShowCode on the link's page.
+var ErrNoCodeBack = errors.New("agent: this login takes no code back")
+
 // LoginFlow is implemented by an adapter whose agent can be logged in again
 // from chat. hataori runs the agent's own login command and passes on what it
 // prints and the owner's code; it keeps neither. An adapter that does not
@@ -36,12 +41,14 @@ type LoginFlow interface {
 	// LoginDecode reads one line the login command printed.
 	LoginDecode(line []byte) LoginStep
 	// LoginCode returns the bytes that hand a code to the login command.
+	// A flow that takes no code back returns ErrNoCodeBack for every code, including empty.
 	LoginCode(code string) ([]byte, error)
 }
 
 // LoginStep is what a line of the login command means: a link to show
 // (with a code to show beside it, if the agent gives one), a request for a
-// code, a refusal with its text, or nothing (the zero value).
+// code, a refusal with its text, or nothing (the zero value). The link and
+// ShowCode may arrive separately, with ShowCode after the link.
 type LoginStep struct {
 	Link      string // a sign-in link for the owner
 	ShowCode  string // a code the owner enters on the link's page

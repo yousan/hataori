@@ -1,0 +1,16 @@
+{
+ "argv": [
+  "codex",
+  "login",
+  "--device-auth"
+ ],
+ "version": "codex-cli 0.163.0",
+ "stopped_after": 60.00182879000204,
+ "stopped_by": "timeout: the script's stop condition did not recognise the code line, which ends in '(expires in 15 minutes)'; it was fixed after this run",
+ "exit_code": -15,
+ "left_after_end": false,
+ "link_shape": "https://auth.openai.com/codex/device",
+ "code_shape": "XX00-0X00X",
+ "end": "not reached: stopped once the link and the code had printed. From Codex's source (cli/src/login.rs, finish_login): success prints 'Successfully logged in' on standard error and exits 0; a failure prints 'Error logging in: <error>' on standard error and exits 1, for example 'device auth timed out after 15 minutes' (login/src/device_code_auth.rs).",
+ "scrubbed": "the code was replaced by its shape after the run, before the capture was committed; the raw output was not kept"
+}

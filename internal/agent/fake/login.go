@@ -17,6 +17,10 @@ import (
 
 // Login is what the fake's login command does. It is part of Config.
 type Login struct {
+	// Device makes the command show a code and wait for page sign-in.
+	Device bool `json:"device"`
+	// DeviceFail makes a device login print this error and fail.
+	DeviceFail string `json:"device_fail"`
 	// Code is the code it accepts; any other is refused, and it asks again.
 	Code string `json:"code"`
 	// NoLink makes it never print a link; it waits for input and exits
@@ -59,6 +63,9 @@ func (a *Adapter) LoginLaunch(agent.Spec) (agent.Launch, error) {
 		return agent.Launch{}, errors.New(Name + ": no config directory to log in to")
 	}
 	argv := append(append([]string{}, a.c.Command...), "login", "--config", a.c.ConfigDir, "--accept", a.c.Login.Code)
+	if a.c.Login.Device {
+		argv = append(argv, "--device", "--device-fail", a.c.Login.DeviceFail)
+	}
 	if a.c.Login.NoLink {
 		argv = append(argv, "--no-link")
 	}
@@ -77,6 +84,10 @@ func (a *Adapter) LoginDecode(line []byte) agent.LoginStep {
 	switch {
 	case strings.HasPrefix(l, loginLinkPrefix):
 		return agent.LoginStep{Link: strings.TrimPrefix(l, loginLinkPrefix)}
+	case strings.HasPrefix(l, "Device code: "):
+		return agent.LoginStep{ShowCode: strings.TrimPrefix(l, "Device code: ")}
+	case a.c.Login.Device && a.c.Login.DeviceFail != "" && l == a.c.Login.DeviceFail:
+		return agent.LoginStep{Refused: l}
 	case l == loginPrompt:
 		return agent.LoginStep{WantsCode: true}
 	case l == loginRefused:
@@ -87,6 +98,9 @@ func (a *Adapter) LoginDecode(line []byte) agent.LoginStep {
 
 // LoginCode is the code and a newline.
 func (a *Adapter) LoginCode(code string) ([]byte, error) {
+	if a.c.Login.Device {
+		return nil, agent.ErrNoCodeBack
+	}
 	if code == "" || strings.ContainsAny(code, " \t\r\n") {
 		return nil, errors.New(Name + ": a code is one word")
 	}
@@ -103,6 +117,8 @@ func loginMain(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	noLink := fs.Bool("no-link", false, "")
 	quit := fs.Bool("quit", false, "")
 	linger := fs.Bool("linger", false, "")
+	device := fs.Bool("device", false, "")
+	deviceFail := fs.String("device-fail", "", "")
 	if err := fs.Parse(args); err != nil || *dir == "" {
 		return 64
 	}
@@ -121,6 +137,18 @@ func loginMain(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var b [12]byte
 	rand.Read(b[:])
 	fmt.Fprintf(stdout, "%shttps://login.example.invalid/sign-in?state=%x\n", loginLinkPrefix, b)
+	if *device {
+		fmt.Fprintln(stdout, "Device code: "+*accept)
+		time.Sleep(300 * time.Millisecond)
+		if *deviceFail != "" {
+			fmt.Fprintln(stderr, *deviceFail)
+			return 1
+		}
+		if err := os.WriteFile(filepath.Join(*dir, LoggedInFile), nil, 0600); err != nil {
+			return 1
+		}
+		return 0
+	}
 	for {
 		fmt.Fprintln(stdout, loginPrompt)
 		if !in.Scan() {

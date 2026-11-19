@@ -46,6 +46,7 @@ type loginFlow struct {
 	link, showCode string
 	expires        time.Time
 	waiting        bool // a code is awaited
+	noCode         bool // the login takes no code back
 	done           relay.Outcome
 	detail         string
 }
@@ -76,7 +77,7 @@ func (f *FrontEnd) LoginUpdate(u relay.Update) {
 	reply := ""
 	switch {
 	case u.Link != "":
-		fl.link, fl.showCode, fl.expires, fl.waiting = u.Link, u.ShowCode, u.Expires, true
+		fl.link, fl.showCode, fl.expires, fl.waiting, fl.noCode = u.Link, u.ShowCode, u.Expires, !u.NoCode, u.NoCode
 	case u.Refused != "":
 		reply = "The code was refused: " + u.Refused
 		fl.waiting = true
@@ -462,7 +463,11 @@ func (f *FrontEnd) loginMessage(ctx context.Context, o outage) surface.Message {
 		if flow.showCode != "" {
 			b.WriteString("Code to enter there: " + flow.showCode + "\n")
 		}
-		b.WriteString("Then send the code you get here, until " + flow.expires.UTC().Format("15:04 UTC") + ".")
+		if flow.noCode {
+			b.WriteString("Nothing to send back here: the login ends by itself once you have signed in, until " + flow.expires.UTC().Format("15:04 UTC") + ".")
+		} else {
+			b.WriteString("Then send the code you get here, until " + flow.expires.UTC().Format("15:04 UTC") + ".")
+		}
 		m.Choices = button
 	case flow.done == relay.Expired:
 		b.WriteString("The sign-in link has expired. Press the button for a new one.")

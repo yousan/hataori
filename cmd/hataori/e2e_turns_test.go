@@ -284,6 +284,11 @@ func TestLoginOutageWithTheFakes(t *testing.T) {
 	}
 	r.driver.Inject(a, fakesurface.Webhook(e2eHook), "reply one again")
 	r.posted(t, a, "one again")
+	checkLoginSecrets(t, r, logged, link, code)
+}
+
+func checkLoginSecrets(t *testing.T, r *chatRoot, logged func() string, link, code string) {
+	t.Helper()
 	for i, secret := range []string{link, code} {
 		name := []string{"the link", "the code"}[i]
 		if strings.Contains(logged(), secret) {
