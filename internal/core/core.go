@@ -351,6 +351,12 @@ func (a *api) act(op control.Ops, name, scope string) error {
 	return a.refused(name, scope, "the person may not act in the scope")
 }
 
+// sees reports whether the caller may read scope: it is one of the
+// caller's scopes, and personSees.
+func (a *api) sees(scope string) bool {
+	return slices.Contains(a.caller.Scopes, scope) && a.personSees(scope)
+}
+
 // personSees reports whether the caller may read scope as far as its
 // person goes: always, unless the caller has ReadAsPerson, whose reads
 // need the person to be allowed in the scope as its input does.
@@ -388,17 +394,28 @@ func (a *api) marked(in control.Input) control.Input {
 	return in
 }
 
+// noThread is a thread number no thread has.
+const noThread control.ThreadID = -1
+
 // filterScope checks a read with filter f and returns the one scope f
-// names, or "" for all of the caller's. A filter whose thread is in
-// another scope than the one it names matches nothing, and is refused. A
-// thread or link that does not exist names no scope: the read finds
-// nothing.
-func (a *api) filterScope(ctx context.Context, name string, f control.Filter) (string, error) {
+// names, or "" for all of the caller's. A thread or link that does not
+// exist names no scope: the read finds nothing. A thread of a scope the
+// caller may not see is read as one that does not exist: f is changed to
+// name noThread, so that the answer, the caught_up mark's position too,
+// tells the caller neither that the thread exists nor its scope. The log
+// line names both scopes. A filter whose thread is in another of the
+// caller's scopes than the one it names matches nothing, and is refused.
+func (a *api) filterScope(ctx context.Context, name string, f *control.Filter) (string, error) {
 	scope := f.Scope
 	if f.Thread != 0 {
 		ts, err := a.c.scopeOf(ctx, a.c.Store.DB, f.Thread)
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			return "", err
+		}
+		if ts != "" && !a.sees(ts) {
+			a.c.Log.Warn("control read names a thread the caller may not see", "op", name, "principal", string(a.caller.Principal),
+				"scope", f.Scope, "thread", int64(f.Thread), "thread_scope", ts)
+			f.Thread, ts = noThread, ""
 		}
 		if f.Scope != "" && ts != "" && f.Scope != ts {
 			a.c.Log.Warn("control call refused", "op", name, "principal", string(a.caller.Principal), "scope", f.Scope, "thread_scope", ts)
@@ -446,7 +463,7 @@ func (a *api) actThread(ctx context.Context, op control.Ops, name string, id con
 }
 
 func (a *api) Threads(ctx context.Context, f control.Filter) ([]control.ThreadInfo, error) {
-	scope, err := a.filterScope(ctx, "Threads", f)
+	scope, err := a.filterScope(ctx, "Threads", &f)
 	if err != nil {
 		return nil, err
 	}
@@ -1620,7 +1637,7 @@ func (a *api) readable(e control.Event) control.Event {
 }
 
 func (a *api) Events(ctx context.Context, f control.Filter, after uint64) (<-chan control.Event, error) {
-	if _, err := a.filterScope(ctx, "Events", f); err != nil {
+	if _, err := a.filterScope(ctx, "Events", &f); err != nil {
 		return nil, err
 	}
 	in := make(chan control.Event)

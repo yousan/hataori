@@ -401,7 +401,7 @@ Where a thread is shown: one conversation of one client; since 3.0. A thread has
 
 ### Type `Filter`
 
-A field left empty matches everything the caller may see.
+A field left empty matches everything the caller may see. A `thread` of a scope the caller may not see is read as a thread that does not exist: the answer is the same, and names no scope the caller was not given.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
