@@ -301,7 +301,7 @@ func (m *MCP) outputMax() int {
 // find returns the thread of the scope with number n.
 func (m *MCP) find(ctx context.Context, api control.API, n int64) (control.ThreadID, error) {
 	ts, err := api.Threads(ctx, control.Filter{Scope: m.Scope, Thread: control.ThreadID(n)})
-	if err != nil && !errors.Is(err, control.ErrForbidden) { // forbidden: the number is another scope's
+	if err != nil && !errors.Is(err, control.ErrForbidden) { // forbidden: the scope is not readable; another scope's number reads as none
 		return 0, reason(err)
 	}
 	if len(ts) == 0 {
