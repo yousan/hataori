@@ -20,6 +20,9 @@ import (
 // stay. An entry that cannot be deleted is logged and deleted on a later
 // pass once it can be.
 func TestDaemonPurgesOldTrash(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a directory's mode does not keep root from deleting in it")
+	}
 	root := newRoot(t)
 	var cfg map[string]any
 	b, _ := os.ReadFile(filepath.Join(root, instance.ConfigFile))
@@ -85,15 +88,29 @@ func TestDaemonPurgesOldTrash(t *testing.T) {
 			t.Errorf("%s was deleted: %v", filepath.Base(p), err)
 		}
 	}
-	lines := strings.Split(logged(), "\n")
-	for _, p := range []string{old, later, stuck} {
+	// An entry is deleted before its line is written, so the lines are
+	// waited for, and counted after one more pass.
+	count := func(p string) int {
 		n := 0
-		for _, l := range lines {
+		for _, l := range strings.Split(logged(), "\n") {
 			if strings.Contains(l, "msg=\"trash purged\"") && names(p).MatchString(l) {
 				n++
 			}
 		}
-		if n != 1 {
+		return n
+	}
+	all := []string{old, later, stuck}
+	eventually(t, "the log lines", 10*time.Second, func() bool {
+		for _, p := range all {
+			if count(p) == 0 {
+				return false
+			}
+		}
+		return true
+	})
+	time.Sleep(3 * purgeEvery)
+	for _, p := range all {
+		if n := count(p); n != 1 {
 			t.Errorf("%d log lines name %s as purged, want 1", n, filepath.Base(p))
 		}
 	}

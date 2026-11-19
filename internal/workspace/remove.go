@@ -207,8 +207,12 @@ func realDir(dir string, make bool) (string, error) {
 }
 
 // trashName matches the names Remove gives: the time, eight hex digits and
-// the workspace's last segment.
-var trashName = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}-[A-Za-z0-9._%-]+$`)
+// the workspace's last segment as Segment writes it. That is "%" for an
+// empty one, or kept bytes and %XX escapes, and when it was too long, the
+// first 40 bytes of that (which may end inside an escape), "%" and 24 hex
+// digits of a hash.
+var trashName = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}-` +
+	`(?:%|(?:[A-Za-z0-9._-]|%[0-9A-F]{2})+|(?:[A-Za-z0-9._-]|%[0-9A-F]{2})*(?:%[0-9A-F]?)?%[0-9a-f]{24})$`)
 
 // Purge deletes the entries of trash/ that were moved there longer than
 // Retention ago, by the time in their names, and returns them. An entry
@@ -262,8 +266,10 @@ func (r Remover) Purge() ([]string, error) {
 		if !trashName.MatchString(name) {
 			continue
 		}
+		// The name has the time in whole seconds, rounded down: the entry
+		// may have been moved up to a second later.
 		moved, err := time.Parse(trashStamp, name[:len(trashStamp)])
-		if err != nil || now.Sub(moved) <= r.Retention {
+		if err != nil || now.Sub(moved.Add(time.Second)) <= r.Retention {
 			continue
 		}
 		p := filepath.Join(trash, name)
