@@ -183,8 +183,8 @@ func (f *FrontEnd) handle(in surface.Inbound) error {
 		return nil
 	}
 	if in.Ref.Conv.Thread != "" {
-		if c, ok := f.textCommand(in); ok {
-			return f.command(f.context(), c)
+		if done, err := f.textCommandOnce(f.context(), in); done || err != nil {
+			return err
 		}
 		return f.followUp(in)
 	}
@@ -198,8 +198,8 @@ func (f *FrontEnd) handle(in surface.Inbound) error {
 		return err
 	}
 	if !seen {
-		if c, ok := f.textCommand(in); ok {
-			return f.command(ctx, c)
+		if done, err := f.textCommandOnce(ctx, in); done || err != nil {
+			return err
 		}
 		text = in.Text
 	}

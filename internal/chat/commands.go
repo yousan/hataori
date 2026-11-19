@@ -120,6 +120,34 @@ func (f *FrontEnd) textCommand(in surface.Inbound) (surface.Command, bool) {
 	return surface.Command{Conv: in.Ref.Conv, Author: in.Author, ID: in.Ref.ID, Name: o.Prompt, Reply: &ref}, true
 }
 
+// textCommandOnce handles a message that gives a command in words after the
+// trigger, and reports whether the message was one. A message keeps what it
+// was the first time, also when it is delivered again after an edit: one
+// handled as a command is nothing more after it, and one already given to
+// the core as input is never read as a command.
+func (f *FrontEnd) textCommandOnce(ctx context.Context, in surface.Inbound) (bool, error) {
+	key := "text:" + in.Ref.ID
+	var was int
+	if err := f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM chat_notices WHERE client = ? AND channel = ? AND message = ?`,
+		f.Name, in.Ref.Conv.Channel, key).Scan(&was); err != nil {
+		return false, err
+	}
+	if was > 0 {
+		return true, nil
+	}
+	c, ok := f.textCommand(in)
+	if !ok {
+		return false, nil
+	}
+	if _, input, err := f.senderOf(ctx, in.Ref.ID); err != nil || input {
+		return false, err
+	}
+	if _, err := f.once(ctx, in.Ref.Conv.Channel, key, true); err != nil {
+		return false, err
+	}
+	return true, f.command(ctx, c)
+}
+
 // newWords reads `<trigger> new ...` on a surface without commands as the
 // trigger without the word.
 func (f *FrontEnd) newWords(o order) order {

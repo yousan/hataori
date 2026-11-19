@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/surface"
@@ -41,10 +42,23 @@ func (f *FrontEnd) dashboardLink(ctx context.Context, c surface.Command) error {
 		_, err = f.Driver.Post(ctx, conv, "", surface.Message{Text: "Your dashboard sign-in link. It works once, and only for a short while:\n" + link})
 	}
 	if err != nil {
-		// The error is the service's, not the link's.
-		f.Log.Warn("dashboard link: not sent", "client", f.Name, "id", c.Author.ID, "err", err)
+		// The service's error may repeat what was posted: the link is
+		// taken out of it before it is logged.
+		f.Log.Warn("dashboard link: not sent", "client", f.Name, "id", c.Author.ID, "err", redact(err.Error(), link))
 		return f.answer(ctx, c, "No link: a direct message could not be sent to you.")
 	}
 	f.Log.Info("dashboard link sent", "client", f.Name, "id", c.Author.ID)
 	return nil
+}
+
+// redact takes link, and the token in its fragment, out of s.
+func redact(s, link string) string {
+	if link == "" {
+		return s
+	}
+	s = strings.ReplaceAll(s, link, "<link>")
+	if _, token, ok := strings.Cut(link, "#t="); ok && token != "" {
+		s = strings.ReplaceAll(s, token, "<token>")
+	}
+	return s
 }
