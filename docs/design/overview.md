@@ -711,6 +711,8 @@ Its shape follows OpenClaw's plugins: a manifest, registration, and hooks. Hook 
 - Go cannot reliably load code into a running binary. The standard `plugin` package needs the same toolchain and the same version of every shared package as the binary.
 - Only a separate program makes what a plugin declares enforceable. The core checks each of its calls, as for every client.
 
+A plugin's grant binds a plugin that presents its token. It is not confinement against a hostile plugin: a process of the daemon's OS user, a plugin included, can change the config or read the state directory, and a connection without a token from that user is the owner's. Running a plugin as another OS user is how to confine it (below, "Later"). One guard catches the mistake of a plugin that forgot its token: a connection without a token from a process in the process group of a plugin hataori started is refused, and the refusal names the plugin. A `hataori` command that a plugin starts is refused the same way. A process can leave its group, so this is a guard against mistakes, not a boundary (decided in #487).
+
 hataori does not depend on OpenClaw. An OpenClaw plugin that talks to hataori is an ordinary client of the control API.
 
 **What is not a plugin.** Tools used inside a session (MCP servers, skills, Claude Code and Codex plugins) already work in a hataori session; hataori only hands them to a session by flags, per scope (section 4.6). hataori does not load OpenClaw's native plugins. The built-in surface drivers and agent adapters stay in the binary.
@@ -736,7 +738,7 @@ hataori does not depend on OpenClaw. An OpenClaw plugin that talks to hataori is
 | `conversation` | whether it needs message text (below) |
 | `config` | a JSON Schema for its own settings |
 
-**What the operator grants.** The plugin's config entry names the scopes it may see and act in, and may narrow the operations, events and hooks below what the manifest asks for. The plugin's `Caller` is what the manifest asks for and the config grants, and nothing more. Any other call is refused by the core's one authorization function (section 4.4), and the refusal is logged.
+**What the operator grants.** The plugin's config entry names the scopes it may see and act in, and may narrow the operations, events and hooks below what the manifest asks for. The plugin's `Caller` is what the manifest asks for and the config grants, and nothing more. Any other call is refused by the core's one authorization function (section 4.4), and the refusal is logged. This binds a plugin that connects with its token, as above.
 
 Message text (input to the agent, the agent's text, outgoing posts) reaches a plugin only with an explicit `conversation` grant, as with OpenClaw's `allowConversationAccess`. Without it, the plugin gets events and hook calls with the text left out. Thread titles are left out too: a title is the first line of the first prompt, so a person wrote it. Such a plugin knows a thread by its id and number. It is refused `Terminal` with the ordinary refusal, logged like other refusals; there is no text-free terminal stream in this phase (decided 2026-11-19). It is refused `HostScreen` of every pane the same way, since a pane can keep a session's screen after `hataori attach` ends, and hataori does not try to tell which panes once showed one; `HostTerminals` stays as it is (decided 2026-11-20). No client can read the login relay's link and code (section 4.7), so no plugin can either.
 
@@ -1722,7 +1724,12 @@ type Limit struct {
 // (empty, never nil, when it names none), and NoText without the
 // "conversation" grant. wire.Server.Restore binds a token issued by
 // an earlier run of the daemon again, for a client that still runs with it
-// (#270). wire.Server.Peered is told of each connection on which the
+// (#270). wire.Server.NotOwner, when set, is asked about the process (its
+// pid, from SO_PEERCRED or LOCAL_PEERPID) of a connection whose hello has no
+// token: a name refuses the connection, logged with that name. The daemon
+// sets it to plugin.Runner.PluginOf, which names the plugin whose process
+// group the process is in: a guard against a plugin that forgot its token,
+// not a boundary (section 7.3, #487). wire.Server.Peered is told of each connection on which the
 // daemon may send requests, with the API it is bound to; plugin.BindAs
 // marks the API of a plugin's caller, so that plugin.Dispatcher knows the
 // plugin's connections, tells it plugin_started on its first one, and

@@ -42,7 +42,7 @@ const secondAgent = "fake-second"
 func TestMain(m *testing.M) {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
-		case "host", "hook", "login-guard", "mcp", "statusline", "signin": // signin: as hataori on the host, run over SSH by hataori connect
+		case "host", "hook", "login-guard", "mcp", "statusline", "signin", "threads": // signin: as hataori on the host, run over SSH by hataori connect; threads: run by a test plugin
 			os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 		case "--version", "login":
 			os.Exit(codexLogin(os.Args[1:]))

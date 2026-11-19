@@ -601,3 +601,34 @@ func TestExternalToken(t *testing.T) {
 		t.Fatalf("an unreadable token file: %v", err)
 	}
 }
+
+// PluginOf names a running plugin for its own process and one it started
+// in its group, and nothing for another process or once it has stopped.
+func TestPluginOf(t *testing.T) {
+	path, sum := script(t, `sh -c 'echo $$ > "$HATAORI_PLUGIN_STATE/child.tmp"; mv "$HATAORI_PLUGIN_STATE/child.tmp" "$HATAORI_PLUGIN_STATE/child"; exec sleep 600' &
+echo $$ > "$HATAORI_PLUGIN_STATE/pid.tmp"; mv "$HATAORI_PLUGIN_STATE/pid.tmp" "$HATAORI_PLUGIN_STATE/pid"; exec sleep 600`)
+	f := newRunner(t, Grant{Path: path, SHA256: sum}, nil)
+	pid, _ := strconv.Atoi(f.file(t, "pid"))
+	child, _ := strconv.Atoi(f.file(t, "child"))
+	if got := f.r.PluginOf(pid); got != "scan" {
+		t.Errorf("the plugin's own process: %q", got)
+	}
+	if got := f.r.PluginOf(child); got != "scan" {
+		t.Errorf("a process it started: %q", got)
+	}
+	if got := f.r.PluginOf(os.Getpid()); got != "" {
+		t.Errorf("another process: %q", got)
+	}
+	f.cancel()
+	f.r.Wait()
+	if got := f.r.PluginOf(pid); got != "" {
+		t.Errorf("after the stop: %q", got)
+	}
+	// Forgotten, not only gone: a group id the system gives again later is
+	// no plugin's.
+	f.r.mu.Lock()
+	defer f.r.mu.Unlock()
+	if len(f.r.groups) != 0 {
+		t.Errorf("groups kept after the stop: %v", f.r.groups)
+	}
+}

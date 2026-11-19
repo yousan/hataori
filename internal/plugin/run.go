@@ -111,7 +111,9 @@ type Runner struct {
 	// and starting it.
 	afterRead func(g Grant)
 
-	wg sync.WaitGroup
+	wg     sync.WaitGroup
+	mu     sync.Mutex
+	groups map[int]string // the process groups of the plugins running now: their ids
 }
 
 // Start binds each external plugin's token to its caller, then starts the
@@ -158,6 +160,39 @@ func (r *Runner) Start(ctx context.Context) error {
 
 // Wait returns once every plugin Start started has stopped.
 func (r *Runner) Wait() { r.wg.Wait() }
+
+// PluginOf returns the id of the running plugin whose process group pid
+// is in, or "": the guard against a plugin that connects to the socket
+// without its token, and so as the owner (wire.Server.NotOwner). It is no
+// boundary: a process can leave its group.
+func (r *Runner) PluginOf(pid int) string {
+	r.mu.Lock()
+	empty := len(r.groups) == 0
+	r.mu.Unlock()
+	if empty {
+		return ""
+	}
+	pgid, err := syscall.Getpgid(pid)
+	if err != nil {
+		return ""
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.groups[pgid]
+}
+
+func (r *Runner) group(pgid int, id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if id == "" {
+		delete(r.groups, pgid)
+		return
+	}
+	if r.groups == nil {
+		r.groups = map[int]string{}
+	}
+	r.groups[pgid] = id
+}
 
 func (r *Runner) environ() []string {
 	if r.Environ != nil {
@@ -298,6 +333,7 @@ func (r *Runner) once(ctx context.Context, g Grant) (string, error) {
 		return "", err
 	}
 	pgid := cmd.Process.Pid
+	r.group(pgid, g.ID)
 	r.Log.Info("plugin started", "plugin", g.ID, "pid", pgid)
 	// A run that lasts the window ends the plugin's outage, while it runs.
 	stable := time.AfterFunc(or(r.Window, DefaultWindow), func() { r.closeOutage(context.WithoutCancel(ctx), g) })
@@ -312,6 +348,7 @@ func (r *Runner) once(ctx context.Context, g Grant) (string, error) {
 	r.Tokens.Revoke(token)
 	// Whatever the plugin started and left in its group goes with it.
 	syscall.Kill(-pgid, syscall.SIGKILL)
+	r.group(pgid, "")
 	return "", err
 }
 

@@ -445,6 +445,9 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	if runnerHook != nil {
 		runnerHook(pr)
 	}
+	// A plugin that forgot its token is refused, not made the owner: a
+	// guard against the mistake, not confinement (section 7.3).
+	srv.NotOwner = pr.PluginOf
 	plCtx, plCancel := context.WithCancel(ctx)
 	defer func() { plCancel(); pr.Wait() }()
 	if err := pr.Start(plCtx); err != nil {
