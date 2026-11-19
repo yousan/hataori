@@ -86,7 +86,7 @@ func examples(t *testing.T) map[string]any {
 		"ThreadEvents": threadEventsArgs{ID: exampleID, Before: 42, Limit: 100},
 		"Scopes":       scopesArgs{},
 		"SetName":      setNameArgs{Link: control.LinkRef{Client: "discord", Channel: "C0123"}, Name: "#builds"},
-		"Start": control.StartRequest{Key: "M0789", Scope: "C0123", Repo: "https://example.com/repo.git",
+		"Start": control.StartRequest{Agent: "codex", Key: "M0789", Scope: "C0123", Repo: "https://example.com/repo.git",
 			Input: control.Input{Text: "Fix the build."}, Model: "opus", Effort: "high"},
 		"Send":           sendArgs{ID: exampleID, Key: "M0790", Input: control.Input{Text: "And the docs.", Link: &exampleLink}, Busy: control.Deliver},
 		"Answer":         answerArgs{Request: "3:toolu_2", Answer: control.Answer{Text: "blue", Choices: []string{"blue"}, Link: &exampleLink}},

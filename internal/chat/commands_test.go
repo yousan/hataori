@@ -152,3 +152,21 @@ func TestRepeatedStopCommandStopsOnce(t *testing.T) {
 		t.Fatalf("%d interrupts, want 1", stops)
 	}
 }
+
+func TestAgentOptionIsNotACommand(t *testing.T) {
+	f := &FrontEnd{Driver: fake.New(), Trigger: "!go"}
+	for _, word := range []string{"stop", "status"} {
+		if _, ok := f.textCommand(surface.Inbound{Text: "!go agent:other " + word}); ok {
+			t.Errorf("agent option was treated as %s", word)
+		}
+	}
+	o, _ := parseTrigger("!go", "!go agent:other new repo:https://example.com/r.git prompt")
+	if got := f.newWords(o); got != o {
+		t.Errorf("agent option changed the order: %+v", got)
+	}
+	o, _ = parseTrigger("!go", "!go new agent:other repo:https://example.com/r.git prompt")
+	got := f.newWords(o)
+	if got.Agent != "other" || got.Repo != "https://example.com/r.git" || got.Prompt != "prompt" {
+		t.Errorf("new words parsed as %+v", got)
+	}
+}

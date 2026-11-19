@@ -106,7 +106,7 @@ func (f *FrontEnd) textCommand(in surface.Inbound) (surface.Command, bool) {
 		return surface.Command{}, false
 	}
 	o, ok := parseTrigger(f.Trigger, in.Text)
-	if !ok || o.Repo != "" || o.Model != "" || o.Effort != "" || (o.Prompt != stopCommand && o.Prompt != statusCommand) {
+	if !ok || o.Agent != "" || o.Repo != "" || o.Model != "" || o.Effort != "" || (o.Prompt != stopCommand && o.Prompt != statusCommand) {
 		return surface.Command{}, false
 	}
 	ref := in.Ref
@@ -117,7 +117,7 @@ func (f *FrontEnd) textCommand(in surface.Inbound) (surface.Command, bool) {
 // trigger without the word.
 func (f *FrontEnd) newWords(o order) order {
 	word, rest, _ := strings.Cut(o.Prompt, " ")
-	if f.Driver.Limits().Commands || o.Repo != "" || o.Model != "" || o.Effort != "" || strings.TrimSpace(word) != newCommand {
+	if f.Driver.Limits().Commands || o.Agent != "" || o.Repo != "" || o.Model != "" || o.Effort != "" || strings.TrimSpace(word) != newCommand {
 		return o
 	}
 	n, _ := parseTrigger(f.Trigger, f.Trigger+" "+rest)
