@@ -324,10 +324,11 @@ func TestReplacedExecutableDoesNotRun(t *testing.T) {
 // number of exits, and the owner is told; its outage is kept, so the next
 // runner tells with the same key.
 func TestRestartsAndStaysStopped(t *testing.T) {
-	path, sum := script(t, `[ -e "$HATAORI_PLUGIN_STATE/child" ] || { sh -c 'echo $$ > "$HATAORI_PLUGIN_STATE/child.tmp"; mv "$HATAORI_PLUGIN_STATE/child.tmp" "$HATAORI_PLUGIN_STATE/child"; exec sleep 600' & }
+	path, sum := script(t, `[ -e "$HATAORI_PLUGIN_STATE/spawned" ] || { touch "$HATAORI_PLUGIN_STATE/spawned"; sh -c 'echo $$ > "$HATAORI_PLUGIN_STATE/child.tmp"; mv "$HATAORI_PLUGIN_STATE/child.tmp" "$HATAORI_PLUGIN_STATE/child"; exec sleep 600' & }
 echo "$$ $HATAORI_TOKEN" > "$HATAORI_PLUGIN_STATE/run.tmp"; mv "$HATAORI_PLUGIN_STATE/run.tmp" "$HATAORI_PLUGIN_STATE/run"; exec sleep 600`)
 	f := newRunner(t, Grant{Path: path, SHA256: sum}, nil)
 	pid, token, _ := strings.Cut(f.file(t, "run"), " ")
+	child, _ := strconv.Atoi(f.file(t, "child")) // the first run's child, before the kill
 	os.Remove(filepath.Join(f.state, "plugins", "scan", "run"))
 	n, _ := strconv.Atoi(pid)
 	if err := syscall.Kill(n, syscall.SIGKILL); err != nil {
@@ -337,7 +338,7 @@ echo "$$ $HATAORI_TOKEN" > "$HATAORI_PLUGIN_STATE/run.tmp"; mv "$HATAORI_PLUGIN_
 	if pid2 == pid || token2 == token || token2 == "" {
 		t.Fatalf("after SIGKILL: pid %s token %s, before %s %s", pid2, token2, pid, token)
 	}
-	if child, _ := strconv.Atoi(f.file(t, "child")); child == 0 || !gone(t, child) {
+	if child == 0 || !gone(t, child) {
 		t.Fatalf("the child %d of the killed plugin is left", child)
 	}
 	if f.tokens.isLive(token) || !f.tokens.isLive(token2) {
