@@ -126,8 +126,9 @@ func runDaemonLog(t *testing.T, root string) (stop func(), logged func() string)
 	done := make(chan struct{})
 	var log bytes.Buffer
 	var mu sync.Mutex
+	var code int // what run returned, once done is closed
 	go func() {
-		runCtx(ctx, []string{"run", "--root", root}, io.Discard, lockedWriter{&mu, &log})
+		code = runCtx(ctx, []string{"run", "--root", root}, io.Discard, lockedWriter{&mu, &log})
 		close(done)
 	}()
 	stopped := false
@@ -139,14 +140,25 @@ func runDaemonLog(t *testing.T, root string) (stop func(), logged func() string)
 		}
 	}
 	t.Cleanup(func() { stop(); killSessions(root) })
-	eventually(t, "the daemon to serve", 10*time.Second, func() bool {
+	logged = func() string { mu.Lock(); defer mu.Unlock(); return log.String() }
+	var dialErr error
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
 		c, err := wire.Dial(root)
 		if err == nil {
 			c.Close()
+			break
 		}
-		return err == nil
-	})
-	return stop, func() string { mu.Lock(); defer mu.Unlock(); return log.String() }
+		dialErr = err
+		select {
+		case <-done:
+			t.Fatalf("the daemon ended with %d before it served: %v\n%s", code, dialErr, logged())
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for the daemon to serve: %v\n%s", dialErr, logged())
+		}
+	}
+	return stop, logged
 }
 
 // dashSignIn signs in with a link from `hataori signin` and returns the
