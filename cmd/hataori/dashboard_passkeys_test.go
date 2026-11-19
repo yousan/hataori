@@ -382,24 +382,28 @@ func TestPasskeyRegistrationNeedsAProofMadeForIt(t *testing.T) {
 		}
 	}
 
+	// Each registration that is to be refused is tried with an
+	// authenticator that holds none of the person's passkeys, so that only
+	// the server can refuse it.
+	fresh := func() *softKey { return &softKey{rpID: webName, origin: d.web} }
 	sA, regA := d.webLink()
 	sB, _ := d.webLink()
 	for _, reg := range []string{"", "made-up"} {
-		code, body, _ := d.register(k, sA, reg)
+		code, body, _ := d.register(fresh(), sA, reg)
 		refused("the session alone, proof "+reg, code, body)
 	}
-	code, body, _ := d.register(k, sB, regA)
+	code, body, _ := d.register(fresh(), sB, regA)
 	refused("another session's proof", code, body)
 	code, body, first := d.register(k, sA, regA)
 	if code != http.StatusOK {
 		t.Fatalf("with its proof: %d %s", code, body)
 	}
-	code, body, _ = d.register(k, sA, regA)
+	code, body, _ = d.register(fresh(), sA, regA)
 	refused("a proof used once", code, body)
 
 	sC, regC := d.webLink()
 	clock.add(dashboard.RegisterWithin)
-	code, body, _ = d.register(k, sC, regC)
+	code, body, _ = d.register(fresh(), sC, regC)
 	refused("a proof five minutes old", code, body)
 	sD, regD := d.webLink()
 	code, a, b := d.beginRegister(sD, regD)
@@ -407,7 +411,7 @@ func TestPasskeyRegistrationNeedsAProofMadeForIt(t *testing.T) {
 		t.Fatalf("begin: %d %s", code, b)
 	}
 	clock.add(dashboard.RegisterWithin)
-	_, cred := (&softKey{rpID: webName, origin: d.web}).create(t, a.Options)
+	_, cred := fresh().create(t, a.Options)
 	code, b = d.post(dashboard.PasskeyRegisterFinishPath, sD, map[string]any{"ceremony": a.Ceremony, "credential": cred})
 	refused("a ceremony finished five minutes after the link", code, string(b))
 
@@ -419,8 +423,8 @@ func TestPasskeyRegistrationNeedsAProofMadeForIt(t *testing.T) {
 	}
 	// The second passkey is on another device: an authenticator that holds
 	// one of the person's passkeys is excluded.
-	k2 := &softKey{rpID: webName, origin: d.web}
-	code, body, _ = d.register(k2, sA, in.Register.Token)
+	k2 := fresh()
+	code, body, _ = d.register(fresh(), sA, in.Register.Token)
 	refused("a passkey check's proof with another session", code, body)
 	code, body, second := d.register(k2, in.Session, in.Register.Token)
 	if code != http.StatusOK {
@@ -654,12 +658,25 @@ func TestPasskeysListedAndRemovedOnEitherListener(t *testing.T) {
 		t.Fatalf("the removals are not logged:\n%s", l)
 	}
 
-	// Removing the file removes them all at the next start.
+	// Removing the file removes them all at the next start; in fact at
+	// once, and nothing writes them back.
 	k := &softKey{rpID: webName, origin: d.web}
 	s, reg := d.webLink()
 	code, body, c := d.register(k, s, reg)
 	if code != http.StatusOK {
 		t.Fatalf("register: %d %s", code, body)
+	}
+	os.Remove(filepath.Join(d.root, dashboard.PasskeysFile))
+	if code, body, _ := d.signInWith(k, c); code != http.StatusUnauthorized || !strings.Contains(body, "not registered") {
+		t.Fatalf("a passkey after its file was removed, before a restart: %d %s", code, body)
+	}
+	s, reg = d.webLink()
+	code, body, c = d.register(k, s, reg)
+	if code != http.StatusOK {
+		t.Fatalf("register: %d %s", code, body)
+	}
+	if keys := d.stored(); len(keys) != 1 || !bytes.Equal(keys[0].ID, c.id) {
+		t.Fatalf("after the file was removed, the next change wrote %+v", keys)
 	}
 	stop()
 	os.Remove(filepath.Join(d.root, dashboard.PasskeysFile))
@@ -718,8 +735,14 @@ func TestPasskeyRoutesNeedTheirListenersOrigin(t *testing.T) {
 	if code, b := d.do(http.MethodDelete, base, dashboard.PasskeysPath+"/AAAA", ls, base, nil); code != http.StatusNotFound {
 		t.Errorf("DELETE on loopback with its Origin: %d %s, want 404", code, b)
 	}
-	// Every other route, and other methods on these, take GET and HEAD
-	// only, with the listener's own Origin too.
+	// Every other route takes GET and HEAD only, refused as such before any
+	// Origin is asked for; and so do other methods on these routes, with
+	// the listener's own Origin too.
+	for _, path := range []string{dashboard.ThreadsPath, dashboard.EventsPath, dashboard.SessionPath, dashboard.PasskeysPath} {
+		if code, b := d.do(http.MethodPost, "", path, s, "", map[string]any{}); code != http.StatusMethodNotAllowed {
+			t.Errorf("POST %s without an Origin: %d %s, want 405", path, code, b)
+		}
+	}
 	for _, r := range []struct{ method, path string }{
 		{http.MethodPost, dashboard.ThreadsPath}, {http.MethodPost, dashboard.SessionPath}, {http.MethodPost, dashboard.PasskeysPath},
 		{http.MethodPut, dashboard.PasskeysPath + "/AAAA"}, {http.MethodGet, dashboard.PasskeySignInBeginPath}, {http.MethodDelete, dashboard.PasskeysPath},
