@@ -11,7 +11,7 @@ The same value is replaced the same way in every file:
   32-digit hex values (hashes, session ids, rate-limit buckets) -> 000...0N
   interaction tokens (also in paths)  -> REDACTED-TOKEN-N (in /interactions/ and /webhooks/ paths)
   signed URL parameters (ex, is, hm)  -> ex=00000000&is=00000000&hm=REDACTED
-  user, guild, channel and role names -> name-N (thread names and test texts are kept)
+  user, guild, channel and role names -> name-N (thread names, test texts and emoji are kept)
   e-mail addresses                    -> userN@example.com
   READY's _trace and resume URL       -> fixed values
   profile tags, discriminators        -> TAG, 0000
@@ -79,6 +79,8 @@ def main():
 
     def name(v):
         if not isinstance(v, str) or v.startswith(("[hataori test]", "hataori-test")) or v == "":
+            return v
+        if not any(ch.isalnum() for ch in v):  # an emoji, such as a reaction's
             return v
         return namemap.setdefault(v, "name-%d" % (len(namemap) + 1))
 

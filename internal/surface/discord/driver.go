@@ -39,9 +39,9 @@ const Name = "discord"
 // intent.
 //
 // The bot's role in an enabled channel needs: View Channel, Read Message
-// History, Create Public Threads, Send Messages in Threads and Attach Files.
-// It needs no Manage permission. A direct conversation and a button in it
-// need no permission.
+// History, Create Public Threads, Send Messages in Threads, Attach Files,
+// and Add Reactions for lamps. It needs no Manage permission. A direct
+// conversation and a button in it need no permission.
 const Intents = gateway.IntentGuilds | gateway.IntentGuildMessages | gateway.IntentMessageContent |
 	gateway.IntentDirectMessages
 
@@ -387,9 +387,4 @@ func (m wireMessage) inbound(conv surface.Conversation, direct bool) surface.Inb
 		in.ReplyTo = &surface.MessageRef{Conv: conv, ID: m.MessageReference.MessageID.String()}
 	}
 	return in
-}
-
-// SetStatus is not implemented: lamps come after phase 1.
-func (d *Driver) SetStatus(context.Context, surface.MessageRef, surface.Status) error {
-	return errors.ErrUnsupported
 }

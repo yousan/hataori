@@ -388,6 +388,7 @@ func (d *Driver) Limits() surface.Limits {
 		Edit:        true,
 		Delete:      true,
 		SetThread:   true,
+		SetStatus:   true,
 		Commands:    true,
 		MultiSelect: true,
 	}
