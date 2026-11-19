@@ -894,7 +894,7 @@ func (a *api) start(ctx context.Context, r control.StartRequest, confined bool) 
 			d["from"] = a.caller.From
 		}
 		data, _ := json.Marshal(d)
-		_, err = tx.Append(ctx, control.Event{Thread: id, Scope: r.Scope, Kind: "thread_created", Data: data})
+		_, err = tx.Append(ctx, control.Event{Thread: id, Scope: r.Scope, Time: a.c.now(), Kind: "thread_created", Data: data})
 		return err
 	})
 	if errors.Is(err, errDup) { // a concurrent call with the same key won
