@@ -46,13 +46,11 @@ func gitIn(t *testing.T, dir string, args ...string) {
 }
 
 // rawGet is a GET of a dashboard route with the given Host and Origin,
-// and the session cookie when c is not nil.
-func rawGet(t *testing.T, method, base, path string, c *http.Cookie, hostHeader, origin string) (int, string) {
+// and the session when c is not empty.
+func rawGet(t *testing.T, method, base, path string, c dashSession, hostHeader, origin string) (int, string) {
 	t.Helper()
 	r, _ := http.NewRequest(method, base+path, nil)
-	if c != nil {
-		r.AddCookie(c)
-	}
+	c.set(r)
 	if hostHeader != "" {
 		r.Host = hostHeader
 	}
@@ -137,7 +135,7 @@ func TestDashboardWorkspaceRoute(t *testing.T) {
 
 	// 2. Signed out, an unknown Host, a foreign Origin.
 	u, _ := url.Parse(base)
-	if code, _ := rawGet(t, "GET", base, path(id), nil, "", ""); code != http.StatusUnauthorized {
+	if code, _ := rawGet(t, "GET", base, path(id), "", "", ""); code != http.StatusUnauthorized {
 		t.Fatalf("signed out: %d, want 401", code)
 	}
 	if code, body := rawGet(t, "GET", base, path(id), cookie, "elsewhere.example:80", ""); code != http.StatusForbidden || strings.Contains(body, "branch") {

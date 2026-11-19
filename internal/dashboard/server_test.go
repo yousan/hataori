@@ -31,12 +31,23 @@ import (
 	"github.com/yousan/hataori/internal/core"
 )
 
-// start serves cfg and returns the server. Each tune changes the server
-// before it serves.
+// start serves cfg and returns the server. A config with no listener gets
+// a loopback one; a listener with no address listens on a free loopback
+// port. Each tune changes the server before it serves.
 func start(t *testing.T, cfg Config, tune ...func(*Server)) *Server {
 	t.Helper()
-	if cfg.Listen == "" {
-		cfg.Listen = "127.0.0.1:0"
+	if cfg.Local == nil && cfg.Web == nil {
+		cfg.Local = &Local{}
+	}
+	if cfg.Local != nil && cfg.Local.Listen == "" {
+		l := *cfg.Local
+		l.Listen = "127.0.0.1:0"
+		cfg.Local = &l
+	}
+	if cfg.Web != nil && cfg.Web.Listen == "" {
+		w := *cfg.Web
+		w.Listen = "127.0.0.1:0"
+		cfg.Web = &w
 	}
 	s, err := Listen(cfg, only(noAPI{}), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
@@ -64,10 +75,19 @@ func only(a control.API) func(string) (control.API, bool) {
 	return func(person string) (control.API, bool) { return a, person == "owner" }
 }
 
-// client follows no redirect and sends each request to the server's
-// listener, whatever its Host.
-func client(s *Server) *http.Client {
-	addr := s.ln.Addr().String()
+// first is the server's loopback listener, or its web listener when it has
+// no loopback one.
+func first(s *Server) *listener {
+	if s.local != nil {
+		return s.local
+	}
+	return s.web
+}
+
+// client follows no redirect and sends each request to l, whatever its
+// Host.
+func client(l *listener) *http.Client {
+	addr := l.ln.Addr().String()
 	d := &net.Dialer{}
 	return &http.Client{
 		Transport: &http.Transport{
@@ -80,64 +100,113 @@ func client(s *Server) *http.Client {
 	}
 }
 
-type req struct {
-	method, path, host, origin string
-	cookie                     *http.Cookie
+// requestTo makes a request to l, as a reverse proxy would send it: over TLS
+// only when l serves TLS itself, with l's own Host.
+func requestTo(t *testing.T, l *listener, method, path string, body io.Reader) *http.Request {
+	t.Helper()
+	scheme := "http"
+	if l.way == control.WayWeb && l.proxy == nil {
+		scheme = "https"
+	}
+	hr, err := http.NewRequest(method, scheme+"://"+l.ln.Addr().String()+path, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hr.Host = l.base.Host
+	return hr
 }
 
-func do(t *testing.T, s *Server, r req) *http.Response {
+type req struct {
+	l                          *listener // first(s) when nil
+	method, path, host, origin string
+	token                      string            // the session, sent as the page sends it
+	auth                       string            // an Authorization header of the test's own, instead
+	cookie                     *http.Cookie      // a cookie, which no longer signs anyone in
+	header                     map[string]string // more headers
+}
+
+// answer is a response with its body read.
+type answer struct {
+	*http.Response
+	body string
+}
+
+func do(t *testing.T, s *Server, r req) answer {
 	t.Helper()
 	if r.method == "" {
 		r.method = http.MethodGet
 	}
-	// To the listener itself, as a reverse proxy would send it: over TLS
-	// only when the dashboard serves TLS itself, with the dashboard's own
-	// Host unless the test gives another.
-	scheme := "http"
-	if s.base.Scheme == "https" && s.proxy == nil {
-		scheme = "https"
+	l := r.l
+	if l == nil {
+		l = first(s)
 	}
-	hr, err := http.NewRequest(r.method, scheme+"://"+s.ln.Addr().String()+r.path, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	hr.Host = s.base.Host
+	hr := requestTo(t, l, r.method, r.path, nil)
 	if r.host != "" {
 		hr.Host = r.host
 	}
 	if r.origin != "" {
 		hr.Header.Set("Origin", r.origin)
 	}
+	if r.token != "" {
+		hr.Header.Set("Authorization", "Bearer "+r.token)
+	}
+	if r.auth != "" {
+		hr.Header.Set("Authorization", r.auth)
+	}
 	if r.cookie != nil {
 		hr.AddCookie(r.cookie)
 	}
-	resp, err := client(s).Do(hr)
+	for k, v := range r.header {
+		hr.Header.Set(k, v)
+	}
+	resp, err := client(l).Do(hr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	io.Copy(io.Discard, resp.Body)
+	b, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	return resp
+	return answer{resp, string(b)}
 }
 
-// signIn uses a new link and returns the session cookie.
-func signIn(t *testing.T, s *Server) *http.Cookie {
+// trade is r made into the request with which the page trades link's
+// token, from its fragment, for a session.
+func trade(t *testing.T, link string, r req) req {
 	t.Helper()
-	link, err := s.NewLink(context.Background(), "owner")
+	u, err := url.Parse(link)
+	if err != nil || u.Path != SignInPath || u.RawQuery != "" {
+		t.Fatalf("link %q is not the sign-in page with its token in the fragment", link)
+	}
+	v, _ := url.ParseQuery(u.Fragment)
+	r.path, r.auth = SessionPath, "Link "+v.Get("t")
+	return r
+}
+
+// tokenOf is the session in the answer to a trade, or "".
+func tokenOf(a answer) string {
+	var v struct{ Session string }
+	json.Unmarshal([]byte(a.body), &v)
+	return v.Session
+}
+
+// signIn uses a new link of the owner for way's listener and returns the
+// session.
+func signIn(t *testing.T, s *Server, way ...control.Way) string {
+	t.Helper()
+	w := control.Way("")
+	if len(way) > 0 {
+		w = way[0]
+	}
+	link, err := s.NewLink(context.Background(), "owner", w)
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp := do(t, s, req{path: pathOf(t, link)})
-	if resp.StatusCode != http.StatusSeeOther {
-		t.Fatalf("sign-in link: %s", resp.Status)
+	l, _ := s.listenerOf(w)
+	a := do(t, s, trade(t, link, req{l: l}))
+	token := tokenOf(a)
+	if a.StatusCode != http.StatusOK || token == "" {
+		t.Fatalf("sign-in link: %s\n%s", a.Status, a.body)
 	}
-	for _, c := range resp.Cookies() {
-		if c.Name == s.cookie {
-			return c
-		}
-	}
-	t.Fatalf("sign-in set no session cookie: %v", resp.Header["Set-Cookie"])
-	return nil
+	return token
 }
 
 func pathOf(t *testing.T, link string) string {
@@ -149,61 +218,120 @@ func pathOf(t *testing.T, link string) string {
 	return u.RequestURI()
 }
 
-var routes = []string{"/", "/events", "/terminal/7", "/no-such-route", "/signin/x"}
-
-func TestEveryRouteNeedsASession(t *testing.T) {
+// Every route that is not the page's own files or the sign-in link needs a
+// session in the Authorization header: none, a made-up one, one in a
+// cookie, one in the address, and one under another scheme are all
+// refused. The page's own files hold no data and need none.
+func TestEveryDataRouteNeedsASession(t *testing.T) {
 	s := start(t, Config{})
-	for _, p := range routes {
+	token := signIn(t, s)
+	for _, p := range []string{"/events", "/terminal/7", "/no-such-route", "/signin/x", "/api/threads"} {
 		for _, m := range []string{http.MethodGet, http.MethodHead} {
-			if resp := do(t, s, req{method: m, path: p}); resp.StatusCode != http.StatusUnauthorized {
-				t.Errorf("%s %s without a session: %s, want 401", m, p, resp.Status)
-			}
-			bogus := &http.Cookie{Name: s.cookie, Value: "made-up"}
-			if resp := do(t, s, req{method: m, path: p, cookie: bogus}); resp.StatusCode != http.StatusUnauthorized {
-				t.Errorf("%s %s with a made-up session: %s, want 401", m, p, resp.Status)
+			for name, r := range map[string]req{
+				"no session":                 {},
+				"a made-up session":          {token: "made-up"},
+				"a session cookie":           {cookie: &http.Cookie{Name: "hataori-session", Value: token}},
+				"another scheme":             {auth: "Basic " + token},
+				"a bare token":               {auth: token},
+				"the session in the address": {path: p + "?session=" + url.QueryEscape(token) + "&token=" + url.QueryEscape(token)},
+			} {
+				r.method = m
+				if r.path == "" {
+					r.path = p
+				}
+				if a := do(t, s, r); a.StatusCode != http.StatusUnauthorized {
+					t.Errorf("%s %s with %s: %s, want 401", m, p, name, a.Status)
+				}
 			}
 		}
 	}
-	c := signIn(t, s)
-	for _, p := range []string{"/", "/events", "/terminal/7"} {
-		if resp := do(t, s, req{path: p, cookie: c}); resp.StatusCode != http.StatusOK {
-			t.Errorf("GET %s signed in: %s", p, resp.Status)
+	for _, p := range []string{"/events", "/terminal/7"} {
+		if a := do(t, s, req{path: p, token: token}); a.StatusCode != http.StatusOK {
+			t.Errorf("GET %s signed in: %s", p, a.Status)
+		}
+	}
+	for _, p := range []string{"/"} {
+		if a := do(t, s, req{path: p}); a.StatusCode != http.StatusOK || !strings.Contains(a.body, `<div id="root">`) {
+			t.Errorf("the page's own %s without a session: %s", p, a.Status)
 		}
 	}
 }
 
+// A link signs in once. It is the sign-in page with the token in its
+// fragment; the page trades the token for a session, which comes back as
+// JSON: no cookie, no redirect, nothing in an address. Opening the link's
+// page, as a preview crawler would, uses nothing up.
 func TestALinkWorksOnce(t *testing.T) {
 	s := start(t, Config{})
-	link, _ := s.NewLink(context.Background(), "owner")
-	p := pathOf(t, link)
-	if resp := do(t, s, req{path: p}); resp.StatusCode != http.StatusSeeOther {
-		t.Fatalf("first use: %s", resp.Status)
+	link, _ := s.NewLink(context.Background(), "owner", "")
+	u, _ := url.Parse(link)
+	if u.RawQuery != "" || !strings.HasPrefix(u.Fragment, "t=") {
+		t.Fatalf("link %q: the token is not in the fragment", link)
 	}
-	if resp := do(t, s, req{path: p}); resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("second use: %s, want 401", resp.Status)
+	// A crawler fetches the address; it never sees the fragment, and the
+	// token in a query does nothing either.
+	for _, p := range []string{SignInPath, SignInPath + "?" + u.Fragment} {
+		for _, m := range []string{http.MethodGet, http.MethodHead} {
+			a := do(t, s, req{method: m, path: p})
+			if a.StatusCode != http.StatusOK || (m == http.MethodGet && !strings.Contains(a.body, `<div id="root">`)) {
+				t.Fatalf("%s %s: %s", m, p, a.Status)
+			}
+		}
 	}
-	if resp := do(t, s, req{path: "/signin?t=made-up"}); resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("a made-up link: %s, want 401", resp.Status)
+	if a := do(t, s, trade(t, link, req{method: http.MethodHead})); a.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("a HEAD of the trade: %s", a.Status)
 	}
-	if resp := do(t, s, req{path: "/signin"}); resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("no token: %s, want 401", resp.Status)
+	a := do(t, s, trade(t, link, req{}))
+	token := tokenOf(a)
+	if a.StatusCode != http.StatusOK || token == "" || !strings.HasPrefix(a.Header.Get("Content-Type"), "application/json") {
+		t.Fatalf("first trade: %s %s\n%s", a.Status, a.Header.Get("Content-Type"), a.body)
 	}
+	if c := a.Header.Values("Set-Cookie"); len(c) != 0 {
+		t.Fatalf("the trade set a cookie: %q", c)
+	}
+	if loc := a.Header.Get("Location"); loc != "" {
+		t.Fatalf("the trade redirects to %q", loc)
+	}
+	if strings.Contains(link, token) {
+		t.Fatal("the session is in the link")
+	}
+	if a := do(t, s, req{path: "/events", token: token}); a.StatusCode != http.StatusOK {
+		t.Fatalf("the session it handed over: %s", a.Status)
+	}
+	if a := do(t, s, trade(t, link, req{})); a.StatusCode != http.StatusUnauthorized || tokenOf(a) != "" {
+		t.Fatalf("second trade: %s, want 401", a.Status)
+	}
+	for name, r := range map[string]req{
+		"a made-up link":          {path: SessionPath, auth: "Link made-up"},
+		"no link":                 {path: SessionPath},
+		"the link as a session":   {path: SessionPath, auth: "Bearer x"},
+		"the link in the address": {path: SessionPath + "?t=x"},
+	} {
+		if a := do(t, s, r); a.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("%s: %s, want 401", name, a.Status)
+		}
+	}
+}
 
-	// A HEAD, such as a link checker's, does not use a link up.
-	link, _ = s.NewLink(context.Background(), "owner")
-	p = pathOf(t, link)
-	if resp := do(t, s, req{method: http.MethodHead, path: p}); resp.StatusCode != http.StatusMethodNotAllowed || len(resp.Cookies()) != 0 {
-		t.Fatalf("HEAD: %s, cookies %v", resp.Status, resp.Cookies())
-	}
-	if resp := do(t, s, req{path: p}); resp.StatusCode != http.StatusSeeOther {
-		t.Fatalf("GET after a HEAD: %s", resp.Status)
+// No response of the dashboard sets a cookie: not the page, not a sign-in,
+// not a route, not a refusal.
+func TestNoResponseSetsACookie(t *testing.T) {
+	s := start(t, Config{})
+	token := signIn(t, s)
+	link, _ := s.NewLink(context.Background(), "owner", "")
+	for _, r := range []req{
+		{path: "/"}, {path: SignInPath}, trade(t, link, req{}), trade(t, link, req{}), {path: "/events", token: token},
+		{path: "/events"}, {path: "/", host: "evil.example.com"}, {method: http.MethodPost, path: "/any", token: token},
+	} {
+		if a := do(t, s, r); len(a.Header.Values("Set-Cookie")) != 0 {
+			t.Errorf("%s %s: Set-Cookie %q", r.method, r.path, a.Header.Values("Set-Cookie"))
+		}
 	}
 }
 
 // A session belongs to the person its link was made for: its requests are
 // made with that person's API, and it answers as none once that person may
-// no longer sign in. A session of the earlier layout, without a person, is
-// refused.
+// no longer sign in. A session of an earlier layout is refused.
 func TestASessionBelongsToItsPerson(t *testing.T) {
 	var mu sync.Mutex
 	var asked []string
@@ -218,20 +346,19 @@ func TestASessionBelongsToItsPerson(t *testing.T) {
 		}
 	})
 	for _, person := range []string{"ada", "grace", long} {
-		link, err := s.NewLink(context.Background(), person)
+		link, err := s.NewLink(context.Background(), person, "")
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp := do(t, s, req{path: pathOf(t, link)})
-		if resp.StatusCode != http.StatusSeeOther || len(resp.Cookies()) != 1 {
-			t.Fatalf("%s: sign-in %s", person, resp.Status)
+		token := tokenOf(do(t, s, trade(t, link, req{})))
+		if token == "" {
+			t.Fatalf("%s: no session", person)
 		}
-		c := resp.Cookies()[0]
 		mu.Lock()
 		asked = nil
 		mu.Unlock()
-		if resp := do(t, s, req{path: "/", cookie: c}); resp.StatusCode != http.StatusOK {
-			t.Fatalf("%s signed in: %s", person, resp.Status)
+		if a := do(t, s, req{path: "/events", token: token}); a.StatusCode != http.StatusOK {
+			t.Fatalf("%s signed in: %s", person, a.Status)
 		}
 		mu.Lock()
 		if !reflect.DeepEqual(asked, []string{person}) {
@@ -239,23 +366,30 @@ func TestASessionBelongsToItsPerson(t *testing.T) {
 		}
 		allowed[person] = false
 		mu.Unlock()
-		if resp := do(t, s, req{path: "/", cookie: c}); resp.StatusCode != http.StatusUnauthorized {
-			t.Fatalf("%s may no longer sign in: %s, want 401", person, resp.Status)
+		if a := do(t, s, req{path: "/events", token: token}); a.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("%s may no longer sign in: %s, want 401", person, a.Status)
 		}
 	}
-	if _, err := s.NewLink(context.Background(), ""); err == nil {
+	if _, err := s.NewLink(context.Background(), "", ""); err == nil {
 		t.Fatal("a link for nobody was made")
 	}
 
-	// The earlier layout: expiry and nonce, signed under the earlier label.
-	var payload [24]byte
-	binary.BigEndian.PutUint64(payload[:8], uint64(time.Now().Add(time.Hour).Unix()))
-	m := hmac.New(sha256.New, s.key)
-	m.Write([]byte("hataori dashboard session\x00"))
-	m.Write(payload[:])
-	old := base64.RawURLEncoding.EncodeToString(payload[:]) + "." + base64.RawURLEncoding.EncodeToString(m.Sum(nil))
-	if resp := do(t, s, req{path: "/", cookie: &http.Cookie{Name: s.cookie, Value: old}}); resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("a session without a person: %s, want 401", resp.Status)
+	// The earlier layouts: without a person, and the cookie of before,
+	// signed under their own labels.
+	for _, c := range []struct {
+		label  string
+		person string
+	}{{"hataori dashboard session\x00", ""}, {"hataori dashboard session 2\x00", "owner"}} {
+		payload := make([]byte, 24, 24+len(c.person))
+		binary.BigEndian.PutUint64(payload[:8], uint64(time.Now().Add(time.Hour).Unix()))
+		payload = append(payload, c.person...)
+		m := hmac.New(sha256.New, s.key)
+		m.Write([]byte(c.label))
+		m.Write(payload)
+		old := base64.RawURLEncoding.EncodeToString(payload) + "." + base64.RawURLEncoding.EncodeToString(m.Sum(nil))
+		if a := do(t, s, req{path: "/events", token: old}); a.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("a session of the layout %q: %s, want 401", c.label, a.Status)
+		}
 	}
 }
 
@@ -264,144 +398,279 @@ func TestAnExpiredLinkIsRefused(t *testing.T) {
 	var mu sync.Mutex
 	now := time.Now()
 	s.now = func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
-	link, _ := s.NewLink(context.Background(), "owner")
+	link, _ := s.NewLink(context.Background(), "owner", "")
 	mu.Lock()
 	now = now.Add(s.linkTTL)
 	mu.Unlock()
-	if resp := do(t, s, req{path: pathOf(t, link)}); resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("expired link: %s, want 401", resp.Status)
+	if a := do(t, s, trade(t, link, req{})); a.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expired link: %s, want 401", a.Status)
 	}
 }
 
+// A session of the loopback listener lasts seven days, one of the web
+// listener twelve hours (section 7.2).
 func TestASessionExpires(t *testing.T) {
-	s := start(t, Config{})
+	s := start(t, Config{Local: &Local{}, Web: &Web{TLS: selfSigned(t)}})
 	var mu sync.Mutex
 	now := time.Now()
 	s.now = func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
-	c := signIn(t, s)
-	mu.Lock()
-	now = now.Add(s.sessionTTL)
-	mu.Unlock()
-	if resp := do(t, s, req{path: "/", cookie: c}); resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("expired session: %s, want 401", resp.Status)
+	for _, c := range []struct {
+		way  control.Way
+		l    *listener
+		life time.Duration
+	}{{control.WayLocal, s.local, 7 * 24 * time.Hour}, {control.WayWeb, s.web, 12 * time.Hour}} {
+		mu.Lock()
+		start := now
+		mu.Unlock()
+		token := signIn(t, s, c.way)
+		set := func(d time.Duration) { mu.Lock(); now = start.Add(d); mu.Unlock() }
+		set(c.life - time.Minute)
+		if a := do(t, s, req{l: c.l, path: "/events", token: token}); a.StatusCode != http.StatusOK {
+			t.Fatalf("%s: a minute before its end: %s", c.way, a.Status)
+		}
+		set(c.life)
+		if a := do(t, s, req{l: c.l, path: "/events", token: token}); a.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("%s: at its end: %s, want 401", c.way, a.Status)
+		}
+		set(0)
 	}
 }
 
-func TestUnknownHostAndForeignOriginAreRefused(t *testing.T) {
+// The loopback listener answers any loopback name with any port, since a
+// port forwarded to it over SSH need not keep its number, and nothing
+// else. An Origin must be exactly http:// and the request's own Host.
+func TestTheLoopbackListenersHostsAndOrigins(t *testing.T) {
 	s := start(t, Config{})
-	c := signIn(t, s)
-	_, port, _ := net.SplitHostPort(s.ln.Addr().String())
-	for _, host := range []string{"evil.example.com", "evil.example.com:" + port, "localhost:" + port, "127.0.0.1"} {
-		for _, p := range []string{"/", "/signin?t=x"} {
-			if resp := do(t, s, req{path: p, host: host, cookie: c}); resp.StatusCode != http.StatusForbidden {
-				t.Errorf("Host %s, %s: %s, want 403", host, p, resp.Status)
+	token := signIn(t, s)
+	for _, host := range []string{"localhost:9999", "LocalHost:1", "127.0.0.1:65535", "[::1]:8080", "localhost", "127.0.0.1", "[::1]", s.local.ln.Addr().String()} {
+		if a := do(t, s, req{path: "/events", host: host, token: token}); a.StatusCode != http.StatusOK {
+			t.Errorf("Host %s: %s", host, a.Status)
+		}
+	}
+	for _, host := range []string{"evil.example.com", "evil.example.com:9999", "127.0.0.2:9999", "localhost.:9999",
+		"dash.localhost:9999", "0.0.0.0:9999", "127.1:9999", "localhost:x", "localhost:0", "localhost:65536", "localhost:09999", "[::2]:9999"} {
+		for _, p := range []string{"/", "/events", "/signin?t=x"} {
+			if a := do(t, s, req{path: p, host: host, token: token}); a.StatusCode != http.StatusForbidden {
+				t.Errorf("Host %q, %s: %s, want 403", host, p, a.Status)
 			}
 		}
 	}
-	for _, origin := range []string{"http://evil.example.com", "https://127.0.0.1:" + port, "http://127.0.0.1:" + port + "/x", "null"} {
-		if resp := do(t, s, req{path: "/", origin: origin, cookie: c}); resp.StatusCode != http.StatusForbidden {
-			t.Errorf("Origin %s: %s, want 403", origin, resp.Status)
+	for _, o := range []struct {
+		host, origin string
+		ok           bool
+	}{
+		{"localhost:9999", "http://localhost:9999", true},
+		{"localhost:9999", "http://LOCALHOST:9999", true},
+		{"127.0.0.1:80", "http://127.0.0.1", true},
+		{"[::1]:9999", "http://[::1]:9999", true},
+		{"localhost:9999", "http://localhost:9998", false}, // another loopback port: another service
+		{"localhost:9999", "http://127.0.0.1:9999", false},
+		{"localhost:9999", "https://localhost:9999", false},
+		{"localhost:9999", "http://localhost:9999/x", false},
+		{"localhost:9999", "http://localhost", false},
+		{"localhost:9999", "http://user@localhost:9999", false},
+		{"localhost:9999", "null", false},
+		{"localhost:9999", "http://evil.example.com", false},
+	} {
+		want := http.StatusOK
+		if !o.ok {
+			want = http.StatusForbidden
+		}
+		if a := do(t, s, req{path: "/events", host: o.host, origin: o.origin, token: token}); a.StatusCode != want {
+			t.Errorf("Host %s, Origin %s: %s, want %d", o.host, o.origin, a.Status, want)
 		}
 	}
-	if resp := do(t, s, req{path: "/", origin: s.URL(), cookie: c}); resp.StatusCode != http.StatusOK {
-		t.Errorf("own Origin: %s", resp.Status)
+}
+
+// The web listener answers only its configured name, and an Origin only
+// when it is exactly that address.
+func TestTheWebListenersHostAndOrigin(t *testing.T) {
+	s := start(t, Config{Web: &Web{TLS: selfSigned(t)}})
+	token := signIn(t, s, control.WayWeb)
+	base := s.web.base
+	_, port, _ := net.SplitHostPort(base.Host)
+	for _, host := range []string{"evil.example.com", "evil.example.com:" + port, "localhost:" + port, "127.0.0.1", "127.0.0.1:1"} {
+		for _, p := range []string{"/", "/events", "/signin?t=x"} {
+			if a := do(t, s, req{path: p, host: host, token: token}); a.StatusCode != http.StatusForbidden {
+				t.Errorf("Host %s, %s: %s, want 403", host, p, a.Status)
+			}
+		}
+	}
+	for _, origin := range []string{"http://evil.example.com", "http://" + base.Host, "https://127.0.0.1:1", "https://" + base.Host + "/x", "null"} {
+		if a := do(t, s, req{path: "/events", origin: origin, token: token}); a.StatusCode != http.StatusForbidden {
+			t.Errorf("Origin %s: %s, want 403", origin, a.Status)
+		}
+	}
+	if a := do(t, s, req{path: "/events", origin: s.URL(control.WayWeb), token: token}); a.StatusCode != http.StatusOK {
+		t.Errorf("own Origin: %s", a.Status)
+	}
+}
+
+// A link, and the session it opens, belong to the listener the link was
+// made for. A link presented on the other listener is used up.
+func TestALinkAndASessionBelongToTheirListener(t *testing.T) {
+	s := start(t, Config{Local: &Local{}, Web: &Web{TLS: selfSigned(t)}})
+	other := map[*listener]*listener{s.local: s.web, s.web: s.local}
+	for _, way := range []control.Way{control.WayLocal, control.WayWeb} {
+		l, _ := s.listenerOf(way)
+		link, err := s.NewLink(context.Background(), "owner", way)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(link, l.base.String()+SignInPath) {
+			t.Fatalf("%s: link %s", way, link)
+		}
+		if a := do(t, s, trade(t, link, req{l: other[l]})); a.StatusCode != http.StatusUnauthorized || tokenOf(a) != "" {
+			t.Fatalf("%s's link on the other listener: %s, want 401", way, a.Status)
+		}
+		if a := do(t, s, trade(t, link, req{l: l})); a.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("%s's link after it was tried on the other listener: %s, want 401", way, a.Status)
+		}
+		token := signIn(t, s, way)
+		if a := do(t, s, req{l: l, path: "/events", token: token}); a.StatusCode != http.StatusOK {
+			t.Fatalf("%s's session: %s", way, a.Status)
+		}
+		if a := do(t, s, req{l: other[l], path: "/events", token: token}); a.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("%s's session on the other listener: %s, want 401", way, a.Status)
+		}
+	}
+}
+
+// A link is for the listener asked for; with none named, the loopback
+// listener when there is one, else the web listener; a listener the
+// dashboard does not have is an error that names its config key.
+func TestNewLinkPicksTheListener(t *testing.T) {
+	both := start(t, Config{Local: &Local{}, Web: &Web{TLS: selfSigned(t)}})
+	local := start(t, Config{Local: &Local{}})
+	web := start(t, Config{Web: &Web{TLS: selfSigned(t)}})
+	for _, c := range []struct {
+		s    *Server
+		way  control.Way
+		want *listener
+		err  string
+	}{
+		{both, "", both.local, ""}, {both, control.WayLocal, both.local, ""}, {both, control.WayWeb, both.web, ""},
+		{local, "", local.local, ""}, {local, control.WayWeb, nil, `"dashboard.web"`},
+		{web, "", web.web, ""}, {web, control.WayLocal, nil, `"dashboard.listen"`},
+		{both, "lan", nil, "not a listener"},
+	} {
+		link, err := c.s.NewLink(context.Background(), "owner", c.way)
+		if c.err != "" {
+			if err == nil || !strings.Contains(err.Error(), c.err) {
+				t.Errorf("%q: %v, want %s", c.way, err, c.err)
+			}
+			continue
+		}
+		if err != nil || !strings.HasPrefix(link, c.want.base.String()+SignInPath+"#t=") {
+			t.Errorf("%q: %s, %v", c.way, link, err)
+		}
 	}
 }
 
 func TestOnlyReadsAreServed(t *testing.T) {
 	s := start(t, Config{})
-	c := signIn(t, s)
+	token := signIn(t, s)
 	for _, m := range []string{"POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE", "CONNECT", "PROPFIND"} {
 		for _, p := range []string{"/", "/events", "/any", "/no-such-route", "/signin?t=x"} {
-			if resp := do(t, s, req{method: m, path: p, cookie: c}); resp.StatusCode != http.StatusMethodNotAllowed {
-				t.Errorf("%s %s: %s, want 405", m, p, resp.Status)
+			if a := do(t, s, req{method: m, path: p, token: token}); a.StatusCode != http.StatusMethodNotAllowed {
+				t.Errorf("%s %s: %s, want 405", m, p, a.Status)
 			}
 		}
 	}
 }
 
-func TestNotLoopbackNeedsTLSOrAProxy(t *testing.T) {
+// The loopback listener must be on loopback; the web listener must be
+// served over HTTPS, its own or a reverse proxy's. Each refusal names its
+// key, with the prefix of the form the config used.
+func TestListenersRefuseWhatTheyCannotServe(t *testing.T) {
 	for _, listen := range []string{"0.0.0.0:0", ":0", "192.0.2.1:0", "[::]:0", "dash.example.com:0"} {
-		_, err := Listen(Config{Listen: listen}, nil, slog.Default())
-		if err == nil || !strings.Contains(err.Error(), "not a loopback address") || !strings.Contains(err.Error(), "dashboard.proxy") {
-			t.Errorf("listen %s: %v", listen, err)
+		_, err := Listen(Config{Local: &Local{Listen: listen}}, nil, slog.Default())
+		if err == nil || !strings.Contains(err.Error(), `"dashboard.listen"`) || !strings.Contains(err.Error(), "not a loopback address") ||
+			!strings.Contains(err.Error(), `"dashboard.web"`) {
+			t.Errorf("loopback listener on %s: %v", listen, err)
 		}
 	}
+	tlsCert := selfSigned(t)
 	for _, c := range []struct {
 		cfg  Config
 		want string
 	}{
-		{Config{Listen: "127.0.0.1:0", Proxy: "127.0.0.1"}, `"dashboard.url": missing`},
-		{Config{Listen: "127.0.0.1:0", Proxy: "127.0.0.1", URL: "http://dash.example.com"}, "not https"},
-		{Config{Listen: "127.0.0.1:0", Proxy: "proxy.example.com", URL: "https://dash.example.com"}, "not an IP address"},
-		{Config{Listen: "127.0.0.1:0", URL: "https://dash.example.com"}, "is https"},
-		{Config{Listen: "127.0.0.1:0", URL: "https://dash.example.com/path"}, "is not an address"},
-		{Config{Listen: "nonsense"}, "is not a host and port"},
+		{Config{}, "neither a loopback nor a web listener"},
+		{Config{Local: &Local{Listen: "nonsense"}}, "is not a host and port"},
+		{Config{Local: &Local{Listen: "127.0.0.1:0", URL: "https://localhost:7466"}}, `"dashboard.url": "https://localhost:7466" is not an http address on a loopback name`},
+		{Config{Local: &Local{Listen: "127.0.0.1:0", URL: "http://dash.example.com"}}, "not an http address on a loopback name"},
+		{Config{Web: &Web{Listen: "127.0.0.1:0"}}, `"dashboard.web.listen": the web listener on "127.0.0.1:0" is served neither with TLS`},
+		{Config{Web: &Web{Listen: "127.0.0.1:0", Key: "dashboard."}}, `"dashboard.listen"`},
+		{Config{Web: &Web{Listen: "127.0.0.1:0", Proxy: "127.0.0.1"}}, `"dashboard.web.url": missing`},
+		{Config{Web: &Web{Listen: "127.0.0.1:0", Proxy: "127.0.0.1", URL: "http://dash.example.com"}}, "not https"},
+		{Config{Web: &Web{Listen: "127.0.0.1:0", Proxy: "proxy.example.com", URL: "https://dash.example.com"}}, "not an IP address"},
+		{Config{Web: &Web{Listen: "127.0.0.1:0", TLS: tlsCert, URL: "http://dash.example.com"}}, "not https"},
+		{Config{Web: &Web{Listen: "127.0.0.1:0", TLS: tlsCert, URL: "https://dash.example.com/path"}}, "is not an address"},
+		{Config{Web: &Web{Listen: "0.0.0.0:0", TLS: tlsCert}}, `"dashboard.web.url": missing`},
 		// A proxy on another machine would get links and sessions in the clear.
-		{Config{Listen: "0.0.0.0:0", Proxy: "192.0.2.1", URL: "https://dash.example.com"}, "on another machine"},
+		{Config{Web: &Web{Listen: "0.0.0.0:0", Proxy: "192.0.2.1", URL: "https://dash.example.com"}}, "on another machine"},
+		{Config{Web: &Web{Listen: "0.0.0.0:0", URL: "https://dash.example.com"}}, "served neither with TLS"},
 	} {
 		if _, err := Listen(c.cfg, nil, slog.Default()); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%+v: %v, want %q", c.cfg, err, c.want)
 		}
 	}
-}
-
-func TestCookieOverPlainHTTPIsHttpOnly(t *testing.T) {
-	s := start(t, Config{})
-	c := signIn(t, s)
-	if !c.HttpOnly || c.Secure {
-		t.Fatalf("cookie: HttpOnly %v Secure %v, want HttpOnly only", c.HttpOnly, c.Secure)
+	// Both on one address: the second cannot listen, and the first is let go.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	l.Close()
+	if _, err := Listen(Config{Local: &Local{Listen: addr}, Web: &Web{Listen: addr, TLS: tlsCert}}, nil, slog.Default()); err == nil {
+		t.Fatal("two listeners on one address")
+	}
+	if l, err := net.Listen("tcp", addr); err != nil {
+		t.Fatalf("the loopback listener was kept after the web one failed: %v", err)
+	} else {
+		l.Close()
 	}
 }
 
-func TestCookieOverTLSIsSecure(t *testing.T) {
-	s := start(t, Config{TLS: selfSigned(t)})
-	if !strings.HasPrefix(s.URL(), "https://") {
-		t.Fatalf("URL %s", s.URL())
+func TestTheWebListenerOverTLS(t *testing.T) {
+	s := start(t, Config{Web: &Web{TLS: selfSigned(t)}})
+	if !strings.HasPrefix(s.URL(control.WayWeb), "https://") || s.URL(control.WayLocal) != "" {
+		t.Fatalf("URLs %q, %q", s.URL(control.WayWeb), s.URL(control.WayLocal))
 	}
-	c := signIn(t, s)
-	if !c.HttpOnly || !c.Secure || !strings.HasPrefix(c.Name, "__Host-") {
-		t.Fatalf("cookie %s: HttpOnly %v Secure %v", c.Name, c.HttpOnly, c.Secure)
-	}
-	if resp := do(t, s, req{path: "/", cookie: c}); resp.StatusCode != http.StatusOK {
-		t.Fatalf("signed in: %s", resp.Status)
+	token := signIn(t, s, control.WayWeb)
+	if a := do(t, s, req{path: "/events", token: token}); a.StatusCode != http.StatusOK {
+		t.Fatalf("signed in: %s", a.Status)
 	}
 }
 
 func TestBehindAProxy(t *testing.T) {
 	// The proxy speaks plain HTTP to the dashboard and forwards the Host it
 	// was asked for.
-	s := start(t, Config{Proxy: "127.0.0.1", URL: "https://Dash.Example.com:443/"})
-	if s.URL() != "https://dash.example.com" {
-		t.Fatalf("URL %s", s.URL())
+	s := start(t, Config{Web: &Web{Proxy: "127.0.0.1", URL: "https://Dash.Example.com:443/"}})
+	if s.URL(control.WayWeb) != "https://dash.example.com" {
+		t.Fatalf("URL %s", s.URL(control.WayWeb))
 	}
-	link, _ := s.NewLink(context.Background(), "owner")
-	if !strings.HasPrefix(link, "https://dash.example.com/signin?t=") {
+	link, _ := s.NewLink(context.Background(), "owner", "")
+	if !strings.HasPrefix(link, "https://dash.example.com/signin#t=") {
 		t.Fatalf("link %s", link)
 	}
-	resp := do(t, s, req{path: pathOf(t, link), host: "dash.example.com"})
-	if resp.StatusCode != http.StatusSeeOther {
-		t.Fatalf("sign-in: %s", resp.Status)
+	a := do(t, s, trade(t, link, req{host: "dash.example.com"}))
+	token := tokenOf(a)
+	if a.StatusCode != http.StatusOK || token == "" {
+		t.Fatalf("sign-in: %s", a.Status)
 	}
-	var c *http.Cookie
-	for _, x := range resp.Cookies() {
-		c = x
+	if a := do(t, s, req{path: "/events", host: "dash.example.com", origin: "https://dash.example.com", token: token}); a.StatusCode != http.StatusOK {
+		t.Fatalf("signed in: %s", a.Status)
 	}
-	if c == nil || !c.HttpOnly || !c.Secure {
-		t.Fatalf("cookie behind the proxy: %+v", c)
-	}
-	if resp := do(t, s, req{path: "/", host: "dash.example.com", origin: "https://dash.example.com", cookie: c}); resp.StatusCode != http.StatusOK {
-		t.Fatalf("signed in: %s", resp.Status)
-	}
-	if resp := do(t, s, req{path: "/", host: s.ln.Addr().String(), cookie: c}); resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("the listener's own address as Host: %s, want 403", resp.Status)
+	if a := do(t, s, req{path: "/events", host: s.web.ln.Addr().String(), token: token}); a.StatusCode != http.StatusForbidden {
+		t.Fatalf("the listener's own address as Host: %s, want 403", a.Status)
 	}
 }
 
 func TestOnlyTheProxyMayConnect(t *testing.T) {
-	s := start(t, Config{Proxy: "192.0.2.1", URL: "https://dash.example.com"})
-	if resp := do(t, s, req{path: "/", host: "dash.example.com"}); resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("not from the proxy: %s, want 403", resp.Status)
+	s := start(t, Config{Web: &Web{Proxy: "192.0.2.1", URL: "https://dash.example.com"}})
+	if a := do(t, s, req{path: "/", host: "dash.example.com"}); a.StatusCode != http.StatusForbidden {
+		t.Fatalf("not from the proxy: %s, want 403", a.Status)
 	}
 }
 
@@ -446,12 +715,12 @@ func (a streamAPI) Events(ctx context.Context, _ control.Filter, _ uint64) (<-ch
 }
 
 // openStream opens the event stream and returns its body.
-func openStream(t *testing.T, s *Server, c *http.Cookie) io.ReadCloser {
+func openStream(t *testing.T, s *Server, token string) io.ReadCloser {
 	t.Helper()
-	hr, _ := http.NewRequest(http.MethodGet, "http://"+s.ln.Addr().String()+EventsPath, nil)
-	hr.Host = s.base.Host
-	hr.AddCookie(c)
-	resp, err := client(s).Do(hr)
+	l := first(s)
+	hr := requestTo(t, l, http.MethodGet, EventsPath, nil)
+	hr.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client(l).Do(hr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -464,7 +733,7 @@ func openStream(t *testing.T, s *Server, c *http.Cookie) io.ReadCloser {
 // A stream ends when its session expires.
 func TestAStreamEndsWithItsSession(t *testing.T) {
 	ended := make(chan struct{})
-	s := start(t, Config{SessionTTL: 2 * time.Second}, func(s *Server) { s.For = only(streamAPI{ended: ended}) })
+	s := start(t, Config{LocalSessionTTL: 2 * time.Second}, func(s *Server) { s.For = only(streamAPI{ended: ended}) })
 	body := openStream(t, s, signIn(t, s))
 	defer body.Close()
 	go io.Copy(io.Discard, body)
@@ -583,13 +852,12 @@ func TestHostScreenStream(t *testing.T) {
 		if body != "" {
 			rd = strings.NewReader(body)
 		}
-		hr, _ := http.NewRequest(http.MethodGet, "http://"+s.ln.Addr().String()+HostScreenPath+"?"+url.Values{"pane": {pane}}.Encode(), rd)
-		hr.Host = s.base.Host
-		hr.AddCookie(c)
+		hr := requestTo(t, first(s), http.MethodGet, HostScreenPath+"?"+url.Values{"pane": {pane}}.Encode(), rd)
+		hr.Header.Set("Authorization", "Bearer "+c)
 		for k, v := range header {
 			hr.Header.Set(k, v)
 		}
-		resp, err := client(s).Do(hr)
+		resp, err := client(first(s)).Do(hr)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -661,11 +929,11 @@ func TestAPartBodyHoldsNothingOpen(t *testing.T) {
 	s := start(t, Config{}, func(s *Server) { s.For = only(api) })
 	c := signIn(t, s)
 	for _, path := range []string{TerminalPath + "?thread=1", HostScreenPath + "?pane=%251"} {
-		conn, err := net.Dial("tcp", s.ln.Addr().String())
+		conn, err := net.Dial("tcp", first(s).ln.Addr().String())
 		if err != nil {
 			t.Fatal(err)
 		}
-		fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: %s\r\nCookie: %s=%s\r\nContent-Length: 100\r\n\r\nrogue", path, s.base.Host, c.Name, c.Value)
+		fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: %s\r\nAuthorization: Bearer %s\r\nContent-Length: 100\r\n\r\nrogue", path, first(s).base.Host, c)
 		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 		b, err := io.ReadAll(conn) // ends only when the server closes the connection
 		conn.Close()
@@ -677,5 +945,68 @@ func TestAPartBodyHoldsNothingOpen(t *testing.T) {
 	defer api.mu.Unlock()
 	if api.reads != 0 {
 		t.Fatal("a pane was read for a request that sent a body")
+	}
+}
+
+// Closing a server that never served lets go of its ports.
+func TestCloseBeforeServeFreesThePorts(t *testing.T) {
+	s, err := Listen(Config{Local: &Local{Listen: "127.0.0.1:0"}, Web: &Web{Listen: "127.0.0.1:0", TLS: selfSigned(t)}}, only(noAPI{}), slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	addrs := []string{s.local.ln.Addr().String(), s.web.ln.Addr().String()}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range addrs {
+		l, err := net.Listen("tcp", a)
+		if err != nil {
+			t.Fatalf("%s is still held: %v", a, err)
+		}
+		l.Close()
+	}
+}
+
+// The loopback listener refuses a request that came through a reverse
+// proxy: one that rewrote the Host to a loopback name would otherwise
+// open it to whoever the proxy serves. The web listener's proxy is fine.
+func TestTheLoopbackListenerRefusesAProxy(t *testing.T) {
+	s := start(t, Config{})
+	token := signIn(t, s)
+	for _, h := range []string{"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Real-IP", "Via"} {
+		for _, p := range []string{"/", "/events", SessionPath} {
+			if a := do(t, s, req{path: p, token: token, header: map[string]string{h: "192.0.2.1"}}); a.StatusCode != http.StatusForbidden {
+				t.Errorf("%s through a proxy (%s): %s, want 403", p, h, a.Status)
+			}
+		}
+	}
+	w := start(t, Config{Web: &Web{Proxy: "127.0.0.1", URL: "https://dash.example.com"}})
+	wt := tokenOf(do(t, w, trade(t, mustLink(t, w, control.WayWeb), req{host: "dash.example.com"})))
+	if a := do(t, w, req{path: "/events", host: "dash.example.com", token: wt,
+		header: map[string]string{"X-Forwarded-For": "192.0.2.1", "Via": "1.1 proxy"}}); a.StatusCode != http.StatusOK {
+		t.Fatalf("the web listener through its proxy: %s", a.Status)
+	}
+}
+
+func mustLink(t *testing.T, s *Server, way control.Way) string {
+	t.Helper()
+	link, err := s.NewLink(context.Background(), "owner", way)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return link
+}
+
+// A session that would outlast its listener's lifetime as it is now, such
+// as one made before the lifetime was shortened, is refused.
+func TestASessionIsCappedAtItsListenersLifetime(t *testing.T) {
+	s := start(t, Config{Local: &Local{}, LocalSessionTTL: time.Hour})
+	ok, _ := s.newSession(time.Now().Add(time.Hour), "owner", control.WayLocal)
+	long, _ := s.newSession(time.Now().Add(7*24*time.Hour), "owner", control.WayLocal)
+	if a := do(t, s, req{path: "/events", token: ok}); a.StatusCode != http.StatusOK {
+		t.Fatalf("a session within the lifetime: %s", a.Status)
+	}
+	if a := do(t, s, req{path: "/events", token: long}); a.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("a session longer than the lifetime: %s, want 401", a.Status)
 	}
 }

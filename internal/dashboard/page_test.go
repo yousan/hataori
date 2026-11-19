@@ -1,7 +1,6 @@
 package dashboard
 
 import (
-	"io"
 	"io/fs"
 	"net/http"
 	"regexp"
@@ -9,37 +8,22 @@ import (
 	"testing"
 )
 
-// fetch is do, keeping the body.
-func fetch(t *testing.T, s *Server, path string, c *http.Cookie) (*http.Response, string) {
+// fetch is a GET of path without a session, keeping the body.
+func fetch(t *testing.T, s *Server, path string) (*http.Response, string) {
 	t.Helper()
-	hr, err := http.NewRequest(http.MethodGet, "http://"+s.ln.Addr().String()+path, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	hr.Host = s.base.Host
-	if c != nil {
-		hr.AddCookie(c)
-	}
-	resp, err := client(s).Do(hr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return resp, string(b)
+	a := do(t, s, req{path: path})
+	return a.Response, a.body
 }
 
 // references are the src and href attributes of an HTML page.
 var references = regexp.MustCompile(`\s(?:src|href)\s*=\s*["']([^"']*)["']`)
 
-// The page comes from the binary: no Node, no files on disk.
+// The page comes from the binary: no Node, no files on disk. Its files
+// hold no data, so they are served without a session: the page reads its
+// session from its own storage once it runs.
 func TestThePageIsServed(t *testing.T) {
 	s := start(t, Config{})
-	c := signIn(t, s)
-	resp, body := fetch(t, s, "/", c)
+	resp, body := fetch(t, s, "/")
 	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
 		t.Fatalf("GET /: %s, %s", resp.Status, resp.Header.Get("Content-Type"))
 	}
@@ -52,16 +36,13 @@ func TestThePageIsServed(t *testing.T) {
 	}
 	for _, m := range refs {
 		ref := m[1]
-		resp, _ := fetch(t, s, ref, c)
+		resp, _ := fetch(t, s, ref)
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("GET %s: %s", ref, resp.Status)
 		}
 		if ct := resp.Header.Get("Content-Type"); (strings.HasSuffix(ref, ".js") && !strings.HasPrefix(ct, "text/javascript")) ||
 			(strings.HasSuffix(ref, ".css") && !strings.HasPrefix(ct, "text/css")) {
 			t.Errorf("GET %s: Content-Type %q", ref, ct)
-		}
-		if resp, _ := fetch(t, s, ref, nil); resp.StatusCode != http.StatusUnauthorized {
-			t.Errorf("GET %s without a session: %s, want 401", ref, resp.Status)
 		}
 	}
 }
@@ -84,12 +65,20 @@ var (
 )
 
 // The page loads nothing beyond its own server: every file it names is
-// one of its own, and the browser is told to refuse anything else.
+// one of its own, and the browser is told to refuse anything else. The
+// sign-in page is the same page under the same policy.
 func TestThePageLoadsNothingElse(t *testing.T) {
 	s := start(t, Config{})
-	resp, _ := fetch(t, s, "/", signIn(t, s))
+	resp, index := fetch(t, s, "/")
 	if got := resp.Header.Get("Content-Security-Policy"); got != contentSecurityPolicy {
 		t.Errorf("Content-Security-Policy %q, want %q", got, contentSecurityPolicy)
+	}
+	a := do(t, s, req{path: SignInPath})
+	if got := a.Header.Get("Content-Security-Policy"); got != contentSecurityPolicy {
+		t.Errorf("sign-in: Content-Security-Policy %q, want %q", got, contentSecurityPolicy)
+	}
+	if a.body != index {
+		t.Errorf("the sign-in page is not the page:\n%s", a.body)
 	}
 	directives := map[string]bool{}
 	for _, d := range strings.Split(contentSecurityPolicy, ";") {

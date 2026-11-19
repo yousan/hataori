@@ -206,13 +206,94 @@ func realDir(dir string, make bool) (string, error) {
 	return dir, nil
 }
 
-// trashName matches the names Remove gives: the time, eight hex digits and
-// the workspace's last segment.
-var trashName = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}-[A-Za-z0-9._%-]+$`)
+// trashPrefix is the start of the names Remove gives: the time and eight
+// hex digits.
+var trashPrefix = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}-`)
+
+// trashName reports whether name is one Remove gives: trashPrefix, then
+// what Segment writes for the base name of a directory.
+func trashName(name string) bool {
+	loc := trashPrefix.FindStringIndex(name)
+	return loc != nil && segmentWritten(name[loc[1]:])
+}
+
+// segmentWritten reports whether Segment returns s for a base name: at
+// most 255 bytes, none of them NUL or '/', and not empty, "." or "..". A
+// segment of at most maxSegment bytes is the one its unescaped bytes give.
+// A longer one was cut: the first 40 bytes of what Segment wrote, which
+// may end inside an escape, "%" and 24 hex digits of a hash.
+func segmentWritten(s string) bool {
+	if raw, ok := unescapeSegment(s); ok && baseName(raw) && Segment(raw) == s {
+		return true
+	}
+	const cut = 40
+	if len(s) != cut+1+24 || s[cut] != '%' || !lowerHex(s[cut+1:]) {
+		return false
+	}
+	p := s[:cut]
+	if strings.Contains(p, "%2E") {
+		// Only dots, all escaped: the input is one of these, so its hash
+		// is known. A name has at most 255 bytes.
+		for n := maxSegment/3 + 1; n <= 255; n++ {
+			if Segment(strings.Repeat(".", n)) == s {
+				return true
+			}
+		}
+		return false
+	}
+	for i := 0; i < len(p); i++ {
+		c := p[i]
+		if c != '%' {
+			if !segmentKeeps(c) {
+				return false
+			}
+			continue
+		}
+		rest := p[i+1:]
+		if len(rest) < 2 { // an escape the cut ends inside
+			return len(rest) == 0 || upperHex(rest[0])
+		}
+		b, err := strconv.ParseUint(rest[:2], 16, 8)
+		if err != nil || !upperHex(rest[0]) || !upperHex(rest[1]) || segmentKeeps(byte(b)) || b == 0 || b == '/' {
+			return false
+		}
+		i += 2
+	}
+	return true
+}
+
+// baseName reports whether s can be the base name of a directory.
+func baseName(s string) bool {
+	return s != "" && s != "." && s != ".." && len(s) <= 255 && !strings.ContainsAny(s, "\x00/")
+}
+
+// unescapeSegment undoes Segment's %XX escapes.
+func unescapeSegment(s string) (string, bool) {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] != '%' {
+			b.WriteByte(s[i])
+			continue
+		}
+		if i+3 > len(s) || !upperHex(s[i+1]) || !upperHex(s[i+2]) {
+			return "", false
+		}
+		v, err := strconv.ParseUint(s[i+1:i+3], 16, 8)
+		if err != nil {
+			return "", false
+		}
+		b.WriteByte(byte(v))
+		i += 2
+	}
+	return b.String(), true
+}
+
+func upperHex(c byte) bool { return c >= '0' && c <= '9' || c >= 'A' && c <= 'F' }
 
 // Purge deletes the entries of trash/ that were moved there longer than
 // Retention ago, by the time in their names, and returns them. An entry
-// whose name the removal did not make is left alone.
+// whose name the removal did not make is left alone. An entry that cannot
+// be deleted is named in the error, and the others are still deleted.
 func (r Remover) Purge() ([]string, error) {
 	if r.Retention <= 0 {
 		return nil, errors.New("workspace: purge: no retention set")
@@ -252,23 +333,30 @@ func (r Remover) Purge() ([]string, error) {
 		return nil, fmt.Errorf("workspace: purge: %w", err)
 	}
 	now := r.now()
-	var purged []string
+	var (
+		purged []string
+		failed []error
+	)
 	for _, e := range entries {
 		name := e.Name()
-		if !trashName.MatchString(name) {
+		if !trashName(name) {
 			continue
 		}
+		// The name has the time in whole seconds, rounded down: the entry
+		// may have been moved up to a second later.
 		moved, err := time.Parse(trashStamp, name[:len(trashStamp)])
-		if err != nil || now.Sub(moved) <= r.Retention {
+		if err != nil || now.Sub(moved.Add(time.Second)) <= r.Retention {
 			continue
 		}
 		p := filepath.Join(trash, name)
+		// One that cannot be deleted does not keep the others from it.
 		if err := tr.RemoveAll(name); err != nil {
-			return purged, fmt.Errorf("workspace: purge: %w", err)
+			failed = append(failed, fmt.Errorf("workspace: purge: %s: %w", p, err))
+			continue
 		}
 		purged = append(purged, p)
 	}
-	return purged, nil
+	return purged, errors.Join(failed...)
 }
 
 // Check answers whether the workspace at dir may be removed: nil when

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math/rand/v2"
 	"net"
 	"os"
 	"os/exec"
@@ -1148,6 +1149,107 @@ func TestPurgeDeletesOnlyOldTrash(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(tmp, "outside")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The purge takes a name only as Remove writes it: what Segment gives for
+// every base name a directory can have, short, escaped, dots only or too
+// long and hashed, and nothing else.
+func TestTrashNameIsWhatRemoveWrites(t *testing.T) {
+	prefix := "20000101T000000Z-0123abcd-"
+	segments := []string{"...", "k", "a b", "%", "%zz", "ü", strings.Repeat("x", 200), strings.Repeat("é", 50), strings.Repeat("x", 255), strings.Repeat(".", 255)}
+	for n := 30; n <= 90; n++ { // the cut at 40 bytes falls at each place of an escape
+		segments = append(segments, strings.Repeat("a", n%3)+strings.Repeat(" ", n), strings.Repeat(".", n))
+	}
+	rnd := rand.New(rand.NewPCG(1, 2))
+	const bytes = "aZ09_-.% \x01\xff\xc3\xa9"
+	for range 5000 {
+		b := make([]byte, 1+rnd.IntN(120))
+		for i := range b {
+			b[i] = bytes[rnd.IntN(len(bytes))]
+		}
+		if s := string(b); s != "." && s != ".." {
+			segments = append(segments, s)
+		}
+	}
+	for _, seg := range segments {
+		if name := prefix + Segment(seg); !trashName(name) {
+			t.Errorf("%q, the name Remove gives for %q, is not taken", name, seg)
+		}
+	}
+	hash := "%abcdef0123456789abcdef01" // "%ab" is no escape Segment writes
+	for _, tail := range []string{"%zz", "a%", "%2", "%2e", "%%", "a%g0", "x%ab", "%a", "a/b", "",
+		"%41", "a%2D", ".", "..", "a%2E", // escapes Segment does not write, dots it escapes
+		"abc" + hash, strings.Repeat("a", 39) + hash, strings.Repeat("a", 41) + hash, // a cut that is not at 40
+		strings.Repeat("a", 37) + "%41" + hash, strings.Repeat("a", 38) + "%g" + hash, "%2E.%2E" + strings.Repeat("a", 33) + hash,
+		strings.Repeat("a", 40) + "%abcdef0123456789ABCDEF01",
+		strings.Repeat("%2E", 13) + "%" + strings.Repeat("0", 24), // the hash of no input of dots
+		// What Segment gives for no base name: empty, ".", "..", NUL, '/'.
+		Segment(""), Segment("."), Segment(".."), Segment("a\x00"), Segment("a/b"),
+		strings.Repeat("a", 37) + "%00" + hash, strings.Repeat("a", 37) + "%2F" + hash} {
+		if trashName(prefix + tail) {
+			t.Errorf("%q, which Remove does not write, is taken", prefix+tail)
+		}
+	}
+}
+
+// A name has its time in whole seconds, rounded down, so an entry is kept
+// for a second longer than the retention from that time.
+func TestPurgeKeepsAnEntryWithinTheSecondOfItsName(t *testing.T) {
+	tmp := t.TempDir()
+	name := "20000101T000000Z-00000000-a"
+	os.MkdirAll(filepath.Join(tmp, TrashDir, name), 0o700)
+	at := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	r := Remover{Maker: Maker{Root: tmp}, Retention: time.Hour, Now: func() time.Time { return at.Add(time.Hour + 500*time.Millisecond) }}
+	if purged, err := r.Purge(); err != nil || len(purged) != 0 {
+		t.Fatalf("purged %v, %v within the second of the name", purged, err)
+	}
+	r.Now = func() time.Time { return at.Add(time.Hour + 1001*time.Millisecond) }
+	if purged, err := r.Purge(); err != nil || len(purged) != 1 {
+		t.Fatalf("purged %v, %v after it", purged, err)
+	}
+}
+
+// An entry the purge cannot delete is named in the error, and the old
+// entries listed after it are still deleted. Two cannot be deleted, so
+// that the error names both whatever order the directory lists them in.
+func TestPurgeGoesOnPastAnEntryItCannotDelete(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a directory's mode does not keep root from deleting in it")
+	}
+	tmp := t.TempDir()
+	trash := filepath.Join(tmp, TrashDir)
+	for _, name := range []string{"a", "b", "c", "d"} {
+		p := filepath.Join(trash, "20000101T000000Z-00000000-"+name, "d")
+		os.MkdirAll(p, 0o700)
+		os.WriteFile(filepath.Join(p, "f"), []byte("x"), 0o600)
+	}
+	var stuck []string
+	for _, name := range []string{"b", "d"} {
+		p := filepath.Join(trash, "20000101T000000Z-00000000-"+name, "d")
+		if err := os.Chmod(p, 0o500); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(p, 0o700) })
+		stuck = append(stuck, p)
+	}
+	r := Remover{Maker: Maker{Root: tmp}, Retention: time.Hour}
+	purged, err := r.Purge()
+	if err == nil || !strings.Contains(err.Error(), "20000101T000000Z-00000000-b") || !strings.Contains(err.Error(), "20000101T000000Z-00000000-d") {
+		t.Fatalf("purge with two entries it cannot delete: %v", err)
+	}
+	var names []string
+	for _, p := range purged {
+		names = append(names, filepath.Base(p))
+	}
+	sort.Strings(names)
+	if fmt.Sprint(names) != "[20000101T000000Z-00000000-a 20000101T000000Z-00000000-c]" {
+		t.Fatalf("purged %v", names)
+	}
+	for _, p := range stuck {
+		if _, err := os.Lstat(filepath.Join(p, "f")); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

@@ -15,6 +15,7 @@ import {
   thread,
   threads,
 } from "./api";
+import { Stream } from "./stream";
 
 // Attention is why a thread needs attention.
 export type Attention =
@@ -135,7 +136,7 @@ export function useDashboard(): Dashboard {
 
   useEffect(() => {
     let closed = false;
-    let source: EventSource | null = null;
+    let source: Stream | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined; // a read to come
     let retry: ReturnType<typeof setTimeout> | undefined; // a start to try again
     let last = 0; // the position to go on after
@@ -205,7 +206,7 @@ export function useDashboard(): Dashboard {
 
     const open = (after: number) => {
       last = after;
-      source = new EventSource(`${eventsPath}?after=${after}`);
+      source = new Stream(`${eventsPath}?after=${after}`);
       source.onopen = () => {
         setState((s) => ({ ...s, live: { ...s.live, connected: true }, opens: s.opens + 1 }));
         later(); // what changed while the stream was down
@@ -222,14 +223,14 @@ export function useDashboard(): Dashboard {
         later();
       };
       source.addEventListener("caught_up", (m) => {
-        const pos = Number((m as MessageEvent).lastEventId);
+        const pos = Number(m.lastEventId);
         if (Number.isFinite(pos)) at(pos);
       });
       source.onerror = () => {
         setState((s) => ({ ...s, live: { ...s.live, connected: false } }));
         // A stream the server refused does not come back by itself: find
         // out whether the session ended, and open it again if not.
-        if (source?.readyState === EventSource.CLOSED) {
+        if (source?.readyState === Stream.CLOSED) {
           source.close();
           read().then(() => {
             if (!closed && !out) setTimeout(() => !closed && !out && open(last), reopenDelay);

@@ -2,14 +2,32 @@
 // section 7.2). It runs inside the daemon as a client of the control API
 // with a read-only Caller, and reads nothing else.
 //
+// It serves on up to two listeners, one per way of reaching it: the
+// loopback listener, for a browser on the host and for one on another
+// machine through a port forwarded over SSH, and the web listener, over
+// HTTPS with a stable name. Which way a request came is the listener that
+// accepted its connection, never anything the request says. A sign-in link,
+// and the session it opens, belong to one listener.
+//
 // Every request goes through the same checks, in this order: the connection
 // comes from the named reverse proxy, when one is named; the Host is the
-// dashboard's address; an Origin, when sent, is the dashboard's own; the
-// method is GET or HEAD; and, for every route but the sign-in link itself,
-// the request carries a signed-in session of a person who may still sign
-// in. A session is made only by a single-use, short-lived link that a
-// person gets with SignInLink, and belongs to that person: its requests are
-// made with the control API bound to that person's Caller.
+// listener's (any loopback name and port on the loopback listener, the
+// configured address on the web listener); an Origin, when sent, is exactly
+// the listener's own; a request on the loopback listener did not come
+// through a reverse proxy; the method is GET or HEAD; and, for every route
+// but the trade of a sign-in link and the page's own files, which hold no
+// data, the request carries a session of a person who may still sign in,
+// in its Authorization header. A session is made only by a single-use,
+// short-lived link that a person gets with SignInLink, and belongs to that
+// person: its requests are made with the control API bound to that
+// person's Caller. The link's token is in its fragment: the page trades it
+// for the session (SessionPath), so fetching the link uses nothing up.
+//
+// There is no session cookie. A browser sends a cookie to every port of the
+// host that set it, so a service someone else runs on another port of the
+// same machine would receive it. The page keeps its session in its own
+// origin's storage, which browsers keep apart by scheme, host and port, and
+// sends it with each request.
 package dashboard
 
 import (
@@ -26,6 +44,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,36 +52,80 @@ import (
 	"github.com/yousan/hataori/internal/control"
 )
 
-// DefaultListen is the address the dashboard listens on when the config
-// names none: loopback only.
+// DefaultListen is the loopback listener's address when the config names
+// none.
 const DefaultListen = "127.0.0.1:7466"
 
-// SignInPath is the route of a sign-in link.
+// SignInPath is the page a sign-in link opens. The link's token is in the
+// address's fragment, which no server and no preview crawler sees: the page
+// trades it for a session at SessionPath, so a chat app that fetches the
+// link for a preview uses nothing up.
 const SignInPath = "/signin"
 
-// Config is how one instance serves its dashboard.
+// SessionPath trades a sign-in link's token, sent as "Authorization: Link
+// <token>", for a session: {"session": "<token>"}. The link is used up.
+const SessionPath = "/api/session"
+
+// The lifetimes of what the server makes, when the config names none.
+const (
+	DefaultLinkTTL = 5 * time.Minute
+	// DefaultLocalSessionTTL: on the loopback listener the person reached
+	// the host by SSH as the instance's user, or is on the host, which is
+	// already the proof; signing in again twice a day would be a chore.
+	DefaultLocalSessionTTL = 7 * 24 * time.Hour
+	DefaultWebSessionTTL   = 12 * time.Hour
+)
+
+// Config is how one instance serves its dashboard. At least one of Local
+// and Web is set.
 type Config struct {
-	// Listen is the TCP address to listen on; DefaultListen when empty. An
-	// address that is not loopback needs TLS, also behind a proxy.
+	Local *Local // the loopback listener; nil for none
+	Web   *Web   // the web listener; nil for none
+
+	LinkTTL         time.Duration // how long a sign-in link works; DefaultLinkTTL when zero
+	LocalSessionTTL time.Duration // how long a session of the loopback listener lasts; DefaultLocalSessionTTL when zero
+	WebSessionTTL   time.Duration // how long a session of the web listener lasts; DefaultWebSessionTTL when zero
+	// SessionKey signs sessions, so that a session outlives a restart of the
+	// daemon. At least 32 bytes; when empty a random key is made, and
+	// sessions end with the process.
+	SessionKey []byte
+}
+
+// Local is the loopback listener: plain HTTP on a loopback address.
+type Local struct {
+	// Listen is the address; DefaultListen when empty. It must be loopback.
+	Listen string
+	// URL is where its sign-in links point, an http address on a loopback
+	// name; made from Listen when empty. Only a config in the old form,
+	// one listener, names it.
+	URL string
+	// Key is the config key of Listen and URL without its last part, for
+	// messages: "dashboard." in both forms.
+	Key string
+}
+
+// Web is the web listener, served over HTTPS by TLS of its own or by a
+// reverse proxy in front.
+type Web struct {
+	// Listen is the TCP address to listen on; DefaultListen when empty (the
+	// old form only). An address that is not loopback needs TLS, also
+	// behind a proxy.
 	Listen string
 	// URL is the address people open, such as "https://dash.example.com".
 	// Sign-in links start with it, and a request whose Host or Origin is
 	// another address is refused. When empty it is made from Listen.
 	URL string
-	// TLS is the certificate to serve with; nil serves plain HTTP.
+	// TLS is the certificate to serve with; nil serves plain HTTP, which is
+	// allowed only on loopback behind a proxy.
 	TLS *tls.Certificate
 	// Proxy is the IP address of a reverse proxy in front that serves the
 	// dashboard over TLS at URL. A connection from any other address is
 	// refused. Without TLS here, the proxy must be on this machine: Listen
 	// is then loopback.
 	Proxy string
-
-	LinkTTL    time.Duration // how long a sign-in link works; 5 minutes when zero
-	SessionTTL time.Duration // how long a session lasts; 12 hours when zero
-	// SessionKey signs session cookies, so that a session outlives a
-	// restart of the daemon. At least 32 bytes; when empty a random key is
-	// made, and sessions end with the process.
-	SessionKey []byte
+	// Key is the prefix of its config keys, for messages: "dashboard.web."
+	// or, for a config in the old form, "dashboard.".
+	Key string
 }
 
 // Server is one instance's dashboard.
@@ -74,16 +137,10 @@ type Server struct {
 	For func(person string) (api control.API, ok bool)
 	Log *slog.Logger
 
-	ln         net.Listener
-	base       *url.URL // canonical: scheme and host, no default port
-	proxy      net.IP
-	secure     bool // over TLS, ours or the proxy's
-	cookie     string
+	local, web *listener
 	linkTTL    time.Duration
-	sessionTTL time.Duration
 	now        func() time.Time
 	mux        *http.ServeMux
-	srv        *http.Server
 
 	key []byte // signs sessions
 
@@ -94,16 +151,27 @@ type Server struct {
 	links map[[32]byte]link // by hash of the token
 }
 
-// link is a sign-in link not used yet: whose session it opens, and when it
-// expires.
+// listener is one way of reaching the dashboard.
+type listener struct {
+	way   control.Way
+	ln    net.Listener
+	base  *url.URL // where its links point, canonical: scheme and host, no default port
+	proxy net.IP   // the web listener's reverse proxy, if any
+	ttl   time.Duration
+	srv   *http.Server
+}
+
+// link is a sign-in link not used yet: whose session it opens, on which
+// listener, and when it expires.
 type link struct {
 	person string
+	way    control.Way
 	exp    time.Time
 }
 
 // configError is a config error naming its key.
 func configError(key, format string, a ...any) error {
-	return fmt.Errorf("config: key %q: %s", "dashboard."+key, fmt.Sprintf(format, a...))
+	return fmt.Errorf("config: key %q: %s", key, fmt.Sprintf(format, a...))
 }
 
 // isLoopback reports whether host, from a listening address, reaches only
@@ -116,20 +184,14 @@ func isLoopback(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// Listen checks cfg and starts listening. It refuses to listen on an address
-// other than loopback unless the dashboard is served over TLS, its own or a
-// named reverse proxy's, and the error says so.
+// Listen checks cfg and starts listening on each listener it names. It
+// refuses a loopback listener on an address that is not loopback, and a web
+// listener that would not be served over HTTPS, and the error says so.
 func Listen(cfg Config, api func(person string) (control.API, bool), log *slog.Logger) (*Server, error) {
-	listen := cfg.Listen
-	if listen == "" {
-		listen = DefaultListen
+	if cfg.Local == nil && cfg.Web == nil {
+		return nil, errors.New("dashboard: neither a loopback nor a web listener")
 	}
-	host, _, err := net.SplitHostPort(listen)
-	if err != nil {
-		return nil, configError("listen", "%q is not a host and port such as %q", listen, DefaultListen)
-	}
-	s := &Server{For: api, Log: log, secure: cfg.TLS != nil || cfg.Proxy != "",
-		linkTTL: cfg.LinkTTL, sessionTTL: cfg.SessionTTL, now: time.Now,
+	s := &Server{For: api, Log: log, linkTTL: cfg.LinkTTL, now: time.Now,
 		links: map[[32]byte]link{}, key: cfg.SessionKey,
 		keepAlive: defaultKeepAlive, writeTimeout: defaultWriteTimeout, hostScreenInterval: defaultHostScreenInterval}
 	if len(s.key) == 0 {
@@ -141,89 +203,154 @@ func Listen(cfg Config, api func(person string) (control.API, bool), log *slog.L
 		return nil, errors.New("dashboard: the session key is shorter than 32 bytes")
 	}
 	if s.linkTTL <= 0 {
-		s.linkTTL = 5 * time.Minute
+		s.linkTTL = DefaultLinkTTL
 	}
-	if s.sessionTTL <= 0 {
-		s.sessionTTL = 12 * time.Hour
-	}
-	if cfg.Proxy != "" {
-		if s.proxy = net.ParseIP(cfg.Proxy); s.proxy == nil {
-			return nil, configError("proxy", "%q is not an IP address: name the address the reverse proxy connects from", cfg.Proxy)
-		}
-	}
-	// A reverse proxy speaking plain HTTP to the dashboard is allowed only on
-	// this machine: on any other hop the links and sessions would cross the
-	// network in the clear, so a proxy elsewhere needs the dashboard's TLS too.
-	if !isLoopback(host) && cfg.TLS == nil {
-		if cfg.Proxy != "" {
-			return nil, configError("listen", "%q is not a loopback address: a reverse proxy (%q) on another machine would get sign-in links and sessions in the clear; listen on loopback with the proxy on this machine, or serve with TLS (%q and %q)",
-				listen, "dashboard.proxy", "dashboard.tls_cert", "dashboard.tls_key")
-		}
-		return nil, configError("listen", "%q is not a loopback address, and the dashboard is served neither with TLS (%q and %q) nor behind a reverse proxy on this machine (%q): it would send sign-in links and sessions in the clear",
-			listen, "dashboard.tls_cert", "dashboard.tls_key", "dashboard.proxy")
-	}
-	if cfg.URL != "" {
-		if s.base, err = parseBase(cfg.URL); err != nil {
+	var err error
+	if cfg.Local != nil {
+		if s.local, err = listenLocal(*cfg.Local, orDefault(cfg.LocalSessionTTL, DefaultLocalSessionTTL)); err != nil {
 			return nil, err
 		}
-		switch {
-		case cfg.Proxy != "" && s.base.Scheme != "https":
-			return nil, configError("url", "%q is not https: the reverse proxy named in %q must serve the dashboard over TLS", cfg.URL, "dashboard.proxy")
-		case cfg.TLS != nil && s.base.Scheme != "https":
-			return nil, configError("url", "%q is not https, and the dashboard is served with TLS", cfg.URL)
-		case cfg.TLS == nil && cfg.Proxy == "" && s.base.Scheme != "http":
-			return nil, configError("url", "%q is https, and the dashboard is served neither with TLS nor behind a reverse proxy", cfg.URL)
+	}
+	if cfg.Web != nil {
+		if s.web, err = listenWeb(*cfg.Web, orDefault(cfg.WebSessionTTL, DefaultWebSessionTTL)); err != nil {
+			if s.local != nil {
+				s.local.ln.Close()
+			}
+			return nil, err
 		}
-	} else if cfg.Proxy != "" {
-		return nil, configError("url", "missing: name the https address the reverse proxy serves the dashboard at")
-	} else if ip := net.ParseIP(host); host == "" || (ip != nil && ip.IsUnspecified()) {
-		return nil, configError("url", "missing: %q listens on every address, so name the one people open", listen)
 	}
-	if s.secure {
-		s.cookie = "__Host-hataori-session"
-	} else {
-		s.cookie = "hataori-session"
+	s.mux = http.NewServeMux()
+	s.mux.HandleFunc("GET "+SessionPath, s.signIn)
+	s.pageRoutes()
+	s.routes()
+	for _, l := range s.listeners() {
+		l.srv = &http.Server{Handler: s.handler(l), ReadHeaderTimeout: 10 * time.Second,
+			ErrorLog: slog.NewLogLogger(log.Handler(), slog.LevelWarn)}
 	}
+	return s, nil
+}
 
+func orDefault(d, def time.Duration) time.Duration {
+	if d <= 0 {
+		return def
+	}
+	return d
+}
+
+// listenLocal checks and opens the loopback listener.
+func listenLocal(c Local, ttl time.Duration) (*listener, error) {
+	if c.Key == "" {
+		c.Key = "dashboard."
+	}
+	listen := c.Listen
+	if listen == "" {
+		listen = DefaultListen
+	}
+	host, _, err := net.SplitHostPort(listen)
+	if err != nil {
+		return nil, configError(c.Key+"listen", "%q is not a host and port such as %q", listen, DefaultListen)
+	}
+	if !isLoopback(host) {
+		return nil, configError(c.Key+"listen", "%q is not a loopback address: the loopback listener serves this machine and ports forwarded to it over SSH; an address others reach is the web listener (%q), served over HTTPS",
+			listen, "dashboard.web")
+	}
+	var base *url.URL
+	if c.URL != "" {
+		if base, err = parseBase(c.Key+"url", c.URL); err != nil {
+			return nil, err
+		}
+		if base.Scheme != "http" || !loopbackName(base.Host) {
+			return nil, configError(c.Key+"url", "%q is not an http address on a loopback name, and the dashboard is served neither with TLS nor behind a reverse proxy", c.URL)
+		}
+	}
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
 		return nil, fmt.Errorf("dashboard: listen: %w", err)
 	}
-	if s.base == nil {
-		scheme := "http"
-		if cfg.TLS != nil {
-			scheme = "https"
-		}
+	// A name such as localhost is what the system resolves it to: make sure
+	// that is loopback.
+	if a, ok := ln.Addr().(*net.TCPAddr); !ok || !a.IP.IsLoopback() {
+		ln.Close()
+		return nil, configError(c.Key+"listen", "%q listens on %s, which is not a loopback address", listen, ln.Addr())
+	}
+	if base == nil {
 		_, port, _ := net.SplitHostPort(ln.Addr().String())
-		s.base = canonical(&url.URL{Scheme: scheme, Host: net.JoinHostPort(host, port)})
+		base = canonical(&url.URL{Scheme: "http", Host: net.JoinHostPort(host, port)})
 	}
-	if cfg.TLS != nil {
-		ln = tls.NewListener(ln, &tls.Config{Certificates: []tls.Certificate{*cfg.TLS}, MinVersion: tls.VersionTLS12})
+	return &listener{way: control.WayLocal, ln: ln, base: base, ttl: ttl}, nil
+}
+
+// listenWeb checks and opens the web listener: today's rules for a
+// dashboard on an address others reach.
+func listenWeb(c Web, ttl time.Duration) (*listener, error) {
+	if c.Key == "" {
+		c.Key = "dashboard.web."
 	}
-	s.ln = ln
-	s.mux = http.NewServeMux()
-	s.mux.HandleFunc("GET "+SignInPath, s.signIn)
-	s.pageRoutes()
-	s.routes()
-	s.srv = &http.Server{Handler: s, ReadHeaderTimeout: 10 * time.Second,
-		ErrorLog: slog.NewLogLogger(log.Handler(), slog.LevelWarn)}
-	return s, nil
+	listen := c.Listen
+	if listen == "" {
+		listen = DefaultListen
+	}
+	host, _, err := net.SplitHostPort(listen)
+	if err != nil {
+		return nil, configError(c.Key+"listen", "%q is not a host and port such as %q", listen, DefaultListen)
+	}
+	l := &listener{way: control.WayWeb, ttl: ttl}
+	if c.Proxy != "" {
+		if l.proxy = net.ParseIP(c.Proxy); l.proxy == nil {
+			return nil, configError(c.Key+"proxy", "%q is not an IP address: name the address the reverse proxy connects from", c.Proxy)
+		}
+	}
+	if c.TLS == nil && c.Proxy == "" {
+		return nil, configError(c.Key+"listen", "the web listener on %q is served neither with TLS (%q and %q) nor behind a reverse proxy (%q): it would send sign-in links and sessions in the clear",
+			listen, c.Key+"tls_cert", c.Key+"tls_key", c.Key+"proxy")
+	}
+	// A reverse proxy speaking plain HTTP to the dashboard is allowed only on
+	// this machine: on any other hop the links and sessions would cross the
+	// network in the clear, so a proxy elsewhere needs the dashboard's TLS too.
+	if !isLoopback(host) && c.TLS == nil {
+		return nil, configError(c.Key+"listen", "%q is not a loopback address: a reverse proxy (%q) on another machine would get sign-in links and sessions in the clear; listen on loopback with the proxy on this machine, or serve with TLS (%q and %q)",
+			listen, c.Key+"proxy", c.Key+"tls_cert", c.Key+"tls_key")
+	}
+	if c.URL != "" {
+		if l.base, err = parseBase(c.Key+"url", c.URL); err != nil {
+			return nil, err
+		}
+		if l.base.Scheme != "https" {
+			return nil, configError(c.Key+"url", "%q is not https: the web listener is served over HTTPS", c.URL)
+		}
+	} else if c.Proxy != "" {
+		return nil, configError(c.Key+"url", "missing: name the https address the reverse proxy serves the dashboard at")
+	} else if ip := net.ParseIP(host); host == "" || (ip != nil && ip.IsUnspecified()) {
+		return nil, configError(c.Key+"url", "missing: %q listens on every address, so name the one people open", listen)
+	}
+	ln, err := net.Listen("tcp", listen)
+	if err != nil {
+		return nil, fmt.Errorf("dashboard: listen: %w", err)
+	}
+	if l.base == nil {
+		_, port, _ := net.SplitHostPort(ln.Addr().String())
+		l.base = canonical(&url.URL{Scheme: "https", Host: net.JoinHostPort(host, port)})
+	}
+	if c.TLS != nil {
+		ln = tls.NewListener(ln, &tls.Config{Certificates: []tls.Certificate{*c.TLS}, MinVersion: tls.VersionTLS12})
+	}
+	l.ln = ln
+	return l, nil
 }
 
 // parseBase parses the URL people open: a scheme and a host, nothing else.
-func parseBase(raw string) (*url.URL, error) {
+func parseBase(key, raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil ||
 		(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
-		return nil, configError("url", "%q is not an address such as %q", raw, "https://dash.example.com")
+		return nil, configError(key, "%q is not an address such as %q", raw, "https://dash.example.com")
 	}
 	return canonical(u), nil
 }
 
 // canonical is u's scheme and host, lower case, without a default port.
 func canonical(u *url.URL) *url.URL {
-	c := &url.URL{Scheme: strings.ToLower(u.Scheme), Host: canonicalHost(u.Scheme, u.Host)}
-	return c
+	return &url.URL{Scheme: strings.ToLower(u.Scheme), Host: canonicalHost(u.Scheme, u.Host)}
 }
 
 func canonicalHost(scheme, host string) string {
@@ -239,33 +366,127 @@ func canonicalHost(scheme, host string) string {
 	return host
 }
 
-// URL returns the address people open, without a trailing slash.
-func (s *Server) URL() string { return s.base.String() }
+// loopbackName reports whether host, from a Host header or an address, is
+// one of the names of this machine's loopback the loopback listener
+// answers: localhost, 127.0.0.1 or [::1], with any port or none. Another
+// name, even one that resolves to loopback, is not: a page under that name
+// would be another site.
+func loopbackName(host string) bool {
+	h := strings.ToLower(host)
+	if hh, port, err := net.SplitHostPort(h); err == nil {
+		if n, err := strconv.ParseUint(port, 10, 16); err != nil || n == 0 || strconv.FormatUint(n, 10) != port {
+			return false
+		}
+		h = hh
+	} else if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") {
+		h = h[1 : len(h)-1]
+	}
+	return h == "localhost" || h == "127.0.0.1" || h == "::1"
+}
+
+// listeners is the listeners the server has, loopback first.
+func (s *Server) listeners() []*listener {
+	var ls []*listener
+	for _, l := range []*listener{s.local, s.web} {
+		if l != nil {
+			ls = append(ls, l)
+		}
+	}
+	return ls
+}
+
+// listenerOf returns the listener of way; empty way is the loopback
+// listener when there is one, else the web listener.
+func (s *Server) listenerOf(way control.Way) (*listener, error) {
+	switch way {
+	case "":
+		if s.local != nil {
+			return s.local, nil
+		}
+		return s.web, nil
+	case control.WayLocal:
+		if s.local == nil {
+			return nil, errors.New(`the dashboard has no loopback listener ("dashboard.listen"); a link for its web listener is asked for with the web way (hataori signin --web)`)
+		}
+		return s.local, nil
+	case control.WayWeb:
+		if s.web == nil {
+			return nil, errors.New(`the dashboard has no web listener ("dashboard.web")`)
+		}
+		return s.web, nil
+	}
+	return nil, fmt.Errorf("dashboard: %q is not a listener", way)
+}
+
+// URL returns the address of the listener of way that sign-in links start
+// with, without a trailing slash, or "" when there is no such listener.
+func (s *Server) URL(way control.Way) string {
+	l, err := s.listenerOf(way)
+	if err != nil || l == nil {
+		return ""
+	}
+	return l.base.String()
+}
 
 // Handle adds a route. It is served only after every check of ServeHTTP,
 // and only to a signed-in session.
 func (s *Server) Handle(pattern string, h http.Handler) { s.mux.Handle(pattern, h) }
 
-// Serve serves until ctx ends.
+// Serve serves every listener until ctx ends.
 func (s *Server) Serve(ctx context.Context) error {
 	stop := context.AfterFunc(ctx, func() { s.Close() })
 	defer stop()
-	err := s.srv.Serve(s.ln)
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
+	ls := s.listeners()
+	errs := make(chan error, len(ls))
+	for _, l := range ls {
+		go func() {
+			err := l.srv.Serve(l.ln)
+			if errors.Is(err, http.ErrServerClosed) {
+				err = nil
+			}
+			errs <- err
+		}()
 	}
-	return err
+	var first error
+	for range ls {
+		if err := <-errs; err != nil && first == nil {
+			first = err
+			s.Close() // one listener failing stops the dashboard, as before
+		}
+	}
+	return first
 }
 
-// Close stops the server and closes its connections.
-func (s *Server) Close() error { return s.srv.Close() }
+// Close stops the server and closes its connections and its listeners,
+// also when it never served.
+func (s *Server) Close() error {
+	var first error
+	for _, l := range s.listeners() {
+		var err error
+		if l.srv != nil {
+			err = l.srv.Close() // closes the listener only once Serve has it
+		}
+		if e := l.ln.Close(); err == nil && !errors.Is(e, net.ErrClosed) {
+			err = e
+		}
+		if err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
 
-// NewLink makes a sign-in link that works once, within the link lifetime,
-// and opens a session of person. The token is kept only as its hash, and
-// is not logged.
-func (s *Server) NewLink(_ context.Context, person string) (string, error) {
+// NewLink makes a sign-in link for the listener way names (empty: the
+// loopback listener when there is one, else the web listener) that works
+// once, within the link lifetime, and opens a session of person on that
+// listener. The token is kept only as its hash, and is not logged.
+func (s *Server) NewLink(_ context.Context, person string, way control.Way) (string, error) {
 	if person == "" {
 		return "", errors.New("dashboard: a sign-in link needs a person")
+	}
+	l, err := s.listenerOf(way)
+	if err != nil {
+		return "", err
 	}
 	token, sum, err := secret()
 	if err != nil {
@@ -274,9 +495,9 @@ func (s *Server) NewLink(_ context.Context, person string) (string, error) {
 	now := s.now()
 	s.mu.Lock()
 	sweep(s.links, now)
-	s.links[sum] = link{person: person, exp: now.Add(s.linkTTL)}
+	s.links[sum] = link{person: person, way: l.way, exp: now.Add(s.linkTTL)}
 	s.mu.Unlock()
-	return s.base.String() + SignInPath + "?t=" + token, nil
+	return l.base.String() + SignInPath + "#t=" + token, nil
 }
 
 // secret returns a new random token and its hash.
@@ -298,62 +519,90 @@ func sweep(m map[[32]byte]link, now time.Time) {
 }
 
 // take removes token from m and returns the person of its session; ok is
-// false when it was not there or had expired.
-func (s *Server) take(m map[[32]byte]link, token string) (person string, ok bool) {
+// false when it was not there, had expired, or belongs to another listener
+// than way. A link presented on the wrong listener is used up too.
+func (s *Server) take(m map[[32]byte]link, token string, way control.Way) (person string, ok bool) {
 	sum := sha256.Sum256([]byte(token))
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	l, ok := m[sum]
 	delete(m, sum)
-	return l.person, ok && s.now().Before(l.exp)
+	return l.person, ok && l.way == way && s.now().Before(l.exp)
 }
 
-// A session is a cookie the server signed: its expiry, a random nonce and
-// the person it belongs to, and an HMAC of them under the session key. The
-// server keeps no list of sessions, so one outlives a restart of the
-// daemon that keeps its key. The label names the payload's layout: a
-// session of the earlier layout, which carried no person, no longer
-// verifies.
-const sessionLabel = "hataori dashboard session 2\x00"
+// A session is a token the server signed: its expiry, a random nonce and
+// the person it belongs to, and an HMAC of them and of its listener under
+// the session key. The server keeps no list of sessions, so one outlives a
+// restart of the daemon that keeps its key. The label names the payload's
+// layout and what is signed: a session of an earlier layout no longer
+// verifies, and a session of one listener does not verify on the other.
+const sessionLabel = "hataori dashboard session 3\x00"
 
 // sessionHead is the length of a session's payload before the person.
 const sessionHead = 24
 
-// newSession returns a session of person that expires at exp.
-func (s *Server) newSession(exp time.Time, person string) (string, error) {
+// newSession returns a session of person on the listener way that expires
+// at exp.
+func (s *Server) newSession(exp time.Time, person string, way control.Way) (string, error) {
 	payload := make([]byte, sessionHead, sessionHead+len(person))
 	binary.BigEndian.PutUint64(payload[:8], uint64(exp.Unix()))
 	if _, err := rand.Read(payload[8:sessionHead]); err != nil {
 		return "", fmt.Errorf("dashboard: %w", err)
 	}
 	payload = append(payload, person...)
-	return base64.RawURLEncoding.EncodeToString(payload) + "." + base64.RawURLEncoding.EncodeToString(s.sign(payload)), nil
+	return base64.RawURLEncoding.EncodeToString(payload) + "." + base64.RawURLEncoding.EncodeToString(s.sign(way, payload)), nil
 }
 
-func (s *Server) sign(payload []byte) []byte {
+func (s *Server) sign(way control.Way, payload []byte) []byte {
 	m := hmac.New(sha256.New, s.key)
 	m.Write([]byte(sessionLabel))
+	m.Write([]byte(way))
+	m.Write([]byte{0})
 	m.Write(payload)
 	return m.Sum(nil)
 }
 
-// valid reports whether token is a session this key signed that has not
-// expired, when it expires, and whose it is.
-func (s *Server) valid(token string) (exp time.Time, person string, ok bool) {
+// valid reports whether token is a session of listener l that this key
+// signed and that has not expired, when it expires, and whose it is. A
+// session that would last longer than l's sessions last now, such as one
+// made before its lifetime was shortened, is refused.
+func (s *Server) valid(token string, l *listener) (exp time.Time, person string, ok bool) {
 	p, sig, ok := strings.Cut(token, ".")
 	if !ok {
 		return time.Time{}, "", false
 	}
 	payload, err1 := base64.RawURLEncoding.DecodeString(p)
 	mac, err2 := base64.RawURLEncoding.DecodeString(sig)
-	if err1 != nil || err2 != nil || len(payload) <= sessionHead || !hmac.Equal(mac, s.sign(payload)) {
+	if err1 != nil || err2 != nil || len(payload) <= sessionHead || !hmac.Equal(mac, s.sign(l.way, payload)) {
 		return time.Time{}, "", false
 	}
 	exp = time.Unix(int64(binary.BigEndian.Uint64(payload[:8])), 0)
-	return exp, string(payload[sessionHead:]), s.now().Before(exp)
+	now := s.now()
+	return exp, string(payload[sessionHead:]), now.Before(exp) && !exp.After(now.Add(l.ttl+time.Minute))
 }
 
+// bearer returns the session a request carries in its Authorization header.
+func bearer(r *http.Request) (string, bool) { return authorization(r, "Bearer") }
+
+// authorization returns the credential a request carries in its
+// Authorization header under scheme.
+func authorization(r *http.Request, scheme string) (string, bool) {
+	sch, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+	if !ok || !strings.EqualFold(sch, scheme) || token == "" {
+		return "", false
+	}
+	return token, true
+}
+
+// proxyHeaders are what a reverse proxy adds to a request it forwards. The
+// loopback listener refuses them: it serves this machine and ports
+// forwarded to it over SSH, which add none, and a proxy that rewrote the
+// Host to a loopback name would otherwise open it to whoever the proxy
+// serves.
+var proxyHeaders = []string{"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Real-Ip", "Via"}
+
 type sessionKey struct{}
+type listenerKey struct{}
 
 // session is what ServeHTTP learned of a request's signed-in session.
 type session struct {
@@ -375,82 +624,132 @@ func api(r *http.Request) control.API {
 	return ss.api
 }
 
-// ServeHTTP checks every request, then hands it to its route.
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	h := w.Header()
-	h.Set("Cache-Control", "no-store")
-	h.Set("Referrer-Policy", "no-referrer")
-	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("X-Frame-Options", "DENY")
-	h.Set("Content-Security-Policy", contentSecurityPolicy)
-
-	if s.proxy != nil {
-		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
-		if remote := net.ParseIP(ip); remote == nil || !remote.Equal(s.proxy) {
-			s.refuse(w, r, http.StatusForbidden, "not from the reverse proxy")
-			return
-		}
-	}
-	if canonicalHost(s.base.Scheme, r.Host) != s.base.Host {
-		s.refuse(w, r, http.StatusForbidden, "unknown host")
-		return
-	}
-	if o := r.Header.Get("Origin"); o != "" {
-		u, err := url.Parse(o)
-		if err != nil || u.Path != "" || *canonical(u) != *s.base {
-			s.refuse(w, r, http.StatusForbidden, "foreign origin")
-			return
-		}
-	}
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		h.Set("Allow", "GET, HEAD")
-		s.refuse(w, r, http.StatusMethodNotAllowed, "read-only")
-		return
-	}
-	if r.URL.Path != SignInPath {
-		c, err := r.Cookie(s.cookie)
-		if err != nil {
-			http.Error(w, "not signed in", http.StatusUnauthorized)
-			return
-		}
-		exp, person, ok := s.valid(c.Value)
-		var a control.API
-		if ok {
-			a, ok = s.For(person)
-		}
-		if !ok || a == nil {
-			http.Error(w, "not signed in", http.StatusUnauthorized)
-			return
-		}
-		r = r.WithContext(context.WithValue(r.Context(), sessionKey{}, session{exp: exp, api: a}))
-	}
-	s.mux.ServeHTTP(w, r)
+// listenerOfRequest is the listener that accepted r.
+func listenerOfRequest(r *http.Request) *listener {
+	l, _ := r.Context().Value(listenerKey{}).(*listener)
+	return l
 }
 
-func (s *Server) refuse(w http.ResponseWriter, r *http.Request, code int, why string) {
-	s.Log.Warn("dashboard request refused", "why", why, "method", r.Method, "host", r.Host, "origin", r.Header.Get("Origin"), "remote", r.RemoteAddr)
+// hostOK reports whether host, a request's Host, is one this listener
+// answers.
+func (l *listener) hostOK(host string) bool {
+	if l.way == control.WayLocal {
+		return loopbackName(host)
+	}
+	return canonicalHost(l.base.Scheme, host) == l.base.Host
+}
+
+// originOK reports whether origin, a request's Origin, is exactly this
+// listener's own for a request whose Host is host: the scheme, the host and
+// the port.
+func (l *listener) originOK(origin, host string) bool {
+	u, err := url.Parse(origin)
+	if err != nil || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
+		return false
+	}
+	want := l.base
+	if l.way == control.WayLocal {
+		want = canonical(&url.URL{Scheme: "http", Host: host})
+	}
+	return *canonical(u) == *want
+}
+
+// isPageFile reports whether path is one of the page's own files, which
+// hold no data and are served without a session: the page reads its
+// session from its own storage once it runs. The sign-in page is the page
+// itself.
+func isPageFile(path string) bool {
+	return path == "/" || path == SignInPath || strings.HasPrefix(path, "/assets/")
+}
+
+// handler checks every request that l accepted, then hands it to its route.
+func (s *Server) handler(l *listener) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Cache-Control", "no-store")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Content-Security-Policy", contentSecurityPolicy)
+
+		if l.proxy != nil {
+			ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+			if remote := net.ParseIP(ip); remote == nil || !remote.Equal(l.proxy) {
+				s.refuse(w, r, l, http.StatusForbidden, "not from the reverse proxy")
+				return
+			}
+		}
+		if !l.hostOK(r.Host) {
+			s.refuse(w, r, l, http.StatusForbidden, "unknown host")
+			return
+		}
+		if l.way == control.WayLocal {
+			for _, name := range proxyHeaders {
+				if r.Header.Get(name) != "" {
+					s.refuse(w, r, l, http.StatusForbidden, "through a reverse proxy: the loopback listener serves this machine and ports forwarded over SSH; put a proxy in front of the web listener")
+					return
+				}
+			}
+		}
+		if o := r.Header.Get("Origin"); o != "" && !l.originOK(o, r.Host) {
+			s.refuse(w, r, l, http.StatusForbidden, "foreign origin")
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			h.Set("Allow", "GET, HEAD")
+			s.refuse(w, r, l, http.StatusMethodNotAllowed, "read-only")
+			return
+		}
+		ctx := context.WithValue(r.Context(), listenerKey{}, l)
+		if r.URL.Path != SessionPath && !isPageFile(r.URL.Path) {
+			token, ok := bearer(r)
+			if !ok {
+				http.Error(w, "not signed in", http.StatusUnauthorized)
+				return
+			}
+			exp, person, ok := s.valid(token, l)
+			var a control.API
+			if ok {
+				a, ok = s.For(person)
+			}
+			if !ok || a == nil {
+				http.Error(w, "not signed in", http.StatusUnauthorized)
+				return
+			}
+			ctx = context.WithValue(ctx, sessionKey{}, session{exp: exp, api: a})
+		}
+		s.mux.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func (s *Server) refuse(w http.ResponseWriter, r *http.Request, l *listener, code int, why string) {
+	s.Log.Warn("dashboard request refused", "why", why, "listener", string(l.way), "method", r.Method, "host", r.Host, "origin", r.Header.Get("Origin"), "remote", r.RemoteAddr)
 	http.Error(w, why, code)
 }
 
-// signIn turns a sign-in link into a session. The link is used up whether
-// or not it was still valid.
+// signIn trades a sign-in link's token for a session of the listener it
+// was made for, and answers {"session": "<token>"}. The link is used up
+// whether or not it was still valid, and whichever listener it was shown
+// on. A HEAD uses nothing up.
 func (s *Server) signIn(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodHead { // a link checker must not use the link up
+	if r.Method == http.MethodHead {
 		w.Header().Set("Allow", "GET")
-		http.Error(w, "open the link with GET", http.StatusMethodNotAllowed)
+		http.Error(w, "ask with GET", http.StatusMethodNotAllowed)
 		return
 	}
-	person, ok := s.take(s.links, r.URL.Query().Get("t"))
+	l := listenerOfRequest(r)
+	link, _ := authorization(r, "Link")
+	person, ok := s.take(s.links, link, l.way)
 	if !ok {
 		http.Error(w, "this sign-in link was used or has expired: ask for a new one", http.StatusUnauthorized)
 		return
 	}
-	token, err := s.newSession(s.now().Add(s.sessionTTL), person)
+	token, err := s.newSession(s.now().Add(l.ttl), person, l.way)
 	if err != nil {
 		http.Error(w, "cannot make a session", http.StatusInternalServerError)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: s.cookie, Value: token, Path: "/", MaxAge: int(s.sessionTTL / time.Second),
-		HttpOnly: true, Secure: s.secure, SameSite: http.SameSiteLaxMode})
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	writeJSON(w, struct {
+		Session string `json:"session"`
+	}{token})
 }

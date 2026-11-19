@@ -73,8 +73,9 @@ A complete example for one Discord channel and Claude Code, with the owner, one 
 | `adapters` | object | empty | One section per coding agent, by name. This binary has two: `claude-code` and `codex` (below). Exactly one adapter must be named. |
 | `terminal_size` | object | absent | The size of the terminal an agent session runs in, for an agent that runs in one (Claude Code): `{"cols": 200, "rows": 50}`. Give both keys: `cols` from 40 to 500 and `rows` from 10 to 200; anything else is refused at start. Each session the daemon starts or resumes takes it, so a change applies to a thread's next session; a running session keeps its size. Without this key a session's terminal is 80 columns by 24 rows. |
 | `host_terminals` | boolean | `false` | With `true`, the owner may list the terminals on the host that hataori does not own (tmux panes and other terminals) and read the screens of the panes of the default tmux server, for display only, through the control API's `HostTerminals` and `HostScreen`. hataori never sends these terminals anything. With `false`, both are refused for everyone. |
-| `dashboard` | object | absent | The read-only web dashboard (below). Without this section the daemon serves none. |
+| `dashboard` | object | absent | The web dashboard (below). Without this section the daemon serves none. |
 | `cleanup` | object | absent | How workspaces are removed (below). Without this section no ignored file is disposable and trash is kept for seven days. |
+| `plugins` | array | empty | The plugins of the instance, one object each (below). Each is checked against its manifest when the daemon starts, and an error stops the start. This version checks them and does not start them yet. |
 
 Model and effort are chosen in this order: the order's `model:` / `effort:`, then the scope's, then the top-level key, then the agent's own default.
 
@@ -166,17 +167,58 @@ Codex writes session files (rollouts) under `sessions/` and caches under `CODEX_
 
 ### `dashboard`
 
-The section may be empty (`{}`): the dashboard then listens on `127.0.0.1:7466`. It has no page yet; it serves the thread list, one thread, the event stream, each session's live terminal and, with `host_terminals` on, the screens of tmux panes, read-only, to a signed-in session. Sign in by opening the link that `hataori signin` prints; it works once, within five minutes, and the session lasts twelve hours, across restarts of the daemon. Sessions are signed with a key the daemon keeps in `state/dashboard-session.key`; removing that file ends every session at the next start. A session belongs to the person whose link opened it and shows only the scopes that person may act in, every scope for the owner. Only the owner may get a link, on the host or, once the chat command exists, in chat; a session ends early when its person may no longer get one. Sessions made by a version before this one are not recognised: sign in again.
+The web dashboard ([design, section 7.2](design/overview.md#72-dashboard)). It serves the page, the thread list, one thread, the event stream, each session's live terminal and, with `host_terminals` on, the screens of tmux panes, read-only, to a signed-in session. It has up to two listeners, one for each way of reaching it, and each knows who is at the other end in its own way:
+
+- **The loopback listener** (`listen`) serves a browser on the host and one on another machine through a port forwarded over SSH. It is plain HTTP on a loopback address only. Logging in to the host by SSH as the user hataori runs as is the proof: the sign-in link is printed on the host.
+- **The web listener** (`web`) serves a phone or a machine without SSH, over HTTPS with a stable name: TLS of its own, or a reverse proxy in front. An address that is neither loopback nor served over HTTPS gets no dashboard: the daemon does not start.
+
+The section may be empty (`{}`): the loopback listener then listens on `127.0.0.1:7466`. Leave `listen` out and give `web` for the web listener alone; give both for both.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `listen` | string | `"127.0.0.1:7466"` | The host and port to listen on. An address that is not loopback needs `tls_cert` and `tls_key`, also behind a proxy; without them the daemon does not start. |
-| `url` | string | made from `listen` | The address people open, such as `"https://dash.example.com"`: a scheme and a host, nothing else. Sign-in links start with it, and a request whose `Host` or `Origin` is any other address is refused. Required with `proxy`, or when `listen` names every address. |
-| `tls_cert` | string | empty | The name of a PEM certificate file in `<root>/config/`. With `tls_key`, the dashboard serves HTTPS itself. |
+| `listen` | string | `"127.0.0.1:7466"`, unless `web` is given | The loopback listener's host and port. An address that is not loopback is refused, and the daemon does not start. |
+| `web` | object | absent | The web listener (below). |
+
+`web`:
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `listen` | string | required | The host and port to listen on. An address that is not loopback needs `tls_cert` and `tls_key`, also behind a proxy. |
+| `url` | string | made from `listen` | The address people open, such as `"https://dash.example.com"`: `https`, a host, nothing else. Its sign-in links start with it, and a request whose `Host` or `Origin` is any other address is refused. Required with `proxy`, or when `listen` names every address. |
+| `tls_cert` | string | empty | The name of a PEM certificate file in `<root>/config/`. With `tls_key`, the listener serves HTTPS itself. |
 | `tls_key` | string | empty | The name of its PEM private key file in `<root>/config/`. |
 | `proxy` | string | empty | The IP address of a reverse proxy in front that serves the dashboard over HTTPS at `url`. Connections from any other address are refused. The proxy must pass the `Host` it was asked for. Without `tls_cert` and `tls_key` the proxy must run on this machine, with `listen` on loopback, so that links and sessions never cross the network in the clear. |
 
-Only `GET` and `HEAD` are served. The session cookie cannot be read by scripts, and it is sent only over HTTPS when the dashboard is served with TLS or behind the proxy.
+One of `tls_cert` and `proxy` is required.
+
+**Signing in.** `hataori signin` on the host prints a link for the loopback listener, and `hataori signin --web` one for the web listener. A link works once, within five minutes, and only on its own listener; the session it opens works only there too, and belongs to the person the link was made for: it shows only the scopes that person may act in, every scope for the owner. Only the owner may get a link, on the host or, once the chat command exists, in chat; a session ends early when its person may no longer get one. A session lasts seven days on the loopback listener and twelve hours on the web listener, across restarts of the daemon. Sessions are signed with a key the daemon keeps in `state/dashboard-session.key`; removing that file ends every session at the next start.
+
+There is no session cookie: a browser sends a cookie to every port of its host, so another service on the same machine could receive it. The page keeps its session in its own origin's storage and sends it in a header with every request. Sessions made by a version that used a cookie are not recognised: sign in again. The page's own files are served without a session; every other route needs one. Only `GET` and `HEAD` are served.
+
+A link's token is in the part after `#`, which a browser does not send: the page trades it for the session with a request of its own. So a chat app or a link checker that fetches the link, for a preview, uses nothing up.
+
+The loopback listener refuses a request that came through a reverse proxy (one that carries `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Real-IP` or `Via`): put a proxy in front of the web listener instead.
+
+**On another machine, over SSH, by hand.** Forward a local port to the loopback listener, with the local address given so that your `GatewayPorts` setting cannot open the port to the network:
+
+```sh
+ssh -L 127.0.0.1:7466:127.0.0.1:7466 user@host
+```
+
+Then run `hataori signin` there, and open the link it prints on your machine with the host and port changed to the local ones, such as `http://localhost:7466/signin#t=...`. The local port may differ from the daemon's: the loopback listener answers `localhost`, `127.0.0.1` and `[::1]` with any port. Browsers treat `http://localhost` as a secure origin, so no certificate or name is needed. Each local port keeps its own session, so two instances forwarded to two ports stay apart.
+
+**The web listener through a VPN or a tunnel**, as one example. A product that gives this machine an HTTPS address with a stable name inside a private network, such as a mesh VPN's built-in HTTPS proxy, can be the reverse proxy: set `url` to the name it serves and `proxy` to the address it connects from, with `listen` on loopback.
+
+```json
+"dashboard": {
+  "listen": "127.0.0.1:7466",
+  "web": {"listen": "127.0.0.1:7467", "url": "https://dash.vpn.example", "proxy": "127.0.0.1"}
+}
+```
+
+hataori does not require or detect such a product; any reverse proxy that serves HTTPS and passes the `Host` works the same way.
+
+**The old form.** A section with `url`, `tls_cert`, `tls_key` or `proxy` directly in it, from before the web listener, is read as one listener: with `tls_cert` or `proxy` it is the web listener and there is no loopback listener; otherwise it is the loopback listener, whose links start with `url`. The daemon logs one line saying the config uses the old form. Move those keys into `web` to have both listeners.
 
 ### `cleanup`
 
@@ -185,13 +227,59 @@ A workspace is removed only when nothing in it exists nowhere else ([design, sec
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `disposable` | array of strings | empty | Patterns of ignored files that are not work, such as `"node_modules"` or `"*.pyc"`. A pattern without a slash matches any path segment, so it covers everything under a directory of that name; a pattern with a slash matches the path from the top of the repository, or a leading part of it (`"build/out"` covers everything under `build/out`). Patterns use Go's `path.Match` syntax (`*`, `?`, `[...]`); `**` is not special. |
-| `trash_retention` | duration | `"168h"` | How long a removed workspace stays in `trash/` before it is deleted. A positive Go duration. Only entries the removal put there are ever deleted. |
+| `trash_retention` | duration | `"168h"` | How long a removed workspace stays in `trash/` before it is deleted. A positive Go duration. Only entries the removal put there are ever deleted, by the time in their names; one still on its way in (`pending-…`) and anything else in `trash/` are left alone. The daemon purges when it starts and then every quarter of the retention, at least every second and at most every ten minutes. It logs one line for each entry it deletes; an entry it cannot delete is logged and tried again on the next pass. |
 | `other_roots` | array of strings | empty | Absolute paths of the roots of other hataori instances on this host. A remote under one of them does not count. |
 | `remove_closed_after` | duration | absent: off | Turns on the automatic removal pass: the workspace of a thread that has been closed for longer than this is removed, with the same proof as `hataori remove`. A positive Go duration, such as `"720h"`. A refused removal leaves the thread closed, writes one `removal_refused` event, and is tried again only after the same duration. |
 
 A workspace is removed only when its thread is closed: `hataori close NUMBER` closes it, and `hataori remove NUMBER` removes it (see "Commands and flags" below). Nothing in chat removes a workspace, and no thread is closed by its idle age.
 
 Processes are found with `lsof`, on Linux and on macOS alike; without `lsof` every removal is refused. Unless hataori runs as root, `lsof` sees only the processes of the user hataori runs as.
+
+### `plugins[]`
+
+A plugin is a separate program that adds to what hataori does ([design, section 7.3](design/overview.md#73-plugins)). Its manifest, which its author writes, says what it asks for: [plugins.md](plugins.md). Its entry here says where it is and what the operator grants it. The plugin gets what its manifest asks for and its entry grants, and nothing more: an entry that names anything the manifest does not ask for is refused, not ignored.
+
+When the daemon starts, it reads each plugin's manifest, `hataori-plugin.json` in the directory of `path`, and checks it with the entry. It reads no other file of the plugin and runs nothing. Any error stops the start with one line that names the key, and for an error in a manifest the manifest's key too.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `id` | string | required | The plugin's name, the same as its manifest's `id`. It follows the rule of driver names. Each id may be listed once. |
+| `path` | string | required | The absolute path of the plugin's executable; its manifest is in the same directory. For an `external` plugin, which hataori does not start, only the directory is used, for the manifest: the file itself need not exist. |
+| `sha256` | string | required unless `external` | The SHA-256 of the executable: 64 hexadecimal digits. Refused with `external`, since hataori does not start that program. |
+| `external` | boolean | `false` | The plugin is a program that hataori does not start, which connects to the control socket by itself with the token in `token_file`. |
+| `token_file` | string | required with `external` | The file in `<root>/config/` that holds an external plugin's token, relative to `config/`: an absolute path, a path out of `config/` and `config/` itself are refused. Refused without `external`: a plugin that hataori starts gets a token at each start. |
+| `scopes` | array of strings | required | The scopes the plugin may see and act in, by their keys under `scopes`; at least one. |
+| `operations` | array of strings | the manifest's | The control operations it may call: some or all of its manifest's `operations`. |
+| `events` | array of strings | the manifest's | The event kinds it may read: some or all of its manifest's `events`. An empty list grants none. |
+| `hooks` | array | the manifest's | The hook points it handles, one object each (below): some or all of its manifest's `hooks`. Without this key, every hook point of the manifest with its defaults. |
+| `conversation` | boolean | `false` | Whether it may read message text: inputs, the agent's text, posts and thread titles. Only for a manifest that asks for `conversation`; without this grant, what the plugin gets has the text left out. |
+| `settings` | object | `{}` | The plugin's own settings. hataori checks only that they are an object and gives them to the plugin as written, `null` values included. The manifest's `config` schema is not applied to them. |
+
+No plugin is given `SignInLink`, `HostTerminals` or `HostScreen`: a manifest that asks for one is refused.
+
+#### `plugins[].hooks[]`
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `point` | string | required | A hook point of the manifest's `hooks`, listed once. |
+| `timeout` | duration | the manifest's, else `"15s"` | How long the plugin's handler has at this point. A positive Go duration. |
+| `on_failure` | string | the point's | `block` or `skip`: whether what passes the point is stopped, or the handler skipped, when the handler fails or times out. `before_agent_run` blocks unless this says otherwise; the other points skip. |
+
+For example, a plugin that reads posts before they are sent, made to block a post when it fails:
+
+```json
+"plugins": [
+  {
+    "id": "secret-scan",
+    "path": "/opt/hataori-plugins/secret-scan/secret-scan",
+    "sha256": "<the executable's SHA-256>",
+    "scopes": ["<channel id>"],
+    "hooks": [{"point": "message_sending", "on_failure": "block"}],
+    "conversation": true,
+    "settings": {"patterns": ["AKIA[0-9A-Z]{16}"]}
+  }
+]
+```
 
 ## Environment variables
 
@@ -220,7 +308,7 @@ hataori stop    [--root DIR] NUMBER
 hataori attach  [--root DIR] NUMBER
 hataori close   [--root DIR] NUMBER
 hataori remove  [--root DIR] NUMBER
-hataori signin  [--root DIR]
+hataori signin  [--root DIR] [--web]
 hataori version
 ```
 
@@ -234,7 +322,7 @@ hataori version
 | `attach NUMBER` | Connects this terminal to the terminal of the thread's agent, on the host, for the owner. It shows the current screen, then passes every key to the agent; Ctrl-\ detaches and leaves the agent running. An asleep thread is woken first; a closed thread, and an agent without a terminal, are refused with a message. While attached the thread is not put to sleep, and a daemon restart does not end the attachment. A turn typed there is posted in chat after a line "(typed at the terminal)". Chat input is still delivered while you are attached, into the same input line: a chat message that arrives while you have typed part of a line is mixed with it, so finish or clear the line before you stop typing. The current screen is replayed from the end of the terminal's log and is exact only once the agent draws again. Output is the agent's terminal, not JSON. |
 | `close NUMBER` | Ends the agent process of an idle, asleep or failed thread and closes the thread; its workspace stays. A message in a closed thread starts nothing and gets one line saying the thread is closed. A thread with a turn running, a question open, or background tasks left running by its last turn is refused: stop it first. Prints `{"thread", "scope", "state": "closed"}`. |
 | `remove NUMBER` | Moves the workspace of a closed thread into `<root>/trash/`, only when nothing in it would be lost (see `cleanup` above), and the thread becomes `removed`. Otherwise it changes nothing, prints the reason on standard error and exits with 1. Prints `{"thread", "scope", "state": "removed"}`. |
-| `signin` | Prints `{"link": ...}`: a link that signs the owner in to the dashboard, once, within five minutes. Fails when the config has no `dashboard`. |
+| `signin` | Prints `{"link": ...}`: a link that signs the owner in to the dashboard's loopback listener, or with `--web` its web listener, once, within five minutes. Fails when the config has no `dashboard`, or when it has no such listener. |
 | `version` | Prints the version. |
 
 | Flag | Default | Meaning |
@@ -242,6 +330,7 @@ hataori version
 | `--root DIR` | `$HATAORI_ROOT` | The instance root. Required by every command above except `version`. |
 | `--after N` | `0` | `events` only: print the events after position `N`. |
 | `--follow` | off | `events` only: keep printing new events as they happen. |
+| `--web` | off | `signin` only: a link for the dashboard's web listener instead of its loopback listener. |
 
 Flags may come before or after `NUMBER`. Exit codes: 0 success, 1 error (for example, no daemon runs for the root), 2 usage error, 3 no such thread.
 

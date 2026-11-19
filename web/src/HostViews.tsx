@@ -4,6 +4,7 @@ import { t } from "./catalog";
 import { age } from "./format";
 import { fitted, sized } from "./fit";
 import { openReadOnly } from "./TerminalView";
+import { Stream } from "./stream";
 
 const dash = () => t("table.none");
 
@@ -38,7 +39,7 @@ function HostScreen({ h, fit }: { h: HostTerminal; fit?: boolean }) {
     if (!el.current || !pane) return;
     const term = openReadOnly(el.current);
     const fitting = fit && box.current ? fitted(term, box.current) : null;
-    const source = new EventSource(hostScreenPath(pane));
+    const source = new Stream(hostScreenPath(pane));
     // Each message is the whole screen. It is drawn after the one before
     // has been, as a session's chunks are, so two never mix.
     let drawn = Promise.resolve();

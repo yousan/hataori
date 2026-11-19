@@ -155,7 +155,7 @@ func newHostTerminalRig(t *testing.T) hostTerminalRig {
 }
 
 // hostTerminals reads the route: its status, body and list.
-func hostTerminalsOf(t *testing.T, base string, c *http.Cookie) (int, string, []control.HostTerminal) {
+func hostTerminalsOf(t *testing.T, base string, c dashSession) (int, string, []control.HostTerminal) {
 	t.Helper()
 	code, body := dashGet(t, base, c, "/api/hostterminals")
 	var ts []control.HostTerminal
@@ -245,7 +245,7 @@ func TestDashboardHostTerminalsRoute(t *testing.T) {
 
 	// 3. Signed out, an unknown Host, a foreign Origin.
 	u, _ := url.Parse(base)
-	if code, _ := rawGet(t, "GET", base, "/api/hostterminals", nil, "", ""); code != http.StatusUnauthorized {
+	if code, _ := rawGet(t, "GET", base, "/api/hostterminals", "", "", ""); code != http.StatusUnauthorized {
 		t.Fatalf("signed out: %d, want 401", code)
 	}
 	if code, body := rawGet(t, "GET", base, "/api/hostterminals", cookie, "elsewhere.example:80", ""); code != http.StatusForbidden || strings.Contains(body, "/dev/") {

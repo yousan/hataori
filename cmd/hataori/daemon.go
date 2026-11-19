@@ -24,6 +24,7 @@ import (
 	"github.com/yousan/hataori/internal/hostterm"
 	"github.com/yousan/hataori/internal/instance"
 	"github.com/yousan/hataori/internal/people"
+	"github.com/yousan/hataori/internal/plugin"
 	"github.com/yousan/hataori/internal/relay"
 	"github.com/yousan/hataori/internal/runner"
 	"github.com/yousan/hataori/internal/session"
@@ -47,6 +48,15 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	}
 	defer in.Close()
 	cfg := in.Config
+	// Each plugin's manifest and grant are checked before anything starts;
+	// nothing of a plugin runs yet (design, section 7.3).
+	var scopeKeys []string
+	for _, s := range cfg.Scopes {
+		scopeKeys = append(scopeKeys, s.Key)
+	}
+	if _, err := plugin.Load(cfg.Plugins, scopeKeys); err != nil {
+		return err
+	}
 
 	adapters := map[string]agent.Adapter{}
 	for name, settings := range cfg.Adapters {
@@ -120,13 +130,22 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	// daemon with the reason.
 	var dash *dashboard.Server
 	if d := cfg.Dashboard; d != nil {
-		dc := dashboard.Config{Listen: d.Listen, URL: d.URL, Proxy: d.Proxy}
-		if d.TLSCert != "" {
-			cert, err := loadCert(in.Root, d.TLSCert, d.TLSKey)
-			if err != nil {
-				return err
+		var dc dashboard.Config
+		if l := d.Local; l != nil {
+			dc.Local = &dashboard.Local{Listen: l.Listen, URL: l.URL, Key: "dashboard."}
+		}
+		if w := d.Web; w != nil {
+			dc.Web = &dashboard.Web{Listen: w.Listen, URL: w.URL, Proxy: w.Proxy, Key: w.Key}
+			if w.TLSCert != "" {
+				cert, err := loadCert(in.Root, w.Key, w.TLSCert, w.TLSKey)
+				if err != nil {
+					return err
+				}
+				dc.Web.TLS = &cert
 			}
-			dc.TLS = &cert
+		}
+		if d.OldForm {
+			lg.Info("the config's dashboard section uses the old form, one listener: put the web listener's keys in \"dashboard.web\" and the loopback listener's address in \"dashboard.listen\"")
 		}
 		if dc.SessionKey, err = sessionKey(in.Root); err != nil {
 			return err
@@ -219,13 +238,27 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 			removalPass(passCtx, c, age, lg)
 		}()
 	}
+	{
+		// It ends, and is waited for, before the daemon returns.
+		purgeCtx, purgeCancel := context.WithCancel(ctx)
+		purgeDone := make(chan struct{})
+		defer func() { purgeCancel(); <-purgeDone }()
+		go func() {
+			defer close(purgeDone)
+			purgePass(purgeCtx, remover, lg)
+		}()
+	}
 	if dash != nil {
 		go func() {
 			if err := dash.Serve(ctx); err != nil {
 				lg.Error("dashboard", "err", err)
 			}
 		}()
-		lg.Info("dashboard listens", "url", dash.URL())
+		for _, way := range []control.Way{control.WayLocal, control.WayWeb} {
+			if u := dash.URL(way); u != "" {
+				lg.Info("dashboard listens", "listener", string(way), "url", u)
+			}
+		}
 	}
 	lg.Info("hataori runs", "root", abs, "agent", agentName)
 	err = srv.Serve(ctx)
@@ -255,6 +288,35 @@ func removalPass(ctx context.Context, c *core.Core, age time.Duration, lg *slog.
 		}
 	}
 }
+
+// purgePass deletes the entries of trash/ older than the retention, as
+// the removal named them, until ctx ends: at the start and then every
+// quarter of the retention, at least every second and at most every ten
+// minutes. Each deleted entry is logged; one that cannot be deleted is
+// logged and tried again on the next pass.
+func purgePass(ctx context.Context, rm workspace.Remover, lg *slog.Logger) {
+	every := min(max(rm.Retention/4, time.Second), 10*time.Minute)
+	if purgeEvery > 0 {
+		every = purgeEvery
+	}
+	for {
+		purged, err := rm.Purge()
+		for _, p := range purged {
+			lg.Info("trash purged", "entry", p)
+		}
+		if err != nil {
+			lg.Error("trash purge", "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(every):
+		}
+	}
+}
+
+// purgeEvery, when a test sets it, is the interval of the trash purge.
+var purgeEvery time.Duration
 
 // dashboardCaller is the read-only Caller of a dashboard session of person:
 // the scopes that person may act in, every scope for the owner (section
@@ -418,9 +480,9 @@ func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.St
 	return fronts, nil
 }
 
-// loadCert reads the dashboard's certificate and key from the config
-// directory.
-func loadCert(root *os.Root, certFile, keyFile string) (tls.Certificate, error) {
+// loadCert reads the web listener's certificate and key from the config
+// directory; key is the prefix of their config keys.
+func loadCert(root *os.Root, key, certFile, keyFile string) (tls.Certificate, error) {
 	read := func(key, name string) ([]byte, error) {
 		f, err := root.Open(filepath.Join("config", name))
 		if err != nil {
@@ -429,17 +491,17 @@ func loadCert(root *os.Root, certFile, keyFile string) (tls.Certificate, error) 
 		defer f.Close()
 		return io.ReadAll(f)
 	}
-	certPEM, err := read("dashboard.tls_cert", certFile)
+	certPEM, err := read(key+"tls_cert", certFile)
 	if err != nil {
 		return tls.Certificate{}, err
 	}
-	keyPEM, err := read("dashboard.tls_key", keyFile)
+	keyPEM, err := read(key+"tls_key", keyFile)
 	if err != nil {
 		return tls.Certificate{}, err
 	}
 	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("config: keys %q and %q: %w", "dashboard.tls_cert", "dashboard.tls_key", err)
+		return tls.Certificate{}, fmt.Errorf("config: keys %q and %q: %w", key+"tls_cert", key+"tls_key", err)
 	}
 	return cert, nil
 }

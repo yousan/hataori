@@ -23,7 +23,7 @@ func TestDashboardLanguage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	link, err := c.SignInLink(ctx)
+	link, err := c.SignInLink(ctx, "")
 	if err != nil {
 		t.Fatal(err)
 	}

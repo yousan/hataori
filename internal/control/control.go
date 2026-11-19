@@ -90,7 +90,10 @@ type API interface {
 	// has, and which a chat front end gives the caller it makes for a person
 	// who asked in chat; the dashboard's caller never has it. The person
 	// must be one who may sign in, today the owner only. A guest is refused.
-	SignInLink(ctx context.Context) (string, error)
+	// way names the dashboard's listener the link is for (design, section
+	// 7.2): WayLocal, WayWeb, or empty for the loopback listener when the
+	// instance has one and the web listener otherwise. Since 3.2.
+	SignInLink(ctx context.Context, way Way) (string, error)
 
 	// Terminal streams the terminal output of the thread's current session,
 	// until ctx ends. The first chunk continues after position after of run,
@@ -186,6 +189,18 @@ const (
 	OpAttach
 	OpClose  // CloseThread: the owner's connection on the control socket only
 	OpRemove // RemoveThread: the owner's connection on the control socket only
+)
+
+// Way is one of the dashboard's listeners, each a way of reaching it with
+// its own proof of who is at the other end (design, section 7.2). Since 3.2.
+type Way string
+
+const (
+	// WayLocal is the loopback listener: a browser on the host, or one on
+	// another machine through a port forwarded over SSH.
+	WayLocal Way = "local"
+	// WayWeb is the web listener, over HTTPS with a stable name.
+	WayWeb Way = "web"
 )
 
 // Has reports whether every operation in o is in ops.
