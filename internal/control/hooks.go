@@ -34,7 +34,7 @@ type HookResult struct {
 }
 
 // The requests the daemon sends a client, by their names on the wire.
-// Since 3.14.
+// Since 3.15.
 const (
 	// OpHook calls one handler of a plugin at a hook point (design,
 	// section 7.3).

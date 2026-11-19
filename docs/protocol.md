@@ -10,7 +10,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 - Each message is one JSON object on one line.
 - Each side sends a `hello` first. The daemon reads the client's hello before it answers with its own. When the daemon refuses the client, its hello carries `error` and the daemon closes the connection.
 - After the hellos, **either side may send requests**. A request has `op` set; a response has no `op`. Each side numbers its own requests, and a response carries the `id` of the request it answers. Several requests may be outstanding at once, and the answers may come in any order.
-- The client sends the operations below. The daemon may send the client requests of its own (Requests the daemon sends, below): since 3.14, to a plugin, its hooks and the notices that it started and is stopping. A side that gets a request whose `op` it does not know answers with the error code `not_supported` and carries on.
+- The client sends the operations below. The daemon may send the client requests of its own (Requests the daemon sends, below): since 3.15, to a plugin, its hooks and the notices that it started and is stopping. A side that gets a request whose `op` it does not know answers with the error code `not_supported` and carries on.
 - An `Events` request turns the connection into a stream: the daemon answers it once with an empty `response`, then sends one `response` with `event` set per event, until the client closes the connection. A client follows events on a connection of its own.
 - A `Terminal` request does the same with terminal output: an empty `response`, then one `response` with `terminal` set per chunk. Since 1.9.
 - On an `Events` or a `Terminal` stream the daemon reads nothing the client sends: no request on that connection is answered or carried out, and nothing reaches a terminal.
@@ -18,7 +18,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.14**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.15**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -215,9 +215,12 @@ Result: string
 
 Interrupts the thread's running turn. Nothing happens when no turn runs.
 
+Since 3.14 a call may name the turn to stop, by the number its `turn_started` event gives it. The daemon then interrupts nothing unless that turn is the thread's running turn, and it checks this in the same step as the interrupt. So a call made for a turn that the daemon has seen end never stops the turn after it. A call that names a turn which is not running is answered `refused`, and nothing changes. A daemon before 3.14 ignores the field and interrupts whatever turn runs, so a client that names a turn checks that the daemon speaks 3.14 or later; the project's client refuses to send it otherwise.
+
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `id` | integer | required | the thread's number; since 3.0, before it a `{scope, key}` object |
+| `turn` | integer | optional | only this turn, by `turn_started`'s `turn`; absent or 0 for whatever turn runs; since 3.14 |
 
 Result: none
 
@@ -399,7 +402,7 @@ Result: [`AgentLimits`]
 
 ## Requests the daemon sends
 
-Since 3.14. The daemon sends these to a plugin, on a connection made with the plugin's token that is not a stream: the oldest such connection that is still open. A connection that becomes a stream takes none from then on, so a plugin keeps one connection for requests, as the project's client does, and follows events on others. Until the daemon has read a connection's first request, it does not know that the connection will be a stream, and may send a request on it: a client skips such a line, unanswered, on its stream, and the daemon counts the request as failed once the stream starts. A plugin that does not know one answers `not_supported`, as for any request.
+Since 3.15. The daemon sends these to a plugin, on a connection made with the plugin's token that is not a stream: the oldest such connection that is still open. A connection that becomes a stream takes none from then on, so a plugin keeps one connection for requests, as the project's client does, and follows events on others. Until the daemon has read a connection's first request, it does not know that the connection will be a stream, and may send a request on it: a client skips such a line, unanswered, on its stream, and the daemon counts the request as failed once the stream starts. A plugin that does not know one answers `not_supported`, as for any request.
 
 ### Request `hook`
 
@@ -674,7 +677,7 @@ A key name is tmux's name for the key, after modifiers, each of `C-`, `M-` and `
 
 ### Type `HookAnswer`
 
-Since 3.14. A plugin's answer to `hook`.
+Since 3.15. A plugin's answer to `hook`.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -684,7 +687,7 @@ Since 3.14. A plugin's answer to `hook`.
 
 ### Type `GrantedHook`
 
-Since 3.14. One hook point of a plugin's grant.
+Since 3.15. One hook point of a plugin's grant.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|

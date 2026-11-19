@@ -93,7 +93,7 @@ func examples(t *testing.T) map[string]any {
 		"Send":           sendArgs{ID: exampleID, Key: "M0790", Input: control.Input{Text: "And the docs.", Link: &exampleLink}, Busy: control.Deliver},
 		"AskInterrupt":   askInterruptArgs{ID: exampleID, Key: "ask-1", Reason: "urgent"},
 		"Answer":         answerArgs{Request: "3:toolu_2", Answer: control.Answer{Text: "blue", Choices: []string{"blue"}, Link: &exampleLink}},
-		"Stop":           stopArgs{ID: exampleID},
+		"Stop":           stopArgs{ID: exampleID, Turn: 12},
 		"Close":          closeArgs{ID: exampleID},
 		"Link":           linkArgs{ID: exampleID, Link: control.LinkRef{Client: "discord", Channel: "C0999", Thread: ""}},
 		"Remove":         removeArgs{ID: exampleID},
@@ -155,7 +155,7 @@ func examples(t *testing.T) map[string]any {
 		}
 		ex["response-"+op+".json"] = resp
 	}
-	// The requests the daemon sends a client, and their answers. Since 3.14.
+	// The requests the daemon sends a client, and their answers. Since 3.15.
 	changed := "Run the tests, then fix the build."
 	daemonArgs := map[string]any{
 		control.OpHook: control.HookRequest{Point: "before_agent_run", Thread: exampleID, Scope: "C0123", Text: "Run the tests.", Left: 15000},

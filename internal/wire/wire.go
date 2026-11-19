@@ -27,7 +27,7 @@ import (
 
 // Version is the protocol version this build speaks: major.minor. Two
 // sides work together when their major numbers are equal (docs/protocol.md).
-const Version = "3.14"
+const Version = "3.15"
 
 type hello struct {
 	Version string `json:"version"`
@@ -96,7 +96,8 @@ type (
 		Answer  control.Answer    `json:"answer"`
 	}
 	stopArgs struct {
-		ID control.ThreadID `json:"id"`
+		ID   control.ThreadID `json:"id"`
+		Turn int64            `json:"turn,omitempty"` // since 3.14
 	}
 	linkArgs struct { // since 3.4
 		ID   control.ThreadID `json:"id"`
@@ -222,7 +223,7 @@ var operations = map[string]operation{
 		if err := args(&a); err != nil {
 			return nil, err
 		}
-		return nil, api.Stop(ctx, a.ID)
+		return nil, api.Stop(ctx, a.ID, a.Turn)
 	}},
 	"Link": {linkArgs{}, control.LinkRef{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
 		var a linkArgs

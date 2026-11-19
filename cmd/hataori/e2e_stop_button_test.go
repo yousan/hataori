@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/yousan/hataori/internal/chat"
+	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/surface"
 	fakesurface "github.com/yousan/hataori/internal/surface/fake"
 )
@@ -155,4 +157,60 @@ func TestStopButtonShownBeforeARestartStopsItsTurn(t *testing.T) {
 	if e := r.turnEnds(t, th, 1, 10*time.Second); e["reason"] != "interrupted" {
 		t.Fatalf("the turn ended %v", e)
 	}
+}
+
+// stopAfter is the API of a front end whose Stop calls wait: each sends its
+// turn on called, then waits until go_ is closed before it reaches the core.
+type stopAfter struct {
+	control.API
+	called chan<- int64
+	go_    <-chan struct{}
+}
+
+func (a stopAfter) Stop(ctx context.Context, id control.ThreadID, turn int64) error {
+	a.called <- turn
+	<-a.go_
+	return a.API.Stop(ctx, id, turn)
+}
+
+// #457: a press whose turn ends, and the next turn starts, after the front
+// end looked the turn up and before its Stop reaches the core stops
+// nothing. The later turn keeps running.
+func TestStopButtonOfATurnThatEndsBeforeTheCallStopsNothing(t *testing.T) {
+	called, go_ := make(chan int64, 1), make(chan struct{})
+	var fe *chat.FrontEnd
+	frontEndHook = func(f *chat.FrontEnd) {
+		f.QuietAfter, f.EditEvery, f.Tick = 300*time.Millisecond, time.Hour, 20*time.Millisecond
+		api := f.API
+		f.API = func(c control.Caller) control.API { return stopAfter{API: api(c), called: called, go_: go_} }
+		fe = f
+	}
+	t.Cleanup(func() { frontEndHook = nil })
+	r := newChatRoot(t, nil)
+	startDaemon(t, r.root)
+	r.connected(t)
+	r.driver.Inject(c1, fakesurface.Webhook(e2eHook), "!go repo:"+bareRepo(t)+" tool wait 2s\nreply first")
+	th := r.thread(t, 0)
+	line, token := stopLine(t, r.driver, th)
+	pressed := make(chan struct{})
+	go func() {
+		defer close(pressed)
+		fe.Choice(surface.Selection{Ref: line.Ref, Author: fakesurface.Person(e2eOwner), Token: token, Tokens: []string{token}})
+	}()
+	var turn int64
+	select {
+	case turn = <-called:
+	case <-time.After(15 * time.Second):
+		t.Fatal("the press did not call Stop")
+	}
+	// After the lookup, before the call: the turn ends and the next starts.
+	r.turnEnds(t, th, 1, 15*time.Second)
+	r.driver.Inject(th, fakesurface.Webhook(e2eHook), "tool wait 60s\nreply never")
+	eventually(t, "the second turn", 15*time.Second, func() bool { return len(r.events(t, "tool_started", th)) == 2 })
+	close(go_)
+	<-pressed
+	if started := r.events(t, "turn_started", th); len(started) != 2 || started[0]["turn"] != float64(turn) {
+		t.Fatalf("Stop named turn %d; the turns started %v", turn, started)
+	}
+	r.stillRunning(t, th, 1)
 }
