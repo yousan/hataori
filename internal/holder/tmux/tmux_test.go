@@ -407,8 +407,7 @@ func TestAlive(t *testing.T) {
 	if st := state2(t, &Holder{Tmux: fake}, s.window(other, pid)); st != holder.Unknown {
 		t.Fatalf("tmux that cannot be reached: %v", st)
 	}
-	// tmux that answers with nothing, as it prints empty fields for a target
-	// it cannot find: that says nothing about the window (#497).
+	// tmux that answers with nothing says nothing about the window (#497).
 	empty := filepath.Join(s.dir, "empty-tmux")
 	os.WriteFile(empty, []byte("#!/bin/sh\nexit 0\n"), 0o700)
 	if st := state2(t, &Holder{Tmux: empty}, s.window(other, pid)); st != holder.Unknown {

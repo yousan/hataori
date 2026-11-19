@@ -179,10 +179,10 @@ type pane struct {
 var errGone = errors.New("tmux: the window is gone")
 
 // find returns the window's pane, errGone when the server is another or
-// does not list the pane, and another error when tmux cannot tell. It asks
-// one list-panes with the server's process id on every line: no target is
-// looked up, so there is no "current" pane for tmux to find or miss, and
-// output that names no pane says nothing about this one.
+// does not have the pane, and another error when tmux cannot tell. Gone is
+// a definite answer: output that names no pane says nothing about this
+// one, and a pane that one listing leaves out is looked up by its id before
+// it counts as gone (#497).
 func (h *Holder) find(ctx context.Context, r ref) (pane, error) {
 	// Spaces between the fields, none of which holds one: under a locale
 	// that is not UTF-8, tmux 3.5 prints a tab in a format as "_" (#483).
@@ -218,7 +218,16 @@ func (h *Holder) find(ctx context.Context, r ref) (pane, error) {
 	if lines == 0 {
 		return pane{}, fmt.Errorf("tmux: list-panes listed no pane: %.200q", out)
 	}
-	return pane{}, fmt.Errorf("%w: the server does not list the pane %s among its %d", errGone, r.Pane, lines)
+	// display-message on a pane that has gone exits 0 with its fields
+	// empty; on one that is there it prints the pane's id.
+	out, err = h.tmux(ctx, r, nil, "display-message", "-p", "-t", r.Pane, "#{pane_id}")
+	if err != nil {
+		return pane{}, err
+	}
+	if got := strings.TrimSpace(string(out)); got != "" {
+		return pane{}, fmt.Errorf("tmux: list-panes left out the pane %s, which display-message finds as %q", r.Pane, got)
+	}
+	return pane{}, fmt.Errorf("%w: the server does not have the pane %s, among its %d", errGone, r.Pane, lines)
 }
 
 // Encodings of the named keys: tmux's name for each, which send-keys
