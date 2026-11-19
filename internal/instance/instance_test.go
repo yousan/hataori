@@ -421,3 +421,27 @@ func TestDashboardSection(t *testing.T) {
 		})
 	}
 }
+
+// The "plugins" list is handed over as it is written, nulls and unknown
+// keys in its entries included: internal/plugin reads it. Without the key
+// there is none.
+func TestPluginsHandedOver(t *testing.T) {
+	c, err := ParseConfig([]byte(validConfig))
+	if err != nil || c.Plugins != nil {
+		t.Fatalf("without plugins: %q, %v", c.Plugins, err)
+	}
+	entries := []string{`{"id": "a", "settings": {"level": null}}`, `{"anything": [1, 2]}`}
+	with := strings.Replace(validConfig, "{", `{"plugins": [`+strings.Join(entries, ", ")+`],`, 1)
+	if c, err = ParseConfig([]byte(with)); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Plugins) != len(entries) || string(c.Plugins[0]) != entries[0] || string(c.Plugins[1]) != entries[1] {
+		t.Fatalf("plugins = %q", c.Plugins)
+	}
+	for _, bad := range []string{`null`, `{}`, `"a"`} {
+		_, err := ParseConfig([]byte(strings.Replace(validConfig, "{", `{"plugins": `+bad+`,`, 1)))
+		if err == nil || !strings.Contains(err.Error(), `"plugins"`) {
+			t.Errorf("plugins %s: %v", bad, err)
+		}
+	}
+}

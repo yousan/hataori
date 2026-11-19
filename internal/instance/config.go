@@ -66,6 +66,10 @@ type Config struct {
 	// the config, by registered name, unparsed.
 	Drivers  map[string][]byte
 	Adapters map[string][]byte
+
+	// Plugins is the "plugins" list, each entry unparsed: internal/plugin
+	// reads and checks it. Nil when the config has none.
+	Plugins []json.RawMessage
 }
 
 // Scope is the config of one scope.
@@ -168,6 +172,7 @@ type fileConfig struct {
 	Cleanup    *fileCleanup               `json:"cleanup"`
 	Drivers    map[string]json.RawMessage `json:"drivers"`
 	Adapters   map[string]json.RawMessage `json:"adapters"`
+	Plugins    []json.RawMessage          `json:"plugins"`
 }
 
 type fileTerminalSize struct {
@@ -222,6 +227,7 @@ func ParseConfig(data []byte) (*Config, error) {
 		Effort:        strings.TrimSpace(f.Effort),
 		Drivers:       raw(f.Drivers),
 		Adapters:      raw(f.Adapters),
+		Plugins:       f.Plugins,
 	}
 	if c.Owner == "" {
 		return nil, missing("owner")
@@ -486,6 +492,7 @@ func (c *Config) oldForm(scopes []fileScope) error {
 
 // rejectNull refuses a null anywhere outside the opaque sections, since
 // encoding/json would read it as the zero value instead of a wrong type.
+// The "plugins" entries are read, nulls included, by internal/plugin.
 func rejectNull(data []byte) error {
 	var v any
 	if err := json.Unmarshal(data, &v); err != nil {
@@ -500,7 +507,7 @@ func walkNull(key string, v any) error {
 		return fmt.Errorf("config: key %q must not be null", key)
 	case map[string]any:
 		for k, e := range v {
-			if key == "" && (k == "drivers" || k == "adapters") {
+			if key == "" && (k == "drivers" || k == "adapters" || k == "plugins") {
 				if e == nil {
 					return fmt.Errorf("config: key %q must not be null", k)
 				}
