@@ -1,12 +1,17 @@
 package runner
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/core"
 )
 
 // hosts returns the pids of the session host processes of stateDir. It
@@ -86,5 +91,56 @@ func TestDaemonKilledAfterTheWorkspaceIsPlaced(t *testing.T) {
 	notes, _ := os.ReadFile(filepath.Join(work, "notes.txt"))
 	if len(after) != len(before) || len(after) != 1 || string(notes) != "someone's work\n" {
 		t.Errorf("the workspace changed: %v, then %v; notes %q", before, after, notes)
+	}
+}
+
+// A daemon killed after it replaced a session that could not resume, and
+// before it launched the new one: after a restart the new session starts,
+// and its agent gets the input the old one was woken for, once, with its
+// link, its key and the text a plugin added (#508).
+func TestDaemonKilledAfterAReplace(t *testing.T) {
+	for _, terminal := range []bool{false, true} {
+		t.Run(fmt.Sprint("terminal ", terminal), func(t *testing.T) {
+			root := t.TempDir()
+			t.Cleanup(func() { killSessions(root) })
+			t.Cleanup(func() {
+				if t.Failed() {
+					b, _ := os.ReadFile(filepath.Join(root, "daemon.log"))
+					t.Logf("daemon log:\n%s", b)
+				}
+			})
+			runDaemon(t, root, terminal, "die-replace+idle+forget", "after replace", "reply hello", "reply anew").waitKilled(t)
+			st := openStore(t, root)
+			var sessions, launch int
+			var old, now core.FirstInput
+			var fo, fn string
+			st.DB.QueryRow(`SELECT count(*) FROM sessions`).Scan(&sessions)
+			st.DB.QueryRow(`SELECT first_input FROM sessions WHERE id = 1`).Scan(&fo)
+			st.DB.QueryRow(`SELECT launch, coalesce(first_input, '') FROM sessions WHERE id = 2`).Scan(&launch, &fn)
+			json.Unmarshal([]byte(fo), &old)
+			json.Unmarshal([]byte(fn), &now)
+			if sessions != 2 || launch != 1 {
+				t.Fatalf("after the kill: %d sessions, the new one's launch %d", sessions, launch)
+			}
+			if now.Key != "m2" || now.Text != "reply anew" || now.Before != "plugin before" || now.After != "plugin after" ||
+				now.Link == nil || *now.Link != (control.LinkRef{Client: "chat", Channel: "s", Thread: "t1"}) ||
+				now.Key != old.Key || now.Text != old.Text || now.Wake || now.Sent || now.Written || now.Dir == "" ||
+				!strings.Contains(now.Context, "reply hello") {
+				t.Fatalf("the new session's first input %s, the old one's %s", fn, fo)
+			}
+			d := runDaemon(t, root, terminal, "resume")
+			until(t, "the new session's turn", st, "turn_ended", 2)
+			time.Sleep(300 * time.Millisecond) // anything late would show now
+			d.kill()
+			var anew, inSession2 int
+			st.DB.QueryRow(`SELECT count(*), coalesce(sum(json_extract(data, '$.session') = 2), 0) FROM events
+				WHERE kind = 'text' AND json_extract(data, '$.text') = 'anew'`).Scan(&anew, &inSession2)
+			if anew != 1 || inSession2 != 1 {
+				t.Errorf("the agent answered the input %d times, %d of them in the new session", anew, inSession2)
+			}
+			if got := counts(t, st); got["turn_started"] != 2 || got["input"] != 2 || got["session_replaced"] != 1 {
+				t.Errorf("events %v", got)
+			}
+		})
 	}
 }

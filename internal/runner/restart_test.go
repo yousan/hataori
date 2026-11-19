@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/core"
 	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/store"
 )
@@ -35,6 +36,9 @@ func daemon(args []string) int {
 			mode, o.dieWhenPlaced = m, true
 		} else if m, ok := strings.CutSuffix(mode, "+dialog"); ok { // the fake shows wakeDialog at each start
 			mode, o.dialog = m, wakeDialog
+		} else if m, ok := strings.CutSuffix(mode, "+forget"); ok { // the fake keeps its conversations in ROOT/conversations
+			mode, o.conversations = m, filepath.Join(root, "conversations")
+			os.MkdirAll(o.conversations, 0o700)
 		} else {
 			break
 		}
@@ -105,6 +109,36 @@ func daemon(args []string) int {
 		}
 		owner(c).Send(context.Background(), control.ThreadID(1), "m2", control.Input{Text: args[5]}, control.Deliver)
 		return 1 // it should have died
+	}
+	if mode == "die-replace" { // start t1, let it sleep, forget its conversation, and kill itself at a point of replacing it
+		point := args[3]
+		os.Stdout.WriteString("up\n")
+		if _, err := owner(c).Start(context.Background(), control.StartRequest{Key: "k1", Scope: "s", Thread: "t1",
+			Repo: "file:///unused", Input: control.Input{Text: args[4]}}); err != nil {
+			fmt.Fprintln(log, err)
+			return 1
+		}
+		for state := ""; state != "asleep"; time.Sleep(20 * time.Millisecond) {
+			st.DB.QueryRow(`SELECT state FROM sessions WHERE id = 1`).Scan(&state)
+		}
+		for !r.alive(StateDir(root, 1)).Ended() {
+			time.Sleep(20 * time.Millisecond)
+		}
+		files, _ := filepath.Glob(filepath.Join(o.conversations, "*"))
+		for _, p := range files {
+			os.Remove(p) // the agent's own retention removed it: it cannot resume
+		}
+		r.point = func(p string) {
+			if p == point {
+				syscall.Kill(os.Getpid(), syscall.SIGKILL) // this process only
+				select {}
+			}
+		}
+		// A plugin adds text around the input; it comes through the thread's link.
+		c.Hooks = aroundHooks{}
+		owner(c).Send(context.Background(), control.ThreadID(1), "m2", control.Input{Text: args[5],
+			Link: &control.LinkRef{Client: "chat", Channel: "s", Thread: "t1"}}, control.Deliver)
+		select {} // the replace comes when the woken agent says it cannot resume
 	}
 	if mode == "die" {
 		c.Runner = dying{r}
@@ -356,4 +390,15 @@ func notDeliveredTurn(t *testing.T, st *store.Store) bool {
 	var n int
 	st.DB.QueryRow(`SELECT count(*) FROM events WHERE kind = 'turn_ended' AND json_extract(data, '$.reason') = 'not delivered'`).Scan(&n)
 	return n > 0
+}
+
+// aroundHooks puts a line before and after every input at
+// before_prompt_build, as a plugin may.
+type aroundHooks struct{}
+
+func (aroundHooks) Run(_ context.Context, c control.HookCall) control.HookResult {
+	if c.Point == core.PointBeforePromptBuild {
+		return control.HookResult{Text: c.Text, Before: "plugin before", After: "plugin after"}
+	}
+	return control.HookResult{Text: c.Text}
 }
