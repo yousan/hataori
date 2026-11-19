@@ -184,6 +184,14 @@ type Server struct {
 	ceremonies map[[32]byte]ceremony  // registrations and checks under way, by hash of their id
 	used       map[[32]byte]time.Time // sign-in challenges answered, by hash, until they expire
 	operated   map[string]int         // panes being operated through this server, by id
+	// operatedChanged is closed when operated changes (operatedChange).
+	operatedChanged chan struct{}
+	// started is when this server started, and removed when each person
+	// last removed a passkey: a session signed in before either may not
+	// start an operation on the web listener without a passkey check
+	// (operate.go, notRecent).
+	started time.Time
+	removed map[string]time.Time
 }
 
 // listener is one way of reaching the dashboard.
@@ -248,6 +256,7 @@ func Listen(cfg Config, api func(person string) (control.API, bool), log *slog.L
 	if s.now == nil {
 		s.now = time.Now
 	}
+	s.started, s.removed = s.now(), map[string]time.Time{}
 	if cfg.Root != nil {
 		s.keys = &passkeyFile{root: cfg.Root, log: log}
 		if _, err := s.keys.load(); err != nil { // refused now, not at the first sign-in

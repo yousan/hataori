@@ -157,15 +157,28 @@ func (s *Server) passkeysOf(person string) (passkeyUser, error) {
 }
 
 // notRecent is why a session of a person with no passkey may not start an
-// operation on the web listener l, or "" when it may: it must have been
-// signed in less than OperateSignInWithin ago. A session does not record
-// its sign-in, only its expiry, which is the sign-in and l's lifetime.
+// operation on the web listener l, or "" when it may: it must be a
+// session of a sign-in link, signed in less than OperateSignInWithin ago,
+// after this server started and after its person last removed a passkey.
+// So a session cannot remove its person's passkeys and then do without a
+// check, nor can one that a passkey made, whose person had a passkey. A
+// session does not record its sign-in, only its expiry, which is the
+// sign-in and l's lifetime.
 func (s *Server) notRecent(c claims, l *listener) string {
+	const again = "typing into a pane from the web needs a passkey check, or a sign-in less than five minutes old: sign in again with a new link"
 	signedIn := c.exp.Add(-l.ttl)
-	if s.now().Sub(signedIn) < OperateSignInWithin {
-		return ""
+	s.mu.Lock()
+	floor := s.started
+	if r, ok := s.removed[c.person]; ok && r.After(floor) {
+		floor = r
 	}
-	return "typing into a pane from the web needs a passkey check, or a sign-in less than five minutes old: sign in again with a new link"
+	s.mu.Unlock()
+	// A sign-in is known to the second: one in the same second as the
+	// removal or the start counts as before it.
+	if !c.checked.IsZero() || !signedIn.After(floor.Truncate(time.Second)) || s.now().Sub(signedIn) >= OperateSignInWithin {
+		return again
+	}
+	return ""
 }
 
 // operateFirst is the WebSocket's first message.
@@ -216,8 +229,8 @@ func (c *wsConn) send(v operateOut) error {
 // close sends a close frame with code and reason, and closes the
 // connection.
 func (c *wsConn) close(code int, reason string) {
-	if len(reason) > 120 { // a close frame's reason is at most 123 bytes
-		reason = reason[:120]
+	if len(reason) > 120 { // a close frame's reason is at most 123 bytes, and UTF-8
+		reason = strings.ToValidUTF8(reason[:120], "")
 	}
 	c.mu.Lock()
 	c.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, reason), time.Now().Add(time.Second))
@@ -244,7 +257,8 @@ func (s *Server) operate(w http.ResponseWriter, r *http.Request) {
 	}
 	c := &wsConn{Conn: ws, timeout: s.writeTimeout}
 	defer c.Close()
-	c.SetReadLimit(maxOperateMessage)
+	// Before the session is known, no more than a passkey's answer.
+	c.SetReadLimit(maxPasskeyBody)
 
 	// The session first, and nothing else before it.
 	c.SetReadDeadline(time.Now().Add(firstMessageTimeout))
@@ -290,6 +304,12 @@ func (s *Server) operate(w http.ResponseWriter, r *http.Request) {
 	}
 	s.operating(first.Pane, 1)
 	defer s.operating(first.Pane, -1)
+	c.SetReadLimit(maxOperateMessage)
+	// A page that stops answering pings has gone, as one that closes has:
+	// a browser answers each ping.
+	alive := func() { c.SetReadDeadline(time.Now().Add(2*s.keepAlive + s.writeTimeout)) }
+	alive()
+	c.SetPongHandler(func(string) error { alive(); return nil })
 	if c.send(operateOut{Started: &struct {
 		Idle int64 `json:"idle"`
 	}{int64(op.Idle() / time.Second)}}) != nil {
@@ -301,14 +321,45 @@ func (s *Server) operate(w http.ResponseWriter, r *http.Request) {
 	// Batches are carried out in order by one goroutine, while this one
 	// keeps reading, so that an end or the page going away takes effect
 	// during a batch.
+	// An end ends the operation after the batches the page sent before it,
+	// which the batch goroutine sends first; a WebSocket that closes ends it
+	// at once. The reader never waits for the batches.
 	batches := make(chan []control.HostKey, maxQueuedBatches)
+	endAsked := make(chan struct{})
 	go func() {
-		for keys := range batches {
+		send := func(keys []control.HostKey) {
 			if err := op.Send(ctx, keys); err != nil && !errors.Is(err, control.ErrEnded) && ctx.Err() == nil {
 				c.send(operateOut{Error: err.Error()})
 			}
 		}
+		for {
+			select {
+			case keys, ok := <-batches:
+				if !ok {
+					return
+				}
+				send(keys)
+			case <-endAsked:
+				for drained := false; !drained; {
+					select {
+					case keys, ok := <-batches:
+						if !ok {
+							op.End()
+							return
+						}
+						send(keys)
+					default:
+						drained = true
+					}
+				}
+				op.End()
+				for range batches { // nothing is sent after the end
+				}
+				return
+			}
+		}
 	}()
+	var endOnce sync.Once
 	go func() {
 		defer close(batches)
 		defer cancel() // the page went away: the operation ends
@@ -324,7 +375,7 @@ func (s *Server) operate(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if m.End {
-				op.End()
+				endOnce.Do(func() { close(endAsked) })
 				continue
 			}
 			if len(m.Keys) == 0 {
@@ -430,7 +481,9 @@ func (s *Server) checkPasskey(cer ceremony, raw json.RawMessage) error {
 	return err
 }
 
-// operating counts the operations of pane open through this server.
+// operating counts the operations of pane open through this server, and
+// wakes the screen streams, so that one waiting its slow interval reads at
+// the fast one at once.
 func (s *Server) operating(pane string, n int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -440,6 +493,21 @@ func (s *Server) operating(pane string, n int) {
 	if s.operated[pane] += n; s.operated[pane] <= 0 {
 		delete(s.operated, pane)
 	}
+	if s.operatedChanged != nil {
+		close(s.operatedChanged)
+	}
+	s.operatedChanged = make(chan struct{})
+}
+
+// operatedChange is closed the next time an operation starts or ends
+// through this server.
+func (s *Server) operatedChange() <-chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.operatedChanged == nil {
+		s.operatedChanged = make(chan struct{})
+	}
+	return s.operatedChanged
 }
 
 // isOperated reports whether pane is being operated through this server.

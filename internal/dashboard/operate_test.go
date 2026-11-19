@@ -27,6 +27,7 @@ type opAPI struct {
 	control.API
 	mu      sync.Mutex
 	refuse  error
+	slow    time.Duration // of each operation's Send
 	ops     []*fakeOp
 	screens int // HostScreen calls
 	views   int // HostView calls
@@ -41,7 +42,7 @@ func (a *opAPI) OperateHost(ctx context.Context, pane string) (control.HostOpera
 	if pane != "%1" {
 		return nil, fmt.Errorf("core: OperateHost: tmux pane %q: %w", pane, core.ErrNotFound)
 	}
-	o := &fakeOp{done: make(chan struct{})}
+	o := &fakeOp{done: make(chan struct{}), slow: a.slow}
 	a.ops = append(a.ops, o)
 	go func() {
 		select {
@@ -81,6 +82,7 @@ func (a *opAPI) reads() (screens, views int) {
 
 // fakeOp records the batches it is given.
 type fakeOp struct {
+	slow   time.Duration // each Send takes this long
 	mu     sync.Mutex
 	keys   [][]control.HostKey
 	reason string
@@ -98,6 +100,7 @@ func (o *fakeOp) finish(reason string) {
 }
 
 func (o *fakeOp) Send(_ context.Context, keys []control.HostKey) error {
+	time.Sleep(o.slow)
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.reason != "" {
@@ -406,6 +409,9 @@ func TestOperateRefusedByTheCore(t *testing.T) {
 		{fmt.Errorf("core: OperateHost: not the owner: %w", control.ErrForbidden), "may not type"},
 		{fmt.Errorf("core: OperateHost: tmux pane %%1 is being operated by owner since 2026-11-20T10:00:00Z: %w", core.ErrBusy), "operated by owner since"},
 		{fmt.Errorf("core: OperateHost: %w", core.ErrNotFound), "not there"},
+		// A reason longer than a close frame holds, cut within a character:
+		// the frame's reason stays valid UTF-8.
+		{fmt.Errorf("core: OperateHost: tmux pane %%1 is being operated by %s since now: %w", strings.Repeat("機織り", 20), core.ErrBusy), "operated by 機織り"},
 	} {
 		a := &opAPI{refuse: tc.err}
 		s := operateServer(t, a, Config{})
@@ -445,6 +451,7 @@ func TestOperateOnTheWebWithoutAPasskey(t *testing.T) {
 	a := &opAPI{}
 	s := operateServer(t, a, Config{Web: &Web{Proxy: "127.0.0.1", URL: "https://dash.example.com"}, Now: clock.now})
 	l := first(s)
+	clock.add(2 * time.Second) // a sign-in in the second the server started counts as before it
 	tok := signIn(t, s, control.WayWeb)
 	check := func() answer {
 		t.Helper()
@@ -553,8 +560,8 @@ func TestScreenStreamWhileOperated(t *testing.T) {
 	if m := readOut(t, c); m.Started == nil {
 		t.Fatalf("not started: %+v", m)
 	}
-	time.Sleep(1100 * time.Millisecond) // the stream's slow wait ends, the fast reads begin
-	if sc, v := count(time.Second); v < 5 || sc != 0 {
+	// At once: a stream waiting its slow interval is woken.
+	if sc, v := count(time.Second); v < 5 || sc > 1 {
 		t.Errorf("operated: %d reads with the cursor and %d without in a second", v, sc)
 	}
 	var withCursor bool
@@ -574,5 +581,138 @@ func TestScreenStreamWhileOperated(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	if sc, v := count(2100 * time.Millisecond); sc > 3 || v > 1 {
 		t.Errorf("after the end: %d screen reads and %d with the cursor in 2.1 s", sc, v)
+	}
+}
+
+// An end the page sends after batches ends the operation after them: none
+// of the keys sent before it is lost, even while batches are slow.
+func TestOperateEndComesAfterTheBatchesBeforeIt(t *testing.T) {
+	a := &opAPI{slow: 50 * time.Millisecond}
+	s := operateServer(t, a, Config{})
+	l := first(s)
+	c, _, err := dialOperate(t, l, origin(l))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.WriteJSON(first2(signIn(t, s)))
+	if m := readOut(t, c); m.Started == nil {
+		t.Fatalf("not started: %+v", m)
+	}
+	keys := []string{"Up", "Down", "Left", "Right", "Home"}
+	for _, k := range keys {
+		c.WriteJSON(map[string]any{"keys": []control.HostKey{{Key: k}}})
+	}
+	c.WriteJSON(map[string]any{"end": true})
+	if m := readOut(t, c); m.Ended != control.HostEnded {
+		t.Fatalf("%+v", m)
+	}
+	if got := a.started()[0].batches(); len(got) != len(keys) {
+		t.Errorf("%d of %d batches sent before the end: %+v", len(got), len(keys), got)
+	}
+}
+
+// A page that stops answering pings, as one whose machine went to sleep,
+// ends the operation as one that closes does.
+func TestOperateEndsWhenThePageStopsAnswering(t *testing.T) {
+	a := &opAPI{}
+	s := operateServer(t, a, Config{}, func(s *Server) { s.keepAlive, s.writeTimeout = 100*time.Millisecond, 100*time.Millisecond })
+	l := first(s)
+	c, _, err := dialOperate(t, l, origin(l))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.WriteJSON(first2(signIn(t, s)))
+	if m := readOut(t, c); m.Started == nil {
+		t.Fatalf("not started: %+v", m)
+	}
+	// The client reads nothing more, so it answers no ping.
+	op := a.started()[0]
+	select {
+	case <-op.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("a page that answers no ping keeps the operation open")
+	}
+	if op.Reason() != control.HostClosed {
+		t.Errorf("reason %q", op.Reason())
+	}
+}
+
+// On the web listener the handshake needs exactly its address as the
+// Origin: not another scheme, port or spelling of the name.
+func TestOperateHandshakeOnTheWebListener(t *testing.T) {
+	a := &opAPI{}
+	s := operateServer(t, a, Config{Web: &Web{Proxy: "127.0.0.1", URL: "https://dash.example.com"}})
+	l := first(s)
+	for _, o := range []string{"", "null", "http://dash.example.com", "https://dash.example.com.", "https://dash.example.com:8443",
+		"https://example.com", "https://x.dash.example.com", "http://127.0.0.1"} {
+		if _, resp, err := dialOperate(t, l, o); err == nil || resp == nil || resp.StatusCode != http.StatusForbidden {
+			t.Errorf("Origin %q: %v %v", o, resp, err)
+		}
+	}
+	if c, _, err := dialOperate(t, l, "https://dash.example.com"); err != nil {
+		t.Errorf("the listener's own Origin: %v", err)
+	} else {
+		c.Close()
+	}
+}
+
+// Before the session is known, the WebSocket takes no message larger than
+// a passkey's answer.
+func TestOperateFirstMessageIsSmall(t *testing.T) {
+	a := &opAPI{}
+	s := operateServer(t, a, Config{})
+	l := first(s)
+	c, _, err := dialOperate(t, l, origin(l))
+	if err != nil {
+		t.Fatal(err)
+	}
+	big := map[string]any{"session": signIn(t, s), "pane": "%1", "credential": map[string]string{"pad": strings.Repeat("x", maxPasskeyBody)}}
+	c.WriteJSON(big)
+	c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, _, err := c.ReadMessage(); err == nil {
+		t.Error("a first message larger than a passkey's answer was read")
+	}
+	if len(a.started()) != 0 {
+		t.Error("it started an operation")
+	}
+}
+
+// A session a passkey made never does without a check on the web, and
+// neither does one signed in before the server started or before its
+// person removed a passkey.
+func TestNotRecent(t *testing.T) {
+	clock := &testClock{at: time.Now()}
+	s := start(t, Config{Web: &Web{Proxy: "127.0.0.1", URL: "https://dash.example.com"}, Now: clock.now})
+	l := s.web
+	clock.add(10 * time.Second)
+	// A session's expiry is whole seconds, as newSession writes it.
+	secs := func(t time.Time) time.Time { return t.Truncate(time.Second) }
+	fresh := claims{exp: secs(clock.now()).Add(l.ttl), person: "owner"}
+	if r := s.notRecent(fresh, l); r != "" {
+		t.Fatalf("a fresh link session: %q", r)
+	}
+	passkey := fresh
+	passkey.checked = clock.now()
+	if r := s.notRecent(passkey, l); r == "" {
+		t.Error("a session a passkey made does without a check")
+	}
+	early := claims{exp: secs(s.started).Add(l.ttl), person: "owner"}
+	if r := s.notRecent(early, l); r == "" {
+		t.Error("a session signed in before the server started does without a check")
+	}
+	s.mu.Lock()
+	s.removed["owner"] = clock.now()
+	s.mu.Unlock()
+	if r := s.notRecent(fresh, l); r == "" {
+		t.Error("a session signed in when its person removed a passkey does without a check")
+	}
+	clock.add(4*time.Minute + 50*time.Second)
+	later := claims{exp: secs(clock.now()).Add(-time.Minute).Add(l.ttl), person: "owner"}
+	if r := s.notRecent(later, l); r != "" {
+		t.Errorf("a link signed in after the removal: %q", r)
+	}
+	clock.add(4*time.Minute + time.Second)
+	if r := s.notRecent(later, l); r == "" {
+		t.Error("a sign-in more than five minutes old")
 	}
 }

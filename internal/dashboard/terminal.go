@@ -173,6 +173,7 @@ func (s *Server) hostScreen(w http.ResponseWriter, r *http.Request) {
 					}
 					last = screen
 				}
+				changed := s.operatedChange() // before the rate is chosen, so that no change is missed
 				every := s.hostScreenInterval
 				if s.isOperated(pane) {
 					every = min(every, s.operatedScreenInterval)
@@ -180,6 +181,10 @@ func (s *Server) hostScreen(w http.ResponseWriter, r *http.Request) {
 				next.Reset(every)
 				select {
 				case <-next.C:
+				case <-changed: // an operation started or ended: read now, at its rate
+					if !next.Stop() {
+						<-next.C
+					}
 				case <-ctx.Done():
 					return
 				}

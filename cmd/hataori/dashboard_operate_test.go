@@ -301,6 +301,7 @@ func TestDashboardOperateOnTheWebNeedsAPasskeyCheck(t *testing.T) {
 func TestDashboardOperateOnTheWebWithoutAPasskey(t *testing.T) {
 	clock := useClock(t)
 	r := newOperateRig(t, "5m")
+	clock.add(2 * time.Second) // a sign-in in the second the server started counts as before it
 	s, _ := r.webLink()
 	if code, b := r.post(dashboard.OperateCheckPath, s, map[string]any{"pane": r.pane}); code != http.StatusOK || !strings.Contains(string(b), `"needs":"nothing"`) {
 		t.Fatalf("the check right after the sign-in: %d %s", code, b)
@@ -321,4 +322,97 @@ func TestDashboardOperateOnTheWebWithoutAPasskey(t *testing.T) {
 		t.Errorf("after five minutes: %+v", m)
 	}
 	r.noMarkerLogged(t)
+}
+
+// A check is bound to the session that asked for it, and a check that
+// signs in is not one to operate. A session cannot remove its person's
+// passkeys and then do without a check; a fresh link after the removal
+// can, as for any person with no passkey.
+func TestDashboardOperateOnTheWebCannotGoAroundTheCheck(t *testing.T) {
+	clock := useClock(t)
+	r := newOperateRig(t, "5m")
+	clock.add(2 * time.Second) // a sign-in in the second the server started counts as before it
+	k := &softKey{rpID: webName, origin: r.web}
+	s, reg := r.webLink()
+	code, body, cred := r.register(k, s, reg)
+	if code != http.StatusOK {
+		t.Fatalf("registering a passkey: %d %s", code, body)
+	}
+	other, _ := r.webLink()
+	start := func(first map[string]any) opMessage {
+		t.Helper()
+		c := r.dial(t, r.web)
+		c.WriteJSON(first)
+		m := readOp(t, c)
+		if m.Started != nil {
+			c.WriteJSON(map[string]any{"end": true})
+			readOp(t, c)
+		}
+		return m
+	}
+
+	// A check another session of the same person asked for.
+	code, b := r.post(dashboard.OperateCheckPath, other, map[string]any{"pane": r.pane})
+	var a struct {
+		Needs string
+		ceremonyAnswer
+	}
+	json.Unmarshal(b, &a)
+	if code != http.StatusOK || a.Needs != "passkey" {
+		t.Fatalf("the check: %d %s", code, b)
+	}
+	if m := start(map[string]any{"session": s, "pane": r.pane, "ceremony": a.Ceremony, "credential": k.get(t, a.Options, cred)}); m.Started != nil || !strings.Contains(m.Refused, "made for another start") {
+		t.Errorf("a check of another session: %+v", m)
+	}
+	// A check that signs in.
+	code, b = r.post(dashboard.PasskeySignInBeginPath, s, map[string]any{"check": true})
+	var in ceremonyAnswer
+	json.Unmarshal(b, &in)
+	if code != http.StatusOK || in.Ceremony == "" {
+		t.Fatalf("a sign-in check: %d %s", code, b)
+	}
+	if m := start(map[string]any{"session": s, "pane": r.pane, "ceremony": in.Ceremony, "credential": k.get(t, in.Options, cred)}); m.Started != nil || !strings.Contains(m.Refused, "made for another start") {
+		t.Errorf("a sign-in check used to operate: %+v", m)
+	}
+
+	// The session removes the passkey, then tries without a check.
+	if code, b := r.do(http.MethodDelete, "", dashboard.PasskeysPath+"/"+b64(cred.id), s, r.web, nil); code != http.StatusNoContent {
+		t.Fatalf("removing the passkey: %d %s", code, b)
+	}
+	if m := start(map[string]any{"session": s, "pane": r.pane}); m.Started != nil || !strings.Contains(m.Refused, "sign in again") {
+		t.Errorf("after the session removed its person's passkey: %+v", m)
+	}
+	if code, _ := r.post(dashboard.OperateCheckPath, s, map[string]any{"pane": r.pane}); code != http.StatusForbidden {
+		t.Errorf("the check after the removal: %d", code)
+	}
+	// A fresh link after the removal: a person with no passkey.
+	clock.add(2 * time.Second)
+	fresh, _ := r.webLink()
+	if m := start(map[string]any{"session": fresh, "pane": r.pane}); m.Started == nil {
+		t.Errorf("a link signed in after the removal: %+v", m)
+	}
+	r.noMarkerLogged(t)
+}
+
+// A session a passkey made does without a check only through one: its
+// person had a passkey, even if it is gone now.
+func TestDashboardOperateOnTheWebAPasskeySessionNeedsACheck(t *testing.T) {
+	r := newOperateRig(t, "5m")
+	k := &softKey{rpID: webName, origin: r.web}
+	s, reg := r.webLink()
+	if code, body, _ := r.register(k, s, reg); code != http.StatusOK {
+		t.Fatalf("registering a passkey: %d %s", code, body)
+	}
+	code, body, signed := r.signInWith(k, k.creds[0])
+	if code != http.StatusOK {
+		t.Fatalf("signing in with the passkey: %d %s", code, body)
+	}
+	if code, b := r.do(http.MethodDelete, "", dashboard.PasskeysPath+"/"+b64(k.creds[0].id), s, r.web, nil); code != http.StatusNoContent {
+		t.Fatalf("removing the passkey: %d %s", code, b)
+	}
+	c := r.dial(t, r.web)
+	c.WriteJSON(map[string]any{"session": signed.Session, "pane": r.pane})
+	if m := readOp(t, c); m.Started != nil || !strings.Contains(m.Refused, "sign in again") {
+		t.Errorf("a passkey's session without a check: %+v", m)
+	}
 }
