@@ -1855,10 +1855,16 @@ type Message struct {
 
 type Adapter interface {
 	// Probe reports whether the agent is installed and logged in.
+	// The Codex adapter runs `codex --version` and reads the exit status of `codex login status`.
 	Probe(ctx context.Context) (Health, error)
 
 	// Launch returns how to start the agent for spec: a new session,
 	// or a resumed one when spec.ResumeID is set.
+	// The Codex adapter runs `codex app-server` on pipes, with no files,
+	// the fixed environment plus pass_env, and the workspace's trust level
+	// given with -c, so that Codex does not record it in the user's
+	// configuration; a resumed session gets the same command (the codec
+	// sends thread/resume).
 	Launch(spec Spec) (Launch, error)
 
 	// NewCodec returns the translator for one running session.
