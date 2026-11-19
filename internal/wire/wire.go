@@ -27,7 +27,7 @@ import (
 
 // Version is the protocol version this build speaks: major.minor. Two
 // sides work together when their major numbers are equal (docs/protocol.md).
-const Version = "3.4"
+const Version = "3.5"
 
 type hello struct {
 	Version string `json:"version"`
@@ -72,8 +72,8 @@ type (
 		Before uint64           `json:"before,omitempty"`
 		Limit  int              `json:"limit"`
 	}
-	scopesArgs  struct{} // since 3.4
-	setNameArgs struct { // since 3.4
+	scopesArgs  struct{} // since 3.5
+	setNameArgs struct { // since 3.5
 		Link control.LinkRef `json:"link"`
 		Name string          `json:"name,omitempty"`
 	}
@@ -89,6 +89,10 @@ type (
 	}
 	stopArgs struct {
 		ID control.ThreadID `json:"id"`
+	}
+	linkArgs struct { // since 3.4
+		ID   control.ThreadID `json:"id"`
+		Link control.LinkRef  `json:"link"`
 	}
 	closeArgs struct { // since 2.3
 		ID control.ThreadID `json:"id"`
@@ -191,6 +195,13 @@ var operations = map[string]operation{
 		}
 		return nil, api.Stop(ctx, a.ID)
 	}},
+	"Link": {linkArgs{}, control.LinkRef{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a linkArgs
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return api.Link(ctx, a.ID, a.Link)
+	}},
 	"Close": {closeArgs{}, nil, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
 		var a closeArgs
 		if err := args(&a); err != nil {
@@ -255,8 +266,9 @@ var codes = []struct {
 	{"refused", session.ErrRefused},
 	// After refused: an error that wraps both, as AttachTerminal's to a
 	// closed thread, stays refused, as 2.1 and 2.2 answered it.
-	{"closed", core.ErrClosed},                  // since 2.3
-	{"removal_refused", core.ErrRemovalRefused}, // since 2.3
+	{"closed", core.ErrClosed},                       // since 2.3
+	{"removal_refused", core.ErrRemovalRefused},      // since 2.3
+	{"linked_elsewhere", control.ErrLinkedElsewhere}, // since 3.4
 	{"not_supported", ErrNotSupported},
 }
 

@@ -95,6 +95,7 @@ type Driver struct {
 	mu        sync.Mutex
 	sink      surface.Sink
 	connected bool
+	commands  []surface.CommandSpec
 	next      int
 	limits    surface.Limits
 	calls     map[surface.Conversation][]Call
@@ -168,6 +169,9 @@ func (d *Driver) Run(ctx context.Context, sink surface.Sink) error {
 	d.mu.Lock()
 	d.sink = sink
 	d.connected = true
+	if c, ok := sink.(surface.Commander); ok {
+		d.commands = c.Commands()
+	}
 	d.mu.Unlock()
 	connected(sink)
 	<-ctx.Done()
@@ -249,6 +253,34 @@ func (d *Driver) Inject(conv surface.Conversation, author surface.Author, text s
 		sink.Message(in)
 	}
 	return in
+}
+
+// InjectCommand delivers the use of a command in conv, when connected,
+// with a Reply in conv as a service that waits for an answer gives one.
+// It returns the command.
+func (d *Driver) InjectCommand(conv surface.Conversation, author surface.Author, name string, args ...surface.Arg) surface.Command {
+	d.deliver.Lock()
+	defer d.deliver.Unlock()
+	d.mu.Lock()
+	id := d.id("cmd")
+	c := surface.Command{Conv: conv, Author: author, ID: id, Name: name, Args: args,
+		Reply: &surface.MessageRef{Conv: conv, ID: id}}
+	var sink surface.Sink
+	if d.connected {
+		sink = d.sink
+	}
+	d.mu.Unlock()
+	if sink != nil {
+		sink.Command(c)
+	}
+	return c
+}
+
+// Commands returns the commands the sink gave when Run connected it.
+func (d *Driver) Commands() []surface.CommandSpec {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.commands
 }
 
 // Since returns the messages received in conv after the one whose cursor is

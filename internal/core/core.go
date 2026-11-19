@@ -46,6 +46,9 @@ type Scope struct {
 	Owner   string // the name of the client that gives the scope its threads
 	Model   string // default model
 	Effort  string // default effort
+	// ShowIn lists the "<client>:<channel>" besides the scope's own where
+	// its threads may be linked (design, section 5.2).
+	ShowIn []string
 }
 
 // Workspaces makes the working directory of a new thread.
@@ -947,6 +950,17 @@ func (c *Core) LastConfined(ctx context.Context, scope string) (control.ThreadID
 		return 0, "", fmt.Errorf("core: confined threads of %q: %w", scope, err)
 	}
 	return control.ThreadID(id), control.State(state), nil
+}
+
+// Confined reports whether thread id was started confined, as a
+// supervisor's thread is.
+func (c *Core) Confined(ctx context.Context, id control.ThreadID) (bool, error) {
+	var confined bool
+	err := c.Store.DB.QueryRowContext(ctx, `SELECT confined FROM threads WHERE id = ?`, int64(id)).Scan(&confined)
+	if err != nil {
+		return false, fmt.Errorf("core: thread %d: %w", id, err)
+	}
+	return confined, nil
 }
 
 // sameConfinement refuses a key that started a thread before whose

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -127,7 +128,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	scopes := map[string]core.Scope{}
 	var keys []string
 	for _, s := range cfg.Scopes {
-		scopes[s.Key] = core.Scope{Name: s.Name, Enabled: s.Enabled, Owner: s.Client, Model: s.Model, Effort: s.Effort}
+		scopes[s.Key] = core.Scope{Name: s.Name, Enabled: s.Enabled, Owner: s.Client, Model: s.Model, Effort: s.Effort, ShowIn: s.ShowIn}
 		keys = append(keys, s.Key)
 	}
 	sort.Strings(keys)
@@ -261,15 +262,32 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		}
 	}()
 	if len(supervisors) > 0 {
-		// Each scope's supervisor thread, once; found again after a restart.
-		// It ends, and is waited for, before the store is closed.
+		// Each scope's supervisor thread, once; found again after a restart;
+		// and its waker, which tells it what happened in its scope. They
+		// end, and are waited for, before the store is closed.
 		svCtx, svCancel := context.WithCancel(feCtx)
-		svDone := make(chan struct{})
-		defer func() { svCancel(); <-svDone }()
+		var svDone sync.WaitGroup
+		defer func() { svCancel(); svDone.Wait() }()
+		svDone.Add(1)
 		go func() {
-			defer close(svDone)
+			defer svDone.Done()
 			sv.Start(svCtx)
 		}()
+		for _, s := range cfg.Scopes {
+			if s.Supervisor == nil {
+				continue
+			}
+			w := &supervisor.Waker{Core: c, Scope: s.Key, Owner: control.Principal(cfg.Owner), Quiet: s.Supervisor.Quiet,
+				OutputMax: s.Supervisor.OutputMax, ThreadsMax: s.Supervisor.ThreadsMax, Log: lg}
+			if wakerHook != nil {
+				wakerHook(w)
+			}
+			svDone.Add(1)
+			go func() {
+				defer svDone.Done()
+				w.Run(svCtx)
+			}()
+		}
 	}
 	if age := cfg.Cleanup.RemoveClosedAfter; age > 0 {
 		// It ends, and is waited for, before the store is closed.
@@ -392,6 +410,10 @@ var hostTermsHook func(*hostterm.Lister)
 // token for a scope, and what revokes one.
 var supervisorHook func(issue func(scope string) (string, error), revoke func(token string))
 
+// wakerHook, when a test sets it, sees each supervisor's waker before it
+// runs, for a clock of the test's own.
+var wakerHook func(*supervisor.Waker)
+
 // coreHook, when a test sets it, is given the daemon's core, so that the
 // test can call it as an in-process client such as a chat front end.
 var coreHook func(*core.Core)
@@ -492,8 +514,17 @@ func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.St
 			}
 			scopes[s.Key] = chat.Scope{Enabled: s.Enabled}
 		}
+		// The channels of this client that may show other scopes' threads.
+		showIn := map[string][]string{}
+		for _, s := range cfg.Scopes {
+			for _, e := range s.ShowIn {
+				if client, channel, _ := strings.Cut(e, ":"); client == name {
+					showIn[channel] = append(showIn[channel], s.Key)
+				}
+			}
+		}
 		fe := &chat.FrontEnd{Name: name, Driver: d, API: c.As, Trigger: cfg.Trigger, People: cfg.People,
-			Scopes: scopes, Log: lg.With("client", name), Instance: filepath.Base(root),
+			Scopes: scopes, ShowIn: showIn, Log: lg.With("client", name), Instance: filepath.Base(root),
 			Outbox:  &chat.Outbox{Store: st, Client: name, Driver: d, Log: lg.With("client", name)},
 			FileDir: filepath.Join(root, "state", "chat", name, "files"),
 			FileRoots: func(ctx context.Context, id control.ThreadID, session int64) ([]string, error) {

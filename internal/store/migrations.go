@@ -388,6 +388,18 @@ var migrations = []Migration{
 	{Name: "threads.confined", Up: execAll(
 		`ALTER TABLE threads ADD COLUMN confined INTEGER NOT NULL DEFAULT 0`,
 	)},
+	// Where each scope's supervisor waker is in the event log (design,
+	// section 7.1), and the wake it was sending, if any: a daemon that died
+	// during the send sends the same text under the same key again.
+	{Name: "supervisor_wakes", Up: execAll(
+		`CREATE TABLE supervisor_wakes (
+			scope    TEXT PRIMARY KEY,
+			pos      INTEGER NOT NULL, -- the events up to here are handled
+			send_to  INTEGER, -- the position the wake being sent covers; NULL for none
+			send_key TEXT,
+			send_text TEXT
+		)`,
+	)},
 	// The names the chat services show for conversations: a scope's own
 	// channel (thread ''), or a linked thread (SetName).
 	{Name: "names", Up: execAll(

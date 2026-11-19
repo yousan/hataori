@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -12,14 +13,6 @@ import (
 	"github.com/yousan/hataori/internal/surface/fake"
 )
 
-// forget empties the front end's memory of where threads are shown, as
-// after a restart.
-func (f *front) forget() {
-	f.fe.convs.mu.Lock()
-	f.fe.convs.m = nil
-	f.fe.convs.mu.Unlock()
-}
-
 // secondLink links thread id to one more conversation of this front end,
 // as #228's attach will, and returns it.
 func (f *front) secondLink(t *testing.T, id control.ThreadID, thread string) surface.Conversation {
@@ -28,7 +21,6 @@ func (f *front) secondLink(t *testing.T, id control.ThreadID, thread string) sur
 		VALUES (?, ?, ?, ?, 'owner', 0)`, int64(id), f.fe.Name, channel, thread); err != nil {
 		t.Fatal(err)
 	}
-	f.forget()
 	return surface.Conversation{Channel: channel, Thread: thread}
 }
 
@@ -51,7 +43,6 @@ func TestAConversationWithNoLinkReachesNothing(t *testing.T) {
 	if _, err := f.fe.Outbox.Store.DB.Exec(`DELETE FROM links WHERE thread_id = ?`, int64(id)); err != nil {
 		t.Fatal(err)
 	}
-	f.forget()
 	before := f.runner.handed()
 	f.fe.Message(f.driver.Inject(conv, fake.Webhook(hook), "to nobody"))
 	time.Sleep(100 * time.Millisecond)
@@ -79,7 +70,6 @@ func TestEachLinkIsCaughtUpFromItsCursorAndPostedOnce(t *testing.T) {
 	f.driver.Inject(second, fake.Webhook(hook), "uno")
 	waitFor(t, "both live messages", func() bool { return len(f.runner.handed()) == 3 })
 	stop() // the daemon goes
-	f.forget()
 
 	two := f.driver.Inject(first, fake.Webhook(hook), "two")
 	dos := f.driver.Inject(second, fake.Webhook(hook), "dos")
@@ -124,10 +114,37 @@ func TestEachLinkIsCaughtUpFromItsCursorAndPostedOnce(t *testing.T) {
 		t.Fatalf("the answer's keys %v, want two, the first without a link", keys)
 	}
 	stopShow()
-	f.forget()
 	f.showing(t) // the reader starts again from its cursor
 	time.Sleep(200 * time.Millisecond)
 	if a, b := posts(f.driver, first, "the answer"), posts(f.driver, second, "the answer"); a != 1 || b != 1 {
 		t.Fatalf("the answer posted %d and %d times", a, b)
 	}
+}
+
+// The text form of attach is for a surface without commands, and a bot
+// account's post attaches nothing.
+func TestTextAttachOnlyWithoutCommandsAndNotFromABot(t *testing.T) {
+	f := newFront(t, workspaces{})
+	id := f.runningThread(t)
+	f.fe.ShowIn = map[string][]string{"c9": {channel}}
+	text := "!go attach " + strconv.FormatInt(int64(id), 10)
+	c9 := surface.Conversation{Channel: "c9"}
+	count := func() int {
+		var n int
+		f.fe.Outbox.Store.DB.QueryRow(`SELECT count(*) FROM links WHERE thread_id = ?`, int64(id)).Scan(&n)
+		return n
+	}
+	f.fe.Message(f.driver.Inject(c9, fake.Bot(hook), text)) // a bot account with a person's id
+	lim := fake.DefaultLimits
+	lim.Commands = true
+	f.driver.SetLimits(lim)
+	f.fe.Message(f.driver.Inject(c9, fake.Webhook(hook), text))
+	time.Sleep(100 * time.Millisecond)
+	if n := count(); n != 1 {
+		t.Fatalf("%d links after a bot's attach and one on a surface with commands, want 1", n)
+	}
+	// The same post on a surface without commands attaches.
+	f.driver.SetLimits(fake.DefaultLimits)
+	f.fe.Message(f.driver.Inject(c9, fake.Webhook(hook), text))
+	waitFor(t, "the text attach", func() bool { return count() == 2 })
 }

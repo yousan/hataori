@@ -60,7 +60,7 @@ var EventKinds = map[EventKind][]Field{
 	"removal_refused": {req("session", Integer), req("trigger", String), opt("principal", String), req("reason", String),
 		opt("repo", String), opt("kind", String), text("detail", String)},
 	// named: the name the chat service shows for a conversation, a scope's
-	// channel or a linked thread, changed (SetName). Since 3.4.
+	// channel or a linked thread, changed (SetName). Since 3.5.
 	"named":  {req("client", String), req("channel", String), opt("thread", String), text("name", String)},
 	CaughtUp: {},
 }

@@ -9,3 +9,9 @@
 Claude Code 2.1.328 first sends `server/discover`, which the server answers "method not found"; it then sends `initialize`, `notifications/initialized` and `tools/list`.
 
 To take a new capture, run `./capture.sh claudecode` from this directory, with `claude` and `jq` installed and logged in. It makes one small model request, saves no session, and starts no daemon. Add the new directory next to the old ones and point the test at it.
+
+# The events behind the wake digest
+
+`wake/capture.json` holds the events of one scope, as a daemon with the fake agent and the fake surface wrote them, and each thread's title and last output as the waker reads them. In it, seven threads ended their turns in each way: completed, blocked on a question, failed with the reasons `limit` and `api_error`, with a background task, with output over 1 KB, and one thread with two turns. Thread 1 is the supervisor's own. The repository's and the root's paths are replaced by `/repo.git` and `/root`.
+
+`wake/digest.txt` is the digest `TestDigestOfCapturedEvents` makes of it, with at most 6 threads. To take a new capture, run `HATAORI_CAPTURE_WAKE=$PWD/internal/supervisor/testdata/wake go test -run TestCaptureWakeEvents ./cmd/hataori` from the repository's root, then `go test -run TestDigestOfCapturedEvents ./internal/supervisor -update`, and read the new digest before committing it.

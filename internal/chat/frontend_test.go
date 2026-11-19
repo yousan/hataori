@@ -143,7 +143,7 @@ func newFront(t *testing.T, ws workspaces, opts ...func(*FrontEnd)) *front {
 		Scopes: map[string]Scope{channel: {Enabled: true}, "off": {}}}
 	c := &core.Core{Store: st, Machine: &session.Machine{Store: st}, Log: lg, Agent: "agent", Runner: r, Workspaces: ws,
 		People: testPeople(),
-		Scopes: map[string]core.Scope{channel: {Enabled: true, Owner: "chat"}, "off": {Owner: "chat"}},
+		Scopes: map[string]core.Scope{channel: {Enabled: true, Owner: "chat", ShowIn: []string{"chat:c9"}}, "off": {Owner: "chat"}},
 		Owners: map[string]control.ScopeOwner{"chat": fe}}
 	fe.API = c.As
 	for _, o := range opts {

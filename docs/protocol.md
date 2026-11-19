@@ -17,7 +17,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.4**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.5**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -91,6 +91,7 @@ Events are stored, and a reader reads them from a position, possibly long after 
 | `not_found` | error code | - | no such thread or request |
 | `closed` | error code | - | the thread is closed or removed: nothing was sent, and a message does not wake it; since 2.3 |
 | `removal_refused` | error code | - | the workspace may hold work that exists nowhere else, so it was not removed; the message says why; since 2.3 |
+| `linked_elsewhere` | error code | - | the conversation shows another thread; since 3.4 |
 | `refused` | error code | - | the session's state does not allow the call |
 | `not_supported` | error code | - | the receiver does not know the operation |
 | `error` | error code | - | any other failure |
@@ -135,13 +136,13 @@ Result: [`Event`]
 
 ### Operation `Scopes`
 
-The scopes the caller may see, each with the name a person knows it by. It takes no arguments. Since 3.4.
+The scopes the caller may see, each with the name a person knows it by. It takes no arguments. Since 3.5.
 
 Result: [`ScopeInfo`]
 
 ### Operation `SetName`
 
-Records the name the chat service shows people for a conversation: a scope's own channel when `link.thread` is empty (`link.client` owns the scope and `link.channel` is its key), else the chat thread of a link. A change writes one `named` event; the same name again changes nothing. It needs the operation `SetName` in the conversation's scope, which a chat front end's caller and the owner's connection have; a conversation of no scope or link is `not_found`. Since 3.4.
+Records the name the chat service shows people for a conversation: a scope's own channel when `link.thread` is empty (`link.client` owns the scope and `link.channel` is its key), else the chat thread of a link. A change writes one `named` event; the same name again changes nothing. It needs the operation `SetName` in the conversation's scope, which a chat front end's caller and the owner's connection have; a conversation of no scope or link is `not_found`. Since 3.5.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -203,6 +204,17 @@ Interrupts the thread's running turn. Nothing happens when no turn runs.
 | `id` | integer | required | the thread's number; since 3.0, before it a `{scope, key}` object |
 
 Result: none
+
+### Operation `Link`
+
+Since 3.4. Shows the thread in one more conversation, and returns its link. It is checked as `Send` is: the caller's person must be allowed in the thread's scope. A link outside the scope's own channel needs the channel in the scope's `show_in` (`<client>:<channel>`, docs/configuration.md); without it the call is `forbidden`, nothing is made, and the daemon logs one line naming the thread, the client and the channel. With `link.thread` empty, the daemon asks the client to open a conversation in `link.channel`, titled like the thread, once the link is allowed, and returns it; when the thread has a link of that client in that channel already, it returns that one and opens nothing. A conversation linked to the thread already changes nothing; one linked to another thread is `linked_elsewhere`.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `id` | integer | required | the thread's number |
+| `link` | `LinkRef` | required | the conversation; `thread` empty to have one opened in `channel` |
+
+Result: `LinkRef`
 
 ### Operation `Close`
 
@@ -355,7 +367,7 @@ A field left empty matches everything the caller may see.
 
 ### Type `ScopeInfo`
 
-One scope the caller may see; since 3.4.
+One scope the caller may see; since 3.5.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -748,7 +760,7 @@ Since 2.3. A removal of the thread's workspace was refused, and nothing changed.
 
 ### Event `named`
 
-Since 3.4. The name the chat service shows for a conversation changed (`SetName`). The event belongs to the conversation's scope, and to the thread when the conversation is a linked chat thread.
+Since 3.5. The name the chat service shows for a conversation changed (`SetName`). The event belongs to the conversation's scope, and to the thread when the conversation is a linked chat thread.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|

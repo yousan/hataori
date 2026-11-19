@@ -401,7 +401,7 @@ The driver splits long text, picks buttons or a menu, and maps a status to whate
 **Links.** A link is where a thread is shown in chat: the client's name, the channel, and the thread on that service (the conversation), with who made it and when. A thread has any number of links, at most one per conversation, and a conversation links to at most one thread. An inbound message in a conversation is resolved to a thread through its link: the front end looks the link up (by `Threads`, or from what it keeps of its own links) and sends to that number. A message in a conversation with no link is not for hataori, as today.
 
 - **The first link** is made when the thread starts: the scope's owner opens the chat thread, from the trigger message when there is one, and the core stores it with the thread in the same transaction.
-- **A second link is attached by hand**, from the channel that should show the thread: `/attach <number>` there, or `<trigger> attach <number>` on a surface without commands. The front end opens a chat thread in that channel, titled like the thread, and calls `Link`. hataori never opens a link in another channel by itself. *Why:* the person who attaches is looking at the channel that will show the work, so nobody gets a copy of a conversation they did not ask for; an automatic link would post every thread of a scope into every channel allowed to show it, and would need a rule for which channel of several; attaching also works for threads that started before the channel was allowed.
+- **A second link is attached by hand**, from the channel that should show the thread: `/attach <number>` there, or `<trigger> attach <number>` on a surface without commands. The front end calls `Link` with that channel and no conversation; once the core allows the link, it asks that client, as it asks a scope's owner at `Start`, to open a chat thread in the channel, titled like the thread, so a refused attach opens nothing. Used inside a chat thread, `/attach` links that chat thread. hataori never opens a link in another channel by itself. *Why:* the person who attaches is looking at the channel that will show the work, so nobody gets a copy of a conversation they did not ask for; an automatic link would post every thread of a scope into every channel allowed to show it, and would need a rule for which channel of several; attaching also works for threads that started before the channel was allowed.
 - **A link in another channel needs the config.** A thread belongs to one scope, and a link outside the scope's own channel is made only when the scope's config lists that channel in `show_in`, as `<client>:<channel>`. Without the entry no link is made, nothing is posted there, and the refusal is logged with the thread, the client and the channel. So a thread is never copied into a channel with a wider audience by accident.
 - **The same people.** `Link` is checked like `Send`: the person (section 5.5) must be allowed in the thread's scope; the channel the link is in does not widen or narrow that. Every input through any link goes through the same check.
 - **Every link reads the same conversation.** Besides the agent's output, each link shows the input and answers given through the other links, from the `input` and `answer` events, which name the link and the person they came through: one line each, `<person>: <text>`. The link the input came through does not get it again. A message that did not reach the agent (a guest's, one refused, one in a closed thread) produces no event and is not copied to any link.
@@ -548,6 +548,8 @@ A supervisor is one ordinary session, Claude Code or Codex, that looks after the
 One limit is not enforced by this: the supervisor can *ask* a worker thread to merge or delete. What a worker may do is decided by that worker's own rules. Messages from a supervisor are marked as such, so a worker's instructions can treat them differently from a person's; an answer to a worker's question is not marked, and its `answer` event names the supervisor.
 
 **When it runs.** It never polls. hataori wakes it by sending it one message when something happens in its scope: a turn ended, a question was asked, a turn failed, a usage limit was hit. Its own thread is excluded. Events that arrive while it is busy, or within a short quiet period after the first, are folded into one message.
+
+**How it is woken** (#271; decision 5 of #267). Each scope that names a supervisor has one waker in the daemon (`supervisor.Waker`). It reads the scope's events from its position, kept in the store (`supervisor_wakes`); a scope seen for the first time starts after the events already stored. What wakes is a `turn_ended` of a thread of the scope that is no supervisor's thread, neither the current one nor one a person closed and the daemon replaced: completed, blocked on a question, or failed, a usage limit included (`reason` `limit`). Other kinds, and other scopes, wake nothing. The first such event opens the quiet period (`scopes[].supervisor.quiet`, 30 s); the turn ends until it is over, and those while the supervisor's turn runs, are folded, each thread once with its latest turn end. The waker then gives the supervisor's thread one message, the digest, with `Send` and `Refuse`, as the owner. The digest names each thread, by number: its title, how its turn ended with the reason, its background count and its last output, cut to `output_max` bytes (1 KB) at a character and quoted line by line; at most `threads_max` threads (20), then one line counting the others. Its format is fixed by a golden file. A wake is sent only to a supervisor thread that is idle or asleep, looked up before the digest is made and again after: one that is running, starting, waiting on a question, failed, closed or not there yet is not sent to, and the events wait for its next turn end or change of state, which makes the digest again with what came since. So the turn ends during one supervisor turn start exactly one more. A running one is not sent to, though `Send` would refuse it, because `Send` refuses only a running thread: a turn that asks a question between the look-up and the send would take the digest as its answer. If the thread starts a turn in that moment anyway, `Send` refuses the wake as busy, it is not accepted, and it waits the same way. The wake is stored, with its text and its key (`hataori-wake-<position>`), before it is sent, and the position once it was accepted: a daemon that died in between sends the stored text under the same key again, which the core ignores if it was accepted, and events up to the stored position are not folded again; so each event wakes the supervisor once across restarts, not twice and not never. Before a wake is made, one `supervisor.Gate` is given its threads, each with its `turn_ended` event, and returns those that may wake it; nothing is sent when it returns none. It is where the budget (#273) and the loop guard (#274) plug in. A wake refused as busy after the gate admitted it is made again later, and the gate is asked again, so wakes are counted from the supervisor's `turn_started` events with the wake's key, not from the gate's calls. A wake's input names the owner as its principal; its `turn_started` has the wake's key, which tells it from a person's input.
 
 **Where this runs.** Waking, the budget and the loop guard below are one client of the control API inside the daemon, as the chat front end is: it reads events from a position, keeps its position, and wakes the supervisor with `Send` to the supervisor's thread. The core has no supervisor code; to the core the supervisor's thread is an ordinary thread and its tools are an ordinary limited `Caller`.
 
@@ -1386,12 +1388,12 @@ type API interface {
 	// owns the scope and l.Channel is its key), else a linked thread. An
 	// empty name forgets it. A change writes one named event; the same
 	// name again changes nothing. It needs OpName in the conversation's
-	// scope: a chat front end's caller has it. Since protocol 3.4.
+	// scope: a chat front end's caller has it. Since protocol 3.5.
 	SetName(ctx context.Context, l LinkRef, name string) error
 	// Scopes lists the scopes the caller may see, by key, each with the
 	// name a person knows it by: the config's, else its channel's as the
 	// chat service shows it (SetName), which is text and left out for a
-	// caller that may not read text. It needs OpRead. Since protocol 3.4.
+	// caller that may not read text. It needs OpRead. Since protocol 3.5.
 	Scopes(ctx context.Context) ([]ScopeInfo, error)
 
 	Start(ctx context.Context, r StartRequest) (ThreadID, error)
@@ -1416,11 +1418,16 @@ type API interface {
 	CloseThread(ctx context.Context, id ThreadID) error
 	RemoveThread(ctx context.Context, id ThreadID) error
 
-	// Link shows the thread in one more conversation. It is checked like
-	// Send, and refused when l.Channel is neither the scope's own channel
-	// nor in its show_in. Linking a conversation twice to the same thread
-	// changes nothing; to another thread, it is refused.
-	Link(ctx context.Context, id ThreadID, l LinkRef) error
+	// Link shows the thread in one more conversation and returns its link.
+	// It is checked like Send, and refused when l.Channel is neither the
+	// scope's own channel nor in its show_in for l.Client; a refusal makes
+	// nothing and is logged with the thread, the client and the channel.
+	// With l.Thread empty, the core asks l.Client's ScopeOwner to open a
+	// conversation in l.Channel, titled like the thread, once the link is
+	// allowed, unless the thread has a link there already, which it returns.
+	// Linking a conversation twice to the same thread changes nothing; to
+	// another thread, it is ErrLinkedElsewhere. Since protocol 3.4.
+	Link(ctx context.Context, id ThreadID, l LinkRef) (LinkRef, error)
 
 	// Events delivers events after a position, then live ones. Between the
 	// two it delivers one mark of kind CaughtUp, which is not stored, so a
@@ -1760,7 +1767,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `hello.token`, and `principal` and `from` in the `input` and `answer` events (#269) | minor: new optional fields; 2.2 |
 | `SignInLink`'s `way` (section 7.2, #359) | minor: new optional argument; 3.2 |
 | `ThreadEvents` (#336) | minor: new operation; 3.3 |
-| `SetName`, with `Ops` gaining `OpName`, `Scopes` and `ScopeInfo`, and the `named` event (#405) | minor: new operations and event kind; 3.4 |
+| `SetName`, with `Ops` gaining `OpName`, `Scopes` and `ScopeInfo`, and the `named` event (#405) | minor: new operations and event kind; 3.5 |
 | `OperateHost`, with `Ops` gaining `OpHostInput` (section 7.2) | minor: new operation, whose connection becomes a stream both ways |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 

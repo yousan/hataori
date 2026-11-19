@@ -88,7 +88,7 @@ async function get<T>(path: string): Promise<T> {
 
 // ScopeInfo is a scope the caller may see, with the name a person knows it
 // by: the config's, else its channel's as the chat service shows it; absent
-// when none is known (protocol 3.4).
+// when none is known (protocol 3.5).
 export interface ScopeInfo {
   key: string;
   name?: string;

@@ -94,6 +94,7 @@ Names in `drivers`, `adapters` and `scopes[].client` start with a lowercase lett
 | `model` | string | empty | The model of threads started here whose order names none. |
 | `effort` | string | empty | The effort of threads started here whose order names none. |
 | `people` | array of strings | empty | Names of the people, under `people`, who may start threads here and post into them besides the owner. Empty strings are ignored. |
+| `show_in` | array of strings | empty | Other channels where this scope's threads may be shown, each as `<client>:<channel>`, such as `"discord:<channel id>"` (for another client, its name under `drivers`). A person allowed in this scope attaches a thread there with `/attach` (see "Showing a thread in another channel"). Without an entry, an attach in that channel makes no link, shows nothing there and writes one log line. The scope's own channel is never listed. |
 | `posters` | array of strings | empty | The old form only: ids, on this scope's client, of who may post here besides the owner. For Discord, user ids, or the id of a webhook for posts made through that webhook. Refused in a config with `people`. |
 | `supervisor` | object | absent | The scope's supervisor (below). Without it the scope has none, and nothing changes. |
 
@@ -107,9 +108,13 @@ A supervisor is one more thread of the scope, started by the daemon (design, sec
 | `model` | string | the adapter's cheapest | Its model. Claude Code's cheapest is `haiku`. An adapter that names no cheapest model gets the scope's model, as any thread. |
 | `effort` | string | the scope's | Its effort, as `effort` above. |
 | `instructions` | string | empty | Appended to the agent's own instructions at each start of its session. |
+| `quiet` | duration | `"30s"` | The quiet period: after the first turn end that wakes the supervisor, how long the waker waits, folding what comes until then into one message. |
+| `output_max` | integer | `1024` | The most bytes of each thread's last output in a wake message. |
+| `threads_max` | integer | `20` | The most threads a wake message shows; the others are counted in one line. |
 
 - **Its thread.** When the daemon starts, it opens the supervisor's thread in the scope's own channel, as the owner, with the title "Supervisor of this channel" and a first message that asks the agent to say it is ready. After a restart it finds that thread again and starts no second one. People write to it there like in any thread. A scope that is not enabled gets no supervisor thread.
 - **A new one.** A supervisor's thread that failed, as when its agent could not start, stays failed, also across restarts; the daemon logs it at each start. Close it (`hataori close NUMBER`), and the next start of the daemon opens a new one. The same holds for a supervisor's thread the owner closed for any other reason. To have no supervisor, remove the section instead.
+- **How it is woken.** It never polls. When a thread of the scope, other than its own, ends a turn (completed, blocked on a question, or failed, a usage limit included), the daemon waits for the quiet period and then sends it one message: each such thread once, by number, with its title, how its turn ended, its background tasks and the end of its output. Turn ends during the quiet period, and while its own turn runs, go into the next message; a message is never sent into its running turn. The daemon keeps its place in the event log, so a restart wakes it once for each turn end, not twice and not never. Turn ends from before the section was added wake nothing.
 - **Its tools need a person.** Its tools act as the id `supervisor:<scope key>`. List that id under a person of its own and that person in the scope's `people`; until then it may read the scope's threads but not start or send, and the daemon logs one line at start saying so. Removing the entry turns it off again.
 - **Its token.** Each of its sessions gets a token of its own for the control socket, kept in the session's state directory and in the agent's MCP config there, outside its working directory. The daemon binds it again after a restart, so a supervisor that keeps running keeps its tools.
 - Its session is kept from what it could write in its own directory for its next start: it loads only the user's settings, not the project's or the local ones; it shows hataori's status line alone, not the user's; it loads no CLAUDE.md files, keeps no automatic memory and gets no claude.ai connectors; and git finds no repository there (`GIT_DIR=/dev/null`).
@@ -397,3 +402,17 @@ An order is a message in an enabled channel (not in a thread):
 - The author must be the owner or one of the scope's `people`. Posts by bot accounts are ignored; posts through a webhook are accepted when the webhook's id belongs to one of the scope's people.
 
 hataori opens a thread on the message, clones the repository into the thread's working directory, starts the agent there and posts its replies into the thread. Later messages in that thread from the owner or one of the scope's people go to the same agent session. An order that is refused for any reason other than the effort value starts nothing and writes one log line.
+
+## Showing a thread in another channel
+
+A thread can be shown in more than one chat conversation, on one chat service or on several. Each is a link of the thread; every link gets the agent's answers, and input given in any of them goes to the same session.
+
+```
+/attach <number>
+<trigger> attach <number>
+```
+
+- `/attach <number>` in a channel opens a chat thread there, titled like the hataori thread, and links it. Used inside a chat thread, it links that chat thread. Its answer is shown only to the person who used it. `<trigger> attach <number>`, posted in a channel, does the same on a service without commands, and answers nothing.
+- The channel must be the scope's own or listed in the scope's `show_in`. The person must be the owner or one of the scope's `people`, as for posting into the thread.
+- Attaching a thread where it is shown already changes nothing. A chat thread that shows one hataori thread is not linked to another.
+- A refused attach links nothing, opens nothing and writes one log line.
