@@ -1821,6 +1821,7 @@ func (r *Runner) Interrupt(ctx context.Context, id, named int64) error {
 			}
 			time.Sleep(r.poll())
 		}
+		r.at("interrupt watch: stop")
 		if lv.taken != nil {
 			// A window a person started: nothing hataori does ends its
 			// process. The turn ends when the agent reports it.

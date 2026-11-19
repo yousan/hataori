@@ -54,6 +54,8 @@
 //	askmany QUESTION -- CHOICE | CHOICE...
 //	                    ask, as ask does, a question whose choices may be
 //	                    chosen several at once
+//	deaf DURATION       wait DURATION without heeding an interrupt; one that
+//	                    came is heeded after
 //	background DURATION end the turn with one background task, then start a
 //	                    turn by itself after DURATION
 //	fail REASON         end the turn as failed with REASON

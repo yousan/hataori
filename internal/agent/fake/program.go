@@ -328,6 +328,11 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 				return 0, false
 			}
 			final, replied = "answer: "+answer, true
+		case "deaf":
+			// Wait without heeding an interrupt: one that comes is heeded
+			// by the next command, as an agent that takes long to stop.
+			d, _ := time.ParseDuration(arg)
+			time.Sleep(d)
 		case "background":
 			d, _ := time.ParseDuration(arg)
 			end["background"] = 1

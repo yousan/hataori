@@ -146,6 +146,7 @@ type options struct {
 	wrap          func(agent.Adapter) agent.Adapter // wraps the fake adapter, if set
 	dialog        string                            // the fake's start-up dialog, in the terminal form
 	confines      bool                              // the fake takes confined specs, and the runner gives them no MCP server
+	interrupt     time.Duration                     // the interrupt's grace period; 5s when zero
 }
 
 // build makes an instance's store, core and runner with the fake agent.
@@ -170,7 +171,7 @@ func build(root string, o options, log io.Writer) (*store.Store, *core.Core, *Ru
 	m := &session.Machine{Store: st}
 	r := &Runner{Store: st, Machine: m, Adapters: map[string]agent.Adapter{"fake": adapter},
 		Host: host.Command{Path: os.Args[0], Args: []string{"role", "host"}}, Root: root, Log: lg,
-		Instructions: o.instructions, StartTimeout: o.startTimeout, InterruptGrace: 5 * time.Second, Poll: cmp.Or(o.poll, 20*time.Millisecond),
+		Instructions: o.instructions, StartTimeout: o.startTimeout, InterruptGrace: cmp.Or(o.interrupt, 5*time.Second), Poll: cmp.Or(o.poll, 20*time.Millisecond),
 		IdlePeriod: o.idlePeriod, ContextBytes: o.contextBytes}
 	if o.confines {
 		r.Confine = func(context.Context, ConfinedLaunch) (Confined, error) { return Confined{}, nil }
@@ -556,4 +557,41 @@ func TestNoAgentNameAndNoTerminalLog(t *testing.T) {
 			t.Errorf("terminal.go contains %q", bad)
 		}
 	}
+}
+
+// #494: the watchdog of an interrupt looks at the interrupted turn once
+// more, under the runner's lock, right before it stops the session. The
+// turn ends in its last poll and the next one starts: the session is not
+// stopped, and the next turn runs to its end.
+func TestWatchdogLeavesATurnThatStartedInItsLastPoll(t *testing.T) {
+	forms(t, func(t *testing.T, terminal bool) {
+		ctx := context.Background()
+		f := newFixture(t, options{terminal: terminal, interrupt: time.Second})
+		// The agent heeds the interrupt only after the grace period.
+		f.start("deaf 1500ms\nreply late")
+		waitFor(t, "the turn", 15*time.Second, f.has("turn_started", 1))
+		var once sync.Once
+		f.run.point = func(p string) {
+			if p != "interrupt watch: stop" {
+				return
+			}
+			once.Do(func() {
+				waitFor(t, "the interrupted turn's end", 15*time.Second, f.has("turn_ended", 1))
+				if err := owner(f.core).Send(ctx, thread, "k2", control.Input{Text: "tool wait 3s\nreply second"}, control.Deliver); err != nil {
+					t.Errorf("the next turn: %v", err)
+				}
+				waitFor(t, "the next turn", 15*time.Second, f.has("turn_started", 2))
+			})
+		}
+		if err := owner(f.core).Stop(ctx, thread, 0); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "the end of the next turn", 20*time.Second, f.has("turn_ended", 2))
+		if d := f.eventData("turn_ended"); d[1]["outcome"] != "completion" {
+			t.Fatalf("turn ends %v; want the next one completed", d)
+		}
+		if strings.Contains(f.log.String(), "stopping the session") {
+			t.Fatalf("the session was stopped: %s", f.log.String())
+		}
+	})
 }
