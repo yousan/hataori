@@ -23,6 +23,10 @@ func (h *host) stop(req request) (resp response, registered bool) {
 	}
 	h.stops.Add(1)
 	h.stopMu.Unlock()
+	if h.spec.Relay { // nothing to signal: the host itself ends
+		h.endRelay.Do(func() { close(h.done) })
+		return response{OK: true}, true
+	}
 	// A second stop waits for the first, and then finds the group gone, so
 	// its shorter grace periods cannot cut the first one's short.
 	h.stopOne.Lock()

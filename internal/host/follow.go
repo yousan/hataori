@@ -143,6 +143,10 @@ func (h *host) follow(c *net.UnixConn, enc *json.Encoder, req request) {
 // "input" requests, written to the terminal as they come and not answered.
 // The host counts the connection as attached until it closes.
 func (h *host) attach(c *net.UnixConn, dec *json.Decoder, enc *json.Encoder, req request) {
+	if h.spec.Relay {
+		enc.Encode(response{Error: errNoTerminal})
+		return
+	}
 	if h.term == nil {
 		enc.Encode(response{Error: "the command runs on pipes: there is no terminal to attach to"})
 		return
@@ -178,6 +182,10 @@ func (h *host) attach(c *net.UnixConn, dec *json.Decoder, enc *json.Encoder, req
 // while read takes what the other end sends; read returns when the other
 // end closes.
 func (h *host) stream(c *net.UnixConn, enc *json.Encoder, req request, read func()) {
+	if h.spec.Relay {
+		enc.Encode(response{Error: errNoTerminal})
+		return
+	}
 	if h.term == nil {
 		enc.Encode(response{Error: "the command runs on pipes: there is no terminal to follow"})
 		return
