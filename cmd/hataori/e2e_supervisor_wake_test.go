@@ -596,3 +596,62 @@ func TestWakeNotByAnEarlierSupervisor(t *testing.T) {
 		t.Fatalf("the new supervisor's digest; want thread %d and not the earlier supervisor %d:\n%s", a, first.ID, got[0])
 	}
 }
+
+// A wake that a supervisor's thread took, closed before the waker stored
+// its position, goes to the thread that replaces it under a key of its
+// own: the core takes a send's key once per scope, and a thread whose
+// resume failed takes it without reading the digest (#443).
+func TestWakeReachesTheReplacingSupervisor(t *testing.T) {
+	wt := newWakeTest(t)
+	stopped := errors.New("stopped here")
+	h := func(at string) error {
+		if at == "sent" {
+			return stopped
+		}
+		return nil
+	}
+	wt.hook.Store(&h)
+	stop, owner, first := wt.start(t)
+	ctx := context.Background()
+	a, pos := wt.worker(t, owner, "c1", "a", "reply alpha")
+	wt.read(t, pos)
+	wt.quiet(t)
+	wt.woken(t, owner, first.ID, 1)
+	var sending sql.NullInt64
+	wt.db.QueryRow(`SELECT send_to FROM supervisor_wakes WHERE scope = 'c1'`).Scan(&sending)
+	if !sending.Valid {
+		t.Fatal("no stored wake after the send: the hook did not stop the waker before it stored its position")
+	}
+	if err := owner.CloseThread(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	stop()
+	db := wt.db
+	b := func() { // on the daemon's goroutine: no t.Fatal
+		for deadline := time.Now().Add(15 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+			var n int
+			db.QueryRow(`SELECT count(*) FROM threads WHERE scope = 'c1' AND confined = 1`).Scan(&n)
+			if n == 2 {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Error("timed out waiting for the supervisor's new thread")
+				return
+			}
+		}
+	}
+	wt.before.Store(&b)
+	stop, owner, sv := wt.start(t)
+	defer stop()
+	if sv.ID == first.ID {
+		t.Fatalf("the closed supervisor %d was not replaced", first.ID)
+	}
+	got := wt.woken(t, owner, sv.ID, 1)
+	if !strings.Contains(got[0], fmt.Sprintf("\nThread %d: reply alpha\n", a)) {
+		t.Fatalf("the new supervisor's digest:\n%s", got[0])
+	}
+	eventually(t, "the wake to be stored as done", 10*time.Second, func() bool {
+		db.QueryRow(`SELECT send_to FROM supervisor_wakes WHERE scope = 'c1'`).Scan(&sending)
+		return !sending.Valid
+	})
+}
