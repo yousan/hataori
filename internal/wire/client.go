@@ -233,9 +233,17 @@ func (c *Client) AskInterrupt(ctx context.Context, id control.ThreadID, key, rea
 	return out, err
 }
 
-func (c *Client) Stop(ctx context.Context, id control.ThreadID) error {
-	return c.call(ctx, "Stop", stopArgs{ID: id}, nil)
+// Stop names turn, when it is not 0, only to a daemon that knows the field:
+// an older one would stop whatever turn runs.
+func (c *Client) Stop(ctx context.Context, id control.ThreadID, turn int64) error {
+	if turn == 0 {
+		return c.call(ctx, "Stop", stopArgs{ID: id}, nil)
+	}
+	return c.callSince(ctx, stopTurnSince, "naming the turn to stop", "Stop", stopArgs{ID: id, Turn: turn}, nil)
 }
+
+// stopTurnSince is the version since which Stop takes the turn to stop.
+const stopTurnSince = "3.13"
 
 func (c *Client) Link(ctx context.Context, id control.ThreadID, l control.LinkRef) (control.LinkRef, error) {
 	var out control.LinkRef

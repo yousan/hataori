@@ -93,7 +93,7 @@ func examples(t *testing.T) map[string]any {
 		"Send":           sendArgs{ID: exampleID, Key: "M0790", Input: control.Input{Text: "And the docs.", Link: &exampleLink}, Busy: control.Deliver},
 		"AskInterrupt":   askInterruptArgs{ID: exampleID, Key: "ask-1", Reason: "urgent"},
 		"Answer":         answerArgs{Request: "3:toolu_2", Answer: control.Answer{Text: "blue", Choices: []string{"blue"}, Link: &exampleLink}},
-		"Stop":           stopArgs{ID: exampleID},
+		"Stop":           stopArgs{ID: exampleID, Turn: 12},
 		"Close":          closeArgs{ID: exampleID},
 		"Link":           linkArgs{ID: exampleID, Link: control.LinkRef{Client: "discord", Channel: "C0999", Thread: ""}},
 		"Remove":         removeArgs{ID: exampleID},
