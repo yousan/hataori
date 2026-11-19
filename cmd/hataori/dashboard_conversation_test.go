@@ -224,10 +224,10 @@ func TestDashboardConversation(t *testing.T) {
 	if i := find("tool", ""); i < 0 || entries[i].Head != "Tool Bash" || entries[i].Open {
 		t.Fatalf("no folded tool line: %+v", entries)
 	}
-	if i := find("turn_started", ""); i < 0 || !strings.HasPrefix(entries[i].Head, "Turn 1, started by owner · ") {
+	if i := find("turn_started", ""); i < 0 || !strings.HasPrefix(entries[i].Head, "Turn started by owner · ") {
 		t.Fatalf("no turn start with who and when: %+v", entries)
 	}
-	if i := find("turn_ended", ""); i < 0 || !strings.HasPrefix(entries[i].Head, "Turn 1 ended: completion · ") {
+	if i := find("turn_ended", ""); i < 0 || !strings.HasPrefix(entries[i].Head, "Turn ended: completion · ") {
 		t.Fatalf("no turn end with its outcome and when: %+v", entries)
 	}
 	var markup int

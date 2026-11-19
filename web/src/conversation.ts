@@ -19,13 +19,13 @@ export const conversationKinds: ReadonlySet<string> = new Set([
 // Entry is one line of a conversation. A text that is absent was withheld
 // from the caller (protocol 2.0): the page says so instead.
 export type Entry =
-  | { kind: "turn_started"; pos: number; time: string; turn?: number; by: string; who?: string }
+  | { kind: "turn_started"; pos: number; time: string; by: string; who?: string }
   | { kind: "input"; pos: number; time: string; who?: string; text?: string }
   | { kind: "request"; pos: number; time: string; approval: boolean; text?: string; choices?: string[] }
   | { kind: "answer"; pos: number; time: string; who?: string; text?: string }
   | { kind: "text"; pos: number; time: string; final: boolean; text?: string }
   | { kind: "tool"; pos: number; time: string; tool: string; parent?: string; ended?: string }
-  | { kind: "turn_ended"; pos: number; time: string; turn?: number; outcome: string; reason?: string };
+  | { kind: "turn_ended"; pos: number; time: string; outcome: string; reason?: string };
 
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 const num = (v: unknown): number | undefined => (typeof v === "number" ? v : undefined);
@@ -48,7 +48,7 @@ export function entries(events: readonly Event[]): Entry[] {
     const base = { pos: e.pos, time: e.time };
     switch (e.kind) {
       case "turn_started":
-        out.push({ kind: "turn_started", ...base, turn: num(d.turn), by: str(d.by) ?? "", who: who(d) });
+        out.push({ kind: "turn_started", ...base, by: str(d.by) ?? "", who: who(d) });
         break;
       case "input":
         out.push({ kind: "input", ...base, who: who(d), text: str(d.text) });
@@ -84,7 +84,7 @@ export function entries(events: readonly Event[]): Entry[] {
         break;
       }
       case "turn_ended":
-        out.push({ kind: "turn_ended", ...base, turn: num(d.turn), outcome: str(d.outcome) ?? "", reason: str(d.reason) || undefined });
+        out.push({ kind: "turn_ended", ...base, outcome: str(d.outcome) ?? "", reason: str(d.reason) || undefined });
         break;
     }
   }

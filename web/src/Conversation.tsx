@@ -49,15 +49,15 @@ function Line({ e }: { e: Entry }) {
     case "turn_started":
       return (
         <li className="conv-turn" data-kind={e.kind} data-pos={e.pos}>
-          {t("conv.turnStarted", { n: e.turn ?? "", who: turnBy(e), time: clock(e.time) })}
+          {t("conv.turnStarted", { who: turnBy(e), time: clock(e.time) })}
         </li>
       );
     case "turn_ended":
       return (
         <li className="conv-turn conv-turn-end" data-kind={e.kind} data-pos={e.pos}>
           {e.reason
-            ? t("conv.turnEndedWhy", { n: e.turn ?? "", outcome: e.outcome, reason: e.reason, time: clock(e.time) })
-            : t("conv.turnEnded", { n: e.turn ?? "", outcome: e.outcome, time: clock(e.time) })}
+            ? t("conv.turnEndedWhy", { outcome: e.outcome, reason: e.reason, time: clock(e.time) })
+            : t("conv.turnEnded", { outcome: e.outcome, time: clock(e.time) })}
         </li>
       );
     case "input":
