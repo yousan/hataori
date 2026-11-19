@@ -158,7 +158,7 @@ func TestLoopGuard(t *testing.T) {
 
 	// A person's input in b: b wakes the supervisor again. (Its relay to a
 	// ends a turn of a, which still wakes nothing.)
-	n = endsOf(b)
+	n, na := endsOf(b), endsOf(a)
 	if err := owner.Send(ctx, b, "person-b", control.Input{Text: "reply a person was here"}, control.Refuse); err != nil {
 		t.Fatal(err)
 	}
@@ -170,6 +170,14 @@ func TestLoopGuard(t *testing.T) {
 	}
 	if n := len(wt.loopNotices(sv)); n != 2 {
 		t.Fatalf("%d loop notices, want still 2", n)
+	}
+	// That wake makes the supervisor relay to a. The relayed turn of a ends,
+	// and the waker reads it, while a is still stopped: after the reset below
+	// it would wake the supervisor itself (#450).
+	wt.read(t, wt.ended(t, a, na+1))
+	wt.settle(t, "the relay to a", func() bool { return true })
+	if got := wt.wakes(t, sv.ID); len(got) != before+2 {
+		t.Fatalf("%d wakes after the relay to %d, which is stopped; want still %d", len(got), a, before+2)
 	}
 
 	// A person's message in the supervisor's thread: a wakes it again too.
