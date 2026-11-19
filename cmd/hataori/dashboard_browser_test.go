@@ -121,13 +121,20 @@ func fakeDevTools(t *testing.T, answers ...[]byte) *browser {
 // closed", as Chrome does for one sent while the page moves to another
 // document, and that any other DevTools error still fails at once.
 func TestBrowserUntilAfterTheTargetNavigated(t *testing.T) {
+	// Answers as Chrome 138 sent them: one for an evaluation sent while
+	// the page navigated to another site, and one for an evaluation whose
+	// expression was not a string.
 	navigated, err := os.ReadFile("testdata/devtools/chrome-138/evaluate-navigated.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid, err := os.ReadFile("testdata/devtools/chrome-138/evaluate-invalid-params.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	fakeDevTools(t, navigated, navigated).until("the condition after two navigations", "true")
 
-	b := fakeDevTools(t, []byte(`{"error":{"code":-32000,"message":"Cannot do that"}}`))
+	b := fakeDevTools(t, invalid)
 	recorder := &browserRecorder{message: make(chan string, 1)}
 	b.t = recorder
 	done := make(chan struct{})
@@ -138,7 +145,7 @@ func TestBrowserUntilAfterTheTargetNavigated(t *testing.T) {
 	<-done
 	select {
 	case message := <-recorder.message:
-		if !strings.Contains(message, "Cannot do that") {
+		if !strings.Contains(message, "Invalid parameters") {
 			t.Errorf("until failed with %q, want the DevTools error", message)
 		}
 	default:
