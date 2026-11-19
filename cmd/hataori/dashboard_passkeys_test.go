@@ -434,9 +434,9 @@ func TestPasskeyRegistrationNeedsAProofMadeForIt(t *testing.T) {
 		t.Fatalf("stored: %+v", keys)
 	}
 
-	// No user verification, and a credential that cannot be found without
-	// a name, are refused.
-	for _, bad := range []*softKey{{rpID: webName, origin: d.web, noUV: true}, {rpID: webName, origin: d.web, noRK: true}} {
+	// No user verification, a credential that cannot be found without a
+	// name, and a public key larger than a passkey's are refused.
+	for _, bad := range []*softKey{{rpID: webName, origin: d.web, noUV: true}, {rpID: webName, origin: d.web, noRK: true}, {rpID: webName, origin: d.web, padKey: 5000}} {
 		s, reg := d.webLink()
 		if code, body, _ := d.register(bad, s, reg); code != http.StatusBadRequest {
 			t.Fatalf("%+v: %d %s, want 400", bad, code, body)
@@ -879,6 +879,13 @@ func TestPasskeyCeremoniesAreUsedOnceInTimeAndByTheirSession(t *testing.T) {
 	if keys := d.stored(); len(keys) != 1 {
 		t.Fatalf("stored: %+v", keys)
 	}
+	// It starts again with the same proof, which was not used.
+	if code, body, _ := d.register(fresh(), sY, regY); code != http.StatusOK {
+		t.Fatalf("starting again: %d %s", code, body)
+	}
+	if keys := d.stored(); len(keys) != 2 || !bytes.Equal(keys[0].Handle, keys[1].Handle) {
+		t.Fatalf("stored: %+v", keys)
+	}
 
 	had := len(d.stored())
 	s, reg := d.webLink()
@@ -1039,6 +1046,19 @@ func TestPasskeyCheckIsOfTheSignedInPersonsOwn(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("register: %d %s", code, body)
 	}
+
+	// One session has at most eight checks or registrations under way;
+	// another session has room.
+	for i := range 9 {
+		code, _, b := check(gs)
+		if want := map[bool]int{true: http.StatusOK, false: http.StatusServiceUnavailable}[i < 8]; code != want {
+			t.Fatalf("check %d under way: %d %s, want %d", i+1, code, b, want)
+		}
+	}
+	if code, _, b := check(func() dashSession { s, _ := d.webLink(); return s }()); code != http.StatusOK {
+		t.Fatalf("a check of another session: %d %s", code, b)
+	}
+	gs, _ = d.webLink()
 
 	code, a, b := check(gs)
 	var o struct {

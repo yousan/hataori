@@ -39,3 +39,19 @@ func TestPasskeysFileNeverGrowsPastWhatItReads(t *testing.T) {
 		t.Fatalf("a temporary file is left: %v", err)
 	}
 }
+
+// A passkey is not added once the file would be fuller than three
+// quarters of what is read, which leaves room for sign-ins.
+func TestAPasskeyLeavesRoomInTheFile(t *testing.T) {
+	var keys []passkey
+	k := passkey{ID: []byte("new"), Person: "ada", PublicKey: make([]byte, 77), Made: time.Now()}
+	for len(keys)*1500 < maxPasskeysFile*3/4 {
+		keys = append(keys, passkey{ID: []byte{byte(len(keys)), byte(len(keys) >> 8)}, Person: "grace", PublicKey: make([]byte, 1000), Made: time.Now()})
+	}
+	if err := addable(keys, k); !errors.Is(err, errFileFull) {
+		t.Fatalf("adding to %d passkeys: %v, want the file full", len(keys), err)
+	}
+	if err := addable(keys[:10], k); err != nil {
+		t.Fatalf("adding to 10 passkeys: %v", err)
+	}
+}

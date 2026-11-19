@@ -237,7 +237,7 @@ func Listen(cfg Config, api func(person string) (control.API, bool), log *slog.L
 		s.now = time.Now
 	}
 	if cfg.Root != nil {
-		s.keys = &passkeyFile{root: cfg.Root}
+		s.keys = &passkeyFile{root: cfg.Root, log: log}
 		if _, err := s.keys.load(); err != nil { // refused now, not at the first sign-in
 			return nil, err
 		}

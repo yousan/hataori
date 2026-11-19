@@ -77,13 +77,22 @@ const (
 	// ceremonyTTL is how long a sign-in ceremony may take.
 	ceremonyTTL = 5 * time.Minute
 	// maxCeremonies is how many registrations and checks may be under way
-	// at once. Each needs a session; a sign-in keeps nothing here.
-	maxCeremonies = 256
-	// maxPasskeyBody is the largest request body a passkey route reads,
-	// and bodyTimeout how long reading it may take.
+	// at once, and maxSessionCeremonies how many of one session. Each
+	// needs a session; a sign-in keeps nothing here.
+	maxCeremonies        = 256
+	maxSessionCeremonies = 8
+	// maxPasskeyBody is the largest request body a passkey route reads.
 	maxPasskeyBody = 64 << 10
-	bodyTimeout    = 10 * time.Second
+	// maxPublicKey is the largest public key a passkey may have, room for
+	// the largest algorithm the library takes (ML-DSA-87, 2592 bytes), and
+	// maxCredentialID the largest credential id WebAuthn allows.
+	maxPublicKey    = 4 << 10
+	maxCredentialID = 1023
 )
+
+// bodyTimeout is how long reading a passkey route's request body may
+// take. Tests shorten it.
+var bodyTimeout = 10 * time.Second
 
 // changeRoute reports whether method and path name a route that takes a
 // request other than GET or HEAD.
@@ -294,7 +303,13 @@ func (s *Server) addCeremony(c ceremony) (string, bool, error) {
 			delete(s.ceremonies, k)
 		}
 	}
-	if len(s.ceremonies) >= maxCeremonies {
+	mine := 0
+	for _, x := range s.ceremonies {
+		if x.session == c.session {
+			mine++
+		}
+	}
+	if len(s.ceremonies) >= maxCeremonies || mine >= maxSessionCeremonies {
 		return "", false, nil
 	}
 	s.ceremonies[sum] = c
@@ -565,6 +580,7 @@ var (
 	errTooMany = fmt.Errorf("you have %d passkeys, the most one person may have: remove one first", MaxPasskeys)
 	errTaken   = errors.New("this passkey is registered already")
 	errHandle  = errors.New("another registration of yours finished first: start again")
+	errTooBig  = errors.New("this passkey's key or id is larger than a passkey's: use another authenticator")
 )
 
 // passkeyRegisterBegin starts registering a passkey for the session's
@@ -670,22 +686,23 @@ func (s *Server) passkeyRegisterFinish(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "this authenticator made a passkey that cannot be found without a name: use another", http.StatusBadRequest)
 		return
 	}
+	// The library keeps the key's bytes as sent: a large one would fill
+	// the file.
+	if len(cred.PublicKey) > maxPublicKey || len(cred.ID) > maxCredentialID {
+		http.Error(w, errTooBig.Error(), http.StatusBadRequest)
+		return
+	}
 	now := s.now()
 	k := passkey{ID: cred.ID, Person: c.person, Handle: c.handle, PublicKey: cred.PublicKey, SignCount: cred.Authenticator.SignCount,
 		BackupEligible: cred.Flags.BackupEligible, BackupState: cred.Flags.BackupState, Made: now}
 	err = s.keys.change(func(keys []passkey) ([]passkey, bool, error) {
-		switch g, ok := s.useGrant(c.grant); {
-		case !ok || !g.stillThere(keys):
+		// Refused for what it is, the proof stays, so that the person can
+		// start again with it; only then is the proof used.
+		if err := addable(keys, k); err != nil {
+			return nil, false, err
+		}
+		if g, ok := s.useGrant(c.grant); !ok || !g.stillThere(keys) {
 			return nil, false, errNoProof
-		case slices.ContainsFunc(keys, func(x passkey) bool { return bytes.Equal(x.ID, k.ID) }):
-			return nil, false, errTaken
-		// One user handle per person: one that began with none, while
-		// another registration of theirs finished, starts again with that
-		// one's.
-		case slices.ContainsFunc(keys, func(x passkey) bool { return x.Person == k.Person && !bytes.Equal(x.Handle, k.Handle) }):
-			return nil, false, errHandle
-		case len(userOf(c.person, keys).creds) >= MaxPasskeys:
-			return nil, false, errTooMany
 		}
 		return append(keys, k), true, nil
 	})
@@ -705,6 +722,29 @@ func (s *Server) passkeyRegisterFinish(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, struct {
 		Passkey passkeyView `json:"passkey"`
 	}{view(k)})
+}
+
+// addable says why k may not be added to keys, nil when it may: its id
+// is there already; its person has passkeys of another user handle (one
+// that began with none while another registration of theirs finished
+// starts again with that one's); the person has MaxPasskeys; or the file
+// would be fuller than three quarters of what is read, which leaves room
+// for sign-ins to record their use.
+func addable(keys []passkey, k passkey) error {
+	u := userOf(k.Person, keys)
+	switch {
+	case slices.ContainsFunc(keys, func(x passkey) bool { return bytes.Equal(x.ID, k.ID) }):
+		return errTaken
+	case u.handle != nil && !bytes.Equal(u.handle, k.Handle):
+		return errHandle
+	case len(u.creds) >= MaxPasskeys:
+		return errTooMany
+	}
+	b, err := encodePasskeys(append(slices.Clone(keys), k))
+	if err != nil || len(b) > maxPasskeysFile/4*3 {
+		return errFileFull
+	}
+	return nil
 }
 
 // passkeyView is a passkey as the page lists it.

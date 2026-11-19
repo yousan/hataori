@@ -23,8 +23,10 @@ type softKey struct {
 	// noCounter makes credentials that keep no signature counter, as
 	// synced passkeys do.
 	noUV, noRK, noCounter bool
-	// fixedID, when set, is the id of every credential it makes.
+	// fixedID, when set, is the id of every credential it makes; padKey
+	// adds a field of that many bytes to each public key it sends.
 	fixedID []byte
+	padKey  int
 	creds   []*softCred
 }
 
@@ -81,11 +83,16 @@ func cat(parts ...[]byte) []byte {
 	return b
 }
 
-// coseKey is pub as a COSE_Key: EC2, ES256, P-256.
-func coseKey(pub *ecdsa.PublicKey) []byte {
+// coseKey is pub as a COSE_Key: EC2, ES256, P-256, with a field of pad
+// bytes more when pad is not 0.
+func coseKey(pub *ecdsa.PublicKey, pad int) []byte {
 	raw, _ := pub.Bytes() // 0x04 | x | y
-	return cat(cborMap(5), cborInt(1), cborInt(2), cborInt(3), cborInt(-7), cborInt(-1), cborInt(1),
+	fields := cat(cborInt(1), cborInt(2), cborInt(3), cborInt(-7), cborInt(-1), cborInt(1),
 		cborInt(-2), cborBytes(raw[1:33]), cborInt(-3), cborBytes(raw[33:65]))
+	if pad == 0 {
+		return cat(cborMap(5), fields)
+	}
+	return cat(cborMap(6), fields, cborInt(99), cborBytes(make([]byte, pad)))
 }
 
 // Authenticator data flags.
@@ -159,7 +166,7 @@ func (k *softKey) create(t *testing.T, raw json.RawMessage) (*softCred, json.Raw
 	if c.counting {
 		c.count++
 	}
-	attested := cat(make([]byte, 16), []byte{0, byte(len(c.id))}, c.id, coseKey(&key.PublicKey))
+	attested := cat(make([]byte, 16), []byte{0, byte(len(c.id))}, c.id, coseKey(&key.PublicKey, k.padKey))
 	att := cat(cborMap(3), cborText("fmt"), cborText("none"), cborText("attStmt"), cborMap(0),
 		cborText("authData"), cborBytes(k.authData(flagAT, c.count, attested)))
 	ext := map[string]any{}

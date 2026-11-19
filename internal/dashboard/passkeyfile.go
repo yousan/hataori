@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path"
 	"sync"
@@ -51,6 +52,7 @@ type passkeysOnDisk struct {
 // The daemon holds the instance lock, so it is the only writer.
 type passkeyFile struct {
 	root *os.Root
+	log  *slog.Logger
 	mu   sync.Mutex // one change at a time
 }
 
@@ -92,14 +94,10 @@ func (f *passkeyFile) load() ([]passkey, error) {
 
 // save writes keys as the whole file.
 func (f *passkeyFile) save(keys []passkey) error {
-	if keys == nil {
-		keys = []passkey{}
-	}
-	b, err := json.MarshalIndent(passkeysOnDisk{Version: 1, Passkeys: keys}, "", "  ")
+	b, err := encodePasskeys(keys)
 	if err != nil {
 		return fmt.Errorf("dashboard: %w", err)
 	}
-	b = append(b, '\n')
 	// load refuses a larger file, which would stop the daemon.
 	if len(b) > maxPasskeysFile {
 		return errFileFull
@@ -127,21 +125,31 @@ func (f *passkeyFile) save(keys []passkey) error {
 		return fmt.Errorf("dashboard: %w", err)
 	}
 	// The rename is kept only once the directory is synced: until then a
-	// crash may bring the old file back, with a passkey removed since.
+	// crash may bring the old file back, with a passkey removed since. The
+	// change has been made either way, so a failure is only logged.
 	d, err := f.root.Open(path.Dir(PasskeysFile))
 	if err == nil {
 		err = d.Sync()
 		d.Close()
 	}
-	if err != nil {
-		return fmt.Errorf("dashboard: %s: %w", path.Dir(PasskeysFile), err)
+	if err != nil && f.log != nil {
+		f.log.Warn("dashboard: the passkeys file was written, but its directory could not be synced: a crash now may bring the old one back", "err", err)
 	}
 	return nil
 }
 
+// encodePasskeys is keys as the file holds them.
+func encodePasskeys(keys []passkey) ([]byte, error) {
+	if keys == nil {
+		keys = []passkey{}
+	}
+	b, err := json.MarshalIndent(passkeysOnDisk{Version: 1, Passkeys: keys}, "", "  ")
+	return append(b, '\n'), err
+}
+
 // errFileFull is why a change that would make the file larger than load
 // reads is refused.
-var errFileFull = fmt.Errorf("the passkeys file would be larger than %d bytes: remove some passkeys first", maxPasskeysFile)
+var errFileFull = errors.New("the passkeys file is full: remove some passkeys first")
 
 // change reads the passkeys, gives them to fn, and writes what fn returns
 // when it says to, all under one lock. Nothing is written when fn fails.
