@@ -67,7 +67,7 @@ export function App() {
     }
     if (n === null) return t("tabs.all");
     const x = thread(n);
-    return x ? t("pane.thread", { n, title: x.title }) : t("thread.number", { n });
+    return x ? t("pane.thread", { n, title: x.title ?? "" }) : t("thread.number", { n });
   };
 
   // On a narrow screen the same page is a list; a thread opened from it is

@@ -425,7 +425,9 @@ func (a *api) summary(ctx context.Context, t *control.ThreadInfo) (int64, error)
 		json.Unmarshal(data, &e)
 		t.Background = e.Background
 	}
-	if !a.caller.NoText {
+	if a.caller.NoText {
+		t.Title = "" // a person wrote it
+	} else {
 		if t.Last, err = a.c.lastLine(ctx, t.ID); err != nil {
 			return 0, err
 		}

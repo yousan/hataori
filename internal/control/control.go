@@ -108,9 +108,9 @@ type Caller struct {
 	Scopes    []string  // the scopes it may see and act in
 	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost
 	// NoText leaves text written by a person or an agent out of what the
-	// caller reads: ThreadInfo.Last, ThreadDetail.Recent, the text of its
-	// requests, and the text fields of events (Field.Text). The thread's
-	// title, taken from its first prompt, is not left out.
+	// caller reads: ThreadInfo.Title and ThreadInfo.Last,
+	// ThreadDetail.Recent, the text of its requests, and the text fields of
+	// events (Field.Text).
 	NoText bool
 }
 
@@ -207,8 +207,8 @@ const (
 // ThreadInfo is one line of Threads.
 type ThreadInfo struct {
 	ID        ThreadID  `json:"id"`
-	Number    int64     `json:"number"` // short number, unique in the instance
-	Title     string    `json:"title"`
+	Number    int64     `json:"number"`          // short number, unique in the instance
+	Title     string    `json:"title,omitempty"` // text: absent for a caller that may not read text, since 2.0
 	Repo      string    `json:"repo"`
 	State     State     `json:"state"`
 	StartedBy Principal `json:"started_by"`

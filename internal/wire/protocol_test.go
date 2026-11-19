@@ -19,7 +19,7 @@ func TestVersions(t *testing.T) {
 	root := t.TempDir()
 	_, owner := newCore(t, root)
 	srv := serve(t, root, owner)
-	c, err := dialPath(srv.Path(), "1.9")
+	c, err := dialPath(srv.Path(), "2.9")
 	if err != nil {
 		t.Fatalf("a newer minor version is refused: %v", err)
 	}
@@ -27,16 +27,16 @@ func TestVersions(t *testing.T) {
 		t.Fatalf("a call with a newer minor version: %v", err)
 	}
 	c.Close()
-	for _, v := range []string{"2.0", "0.9"} {
+	for _, v := range []string{"3.0", "1.13"} {
 		_, err := dialPath(srv.Path(), v)
 		if err == nil || !strings.Contains(err.Error(), "client speaks "+v) || !strings.Contains(err.Error(), "daemon speaks "+Version) {
 			t.Errorf("client %s: %v", v, err)
 		}
 	}
 	// And the client refuses a daemon of another major version.
-	path := fakeDaemon(t, "2.3", nil)
-	if _, err := dialPath(path, Version); err == nil || !strings.Contains(err.Error(), "2.3") || !strings.Contains(err.Error(), Version) {
-		t.Errorf("daemon 2.3: %v", err)
+	path := fakeDaemon(t, "3.3", nil)
+	if _, err := dialPath(path, Version); err == nil || !strings.Contains(err.Error(), "3.3") || !strings.Contains(err.Error(), Version) {
+		t.Errorf("daemon 3.3: %v", err)
 	}
 }
 
@@ -83,7 +83,7 @@ func fakeDaemon(t *testing.T, version string, answer func(req message) []string)
 
 // A field or an event kind the client does not know is ignored.
 func TestUnknownFieldsAndKinds(t *testing.T) {
-	path := fakeDaemon(t, "1.4", func(m message) []string {
+	path := fakeDaemon(t, "2.4", func(m message) []string {
 		switch m.Op {
 		case "Threads":
 			return []string{`{"id":1,"result":[{"id":{"scope":"s","key":"k","shard":7},"number":1,"state":"idle","colour":"red"}],"later":{"x":1}}`}

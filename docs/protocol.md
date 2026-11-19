@@ -16,10 +16,12 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **1.13**. Both hellos carry it.
+The protocol version is `major.minor`, now **2.0**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 1.0`.
 - With the same major number and different minor numbers they work together.
+
+**A 1.x client and a 2.0 daemon.** 2.0 changed one thing: `title` in `ThreadInfo` and `ThreadDetail` became optional, and it is absent for a caller that may not read text. Because 1.x promised it, the two refuse each other. A 1.x client that connects gets the daemon's hello with an error, for example `{"version":"2.0","error":"wire: protocol version mismatch: client speaks 1.13, daemon speaks 2.0"}`, and the daemon closes the connection without reading a request. The project's 1.x client reports that refusal and makes no call. A client of 2.0 or later that may read text sees one other difference from 1.13: an empty title, from an empty first line, is left out instead of sent as `""`.
 
 What a change does to the version:
 
@@ -30,7 +32,7 @@ What a change does to the version:
 | A new operation, or a new request the daemon sends | minor |
 | A new error code | minor |
 | Removing or renaming an operation, a field, an event kind or an error code | major |
-| Making an optional field required | major |
+| Making an optional field required, or a required field optional | major |
 | Changing a field's type, or what a field or a value means | major |
 
 So a reader must ignore what it does not know: a field it does not know, an event kind it does not know, a request it does not know (answered `not_supported`). The project's own client does: it skips an event of a kind it does not know.
@@ -279,7 +281,7 @@ A field left empty matches everything the caller may see.
 |---|---|---|---|
 | `id` | `ThreadID` | required | the thread |
 | `number` | integer | required | a short number, unique in the instance |
-| `title` | string | required | from the first line of the first prompt |
+| `title` | string | optional | from the first line of the first prompt; text; absent for a caller that may not read text, and when it is empty; optional since 2.0, required before |
 | `repo` | string | required | the repository of its workspace |
 | `state` | string | required | `creating`, `idle`, `running`, `waiting`, `asleep`, `closed`, `removed` or `failed` |
 | `started_by` | string | required | the principal that started it |
@@ -303,7 +305,7 @@ The fields of `ThreadInfo`, and:
 |---|---|---|---|
 | `id` | `ThreadID` | required | as in `ThreadInfo` |
 | `number` | integer | required | as in `ThreadInfo` |
-| `title` | string | required | as in `ThreadInfo` |
+| `title` | string | optional | as in `ThreadInfo` |
 | `repo` | string | required | as in `ThreadInfo` |
 | `state` | string | required | as in `ThreadInfo` |
 | `started_by` | string | required | as in `ThreadInfo` |
