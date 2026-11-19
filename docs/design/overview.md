@@ -496,6 +496,7 @@ Not in the dashboard: diffs, boards of cards, a browser inside the page. Other t
 | open question, failure reason, last output | `Thread` (exists), the `request` and `turn_ended` events |
 | live updates, the live mark | `Events` from a position (exists) |
 | recent events of one thread | new optional argument of `Thread` |
+| a thread's conversation, read back to its first input | new operation `ThreadEvents`: events before a position, with a limit (#336) |
 | agent, model, effort, number of turns, last line, background tasks | new optional fields of `ThreadInfo` |
 | tokens this turn and today, context use | new optional fields of the `usage` event, which the core sums into `ThreadInfo` |
 | branch, lines added and removed against the branch point, uncommitted files, unpushed commits | new operation `Workspace` |
@@ -1197,6 +1198,12 @@ type API interface {
 	// recent bytes, and the thread's last events, at most events of them
 	// (and at most MaxEvents), newest last.
 	Thread(ctx context.Context, id ThreadID, recent, events int) (ThreadDetail, error)
+	// ThreadEvents returns the thread's events before position before, or
+	// its last ones when before is 0: at most n of them (and at most
+	// MaxEvents), newest last, as Thread returns them. Asking again before
+	// the oldest one returned reads the thread's log back to its start; an
+	// empty result is the start. Since protocol 3.1.
+	ThreadEvents(ctx context.Context, id ThreadID, before uint64, n int) ([]Event, error)
 
 	Start(ctx context.Context, r StartRequest) (ThreadID, error)
 	// key makes Send safe to repeat; for chat, the surface's message id.
@@ -1463,6 +1470,9 @@ type API interface {
 	// HostTerminals, HostScreen: declared above, since protocol 1.10 (#199),
 	// with OpHost.
 
+	// ThreadEvents: declared above, since protocol 3.1 (#336), for the
+	// dashboard's Conversation view.
+
 	// SignInLink: declared above, since protocol 1.7 (#200); for a chat
 	// caller with From since 1.11 (#252). The control socket's connections
 	// have OpSignIn, and so will the chat front end's caller for a person's
@@ -1540,6 +1550,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `ThreadInfo.title` left out for `Caller.NoText` (#236) | major: a required field becomes optional; 2.0 |
 | `AttachTerminal`, with `Ops` gaining `OpAttach` (#253) | minor: new operation; 2.1 |
 | `hello.token`, and `principal` and `from` in the `input` and `answer` events (#269) | minor: new optional fields; 2.2 |
+| `ThreadEvents` (#336) | minor: new operation; 3.1 |
 | `SignInLink`'s `way` (section 7.2) | minor: new optional argument |
 | `OperateHost`, with `Ops` gaining `OpHostInput` (section 7.2) | minor: new operation, whose connection becomes a stream both ways |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
