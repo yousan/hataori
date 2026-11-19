@@ -124,6 +124,10 @@ type Supervisor struct {
 	TurnsPerHour int
 	SendsPerHour int
 	TokensPerDay int64
+	// LoopCycles is how many cycles with the supervisor a thread goes
+	// through, with no person's message in between, before it no longer
+	// wakes it. "loop_cycles"; 3 when absent; 0 turns the guard off.
+	LoopCycles int
 }
 
 // The defaults of a supervisor's wake (decision 5 of #267).
@@ -135,6 +139,8 @@ const (
 	DefaultTurnsPerHour = 12
 	DefaultSendsPerHour = 20
 	DefaultTokensPerDay = 2_000_000
+
+	DefaultLoopCycles = 3
 )
 
 type fileSupervisor struct {
@@ -148,6 +154,7 @@ type fileSupervisor struct {
 	TurnsPerHour *int   `json:"turns_per_hour"`
 	SendsPerHour *int   `json:"sends_per_hour"`
 	TokensPerDay *int64 `json:"tokens_per_day"`
+	LoopCycles   *int   `json:"loop_cycles"`
 }
 
 // Dashboard is the "dashboard" section of the config: a loopback listener,
@@ -430,7 +437,8 @@ func ParseConfig(data []byte) (*Config, error) {
 			sc.Supervisor = &Supervisor{Agent: strings.TrimSpace(sv.Agent), Model: strings.TrimSpace(sv.Model),
 				Effort: strings.TrimSpace(sv.Effort), Instructions: strings.TrimSpace(sv.Instructions),
 				Quiet: DefaultQuiet, OutputMax: DefaultOutputMax, ThreadsMax: DefaultThreadsMax,
-				TurnsPerHour: DefaultTurnsPerHour, SendsPerHour: DefaultSendsPerHour, TokensPerDay: DefaultTokensPerDay}
+				TurnsPerHour: DefaultTurnsPerHour, SendsPerHour: DefaultSendsPerHour, TokensPerDay: DefaultTokensPerDay,
+				LoopCycles: DefaultLoopCycles}
 			if a := sc.Supervisor.Agent; a != "" {
 				if err := registry.ValidName(a); err != nil {
 					return nil, fmt.Errorf("config: key %q: %v", key+".supervisor.agent", err)
@@ -460,7 +468,8 @@ func ParseConfig(data []byte) (*Config, error) {
 				name string
 				v    *int
 				to   *int
-			}{{"turns_per_hour", sv.TurnsPerHour, &sc.Supervisor.TurnsPerHour}, {"sends_per_hour", sv.SendsPerHour, &sc.Supervisor.SendsPerHour}} {
+			}{{"turns_per_hour", sv.TurnsPerHour, &sc.Supervisor.TurnsPerHour}, {"sends_per_hour", sv.SendsPerHour, &sc.Supervisor.SendsPerHour},
+				{"loop_cycles", sv.LoopCycles, &sc.Supervisor.LoopCycles}} {
 				if n.v == nil {
 					continue
 				}

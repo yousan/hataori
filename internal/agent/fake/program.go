@@ -43,11 +43,15 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	configDir := fs.String("config", "", "where its login is kept; turns fail until it is logged in")
 	dialog := fs.String("dialog", "", "a start-up dialog to show on the terminal, answered by Enter")
 	mcpConfig := fs.String("mcp-config", "", "a confined spec's MCP servers, for the script command mcp")
+	relay := fs.String("relay", "", "A,B: relay between threads A and B, as a supervisor that passes each one's answer to the other")
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
 	p := &program{out: stdout, hook: *hook, terminal: *terminal, answers: map[string]chan string{}, configDir: *configDir,
 		model: *model, effort: *effort, mcp: &mcpClient{config: *mcpConfig}}
+	if a, b, ok := strings.Cut(*relay, ","); ok {
+		p.relay = [2]string{a, b}
+	}
 	if *terminal {
 		if f, ok := stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
 			if old, err := term.MakeRaw(int(f.Fd())); err == nil {
@@ -152,6 +156,31 @@ type program struct {
 	effort     string
 	turns      int        // turns started since the program started
 	mcp        *mcpClient // the confined spec's MCP server
+	relay      [2]string  // the two threads it relays between; empty for none
+}
+
+// relayed sends, through the MCP server, to the other of the two relay
+// threads for each of them that the turn's text names as a wake message
+// does, and returns what it replies.
+func (p *program) relayed(input string) []string {
+	var out []string
+	for i, from := range p.relay {
+		if from == "" || !strings.Contains("\n"+input, "\nThread "+from+":") {
+			continue
+		}
+		to := p.relay[1-i]
+		args, _ := json.Marshal(map[string]any{"number": json.Number(to), "text": "reply relayed from " + from})
+		text, isError, err := p.mcp.call("send_to_thread", string(args))
+		switch {
+		case err != nil:
+			out = append(out, "relay failed: "+err.Error())
+		case isError:
+			out = append(out, "relay error: "+text)
+		default:
+			out = append(out, "relayed to "+to+": "+text)
+		}
+	}
+	return out
 }
 
 // report sends one report: a line on stdout, or a hook call.
@@ -346,6 +375,12 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 			}
 			p.report(map[string]any{"t": "file", "path": f[0], "more": f[1:], "caption": caption})
 		}
+	}
+	if r := p.relayed(script); len(r) > 0 {
+		if replied {
+			p.say(final, false)
+		}
+		final = strings.Join(r, "; ")
 	}
 	p.say(final, true)
 	end["answer"] = final
