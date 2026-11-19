@@ -19,6 +19,13 @@ var (
 	ErrForbidden = errors.New("not allowed")
 	// ErrUnknownEffort: a Start asked for an effort not in Efforts.
 	ErrUnknownEffort = errors.New("unknown effort")
+	// ErrClosed: a Send to a thread that is closed or removed. Nothing was
+	// given to the agent, and a message does not wake the thread.
+	ErrClosed = errors.New("the thread is closed")
+	// ErrRemovalRefused: a RemoveThread whose proof did not hold (design, section
+	// 4.6). The thread stays closed and its workspace is unchanged; the
+	// error says why.
+	ErrRemovalRefused = errors.New("removal refused")
 )
 
 // Efforts are the effort values hataori knows. An agent adapter maps each
@@ -46,6 +53,23 @@ type API interface {
 	Answer(ctx context.Context, req RequestID, a Answer) error
 	// Stop interrupts the thread's running turn.
 	Stop(ctx context.Context, id ThreadID) error
+	// CloseThread ends the agent process of an idle, asleep or failed thread and
+	// closes it: the workspace stays, and a message does not wake it (Send
+	// is ErrClosed). A thread with a turn running, a question open or a
+	// session starting is refused, and so is an idle
+	// one whose last turn left background tasks running. A closed thread is not closed again, but
+	// its agent is stopped if it still runs.
+	// It is checked like Stop and needs OpClose. On the wire it is the
+	// operation Close.
+	CloseThread(ctx context.Context, id ThreadID) error
+	// RemoveThread removes the workspace of a closed thread: only when every step
+	// of the proof of design section 4.6 holds at that moment, by a rename
+	// into trash, and the thread is then removed. A thread that is not
+	// closed is refused; a proof that does not hold is ErrRemovalRefused,
+	// with the reason, and the thread stays closed. Each removal and each
+	// refusal writes one event. It is checked like Stop and needs OpRemove.
+	// On the wire it is the operation Remove.
+	RemoveThread(ctx context.Context, id ThreadID) error
 
 	// Events delivers events after a position, then live ones, until ctx ends.
 	// Once the events stored when it was called are delivered, it delivers
@@ -104,8 +128,8 @@ type API interface {
 // Caller is who is asking. An API value is bound to one Caller,
 // and the core checks every call against it.
 //
-// Start, Send, Answer and Stop are refused unless the Principal is the
-// owner or one of the people of the thread's scope.
+// Start, Send, Answer, Stop, Close and Remove are refused unless the
+// Principal is the owner or one of the people of the thread's scope.
 type Caller struct {
 	// From is the "<client>:<id>" a relayed input came from, such as a
 	// chat message's author. The core resolves it to a person and uses that
@@ -115,7 +139,7 @@ type Caller struct {
 	From      string
 	Principal Principal // a person's name
 	Scopes    []string  // the scopes it may see and act in
-	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach
+	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove
 	// NoText leaves text written by a person or an agent out of what the
 	// caller reads: ThreadInfo.Title and ThreadInfo.Last,
 	// ThreadDetail.Recent, the text of its requests, and the text fields of
@@ -138,7 +162,7 @@ type Caller struct {
 type Principal string
 
 // Ops is a set of operations a Caller may use.
-type Ops uint8
+type Ops uint16
 
 // The operations of the API, as members of Ops.
 const (
@@ -156,6 +180,8 @@ const (
 	// (AttachTerminal). Only the owner's connection on the control socket
 	// is given it.
 	OpAttach
+	OpClose  // CloseThread: the owner's connection on the control socket only
+	OpRemove // RemoveThread: the owner's connection on the control socket only
 )
 
 // Has reports whether every operation in o is in ops.

@@ -8,6 +8,8 @@
 //	hataori events [--root DIR] [--after N] [--follow]
 //	hataori stop [--root DIR] KEY               interrupt the thread's running turn
 //	hataori attach [--root DIR] KEY             this terminal on the agent's, until Ctrl-\
+//	hataori close [--root DIR] KEY              end the thread's agent and close it; the workspace stays
+//	hataori remove [--root DIR] KEY             move a closed thread's workspace into trash, if nothing would be lost
 //	hataori signin [--root DIR]                 a single-use dashboard sign-in link
 //	hataori mcp [--root DIR] --scope SCOPE [--output-max BYTES]
 //	                                            the supervisor's MCP server on stdio;
@@ -71,7 +73,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return runCtx(context.Background(), args, stdout, stderr)
 }
 
-const usage = "usage: hataori run|threads|thread KEY|events [--after N] [--follow]|stop KEY|attach KEY|signin [--root DIR] | hataori mcp --scope SCOPE [--root DIR] [--output-max BYTES] | hataori version | hataori host <state-dir> | hataori hook [--wait] [--timeout DURATION] | hataori statusline --last FILE [--run COMMAND]"
+const usage = "usage: hataori run|threads|thread KEY|events [--after N] [--follow]|stop KEY|attach KEY|close KEY|remove KEY|signin [--root DIR] | hataori mcp --scope SCOPE [--root DIR] [--output-max BYTES] | hataori version | hataori host <state-dir> | hataori hook [--wait] [--timeout DURATION] | hataori statusline --last FILE [--run COMMAND]"
 
 func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -101,7 +103,7 @@ func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return mcpMain(ctx, args[1:], os.Stdin, stdout, stderr, os.Getenv)
 	case "statusline":
 		return claudecode.StatusLineMain(args[1:], os.Stdin, stdout, stderr, os.Getenv)
-	case "run", "threads", "thread", "events", "stop", "attach", "signin":
+	case "run", "threads", "thread", "events", "stop", "attach", "close", "remove", "signin":
 		return command(ctx, args[0], args[1:], stdout, stderr)
 	}
 	fmt.Fprintln(stderr, usage)
@@ -126,7 +128,7 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 		args = fs.Args()[1:]
 	}
 	want := 0
-	if name == "thread" || name == "stop" || name == "attach" {
+	if name == "thread" || name == "stop" || name == "attach" || name == "close" || name == "remove" {
 		want = 1
 	}
 	if len(pos) != want || *root == "" || (name != "events" && (*after != 0 || *follow)) {
@@ -215,6 +217,30 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 			return fail(err)
 		}
 		if err := enc.Encode(map[string]any{"scope": t.ID.Scope, "key": t.ID.Key, "running": running}); err != nil {
+			return fail(err)
+		}
+	case "close", "remove":
+		t, ok, err := find(ctx, c, pos[0])
+		if err != nil {
+			return fail(err)
+		}
+		if !ok {
+			fmt.Fprintf(stderr, "hataori: no thread of this instance has the key %q\n", pos[0])
+			return exitNoThread
+		}
+		if name == "close" {
+			err = c.CloseThread(ctx, t.ID)
+		} else {
+			err = c.RemoveThread(ctx, t.ID)
+		}
+		if err != nil {
+			return fail(err)
+		}
+		state := control.Closed
+		if name == "remove" {
+			state = control.Removed
+		}
+		if err := enc.Encode(map[string]any{"scope": t.ID.Scope, "key": t.ID.Key, "state": state}); err != nil {
 			return fail(err)
 		}
 	}
