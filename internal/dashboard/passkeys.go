@@ -100,7 +100,7 @@ func changeRoute(method, path string) bool {
 	switch method {
 	case http.MethodPost:
 		switch path {
-		case PasskeySignInBeginPath, PasskeySignInFinishPath, PasskeyRegisterBeginPath, PasskeyRegisterFinishPath:
+		case PasskeySignInBeginPath, PasskeySignInFinishPath, PasskeyRegisterBeginPath, PasskeyRegisterFinishPath, OperateCheckPath:
 			return true
 		}
 	case http.MethodDelete:
@@ -133,6 +133,7 @@ type ceremony struct {
 	session  [32]byte
 	grant    [32]byte // a registration's proof
 	handle   []byte   // a registration's user handle
+	operate  string   // a check made to start operating this pane (operate.go); "" for a check that signs in
 	data     webauthn.SessionData
 	exp      time.Time
 }
@@ -481,7 +482,7 @@ func (s *Server) passkeySignInFinish(w http.ResponseWriter, r *http.Request) {
 		var ok bool
 		check, ok = s.takeCeremony(req.Ceremony, false)
 		ss, signedIn := s.sessionFrom(r, listenerOfRequest(r))
-		if !ok || !signedIn || ss.person != check.person || ss.sum != check.session {
+		if !ok || !signedIn || ss.person != check.person || ss.sum != check.session || check.operate != "" {
 			http.Error(w, "this passkey sign-in has expired, was finished, or belongs to another sign-in: start again", http.StatusUnauthorized)
 			return
 		}

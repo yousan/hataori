@@ -1,6 +1,7 @@
-// Package dashboard is the read-only web dashboard's HTTP server (design,
-// section 7.2). It runs inside the daemon as a client of the control API
-// with a read-only Caller, and reads nothing else.
+// Package dashboard is the web dashboard's HTTP server (design, section
+// 7.2). It runs inside the daemon as a client of the control API with a
+// Caller that reads, and that may type into a host tmux pane for the owner
+// when host input is on (operate.go); it reads nothing else.
 //
 // It serves on up to two listeners, one per way of reaching it: the
 // loopback listener, for a browser on the host and for one on another
@@ -15,11 +16,14 @@
 // configured address on the web listener); an Origin, when sent, is exactly
 // the listener's own; a request on the loopback listener did not come
 // through a reverse proxy; the method is GET or HEAD, except on the
-// passkey routes, whose other requests must carry the listener's exact
-// Origin (changeRoute); and, for every route but the sign-in routes (the
-// trade of a sign-in link and the passkey sign-in) and the page's own
-// files, which hold no data, the request carries a session of a person who
-// may still sign in, in its Authorization header. A session is made by a
+// passkey routes and the operate check, whose other requests must carry the
+// listener's exact Origin (changeRoute); only the operate route accepts an
+// Upgrade, and its handshake must carry that Origin too; and, for every
+// route but the sign-in routes (the trade of a sign-in link and the passkey
+// sign-in), the operate WebSocket, whose session is its first message
+// (operate.go), and the page's own files, which hold no data, the request
+// carries a session of a person who may still sign in, in its
+// Authorization header. A session is made by a
 // single-use, short-lived link that a person gets with SignInLink, or on
 // the web listener by a passkey (passkeys.go), and belongs to that person:
 // its requests are made with the control API bound to that person's
@@ -100,6 +104,10 @@ type Config struct {
 	Root *os.Root
 	// Now is the clock; time.Now when nil. Tests set their own.
 	Now func() time.Time
+	// HostInput is whether the instance's config turns host input on
+	// ("host_input"): without it the operate routes refuse at once. Who may
+	// operate a pane is still the core's decision.
+	HostInput bool
 }
 
 // Local is the loopback listener: plain HTTP on a loopback address.
@@ -160,7 +168,9 @@ type Server struct {
 	ceremonyKey []byte
 
 	// Stream timings; tests shorten them.
-	keepAlive, writeTimeout, hostScreenInterval time.Duration
+	keepAlive, writeTimeout, hostScreenInterval, operatedScreenInterval time.Duration
+
+	hostInput bool // the config's host_input
 
 	// Passkeys: the web listener's relying party, nil when there is none
 	// (rpOff says why), and where they are kept, nil for nowhere.
@@ -173,6 +183,7 @@ type Server struct {
 	grants     map[[32]byte]grant     // proofs for a registration, by hash of the token
 	ceremonies map[[32]byte]ceremony  // registrations and checks under way, by hash of their id
 	used       map[[32]byte]time.Time // sign-in challenges answered, by hash, until they expire
+	operated   map[string]int         // panes being operated through this server, by id
 }
 
 // listener is one way of reaching the dashboard.
@@ -217,7 +228,8 @@ func Listen(cfg Config, api func(person string) (control.API, bool), log *slog.L
 	}
 	s := &Server{For: api, Log: log, linkTTL: cfg.LinkTTL, now: cfg.Now,
 		links: map[[32]byte]link{}, grants: map[[32]byte]grant{}, ceremonies: map[[32]byte]ceremony{}, used: map[[32]byte]time.Time{}, key: cfg.SessionKey,
-		keepAlive: defaultKeepAlive, writeTimeout: defaultWriteTimeout, hostScreenInterval: defaultHostScreenInterval}
+		keepAlive: defaultKeepAlive, writeTimeout: defaultWriteTimeout, hostScreenInterval: defaultHostScreenInterval,
+		operatedScreenInterval: defaultOperatedScreenInterval, hostInput: cfg.HostInput}
 	if len(s.key) == 0 {
 		s.key = make([]byte, 32)
 		if _, err := rand.Read(s.key); err != nil {
@@ -266,6 +278,7 @@ func Listen(cfg Config, api func(person string) (control.API, bool), log *slog.L
 	s.mux = http.NewServeMux()
 	s.mux.HandleFunc("GET "+SessionPath, s.signIn)
 	s.passkeyRoutes()
+	s.operateRoutes()
 	s.pageRoutes()
 	s.routes()
 	for _, l := range s.listeners() {
@@ -762,6 +775,20 @@ func (s *Server) handler(l *listener) http.Handler {
 			s.refuse(w, r, l, http.StatusForbidden, "foreign origin")
 			return
 		}
+		// Only the operate route accepts an Upgrade; the terminal routes
+		// refuse one themselves, and log it (dropInput).
+		if up := r.Header.Get("Upgrade"); up != "" && r.URL.Path != OperatePath && r.URL.Path != TerminalPath && r.URL.Path != HostScreenPath {
+			s.refuse(w, r, l, http.StatusBadRequest, "only the operate route takes an upgrade")
+			return
+		}
+		if r.URL.Path == OperatePath {
+			// A WebSocket's handshake is a GET, sent by the browser with the
+			// page's Origin; one without is not from the page.
+			if o := r.Header.Get("Origin"); o == "" || o == "null" || !l.originOK(o, r.Host) {
+				s.refuse(w, r, l, http.StatusForbidden, "the operate connection must carry this listener's origin")
+				return
+			}
+		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			if !changeRoute(r.Method, r.URL.Path) {
 				h.Set("Allow", "GET, HEAD")
@@ -776,7 +803,9 @@ func (s *Server) handler(l *listener) http.Handler {
 			}
 		}
 		ctx := context.WithValue(r.Context(), listenerKey{}, l)
-		if !signInRoute(r.URL.Path) && !isPageFile(r.URL.Path) {
+		// The operate WebSocket carries its session in its first message:
+		// a browser sends no header with a WebSocket (operate.go).
+		if !signInRoute(r.URL.Path) && !isPageFile(r.URL.Path) && r.URL.Path != OperatePath {
 			ss, ok := s.sessionFrom(r, l)
 			if !ok {
 				http.Error(w, "not signed in", http.StatusUnauthorized)

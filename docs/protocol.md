@@ -18,7 +18,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.12**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.13**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -366,6 +366,16 @@ Since 3.11, and only on an `OperateHost` stream; elsewhere it is answered `not_s
 
 Result: none
 
+### Operation `HostView`
+
+Since 3.13. One tmux pane's screen, as `HostScreen` gives it, and where its cursor is, read right after the screen. Allowed as `HostScreen` is, and refused alike to a caller that may not read text. The dashboard reads it for a pane being operated (`OperateHost`), so that the page draws the cursor where tmux has it. hataori runs `tmux display-message -p` for the cursor, which changes nothing. A pane that `HostTerminals` would not list, and one that goes between the two reads, is answered `not_found`.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `pane` | string | required | the pane, as `TmuxPane.pane` |
+
+Result: `HostView`
+
 ### Operation `AttachTerminal`
 
 Since 2.1. Readies a thread's agent for a terminal on the host, for `hataori attach`. Only the instance's owner may call it; every other caller is answered `forbidden` and the refusal is logged. A thread that is closed, removed or failed, and a thread whose agent runs without a terminal (on pipes), are answered `refused` and nothing changes. An asleep thread is woken first, with no input: its agent resumes its conversation and the thread becomes idle, as after a message, but no turn starts. The answer comes once the session host listens, and at most after 90 seconds.
@@ -581,6 +591,16 @@ Since 1.10. A tab in a name or a directory is given as a space.
 | `index` | string | required | the pane's index in its window |
 | `dir` | string | optional | the pane's current directory |
 | `attached` | boolean | required | a tmux client shows the session now |
+
+### Type `HostView`
+
+Since 3.13.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `screen` | string | optional | the visible screen, one line per row, as `HostScreen` gives it; text, so optional |
+| `cursor_x` | integer | required | the cursor's column, from 0 |
+| `cursor_y` | integer | required | the cursor's row, from 0 at the top of the screen |
 
 ### Type `HostOperation`
 

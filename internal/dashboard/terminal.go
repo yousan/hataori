@@ -104,12 +104,16 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 //
 // P is the pane's id, as HostTerminals gives it (TmuxPane.Pane). It is a
 // Server-Sent Events stream of {"screen": "..."}: the pane's whole screen,
-// then the screen again each time it changes, read every
-// second while the page keeps the stream open. A page that
-// reconnects gets the current screen. The stream ends when the pane goes.
-// It takes no input, as the terminal route does, and a pane the caller may
-// not read (host terminals off, or not the owner) answers as one that does
-// not exist.
+// then the screen again each time it changes, read every second while the
+// page keeps the stream open. While the pane is operated through this
+// server (operate.go) it is read five times a second instead, and each
+// message also carries the cursor, {"screen": "...", "cursor": {"x", "y"}},
+// so that what is typed shows within a fifth of a second; a message is
+// sent when the screen or the cursor changes. A page that reconnects gets
+// the current screen. The stream ends when the pane goes. It takes no
+// input, as the terminal route does, and a pane the caller may not read
+// (host terminals off, or not the owner) answers as one that does not
+// exist.
 const HostScreenPath = "/api/hostscreen"
 
 // defaultHostScreenInterval is how often an open pane stream reads the
@@ -117,7 +121,24 @@ const HostScreenPath = "/api/hostscreen"
 const defaultHostScreenInterval = time.Second
 
 type hostScreen struct {
-	Screen string `json:"screen"`
+	Screen string  `json:"screen"`
+	Cursor *cursor `json:"cursor,omitempty"` // while the pane is operated
+}
+
+type cursor struct {
+	X int `json:"x"`
+	Y int `json:"y"`
+}
+
+// readScreen reads pane once: with its cursor while it is operated through
+// this server.
+func (s *Server) readScreen(ctx context.Context, a control.API, pane string) (hostScreen, error) {
+	if !s.isOperated(pane) {
+		screen, err := a.HostScreen(ctx, pane)
+		return hostScreen{Screen: screen}, err
+	}
+	v, err := a.HostView(ctx, pane)
+	return hostScreen{Screen: v.Screen, Cursor: &cursor{v.CursorX, v.CursorY}}, err
 }
 
 func (s *Server) hostScreen(w http.ResponseWriter, r *http.Request) {
@@ -131,18 +152,20 @@ func (s *Server) hostScreen(w http.ResponseWriter, r *http.Request) {
 	}
 	n := 0
 	a := api(r)
-	stream(s, w, r, func(ctx context.Context) (<-chan string, error) {
-		screen, err := a.HostScreen(ctx, pane) // before the answer: a refusal is a 404
+	stream(s, w, r, func(ctx context.Context) (<-chan hostScreen, error) {
+		screen, err := s.readScreen(ctx, a, pane) // before the answer: a refusal is a 404
 		if err != nil {
 			return nil, err
 		}
-		out := make(chan string)
+		out := make(chan hostScreen)
 		go func() {
 			defer close(out)
-			tick := time.NewTicker(s.hostScreenInterval)
-			defer tick.Stop()
-			for last, first := "", true; ; first = false {
-				if screen != last || first {
+			next := time.NewTimer(0)
+			defer next.Stop()
+			<-next.C
+			var last hostScreen
+			for first := true; ; first = false {
+				if first || !sameScreen(screen, last) {
 					select {
 					case out <- screen:
 					case <-ctx.Done():
@@ -150,13 +173,18 @@ func (s *Server) hostScreen(w http.ResponseWriter, r *http.Request) {
 					}
 					last = screen
 				}
+				every := s.hostScreenInterval
+				if s.isOperated(pane) {
+					every = min(every, s.operatedScreenInterval)
+				}
+				next.Reset(every)
 				select {
-				case <-tick.C:
+				case <-next.C:
 				case <-ctx.Done():
 					return
 				}
 				var err error
-				if screen, err = a.HostScreen(ctx, pane); err != nil {
+				if screen, err = s.readScreen(ctx, a, pane); err != nil {
 					if ctx.Err() == nil && !errors.Is(err, errNotFound) {
 						s.Log.Warn("dashboard host screen", "pane", pane, "err", err)
 					}
@@ -165,8 +193,13 @@ func (s *Server) hostScreen(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 		return out, nil
-	}, s.notFound, func(screen string) message {
+	}, s.notFound, func(screen hostScreen) message {
 		n++
-		return message{id: strconv.Itoa(n), data: hostScreen{screen}}
+		return message{id: strconv.Itoa(n), data: screen}
 	})
+}
+
+// sameScreen reports whether a and b show the same, cursor included.
+func sameScreen(a, b hostScreen) bool {
+	return a.Screen == b.Screen && (a.Cursor == nil) == (b.Cursor == nil) && (a.Cursor == nil || *a.Cursor == *b.Cursor)
 }
