@@ -58,8 +58,9 @@ func testPlugin() int {
 		write()
 		return 1
 	}
-	// Requests the daemon sends, such as plugin_started and plugin_stopping,
-	// come on this connection too: each is answered, with no result.
+	// Requests the daemon sends come on this connection too:
+	// plugin_started and plugin_stopping are answered with no result, any
+	// other with not_supported, as docs/protocol.md says.
 	type message struct {
 		ID     uint64
 		Op     string
@@ -71,7 +72,12 @@ func testPlugin() int {
 			fmt.Fprintln(f, m.Op)
 			f.Close()
 		}
-		enc.Encode(map[string]any{"id": m.ID, "result": nil})
+		switch m.Op {
+		case "plugin_started", "plugin_stopping":
+			enc.Encode(map[string]any{"id": m.ID, "result": nil})
+		default: // it handles no hook point
+			enc.Encode(map[string]any{"id": m.ID, "error": map[string]string{"code": "not_supported", "message": m.Op}})
+		}
 	}
 	enc.Encode(map[string]any{"id": 1, "op": "Threads", "args": map[string]any{"filter": map[string]any{}}})
 	for {
@@ -253,7 +259,7 @@ func TestPluginStartsAndStartsAgain(t *testing.T) {
 	owner.Close()
 	stop()
 	b, _ := os.ReadFile(filepath.Join(r.root, "state", "plugins", "scan", "ops"))
-	if ops := strings.Fields(string(b)); len(ops) < 3 || ops[0] != "plugin_started" || ops[len(ops)-1] != "plugin_stopping" {
+	if ops := strings.Join(strings.Fields(string(b)), " "); ops != "plugin_started plugin_started plugin_stopping" {
 		t.Fatalf("the plugin was sent %v", ops)
 	}
 }
