@@ -39,8 +39,8 @@ var eventData = map[control.EventKind]string{
 	"state":             `{"detail":"last lines of the terminal","from":"running","reason":"interrupted","session":3,"to":"asleep"}`,
 	"turn_started":      `{"by":"caller","from":"discord:W1","key":"M0789","principal":"dispatch","session":3,"turn":12}`,
 	"turn_ended":        `{"background":0,"by":"caller","from":"discord:W1","outcome":"failure","principal":"dispatch","reason":"limit","session":3,"turn":12}`,
-	"input":             `{"session":3,"text":"Run the tests.","turn":12}`,
-	"answer":            `{"session":3,"text":"blue","turn":13}`,
+	"input":             `{"from":"discord:W1","principal":"dispatch","session":3,"text":"Run the tests.","turn":12}`,
+	"answer":            `{"from":"discord:W1","principal":"dispatch","session":3,"text":"blue","turn":13}`,
 	"text":              `{"final":true,"session":3,"text":"All tests pass."}`,
 	"tool_started":      `{"id":"toolu_1","parent":"agent_1","session":3,"tool":"Bash"}`,
 	"tool_ended":        `{"id":"toolu_1","session":3,"tool":"Bash"}`,
@@ -72,6 +72,7 @@ func examples(t *testing.T) map[string]any {
 	t.Helper()
 	ex := map[string]any{
 		"hello.json":         hello{Version: Version},
+		"hello-token.json":   hello{Version: Version, Token: "example-token-never-issued"},
 		"hello-refusal.json": hello{Version: Version, Error: versionError("3.0", Version).Error()},
 		"response-error.json": response{ID: 5, Error: &wireError{Code: "not_supported",
 			Message: `wire: operation "Unheard": not supported`}},

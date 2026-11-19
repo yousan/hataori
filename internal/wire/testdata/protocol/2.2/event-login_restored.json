@@ -1,0 +1,1 @@
+{"id":1,"event":{"pos":42,"thread":{"scope":"C0123","key":"T0456"},"time":"2026-01-02T03:04:05.678Z","kind":"login_restored","data":{"agent":"claude-code","outage":1,"scopes":["C0123"],"threads":[{"scope":"C0123","key":"T0456"}]}}}

@@ -1,0 +1,1 @@
+{"id":1,"result":[{"agent":"claude-code","at":"2026-01-02T03:04:05.678Z","every":300,"windows":[{"name":"five_hour","minutes":300,"used":4,"resets":"2026-01-02T03:04:05.678Z"},{"name":"seven_day","minutes":10080,"used":21,"resets":"2026-01-02T03:04:05.678Z"}]}]}

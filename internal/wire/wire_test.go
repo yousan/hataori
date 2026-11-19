@@ -2,9 +2,11 @@ package wire
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -276,5 +278,51 @@ func TestDeepRootUsesShortSocketPath(t *testing.T) {
 	defer client.Close()
 	if _, err := client.Threads(context.Background(), control.Filter{}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A daemon older than 2.2 ignores a hello's token and would make the
+// connection the owner's, so a client with a token refuses it.
+func TestTokenClientRefusesADaemonWithoutTokens(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "hw") // short: macOS's temporary directory is too deep for a socket
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	path := filepath.Join(dir, "s.sock")
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			var h hello
+			json.NewDecoder(c).Decode(&h)
+			json.NewEncoder(c).Encode(hello{Version: "2.1"})
+		}
+	}()
+	if _, err := dial(path, Version, "a-token"); err == nil || !strings.Contains(err.Error(), "does not know tokens") {
+		t.Fatalf("a client with a token and a 2.1 daemon: %v, want refused", err)
+	}
+	c, err := dial(path, Version, "")
+	if err != nil {
+		t.Fatalf("a client without a token and a 2.1 daemon: %v", err)
+	}
+	c.Close()
+}
+
+func TestAtLeast(t *testing.T) {
+	for _, x := range []struct {
+		v    string
+		want bool
+	}{{"2.2", true}, {"2.10", true}, {"3.0", true}, {"2.1", false}, {"1.13", false}, {"2", false}, {"x.y", false}} {
+		if got := atLeast(x.v, "2.2"); got != x.want {
+			t.Errorf("atLeast(%q, 2.2) = %v", x.v, got)
+		}
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -185,4 +186,22 @@ func (p *Peer) close(err error) {
 func major(v string) string {
 	m, _, _ := strings.Cut(v, ".")
 	return m
+}
+
+// tokensSince is the first version whose daemon honours a hello's token.
+// An older daemon ignores the field and makes the connection the owner's.
+const tokensSince = "2.2"
+
+// atLeast reports whether version v is min or later, by number. A version
+// that is not two numbers is not.
+func atLeast(v, min string) bool {
+	parse := func(s string) (int, int, bool) {
+		a, b, ok := strings.Cut(s, ".")
+		x, err1 := strconv.Atoi(a)
+		y, err2 := strconv.Atoi(b)
+		return x, y, ok && err1 == nil && err2 == nil
+	}
+	x, y, ok := parse(v)
+	mx, my, _ := parse(min)
+	return ok && (x > mx || x == mx && y >= my)
 }
