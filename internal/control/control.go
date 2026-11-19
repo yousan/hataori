@@ -50,6 +50,18 @@ type API interface {
 	// the oldest one returned reads the thread's log back to its start; an
 	// empty result is the start. Since protocol 3.3.
 	ThreadEvents(ctx context.Context, id ThreadID, before uint64, n int) ([]Event, error)
+	// SetName records the name the chat service shows people for a
+	// conversation: a scope's own channel when l.Thread is empty (l.Client
+	// owns the scope and l.Channel is its key), else a linked thread. An
+	// empty name forgets it. A change writes one named event; the same
+	// name again changes nothing. It needs OpName in the conversation's
+	// scope: a chat front end's caller has it. Since protocol 3.5.
+	SetName(ctx context.Context, l LinkRef, name string) error
+	// Scopes lists the scopes the caller may see, by key, each with the
+	// name a person knows it by: the config's, else its channel's as the
+	// chat service shows it (SetName), which is text and left out for a
+	// caller that may not read text. It needs OpRead. Since protocol 3.5.
+	Scopes(ctx context.Context) ([]ScopeInfo, error)
 
 	// Start starts a thread in a scope. A repeated r.Key starts nothing and
 	// returns the thread the first call started.
@@ -195,7 +207,7 @@ type Ops uint16
 
 // The operations of the API, as members of Ops.
 const (
-	OpRead   Ops = 1 << iota // Threads, Thread, Events, Workspace, Terminal, Limits
+	OpRead   Ops = 1 << iota // Threads, Thread, ThreadEvents, Events, Workspace, Terminal, Limits, Scopes
 	OpStart                  // Start
 	OpSend                   // Send
 	OpAnswer                 // Answer
@@ -211,6 +223,9 @@ const (
 	OpAttach
 	OpClose  // CloseThread: the owner's connection on the control socket only
 	OpRemove // RemoveThread: the owner's connection on the control socket only
+	// OpName may record the names the chat service shows (SetName): a chat
+	// front end's caller, and the owner's connection on the control socket.
+	OpName
 )
 
 // Way is one of the dashboard's listeners, each a way of reaching it with
@@ -305,6 +320,12 @@ const (
 	Removed  State = "removed"
 	Failed   State = "failed"
 )
+
+// ScopeInfo is one line of Scopes. Name is empty when no name is known.
+type ScopeInfo struct {
+	Key  string `json:"key"`
+	Name string `json:"name,omitempty"`
+}
 
 // ThreadInfo is one line of Threads.
 type ThreadInfo struct {

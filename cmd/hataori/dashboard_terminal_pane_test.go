@@ -68,6 +68,7 @@ func newPaneRig(t *testing.T, root string, input string, settled func(control.Th
 	}
 	r.base = link
 	b.call("Page.navigate", map[string]any{"url": link})
+	b.showAll() // a thread with a short idle period may be asleep already (#335)
 	b.until("the thread in the tree", fmt.Sprintf(`!!document.querySelector('[data-section=threads] .row[data-thread="%d"]')`, r.n))
 	b.eval(fmt.Sprintf(`document.querySelector('[data-section=threads] .row[data-thread="%d"]').click(), true`, r.n), nil)
 	r.b = b
@@ -171,7 +172,7 @@ func TestDashboardTerminalPaneIsReadOnly(t *testing.T) {
 	// Every request of the page: a GET or HEAD of its own routes, with no
 	// body, and nothing typed in its address.
 	page, _ := url.Parse(r.base)
-	routes := []string{"/", "/signin", "/api/session", "/favicon.ico", "/api/threads", "/api/thread", "/api/events", "/api/terminal", "/api/limits", "/api/workspace", "/api/hostterminals", "/api/hostscreen"}
+	routes := []string{"/", "/signin", "/api/session", "/favicon.ico", "/api/threads", "/api/scopes", "/api/threadevents", "/api/thread", "/api/events", "/api/terminal", "/api/limits", "/api/workspace", "/api/hostterminals", "/api/hostscreen"}
 	requests := 0
 	for _, e := range b.events {
 		switch e.Method {
@@ -211,7 +212,7 @@ func TestDashboardTerminalPaneIsReadOnly(t *testing.T) {
 			// session, which is the server's own token. No cookie.
 			number := regexp.MustCompile(`^[0-9]+$`)
 			for name, vs := range u.Query() {
-				allowed := map[string][]string{"/api/thread": {"thread", "recent", "events"},
+				allowed := map[string][]string{"/api/thread": {"thread", "recent", "events"}, "/api/threadevents": {"thread", "before", "limit"},
 					"/api/terminal": {"thread"}, "/api/workspace": {"thread"}, "/api/hostscreen": {"pane"}, "/api/events": {"after"}, "/signin": {"t"}}[u.Path]
 				if !slices.Contains(allowed, name) || len(vs) != 1 {
 					t.Fatalf("a request has a parameter %q it does not need: %s", name, q.URL)

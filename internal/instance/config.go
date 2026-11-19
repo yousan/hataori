@@ -75,6 +75,7 @@ type Config struct {
 // Scope is the config of one scope.
 type Scope struct {
 	Key     string   // opaque; for chat, a channel
+	Name    string   // what the dashboard calls it; empty for its channel's name, else its key
 	Client  string   // name of the client that owns the scope
 	Enabled bool     // whether threads may be started in it
 	Model   string   // default model; empty for the agent's own default
@@ -230,6 +231,7 @@ const (
 
 type fileScope struct {
 	Key        string          `json:"key"`
+	Name       string          `json:"name"`
 	Client     string          `json:"client"`
 	Enabled    bool            `json:"enabled"`
 	Model      string          `json:"model"`
@@ -329,6 +331,7 @@ func ParseConfig(data []byte) (*Config, error) {
 		key := fmt.Sprintf("scopes[%d]", i)
 		sc := Scope{
 			Key:     strings.TrimSpace(s.Key),
+			Name:    strings.TrimSpace(s.Name),
 			Client:  strings.TrimSpace(s.Client),
 			Enabled: s.Enabled,
 			Model:   strings.TrimSpace(s.Model),

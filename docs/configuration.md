@@ -89,6 +89,7 @@ Names in `drivers`, `adapters` and `scopes[].client` start with a lowercase lett
 |---|---|---|---|
 | `key` | string | required | The scope's id. For Discord, the channel id. Each key may be listed once. |
 | `client` | string | required | The driver that owns the scope: `"discord"`. It must also be configured under `drivers`. |
+| `name` | string | empty | What the dashboard calls the scope. Without it, the dashboard shows the channel's name as the chat service shows it (for Discord, `#name`, looked up each time the driver connects), else the key. |
 | `enabled` | boolean | `false` | Whether orders in this scope start threads. |
 | `model` | string | empty | The model of threads started here whose order names none. |
 | `effort` | string | empty | The effort of threads started here whose order names none. |

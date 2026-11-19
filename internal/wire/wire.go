@@ -27,7 +27,7 @@ import (
 
 // Version is the protocol version this build speaks: major.minor. Two
 // sides work together when their major numbers are equal (docs/protocol.md).
-const Version = "3.4"
+const Version = "3.5"
 
 type hello struct {
 	Version string `json:"version"`
@@ -71,6 +71,11 @@ type (
 		ID     control.ThreadID `json:"id"`
 		Before uint64           `json:"before,omitempty"`
 		Limit  int              `json:"limit"`
+	}
+	scopesArgs  struct{} // since 3.5
+	setNameArgs struct { // since 3.5
+		Link control.LinkRef `json:"link"`
+		Name string          `json:"name,omitempty"`
 	}
 	sendArgs struct {
 		ID    control.ThreadID `json:"id"`
@@ -151,6 +156,16 @@ var operations = map[string]operation{
 			return nil, err
 		}
 		return api.ThreadEvents(ctx, a.ID, a.Before, a.Limit)
+	}},
+	"Scopes": {scopesArgs{}, []control.ScopeInfo{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		return api.Scopes(ctx)
+	}},
+	"SetName": {setNameArgs{}, nil, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a setNameArgs
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return nil, api.SetName(ctx, a.Link, a.Name)
 	}},
 	"Start": {control.StartRequest{}, control.ThreadID(0), func(ctx context.Context, api control.API, args func(any) error) (any, error) {
 		var a control.StartRequest

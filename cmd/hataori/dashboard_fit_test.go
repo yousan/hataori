@@ -233,6 +233,7 @@ func TestDashboardTerminalFillsPane(t *testing.T) {
 	// 3. A tmux pane fills its pane too, and fits again when its size
 	// changes.
 	hostRow := fmt.Sprintf(`.tree [data-host=%q]`, rig.device)
+	b.unfoldHosts()
 	b.until("the tmux pane in the tree", `!!document.querySelector(`+strconv.Quote(hostRow)+`)`)
 	b.click(hostRow)
 	hostView := fmt.Sprintf(`.pane[data-pane="0"] [data-host-screen=%q]`, rig.pane)

@@ -217,6 +217,12 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 		"Threads":      func(a control.API) error { _, err := a.Threads(ctx, control.Filter{Scope: "s"}); return err },
 		"Thread":       func(a control.API) error { _, err := a.Thread(ctx, id, 10, 0); return err },
 		"ThreadEvents": func(a control.API) error { _, err := a.ThreadEvents(ctx, id, 0, 10); return err },
+		// Scopes, as Limits, needs OpRead and no scope: "other scope" may
+		// call it, and gets its own scopes.
+		"Scopes": func(a control.API) error { _, err := a.Scopes(ctx); return err },
+		"SetName": func(a control.API) error {
+			return a.SetName(ctx, control.LinkRef{Client: f.core.Scopes["s"].Owner, Channel: "s"}, "#s")
+		},
 		"Start": func(a control.API) error {
 			_, err := a.Start(ctx, control.StartRequest{Key: "k2", Scope: "s", Thread: "t2"})
 			return err
@@ -253,7 +259,7 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 	for cname, c := range callers {
 		a := f.core.As(c)
 		for name, op := range ops {
-			if name == "Limits" && cname == "other scope" {
+			if (name == "Limits" || name == "Scopes") && cname == "other scope" {
 				continue
 			}
 			f.log.Reset()

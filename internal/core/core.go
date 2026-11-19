@@ -41,6 +41,7 @@ var (
 
 // Scope is what the core needs to know about one scope.
 type Scope struct {
+	Name    string // the config's name for it; wins over its channel's name
 	Enabled bool
 	Owner   string // the name of the client that gives the scope its threads
 	Model   string // default model

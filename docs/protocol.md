@@ -17,7 +17,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.4**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.5**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -133,6 +133,23 @@ One thread's events before a position, newest last, each as `Events` delivers it
 | `limit` | integer | required | how many events to return, at most 100 |
 
 Result: [`Event`]
+
+### Operation `Scopes`
+
+The scopes the caller may see, each with the name a person knows it by. It takes no arguments. Since 3.5.
+
+Result: [`ScopeInfo`]
+
+### Operation `SetName`
+
+Records the name the chat service shows people for a conversation: a scope's own channel when `link.thread` is empty (`link.client` owns the scope and `link.channel` is its key), else the chat thread of a link. A change writes one `named` event; the same name again changes nothing. It needs the operation `SetName` in the conversation's scope, which a chat front end's caller and the owner's connection have; a conversation of no scope or link is `not_found`. Since 3.5.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `link` | `LinkRef` | required | the conversation; `thread` empty for a scope's channel |
+| `name` | string | optional | the name as the service shows it, such as `#general` for a Discord channel, at most 256 bytes; absent or empty forgets it |
+
+Result: none
 
 ### Operation `Start`
 
@@ -347,6 +364,15 @@ A field left empty matches everything the caller may see.
 | `text` | string | required | a free-text answer to a question |
 | `choices` | [string] | required | the tokens of the chosen options, for a question with choices; may be `null` |
 | `allow` | boolean | required | the decision, for an approval |
+
+### Type `ScopeInfo`
+
+One scope the caller may see; since 3.5.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `key` | string | required | the scope's key |
+| `name` | string | optional | the config's name for it, else its channel's as the chat service shows it (`SetName`), which is text and absent for a caller that may not read text; absent when neither is known |
 
 ### Type `ThreadInfo`
 
@@ -731,6 +757,17 @@ Since 2.3. A removal of the thread's workspace was refused, and nothing changed.
 | `repo` | string | optional | where it was found, relative to the workspace, when not in the workspace's own repository |
 | `kind` | string | optional | what `repo` is: `submodule`, `nested repository`, `nested bare repository` or `submodule without checkout` |
 | `detail` | string | optional | text for a person, such as the file or the commit; for `thread not closed`, the thread's state |
+
+### Event `named`
+
+Since 3.5. The name the chat service shows for a conversation changed (`SetName`). The event belongs to the conversation's scope, and to the thread when the conversation is a linked chat thread.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `client` | string | required | as in `LinkRef` |
+| `channel` | string | required | as in `LinkRef` |
+| `thread` | string | optional | as in `LinkRef`; absent for a scope's channel |
+| `name` | string | optional | the new name; text; absent when the name was forgotten, and for a reader that may not read text |
 
 ### Event `caught_up`
 

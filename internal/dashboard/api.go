@@ -34,7 +34,10 @@ import (
 // pane streams are described in terminal.go.
 const (
 	ThreadsPath = "/api/threads"
-	ThreadPath  = "/api/thread"
+	// ScopesPath answers with the scopes the caller may see and their
+	// names: the control API's Scopes.
+	ScopesPath = "/api/scopes"
+	ThreadPath = "/api/thread"
 	// ThreadEventsPath answers with a thread's events before ?before=P (its
 	// last ones without it), at most ?limit=N, newest last: the control
 	// API's ThreadEvents.
@@ -84,6 +87,7 @@ var errNotFound = core.ErrNotFound
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET "+ThreadsPath, s.threads)
+	s.mux.HandleFunc("GET "+ScopesPath, s.scopes)
 	s.mux.HandleFunc("GET "+ThreadPath, s.thread)
 	s.mux.HandleFunc("GET "+ThreadEventsPath, s.threadEvents)
 	s.mux.HandleFunc("GET "+EventsPath, s.events)
@@ -232,6 +236,18 @@ func (s *Server) thread(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.Error(w, err.Error(), http.StatusBadRequest)
+}
+
+func (s *Server) scopes(w http.ResponseWriter, r *http.Request) {
+	ss, err := api(r).Scopes(r.Context())
+	if err != nil {
+		s.apiError(w, err)
+		return
+	}
+	if ss == nil {
+		ss = []control.ScopeInfo{}
+	}
+	writeJSON(w, ss)
 }
 
 func (s *Server) threadEvents(w http.ResponseWriter, r *http.Request) {

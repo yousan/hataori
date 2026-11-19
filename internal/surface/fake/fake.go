@@ -107,6 +107,7 @@ type Driver struct {
 	direct    map[string]surface.Conversation
 	// fromMessage is the thread opened from each message.
 	fromMessage map[MessageRef]surface.Conversation
+	names       map[surface.Conversation]string // what Name answers
 }
 
 var _ surface.Driver = (*Driver)(nil)
@@ -137,7 +138,25 @@ func New() *Driver {
 		direct:  map[string]surface.Conversation{},
 
 		fromMessage: map[MessageRef]surface.Conversation{},
+		names:       map[surface.Conversation]string{},
 	}
+}
+
+var _ surface.Namer = (*Driver)(nil)
+
+// SetName makes Name answer name for conv, as a service that shows people
+// that name; "" for none.
+func (d *Driver) SetName(conv surface.Conversation, name string) {
+	d.mu.Lock()
+	d.names[conv] = name
+	d.mu.Unlock()
+}
+
+// Name answers what SetName set for conv, "" until then.
+func (d *Driver) Name(_ context.Context, conv surface.Conversation) (string, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.names[conv], nil
 }
 
 func (d *Driver) id(prefix string) string {

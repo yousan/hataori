@@ -395,11 +395,11 @@ func TestDashboardTreeAndStatusBar(t *testing.T) {
 		}
 		b.filter(f.q)
 		b.until(fmt.Sprintf("filter %q", f.q), fmt.Sprintf(
-			`JSON.stringify([...document.querySelectorAll('[data-section=threads] .row')].map(r => +r.dataset.thread)) === %q`, js(want)))
+			`JSON.stringify([...document.querySelectorAll('[data-section=threads] .row')].map(r => +r.dataset.thread).sort((a, b) => a - b)) === %q`, js(want)))
 	}
 	b.filter("")
 	b.until("every thread with an empty filter", fmt.Sprintf(
-		`JSON.stringify([...document.querySelectorAll('[data-section=threads] .row')].map(r => +r.dataset.thread)) === %q`, js([]int64{n1, n2, n3})))
+		`JSON.stringify([...document.querySelectorAll('[data-section=threads] .row')].map(r => +r.dataset.thread).sort((a, b) => a - b)) === %q`, js([]int64{n1, n2, n3})))
 
 	// 4. Normal density hides the second line of every row; dense shows it.
 	hidden := `[...document.querySelectorAll('.row')].every(r => getComputedStyle(r.querySelector('.line2')).display === 'none')`
