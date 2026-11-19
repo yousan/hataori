@@ -1,0 +1,129 @@
+package chat
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/surface"
+)
+
+// The Stop button (#453, decision 7 of #248): a choice on a turn's progress
+// line, the one message a quiet turn shows. Its token names the thread and
+// the turn it was shown for, by the position of that turn's turn_started
+// event, so it still works after a restart and never stops a later turn.
+// A press calls Stop as the person who pressed; the core decides who may.
+// Once the core has taken a press, the line shows that the turn is being
+// stopped, without the button, until the turn ends and the line goes.
+
+// stopToken starts a Stop button's token: stopturn:<thread>#<turn>.
+const stopToken = "stopturn:"
+
+// stoppedPart is the part of the line's edit that takes the button off,
+// above every timed edit (linePart+n).
+const stoppedPart = linePart + 1<<28
+
+// stoppingText is what the line says once a press was taken.
+const stoppingText = "Stopping the turn."
+
+func stopChoice(thread control.ThreadID, turn uint64) surface.Choice {
+	return surface.Choice{Label: "Stop", Token: fmt.Sprintf("%s%d#%d", stopToken, thread, turn)}
+}
+
+// stopKey is the record of a press the core took, kept in chat_notices
+// under no channel: a button in any link of the thread is the same one.
+func stopKey(thread control.ThreadID, turn uint64) string {
+	return fmt.Sprintf("stopbtn:%d#%d", thread, turn)
+}
+
+// stopped reports whether a press of the turn's button was taken.
+func (f *FrontEnd) stopped(ctx context.Context, thread control.ThreadID, turn uint64) (bool, error) {
+	var n int
+	err := f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM chat_notices WHERE client = ? AND channel = '' AND message = ?`,
+		f.Name, stopKey(thread, turn)).Scan(&n)
+	return n > 0, err
+}
+
+// pressStop stops the turn a Stop button was shown for, as the presser,
+// while that turn runs. A press that stops nothing writes one log line and
+// shows nothing.
+func (f *FrontEnd) pressStop(s surface.Selection, rest string) {
+	ctx := f.context()
+	ignored := func(reason string, err error) {
+		f.Log.Warn("button ignored", "reason", reason, "client", f.Name, "id", s.Author.ID,
+			"channel", s.Ref.Conv.Channel, "message", s.Ref.ID, "err", err)
+	}
+	th, tu, ok := strings.Cut(rest, "#")
+	n, err1 := strconv.ParseInt(th, 10, 64)
+	turn, err2 := strconv.ParseUint(tu, 10, 64)
+	if !ok || err1 != nil || err2 != nil || turn == 0 {
+		ignored("no button of the front end's", nil)
+		return
+	}
+	thread := control.ThreadID(n)
+	t, ok, err := f.threadHere(ctx, s.Ref.Conv)
+	if err != nil || !ok || t.ID != thread {
+		ignored("not a button of this thread", err)
+		return
+	}
+	open, err := f.turnOpen(ctx, t, turn)
+	if err != nil || !open {
+		ignored("its turn is not running", err)
+		return
+	}
+	// Each button stops once: a second press, also one delivered again
+	// after a restart, does nothing more. The press is recorded before the
+	// core is asked, and forgotten when the core refuses it; the line
+	// changes only by the second record, written once the core took it, so
+	// it shows nothing of a press the core refused.
+	pressed := "stoppress:" + strings.TrimPrefix(stopKey(thread, turn), "stopbtn:")
+	first, err := f.once(ctx, "", pressed, true)
+	if err != nil || !first {
+		ignored("the turn is being stopped", err)
+		return
+	}
+	api := f.API(control.Caller{From: f.from(s.Author), Scopes: f.scopesIn(s.Ref.Conv.Channel), May: control.OpRead | control.OpStop})
+	if err := api.Stop(ctx, thread); err != nil {
+		f.once(ctx, "", pressed, false)
+		if !errors.Is(err, control.ErrForbidden) { // the core logged a refusal
+			ignored("not stopped", err)
+		}
+		return
+	}
+	if _, err := f.once(ctx, "", stopKey(thread, turn), true); err != nil {
+		f.Log.Warn("stop button: the press could not be recorded", "thread", int64(thread), "err", err)
+	}
+	f.Log.Info("stop button pressed", "thread", int64(thread), "client", f.Name, "id", s.Author.ID)
+}
+
+// turnOpen reports whether the turn whose turn_started is at position turn
+// is the thread's running turn: the thread runs, and no turn ended or
+// started after it.
+func (f *FrontEnd) turnOpen(ctx context.Context, t control.ThreadInfo, turn uint64) (bool, error) {
+	if t.State != control.Running {
+		return false, nil
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	api := f.API(control.Caller{Principal: f.ownerPrincipal(), Scopes: []string{t.Scope}, May: control.OpRead})
+	evs, err := api.Events(ctx, control.Filter{Thread: t.ID}, turn-1)
+	if err != nil {
+		return false, err
+	}
+	defer stopEvents(cancel, evs)
+	seen := false
+	for e := range evs {
+		switch {
+		case e.Kind == control.CaughtUp:
+			return seen, nil
+		case e.Pos == turn:
+			seen = e.Kind == "turn_started"
+		case e.Kind == "turn_started" || e.Kind == "turn_ended":
+			return false, nil
+		}
+	}
+	return false, ctx.Err()
+}

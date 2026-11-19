@@ -28,6 +28,11 @@ type quiet struct {
 	tools  []tool    // running, in the order they started
 	line   bool      // the line's post is written
 	edit   int64     // the last edit written (0: the post)
+	// turn is the position of the turn's turn_started, which its Stop
+	// button names (stopbutton.go); stopping, that a press was taken and
+	// the line's edit without the button is written.
+	turn     uint64
+	stopping bool
 }
 
 type tool struct{ id, name string }
@@ -76,7 +81,7 @@ func (r *reader) track(e control.Event) []Row {
 	q := r.quiet[e.Thread]
 	switch {
 	case e.Kind == "turn_started":
-		r.quiet[e.Thread] = &quiet{anchor: e.Pos, since: e.Time}
+		r.quiet[e.Thread] = &quiet{anchor: e.Pos, since: e.Time, turn: e.Pos}
 		return nil
 	case q == nil:
 		return nil
@@ -106,7 +111,7 @@ func (r *reader) track(e control.Event) []Row {
 	if e.Kind == "turn_ended" {
 		delete(r.quiet, e.Thread)
 	} else {
-		r.quiet[e.Thread] = &quiet{anchor: e.Pos, since: e.Time, tools: q.tools}
+		r.quiet[e.Thread] = &quiet{anchor: e.Pos, since: e.Time, tools: q.tools, turn: q.turn}
 	}
 	return rows
 }
@@ -144,6 +149,18 @@ func (f *FrontEnd) lineRows(ctx context.Context, r *reader, now time.Time, id co
 	conv := r.conv(id)
 	n := int64((el - f.quietAfter()) / f.editEvery())
 	m := surface.Message{Text: progressText(el, q.tools), Quiet: true}
+	stopped := false
+	if q.turn != 0 {
+		var err error
+		if stopped, err = f.stopped(ctx, id, q.turn); err != nil {
+			return nil
+		}
+		if stopped {
+			m = surface.Message{Text: stoppingText, Quiet: true}
+		} else {
+			m.Choices = []surface.Choice{stopChoice(id, q.turn)}
+		}
+	}
 	if !q.line {
 		if g := r.gone[id]; g != nil && !r.done(id, *g) {
 			return nil // the line before is still shown
@@ -151,8 +168,18 @@ func (f *FrontEnd) lineRows(ctx context.Context, r *reader, now time.Time, id co
 		q.line = true
 		if last, _, err := f.Outbox.lineChanges(ctx, conv, q.anchor); err != nil || last.IsZero() {
 			// Not posted yet (also not before a restart): post it.
+			q.stopping = stopped
 			return []Row{{Event: q.anchor, Part: linePart, Conv: conv, Message: m, Decoration: true}}
 		}
+	}
+	if stopped {
+		// Once: the button goes at once, and no timed edit follows.
+		if q.stopping {
+			return nil
+		}
+		q.stopping = true
+		return []Row{{Event: q.anchor, Part: stoppedPart, Conv: conv, Message: m, Decoration: true,
+			Op: Edit, Target: &RowKey{Event: q.anchor, Part: linePart}}}
 	}
 	if n <= q.edit {
 		return nil
