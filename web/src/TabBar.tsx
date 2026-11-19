@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { HostTerminal, ThreadInfo } from "./api";
 import { hostLabel } from "./hostTerminals";
+import { clock, left, type OpState } from "./operate";
 import { t } from "./catalog";
 import { age, displayTitle, fullTitle, mark, stateName } from "./format";
 import type { Layout } from "./layout";
@@ -13,6 +14,8 @@ interface Props {
   active: TabKey;
   thread: (n: number) => ThreadInfo | undefined;
   host: (device: string) => HostTerminal | undefined;
+  // op is the operation of a host pane's tab, if any.
+  op: (k: TabKey) => OpState | undefined;
   now: number;
   onView: (k: TabKey) => void;
   onClose: (k: TabKey) => void;
@@ -47,13 +50,14 @@ function Tab(props: {
   k: TabKey;
   x: ThreadInfo | undefined;
   h: HostTerminal | undefined;
+  op: OpState | undefined;
   active: boolean;
   now: number;
   onView: (k: TabKey) => void;
   onClose: (k: TabKey) => void;
   onKey: (e: React.KeyboardEvent, k: TabKey) => void;
 }) {
-  const { k, x, h, active, now, onView, onClose, onKey } = props;
+  const { k, x, h, op, active, now, onView, onClose, onKey } = props;
   const n = threadOf(k);
   const device = hostOf(k);
   const name =
@@ -85,6 +89,11 @@ function Tab(props: {
             {t(b === "question" ? "tabs.question" : "tabs.failed")}
           </span>
         )}
+        {op?.phase === "on" && (
+          <span className="tab-operating" data-tab-operating={op.pane} title={t("operate.tabTitle", { pane: op.pane })}>
+            {t("operate.tab", { left: clock(left(op, now)) })}
+          </span>
+        )}
       </button>
       {k !== allTab && (
         <button type="button" className="tab-close" tabIndex={active ? 0 : -1} aria-label={t("tabs.close", { name })} title={t("tabs.close", { name })} onClick={() => onClose(k)}>
@@ -96,7 +105,7 @@ function Tab(props: {
 }
 
 export function TabBar(props: Props) {
-  const { open, active, thread, host, now, onView, onClose, split, onSplit, layout, onLayout, theme, onTheme, show, onShow, hidden } = props;
+  const { open, active, thread, host, op, now, onView, onClose, split, onSplit, layout, onLayout, theme, onTheme, show, onShow, hidden } = props;
   const next: Theme = theme === "dark" ? "light" : "dark";
   const bar = useRef<HTMLDivElement>(null);
   const focusing = useRef(false); // the active tab is to take the focus once it shows
@@ -157,6 +166,7 @@ export function TabBar(props: Props) {
               k={k}
               x={n === null ? undefined : thread(n)}
               h={device === null ? undefined : host(device)}
+              op={op(k)}
               active={k === active}
               now={now}
               onView={onView}

@@ -114,6 +114,13 @@ export async function adoptSession(): Promise<void> {
   }
 }
 
+// sessionToken is the page's session, for the one connection that cannot
+// carry it in a header: the operate WebSocket sends it as its first
+// message (operate.ts).
+export function sessionToken(): string | null {
+  return current;
+}
+
 // authorized returns init with the session's header added.
 export function authorized(init: RequestInit = {}): RequestInit {
   const headers = new Headers(init.headers);

@@ -3,6 +3,7 @@ import { t } from "./catalog";
 import { contextUse, stateName, when, windowName } from "./format";
 import type { Live } from "./live";
 import { Passkeys } from "./Passkeys";
+import { clock, left, type OpState } from "./operate";
 
 interface Props {
   selected: ThreadInfo | undefined;
@@ -10,6 +11,8 @@ interface Props {
   limits: AgentLimits[];
   now: number;
   signedIn: boolean;
+  // operating is the operation of a host pane under way, if any.
+  operating?: OpState;
 }
 
 // Limits shows each agent's remaining usage with its reset time. An agent
@@ -41,8 +44,9 @@ function Limits({ limits, now }: { limits: AgentLimits[]; now: number }) {
 
 // StatusBar shows the selected thread on the left; on the right, each
 // agent's remaining usage, the live mark with the position of the last
-// event read, "read-only", and, signed in, the person's passkeys.
-export function StatusBar({ selected: x, live, limits, now, signedIn }: Props) {
+// event read, "read-only" or the pane being operated with the time left
+// before its idle end, and, signed in, the person's passkeys.
+export function StatusBar({ selected: x, live, limits, now, signedIn, operating }: Props) {
   let mark: string;
   if (live.connected) {
     mark = live.pos === null ? t("status.liveStarting") : t("status.live", { pos: live.pos });
@@ -70,7 +74,13 @@ export function StatusBar({ selected: x, live, limits, now, signedIn }: Props) {
           <span className="live-dot" />
           {mark}
         </span>
-        <span className="mark">{t("app.readOnly")}</span>
+        {operating?.phase === "on" ? (
+          <span className="mark operating" data-status-operating={operating.pane}>
+            {t("status.operating", { pane: operating.pane, left: clock(left(operating, now)) })}
+          </span>
+        ) : (
+          <span className="mark">{t("app.readOnly")}</span>
+        )}
         {signedIn && <Passkeys />}
       </div>
     </footer>
