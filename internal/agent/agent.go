@@ -193,6 +193,12 @@ type Spec struct {
 	// start, naming them. A confined session ignores those files, so the
 	// list does not matter to it.
 	TrustFiles []string `json:",omitempty"`
+	// TakenIn is a session that a person started in their own window and
+	// hataori took in (design, section 4.8): it is past its start, and runs
+	// as ResumeID with Model. Its codec starts ready, as one rebuilt after a
+	// restart does; Open reports SessionReady at once and watches no
+	// screen. Nothing launches it.
+	TakenIn bool `json:",omitempty"`
 }
 
 // Confinement is what a confined session may use besides its file tools.

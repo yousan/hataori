@@ -267,6 +267,18 @@ func (c *Client) CloseThread(ctx context.Context, id control.ThreadID) error {
 	return c.call(ctx, "Close", closeArgs{ID: id}, nil)
 }
 
+// TakeIn is the operation TakeIn. Since 3.17.
+func (c *Client) TakeIn(ctx context.Context, r control.TakeInRequest) (control.ThreadID, error) {
+	var out control.ThreadID
+	err := c.call(ctx, "TakeIn", r, &out)
+	return out, err
+}
+
+// Release is the operation Release. Since 3.17.
+func (c *Client) Release(ctx context.Context, id control.ThreadID) error {
+	return c.call(ctx, "Release", releaseArgs{ID: id}, nil)
+}
+
 // RemoveThread is the operation Remove.
 func (c *Client) RemoveThread(ctx context.Context, id control.ThreadID) error {
 	return c.call(ctx, "Remove", removeArgs{ID: id}, nil)

@@ -43,15 +43,16 @@ var points = map[string]Failure{
 // operations are the operations of the control protocol, as
 // docs/protocol.md lists them; a test keeps the two equal.
 var operations = []string{"Answer", "AskInterrupt", "AttachTerminal", "Close", "End", "Events", "HostKeys", "HostScreen", "HostTerminals", "HostView", "Limits", "Link",
-	"OperateHost", "Remove", "Scopes", "Send", "SetName", "SignInLink", "Start", "Stop", "Terminal", "Thread", "ThreadEvents", "Threads", "Workspace"}
+	"OperateHost", "Release", "Remove", "Scopes", "Send", "SetName", "SignInLink", "Start", "Stop", "TakeIn", "Terminal", "Thread", "ThreadEvents", "Threads", "Workspace"}
 
 // never are the operations no plugin is given, whatever its manifest and
 // its config say: the dashboard's sign-in; the terminals on the host, read
 // or typed into; a terminal attached to an agent, which reaches the agent
-// past the core's checks; and closing or removing a thread, which ends or
-// deletes a person's work.
+// past the core's checks; closing or removing a thread, which ends or
+// deletes a person's work; and taking in a window a person started, or
+// letting it go.
 var never = []string{"SignInLink", "HostTerminals", "HostScreen", "HostView", "OperateHost", "HostKeys", "End",
-	"AttachTerminal", "Close", "Remove"}
+	"AttachTerminal", "Close", "Remove", "TakeIn", "Release"}
 
 // classes are the classes of Caller.May that the operations a plugin may
 // be given need; the core checks the operation's name besides

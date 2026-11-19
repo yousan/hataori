@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -251,7 +252,7 @@ func (r Report) valid() bool {
 		}
 	}
 	return r.Holder == Tmux && r.Server != "" && paneID.MatchString(r.Pane) && strings.HasPrefix(r.Device, "/dev/") &&
-		r.PID > 1 && r.Agent != "" && r.Session != "" && r.Event != ""
+		r.PID > 1 && r.Agent != "" && r.Session != "" && r.Event != "" && filepath.IsAbs(r.Dir)
 }
 
 // Starts is the event with which a session starts or resumes.
@@ -367,4 +368,126 @@ func (t terms) List(ctx context.Context, owned []int) ([]control.HostTerminal, e
 		t.s.Annotate(list, since)
 	}
 	return list, err
+}
+
+// Report returns the report kept for the window named name, as
+// ReportedSession.Window names it, when its agent's process still exists.
+func (s *Server) Report(name string) (Report, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.reports[name]
+	if !ok || !s.alive(r.PID) {
+		return Report{}, false
+	}
+	return r, true
+}
+
+// Record says that hataori took a window in (design, section 4.8): the
+// hooks of the agent's process the take-in checked go to the relay host of
+// the thread's session, as `hataori hook` does, and those of any other
+// process in the window are only reported. It is a file next to the
+// reports' socket, so a hook finds it while the daemon is down.
+type Record struct {
+	Server  string `json:"server"`  // as Report.Server
+	Pane    string `json:"pane"`    // as Report.Pane
+	PID     int    `json:"pid"`     // the agent's process that was taken in
+	Socket  string `json:"socket"`  // the relay host's socket
+	Thread  int64  `json:"thread"`  // the thread it was taken in as
+	Session int64  `json:"session"` // that thread's session
+}
+
+// TakenDir is the directory of the records, next to the socket.
+const TakenDir = "taken"
+
+// recordPath is the record of the window of server and pane.
+func recordPath(root, server, pane string) (string, error) {
+	sock, err := SocketPath(root)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(server + "\x00" + pane))
+	return filepath.Join(filepath.Dir(sock), TakenDir, hex.EncodeToString(sum[:12])+".json"), nil
+}
+
+// WriteRecord records that rec's window was taken in, whole or not at all.
+// The directory of the socket must be private to this user, as Listen
+// makes it.
+func WriteRecord(root string, rec Record) error {
+	p, err := recordPath(root, rec.Server, rec.Pane)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(p)
+	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
+		return fmt.Errorf("window: %w", err)
+	}
+	if err := PrivateDir(filepath.Dir(dir)); err != nil {
+		return err
+	}
+	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+		return fmt.Errorf("window: %w", err)
+	}
+	if err := PrivateDir(dir); err != nil {
+		return err
+	}
+	b, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".record-*")
+	if err != nil {
+		return fmt.Errorf("window: %w", err)
+	}
+	defer os.Remove(tmp.Name()) // gone once renamed
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		return fmt.Errorf("window: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("window: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), p); err != nil {
+		return fmt.Errorf("window: %w", err)
+	}
+	return nil
+}
+
+// ReadRecord returns the record of the window of server and pane; ok is
+// false when it was not taken in. A record in a directory that is not
+// private to this user is not read.
+func ReadRecord(root, server, pane string) (rec Record, ok bool, err error) {
+	p, err := recordPath(root, server, pane)
+	if err != nil {
+		return Record{}, false, err
+	}
+	if err := PrivateDir(filepath.Dir(p)); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return Record{}, false, nil
+		}
+		return Record{}, false, err
+	}
+	b, err := os.ReadFile(p)
+	if errors.Is(err, fs.ErrNotExist) {
+		return Record{}, false, nil
+	}
+	if err != nil {
+		return Record{}, false, fmt.Errorf("window: %w", err)
+	}
+	if err := json.Unmarshal(b, &rec); err != nil || rec.Server != server || rec.Pane != pane {
+		return Record{}, false, fmt.Errorf("window: the record of %s %s is not readable", server, pane)
+	}
+	return rec, true, nil
+}
+
+// RemoveRecord removes the record of the window of server and pane: its
+// hooks only report again. A window not taken in is not an error.
+func RemoveRecord(root, server, pane string) error {
+	p, err := recordPath(root, server, pane)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("window: %w", err)
+	}
+	return nil
 }
