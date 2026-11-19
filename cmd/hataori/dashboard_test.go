@@ -61,33 +61,15 @@ func TestSignInThroughTheDaemon(t *testing.T) {
 		t.Fatalf("link %q", link)
 	}
 	base := link[:strings.Index(link, "/signin")]
-	hc := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	get := func(url string, cookies ...*http.Cookie) *http.Response {
-		t.Helper()
-		r, _ := http.NewRequest(http.MethodGet, url, nil)
-		for _, c := range cookies {
-			r.AddCookie(c)
-		}
-		resp, err := hc.Do(r)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		return resp
+	if code, _ := dashGet(t, base, "", "/api/threads"); code != http.StatusUnauthorized {
+		t.Fatalf("before sign-in: %d", code)
 	}
-	if resp := get(base + "/"); resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("before sign-in: %s", resp.Status)
+	session := openLink(t, link)
+	if code, body := dashGet(t, base, session, "/api/threads"); code != http.StatusOK {
+		t.Fatalf("signed in: %d %s", code, body)
 	}
-	resp := get(link)
-	if resp.StatusCode != http.StatusSeeOther || len(resp.Cookies()) != 1 || !resp.Cookies()[0].HttpOnly {
-		t.Fatalf("sign-in: %s, cookies %v", resp.Status, resp.Header["Set-Cookie"])
-	}
-	cookie := resp.Cookies()[0]
-	if resp := get(base+"/", cookie); resp.StatusCode != http.StatusOK {
-		t.Fatalf("signed in: %s", resp.Status)
-	}
-	if resp := get(link); resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("the link a second time: %s", resp.Status)
+	if code, _, s := tryLink(t, &http.Client{}, link); code != http.StatusUnauthorized || s != "" {
+		t.Fatalf("the link a second time: %d", code)
 	}
 }
 
@@ -169,7 +151,7 @@ func runDaemonLog(t *testing.T, root string) (stop func(), logged func() string)
 
 // dashSignIn signs in with a link from `hataori signin` and returns the
 // dashboard's address and the session cookie.
-func dashSignIn(t *testing.T, root string) (string, *http.Cookie) {
+func dashSignIn(t *testing.T, root string) (string, dashSession) {
 	t.Helper()
 	_, out, errOut := cli(t, "signin", "--root", root)
 	ls := lines(t, out)
@@ -177,23 +159,86 @@ func dashSignIn(t *testing.T, root string) (string, *http.Cookie) {
 		t.Fatalf("signin: %q %q", out, errOut)
 	}
 	link := ls[0]["link"].(string)
-	hc := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	resp, err := hc.Get(link)
-	if err != nil {
-		t.Fatal(err)
+	return link[:strings.Index(link, "/signin")], openLink(t, link)
+}
+
+// dashSession is a dashboard session, which the page sends in the
+// Authorization header of each request.
+type dashSession string
+
+// set puts the session in r, as the page does.
+func (s dashSession) set(r *http.Request) {
+	if s != "" {
+		r.Header.Set("Authorization", "Bearer "+string(s))
 	}
-	resp.Body.Close()
-	if len(resp.Cookies()) != 1 {
-		t.Fatalf("sign-in: %s", resp.Status)
+}
+
+// openLink opens a sign-in link as the page does, and returns the session
+// it trades the link for; it fails the test when there is none.
+func openLink(t *testing.T, link string) dashSession {
+	t.Helper()
+	code, body, s := tryLink(t, &http.Client{}, link)
+	if code != http.StatusOK || s == "" {
+		t.Fatalf("sign-in: %d %s", code, body)
 	}
-	return link[:strings.Index(link, "/signin")], resp.Cookies()[0]
+	return s
+}
+
+// tryLink opens a sign-in link with hc as a browser and the page do: the
+// sign-in page at the link's address, then the trade of the token from
+// its fragment. It returns the trade's status, body and session, if any,
+// and checks that neither answer sets a cookie.
+func tryLink(t *testing.T, hc *http.Client, link string) (int, string, dashSession) {
+	t.Helper()
+	return tryLinkAt(t, hc, link, "", "")
+}
+
+// tryLinkAt is tryLink sent to addr, with the Host header host, as a
+// reverse proxy would pass it on; empty for the link's own.
+func tryLinkAt(t *testing.T, hc *http.Client, link, addr, host string) (int, string, dashSession) {
+	t.Helper()
+	u, err := url.Parse(link)
+	if err != nil || u.Path != "/signin" || u.RawQuery != "" || !strings.HasPrefix(u.Fragment, "t=") {
+		t.Fatalf("link %q is not the sign-in page with its token in the fragment", link)
+	}
+	if addr == "" {
+		addr = u.Host
+	}
+	get := func(path, auth string) (*http.Response, []byte) {
+		t.Helper()
+		r, _ := http.NewRequest(http.MethodGet, u.Scheme+"://"+addr+path, nil)
+		if host != "" {
+			r.Host = host
+		}
+		if auth != "" {
+			r.Header.Set("Authorization", auth)
+		}
+		resp, err := hc.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		if c := resp.Header.Values("Set-Cookie"); len(c) != 0 {
+			t.Fatalf("%s set a cookie: %q", path, c)
+		}
+		return resp, b
+	}
+	if resp, b := get(u.Path, ""); resp.StatusCode != http.StatusOK {
+		return resp.StatusCode, string(b), ""
+	}
+	v, _ := url.ParseQuery(u.Fragment)
+	resp, b := get("/api/session", "Link "+v.Get("t"))
+	var out struct{ Session string }
+	json.Unmarshal(b, &out)
+	return resp.StatusCode, string(b), dashSession(out.Session)
 }
 
 // dashGet returns the status and body of a GET of a dashboard route.
-func dashGet(t *testing.T, base string, c *http.Cookie, path string) (int, string) {
+func dashGet(t *testing.T, base string, c dashSession, path string) (int, string) {
 	t.Helper()
 	r, _ := http.NewRequest(http.MethodGet, base+path, nil)
-	r.AddCookie(c)
+	c.set(r)
 	resp, err := http.DefaultClient.Do(r)
 	if err != nil {
 		t.Fatal(err)
@@ -216,7 +261,7 @@ type sseEvent struct {
 
 // dashStream reads the event stream after lastID until the test ends or
 // stop is called. Messages arrive on the returned channel.
-func dashStream(t *testing.T, base string, c *http.Cookie, lastID uint64) (<-chan sseEvent, func()) {
+func dashStream(t *testing.T, base string, c dashSession, lastID uint64) (<-chan sseEvent, func()) {
 	t.Helper()
 	id := ""
 	if lastID > 0 {
@@ -227,11 +272,11 @@ func dashStream(t *testing.T, base string, c *http.Cookie, lastID uint64) (<-cha
 
 // openSSE reads a Server-Sent Events stream at u, resuming after lastID
 // when it is not empty.
-func openSSE(t *testing.T, u string, c *http.Cookie, lastID string) (<-chan sseEvent, func()) {
+func openSSE(t *testing.T, u string, c dashSession, lastID string) (<-chan sseEvent, func()) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	r, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	r.AddCookie(c)
+	c.set(r)
 	if lastID != "" {
 		r.Header.Set("Last-Event-ID", lastID)
 	}
@@ -508,7 +553,7 @@ func terminalRoot(t *testing.T) string {
 
 // terminalStream opens a thread's terminal stream, resuming after lastID
 // when it is not empty.
-func terminalStream(t *testing.T, base string, c *http.Cookie, id control.ThreadID, lastID string) (<-chan sseEvent, func()) {
+func terminalStream(t *testing.T, base string, c dashSession, id control.ThreadID, lastID string) (<-chan sseEvent, func()) {
 	t.Helper()
 	return openSSE(t, base+"/api/terminal?"+url.Values{"thread": {fmt.Sprint(int64(id))}}.Encode(), c, lastID)
 }
@@ -614,7 +659,7 @@ func TestDashboardTerminalStream(t *testing.T) {
 		// A bracketed paste and Enter: what the fake agent takes as a prompt
 		// when it reaches its terminal, so it would run a turn.
 		r, _ := http.NewRequestWithContext(rctx, method, u, strings.NewReader("\x1b[200~reply rogue-keys\x1b[201~\r"))
-		r.AddCookie(cookie)
+		cookie.set(r)
 		for k, v := range header {
 			r.Header.Set(k, v)
 		}

@@ -50,7 +50,7 @@ func TestDashboardLimits(t *testing.T) {
 	turns(1)
 
 	b := newBrowser(t)
-	link, err := c.SignInLink(ctx)
+	link, err := c.SignInLink(ctx, "")
 	if err != nil {
 		t.Fatal(err)
 	}

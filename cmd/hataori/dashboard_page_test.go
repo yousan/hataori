@@ -307,7 +307,7 @@ func TestDashboardTreeAndStatusBar(t *testing.T) {
 	n1, n2, n3 := int64(ts["ask Proceed with the deploy?"].ID), int64(ts["reply done"].ID), int64(ts["tool long 10m"].ID)
 
 	b := newBrowser(t)
-	link, err := c.SignInLink(ctx)
+	link, err := c.SignInLink(ctx, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -257,9 +257,10 @@ type HostTerms interface {
 }
 
 // SignIn makes single-use dashboard sign-in links. The session a link
-// opens belongs to person.
+// opens belongs to person, on the listener way names (empty: the loopback
+// listener when there is one, else the web listener).
 type SignIn interface {
-	NewLink(ctx context.Context, person string) (string, error)
+	NewLink(ctx context.Context, person string, way control.Way) (string, error)
 }
 
 // MaySignIn reports whether person may get a dashboard sign-in link, and
@@ -1367,7 +1368,7 @@ func (a *api) Events(ctx context.Context, f control.Filter, after uint64) (<-cha
 	return out, nil
 }
 
-func (a *api) SignInLink(ctx context.Context) (string, error) {
+func (a *api) SignInLink(ctx context.Context, way control.Way) (string, error) {
 	if err := a.check(control.OpSignIn, "SignInLink", ""); err != nil {
 		return "", err
 	}
@@ -1378,7 +1379,12 @@ func (a *api) SignInLink(ctx context.Context) (string, error) {
 	if a.c.SignIn == nil {
 		return "", fmt.Errorf("core: SignInLink: %w", ErrNoDashboard)
 	}
-	return a.c.SignIn.NewLink(ctx, person)
+	switch way {
+	case "", control.WayLocal, control.WayWeb:
+	default:
+		return "", fmt.Errorf("core: SignInLink: %q is not a listener: say %q or %q", way, control.WayLocal, control.WayWeb)
+	}
+	return a.c.SignIn.NewLink(ctx, person, way)
 }
 
 // checkHost allows HostTerminals and HostScreen: only when they are on, and

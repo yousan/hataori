@@ -10,7 +10,8 @@
 //	hataori attach [--root DIR] NUMBER          this terminal on the agent's, until Ctrl-\
 //	hataori close [--root DIR] NUMBER           end the thread's agent and close it; the workspace stays
 //	hataori remove [--root DIR] NUMBER          move a closed thread's workspace into trash, if nothing would be lost
-//	hataori signin [--root DIR]                 a single-use dashboard sign-in link
+//	hataori signin [--root DIR] [--web]         a single-use dashboard sign-in link, for the
+//	                                            loopback listener or, with --web, the web listener
 //	hataori mcp [--root DIR] --scope SCOPE [--output-max BYTES]
 //	                                            the supervisor's MCP server on stdio;
 //	                                            its token is $HATAORI_TOKEN
@@ -76,7 +77,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return runCtx(context.Background(), args, stdout, stderr)
 }
 
-const usage = "usage: hataori run|threads|thread NUMBER|events [--after N] [--follow]|stop NUMBER|attach NUMBER|close NUMBER|remove NUMBER|signin [--root DIR] | hataori mcp --scope SCOPE [--root DIR] [--output-max BYTES] | hataori version | hataori host <state-dir> | hataori hook [--wait] [--timeout DURATION] | hataori statusline --last FILE [--run COMMAND]"
+const usage = "usage: hataori run|threads|thread NUMBER|events [--after N] [--follow]|stop NUMBER|attach NUMBER|close NUMBER|remove NUMBER|signin [--web] [--root DIR] | hataori mcp --scope SCOPE [--root DIR] [--output-max BYTES] | hataori version | hataori host <state-dir> | hataori hook [--wait] [--timeout DURATION] | hataori statusline --last FILE [--run COMMAND]"
 
 func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -119,6 +120,7 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 	root := fs.String("root", os.Getenv("HATAORI_ROOT"), "the instance root")
 	after := fs.Uint64("after", 0, "events: print the events after this position")
 	follow := fs.Bool("follow", false, "events: keep printing new events")
+	web := fs.Bool("web", false, "signin: a link for the dashboard's web listener instead of its loopback listener")
 	var pos []string // flags may come before or after the key
 	for {
 		if err := fs.Parse(args); err != nil {
@@ -139,7 +141,7 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 		fmt.Fprintln(stderr, usage)
 		return exitUsage
 	}
-	if len(pos) != want || *root == "" || (name != "events" && (*after != 0 || *follow)) {
+	if len(pos) != want || *root == "" || (name != "events" && (*after != 0 || *follow)) || (name != "signin" && *web) {
 		fmt.Fprintln(stderr, usage)
 		return exitUsage
 	}
@@ -192,7 +194,11 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 	case "events":
 		return events(ctx, c, *after, *follow, enc, fail)
 	case "signin":
-		link, err := c.SignInLink(ctx)
+		way := control.WayLocal
+		if *web {
+			way = control.WayWeb
+		}
+		link, err := c.SignInLink(ctx, way)
 		if err != nil {
 			return fail(err)
 		}

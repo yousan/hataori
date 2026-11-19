@@ -67,7 +67,7 @@ func TestSessionTerminalSize(t *testing.T) {
 	b.call("Emulation.setDeviceMetricsOverride", map[string]any{"width": 1400, "height": 900, "deviceScaleFactor": 1, "mobile": false})
 	open := func(cols int) {
 		t.Helper()
-		link, err := c.SignInLink(ctx)
+		link, err := c.SignInLink(ctx, "")
 		if err != nil {
 			t.Fatal(err)
 		}

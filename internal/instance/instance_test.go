@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -367,5 +368,56 @@ func TestHostTerminalsOffByDefault(t *testing.T) {
 	on := strings.Replace(validConfig, "{", `{"host_terminals": true,`, 1)
 	if c, err = ParseConfig([]byte(on)); err != nil || !c.HostTerminals {
 		t.Errorf("host_terminals: true gives %v, %v", c, err)
+	}
+}
+
+// The dashboard section: "listen" is the loopback listener and "web" the
+// web listener; either may be left out. A section in the old form, one
+// listener with "url", "tls_cert", "tls_key" or "proxy" in it, is read as
+// before: with TLS or a proxy the web listener alone, otherwise the
+// loopback listener.
+func TestDashboardSection(t *testing.T) {
+	const base = `{"owner": "o", "trigger": "!go", "idle": "30m", "dashboard": `
+	for _, tc := range []struct {
+		name, section string
+		want          Dashboard
+	}{
+		{"empty", `{}`, Dashboard{Local: &DashboardLocal{}}},
+		{"loopback", `{"listen": "127.0.0.1:9000"}`, Dashboard{Local: &DashboardLocal{Listen: "127.0.0.1:9000"}}},
+		{"web only", `{"web": {"listen": "127.0.0.1:9443", "url": "https://dash.example.com", "proxy": "127.0.0.1"}}`,
+			Dashboard{Web: &DashboardWeb{Listen: "127.0.0.1:9443", URL: "https://dash.example.com", Proxy: "127.0.0.1", Key: "dashboard.web."}}},
+		{"both", `{"listen": " 127.0.0.1:9000 ", "web": {"listen": "0.0.0.0:9443", "tls_cert": "c.pem", "tls_key": "k.pem", "url": "https://dash.example.com"}}`,
+			Dashboard{Local: &DashboardLocal{Listen: "127.0.0.1:9000"},
+				Web: &DashboardWeb{Listen: "0.0.0.0:9443", URL: "https://dash.example.com", TLSCert: "c.pem", TLSKey: "k.pem", Key: "dashboard.web."}}},
+		{"old form, TLS", `{"listen": "0.0.0.0:7466", "url": "https://dash.example.com", "tls_cert": "c.pem", "tls_key": "k.pem"}`,
+			Dashboard{OldForm: true, Web: &DashboardWeb{Listen: "0.0.0.0:7466", URL: "https://dash.example.com", TLSCert: "c.pem", TLSKey: "k.pem", Key: "dashboard."}}},
+		{"old form, proxy", `{"url": "https://dash.example.com", "proxy": "127.0.0.1"}`,
+			Dashboard{OldForm: true, Web: &DashboardWeb{URL: "https://dash.example.com", Proxy: "127.0.0.1", Key: "dashboard."}}},
+		{"old form, loopback", `{"listen": "127.0.0.1:7466", "url": "http://localhost:7466"}`,
+			Dashboard{OldForm: true, Local: &DashboardLocal{Listen: "127.0.0.1:7466", URL: "http://localhost:7466"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := ParseConfig([]byte(base + tc.section + "}"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(*c.Dashboard, tc.want) {
+				t.Fatalf("%+v %+v %+v, want %+v %+v %+v", *c.Dashboard, c.Dashboard.Local, c.Dashboard.Web, tc.want, tc.want.Local, tc.want.Web)
+			}
+		})
+	}
+	for _, tc := range []struct{ name, section, key string }{
+		{"web without an address", `{"web": {"proxy": "127.0.0.1", "url": "https://dash.example.com"}}`, `"dashboard.web.listen"`},
+		{"half a certificate", `{"web": {"listen": "127.0.0.1:1", "tls_cert": "c.pem"}}`, `"dashboard.web.tls_cert" and "dashboard.web.tls_key"`},
+		{"half a certificate, old form", `{"tls_key": "k.pem"}`, `"dashboard.tls_cert" and "dashboard.tls_key"`},
+		{"both forms", `{"proxy": "127.0.0.1", "web": {"listen": "127.0.0.1:1"}}`, `"dashboard.web"`},
+		{"unknown key in web", `{"web": {"listen": "127.0.0.1:1", "port": 1}}`, `"port"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseConfig([]byte(base + tc.section + "}"))
+			if err == nil || strings.Contains(err.Error(), "\n") || !strings.Contains(err.Error(), tc.key) {
+				t.Fatalf("%v, want one line naming %s", err, tc.key)
+			}
+		})
 	}
 }

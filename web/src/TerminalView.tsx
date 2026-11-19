@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { type TerminalChunk, type ThreadInfo, terminalPath } from "./api";
 import { t } from "./catalog";
 import { fitted, sized } from "./fit";
+import { Stream } from "./stream";
 
 // bytes decodes a chunk's base64 data.
 function bytes(data: string | undefined): Uint8Array {
@@ -43,7 +44,7 @@ export function TerminalView({ x, fit }: { x: ThreadInfo; fit?: boolean }) {
     if (!host.current) return;
     const term = openReadOnly(host.current);
     const fitting = fit && box.current ? fitted(term, box.current) : null;
-    const source = new EventSource(terminalPath(id));
+    const source = new Stream(terminalPath(id));
     // xterm.js parses what it is given later, while reset and resize act at
     // once: each chunk waits for the bytes before it to be drawn, so a reset
     // never lands under output that came before it.

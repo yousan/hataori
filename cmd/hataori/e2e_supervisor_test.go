@@ -125,7 +125,7 @@ func TestSupervisorConnectionIsLimitedToItsScope(t *testing.T) {
 	if err := sv.Stop(ctx, a); !errors.Is(err, control.ErrForbidden) {
 		t.Fatalf("Stop in c1: %v, want forbidden", err)
 	}
-	if _, err := sv.SignInLink(ctx); !errors.Is(err, control.ErrForbidden) {
+	if _, err := sv.SignInLink(ctx, ""); !errors.Is(err, control.ErrForbidden) {
 		t.Fatalf("SignInLink: %v, want forbidden", err)
 	}
 	eventually(t, "the refusals logged", 5*time.Second, func() bool {

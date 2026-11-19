@@ -43,7 +43,7 @@ func hostPage(t *testing.T, rig hostTerminalRig, on bool) (*browser, *wire.Clien
 	b.call("Network.enable", map[string]any{})
 	b.call("Page.addScriptToEvaluateOnNewDocument", map[string]any{"source": `window.__csp = [];
 		document.addEventListener('securitypolicyviolation', e => window.__csp.push(e.violatedDirective + ' ' + e.blockedURI));`})
-	link, err := c.SignInLink(ctx)
+	link, err := c.SignInLink(ctx, "")
 	if err != nil {
 		t.Fatal(err)
 	}

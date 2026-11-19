@@ -120,13 +120,22 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	// daemon with the reason.
 	var dash *dashboard.Server
 	if d := cfg.Dashboard; d != nil {
-		dc := dashboard.Config{Listen: d.Listen, URL: d.URL, Proxy: d.Proxy}
-		if d.TLSCert != "" {
-			cert, err := loadCert(in.Root, d.TLSCert, d.TLSKey)
-			if err != nil {
-				return err
+		var dc dashboard.Config
+		if l := d.Local; l != nil {
+			dc.Local = &dashboard.Local{Listen: l.Listen, URL: l.URL, Key: "dashboard."}
+		}
+		if w := d.Web; w != nil {
+			dc.Web = &dashboard.Web{Listen: w.Listen, URL: w.URL, Proxy: w.Proxy, Key: w.Key}
+			if w.TLSCert != "" {
+				cert, err := loadCert(in.Root, w.Key, w.TLSCert, w.TLSKey)
+				if err != nil {
+					return err
+				}
+				dc.Web.TLS = &cert
 			}
-			dc.TLS = &cert
+		}
+		if d.OldForm {
+			lg.Info("the config's dashboard section uses the old form, one listener: put the web listener's keys in \"dashboard.web\" and the loopback listener's address in \"dashboard.listen\"")
 		}
 		if dc.SessionKey, err = sessionKey(in.Root); err != nil {
 			return err
@@ -225,7 +234,11 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 				lg.Error("dashboard", "err", err)
 			}
 		}()
-		lg.Info("dashboard listens", "url", dash.URL())
+		for _, way := range []control.Way{control.WayLocal, control.WayWeb} {
+			if u := dash.URL(way); u != "" {
+				lg.Info("dashboard listens", "listener", string(way), "url", u)
+			}
+		}
 	}
 	lg.Info("hataori runs", "root", abs, "agent", agentName)
 	err = srv.Serve(ctx)
@@ -418,9 +431,9 @@ func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.St
 	return fronts, nil
 }
 
-// loadCert reads the dashboard's certificate and key from the config
-// directory.
-func loadCert(root *os.Root, certFile, keyFile string) (tls.Certificate, error) {
+// loadCert reads the web listener's certificate and key from the config
+// directory; key is the prefix of their config keys.
+func loadCert(root *os.Root, key, certFile, keyFile string) (tls.Certificate, error) {
 	read := func(key, name string) ([]byte, error) {
 		f, err := root.Open(filepath.Join("config", name))
 		if err != nil {
@@ -429,17 +442,17 @@ func loadCert(root *os.Root, certFile, keyFile string) (tls.Certificate, error) 
 		defer f.Close()
 		return io.ReadAll(f)
 	}
-	certPEM, err := read("dashboard.tls_cert", certFile)
+	certPEM, err := read(key+"tls_cert", certFile)
 	if err != nil {
 		return tls.Certificate{}, err
 	}
-	keyPEM, err := read("dashboard.tls_key", keyFile)
+	keyPEM, err := read(key+"tls_key", keyFile)
 	if err != nil {
 		return tls.Certificate{}, err
 	}
 	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("config: keys %q and %q: %w", "dashboard.tls_cert", "dashboard.tls_key", err)
+		return tls.Certificate{}, fmt.Errorf("config: keys %q and %q: %w", key+"tls_cert", key+"tls_key", err)
 	}
 	return cert, nil
 }
