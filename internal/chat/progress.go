@@ -99,7 +99,7 @@ func (r *reader) track(e control.Event) []Row {
 			Op: Delete, Target: &RowKey{Event: q.anchor, Part: linePart}})
 		// A line is posted only once the delete before it is done, so
 		// while one is waiting, this stretch had no line to delete.
-		if g := r.gone[e.Thread]; g == nil || r.done(*g) {
+		if g := r.gone[e.Thread]; g == nil || r.done(e.Thread, *g) {
 			r.gone[e.Thread] = &RowKey{Event: e.Pos, Part: deletePart}
 		}
 	}
@@ -111,12 +111,13 @@ func (r *reader) track(e control.Event) []Row {
 	return rows
 }
 
-// done reports whether row k is sent or given up in every conversation.
-func (r *reader) done(k RowKey) bool {
-	var n int
-	err := r.outbox.Store.DB.QueryRowContext(r.ctx, `SELECT count(*) FROM chat_outbox
-		WHERE client = ? AND event = ? AND part = ? AND state = 'pending'`, r.outbox.Client, k.Event, k.Part).Scan(&n)
-	return err == nil && n == 0
+// done reports whether row k of thread id is sent or given up in the
+// thread's first conversation. The line is scheduled by that conversation
+// alone, as lineRows does, and the other links follow it: one that fails
+// holds back no other.
+func (r *reader) done(id control.ThreadID, k RowKey) bool {
+	state, _, err := r.outbox.state(r.ctx, r.conv(id), k)
+	return err == nil && state != "pending"
 }
 
 // tick returns the rows that post or edit the progress lines due at now.
@@ -144,7 +145,7 @@ func (f *FrontEnd) lineRows(ctx context.Context, r *reader, now time.Time, id co
 	n := int64((el - f.quietAfter()) / f.editEvery())
 	m := surface.Message{Text: progressText(el, q.tools), Quiet: true}
 	if !q.line {
-		if g := r.gone[id]; g != nil && !r.done(*g) {
+		if g := r.gone[id]; g != nil && !r.done(id, *g) {
 			return nil // the line before is still shown
 		}
 		q.line = true

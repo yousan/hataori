@@ -110,6 +110,19 @@ func TestEachLinkIsCaughtUpFromItsCursorAndPostedOnce(t *testing.T) {
 	waitFor(t, "the answer in both", func() bool {
 		return posts(f.driver, first, "the answer") == 1 && posts(f.driver, second, "the answer") == 1
 	})
+	// Each copy has a key of its own; the first link's is the key it
+	// always had.
+	var keys []string
+	for _, conv := range []surface.Conversation{first, second} {
+		for _, c := range f.driver.Calls(conv) {
+			if c.Op == fake.OpPost && c.Message.Text == "the answer" {
+				keys = append(keys, c.Key)
+			}
+		}
+	}
+	if len(keys) != 2 || keys[0] == keys[1] || strings.Contains(keys[0], "@") {
+		t.Fatalf("the answer's keys %v, want two, the first without a link", keys)
+	}
 	stopShow()
 	f.forget()
 	f.showing(t) // the reader starts again from its cursor

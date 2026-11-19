@@ -8,8 +8,9 @@ import (
 	"github.com/yousan/hataori/internal/surface"
 )
 
-// convCache remembers the conversation of each thread this front end has
-// looked up: a thread's links do not change while it reads its events.
+// convCache remembers the conversations of each thread this front end has
+// looked up. Nothing adds or removes a link while it runs yet; the one
+// that will (attaching a thread here) must drop the thread's entry.
 type convCache struct {
 	mu sync.Mutex
 	m  map[control.ThreadID][]surface.Conversation

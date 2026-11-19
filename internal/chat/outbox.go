@@ -310,6 +310,7 @@ type pending struct {
 	message    []byte
 	decoration bool
 	failures   int
+	link       int64
 }
 
 // drain posts conv's pending rows in order until none is left or a reply
@@ -355,7 +356,7 @@ func (o *Outbox) drain(ctx context.Context, conv surface.Conversation) {
 }
 
 func (o *Outbox) pendingRows(ctx context.Context, conv surface.Conversation) ([]pending, error) {
-	rows, err := o.Store.DB.QueryContext(ctx, `SELECT id, event, part, message, decoration, failures FROM chat_outbox
+	rows, err := o.Store.DB.QueryContext(ctx, `SELECT id, event, part, message, decoration, failures, link FROM chat_outbox
 		WHERE client = ? AND channel = ? AND thread = ? AND state = 'pending' ORDER BY event, part`,
 		o.Client, conv.Channel, conv.Thread)
 	if err != nil {
@@ -365,7 +366,7 @@ func (o *Outbox) pendingRows(ctx context.Context, conv surface.Conversation) ([]
 	var out []pending
 	for rows.Next() {
 		var p pending
-		if err := rows.Scan(&p.id, &p.event, &p.part, &p.message, &p.decoration, &p.failures); err != nil {
+		if err := rows.Scan(&p.id, &p.event, &p.part, &p.message, &p.decoration, &p.failures, &p.link); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -382,9 +383,31 @@ const (
 	reread             // the queue changed in front of the row: read it again
 )
 
+// postKey is the key row r is posted with, the same on every attempt. A
+// surface may hold a key unique across all of its conversations, as one
+// that keys by the author does, so the copy of a row in a second link has
+// a key of its own. The row of the thread's first link, and every row written before
+// rows were per link, keep the key they always had.
+func (o *Outbox) postKey(ctx context.Context, r pending) (string, error) {
+	k := key(r.event, r.part)
+	if r.link == 0 {
+		return k, nil
+	}
+	var n int
+	err := o.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM chat_outbox
+		WHERE client = ? AND event = ? AND part = ? AND link != 0 AND link < ?`, o.Client, r.event, r.part, r.link).Scan(&n)
+	if err != nil || n == 0 {
+		return k, err
+	}
+	return k + "@" + strconv.FormatInt(r.link, 10), nil
+}
+
 // send posts one row and records the outcome.
 func (o *Outbox) send(ctx context.Context, conv surface.Conversation, r pending) outcome {
-	k := key(r.event, r.part)
+	k, kerr := o.postKey(ctx, r)
+	if kerr != nil {
+		return stuck
+	}
 	m, meta, err := decode(r.message)
 	replyRow := meta.ReplyRow
 	if err == nil && replyRow != nil {
