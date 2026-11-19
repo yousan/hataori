@@ -181,9 +181,7 @@ func TestDashboardNarrowList(t *testing.T) {
 		t.Fatalf("an opened thread is at %q, want the same address, /", openPath)
 	}
 	var controls int
-	// The switch between the terminal and the conversation (#336) only
-	// changes what the page shows, so it is not counted.
-	b.eval(`document.querySelectorAll('.narrow-thread button:not(.narrow-back):not(.view-switch button), .narrow-thread a[href], .narrow-thread input, .narrow-thread select, .narrow-thread textarea:not(.xterm-helper-textarea), .narrow-thread [role=button], .narrow-thread summary, .narrow-thread [contenteditable]').length`, &controls)
+	b.eval(`document.querySelectorAll('.narrow-thread button:not(.narrow-back), .narrow-thread a[href], .narrow-thread input, .narrow-thread select, .narrow-thread textarea:not(.xterm-helper-textarea), .narrow-thread [role=button], .narrow-thread summary, .narrow-thread [contenteditable]').length`, &controls)
 	// The terminal's own hidden textarea is how xterm.js takes the focus;
 	// with stdin disabled it sends nothing (TestDashboardTerminalPaneIsReadOnly).
 	if controls != 0 {
@@ -195,10 +193,9 @@ func TestDashboardNarrowList(t *testing.T) {
 		t.Fatalf("the question is %s after looking at it", d.State)
 	}
 
-	// The failure and its conversation, which a failed thread opens on
-	// (#336), and back with the browser's Back.
+	// The failure and its terminal, and back with the browser's Back.
 	b.click(fmt.Sprintf(`.narrow-list .row[data-thread="%d"]`, num[0]))
-	b.until("the failure and its conversation", fmt.Sprintf(`!!document.querySelector('[data-narrow-thread="%d"] [data-block=failure] [data-field=reason]')?.textContent && !!document.querySelector('[data-narrow-thread="%d"] .narrow-pane .conversation')`, num[0], num[0]))
+	b.until("the failure and its terminal", fmt.Sprintf(`!!document.querySelector('[data-narrow-thread="%d"] [data-block=failure] [data-field=reason]')?.textContent && !!document.querySelector('[data-narrow-thread="%d"] .narrow-pane .xterm')`, num[0], num[0]))
 	b.noSideScroll("a failed thread")
 	b.eval(`history.back(), true`, nil)
 	b.until("the list again after Back", listShown)
@@ -267,8 +264,8 @@ func TestDashboardNarrowRebuiltOutput(t *testing.T) {
 	n := int64(stateOf(c, ids[0]).ID)
 	b.click(`.narrow-list [data-section=rest] summary`)
 	b.click(fmt.Sprintf(`.narrow-list .row[data-thread="%d"]`, n))
-	b.until("the conversation", fmt.Sprintf(`document.querySelectorAll('[data-narrow-thread="%d"] .narrow-pane [data-conversation] .conv-list > li').length >= 5 && !document.querySelector('.narrow-pane .xterm')`, n))
-	b.noSideScroll("the conversation")
+	b.until("the rebuilt output", fmt.Sprintf(`document.querySelectorAll('[data-narrow-thread="%d"] .narrow-pane [data-events] .ev').length >= 5 && !document.querySelector('.narrow-pane .xterm')`, n))
+	b.noSideScroll("the rebuilt output")
 	b.click(`.narrow-back`)
 	b.until("the list again", `!!document.querySelector('.narrow-list') && !document.querySelector('.narrow-thread')`)
 }

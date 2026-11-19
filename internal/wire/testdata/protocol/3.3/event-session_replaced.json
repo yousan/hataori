@@ -1,1 +1,0 @@
-{"id":1,"event":{"pos":42,"thread":7,"scope":"C0123","time":"2026-01-02T03:04:05.678Z","kind":"session_replaced","data":{"new_session":4,"reason":"cannot resume","session":3}}}
