@@ -1799,7 +1799,7 @@ type Factory func(config *os.Root, settings []byte) (Driver, error)
 // Sink is implemented by the chat front end, not by the core.
 type Sink interface {
 	Message(Inbound)  // text, files, author, ids
-	Choice(Selection) // a button or menu was used
+	Choice(Selection) // a button or menu was used: Token, and Tokens for every option chosen
 	Command(Command)  // a slash or text command
 }
 
@@ -1860,6 +1860,7 @@ type Message struct {
 	Text    string
 	Files   []File
 	Choices []Choice    // rendered as buttons or a menu; each carries an opaque token
+	Multi   bool        // several may be chosen at once (a menu); needs Limits.MultiSelect
 	ReplyTo *MessageRef // quote-reply
 	Notify  []string    // ids of people to ping
 	Quiet   bool        // no notification

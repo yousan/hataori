@@ -1,0 +1,23 @@
+{
+ "body": null,
+ "date": "2026-11-19T08:14:01Z",
+ "headers": {
+  "content-type": "text/html; charset=utf-8",
+  "via": "1.1 google",
+  "x-ratelimit-bucket": "00000000000000000000000000000003",
+  "x-ratelimit-limit": "5",
+  "x-ratelimit-remaining": "4",
+  "x-ratelimit-reset": "1795076041.990",
+  "x-ratelimit-reset-after": "0.200"
+ },
+ "request": {
+  "body": {
+   "type": 6
+  },
+  "files": [],
+  "method": "POST",
+  "path": "/interactions/1000000000000000009/REDACTED-TOKEN-1/callback"
+ },
+ "source": "rest",
+ "status": 204
+}

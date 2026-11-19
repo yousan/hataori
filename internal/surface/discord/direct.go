@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -14,11 +16,16 @@ import (
 	"github.com/yousan/hataori/internal/surface"
 )
 
-// Discord's limits on a button (message components reference).
+// Discord's limits on buttons and menus (message components reference).
 const (
-	maxChoices     = 1 // the driver posts one button; menus come after phase 1
-	maxCustomID    = 100
-	maxButtonLabel = 80
+	maxChoices       = 25 // buttons in one message (5 rows of 5), and options in one menu
+	maxButtonsPerRow = 5
+	maxCustomID      = 100 // a button's custom_id, and an option's value
+	maxButtonLabel   = 80
+	maxOptionLabel   = 100
+	// menuID is the custom_id of the menu the driver posts. A selection
+	// carries the values of the options chosen, which are the tokens.
+	menuID = "hataori-menu"
 	// ackWithin is how long the driver gives itself to acknowledge a
 	// press; the service's deadline is 3 seconds.
 	ackWithin = 2500 * time.Millisecond
@@ -40,27 +47,51 @@ func (d *Driver) OpenDirect(ctx context.Context, who string) (surface.Conversati
 	return surface.Conversation{Channel: c.ID.String()}, nil
 }
 
-// components renders choices as one row of buttons; nil choices render
-// none, which removes the buttons of an edited message.
-func components(choices []surface.Choice) ([]map[string]any, error) {
+// components renders choices: as buttons in rows of five, or, when multi is
+// set, as one menu in which several can be chosen. No choices render none,
+// which removes the buttons and the menu of an edited message.
+func components(choices []surface.Choice, multi bool) ([]map[string]any, error) {
 	if len(choices) > maxChoices {
 		return nil, fmt.Errorf("discord: %d choices, at most %d fit in one message", len(choices), maxChoices)
 	}
 	if len(choices) == 0 {
 		return []map[string]any{}, nil
 	}
-	var buttons []map[string]any
+	seen := map[string]bool{}
 	for _, c := range choices {
 		if c.Token == "" || len(c.Token) > maxCustomID {
 			return nil, fmt.Errorf("discord: a choice's token must have 1 to %d bytes", maxCustomID)
 		}
-		label := c.Label
-		if utf8.RuneCountInString(label) > maxButtonLabel {
-			label = cutRunes(label, maxButtonLabel)
+		if seen[c.Token] {
+			return nil, fmt.Errorf("discord: two choices have the token %q", c.Token)
 		}
-		buttons = append(buttons, map[string]any{"type": 2, "style": 1, "label": label, "custom_id": c.Token})
+		seen[c.Token] = true
+		if strings.TrimSpace(c.Label) == "" {
+			return nil, fmt.Errorf("discord: the choice %q has no label", c.Token)
+		}
 	}
-	return []map[string]any{{"type": 1, "components": buttons}}, nil
+	if multi {
+		var options []map[string]any
+		for _, c := range choices {
+			options = append(options, map[string]any{"label": cutRunes(c.Label, maxOptionLabel), "value": c.Token})
+		}
+		menu := map[string]any{"type": 3, "custom_id": menuID, "options": options,
+			"min_values": 1, "max_values": len(choices)}
+		return []map[string]any{{"type": 1, "components": []map[string]any{menu}}}, nil
+	}
+	var rows []map[string]any
+	for i := 0; i < len(choices); i += maxButtonsPerRow {
+		var buttons []map[string]any
+		for _, c := range choices[i:min(i+maxButtonsPerRow, len(choices))] {
+			label := c.Label
+			if utf8.RuneCountInString(label) > maxButtonLabel {
+				label = cutRunes(label, maxButtonLabel)
+			}
+			buttons = append(buttons, map[string]any{"type": 2, "style": 1, "label": label, "custom_id": c.Token})
+		}
+		rows = append(rows, map[string]any{"type": 1, "components": buttons})
+	}
+	return rows, nil
 }
 
 // wireInteraction is the part of an interaction the driver reads.
@@ -73,9 +104,10 @@ type wireInteraction struct {
 	GuildID       snowflake.ID `json:"guild_id"`
 	Channel       wireChannel  `json:"channel"`
 	Data          struct {
-		ComponentType int    `json:"component_type"`
-		CustomID      string `json:"custom_id"`
-		Name          string `json:"name"` // of a command
+		ComponentType int      `json:"component_type"`
+		CustomID      string   `json:"custom_id"`
+		Values        []string `json:"values"` // of a menu
+		Name          string   `json:"name"`   // of a command
 		Options       []struct {
 			Name  string          `json:"name"`
 			Value json.RawMessage `json:"value"`
@@ -129,8 +161,9 @@ func (d *Driver) interactionConv(in wireInteraction) surface.Conversation {
 
 // Interaction and callback types the driver uses.
 const (
-	interactionComponent = 3
-	callbackDeferUpdate  = 6
+	interactionComponent  = 3
+	componentStringSelect = 3
+	callbackDeferUpdate   = 6
 )
 
 // interaction handles a button press or the use of a command.
@@ -169,10 +202,18 @@ func (d *Driver) press(ctx context.Context, in wireInteraction, sink surface.Sin
 		return nil
 	}
 	conv := d.interactionConv(in)
-	sink.Choice(surface.Selection{
+	sel := surface.Selection{
 		Ref:    surface.MessageRef{Conv: conv, ID: in.Message.ID.String()},
 		Author: surface.Author{Kind: surface.Person, ID: u.ID.String(), Name: u.name()},
 		Token:  in.Data.CustomID,
-	})
+		Tokens: []string{in.Data.CustomID},
+	}
+	if in.Data.ComponentType == componentStringSelect {
+		if len(in.Data.Values) == 0 {
+			return nil // nothing chosen
+		}
+		sel.Token, sel.Tokens = in.Data.Values[0], slices.Clone(in.Data.Values)
+	}
+	sink.Choice(sel)
 	return nil
 }
