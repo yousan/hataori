@@ -205,12 +205,9 @@ func (g *LoopGuard) count(ctx context.Context, w control.ThreadID, svReset uint6
 	// The ends of w's turns that the supervisor started since the reset:
 	// started, not only ended, after it, so that a person's message
 	// delivered into such a turn takes that turn out of the count (#454).
-	ends, err := positions(ctx, db, `SELECT e.pos FROM events e WHERE e.thread_id = ? AND e.kind = 'turn_ended' AND e.pos > ?
-		AND json_extract(e.data, '$.from') = ?
-		AND EXISTS (SELECT 1 FROM events s WHERE s.thread_id = e.thread_id AND s.kind = 'turn_started' AND s.pos > ? AND s.pos < e.pos
-			AND json_extract(s.data, '$.session') = json_extract(e.data, '$.session')
-			AND json_extract(s.data, '$.turn') = json_extract(e.data, '$.turn'))
-		ORDER BY e.pos`, int64(w), int64(reset), from, int64(reset))
+	// One pass over w's turn events since the reset, on its (thread, pos)
+	// index.
+	ends, err := supervisorEnds(ctx, db, w, reset, from)
 	if err != nil || len(ends) == 0 {
 		return 0, reset, err
 	}
@@ -247,19 +244,34 @@ func (g *LoopGuard) count(ctx context.Context, w control.ThreadID, svReset uint6
 	return len(told), reset, nil
 }
 
-func positions(ctx context.Context, db *sql.DB, q string, args ...any) ([]uint64, error) {
-	rows, err := db.QueryContext(ctx, q, args...)
+// supervisorEnds returns the positions of the turn ends of w after reset
+// whose turns the caller from started, and started after reset too.
+func supervisorEnds(ctx context.Context, db *sql.DB, w control.ThreadID, reset uint64, from string) ([]uint64, error) {
+	rows, err := db.QueryContext(ctx, `SELECT pos, kind, json_extract(data, '$.session'), json_extract(data, '$.turn'),
+		coalesce(json_extract(data, '$.from'), '') FROM events
+		WHERE thread_id = ? AND pos > ? AND kind IN ('turn_started', 'turn_ended') ORDER BY pos`, int64(w), int64(reset))
 	if err != nil {
 		return nil, fmt.Errorf("supervisor: loop guard: %w", err)
 	}
 	defer rows.Close()
+	started := map[turnRef]bool{}
 	var out []uint64
 	for rows.Next() {
-		var p int64
-		if err := rows.Scan(&p); err != nil {
+		var (
+			pos           int64
+			kind, by      string
+			session, turn sql.NullInt64
+		)
+		if err := rows.Scan(&pos, &kind, &session, &turn, &by); err != nil {
 			return nil, fmt.Errorf("supervisor: loop guard: %w", err)
 		}
-		out = append(out, uint64(p))
+		ref := turnRef{session.Int64, turn.Int64}
+		switch {
+		case kind == "turn_started":
+			started[ref] = true
+		case by == from && started[ref]:
+			out = append(out, uint64(pos))
+		}
 	}
 	return out, rows.Err()
 }
