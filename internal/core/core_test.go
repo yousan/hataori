@@ -517,7 +517,7 @@ func TestThreadDetail(t *testing.T) {
 	if d.State != control.Waiting || len(d.Requests) != 1 || d.Requests[0].ID != session.RequestHandle(sid, "r1") || len(d.Requests[0].Choices) != 2 {
 		t.Fatalf("detail: %+v", d)
 	}
-	if d.Recent != "rt, second part" {
+	if d.Recent != ", \n\nsecond part" {
 		t.Fatalf("recent = %q", d.Recent)
 	}
 }

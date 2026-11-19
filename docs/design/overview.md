@@ -1704,7 +1704,7 @@ type TokenCount struct{ Turn, Today int64 }
 type ThreadDetail struct {
 	ThreadInfo
 	Requests []Request
-	Recent   string
+	Recent   string  // the last output, its messages apart by a blank line (since 3.12)
 	Events   []Event // the last events asked for, newest last
 }
 
