@@ -25,8 +25,9 @@ import (
 // svRoot is a chat root with two scopes: c1 names a supervisor, the person
 // sv1, and c2 names none. The fake agent takes confined specs when
 // confines is set, and names fake-cheap its cheapest model. Each session
-// the fake program starts leaves a file in the returned directory.
-func svRoot(t *testing.T, confines bool) (*chatRoot, string) {
+// the fake program starts leaves a file in the returned directory. Each of
+// more changes the config after that.
+func svRoot(t *testing.T, confines bool, more ...func(cfg map[string]any)) (*chatRoot, string) {
 	t.Helper()
 	conversations := t.TempDir()
 	r := newChatRoot(t, func(cfg map[string]any) {
@@ -43,6 +44,9 @@ func svRoot(t *testing.T, confines bool) (*chatRoot, string) {
 		}
 		cfg["adapters"] = map[string]any{fake.Name: fake.Config{Command: []string{os.Args[0], "fake"},
 			Env: []string{"PATH=" + os.Getenv("PATH")}, Confines: confines, Cheap: "fake-cheap", Conversations: conversations}}
+		for _, change := range more {
+			change(cfg)
+		}
 	})
 	return r, conversations
 }

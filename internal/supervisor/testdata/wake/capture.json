@@ -1,0 +1,972 @@
+{
+  "supervisor": 1,
+  "events": [
+    {
+      "pos": 1,
+      "thread": 1,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:55.939+09:00",
+      "kind": "thread_created",
+      "data": {
+        "effort": "",
+        "model": "fake-cheap",
+        "principal": "boss",
+        "repo": "",
+        "session": 1,
+        "thread": 1
+      }
+    },
+    {
+      "pos": 2,
+      "thread": 1,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.015+09:00",
+      "kind": "state",
+      "data": {
+        "from": "creating",
+        "session": 1,
+        "to": "idle"
+      }
+    },
+    {
+      "pos": 3,
+      "thread": 1,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.015+09:00",
+      "kind": "state",
+      "data": {
+        "from": "idle",
+        "session": 1,
+        "to": "running"
+      }
+    },
+    {
+      "pos": 4,
+      "thread": 1,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.015+09:00",
+      "kind": "turn_started",
+      "data": {
+        "by": "caller",
+        "key": "hataori-supervisor",
+        "principal": "boss",
+        "session": 1,
+        "turn": 1
+      }
+    },
+    {
+      "pos": 5,
+      "thread": 1,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.015+09:00",
+      "kind": "input",
+      "data": {
+        "principal": "boss",
+        "session": 1,
+        "text": "Supervisor of this channel\nYou are this channel's supervisor. Your hataori tools list, read, start and send to the threads of this channel; you are told when something happens in them. For now, reply with one line saying you are ready.",
+        "turn": 1
+      }
+    },
+    {
+      "pos": 6,
+      "thread": 1,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.066+09:00",
+      "kind": "text",
+      "data": {
+        "final": true,
+        "session": 1,
+        "text": "done"
+      }
+    },
+    {
+      "pos": 7,
+      "thread": 1,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.066+09:00",
+      "kind": "turn_ended",
+      "data": {
+        "background": 0,
+        "by": "caller",
+        "outcome": "completion",
+        "principal": "boss",
+        "session": 1,
+        "turn": 1
+      }
+    },
+    {
+      "pos": 8,
+      "thread": 1,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.066+09:00",
+      "kind": "state",
+      "data": {
+        "from": "running",
+        "session": 1,
+        "to": "idle"
+      }
+    },
+    {
+      "pos": 9,
+      "thread": 2,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.068+09:00",
+      "kind": "thread_created",
+      "data": {
+        "effort": "",
+        "model": "",
+        "principal": "boss",
+        "repo": "/repo.git",
+        "session": 2,
+        "thread": 2
+      }
+    },
+    {
+      "pos": 10,
+      "thread": 2,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.245+09:00",
+      "kind": "state",
+      "data": {
+        "from": "creating",
+        "session": 2,
+        "to": "idle"
+      }
+    },
+    {
+      "pos": 11,
+      "thread": 2,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.246+09:00",
+      "kind": "state",
+      "data": {
+        "from": "idle",
+        "session": 2,
+        "to": "running"
+      }
+    },
+    {
+      "pos": 12,
+      "thread": 2,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.246+09:00",
+      "kind": "turn_started",
+      "data": {
+        "by": "caller",
+        "key": "k0",
+        "principal": "boss",
+        "session": 2,
+        "turn": 2
+      }
+    },
+    {
+      "pos": 13,
+      "thread": 2,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.246+09:00",
+      "kind": "input",
+      "data": {
+        "principal": "boss",
+        "session": 2,
+        "text": "reply first",
+        "turn": 2
+      }
+    },
+    {
+      "pos": 14,
+      "thread": 2,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.295+09:00",
+      "kind": "text",
+      "data": {
+        "final": true,
+        "session": 2,
+        "text": "first"
+      }
+    },
+    {
+      "pos": 15,
+      "thread": 2,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.295+09:00",
+      "kind": "turn_ended",
+      "data": {
+        "background": 0,
+        "by": "caller",
+        "outcome": "completion",
+        "principal": "boss",
+        "session": 2,
+        "turn": 2
+      }
+    },
+    {
+      "pos": 16,
+      "thread": 2,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.295+09:00",
+      "kind": "state",
+      "data": {
+        "from": "running",
+        "session": 2,
+        "to": "idle"
+      }
+    },
+    {
+      "pos": 17,
+      "thread": 3,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.303+09:00",
+      "kind": "thread_created",
+      "data": {
+        "effort": "",
+        "model": "",
+        "principal": "boss",
+        "repo": "/repo.git",
+        "session": 3,
+        "thread": 3
+      }
+    },
+    {
+      "pos": 18,
+      "thread": 3,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.467+09:00",
+      "kind": "state",
+      "data": {
+        "from": "creating",
+        "session": 3,
+        "to": "idle"
+      }
+    },
+    {
+      "pos": 19,
+      "thread": 3,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.467+09:00",
+      "kind": "state",
+      "data": {
+        "from": "idle",
+        "session": 3,
+        "to": "running"
+      }
+    },
+    {
+      "pos": 20,
+      "thread": 3,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.467+09:00",
+      "kind": "turn_started",
+      "data": {
+        "by": "caller",
+        "key": "k1",
+        "principal": "boss",
+        "session": 3,
+        "turn": 3
+      }
+    },
+    {
+      "pos": 21,
+      "thread": 3,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.467+09:00",
+      "kind": "input",
+      "data": {
+        "principal": "boss",
+        "session": 3,
+        "text": "reply ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text,",
+        "turn": 3
+      }
+    },
+    {
+      "pos": 22,
+      "thread": 3,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.517+09:00",
+      "kind": "text",
+      "data": {
+        "final": true,
+        "session": 3,
+        "text": "ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text,"
+      }
+    },
+    {
+      "pos": 23,
+      "thread": 3,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.517+09:00",
+      "kind": "turn_ended",
+      "data": {
+        "background": 0,
+        "by": "caller",
+        "outcome": "completion",
+        "principal": "boss",
+        "session": 3,
+        "turn": 3
+      }
+    },
+    {
+      "pos": 24,
+      "thread": 3,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.517+09:00",
+      "kind": "state",
+      "data": {
+        "from": "running",
+        "session": 3,
+        "to": "idle"
+      }
+    },
+    {
+      "pos": 25,
+      "thread": 4,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.526+09:00",
+      "kind": "thread_created",
+      "data": {
+        "effort": "",
+        "model": "",
+        "principal": "boss",
+        "repo": "/repo.git",
+        "session": 4,
+        "thread": 4
+      }
+    },
+    {
+      "pos": 26,
+      "thread": 4,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.692+09:00",
+      "kind": "state",
+      "data": {
+        "from": "creating",
+        "session": 4,
+        "to": "idle"
+      }
+    },
+    {
+      "pos": 27,
+      "thread": 4,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.692+09:00",
+      "kind": "state",
+      "data": {
+        "from": "idle",
+        "session": 4,
+        "to": "running"
+      }
+    },
+    {
+      "pos": 28,
+      "thread": 4,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.692+09:00",
+      "kind": "turn_started",
+      "data": {
+        "by": "caller",
+        "key": "k2",
+        "principal": "boss",
+        "session": 4,
+        "turn": 4
+      }
+    },
+    {
+      "pos": 29,
+      "thread": 4,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.692+09:00",
+      "kind": "input",
+      "data": {
+        "principal": "boss",
+        "session": 4,
+        "text": "reply one\nreply two",
+        "turn": 4
+      }
+    },
+    {
+      "pos": 30,
+      "thread": 4,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.741+09:00",
+      "kind": "text",
+      "data": {
+        "final": false,
+        "session": 4,
+        "text": "one"
+      }
+    },
+    {
+      "pos": 31,
+      "thread": 4,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.741+09:00",
+      "kind": "text",
+      "data": {
+        "final": true,
+        "session": 4,
+        "text": "two"
+      }
+    },
+    {
+      "pos": 32,
+      "thread": 4,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.741+09:00",
+      "kind": "turn_ended",
+      "data": {
+        "background": 0,
+        "by": "caller",
+        "outcome": "completion",
+        "principal": "boss",
+        "session": 4,
+        "turn": 4
+      }
+    },
+    {
+      "pos": 33,
+      "thread": 4,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.741+09:00",
+      "kind": "state",
+      "data": {
+        "from": "running",
+        "session": 4,
+        "to": "idle"
+      }
+    },
+    {
+      "pos": 34,
+      "thread": 5,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.749+09:00",
+      "kind": "thread_created",
+      "data": {
+        "effort": "",
+        "model": "",
+        "principal": "boss",
+        "repo": "/repo.git",
+        "session": 5,
+        "thread": 5
+      }
+    },
+    {
+      "pos": 35,
+      "thread": 5,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.911+09:00",
+      "kind": "state",
+      "data": {
+        "from": "creating",
+        "session": 5,
+        "to": "idle"
+      }
+    },
+    {
+      "pos": 36,
+      "thread": 5,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.911+09:00",
+      "kind": "state",
+      "data": {
+        "from": "idle",
+        "session": 5,
+        "to": "running"
+      }
+    },
+    {
+      "pos": 37,
+      "thread": 5,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.911+09:00",
+      "kind": "turn_started",
+      "data": {
+        "by": "caller",
+        "key": "k3",
+        "principal": "boss",
+        "session": 5,
+        "turn": 5
+      }
+    },
+    {
+      "pos": 38,
+      "thread": 5,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.911+09:00",
+      "kind": "input",
+      "data": {
+        "principal": "boss",
+        "session": 5,
+        "text": "ask Which way? -- left | right",
+        "turn": 5
+      }
+    },
+    {
+      "pos": 39,
+      "thread": 5,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.96+09:00",
+      "kind": "request",
+      "data": {
+        "approval": false,
+        "choices": [
+          "left",
+          "right"
+        ],
+        "request": "5:q1",
+        "session": 5,
+        "text": "Which way?"
+      }
+    },
+    {
+      "pos": 40,
+      "thread": 5,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.96+09:00",
+      "kind": "turn_ended",
+      "data": {
+        "background": 0,
+        "by": "caller",
+        "outcome": "blocked",
+        "principal": "boss",
+        "session": 5,
+        "turn": 5
+      }
+    },
+    {
+      "pos": 41,
+      "thread": 5,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.96+09:00",
+      "kind": "state",
+      "data": {
+        "from": "running",
+        "session": 5,
+        "to": "waiting"
+      }
+    },
+    {
+      "pos": 42,
+      "thread": 6,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:56.966+09:00",
+      "kind": "thread_created",
+      "data": {
+        "effort": "",
+        "model": "",
+        "principal": "boss",
+        "repo": "/repo.git",
+        "session": 6,
+        "thread": 6
+      }
+    },
+    {
+      "pos": 43,
+      "thread": 6,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.131+09:00",
+      "kind": "state",
+      "data": {
+        "from": "creating",
+        "session": 6,
+        "to": "idle"
+      }
+    },
+    {
+      "pos": 44,
+      "thread": 6,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.131+09:00",
+      "kind": "state",
+      "data": {
+        "from": "idle",
+        "session": 6,
+        "to": "running"
+      }
+    },
+    {
+      "pos": 45,
+      "thread": 6,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.131+09:00",
+      "kind": "turn_started",
+      "data": {
+        "by": "caller",
+        "key": "k4",
+        "principal": "boss",
+        "session": 6,
+        "turn": 6
+      }
+    },
+    {
+      "pos": 46,
+      "thread": 6,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.131+09:00",
+      "kind": "input",
+      "data": {
+        "principal": "boss",
+        "session": 6,
+        "text": "fail limit",
+        "turn": 6
+      }
+    },
+    {
+      "pos": 47,
+      "thread": 6,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.18+09:00",
+      "kind": "text",
+      "data": {
+        "final": true,
+        "session": 6,
+        "text": "done"
+      }
+    },
+    {
+      "pos": 48,
+      "thread": 6,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.18+09:00",
+      "kind": "turn_ended",
+      "data": {
+        "background": 0,
+        "by": "caller",
+        "outcome": "failure",
+        "principal": "boss",
+        "reason": "limit",
+        "session": 6,
+        "turn": 6
+      }
+    },
+    {
+      "pos": 49,
+      "thread": 6,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.18+09:00",
+      "kind": "state",
+      "data": {
+        "from": "running",
+        "session": 6,
+        "to": "idle"
+      }
+    },
+    {
+      "pos": 50,
+      "thread": 7,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.187+09:00",
+      "kind": "thread_created",
+      "data": {
+        "effort": "",
+        "model": "",
+        "principal": "boss",
+        "repo": "/repo.git",
+        "session": 7,
+        "thread": 7
+      }
+    },
+    {
+      "pos": 51,
+      "thread": 7,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.35+09:00",
+      "kind": "state",
+      "data": {
+        "from": "creating",
+        "session": 7,
+        "to": "idle"
+      }
+    },
+    {
+      "pos": 52,
+      "thread": 7,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.35+09:00",
+      "kind": "state",
+      "data": {
+        "from": "idle",
+        "session": 7,
+        "to": "running"
+      }
+    },
+    {
+      "pos": 53,
+      "thread": 7,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.35+09:00",
+      "kind": "turn_started",
+      "data": {
+        "by": "caller",
+        "key": "k5",
+        "principal": "boss",
+        "session": 7,
+        "turn": 7
+      }
+    },
+    {
+      "pos": 54,
+      "thread": 7,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.35+09:00",
+      "kind": "input",
+      "data": {
+        "principal": "boss",
+        "session": 7,
+        "text": "background 1h\nreply started a long task",
+        "turn": 7
+      }
+    },
+    {
+      "pos": 55,
+      "thread": 7,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.4+09:00",
+      "kind": "text",
+      "data": {
+        "final": true,
+        "session": 7,
+        "text": "started a long task"
+      }
+    },
+    {
+      "pos": 56,
+      "thread": 7,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.4+09:00",
+      "kind": "turn_ended",
+      "data": {
+        "background": 1,
+        "by": "caller",
+        "outcome": "completion",
+        "principal": "boss",
+        "session": 7,
+        "turn": 7
+      }
+    },
+    {
+      "pos": 57,
+      "thread": 7,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.4+09:00",
+      "kind": "state",
+      "data": {
+        "from": "running",
+        "session": 7,
+        "to": "idle"
+      }
+    },
+    {
+      "pos": 58,
+      "thread": 8,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.405+09:00",
+      "kind": "thread_created",
+      "data": {
+        "effort": "",
+        "model": "",
+        "principal": "boss",
+        "repo": "/repo.git",
+        "session": 8,
+        "thread": 8
+      }
+    },
+    {
+      "pos": 59,
+      "thread": 8,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.565+09:00",
+      "kind": "state",
+      "data": {
+        "from": "creating",
+        "session": 8,
+        "to": "idle"
+      }
+    },
+    {
+      "pos": 60,
+      "thread": 8,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.566+09:00",
+      "kind": "state",
+      "data": {
+        "from": "idle",
+        "session": 8,
+        "to": "running"
+      }
+    },
+    {
+      "pos": 61,
+      "thread": 8,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.566+09:00",
+      "kind": "turn_started",
+      "data": {
+        "by": "caller",
+        "key": "k6",
+        "principal": "boss",
+        "session": 8,
+        "turn": 8
+      }
+    },
+    {
+      "pos": 62,
+      "thread": 8,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.566+09:00",
+      "kind": "input",
+      "data": {
+        "principal": "boss",
+        "session": 8,
+        "text": "reply done",
+        "turn": 8
+      }
+    },
+    {
+      "pos": 63,
+      "thread": 8,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.615+09:00",
+      "kind": "text",
+      "data": {
+        "final": true,
+        "session": 8,
+        "text": "done"
+      }
+    },
+    {
+      "pos": 64,
+      "thread": 8,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.615+09:00",
+      "kind": "turn_ended",
+      "data": {
+        "background": 0,
+        "by": "caller",
+        "outcome": "completion",
+        "principal": "boss",
+        "session": 8,
+        "turn": 8
+      }
+    },
+    {
+      "pos": 65,
+      "thread": 8,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.615+09:00",
+      "kind": "state",
+      "data": {
+        "from": "running",
+        "session": 8,
+        "to": "idle"
+      }
+    },
+    {
+      "pos": 66,
+      "thread": 2,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.622+09:00",
+      "kind": "state",
+      "data": {
+        "from": "idle",
+        "session": 2,
+        "to": "running"
+      }
+    },
+    {
+      "pos": 67,
+      "thread": 2,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.622+09:00",
+      "kind": "turn_started",
+      "data": {
+        "by": "caller",
+        "key": "again",
+        "principal": "boss",
+        "session": 2,
+        "turn": 9
+      }
+    },
+    {
+      "pos": 68,
+      "thread": 2,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.622+09:00",
+      "kind": "input",
+      "data": {
+        "principal": "boss",
+        "session": 2,
+        "text": "fail api_error",
+        "turn": 9
+      }
+    },
+    {
+      "pos": 69,
+      "thread": 2,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.645+09:00",
+      "kind": "text",
+      "data": {
+        "final": true,
+        "session": 2,
+        "text": "done"
+      }
+    },
+    {
+      "pos": 70,
+      "thread": 2,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.645+09:00",
+      "kind": "turn_ended",
+      "data": {
+        "background": 0,
+        "by": "caller",
+        "outcome": "failure",
+        "principal": "boss",
+        "reason": "api_error",
+        "session": 2,
+        "turn": 9
+      }
+    },
+    {
+      "pos": 71,
+      "thread": 2,
+      "scope": "c1",
+      "time": "2026-11-19T17:04:57.645+09:00",
+      "kind": "state",
+      "data": {
+        "from": "running",
+        "session": 2,
+        "to": "idle"
+      }
+    }
+  ],
+  "threads": {
+    "2": {
+      "title": "reply first",
+      "recent": "firstdone"
+    },
+    "3": {
+      "title": "reply ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ü",
+      "recent": "ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text,"
+    },
+    "4": {
+      "title": "reply one",
+      "recent": "onetwo"
+    },
+    "5": {
+      "title": "ask Which way? -- left | right",
+      "recent": ""
+    },
+    "6": {
+      "title": "fail limit",
+      "recent": "done"
+    },
+    "7": {
+      "title": "background 1h",
+      "recent": "started a long task"
+    },
+    "8": {
+      "title": "reply done",
+      "recent": "done"
+    }
+  }
+}

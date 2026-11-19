@@ -262,15 +262,32 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		}
 	}()
 	if len(supervisors) > 0 {
-		// Each scope's supervisor thread, once; found again after a restart.
-		// It ends, and is waited for, before the store is closed.
+		// Each scope's supervisor thread, once; found again after a restart;
+		// and its waker, which tells it what happened in its scope. They
+		// end, and are waited for, before the store is closed.
 		svCtx, svCancel := context.WithCancel(feCtx)
-		svDone := make(chan struct{})
-		defer func() { svCancel(); <-svDone }()
+		var svDone sync.WaitGroup
+		defer func() { svCancel(); svDone.Wait() }()
+		svDone.Add(1)
 		go func() {
-			defer close(svDone)
+			defer svDone.Done()
 			sv.Start(svCtx)
 		}()
+		for _, s := range cfg.Scopes {
+			if s.Supervisor == nil {
+				continue
+			}
+			w := &supervisor.Waker{Core: c, Scope: s.Key, Owner: control.Principal(cfg.Owner), Quiet: s.Supervisor.Quiet,
+				OutputMax: s.Supervisor.OutputMax, ThreadsMax: s.Supervisor.ThreadsMax, Log: lg}
+			if wakerHook != nil {
+				wakerHook(w)
+			}
+			svDone.Add(1)
+			go func() {
+				defer svDone.Done()
+				w.Run(svCtx)
+			}()
+		}
 	}
 	if age := cfg.Cleanup.RemoveClosedAfter; age > 0 {
 		// It ends, and is waited for, before the store is closed.
@@ -392,6 +409,10 @@ var hostTermsHook func(*hostterm.Lister)
 // supervisorHook, when a test sets it, is given what issues a supervisor's
 // token for a scope, and what revokes one.
 var supervisorHook func(issue func(scope string) (string, error), revoke func(token string))
+
+// wakerHook, when a test sets it, sees each supervisor's waker before it
+// runs, for a clock of the test's own.
+var wakerHook func(*supervisor.Waker)
 
 // coreHook, when a test sets it, is given the daemon's core, so that the
 // test can call it as an in-process client such as a chat front end.
