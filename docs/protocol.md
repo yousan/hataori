@@ -316,7 +316,7 @@ Result: [`HostTerminal`]
 
 ### Operation `HostScreen`
 
-Since 1.10. The visible screen of one tmux pane, as text, one line per row. Allowed as `HostTerminals` is. hataori runs only `tmux list-panes`, `ps` and `tmux capture-pane`, which change nothing; a hook the user set in their own tmux for these commands (`after-list-panes`, `after-capture-pane`) still runs, as it does when the user runs them. A pane that `HostTerminals` would not list is answered `not_found`. A caller that may not read text is answered `forbidden` for every pane, before any pane is read, since a pane can keep a session's screen after `hataori attach` ends.
+Since 1.10. The visible screen of one tmux pane, as text, one line per row. Allowed as `HostTerminals` is. hataori runs only `tmux list-panes`, `ps` and `tmux capture-pane`, which change nothing; a hook the user set in their own tmux for these commands (`after-list-panes`, `after-capture-pane`) still runs, as it does when the user runs them. A pane that `HostTerminals` would not list is answered `not_found`. A caller that may not read text is answered `forbidden` for every pane, even one that `HostTerminals` would not list, before any pane is read, since a pane can keep a session's screen after `hataori attach` ends.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
