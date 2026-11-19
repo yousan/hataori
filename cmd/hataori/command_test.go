@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/parser"
 	"go/token"
@@ -135,16 +136,53 @@ func killSessions(root string) {
 	dirs, _ := filepath.Glob(filepath.Join(root, "state", "sessions", "*"))
 	for _, d := range dirs {
 		for _, f := range []string{host.PIDFile, host.HostPIDFile} {
-			if b, err := os.ReadFile(filepath.Join(d, f)); err == nil {
-				if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid > 1 {
-					syscall.Kill(-pid, syscall.SIGKILL)
-				}
+			if pid, ok := sessionPID(filepath.Join(d, f)); ok {
+				syscall.Kill(-pid, syscall.SIGKILL) // each leads its own group
 			}
 		}
 		if sock := filepath.Dir(host.SocketPath(d)); strings.HasPrefix(filepath.Base(sock), "hataori-host-") {
 			os.RemoveAll(sock) // left outside root by a killed host
 		}
 	}
+}
+
+// pidFileSlack is how much later than its pid file a process may seem to
+// have started: a file's time is a few milliseconds coarse, and Linux
+// gives a start in ticks of 10. A pid given to another process within it
+// would still be signalled.
+const pidFileSlack = 20 * time.Millisecond
+
+// sessionPID returns the pid that the pid file at path names, and whether
+// its group may be killed: only while the pid is still the process the
+// file was written for, or no process has it any more. A pid that ended
+// early can be given to another process, of another test or program,
+// which must not be signalled.
+func sessionPID(path string) (int, bool) {
+	st, err := os.Stat(path)
+	if err != nil {
+		return 0, false
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || pid <= 1 {
+		return 0, false
+	}
+	if errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
+		// Gone. A new process never gets the id of a process group that
+		// still has members, so a group it left behind is still its own.
+		return pid, true
+	}
+	start, ok := processStart(pid)
+	if !ok {
+		return 0, false // cannot tell: nothing is sent
+	}
+	// The file is written once the process runs: the host writes its own,
+	// and the agent's right after starting it. A process that started
+	// after that only has the same number.
+	return pid, !start.After(st.ModTime().Add(pidFileSlack))
 }
 
 // startDaemon runs `hataori run` in this process until the test ends.
@@ -444,5 +482,59 @@ func TestEventsPrintTheDocumentedSchema(t *testing.T) {
 		if got := bytes.TrimSpace(out.Bytes()); !bytes.Equal(got, msg.Event) {
 			t.Errorf("%s:\n printed %s\n golden  %s", filepath.Base(f), got, msg.Event)
 		}
+	}
+}
+
+// killSessions signals a pid of a session only while it is the process
+// its pid file was written for: one that ended early leaves its pid file,
+// and the pid may name another process by the time the test ends.
+func TestKillSessionsOnlyTheSessionsProcesses(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "state", "sessions", "1")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sleeper := func() (*exec.Cmd, <-chan error) {
+		t.Helper()
+		cmd := exec.Command("sleep", "60")
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // leads its group, as a host or agent does
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) })
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		return cmd, done
+	}
+	// The agent's pid file names it, written after it started.
+	agent, agentDone := sleeper()
+	if err := os.WriteFile(filepath.Join(dir, host.PIDFile), []byte(strconv.Itoa(agent.Process.Pid)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The host's pid file is stale: written 50 ms before its pid went to a
+	// process the test did not start as the session's.
+	other, otherDone := sleeper()
+	stale := filepath.Join(dir, host.HostPIDFile)
+	if err := os.WriteFile(stale, []byte(strconv.Itoa(other.Process.Pid)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	start, ok := processStart(other.Process.Pid)
+	if !ok {
+		t.Fatal("the other process's start cannot be read")
+	}
+	if err := os.Chtimes(stale, start.Add(-50*time.Millisecond), start.Add(-50*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+
+	killSessions(root)
+	select {
+	case <-agentDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the session's agent was not killed")
+	}
+	select {
+	case err := <-otherDone:
+		t.Fatalf("the process a stale pid file names was signalled: %v", err)
+	case <-time.After(500 * time.Millisecond):
 	}
 }
