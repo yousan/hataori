@@ -85,6 +85,15 @@ type API interface {
 	HostTerminals(ctx context.Context) ([]HostTerminal, error)
 	HostScreen(ctx context.Context, pane string) (string, error)
 
+	// AttachTerminal readies the thread's agent for a person's terminal on
+	// the host (`hataori attach`): an asleep thread is woken first, with no
+	// input, and the result names the socket of the session host that the
+	// terminal then connects to itself, so that a daemon restart does not
+	// end it. It needs OpAttach, which only the owner's connection on the
+	// control socket has. A closed or removed thread, and an agent with no
+	// terminal, are refused and change nothing.
+	AttachTerminal(ctx context.Context, id ThreadID) (Attachment, error)
+
 	// Limits returns the remaining usage of each agent whose sessions
 	// report it, as the last report said, one entry per agent by name. An
 	// agent that reports none has no entry. It needs OpRead; the usage is
@@ -106,7 +115,7 @@ type Caller struct {
 	From      string
 	Principal Principal // a person's name
 	Scopes    []string  // the scopes it may see and act in
-	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost
+	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach
 	// NoText leaves text written by a person or an agent out of what the
 	// caller reads: ThreadInfo.Title and ThreadInfo.Last,
 	// ThreadDetail.Recent, the text of its requests, and the text fields of
@@ -133,6 +142,10 @@ const (
 	// (HostTerminals, HostScreen). Only the owner is given it, and only when
 	// the config turns them on.
 	OpHost
+	// OpAttach may attach a terminal on the host to a thread's agent
+	// (AttachTerminal). Only the owner's connection on the control socket
+	// is given it.
+	OpAttach
 )
 
 // Has reports whether every operation in o is in ops.
@@ -230,6 +243,14 @@ type ThreadInfo struct {
 	// runs in, such as /dev/pts/3; absent on pipes and while no process
 	// runs.
 	Terminal string `json:"terminal,omitempty"`
+}
+
+// Attachment is the result of AttachTerminal.
+type Attachment struct {
+	// Socket is the path of the Unix socket of the thread's session host,
+	// which a terminal on the host connects to. It is not text.
+	Socket string `json:"socket"`
+	Number int64  `json:"number"` // the thread's number
 }
 
 // Context is a session's context use, in tokens.

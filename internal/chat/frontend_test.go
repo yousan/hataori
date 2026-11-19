@@ -56,6 +56,11 @@ func (r *starts) Device(context.Context, int64) string   { return "" }
 func (r *starts) Resume(context.Context, int64, control.Principal, string, string, control.Input) error {
 	return nil
 }
+func (r *starts) Wake(context.Context, int64, control.Principal) error { return nil }
+func (r *starts) OnPipes(int64) bool                                   { return false }
+func (r *starts) AttachSocket(context.Context, int64) (string, error) {
+	return "", core.ErrNoTerminal
+}
 func (r *starts) Terminal(context.Context, int64, string, uint64) (<-chan control.TerminalChunk, error) {
 	return nil, core.ErrNotFound
 }

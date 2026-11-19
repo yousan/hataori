@@ -42,9 +42,11 @@ type host struct {
 	cols    int
 	rows    int
 
-	follows atomic.Int32 // follow requests being served
-	ln      *net.UnixListener
-	sock    string
+	follows  atomic.Int32 // follow and attach requests being served
+	attached atomic.Int32 // attach requests being served: a person's terminal is connected
+	detached atomic.Int64 // when the last attached terminal went, in Unix milliseconds; 0 for never
+	ln       *net.UnixListener
+	sock     string
 
 	events *lineLog
 	calls  callTable
@@ -400,6 +402,10 @@ type response struct {
 	Rows    int           `json:"rows,omitempty"`
 	End     bool          `json:"end,omitempty"`    // follow: the terminal is closed and everything was sent
 	Device  string        `json:"device,omitempty"` // status: the terminal the command runs in; empty on pipes
+	// Attached, for status, is how many terminals of people are attached;
+	// Detached is when the last one went, in Unix milliseconds, 0 for never.
+	Attached int   `json:"attached,omitempty"`
+	Detached int64 `json:"detached,omitempty"`
 }
 
 func (h *host) serveConn(c *net.UnixConn) {
@@ -426,6 +432,12 @@ func (h *host) serveConn(c *net.UnixConn) {
 			h.follow(c, enc, req)
 			h.follows.Add(-1)
 			return // the connection is the stream now
+		}
+		if req.Op == "attach" {
+			h.follows.Add(1)
+			h.attach(c, dec, enc, req)
+			h.follows.Add(-1)
+			return // the connection is the stream now, and carries keys
 		}
 		if req.Op == "stop" {
 			resp, registered := h.stop(req)
@@ -468,7 +480,8 @@ func (h *host) handle(req request) response {
 			device = ""
 		default:
 		}
-		return response{OK: true, PID: h.cmd.Process.Pid, Device: device}
+		return response{OK: true, PID: h.cmd.Process.Pid, Device: device,
+			Attached: int(h.attached.Load()), Detached: h.detached.Load()}
 	case "tail":
 		return response{OK: true, Data: h.tail(int(req.Interrupt))}
 	case "waiting":

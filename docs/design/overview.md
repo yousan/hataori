@@ -185,6 +185,8 @@ Each agent is started by a small host process (`hataori host`, the same binary).
 - keeps the terminal's raw output in a bounded log, for a person to look at and for `attach`. Nothing reads it to decide anything;
 - records the exit status when the agent ends.
 
+**Attach.** `hataori attach <thread>` connects the owner's own terminal on the host to the agent's: the control API's `AttachTerminal` (owner only) wakes an asleep thread with no input and names the host's socket, and the command then talks to the host directly, so a daemon restart ends neither the agent nor the attached terminal. The host sends the end of its terminal log, then the output as it comes, and writes the person's keys to the terminal; Ctrl-\ detaches and is not passed on. The host counts attached terminals and reports when the last one went, and the runner does not put a session to sleep while one is attached, nor within the idle period after it went. A turn typed there is reported by the agent's hooks like any other, with `by` `terminal`; chat posts its final answer after a line "(typed at the terminal)", and chat input while someone is attached is delivered as usual (section 10). Both reach the agent's one input line, so a chat message that arrives while a person has typed part of a line is mixed with it, and the agent may get both as one prompt **(unverified with Claude Code)**. The screen shown first is the end of the raw log, replayed; it is exact once the agent draws again, since the host interprets nothing. The agent's terminal keeps its own size.
+
 The host does not parse or interpret anything, so it rarely needs to change. It is detached from the daemon. When the daemon restarts, running turns continue; the daemon reconnects to the socket and reads the log from the byte offset it last stored. A hook that is waiting for an answer keeps waiting across the restart.
 
 Checked: a `claude -p` process with stdin on a FIFO and stdout on a file finished its turn after the process that launched it had exited, and accepted a second message afterwards. The interactive CLI was run in a terminal with its hooks writing to a file (Appendix B). The host itself is new code and is the first thing phase 1 must prove.
@@ -1158,7 +1160,19 @@ type API interface {
 	// reported it; an agent that reports none has no entry. It needs
 	// OpRead and no scope: the usage is the account's. Since protocol 1.13.
 	Limits(ctx context.Context) ([]AgentLimits, error)
+
+	// AttachTerminal readies the thread's agent for a terminal on the host
+	// (`hataori attach`, section 4.3): it needs OpAttach, which only the
+	// owner's connection on the control socket has, and the owner's
+	// person. A closed, removed or failed thread and an agent with no
+	// terminal are refused and change nothing; an asleep thread is woken
+	// with no input first. The result names the session host's socket,
+	// which the terminal connects to itself. Since protocol 2.1.
+	AttachTerminal(ctx context.Context, id ThreadID) (Attachment, error)
 }
+
+// Attachment: Socket is the session host's socket path, Number the
+// thread's number.
 
 // AgentLimits: At is when the report was made, Every how often the
 // agent's sessions report while one runs. Older than Every, a report is
@@ -1224,7 +1238,7 @@ type Caller struct {
 	From      string
 	Principal Principal // a person's name (section 5.5)
 	Scopes    []string  // the scopes it may see and act in
-	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost
+	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach
 	// NoText leaves text written by a person or an agent out of what the
 	// caller reads: ThreadInfo.Title and ThreadInfo.Last,
 	// ThreadDetail.Recent, the text of its requests, and the text fields of
@@ -1346,6 +1360,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `ThreadInfo.terminal` | minor: new optional field; landed in 1.12 |
 | `Limits` | minor: new operation; landed in 1.13 |
 | `ThreadInfo.title` left out for `Caller.NoText` (#236) | major: a required field becomes optional; 2.0 |
+| `AttachTerminal`, with `Ops` gaining `OpAttach` (#253) | minor: new operation; 2.1 |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 
 Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event. In protocol 1.9: `Terminal`, which turns its connection into a stream as `Events` does. In protocol 1.12: `ThreadInfo.terminal`, the terminal device its session host opened, for the tree's filter, the status bar and the details panel (#285); `HostTerminals` still leaves these terminals out.

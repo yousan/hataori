@@ -27,7 +27,7 @@ import (
 
 // Version is the protocol version this build speaks: major.minor. Two
 // sides work together when their major numbers are equal (docs/protocol.md).
-const Version = "2.0"
+const Version = "2.1"
 
 type hello struct {
 	Version string `json:"version"`
@@ -89,6 +89,9 @@ type (
 		ID    control.ThreadID `json:"id"`
 		Run   string           `json:"run"`
 		After uint64           `json:"after"`
+	}
+	attachTerminalArgs struct {
+		ID control.ThreadID `json:"id"`
 	}
 	hostTerminalsArgs struct{}
 	limitsArgs        struct{}
@@ -167,6 +170,13 @@ var operations = map[string]operation{
 	"Terminal": {terminalArgs{}, control.TerminalChunk{}, nil},
 	"HostTerminals": {hostTerminalsArgs{}, []control.HostTerminal{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
 		return api.HostTerminals(ctx)
+	}},
+	"AttachTerminal": {attachTerminalArgs{}, control.Attachment{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a attachTerminalArgs
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return api.AttachTerminal(ctx, a.ID)
 	}},
 	"Limits": {limitsArgs{}, []control.AgentLimits{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
 		return api.Limits(ctx)

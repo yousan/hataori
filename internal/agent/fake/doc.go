@@ -6,7 +6,8 @@
 // On pipes (Config.Terminal false) the program writes one JSON object per
 // line to stdout and reads one per line on stdin. In a terminal it reads
 // pasted input from the terminal (a bracketed paste, then Enter; a lone
-// Escape interrupts), reports each event by running `hataori hook` with the
+// Escape interrupts) and keys a person types there (echoed, then Enter: a
+// turn "by" "terminal", whose script is the line), reports each event by running `hataori hook` with the
 // object as the payload (`--wait` for a question, whose answer the hook
 // prints), and writes its text to a transcript file that it names in its
 // first report. It never writes anything a reader needs to its terminal;
@@ -17,8 +18,8 @@
 // Every report is a JSON object with a field "t":
 //
 //	{"t":"ready","session":S,"model":M,"effort":E,"resume":R,"transcript":P}
-//	{"t":"turn","by":"caller"|"agent","input":I}
-//	{"t":"text","text":T,"final":true|false}   (on a terminal: in the transcript)
+//	{"t":"turn","by":"caller"|"agent"|"terminal","input":I,"n":N}   (N: its number since the program started)
+//	{"t":"text","text":T,"final":true|false}   (on a terminal: in the transcript, with "turn":N)
 //	{"t":"tool","id":I,"name":N,"parent":P,"end":false|true}   (P: the subagent it runs in)
 //	{"t":"subagent","id":I,"name":N,"end":false|true}
 //	{"t":"ask","id":I,"text":Q,"choices":[C...]} (on a terminal: a waiting hook call; choices only when it has some)

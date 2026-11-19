@@ -32,6 +32,9 @@ func (nopRunner) Resume(context.Context, int64, control.Principal, string, strin
 	return nil
 }
 
+func (nopRunner) Wake(context.Context, int64, control.Principal) error { return nil }
+func (nopRunner) OnPipes(int64) bool                                   { return false }
+func (nopRunner) AttachSocket(context.Context, int64) (string, error)  { return "", core.ErrNoTerminal }
 func (nopRunner) Terminal(context.Context, int64, string, uint64) (<-chan control.TerminalChunk, error) {
 	return nil, core.ErrNotFound
 }

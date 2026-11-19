@@ -16,7 +16,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **2.0**. Both hellos carry it.
+The protocol version is `major.minor`, now **2.1**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 1.0`.
 - With the same major number and different minor numbers they work together.
@@ -234,6 +234,18 @@ Since 1.10. The visible screen of one tmux pane, as text, one line per row. Allo
 
 Result: string
 
+### Operation `AttachTerminal`
+
+Since 2.1. Readies a thread's agent for a terminal on the host, for `hataori attach`. Only the instance's owner may call it; every other caller is answered `forbidden` and the refusal is logged. A thread that is closed, removed or failed, and a thread whose agent runs without a terminal (on pipes), are answered `refused` and nothing changes. An asleep thread is woken first, with no input: its agent resumes its conversation and the thread becomes idle, as after a message, but no turn starts. The answer comes once the session host listens, and at most after 90 seconds.
+
+The result names the socket of the thread's session host. The terminal connects there itself and not through the daemon, so a daemon restart does not end it. What it then speaks to the session host is internal to hataori and not part of this protocol. While a terminal is attached the thread is not put to sleep, and the idle period starts again when the last one goes. A turn typed at the terminal is reported like any other, with `by` `terminal` in `turn_started` and `turn_ended`.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `id` | `ThreadID` | required | the thread |
+
+Result: `Attachment`
+
 ### Operation `Limits`
 
 Since 1.13. The remaining usage of each agent, as its sessions last reported it: one entry per agent that has reported, by its registered name. An agent that has not, because nothing it gives says so, has no entry. A later report replaces an earlier one, whichever of the agent's sessions made it; it changes no thread and writes no event. The usage is the agent's account's, so it needs the `Threads` permission and no scope. It takes no arguments.
@@ -371,6 +383,15 @@ Since 1.4.
 | `uncommitted` | integer | required | files modified, staged or untracked, each once; ignored files are not counted, and untracked files add no lines |
 | `unpushed` | integer | required | commits reachable from the checked-out commit or a local branch and from no remote-tracking ref |
 | `fetched` | time | optional | when the remote-tracking refs were last updated, by a fetch, a push or the clone; absent when the repository does not say |
+
+### Type `Attachment`
+
+Since 2.1. The result of `AttachTerminal`.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `number` | integer | required | the thread's number |
+| `socket` | string | required | the path of the Unix socket of the thread's session host; not text |
 
 ### Type `TerminalChunk`
 

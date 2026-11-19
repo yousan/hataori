@@ -135,3 +135,43 @@ func (r *Runner) pumpTerminal(ctx context.Context, s *host.TerminalStream, send 
 		*run, *after = ch.Run, ch.Pos
 	}
 }
+
+// OnPipes reports whether session id's agent is known to run on pipes: the
+// spec its last host was given says so.
+func (r *Runner) OnPipes(id int64) bool {
+	spec, ok, err := host.ReadSpec(StateDir(r.Root, id))
+	return err == nil && ok && !spec.Terminal
+}
+
+// AttachSocket returns the socket of session id's host once it answers,
+// for a person's terminal to attach to (host.Attach). It waits, until ctx
+// ends, for a host that is being started.
+func (r *Runner) AttachSocket(ctx context.Context, id int64) (string, error) {
+	dir := StateDir(r.Root, id)
+	for {
+		spec, ok, err := host.ReadSpec(dir)
+		if err != nil {
+			return "", fmt.Errorf("runner: session %d: %w", id, err)
+		}
+		if ok && !spec.Terminal {
+			return "", fmt.Errorf("runner: session %d runs on pipes: %w", id, core.ErrNoTerminal)
+		}
+		if ok && !host.Gone(dir) {
+			dctx, cancel := context.WithTimeout(ctx, deviceTimeout)
+			c, err := host.DialContext(dctx, dir)
+			if err == nil {
+				_, err = c.Device(dctx)
+				c.Close()
+			}
+			cancel()
+			if err == nil {
+				return host.SocketPath(dir), nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return "", fmt.Errorf("runner: session %d: its host does not answer: %w", id, ctx.Err())
+		case <-time.After(r.poll()):
+		}
+	}
+}

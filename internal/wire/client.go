@@ -361,3 +361,11 @@ func (c *Client) Limits(ctx context.Context) ([]control.AgentLimits, error) {
 	err := c.call(ctx, "Limits", limitsArgs{}, &out)
 	return out, err
 }
+
+// AttachTerminal is control.API.AttachTerminal. It waits as long as the
+// daemon does for a thread that is being woken.
+func (c *Client) AttachTerminal(ctx context.Context, id control.ThreadID) (control.Attachment, error) {
+	var out control.Attachment
+	err := c.call(ctx, "AttachTerminal", attachTerminalArgs{ID: id}, &out)
+	return out, err
+}
