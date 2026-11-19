@@ -1643,7 +1643,15 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 	return a.send(ctx, id, key, in, busy, nil)
 }
 
-type sendGuard struct{ session, turn int64 }
+// sendGuard is an approved interrupt's send: only while turn of session
+// runs. What the interrupt did is set before the input is handed over:
+// interrupted when it was sent, ended when that turn ended after the input
+// was taken and before the interrupt, so that nothing was interrupted
+// (#493).
+type sendGuard struct {
+	session, turn      int64
+	interrupted, ended bool
+}
 
 var errGuardEnded = errors.New("the requested turn ended")
 
@@ -1776,8 +1784,24 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		return nil
 	}
 	if interrupt {
-		if err := a.c.Runner.Interrupt(ctx, sid, 0); err != nil {
+		// A guarded send names its turn: the runner interrupts only while
+		// that turn runs, checked in the step that interrupts (#457), so a
+		// turn that ended since the input was taken, and the turn after
+		// it, are not interrupted (#493). The input was taken while that
+		// turn ran, and is handed over as any input of a turn that ended
+		// first: it starts the next one, or joins one that started.
+		var turn int64
+		if guard != nil {
+			turn = guard.turn
+		}
+		err := a.c.Runner.Interrupt(ctx, sid, turn)
+		switch {
+		case guard != nil && errors.Is(err, session.ErrRefused):
+			guard.ended = true
+		case err != nil:
 			return fmt.Errorf("core: send to %v: interrupt: %w", id, err)
+		case guard != nil:
+			guard.interrupted = true
 		}
 	}
 	return a.c.Runner.Deliver(ctx, sid, pending, forAgent(in))
