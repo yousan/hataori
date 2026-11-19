@@ -77,8 +77,42 @@ func (f *FrontEnd) questionDone(ctx context.Context, r *reader, e control.Event,
 		jsonInto(e.Data, &d)
 		end = "Answered: " + strings.TrimSpace(d.Text)
 	}
-	m := surface.Message{Text: strings.TrimSpace(q.Text) + "\n\n" + end}
-	return []Row{{Event: e.Pos, Part: questionPart, Conv: conv, Op: Edit, Target: &RowKey{Event: pos, Part: 0}, Message: m}}, nil
+	// An edit is not split as a post is: it fits one message. It is a
+	// decoration, so one the service refuses never holds back what follows.
+	m := surface.Message{Text: fitted(strings.TrimSpace(q.Text), end, f.Driver.Limits().MaxText)}
+	return []Row{{Event: e.Pos, Part: questionPart, Conv: conv, Op: Edit, Target: &RowKey{Event: pos, Part: 0}, Message: m,
+		Decoration: true}}, nil
+}
+
+// endMax is the most characters the line under an ended question keeps.
+const endMax = 200
+
+// fitted is the question, a blank line and the end line, cut to max
+// characters (no limit when max is 0): the end line to endMax first, then
+// the question, each marked with "…" where it is cut.
+func fitted(question, end string, max int) string {
+	end = cut(end, endMax)
+	if max <= 0 {
+		return question + "\n\n" + end
+	}
+	end = cut(end, max)
+	room := max - len([]rune(end)) - 2
+	if room <= 0 {
+		return end
+	}
+	return cut(question, room) + "\n\n" + end
+}
+
+// cut returns s, or its first n-1 characters and "…" when it is longer.
+func cut(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	if n <= 1 {
+		return string(r[:n])
+	}
+	return string(r[:n-1]) + "…"
 }
 
 // requestData is what a request event says, and what an answer or a
