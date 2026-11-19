@@ -107,7 +107,7 @@ It runs the daemon as the phase 1 check does, through the same wrapper, with one
 
 The supervisor's launches run through a wrapper that passes a confined launch (one with `--restricted`) to the CLI exactly as the adapter made it, so that the check is of the launch as deployed, including what the adapter adds to keep the session's own files out. Unlike the phase 1 check, the user's own settings, hooks and plugins therefore load for the supervisor's session, as they would anywhere; its CLAUDE.md files, memory and connectors are kept out by the launch itself. The worker runs through the phase 1 wrapper. `TestRealCheckLeavesTheLoginAlone` holds this check's source to the same rules as the phase 1 check's.
 
-Last run: not yet run against the real CLI. The confinement it relies on was checked by #268 with the same flags (Appendix B); `TestConfinedFlagsAreTheCheckedOnes` ties the adapter's flags to those captures.
+Last passed: 2026-11-19, Claude Code 2.1.328, logged in with a subscription, model `haiku`. All 6 steps passed in 3.9 minutes, and hataori's own status line handed on usage. Earlier runs that day found what #409, #410 and #426 fixed, and the blocked resume with a `.git` that #423 tracks.
 
 ### New captures
 
