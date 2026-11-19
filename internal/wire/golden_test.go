@@ -112,7 +112,7 @@ func examples(t *testing.T) map[string]any {
 	}
 	results := map[string]any{
 		"Threads": []control.ThreadInfo{exampleInfo},
-		"Thread": control.ThreadDetail{ThreadInfo: exampleInfo, Recent: "Running the tests...",
+		"Thread": control.ThreadDetail{ThreadInfo: exampleInfo, Recent: "Reading the code.\n\nRunning the tests...",
 			Requests: []control.Request{{ID: "3:toolu_2", Kind: control.Question, Text: "Which colour?",
 				Choices: []control.Choice{{Label: "red", Token: "red"}, {Label: "blue", Token: "blue"}}}},
 			Events: []control.Event{{Pos: 42, Thread: exampleID, Scope: "C0123", Time: exampleTime, Kind: "text",

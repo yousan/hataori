@@ -452,7 +452,7 @@ const MaxEvents = 100
 type ThreadDetail struct {
 	ThreadInfo
 	Requests []Request `json:"requests"`         // open questions and approvals
-	Recent   string    `json:"recent"`           // the last output, cut to the size asked for
+	Recent   string    `json:"recent"`           // the last output, cut to the size asked for at a character; its messages apart by a blank line since 3.12
 	Events   []Event   `json:"events,omitempty"` // the last events asked for, newest last; since 1.5
 }
 
