@@ -127,8 +127,8 @@ func newWakeTest(t *testing.T, more ...func(cfg map[string]any)) *wakeTest {
 				t.Errorf("waker defaults: quiet %v, output %d, threads %d; want 30s, 1024, 20", w.Quiet, w.OutputMax, w.ThreadsMax)
 			}
 			want := supervisor.Limits{Turns: 12, Sends: 20, Tokens: 2_000_000}
-			if len(w.Gates) != 1 || w.Gates[0].(*supervisor.Budget).Limits != want {
-				t.Errorf("the waker's gates %v; want the budget with the defaults %+v", w.Gates, want)
+			if len(w.Gates) != 2 || w.Gates[0].(*supervisor.LoopGuard).Cycles != 3 || w.Gates[1].(*supervisor.Budget).Limits != want {
+				t.Errorf("the waker's gates %v; want the loop guard at 3 cycles, then the budget with the defaults %+v", w.Gates, want)
 			}
 		}
 		wt.clk.reset()
