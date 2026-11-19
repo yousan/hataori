@@ -25,6 +25,10 @@ type codexWire struct {
 
 func codexReplay(args []string) int {
 	capture, record := os.Getenv("HATAORI_TEST_CODEX_CAPTURE"), os.Getenv("HATAORI_TEST_CODEX_RECORD")
+	if capture == "" || record == "" {
+		fmt.Fprintln(os.Stderr, "codex replay: capture and record environment variables are required")
+		return 2
+	}
 	var names []string
 	for _, e := range os.Environ() {
 		k, _, _ := strings.Cut(e, "=")

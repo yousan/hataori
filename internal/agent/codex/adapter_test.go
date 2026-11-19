@@ -56,6 +56,7 @@ func TestCodexLaunch(t *testing.T) {
 		{agent.Spec{Dir: "/w/ws.1"}, `projects={"/w/ws.1"={trust_level="trusted"}}`},
 		{agent.Spec{Dir: "/w/ws.1", ResumeID: "id", Model: "m", Effort: "e", Instructions: "i"}, `projects={"/w/ws.1"={trust_level="trusted"}}`},
 		{agent.Spec{Dir: `/w/a"\b`}, `projects={"/w/a\"\\b"={trust_level="trusted"}}`},
+		{agent.Spec{Dir: "/w/del\x7f"}, `projects={"/w/del\u007f"={trust_level="trusted"}}`},
 	} {
 		l, err := a.Launch(tc.spec)
 		if err != nil {
@@ -137,6 +138,54 @@ func TestCodexProbe(t *testing.T) {
 	h, err = a.Probe(context.Background())
 	if err != nil || !h.Installed || h.LoggedIn || h.Detail != "not logged in" {
 		t.Fatalf("silent probe: got %+v, error %v; want installed, logged out, detail not logged in", h, err)
+	}
+	t.Setenv("HATAORI_TEST_PROBE_LEAK", "1")
+	// Record both probe invocations; /usr/bin/env works without PATH.
+	record := filepath.Join(dir, "environment")
+	content := fmt.Sprintf("#!/bin/sh\n/usr/bin/env >> %q\nif [ \"$1\" = --version ]; then printf 'codex-cli 0.163.0\\n'; fi\n", record)
+	if err := os.WriteFile(script, []byte(content), 0700); err != nil {
+		t.Fatalf("write environment script: %v", err)
+	}
+	a.command = script
+	for _, tc := range []struct {
+		name     string
+		env      []string
+		wantHome bool
+	}{
+		{"no allowed variables", []string{"OPENAI_API_KEY=x"}, false},
+		{"allowed variables", []string{"PATH=" + os.Getenv("PATH"), "CODEX_HOME=h", "OPENAI_API_KEY=x"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.Remove(record); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			a.environ = func() []string { return tc.env }
+			h, err := a.Probe(context.Background())
+			if err != nil || !h.Installed || !h.LoggedIn {
+				t.Fatalf("probe: got %+v, %v; want installed and logged in", h, err)
+			}
+			b, err := os.ReadFile(record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := strings.Split(string(b), "\n")
+			homes := 0
+			for _, line := range lines {
+				key, _, _ := strings.Cut(line, "=")
+				if key == "OPENAI_API_KEY" || key == "HATAORI_TEST_PROBE_LEAK" {
+					t.Errorf("probe leaked %s", key)
+				}
+				if line == "CODEX_HOME=h" {
+					homes++
+				}
+			}
+			if tc.wantHome && homes != 2 {
+				t.Errorf("CODEX_HOME appeared %d times, want twice: %q", homes, b)
+			}
+			if !tc.wantHome && homes != 0 {
+				t.Errorf("unexpected CODEX_HOME: %q", b)
+			}
+		})
 	}
 	a.command = script + "-missing"
 	h, err = a.Probe(context.Background())

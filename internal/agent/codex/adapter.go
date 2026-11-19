@@ -89,7 +89,7 @@ func (a *Adapter) env() []string {
 	for _, k := range a.passEnv {
 		allowed[k] = true
 	}
-	var env []string
+	env := make([]string, 0)
 	for _, kv := range a.environ() {
 		k, _, _ := strings.Cut(kv, "=")
 		if allowed[k] {
@@ -99,8 +99,12 @@ func (a *Adapter) env() []string {
 	return env
 }
 
-// tomlString uses JSON string encoding, which is also valid for TOML basic strings.
-func tomlString(s string) string { b, _ := json.Marshal(s); return string(b) }
+// tomlString uses JSON string encoding, with DEL escaped because TOML basic
+// strings forbid it unescaped while JSON permits it.
+func tomlString(s string) string {
+	b, _ := json.Marshal(s)
+	return strings.ReplaceAll(string(b), "\x7f", `\u007f`)
+}
 
 // Launch starts app-server on pipes. The trust override prevents Codex from
 // recording the workspace in the user's configuration. The path is in the
