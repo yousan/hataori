@@ -23,6 +23,8 @@ func TestMain(m *testing.M) {
 			os.Exit(0)
 		case "hook":
 			os.Exit(host.HookMain(os.Args[3:], os.Stdin, os.Stdout, os.Stderr, os.Getenv))
+		case "windowhook":
+			os.Exit(WindowHookMain(os.Args[3:], os.Stdin, os.Stderr, os.Getenv))
 		case "statusline":
 			os.Exit(StatusLineMain(os.Args[3:], os.Stdin, os.Stdout, os.Stderr, os.Getenv))
 		case "login-pure":

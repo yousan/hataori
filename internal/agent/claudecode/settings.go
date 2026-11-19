@@ -38,29 +38,7 @@ type hookMatcher struct {
 // AskUserQuestion is therefore reported twice, once waiting; the codec
 // reads the waiting one.
 func (a *Adapter) settings(spec agent.Spec) ([]byte, error) {
-	secs := int(a.hookTimeout.Seconds())
-	hooks := map[string][]hookMatcher{}
-	plain := shellQuote(a.hataori) + " hook"
-	for _, ev := range hookEvents {
-		wait := false
-		for _, w := range waiting {
-			if w.event == ev && w.matcher == "" {
-				wait = true
-			}
-		}
-		if wait {
-			hooks[ev] = []hookMatcher{{Hooks: []hookCmd{{Type: "command", Timeout: secs,
-				Command: fmt.Sprintf("%s --wait --timeout %ds", plain, secs)}}}}
-		} else {
-			hooks[ev] = []hookMatcher{{Hooks: []hookCmd{{Type: "command", Command: plain}}}}
-		}
-	}
-	for _, w := range waiting {
-		if w.matcher != "" {
-			hooks[w.event] = append(hooks[w.event], hookMatcher{Matcher: w.matcher, Hooks: []hookCmd{{
-				Type: "command", Timeout: secs, Command: fmt.Sprintf("%s --wait --timeout %ds", plain, secs)}}})
-		}
-	}
+	hooks := a.hooks(shellQuote(a.hataori)+" hook", "")
 	// The user's own vim mode would make Escape leave insert mode instead
 	// of stopping the turn; settings given with --settings take precedence
 	// over the user's global choice, so the session runs in normal mode.
@@ -71,6 +49,35 @@ func (a *Adapter) settings(spec agent.Spec) ([]byte, error) {
 	// status line alone, which reads only its input.
 	return json.MarshalIndent(map[string]any{"hooks": hooks, "editorMode": "normal",
 		"statusLine": a.statusLineSetting(spec.Dir, spec.StateDir, spec.Confine == nil)}, "", "  ")
+}
+
+// hooks registers plain, a hook command, for every event the codec reads;
+// a waiting hook gets `--wait` and the configured timeout, and Claude Code
+// is told the same timeout. tail ends every command.
+func (a *Adapter) hooks(plain, tail string) map[string][]hookMatcher {
+	secs := int(a.hookTimeout.Seconds())
+	hooks := map[string][]hookMatcher{}
+	for _, ev := range hookEvents {
+		wait := false
+		for _, w := range waiting {
+			if w.event == ev && w.matcher == "" {
+				wait = true
+			}
+		}
+		if wait {
+			hooks[ev] = []hookMatcher{{Hooks: []hookCmd{{Type: "command", Timeout: secs,
+				Command: fmt.Sprintf("%s --wait --timeout %ds%s", plain, secs, tail)}}}}
+		} else {
+			hooks[ev] = []hookMatcher{{Hooks: []hookCmd{{Type: "command", Command: plain + tail}}}}
+		}
+	}
+	for _, w := range waiting {
+		if w.matcher != "" {
+			hooks[w.event] = append(hooks[w.event], hookMatcher{Matcher: w.matcher, Hooks: []hookCmd{{
+				Type: "command", Timeout: secs, Command: fmt.Sprintf("%s --wait --timeout %ds%s", plain, secs, tail)}}})
+		}
+	}
+	return hooks
 }
 
 // shellQuote quotes s for the shell Claude Code runs a hook command in.

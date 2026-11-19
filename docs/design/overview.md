@@ -1567,6 +1567,19 @@ type HostTerminal struct {
 	Process  string     // the command of its foreground process
 	Activity *time.Time // last output, when known
 	Tmux     *TmuxPane  // absent for a terminal outside tmux
+	Reported *ReportedSession // what the plugin's hooks reported from this tmux pane; absent without them (since 3.15)
+}
+
+// ReportedSession is what the hooks of a session that a person started in
+// their own window last reported (section 4.8). No text of the session.
+type ReportedSession struct {
+	Window  string    // holder and reference, as TakeIn takes it: "tmux:<socket>,<server pid>,<pane>"
+	Agent   string    // the adapter's name
+	Session string    // the agent's session id
+	Dir     string
+	Event   string    // the last hook event's name
+	At      time.Time // when the daemon took it
+	Thread  *ThreadID // the thread whose session this is, if any
 }
 
 type TmuxPane struct {
@@ -1726,7 +1739,7 @@ type Limit struct {
 // is one the point does not allow; a failure blocks or skips by the
 // handler's on_failure, else its point's. Calls are logged without text.
 // A point with no handler calls nothing and waits for nothing. Since
-// protocol 3.15.
+// protocol 3.16.
 type Hooks interface {
 	Run(ctx context.Context, c HookCall) HookResult
 }
@@ -1901,6 +1914,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `ThreadInfo.Name`, the chat thread's own name (#406) | minor: new optional field; 3.7 |
 | `OperateHost`, with `Ops` gaining `OpHostInput`, `HostKeys` and `End` on its stream, and the `ended` error code (section 7.2, #362) | minor: new operation, whose connection becomes a stream both ways; 3.11 |
 | `HostView`, a pane's screen with its cursor, for the dashboard's screen of a pane being operated (section 7.2, #363) | minor: new operation; 3.13 |
+| `HostTerminal.Reported` and `ReportedSession`, from the hooks of the Claude Code plugin (section 4.8, #397) | minor: new optional field; 3.15 |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 
 Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event. In protocol 1.9: `Terminal`, which turns its connection into a stream as `Events` does. In protocol 1.12: `ThreadInfo.terminal`, the terminal device its session host opened, for the tree's filter, the status bar and the details panel (#285); `HostTerminals` still leaves these terminals out.
@@ -2366,18 +2380,8 @@ type TakeInRequest struct {
 	Key    string // makes the call safe to repeat
 }
 
-// HostTerminal gains:
-//	Reported *ReportedSession // what the plugin's hooks reported; absent without them
-
-type ReportedSession struct {
-	Window  string    // holder and reference, as TakeIn takes it
-	Agent   string    // the adapter's name
-	Session string    // the agent's session id
-	Dir     string
-	Event   string    // the last hook event's name
-	At      time.Time // when it was reported
-	Thread  *ThreadID // the thread this session belongs to, if any
-}
+// HostTerminal.Reported and ReportedSession: declared above, since
+// protocol 3.15 (#397).
 ```
 
 ## Appendix E: acceptance criteria after phase 1

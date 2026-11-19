@@ -292,6 +292,40 @@ func fields(line string, n int) ([]string, string) {
 	return f, line
 }
 
+// TerminalOf returns the nearest process at pid or above it that has a
+// terminal, and that terminal's device: for a hook, which an agent runs
+// under a shell of its own that has none, the agent's process. ok is false
+// when no process up the chain has one. It runs ps once.
+func TerminalOf(ctx context.Context, pid int) (proc int, device string, ok bool, err error) {
+	out, err := (&Lister{}).exec(ctx, psCmd)
+	if err != nil {
+		return 0, "", false, err
+	}
+	proc, device, ok = terminalOf(parsePS(out), pid)
+	return proc, device, ok, nil
+}
+
+func terminalOf(ps []proc, pid int) (int, string, bool) {
+	byPID := map[int]proc{}
+	for _, p := range ps {
+		byPID[p.pid] = p
+	}
+	for range len(ps) + 1 { // a loop in the table ends here
+		p, found := byPID[pid]
+		if !found {
+			return 0, "", false
+		}
+		if p.tty != "" {
+			return p.pid, p.tty, true
+		}
+		if p.ppid <= 1 || p.ppid == pid {
+			return 0, "", false
+		}
+		pid = p.ppid
+	}
+	return 0, "", false
+}
+
 // ownPIDs are the processes named own that hold no terminal. Linux cuts a
 // command name to 15 bytes.
 func ownPIDs(ps []proc, own string) []int {
