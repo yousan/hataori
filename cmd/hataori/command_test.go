@@ -37,6 +37,10 @@ func TestMain(m *testing.M) {
 		switch os.Args[1] {
 		case "host", "hook", "login-guard":
 			os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+		case "app-server":
+			if os.Getenv("HATAORI_TEST_CODEX_CAPTURE") != "" {
+				os.Exit(codexReplay(os.Args[2:]))
+			}
 		case "fake":
 			os.Exit(fake.Main(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 		case "orphan-terminal":
