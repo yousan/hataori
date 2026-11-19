@@ -306,6 +306,15 @@ func (a *api) refused(name, scope, reason string) error {
 	return fmt.Errorf("core: %s in scope %q: %w", name, scope, ErrForbidden)
 }
 
+// marked returns in with the caller's mark, if it has one, as its first
+// line.
+func (a *api) marked(in control.Input) control.Input {
+	if a.caller.Mark != "" {
+		in.Text = a.caller.Mark + "\n" + in.Text
+	}
+	return in
+}
+
 // filterScope checks a read with filter f and returns the one scope f
 // names, or "" for all of the caller's. A filter that names two different
 // scopes matches nothing, and is refused.
@@ -648,6 +657,9 @@ func (a *api) Start(ctx context.Context, r control.StartRequest) (control.Thread
 	if err := a.act(control.OpStart, "Start", r.Scope); err != nil {
 		return control.ThreadID{}, err
 	}
+	// The title is the first line of what the caller wrote, not its mark.
+	name := title(r.Input.Text)
+	r.Input = a.marked(r.Input)
 	sc, ok := a.c.Scopes[r.Scope]
 	if !ok || !sc.Enabled {
 		a.c.Log.Warn("start refused", "scope", r.Scope, "reason", "scope is not enabled")
@@ -671,7 +683,7 @@ func (a *api) Start(ctx context.Context, r control.StartRequest) (control.Thread
 		if !ok {
 			return control.ThreadID{}, fmt.Errorf("core: start in %q: no owner %q", r.Scope, sc.Owner)
 		}
-		key, err := owner.NewThread(ctx, r.Scope, r.Key, title(r.Input.Text))
+		key, err := owner.NewThread(ctx, r.Scope, r.Key, name)
 		if err != nil {
 			return control.ThreadID{}, fmt.Errorf("core: start in %q: owner: %w", r.Scope, err)
 		}
@@ -701,7 +713,7 @@ func (a *api) Start(ctx context.Context, r control.StartRequest) (control.Thread
 		now := time.Now().UnixMilli()
 		res, err := tx.ExecContext(ctx,
 			`INSERT INTO threads (scope, key, title, repo, started_by, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			id.Scope, id.Key, title(r.Input.Text), r.Repo, string(a.caller.Principal), string(control.Creating), now, now)
+			id.Scope, id.Key, name, r.Repo, string(a.caller.Principal), string(control.Creating), now, now)
 		if err != nil {
 			return fmt.Errorf("core: create thread: %w", err)
 		}
@@ -1038,6 +1050,11 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 	if err := a.act(control.OpSend, "Send", id.Scope); err != nil {
 		return err
 	}
+	asked := busy
+	if a.caller.RefuseBusy {
+		busy = control.Refuse
+	}
+	in = a.marked(in)
 	var (
 		sid       int64
 		pending   int64
@@ -1065,6 +1082,10 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 		if state == control.Running {
 			switch busy {
 			case control.Refuse:
+				if asked != control.Refuse {
+					a.c.Log.Warn("control call refused", "op", "Send", "principal", string(a.caller.Principal), "scope", id.Scope,
+						"reason", "the caller may not deliver into or interrupt a turn")
+				}
 				return fmt.Errorf("core: send to %v: %w", id, ErrBusy)
 			case control.Interrupt:
 				interrupt = true

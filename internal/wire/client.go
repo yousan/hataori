@@ -18,6 +18,7 @@ import (
 type Client struct {
 	path    string
 	version string // the version it says it speaks; Version unless a test changes it
+	token   string // presented in every hello; empty for the owner
 
 	mu      sync.Mutex
 	conn    net.Conn
@@ -36,8 +37,24 @@ func Dial(root string) (*Client, error) {
 	return dialPath(path, Version)
 }
 
-func dialPath(path, version string) (*Client, error) {
-	c := &Client{path: path, version: version}
+// DialToken connects to the daemon of the instance at root as the caller
+// the daemon issued token for. Every connection the client opens, for
+// calls and for streams, presents it. An unknown token is refused.
+func DialToken(root, token string) (*Client, error) {
+	if token == "" {
+		return nil, errors.New("wire: no token")
+	}
+	path, err := clientPath(root)
+	if err != nil {
+		return nil, err
+	}
+	return dial(path, Version, token)
+}
+
+func dialPath(path, version string) (*Client, error) { return dial(path, version, "") }
+
+func dial(path, version, token string) (*Client, error) {
+	c := &Client{path: path, version: version, token: token}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.open(context.Background()); err != nil {
@@ -89,7 +106,7 @@ func (c *Client) connect(ctx context.Context) (net.Conn, *json.Decoder, error) {
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
 	dec := json.NewDecoder(bufio.NewReader(conn))
-	if err := json.NewEncoder(conn).Encode(hello{Version: c.version}); err != nil {
+	if err := json.NewEncoder(conn).Encode(hello{Version: c.version, Token: c.token}); err != nil {
 		conn.Close()
 		return nil, nil, fmt.Errorf("wire: hello: %w", err)
 	}
@@ -105,6 +122,11 @@ func (c *Client) connect(ctx context.Context) (net.Conn, *json.Decoder, error) {
 	if major(h.Version) != major(c.version) {
 		conn.Close()
 		return nil, nil, versionError(c.version, h.Version)
+	}
+	if c.token != "" && !atLeast(h.Version, tokensSince) {
+		// It would make this connection the owner's.
+		conn.Close()
+		return nil, nil, fmt.Errorf("wire: the daemon speaks %s, which does not know tokens (since %s); refusing to connect as the owner", h.Version, tokensSince)
 	}
 	return conn, dec, nil
 }

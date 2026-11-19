@@ -3,6 +3,9 @@ package wire
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,19 +21,22 @@ import (
 	"github.com/yousan/hataori/internal/control"
 )
 
-// Server serves the control API on a Unix socket. Every connection is
-// made as the instance's owner, and only the OS user that runs the daemon
-// may connect.
+// Server serves the control API on a Unix socket. Only the OS user that
+// runs the daemon may connect. A connection whose hello has no token is
+// made as the instance's owner; one with a token the server issued is made
+// as the caller the token was issued for, and one with any other token is
+// refused.
 type Server struct {
 	API control.API // bound to the owner's Caller
 	Log *slog.Logger
 
-	uid   int // the OS user allowed to connect
-	ln    *net.UnixListener
-	path  string
-	mu    sync.Mutex
-	conns map[net.Conn]struct{}
-	peers map[*Peer]struct{}
+	uid    int // the OS user allowed to connect
+	ln     *net.UnixListener
+	path   string
+	mu     sync.Mutex
+	conns  map[net.Conn][32]byte // the hash of the token it presented; zero for none
+	peers  map[*Peer]struct{}
+	tokens map[[32]byte]control.API // by the hash of the token
 }
 
 // Listen creates the socket for the instance at root and returns a server
@@ -65,7 +71,7 @@ func Listen(root string, api control.API, log *slog.Logger) (*Server, error) {
 		ln.Close()
 		return nil, fmt.Errorf("wire: %w", err)
 	}
-	return &Server{API: api, Log: log, uid: os.Getuid(), ln: ln, path: path, conns: map[net.Conn]struct{}{}, peers: map[*Peer]struct{}{}}, nil
+	return &Server{API: api, Log: log, uid: os.Getuid(), ln: ln, path: path, conns: map[net.Conn][32]byte{}, peers: map[*Peer]struct{}{}, tokens: map[[32]byte]control.API{}}, nil
 }
 
 // privateDir makes dir, owned by this user and closed to others.
@@ -102,7 +108,7 @@ func (s *Server) Serve(ctx context.Context) error {
 			return fmt.Errorf("wire: accept: %w", err)
 		}
 		s.mu.Lock()
-		s.conns[c] = struct{}{}
+		s.conns[c] = [32]byte{}
 		s.mu.Unlock()
 		go func() {
 			s.serveConn(ctx, c)
@@ -156,11 +162,29 @@ func (s *Server) serveConn(ctx context.Context, c *net.UnixConn) {
 		enc.Encode(hello{Version: Version, Error: msg})
 		return
 	}
+	api := s.API
+	if h.Token != "" {
+		sum := sha256.Sum256([]byte(h.Token))
+		s.mu.Lock()
+		limited, ok := s.tokens[sum]
+		if ok {
+			s.conns[c] = sum // Revoke closes it
+		}
+		s.mu.Unlock()
+		if !ok {
+			// The token is not logged: it may be one that was revoked, or
+			// mistyped from a live one.
+			s.Log.Warn("control connection refused", "reason", "unknown token")
+			enc.Encode(hello{Version: Version, Error: "connection refused: unknown token"})
+			return
+		}
+		api = limited
+	}
 	if err := enc.Encode(hello{Version: Version}); err != nil {
 		return
 	}
 	p := newPeer(c, func(ctx context.Context, op string, args json.RawMessage) (any, error) {
-		return s.call(ctx, request{Op: op, Args: args})
+		return call(ctx, api, request{Op: op, Args: args})
 	})
 	s.mu.Lock()
 	s.peers[p] = struct{}{}
@@ -177,7 +201,7 @@ func (s *Server) serveConn(ctx context.Context, c *net.UnixConn) {
 		s.mu.Lock()
 		delete(s.peers, p) // the connection is a stream now
 		s.mu.Unlock()
-		s.stream(ctx, c, dec, enc, req)
+		stream(ctx, api, c, enc, req)
 		return true
 	})
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
@@ -197,12 +221,41 @@ func (s *Server) Peers() []*Peer {
 	return out
 }
 
-func (s *Server) call(ctx context.Context, req request) (any, error) {
+// Issue makes a token that binds a connection to api, which the caller
+// bound api to its Caller. The token is random, and the server keeps only
+// its hash. A client presents it in its hello (DialToken).
+func (s *Server) Issue(api control.API) (string, error) {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("wire: token: %w", err)
+	}
+	token := base64.RawURLEncoding.EncodeToString(b[:])
+	s.mu.Lock()
+	s.tokens[sha256.Sum256([]byte(token))] = api
+	s.mu.Unlock()
+	return token, nil
+}
+
+// Revoke forgets token and closes the connections made with it. A token
+// the server does not know changes nothing.
+func (s *Server) Revoke(token string) {
+	sum := sha256.Sum256([]byte(token))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.tokens, sum)
+	for c, t := range s.conns {
+		if t == sum {
+			c.Close()
+		}
+	}
+}
+
+func call(ctx context.Context, api control.API, req request) (any, error) {
 	op, ok := operations[req.Op]
 	if !ok || op.run == nil {
 		return nil, fmt.Errorf("wire: operation %q: %w", req.Op, ErrNotSupported)
 	}
-	return op.run(ctx, s.API, func(v any) error {
+	return op.run(ctx, api, func(v any) error {
 		if err := json.Unmarshal(req.Args, v); err != nil {
 			return fmt.Errorf("wire: %s: bad arguments: %w", req.Op, err)
 		}
@@ -212,7 +265,7 @@ func (s *Server) call(ctx context.Context, req request) (any, error) {
 
 // stream sends events, or terminal output, until the client goes away.
 // Whatever the client sends on the stream is read and dropped.
-func (s *Server) stream(ctx context.Context, c net.Conn, dec *json.Decoder, enc *json.Encoder, req request) {
+func stream(ctx context.Context, api control.API, c net.Conn, enc *json.Encoder, req request) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var next func() (response, bool)
@@ -223,7 +276,7 @@ func (s *Server) stream(ctx context.Context, c net.Conn, dec *json.Decoder, enc 
 			enc.Encode(response{ID: req.ID, Error: encodeError(err)})
 			return
 		}
-		evs, err := s.API.Events(ctx, a.Filter, a.After)
+		evs, err := api.Events(ctx, a.Filter, a.After)
 		if err != nil {
 			enc.Encode(response{ID: req.ID, Error: encodeError(err)})
 			return
@@ -238,7 +291,7 @@ func (s *Server) stream(ctx context.Context, c net.Conn, dec *json.Decoder, enc 
 			enc.Encode(response{ID: req.ID, Error: encodeError(err)})
 			return
 		}
-		chunks, err := s.API.Terminal(ctx, a.ID, a.Run, a.After)
+		chunks, err := api.Terminal(ctx, a.ID, a.Run, a.After)
 		if err != nil {
 			enc.Encode(response{ID: req.ID, Error: encodeError(err)})
 			return

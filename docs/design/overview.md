@@ -437,6 +437,8 @@ A supervisor is one ordinary session, Claude Code or Codex, that looks after the
   - *Claude Code 2.1.327:* `--restricted --strict-mcp-config --mcp-config <file> --tools "Read,Write,Edit,Glob,Grep"`. A shell command, a web fetch, a subagent and a wake-up were not available. A write and a read outside its directory were refused. A write inside it and a call to the listed MCP server were allowed. Under `--tools ""` only the MCP tools are left, so no built-in tool can write a file. The confinement held across `--resume` with the same flags and across a model switch. Project settings, `--settings`, the user's own settings, skills and plugins, and `--plugin-dir` added no tool back. Two limits: the flags must be given at every launch, since a `--resume` without them had a shell again; and `/model` typed in the session wrote the model into the user's settings file. hataori therefore changes a supervisor's model by relaunching with `--model`, never with `/model`.
   - *Codex 0.163.0:* neither sandbox removes the shell, the subagent tool or web search, and neither confines reads: `read-only` and `workspace-write` confine writes and the network only. The setting under which every attempt but the MCP call and the write inside was refused or not available is `sandbox: "workspace-write"` with `approvalPolicy: "never"` and `-c sandbox_workspace_write.exclude_slash_tmp=true -c sandbox_workspace_write.exclude_tmpdir_env_var=true --disable shell_tool --disable unified_exec --disable multi_agent --disable goals --disable sleep_tool --disable apps --disable plugins --disable hooks -c web_search="disabled" -c agents.max_depth=0`, with the MCP server's `default_tools_approval_mode = "approve"`. Without the two `exclude_*` settings a write to `/tmp` is allowed. Under this setting no built-in tool reads a file. In both CLIs, what the session can still do outside its directory is then only what the listed MCP servers' tools do, so those tools must be limited too: the check used one tool that only answers. Still open for the Codex phase: which of the `--disable` flags are each needed, a resume and a model switch, and whether a project's `.codex/config.toml` can add tools when a parent directory is not trusted. That file did load an MCP server in the check, and `codex app-server` recorded the directory as trusted in the user's configuration. The scripts now run the `/model` and project-configuration scenarios only with a configuration directory of their own (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), since both write the user's configuration.
 
+**Who its tools are** (#269; decisions 1 and 2 of #267). `hataori mcp --scope <scope>` connects to the control socket with a token in its hello (`$HATAORI_TOKEN`), which the daemon issues for each supervisor session and puts in that session's MCP config, in its state directory, outside the workspace. The daemon binds the connection to the Caller it issued the token for: that scope only, `OpRead | OpStart | OpSend`, every `Send` treated as `Refuse` (`Caller.RefuseBusy`), and every input marked (`Caller.Mark`). Nothing `hataori mcp` sends widens it. An unknown or revoked token is refused and logged without the token; a connection with no token is still the owner. The caller's id is `supervisor:<scope>`, and the operator makes it a person by listing that id under a person of its own and that person in the scope's `people`: then the core's one check (section 5.1) allows its `Start` and `Send`, and its events name that person. Without the entry it can read its scope but gives no input, and removing the entry turns the supervisor off for that scope. Each input it gives starts with the line `From the supervisor of this channel:`, added by the core from the caller, never by `hataori mcp`; a thread's title is made from the text without it. `read_thread` returns at most `--output-max` bytes of output (4096 when not given), with a line saying it was cut. A tool's refusal is a tool error that starts with the reason: `busy`, `not in this scope` or `not allowed`.
+
 One limit is not enforced by this: the supervisor can *ask* a worker thread to merge or delete. What a worker may do is decided by that worker's own rules. Messages from a supervisor are marked as such, so a worker's instructions can treat them differently from a person's.
 
 **When it runs.** It never polls. hataori wakes it by sending it one message when something happens in its scope: a turn ended, a question was asked, a turn failed, a usage limit was hit. Its own thread is excluded. Events that arrive while it is busy, or within a short quiet period after the first, are folded into one message.
@@ -583,15 +585,15 @@ The first hook points, and the events, next to the OpenClaw hook with the same m
 | `before_agent_run` | Gate | core: before input from `Start` or `Send` reaches the agent | `before_agent_run` |
 | `before_prompt_build` | Modify | core: at the same point; may add text before or after the input | `before_prompt_build` |
 | `message_sending` | Modify, Gate | chat front end: before an outbox row is posted; may rewrite the text or cancel the post | `message_sending` |
-| thread created | Observe | core event | `session_start` |
-| turn started | Observe | core event | none |
-| tool progress | Observe | core event | `after_tool_call` (closest) |
-| question asked | Observe | core event | none |
-| turn ended | Observe | core event | `agent_end` |
-| post sent | Observe | chat front end event | `message_sent` |
+| `thread_created` | Observe | core event | `session_start` |
+| `turn_started` | Observe | core event | none |
+| `tool_started`, `tool_ended` | Observe | core event | `after_tool_call` (closest) |
+| `request` | Observe | core event: a question or an approval | none |
+| `turn_ended` | Observe | core event | `agent_end` |
+| `post_sent` | Observe | chat front end event, new in this phase: an outbox row was posted | `message_sent` |
 | plugin started, stopping | Observe | told to the plugin itself | `gateway_start`, `gateway_stop` |
 
-The event names follow the session state machine (#16) and may still change. A cancelled post stays in the outbox with the plugin and the reason, and is visible through `hataori thread`. Nothing is posted in its place unless the plugin returned new text.
+The observe rows are event kinds of [docs/protocol.md](../protocol.md), and the manifest's `events` names kinds from there; any other kind there can be asked for too. A cancelled post stays in the outbox with the plugin and the reason, and is visible through `hataori thread`. Nothing is posted in its place unless the plugin returned new text.
 
 **Order, timeout and failure.** Handlers on one point run one after another, by priority (higher first) and then in config order, and each sees the result of the one before. The defaults follow OpenClaw. Each handler has 15 seconds. When a `before_agent_run` handler fails or times out, the input is blocked (fail closed), and the thread says which plugin blocked it. When a `before_prompt_build` or `message_sending` handler fails or times out, that handler is skipped and the other results are kept. The operator can change the timeout and the failure policy per plugin, for example to make a secret scanner on `message_sending` fail closed.
 
@@ -664,7 +666,7 @@ It has the criterion of the later phases below, with three additions that the da
 
 ### After phase 1
 
-The order below was decided by the maintainer (section 10): Codex, people in chat and cleanup, the supervisor, plugins, then Slack and Teams. Each later phase also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter; the supervisor phase may also let the control socket bind a connection to a limited `Caller` (which plugins use too, section 7.3) and let a session be started confined (no shell, only the listed tools, section 7.1); the plugin phase may also add hook points. Appendix E has the acceptance criteria of each.
+The order below was decided by the maintainer (section 10): Codex, people in chat and cleanup, the supervisor, plugins, then Slack and Teams. Each later phase also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter; the supervisor phase may also let the control socket bind a connection to a limited `Caller` (which plugins use too, section 7.3) and let a session be started confined (no shell, only the listed tools, section 7.1); the plugin phase may also limit a `Caller` to the operations and event kinds a plugin was granted, and add hook points (section 7.3). Appendix E has the acceptance criteria of each.
 
 **Codex.** The second agent adapter (section 3.4). It comes before the buttons of "people in chat", so it is built and tested with what phase 1 offers in chat. The adapter's code is written by Codex (`codex exec`), and reviewed and fixed by Claude.
 
@@ -675,6 +677,14 @@ The order below was decided by the maintainer (section 10): Codex, people in cha
 **Plugins.** Section 7.3. Right after the supervisor (section 10).
 
 **Slack.** Go has no official Slack SDK (official ones are for Java, JavaScript, Python and Deno). The adapter uses `github.com/slack-go/slack` (BSD-2-Clause, actively released; v0.36.0 on 2026-11-14), which Slack lists among community-developed tools, and its `socketmode` package. It covers Socket Mode, Block Kit buttons, `chat.update` (`UpdateMessageContext`), thread replies (`MsgOptionTS`) and the current file upload flow (`UploadFileContext`). Socket Mode needs no inbound endpoint. Catch-up (`Since`) reads `conversations.replies`, which allows 50+ requests per minute (Tier 3) for an app installed as an internal (customer-built) app and for a Marketplace app; a commercially distributed app outside the Marketplace gets 1 request per minute and 15 messages per request, which is too little for catch-up. hataori is therefore installed as an internal app in each workspace. `chat.update` is also Tier 3, so progress-line edits are paced. These facts come from Slack's documentation and the library's source (Appendix B, "Documentation read on 2026-11-18"); the library was not run.
+
+Where Slack differs from what the driver interface assumes (Appendix B, "Documentation read on 2026-11-19"; nothing was run):
+
+- A thread is the replies to one message, named by that message's `ts` (`thread_ts`). A thread that hataori opens without a trigger message, as for a `Start` through the control API, starts from a message that hataori posts in the channel.
+- Custom slash commands "cannot, however, be invoked in message threads"; only Slack's built-in ones and Giphy's can. Their acknowledgment over HTTP must arrive within 3000 ms.
+- `chat.postMessage` takes no key that makes a post safe to repeat. It takes `metadata`, an event type and a payload that every member of the workspace can read, and `conversations.replies` returns it with `include_all_metadata`. `slack-go/slack` v0.36.0 has `MsgOptionMetadata`, and `IncludeAllMetadata` on both reads.
+- Text in `text` is Slack's own format; the `markdown` block (`NewMarkdownBlock`) renders standard Markdown, tables and code blocks included, with at most 12,000 characters across a message's markdown blocks. The documentation recommends at most 4,000 characters in `text` and cuts it after 40,000.
+- An incoming webhook posts only into the channel it was made for, and into a thread with `thread_ts`, under the name and icon of the app it belongs to.
 
 **Microsoft Teams.** Microsoft's bot SDKs are C#, TypeScript and Python; the older Bot Framework SDK is archived. There is nothing for Go, so the adapter is written against the HTTP protocol. By hand (from Microsoft's documentation, Appendix B, "Documentation read on 2026-11-18"; nothing was run):
 
@@ -1065,6 +1075,17 @@ Read for section 8 (Slack, Microsoft Teams) and for the Codex rows above. Nothin
 - Codex questions: https://github.com/openai/codex/blob/main/codex-rs/protocol/src/config_types.rs (`allows_request_user_input` is true only for `ModeKind::Plan`), https://github.com/openai/codex/blob/main/codex-rs/tools/src/tool_config.rs (or in the default mode with the feature `DefaultModeRequestUserInput`), https://github.com/openai/codex/blob/main/codex-rs/core/src/tools/handlers/request_user_input_async.rs (the `request_user_input_async` tool emits an agent message with `questions` and `delivery: Async`), https://github.com/openai/codex/blob/main/codex-rs/prompts/src/model_messages.rs (its description: "any reply arrives asynchronously as a new user message").
 - Codex methods, https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/src/protocol/common.rs: `thread/backgroundTerminals/clean`, `…/list` and `…/terminate`, each `#[experimental]`, with `threadId` in the params.
 
+### Documentation read on 2026-11-19
+
+Read to split the Slack phase (section 8). Nothing here was run.
+
+- Slack slash commands, https://docs.slack.dev/interactivity/implementing-slash-commands: "Slash commands created by developers cannot, however, be invoked in message threads"; built-in commands and Giphy's can; the acknowledgment "must be received by Slack within 3000 milliseconds of the original request being sent" (HTTP; the page does not mention Socket Mode).
+- Slack `chat.postMessage`, https://docs.slack.dev/reference/methods/chat.postMessage/: its arguments include `thread_ts`, `blocks`, `text`, `markdown_text` and `metadata`, and none that makes a post safe to repeat; `metadata` is "accessible to any app or user who is a member of that workspace"; keep `text` within 4,000 characters, and more than 40,000 are cut with a `message_truncated` warning; `markdown_text` is not combined with `text` or `blocks`; about one message per second per channel, with bursts allowed.
+- Slack `markdown` block, https://docs.slack.dev/reference/block-kit/blocks/markdown-block: standard Markdown in messages, tables and code blocks included; 12,000 characters across the markdown blocks of one payload; headers render at one size and images become links.
+- Slack `conversations.replies`, https://docs.slack.dev/reference/methods/conversations.replies/: `ts` of the parent or of any message in the thread, `oldest`, `latest`, `inclusive`, `cursor`, `limit` and `include_all_metadata`; Tier 3.
+- Slack incoming webhooks, https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/: a webhook is tied to one channel, which cannot be overridden, nor can the name or icon; a reply goes into a thread with `thread_ts`; the response carries no `ts`.
+- `slack-go/slack` v0.36.0: `MsgOptionMetadata` in https://github.com/slack-go/slack/blob/v0.36.0/chat.go, `NewMarkdownBlock` in https://github.com/slack-go/slack/blob/v0.36.0/block_markdown.go, `IncludeAllMetadata` on the history and replies parameters in https://github.com/slack-go/slack/blob/v0.36.0/conversation.go.
+
 ## Appendix C: c-lord bug issues by group
 
 All numbers are `yousan/c-lord` issues.
@@ -1244,7 +1265,23 @@ type Caller struct {
 	// ThreadDetail.Recent, the text of its requests, and the text fields of
 	// events (section 7.3).
 	NoText bool
+	// RefuseBusy makes every Send of the caller one with Refuse, whatever
+	// Busy it gives; Deliver or Interrupt to a running thread is refused
+	// with ErrBusy and logged. A supervisor's caller has it (section 7.1).
+	RefuseBusy bool
+	// Mark is a line the core puts before the text of every input of the
+	// caller's Start and Send; the title is made without it. Set by the
+	// daemon when it binds the caller, never by the client.
+	Mark string
 }
+
+// A connection to the control socket is the owner's, unless its hello
+// carries a token that the daemon issued (wire.Server.Issue, since
+// protocol 2.2): then it is bound to the API of the Caller the token was
+// issued for. wire.Server.Revoke forgets a token and closes its
+// connections. supervisor.Caller(scope) is a supervisor's Caller: From
+// "supervisor:<scope>", Scopes [scope], OpRead|OpStart|OpSend, RefuseBusy,
+// and the Mark of section 7.1.
 
 // Fields of ThreadInfo, and so of ThreadDetail, besides its id, number,
 // repository, state, who started it and when (section 7.2).
@@ -1361,6 +1398,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `Limits` | minor: new operation; landed in 1.13 |
 | `ThreadInfo.title` left out for `Caller.NoText` (#236) | major: a required field becomes optional; 2.0 |
 | `AttachTerminal`, with `Ops` gaining `OpAttach` (#253) | minor: new operation; 2.1 |
+| `hello.token`, and `principal` and `from` in the `input` and `answer` events (#269) | minor: new optional fields; 2.2 |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 
 Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event. In protocol 1.9: `Terminal`, which turns its connection into a stream as `Events` does. In protocol 1.12: `ThreadInfo.terminal`, the terminal device its session host opened, for the tree's filter, the status bar and the details panel (#285); `HostTerminals` still leaves these terminals out.
@@ -1579,7 +1617,7 @@ type Factory func(settings []byte) (Adapter, error)
 
 ## Appendix E: acceptance criteria after phase 1
 
-Every phase here also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter; the supervisor phase may also let the control socket bind a connection to a limited `Caller` (which plugins use too, section 7.3) and let a session be started confined (no shell, only the listed tools, section 7.1); the plugin phase may also add hook points.
+Every phase here also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter; the supervisor phase may also let the control socket bind a connection to a limited `Caller` (which plugins use too, section 7.3) and let a session be started confined (no shell, only the listed tools, section 7.1); the plugin phase may also limit a `Caller` to the operations and event kinds a plugin was granted, and add hook points (section 7.3).
 
 ### Codex
 

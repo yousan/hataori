@@ -52,6 +52,19 @@ type Input struct {
 	Detail    string            // StartTimeout, Exit: what a person may want to read, such as the end of the terminal log
 }
 
+// given is the data of the input or answer event of in: its text, and who
+// gave it, since protocol 2.2.
+func given(in Input) map[string]any {
+	d := map[string]any{"text": in.Text}
+	if in.Principal != "" {
+		d["principal"] = string(in.Principal)
+	}
+	if in.From != "" {
+		d["from"] = in.From
+	}
+	return d
+}
+
 // Turn-end outcomes and reasons that the state machine adds to the agent's.
 const (
 	Completion = "completion"
@@ -168,9 +181,9 @@ func Step(s Snapshot, in Input) (Result, error) {
 		case s.State == control.Idle:
 			to(control.Running, "")
 			start(OpenTurn{By: ByCaller, Principal: in.Principal, From: in.From}, in.Key)
-			r.Out = append(r.Out, Out{Kind: KindInput, Data: map[string]any{"text": in.Text}})
+			r.Out = append(r.Out, Out{Kind: KindInput, Data: given(in)})
 		case inTurn:
-			r.Out = append(r.Out, Out{Kind: KindInput, Data: map[string]any{"text": in.Text}})
+			r.Out = append(r.Out, Out{Kind: KindInput, Data: given(in)})
 		default:
 			return refuse()
 		}
@@ -180,7 +193,7 @@ func Step(s Snapshot, in Input) (Result, error) {
 		}
 		to(control.Running, "")
 		start(OpenTurn{By: ByCaller, Principal: in.Principal, From: in.From}, in.Key)
-		r.Out = append(r.Out, Out{Kind: KindAnswer, Data: map[string]any{"text": in.Text}})
+		r.Out = append(r.Out, Out{Kind: KindAnswer, Data: given(in)})
 	case Close:
 		if s.State != control.Asleep {
 			return refuse()
