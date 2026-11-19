@@ -49,6 +49,15 @@ func TestMain(m *testing.M) {
 			os.Exit(codexReplay(os.Args[2:]))
 		case "fake":
 			os.Exit(fake.Main(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+		case "codex-standin":
+			parent, err := strconv.Atoi(os.Args[2])
+			if err != nil || parent <= 1 {
+				os.Exit(2)
+			}
+			for os.Getppid() == parent {
+				time.Sleep(50 * time.Millisecond)
+			}
+			os.Exit(0)
 		case "orphan-terminal":
 			os.Exit(orphanTerminal(os.Args[2]))
 		}

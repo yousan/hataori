@@ -14,8 +14,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yousan/hataori/internal/agent"
+	"github.com/yousan/hataori/internal/agent/codex"
 	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/runner"
+	"github.com/yousan/hataori/internal/surface"
 )
 
 func TestRealCodex(t *testing.T) {
@@ -43,12 +46,13 @@ func TestRealCodex(t *testing.T) {
 		}
 	})
 	p := newProcRoot(t, func(cfg map[string]any) {
+		cfg["idle"] = "20s"
 		cfg["model"] = "gpt-6-luna"
 		cfg["effort"] = "low"
 		cfg["login_relay"] = false
 		cfg["adapters"] = map[string]any{"codex": map[string]any{"command": wrapper}}
 	})
-	p.deadline = time.Now().Add(15 * time.Minute)
+	p.deadline = time.Now().Add(55 * time.Minute)
 	var daemonStart uint64
 	defer func() {
 		if daemonStart == 0 && p.daemon != nil {
@@ -124,55 +128,169 @@ func TestRealCodex(t *testing.T) {
 	if daemonStart == 0 {
 		t.Fatal("cannot read daemon start time")
 	}
-	// The helper starts at the first tool use and lives as long as the app-server (#317 interrupt).
-	p.in(c1, "!go repo:"+bareRepo(t)+" Run the shell command `true`, then reply with just the word: ok")
-	th := p.thread(t, 0)
-	t.Cleanup(func() {
-		if t.Failed() {
-			p.dump(t, th)
+	step := func(name string, f func(*testing.T)) bool {
+		start := time.Now()
+		return t.Run(name, func(t *testing.T) {
+			defer func() {
+				status := "ok"
+				if t.Failed() {
+					status = "FAIL"
+				} else if t.Skipped() {
+					status = "SKIP"
+				}
+				t.Logf("%s: %s (%s)", name, status, time.Since(start).Round(time.Millisecond))
+			}()
+			f(t)
+		})
+	}
+	var th surface.Conversation
+	var session, workspace string
+	if !step("start", func(t *testing.T) {
+		p.in(c1, "!go repo:"+bareRepo(t)+" Run the shell command `true`, then reply with just the word: ok")
+		th = p.thread(t, 0)
+		t.Cleanup(func() {
+			if t.Failed() {
+				p.dump(t, th)
+			}
+		})
+		eventually(t, "first answer", p.within(3*time.Minute), func() bool {
+			return len(p.turnsEnded(t, th)) == 1 && p.replies(th, "ok") > 0 && len(p.list(t, "tool_started", th)) > 0
+		})
+		_, session = p.agentSession(t)
+		if session == "" {
+			t.Fatal("missing agent session")
 		}
-	})
-	eventually(t, "first answer", p.within(3*time.Minute), func() bool {
-		return len(p.turnsEnded(t, th)) == 1 && p.replies(th, "ok") > 0 && len(p.list(t, "tool_started", th)) > 0
-	})
-	_, session := p.agentSession(t)
-	if session == "" {
-		t.Fatal("missing agent session")
-	}
-	var workspace string
-	if err := p.db(t).QueryRow(`SELECT t.workspace FROM threads t JOIN links l ON l.thread_id = t.id WHERE l.channel = ? AND l.thread = ?`, th.Channel, th.Thread).Scan(&workspace); err != nil {
-		t.Fatal(err)
-	}
-	app := p.agentPID(t)
-	if _, start := codexProcess(app); start == 0 || start < daemonStart {
-		t.Fatal("invalid agent process start time")
-	}
-	baseline := codexProcesses(app, workspace, daemonStart)
-	beforeEnds := len(p.turnsEnded(t, th))
-	beforeTools := len(p.list(t, "tool_started", th))
-	p.in(th, "Run exactly this one shell command and wait until it has finished before you reply: sleep 600. Do not do anything else.")
-	eventually(t, "command start", p.within(3*time.Minute), func() bool { return len(p.list(t, "tool_started", th)) > beforeTools })
-	if code, _, stderr := cli(t, "stop", "--root", p.root, numberOf(t, p.root, th)); code != 0 {
-		t.Fatalf("stop: exit %d: %s", code, stderr)
-	}
-	eventually(t, "interrupted turn and command cleanup", p.within(10*time.Second), func() bool {
-		ended := p.turnsEnded(t, th)
-		if len(ended) <= beforeEnds || ended[beforeEnds].Data["outcome"] != "failure" || ended[beforeEnds].Data["reason"] != "interrupted" {
-			return false
+		if err := p.db(t).QueryRow(`SELECT t.workspace FROM threads t JOIN links l ON l.thread_id = t.id WHERE l.channel = ? AND l.thread = ?`, th.Channel, th.Thread).Scan(&workspace); err != nil {
+			t.Fatal(err)
 		}
-		for _, proc := range codexProcesses(app, workspace, daemonStart) {
-			if !containsProcess(baseline, proc) {
+	}) {
+		return
+	}
+	if !step("follow-up", func(t *testing.T) {
+		ends := len(p.turnsEnded(t, th))
+		p.in(th, "Remember the word marigold and reply with just the word: again")
+		eventually(t, "follow-up", p.within(3*time.Minute), func() bool { return len(p.turnsEnded(t, th)) > ends && p.replies(th, "again") > 0 })
+		if n, id := p.agentSession(t); n != 1 || id != session {
+			t.Fatalf("%d sessions, %q then %q", n, session, id)
+		}
+	}) {
+		return
+	}
+	if !step("question", func(t *testing.T) {
+		before := len(p.list(t, "request", th))
+		p.in(th, "Use your question tool to ask me which colour I like, and wait for my answer. Then reply with just that colour.")
+		eventually(t, "question posted", p.within(3*time.Minute), func() bool {
+			requests := p.list(t, "request", th)
+			if len(requests) <= before {
 				return false
 			}
-		}
-		return true
-	})
-	beforeEnds = len(p.turnsEnded(t, th))
-	p.in(th, "Reply with just the word: again")
-	eventually(t, "follow-up answer", p.within(3*time.Minute), func() bool { return len(p.turnsEnded(t, th)) > beforeEnds && p.replies(th, "again") > 0 })
-	if n, id := p.agentSession(t); n != 1 || id != session {
-		t.Fatalf("%d sessions, ID %q then %q", n, session, id)
+			text, _ := requests[before].Data["text"].(string)
+			return text != "" && p.count(th, text) > 0
+		})
+		ends := len(p.turnsEnded(t, th))
+		p.in(th, "blue")
+		eventually(t, "question answer", p.within(3*time.Minute), func() bool { return len(p.turnsEnded(t, th)) > ends && p.replies(th, "blue") > 0 })
+	}) {
+		return
 	}
+	if !step("interrupt", func(t *testing.T) {
+		app := p.agentPID(t)
+		if _, start := codexProcess(app); start == 0 || start < daemonStart {
+			t.Fatal("invalid agent process start time")
+		}
+		baseline := codexProcesses(app, workspace, daemonStart)
+		ends, tools := len(p.turnsEnded(t, th)), len(p.list(t, "tool_started", th))
+		p.in(th, "Run exactly this one shell command and wait until it has finished before you reply: sleep 600. Do not do anything else.")
+		eventually(t, "command start", p.within(3*time.Minute), func() bool { return len(p.list(t, "tool_started", th)) > tools })
+		if code, _, out := cli(t, "stop", "--root", p.root, numberOf(t, p.root, th)); code != 0 {
+			t.Fatalf("stop: %d: %s", code, out)
+		}
+		eventually(t, "interrupted turn and command cleanup", p.within(10*time.Second), func() bool {
+			ended := p.turnsEnded(t, th)
+			if len(ended) <= ends || ended[ends].Data["outcome"] != "failure" || ended[ends].Data["reason"] != "interrupted" {
+				return false
+			}
+			for _, proc := range codexProcesses(app, workspace, daemonStart) {
+				if !containsProcess(baseline, proc) {
+					return false
+				}
+			}
+			return true
+		})
+		ends = len(p.turnsEnded(t, th))
+		p.in(th, "Reply with just the word: recovered")
+		eventually(t, "follow-up after interrupt", p.within(3*time.Minute), func() bool { return len(p.turnsEnded(t, th)) > ends && p.replies(th, "recovered") > 0 })
+		if n, id := p.agentSession(t); n != 1 || id != session {
+			t.Fatalf("%d sessions, %q then %q", n, session, id)
+		}
+	}) {
+		return
+	}
+	if !step("daemon restart during turn", func(t *testing.T) {
+		ends, tools := len(p.turnsEnded(t, th)), len(p.list(t, "tool_started", th))
+		p.in(th, "Run `sleep 30` in the foreground, wait for it to finish, then reply with just the word: restartdone")
+		eventually(t, "restart command start", p.within(3*time.Minute), func() bool { return len(p.list(t, "tool_started", th)) > tools })
+		if len(p.turnsEnded(t, th)) != ends {
+			t.Fatal("turn ended before daemon kill")
+		}
+		pid := p.daemon.Process.Pid
+		_, start := codexProcess(pid)
+		if start != daemonStart || start == 0 {
+			t.Fatal("daemon PID changed")
+		}
+		p.kill(t)
+		p.start(t)
+		eventually(t, "restart answer", p.within(3*time.Minute), func() bool { return len(p.turnsEnded(t, th)) > ends && p.replies(th, "restartdone") > 0 })
+		time.Sleep(500 * time.Millisecond)
+		if n := len(p.turnsEnded(t, th)) - ends; n != 1 || p.replies(th, "restartdone") != 1 {
+			t.Fatalf("%d end events, %d answers", n, p.replies(th, "restartdone"))
+		}
+	}) {
+		return
+	}
+	if !step("sleep and wake", func(t *testing.T) {
+		pid := p.agentPID(t)
+		eventually(t, "app-server sleeps", p.within(90*time.Second), func() bool { state, _ := codexProcess(pid); return state == "" || state == "Z" })
+		_, out, _ := cli(t, "thread", "--root", p.root, numberOf(t, p.root, th))
+		if !strings.Contains(out, `"state":"asleep"`) {
+			t.Fatalf("thread: %s", out)
+		}
+		ends := len(p.turnsEnded(t, th))
+		p.in(th, "What word did I ask you to remember? Reply with only that word.")
+		eventually(t, "resumed answer", p.within(3*time.Minute), func() bool { return len(p.turnsEnded(t, th)) > ends && p.replies(th, "marigold") > 0 })
+		if n, id := p.agentSession(t); n != 1 || id != session {
+			t.Fatalf("%d sessions, %q then %q", n, session, id)
+		}
+	}) {
+		return
+	}
+	if !step("approval through Answer", func(t *testing.T) {
+		dir := t.TempDir()
+		cmd := exec.Command("git", "init", "-q", dir)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git init: %v: %s", err, out)
+		}
+		settings := fmt.Sprintf(`{"command":%q,"approval_policy":"untrusted","sandbox":"workspace-write"}`, wrapper)
+		adapter, err := codex.New([]byte(settings))
+		if err != nil {
+			t.Fatal(err)
+		}
+		driveCodexApproval(t, adapter, agent.Spec{Dir: dir, Model: "gpt-6-luna", Effort: "low", Approvals: agent.AskInChat}, true, 1, 1, 3*time.Minute)
+	}) {
+		return
+	}
+	step("30-minute turn", func(t *testing.T) {
+		if os.Getenv("HATAORI_REAL_CODEX_LONG") != "1" {
+			t.Skip("set HATAORI_REAL_CODEX_LONG=1 to run")
+		}
+		ends := len(p.turnsEnded(t, th))
+		start := time.Now()
+		p.in(th, "Run these three commands sequentially in the foreground, wait for each to finish before starting the next, and wait for all of them before replying: sleep 610; sleep 610; sleep 610. Then reply with just the word: longdone")
+		eventually(t, "long turn", p.within(40*time.Minute), func() bool { return len(p.turnsEnded(t, th)) > ends })
+		if time.Since(start) < 30*time.Minute || len(p.turnsEnded(t, th)) != ends+1 || p.turnsEnded(t, th)[ends].Data["outcome"] != "completion" || p.replies(th, "longdone") != 1 {
+			t.Fatalf("duration %s, end events %d, answers %d", time.Since(start), len(p.turnsEnded(t, th))-ends, p.replies(th, "longdone"))
+		}
+	})
 
 }
 
