@@ -1001,8 +1001,8 @@ func mustLink(t *testing.T, s *Server, way control.Way) string {
 // as one made before the lifetime was shortened, is refused.
 func TestASessionIsCappedAtItsListenersLifetime(t *testing.T) {
 	s := start(t, Config{Local: &Local{}, LocalSessionTTL: time.Hour})
-	ok, _ := s.newSession(time.Now().Add(time.Hour), "owner", control.WayLocal)
-	long, _ := s.newSession(time.Now().Add(7*24*time.Hour), "owner", control.WayLocal)
+	ok, _ := s.newSession(time.Now().Add(time.Hour), "owner", control.WayLocal, time.Time{})
+	long, _ := s.newSession(time.Now().Add(7*24*time.Hour), "owner", control.WayLocal, time.Time{})
 	if a := do(t, s, req{path: "/events", token: ok}); a.StatusCode != http.StatusOK {
 		t.Fatalf("a session within the lifetime: %s", a.Status)
 	}

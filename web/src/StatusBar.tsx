@@ -2,12 +2,14 @@ import type { AgentLimits, ThreadInfo } from "./api";
 import { t } from "./catalog";
 import { contextUse, stateName, when, windowName } from "./format";
 import type { Live } from "./live";
+import { Passkeys } from "./Passkeys";
 
 interface Props {
   selected: ThreadInfo | undefined;
   live: Live;
   limits: AgentLimits[];
   now: number;
+  signedIn: boolean;
 }
 
 // Limits shows each agent's remaining usage with its reset time. An agent
@@ -39,8 +41,8 @@ function Limits({ limits, now }: { limits: AgentLimits[]; now: number }) {
 
 // StatusBar shows the selected thread on the left; on the right, each
 // agent's remaining usage, the live mark with the position of the last
-// event read, and "read-only".
-export function StatusBar({ selected: x, live, limits, now }: Props) {
+// event read, "read-only", and, signed in, the person's passkeys.
+export function StatusBar({ selected: x, live, limits, now, signedIn }: Props) {
   let mark: string;
   if (live.connected) {
     mark = live.pos === null ? t("status.liveStarting") : t("status.live", { pos: live.pos });
@@ -69,6 +71,7 @@ export function StatusBar({ selected: x, live, limits, now }: Props) {
           {mark}
         </span>
         <span className="mark">{t("app.readOnly")}</span>
+        {signedIn && <Passkeys />}
       </div>
     </footer>
   );

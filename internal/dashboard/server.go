@@ -14,14 +14,17 @@
 // listener's (any loopback name and port on the loopback listener, the
 // configured address on the web listener); an Origin, when sent, is exactly
 // the listener's own; a request on the loopback listener did not come
-// through a reverse proxy; the method is GET or HEAD; and, for every route
-// but the trade of a sign-in link and the page's own files, which hold no
-// data, the request carries a session of a person who may still sign in,
-// in its Authorization header. A session is made only by a single-use,
-// short-lived link that a person gets with SignInLink, and belongs to that
-// person: its requests are made with the control API bound to that
-// person's Caller. The link's token is in its fragment: the page trades it
-// for the session (SessionPath), so fetching the link uses nothing up.
+// through a reverse proxy; the method is GET or HEAD, except on the
+// passkey routes, whose other requests must carry the listener's exact
+// Origin (changeRoute); and, for every route but the sign-in routes (the
+// trade of a sign-in link and the passkey sign-in) and the page's own
+// files, which hold no data, the request carries a session of a person who
+// may still sign in, in its Authorization header. A session is made by a
+// single-use, short-lived link that a person gets with SignInLink, or on
+// the web listener by a passkey (passkeys.go), and belongs to that person:
+// its requests are made with the control API bound to that person's
+// Caller. The link's token is in its fragment: the page trades it for the
+// session (SessionPath), so fetching the link uses nothing up.
 //
 // There is no session cookie. A browser sends a cookie to every port of the
 // host that set it, so a service someone else runs on another port of the
@@ -44,10 +47,13 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/yousan/hataori/internal/control"
 )
@@ -89,6 +95,11 @@ type Config struct {
 	// daemon. At least 32 bytes; when empty a random key is made, and
 	// sessions end with the process.
 	SessionKey []byte
+	// Root is the instance root, where the passkeys are kept (PasskeysFile);
+	// nil keeps none.
+	Root *os.Root
+	// Now is the clock; time.Now when nil. Tests set their own.
+	Now func() time.Time
 }
 
 // Local is the loopback listener: plain HTTP on a loopback address.
@@ -143,12 +154,25 @@ type Server struct {
 	mux        *http.ServeMux
 
 	key []byte // signs sessions
+	// ceremonyKey signs passkey sign-in ceremonies. It is made at each
+	// start, so that a ceremony answered before a restart, whose answer
+	// was recorded only in memory, cannot be answered again after it.
+	ceremonyKey []byte
 
 	// Stream timings; tests shorten them.
 	keepAlive, writeTimeout, hostScreenInterval time.Duration
 
-	mu    sync.Mutex
-	links map[[32]byte]link // by hash of the token
+	// Passkeys: the web listener's relying party, nil when there is none
+	// (rpOff says why), and where they are kept, nil for nowhere.
+	rp    *webauthn.WebAuthn
+	rpOff string
+	keys  *passkeyFile
+
+	mu         sync.Mutex
+	links      map[[32]byte]link      // by hash of the token
+	grants     map[[32]byte]grant     // proofs for a registration, by hash of the token
+	ceremonies map[[32]byte]ceremony  // registrations and checks under way, by hash of their id
+	used       map[[32]byte]time.Time // sign-in challenges answered, by hash, until they expire
 }
 
 // listener is one way of reaching the dashboard.
@@ -191,8 +215,8 @@ func Listen(cfg Config, api func(person string) (control.API, bool), log *slog.L
 	if cfg.Local == nil && cfg.Web == nil {
 		return nil, errors.New("dashboard: neither a loopback nor a web listener")
 	}
-	s := &Server{For: api, Log: log, linkTTL: cfg.LinkTTL, now: time.Now,
-		links: map[[32]byte]link{}, key: cfg.SessionKey,
+	s := &Server{For: api, Log: log, linkTTL: cfg.LinkTTL, now: cfg.Now,
+		links: map[[32]byte]link{}, grants: map[[32]byte]grant{}, ceremonies: map[[32]byte]ceremony{}, used: map[[32]byte]time.Time{}, key: cfg.SessionKey,
 		keepAlive: defaultKeepAlive, writeTimeout: defaultWriteTimeout, hostScreenInterval: defaultHostScreenInterval}
 	if len(s.key) == 0 {
 		s.key = make([]byte, 32)
@@ -204,6 +228,19 @@ func Listen(cfg Config, api func(person string) (control.API, bool), log *slog.L
 	}
 	if s.linkTTL <= 0 {
 		s.linkTTL = DefaultLinkTTL
+	}
+	s.ceremonyKey = make([]byte, 32)
+	if _, err := rand.Read(s.ceremonyKey); err != nil {
+		return nil, fmt.Errorf("dashboard: %w", err)
+	}
+	if s.now == nil {
+		s.now = time.Now
+	}
+	if cfg.Root != nil {
+		s.keys = &passkeyFile{root: cfg.Root, log: log}
+		if _, err := s.keys.load(); err != nil { // refused now, not at the first sign-in
+			return nil, err
+		}
 	}
 	var err error
 	if cfg.Local != nil {
@@ -219,8 +256,16 @@ func Listen(cfg Config, api func(person string) (control.API, bool), log *slog.L
 			return nil, err
 		}
 	}
+	s.rpOff = "passkeys are for the web listener, and this dashboard has none"
+	if s.web != nil {
+		if s.rp, err = relyingParty(s.web); err != nil {
+			s.rpOff = err.Error()
+			log.Info("dashboard: " + s.rpOff)
+		}
+	}
 	s.mux = http.NewServeMux()
 	s.mux.HandleFunc("GET "+SessionPath, s.signIn)
+	s.passkeyRoutes()
 	s.pageRoutes()
 	s.routes()
 	for _, l := range s.listeners() {
@@ -530,24 +575,33 @@ func (s *Server) take(m map[[32]byte]link, token string, way control.Way) (perso
 	return l.person, ok && l.way == way && s.now().Before(l.exp)
 }
 
-// A session is a token the server signed: its expiry, a random nonce and
-// the person it belongs to, and an HMAC of them and of its listener under
-// the session key. The server keeps no list of sessions, so one outlives a
-// restart of the daemon that keeps its key. The label names the payload's
-// layout and what is signed: a session of an earlier layout no longer
-// verifies, and a session of one listener does not verify on the other.
-const sessionLabel = "hataori dashboard session 3\x00"
+// A session is a token the server signed: its expiry, a random nonce,
+// when a passkey was checked for it (zero for none: a session of a link),
+// and the person it belongs to, and an HMAC of them and of its listener
+// under the session key. The server keeps no list of sessions, so one
+// outlives a restart of the daemon that keeps its key. The label names the
+// payload's layout and what is signed: a session of an earlier layout no
+// longer verifies, and a session of one listener does not verify on the
+// other.
+const sessionLabel = "hataori dashboard session 4\x00"
 
-// sessionHead is the length of a session's payload before the person.
-const sessionHead = 24
+// sessionHead is the length of a session's payload before the person: the
+// expiry, the nonce and the passkey check, which starts at sessionChecked.
+const (
+	sessionHead    = 32
+	sessionChecked = 24
+)
 
 // newSession returns a session of person on the listener way that expires
-// at exp.
-func (s *Server) newSession(exp time.Time, person string, way control.Way) (string, error) {
+// at exp; checked is when a passkey was checked for it, zero for none.
+func (s *Server) newSession(exp time.Time, person string, way control.Way, checked time.Time) (string, error) {
 	payload := make([]byte, sessionHead, sessionHead+len(person))
 	binary.BigEndian.PutUint64(payload[:8], uint64(exp.Unix()))
-	if _, err := rand.Read(payload[8:sessionHead]); err != nil {
+	if _, err := rand.Read(payload[8:sessionChecked]); err != nil {
 		return "", fmt.Errorf("dashboard: %w", err)
+	}
+	if !checked.IsZero() {
+		binary.BigEndian.PutUint64(payload[sessionChecked:sessionHead], uint64(checked.Unix()))
 	}
 	payload = append(payload, person...)
 	return base64.RawURLEncoding.EncodeToString(payload) + "." + base64.RawURLEncoding.EncodeToString(s.sign(way, payload)), nil
@@ -562,23 +616,33 @@ func (s *Server) sign(way control.Way, payload []byte) []byte {
 	return m.Sum(nil)
 }
 
+// claims is what a session says: when it expires, when a passkey was
+// checked for it (zero for none), and whose it is.
+type claims struct {
+	exp, checked time.Time
+	person       string
+}
+
 // valid reports whether token is a session of listener l that this key
-// signed and that has not expired, when it expires, and whose it is. A
-// session that would last longer than l's sessions last now, such as one
-// made before its lifetime was shortened, is refused.
-func (s *Server) valid(token string, l *listener) (exp time.Time, person string, ok bool) {
+// signed and that has not expired, and what it says. A session that would
+// last longer than l's sessions last now, such as one made before its
+// lifetime was shortened, is refused.
+func (s *Server) valid(token string, l *listener) (claims, bool) {
 	p, sig, ok := strings.Cut(token, ".")
 	if !ok {
-		return time.Time{}, "", false
+		return claims{}, false
 	}
 	payload, err1 := base64.RawURLEncoding.DecodeString(p)
 	mac, err2 := base64.RawURLEncoding.DecodeString(sig)
 	if err1 != nil || err2 != nil || len(payload) <= sessionHead || !hmac.Equal(mac, s.sign(l.way, payload)) {
-		return time.Time{}, "", false
+		return claims{}, false
 	}
-	exp = time.Unix(int64(binary.BigEndian.Uint64(payload[:8])), 0)
+	c := claims{exp: time.Unix(int64(binary.BigEndian.Uint64(payload[:8])), 0), person: string(payload[sessionHead:])}
+	if at := binary.BigEndian.Uint64(payload[sessionChecked:sessionHead]); at != 0 {
+		c.checked = time.Unix(int64(at), 0)
+	}
 	now := s.now()
-	return exp, string(payload[sessionHead:]), now.Before(exp) && !exp.After(now.Add(l.ttl+time.Minute))
+	return c, now.Before(c.exp) && !c.exp.After(now.Add(l.ttl+time.Minute))
 }
 
 // bearer returns the session a request carries in its Authorization header.
@@ -604,25 +668,28 @@ var proxyHeaders = []string{"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", 
 type sessionKey struct{}
 type listenerKey struct{}
 
-// session is what ServeHTTP learned of a request's signed-in session.
+// session is what ServeHTTP learned of a request's signed-in session:
+// what it says, its hash, which a registration's proof is bound to, and
+// the control API of its person.
 type session struct {
-	exp time.Time
+	claims
+	sum [32]byte
 	api control.API
+}
+
+// sessionOf is the session of a request that passed ServeHTTP's checks.
+func sessionOf(r *http.Request) session {
+	ss, _ := r.Context().Value(sessionKey{}).(session)
+	return ss
 }
 
 // sessionExpiry is when the session of a request that passed ServeHTTP's
 // checks expires.
-func sessionExpiry(r *http.Request) time.Time {
-	ss, _ := r.Context().Value(sessionKey{}).(session)
-	return ss.exp
-}
+func sessionExpiry(r *http.Request) time.Time { return sessionOf(r).exp }
 
 // api is the control API of the person whose session made a request that
 // passed ServeHTTP's checks.
-func api(r *http.Request) control.API {
-	ss, _ := r.Context().Value(sessionKey{}).(session)
-	return ss.api
-}
+func api(r *http.Request) control.API { return sessionOf(r).api }
 
 // listenerOfRequest is the listener that accepted r.
 func listenerOfRequest(r *http.Request) *listener {
@@ -696,30 +763,48 @@ func (s *Server) handler(l *listener) http.Handler {
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			h.Set("Allow", "GET, HEAD")
-			s.refuse(w, r, l, http.StatusMethodNotAllowed, "read-only")
-			return
+			if !changeRoute(r.Method, r.URL.Path) {
+				h.Set("Allow", "GET, HEAD")
+				s.refuse(w, r, l, http.StatusMethodNotAllowed, "read-only")
+				return
+			}
+			// A browser sends its page's Origin with every such request; one
+			// without is not from the page.
+			if o := r.Header.Get("Origin"); o == "" || o == "null" || !l.originOK(o, r.Host) {
+				s.refuse(w, r, l, http.StatusForbidden, "a request that changes something must carry this listener's origin")
+				return
+			}
 		}
 		ctx := context.WithValue(r.Context(), listenerKey{}, l)
-		if r.URL.Path != SessionPath && !isPageFile(r.URL.Path) {
-			token, ok := bearer(r)
+		if !signInRoute(r.URL.Path) && !isPageFile(r.URL.Path) {
+			ss, ok := s.sessionFrom(r, l)
 			if !ok {
 				http.Error(w, "not signed in", http.StatusUnauthorized)
 				return
 			}
-			exp, person, ok := s.valid(token, l)
-			var a control.API
-			if ok {
-				a, ok = s.For(person)
-			}
-			if !ok || a == nil {
-				http.Error(w, "not signed in", http.StatusUnauthorized)
-				return
-			}
-			ctx = context.WithValue(ctx, sessionKey{}, session{exp: exp, api: a})
+			ctx = context.WithValue(ctx, sessionKey{}, ss)
 		}
 		s.mux.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// sessionFrom is the session r carries in its Authorization header, when
+// it is one of l's that this key signed, has not expired, and belongs to a
+// person who may still sign in.
+func (s *Server) sessionFrom(r *http.Request, l *listener) (session, bool) {
+	token, ok := bearer(r)
+	if !ok {
+		return session{}, false
+	}
+	c, ok := s.valid(token, l)
+	if !ok {
+		return session{}, false
+	}
+	a, ok := s.For(c.person)
+	if !ok || a == nil {
+		return session{}, false
+	}
+	return session{claims: c, sum: sha256.Sum256([]byte(token)), api: a}, true
 }
 
 func (s *Server) refuse(w http.ResponseWriter, r *http.Request, l *listener, code int, why string) {
@@ -728,9 +813,10 @@ func (s *Server) refuse(w http.ResponseWriter, r *http.Request, l *listener, cod
 }
 
 // signIn trades a sign-in link's token for a session of the listener it
-// was made for, and answers {"session": "<token>"}. The link is used up
-// whether or not it was still valid, and whichever listener it was shown
-// on. A HEAD uses nothing up.
+// was made for, and answers {"session": "<token>"}, on the web listener
+// with the proof that registers a passkey ("register"). The link is used
+// up whether or not it was still valid, and whichever listener it was
+// shown on. A HEAD uses nothing up.
 func (s *Server) signIn(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodHead {
 		w.Header().Set("Allow", "GET")
@@ -744,12 +830,17 @@ func (s *Server) signIn(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "this sign-in link was used or has expired: ask for a new one", http.StatusUnauthorized)
 		return
 	}
-	token, err := s.newSession(s.now().Add(l.ttl), person, l.way)
+	token, err := s.newSession(s.now().Add(l.ttl), person, l.way, time.Time{})
 	if err != nil {
 		http.Error(w, "cannot make a session", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, struct {
-		Session string `json:"session"`
-	}{token})
+	out := signedIn{Session: token}
+	if l.way == control.WayWeb && s.rp != nil && s.keys != nil {
+		if out.Register, err = s.newGrant(person, token, nil); err != nil {
+			http.Error(w, "cannot make a session", http.StatusInternalServerError)
+			return
+		}
+	}
+	writeJSON(w, out)
 }
