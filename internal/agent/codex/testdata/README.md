@@ -31,7 +31,7 @@ Each scenario directory holds:
 
 | Scenario | What it shows |
 |---|---|
-| `start` | `initialize`, `thread/start`, one turn: an `agentMessage` with `phase: "commentary"`, a command, then one with `phase: "final_answer"`; `item/agentMessage/delta`. |
+| `start` | `initialize`, `thread/start`, one turn. In this capture the model answered with one `agentMessage`, `phase: "final_answer"` ("I'll run the requested shell command, then answer the arithmetic question."), and ran nothing; `item/agentMessage/delta`. `usage` has the same prompt and shows the full shape: `phase: "commentary"`, a command, then `phase: "final_answer"`. |
 | `command`, `file_change` | A `commandExecution` item with `item/commandExecution/outputDelta`; a `fileChange` item with `turn/diff/updated`. |
 | `approval_accept`, `approval_decline` | Under `untrusted`: `item/commandExecution/requestApproval` and `item/fileChange/requestApproval`, each followed by `serverRequest/resolved`. Accepted, both files were written; declined, the items completed with `status: "declined"` and neither file exists. |
 | `question_async` | `request_user_input_async`: an `agentMessage` (`phase: "final_answer"`) with `questions`, while the turn goes on; the `turn/steer` answer was taken into the same turn, which then answered "Blue". |
