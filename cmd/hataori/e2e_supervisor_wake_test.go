@@ -708,6 +708,24 @@ func TestWakeByATurnEndWrittenAtTheFirstStart(t *testing.T) {
 	if err := os.WriteFile(path, b, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// The waker starts only once the reconnected session has written the
+	// turn end, as it may well do: without the position taken at the start,
+	// the waker's first run would begin after it.
+	db := wt.db
+	written := func() { // on the daemon's goroutine: no t.Fatal
+		for deadline := time.Now().Add(15 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+			var n int
+			db.QueryRow(`SELECT count(*) FROM events WHERE thread_id = ? AND kind = 'turn_ended'`, int64(a)).Scan(&n)
+			if n == 1 {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Error("timed out waiting for the reconnected worker's turn end")
+				return
+			}
+		}
+	}
+	wt.before.Store(&written)
 	stop, owner, sv := wt.start(t)
 	defer stop()
 	pos := wt.ended(t, a, 1)
