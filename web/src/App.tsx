@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { t } from "./catalog";
 import { useLayout } from "./layout";
 import { linkRefused } from "./session";
+import { SignInNotice } from "./Passkeys";
 import { useDashboard, useNow } from "./live";
 import { StatusBar } from "./StatusBar";
 import { TabBar, tabID } from "./TabBar";
@@ -164,11 +165,7 @@ export function App() {
     const loading = opened !== null && d.threads === null;
     return (
       <div className="shell narrow" data-layout="narrow">
-        {(d.signedOut || linkRefused()) && (
-          <p className="signed-out" role="alert">
-            {t(linkRefused() ? "app.linkUsed" : "app.signedOut")}
-          </p>
-        )}
+        <SignInNotice signedOut={d.signedOut} refused={linkRefused()} />
         <div className="narrow-body">
           {openedHost !== null ? (
             <NarrowHost h={host(openedHost)} device={openedHost} now={now} onBack={backNarrow} />
@@ -198,18 +195,14 @@ export function App() {
             />
           )}
         </div>
-        <StatusBar selected={openedHost !== null ? undefined : x} live={d.live} limits={d.limits} now={now} />
+        <StatusBar selected={openedHost !== null ? undefined : x} live={d.live} limits={d.limits} now={now} signedIn={!d.signedOut} />
       </div>
     );
   }
 
   return (
     <div className="shell" data-layout="wide">
-      {(d.signedOut || linkRefused()) && (
-        <p className="signed-out" role="alert">
-          {t(linkRefused() ? "app.linkUsed" : "app.signedOut")}
-        </p>
-      )}
+      <SignInNotice signedOut={d.signedOut} refused={linkRefused()} />
       <div className="body">
         {layout.tree && (
           <Tree
@@ -311,7 +304,7 @@ export function App() {
           </aside>
         )}
       </div>
-      <StatusBar selected={current === null ? undefined : thread(current)} live={d.live} limits={d.limits} now={now} />
+      <StatusBar selected={current === null ? undefined : thread(current)} live={d.live} limits={d.limits} now={now} signedIn={!d.signedOut} />
     </div>
   );
 }

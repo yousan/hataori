@@ -173,6 +173,8 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		if dc.SessionKey, err = sessionKey(in.Root); err != nil {
 			return err
 		}
+		dc.Root = in.Root // the passkeys, next to the session key
+		dc.Now = dashboardNow
 		// A session's requests are made as its person, while the core still
 		// lets that person sign in.
 		forPerson := func(person string) (control.API, bool) {
@@ -478,6 +480,9 @@ func dashboardCaller(dir *people.Directory, scopes []string, hostTerminals bool,
 
 // dashboardHook, when a test sets it, changes the dashboard's Caller.
 var dashboardHook func(*control.Caller)
+
+// dashboardNow, when a test sets it, is the dashboard server's clock.
+var dashboardNow func() time.Time
 
 // hostTermsHook, when a test sets it, changes how the daemon lists the
 // host's terminals, such as to read a tmux server of the test's own.

@@ -19,6 +19,63 @@ let current: string | null = null;
 // not sign in: used already, by the person or by someone else, or expired.
 let refused = false;
 
+// SignedIn is what a sign-in answers: the session and, on the web
+// listener, the proof that registers one passkey within its seconds.
+export interface SignedIn {
+  session?: unknown;
+  register?: { token?: unknown; expires_in?: unknown };
+}
+
+// proof is the registration proof of the last sign-in, kept in memory
+// only: it is good for one passkey, for a few minutes, with this session.
+// from says which sign-in brought it.
+let proof: { token: string; until: number; from: "link" | "passkey" } | null = null;
+const proofWatchers = new Set<() => void>();
+
+// registerProof returns the proof's token while it is good, else null.
+export function registerProof(): string | null {
+  return proof && Date.now() < proof.until ? proof.token : null;
+}
+
+// linkProofUntil is when the proof a sign-in link brought stops being
+// good, in milliseconds since the epoch; 0 when there is none.
+export function linkProofUntil(): number {
+  return proof?.from === "link" ? proof.until : 0;
+}
+
+// dropProof forgets the proof: it was used, or the person declined.
+export function dropProof(): void {
+  proof = null;
+  for (const f of proofWatchers) f();
+}
+
+// watchProof calls f whenever the proof changes, until the returned
+// function is called.
+export function watchProof(f: () => void): () => void {
+  proofWatchers.add(f);
+  return () => proofWatchers.delete(f);
+}
+
+// adopt keeps what a sign-in answered: its session, in this origin's
+// storage, and its registration proof, in memory. It reports whether there
+// was a session.
+export function adopt(a: SignedIn, from: "link" | "passkey"): boolean {
+  if (typeof a.session !== "string" || !a.session) return false;
+  current = a.session;
+  try {
+    localStorage.setItem(storageKey, a.session);
+  } catch {
+    // Kept for this tab only.
+  }
+  const r = a.register;
+  proof =
+    r && typeof r.token === "string" && typeof r.expires_in === "number"
+      ? { token: r.token, until: Date.now() + r.expires_in * 1000, from }
+      : null;
+  for (const f of proofWatchers) f();
+  return true;
+}
+
 // linkRefused reports whether the page was opened with a sign-in link that
 // did not sign in, so that it can say so instead of only "signed out".
 export function linkRefused(): boolean {
@@ -45,16 +102,7 @@ export async function adoptSession(): Promise<void> {
         cache: "no-store",
       });
       if (r.status === 401) refused = true; // used, by anyone, or expired; not a network failure
-      const session = r.ok ? ((await r.json()) as { session?: unknown }).session : undefined;
-      if (typeof session === "string" && session) {
-        current = session;
-        try {
-          localStorage.setItem(storageKey, session);
-        } catch {
-          // Kept for this tab only.
-        }
-        return;
-      }
+      if (r.ok && adopt((await r.json()) as SignedIn, "link")) return;
     } catch {
       // No session from this link: the one kept earlier, below.
     }

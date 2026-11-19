@@ -500,6 +500,93 @@ body {
   background: var(--st-failed);
 }
 
+/* Signing in with a passkey, the offer to register one, and the list. */
+.signed-out,
+.passkey-offer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.signed-out p,
+.passkey-offer p {
+  margin: 0;
+}
+
+.passkey-offer {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bar);
+}
+
+.signed-out button,
+.passkey-offer button,
+.passkeys button,
+.passkeys-open {
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.passkeys-open {
+  font-size: 12px;
+  padding: 0 6px;
+  color: var(--muted);
+}
+
+.passkeys {
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  width: min(32rem, calc(100vw - 32px));
+}
+
+.passkeys h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.passkeys ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.passkeys li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.passkeys li button {
+  margin-left: auto;
+}
+
+.passkeys-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.passkey-error {
+  color: var(--st-failed);
+}
+
+.signed-out .passkey-error {
+  color: inherit;
+  font-weight: 600;
+}
+
 /* The tab bar, the panes and the details panel. */
 .center {
   flex: 1;
