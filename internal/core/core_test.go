@@ -249,6 +249,7 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 		"Terminal":      func(a control.API) error { _, err := a.Terminal(ctx, id, "", 0); return err },
 		"HostTerminals": func(a control.API) error { _, err := a.HostTerminals(ctx); return err },
 		"HostScreen":    func(a control.API) error { _, err := a.HostScreen(ctx, "%0"); return err },
+		"HostView":      func(a control.API) error { _, err := a.HostView(ctx, "%0"); return err },
 		// Only the owner's caller with OpHostInput may (hostinput_test.go).
 		"OperateHost": func(a control.API) error { _, err := a.OperateHost(ctx, "%0"); return err },
 		// Limits needs OpRead and no scope, so "other scope" may call it

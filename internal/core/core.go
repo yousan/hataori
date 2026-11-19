@@ -291,6 +291,8 @@ func (k *keyedMutex) lock(key string) func() {
 type HostTerms interface {
 	List(ctx context.Context, owned []int) ([]control.HostTerminal, error)
 	Screen(ctx context.Context, pane string, owned []int) (screen string, ok bool, err error)
+	// View is Screen with the cursor's position.
+	View(ctx context.Context, pane string, owned []int) (v control.HostView, ok bool, err error)
 }
 
 // SignIn makes single-use dashboard sign-in links. The session a link
@@ -1801,7 +1803,7 @@ func (a *api) SignInLink(ctx context.Context, way control.Way) (string, error) {
 	return a.c.SignIn.NewLink(ctx, person, way)
 }
 
-// checkHost allows HostTerminals and HostScreen: only when they are on, and
+// checkHost allows HostTerminals, HostScreen and HostView: only when they are on, and
 // only to the owner's caller with OpHost.
 func (a *api) checkHost(name string) error {
 	if err := a.granted(name, ""); err != nil {
@@ -1850,24 +1852,50 @@ func (a *api) HostTerminals(ctx context.Context) ([]control.HostTerminal, error)
 // show a session's text with none of hataori's processes in it, as after
 // `hataori attach` ends.
 func (a *api) HostScreen(ctx context.Context, pane string) (string, error) {
-	if err := a.checkHost("HostScreen"); err != nil {
-		return "", err
-	}
-	if a.caller.NoText {
-		return "", a.refused("HostScreen", "", "the caller may not read text")
-	}
-	owned, err := a.c.hostPIDs(ctx)
-	if err != nil {
-		return "", err
-	}
-	screen, ok, err := a.c.HostTerms.Screen(ctx, pane, owned)
-	if err == nil && !ok {
-		err = fmt.Errorf("core: HostScreen: tmux pane %q: %w", pane, ErrNotFound)
-	}
+	var screen string
+	err := a.hostRead(ctx, "HostScreen", pane, func(owned []int) (ok bool, err error) {
+		screen, ok, err = a.c.HostTerms.Screen(ctx, pane, owned)
+		return ok, err
+	})
 	if err != nil {
 		return "", err
 	}
 	return screen, nil
+}
+
+// HostView reads one tmux pane's screen and its cursor, checked as
+// HostScreen is.
+func (a *api) HostView(ctx context.Context, pane string) (control.HostView, error) {
+	var v control.HostView
+	err := a.hostRead(ctx, "HostView", pane, func(owned []int) (ok bool, err error) {
+		v, ok, err = a.c.HostTerms.View(ctx, pane, owned)
+		return ok, err
+	})
+	if err != nil {
+		return control.HostView{}, err
+	}
+	return v, nil
+}
+
+// hostRead makes the checks of a read of one pane around read, which
+// reports ok false for a pane that HostTerminals would not list. A caller
+// that may not read text is refused every pane, before any is read.
+func (a *api) hostRead(ctx context.Context, name, pane string, read func(owned []int) (bool, error)) error {
+	if err := a.checkHost(name); err != nil {
+		return err
+	}
+	if a.caller.NoText {
+		return a.refused(name, "", "the caller may not read text")
+	}
+	owned, err := a.c.hostPIDs(ctx)
+	if err != nil {
+		return err
+	}
+	ok, err := read(owned)
+	if err == nil && !ok {
+		err = fmt.Errorf("core: %s: tmux pane %q: %w", name, pane, ErrNotFound)
+	}
+	return err
 }
 
 // attachTimeout bounds how long AttachTerminal waits for the session host

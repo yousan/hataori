@@ -143,7 +143,7 @@ func startTmux(t *testing.T, cmd string) []string {
 // tmux's send-keys, load-buffer and paste-buffer, and delete-buffer and
 // list-buffers for an operation's buffers (TestInputCommands).
 func TestOnlyTheFixedCommandsRun(t *testing.T) {
-	known := map[string]bool{"ps -A": true, "tmux list-panes": true, "tmux capture-pane": true,
+	known := map[string]bool{"ps -A": true, "tmux list-panes": true, "tmux capture-pane": true, "tmux display-message": true,
 		"tmux send-keys": true, "tmux load-buffer": true, "tmux paste-buffer": true, "tmux delete-buffer": true, "tmux list-buffers": true}
 	for _, c := range Commands {
 		if !known[c.name+" "+c.args[0]] {
@@ -187,6 +187,9 @@ func TestOnlyTheFixedCommandsRun(t *testing.T) {
 	if _, ok, err := l.Screen(ctx, pane, nil); err != nil || !ok {
 		t.Fatal(ok, err)
 	}
+	if _, ok, err := l.View(ctx, pane, nil); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
 	if empty, _ := (&Lister{Tmux: []string{"-L", "hataori-hostterm-none"}, run: func(context.Context, []byte, string, ...string) ([]byte, error) {
 		return nil, nil
 	}}).List(ctx, nil); empty == nil {
@@ -196,7 +199,7 @@ func TestOnlyTheFixedCommandsRun(t *testing.T) {
 		t.Fatal("a pane id with more in it was read", ok, err)
 	}
 	allowed := func(argv []string) bool {
-		for _, c := range []command{psCmd, listPanesCmd, capturePaneCmd} {
+		for _, c := range []command{psCmd, listPanesCmd, capturePaneCmd, cursorCmd} {
 			want := []string{c.name}
 			if c.name == "tmux" {
 				want = append(want, sock...)
@@ -207,6 +210,10 @@ func TestOnlyTheFixedCommandsRun(t *testing.T) {
 			}
 			if c.args[0] == "capture-pane" && len(argv) == len(want)+1 && slices.Equal(argv[:len(want)], want) &&
 				paneID.MatchString(argv[len(want)]) {
+				return true
+			}
+			if c.args[0] == "display-message" && len(argv) == len(want)+2 && slices.Equal(argv[:len(want)], want) &&
+				paneID.MatchString(argv[len(want)]) && argv[len(want)+1] == cursorFormat {
 				return true
 			}
 		}

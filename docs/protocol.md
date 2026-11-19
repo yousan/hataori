@@ -18,7 +18,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.13**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.14**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -215,12 +215,12 @@ Result: string
 
 Interrupts the thread's running turn. Nothing happens when no turn runs.
 
-Since 3.13 a call may name the turn to stop, by the number its `turn_started` event gives it. The daemon then interrupts nothing unless that turn is the thread's running turn, and it checks this in the same step as the interrupt. So a call made for a turn that has just ended never stops the turn after it. A call that names a turn which is not running is answered `refused`, and nothing changes. A daemon before 3.13 ignores the field and interrupts whatever turn runs, so a client that names a turn checks that the daemon speaks 3.13 or later; the project's client refuses to send it otherwise.
+Since 3.14 a call may name the turn to stop, by the number its `turn_started` event gives it. The daemon then interrupts nothing unless that turn is the thread's running turn, and it checks this in the same step as the interrupt. So a call made for a turn that has just ended never stops the turn after it. A call that names a turn which is not running is answered `refused`, and nothing changes. A daemon before 3.14 ignores the field and interrupts whatever turn runs, so a client that names a turn checks that the daemon speaks 3.14 or later; the project's client refuses to send it otherwise.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `id` | integer | required | the thread's number; since 3.0, before it a `{scope, key}` object |
-| `turn` | integer | optional | only this turn, by `turn_started`'s `turn`; absent or 0 for whatever turn runs; since 3.13 |
+| `turn` | integer | optional | only this turn, by `turn_started`'s `turn`; absent or 0 for whatever turn runs; since 3.14 |
 
 Result: none
 
@@ -368,6 +368,16 @@ Since 3.11, and only on an `OperateHost` stream; elsewhere it is answered `not_s
 |---|---|---|---|
 
 Result: none
+
+### Operation `HostView`
+
+Since 3.13. One tmux pane's screen, as `HostScreen` gives it, and where its cursor is, read right after the screen. Allowed as `HostScreen` is, and refused alike to a caller that may not read text. The dashboard reads it for a pane being operated (`OperateHost`), so that the page draws the cursor where tmux has it. hataori runs `tmux display-message -p` for the cursor, which changes nothing. A pane that `HostTerminals` would not list, and one that goes between the two reads, is answered `not_found`.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `pane` | string | required | the pane, as `TmuxPane.pane` |
+
+Result: `HostView`
 
 ### Operation `AttachTerminal`
 
@@ -584,6 +594,16 @@ Since 1.10. A tab in a name or a directory is given as a space.
 | `index` | string | required | the pane's index in its window |
 | `dir` | string | optional | the pane's current directory |
 | `attached` | boolean | required | a tmux client shows the session now |
+
+### Type `HostView`
+
+Since 3.13.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `screen` | string | optional | the visible screen, one line per row, as `HostScreen` gives it; text, so optional |
+| `cursor_x` | integer | required | the cursor's column, from 0 |
+| `cursor_y` | integer | required | the cursor's row, from 0 at the top of the screen |
 
 ### Type `HostOperation`
 

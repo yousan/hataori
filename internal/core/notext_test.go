@@ -43,37 +43,48 @@ func TestNoTextTerminalIsRefused(t *testing.T) {
 	}
 }
 
-// A caller that may not read text is refused HostScreen of every pane,
-// with one log line and before any pane is read: a pane in which none of
-// hataori's processes runs may still show a session, as after `hataori
-// attach` ends. A pane that does not exist is refused too, so the
-// refusal tells nothing about the panes. The owner with the grant reads
-// the pane.
+// A caller that may not read text is refused HostScreen and HostView of
+// every pane, with one log line and before any pane is read: a pane in
+// which none of hataori's processes runs may still show a session, as
+// after `hataori attach` ends. A pane that does not exist is refused too,
+// so the refusal tells nothing about the panes. The owner with the grant
+// reads the pane, and HostView gives its cursor.
 func TestNoTextHostScreenIsRefused(t *testing.T) {
 	ctx := context.Background()
 	owner := control.Caller{Principal: "owner", May: control.OpHost}
 	quiet := owner
 	quiet.NoText = true
-	for _, pane := range []string{"%1", "%9"} {
-		f := newFixture(t, fakeOwner{})
-		h := &fakeHostTerms{}
-		f.core.HostTerms = h
-		f.log.Reset()
-		screen, err := f.core.As(quiet).HostScreen(ctx, pane)
-		if !errors.Is(err, ErrForbidden) || screen != "" {
-			t.Errorf("pane %s, without the grant: %q, %v", pane, screen, err)
-		}
-		if n := strings.Count(f.log.String(), "\n"); n != 1 || !strings.Contains(f.log.String(), "control call refused") {
-			t.Errorf("pane %s: the refusal logged %d lines: %s", pane, n, f.log.String())
-		}
-		if len(h.owned) != 0 {
-			t.Errorf("pane %s: a refused HostScreen read the host's terminals", pane)
-		}
+	reads := map[string]func(a control.API, pane string) (string, error){
+		"HostScreen": func(a control.API, pane string) (string, error) { return a.HostScreen(ctx, pane) },
+		"HostView": func(a control.API, pane string) (string, error) {
+			v, err := a.HostView(ctx, pane)
+			if err == nil && (v.CursorX != 2 || v.CursorY != 1) {
+				return "", errors.New("no cursor")
+			}
+			return v.Screen, err
+		},
 	}
-
-	f := newFixture(t, fakeOwner{})
-	f.core.HostTerms = &fakeHostTerms{}
-	if screen, err := f.core.As(owner).HostScreen(ctx, "%1"); err != nil || screen != "screen" {
-		t.Errorf("with the grant: %q, %v", screen, err)
+	for op, read := range reads {
+		for _, pane := range []string{"%1", "%9"} {
+			f := newFixture(t, fakeOwner{})
+			h := &fakeHostTerms{}
+			f.core.HostTerms = h
+			f.log.Reset()
+			screen, err := read(f.core.As(quiet), pane)
+			if !errors.Is(err, ErrForbidden) || screen != "" {
+				t.Errorf("%s of pane %s, without the grant: %q, %v", op, pane, screen, err)
+			}
+			if n := strings.Count(f.log.String(), "\n"); n != 1 || !strings.Contains(f.log.String(), "control call refused") {
+				t.Errorf("%s of pane %s: the refusal logged %d lines: %s", op, pane, n, f.log.String())
+			}
+			if len(h.owned) != 0 {
+				t.Errorf("%s of pane %s: a refused read read the host's terminals", op, pane)
+			}
+		}
+		f := newFixture(t, fakeOwner{})
+		f.core.HostTerms = &fakeHostTerms{}
+		if screen, err := read(f.core.As(owner), "%1"); err != nil || screen != "screen" {
+			t.Errorf("%s with the grant: %q, %v", op, screen, err)
+		}
 	}
 }

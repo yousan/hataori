@@ -243,7 +243,7 @@ func (c *Client) Stop(ctx context.Context, id control.ThreadID, turn int64) erro
 }
 
 // stopTurnSince is the version since which Stop takes the turn to stop.
-const stopTurnSince = "3.13"
+const stopTurnSince = "3.14"
 
 func (c *Client) Link(ctx context.Context, id control.ThreadID, l control.LinkRef) (control.LinkRef, error) {
 	var out control.LinkRef
@@ -287,6 +287,16 @@ func (c *Client) HostTerminals(ctx context.Context) ([]control.HostTerminal, err
 	err := c.call(ctx, "HostTerminals", hostTerminalsArgs{}, &out)
 	return out, err
 }
+
+// HostView needs a daemon of 3.13 or later.
+func (c *Client) HostView(ctx context.Context, pane string) (control.HostView, error) {
+	var out control.HostView
+	err := c.callSince(ctx, viewSince, "a host pane's cursor", "HostView", hostScreenArgs{Pane: pane}, &out)
+	return out, err
+}
+
+// viewSince is the first version whose daemon knows HostView.
+const viewSince = "3.13"
 
 func (c *Client) HostScreen(ctx context.Context, pane string) (string, error) {
 	var out string
