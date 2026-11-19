@@ -95,6 +95,22 @@ func (c *Core) nameScope(ctx context.Context, l control.LinkRef) (string, contro
 	return scope, control.ThreadID(id), err
 }
 
+// linkName is the name the chat service shows for the chat thread of the
+// first of links, "" when none is known.
+func (c *Core) linkName(ctx context.Context, links []control.LinkRef) (string, error) {
+	if len(links) == 0 || links[0].Thread == "" {
+		return "", nil
+	}
+	l := links[0]
+	var name string
+	err := c.Store.DB.QueryRowContext(ctx, `SELECT name FROM names WHERE client = ? AND channel = ? AND thread = ?`,
+		l.Client, l.Channel, l.Thread).Scan(&name)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("core: thread name: %w", err)
+	}
+	return name, nil
+}
+
 // Scopes lists the scopes the caller may see, with their names
 // (control.API).
 func (a *api) Scopes(ctx context.Context) ([]control.ScopeInfo, error) {

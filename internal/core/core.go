@@ -547,6 +547,9 @@ func (a *api) summary(ctx context.Context, t *control.ThreadInfo) (int64, error)
 		if t.Last, err = a.c.lastLine(ctx, t.ID); err != nil {
 			return 0, err
 		}
+		if t.Name, err = a.c.linkName(ctx, t.Links); err != nil {
+			return 0, err
+		}
 	}
 	return sid, nil
 }

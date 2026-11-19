@@ -571,7 +571,7 @@ The unit is the thread, not the terminal, so the page does not depend on how hat
 **Layout.** One page in five parts.
 
 - **Tree, on the left.** A filter box on top, matching title, number and terminal. Under it a *needs attention* block: the threads waiting on a question or failed, each with the question or the failure reason. Then the tree itself, which reads like the chat it mirrors (#405), driven from the keyboard as a tree view (up, down, left folds or goes up, right unfolds or goes in, Enter opens):
-  1. *One node per scope* the person may see (`Scopes`), also one with no thread, named as the chat service names its channel (`#name` on Discord, through the control API), by the config's name when it has one, else by its key. It shows the number of its threads and one state dot per thread, and folds; the folds are kept in the browser. Under it its threads, the most recently active first. A thread's row shows the agent's mark coloured by state, its number and title, and its age; a second line shows the model, the context use in percent and the last line of output, with a question or a failure highlighted.
+  1. *One node per scope* the person may see (`Scopes`), also one with no thread, named as the chat service names its channel (`#name` on Discord, through the control API), by the config's name when it has one, else by its key. It shows the number of its threads and one state dot per thread, and folds; the folds are kept in the browser. Under it its threads, the most recently active first. A thread's row shows the agent's mark coloured by state, its number and title, and its age. Its title is the chat thread's own name, following a rename, else the first line of its first prompt; an issue's or a pull request's address in it is shown short, as `repo#N`, with the whole title in the tooltip and the details panel (#406); a second line shows the model, the context use in percent and the last line of output, with a question or a failure highlighted.
   2. *Host terminals*, one node after the scopes, folded at first. In it, *tmux on the host*, sessions that hataori does not own: session, then window. A row shows the window, its process, its terminal device and its last activity. A pane whose foreground process is a shell and whose window has shown no activity for more than a day is hidden by default, by the same switch that hides asleep threads (#335), and counted with them.
      Then *other terminals on the host* that hataori does not own: terminal device and process.
 
@@ -1606,6 +1606,7 @@ type Caller struct {
 type ThreadInfo struct {
 	// ...
 	Title      string // the first line of the first prompt; text, so optional since protocol 2.0
+	Name       string // the chat thread's own name, of the first link (SetName), following a rename; text; since protocol 3.6
 	Agent      string // the agent's registered name
 	Model      string // as the agent reports it; as asked for until then
 	Effort     string // the same
@@ -1768,6 +1769,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `SignInLink`'s `way` (section 7.2, #359) | minor: new optional argument; 3.2 |
 | `ThreadEvents` (#336) | minor: new operation; 3.3 |
 | `SetName`, with `Ops` gaining `OpName`, `Scopes` and `ScopeInfo`, and the `named` event (#405) | minor: new operations and event kind; 3.5 |
+| `ThreadInfo.Name`, the chat thread's own name (#406) | minor: new optional field; 3.6 |
 | `OperateHost`, with `Ops` gaining `OpHostInput` (section 7.2) | minor: new operation, whose connection becomes a stream both ways |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 
@@ -1815,6 +1817,15 @@ type Factory func(config *os.Root, settings []byte) (Driver, error)
 // connect, and records the names with SetName (#405).
 type Namer interface {
 	Name(ctx context.Context, conv Conversation) (string, error)
+}
+
+// Renamer is implemented by a Sink that wants the names of conversations
+// as the service shows them: Run calls Renamed when it learns a thread's
+// name, and when the name changes. The chat front end records them with
+// SetName, and the dashboard shows a thread by its chat thread's name
+// (#406).
+type Renamer interface {
+	Renamed(conv Conversation, name string)
 }
 
 // Sink is implemented by the chat front end, not by the core.
