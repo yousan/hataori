@@ -2,7 +2,6 @@ package codex
 
 import (
 	"encoding/json"
-	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -10,7 +9,7 @@ import (
 	"github.com/yousan/hataori/internal/agent"
 )
 
-// Issues #320 and #321 turn some skipped notifications and items into events.
+// skippedMethods lists notifications the codec reads without acting on them.
 var skippedMethods = map[string]bool{
 	"item/agentMessage/delta":           true,
 	"item/reasoning/summaryTextDelta":   true,
@@ -27,10 +26,9 @@ var skippedMethods = map[string]bool{
 	"deprecationNotice":                 true,
 	"thread/goal/cleared":               true,
 	"thread/settings/updated":           true,
-	"serverRequest/resolved":            true,
 }
 
-// Issues #320 and #321 turn some skipped items into events.
+// skippedItems lists items the codec reads without acting on them.
 var skippedItems = map[string]bool{"reasoning": true}
 
 // DefaultInputTimeout is the time allowed for an input to be reported.
@@ -68,6 +66,7 @@ type codec struct {
 	turnID   string          // current turn id
 	sent     []*pendingInput // written inputs awaiting their report
 	queue    []agent.Input   // inputs waiting to be written
+	requestState
 	toolState
 	usageState
 	held *string // latest agent text that may be final
@@ -169,11 +168,11 @@ func (c *codec) Input(in agent.Input) (agent.Actions, error) {
 	return a, nil
 }
 
-// Answer reports that answers are not supported yet.
-func (c *codec) Answer(agent.Answer) (agent.Actions, error) {
+// Answer answers an open request.
+func (c *codec) Answer(answer agent.Answer) (agent.Actions, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return agent.Actions{}, errors.New("not supported yet")
+	return c.answer(answer)
 }
 
 // Interrupt returns no actions until interrupts are supported.
@@ -225,14 +224,31 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 		c.response(&a, m, line)
 		return a
 	}
-	if m.ID != nil {
-		c.unknown(&a, line)
+	if len(m.ID) != 0 {
+		c.serverRequest(&a, m, line)
 		return a
 	}
 	var p params
 	if json.Unmarshal(m.Params, &p) != nil {
 		c.unknown(&a, line)
 		return a
+	}
+	if m.Method == "serverRequest/resolved" {
+		c.resolved(&a, m.Params)
+		return a
+	}
+	if m.Method == "item/started" {
+		c.rememberItem(p)
+	}
+	if m.Method == "item/completed" {
+		c.forgetItem(p.Item.ID)
+	}
+	if m.Method == "turn/completed" {
+		c.forgetThread(p.ThreadID)
+		c.withdrawThread(&a, p.ThreadID)
+	}
+	if m.Method == "turn/started" && (p.ThreadID == "" || c.session == "" || p.ThreadID == c.session) {
+		c.withdrawAsync(&a)
 	}
 	if p.ThreadID != "" && c.session != "" && p.ThreadID != c.session {
 		if _, ok := c.subagents[p.ThreadID]; ok {
@@ -272,11 +288,15 @@ func (c *codec) unknown(a *agent.Actions, line []byte) {
 
 // response matches a response and updates session or turn state.
 func (c *codec) response(a *agent.Actions, m message, line []byte) {
-	if m.ID == nil {
+	if len(m.ID) == 0 {
 		c.unknown(a, line)
 		return
 	}
-	id := *m.ID
+	var id int
+	if json.Unmarshal(m.ID, &id) != nil {
+		c.unknown(a, line)
+		return
+	}
 	if id >= c.next {
 		c.next = id + 1
 	}
@@ -296,6 +316,8 @@ func (c *codec) response(a *agent.Actions, m message, line []byte) {
 		case method == "initialize" || method == "thread/start":
 			c.closed = true
 			c.emit(a, agent.Event{Kind: agent.SessionEnded, Reason: agent.Reason(msg)})
+		case method == "turn/steer":
+			c.steerFailed(a, id)
 		case method == "turn/start":
 			for i, s := range c.sent {
 				if s.request == id {
@@ -311,6 +333,7 @@ func (c *codec) response(a *agent.Actions, m message, line []byte) {
 		}
 		return
 	}
+	delete(c.steers, id)
 	if c.limitResponse(a, method, m.Result, line) {
 		return
 	}
@@ -404,6 +427,10 @@ func (c *codec) item(a *agent.Actions, p params, method string, line []byte) {
 		if c.held != nil {
 			c.emit(a, agent.Event{Kind: agent.Text, Text: *c.held})
 			c.held = nil
+		}
+		if len(p.Item.Questions) > 0 {
+			c.asyncQuestion(a, p)
+			return
 		}
 		if p.Item.Phase == "commentary" {
 			c.emit(a, agent.Event{Kind: agent.Text, Text: p.Item.Text})

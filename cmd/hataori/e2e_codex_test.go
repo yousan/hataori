@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -125,7 +126,12 @@ func codexReplay(args []string) int {
 		}
 		return lines
 	}
-	lines := read(filepath.Join(capture, "start/wire.jsonl"))
+	// The scenario selects a capture; the optional wire file records client lines.
+	scenario := os.Getenv("HATAORI_TEST_CODEX_SCENARIO")
+	if scenario == "" {
+		scenario = "start"
+	}
+	lines := read(filepath.Join(capture, scenario, "wire.jsonl"))
 	usage := read(filepath.Join(capture, "usage/wire.jsonl"))
 	var rate map[string]any
 	for i, l := range usage {
@@ -144,6 +150,14 @@ func codexReplay(args []string) int {
 	scanner.Buffer(make([]byte, 4096), 4<<20)
 	out := json.NewEncoder(os.Stdout)
 	for scanner.Scan() {
+		if wire := os.Getenv("HATAORI_TEST_CODEX_WIRE"); wire != "" {
+			f, err := os.OpenFile(wire, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+			if err != nil {
+				return 2
+			}
+			fmt.Fprintln(f, scanner.Text())
+			f.Close()
+		}
 		var m map[string]any
 		if json.Unmarshal(scanner.Bytes(), &m) != nil {
 			continue
@@ -177,12 +191,30 @@ func codexReplay(args []string) int {
 			out.Encode(copy)
 			continue
 		}
-		if pos < len(lines) && lines[pos].Dir == "send" && lines[pos].Msg["method"] == method {
+		if method != "" {
+			for pos < len(lines) && (lines[pos].Dir != "send" || lines[pos].Msg["method"] != method) {
+				pos++
+			}
+		} else if pos < len(lines) && lines[pos].Dir == "send" && lines[pos].Msg["method"] == nil {
+			// A server request must receive the captured id and result.
+			expected := lines[pos].Msg
+			want, _ := json.Marshal([]any{expected["id"], expected["result"]})
+			got, _ := json.Marshal([]any{m["id"], m["result"]})
+			if !bytes.Equal(want, got) {
+				fmt.Fprintf(os.Stderr, "codex replay: response %s, want %s\n", got, want)
+				return 3
+			}
+		}
+		if method == "" && (pos >= len(lines) || lines[pos].Dir != "send" || lines[pos].Msg["method"] != nil) {
+			fmt.Fprintln(os.Stderr, "codex replay: unexpected response to a server request")
+			return 3
+		}
+		if pos < len(lines) && lines[pos].Dir == "send" && (lines[pos].Msg["method"] == method || (method == "" && lines[pos].Msg["method"] == nil)) {
 			requestPos := pos
 			pos++
 			for pos < len(lines) && lines[pos].Dir == "recv" {
 				v := lines[pos].Msg
-				if _, ok := v["id"]; ok {
+				if _, ok := v["id"]; ok && v["method"] == nil {
 					v["id"] = m["id"]
 				}
 				out.Encode(v)
@@ -373,4 +405,128 @@ func TestCodexLoginRelay(t *testing.T) {
 	r.driver.Inject(a, fakesurface.Webhook(e2eHook), "try again")
 	r.posted(t, a, "I’ll run the requested shell command, then answer the arithmetic question.")
 	checkLoginSecrets(t, r, logged, deviceLink, deviceCode)
+}
+
+// TestCodexQuestionsAndApprovalsInTheThread checks captured approvals are automatically accepted and hidden, and questions shown and answered by the next message on the fake surface.
+func TestCodexQuestionsAndApprovalsInTheThread(t *testing.T) {
+	for _, tc := range []struct{ scenario, first, answer, last string }{
+		{"approval_accept", "Ran `touch approved.txt` successfully.", "continue", "Created `patch.txt` containing `hi`."},
+		{"question_async", "Which colour do you like?\n\n1. Blue\n2. Green\n3. Red\n4. Purple", "blue", "You like blue."},
+		{"question_after_turn", "Which colour do you like?\n\n1. Blue\n2. Green\n3. Red\n4. Purple", "blue", "Blue."},
+		{"question_plan", "What would you like help with?\n- Plan a change (Recommended): Explore the project and prepare a concrete implementation plan.\n- Explain something: Answer a question or clarify a topic.\n- Review work: Inspect existing code, writing, or a design.\n\n1. Plan a change (Recommended)\n2. Explain something\n3. Review work", "Plan a change (Recommended)", ""},
+	} {
+		t.Run(tc.scenario, func(t *testing.T) {
+			temp := t.TempDir()
+			home := filepath.Join(temp, "home")
+			if err := os.Mkdir(home, 0700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("CODEX_HOME", home)
+			if err := os.WriteFile(filepath.Join(home, codexLoggedFile), nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			capture, err := filepath.Abs("../../internal/agent/codex/testdata/0.163.0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			wire := filepath.Join(temp, "wire")
+			t.Setenv("HATAORI_TEST_CODEX_CAPTURE", capture)
+			t.Setenv("HATAORI_TEST_CODEX_RECORD", filepath.Join(temp, "env"))
+			t.Setenv("HATAORI_TEST_CODEX_SCENARIO", tc.scenario)
+			t.Setenv("HATAORI_TEST_CODEX_WIRE", wire)
+			r := newChatRoot(t, func(cfg map[string]any) {
+				cfg["adapters"] = map[string]any{"codex": map[string]any{"command": os.Args[0], "pass_env": []string{"HATAORI_TEST_CODEX_CAPTURE", "HATAORI_TEST_CODEX_RECORD", "HATAORI_TEST_CODEX_SCENARIO", "HATAORI_TEST_CODEX_WIRE"}}}
+			})
+			r.deadline = time.Now().Add(30 * time.Second)
+			startDaemon(t, r.root)
+			r.connected(t)
+			r.driver.Inject(c1, fakesurface.Webhook(e2eHook), "!go repo:"+bareRepo(t)+" hello")
+			th := r.thread(t, 0)
+			r.posted(t, th, tc.first)
+			if tc.scenario == "question_after_turn" {
+				r.posted(t, th, "I haven’t received your answer yet. Which colour do you like?")
+			}
+			endsBefore := len(r.events(t, "turn_ended", th))
+			r.driver.Inject(th, fakesurface.Webhook(e2eHook), tc.answer)
+			if tc.last != "" {
+				r.posted(t, th, tc.last)
+			} else {
+				eventually(t, "turn end", r.within(15*time.Second), func() bool { return len(r.events(t, "turn_ended", th)) > endsBefore })
+			}
+			b, err := os.ReadFile(wire)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var sent []map[string]any
+			for _, line := range bytes.Split(bytes.TrimSpace(b), []byte("\n")) {
+				var m map[string]any
+				if err := json.Unmarshal(line, &m); err != nil {
+					t.Fatal(err)
+				}
+				sent = append(sent, m)
+			}
+			f, err := os.Open(filepath.Join(capture, tc.scenario, "wire.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			var captured []codexWire
+			scanner := bufio.NewScanner(f)
+			scanner.Buffer(make([]byte, 4096), 4<<20)
+			for scanner.Scan() {
+				var line codexWire
+				if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
+					t.Fatal(err)
+				}
+				captured = append(captured, line)
+			}
+			if err := scanner.Err(); err != nil {
+				t.Fatal(err)
+			}
+			selectMethod := func(messages []map[string]any, method string) []map[string]any {
+				var found []map[string]any
+				for _, m := range messages {
+					if method == "" {
+						if _, hasMethod := m["method"]; !hasMethod {
+							found = append(found, m)
+						}
+					} else if m["method"] == method {
+						found = append(found, m)
+					}
+				}
+				return found
+			}
+			var capturedSent []map[string]any
+			for _, l := range captured {
+				if l.Dir == "send" {
+					capturedSent = append(capturedSent, l.Msg)
+				}
+			}
+			switch tc.scenario {
+			case "approval_accept", "question_plan":
+				got, want := selectMethod(sent, ""), selectMethod(capturedSent, "")
+				if !reflect.DeepEqual(got, want) || (tc.scenario == "approval_accept" && len(got) != 2) || (tc.scenario == "question_plan" && len(got) != 1) {
+					t.Fatalf("responses got %v want %v", got, want)
+				}
+				if tc.scenario == "approval_accept" && len(r.events(t, "request", th)) != 0 {
+					t.Fatal("approval request appeared in thread")
+				}
+			case "question_async":
+				got, want := selectMethod(sent, "turn/steer"), selectMethod(capturedSent, "turn/steer")
+				if len(got) != 1 || len(want) != 1 {
+					t.Fatalf("steers got %v want %v", got, want)
+				}
+				gp, wp := got[0]["params"].(map[string]any), want[0]["params"].(map[string]any)
+				input := []any{map[string]any{"type": "text", "text": "blue"}}
+				if !reflect.DeepEqual(gp["input"], input) || gp["expectedTurnId"] != wp["expectedTurnId"] {
+					t.Fatalf("steer params %v", gp)
+				}
+			case "question_after_turn":
+				starts := selectMethod(sent, "turn/start")
+				if len(starts) != 2 || !reflect.DeepEqual(starts[1]["params"].(map[string]any)["input"], []any{map[string]any{"type": "text", "text": "blue"}}) {
+					t.Fatalf("turn starts %v", starts)
+				}
+			}
+		})
+	}
 }
