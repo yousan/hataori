@@ -421,7 +421,7 @@ var migrations = []Migration{
 		`CREATE TABLE chat_senders (
 			client  TEXT NOT NULL, -- the chat front end's name
 			key     TEXT NOT NULL, -- the Start, Send or Answer key
-			lamp    TEXT NOT NULL, -- 'message': the message below; 'prompt': the thread's prompt; 'none'
+			lamp    TEXT NOT NULL, -- 'message': the message below; 'prompt': the thread's prompt; 'answer': a press, pinging the turn's caller
 			channel TEXT NOT NULL DEFAULT '',
 			thread  TEXT NOT NULL DEFAULT '',
 			message TEXT NOT NULL DEFAULT '',

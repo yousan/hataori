@@ -178,8 +178,9 @@ func (f *FrontEnd) press(s surface.Selection, rest string) {
 	}
 	conv := s.Ref.Conv
 	// The turn the answer starts lamps the question's turn's message, and
-	// pings the presser (lamps.go); the core's key of an answer is this.
-	if err := f.rememberSender(ctx, "answer:"+string(request), sender{lamp: "none", ping: pingOf(s.Author)}); err != nil {
+	// pings whoever's answer the core accepts (lamps.go); the core's key of
+	// an answer is this. It names no presser: one refused may come first.
+	if err := f.rememberSender(ctx, "answer:"+string(request), sender{lamp: "answer"}); err != nil {
 		ignored("the press could not be recorded", err)
 		return
 	}

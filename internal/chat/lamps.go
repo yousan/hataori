@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/surface"
@@ -43,7 +44,6 @@ type lit struct {
 	conv surface.Conversation
 	on   *surface.MessageRef
 	row  *RowKey
-	ping string
 }
 
 func (l *lit) same(o *lit) bool {
@@ -60,11 +60,12 @@ func (l *lit) same(o *lit) bool {
 
 // lampState is a thread's lamps as its events tell them.
 type lampState struct {
-	last   *lit           // the message of the last turn a caller started
-	shown  surface.Status // what last shows
-	turn   *lit           // the open turn's message; nil for none
-	ping   string         // who the open turn pings at its end
-	byself bool           // the agent started the open turn
+	last     *lit           // the message of the last turn a caller started
+	lastPing string         // who that turn pinged: its caller
+	shown    surface.Status // what last shows
+	turn     *lit           // the open turn's message; nil for none
+	ping     string         // who the open turn pings at its end
+	byself   bool           // the agent started the open turn
 }
 
 // rememberSender records who gave input under key, before it is given.
@@ -100,7 +101,7 @@ func (f *FrontEnd) lamps(ctx context.Context, r *reader, e control.Event, convs 
 		return nil, nil
 	}
 	var d struct {
-		By, Key, Outcome string
+		By, Key, Outcome, From string
 	}
 	json.Unmarshal(e.Data, &d)
 	st := r.lamp[e.Thread]
@@ -123,13 +124,30 @@ func (f *FrontEnd) lamps(ctx context.Context, r *reader, e control.Event, convs 
 		var rows []Row
 		switch d.By {
 		case "caller":
-			l, ping, err := f.litOf(ctx, r, e.Thread, d.Key, convs)
+			s, ok, err := f.senderOf(ctx, d.Key)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				return nil, nil // input this front end did not give: no lamp of its own, none of ours
+			}
+			ping := s.ping
+			if s.lamp == "answer" {
+				// A press: whoever's answer the core accepted, the turn's
+				// own from; a press is always a person's.
+				ping = ""
+				if client, id, ok := strings.Cut(d.From, ":"); ok && client == f.Name {
+					ping = id
+				}
+			}
+			l, err := f.litOf(ctx, r, e.Thread, s, convs)
 			if err != nil {
 				return nil, err
 			}
 			if l == nil {
 				l = st.last // an answer by a button: the question's turn's message
 			}
+			st.lastPing = ping
 			if l == nil {
 				st.ping = ping
 				return nil, nil
@@ -143,7 +161,7 @@ func (f *FrontEnd) lamps(ctx context.Context, r *reader, e control.Event, convs 
 			if st.last == nil {
 				return nil, nil
 			}
-			st.turn, st.ping, st.byself = st.last, st.last.ping, true
+			st.turn, st.ping, st.byself = st.last, st.lastPing, true
 		default:
 			return nil, nil // typed at the terminal
 		}
@@ -171,29 +189,22 @@ func (f *FrontEnd) lamps(ctx context.Context, r *reader, e control.Event, convs 
 	return rows, nil
 }
 
-// litOf returns the message the turn of key lamps and who it pings, from
-// what the front end recorded when it gave that input; nil when it lamps
-// no message of its own.
-func (f *FrontEnd) litOf(ctx context.Context, r *reader, thread control.ThreadID, key string, convs []surface.Conversation) (*lit, string, error) {
-	if key == "" {
-		return nil, "", nil
-	}
-	s, ok, err := f.senderOf(ctx, key)
-	if err != nil || !ok {
-		return nil, "", err
-	}
+// litOf returns the message a turn of input s lamps, from what the front
+// end recorded when it gave that input; nil when it lamps no message of its
+// own, as an answer by a button.
+func (f *FrontEnd) litOf(ctx context.Context, r *reader, thread control.ThreadID, s sender, convs []surface.Conversation) (*lit, error) {
 	switch s.lamp {
 	case "message":
 		on := s.msg
-		return &lit{conv: on.Conv, on: &on, ping: s.ping}, s.ping, nil
+		return &lit{conv: on.Conv, on: &on}, nil
 	case "prompt":
 		first, err := r.firstPos(ctx, thread)
 		if err != nil {
-			return nil, "", err
+			return nil, err
 		}
-		return &lit{conv: convs[0], row: &RowKey{Event: first, Part: 0}, ping: s.ping}, s.ping, nil
+		return &lit{conv: convs[0], row: &RowKey{Event: first, Part: 0}}, nil
 	}
-	return nil, s.ping, nil
+	return nil, nil
 }
 
 // pingRow is the one ping at a turn's end: a short line that names how it
