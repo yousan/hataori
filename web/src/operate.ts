@@ -147,6 +147,12 @@ export class Operation {
     this.ws = ws;
     ws.onopen = () => ws.send(JSON.stringify(first));
     ws.onmessage = (m) => {
+      if (this.done) {
+        // Ended on the page already, waiting for the server: its end
+        // closes the connection.
+        if (String(m.data).includes('"ended"')) ws.close();
+        return;
+      }
       let a: { started?: { idle?: number }; ended?: string; refused?: string; error?: string };
       try {
         a = JSON.parse(String(m.data));
@@ -172,7 +178,7 @@ export class Operation {
   send(keys: HostKey[]): void {
     if (this.stopping || this.state.phase !== "on" || keys.length === 0 || this.ws?.readyState !== WebSocket.OPEN) return;
     this.ws.send(JSON.stringify({ keys }));
-    this.set({ lastKey: Date.now(), error: undefined });
+    this.set({ lastKey: Date.now() }); // a refused batch's error stays until the end
   }
 
   // stop is the switch turned off: the server ends the operation after the
@@ -181,10 +187,16 @@ export class Operation {
     if (this.done || this.stopping) return;
     this.stopping = true;
     if (this.ws?.readyState === WebSocket.OPEN && this.state.phase === "on") {
-      this.ws.send(JSON.stringify({ end: true }));
-      // The server answers at once; a page that hears nothing is
-      // read-only again within a second all the same.
-      this.stopTimer = setTimeout(() => this.end("ended"), 900);
+      const ws = this.ws;
+      ws.send(JSON.stringify({ end: true }));
+      // The server sends the batches before the end, then answers. A page
+      // that hears nothing is read-only again within a second all the
+      // same, but keeps the connection open a while, since closing it
+      // would cancel what the server has not sent yet.
+      this.stopTimer = setTimeout(() => {
+        this.set({ phase: "ended", reason: "ended" });
+        this.stopTimer = setTimeout(() => ws.close(), 15000);
+      }, 900);
       return;
     }
     this.end("ended");
