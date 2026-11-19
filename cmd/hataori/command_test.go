@@ -64,6 +64,12 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 2 && os.Args[1] == "daemon" {
 		os.Exit(run([]string{"run", "--root", os.Args[2]}, os.Stdout, os.Stderr))
 	}
+	// The status line command of TestStatusLineCommandRunsHere: a command
+	// not run above would run the whole suite here, sessions and all.
+	if os.Getenv(statusLineChildEnv) == "1" {
+		fmt.Fprintln(os.Stdout, "the test binary ran its tests instead of the command:", os.Args[1:])
+		os.Exit(2)
+	}
 	os.Exit(m.Run())
 }
 

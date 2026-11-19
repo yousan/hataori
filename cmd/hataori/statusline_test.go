@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -20,9 +19,6 @@ import (
 // hataori binary is this test binary. It must print the session's own
 // status line and exit, not run the test suite.
 func TestStatusLineCommandRunsHere(t *testing.T) {
-	if os.Getenv("HATAORI_STATUSLINE_CHILD") == "1" {
-		t.Skip("run by the status line command of this test: the suite ran where it must not")
-	}
 	dir, state := t.TempDir(), t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
@@ -52,17 +48,16 @@ func TestStatusLineCommandRunsHere(t *testing.T) {
 	cmd := exec.CommandContext(ctx, "sh", "-c", settings.StatusLine.Command)
 	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader("{}")
-	cmd.Env = append(os.Environ(), "HATAORI_STATUSLINE_CHILD=1")
-	// A suite run by mistake starts processes of its own: on the deadline,
-	// all of them go.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-	cmd.WaitDelay = time.Second
+	// TestMain exits instead of running the suite under this variable.
+	cmd.Env = append(os.Environ(), statusLineChildEnv+"=1")
 	out, err := cmd.Output()
 	if err != nil || string(out) != "the session line\n" {
 		t.Fatalf("%s printed %q (%v), want the session's own line", settings.StatusLine.Command, truncate(string(out), 300), err)
 	}
 }
+
+// statusLineChildEnv marks the status line command this test runs.
+const statusLineChildEnv = "HATAORI_STATUSLINE_CHILD"
 
 func truncate(s string, n int) string {
 	if len(s) > n {
