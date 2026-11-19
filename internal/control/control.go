@@ -238,9 +238,13 @@ type Caller struct {
 	Scopes    []string  // the scopes it may see and act in; a thread of another is answered as none (ErrNotFound)
 	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName, OpAsk, OpHostInput, OpTakeIn
 	// NoText leaves text written by a person or an agent out of what the
-	// caller reads: ThreadInfo.Title and ThreadInfo.Last,
-	// ThreadDetail.Recent, the text of its requests, and the text fields of
-	// events (Field.Text).
+	// caller reads: ThreadInfo.Title, ThreadInfo.Last and ThreadInfo.Name,
+	// ThreadDetail.Recent, the text of its requests and a question's
+	// choices, a scope's name read from chat (ScopeInfo.Name, when the
+	// config gives none), and the text fields of events (Field.Text). It
+	// also refuses the reads that show a terminal, whose screen holds such
+	// text: Terminal, and HostScreen and HostView of every pane, before any
+	// pane is read.
 	NoText bool
 	// RefuseBusy makes every Send of the caller one with Refuse, whatever
 	// Busy it gives: input never goes into a running turn and never
