@@ -1,6 +1,6 @@
-import type { ThreadInfo } from "./api";
+import type { ScopeInfo, ThreadInfo } from "./api";
 import { type Key, lang, t } from "./catalog";
-import { age, displayTitle, fullTitle, stateName } from "./format";
+import { age, displayTitle, fullTitle, scopeLabel, stateName } from "./format";
 import { type Show, shows } from "./show";
 import type { Workspace } from "./workspaces";
 
@@ -16,6 +16,7 @@ interface Props {
   selected: number | null;
   onOpen: (n: number) => void;
   show: Show; // the active threads or all of them
+  scopes: ScopeInfo[] | null; // their names, for the groups' headers; null until read
 }
 
 const columns: Key[] = [
@@ -100,12 +101,12 @@ function Row(props: { x: ThreadInfo; w: Workspace | undefined; now: number; sele
 // AllThreads is the "All threads" tab: one row per thread shown, grouped
 // by scope. Every cell is a value from the control API, or a dash where it
 // leaves the value out; nothing is guessed. A row opens its thread's tab.
-export function AllThreads({ threads, workspaces, now, selected, onOpen, show }: Props) {
-  const scopes = new Map<string, ThreadInfo[]>();
+export function AllThreads({ threads, workspaces, now, selected, onOpen, show, scopes }: Props) {
+  const groups = new Map<string, ThreadInfo[]>();
   for (const x of (threads ?? []).filter((x) => shows(show, x))) {
-    const list = scopes.get(x.scope) ?? [];
+    const list = groups.get(x.scope) ?? [];
     list.push(x);
-    scopes.set(x.scope, list);
+    groups.set(x.scope, list);
   }
   return (
     <table className="all-threads" aria-label={t("table.label")}>
@@ -118,11 +119,11 @@ export function AllThreads({ threads, workspaces, now, selected, onOpen, show }:
           ))}
         </tr>
       </thead>
-      {[...scopes].map(([scope, list]) => (
+      {[...groups].map(([scope, list]) => (
         <tbody key={scope} data-scope={scope}>
           <tr className="scope-row">
             <th colSpan={columns.length} scope="rowgroup">
-              {scope}
+              {scopeLabel(scope, scopes)}
             </th>
           </tr>
           {list.map((x) => (
