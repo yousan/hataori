@@ -18,35 +18,6 @@ import (
 // without commands.
 const attachCommand = "attach"
 
-// Commands returns the commands the front end handles; it makes it a
-// surface.Commander.
-func (f *FrontEnd) Commands() []surface.CommandSpec {
-	return []surface.CommandSpec{{
-		Name:        attachCommand,
-		Description: "Show a hataori thread here too",
-		Args:        []surface.ArgSpec{{Name: "number", Description: "The thread's number", Required: true}},
-		Private:     true,
-	}}
-}
-
-var _ surface.Commander = (*FrontEnd)(nil)
-
-// Command handles a command.
-func (f *FrontEnd) Command(c surface.Command) {
-	if c.Name != attachCommand || c.Author.Kind == surface.Bot {
-		return
-	}
-	arg := ""
-	for _, a := range c.Args {
-		if a.Name == "number" {
-			arg = a.Value
-		}
-	}
-	if err := f.attach(f.context(), c.Conv, c.Author, arg, c.ID, c.Reply); err != nil {
-		f.Log.Error("attach failed", "channel", c.Conv.Channel, "command", c.ID, "err", err)
-	}
-}
-
 // attachArg returns the number of a trigger line that asks to attach.
 func attachArg(o order) (string, bool) {
 	if o.Repo != "" || o.Model != "" || o.Effort != "" {

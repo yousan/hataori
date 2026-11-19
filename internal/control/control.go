@@ -196,6 +196,13 @@ type Caller struct {
 	// and a Send that answers an open question is not marked: the agent's
 	// question tool takes the answer as it is given.
 	Mark string
+	// ReadAsPerson checks the caller's reads like its input: the person From
+	// resolves to must be allowed in a scope to read its threads and events.
+	// A read in a scope it is not allowed in is refused and logged, as
+	// Start is; a list of every scope leaves those scopes out. A chat front
+	// end's caller for a person's command has it, so that a guest's status
+	// command shows nothing.
+	ReadAsPerson bool
 }
 
 // Principal is the name of a person of the instance's config. The core

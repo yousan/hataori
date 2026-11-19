@@ -82,7 +82,7 @@ func TestAttachAThreadOnASecondSurface(t *testing.T) {
 	r.connected(t)
 	eventually(t, "the second driver to connect", 10*time.Second, two.Connected)
 	time.Sleep(20 * time.Millisecond)
-	if cs := two.Commands(); len(cs) != 1 || cs[0].Name != "attach" {
+	if cs := two.Commands(); len(cs) != 4 || cs[3].Name != "attach" {
 		t.Fatalf("the second surface's commands: %+v", cs)
 	}
 	repo := bareRepo(t)
