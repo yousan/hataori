@@ -36,6 +36,18 @@ func (l *listedTerms) Screen(_ context.Context, pane string, _ []int) (string, b
 	return "", false, nil
 }
 
+func (l *listedTerms) Check(_ context.Context, pane string, _ []int, _ bool) (*control.TmuxPane, bool, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, h := range l.list {
+		if h.Tmux != nil && h.Tmux.Pane == pane {
+			p := *h.Tmux
+			return &p, false, nil
+		}
+	}
+	return nil, false, nil
+}
+
 // change changes the terminal on device.
 func (l *listedTerms) change(device string, f func(h *control.HostTerminal)) {
 	l.mu.Lock()

@@ -293,7 +293,7 @@ The terminal output of the thread's current session, then new output as the sess
 
 Positions count the bytes the session host wrote since its run started; the host keeps the end of them. The first chunk continues after `after` of `run`. When `after` is 0, `run` is another run, or the bytes after `after` are no longer kept, the first chunk is the end of the kept log with `reset` set, and the reader redraws. Every later chunk continues the one before it, or, when the stream had to start again, has `reset` set.
 
-A session whose host has ended (an asleep session, for one) sends the end of its last run's log with `reset` set and an empty `run`, then nothing until it runs again; then the new run's output, starting with a chunk marked `reset`. When the thread gets a new session, because the agent could not resume the old one, the stream goes on with the new session, from a chunk marked `reset`. A session that runs on pipes has no terminal and is `not_found`. A reader that falls far behind is cut off by the session host; the daemon then asks again from the last position, so the reader gets either a continuation or a `reset`.
+A session whose host has ended (an asleep session, for one) sends the end of its last run's log with `reset` set and an empty `run`, then nothing until it runs again; then the new run's output, starting with a chunk marked `reset`. When the thread gets a new session, because the agent could not resume the old one, the stream goes on with the new session, from a chunk marked `reset`. A session that runs on pipes has no terminal and is `not_found`. A caller that may not read text is answered `forbidden`, since the terminal shows the prompts and the agent's output. A reader that falls far behind is cut off by the session host; the daemon then asks again from the last position, so the reader gets either a continuation or a `reset`.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -316,7 +316,7 @@ Result: [`HostTerminal`]
 
 ### Operation `HostScreen`
 
-Since 1.10. The visible screen of one tmux pane, as text, one line per row. Allowed as `HostTerminals` is. hataori runs only `tmux list-panes` and `tmux capture-pane`, which change nothing; a hook the user set in their own tmux for these commands (`after-list-panes`, `after-capture-pane`) still runs, as it does when the user runs them. A pane that `HostTerminals` would not list is answered `not_found`.
+Since 1.10. The visible screen of one tmux pane, as text, one line per row. Allowed as `HostTerminals` is. hataori runs only `tmux list-panes` and `tmux capture-pane`, which change nothing; a hook the user set in their own tmux for these commands (`after-list-panes`, `after-capture-pane`) still runs, as it does when the user runs them. A pane that `HostTerminals` would not list is answered `not_found`. For a caller that may not read text, a pane in which one of hataori's own processes runs, such as `hataori attach`, shows a session and is answered `forbidden`, as is a pane for which the daemon cannot tell; for such a caller it also reads the process table (`ps`) before and after the screen.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
