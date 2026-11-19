@@ -265,6 +265,9 @@ func supervisorEnds(ctx context.Context, db *sql.DB, w control.ThreadID, reset u
 		if err := rows.Scan(&pos, &kind, &session, &turn, &by); err != nil {
 			return nil, fmt.Errorf("supervisor: loop guard: %w", err)
 		}
+		if !session.Valid || !turn.Valid {
+			continue // the schema has both; a row without them matches nothing
+		}
 		ref := turnRef{session.Int64, turn.Int64}
 		switch {
 		case kind == "turn_started":
