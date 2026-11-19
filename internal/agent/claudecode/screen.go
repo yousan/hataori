@@ -2,6 +2,7 @@ package claudecode
 
 import (
 	"bytes"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +22,13 @@ import (
 // text, and confirms once the cursor is on it. Any other screen gets no
 // key, and the start fails on its timeout.
 //
+// When the folder holds files that trusting it loads, such as a project
+// settings file, the dialog names them on one more line (2.1.328, #423).
+// A confined session gets the dialog answered whatever it names: its
+// launch ignores those files. An ordinary session gets it answered only
+// when Spec.TrustFiles lists every file it names; otherwise no key is
+// sent, and the start fails at once as blocked at start, naming them.
+//
 // The first input (#178): SessionStart is reported before the CLI reads its
 // terminal as keys. Input written in between reaches the terminal's line
 // discipline: the paste lands in the input box later, but its Enter turns
@@ -32,10 +40,21 @@ import (
 
 // trustHeader is the dialog's text above its choices, with the workspace's
 // path in place of %s, its lines joined by single spaces.
+// The line naming files, if any, comes between %s and "Security guide".
 const trustHeader = "Accessing workspace: %s Quick safety check: Is this a project you created or one you trust? " +
 	"(Like your own code, a well-known open source project, or work from your team). If not, " +
 	"take a moment to review what's in this folder first. " +
-	"Claude Code'll be able to read, edit, and execute files here. Security guide"
+	"Claude Code'll be able to read, edit, and execute files here.%s Security guide"
+
+// The line of the dialog that names the files trusting the folder loads,
+// as 2.1.328 writes it: "Trusting this folder loads .claude/settings.json.",
+// "... loads .claude/settings.json and .claude/settings.local.json (runs
+// commands and sets environment variables).", "... loads .mcp.json here or
+// above (MCP servers)." (testdata/2.1.328/trust_*).
+const (
+	loadsPrefix = "Trusting this folder loads "
+	loadsAbove  = " here or above"
+)
 
 const (
 	trustYes    = "Yes, I trust this folder"
@@ -76,8 +95,9 @@ const (
 
 // trustDialog reads the screen as the trust dialog for the workspace dir:
 // the line the cursor is on and the line that says yes, counted among the
-// choices. ok is false when the screen is anything else.
-func trustDialog(screen []string, dir string) (cursor, yes int, ok bool) {
+// choices, and the files the dialog says trusting the folder loads, if it
+// names any. ok is false when the screen is anything else.
+func trustDialog(screen []string, dir string) (cursor, yes int, files []string, ok bool) {
 	lines := trimLines(screen)
 	footer := -1
 	for i, l := range lines {
@@ -86,12 +106,12 @@ func trustDialog(screen []string, dir string) (cursor, yes int, ok bool) {
 		}
 	}
 	if footer < 0 || footer != len(lines)-1 {
-		return 0, 0, false // the footer is the dialog's last line
+		return 0, 0, nil, false // the footer is the dialog's last line
 	}
 	// The choices: the lines just above the blank line above the footer.
 	end := footer - 1
 	if end < 0 || lines[end] != "" {
-		return 0, 0, false
+		return 0, 0, nil, false
 	}
 	start := end
 	for start > 0 && lines[start-1] != "" {
@@ -102,7 +122,7 @@ func trustDialog(screen []string, dir string) (cursor, yes int, ok bool) {
 	for i, l := range lines[start:end] {
 		if rest, found := strings.CutPrefix(l, cursorMark); found {
 			if cursor >= 0 {
-				return 0, 0, false
+				return 0, 0, nil, false
 			}
 			cursor = i
 			l = rest
@@ -110,7 +130,7 @@ func trustDialog(screen []string, dir string) (cursor, yes int, ok bool) {
 		choices = append(choices, strings.TrimSpace(l))
 	}
 	if cursor < 0 || len(choices) != 2 {
-		return 0, 0, false
+		return 0, 0, nil, false
 	}
 	for i, c := range choices {
 		switch c {
@@ -118,11 +138,11 @@ func trustDialog(screen []string, dir string) (cursor, yes int, ok bool) {
 			yes = i
 		case trustNo:
 		default:
-			return 0, 0, false
+			return 0, 0, nil, false
 		}
 	}
 	if yes < 0 || choices[0] == choices[1] {
-		return 0, 0, false
+		return 0, 0, nil, false
 	}
 	// The text above the choices: a top rule, then the header.
 	var words []string
@@ -132,22 +152,61 @@ func trustDialog(screen []string, dir string) (cursor, yes int, ok bool) {
 		}
 		words = append(words, strings.Fields(l)...)
 	}
-	if !headerMatches(strings.Join(words, " "), dir) {
-		return 0, 0, false
+	files, ok = headerMatches(strings.Join(words, " "), dir)
+	if !ok {
+		return 0, 0, nil, false
 	}
-	return cursor, yes, true
+	return cursor, yes, files, true
 }
 
 // headerMatches reports whether text is the dialog's header for the
-// workspace dir. The path may be wrapped, so it is compared without spaces.
-func headerMatches(text, dir string) bool {
-	before, after, ok := strings.Cut(trustHeader, "%s")
-	if !ok || !strings.HasPrefix(text, before) || !strings.HasSuffix(text, after) || len(text) < len(before)+len(after) {
-		return false
+// workspace dir, and returns the files its line about them names. The path
+// may be wrapped, so it is compared without spaces.
+func headerMatches(text, dir string) ([]string, bool) {
+	parts := strings.Split(trustHeader, "%s")
+	if len(parts) != 3 || dir == "" || !strings.HasPrefix(text, parts[0]) {
+		return nil, false
 	}
-	path := text[len(before) : len(text)-len(after)]
+	path, rest, ok := strings.Cut(text[len(parts[0]):], parts[1])
 	nospace := func(s string) string { return strings.Join(strings.Fields(s), "") }
-	return dir != "" && nospace(path) == nospace(dir)
+	if !ok || nospace(path) != nospace(dir) {
+		return nil, false
+	}
+	loads, ok := strings.CutSuffix(rest, parts[2])
+	if !ok {
+		return nil, false
+	}
+	if loads == "" {
+		return nil, true
+	}
+	files := loadedFiles(strings.TrimPrefix(loads, " "))
+	return files, files != nil
+}
+
+// loadedFiles reads the dialog's line about the files trusting the folder
+// loads: the files it names, or nil when the line is not of that shape.
+func loadedFiles(line string) []string {
+	list, ok := strings.CutPrefix(line, loadsPrefix)
+	if !ok {
+		return nil
+	}
+	list, ok = strings.CutSuffix(list, ".")
+	if !ok {
+		return nil
+	}
+	if i := strings.LastIndex(list, " ("); i >= 0 && strings.HasSuffix(list, ")") {
+		list = list[:i] // what the files do, such as "(runs commands)"
+	}
+	list = strings.TrimSuffix(list, loadsAbove)
+	var files []string
+	for _, f := range strings.FieldsFunc(strings.ReplaceAll(list, " and ", ","), func(r rune) bool { return r == ',' }) {
+		f = strings.TrimSpace(f)
+		if f == "" || strings.ContainsAny(f, " ()") {
+			return nil
+		}
+		files = append(files, f)
+	}
+	return files
 }
 
 // trimLines trims the spaces around each line and drops the blank lines
@@ -585,9 +644,16 @@ func (c *codec) tickScreen(now time.Time) Actions {
 		s.done = true // a screen it cannot read: no key, ever
 		return Actions{}
 	}
-	cursor, yes, ok := trustDialog(screen, c.spec.Dir)
+	cursor, yes, files, ok := trustDialog(screen, c.spec.Dir)
 	if !ok || (s.moved > 0 && cursor == s.from) {
 		return Actions{}
+	}
+	if refused := c.untrusted(files); len(refused) > 0 {
+		// Not answered: the start fails now, naming what the dialog loads.
+		s.done = true
+		return c.events(agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart,
+			Text: "the folder-trust dialog says trusting the folder loads " + strings.Join(files, ", ") +
+				"; this scope does not trust " + strings.Join(refused, ", ")})
 	}
 	s.quiet = time.Time{} // the next key waits for the screen to change and settle again
 	switch {
@@ -604,4 +670,21 @@ func (c *codec) tickScreen(now time.Time) Actions {
 		s.moved, s.from = s.moved+1, cursor
 		return Actions{Keys: []agent.Part{keyUp}}
 	}
+}
+
+// untrusted returns the files of the trust dialog's list that the codec may
+// not answer yes for: none in a confined session, whose launch ignores the
+// project's files (design, section 7.1), and those Spec.TrustFiles does not
+// list in an ordinary one.
+func (c *codec) untrusted(files []string) []string {
+	if c.spec.Confine != nil {
+		return nil
+	}
+	var out []string
+	for _, f := range files {
+		if !slices.Contains(c.spec.TrustFiles, f) {
+			out = append(out, f)
+		}
+	}
+	return out
 }

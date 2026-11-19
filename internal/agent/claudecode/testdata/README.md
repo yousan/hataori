@@ -5,7 +5,7 @@ Real output of the interactive `claude` CLI, for testing the adapter's codec. Th
 - `2.1.322/`: Claude Code 2.1.322, captured on 2026-11-12 (also in `2.1.322/VERSION`), on Linux, with the model `haiku` (it reports itself as `claude-haiku-5-5`).
 - `2.1.326/`: Claude Code 2.1.326, captured on 2026-11-17 (also in `2.1.326/VERSION`), on Linux, with the model `haiku`: `subagent_tools`, taken for #142, and `trust_answered`, taken for #56 (see below).
 - `2.1.327/`: Claude Code 2.1.327, on 2026-11-18 (also in `2.1.327/VERSION`), on Linux: `first_enter_lost`, a real start of a session that hataori ran, taken for #178, `usage`, taken by `capture.py` for #195, and the `confine_*` scenarios, taken by `confine.py` for #268 (see below).
-- `2.1.328/`: Claude Code 2.1.328, on 2026-11-20 (also in `2.1.328/VERSION`), on Linux: `paste_tabs`, taken for #393 (see below).
+- `2.1.328/`: Claude Code 2.1.328, on 2026-11-20 (also in `2.1.328/VERSION`), on Linux: `paste_tabs`, taken for #393, and the `trust_files_*` scenarios, taken for #423 (see below).
 - `capture.py` took them (`confine.py`, the `confine_*` ones); `scrub.py` made them committable. `captures_test.go` in the package fails when a capture holds a home directory path, an e-mail address, an unscrubbed UUID or something shaped like a token.
 
 ## How they were taken
@@ -221,3 +221,26 @@ Two inputs were sent, each as one bracketed paste and then Enter. The text paste
 | `pasted-2.txt`: Go source of 41 lines, indented with tabs, with Japanese, backticks, `$HOME` and a literal `\t` | `04-UserPromptSubmit.json` | the same text with each tab as four spaces and every other byte unchanged; not inside a `pasted_content` tag |
 
 Each prompt is followed by `StopFailure` (`authentication_failed`, `Not logged in · Please run /login`); `SessionEnd` after `/exit`. The transcript shows the same prompts.
+
+## The folder-trust dialog that names files (2.1.328, taken for #423)
+
+`2.1.328/trust_files_*/`, taken by `TestLiveTrustFiles` in the package, then `scrub.py`:
+
+```sh
+HATAORI_REAL_CLAUDE=1 HATAORI_CAPTURE_DIR=<raw dir> go test -run TestLiveTrustFiles -v ./internal/agent/claudecode
+```
+
+It runs with `TMPDIR` set to a short directory, so that the workspace's path fits on one line of the 80 columns and `scrub.py` finds it whole. Each case gets a new, empty `CLAUDE_CONFIG_DIR`, so there is no login and nothing of the user's is read or written; the test writes only a `.claude.json` there with `hasCompletedOnboarding` and a theme, and removes the directory afterwards. The workspace is a new `git init` directory holding the files below. The command line and environment are the adapter's own `Launch` for the spec, on the session host's 24×80 terminal, except that `--settings` names a recorder of `SessionStart` and `SessionEnd` in place of hataori's hooks. The codec itself handled the dialog.
+
+| Scenario | Workspace | Spec | Dialog's extra line | What the codec did |
+|---|---|---|---|---|
+| `trust_files_refused` | `.claude/settings.json` | ordinary, no `TrustFiles` | `Trusting this folder loads .claude/settings.json.` | no key; one `SessionEnded`, `blocked at start`, naming the file (`events.txt`). No hook ran. |
+| `trust_files_allowed` | `.claude/settings.json` | ordinary, `TrustFiles: [".claude/settings.json"]` | the same | Down, then Enter (`keys.txt`); `SessionStart` followed |
+| `trust_files_confined` | `.claude/settings.local.json` with a status line, a `SessionStart` hook and `env` | confined | `Trusting this folder loads .claude/settings.local.json (runs commands and sets environment variables).` | Down, then Enter; `SessionStart` from `--settings` followed |
+| `trust_files_both` | both files above | ordinary, `TrustFiles` naming both | `Trusting this folder loads .claude/settings.json and .claude/settings.local.json (runs commands and sets environment variables).` | Down, then Enter; `SessionStart` followed |
+| `trust_files_mcp` | `.mcp.json` naming one stdio server | ordinary, no `TrustFiles` | `Trusting this folder loads .mcp.json here or above (MCP servers).` | no key; one `SessionEnded`, `blocked at start`, naming `.mcp.json`. No hook ran. |
+
+Each holds `screen-NN.raw`, the terminal output chunk by chunk as the codec was given it up to its key or its event, `keys.txt`, `events.txt` and `hooks/`. The screen after the Enter is not kept.
+
+Seen by hand on the same version, not kept: a settings file with only hooks gives `(runs commands)`, one with only `env` gives `(sets environment variables)`. The parenthesis is not read: only the files are.
+

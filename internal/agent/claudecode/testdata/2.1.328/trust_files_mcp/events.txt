@@ -1,0 +1,1 @@
+after screen-07 and a tick: session-end(blocked at start) "blocked at start" "the folder-trust dialog says trusting the folder loads .mcp.json; this scope does not trust .mcp.json"

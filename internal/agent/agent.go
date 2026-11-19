@@ -186,6 +186,13 @@ type Spec struct {
 	// or a plugin's. An adapter that cannot do all of it refuses the launch,
 	// and an ordinary spec leaves it nil.
 	Confine *Confinement `json:",omitempty"`
+	// TrustFiles are the files a start-up dialog may say the workspace
+	// loads, such as a project settings file, that an ordinary session may
+	// be let past the dialog for (design, section 3.5). A dialog that names
+	// any other file is not answered, and the start fails as blocked at
+	// start, naming them. A confined session ignores those files, so the
+	// list does not matter to it.
+	TrustFiles []string `json:",omitempty"`
 }
 
 // Confinement is what a confined session may use besides its file tools.
@@ -303,7 +310,7 @@ type Event struct {
 	Model     string // SessionReady: the model the agent reports
 	Effort    string // SessionReady: the effort the agent reports
 
-	Text  string // Text: the text; Unknown: the line
+	Text  string // Text: the text; Unknown: the line; SessionEnded before the session was ready: what a person may read about why
 	Final bool   // Text: the turn's final answer
 
 	StartedBy Starter // TurnStarted
@@ -324,7 +331,7 @@ type Event struct {
 	Caption string
 
 	Status     EndStatus // TurnEnded
-	Reason     Reason    // TurnEnded when failed; SessionEnded: why, as the agent says or CannotResume, WrongSession
+	Reason     Reason    // TurnEnded when failed; SessionEnded: why, as the agent says or CannotResume, WrongSession, BlockedAtStart
 	Background int       // TurnEnded: background tasks still running
 
 	Usage *UsageCount // Usage: the counts the agent reports

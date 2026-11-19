@@ -2,6 +2,7 @@ package claudecode
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -117,6 +118,7 @@ type payload struct {
 	TranscriptPath string `json:"transcript_path"`
 	PromptID       string `json:"prompt_id"`
 	SessionID      string `json:"session_id"`
+	Cwd            string `json:"cwd"`
 	Source         string `json:"source"`
 	Model          string `json:"model"`
 	Effort         struct {
@@ -717,6 +719,11 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 		}
 		return c.events(agent.Event{Kind: agent.ToolEnded, ID: p.ToolUseID, Tool: p.ToolName, Parent: p.AgentID})
 	case "PermissionRequest":
+		if c.spec.Confine != nil && k.Wait {
+			if path, ok := protectedWrite(c.spec.Dir, p); ok {
+				return Actions{Reply: []agent.HookReply{{Call: k.Hook, Body: denyWrite(path)}}}
+			}
+		}
 		if c.spec.Approvals == agent.AllowAll && k.Wait {
 			return Actions{Reply: []agent.HookReply{{Call: k.Hook, Body: allow}}}
 		}
@@ -768,6 +775,67 @@ func compactID(n int) string { return "compaction-" + strconv.Itoa(n) }
 
 // allow is the reply that allows a permission request.
 var allow = []byte(`{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}`)
+
+// writeTools are the built-in tools that write a file, with the field of
+// their input that names it.
+var writeTools = map[string]string{"Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
+
+// protectedWrite says whether a permission request of a confined session
+// asks to write a file it must not: one whose path, inside the session's
+// directory, has a part that starts with a dot. That holds every settings,
+// git and tool configuration file a project gives the CLI (.claude/,
+// .mcp.json, .git/, .gitconfig, .vscode/, ...), the files --restricted
+// leaves to a person or the permission handler, and a supervisor needs
+// none of them (#423). A path outside the directory, or one that cannot be
+// read, counts too; the CLI refuses the first itself. The directory is the
+// session's, or the request's cwd when that ends with the session's: the
+// CLI may name the same directory with a link above it resolved, such as
+// /private/var/... for /var/.... path is the path as the request gives it.
+func protectedWrite(dir string, p payload) (path string, ok bool) {
+	field, ok := writeTools[p.ToolName]
+	if !ok {
+		return "", false
+	}
+	var in map[string]any
+	json.Unmarshal(p.ToolInput, &in)
+	path, _ = in[field].(string)
+	if path == "" {
+		return path, true
+	}
+	bases := []string{dir}
+	if cwd, d := filepath.Clean(p.Cwd), filepath.Clean(dir); dir != "" && cwd != d && strings.HasSuffix(cwd, d) {
+		bases = append(bases, cwd)
+	}
+	for _, base := range bases {
+		if base == "" || !filepath.IsAbs(base) {
+			continue
+		}
+		full := path
+		if !filepath.IsAbs(full) {
+			full = filepath.Join(base, full)
+		}
+		rel, err := filepath.Rel(filepath.Clean(base), filepath.Clean(full))
+		if err != nil || !filepath.IsLocal(rel) {
+			continue
+		}
+		for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+			if strings.HasPrefix(part, ".") {
+				return path, true
+			}
+		}
+		return "", false
+	}
+	return path, true
+}
+
+// denyWrite is the reply that refuses a confined session's write to path.
+func denyWrite(path string) []byte {
+	msg := "hataori: a confined session may not write " + strconv.Quote(path) +
+		": no settings, git or tool configuration file, nor any other file or directory whose name starts with a dot, nor a file outside its directory"
+	b, _ := json.Marshal(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": "PermissionRequest",
+		"decision": map[string]any{"behavior": "deny", "message": msg}}})
+	return b
+}
 
 // starter tells who started a turn from its prompt: text hataori pasted is
 // the caller's, and its Input.ID is returned; a task notification is the

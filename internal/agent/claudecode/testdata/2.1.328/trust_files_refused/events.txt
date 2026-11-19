@@ -1,0 +1,1 @@
+after screen-05 and a tick: session-end(blocked at start) "blocked at start" "the folder-trust dialog says trusting the folder loads .claude/settings.json; this scope does not trust .claude/settings.json"
