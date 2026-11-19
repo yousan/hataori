@@ -148,3 +148,18 @@ func TestTextAttachOnlyWithoutCommandsAndNotFromABot(t *testing.T) {
 	f.fe.Message(f.driver.Inject(c9, fake.Webhook(hook), text))
 	waitFor(t, "the text attach", func() bool { return count() == 2 })
 }
+
+// Only what came through a link is shown in the others: an input of no
+// link, such as the supervisor's, is not.
+func TestMirrorOnlyWhatCameThroughALink(t *testing.T) {
+	f := newFront(t, workspaces{})
+	convs := []surface.Conversation{{Channel: channel, Thread: "a"}, {Channel: channel, Thread: "b"}}
+	through := control.Event{Pos: 9, Kind: "input", Data: []byte(`{"session":1,"turn":1,"text":"hi","principal":"grace","link":{"client":"chat","channel":"c1","thread":"a"}}`)}
+	none := control.Event{Pos: 10, Kind: "input", Data: []byte(`{"session":1,"turn":1,"text":"[supervisor]\nhi","principal":"owner"}`)}
+	if rows := f.fe.mirrorRows(through, convs); len(rows) != 1 || rows[0].Conv != convs[1] || rows[0].Message.Text != "grace: hi" {
+		t.Fatalf("rows of an input through a link: %+v", rows)
+	}
+	if rows := f.fe.mirrorRows(none, convs); len(rows) != 0 {
+		t.Fatalf("rows of an input through no link: %+v", rows)
+	}
+}

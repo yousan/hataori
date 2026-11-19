@@ -176,6 +176,8 @@ type FirstInput struct {
 	Wake      bool              `json:"wake,omitempty"`     // the session was asleep: its agent resumes
 	NoInput   bool              `json:"no_input,omitempty"` // woken with no input, as for an attach: the agent is only started
 	Dir       string            `json:"dir,omitempty"`      // the workspace, once it is made
+	// Link is the link the input came through, if any (design, section 5.2).
+	Link *control.LinkRef `json:"link,omitempty"`
 	// Context goes before Text when the input is handed to the agent; the
 	// input event records Text alone. See Launch.Context.
 	Context string `json:"context,omitempty"`
@@ -869,7 +871,15 @@ func (a *api) start(ctx context.Context, r control.StartRequest, confined bool) 
 			thread, link.Client, link.Channel, link.Thread, string(a.caller.Principal), now); err != nil {
 			return fmt.Errorf("core: create thread: link %s %s %s: %w", link.Client, link.Channel, link.Thread, err)
 		}
-		fi, _ := json.Marshal(FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: r.Key, Text: r.Input.Text})
+		// The first input came through the first link when the client that
+		// opened it relayed the start; a start from elsewhere, such as the
+		// supervisor's, came through no link.
+		r.Input.Link = nil
+		if client, _, ok := people.Split(a.caller.From); ok && client == link.Client {
+			first := link
+			r.Input.Link = &first
+		}
+		fi, _ := json.Marshal(FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: r.Key, Text: r.Input.Text, Link: r.Input.Link})
 		res, err = tx.ExecContext(ctx,
 			`INSERT INTO sessions (thread_id, agent, state, model, effort, first_input, launch, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
@@ -983,7 +993,7 @@ func (c *Core) sameConfinement(ctx context.Context, id control.ThreadID, confine
 func (c *Core) launch(ctx context.Context, l Launch, repo string) error {
 	var err error
 	record := func(f FirstInput) error {
-		f.Principal, f.From, f.Key, f.Text, f.Context = l.Principal, l.From, l.Key, l.Input.Text, l.Context
+		f.Principal, f.From, f.Key, f.Text, f.Context, f.Link = l.Principal, l.From, l.Key, l.Input.Text, l.Context, l.Input.Link
 		fi, _ := json.Marshal(f)
 		return c.Store.Update(ctx, func(tx *store.Tx) error {
 			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, string(fi), l.Session); err != nil {
@@ -1075,7 +1085,7 @@ func (c *Core) Recover(ctx context.Context) error {
 	}
 	rows.Close()
 	for _, x := range found {
-		in := control.Input{Text: x.f.Text}
+		in := control.Input{Text: x.f.Text, Link: x.f.Link}
 		if x.f.Wake && x.f.NoInput {
 			if err = c.Runner.Wake(ctx, x.l.Session, x.f.Principal); err != nil {
 				if ferr := c.Machine.Apply(ctx, x.l.Session, session.Input{Kind: session.Exit, Reason: "resume: " + err.Error()}); ferr != nil {
@@ -1299,6 +1309,9 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 			// Nothing is accepted: a message does not wake a closed thread.
 			return fmt.Errorf("core: send to %v: %w", id, ErrClosed)
 		}
+		if in.Link, err = a.c.ownLink(ctx, tx, id, in.Link, a.caller.From); err != nil {
+			return err
+		}
 		if key != "" {
 			data, _ := json.Marshal(map[string]any{"thread": id, "session": sid, "text": in.Text})
 			ok, err := tx.Accept(ctx, "send:"+scope+"\x00"+key, data)
@@ -1324,7 +1337,7 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 			if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Wake}); err != nil {
 				return err
 			}
-			fi, _ := json.Marshal(FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: key, Text: in.Text, Wake: true})
+			fi, _ := json.Marshal(FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: key, Text: in.Text, Wake: true, Link: in.Link})
 			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ?, launch = 1 WHERE id = ?`, string(fi), sid); err != nil {
 				return fmt.Errorf("core: wake: %w", err)
 			}
@@ -1341,14 +1354,14 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 			if err == nil {
 				answer = req
 				if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal, From: a.caller.From,
-					Key: key, Text: given.Text, Request: req}); err != nil {
+					Key: key, Text: given.Text, Request: req, Link: in.Link}); err != nil {
 					return err
 				}
 				pending, err = pend(ctx, tx, sid, req, control.Answer{Text: given.Text})
 				return err
 			}
 		}
-		if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Send, Principal: a.caller.Principal, From: a.caller.From, Key: key, Text: in.Text}); err != nil {
+		if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Send, Principal: a.caller.Principal, From: a.caller.From, Key: key, Text: in.Text, Link: in.Link}); err != nil {
 			return err
 		}
 		pending, err = pend(ctx, tx, sid, "", in)
@@ -1380,14 +1393,15 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 	}
 	var (
 		scope    string
+		thread   control.ThreadID
 		sid      int64
 		agentReq string
 		state    string
 	)
 	err := a.c.Store.DB.QueryRowContext(ctx, `
-		SELECT t.scope, r.session_id, r.request, r.state FROM requests r
+		SELECT t.scope, t.id, r.session_id, r.request, r.state FROM requests r
 		JOIN sessions s ON s.id = r.session_id JOIN threads t ON t.id = s.thread_id
-		WHERE r.handle = ?`, string(req)).Scan(&scope, &sid, &agentReq, &state)
+		WHERE r.handle = ?`, string(req)).Scan(&scope, &thread, &sid, &agentReq, &state)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -1404,11 +1418,14 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 	// The machine refuses it, atomically, if it was closed since.
 	var pending int64
 	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
-		if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal, From: a.caller.From,
-			Key: "answer:" + string(req), Text: ans.Text, Request: agentReq}); err != nil {
+		var err error
+		if ans.Link, err = a.c.ownLink(ctx, tx, thread, ans.Link, a.caller.From); err != nil {
 			return err
 		}
-		var err error
+		if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal, From: a.caller.From,
+			Key: "answer:" + string(req), Text: ans.Text, Request: agentReq, Link: ans.Link}); err != nil {
+			return err
+		}
 		pending, err = pend(ctx, tx, sid, agentReq, ans)
 		return err
 	})

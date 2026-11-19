@@ -1657,7 +1657,7 @@ type LinkRef struct {
 }
 
 // Filter gains Link: Threads with a Link returns the thread linked there,
-// or none. Input gains Link, the conversation it came through. ThreadInfo gains Scope and Links; Event carries Thread (the
+// or none. Input and Answer gain Link, the conversation they came through (since protocol 3.6); the core keeps it only when it is a link of the thread, and the `input` and `answer` events name it with the person, so that every other link shows them as `<person>: <text>`. ThreadInfo gains Scope and Links; Event carries Thread (the
 // number) and Scope.
 
 // ScopeOwner is the client that gives a scope its threads. The core asks

@@ -16,6 +16,7 @@ const (
 	Integer FieldType = "integer"
 	Boolean FieldType = "boolean"
 	Array   FieldType = "array"
+	Object  FieldType = "object" // since 3.6
 )
 
 // Field is one field of an event's data.
@@ -42,8 +43,10 @@ var EventKinds = map[EventKind][]Field{
 	"turn_started": {req("session", Integer), req("turn", Integer), req("by", String), opt("principal", String), opt("from", String), opt("key", String)},
 	"turn_ended": {req("session", Integer), req("turn", Integer), req("by", String), opt("principal", String), opt("from", String),
 		req("outcome", String), opt("reason", String), req("background", Integer)},
-	"input":             {req("session", Integer), req("turn", Integer), text("text", String), opt("principal", String), opt("from", String)},
-	"answer":            {req("session", Integer), req("turn", Integer), text("text", String), opt("principal", String), opt("from", String)},
+	"input": {req("session", Integer), req("turn", Integer), text("text", String), opt("principal", String), opt("from", String),
+		opt("link", Object)},
+	"answer": {req("session", Integer), req("turn", Integer), text("text", String), opt("principal", String), opt("from", String),
+		opt("link", Object)},
 	"text":              {req("session", Integer), text("text", String), req("final", Boolean)},
 	"tool_started":      {req("session", Integer), req("id", String), req("tool", String), opt("parent", String)},
 	"tool_ended":        {req("session", Integer), req("id", String), req("tool", String)},
@@ -143,6 +146,9 @@ func hasType(v any, t FieldType) bool {
 		return ok && f == math.Trunc(f)
 	case Array:
 		_, ok := v.([]any)
+		return ok
+	case Object:
+		_, ok := v.(map[string]any)
 		return ok
 	}
 	return false
