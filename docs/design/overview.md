@@ -1493,6 +1493,17 @@ type API interface {
 	HostTerminals(ctx context.Context) ([]HostTerminal, error)
 	HostScreen(ctx context.Context, pane string) (string, error)
 
+	// OperateHost lets the caller type into one tmux pane on the host that
+	// no session host owns, by TmuxPane.Pane (section 7.2). It needs
+	// OpHostInput, which the core honours only for the owner and only when
+	// the config's host_input (which needs host_terminals) is true. It
+	// refuses a pane in which one of hataori's own processes runs, and a
+	// pane already being operated (ErrBusy, naming since when and by whom).
+	// It logs the start and the end with the person, the pane and the
+	// reason, and never a key. On the socket its connection becomes a
+	// stream both ways (below). Since protocol 3.11.
+	OperateHost(ctx context.Context, pane string) (HostOperation, error)
+
 	// Limits returns each agent's remaining usage as its sessions last
 	// reported it; an agent that reports none has no entry. It needs
 	// OpRead and no scope: the usage is the account's. Since protocol 1.13.
@@ -1554,6 +1565,36 @@ type TmuxPane struct {
 	Attached   bool
 }
 
+// HostOperation is one pane being operated. It ends when ctx ends, when
+// End is called, when no key came for Idle, when the pane goes or comes
+// to run one of hataori's processes, or when the daemon stops. Done is
+// then closed and Reason says which: "closed", "ended", "idle", "pane
+// gone", "hataori's own" or "stopping" (control.HostClosed and the rest).
+// The socket's client says "disconnected" when its connection breaks
+// without the daemon's last message.
+type HostOperation interface {
+	Send(ctx context.Context, keys []HostKey) error // in order; ErrEnded once it ended
+	Idle() time.Duration                             // the config's host_input_idle
+	Done() <-chan struct{}
+	Reason() string
+	End()
+}
+
+// HostKey is one input to a pane. Key is one of a fixed list of tmux key
+// names (control.ValidHostKey: Enter, Tab, BTab, BSpace, Escape, the
+// arrows, Home, End, PPage, NPage, IC, DC, F1 to F12, and C-, M- and S-
+// with them or with one character), passed to send-keys. Otherwise Text is
+// written to the pane through a buffer of the operation's own (load-buffer
+// from standard input, then paste-buffer -d), with Paste as a paste
+// (paste-buffer -p). hataori logs and stores neither; Text is in the
+// buffer for one paste, and the buffer is deleted after a failed paste,
+// at the end of the operation and at the daemon's start.
+type HostKey struct {
+	Key   string
+	Text  string
+	Paste bool
+}
+
 type TerminalChunk struct {
 	Run   string // the session host's run, opaque; a new run starts a new count; empty when no host runs
 	Pos   uint64 // the byte position after Data, counted since the run started; 0 when Run is empty
@@ -1587,7 +1628,7 @@ type Caller struct {
 	From      string
 	Principal Principal // a person's name (section 5.5)
 	Scopes    []string  // the scopes it may see and act in
-	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName, OpAsk
+	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName, OpAsk, OpHostInput
 	// NoText leaves text written by a person or an agent out of what the
 	// caller reads: ThreadInfo.Title and ThreadInfo.Last,
 	// ThreadDetail.Recent, the text of its requests, and the text fields of
@@ -1739,44 +1780,14 @@ type API interface {
 	// front end asks for WayWeb when there is a web listener (#259,
 	// FrontEnd.SignInWay).
 
-	// OperateHost lets the caller type into one tmux pane on the host that
-	// no session host owns, by HostTerminals' TmuxPane.Pane (section 7.2).
-	// It needs OpHostInput, which the core grants only to the owner and
-	// only when the config's host_input and host_terminals are both true.
-	// It refuses a pane in which one of hataori's own processes runs, and a
-	// pane already being operated (ErrBusy, naming since when and by whom).
-	// It logs the start and the end with the person, the pane and the
-	// reason, and never a key.
-	OperateHost(ctx context.Context, pane string) (HostOperation, error)
+	// OperateHost: declared above, since protocol 3.11 (#362), with
+	// OpHostInput, which the owner's connection on the control socket has
+	// when host input is on.
 }
 
 // Way: declared above, with SignInLink.
 
-// HostOperation is one pane being operated. It ends when ctx ends, when
-// End is called, when no key came for Idle, when the pane goes or comes
-// to run one of hataori's processes, or when the daemon stops. Done is
-// then closed and Reason says which: "ended", "idle", "pane gone",
-// "hataori's own" or "stopping".
-type HostOperation interface {
-	Send(ctx context.Context, keys []HostKey) error // in order; ErrEnded once it ended
-	Idle() time.Duration                             // the config's host_input_idle
-	Done() <-chan struct{}
-	Reason() string
-	End()
-}
-
-// HostKey is one input to a pane. Key is one of a fixed list of tmux key
-// names (Enter, Tab, BTab, BSpace, Escape, the arrows, Home, End, PPage,
-// NPage, IC, DC, F1 to F12, and C-, M- and S- with them or with one
-// character), passed to send-keys. Otherwise Text is written to the pane
-// through a buffer of the operation's own (load-buffer from standard
-// input, then paste-buffer -d), with Paste as a paste (paste-buffer -p).
-// hataori logs and stores neither; Text is in the buffer for one paste.
-type HostKey struct {
-	Key   string
-	Text  string
-	Paste bool
-}
+// HostOperation, HostKey: declared above, with OperateHost.
 
 // WorkspaceState: declared above, with Workspace.
 
@@ -1785,7 +1796,7 @@ type HostKey struct {
 // HostTerminal, TmuxPane: declared above, with HostTerminals.
 ```
 
-On the socket, `OperateHost` turns its connection into a stream in both directions, after its reply: the client sends batches of keys and may send an end; the daemon answers each batch and sends one message with the reason when the operation ends. A connection that closes ends the operation.
+On the socket, `OperateHost` turns its connection into a stream in both directions, after its reply: the client sends batches of keys (`HostKeys`) and may send an end (`End`); the daemon answers each batch and sends one message with the reason (`ended`) when the operation ends. A connection that closes ends the operation. The daemon gives the core the tmux lister as `core.Core.HostInput` when host input is on, with the idle period and its own context's end as `Stopping`, and deletes the buffers an earlier run left before it listens; each instance's buffers have a name of their own.
 
 Remaining usage per agent is `Limits`, declared above (#211), from the sources the research found (#191, [docs/notes/agent-usage-limits.md](../notes/agent-usage-limits.md)). An adapter reports it as an agent event of kind `Limits`; the session machine keeps the newest report per agent in the same transaction and writes no control event, since it belongs to no thread. Claude Code: hataori's `--settings` sets `statusLine` to `hataori statusline`, which hands the input's `rate_limits` to the session host when they change and every 5 minutes, refreshes at least once a minute, and runs and prints the status line the user would have had (the workspace's local and shared settings, then the user's own; only read, never written), so the user's line still shows. Codex: the decoder of `account/rateLimits/read` is in `internal/agent/codex`; the Codex adapter reads it at start and after each turn when it comes (section 8).
 
@@ -1804,7 +1815,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `ThreadEvents` (#336) | minor: new operation; 3.3 |
 | `SetName`, with `Ops` gaining `OpName`, `Scopes` and `ScopeInfo`, and the `named` event (#405) | minor: new operations and event kind; 3.5 |
 | `ThreadInfo.Name`, the chat thread's own name (#406) | minor: new optional field; 3.7 |
-| `OperateHost`, with `Ops` gaining `OpHostInput` (section 7.2) | minor: new operation, whose connection becomes a stream both ways |
+| `OperateHost`, with `Ops` gaining `OpHostInput`, `HostKeys` and `End` on its stream, and the `ended` error code (section 7.2, #362) | minor: new operation, whose connection becomes a stream both ways; 3.11 |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 
 Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event. In protocol 1.9: `Terminal`, which turns its connection into a stream as `Events` does. In protocol 1.12: `ThreadInfo.terminal`, the terminal device its session host opened, for the tree's filter, the status bar and the details panel (#285); `HostTerminals` still leaves these terminals out.

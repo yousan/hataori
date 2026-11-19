@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -201,6 +203,23 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 			c.HostTerms = hostTermsSource
 		}
 		owner |= control.OpHost
+		if cfg.HostInput { // off unless the config turns it on; only the owner gets it
+			// Each instance's buffers have a name of their own, so that
+			// one daemon's start never deletes another's.
+			lister.Buffers = "hataori-input-" + instanceTag(abs) + "-"
+			n, err := lister.DropLeftovers(ctx)
+			if err != nil {
+				return fmt.Errorf("host input: deleting the tmux buffers an earlier run left: %w", err)
+			}
+			if n > 0 {
+				lg.Info("host input: deleted tmux buffers an earlier run left", "buffers", n)
+			}
+			c.HostInput, c.HostInputIdle, c.Stopping = lister, cfg.HostInputIdle, ctx.Done()
+			if hostInputSource != nil {
+				c.HostInput = hostInputSource
+			}
+			owner |= control.OpHostInput
+		}
 	}
 	srv, err := wire.Listen(abs, c.As(control.Caller{Principal: control.Principal(cfg.Owner), Scopes: keys, May: owner}), lg)
 	if err != nil {
@@ -448,6 +467,17 @@ var dashboardHook func(*control.Caller)
 // hostTermsHook, when a test sets it, changes how the daemon lists the
 // host's terminals, such as to read a tmux server of the test's own.
 var hostTermsHook func(*hostterm.Lister)
+
+// instanceTag is a short name of the instance at root, the same in each
+// run: the start of a hash of its absolute path.
+func instanceTag(root string) string {
+	sum := sha256.Sum256([]byte(root))
+	return hex.EncodeToString(sum[:6])
+}
+
+// hostInputSource, when a test sets it, is what the daemon types into
+// host panes with instead of tmux.
+var hostInputSource core.HostInput
 
 // hostTermsSource, when a test sets it, is what the daemon lists the
 // host's terminals from instead of tmux and the process table, such as a

@@ -127,6 +127,7 @@ type fixture struct {
 	runner *fakeRunner
 	log    *bytes.Buffer
 	owner  control.API
+	root   string
 }
 
 func newFixture(t *testing.T, owner fakeOwner) *fixture {
@@ -138,7 +139,7 @@ func newFixture(t *testing.T, owner fakeOwner) *fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	f := &fixture{runner: &fakeRunner{}, log: &bytes.Buffer{}}
+	f := &fixture{runner: &fakeRunner{}, log: &bytes.Buffer{}, root: root}
 	f.runner.machine = &session.Machine{Store: st}
 	f.core = &Core{
 		Store:   st,
@@ -243,6 +244,8 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 		"Terminal":      func(a control.API) error { _, err := a.Terminal(ctx, id, "", 0); return err },
 		"HostTerminals": func(a control.API) error { _, err := a.HostTerminals(ctx); return err },
 		"HostScreen":    func(a control.API) error { _, err := a.HostScreen(ctx, "%0"); return err },
+		// Only the owner's caller with OpHostInput may (hostinput_test.go).
+		"OperateHost": func(a control.API) error { _, err := a.OperateHost(ctx, "%0"); return err },
 		// Limits needs OpRead and no scope, so "other scope" may call it
 		// (TestLimitsKeepTheNewestPerAgent).
 		"Limits": func(a control.API) error { _, err := a.Limits(ctx); return err },

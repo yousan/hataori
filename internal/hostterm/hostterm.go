@@ -1,10 +1,15 @@
 // Package hostterm lists the terminals on the host that hataori does not
-// own, and reads the screen of a tmux pane, for display only (design,
-// section 7.2).
+// own, reads the screen of a tmux pane, and types into a tmux pane that the
+// owner operates (design, section 7.2).
 //
-// It runs a fixed list of commands, none of which changes anything: tmux's
-// list-panes and capture-pane, and ps. It writes to no terminal and reads
-// nothing under /proc, so the same code runs on Linux and macOS.
+// It runs a fixed list of commands. Listing and reading change nothing:
+// tmux's list-panes and capture-pane, and ps. Typing goes only through
+// tmux: send-keys with a key name from a fixed list, and load-buffer with
+// the text on standard input into a buffer of the operation's own, then
+// paste-buffer, which deletes it; delete-buffer and list-buffers remove
+// such a buffer after a failure and one left over from an earlier run. It
+// opens no terminal and reads nothing under /proc, so the same code runs
+// on Linux and macOS.
 package hostterm
 
 import (
@@ -22,8 +27,9 @@ import (
 	"github.com/yousan/hataori/internal/control"
 )
 
-// command is one of the commands this package runs. Its argv is fixed; only
-// a pane id is appended to capture-pane.
+// command is one of the commands this package runs. Its argv is fixed but
+// for what is appended: a pane id to capture-pane, and the buffer, the
+// pane and a key name to the input commands (input.go).
 type command struct {
 	name string
 	args []string
@@ -41,7 +47,7 @@ var (
 	psCmd          = command{"ps", []string{"-A", "-o", "pid=,ppid=,pgid=,tpgid=,tty=,comm="}}
 	listPanesCmd   = command{"tmux", []string{"list-panes", "-a", "-F", paneFormat}}
 	capturePaneCmd = command{"tmux", []string{"capture-pane", "-p", "-t"}} // then the pane id
-	Commands       = []command{psCmd, listPanesCmd, capturePaneCmd}
+	Commands       = []command{psCmd, listPanesCmd, capturePaneCmd, sendKeysCmd, loadBufferCmd, pasteBufferCmd, deleteBufferCmd, listBuffersCmd}
 )
 
 // Lister lists and reads host terminals. The zero value uses the default
@@ -55,19 +61,33 @@ type Lister struct {
 	// been recorded yet, counts as owned too.
 	Own string
 
-	// run runs one command and returns its standard output; nil runs it.
-	run func(ctx context.Context, name string, args ...string) ([]byte, error)
+	// Buffers starts the name of every tmux buffer an operation of this
+	// instance uses, such as "hataori-input-<instance>-". Only a buffer
+	// whose name starts with it is ever deleted. Empty: Operate refuses.
+	Buffers string
+
+	// run runs one command with stdin on its standard input and returns
+	// its standard output; nil runs it.
+	run func(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error)
 }
 
 func (l *Lister) exec(ctx context.Context, c command, extra ...string) ([]byte, error) {
+	return l.execIn(ctx, nil, c, extra...)
+}
+
+// execIn runs c with stdin on its standard input.
+func (l *Lister) execIn(ctx context.Context, stdin []byte, c command, extra ...string) ([]byte, error) {
 	args := slices.Concat(c.args, extra)
 	if c.name == "tmux" {
 		args = slices.Concat(l.Tmux, args)
 	}
 	if l.run != nil {
-		return l.run(ctx, c.name, args...)
+		return l.run(ctx, stdin, c.name, args...)
 	}
 	cmd := exec.CommandContext(ctx, c.name, args...)
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

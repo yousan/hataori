@@ -228,11 +228,23 @@ type Core struct {
 	// when the config leaves them off: HostTerminals and HostScreen are
 	// then refused for every caller.
 	HostTerms HostTerms
+	// HostInput types into tmux panes on the host that hataori does not
+	// own. Nil when the config's host_input is off: OperateHost is then
+	// refused for every caller, as it is without HostTerms.
+	HostInput HostInput
+	// HostInputIdle ends an operation of a pane after this long without a
+	// key; DefaultHostInputIdle when 0.
+	HostInputIdle time.Duration
+	// Stopping is closed when the daemon stops: every operation of a pane
+	// ends with control.HostStopping, and OperateHost is refused. Nil
+	// never closes.
+	Stopping <-chan struct{}
 	// Remover removes the workspaces of closed threads. It is the only way
 	// the core removes a workspace; nil refuses every Remove.
 	Remover Remover
 
-	locks keyedMutex
+	locks   keyedMutex
+	hostOps hostOpSet
 }
 
 // keyedMutex serializes work per key.

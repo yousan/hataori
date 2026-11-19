@@ -34,6 +34,9 @@ var (
 	// ErrNoDashboard: a SignInLink on an instance that has no dashboard.
 	// On the socket it has no code of its own, as before.
 	ErrNoDashboard = errors.New("the instance has no dashboard: add a \"dashboard\" section to its config")
+	// ErrEnded: a HostOperation's Send after the operation ended. Nothing
+	// was sent. Since 3.11.
+	ErrEnded = errors.New("the operation has ended")
 )
 
 // Efforts are the effort values hataori knows. An agent adapter maps each
@@ -164,6 +167,16 @@ type API interface {
 	HostTerminals(ctx context.Context) ([]HostTerminal, error)
 	HostScreen(ctx context.Context, pane string) (string, error)
 
+	// OperateHost lets the caller type into one tmux pane on the host that
+	// no session host owns, by TmuxPane.Pane (design, section 7.2). It
+	// needs OpHostInput, which the core honours only for the owner and only
+	// when the config's host_input is on. A pane in which one of hataori's
+	// own processes runs is refused, and a pane being operated already is
+	// ErrBusy, naming since when and by whom. The start and the end are
+	// logged with the person, the pane and the reason; no key ever is.
+	// Since 3.11.
+	OperateHost(ctx context.Context, pane string) (HostOperation, error)
+
 	// AttachTerminal readies the thread's agent for a person's terminal on
 	// the host (`hataori attach`): an asleep thread is woken first, with no
 	// input, and the result names the socket of the session host that the
@@ -197,7 +210,7 @@ type Caller struct {
 	From      string
 	Principal Principal // a person's name
 	Scopes    []string  // the scopes it may see and act in
-	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName, OpAsk
+	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName, OpAsk, OpHostInput
 	// NoText leaves text written by a person or an agent out of what the
 	// caller reads: ThreadInfo.Title and ThreadInfo.Last,
 	// ThreadDetail.Recent, the text of its requests, and the text fields of
@@ -259,6 +272,10 @@ const (
 	// front end's caller, and the owner's connection on the control socket.
 	OpName
 	OpAsk // AskInterrupt
+	// OpHostInput may type into a tmux pane on the host that hataori does
+	// not own (OperateHost). The core honours it only for the owner, and
+	// only when the config's host_input is on. Since 3.11.
+	OpHostInput
 )
 
 // Way is one of the dashboard's listeners, each a way of reaching it with
@@ -538,6 +555,76 @@ type TmuxPane struct {
 	Index      string `json:"index"`                 // the pane's index in its window
 	Dir        string `json:"dir,omitempty"`         // the pane's current directory
 	Attached   bool   `json:"attached"`              // a client shows the session now
+}
+
+// HostOperation is one tmux pane being operated (OperateHost). It ends
+// when the context OperateHost was given ends, when End is called, when no
+// key came for Idle, when the pane goes or comes to run one of hataori's
+// processes, or when the daemon stops. Done is then closed and Reason says
+// which: one of the HostEnd values. Since 3.11.
+type HostOperation interface {
+	// Send gives the pane keys, in order. A batch that is refused, or not
+	// sent because the pane's command cannot be read, changes nothing and
+	// the operation goes on; once the operation has ended, Send is
+	// ErrEnded.
+	Send(ctx context.Context, keys []HostKey) error
+	Idle() time.Duration // the config's host_input_idle
+	Done() <-chan struct{}
+	Reason() string // empty until Done is closed
+	End()
+}
+
+// Why a HostOperation ended.
+const (
+	HostEnded    = "ended"         // End was called
+	HostClosed   = "closed"        // the context ended: the connection or the tab closed
+	HostIdle     = "idle"          // no key came for Idle
+	HostGone     = "pane gone"     // tmux no longer lists the pane
+	HostOwn      = "hataori's own" // one of hataori's processes runs in the pane
+	HostStopping = "stopping"      // the daemon stops
+)
+
+// HostKey is one input to an operated pane: either Key, one of the tmux
+// key names ValidHostKey accepts, which tmux encodes for the pane's modes;
+// or Text, which goes through a tmux buffer of the operation's own and is
+// never on a command line, as a paste when Paste is set. hataori logs and
+// stores neither. Since 3.11.
+type HostKey struct {
+	Key   string `json:"key,omitempty"`
+	Text  string `json:"text,omitempty"` // text, so optional
+	Paste bool   `json:"paste,omitempty"`
+}
+
+// hostKeyNames are the tmux key names a HostKey's Key may be, alone or
+// after modifiers.
+var hostKeyNames = map[string]bool{
+	"Enter": true, "Tab": true, "BTab": true, "BSpace": true, "Escape": true,
+	"Up": true, "Down": true, "Left": true, "Right": true, "Home": true, "End": true,
+	"PPage": true, "NPage": true, "IC": true, "DC": true,
+	"F1": true, "F2": true, "F3": true, "F4": true, "F5": true, "F6": true,
+	"F7": true, "F8": true, "F9": true, "F10": true, "F11": true, "F12": true,
+}
+
+// ValidHostKey reports whether name is a key name hataori passes to tmux's
+// send-keys: Enter, Tab, BTab, BSpace, Escape, Up, Down, Left, Right,
+// Home, End, PPage, NPage, IC, DC or F1 to F12, each alone or after one or
+// more of the modifiers C-, M- and S- (each at most once); or one
+// printable ASCII character other than a space after one or more
+// modifiers, such as C-a or M-x. A character alone is text, not a key.
+func ValidHostKey(name string) bool {
+	mods := 0
+	for len(name) > 2 && name[1] == '-' && (name[0] == 'C' || name[0] == 'M' || name[0] == 'S') {
+		bit := map[byte]int{'C': 1, 'M': 2, 'S': 4}[name[0]]
+		if mods&bit != 0 {
+			return false
+		}
+		mods |= bit
+		name = name[2:]
+	}
+	if hostKeyNames[name] {
+		return true
+	}
+	return mods != 0 && len(name) == 1 && name[0] > ' ' && name[0] < 0x7f
 }
 
 // AgentLimits is an agent's remaining usage, as one of its sessions last

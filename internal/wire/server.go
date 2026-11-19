@@ -195,13 +195,17 @@ func (s *Server) serveConn(ctx context.Context, c *net.UnixConn) {
 		s.mu.Unlock()
 	}()
 	err = p.serve(ctx, dec, func(req request) bool {
-		if req.Op != "Events" && req.Op != "Terminal" {
+		if req.Op != "Events" && req.Op != "Terminal" && req.Op != "OperateHost" {
 			return false
 		}
 		s.mu.Lock()
 		delete(s.peers, p) // the connection is a stream now
 		s.mu.Unlock()
-		stream(ctx, api, c, enc, req)
+		if req.Op == "OperateHost" {
+			operate(ctx, api, c, dec, enc, req)
+		} else {
+			stream(ctx, api, c, enc, req)
+		}
 		return true
 	})
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {

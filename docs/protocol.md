@@ -13,11 +13,12 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 - The client sends the operations below. The daemon may send the client requests of its own; there are none in this version, and plugin hooks and scope owners in other processes will use them. A side that gets a request whose `op` it does not know answers with the error code `not_supported` and carries on.
 - An `Events` request turns the connection into a stream: the daemon answers it once with an empty `response`, then sends one `response` with `event` set per event, until the client closes the connection. A client follows events on a connection of its own.
 - A `Terminal` request does the same with terminal output: an empty `response`, then one `response` with `terminal` set per chunk. Since 1.9.
-- On a stream the daemon reads nothing the client sends: no request on that connection is answered or carried out, and nothing reaches a terminal.
+- On an `Events` or a `Terminal` stream the daemon reads nothing the client sends: no request on that connection is answered or carried out, and nothing reaches a terminal.
+- An `OperateHost` request turns the connection into a stream in both directions, for typing into one tmux pane on the host. Since 3.11. The daemon answers it once with a `response` whose `result` is a `HostOperation`. Then the client sends `HostKeys` requests, and may send one `End`, numbered as on any connection; the daemon carries them out in order and answers each. When the operation ends, for whatever reason, the daemon sends one last `response` with the `id` of the `OperateHost` request and `ended` set to the reason, and closes the connection. A connection that closes ends the operation. No other request is carried out on that connection: one is answered `not_supported`.
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.10**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.11**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -73,6 +74,7 @@ Events are stored, and a reader reads them from a position, possibly long after 
 | `error` | `WireError` | optional | the operation failed |
 | `event` | `Event` | optional | one event of an `Events` stream |
 | `terminal` | `TerminalChunk` | optional | one chunk of a `Terminal` stream; since 1.9 |
+| `ended` | string | optional | the last message of an `OperateHost` stream: why the operation ended, one of the reasons under `OperateHost`; since 3.11 |
 
 ### Type `WireError`
 
@@ -87,11 +89,12 @@ Events are stored, and a reader reads them from a position, possibly long after 
 |---|---|---|---|
 | `forbidden` | error code | - | the caller may not make this call in this scope |
 | `disabled` | error code | - | the scope is not enabled |
-| `busy` | error code | - | a turn is running and the call said to refuse |
+| `busy` | error code | - | a turn is running and the call said to refuse; for `OperateHost`, the pane is being operated already (since 3.11) |
 | `not_found` | error code | - | no such thread or request |
 | `closed` | error code | - | the thread is closed or removed: nothing was sent, and a message does not wake it; since 2.3 |
 | `removal_refused` | error code | - | the workspace may hold work that exists nowhere else, so it was not removed; the message says why; since 2.3 |
 | `linked_elsewhere` | error code | - | the conversation shows another thread; since 3.4 |
+| `ended` | error code | - | the operation of a host pane has ended: nothing was sent; since 3.11 |
 | `refused` | error code | - | the session's state does not allow the call |
 | `not_supported` | error code | - | the receiver does not know the operation |
 | `error` | error code | - | any other failure |
@@ -321,6 +324,48 @@ Since 1.10. The visible screen of one tmux pane, as text, one line per row. Allo
 
 Result: string
 
+### Operation `OperateHost`
+
+Since 3.11. Types into one tmux pane on the host that hataori does not own, by `TmuxPane.pane` as `HostTerminals` lists it. It turns the connection into a stream in both directions (see Connection).
+
+Only the instance's owner may call it, and only when the config's `host_input` is `true` (which needs `host_terminals`); every other call is answered `forbidden`, and each refusal is logged. A pane that `HostTerminals` would not list is answered `not_found`. A pane in which one of hataori's own processes runs, such as `hataori attach`, is answered `forbidden`. A pane that is being operated already is answered `busy`, and the message names the person and since when. Each start and each end is one line in the daemon's log, with the person and the pane (its id, session, window and index), and for the end the reason. What is typed is written to no log, event, database or file, nor how much.
+
+The operation ends, and the daemon sends its last message, with one of these reasons:
+
+- `ended`: the client sent `End`;
+- `closed`: the connection closed, or the caller's context ended;
+- `idle`: no batch with a key came for the idle period (`host_input_idle`, 5 minutes by default);
+- `pane gone`: tmux no longer lists the pane;
+- `hataori's own`: one of hataori's processes runs in the pane now, by the command tmux reports for it or by the process table, which is read at least once a second;
+- `stopping`: the daemon stops.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `pane` | string | required | the pane, as `TmuxPane.pane` |
+
+Result: `HostOperation`
+
+### Operation `HostKeys`
+
+Since 3.11, and only on an `OperateHost` stream; elsewhere it is answered `not_supported`. Types the keys into the pane, in order. Before the batch the daemon reads the command tmux reports for the pane: when it is hataori's own or the pane is gone, nothing is sent, the answer is `ended` and the operation ends; when it cannot be read, nothing is sent, the answer is `error` and the operation goes on. A batch with an input that is not a key name of the list (under `HostKey`), that has both a key and a text, or neither, is refused whole with `error` and changes nothing. An empty batch does nothing and does not count as a key.
+
+A key goes to the pane by `tmux send-keys` with its name, so tmux encodes it for the pane's modes (`Up` is `ESC [ A`, or `ESC O A` once the program asked for application cursor keys). A text goes into a tmux buffer of the operation's own by `tmux load-buffer` from standard input, never on a command line, then into the pane by `tmux paste-buffer -d`, which deletes the buffer; a paste uses `-p`, so tmux brackets it when the program asked for that. tmux turns each line feed of a text into a carriage return. The buffer is also deleted when a paste fails, when the operation ends, and when the daemon starts, for any left over from an earlier run. No tmux client is attached, so no window changes size.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `keys` | [`HostKey`] | required | the inputs, in order |
+
+Result: none
+
+### Operation `End`
+
+Since 3.11, and only on an `OperateHost` stream; elsewhere it is answered `not_supported`. Ends the operation with the reason `ended`. It takes no arguments.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+
+Result: none
+
 ### Operation `AttachTerminal`
 
 Since 2.1. Readies a thread's agent for a terminal on the host, for `hataori attach`. Only the instance's owner may call it; every other caller is answered `forbidden` and the refusal is logged. A thread that is closed, removed or failed, and a thread whose agent runs without a terminal (on pipes), are answered `refused` and nothing changes. An asleep thread is woken first, with no input: its agent resumes its conversation and the thread becomes idle, as after a message, but no turn starts. The answer comes once the session host listens, and at most after 90 seconds.
@@ -536,6 +581,26 @@ Since 1.10. A tab in a name or a directory is given as a space.
 | `index` | string | required | the pane's index in its window |
 | `dir` | string | optional | the pane's current directory |
 | `attached` | boolean | required | a tmux client shows the session now |
+
+### Type `HostOperation`
+
+Since 3.11. `OperateHost`'s result.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `idle` | integer | required | seconds without a key after which the operation ends |
+
+### Type `HostKey`
+
+Since 3.11. One input to an operated pane: either `key` or `text`.
+
+A key name is one of `Enter`, `Tab`, `BTab`, `BSpace`, `Escape`, `Up`, `Down`, `Left`, `Right`, `Home`, `End`, `PPage`, `NPage`, `IC`, `DC` and `F1` to `F12`, alone or after one or more of the modifiers `C-`, `M-` and `S-`, each at most once; or one printable ASCII character other than a space after one or more modifiers, such as `C-a` or `M-x`. These are tmux's names. A character alone is text. A key name is on tmux's command line while it runs, so a name with a character shows that character to other users of the host; text never is.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `key` | string | optional | a key name, as above |
+| `text` | string | optional | text, written to the pane as it is; text, so optional |
+| `paste` | boolean | optional | the text is a paste: tmux brackets it when the program asked for that |
 
 ### Type `AgentLimits`
 

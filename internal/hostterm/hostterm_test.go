@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -94,13 +95,21 @@ func TestTabInAWindowName(t *testing.T) {
 	}
 }
 
-// recorder runs the commands for real and records every argv.
-type recorder struct{ argvs [][]string }
+// recorder runs the commands for real and records every argv, and what
+// each was given on standard input.
+type recorder struct {
+	mu     sync.Mutex
+	argvs  [][]string
+	stdins [][]byte
+}
 
-func (r *recorder) run(ctx context.Context, name string, args ...string) ([]byte, error) {
+func (r *recorder) run(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+	r.mu.Lock()
 	r.argvs = append(r.argvs, append([]string{name}, args...))
+	r.stdins = append(r.stdins, stdin)
+	r.mu.Unlock()
 	var l Lister
-	return l.exec(ctx, command{name, args})
+	return l.execIn(ctx, stdin, command{name, args})
 }
 
 // startTmux starts a tmux server on a socket of its own with one pane
@@ -129,14 +138,20 @@ func startTmux(t *testing.T, cmd string) []string {
 	return sock
 }
 
-// Only the fixed commands run, and none of them changes anything: ps, and
-// tmux's list-panes and capture-pane with a pane id.
+// Only the fixed commands run: to list and read, which change nothing, ps
+// and tmux's list-panes and capture-pane with a pane id; to type, only
+// tmux's send-keys, load-buffer and paste-buffer, and delete-buffer and
+// list-buffers for an operation's buffers (TestInputCommands).
 func TestOnlyTheFixedCommandsRun(t *testing.T) {
-	readOnly := map[string]bool{"ps -A": true, "tmux list-panes": true, "tmux capture-pane": true}
+	known := map[string]bool{"ps -A": true, "tmux list-panes": true, "tmux capture-pane": true,
+		"tmux send-keys": true, "tmux load-buffer": true, "tmux paste-buffer": true, "tmux delete-buffer": true, "tmux list-buffers": true}
 	for _, c := range Commands {
-		if !readOnly[c.name+" "+c.args[0]] {
-			t.Errorf("%s %s is not a read-only command", c.name, c.args[0])
+		if !known[c.name+" "+c.args[0]] {
+			t.Errorf("%s %s is not a command this package may run", c.name, c.args[0])
 		}
+	}
+	if len(Commands) != len(known) {
+		t.Errorf("%d commands, %d known", len(Commands), len(known))
 	}
 	sock := startTmux(t, "sh -c 'echo fixed; exec sleep 600'")
 	// tmux 3.4 takes a tab in a window's name and prints it as it is;
@@ -172,7 +187,7 @@ func TestOnlyTheFixedCommandsRun(t *testing.T) {
 	if _, ok, err := l.Screen(ctx, pane, nil); err != nil || !ok {
 		t.Fatal(ok, err)
 	}
-	if empty, _ := (&Lister{Tmux: []string{"-L", "hataori-hostterm-none"}, run: func(context.Context, string, ...string) ([]byte, error) {
+	if empty, _ := (&Lister{Tmux: []string{"-L", "hataori-hostterm-none"}, run: func(context.Context, []byte, string, ...string) ([]byte, error) {
 		return nil, nil
 	}}).List(ctx, nil); empty == nil {
 		t.Error("an empty list is nil, which is null on the wire")
@@ -181,7 +196,7 @@ func TestOnlyTheFixedCommandsRun(t *testing.T) {
 		t.Fatal("a pane id with more in it was read", ok, err)
 	}
 	allowed := func(argv []string) bool {
-		for _, c := range Commands {
+		for _, c := range []command{psCmd, listPanesCmd, capturePaneCmd} {
 			want := []string{c.name}
 			if c.name == "tmux" {
 				want = append(want, sock...)

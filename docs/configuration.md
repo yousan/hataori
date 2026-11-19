@@ -75,7 +75,9 @@ A complete example for one Discord channel and Claude Code, with the owner, one 
 | `drivers` | object | empty | One section per chat surface, by name. This binary has one: `discord` (below). A name it does not have is refused at start. |
 | `adapters` | object | empty | One section per coding agent, by name. This binary has two: `claude-code` and `codex` (below). One or more adapters must be named; with more than one, `agent` names the default. |
 | `terminal_size` | object | absent | The size of the terminal an agent session runs in, for an agent that runs in one (Claude Code): `{"cols": 200, "rows": 50}`. Give both keys: `cols` from 40 to 500 and `rows` from 10 to 200; anything else is refused at start. Each session the daemon starts or resumes takes it, so a change applies to a thread's next session; a running session keeps its size. Without this key a session's terminal is 80 columns by 24 rows. |
-| `host_terminals` | boolean | `false` | With `true`, the owner may list the terminals on the host that hataori does not own (tmux panes and other terminals) and read the screens of the panes of the default tmux server, for display only, through the control API's `HostTerminals` and `HostScreen`. hataori never sends these terminals anything. With `false`, both are refused for everyone. |
+| `host_terminals` | boolean | `false` | With `true`, the owner may list the terminals on the host that hataori does not own (tmux panes and other terminals) and read the screens of the panes of the default tmux server, for display only, through the control API's `HostTerminals` and `HostScreen`. hataori never sends these terminals anything, unless `host_input` is on. With `false`, both are refused for everyone. |
+| `host_input` | boolean | `false` | With `true`, the owner may type into a tmux pane on the host that hataori does not own, through the control API's `OperateHost` (design, section 7.2). It needs `host_terminals`: `true` without it is refused at start, naming both keys. hataori's own session terminals, and a pane in which one of hataori's processes runs, are never typed into. Keys go by `tmux send-keys`, and text through a tmux buffer of the operation's own, never on a command line; no tmux client is attached, so no window changes size. Each start and end is logged with the person and the pane; what is typed is not. With `false`, `OperateHost` is refused for everyone. |
+| `host_input_idle` | duration | `"5m"` | How long an operation of a host pane lasts without a key before it ends. At least one second. |
 | `dashboard` | object | absent | The web dashboard (below). Without this section the daemon serves none. |
 | `cleanup` | object | absent | How workspaces are removed (below). Without this section no ignored file is disposable and trash is kept for seven days. |
 | `plugins` | array | empty | The plugins of the instance, one object each (below). Each is checked against its manifest when the daemon starts, and an error stops the start. This version checks them and does not start them yet. |
@@ -330,7 +332,7 @@ When the daemon starts, it reads each plugin's manifest, `hataori-plugin.json` i
 | `conversation` | boolean | `false` | Whether it may read message text: inputs, the agent's text, posts and thread titles. Only for a manifest that asks for `conversation`; without this grant, what the plugin gets has the text left out. |
 | `settings` | object | `{}` | The plugin's own settings. hataori checks only that they are an object and gives them to the plugin as written, `null` values included. The manifest's `config` schema is not applied to them. |
 
-No plugin is given `SignInLink`, `HostTerminals` or `HostScreen`: a manifest that asks for one is refused.
+No plugin is given `SignInLink`, `HostTerminals`, `HostScreen` or `OperateHost` (with `HostKeys` and `End`): a manifest that asks for one is refused.
 
 #### `plugins[].hooks[]`
 

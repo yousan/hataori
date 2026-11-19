@@ -397,6 +397,41 @@ func TestHostTerminalsOffByDefault(t *testing.T) {
 	}
 }
 
+// host_input is off by default, needs host_terminals, and its idle period
+// is 5 minutes by default and at least one second.
+func TestHostInputConfig(t *testing.T) {
+	c, err := ParseConfig([]byte(validConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.HostInput || c.HostInputIdle != 5*time.Minute {
+		t.Errorf("without the keys: host_input %v, host_input_idle %v", c.HostInput, c.HostInputIdle)
+	}
+	with := func(keys string) (*Config, error) {
+		return ParseConfig([]byte(strings.Replace(validConfig, "{", "{"+keys+",", 1)))
+	}
+	_, err = with(`"host_input": true`)
+	if err == nil || !strings.Contains(err.Error(), `"host_input"`) || !strings.Contains(err.Error(), `"host_terminals"`) {
+		t.Errorf("host_input without host_terminals: %v", err)
+	}
+	if _, err = with(`"host_input": true, "host_terminals": false`); err == nil {
+		t.Error("host_input with host_terminals false is accepted")
+	}
+	c, err = with(`"host_input": true, "host_terminals": true, "host_input_idle": " 90s "`)
+	if err != nil || !c.HostInput || c.HostInputIdle != 90*time.Second {
+		t.Errorf("host_input on, 90s: %+v, %v", c, err)
+	}
+	if c, err = with(`"host_input_idle": "1s"`); err != nil || c.HostInputIdle != time.Second {
+		t.Errorf("host_input_idle 1s: %v", err)
+	}
+	for _, bad := range []string{`"999ms"`, `"0s"`, `"-5m"`, `"five minutes"`, `"  "`} {
+		_, err := with(`"host_input_idle": ` + bad)
+		if err == nil || !strings.Contains(err.Error(), `"host_input_idle"`) {
+			t.Errorf("host_input_idle %s: %v", bad, err)
+		}
+	}
+}
+
 // The dashboard section: "listen" is the loopback listener and "web" the
 // web listener; either may be left out. A section in the old form, one
 // listener with "url", "tls_cert", "tls_key" or "proxy" in it, is read as

@@ -41,12 +41,13 @@ var points = map[string]Failure{
 
 // operations are the operations of the control protocol, as
 // docs/protocol.md lists them; a test keeps the two equal.
-var operations = []string{"Answer", "AskInterrupt", "AttachTerminal", "Close", "Events", "HostScreen", "HostTerminals", "Limits", "Link",
-	"Remove", "Scopes", "Send", "SetName", "SignInLink", "Start", "Stop", "Terminal", "Thread", "ThreadEvents", "Threads", "Workspace"}
+var operations = []string{"Answer", "AskInterrupt", "AttachTerminal", "Close", "End", "Events", "HostKeys", "HostScreen", "HostTerminals", "Limits", "Link",
+	"OperateHost", "Remove", "Scopes", "Send", "SetName", "SignInLink", "Start", "Stop", "Terminal", "Thread", "ThreadEvents", "Threads", "Workspace"}
 
 // never are the operations no plugin is given, whatever its manifest and
-// its config say: the dashboard's sign-in and the terminals on the host.
-var never = []string{"SignInLink", "HostTerminals", "HostScreen"}
+// its config say: the dashboard's sign-in, and the terminals on the host,
+// read or typed into.
+var never = []string{"SignInLink", "HostTerminals", "HostScreen", "OperateHost", "HostKeys", "End"}
 
 // Grant is one plugin's effective grant: what its manifest asks for and
 // its config entry grants, and nothing more.
