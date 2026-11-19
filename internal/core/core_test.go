@@ -72,12 +72,14 @@ func (r *fakeRunner) Interrupt(_ context.Context, sid, turn int64) error {
 	if before != nil {
 		before()
 	}
-	if turn != 0 {
+	if turn != 0 && r.machine != nil {
 		var open int64
 		r.machine.Store.DB.QueryRow(`SELECT coalesce(max(id), 0) FROM turns WHERE session_id = ? AND ended_at IS NULL`, sid).Scan(&open)
 		if open != turn {
 			return fmt.Errorf("fake runner: turn %d is not the running turn: %w", turn, session.ErrRefused)
 		}
+	}
+	if turn != 0 {
 		return r.record(fmt.Sprintf("interrupt turn %d", turn))
 	}
 	return r.record("interrupt")
