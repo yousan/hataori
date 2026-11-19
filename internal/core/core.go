@@ -1018,6 +1018,26 @@ func (c *Core) Confined(ctx context.Context, id control.ThreadID) (bool, error) 
 	return confined, nil
 }
 
+// SentTo returns the thread that a Send in scope took key for, and false
+// when no Send took it. It is no operation of the control API: the
+// supervisor's waker asks it about a wake's key from before the key named
+// its thread (#443).
+func (c *Core) SentTo(ctx context.Context, scope, key string) (control.ThreadID, bool, error) {
+	var data []byte
+	err := c.Store.DB.QueryRowContext(ctx, `SELECT data FROM inbox WHERE key = ?`, "send:"+scope+"\x00"+key).Scan(&data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("core: send key: %w", err)
+	}
+	var d struct{ Thread control.ThreadID }
+	if err := json.Unmarshal(data, &d); err != nil {
+		return 0, false, fmt.Errorf("core: send key: %w", err)
+	}
+	return d.Thread, true, nil
+}
+
 // sameConfinement refuses a key that started a thread before whose
 // confinement is not the one asked for now: an ordinary Start never
 // returns a confined thread, and StartConfined never an ordinary one.

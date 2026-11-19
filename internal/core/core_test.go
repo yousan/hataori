@@ -744,6 +744,24 @@ func TestNoAnswerCallerIsRefusedByAnOpenQuestion(t *testing.T) {
 	}
 }
 
+// SentTo tells which thread a Send took a key for, and that no Send took
+// another key (#443).
+func TestSentTo(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{})
+	id, sid := f.running(t, "t1")
+	f.agentEvent(t, sid, 2, agent.Event{Kind: agent.TurnEnded})
+	if err := f.owner.Send(ctx, id, "k1", control.Input{Text: "x"}, control.Refuse); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := f.core.SentTo(ctx, "s", "k1"); err != nil || !ok || got != id {
+		t.Fatalf("SentTo(k1) = %d, %v, %v; want %d", got, ok, err, id)
+	}
+	if _, ok, err := f.core.SentTo(ctx, "s", "k2"); err != nil || ok {
+		t.Fatalf("SentTo(k2) = %v, %v; want no thread", ok, err)
+	}
+}
+
 // Agents number their requests per session, so two sessions can ask "q1".
 func TestSameRequestIDInTwoSessions(t *testing.T) {
 	ctx := context.Background()

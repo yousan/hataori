@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -221,7 +220,7 @@ func (g *LoopGuard) count(ctx context.Context, w control.ThreadID, svReset uint6
 		if err := rows.Scan(&key); err != nil {
 			return 0, 0, fmt.Errorf("supervisor: loop guard: %w", err)
 		}
-		if to, err := strconv.ParseUint(strings.TrimPrefix(key, WakeKeyPrefix), 10, 64); err == nil {
+		if to, _, ok := ParseWakeKey(key); ok {
 			wakes = append(wakes, to)
 		}
 	}
