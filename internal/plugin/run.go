@@ -157,7 +157,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	// that ran it died.
 	configured := map[string]bool{}
 	for _, g := range r.Grants {
-		configured[g.ID] = true
+		configured[g.ID] = !g.External // an external plugin's earlier runs, when hataori started it, are leftovers too
 	}
 	dirs, _ := filepath.Glob(filepath.Join(r.State, "plugin-run", "*"))
 	for _, d := range dirs {
@@ -165,7 +165,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			r.wg.Add(1)
 			go func() {
 				defer r.wg.Done()
-				r.leftovers(Grant{ID: id})
+				r.leftovers(ctx, Grant{ID: id})
 			}()
 		}
 	}
@@ -262,7 +262,7 @@ func or[T comparable](v, d T) T {
 
 // run starts g again and again until ctx ends or it stays stopped.
 func (r *Runner) run(ctx context.Context, g Grant) {
-	r.leftovers(g)
+	r.leftovers(ctx, g)
 	backoff := or(r.Backoff, DefaultBackoff)
 	window := or(r.Window, DefaultWindow)
 	var exits []time.Time
@@ -439,7 +439,14 @@ func (r *Runner) once(ctx context.Context, g Grant) (string, error) {
 	syscall.Kill(-pgid, syscall.SIGKILL)
 	r.group(pgid, "")
 	if recPath != "" {
-		os.Remove(recPath)
+		// What it started that left the group, and kept its environment.
+		killed, done := r.sweep(context.WithoutCancel(ctx), g, rec.Run)
+		if killed > 0 {
+			r.Log.Warn("plugin: killed what it started outside its group", "plugin", g.ID, "processes", killed)
+		}
+		if done {
+			os.Remove(recPath)
+		}
 	}
 	return "", err
 }
