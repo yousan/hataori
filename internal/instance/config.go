@@ -94,13 +94,33 @@ type Supervisor struct {
 	Model        string // "model": the adapter's cheapest when empty
 	Effort       string // "effort": the scope's default when empty
 	Instructions string // "instructions": appended to the agent's own instructions
+	// Quiet is how long the supervisor's waker waits after the first event
+	// that wakes it, folding the events until then into one message.
+	// "quiet"; 30 seconds when absent.
+	Quiet time.Duration
+	// OutputMax caps, in bytes, each thread's last output in a wake
+	// message. "output_max"; 1024 when absent.
+	OutputMax int
+	// ThreadsMax is the most threads a wake message shows; the others are
+	// counted in one line. "threads_max"; 20 when absent.
+	ThreadsMax int
 }
+
+// The defaults of a supervisor's wake (decision 5 of #267).
+const (
+	DefaultQuiet      = 30 * time.Second
+	DefaultOutputMax  = 1024
+	DefaultThreadsMax = 20
+)
 
 type fileSupervisor struct {
 	Agent        string `json:"agent"`
 	Model        string `json:"model"`
 	Effort       string `json:"effort"`
 	Instructions string `json:"instructions"`
+	Quiet        string `json:"quiet"`
+	OutputMax    *int   `json:"output_max"`
+	ThreadsMax   *int   `json:"threads_max"`
 }
 
 // Dashboard is the "dashboard" section of the config: a loopback listener,
@@ -329,11 +349,32 @@ func ParseConfig(data []byte) (*Config, error) {
 		}
 		if sv := s.Supervisor; sv != nil {
 			sc.Supervisor = &Supervisor{Agent: strings.TrimSpace(sv.Agent), Model: strings.TrimSpace(sv.Model),
-				Effort: strings.TrimSpace(sv.Effort), Instructions: strings.TrimSpace(sv.Instructions)}
+				Effort: strings.TrimSpace(sv.Effort), Instructions: strings.TrimSpace(sv.Instructions),
+				Quiet: DefaultQuiet, OutputMax: DefaultOutputMax, ThreadsMax: DefaultThreadsMax}
 			if a := sc.Supervisor.Agent; a != "" {
 				if err := registry.ValidName(a); err != nil {
 					return nil, fmt.Errorf("config: key %q: %v", key+".supervisor.agent", err)
 				}
+			}
+			if q := strings.TrimSpace(sv.Quiet); q != "" {
+				d, err := time.ParseDuration(q)
+				if err != nil || d <= 0 {
+					return nil, fmt.Errorf("config: key %q: %q is not a positive duration such as \"30s\"", key+".supervisor.quiet", q)
+				}
+				sc.Supervisor.Quiet = d
+			}
+			for _, n := range []struct {
+				name string
+				v    *int
+				to   *int
+			}{{"output_max", sv.OutputMax, &sc.Supervisor.OutputMax}, {"threads_max", sv.ThreadsMax, &sc.Supervisor.ThreadsMax}} {
+				if n.v == nil {
+					continue
+				}
+				if *n.v <= 0 {
+					return nil, fmt.Errorf("config: key %q: %d is not a positive number", key+".supervisor."+n.name, *n.v)
+				}
+				*n.to = *n.v
 			}
 		}
 		for j, e := range s.ShowIn {
