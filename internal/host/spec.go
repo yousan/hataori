@@ -2,17 +2,20 @@
 // on a pseudo-terminal or on pipes, outlives whoever started it, records
 // what the command reports, and accepts input on a Unix socket.
 //
+// A host can also run no command (Spec.Relay), for a terminal that another
+// holder holds: it then only relays hook calls, until it is told to stop.
+//
 // The host interprets nothing. It knows a command, a directory, an
 // environment and a few files in a state directory:
 //
 //	host.json      the Spec, written by Start
 //	host.pid       the host's process id
-//	command.pid    the command's process id, which is also its process group
-//	events.ndjson  on pipes, every line of the command's standard output
+//	command.pid    the command's process id, which is also its process group; not for a relay
+//	events.ndjson  on pipes, every line of the command's standard output; and every hook call
 //	terminal.log   on a terminal, its raw output, bounded
 //	stderr.log     on pipes, its standard error, bounded
-//	host.sock      the socket, while the command runs
-//	status.json    how the command ended, written when it has
+//	host.sock      the socket, while the command runs, or until a relay is stopped
+//	status.json    how the command ended, written when it has; for a relay, when it was stopped
 package host
 
 import (
@@ -39,7 +42,15 @@ type Spec struct {
 	Rows     uint16   `json:"rows,omitempty"`      // terminal size; 24 when zero
 	Cols     uint16   `json:"cols,omitempty"`      // terminal size; 80 when zero
 	LogLimit int64    `json:"log_limit,omitempty"` // bound of terminal.log and stderr.log; DefaultLogLimit when zero
+	// Relay runs no command: the host only listens on its socket, appends
+	// each hook call to events.ndjson and holds the calls that wait, for a
+	// terminal that another holder holds. It ends when told to stop. Argv
+	// is then empty and Terminal false.
+	Relay bool `json:"relay,omitempty"`
 }
+
+// errRelayCommand refuses a Spec that is a relay and names a command.
+var errRelayCommand = errors.New("host: a relay runs no command and has no terminal")
 
 // Size returns the terminal's size, with the defaults for a zero field.
 func (s Spec) Size() (cols, rows uint16) {
@@ -94,6 +105,10 @@ type Status struct {
 	Stopped  bool   `json:"stopped,omitempty"`
 	StopNote string `json:"stop_note,omitempty"` // which signals a stop sent
 	Error    string `json:"error,omitempty"`     // the command could not be started
+	// Relay says the host ran no command (Spec.Relay): it relayed hook
+	// calls until it was told to stop, and had nothing to signal. Exited is
+	// then false and Stopped true.
+	Relay bool `json:"relay,omitempty"`
 }
 
 // Command is how to run the host program itself: the hataori binary with
@@ -110,7 +125,10 @@ type Command struct {
 // exits or is killed. It returns the host's process id once the host
 // listens on its socket.
 func Start(c Command, stateDir string, spec Spec) (int, error) {
-	if len(spec.Argv) == 0 {
+	if spec.Relay && (len(spec.Argv) > 0 || spec.Terminal) {
+		return 0, errRelayCommand
+	}
+	if len(spec.Argv) == 0 && !spec.Relay {
 		return 0, errors.New("host: empty command")
 	}
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {

@@ -147,6 +147,8 @@ type StopResult struct {
 // its group: SIGINT, then SIGTERM after interrupt, then SIGKILL after
 // terminate. It returns once the host has recorded the command's status,
 // so its logs are complete. A command that already exited is not an error.
+// A relay (Spec.Relay) is sent no signal: it ends, and its Status says
+// Relay.
 func Stop(stateDir string, interrupt, terminate time.Duration) (StopResult, error) {
 	var r StopResult
 	c, err := Dial(stateDir)

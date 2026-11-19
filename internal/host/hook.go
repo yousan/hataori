@@ -175,6 +175,9 @@ func (h *host) call(c net.Conn, req request) response {
 		return response{Error: "the hook went away"}
 	case <-h.done:
 		h.calls.remove(id)
+		if h.spec.Relay {
+			return response{Error: "the relay was told to stop"}
+		}
 		return response{Error: "the command has exited"}
 	}
 }
