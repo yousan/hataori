@@ -121,6 +121,14 @@ func expected() map[string]section {
 		}
 		want["Operation `"+name+"`"] = s
 	}
+	for name, r := range requests {
+		s := section{rows: fields(reflect.TypeOf(r.args), types), result: "none"}
+		if r.result != nil {
+			s.result = typeName(reflect.TypeOf(r.result))
+			collect(reflect.TypeOf(r.result), types)
+		}
+		want["Request `"+name+"`"] = s
+	}
 	for len(types) > 0 { // the types the others use, and the types those use
 		var next = map[string]reflect.Type{}
 		for name, t := range types {
@@ -222,12 +230,12 @@ func TestProtocolDocMatchesTheCode(t *testing.T) {
 		if strings.Join(sortedRows(g.rows), "\n") != strings.Join(sortedRows(w.rows), "\n") {
 			t.Errorf("%s: the document has\n%s\nthe code has\n%s", h, strings.Join(sortedRows(g.rows), "\n"), strings.Join(sortedRows(w.rows), "\n"))
 		}
-		if w.result != g.result && strings.HasPrefix(h, "Operation") {
+		if w.result != g.result && (strings.HasPrefix(h, "Operation") || strings.HasPrefix(h, "Request")) {
 			t.Errorf("%s: result %q in the document, %q in the code", h, g.result, w.result)
 		}
 	}
 	for h := range got {
-		if _, ok := want[h]; !ok && (strings.HasPrefix(h, "Operation") || strings.HasPrefix(h, "Type") ||
+		if _, ok := want[h]; !ok && (strings.HasPrefix(h, "Operation") || strings.HasPrefix(h, "Request") || strings.HasPrefix(h, "Type") ||
 			strings.HasPrefix(h, "Event") || strings.HasPrefix(h, "Message")) {
 			t.Errorf("docs/protocol.md describes %q, which the code does not have", h)
 		}

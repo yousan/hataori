@@ -42,6 +42,13 @@ func Dial(root string) (*Client, error) {
 // the daemon issued token for. Every connection the client opens, for
 // calls and for streams, presents it. An unknown token is refused.
 func DialToken(root, token string) (*Client, error) {
+	return DialTokenHandler(root, token, nil)
+}
+
+// DialTokenHandler is DialToken with h answering the requests the daemon
+// sends from the start, such as a plugin's plugin_started, which may come
+// as soon as the hellos are exchanged.
+func DialTokenHandler(root, token string, h Handler) (*Client, error) {
 	if token == "" {
 		return nil, errors.New("wire: no token")
 	}
@@ -49,13 +56,17 @@ func DialToken(root, token string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return dial(path, Version, token)
+	return dialHandler(path, Version, token, h)
 }
 
 func dialPath(path, version string) (*Client, error) { return dial(path, version, "") }
 
 func dial(path, version, token string) (*Client, error) {
-	c := &Client{path: path, version: version, token: token}
+	return dialHandler(path, version, token, nil)
+}
+
+func dialHandler(path, version, token string, h Handler) (*Client, error) {
+	c := &Client{path: path, version: version, token: token, handler: h}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.open(context.Background()); err != nil {

@@ -123,6 +123,10 @@ func (p *Peer) Request(ctx context.Context, op string, args, result any) error {
 	}
 }
 
+// Done is closed when the connection breaks, or when it becomes a stream:
+// from then on Request fails at once.
+func (p *Peer) Done() <-chan struct{} { return p.done }
+
 // serve reads the connection until it breaks. Requests are answered by the
 // handler, each in its own goroutine, so that a handler may itself send a
 // request and wait. stream, when not nil, takes over the connection for an

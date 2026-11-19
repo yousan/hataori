@@ -10,7 +10,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 - Each message is one JSON object on one line.
 - Each side sends a `hello` first. The daemon reads the client's hello before it answers with its own. When the daemon refuses the client, its hello carries `error` and the daemon closes the connection.
 - After the hellos, **either side may send requests**. A request has `op` set; a response has no `op`. Each side numbers its own requests, and a response carries the `id` of the request it answers. Several requests may be outstanding at once, and the answers may come in any order.
-- The client sends the operations below. The daemon may send the client requests of its own; there are none in this version, and plugin hooks and scope owners in other processes will use them. A side that gets a request whose `op` it does not know answers with the error code `not_supported` and carries on.
+- The client sends the operations below. The daemon may send the client requests of its own (Requests the daemon sends, below): since 3.13, to a plugin, its hooks and the notices that it started and is stopping. A side that gets a request whose `op` it does not know answers with the error code `not_supported` and carries on.
 - An `Events` request turns the connection into a stream: the daemon answers it once with an empty `response`, then sends one `response` with `event` set per event, until the client closes the connection. A client follows events on a connection of its own.
 - A `Terminal` request does the same with terminal output: an empty `response`, then one `response` with `terminal` set per chunk. Since 1.9.
 - On an `Events` or a `Terminal` stream the daemon reads nothing the client sends: no request on that connection is answered or carried out, and nothing reaches a terminal.
@@ -18,7 +18,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.12**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.13**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -387,6 +387,56 @@ Since 1.13. The remaining usage of each agent, as its sessions last reported it:
 
 Result: [`AgentLimits`]
 
+## Requests the daemon sends
+
+Since 3.13. The daemon sends these to a plugin, on a connection made with the plugin's token that is not a stream: the oldest such connection that is still open. A connection that becomes a stream takes none from then on, so a plugin keeps one connection for requests, as the project's client does, and follows events on others. A plugin that does not know one answers `not_supported`, as for any request.
+
+### Request `hook`
+
+Calls the plugin's handler on one hook point (design, section 7.3). The handlers of a point run one after another: by the priority of the plugin's grant, higher first, then in the config's order, each given the text as the one before left it. A handler fails when it does not answer within its timeout (`left`), when its plugin has no connection open or the connection closes before the answer, when it answers with an error (`not_supported` too), and when its answer is one the point does not allow. A failure blocks or skips by the handler's policy (`GrantedHook.on_failure`): blocked, what passes the point is stopped, with hataori's account of the failure and the plugin's name; skipped, the next handler gets the text as it was. The daemon logs each call with the plugin, the point, the thread and the outcome, and no text.
+
+| Point | May answer `stop` | May answer `text` | Policy unless the config says otherwise |
+|---|---|---|---|
+| before_agent_run | yes | no | block |
+| before_prompt_build | no | yes | skip |
+| message_sending | yes | yes | skip |
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `point` | string | required | the hook point |
+| `thread` | integer | optional | the thread's number; absent at a point before the thread has one |
+| `scope` | string | required | the thread's scope |
+| `text` | string | optional | what passes the point: the input or the post, as the handler before left it; text, left out for a plugin without the `conversation` grant |
+| `left` | integer | required | milliseconds the handler has to answer; a later answer is not waited for and counts as a failure |
+
+Result: `HookAnswer`
+
+### Request `plugin_started`
+
+Tells the plugin that it is connected, with its grant: what its manifest asks for and the config grants. The daemon sends it on the plugin's first connection, and again on a connection made when it had none open, such as after the plugin was started again. It sends `hook` requests whether or not this one was answered; its answer, an error too, changes nothing and is logged.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `plugin` | string | required | the plugin's id |
+| `scopes` | [string] | required | the scopes it may see and act in |
+| `operations` | [string] | optional | the operations it may call; absent for none |
+| `events` | [string] | optional | the event kinds it may read; absent for none |
+| `hooks` | [`GrantedHook`] | optional | the hook points it handles; absent for none |
+| `conversation` | boolean | optional | whether it may read text |
+
+Result: none
+
+### Request `plugin_stopping`
+
+Tells the plugin that hataori is about to stop it. The daemon waits for the answer at most `left`, and stops the plugin then whether it answered or not. A plugin with no connection open is told nothing.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `plugin` | string | required | the plugin's id |
+| `left` | integer | required | milliseconds before it is stopped |
+
+Result: none
+
 ## Types
 
 ### Type `LinkRef`
@@ -601,6 +651,27 @@ A key name is tmux's name for the key, after modifiers, each of `C-`, `M-` and `
 | `key` | string | optional | a key name, as above |
 | `text` | string | optional | text, written to the pane as it is; text, so optional |
 | `paste` | boolean | optional | the text is a paste: tmux brackets it when the program asked for that |
+
+### Type `HookAnswer`
+
+Since 3.13. A plugin's answer to `hook`.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `action` | string | required | `continue`: it passes; `stop`: it does not, at a point that allows it |
+| `text` | string | optional | with `continue`, what passes the point instead, at a point that allows it; absent, it passes unchanged |
+| `reason` | string | optional | with `stop`, why, which the thread shows; text |
+
+### Type `GrantedHook`
+
+Since 3.13. One hook point of a plugin's grant.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `point` | string | required | the hook point |
+| `priority` | integer | optional | the manifest's; higher runs first; absent for 0 |
+| `timeout` | integer | required | milliseconds its handler has: the config's, else the manifest's, else 15000 |
+| `on_failure` | string | required | `block` or `skip`: what its failure does, the config's, else the point's |
 
 ### Type `AgentLimits`
 
