@@ -142,11 +142,11 @@ function HostScreen({ h, fit, operating, onKeys }: { h: HostTerminal; fit?: bool
   );
 }
 
-function Field(props: { name: string; label: string; value: string }) {
+function Field(props: { name: string; label: string; value: string; time?: string }) {
   return (
     <div className="field" data-field={props.name}>
       <dt>{props.label}</dt>
-      <dd>{props.value}</dd>
+      <dd>{props.time ? <time dateTime={props.time}>{props.value}</time> : props.value}</dd>
     </div>
   );
 }
@@ -171,6 +171,19 @@ export function HostDetails({ h, now }: { h: HostTerminal; now: number }) {
         <Field name="activity" label={t("host.activity")} value={h.activity ? age(h.activity, now) : dash()} />
         {p && <Field name="attached" label={t("host.attached")} value={t(p.attached ? "host.yes" : "host.no")} />}
       </dl>
+      {p && h.reported && (
+        // What the session's own hooks reported, through the plugin a
+        // person installed: shown as reported, not judged.
+        <section data-block="reported">
+          <h3>{t("host.reported")}</h3>
+          <dl>
+            <Field name="reportedSession" label={t("host.reportedSession")} value={h.reported.session} />
+            <Field name="reportedDir" label={t("host.reportedDir")} value={h.reported.dir} />
+            <Field name="reportedEvent" label={t("host.reportedEvent")} value={h.reported.event} />
+            <Field name="reportedAt" label={t("host.reportedAt")} value={age(h.reported.at, now)} time={h.reported.at} />
+          </dl>
+        </section>
+      )}
     </div>
   );
 }
