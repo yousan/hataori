@@ -1377,7 +1377,9 @@ func (r *Runner) checkIdle(lv *live) {
 // session's host, or was within the idle period: while it is, the session
 // is not put to sleep, and the idle period starts again when it goes. The
 // host keeps the count, so it holds across a daemon restart. A host that
-// does not answer has none attached.
+// does not answer has none attached. A terminal that attaches after this
+// check is safe too: AttachTerminal restarts the idle period in a write
+// transaction, which the sleep's transaction below then sees.
 func (r *Runner) attached(lv *live) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()

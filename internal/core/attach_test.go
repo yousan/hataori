@@ -101,3 +101,25 @@ func TestAttachTerminalWakesWithoutInput(t *testing.T) {
 		t.Fatalf("first input %s", fi)
 	}
 }
+
+// Attaching to an idle thread starts its idle period again, so that it is
+// not put to sleep before the terminal reaches its host.
+func TestAttachTerminalRestartsTheIdlePeriod(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{key: "new"})
+	id, sid := f.running(t, "t1")
+	f.agentEvent(t, sid, 2, agent.Event{Kind: agent.TurnStarted})
+	f.agentEvent(t, sid, 3, agent.Event{Kind: agent.TurnEnded})
+	if _, err := f.core.Store.DB.Exec(`UPDATE sessions SET updated_at = 1 WHERE id = ?`, sid); err != nil {
+		t.Fatal(err)
+	}
+	owner := f.core.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all | control.OpAttach})
+	if _, err := owner.AttachTerminal(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	var updated int64
+	f.core.Store.DB.QueryRow(`SELECT updated_at FROM sessions WHERE id = ?`, sid).Scan(&updated)
+	if updated <= 1 || f.state(t, sid) != control.Idle {
+		t.Fatalf("after the attach: updated_at %d, state %s; want the idle period started again", updated, f.state(t, sid))
+	}
+}

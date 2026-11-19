@@ -1364,7 +1364,12 @@ func (a *api) AttachTerminal(ctx context.Context, id control.ThreadID) (control.
 			return fmt.Errorf("core: attach to thread %d: %w: %w", number, ErrNoTerminal, session.ErrRefused)
 		}
 		if state != control.Asleep {
-			return nil
+			// The idle period starts again now, in the transaction the idle
+			// check also writes in: the session is not put to sleep between
+			// this answer and the terminal reaching its host, which then
+			// reports it attached.
+			_, err := tx.ExecContext(ctx, `UPDATE sessions SET updated_at = max(updated_at, ?) WHERE id = ?`, a.c.now().UnixMilli(), sid)
+			return err
 		}
 		wake = true
 		if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Wake}); err != nil {
