@@ -13,6 +13,7 @@ How to read it:
 - OpenClaw facts (section 7.3) come from its documentation for version 2026.10.6, read on 2026-11-12.
 - Slack and Microsoft Teams facts in section 8, and the source notes in Appendix B's Codex rows, come from documentation and source code read on 2026-11-18 (Appendix B); they were not run.
 - The tmux facts behind typing into a host pane (section 7.2) were checked on 2026-11-19 against tmux 3.4 on Linux (Appendix B). The SSH and browser facts there (OpenSSH's connection sharing and forwarding, `localhost` as a secure origin, cookies shared across ports) were not run or read again for it, and count as **(unverified)** until the issues that use them check them.
+- The facts behind terminal holders and taking in sessions people started (sections 4.3 and 4.8) were checked on 2026-11-19 against Claude Code 2.1.328 and tmux 3.4 on Linux, with a throwaway configuration directory and no login (Appendix B). cmux and iTerm2 run only on macOS: their facts come from their documentation, read the same day, and are **(unverified)**.
 - Anything marked **(unverified)** was not checked by running it.
 
 ## 1. Summary
@@ -26,6 +27,7 @@ How to read it:
 7. **hataori writes nothing into a working tree**, and removes a workspace only after proving there is nothing in it that exists nowhere else (section 4.6).
 8. **Phase 1 is narrow:** replace c-lord for orders that a managing agent sends through a webhook, with the full test suite written before the first real order. Everything a person does by hand in chat comes after (section 8).
 9. **Two things have no hook:** the folder-trust dialog at a workspace's first start, and the end of an interrupted turn. Section 3.5 says how each is handled; the first is answered by keys before the session starts (decided, section 10).
+10. **hataori is added to the terminals people already use, not a replacement for them.** Its own session host stays the default, but holding a terminal is a replaceable part, so tmux, and on macOS cmux and iTerm2, can hold a session too. With a Claude Code plugin the person installs, a session they started in their own window reports through the same hooks and can be taken in as a thread, explicitly, by its owner (sections 4.3 and 4.8; decided 2026-11-19, section 10).
 
 ## 2. What c-lord taught us
 
@@ -51,7 +53,7 @@ c-lord has 698 issues. 443 are bugs (labelled `bug`, or titled `bug:` / `fix:`).
 |---|---:|---|---|
 | Reading the terminal screen: finding menus, dialogs, limits and login state in pane text | 52 | c-lord#388, c-lord#990 | The screen is not read. Questions, approvals, turn ends and failures arrive as hook calls or protocol messages. One start-up dialog is left (section 3.5). |
 | Typing into the terminal: keystrokes lost, split, reinterpreted or sent to the wrong dialog | 22 | c-lord#560, c-lord#1284 | Input is one paste, and it counts as delivered only when the agent's own hook reports the same text. Nothing is typed before the session has reported its start. |
-| tmux window bookkeeping: which window is which thread, twins, reaping | 32 | c-lord#649, c-lord#701 | No tmux. One process per session, tracked by the database. |
+| tmux window bookkeeping: which window is which thread, twins, reaping | 32 | c-lord#649, c-lord#701 | hataori's own session host by default: one process per session, tracked by the database. A tmux pane holds a session only by the pane id that the session's own hook reports, never matched by name or screen (sections 4.3 and 4.8). |
 | Tailing the transcript file: replies lost, posted twice, user input echoed, internal text leaked | 39 | c-lord#553, c-lord#773 | The agent's hooks name the transcript file; it is read from a stored position, and only for text. What hataori pasted is known from the hook, so nothing has to be recognised as an echo. |
 | Guessing turn state from timers and polling: false "finished", false timeouts, stuck lamps, wrong person pinged | 64 | c-lord#541, c-lord#1132 | Turn start and end are reported by the agent, with a reason. One state machine per session. |
 | Subagents and background tasks, tracked through the transcript | 20 | c-lord#1136, c-lord#1302 | Subagent start and end are hook calls with their own transcript path; a turn's end lists the background tasks still running. |
@@ -146,6 +148,7 @@ Each hook is the command `hataori hook`. It hands its payload to the session hos
 - **A hook that waits for a person.** Command hooks time out after 600 seconds by default (documented). A question may wait for hours, so the hook's timeout must be raised, and what happens when it still expires must be known **(unverified)**.
 - **Input while a turn is running** was not checked on this path **(unverified)**. Until it is, hataori holds such input and pastes it when the turn ends.
 - **Paste depends on the terminal UI's input box.** It was checked in the default editing mode only; the user's own settings (vim mode) are **unverified**.
+- **A tab in a paste arrives as four spaces.** Claude Code 2.1.328's input box turned each tab of a bracketed paste into four spaces, on its own pseudo-terminal and through tmux alike (Appendix B). The codec compares the pasted text with the prompt the hook reports after trimming and line-ending changes only, so an input with a tab is never matched: the agent runs it, the turn is reported as typed at the terminal, and the input later fails as `not delivered` (#393).
 - **Whether the usage-limit menu still needs an answer** on screen when a limit is hit is **unverified**; c-lord answers it by keys.
 - **Codex `app-server` is marked experimental** in its own help text. Captures per version, unknown messages skipped.
 - **Codex interrupt leaves the command running** (observed). The session host runs the agent in its own process group so hataori can end what the agent left behind.
@@ -176,7 +179,7 @@ creating ──► idle ◄──► running ◄──► waiting      (waiting:
 
 Every transition is caused by one event (a chat message, an agent event, a timer, a command), is written to the database in the same transaction as the events it produces, and is the only place that state changes. Lamps, the progress line, pings and turn-end events are all derived from those events, so they cannot disagree with each other.
 
-### 4.3 The session host
+### 4.3 The session host, and terminal holders
 
 Each agent is started by a small host process (`hataori host`, the same binary). The host:
 
@@ -191,6 +194,53 @@ Each agent is started by a small host process (`hataori host`, the same binary).
 The host does not parse or interpret anything, so it rarely needs to change. It is detached from the daemon. When the daemon restarts, running turns continue; the daemon reconnects to the socket and reads the log from the byte offset it last stored. A hook that is waiting for an answer keeps waiting across the restart.
 
 Checked: a `claude -p` process with stdin on a FIFO and stdout on a file finished its turn after the process that launched it had exited, and accepted a second message afterwards. The interactive CLI was run in a terminal with its hooks writing to a file (Appendix B). The host itself is new code and is the first thing phase 1 must prove.
+
+**Terminal holders.** The host does two jobs. It holds the agent's terminal, and it relays what the agent reports: the log, and the hook calls that wait for an answer. Relaying stays with hataori's host whatever holds the terminal, so turn state, questions and permission requests keep one path and survive a daemon restart as described above. A host can therefore also run with no command, as a relay only, for a terminal that something else holds. Holding the terminal is a replaceable part, the *terminal holder*. hataori's own host is the default holder for every session hataori starts, and the reference that every other holder is measured against (decided 2026-11-19, section 10). One holder is added at a time, and each one's input path is checked against the real agent before it ships.
+
+A holder has five operations. The right-hand column is what hataori's own host does today.
+
+| Operation | What it does | hataori's own host |
+|---|---|---|
+| Start | starts the agent in the workspace, with exactly the arguments, environment and terminal size given, in a process group of its own; returns a reference to the window, which the core stores with the session | opens a pseudo-terminal with `creack/pty` and starts the command in a new session on it |
+| Input | delivers pastes and named keys, in order | a paste is `ESC [200~`, the text, `ESC [201~`; a key comes from a fixed table: Enter `\r`, Escape `ESC`, Up `ESC [A`, Down `ESC [B` |
+| Screen | shows what the agent draws, as raw output with byte positions or as rendered snapshots | raw output, positions counted from the start of the host's run (section 7.2) |
+| Stop | ends the agent's process group, interrupting first, and leaves no process behind | SIGINT, then SIGTERM, then SIGKILL to the group |
+| Alive | says whether the agent runs, has ended (with its exit status when the holder knows it), or is gone, or that the holder cannot tell | the host's socket and `status.json` |
+
+What every holder must provide:
+
+- *Input.* A paste reaches the agent as one bracketed paste when the agent has asked for bracketed paste, with its bytes unchanged: no line feed turned into a carriage return, nothing re-encoded. A named key reaches the agent encoded for the terminal's current mode. Text never appears on a command line, where other users of the machine could read it in the process table. Nothing is sent that the codec did not ask for. An input counts as handed over once the holder has given all of it to the terminal; whether the agent took it is still decided by the agent's hook (section 3.4), never by the screen.
+- *Screen.* Either raw output from the agent's first byte, with positions that survive trimming the log, or rendered snapshots. Raw output is what the start-up dialog watcher reads (section 3.5), and how the codec sees that the agent has turned bracketed paste on. A holder that has only snapshots therefore cannot start sessions; it holds only sessions that are past their start (section 4.8). Whatever the holder, nothing reads the screen to decide anything else.
+- *Stop.* Only a holder that started the agent stops it. A window hataori did not start is never stopped by hataori; it can only be let go (section 4.8).
+- *Alive.* The answer comes from the holder's own records, never from the screen. "Cannot tell" is not "gone": a session is put asleep or marked as exited only on a definite answer.
+- *Identity.* A window reference is never reused for another window, even after the holder itself restarts.
+
+The holders, in the order they come:
+
+| Holder | Start | Input | Screen | Stop | Alive | Checked |
+|---|---|---|---|---|---|---|
+| hataori's own host | yes | bytes to its pseudo-terminal | raw | yes | socket and status file | yes |
+| tmux, a window a person started (section 4.8) | no | `load-buffer -b <own> -`, then `paste-buffer -p -r -d -b <own>`; `send-keys` with tmux's key names | snapshots (`capture-pane`) | no | `list-panes`, and the process the hooks named | yes, Appendix B |
+| tmux, a window hataori starts | yes | as above | raw, through `pipe-pane -O` | yes | `remain-on-exit` and `#{pane_dead_status}` | the parts, Appendix B; the whole is not built |
+| cmux (macOS) | **(unverified)** | `cmux paste`, `cmux send-key` | `cmux read-screen`, text | `cmux close-surface` | `cmux surface-health` | documentation only |
+| iTerm2 (macOS) | **(unverified)** | Python API `Session.async_send_text` | `Session.async_get_screen_contents` | **(unverified)** | **(unverified)** | documentation only |
+
+*tmux.* A window is named by the server and the pane: `TMUX` holds the server's socket path and process id, and `TMUX_PANE` the pane id. The server's process id is part of the reference because pane ids start again at `%0` on a new server (Appendix B). Input follows the path chosen for host panes in section 7.2, with one change: `paste-buffer` replaces every line feed with a carriage return unless it is given `-r`, so a paste for an agent always uses `-r`. `display-message` on a pane that no longer exists exits 0 with empty fields, so whether a pane exists is read from `list-panes`. The process tmux starts in a pane leads its own process group, so Stop signals that group as the host does. For a window hataori starts:
+
+1. A relay host with no command starts first, so the first hook call finds its socket, as today.
+2. The pane is created in a tmux session of hataori's own name, on the person's default tmux server, with a placeholder command. The person sees the window among their own and can switch to it; what they type there is reported by the hooks as typed at the terminal (Attach, above).
+3. `remain-on-exit` is set on the pane, so that its exit status can be read after the agent ends, and `pipe-pane -O` sends the pane's output to a `hataori` process that writes the bounded raw log the host writes today.
+4. `respawn-pane -k` replaces the placeholder with the real command. The pipe stays on the pane and gets the first byte (Appendix B). The command is a small `hataori` command that reads the spec from the session's state directory and executes the agent with exactly that environment. Without it the pane would inherit the tmux server's environment, and passing values with `-e` would put them on a command line.
+
+Choosing tmux for the sessions hataori starts is a config option, later (section 10).
+
+*cmux*, from its documentation (Appendix B; nothing run). Each terminal, a "surface", has `CMUX_SURFACE_ID` in its environment, which stays the same for the terminal's whole life, across a restore of the app, and `CMUX_SOCKET_PATH`. `cmux paste` sends text unchanged through the app's paste path; the terminal brackets it when the program has asked for bracketed paste, and "replaces unsafe control bytes with spaces". `cmux send-key` sends one key. Both refuse to write over a prompt that a person is typing, or into an open dialog, unless forced. `cmux read-screen` returns text. cmux also starts `claude` through a wrapper of its own, which registers hooks with `--settings` and shows permission requests in cmux's own feed. So in a cmux window two programs could answer one permission request, and the cmux issue decides which one does before anything ships. It is not known whether cmux can give raw output from the first byte, so cmux starts as a holder for windows people started only.
+
+*iTerm2*, from its documentation (Appendix B; nothing run). The Python API, which a person has to turn on in iTerm2's settings **(unverified)**, has `Session.async_send_text`, documented as "Send text as though the user had typed it", and `Session.async_get_screen_contents`. No paste method is documented. A session's identifier is `Session.session_id`; the environment variable `ITERM_SESSION_ID`, of the form `w0t0p0:<UUID>`, is known from third-party code only. The first thing its issue checks is whether text sent this way can carry the bracketed-paste marks, so that a prompt of several lines reaches Claude Code as one paste and not as lines typed one by one.
+
+Orca is not a holder. It is an orchestrator at the same level as hataori, and its terminals are listed like any other terminal (section 10).
+
+**The first step changes nothing a session does.** Today the runner calls the host package directly. The first step puts those calls behind the holder operations, with hataori's own host as the only holder, and changes the codec of an agent in a terminal to return pastes and named keys instead of bytes. The own host writes exactly the bytes written today. An agent on pipes, Codex, keeps writing its bytes, and hataori's own host stays its only holder. Appendix D has the proposed interface.
 
 ### 4.4 Running a turn
 
@@ -256,6 +306,59 @@ The rules:
 This is the only input hataori takes from direct messages in phase 1, and the only button.
 
 For Claude Code the command is `claude auth login`. It was run with a throwaway config directory, so the existing login was not touched: it works on pipes without a terminal, prints the link on one line and then asks for the code, and answered a wrong code with one line and kept waiting (Appendix B). What it prints and how it ends after a correct code was not run **(unverified)**. Codex comes with its adapter: `codex login --device-auth` prints a link and a code and needs no reply, and `codex login status` reports the result (from its help text; not run).
+
+### 4.8 Taking in a session a person started
+
+People who already run many Claude Code sessions run them in their own terminal tools, and will not switch tools for hataori. So hataori is added to what they run, in three steps (decided 2026-11-19, section 10):
+
+1. Without installing anything, terminals that hataori does not own are listed in the dashboard (section 7.2).
+2. With a Claude Code plugin that the person installs, a session they started reports through hooks, as hataori's own sessions do, and can be taken in as a thread. From then on chat, the supervisor and the dashboard treat it like any other thread.
+3. hataori can start a session inside the person's tool (section 4.3, tmux).
+
+This section is step 2, and Claude Code only. c-lord could attach a thread to a window a person had made, and hataori dropped that (Appendix A), because c-lord matched windows to threads by name and read their screens. Neither comes back: the window is named by the environment of the session's own hook, and the state comes from the hooks.
+
+**The plugin.** `hataori plugin` writes a Claude Code plugin into the instance's root, in a directory that is also a plugin marketplace, and prints the two commands that install it: `claude plugin marketplace add <directory>` and `claude plugin install <plugin>@<marketplace>`. The person runs them. hataori writes nothing into Claude Code's configuration itself, as for its own sessions (section 3.4). What installing does (Appendix B):
+
+- It records the marketplace and the plugin in the user's settings file (`extraKnownMarketplaces`, `enabledPlugins`) and in the `plugins/` directory of that configuration directory.
+- Installed at user scope, the plugin's hooks run in every session of that configuration directory: in every project, next to hooks given with `--settings`, and under `claude -p`. They do not run when `--setting-sources` leaves out `user`, nor in a session that uses another configuration directory.
+- A plugin's hooks run in a session that is not logged in, so all of this can be checked with a throwaway configuration directory.
+- For a marketplace that is a local directory, the hooks ran from that directory, not from the copy Claude Code keeps in its cache. A plugin rewritten by a newer hataori then takes effect at the next session start, without reinstalling. Whether this holds in later Claude Code versions is **(unverified)**.
+
+The plugin's files name the instance's root and the `hataori` binary by absolute path, so it has no option to set. (Claude Code plugins can declare options, which reach hooks as `CLAUDE_PLUGIN_OPTION_<NAME>`, Appendix B; this plugin needs none.) It registers the hook events of hataori's own settings file (section 3.4), `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, `SubagentStart`, `SubagentStop`, `Stop`, `StopFailure`, `PreCompact`, `PostCompact` and `SessionEnd`, each with the command `hataori hook --window`. The two that decide something, `PermissionRequest` and `PreToolUse` for `AskUserQuestion`, also get `--wait` and the configured hook timeout. It registers nothing else: no status line, tool, skill or MCP server.
+
+**What `hataori hook --window` does**, in this order:
+
+1. In a session that hataori started, whose environment has `HATAORI_HOST_SOCKET`, it exits 0 at once and prints nothing. hataori's own hooks report that session; both sets run in it, and the plugin's hook sees the variable (Appendix B).
+2. It names the window from its own environment: `TMUX` and `TMUX_PANE` for tmux; later `CMUX_SURFACE_ID` with `CMUX_SOCKET_PATH` for cmux, and `ITERM_SESSION_ID` for iTerm2. It finds the Claude Code process as its nearest ancestor that has a terminal: Claude Code runs a hook under a shell of its own that has none (Appendix B).
+3. If that window has been taken in, by this Claude Code process, it does what `hataori hook` does today, with the thread's relay host (section 4.3). The take-in record that says so is a file in the instance's runtime directory, next to the relay's socket, so this works while the daemon is down.
+4. Otherwise it sends the daemon a short report and exits 0 with nothing printed, within a second, whether the daemon answers or not. The report holds the window, the session id, the working directory, the configuration directory when one is set, the event's name and time, the model, and whether the session is interactive: `CLAUDE_CODE_ENTRYPOINT` was `cli` in an interactive session and `sdk-cli` under `-p` (observed; not documented). It holds no prompt, no message and no tool input.
+
+So the hooks of a session that was not taken in do one thing: they put it in the dashboard's list. They never reach an agent, a chat, the supervisor or a plugin. Nothing of them goes into the event log or the database; the daemon keeps the list in memory and builds it again from the next reports after a restart. And they never hold a permission request or a question: the hook returns at once with no answer, so Claude Code shows its own dialog in the window, as it would without the plugin. That a hook which prints nothing and exits 0 leaves the decision to Claude Code's normal permission flow is documented; it was not run here **(unverified)**. The exit status is always 0, also when the daemon cannot be reached, since any other status puts a hook error notice in the person's window (Appendix B).
+
+**The list.** In the dashboard, a tmux row whose pane has reported also shows the session id, the directory, the last event and its time (section 7.2). These are reported, not inferred. Only interactive sessions are listed, and a report for a window that is not among the host's terminals is dropped.
+
+**Taking a window in** is explicit: one window at a time, by its owner, with the scope chosen at that moment. Hooks reach the daemon only through a socket that only the instance's OS user can open, so a window that reports is one of that user's, and its owner is the instance's owner (section 5.5). The owner takes a window in with `hataori take <window> --scope <scope>` on the host, and later from the window's row in the dashboard.
+
+1. hataori asks the holder whether the window still exists, whether the terminal of the Claude Code process that the hooks named is the window's terminal, and whether that process is the window's foreground process (Appendix B). This check is needed because an environment is inherited: a `claude -p` that the session's own shell starts sees the same `TMUX_PANE`. If any answer is no or unknown, nothing changes.
+2. In one transaction the core makes a thread in the chosen scope, as `Start` does, with its first link opened by the scope's owner (section 5.2). The thread's session is the window's session id, its holder is the window, and its workspace is the window's directory, recorded as not hataori's (below). Its title is the window's name, or the directory's name when the window has none.
+3. A relay host with no command starts for the session (section 4.3), and the take-in record is written. From the next hook on, the window reports to the thread.
+
+A thread taken in is like any other:
+
+- Input from chat or the control API is pasted into the window by the holder, and counts as delivered when the hook reports it, as always. The person can still type in the window at any time. Such a turn is reported as typed at the terminal and appears in chat with that line, as with `hataori attach` (section 4.3). A chat message that arrives while the person has typed part of a line can be mixed with it, as with attach **(unverified)**.
+- Questions and permission requests follow the rules of the thread's scope, from the next hook on. Today that means permission requests are allowed automatically (section 10). `hataori take` says so before it acts.
+- The codec of a session taken in starts the way a codec rebuilt after a restart does: ready, and without watching the screen, since the session is past its start.
+- Stop interrupts the running turn with Escape. Nothing hataori does ends the window's process.
+
+**Letting go.** `hataori release <thread>` ends a take-in. The take-in record and the relay host go, the thread goes asleep, and the window's hooks go back to listing only. The window itself is not touched.
+
+**When the window closes.** When the window's Claude Code ends, its `SessionEnd` hook reports it: Claude Code ran that hook with reason `other` when its pane was killed and when the whole tmux server was killed (Appendix B). A process killed so hard that no hook ran is found by the holder's Alive. Either way the thread goes asleep with reason `window closed`, and the relay host exits. The next input resumes the session under hataori's own host, in the same directory, with hataori's own launch (section 3.4): `--resume`, the model the session last reported, and the configuration directory the window used. The options the person started it with are not known, and are not reused.
+
+If the person opens the same session again in a window, its `SessionStart` names a session id that a thread knows. The window is listed with that thread's number, and can be taken in again, to the same thread. It is never taken in automatically. Nothing prevents the person from opening the session in a window while hataori's own host runs it. What Claude Code does with two processes on one session is **(unverified)**, and the dashboard marks such a window.
+
+**The directory is the person's.** The workspace of a thread taken in was not cloned by hataori, and may hold the only copy of someone's work. No removal path touches it: `hataori remove` of such a thread removes hataori's records and the session's state directory only, and the removal pass (section 4.6) skips the directory. Nothing is written into it, as for every workspace.
+
+**One instance.** The plugin reports to the instance that wrote it. A person who runs two instances installs the plugin of the one that should see their windows. With both installed, both could take in the same window, and nothing coordinates two instances (section 6.4).
 
 ## 5. Interfaces
 
@@ -521,6 +624,7 @@ Appendix D lists the new operations and fields as a proposal. Each is a minor pr
 - tmux panes are listed with tmux's own commands, which report session, window, pane, terminal device, current command, directory and last activity. A pane's screen is read with `capture-pane` while a tab shows it.
 - Other terminals are found from the process table through `ps`, not `/proc`, so the same code runs on Linux and macOS (section 6.4). A program that does not hold a terminal cannot read its screen, so only metadata is shown for these.
 - A terminal that a session host owns is shown once, as its thread.
+- With the Claude Code plugin installed (section 4.8), a pane whose session has reported also shows the session id, the directory, the last hook event and its time. That is reported by the session's hooks, not inferred. A pane that has been taken in is shown once, as its thread.
 
 **Three ways in, and who is at the other end.** A terminal app on one's own machine knows its user: whoever has the window. The dashboard is served by a daemon that may run on another machine, so before it shows anything, and above all before it lets anyone type, it must know who is at the other end. It is opened in one of three ways, and each has its own proof. The daemon tells the ways apart by the listener a connection arrived on, never by anything the request says.
 
@@ -754,6 +858,17 @@ Where Slack differs from what the driver interface assumes (Appendix B, "Documen
 
 Teams calls hataori at a public HTTPS address, which is a deployment decision. Teams also has a socket mode (public preview, new bots only, not recommended for production by Microsoft); from Go it needs the SignalR hub protocol written by hand, so hataori does not use it in this phase.
 
+### Not scheduled: terminal holders, and sessions people started
+
+Sections 4.3 and 4.8 (decided 2026-11-19, section 10). This work is designed but not scheduled, and holds up no phase. It is tracked in #394, in this order:
+
+1. The holder operations around today's session host, with no change in what a session does.
+2. The plugin, and taking in a Claude Code session that a person started in tmux.
+3. hataori starting its own sessions in tmux, chosen by config.
+4. cmux and iTerm2, last, when hataori runs on macOS.
+
+Its criteria are in Appendix E. Besides the criterion of the later phases, it may change core packages to store a session's holder and window, to record that a workspace is not hataori's, and to add the take-in operations to the control API.
+
 ## 9. Future work, not designed here
 
 **Surfaces without threads.** The core names a thread by its number and a link is opaque to it, so a surface with no native threads only needs a front end that makes the links' keys up. The intended rules: a reply to a hataori message continues that message's thread; any other message goes to the thread used last; `/new` starts one; every hataori message begins with the thread's name. If the bot cannot see what a message replies to, one chat is one thread. A surface whose threads expire (LINE OpenChat: 24 hours or two weeks) counts as having none.
@@ -766,6 +881,16 @@ None.
 
 ### Decided
 
+- **hataori's own terminal by default; other terminal tools as holders; taking in sessions people started** (#384; the maintainer, 2026-11-19). Sections 4.3 and 4.8, Appendix E. The maintainer asked whether hataori could leave the terminal to the tools people already use to run many agents (tmux, iTerm2, cmux), so that a session living in such a tool could still be listed, given work by the supervisor and operated from hataori. People who already run fleets of Claude Code sessions will not switch tools, and the maintainer was not yet sure that hataori should own the terminal itself. Looking into it showed that c-lord's terminal bugs came from reading the screen, typing keys and matching windows to threads, not from owning a pseudo-terminal. Handing the terminal to tmux or cmux keeps the typing path, through their paste or send command. The input bugs hataori's own host has had so far (#121, #155, #178) are about timing in Claude Code's input box, and would happen the same way through tmux. And the host opens its terminal with `creack/pty`, which is what tmux does at its core. The details below were chosen on the maintainer's direction:
+  1. *hataori's own session host stays the default* for the sessions hataori starts: from chat, from a schedule, from the supervisor. *Why:* owning the pseudo-terminal was not the cause of c-lord's bugs, and the host already gives a raw byte stream, a process group and a relay that outlives the daemon.
+  2. *hataori is added to what people run, not a replacement*, in three steps: without installing anything, terminals hataori does not own appear in the dashboard; with a Claude Code plugin the person installs, a session they started reports through the same hooks and can be taken in as a thread, which chat, the supervisor and the dashboard then treat like any other; and hataori can start a session inside the person's tool. *Why:* people with fleets of sessions keep their tools, so hataori has to come on top of them.
+  3. *The terminal holder is a replaceable part* with five operations: start, deliver input, show the screen, stop, and tell whether the agent is alive. hataori's own host comes first, then tmux; cmux and iTerm2 when hataori runs on macOS. One holder at a time, and each one's input path is checked before it ships. *Why:* the typing path is where terminal bugs live, so each new one is proven on its own.
+  4. *State never comes from the screen*, whatever the holder: hooks report it, as today. Which window a session runs in comes from the hook's environment (`TMUX_PANE`; `CMUX_SURFACE_ID` according to cmux's documentation, not run), not from matching windows to threads. *Why:* reading screens and matching windows were the causes of c-lord's terminal bugs.
+  5. *Taking a session in is explicit:* per window, by its owner, and the scope is chosen then. The hooks of a session that was not taken in only let it appear in the dashboard's list. They never reach an agent or the chat, and never hold a permission request. *Why:* installing the plugin must not hand every session a person runs to hataori, nor change how a session the person did not hand over behaves.
+  6. *Orca is out of scope*, except as a terminal in the list. *Why:* it is an orchestrator at the same level as hataori (an agent per worktree, a coordinating agent, phone notifications); putting it under hataori would manage the same work twice.
+  7. *Choosing tmux as the holder for the sessions hataori starts* becomes a config option, later.
+
+  This is designed and not scheduled (section 8). The rest of sections 4.3 and 4.8 is the design's, not the maintainer's: the relay staying with hataori's host whatever holds the terminal; holders that offer only snapshots holding taken-in sessions only; checking a window's terminal and foreground process before taking it in, since an environment is inherited; the plugin written by `hataori plugin` and installed by the person with Claude Code's own commands; reports of sessions not taken in kept only in memory, without text; permission requests of a taken-in thread following its scope's rules; `hataori release`; resuming with hataori's own launch after the window closes; and a taken-in thread's directory never being removed.
 - **How the dashboard is reached, and typing into host tmux panes** (#356; the maintainer, 2026-11-19, after using the dashboard). Section 7.2 and Appendix E.
   1. *Three ways in, each with its own proof of who is at the other end:* a native window (Electron, later) of the same OS user, through a socket only that user can open, is the owner with no sign-in; another machine over SSH, with the daemon on loopback, a forwarded port opened as `http://localhost:<port>` and the sign-in link fetched over the same SSH connection, where SSH as the instance's OS user is the proof; the web over HTTPS with a stable name, set up by the operator, with the single-use link first and passkeys after. Plain HTTP that is not loopback still gets no dashboard. *Why:* an app on one's own machine knows its user because whoever has the window is the user; a daemon that may run elsewhere has to find out, and each way of reaching it offers a different proof.
   2. *SSH is the default for remote use, and must not be a chore.* `hataori connect [user@]host` on the person's machine, built for macOS too, uses the system's `ssh` and the person's own keys and config, keeps the forward up, reconnects by itself and remembers the host, so `user@host` is typed once. hataori stores no SSH key. *Why:* most people who run hataori on a Linux server can use SSH, far fewer can give it HTTPS and a domain name, and opening SSH by hand every time is not acceptable.
@@ -825,7 +950,7 @@ None.
 | Only threads hataori created are sessions | keep | Prevents adopting ordinary conversations (c-lord#551). |
 | Clear error when the channel is unbound or the bot lacks permissions | keep | A silent start failure looks like a hang. |
 | Run a skill as a command (`/skill`) | change | Becomes an ordinary first message beginning with the skill's name; no separate launch path. |
-| Attach a thread to a hand-made tmux window | drop | No tmux; hataori starts every session's terminal itself. |
+| Attach a thread to a hand-made tmux window | drop | c-lord matched windows to threads by name and read their screens. A session a person started can instead be taken in through its own hooks, with the window named by the hook's environment (section 4.8). |
 | Programmatic spawn over HTTP | change | The control API: `hataori spawn` on the host, the supervisor's tool, or the text trigger through a webhook. |
 | CI webhook trigger with a fixed server-side prompt | drop | Not wired in c-lord's default setup; the text trigger covers it. |
 
@@ -1089,21 +1214,6 @@ Claude Code 2.1.327 and codex-cli 0.163.0, Linux, 2026-11-18. Every attempt ran 
 
 Without `--tools` (the set of section 7.1 before this check): `Agent`, `ScheduleWakeup`, `Skill`, `ToolSearch`, `ListAgents`, `AskUserQuestion` and the file tools were listed, with 16 deferred tools (`WebSearch`, `CronList`, `PushNotification`, `SendMessage`, `TaskStop` among them), 17 skills and 6 agent types.
 
-### tmux: typing into a pane (#356)
-
-Run on 2026-11-19 against tmux 3.4 on Linux, on a tmux server of its own (`-L`, no configuration file), in a 100×30 window with no client attached. The program in the pane was bash running `od -c` on what it read, with the terminal in raw mode where a byte would otherwise be edited by the terminal driver. Not run on macOS.
-
-| Check | Result |
-|---|---|
-| `send-keys Up`, the program in normal cursor mode | `ESC [ A` |
-| `send-keys Up` after the program printed `ESC [?1h` (application cursor keys; `#{keypad_cursor_flag}` became 1) | `ESC O A` |
-| `set-buffer`, then `paste-buffer -p`, after the program printed `ESC [?2004h` | `ESC [200~` and the text; the program read 8 bytes, so the closing mark was not read |
-| Text with a DEL in it given on standard input to `load-buffer -b <name> -`, then `paste-buffer -d -b <name>` | the same bytes, the DEL included; the buffer was gone afterwards |
-| `#{window_width}x#{window_height}` and `#{session_attached}` before and after the keys | `100x30` and `0`, both times |
-| `#{pane_current_command}` of panes started as `exec -a -bash bash` and `exec -a -zsh zsh` (how a login shell names itself) | `bash` and `zsh` |
-| The default of `window-size` | `latest` |
-| `attach-session -f` in the manual page | the client flags include `ignore-size`; `-r` is `read-only,ignore-size` |
-
 **Codex**, `codex app-server` (stdio), `thread/start` with `approvalPolicy: "never"`, `ephemeral: true` and the sandbox below, the MCP server given with `-c` and `default_tools_approval_mode = "approve"`. The prompt asked for one real attempt, since the model otherwise often declined without trying. "Locked" is `workspace-write` with `exclude_slash_tmp` and `exclude_tmpdir_env_var`, `--disable shell_tool --disable unified_exec --disable multi_agent --disable goals --disable sleep_tool --disable apps --disable plugins --disable hooks`, `-c web_search="disabled"` and `-c agents.max_depth=0`.
 
 | Attempt | `read-only` | `workspace-write` | `workspace-write`, `/tmp` and `$TMPDIR` excluded | Locked |
@@ -1122,6 +1232,59 @@ Run on 2026-11-19 against tmux 3.4 on Linux, on a tmux server of its own (`-L`, 
 `codex app-server` also wrote the project directory into the user's `~/.codex/config.toml` as a trusted project, one entry per run. A parent of it was trusted there, which may be why the project's configuration was loaded at all. `experimentalFeature/list` still reported `unified_exec` on after `--disable unified_exec`.
 
 Not run: a Codex resume and model switch (not needed until the Codex phase); which of the Codex `--disable` flags are each needed; Codex with a project directory whose parents are not trusted (it needs a change to the user's Codex configuration); Claude Code managed settings (they need a file outside the user's directories); what a person can do by typing at the terminal (`/add-dir`, `/cd`, `!`), which is not the model's confinement.
+
+### tmux: typing into a pane (#356)
+
+Run on 2026-11-19 against tmux 3.4 on Linux, on a tmux server of its own (`-L`, no configuration file), in a 100×30 window with no client attached. The program in the pane was bash running `od -c` on what it read, with the terminal in raw mode where a byte would otherwise be edited by the terminal driver. Not run on macOS.
+
+| Check | Result |
+|---|---|
+| `send-keys Up`, the program in normal cursor mode | `ESC [ A` |
+| `send-keys Up` after the program printed `ESC [?1h` (application cursor keys; `#{keypad_cursor_flag}` became 1) | `ESC O A` |
+| `set-buffer`, then `paste-buffer -p`, after the program printed `ESC [?2004h` | `ESC [200~` and the text; the program read 8 bytes, so the closing mark was not read |
+| Text with a DEL in it given on standard input to `load-buffer -b <name> -`, then `paste-buffer -d -b <name>` | the same bytes, the DEL included; the buffer was gone afterwards |
+| `#{window_width}x#{window_height}` and `#{session_attached}` before and after the keys | `100x30` and `0`, both times |
+| `#{pane_current_command}` of panes started as `exec -a -bash bash` and `exec -a -zsh zsh` (how a login shell names itself) | `bash` and `zsh` |
+| The default of `window-size` | `latest` |
+| `attach-session -f` in the manual page | the client flags include `ignore-size`; `-r` is `read-only,ignore-size` |
+
+### Claude Code plugins, and hooks in a tmux pane (#384)
+
+Run on 2026-11-19 against Claude Code 2.1.328 and tmux 3.4 on Linux. Every run of Claude Code had a throwaway directory as both `HOME` and `CLAUDE_CONFIG_DIR`, and no login. The real configuration was never used. Its plugin files were compared before and after the runs: the only change was the refresh time of the official marketplace, written by another session that uses the real configuration (the throwaway sessions wrote their own refresh into the throwaway directory, at another time). In the throwaway `.claude.json`, onboarding was marked done and the two test directories trusted. A plugin `probe`, in a marketplace that is a local directory, registered `SessionStart`, `UserPromptSubmit`, `PermissionRequest`, `Stop` and `SessionEnd`, each running a script that wrote its environment, its chain of parent processes, what tmux said of its pane, and its payload to a file of its own for each call. The sessions ran in panes of a tmux server of its own (`-L`, no configuration file). With no login no turn reached the model, so `PermissionRequest` and `Stop` never fired.
+
+| Check | Observed |
+|---|---|
+| `claude plugin marketplace add <directory>`, then `claude plugin install probe@probe-market` | The user settings file got `extraKnownMarketplaces` (source `directory`, with its path) and `enabledPlugins` with `"probe@probe-market": true`. `plugins/` got `known_marketplaces.json`, `installed_plugins.json` (scope `user`) and a copy of the plugin under `plugins/cache/`. `claude plugin list` showed it enabled, "Read from" the marketplace's directory. |
+| Where the hooks ran from | `CLAUDE_PLUGIN_ROOT` was the marketplace's directory, not the copy in the cache. `CLAUDE_PLUGIN_DATA` was a directory of the plugin's own under `plugins/data/`. |
+| A plugin option | `userConfig` declared in `plugin.json` and set with `claude plugin configure <plugin> --values-stdin` was stored in the user settings file under `pluginConfigs`, and reached every hook as `CLAUDE_PLUGIN_OPTION_ROOT`. |
+| Hooks without a login | `SessionStart` ran at start and `UserPromptSubmit` when a prompt was submitted; then the CLI answered "Not logged in". |
+| Which sessions | The plugin's `SessionStart` ran in interactive sessions in two directories, in a session started with `--settings` that registered hooks of its own (both sets ran), and under `claude -p`. It did not run under `--setting-sources project,local`. |
+| The hook's environment in a pane | `TMUX` (`<socket path>,<server pid>,<session index>`), `TMUX_PANE` (`%0`, `%1`, ...), `TERM_PROGRAM=tmux`, `TERM=tmux-256color`, `CLAUDE_PROJECT_DIR`, `CLAUDECODE=1`, and `CLAUDE_CODE_ENTRYPOINT`: `cli` in an interactive session, `sdk-cli` under `-p`. On a plain pseudo-terminal there were no `TMUX` variables. |
+| `HATAORI_HOST_SOCKET` in the session's environment | The plugin's hook saw it. |
+| The hook's parent processes | the hook, under `sh` with no terminal, under the Claude Code process (named after its version, `2.1.328`) on the pane's terminal, which led its own process group and was the terminal's foreground group. `#{pane_pid}` was the Claude Code process when it was the pane's command, and the shell when `claude -p` was started from a shell. `#{pane_current_command}` was `2.1.328`. |
+| A prompt pasted through tmux | 1,441 characters in 41 lines (a leading `-`, backticks, quotes, `$HOME`, `${PATH}`, Japanese, `<>&\|;`, a trailing `;`, one tab per line), by `load-buffer -b <name> -` and `paste-buffer -p -d -b <name>`, then `send-keys Enter` 1.5 s later. `UserPromptSubmit` reported every character unchanged except the tabs, each of which was four spaces. There was no `pasted_content` tag at this length. The buffer was gone afterwards. |
+| The same without tmux | Written to a plain pseudo-terminal inside bracketed-paste marks, then Enter: `tab<TAB>here, two<TAB><TAB>tabs; end` arrived as `tab    here, two        tabs; end`, four spaces for each tab and not spaces to the next tab stop (#393). |
+| `/exit` | `SessionEnd` with reason `prompt_input_exit` |
+| `kill-pane` on a session with the plugin | `SessionEnd` with reason `other`, run after the pane had gone |
+| `kill-server` under a session with both sets of hooks | `SessionEnd` with reason `other`, from both sets; the Claude Code process had lost its terminal and its parent |
+| `claude -p` ending | `SessionEnd` with reason `other` |
+
+Not run: a `PermissionRequest` whose hook prints nothing while a dialog would show, since that needs a turn and so a login (Claude Code's hooks reference says that a hook exiting 0 with no output "has no decision to report, so the tool call continues through the normal permission flow"); a `claude` that the session's own shell tool starts; macOS.
+
+### tmux: holding an agent's terminal (#384)
+
+Run on 2026-11-19 against tmux 3.4 on Linux, on tmux servers of their own, as above. The reading program was bash running `od -c` with the terminal in raw mode, after it printed `ESC [?2004h`.
+
+| Check | Result |
+|---|---|
+| `paste-buffer -p -d` of `one<LF>two` | `ESC [200~`, `one`, CR, `two`, `ESC [201~`: the line feed became a carriage return |
+| `paste-buffer -p -r -d` of the same | `ESC [200~`, `one`, LF, `two`, `ESC [201~` |
+| `paste-buffer -p` of text with a tab and a DEL | the same bytes, and both marks were read |
+| `send-keys Enter Escape Up` | `\r`, `ESC`, `ESC [ A` |
+| `pipe-pane -O` set on a pane running a placeholder, then `respawn-pane -k` with a command that prints at once | `#{pane_pipe}` was still 1, and the pipe's file had the command's output from its first byte, the bracketed-paste switch included |
+| `remain-on-exit on`, then a command that exits 7 | `#{pane_dead}` 1, `#{pane_dead_status}` 7 |
+| `display-message -p -t <pane>` for a pane that has gone | exit status 0, every field empty; `list-panes -a` no longer listed it |
+| Pane ids after the server was killed and started again | the first pane was `%0` again, and the server's process id in `TMUX` was another |
 
 ### Documentation read on 2026-11-12
 
@@ -1163,6 +1326,16 @@ Read to split the Slack phase (section 8). Nothing here was run.
 - Slack `conversations.replies`, https://docs.slack.dev/reference/methods/conversations.replies/: `ts` of the parent or of any message in the thread, `oldest`, `latest`, `inclusive`, `cursor`, `limit` and `include_all_metadata`; Tier 3.
 - Slack incoming webhooks, https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/: a webhook is tied to one channel, which cannot be overridden, nor can the name or icon; a reply goes into a thread with `thread_ts`; the response carries no `ts`.
 - `slack-go/slack` v0.36.0: `MsgOptionMetadata` in https://github.com/slack-go/slack/blob/v0.36.0/chat.go, `NewMarkdownBlock` in https://github.com/slack-go/slack/blob/v0.36.0/block_markdown.go, `IncludeAllMetadata` on the history and replies parameters in https://github.com/slack-go/slack/blob/v0.36.0/conversation.go.
+
+Read for sections 4.3 and 4.8 (#384). Nothing here was run.
+
+- Claude Code hooks reference, https://code.claude.com/docs/en/hooks: "Exit code 0 with no output means the hook has no decision to report, so the tool call continues through the normal permission flow. The hook can deny the call, but staying silent doesn't approve it." Any other exit code but 2 is a non-blocking error, and on events such as `PreToolUse` the person sees "a `<hook name> hook error` notice in the transcript". Command hooks time out after 600 seconds, 30 on `UserPromptSubmit`. A plugin's hooks "merge with your user and project hooks", and "A plugin's or skill's copy of the same handler stays separate."
+- cmux, https://github.com/manaflow-ai/cmux, release v0.65.2.2 of 2026-10-27: "Open source Ghostty-based macOS terminal with vertical tabs and notifications for AI coding agents."
+- cmux CLI contract, https://github.com/manaflow-ai/cmux/blob/v0.65.2.2/docs/cli-contract.md: `CMUX_WORKSPACE_ID` "Default workspace context inside cmux terminals", `CMUX_SURFACE_ID` "Default surface context inside cmux terminals", `CMUX_SOCKET_PATH` "Canonical socket path override". `paste` sends text "through the Cmd+V paste path (`terminal.paste`). The CLI sends the text unchanged; Ghostty brackets it when the program enabled bracketed paste (otherwise newlines become Enter) and replaces unsafe control bytes with spaces." `send` sends text "as keystrokes", and `send-key` "one key". Before writing, `send` and `paste` "refuse when an agent's prompt holds text someone is typing, or when a question or permission dialog is open in an agent", unless `--force`. `read-screen` reads "terminal text from a surface". `new-workspace` and `new-surface` take `--command`; there are `close-surface`, `surface-health` and `events` ("Stream reconnectable cmux events as newline-delimited JSON"), and tmux-like `capture-pane` and `pipe-pane`, which pipes "the selected surface's text".
+- cmux agent session tracking, https://github.com/manaflow-ai/cmux/blob/v0.65.2.2/docs/agent-session-tracking-spec.md: the surface id is "persisted in the session snapshot and ... REUSED verbatim on restore", and regenerated only on a collision; the workspace id is "ALWAYS regenerated on restore".
+- cmux agent hooks, https://github.com/manaflow-ai/cmux/blob/v0.65.2.2/docs/agent-hooks.md: "Claude Code is handled by the cmux Claude wrapper when Claude Code integration is enabled in Settings"; its table lists Claude Code's hooks as "wrapper-injected settings", with `PermissionRequest`. Outside a cmux shell, `cmux claude-hook install` writes the user's Claude Code settings file.
+- iTerm2 Python API, `Session`, https://iterm2.com/python-api/session.html: `async_send_text`, "Send text as though the user had typed it."; `session_id`, "the globally unique identifier for this session"; `async_get_screen_contents`, "Returns the contents of the mutable area of the screen."; `async_inject`, "Injects data as though it were program output." No paste method is documented.
+- iTerm2 variables, https://iterm2.com/documentation-variables.html: a session's `id` is "A unique identifier for the session", `termid` the "Window, tab, and pane number as used in the `$TERM_SESSION_ID` environment variable", and `tty` and `pid` its terminal and root process. `ITERM_SESSION_ID` is not on the page; its form `w0t0p0:<UUID>` is known from third-party code only.
 
 ## Appendix C: c-lord bug issues by group
 
@@ -1815,6 +1988,116 @@ type Event struct {
 type Factory func(settings []byte) (Adapter, error)
 ```
 
+### Terminal holder (proposal)
+
+Section 4.3. A holder sits below the core, next to the session host; the core stores a session's `Window` and nothing else of it. For an agent in a terminal, the codec's `Actions` carry `Keys []Part` in place of `Write`; an agent on pipes keeps `Write`, and its holder is always hataori's own host.
+
+```go
+// Package holder: what holds an agent's terminal. The relay of hook calls
+// is not part of it: hataori's session host keeps that job for every holder.
+
+type Holder interface {
+	// Caps says what this holder offers. The runner asks Start only of a
+	// holder with CanStart, and starts a session that needs the screen
+	// watched (Actions.WatchScreen) only on a holder with RawScreen.
+	Caps() Caps
+
+	// Start starts the agent with exactly spec's arguments, environment
+	// and size, in a process group of its own, once the relay for
+	// stateDir listens.
+	Start(ctx context.Context, stateDir string, spec Spec) (Window, error)
+
+	// Input hands the parts to the terminal in order and returns once
+	// all of them were handed over. Text never goes on a command line.
+	Input(ctx context.Context, w Window, parts []Part) error
+
+	// Screen streams the terminal from a position: raw output when
+	// Caps().RawScreen, else one snapshot, marked Reset, each time it
+	// changes.
+	Screen(ctx context.Context, w Window, run string, after uint64) (<-chan control.TerminalChunk, error)
+
+	// Stop ends the agent's process group, interrupt first. A holder
+	// that did not start the agent returns ErrNotOwned and does nothing.
+	Stop(ctx context.Context, w Window, interrupt, terminate time.Duration) (StopResult, error)
+
+	// Alive says whether the agent runs. Unknown is never Gone.
+	Alive(ctx context.Context, w Window) (Liveness, error)
+}
+
+type Caps struct {
+	CanStart  bool // hataori's own host; tmux for windows it starts
+	RawScreen bool // raw output from the first byte, with positions
+}
+
+// Window names one window of one holder. Ref is opaque to the core and is
+// never reused for another window: for tmux it holds the server's socket
+// path and process id and the pane id.
+type Window struct {
+	Holder string // the holder's registered name
+	Ref    string
+	Owned  bool   // hataori started it; false for a window taken in
+}
+
+// Part is one piece of input: a paste, or one named key.
+type Part struct {
+	Paste string // delivered as one bracketed paste, its bytes unchanged
+	Key   Key
+}
+
+// Key is a name from a fixed table. Each holder maps every name or
+// refuses the whole input; it never guesses.
+type Key string
+
+const (
+	Enter  Key = "Enter"
+	Escape Key = "Escape"
+	Up     Key = "Up"
+	Down   Key = "Down"
+)
+
+type Liveness struct {
+	State  State       // Running, Exited, Gone or Unknown
+	Status *host.Status // how it ended, when the holder knows
+}
+```
+
+### Control API: taking in a window (proposal)
+
+Section 4.8. Minor protocol changes: new operations and optional fields.
+
+```go
+	// TakeIn makes a thread of a window that a person started: the
+	// window's last report must be an interactive session, and the
+	// holder's check (section 4.8) must pass. The thread is made in
+	// req.Scope as Start makes one, and its workspace is recorded as
+	// not hataori's. It needs OpTakeIn, which only the owner's
+	// connection on the control socket has.
+	TakeIn(ctx context.Context, req TakeInRequest) (ThreadID, error)
+
+	// Release ends a take-in: the thread goes asleep and the window is
+	// left as it is. It needs OpTakeIn.
+	Release(ctx context.Context, id ThreadID) error
+
+type TakeInRequest struct {
+	Window string // as HostTerminal.Reported.Window names it
+	Scope  string
+	Key    string // makes the call safe to repeat
+}
+
+// HostTerminal gains:
+//	Reported *ReportedSession // what the plugin's hooks reported; absent without them
+
+type ReportedSession struct {
+	Window  string    // holder and reference, as TakeIn takes it
+	Agent   string    // the adapter's name
+	Session string    // the agent's session id
+	Dir     string
+	Event   string    // the last hook event's name
+	At      time.Time // when it was reported
+	Thread  *ThreadID // the thread this session belongs to, if any
+}
+```
+
 ## Appendix E: acceptance criteria after phase 1
 
 Every phase here also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter; the supervisor phase may also let the control socket bind a connection to a limited `Caller` (which plugins use too, section 7.3) and let a session be started confined (no shell, only the listed tools, section 7.1); the plugin phase may also limit a `Caller` to the operations and event kinds a plugin was granted, and add hook points (section 7.3).
@@ -1885,3 +2168,38 @@ Every phase here also has this criterion: the change touches no core package, ex
 - [ ] A `message_sending` handler rewrites one post and cancels another. A `before_agent_run` handler stops an input before it reaches the agent, and the thread names the plugin and the reason.
 - [ ] Two handlers on one point run by priority, then in config order. A handler that times out gets the point's default failure policy, and a per-plugin override in the config replaces it (each tested).
 - [ ] Without the `conversation` grant, nothing sent to the plugin contains message text (tested with a marker string in the input, the agent's text and a post).
+
+### Terminal holders, and sessions people started
+
+Not scheduled (section 8). Sections 4.3 and 4.8.
+
+*The holder operations around today's host:*
+
+- [ ] The runner reaches an agent's terminal only through the holder operations. Outside hataori's own holder, no package calls the session host's functions that start, write to, read, stop or check a command.
+- [ ] For a paste, Enter, Escape, Up and Down, hataori's own host writes the same bytes as before the change (tested against the bytes today's codec writes).
+- [ ] Every test of phase 1 passes unchanged, the end-to-end test included.
+
+*The plugin, and taking in a tmux window:*
+
+- [ ] Installed with the two commands that `hataori plugin` prints, in a throwaway `CLAUDE_CONFIG_DIR`, the plugin's hooks report a session started in a tmux pane. `hataori plugin` itself changes no file in any Claude Code configuration directory.
+- [ ] In a session hataori started, `hataori hook --window` exits 0, prints nothing and connects to nothing.
+- [ ] In a window that was not taken in, every hook, `PermissionRequest` and `PreToolUse` for `AskUserQuestion` included, exits 0 within one second and prints nothing, while the daemon runs, while it is stopped, and while it accepts the connection and never answers.
+- [ ] With a marker string in a prompt, a reply and a tool input of a session that was not taken in, the marker is found in no report the daemon received. No event, database row, chat post, supervisor wake or plugin call comes from that session.
+- [ ] `hataori take` refuses a window whose foreground process is not the Claude Code process that reported, and a session that is not interactive, and then changes nothing.
+- [ ] After `hataori take`, a message in the scope's chat thread reaches the window's session and its final answer is posted once; a prompt typed in the window appears in chat marked as typed at the terminal; a stop interrupts the turn and leaves the window's process running.
+- [ ] A prompt of several lines with a leading `-`, Japanese, quotes and backticks arrives unchanged through the tmux holder (checked against the real CLI, recorded under `testdata/`).
+- [ ] After `hataori release`, the window's hooks only list it, and the window is as it was.
+- [ ] When the window's pane is killed, the thread goes asleep with reason `window closed`, and the next message resumes the same conversation under hataori's own host, in the same directory.
+- [ ] `hataori remove` of a thread that was taken in leaves its directory as it was, and the removal pass skips it (tested with an untracked file and an unpushed commit in it).
+
+*hataori starting sessions in tmux:*
+
+- [ ] With the config option set, a thread started from chat runs in a window of a tmux session of hataori's own name. Phase 1's criteria for start, continue, questions, restart, sleep and stop pass with it, including a new workspace's folder-trust dialog.
+- [ ] The agent's environment in that window is exactly the one hataori's own host gives it (test that compares the two).
+- [ ] The agent's exit status is recorded when it exits. When the tmux server is killed the thread goes asleep with reason `interrupted`, and a pane of a new server with the same id is never taken for the old one.
+
+*cmux and iTerm2, on macOS:*
+
+- [ ] Every claim about the holder marked **(unverified)** in section 4.3 was run on macOS and is listed in Appendix B, or the holder does not ship.
+- [ ] The criteria for taking in a tmux window pass with a cmux window, and a permission request in it is answered by exactly one program.
+- [ ] The same criteria pass with an iTerm2 session, and a prompt of several lines arrives as one paste.
