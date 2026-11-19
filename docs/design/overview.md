@@ -569,7 +569,7 @@ The unit is the thread, not the terminal, so the page does not depend on how hat
 **Layout.** One page in five parts.
 
 - **Tree, on the left.** A filter box on top, matching title, number and terminal. Under it a *needs attention* block: the threads waiting on a question or failed, each with the question or the failure reason. Then the tree itself, which reads like the chat it mirrors (#405), driven from the keyboard as a tree view (up, down, left folds or goes up, right unfolds or goes in, Enter opens):
-  1. *One node per scope*, named as the chat service names its channel (`#name` on Discord, through the control API), by the config's name when it has one, else by its key. It shows the number of its threads and one state dot per thread, and folds; the folds are kept in the browser. Under it its threads, the most recently active first. A thread's row shows the agent's mark coloured by state, its number and title, and its age; a second line shows the model, the context use in percent and the last line of output, with a question or a failure highlighted.
+  1. *One node per scope* the person may see (`Scopes`), also one with no thread, named as the chat service names its channel (`#name` on Discord, through the control API), by the config's name when it has one, else by its key. It shows the number of its threads and one state dot per thread, and folds; the folds are kept in the browser. Under it its threads, the most recently active first. A thread's row shows the agent's mark coloured by state, its number and title, and its age; a second line shows the model, the context use in percent and the last line of output, with a question or a failure highlighted.
   2. *Host terminals*, one node after the scopes, folded at first. In it, *tmux on the host*, sessions that hataori does not own: session, then window. A row shows the window, its process, its terminal device and its last activity. A pane whose foreground process is a shell and whose window has shown no activity for more than a day is hidden by default, by the same switch that hides asleep threads (#335), and counted with them.
      Then *other terminals on the host* that hataori does not own: terminal device and process.
 
@@ -1388,6 +1388,11 @@ type API interface {
 	// name again changes nothing. It needs OpName in the conversation's
 	// scope: a chat front end's caller has it. Since protocol 3.4.
 	SetName(ctx context.Context, l LinkRef, name string) error
+	// Scopes lists the scopes the caller may see, by key, each with the
+	// name a person knows it by: the config's, else its channel's as the
+	// chat service shows it (SetName), which is text and left out for a
+	// caller that may not read text. It needs OpRead. Since protocol 3.4.
+	Scopes(ctx context.Context) ([]ScopeInfo, error)
 
 	Start(ctx context.Context, r StartRequest) (ThreadID, error)
 	// key makes Send safe to repeat; for chat, the surface's message id.
@@ -1594,7 +1599,6 @@ type Caller struct {
 type ThreadInfo struct {
 	// ...
 	Title      string // the first line of the first prompt; text, so optional since protocol 2.0
-	ScopeName  string // the config's name of the scope, else its channel's from SetName (text); since protocol 3.4
 	Agent      string // the agent's registered name
 	Model      string // as the agent reports it; as asked for until then
 	Effort     string // the same
@@ -1756,7 +1760,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `hello.token`, and `principal` and `from` in the `input` and `answer` events (#269) | minor: new optional fields; 2.2 |
 | `SignInLink`'s `way` (section 7.2, #359) | minor: new optional argument; 3.2 |
 | `ThreadEvents` (#336) | minor: new operation; 3.3 |
-| `SetName`, with `Ops` gaining `OpName`, `ThreadInfo.ScopeName` and the `named` event (#405) | minor: new operation, field and event kind; 3.4 |
+| `SetName`, with `Ops` gaining `OpName`, `Scopes` and `ScopeInfo`, and the `named` event (#405) | minor: new operations and event kind; 3.4 |
 | `OperateHost`, with `Ops` gaining `OpHostInput` (section 7.2) | minor: new operation, whose connection becomes a stream both ways |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 

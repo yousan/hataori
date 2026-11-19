@@ -34,6 +34,7 @@ const en = {
   "tree.unfold": "Unfold {name}",
   "tree.openMark": "▾",
   "tree.foldedMark": "▸",
+  "tree.tmuxSession": "tmux {session}",
 
   "show.label": "Threads shown",
   "show.active": "Active",
@@ -249,6 +250,7 @@ const ja: Catalog = {
   "tree.unfold": "{name} を展開",
   "tree.openMark": "▾",
   "tree.foldedMark": "▸",
+  "tree.tmuxSession": "tmux {session}",
   "show.label": "表示するスレッド",
   "show.active": "アクティブ",
   "show.all": "すべて",

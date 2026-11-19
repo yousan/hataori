@@ -133,6 +133,12 @@ One thread's events before a position, newest last, each as `Events` delivers it
 
 Result: [`Event`]
 
+### Operation `Scopes`
+
+The scopes the caller may see, each with the name a person knows it by. It takes no arguments. Since 3.4.
+
+Result: [`ScopeInfo`]
+
 ### Operation `SetName`
 
 Records the name the chat service shows people for a conversation: a scope's own channel when `link.thread` is empty (`link.client` owns the scope and `link.channel` is its key), else the chat thread of a link. A change writes one `named` event; the same name again changes nothing. It needs the operation `SetName` in the conversation's scope, which a chat front end's caller and the owner's connection have; a conversation of no scope or link is `not_found`. Since 3.4.
@@ -347,6 +353,15 @@ A field left empty matches everything the caller may see.
 | `choices` | [string] | required | the tokens of the chosen options, for a question with choices; may be `null` |
 | `allow` | boolean | required | the decision, for an approval |
 
+### Type `ScopeInfo`
+
+One scope the caller may see; since 3.4.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `key` | string | required | the scope's key |
+| `name` | string | optional | the config's name for it, else its channel's as the chat service shows it (`SetName`), which is text and absent for a caller that may not read text; absent when neither is known |
+
 ### Type `ThreadInfo`
 
 | Field | Type | Presence | Meaning |
@@ -355,7 +370,6 @@ A field left empty matches everything the caller may see.
 | `scope` | string | required | the scope it belongs to; since 3.0 |
 | `links` | [`LinkRef`] | required | where it is shown, the first link first; empty for a thread from before 3.0 whose scope is no longer in the config; since 3.0 |
 | `title` | string | optional | from the first line of the first prompt; text; absent for a caller that may not read text, and when it is empty; optional since 2.0, required before |
-| `scope_name` | string | optional | the scope's name: the config's, else its channel's as the chat service shows it (`SetName`), which is text and absent for a caller that may not read text; absent when neither is known; since 3.4 |
 | `repo` | string | required | the repository of its workspace |
 | `state` | string | required | `creating`, `idle`, `running`, `waiting`, `asleep`, `closed`, `removed` or `failed` |
 | `started_by` | string | required | the principal that started it |
@@ -381,7 +395,6 @@ The fields of `ThreadInfo`, and:
 | `scope` | string | required | as in `ThreadInfo` |
 | `links` | [`LinkRef`] | required | as in `ThreadInfo` |
 | `title` | string | optional | as in `ThreadInfo` |
-| `scope_name` | string | optional | as in `ThreadInfo` |
 | `repo` | string | required | as in `ThreadInfo` |
 | `state` | string | required | as in `ThreadInfo` |
 | `started_by` | string | required | as in `ThreadInfo` |

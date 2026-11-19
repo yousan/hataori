@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -94,27 +95,28 @@ func (c *Core) nameScope(ctx context.Context, l control.LinkRef) (string, contro
 	return scope, control.ThreadID(id), err
 }
 
-// scopeNames fills the ScopeName of each thread in ts: the config's name
-// of its scope, else its channel's name as the chat service shows it,
-// which a caller that may not read text does not get.
-func (a *api) scopeNames(ctx context.Context, ts []control.ThreadInfo) error {
-	known := map[string]string{}
-	for i := range ts {
-		scope := ts[i].Scope
-		name, ok := known[scope]
-		if !ok {
-			sc := a.c.Scopes[scope]
-			name = sc.Name
-			if name == "" && !a.caller.NoText && sc.Owner != "" {
-				err := a.c.Store.DB.QueryRowContext(ctx, `SELECT name FROM names WHERE client = ? AND channel = ? AND thread = ''`,
-					sc.Owner, scope).Scan(&name)
-				if err != nil && !errors.Is(err, sql.ErrNoRows) {
-					return fmt.Errorf("core: scope name: %w", err)
-				}
-			}
-			known[scope] = name
-		}
-		ts[i].ScopeName = name
+// Scopes lists the scopes the caller may see, with their names
+// (control.API).
+func (a *api) Scopes(ctx context.Context) ([]control.ScopeInfo, error) {
+	if err := a.check(control.OpRead, "Scopes", ""); err != nil {
+		return nil, err
 	}
-	return nil
+	var out []control.ScopeInfo
+	for _, key := range a.caller.Scopes {
+		sc, ok := a.c.Scopes[key]
+		if !ok {
+			continue
+		}
+		name := sc.Name
+		if name == "" && !a.caller.NoText && sc.Owner != "" {
+			err := a.c.Store.DB.QueryRowContext(ctx, `SELECT name FROM names WHERE client = ? AND channel = ? AND thread = ''`,
+				sc.Owner, key).Scan(&name)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, fmt.Errorf("core: scopes: %w", err)
+			}
+		}
+		out = append(out, control.ScopeInfo{Key: key, Name: name})
+	}
+	slices.SortFunc(out, func(x, y control.ScopeInfo) int { return strings.Compare(x.Key, y.Key) })
+	return out, nil
 }

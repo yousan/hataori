@@ -43,6 +43,7 @@ func TestDashboardTreeChannels(t *testing.T) {
 			{"key": "c1", "client": fakeSurface, "enabled": true},
 			{"key": "c2", "client": fakeSurface, "enabled": true},
 			{"key": "c3", "client": fakeSurface, "enabled": true, "name": "Release"},
+			{"key": "c4", "client": fakeSurface, "enabled": true}, // no thread
 		}
 		cfg["host_terminals"] = true
 		cfg["dashboard"] = map[string]any{"listen": "127.0.0.1:0"}
@@ -73,15 +74,8 @@ func TestDashboardTreeChannels(t *testing.T) {
 	named := start("c3", "k4", "reply named")
 	// The names reach the control API.
 	eventually(t, "the scopes' names", 10*time.Second, func() bool {
-		ts, err := c.Threads(ctx, control.Filter{})
-		if err != nil {
-			return false
-		}
-		names := map[string]string{}
-		for _, x := range ts {
-			names[x.Scope] = x.ScopeName
-		}
-		return names["c1"] == "#builds" && names["c2"] == "" && names["c3"] == "Release"
+		ss, err := c.Scopes(ctx)
+		return err == nil && slices.Equal(ss, []control.ScopeInfo{{Key: "c1", Name: "#builds"}, {Key: "c2"}, {Key: "c3", Name: "Release"}, {Key: "c4"}})
 	})
 	b := newBrowser(t)
 	link, err := c.SignInLink(ctx, "")
@@ -107,6 +101,7 @@ func TestDashboardTreeChannels(t *testing.T) {
 	want := []node{
 		{Node: "scope:c1", Label: "#builds", Open: "yes", Count: 2, Dots: 2, Rows: []int64{int64(newer), int64(older)}},
 		{Node: "scope:c2", Label: "c2", Open: "yes", Count: 1, Dots: 1, Rows: []int64{int64(plain)}},
+		{Node: "scope:c4", Label: "c4", Open: "yes", Count: 0, Dots: 0, Rows: nil}, // a scope with no thread
 		{Node: "scope:c3", Label: "Release", Open: "yes", Count: 1, Dots: 1, Rows: []int64{int64(named)}},
 		{Node: "host", Label: "Host terminals", Open: "no", Count: -1},
 	}
@@ -163,7 +158,7 @@ func TestDashboardTreeChannels(t *testing.T) {
 		t.Helper()
 		b.eval(`document.body.dataset.reloading = 'yes', true`, nil)
 		b.call("Page.reload", map[string]any{})
-		b.until("the page after the reload", `document.body.dataset.reloading !== 'yes' && document.querySelectorAll('.tree .node').length === 4`)
+		b.until("the page after the reload", `document.body.dataset.reloading !== 'yes' && document.querySelectorAll('.tree .node').length === 5`)
 	}
 	b.click(`.tree [data-node="scope:c1"] .node-head`)
 	folded := slices.Clone(want)
@@ -193,7 +188,7 @@ func TestDashboardTreeChannels(t *testing.T) {
 			}
 		}
 	}
-	b.eval(`document.querySelector('.tree [data-node="scope:c1"] .node-head').focus(), true`, nil)
+	b.eval(`document.querySelector('.tree [data-node="scope:c1"]').focus(), true`, nil)
 	expectFocus("the first node", "scope:c1")
 	key("ArrowRight", 39)
 	untilNodes("c1 unfolded from the keyboard", want)
@@ -215,10 +210,36 @@ func TestDashboardTreeChannels(t *testing.T) {
 	key("Enter", 13)
 	b.until("the thread's tab", fmt.Sprintf(`!!document.querySelector('.tabbar .tab[data-tab="thread:%d"] .tab-main[aria-selected=true]')`, plain))
 
-	// 4. The host terminals: unfolded, tmux session, then window and pane,
+	// 4. While filtering, a node with a match is open and shows only the
+	// scopes with one; a fold then lasts until the filter is cleared, and
+	// leaves the node's own fold as it was.
+	b.click(`.tree [data-node="scope:c1"] .node-head`)
+	untilNodes("c1 unfolded again", want)
+	b.filter("older")
+	b.until("only c1 while filtering", `JSON.stringify([...document.querySelectorAll('.tree [role=tree] [data-scope]')].map(n => n.dataset.scope + ':' + n.dataset.open)) === '["c1:yes"]'`)
+	b.click(`.tree [data-node="scope:c1"] .node-head`)
+	b.until("c1 folded while filtering", `document.querySelector('.tree [data-node="scope:c1"]').dataset.open === 'no'`)
+	b.filter("")
+	untilNodes("c1 open again once the filter is cleared", want)
+
+	// 5. The host terminals: unfolded, tmux session, then window and pane,
 	// as before; kept unfolded across a reload.
 	b.unfoldHosts()
-	b.until("the pane under its session", fmt.Sprintf(`!!document.querySelector('.tree [data-node=host] [data-section=tmux] [data-session=work] [data-host=%q]')`, rig.device))
+	b.until("the pane under its session", fmt.Sprintf(`!!document.querySelector('.tree [data-node=host] [data-session=work] [data-host=%q]')`, rig.device))
+	// Each tree item is in the tree or in the group of the item it is under.
+	var misplaced []string
+	b.eval(`[...document.querySelectorAll('.tree [role=tree] [role=treeitem]')].filter(i => {
+		let p = i.parentElement;
+		while (p && p.getAttribute('role') === 'none') p = p.parentElement;
+		if (!p) return true;
+		if (p.getAttribute('role') === 'tree') return false;
+		if (p.getAttribute('role') !== 'group') return true;
+		const owner = p.parentElement;
+		return owner?.getAttribute('role') !== 'treeitem' || owner.dataset.treeItem !== i.dataset.parent;
+	}).map(i => i.dataset.treeItem)`, &misplaced)
+	if len(misplaced) > 0 {
+		t.Fatalf("tree items outside the tree or the group of their parent: %q", misplaced)
+	}
 	reload()
 	b.until("the host terminals unfolded after a reload", `document.querySelector('.tree [data-node=host]').dataset.open === 'yes'`)
 }
@@ -252,19 +273,16 @@ func TestScopeNameWithheld(t *testing.T) {
 		eventually(t, "the thread", 20*time.Second, func() bool { d, err := c.Thread(ctx, id, 0, 0); return err == nil && d.State == control.Idle })
 	}
 	eventually(t, "the owner sees the channel's name", 10*time.Second, func() bool {
-		ts, _ := c.Threads(ctx, control.Filter{Scope: "c1"})
-		return len(ts) == 1 && ts[0].ScopeName == "#builds"
+		ss, _ := c.Scopes(ctx)
+		return slices.Equal(ss, []control.ScopeInfo{{Key: "c1", Name: "#builds"}, {Key: "c3", Name: "Release"}})
 	})
 	base, cookie := dashSignIn(t, r.root)
-	code, body := dashGet(t, base, cookie, "/api/threads")
-	var ts []control.ThreadInfo
-	if err := json.Unmarshal([]byte(body), &ts); code != 200 || err != nil || len(ts) != 2 {
-		t.Fatalf("/api/threads: %d %s", code, body)
+	code, body := dashGet(t, base, cookie, "/api/scopes")
+	var ss []control.ScopeInfo
+	if err := json.Unmarshal([]byte(body), &ss); code != 200 || err != nil {
+		t.Fatalf("/api/scopes: %d %s", code, body)
 	}
-	for _, x := range ts {
-		want := map[string]string{"c1": "", "c3": "Release"}[x.Scope]
-		if x.ScopeName != want {
-			t.Fatalf("scope %s: name %q for a caller that may not read text, want %q", x.Scope, x.ScopeName, want)
-		}
+	if want := []control.ScopeInfo{{Key: "c1"}, {Key: "c3", Name: "Release"}}; !slices.Equal(ss, want) {
+		t.Fatalf("a caller that may not read text gets %+v, want %+v", ss, want)
 	}
 }

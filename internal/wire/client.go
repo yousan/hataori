@@ -203,6 +203,12 @@ func (c *Client) ThreadEvents(ctx context.Context, id control.ThreadID, before u
 	return out, err
 }
 
+func (c *Client) Scopes(ctx context.Context) ([]control.ScopeInfo, error) {
+	var out []control.ScopeInfo
+	err := c.call(ctx, "Scopes", scopesArgs{}, &out)
+	return out, err
+}
+
 func (c *Client) SetName(ctx context.Context, l control.LinkRef, name string) error {
 	return c.call(ctx, "SetName", setNameArgs{Link: l, Name: name}, nil)
 }

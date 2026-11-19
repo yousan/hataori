@@ -54,6 +54,11 @@ type API interface {
 	// name again changes nothing. It needs OpName in the conversation's
 	// scope: a chat front end's caller has it. Since protocol 3.4.
 	SetName(ctx context.Context, l LinkRef, name string) error
+	// Scopes lists the scopes the caller may see, by key, each with the
+	// name a person knows it by: the config's, else its channel's as the
+	// chat service shows it (SetName), which is text and left out for a
+	// caller that may not read text. It needs OpRead. Since protocol 3.4.
+	Scopes(ctx context.Context) ([]ScopeInfo, error)
 
 	// Start starts a thread in a scope. A repeated r.Key starts nothing and
 	// returns the thread the first call started.
@@ -186,7 +191,7 @@ type Ops uint16
 
 // The operations of the API, as members of Ops.
 const (
-	OpRead   Ops = 1 << iota // Threads, Thread, Events, Workspace, Terminal, Limits
+	OpRead   Ops = 1 << iota // Threads, Thread, ThreadEvents, Events, Workspace, Terminal, Limits, Scopes
 	OpStart                  // Start
 	OpSend                   // Send
 	OpAnswer                 // Answer
@@ -300,16 +305,18 @@ const (
 	Failed   State = "failed"
 )
 
+// ScopeInfo is one line of Scopes. Name is empty when no name is known.
+type ScopeInfo struct {
+	Key  string `json:"key"`
+	Name string `json:"name,omitempty"`
+}
+
 // ThreadInfo is one line of Threads.
 type ThreadInfo struct {
-	ID    ThreadID  `json:"id"`              // the thread's number; since 3.0, it replaces number
-	Scope string    `json:"scope"`           // the scope the thread belongs to; since 3.0
-	Links []LinkRef `json:"links"`           // where it is shown, the first link first; since 3.0
-	Title string    `json:"title,omitempty"` // text: absent for a caller that may not read text, since 2.0
-	// ScopeName is the scope's name: the config's, else its channel's as
-	// the chat service shows it (SetName), which is text and absent for a
-	// caller that may not read text; absent when neither is known. Since 3.4.
-	ScopeName string    `json:"scope_name,omitempty"`
+	ID        ThreadID  `json:"id"`              // the thread's number; since 3.0, it replaces number
+	Scope     string    `json:"scope"`           // the scope the thread belongs to; since 3.0
+	Links     []LinkRef `json:"links"`           // where it is shown, the first link first; since 3.0
+	Title     string    `json:"title,omitempty"` // text: absent for a caller that may not read text, since 2.0
 	Repo      string    `json:"repo"`
 	State     State     `json:"state"`
 	StartedBy Principal `json:"started_by"`

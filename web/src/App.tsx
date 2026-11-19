@@ -207,6 +207,7 @@ export function App() {
         {layout.tree && (
           <Tree
             threads={d.threads}
+            scopes={d.scopes}
             attention={d.attention}
             now={now}
             filter={filter}

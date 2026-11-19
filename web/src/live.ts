@@ -6,6 +6,8 @@
 import { useEffect, useRef, useState } from "react";
 import {
   type AgentLimits,
+  type ScopeInfo,
+  scopes,
   type Event,
   eventsPath,
   limits,
@@ -37,6 +39,7 @@ export interface Dashboard {
   live: Live;
   signedOut: boolean;
   limits: AgentLimits[]; // each agent's remaining usage; none until read
+  scopes: ScopeInfo[] | null; // the scopes the caller may see, with their names; null until read
   // subscribe calls f with each event the stream delivers from now on,
   // until the returned function is called. One stream serves the page.
   subscribe: (f: (e: Event) => void) => () => void;
@@ -123,6 +126,7 @@ export function useDashboard(): Dashboard {
     live: { connected: false, pos: null },
     signedOut: false,
     limits: [],
+    scopes: null,
     opens: 0,
   });
   const reads = useRef(0);
@@ -154,7 +158,7 @@ export function useDashboard(): Dashboard {
       const n = ++reads.current;
       try {
         readLimits();
-        const ts = await threads();
+        const [ts, ss] = await Promise.all([threads(), scopes()]);
         // A thread that goes away between the list and its detail keeps
         // the list good: it shows without what it waits on until the next
         // read.
@@ -172,7 +176,7 @@ export function useDashboard(): Dashboard {
           const a = d && attentionOf(d);
           if (d && a) attention.set(d.id, a);
         }
-        setState((s) => ({ ...s, threads: ts, attention }));
+        setState((s) => ({ ...s, threads: ts, scopes: ss, attention }));
       } catch (err) {
         if (err instanceof SignedOut) signedOut();
       }

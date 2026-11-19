@@ -72,6 +72,7 @@ type (
 		Before uint64           `json:"before,omitempty"`
 		Limit  int              `json:"limit"`
 	}
+	scopesArgs  struct{} // since 3.4
 	setNameArgs struct { // since 3.4
 		Link control.LinkRef `json:"link"`
 		Name string          `json:"name,omitempty"`
@@ -151,6 +152,9 @@ var operations = map[string]operation{
 			return nil, err
 		}
 		return api.ThreadEvents(ctx, a.ID, a.Before, a.Limit)
+	}},
+	"Scopes": {scopesArgs{}, []control.ScopeInfo{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		return api.Scopes(ctx)
 	}},
 	"SetName": {setNameArgs{}, nil, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
 		var a setNameArgs

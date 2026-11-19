@@ -28,7 +28,7 @@ var (
 	exampleTime = time.Date(2026, 1, 2, 3, 4, 5, 678000000, time.UTC)
 	exampleID   = control.ThreadID(7)
 	exampleLink = control.LinkRef{Client: "discord", Channel: "C0123", Thread: "T0456"}
-	exampleInfo = control.ThreadInfo{ID: exampleID, Scope: "C0123", Links: []control.LinkRef{exampleLink}, Title: "Fix the build", ScopeName: "#builds", Repo: "https://example.com/repo.git",
+	exampleInfo = control.ThreadInfo{ID: exampleID, Scope: "C0123", Links: []control.LinkRef{exampleLink}, Title: "Fix the build", Repo: "https://example.com/repo.git",
 		State: control.Running, StartedBy: "webhook:W1", Created: exampleTime, Updated: exampleTime,
 		Agent: "claude-code", Model: "opus", Effort: "high", Turns: 12, Last: "Running the tests...", Background: 1,
 		Context: &control.Context{Used: 45000, Size: 200000}, Tokens: &control.TokenCount{Turn: 2450, Today: 98000}, Terminal: "/dev/pts/3"}
@@ -84,6 +84,7 @@ func examples(t *testing.T) map[string]any {
 		"Threads":      threadsArgs{Filter: control.Filter{Scope: "C0123", Link: &exampleLink}},
 		"Thread":       threadArgs{ID: exampleID, Recent: 2000, Events: 5},
 		"ThreadEvents": threadEventsArgs{ID: exampleID, Before: 42, Limit: 100},
+		"Scopes":       scopesArgs{},
 		"SetName":      setNameArgs{Link: control.LinkRef{Client: "discord", Channel: "C0123"}, Name: "#builds"},
 		"Start": control.StartRequest{Key: "M0789", Scope: "C0123", Repo: "https://example.com/repo.git",
 			Input: control.Input{Text: "Fix the build."}, Model: "opus", Effort: "high"},
@@ -110,7 +111,8 @@ func examples(t *testing.T) map[string]any {
 				Data: raw(`{"final":false,"session":3,"text":"Running the tests..."}`)}}},
 		"ThreadEvents": []control.Event{{Pos: 41, Thread: exampleID, Scope: "C0123", Time: exampleTime, Kind: "input",
 			Data: raw(`{"from":"discord:U0456","principal":"alice","session":3,"text":"Fix the build.","turn":1}`)}},
-		"Start": exampleID,
+		"Scopes": []control.ScopeInfo{{Key: "C0123", Name: "#builds"}, {Key: "C0456"}},
+		"Start":  exampleID,
 		"Workspace": control.WorkspaceState{Branch: "fix-build", Base: "9fceb02d0ae598e95dc970b74767f19372d61af8",
 			Added: 12, Removed: 3, Uncommitted: 2, Unpushed: 1, Fetched: &exampleTime},
 		"SignInLink": "https://dashboard.example.com/signin#t=Q2hhbmdlIG1lIGV2ZXJ5IHRpbWU",

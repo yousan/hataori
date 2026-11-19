@@ -116,7 +116,7 @@ func TestDashboardHostTerminalsInThePage(t *testing.T) {
 	// node, folded at first (#405).
 	b.unfoldHosts()
 	b.until("the pane and the other terminal in their sections", fmt.Sprintf(
-		`!!document.querySelector('[data-section=tmux] [data-session=work] %s') && !!document.querySelector('[data-section=others] %s')`, hostRow(rig.device), hostRow(rig.outside)))
+		`!!document.querySelector('.tree [data-node=host] [data-session=work] %s') && !!document.querySelector('.tree [data-node=host] [data-section=others] %s')`, hostRow(rig.device), hostRow(rig.outside)))
 	b.noStateFor(rig.device, "the pane's row")
 	b.noStateFor(rig.outside, "the other terminal's row")
 
