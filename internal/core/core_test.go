@@ -265,6 +265,11 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 	if len(ops) != reflect.TypeFor[control.API]().NumMethod() {
 		t.Fatal("the test does not cover every operation")
 	}
+	// The operations that name a thread, by its number or by its request:
+	// a caller of another scope gets the answer for a thread that does not
+	// exist (#479).
+	namesThread := []string{"Thread", "ThreadEvents", "Workspace", "Terminal", "AttachTerminal", "Send", "AskInterrupt",
+		"Answer", "Stop", "CloseThread", "RemoveThread", "Link"}
 	events, threads, calls := count(t, f.core.Store, "events"), count(t, f.core.Store, "threads"), f.runner.Calls()
 	for cname, c := range callers {
 		a := f.core.As(c)
@@ -272,9 +277,13 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 			if (name == "Limits" || name == "Scopes") && cname == "other scope" {
 				continue
 			}
+			want := ErrForbidden
+			if cname == "other scope" && slices.Contains(namesThread, name) {
+				want = ErrNotFound
+			}
 			f.log.Reset()
-			if err := op(a); !errors.Is(err, ErrForbidden) {
-				t.Errorf("%s by a caller with %s: %v", name, cname, err)
+			if err := op(a); !errors.Is(err, want) {
+				t.Errorf("%s by a caller with %s: %v, want %v", name, cname, err, want)
 			}
 			if n := strings.Count(f.log.String(), "\n"); n != 1 {
 				t.Errorf("%s by a caller with %s wrote %d log lines", name, cname, n)

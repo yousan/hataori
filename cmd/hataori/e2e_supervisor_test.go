@@ -113,11 +113,13 @@ func TestSupervisorConnectionIsLimitedToItsScope(t *testing.T) {
 	if _, err := sv.Threads(ctx, control.Filter{Scope: "c2"}); !errors.Is(err, control.ErrForbidden) {
 		t.Fatalf("Threads in c2: %v, want forbidden", err)
 	}
-	if _, err := sv.Thread(ctx, b, 100, 0); !errors.Is(err, control.ErrForbidden) {
-		t.Fatalf("Thread in c2: %v, want forbidden", err)
+	// A thread of another scope is answered as one that does not exist
+	// (#479).
+	if _, err := sv.Thread(ctx, b, 100, 0); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("Thread in c2: %v, want not found", err)
 	}
-	if err := sv.Send(ctx, b, "s-b", control.Input{Text: "reply no"}, control.Refuse); !errors.Is(err, control.ErrForbidden) {
-		t.Fatalf("Send in c2: %v, want forbidden", err)
+	if err := sv.Send(ctx, b, "s-b", control.Input{Text: "reply no"}, control.Refuse); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("Send in c2: %v, want not found", err)
 	}
 	if _, err := sv.Start(ctx, control.StartRequest{Key: "k-c", Scope: "c2", Thread: "tc", Repo: repo, Input: control.Input{Text: "reply no"}}); !errors.Is(err, control.ErrForbidden) {
 		t.Fatalf("Start in c2: %v, want forbidden", err)
@@ -151,8 +153,8 @@ func TestSupervisorConnectionIsLimitedToItsScope(t *testing.T) {
 	if ts, err := sv2.Threads(ctx, control.Filter{}); err != nil || len(ts) != 1 || ts[0].ID != b {
 		t.Fatalf("the supervisor of c2 lists %+v, %v; want only %v", ts, err, b)
 	}
-	if _, err := sv2.Thread(ctx, a, 100, 0); !errors.Is(err, control.ErrForbidden) {
-		t.Fatalf("c2's token reads c1: %v, want forbidden", err)
+	if _, err := sv2.Thread(ctx, a, 100, 0); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("c2's token reads c1: %v, want not found", err)
 	}
 	// c2's supervisor is no person of the config, so it may read its
 	// scope but give no input there.
