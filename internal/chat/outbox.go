@@ -18,7 +18,9 @@ import (
 )
 
 // Row is one message the front end posts. It is keyed by the event it
-// shows and a part number, so that writing it twice writes one row.
+// shows, the link of its conversation and a part number, so that writing
+// it twice writes one row. A row in a conversation that is no link has
+// link 0. ReplyToRow and Target name rows of the same conversation.
 type Row struct {
 	Event   uint64 // position of the event in the event log
 	Part    int    // which of the event's messages this is
@@ -165,11 +167,11 @@ func (o *Outbox) WriteTx(ctx context.Context, tx *store.Tx, rows ...Row) error {
 		if err != nil {
 			return fmt.Errorf("chat: outbox: %w", err)
 		}
-		// link: the link of the conversation, if it is one (design, section 6.2).
+		// link: the link of the conversation, or 0 (design, section 5.2).
 		_, err = tx.ExecContext(ctx, `INSERT INTO chat_outbox
 			(client, event, part, channel, thread, message, decoration, created_at, link) VALUES (?, ?, ?, ?, ?, ?, ?, ?,
-			(SELECT id FROM links WHERE client = ? AND channel = ? AND thread = ?))
-			ON CONFLICT (client, event, part) DO NOTHING`,
+			coalesce((SELECT id FROM links WHERE client = ? AND channel = ? AND thread = ?), 0))
+			ON CONFLICT (client, event, link, part) DO NOTHING`,
 			o.Client, r.Event, r.Part, r.Conv.Channel, r.Conv.Thread, string(msg), r.Decoration, now,
 			o.Client, r.Conv.Channel, r.Conv.Thread)
 		if err != nil {
@@ -185,12 +187,13 @@ func (o *Outbox) Wake() {
 	o.poke()
 }
 
-// Sent returns the reference of the posted message of a row, and false
-// while the row is not sent (or does not exist, or was dropped).
+// Sent returns the reference of the posted message of a row, in any of
+// its conversations, and false while none is sent (or the row does not
+// exist, or was dropped).
 func (o *Outbox) Sent(ctx context.Context, event uint64, part int) (surface.MessageRef, bool, error) {
 	var r surface.MessageRef
 	err := o.Store.DB.QueryRowContext(ctx, `SELECT channel, thread, ref FROM chat_outbox
-		WHERE client = ? AND event = ? AND part = ? AND state = 'sent'`, o.Client, event, part).
+		WHERE client = ? AND event = ? AND part = ? AND state = 'sent' ORDER BY id LIMIT 1`, o.Client, event, part).
 		Scan(&r.Conv.Channel, &r.Conv.Thread, &r.ID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return surface.MessageRef{}, false, nil
@@ -208,15 +211,16 @@ func (o *Outbox) now() time.Time {
 	return time.Now()
 }
 
-// lineChanges returns, for the rows of event with a part of linePart or
-// more (a progress line and its edits), when the last of them was sent (zero for
-// none) and whether one is pending.
-func (o *Outbox) lineChanges(ctx context.Context, event uint64) (last time.Time, pending bool, err error) {
+// lineChanges returns, for the rows in conv of event with a part of
+// linePart or more (a progress line and its edits), when the last of them
+// was sent (zero for none) and whether one is pending.
+func (o *Outbox) lineChanges(ctx context.Context, conv surface.Conversation, event uint64) (last time.Time, pending bool, err error) {
 	var ms sql.NullInt64
 	var n int
 	err = o.Store.DB.QueryRowContext(ctx, `SELECT max(CASE WHEN state = 'sent' THEN sent_at END),
-		count(CASE WHEN state = 'pending' THEN 1 END) FROM chat_outbox WHERE client = ? AND event = ? AND part >= ?`,
-		o.Client, event, linePart).Scan(&ms, &n)
+		count(CASE WHEN state = 'pending' THEN 1 END) FROM chat_outbox
+		WHERE client = ? AND channel = ? AND thread = ? AND event = ? AND part >= ?`,
+		o.Client, conv.Channel, conv.Thread, event, linePart).Scan(&ms, &n)
 	if err != nil {
 		return time.Time{}, false, err
 	}
@@ -226,15 +230,16 @@ func (o *Outbox) lineChanges(ctx context.Context, event uint64) (last time.Time,
 	return last, n > 0, nil
 }
 
-// state returns the state of a row ("" when it does not exist) and its
-// message reference once it is sent.
-func (o *Outbox) state(ctx context.Context, k RowKey) (string, surface.MessageRef, error) {
+// state returns the state of the row k in conv ("" when it does not
+// exist) and its message reference once it is sent.
+func (o *Outbox) state(ctx context.Context, conv surface.Conversation, k RowKey) (string, surface.MessageRef, error) {
 	var (
 		state string
 		r     surface.MessageRef
 	)
 	err := o.Store.DB.QueryRowContext(ctx, `SELECT state, channel, thread, ref FROM chat_outbox
-		WHERE client = ? AND event = ? AND part = ?`, o.Client, k.Event, k.Part).Scan(&state, &r.Conv.Channel, &r.Conv.Thread, &r.ID)
+		WHERE client = ? AND channel = ? AND thread = ? AND event = ? AND part = ?`,
+		o.Client, conv.Channel, conv.Thread, k.Event, k.Part).Scan(&state, &r.Conv.Channel, &r.Conv.Thread, &r.ID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", surface.MessageRef{}, nil
 	}
@@ -305,6 +310,7 @@ type pending struct {
 	message    []byte
 	decoration bool
 	failures   int
+	link       int64
 }
 
 // drain posts conv's pending rows in order until none is left or a reply
@@ -350,7 +356,7 @@ func (o *Outbox) drain(ctx context.Context, conv surface.Conversation) {
 }
 
 func (o *Outbox) pendingRows(ctx context.Context, conv surface.Conversation) ([]pending, error) {
-	rows, err := o.Store.DB.QueryContext(ctx, `SELECT id, event, part, message, decoration, failures FROM chat_outbox
+	rows, err := o.Store.DB.QueryContext(ctx, `SELECT id, event, part, message, decoration, failures, link FROM chat_outbox
 		WHERE client = ? AND channel = ? AND thread = ? AND state = 'pending' ORDER BY event, part`,
 		o.Client, conv.Channel, conv.Thread)
 	if err != nil {
@@ -360,7 +366,7 @@ func (o *Outbox) pendingRows(ctx context.Context, conv surface.Conversation) ([]
 	var out []pending
 	for rows.Next() {
 		var p pending
-		if err := rows.Scan(&p.id, &p.event, &p.part, &p.message, &p.decoration, &p.failures); err != nil {
+		if err := rows.Scan(&p.id, &p.event, &p.part, &p.message, &p.decoration, &p.failures, &p.link); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -377,13 +383,35 @@ const (
 	reread             // the queue changed in front of the row: read it again
 )
 
+// postKey is the key row r is posted with, the same on every attempt. A
+// surface may hold a key unique across all of its conversations, as one
+// that keys by the author does, so the copy of a row in a second link has
+// a key of its own. The row of the thread's first link, and every row written before
+// rows were per link, keep the key they always had.
+func (o *Outbox) postKey(ctx context.Context, r pending) (string, error) {
+	k := key(r.event, r.part)
+	if r.link == 0 {
+		return k, nil
+	}
+	var n int
+	err := o.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM chat_outbox
+		WHERE client = ? AND event = ? AND part = ? AND link != 0 AND link < ?`, o.Client, r.event, r.part, r.link).Scan(&n)
+	if err != nil || n == 0 {
+		return k, err
+	}
+	return k + "@" + strconv.FormatInt(r.link, 10), nil
+}
+
 // send posts one row and records the outcome.
 func (o *Outbox) send(ctx context.Context, conv surface.Conversation, r pending) outcome {
-	k := key(r.event, r.part)
+	k, kerr := o.postKey(ctx, r)
+	if kerr != nil {
+		return stuck
+	}
 	m, meta, err := decode(r.message)
 	replyRow := meta.ReplyRow
 	if err == nil && replyRow != nil {
-		state, to, err := o.state(ctx, *replyRow)
+		state, to, err := o.state(ctx, conv, *replyRow)
 		switch {
 		case err != nil:
 			return stuck
@@ -406,7 +434,7 @@ func (o *Outbox) send(ctx context.Context, conv surface.Conversation, r pending)
 		return o.record(ctx, failedPost, r.id, `UPDATE chat_outbox SET state = 'dropped' WHERE id = ?`, r.id)
 	}
 	if meta.Op == Edit || meta.Op == Delete {
-		return o.change(ctx, r, meta, m)
+		return o.change(ctx, conv, r, meta, m)
 	}
 	ref, err := o.Driver.Post(ctx, conv, k, m)
 	if err == nil {
@@ -425,7 +453,7 @@ func (o *Outbox) send(ctx context.Context, conv surface.Conversation, r pending)
 }
 
 // change edits or deletes the message another row posted.
-func (o *Outbox) change(ctx context.Context, r pending, meta message, m surface.Message) outcome {
+func (o *Outbox) change(ctx context.Context, conv surface.Conversation, r pending, meta message, m surface.Message) outcome {
 	k := key(r.event, r.part)
 	var (
 		state string
@@ -433,7 +461,7 @@ func (o *Outbox) change(ctx context.Context, r pending, meta message, m surface.
 		err   error
 	)
 	if meta.Target != nil {
-		state, to, err = o.state(ctx, *meta.Target)
+		state, to, err = o.state(ctx, conv, *meta.Target)
 	}
 	switch {
 	case err != nil:
