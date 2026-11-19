@@ -2,19 +2,11 @@ package chat
 
 import (
 	"context"
-	"sync"
+	"strings"
 
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/surface"
 )
-
-// convCache remembers the conversations of each thread this front end has
-// looked up. Nothing adds or removes a link while it runs yet; the one
-// that will (attaching a thread here) must drop the thread's entry.
-type convCache struct {
-	mu sync.Mutex
-	m  map[control.ThreadID][]surface.Conversation
-}
 
 // linkConvs returns the conversations of t's links of this front end, the
 // first link first.
@@ -39,29 +31,34 @@ func (f *FrontEnd) convOf(ctx context.Context, id control.ThreadID) (surface.Con
 }
 
 // convsOf returns every conversation thread id is shown in by this front
-// end, one per link, the first link first; none when it has no link here.
+// end, one per link, the first link first; none when it has no link here,
+// or its scope is not one this front end shows. It reads the links as they
+// are now, so a link made since, by any client, is seen at once.
 func (f *FrontEnd) convsOf(ctx context.Context, id control.ThreadID) ([]surface.Conversation, error) {
-	f.convs.mu.Lock()
-	convs, ok := f.convs.m[id]
-	f.convs.mu.Unlock()
-	if ok {
-		return convs, nil
+	scopes := f.scopeList()
+	if len(scopes) == 0 {
+		return nil, nil
 	}
-	api := f.API(control.Caller{Principal: f.ownerPrincipal(), Scopes: f.scopeList(), May: control.OpRead})
-	ts, err := api.Threads(ctx, control.Filter{Thread: id})
-	if err != nil || len(ts) == 0 {
+	q := `SELECT l.channel, l.thread FROM links l JOIN threads t ON t.id = l.thread_id
+		WHERE l.thread_id = ? AND l.client = ? AND t.scope IN (?` + strings.Repeat(", ?", len(scopes)-1) + `) ORDER BY l.id`
+	args := []any{int64(id), f.Name}
+	for _, sc := range scopes {
+		args = append(args, sc)
+	}
+	rows, err := f.Outbox.Store.DB.QueryContext(ctx, q, args...)
+	if err != nil {
 		return nil, err
 	}
-	convs = f.linkConvs(ts[0])
-	if len(convs) > 0 {
-		f.convs.mu.Lock()
-		if f.convs.m == nil {
-			f.convs.m = map[control.ThreadID][]surface.Conversation{}
+	defer rows.Close()
+	var out []surface.Conversation
+	for rows.Next() {
+		var c surface.Conversation
+		if err := rows.Scan(&c.Channel, &c.Thread); err != nil {
+			return nil, err
 		}
-		f.convs.m[id] = convs
-		f.convs.mu.Unlock()
+		out = append(out, c)
 	}
-	return convs, nil
+	return out, rows.Err()
 }
 
 // everyLink returns rows, written for the first conversation of thread id

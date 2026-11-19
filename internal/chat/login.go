@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -483,11 +484,31 @@ func (f *FrontEnd) loginMessage(ctx context.Context, o outage) surface.Message {
 	return m
 }
 
+// scopeList returns the scopes whose threads this front end may show: its
+// own, and those whose show_in names one of its channels.
 func (f *FrontEnd) scopeList() []string {
 	var s []string
 	for k := range f.Scopes {
 		s = append(s, k)
 	}
+	for _, shown := range f.ShowIn {
+		for _, k := range shown {
+			if !slices.Contains(s, k) {
+				s = append(s, k)
+			}
+		}
+	}
 	sort.Strings(s)
 	return s
+}
+
+// scopesIn returns the scopes whose threads may be shown in channel: its
+// own scope, if it is one of this front end's, and those whose show_in
+// names it.
+func (f *FrontEnd) scopesIn(channel string) []string {
+	var s []string
+	if _, own := f.Scopes[channel]; own {
+		s = append(s, channel)
+	}
+	return append(s, f.ShowIn[channel]...)
 }

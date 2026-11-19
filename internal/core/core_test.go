@@ -214,8 +214,9 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 		"no operation": {Principal: "x", Scopes: []string{"s"}},
 	}
 	ops := map[string]func(control.API) error{
-		"Threads": func(a control.API) error { _, err := a.Threads(ctx, control.Filter{Scope: "s"}); return err },
-		"Thread":  func(a control.API) error { _, err := a.Thread(ctx, id, 10, 0); return err },
+		"Threads":      func(a control.API) error { _, err := a.Threads(ctx, control.Filter{Scope: "s"}); return err },
+		"Thread":       func(a control.API) error { _, err := a.Thread(ctx, id, 10, 0); return err },
+		"ThreadEvents": func(a control.API) error { _, err := a.ThreadEvents(ctx, id, 0, 10); return err },
 		"Start": func(a control.API) error {
 			_, err := a.Start(ctx, control.StartRequest{Key: "k2", Scope: "s", Thread: "t2"})
 			return err
@@ -238,6 +239,10 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 		// Limits needs OpRead and no scope, so "other scope" may call it
 		// (TestLimitsKeepTheNewestPerAgent).
 		"Limits": func(a control.API) error { _, err := a.Limits(ctx); return err },
+		"Link": func(a control.API) error {
+			_, err := a.Link(ctx, id, control.LinkRef{Client: "chat", Channel: "s", Thread: "c2"})
+			return err
+		},
 		// Only the owner's caller with OpAttach may (attach_test.go).
 		"AttachTerminal": func(a control.API) error { _, err := a.AttachTerminal(ctx, id); return err },
 	}
@@ -757,6 +762,10 @@ func TestOnlyThePeopleOfTheScopeAct(t *testing.T) {
 		"Stop":         func(a control.API) error { return a.Stop(ctx, id) },
 		"CloseThread":  func(a control.API) error { return a.CloseThread(ctx, id) },
 		"RemoveThread": func(a control.API) error { return a.RemoveThread(ctx, id) },
+		"Link": func(a control.API) error {
+			_, err := a.Link(ctx, id, control.LinkRef{Client: "chat", Channel: "s"})
+			return err
+		},
 	}
 	caller := func(from string) control.API {
 		// A Principal given with a From is not trusted.

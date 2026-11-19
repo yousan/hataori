@@ -27,7 +27,7 @@ import (
 
 // Version is the protocol version this build speaks: major.minor. Two
 // sides work together when their major numbers are equal (docs/protocol.md).
-const Version = "3.2"
+const Version = "3.4"
 
 type hello struct {
 	Version string `json:"version"`
@@ -67,6 +67,11 @@ type (
 		Recent int              `json:"recent"`
 		Events int              `json:"events,omitempty"` // since 1.5
 	}
+	threadEventsArgs struct { // since 3.3
+		ID     control.ThreadID `json:"id"`
+		Before uint64           `json:"before,omitempty"`
+		Limit  int              `json:"limit"`
+	}
 	sendArgs struct {
 		ID    control.ThreadID `json:"id"`
 		Key   string           `json:"key"`
@@ -79,6 +84,10 @@ type (
 	}
 	stopArgs struct {
 		ID control.ThreadID `json:"id"`
+	}
+	linkArgs struct { // since 3.4
+		ID   control.ThreadID `json:"id"`
+		Link control.LinkRef  `json:"link"`
 	}
 	closeArgs struct { // since 2.3
 		ID control.ThreadID `json:"id"`
@@ -136,6 +145,13 @@ var operations = map[string]operation{
 		}
 		return api.Thread(ctx, a.ID, a.Recent, a.Events)
 	}},
+	"ThreadEvents": {threadEventsArgs{}, []control.Event{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a threadEventsArgs
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return api.ThreadEvents(ctx, a.ID, a.Before, a.Limit)
+	}},
 	"Start": {control.StartRequest{}, control.ThreadID(0), func(ctx context.Context, api control.API, args func(any) error) (any, error) {
 		var a control.StartRequest
 		if err := args(&a); err != nil {
@@ -163,6 +179,13 @@ var operations = map[string]operation{
 			return nil, err
 		}
 		return nil, api.Stop(ctx, a.ID)
+	}},
+	"Link": {linkArgs{}, control.LinkRef{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a linkArgs
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return api.Link(ctx, a.ID, a.Link)
 	}},
 	"Close": {closeArgs{}, nil, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
 		var a closeArgs
@@ -228,8 +251,9 @@ var codes = []struct {
 	{"refused", session.ErrRefused},
 	// After refused: an error that wraps both, as AttachTerminal's to a
 	// closed thread, stays refused, as 2.1 and 2.2 answered it.
-	{"closed", core.ErrClosed},                  // since 2.3
-	{"removal_refused", core.ErrRemovalRefused}, // since 2.3
+	{"closed", core.ErrClosed},                       // since 2.3
+	{"removal_refused", core.ErrRemovalRefused},      // since 2.3
+	{"linked_elsewhere", control.ErrLinkedElsewhere}, // since 3.4
 	{"not_supported", ErrNotSupported},
 }
 

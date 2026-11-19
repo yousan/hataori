@@ -45,6 +45,9 @@ type Scope struct {
 	Owner   string // the name of the client that gives the scope its threads
 	Model   string // default model
 	Effort  string // default effort
+	// ShowIn lists the "<client>:<channel>" besides the scope's own where
+	// its threads may be linked (design, section 5.2).
+	ShowIn []string
 }
 
 // Workspaces makes the working directory of a new thread.
@@ -678,6 +681,17 @@ func (a *api) Thread(ctx context.Context, id control.ThreadID, recent, events in
 		d.Events[i] = a.readable(d.Events[i])
 	}
 	return d, err
+}
+
+func (a *api) ThreadEvents(ctx context.Context, id control.ThreadID, before uint64, n int) ([]control.Event, error) {
+	if _, err := a.checkThread(ctx, control.OpRead, "ThreadEvents", id); err != nil {
+		return nil, err
+	}
+	evs, err := a.c.Store.LastBefore(ctx, id, before, min(n, control.MaxEvents), a.mayRead)
+	for i := range evs {
+		evs[i] = a.readable(evs[i])
+	}
+	return evs, err
 }
 
 // querier is the store's database or one of its transactions.
