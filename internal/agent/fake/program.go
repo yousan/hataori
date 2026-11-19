@@ -159,6 +159,13 @@ type program struct {
 	relay      [2]string  // the two threads it relays between; empty for none
 }
 
+// A relay refused as busy is sent again after relayWait, at most relayTries
+// times.
+const (
+	relayWait  = 100 * time.Millisecond
+	relayTries = 100
+)
+
 // relayed sends, through the MCP server, to the other of the two relay
 // threads for each of them that the turn's text names as a wake message
 // does, and returns what it replies.
@@ -171,6 +178,12 @@ func (p *program) relayed(input string) []string {
 		to := p.relay[1-i]
 		args, _ := json.Marshal(map[string]any{"number": json.Number(to), "text": "reply relayed from " + from})
 		text, isError, err := p.mcp.call("send_to_thread", string(args))
+		// A thread still running its turn refuses the send as busy; a
+		// supervisor tries again once that turn has ended (#450).
+		for try := 0; err == nil && isError && strings.HasPrefix(text, "busy") && try < relayTries; try++ {
+			time.Sleep(relayWait)
+			text, isError, err = p.mcp.call("send_to_thread", string(args))
+		}
 		switch {
 		case err != nil:
 			out = append(out, "relay failed: "+err.Error())
