@@ -1,0 +1,10 @@
+{
+  "server_1_left_after_end": [],
+  "server_1_exit_code": 0,
+  "server_1_seconds_until_exit": 0.512,
+  "server_2_left_after_end": [],
+  "resumed_turn_statuses": [
+    "interrupted"
+  ],
+  "server_3_left_after_end": []
+}

@@ -1,0 +1,7 @@
+{"t": 0.001, "dir": "send", "msg": {"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "hataori-capture", "version": "0"}, "capabilities": {"experimentalApi": true}}}}
+{"t": 0.21, "dir": "recv", "msg": {"id": 1, "result": {"userAgent": "hataori-capture/0.163.0 (Ubuntu 24.4.0; x86_64) unknown (hataori-capture; 0)", "codexHome": "/home/user/.codex", "platformFamily": "unix", "platformOs": "linux"}}}
+{"t": 0.21, "dir": "recv", "msg": {"method": "remoteControl/status/changed", "params": {"status": "disabled", "serverName": "host", "installationId": "00000000-0000-4000-8000-000000000001", "environmentId": null}, "emittedAtMs": 1795061569956}}
+{"t": 0.21, "dir": "send", "msg": {"method": "initialized", "params": {}}}
+{"t": 0.21, "dir": "send", "msg": {"id": 2, "method": "account/read", "params": {}}}
+{"t": 0.745, "dir": "recv", "msg": {"method": "account/updated", "params": {"authMode": "chatgpt", "planType": "REDACTED"}, "emittedAtMs": 1795061570478}}
+{"t": 0.754, "dir": "recv", "msg": {"id": 2, "result": {"account": {"type": "chatgpt", "email": "user1@example.com", "planType": "REDACTED"}, "requiresOpenaiAuth": true, "workspaceRouting": {"chatgptAccountId": "00000000-0000-4000-8000-000000000050", "backendOrigin": "https://chatgpt.com", "accountRoutingOverride": "NO_CONSTRAINT"}}}}

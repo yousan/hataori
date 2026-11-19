@@ -1,0 +1,155 @@
+{
+  "interrupted_turn_status": "interrupted",
+  "procs_after_interrupt": [
+    {
+      "pid_rel": 0,
+      "ppid_rel": null,
+      "pgid_is_ours": true,
+      "argv": [
+        "codex",
+        "app-server",
+        "-c",
+        "projects./tmp/capture-work.trust_level=\"trusted\""
+      ],
+      "descendant": false
+    },
+    {
+      "pid_rel": 1,
+      "ppid_rel": 0,
+      "pgid_is_ours": false,
+      "argv": [
+        "codex-code-mode-host"
+      ],
+      "descendant": true
+    },
+    {
+      "pid_rel": 2,
+      "ppid_rel": 0,
+      "pgid_is_ours": false,
+      "argv": [
+        "codex-linux-sandbox",
+        "/usr/bin/zsh",
+        "-c",
+        "__CODEX_SNAPSHOT_OVERRIDE_SET_0=\"${CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS+x}\"\n_"
+      ],
+      "descendant": true
+    },
+    {
+      "pid_rel": 3,
+      "ppid_rel": 2,
+      "pgid_is_ours": false,
+      "argv": [
+        "bwrap",
+        "/usr/bin/zsh",
+        "-c",
+        "__CODEX_SNAPSHOT_OVERRIDE_SET_0=\"${CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS+x}\"\n_"
+      ],
+      "descendant": true
+    },
+    {
+      "pid_rel": 4,
+      "ppid_rel": 3,
+      "pgid_is_ours": false,
+      "argv": [
+        "codex-linux-sandbox",
+        "/usr/bin/zsh",
+        "-c",
+        "__CODEX_SNAPSHOT_OVERRIDE_SET_0=\"${CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS+x}\"\n_"
+      ],
+      "descendant": true
+    }
+  ],
+  "procs_after_15s": [
+    {
+      "pid_rel": 0,
+      "ppid_rel": null,
+      "pgid_is_ours": true,
+      "argv": [
+        "codex",
+        "app-server",
+        "-c",
+        "projects./tmp/capture-work.trust_level=\"trusted\""
+      ],
+      "descendant": false
+    },
+    {
+      "pid_rel": 1,
+      "ppid_rel": 0,
+      "pgid_is_ours": false,
+      "argv": [
+        "codex-code-mode-host"
+      ],
+      "descendant": true
+    },
+    {
+      "pid_rel": 2,
+      "ppid_rel": 0,
+      "pgid_is_ours": false,
+      "argv": [
+        "codex-linux-sandbox",
+        "/usr/bin/zsh",
+        "-c",
+        "__CODEX_SNAPSHOT_OVERRIDE_SET_0=\"${CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS+x}\"\n_"
+      ],
+      "descendant": true
+    },
+    {
+      "pid_rel": 3,
+      "ppid_rel": 2,
+      "pgid_is_ours": false,
+      "argv": [
+        "bwrap",
+        "/usr/bin/zsh",
+        "-c",
+        "__CODEX_SNAPSHOT_OVERRIDE_SET_0=\"${CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS+x}\"\n_"
+      ],
+      "descendant": true
+    },
+    {
+      "pid_rel": 4,
+      "ppid_rel": 3,
+      "pgid_is_ours": false,
+      "argv": [
+        "codex-linux-sandbox",
+        "/usr/bin/zsh",
+        "-c",
+        "__CODEX_SNAPSHOT_OVERRIDE_SET_0=\"${CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS+x}\"\n_"
+      ],
+      "descendant": true
+    },
+    {
+      "pid_rel": 5,
+      "ppid_rel": 4,
+      "pgid_is_ours": false,
+      "argv": [
+        "sleep",
+        "600"
+      ],
+      "descendant": true
+    }
+  ],
+  "procs_after_clean": [
+    {
+      "pid_rel": 0,
+      "ppid_rel": null,
+      "pgid_is_ours": true,
+      "argv": [
+        "codex",
+        "app-server",
+        "-c",
+        "projects./tmp/capture-work.trust_level=\"trusted\""
+      ],
+      "descendant": false
+    },
+    {
+      "pid_rel": 1,
+      "ppid_rel": 0,
+      "pgid_is_ours": false,
+      "argv": [
+        "codex-code-mode-host"
+      ],
+      "descendant": true
+    }
+  ],
+  "left_after_end": []
+}
