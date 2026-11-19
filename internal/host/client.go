@@ -94,6 +94,26 @@ func (c *Client) Device(ctx context.Context) (string, error) {
 	return resp.Device, err
 }
 
+// Attached returns how many terminals of people are attached to the host
+// (Attach), and when the last one went, the zero time for never. It gives
+// up at ctx's deadline, or after a second when ctx has none.
+func (c *Client) Attached(ctx context.Context) (n int, detached time.Time, err error) {
+	by, ok := ctx.Deadline()
+	if !ok {
+		by = time.Now().Add(time.Second)
+	}
+	c.conn.SetDeadline(by)
+	defer c.conn.SetDeadline(time.Time{})
+	resp, err := c.call(request{Op: "status"})
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	if resp.Detached > 0 {
+		detached = time.UnixMilli(resp.Detached)
+	}
+	return resp.Attached, detached, nil
+}
+
 // Gone reports whether the host of stateDir has finished: its socket is
 // gone and its status recorded.
 func Gone(stateDir string) bool {

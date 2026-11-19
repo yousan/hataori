@@ -239,6 +239,16 @@ func (r *Runner) at(point string) {
 // Resume starts the agent of an asleep session again, resuming its
 // conversation, and sends in once the agent reports that it is ready.
 func (r *Runner) Resume(ctx context.Context, id int64, principal control.Principal, from, key string, in control.Input) error {
+	return r.resume(ctx, id, firstInput{Principal: principal, From: from, Key: key, Text: in.Text, Wake: true})
+}
+
+// Wake starts the agent of an asleep session again, resuming its
+// conversation, and gives it no input: the session becomes idle.
+func (r *Runner) Wake(ctx context.Context, id int64, principal control.Principal) error {
+	return r.resume(ctx, id, firstInput{Principal: principal, Wake: true, NoInput: true})
+}
+
+func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 	// The agent that was put to sleep must be gone, and read to its end,
 	// before another starts in the same state directory.
 	r.mu.Lock()
@@ -293,7 +303,7 @@ func (r *Runner) Resume(ctx context.Context, id int64, principal control.Princip
 	}
 	spec := s.Spec
 	spec.ResumeID = resumeID
-	if err := r.launch(ctx, id, s.Agent, ad, spec, firstInput{Principal: principal, From: from, Key: key, Text: in.Text, Wake: true}); err != nil {
+	if err := r.launch(ctx, id, s.Agent, ad, spec, first); err != nil {
 		return err
 	}
 	return r.follow(id, ad, spec, wake)
@@ -1135,6 +1145,11 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 			return err
 		}
 		switch {
+		case f.NoInput && control.State(state) == control.Idle:
+			// Woken with nothing to say: ready is all it waited for.
+			f = firstInput{}
+		case f.NoInput:
+			return nil
 		case !f.Sent && control.State(state) == control.Idle:
 			if err := r.Machine.ApplyTx(ctx, tx, lv.id, session.Input{Kind: session.Send, Principal: f.Principal, From: f.From, Key: f.Key, Text: f.Text}); err != nil {
 				return err
@@ -1310,8 +1325,17 @@ func (r *Runner) checkIdle(lv *live) {
 	if lv.asleep || lv.failed {
 		return
 	}
-	slept := false
 	ctx := context.Background()
+	var state string
+	var updated int64
+	if err := r.Store.DB.QueryRowContext(ctx, `SELECT state, updated_at FROM sessions WHERE id = ?`, lv.id).Scan(&state, &updated); err != nil ||
+		control.State(state) != control.Idle || time.Since(time.UnixMilli(updated)) < r.idlePeriod() {
+		return
+	}
+	if r.attached(lv) {
+		return
+	}
+	slept := false
 	err := r.Store.Update(ctx, func(tx *store.Tx) error {
 		slept = false
 		var state string
@@ -1347,6 +1371,26 @@ func (r *Runner) checkIdle(lv *live) {
 		lv.asleep = true
 		go host.Stop(lv.dir, time.Second, 2*time.Second)
 	}
+}
+
+// attached reports whether a person's terminal is attached to the
+// session's host, or was within the idle period: while it is, the session
+// is not put to sleep, and the idle period starts again when it goes. The
+// host keeps the count, so it holds across a daemon restart. A host that
+// does not answer has none attached.
+func (r *Runner) attached(lv *live) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	c, err := host.DialContext(ctx, lv.dir)
+	if err != nil {
+		return false
+	}
+	defer c.Close()
+	n, detached, err := c.Attached(ctx)
+	if err != nil {
+		return false
+	}
+	return n > 0 || !detached.IsZero() && time.Since(detached) < r.idlePeriod()
 }
 
 // replace starts a new session in the same workspace for a session whose

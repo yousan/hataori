@@ -144,8 +144,8 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	}
 
 	// The socket's connections are the owner's, and only they may make a
-	// dashboard sign-in link.
-	owner := control.OpRead | control.OpStart | control.OpSend | control.OpAnswer | control.OpStop | control.OpSignIn
+	// dashboard sign-in link and attach a terminal on the host.
+	owner := control.OpRead | control.OpStart | control.OpSend | control.OpAnswer | control.OpStop | control.OpSignIn | control.OpAttach
 	if cfg.HostTerminals { // off unless the config turns it on; only the owner gets it
 		lister := &hostterm.Lister{Own: filepath.Base(exe)}
 		if hostTermsHook != nil {

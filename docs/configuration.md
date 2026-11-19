@@ -196,6 +196,7 @@ hataori threads [--root DIR]
 hataori thread  [--root DIR] KEY
 hataori events  [--root DIR] [--after N] [--follow]
 hataori stop    [--root DIR] KEY
+hataori attach  [--root DIR] KEY
 hataori signin  [--root DIR]
 hataori version
 ```
@@ -207,6 +208,7 @@ hataori version
 | `thread KEY` | Prints one thread and its state. Exits with 3 when no thread has that key. |
 | `events` | Prints the event log, one JSON object per line. |
 | `stop KEY` | Interrupts the thread's running turn. |
+| `attach KEY` | Connects this terminal to the terminal of the thread's agent, on the host, for the owner. It shows the current screen, then passes every key to the agent; Ctrl-\ detaches and leaves the agent running. An asleep thread is woken first; a closed thread, and an agent without a terminal, are refused with a message. While attached the thread is not put to sleep, and a daemon restart does not end the attachment. A turn typed there is posted in chat after a line "(typed at the terminal)". Output is the agent's terminal, not JSON. |
 | `signin` | Prints `{"link": ...}`: a link that signs the owner in to the dashboard, once, within five minutes. Fails when the config has no `dashboard`. |
 | `version` | Prints the version. |
 

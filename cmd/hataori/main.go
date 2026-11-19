@@ -7,10 +7,12 @@
 //	hataori thread [--root DIR] KEY             the thread with KEY, or exit 3
 //	hataori events [--root DIR] [--after N] [--follow]
 //	hataori stop [--root DIR] KEY               interrupt the thread's running turn
+//	hataori attach [--root DIR] KEY             this terminal on the agent's, until Ctrl-\
 //	hataori signin [--root DIR]                 a single-use dashboard sign-in link
 //	hataori version
 //
-// The root is --root, or $HATAORI_ROOT. Output is one JSON object per line.
+// The root is --root, or $HATAORI_ROOT. Output is one JSON object per line,
+// except for attach, whose output is the agent's terminal.
 //
 // Exit codes: 0 success; 1 an error, such as no daemon running for the
 // root; 2 a usage error; 3 (thread) no thread of this instance has the key.
@@ -66,7 +68,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return runCtx(context.Background(), args, stdout, stderr)
 }
 
-const usage = "usage: hataori run|threads|thread KEY|events [--after N] [--follow]|stop KEY|signin [--root DIR] | hataori version | hataori host <state-dir> | hataori hook [--wait] [--timeout DURATION] | hataori statusline --last FILE [--run COMMAND]"
+const usage = "usage: hataori run|threads|thread KEY|events [--after N] [--follow]|stop KEY|attach KEY|signin [--root DIR] | hataori version | hataori host <state-dir> | hataori hook [--wait] [--timeout DURATION] | hataori statusline --last FILE [--run COMMAND]"
 
 func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -94,7 +96,7 @@ func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return host.HookMain(args[1:], os.Stdin, stdout, stderr, os.Getenv)
 	case "statusline":
 		return claudecode.StatusLineMain(args[1:], os.Stdin, stdout, stderr, os.Getenv)
-	case "run", "threads", "thread", "events", "stop", "signin":
+	case "run", "threads", "thread", "events", "stop", "attach", "signin":
 		return command(ctx, args[0], args[1:], stdout, stderr)
 	}
 	fmt.Fprintln(stderr, usage)
@@ -119,7 +121,7 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 		args = fs.Args()[1:]
 	}
 	want := 0
-	if name == "thread" || name == "stop" {
+	if name == "thread" || name == "stop" || name == "attach" {
 		want = 1
 	}
 	if len(pos) != want || *root == "" || (name != "events" && (*after != 0 || *follow)) {
@@ -180,6 +182,18 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 			return fail(err)
 		}
 		if err := enc.Encode(map[string]string{"link": link}); err != nil {
+			return fail(err)
+		}
+	case "attach":
+		t, ok, err := find(ctx, c, pos[0])
+		if err != nil {
+			return fail(err)
+		}
+		if !ok {
+			fmt.Fprintf(stderr, "hataori: no thread of this instance has the key %q\n", pos[0])
+			return exitNoThread
+		}
+		if err := attachTerminal(ctx, c, t, attachStdin, stdout, stderr); err != nil {
 			return fail(err)
 		}
 	case "stop":

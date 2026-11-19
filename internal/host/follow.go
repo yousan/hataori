@@ -1,9 +1,12 @@
 package host
 
 import (
+	"bufio"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -132,6 +135,49 @@ func newRun() string {
 // is closed. The connection carries no further requests: whatever the
 // reader sends is read and dropped.
 func (h *host) follow(c *net.UnixConn, enc *json.Encoder, req request) {
+	h.stream(c, enc, req, func() { io.Copy(io.Discard, c) }) // never decoded, never passed on
+}
+
+// attach serves an "attach" request: the terminal's output as follow sends
+// it, and the keys of a person, which the connection then carries as
+// "input" requests, written to the terminal as they come and not answered.
+// The host counts the connection as attached until it closes.
+func (h *host) attach(c *net.UnixConn, dec *json.Decoder, enc *json.Encoder, req request) {
+	if h.term == nil {
+		enc.Encode(response{Error: "the command runs on pipes: there is no terminal to attach to"})
+		return
+	}
+	h.attached.Add(1)
+	defer func() {
+		h.detached.Store(time.Now().UnixMilli())
+		h.attached.Add(-1)
+	}()
+	h.log.printf("a terminal attached")
+	defer h.log.printf("a terminal detached")
+	h.stream(c, enc, req, func() {
+		for {
+			var in request
+			if err := dec.Decode(&in); err != nil {
+				return
+			}
+			if in.Op != "input" || len(in.Data) == 0 {
+				continue
+			}
+			h.inMu.Lock()
+			select {
+			case <-h.done:
+			default:
+				h.input.Write(in.Data)
+			}
+			h.inMu.Unlock()
+		}
+	})
+}
+
+// stream sends the terminal's output after req.After, as follow says,
+// while read takes what the other end sends; read returns when the other
+// end closes.
+func (h *host) stream(c *net.UnixConn, enc *json.Encoder, req request, read func()) {
 	if h.term == nil {
 		enc.Encode(response{Error: "the command runs on pipes: there is no terminal to follow"})
 		return
@@ -161,7 +207,7 @@ func (h *host) follow(c *net.UnixConn, enc *json.Encoder, req request) {
 	}
 	gone := make(chan struct{})
 	go func() {
-		io.Copy(io.Discard, c) // never decoded, never passed on
+		read()
 		close(gone)
 	}()
 	for {
@@ -278,3 +324,51 @@ func (s *TerminalStream) Close() error { return s.conn.Close() }
 type hostError struct{ msg string }
 
 func (e *hostError) Error() string { return "host: " + e.msg }
+
+// Attachment is a person's terminal attached to a host's terminal: the
+// output as a TerminalStream, and keys passed to the command. While it is
+// open the host counts it as attached (Client.Attached).
+type Attachment struct {
+	*TerminalStream
+	mu  sync.Mutex
+	enc *json.Encoder
+}
+
+// Attach connects to the host listening on the socket sock, as
+// SocketPath gives it, and attaches to its terminal. The first chunk is
+// the end of the kept log, with Reset set; each later chunk continues it.
+func Attach(sock string) (*Attachment, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "unix", sock)
+	if err != nil {
+		return nil, fmt.Errorf("host: connect: %w", err)
+	}
+	a := &Attachment{TerminalStream: &TerminalStream{conn: conn, dec: json.NewDecoder(bufio.NewReader(conn))}, enc: json.NewEncoder(conn)}
+	if err := a.enc.Encode(request{Op: "attach"}); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	conn.SetReadDeadline(time.Now().Add(followFirstTimeout))
+	first, err := a.read()
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	conn.SetReadDeadline(time.Time{})
+	a.first, a.cols, a.rows = &first, first.Cols, first.Rows
+	return a, nil
+}
+
+// Input writes b to the command's terminal, unchanged. The host does not
+// answer it.
+func (a *Attachment) Input(b []byte) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.conn.SetWriteDeadline(time.Now().Add(followWriteTimeout))
+	return a.enc.Encode(request{Op: "input", Data: b})
+}
+
+// Size is the size of the host's terminal.
+func (a *Attachment) Size() (cols, rows int) { return a.cols, a.rows }

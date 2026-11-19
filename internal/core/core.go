@@ -30,6 +30,11 @@ var (
 	ErrBusy      = errors.New("a turn is running")
 	ErrNotFound  = errors.New("not found")
 	ErrNotOpen   = errors.New("the request is not open") // answered, withdrawn, or its agent ended
+	// ErrNoTerminal: the thread's agent runs without a terminal, so there
+	// is nothing to attach to.
+	ErrNoTerminal = errors.New("the agent has no terminal to attach to")
+	// ErrClosed: the thread is closed or removed.
+	ErrClosed = errors.New("the thread is closed")
 )
 
 // Scope is what the core needs to know about one scope.
@@ -82,6 +87,17 @@ type Runner interface {
 	// reports that it is ready.
 	// from is the "<client>:<id>" the input came from, if relayed.
 	Resume(ctx context.Context, sessionID int64, principal control.Principal, from, key string, in control.Input) error
+	// Wake starts the agent of an asleep session again with its
+	// conversation and gives it no input, so that the session becomes idle.
+	Wake(ctx context.Context, sessionID int64, principal control.Principal) error
+	// OnPipes reports whether a session's agent is known to run on pipes,
+	// with no terminal a person could attach to.
+	OnPipes(sessionID int64) bool
+	// AttachSocket returns the socket of the session host whose terminal a
+	// person attaches to, once the host listens; it waits for a session
+	// that is being started, until ctx ends. A session on pipes is
+	// ErrNoTerminal.
+	AttachSocket(ctx context.Context, sessionID int64) (string, error)
 	// Terminal streams a session's terminal output, as control.API.Terminal
 	// says, until ctx ends. A session on pipes is ErrNotFound.
 	Terminal(ctx context.Context, sessionID int64, run string, after uint64) (<-chan control.TerminalChunk, error)
@@ -118,10 +134,11 @@ type FirstInput struct {
 	From      string            `json:"from,omitempty"`
 	Key       string            `json:"key"`
 	Text      string            `json:"text"`
-	Sent      bool              `json:"sent,omitempty"`    // the turn was started for it, and it was handed to the codec
-	Written   bool              `json:"written,omitempty"` // it was written to the agent; see agent.Input.Written
-	Wake      bool              `json:"wake,omitempty"`    // the session was asleep: its agent resumes
-	Dir       string            `json:"dir,omitempty"`     // the workspace, once it is made
+	Sent      bool              `json:"sent,omitempty"`     // the turn was started for it, and it was handed to the codec
+	Written   bool              `json:"written,omitempty"`  // it was written to the agent; see agent.Input.Written
+	Wake      bool              `json:"wake,omitempty"`     // the session was asleep: its agent resumes
+	NoInput   bool              `json:"no_input,omitempty"` // woken with no input, as for an attach: the agent is only started
+	Dir       string            `json:"dir,omitempty"`      // the workspace, once it is made
 	// Context goes before Text when the input is handed to the agent; the
 	// input event records Text alone. See Launch.Context.
 	Context string `json:"context,omitempty"`
@@ -805,7 +822,13 @@ func (c *Core) Recover(ctx context.Context) error {
 	rows.Close()
 	for _, x := range found {
 		in := control.Input{Text: x.f.Text}
-		if x.f.Wake {
+		if x.f.Wake && x.f.NoInput {
+			if err = c.Runner.Wake(ctx, x.l.Session, x.f.Principal); err != nil {
+				if ferr := c.Machine.Apply(ctx, x.l.Session, session.Input{Kind: session.Exit, Reason: "resume: " + err.Error()}); ferr != nil {
+					c.Log.Error("recording a failed resume", "session", x.l.Session, "err", ferr)
+				}
+			}
+		} else if x.f.Wake {
 			err = c.resume(ctx, x.l.Session, x.f.Principal, x.f.From, x.f.Key, in)
 		} else {
 			x.l.Dir, x.l.Principal, x.l.From, x.l.Key, x.l.Input, x.l.Context = x.f.Dir, x.f.Principal, x.f.From, x.f.Key, in, x.f.Context
@@ -1296,4 +1319,80 @@ func (a *api) HostScreen(ctx context.Context, pane string) (string, error) {
 		err = fmt.Errorf("core: HostScreen: tmux pane %q: %w", pane, ErrNotFound)
 	}
 	return screen, err
+}
+
+// attachTimeout bounds how long AttachTerminal waits for the session host
+// of a thread that is being started or woken.
+const attachTimeout = 90 * time.Second
+
+// AttachTerminal readies a thread for a person's terminal on the host: the
+// owner only, and only with OpAttach. A thread that is closed, removed or
+// failed, and an agent known to have no terminal, are refused before
+// anything changes. An asleep thread is woken with no input first.
+func (a *api) AttachTerminal(ctx context.Context, id control.ThreadID) (control.Attachment, error) {
+	const name = "AttachTerminal"
+	if err := a.check(control.OpAttach, name, id.Scope); err != nil {
+		return control.Attachment{}, err
+	}
+	if owner := a.c.People.Owner(); owner == "" || a.caller.Principal != control.Principal(owner) {
+		return control.Attachment{}, a.refused(name, id.Scope, "only the owner may attach a terminal")
+	}
+	var (
+		sid    int64
+		number int64
+		wake   bool
+	)
+	err := a.c.Store.Update(ctx, func(tx *store.Tx) error {
+		wake = false
+		var (
+			state control.State
+			err   error
+		)
+		if sid, state, err = a.c.current(ctx, tx, id); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM threads WHERE scope = ? AND key = ?`, id.Scope, id.Key).Scan(&number); err != nil {
+			return fmt.Errorf("core: thread %v: %w", id, err)
+		}
+		switch state {
+		case control.Closed, control.Removed:
+			return fmt.Errorf("core: attach to thread %d: it is %s: %w: %w", number, state, ErrClosed, session.ErrRefused)
+		case control.Failed:
+			return fmt.Errorf("core: attach to thread %d: its session failed and has no agent running: %w", number, session.ErrRefused)
+		}
+		if a.c.Runner.OnPipes(sid) {
+			return fmt.Errorf("core: attach to thread %d: %w: %w", number, ErrNoTerminal, session.ErrRefused)
+		}
+		if state != control.Asleep {
+			return nil
+		}
+		wake = true
+		if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Wake}); err != nil {
+			return err
+		}
+		fi, _ := json.Marshal(FirstInput{Principal: a.caller.Principal, Wake: true, NoInput: true})
+		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ?, launch = 1 WHERE id = ?`, string(fi), sid); err != nil {
+			return fmt.Errorf("core: wake: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return control.Attachment{}, err
+	}
+	if wake {
+		if err := a.c.Runner.Wake(ctx, sid, a.caller.Principal); err != nil {
+			if ferr := a.c.Machine.Apply(ctx, sid, session.Input{Kind: session.Exit, Reason: "resume: " + err.Error()}); ferr != nil {
+				a.c.Log.Error("recording a failed resume", "session", sid, "err", ferr)
+			}
+			return control.Attachment{}, fmt.Errorf("core: attach to thread %d: resume: %w", number, err)
+		}
+	}
+	wctx, cancel := context.WithTimeout(ctx, attachTimeout)
+	defer cancel()
+	sock, err := a.c.Runner.AttachSocket(wctx, sid)
+	if err != nil {
+		return control.Attachment{}, fmt.Errorf("core: attach to thread %d: %w", number, err)
+	}
+	a.c.Log.Info("a terminal attaches", "scope", id.Scope, "thread", number, "person", string(a.caller.Principal))
+	return control.Attachment{Socket: sock, Number: number}, nil
 }

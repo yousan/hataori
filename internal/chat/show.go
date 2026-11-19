@@ -22,6 +22,7 @@ type reader struct {
 	api   control.API
 	first map[control.ThreadID]uint64               // position of each thread's first event
 	turn  map[control.ThreadID]string               // key of the call that started the open turn
+	by    map[control.ThreadID]string               // who started the open turn: caller, agent or terminal
 	quiet map[control.ThreadID]*quiet               // open turns, for the progress line
 	gone  map[control.ThreadID]*RowKey              // the last delete of a progress line
 	known map[control.ThreadID]bool                 // threads whose earlier events were read
@@ -47,6 +48,7 @@ func (f *FrontEnd) show(ctx context.Context) error {
 		api:   f.API(control.Caller{Principal: f.ownerPrincipal(), Scopes: scopes, May: control.OpRead}),
 		first: map[control.ThreadID]uint64{},
 		turn:  map[control.ThreadID]string{},
+		by:    map[control.ThreadID]string{},
 		quiet: map[control.ThreadID]*quiet{},
 		gone:  map[control.ThreadID]*RowKey{},
 		known: map[control.ThreadID]bool{},
@@ -160,7 +162,13 @@ type eventData struct {
 	File     string   `json:"file"`
 	More     []string `json:"more"`
 	Caption  string   `json:"caption"`
+	By       string   `json:"by"` // turn_started: who started the turn
 }
+
+// typedAtTerminal is the line that goes before the final answer of a turn a
+// person typed at the agent's terminal (`hataori attach`), so that the chat
+// thread shows the whole conversation and says where that turn came from.
+const typedAtTerminal = "(typed at the terminal)"
 
 // rowsFor returns the rows that show e. A kind it does not show gives none.
 func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event) ([]Row, error) {
@@ -183,6 +191,7 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event) ([]R
 		r.first[e.Thread] = e.Pos
 	case "turn_started":
 		r.turn[e.Thread] = d.Key
+		r.by[e.Thread] = d.By
 	case "text":
 		if strings.TrimSpace(d.Text) == "" {
 			return nil, nil
@@ -190,11 +199,14 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event) ([]R
 		if !d.Final {
 			return row(surface.Message{Text: d.Text, Quiet: true}), nil
 		}
-		rows := row(surface.Message{Text: d.Text})
-		key, err := r.turnKey(ctx, e)
+		key, by, err := r.turnKey(ctx, e)
 		if err != nil {
 			return nil, err
 		}
+		if by == "terminal" {
+			return row(surface.Message{Text: typedAtTerminal + "\n" + d.Text}), nil
+		}
+		rows := row(surface.Message{Text: d.Text})
 		if key == "" {
 			return rows, nil // the agent started the turn by itself
 		}
@@ -223,6 +235,7 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event) ([]R
 		return f.fileRows(ctx, e, conv, d.Session, append([]string{d.File}, d.More...), d.Caption), nil
 	case "turn_ended":
 		delete(r.turn, e.Thread)
+		delete(r.by, e.Thread)
 		if d.Outcome == "failure" {
 			return row(surface.Message{Text: failureLine(d.Reason)}), nil
 		}
@@ -266,22 +279,25 @@ func (f *FrontEnd) isTrigger(ctx context.Context, channel, key string) (bool, er
 	return ok, err
 }
 
-// turnKey returns the key of the call that started the turn e is in.
-func (r *reader) turnKey(ctx context.Context, e control.Event) (string, error) {
+// turnKey returns the key of the call that started the turn e is in, and
+// who started it.
+func (r *reader) turnKey(ctx context.Context, e control.Event) (key, by string, err error) {
 	if k, ok := r.turn[e.Thread]; ok {
-		return k, nil
+		return k, r.by[e.Thread], nil
 	}
-	err := r.scan(ctx, e.Thread, e.Pos, func(ev control.Event) {
+	err = r.scan(ctx, e.Thread, e.Pos, func(ev control.Event) {
 		switch ev.Kind {
 		case "turn_started":
 			var d eventData
 			json.Unmarshal(ev.Data, &d)
 			r.turn[e.Thread] = d.Key
+			r.by[e.Thread] = d.By
 		case "turn_ended":
 			delete(r.turn, e.Thread)
+			delete(r.by, e.Thread)
 		}
 	})
-	return r.turn[e.Thread], err
+	return r.turn[e.Thread], r.by[e.Thread], err
 }
 
 // firstPos returns the position of a thread's first event.

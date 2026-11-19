@@ -121,11 +121,13 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				return 0
 			}
 			time.Sleep(*inputDelay)
-			id := ""
-			if rest, found := strings.CutPrefix(text, inputIDPrefix); found {
+			id, by := "", "caller"
+			if rest, found := strings.CutPrefix(text, terminalPrefix); found {
+				text, by = rest, "terminal"
+			} else if rest, found := strings.CutPrefix(text, inputIDPrefix); found {
 				id, text, _ = strings.Cut(rest, "\n")
 			}
-			if code, exit := p.turn("caller", id, text, agentTurns); exit {
+			if code, exit := p.turn(by, id, text, agentTurns); exit {
 				return code
 			}
 		case d := <-agentTurns:
@@ -147,6 +149,7 @@ type program struct {
 	configDir  string
 	model      string // as started, for whoami
 	effort     string
+	turns      int // turns started since the program started
 }
 
 // report sends one report: a line on stdout, or a hook call.
@@ -175,8 +178,9 @@ func (p *program) say(text string, final bool) {
 		p.report(v)
 		return
 	}
-	b, _ := json.Marshal(v)
 	p.mu.Lock()
+	v["turn"] = p.turns
+	b, _ := json.Marshal(v)
 	p.transcript.Write(append(b, '\n'))
 	p.mu.Unlock()
 }
@@ -187,7 +191,11 @@ const inputIDPrefix = "@input "
 // turn runs one script; input is the id the input named, if any. It
 // returns an exit code and true when the script says to exit.
 func (p *program) turn(by, input, script string, agentTurns chan time.Duration) (int, bool) {
-	p.report(map[string]any{"t": "turn", "by": by, "input": input})
+	p.mu.Lock()
+	p.turns++
+	n := p.turns
+	p.mu.Unlock()
+	p.report(map[string]any{"t": "turn", "by": by, "input": input, "n": n})
 	end := map[string]any{"t": "end", "status": "completed", "reason": "", "background": 0}
 	if !loggedIn(p.configDir) {
 		end["status"], end["reason"] = "failed", string(agent.Login)
@@ -449,11 +457,22 @@ const (
 	pasteEnd   = "\x1b[201~"
 )
 
-// readTerminal reads bracketed pastes confirmed by Enter, and a lone
-// Escape as an interrupt.
+// terminalPrefix marks, on the inputs channel, a line a person typed at
+// the terminal; it cannot start a paste, which never holds a NUL.
+const terminalPrefix = "\x00terminal\n"
+
+// echo writes what a person typed back to the terminal, for them to see.
+func (p *program) echo(b []byte) {
+	p.mu.Lock()
+	p.out.Write(b)
+	p.mu.Unlock()
+}
+
+// readTerminal reads bracketed pastes confirmed by Enter, keys typed and
+// confirmed by Enter, and a lone Escape as an interrupt.
 func (p *program) readTerminal(r io.Reader, inputs chan<- string) {
 	defer close(inputs)
-	var buf, pasted []byte
+	var buf, pasted, typed []byte
 	in := make([]byte, 4096)
 	for {
 		n, err := r.Read(in)
@@ -478,9 +497,23 @@ func (p *program) readTerminal(r io.Reader, inputs chan<- string) {
 				buf = buf[1:]
 				continue
 			}
-			if buf[0] == '\r' && len(pasted) > 0 {
+			switch c := buf[0]; {
+			case c == '\r' && len(pasted) > 0:
 				inputs <- string(pasted)
-				pasted = nil
+				pasted, typed = nil, nil
+			case c == '\r' && len(typed) > 0:
+				// Keys typed by a person, not pasted: a turn of the terminal.
+				p.echo([]byte("\r\n"))
+				inputs <- terminalPrefix + string(typed)
+				typed = nil
+			case c == 0x7f || c == '\b':
+				if len(typed) > 0 {
+					typed = typed[:len(typed)-1]
+					p.echo([]byte("\b \b"))
+				}
+			case c >= ' ' && len(pasted) == 0:
+				typed = append(typed, c)
+				p.echo(buf[:1])
 			}
 			buf = buf[1:]
 		}

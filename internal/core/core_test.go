@@ -27,6 +27,7 @@ type fakeRunner struct {
 	calls []string
 	// device, when set, answers Device.
 	device func(ctx context.Context, sid int64) string
+	pipes  bool // OnPipes answers this
 }
 
 func (r *fakeRunner) record(s string) error {
@@ -53,6 +54,13 @@ func (r *fakeRunner) Device(ctx context.Context, sid int64) string {
 }
 func (r *fakeRunner) Resume(_ context.Context, _ int64, _ control.Principal, _ string, _ string, in control.Input) error {
 	return r.record("resume " + in.Text)
+}
+func (r *fakeRunner) Wake(_ context.Context, sid int64, _ control.Principal) error {
+	return r.record(fmt.Sprint("wake ", sid))
+}
+func (r *fakeRunner) OnPipes(int64) bool { return r.pipes }
+func (r *fakeRunner) AttachSocket(_ context.Context, sid int64) (string, error) {
+	return fmt.Sprint("socket ", sid), nil
 }
 func (r *fakeRunner) Terminal(_ context.Context, sid int64, _ string, _ uint64) (<-chan control.TerminalChunk, error) {
 	r.record(fmt.Sprint("terminal ", sid))
@@ -196,6 +204,8 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 		// Limits needs OpRead and no scope, so "other scope" may call it
 		// (TestLimitsKeepTheNewestPerAgent).
 		"Limits": func(a control.API) error { _, err := a.Limits(ctx); return err },
+		// Only the owner's caller with OpAttach may (attach_test.go).
+		"AttachTerminal": func(a control.API) error { _, err := a.AttachTerminal(ctx, id); return err },
 	}
 	if len(ops) != reflect.TypeFor[control.API]().NumMethod() {
 		t.Fatal("the test does not cover every operation")

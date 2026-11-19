@@ -19,6 +19,8 @@ type codec struct {
 	followed map[string]bool
 	asked    map[string]string // request id → the fake's question id (pipes) or hook call id (terminal)
 	running  bool              // a turn is running: input waits for its end, as an agent's own would
+	early    []agent.Event     // text read from the transcript before the hook call that starts its turn
+	turn     int               // the number of the last turn reported since the program started
 	queue    []agent.Input     // input held until the turn ends
 	waiting  []*written        // inputs written and not yet reported, with an Input.ID
 	timeout  time.Duration     // for waiting; DefaultInputTimeout when zero
@@ -64,6 +66,8 @@ type report struct {
 	Reason     string   `json:"reason"`
 	Background int      `json:"background"`
 	Input      string   `json:"input"`
+	N          int      `json:"n"`    // turn: its number since the program started
+	Turn       int      `json:"turn"` // text in the transcript: the number of its turn
 	// usage; "input" is the turn's input id above, so the counts are "in"
 	Tokens
 	// limits
@@ -166,16 +170,21 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 			id = r.Resume
 		}
 		a = c.events(agent.Event{Kind: agent.SessionReady, SessionID: id, Model: r.Model, Effort: r.Effort})
+		c.turn, c.early = 0, nil // a program that started again counts from 1
 		if r.Transcript != "" && c.terminal && !c.followed[r.Transcript] {
 			c.followed[r.Transcript] = true
 			a.Follow = []string{r.Transcript}
 		}
 	case "turn":
 		by := agent.ByCaller
-		if r.By == "agent" {
+		switch r.By {
+		case "agent":
 			by = agent.ByAgent
+		case "terminal":
+			by = agent.ByTerminal
 		}
-		a = c.events(agent.Event{Kind: agent.TurnStarted, StartedBy: by, Input: r.Input})
+		a = c.events(append([]agent.Event{{Kind: agent.TurnStarted, StartedBy: by, Input: r.Input}}, c.early...)...)
+		c.early, c.turn = nil, r.N
 		c.running = true
 		for i, w := range c.waiting {
 			if w.id == r.Input {
@@ -184,7 +193,17 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 			}
 		}
 	case "text":
-		a = c.events(agent.Event{Kind: agent.Text, Text: r.Text, Final: r.Final})
+		e := agent.Event{Kind: agent.Text, Text: r.Text, Final: r.Final}
+		if c.terminal && src == agent.File && r.Turn > c.turn {
+			// The runner reads the transcript before the hook calls of one
+			// step, so the text of a turn that no caller started (typed at
+			// the terminal, or the agent's own) can come before the call
+			// that starts it. It belongs to that turn, as the Claude Code
+			// codec also holds it.
+			c.early = append(c.early, e)
+			return agent.Actions{}
+		}
+		a = c.events(e)
 	case "tool":
 		k := agent.ToolStarted
 		if r.End {
