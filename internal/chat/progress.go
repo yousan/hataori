@@ -111,48 +111,61 @@ func (r *reader) track(e control.Event) []Row {
 	return rows
 }
 
-// done reports whether row k is sent or given up.
+// done reports whether row k is sent or given up in every conversation.
 func (r *reader) done(k RowKey) bool {
-	state, _, err := r.outbox.state(r.ctx, k)
-	return err == nil && state != "pending"
+	var n int
+	err := r.outbox.Store.DB.QueryRowContext(r.ctx, `SELECT count(*) FROM chat_outbox
+		WHERE client = ? AND event = ? AND part = ? AND state = 'pending'`, r.outbox.Client, k.Event, k.Part).Scan(&n)
+	return err == nil && n == 0
 }
 
 // tick returns the rows that post or edit the progress lines due at now.
+// Every link of the thread gets the line (everyLink).
 func (f *FrontEnd) tick(ctx context.Context, r *reader, now time.Time) []Row {
-	var rows []Row
+	var all []Row
 	for id, q := range r.quiet {
-		el := now.Sub(q.since)
-		if el < f.quietAfter() {
-			continue
+		rows := f.lineRows(ctx, r, now, id, q)
+		if convs, err := f.convsOf(ctx, id); err == nil {
+			rows = everyLink(rows, convs)
 		}
-		n := int64((el - f.quietAfter()) / f.editEvery())
-		m := surface.Message{Text: progressText(el, q.tools), Quiet: true}
-		if !q.line {
-			if g := r.gone[id]; g != nil && !r.done(*g) {
-				continue // the line before is still shown
-			}
-			q.line = true
-			if last, _, err := f.Outbox.lineChanges(ctx, q.anchor); err != nil || last.IsZero() {
-				// Not posted yet (also not before a restart): post it.
-				rows = append(rows, Row{Event: q.anchor, Part: linePart, Conv: r.conv(id), Message: m, Decoration: true})
-				continue
-			}
-		}
-		if n <= q.edit {
-			continue
-		}
-		// One change at a time, at most every EditEvery after the last one
-		// sent (also by a reader before a restart). A dropped change
-		// holds nothing back.
-		last, pending, err := f.Outbox.lineChanges(ctx, q.anchor)
-		if err != nil || pending || last.IsZero() || now.Sub(last) < f.editEvery() {
-			continue
-		}
-		q.edit = n
-		rows = append(rows, Row{Event: q.anchor, Part: linePart + int(n), Conv: r.conv(id), Message: m, Decoration: true,
-			Op: Edit, Target: &RowKey{Event: q.anchor, Part: linePart}})
+		all = append(all, rows...)
 	}
-	return rows
+	return all
+}
+
+// lineRows returns the rows that post or edit thread id's progress line, in
+// its first conversation, due at now.
+func (f *FrontEnd) lineRows(ctx context.Context, r *reader, now time.Time, id control.ThreadID, q *quiet) []Row {
+	el := now.Sub(q.since)
+	if el < f.quietAfter() {
+		return nil
+	}
+	conv := r.conv(id)
+	n := int64((el - f.quietAfter()) / f.editEvery())
+	m := surface.Message{Text: progressText(el, q.tools), Quiet: true}
+	if !q.line {
+		if g := r.gone[id]; g != nil && !r.done(*g) {
+			return nil // the line before is still shown
+		}
+		q.line = true
+		if last, _, err := f.Outbox.lineChanges(ctx, conv, q.anchor); err != nil || last.IsZero() {
+			// Not posted yet (also not before a restart): post it.
+			return []Row{{Event: q.anchor, Part: linePart, Conv: conv, Message: m, Decoration: true}}
+		}
+	}
+	if n <= q.edit {
+		return nil
+	}
+	// One change at a time, at most every EditEvery after the last one
+	// sent (also by a reader before a restart). A dropped change
+	// holds nothing back.
+	last, pending, err := f.Outbox.lineChanges(ctx, conv, q.anchor)
+	if err != nil || pending || last.IsZero() || now.Sub(last) < f.editEvery() {
+		return nil
+	}
+	q.edit = n
+	return []Row{{Event: q.anchor, Part: linePart + int(n), Conv: conv, Message: m, Decoration: true,
+		Op: Edit, Target: &RowKey{Event: q.anchor, Part: linePart}}}
 }
 
 func progressText(el time.Duration, tools []tool) string {

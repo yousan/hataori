@@ -14,3 +14,8 @@
   database, under the same instance root, with one channel `c1`, and then
   started one thread there, whose link, events' thread number, outbox rows'
   link and workspace path it did not write. Copied as above.
+- `release-226.db`: a database made by the release that named threads by
+  number (#226), under the same instance root, with one channel `c1`: two
+  threads started there, each with one follow-up message, so it holds
+  catch-up cursors for the channel and for each thread, the event reader's
+  cursor, triggers and outbox rows with their links. Copied as above.

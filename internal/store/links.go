@@ -134,9 +134,10 @@ func linkThreads(ctx context.Context, tx *sql.Tx, clients map[string]string, sin
 		(SELECT t.id FROM threads t WHERE t.scope = events.scope AND t.key = events.thread) WHERE thread_id IS NULL`); err != nil {
 		return nil, fmt.Errorf("events: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE chat_outbox SET link =
-		(SELECT l.id FROM links l WHERE l.client = chat_outbox.client AND l.channel = chat_outbox.channel AND l.thread = chat_outbox.thread)
-		WHERE link IS NULL`); err != nil {
+	// link is 0 for none since the outbox has rows per link.
+	if _, err := tx.ExecContext(ctx, `UPDATE chat_outbox SET link = coalesce(
+		(SELECT l.id FROM links l WHERE l.client = chat_outbox.client AND l.channel = chat_outbox.channel AND l.thread = chat_outbox.thread), 0)
+		WHERE link IS NULL OR link = 0`); err != nil {
 		return nil, fmt.Errorf("outbox: %w", err)
 	}
 	return unlinked, nil

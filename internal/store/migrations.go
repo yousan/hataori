@@ -351,6 +351,38 @@ var migrations = []Migration{
 			JOIN threads t ON t.scope = json_extract(j.value, '$.scope') AND t.key = json_extract(j.value, '$.key')), '[]')
 		WHERE json_type(threads, '$[0]') = 'object'`,
 	)},
+	// One outbox row per link (design, section 5.2): a thread shown in two
+	// conversations of one front end gets the same event's messages in
+	// each. link is 0 for a message outside a linked conversation, such
+	// as a direct message, so that the key holds for those too.
+	{Name: "chat_outbox: rows per link", Up: execAll(
+		`CREATE TABLE chat_outbox_new (
+			id         INTEGER PRIMARY KEY,
+			client     TEXT NOT NULL, -- the chat front end's name
+			event      INTEGER NOT NULL, -- position of the event it shows
+			part       INTEGER NOT NULL,
+			channel    TEXT NOT NULL,
+			thread     TEXT NOT NULL DEFAULT '',
+			message    TEXT NOT NULL, -- JSON
+			decoration INTEGER NOT NULL DEFAULT 0,
+			state      TEXT NOT NULL DEFAULT 'pending',
+			failures   INTEGER NOT NULL DEFAULT 0,
+			ref        TEXT NOT NULL DEFAULT '', -- the surface's message id, once sent
+			created_at INTEGER NOT NULL,
+			sent_at    INTEGER,
+			link       INTEGER NOT NULL DEFAULT 0, -- links.id of the conversation; 0 for none
+			UNIQUE (client, event, link, part)
+		)`,
+		`INSERT INTO chat_outbox_new (id, client, event, part, channel, thread, message, decoration, state, failures, ref,
+			created_at, sent_at, link)
+		SELECT id, client, event, part, channel, thread, message, decoration, state, failures, ref, created_at, sent_at,
+			coalesce(link, (SELECT l.id FROM links l WHERE l.client = chat_outbox.client AND l.channel = chat_outbox.channel
+				AND l.thread = chat_outbox.thread), 0)
+		FROM chat_outbox`,
+		`DROP TABLE chat_outbox`,
+		`ALTER TABLE chat_outbox_new RENAME TO chat_outbox`,
+		`CREATE INDEX chat_outbox_pending ON chat_outbox (client, channel, thread, id) WHERE state = 'pending'`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

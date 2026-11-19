@@ -194,7 +194,12 @@ type outage struct {
 // loginEvent follows the login events and the turns that fail as logged
 // out, and keeps chat_logins. It returns the lines for the threads when a
 // login is back.
-func (f *FrontEnd) loginEvent(ctx context.Context, e control.Event) ([]Row, error) {
+//
+// Which threads it names (design, section 5.2): the owner's message about
+// an outage lists the stopped threads this front end shows, those with a
+// link here, so linked tells whether e's thread has one. When the login is
+// back, every link here of each stopped thread gets the line.
+func (f *FrontEnd) loginEvent(ctx context.Context, e control.Event, linked bool) ([]Row, error) {
 	var d struct {
 		Agent   string
 		Outage  int64
@@ -203,25 +208,25 @@ func (f *FrontEnd) loginEvent(ctx context.Context, e control.Event) ([]Row, erro
 		Threads []json.RawMessage // numbers; {"scope", "key"} in an event from before thread numbers
 	}
 	switch e.Kind {
-	case "login_lost", "login_restored", "turn_ended":
+	case "turn_ended":
+		if !linked {
+			return nil, nil
+		}
+	case "login_lost", "login_restored":
 	default:
 		return nil, nil
 	}
 	json.Unmarshal(e.Data, &d)
 	// The conversations of the stopped threads, looked up before the
 	// transaction: the store has one connection, which it holds.
-	var convs []*surface.Conversation
+	var convs [][]surface.Conversation
 	if e.Kind == "login_restored" {
 		for _, raw := range d.Threads {
-			conv, ok, err := f.stoppedConv(ctx, raw)
+			cs, err := f.stoppedConvs(ctx, raw)
 			if err != nil {
 				return nil, err
 			}
-			if ok {
-				convs = append(convs, &conv)
-			} else {
-				convs = append(convs, nil)
-			}
+			convs = append(convs, cs)
 		}
 	}
 	st := f.Outbox.Store
@@ -229,7 +234,13 @@ func (f *FrontEnd) loginEvent(ctx context.Context, e control.Event) ([]Row, erro
 	err := st.Update(ctx, func(tx *store.Tx) error {
 		switch e.Kind {
 		case "login_lost":
-			b, _ := json.Marshal([]control.ThreadID{e.Thread})
+			// The outage is the owner's to know of; the thread is listed
+			// only when it is shown here.
+			listed := []control.ThreadID{}
+			if linked {
+				listed = append(listed, e.Thread)
+			}
+			b, _ := json.Marshal(listed)
 			_, err := tx.ExecContext(ctx, `INSERT INTO chat_logins (client, outage, agent, threads) VALUES (?, ?, ?, ?)
 				ON CONFLICT DO NOTHING`, f.Name, d.Outage, d.Agent, string(b))
 			return err
@@ -261,9 +272,9 @@ func (f *FrontEnd) loginEvent(ctx context.Context, e control.Event) ([]Row, erro
 				f.Name, d.Outage); err != nil {
 				return err
 			}
-			for i, conv := range convs {
-				if conv != nil {
-					rows = append(rows, Row{Event: e.Pos, Part: i, Conv: *conv, Message: surface.Message{
+			for i, cs := range convs {
+				for _, conv := range cs {
+					rows = append(rows, Row{Event: e.Pos, Part: i, Conv: conv, Message: surface.Message{
 						Text: "The agent is logged in again. Send your last message again to go on."}})
 				}
 			}
@@ -276,31 +287,31 @@ func (f *FrontEnd) loginEvent(ctx context.Context, e control.Event) ([]Row, erro
 	return rows, err
 }
 
-// stoppedConv returns the conversation, here, of one thread a
+// stoppedConvs returns the conversations, here, of one thread a
 // login_restored event names: its number, or its scope and key in an event
 // from before thread numbers.
-// It is shown only through the thread's link here: ok is false when it
-// has none. Call it outside a store transaction.
-func (f *FrontEnd) stoppedConv(ctx context.Context, raw json.RawMessage) (surface.Conversation, bool, error) {
+// It is shown only through the thread's links here: none when it has none.
+// Call it outside a store transaction.
+func (f *FrontEnd) stoppedConvs(ctx context.Context, raw json.RawMessage) ([]surface.Conversation, error) {
 	var id control.ThreadID
 	if json.Unmarshal(raw, &id) != nil {
 		var old struct{ Scope, Key string }
 		if json.Unmarshal(raw, &old) != nil {
-			return surface.Conversation{}, false, nil
+			return nil, nil
 		}
 		if _, ours := f.Scopes[old.Scope]; !ours {
-			return surface.Conversation{}, false, nil
+			return nil, nil
 		}
 		err := f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT id FROM threads WHERE scope = ? AND key = ? ORDER BY id LIMIT 1`,
 			old.Scope, old.Key).Scan(&id)
 		if errors.Is(err, sql.ErrNoRows) {
-			return surface.Conversation{}, false, nil
+			return nil, nil
 		}
 		if err != nil {
-			return surface.Conversation{}, false, err
+			return nil, err
 		}
 	}
-	return f.convOf(ctx, id)
+	return f.convsOf(ctx, id)
 }
 
 func contains(ts []control.ThreadID, t control.ThreadID) bool {

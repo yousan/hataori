@@ -201,9 +201,8 @@ func (f *FrontEnd) toCatchUp(ctx context.Context) ([]surface.Conversation, error
 		switch t.State {
 		case control.Closed, control.Removed, control.Failed:
 		default:
-			if conv, ok := f.linkConv(t); ok {
-				convs = append(convs, conv)
-			}
+			// Each linked conversation, from its own cursor.
+			convs = append(convs, f.linkConvs(t)...)
 		}
 	}
 	return convs, nil
