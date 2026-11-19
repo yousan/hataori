@@ -242,6 +242,27 @@ type Caller struct {
 	// end's caller for a person's command has it, so that a guest's status
 	// command shows nothing.
 	ReadAsPerson bool
+	// Limit, when set, limits the caller to the operations and the event
+	// kinds it names, within what May and Scopes allow: a plugin's caller
+	// has the operations and event kinds its grant names (design, section
+	// 7.3). Nil limits nothing.
+	Limit *Limit
+}
+
+// Limit is what a Caller is limited to.
+type Limit struct {
+	// Operations are the operations the caller may call, by their names in
+	// docs/protocol.md, such as "Threads" and "Close". Any other is refused
+	// with ErrForbidden and one log line naming the operation, the scope and
+	// the caller. HostKeys and End act on the operation OperateHost
+	// started, and are allowed with it.
+	Operations []string
+	// Events are the event kinds the caller reads, through Events,
+	// ThreadEvents and Thread alike; others are left out, as an event in
+	// another scope is. Positions stay the instance's own: a reader that
+	// resumes after the last position it read skips no event of these
+	// kinds. The CaughtUp mark is delivered whatever this says.
+	Events []EventKind
 }
 
 // Principal is the name of a person of the instance's config. The core

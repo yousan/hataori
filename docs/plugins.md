@@ -4,6 +4,12 @@ A plugin is a separate program, in any language, that adds to what hataori does 
 
 This version reads and checks each plugin's manifest and config entry when the daemon starts. It does not start plugins or call hooks yet.
 
+## What a plugin's connection may do
+
+Once hataori starts plugins, a plugin's connection is bound, by a token the daemon issues, to a caller made from its grant: what the manifest asks for and the config grants, and nothing more. The core refuses any other operation with `forbidden` and one log line naming the operation, the scope and the plugin. Events of kinds it was not granted are left out of `Events`, `ThreadEvents` and `Thread`; positions are the instance's own, so a plugin that reads again after the last position it kept misses no event of its kinds. `Threads` and `Thread` still summarize a thread's state, such as its turns, usage and open requests, whatever kinds were granted. Without the `conversation` grant the text is left out of what it reads, and `Terminal` is refused.
+
+A plugin calls as the id `plugin:<id>`. Its `Start`, `Send`, `Answer`, `Stop` and `Link` are refused like a guest's unless the operator lists that id under a person of the config and that person in the scope's `people` ([configuration.md, `people[]`](configuration.md#people)), as for a supervisor. `AskInterrupt` is refused in this version whatever the grant: a plugin has no thread to ask in.
+
 ## The manifest
 
 The manifest is `hataori-plugin.json`, in the same directory as the plugin's executable. hataori reads it when the daemon starts, without running the plugin. It says what the plugin is and what it asks for; the operator's config grants some or all of it, never more.
@@ -17,7 +23,7 @@ The manifest is `hataori-plugin.json`, in the same directory as the plugin's exe
 | `id` | string | required | The plugin's name: a lowercase letter, then lowercase letters, digits and `-`. The config entry's `id` must be the same. |
 | `version` | string | required | The plugin's version, as its author writes it. hataori does not interpret it. |
 | `protocol` | string | required | The control protocol it speaks, `"<major>.<minor>"`: the major version, and the lowest minor version it needs, such as `"3.0"` ([protocol.md, Versions](protocol.md#versions)). |
-| `operations` | array of strings | empty | The control operations it calls, by their names in [protocol.md](protocol.md#operations), such as `Threads` and `Events`. `SignInLink`, `HostTerminals` and `HostScreen` are refused: no plugin gets them. |
+| `operations` | array of strings | empty | The control operations it calls, by their names in [protocol.md](protocol.md#operations), such as `Threads` and `Events`. `SignInLink`, `HostTerminals`, `HostScreen`, `OperateHost` (with `HostKeys` and `End`), `AttachTerminal`, `Close` and `Remove` are refused: no plugin gets them. |
 | `events` | array of strings | empty | The event kinds it reads, by their names in [protocol.md](protocol.md#events), such as `turn_started` and `turn_ended`. These are the observe hooks. |
 | `hooks` | array | empty | The hook points it handles, one object each (below), each point once. |
 | `conversation` | boolean | `false` | Whether it needs message text: inputs to the agent, the agent's text, outgoing posts and thread titles. Without it, and without the operator's grant, what the plugin gets has the text left out. |

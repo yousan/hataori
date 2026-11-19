@@ -30,6 +30,11 @@ func (a *api) SetName(ctx context.Context, l control.LinkRef, name string) error
 		name = name[:len(name)-size]
 	}
 	scope, thread, err := a.c.nameScope(ctx, l)
+	if errors.Is(err, ErrNotFound) {
+		if gerr := a.granted("SetName", ""); gerr != nil {
+			return gerr // whether the conversation is known or not
+		}
+	}
 	if err != nil {
 		return err
 	}
