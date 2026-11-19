@@ -381,3 +381,51 @@ func TestExternalPluginConnects(t *testing.T) {
 		t.Fatal("hataori started the external plugin")
 	}
 }
+
+// A hataori command that a plugin starts, and so the plugin itself when it
+// connects without its token, is refused instead of getting the owner's
+// connection, and the log line names the plugin. The owner's own commands
+// work as before while the plugin runs.
+func TestPluginWithoutItsTokenIsNotTheOwner(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The instance's root is three levels above the plugin's state directory.
+	path, sum := writePlugin(t, "forgetful", `'`+exe+`' threads --root "$HATAORI_PLUGIN_STATE/../../.." > "$HATAORI_PLUGIN_STATE/out" 2>&1
+echo $? > "$HATAORI_PLUGIN_STATE/code.tmp"; mv "$HATAORI_PLUGIN_STATE/code.tmp" "$HATAORI_PLUGIN_STATE/code"
+exec sleep 600`)
+	r := newChatRoot(t, func(cfg map[string]any) { cfg["plugins"] = []map[string]any{pluginEntry("forgetful", path, sum)} })
+	logged, _ := pluginDaemon(t, r.root)
+	state := filepath.Join(r.root, "state", "plugins", "forgetful")
+	var code []byte
+	eventually(t, "the plugin's command to end", 20*time.Second, func() bool {
+		code, err = os.ReadFile(filepath.Join(state, "code"))
+		return err == nil
+	})
+	out, _ := os.ReadFile(filepath.Join(state, "out"))
+	if strings.TrimSpace(string(code)) == "0" || !strings.Contains(string(out), "a plugin connects with its token") {
+		t.Fatalf("hataori threads from a plugin: exit %s, %s", code, out)
+	}
+	eventually(t, "the refusal logged", 5*time.Second, func() bool {
+		for _, l := range strings.Split(logged(), "\n") {
+			if strings.Contains(l, "control connection refused") && strings.Contains(l, "plugin=forgetful") {
+				return true
+			}
+		}
+		return false
+	})
+
+	// The owner, while the plugin runs.
+	if code, out, errOut := cli(t, "threads", "--root", r.root); code != 0 {
+		t.Fatalf("the owner's hataori threads: %d %s %s", code, out, errOut)
+	}
+	owner, err := wire.Dial(r.root)
+	if err != nil {
+		t.Fatalf("the owner's connection: %v", err)
+	}
+	defer owner.Close()
+	if _, err := owner.Threads(context.Background(), control.Filter{}); err != nil {
+		t.Fatal(err)
+	}
+}
