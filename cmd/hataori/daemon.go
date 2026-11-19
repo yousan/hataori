@@ -124,6 +124,11 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		Host: host.Command{Path: exe, Args: []string{"host"}}, Root: abs, Log: lg, IdlePeriod: cfg.Idle,
 		ContextBytes: cfg.ContextBytes, Cols: uint16(cfg.TerminalCols), Rows: uint16(cfg.TerminalRows)}
 	defer r.Close()
+	trust := map[string][]string{}
+	for _, s := range cfg.Scopes {
+		trust[s.Key] = s.TrustFiles
+	}
+	r.TrustFiles = func(scope string) []string { return trust[scope] }
 
 	scopes := map[string]core.Scope{}
 	var keys []string

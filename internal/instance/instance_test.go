@@ -116,6 +116,9 @@ func TestConfigErrorsNameTheKey(t *testing.T) {
 		{"no rows", `{"owner": "o", "trigger": "!go", "idle": "30m", "terminal_size": {"cols": 80}}`, `"terminal_size.rows"`},
 		{"no columns", `{"owner": "o", "trigger": "!go", "idle": "30m", "terminal_size": {"rows": 30}}`, `"terminal_size.cols"`},
 		{"not a number", `{"owner": "o", "trigger": "!go", "idle": "30m", "terminal_size": {"cols": "wide", "rows": 30}}`, `cols`},
+		{"empty trust file", `{"owner": "o", "trigger": "!go", "idle": "30m", "scopes": [{"key": "c1", "client": "chat", "trust_files": [" "]}]}`, `"scopes[0].trust_files[0]"`},
+		{"trust file with a space", `{"owner": "o", "trigger": "!go", "idle": "30m", "scopes": [{"key": "c1", "client": "chat", "trust_files": [".claude/my settings.json"]}]}`, `"scopes[0].trust_files[0]"`},
+		{"trust file twice", `{"owner": "o", "trigger": "!go", "idle": "30m", "scopes": [{"key": "c1", "client": "chat", "trust_files": [".mcp.json", " .mcp.json"]}]}`, `"scopes[0].trust_files[1]"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := ParseConfig([]byte(tc.config))
@@ -504,5 +507,21 @@ func TestPluginsHandedOver(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), `"plugins"`) {
 			t.Errorf("plugins %s: %v", bad, err)
 		}
+	}
+}
+
+// A scope's trust_files are read as listed, trimmed; a scope without them
+// trusts none (#423).
+func TestTrustFilesConfig(t *testing.T) {
+	c, err := ParseConfig([]byte(`{"owner": "o", "trigger": "!go", "idle": "30m", "scopes": [` +
+		`{"key": "c1", "client": "chat", "trust_files": [".claude/settings.json", " .mcp.json "]}, {"key": "c2", "client": "chat"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Scopes[0].TrustFiles; !slices.Equal(got, []string{".claude/settings.json", ".mcp.json"}) {
+		t.Fatalf("c1 trusts %q", got)
+	}
+	if got := c.Scopes[1].TrustFiles; got != nil {
+		t.Fatalf("c2 trusts %q", got)
 	}
 }

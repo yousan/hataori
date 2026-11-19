@@ -66,6 +66,10 @@ type Runner struct {
 	// fails, the launch fails: a confined session is never started
 	// unconfined, and never with what another launch was given.
 	Confine func(ctx context.Context, l ConfinedLaunch) (Confined, error)
+	// TrustFiles gives each launch the files of its scope that a start-up
+	// dialog may name and the session may be let past it for
+	// (agent.Spec.TrustFiles). It is called at every launch; nil gives none.
+	TrustFiles func(scope string) []string
 
 	mu   sync.Mutex
 	live map[int64]*live
@@ -187,7 +191,8 @@ func (r *Runner) Start(ctx context.Context, l core.Launch) error {
 	spec := agent.Spec{Dir: l.Dir, StateDir: StateDir(r.Root, l.Session), Model: l.Model, Effort: l.Effort,
 		Instructions: r.Instructions, Approvals: agent.AllowAll}
 	first := firstInput{Principal: l.Principal, From: l.From, Key: l.Key, Text: l.Input.Text, Context: l.Context, Link: l.Input.Link}
-	if err := r.launch(ctx, l.Session, l.Agent, ad, spec, first); err != nil {
+	spec, err := r.launch(ctx, l.Session, l.Agent, ad, spec, first)
+	if err != nil {
 		return err
 	}
 	return r.follow(l.Session, ad, spec, fresh)
@@ -196,18 +201,25 @@ func (r *Runner) Start(ctx context.Context, l core.Launch) error {
 // launch writes what the agent asks for into the session's state directory,
 // stores the spec and the first input, and starts the session host. A
 // session whose thread was started confined is launched confined, whatever
-// spec says, or not at all.
-func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agent.Adapter, spec agent.Spec, first firstInput) error {
+// spec says, or not at all. It returns the spec as stored, which the
+// session's codec is made from.
+func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agent.Adapter, spec agent.Spec, first firstInput) (agent.Spec, error) {
 	dir := spec.StateDir
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("runner: %w", err)
+		return agent.Spec{}, fmt.Errorf("runner: %w", err)
 	}
 	thread, scope, confined, err := r.confinement(ctx, id)
 	if err != nil {
-		return err
+		return agent.Spec{}, err
 	}
 	if confined && spec.Confine == nil {
 		spec.Confine = &agent.Confinement{}
+	}
+	// The scope's config as it is at this launch, not as it was at the
+	// session's first.
+	spec.TrustFiles = nil
+	if r.TrustFiles != nil {
+		spec.TrustFiles = r.TrustFiles(scope)
 	}
 	// What the adapter gets: the spec, with what this launch alone is given.
 	// The stored spec keeps the confinement, not the MCP servers, whose
@@ -216,11 +228,11 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 	if spec.Confine != nil {
 		spec.Confine = &agent.Confinement{}
 		if r.Confine == nil {
-			return fmt.Errorf("runner: session %d is confined, and nothing gives it its MCP servers; it was not started", id)
+			return agent.Spec{}, fmt.Errorf("runner: session %d is confined, and nothing gives it its MCP servers; it was not started", id)
 		}
 		c, err := r.Confine(ctx, ConfinedLaunch{Session: id, Thread: thread, Scope: scope, StateDir: dir})
 		if err != nil {
-			return fmt.Errorf("runner: session %d: confinement: %w", id, err)
+			return agent.Spec{}, fmt.Errorf("runner: session %d: confinement: %w", id, err)
 		}
 		run.Confine = &agent.Confinement{MCP: c.MCP}
 		if c.Instructions != "" {
@@ -229,21 +241,21 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 	}
 	launch, err := ad.Launch(run)
 	if err != nil {
-		return fmt.Errorf("runner: %w", err)
+		return agent.Spec{}, fmt.Errorf("runner: %w", err)
 	}
 	if run.Confine != nil && !launch.Confined {
-		return fmt.Errorf("runner: the agent %q cannot start a confined session; it was not started", agentName)
+		return agent.Spec{}, fmt.Errorf("runner: the agent %q cannot start a confined session; it was not started", agentName)
 	}
 	for name, b := range launch.Files {
 		if !filepath.IsLocal(name) {
-			return fmt.Errorf("runner: the agent asks for a file outside its state directory: %q", name)
+			return agent.Spec{}, fmt.Errorf("runner: the agent asks for a file outside its state directory: %q", name)
 		}
 		p := filepath.Join(dir, name)
 		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-			return fmt.Errorf("runner: %w", err)
+			return agent.Spec{}, fmt.Errorf("runner: %w", err)
 		}
 		if err := os.WriteFile(p, b, 0o600); err != nil {
-			return fmt.Errorf("runner: %w", err)
+			return agent.Spec{}, fmt.Errorf("runner: %w", err)
 		}
 	}
 	first.Dir = spec.Dir // so that a launch begun here can be begun again
@@ -251,14 +263,14 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 	fb, _ := json.Marshal(first)
 	var before, recorded int
 	if err := r.Store.DB.QueryRowContext(ctx, `SELECT launch, host_pid FROM sessions WHERE id = ?`, id).Scan(&before, &recorded); err != nil {
-		return fmt.Errorf("runner: %w", err)
+		return agent.Spec{}, fmt.Errorf("runner: %w", err)
 	}
 	// launch = 2: the host is being started. Until it is recorded as
 	// started, a daemon that comes back launches the session again, and
 	// keeps the host it finds running instead of starting another.
 	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET spec = ?, first_input = ?, launch = 2 WHERE id = ?`,
 		string(sb), string(fb), id); err != nil {
-		return fmt.Errorf("runner: %w", err)
+		return agent.Spec{}, fmt.Errorf("runner: %w", err)
 	}
 	r.at("before host start")
 	hs := holder.Spec{Argv: launch.Argv, Env: launch.Env, Terminal: launch.Terminal, Dir: spec.Dir, Cols: r.Cols, Rows: r.Rows}
@@ -269,16 +281,16 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 	}
 	w, err := r.hold().Start(ctx, dir, hs)
 	if errors.Is(err, holder.ErrHeld) {
-		return fmt.Errorf("runner: session %d: another host still holds its state directory", id)
+		return agent.Spec{}, fmt.Errorf("runner: session %d: another host still holds its state directory", id)
 	}
 	if err != nil {
-		return err
+		return agent.Spec{}, err
 	}
 	r.at("after host start")
 	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET host_pid = ?, launch = 0 WHERE id = ?`, w.Process, id); err != nil {
-		return fmt.Errorf("runner: %w", err)
+		return agent.Spec{}, fmt.Errorf("runner: %w", err)
 	}
-	return nil
+	return spec, nil
 }
 
 // own is hataori's own session host, the holder of every session's terminal.
@@ -375,7 +387,8 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 	}
 	spec := s.Spec
 	spec.ResumeID = resumeID
-	if err := r.launch(ctx, id, s.Agent, ad, spec, first); err != nil {
+	spec, err := r.launch(ctx, id, s.Agent, ad, spec, first)
+	if err != nil {
 		return err
 	}
 	return r.follow(id, ad, spec, wake)
@@ -474,11 +487,13 @@ const (
 	wake                  // a new agent of a session read before: read on from the stored offsets
 )
 
-// stopSleepers stops the agents of asleep and closed sessions that are
+// stopSleepers stops the agents of asleep, closed and failed sessions that are
 // still running, as after a daemon that stopped while it put one to sleep
 // or closed it.
 func (r *Runner) stopSleepers(ctx context.Context) error {
-	rows, err := r.Store.DB.QueryContext(ctx, `SELECT id FROM sessions WHERE state IN ('asleep', 'closed') AND spec != ''`)
+	// A failed session's agent may still run too: one failed at a start-up
+	// dialog is stopped just after its failure is stored (#423).
+	rows, err := r.Store.DB.QueryContext(ctx, `SELECT id FROM sessions WHERE state IN ('asleep', 'closed', 'failed') AND spec != ''`)
 	if err != nil {
 		return fmt.Errorf("runner: %w", err)
 	}
@@ -497,7 +512,7 @@ func (r *Runner) stopSleepers(ctx context.Context) error {
 		if r.alive(dir).State != holder.Running {
 			continue
 		}
-		r.Log.Warn("stopping the agent of an asleep or closed session", "session", id)
+		r.Log.Warn("stopping the agent of an asleep, closed or failed session", "session", id)
 		go r.stop(dir, time.Second, 2*time.Second)
 	}
 	return nil
@@ -1042,6 +1057,11 @@ func (r *Runner) stepLocked(lv *live) bool {
 		}
 		if e.Kind == agent.SessionEnded && e.Reason == agent.WrongSession {
 			// The session failed; its agent runs another conversation.
+			go r.stop(lv.dir, time.Second, 2*time.Second)
+		}
+		if e.Kind == agent.SessionEnded && e.Reason == agent.BlockedAtStart {
+			// The session failed at a start-up dialog it may not answer;
+			// its agent still shows it.
 			go r.stop(lv.dir, time.Second, 2*time.Second)
 		}
 	}
