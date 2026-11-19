@@ -33,8 +33,10 @@ type fakeRunner struct {
 	machine *session.Machine
 	shutErr error
 	// beforeInterrupt, when set, runs once as Interrupt is called, before
-	// it looks at the session's turn.
+	// it looks at the session's turn. deliverErr, when set, is what the
+	// next Deliver returns, once.
 	beforeInterrupt func()
+	deliverErr      error
 }
 
 func (r *fakeRunner) record(s string) error {
@@ -47,6 +49,13 @@ func (r *fakeRunner) Start(_ context.Context, l Launch) error {
 	return r.record("start " + l.Input.Text)
 }
 func (r *fakeRunner) Deliver(_ context.Context, _, _ int64, in control.Input) error {
+	r.mu.Lock()
+	err := r.deliverErr
+	r.deliverErr = nil
+	r.mu.Unlock()
+	if err != nil {
+		return err
+	}
 	return r.record("deliver " + in.Text)
 }
 func (r *fakeRunner) Answer(_ context.Context, _, _ int64, req string, _ control.Answer) error {

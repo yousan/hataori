@@ -165,3 +165,38 @@ func TestApprovalOfATurnThatEndsBeforeTheInterrupt(t *testing.T) {
 		t.Fatalf("approval state %q: %v", state, err)
 	}
 }
+
+// #493: when the reason cannot be handed over after the interrupt was
+// refused, the approval still ends as ended, and it is not left open for
+// an answer that would record it as interrupted.
+func TestApprovalOfATurnThatEndsBeforeTheInterruptAndADeliveryThatFails(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{key: "chat"})
+	f.core.People = people.New([]people.Person{{Name: "sv", IDs: []string{"supervisor:s"}}}, "owner", map[string][]string{"s": {"sv"}})
+	askerThread, _ := f.running(t, "asker")
+	target, sid := f.running(t, "target")
+	asker := f.core.As(control.Caller{From: "supervisor:s", Scopes: []string{"s"}, May: control.OpAsk, AsksIn: askerThread})
+	req, err := asker.AskInterrupt(ctx, target, "key", "urgent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.runner.beforeInterrupt = func() {
+		f.agentEvent(t, sid, 2, agent.Event{Kind: agent.TurnEnded, Status: agent.Completed})
+		if err := f.owner.Send(ctx, target, "next", control.Input{Text: "the next turn"}, control.Deliver); err != nil {
+			t.Errorf("the next turn: %v", err)
+		}
+		f.runner.mu.Lock()
+		f.runner.deliverErr = errors.New("the session is gone")
+		f.runner.mu.Unlock()
+	}
+	if err := f.owner.Answer(ctx, req, control.Answer{Allow: true}); err != nil {
+		t.Fatalf("the approval: %v", err)
+	}
+	var state string
+	if err := f.core.Store.DB.QueryRow(`SELECT state FROM approvals WHERE handle = ?`, req).Scan(&state); err != nil || state != "ended" {
+		t.Fatalf("approval state %q: %v", state, err)
+	}
+	if calls := f.runner.Calls(); strings.Contains(calls, "interrupt") {
+		t.Fatalf("runner calls: %s", calls)
+	}
+}

@@ -130,11 +130,23 @@ func (a *api) answerApproval(ctx context.Context, req control.RequestID, ans con
 		} else {
 			sender := a.c.As(control.Caller{From: from, Principal: control.Principal(principal), Scopes: []string{scope}, May: control.OpSend}).(*api)
 			err := sender.send(ctx, target, "approval:"+string(req), control.Input{Text: marked}, control.Interrupt, &guard)
-			if errors.Is(err, errGuardEnded) || (err == nil && guard.ended) {
+			switch {
+			case errors.Is(err, errGuardEnded):
 				outcome = "ended"
-			} else if err != nil {
+			case guard.ended || guard.interrupted:
+				// What the interrupt did stands, also when the reason could
+				// not be handed over: the approval is not left open for an
+				// answer that would record something else.
+				outcome = "interrupted"
+				if guard.ended {
+					outcome = "ended"
+				}
+				if err != nil {
+					a.c.Log.Warn("approved interrupt: the reason was not handed over", "request", string(req), "thread", int64(target), "err", err)
+				}
+			case err != nil:
 				return err
-			} else {
+			default:
 				outcome = "interrupted"
 			}
 		}
