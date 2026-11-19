@@ -194,7 +194,7 @@ func TestLinkThreadsOnTheReleasedDatabase(t *testing.T) {
 		"c1|thread2|1|14|", "c1|thread8|2|8|", "c2|thread12|3|8|",
 	})
 	sameRows(t, "outbox links", dump(t, s.DB, `SELECT id, link FROM chat_outbox ORDER BY id`), []string{
-		"1|1|", "2|1|", "3|1|", "4|2|", "5|2|", "6|<nil>|", "7|<nil>|",
+		"1|1|", "2|1|", "3|1|", "4|2|", "5|2|", "6|0|", "7|0|",
 	})
 	if lines := strings.Split(strings.TrimSpace(log.String()), "\n"); len(lines) != 1 ||
 		!strings.Contains(lines[0], "thread 3 gets no link") || !strings.Contains(lines[0], `\"c2\"`) {
@@ -288,7 +288,7 @@ func TestLinkThreadsRowsWrittenBetween(t *testing.T) {
 	sameRows(t, "links before", dump(t, s.DB, `SELECT id FROM links`), nil)
 	sameRows(t, "workspace before", dump(t, s.DB, `SELECT id, workspace FROM threads`), []string{"1||"})
 	sameRows(t, "events before", dump(t, s.DB, `SELECT count(*) FROM events WHERE thread_id IS NOT NULL`), []string{"0|"})
-	sameRows(t, "outbox before", dump(t, s.DB, `SELECT count(*) FROM chat_outbox WHERE link IS NOT NULL`), []string{"0|"})
+	sameRows(t, "outbox before", dump(t, s.DB, `SELECT count(*) FROM chat_outbox WHERE link != 0`), []string{"0|"})
 	events := dump(t, s.DB, `SELECT pos, scope, thread, time, kind, data FROM events ORDER BY pos`)
 	if len(events) == 0 || len(dump(t, s.DB, `SELECT id FROM chat_outbox`)) == 0 {
 		t.Fatal("the fixture has no events or outbox rows")
@@ -339,4 +339,60 @@ func TestLoginThreadsByNumber(t *testing.T) {
 	}
 	defer s.Close()
 	sameRows(t, "chat_logins", dump(t, s.DB, `SELECT outage, threads FROM chat_logins ORDER BY outage`), []string{"1|[4,7]|", "2|[]|"})
+}
+
+// The release that named threads by number (#226) made this database: two
+// threads in c1, each with a follow-up, so catch-up cursors per channel and
+// per thread, the event reader's cursor, triggers and outbox rows. The
+// outbox, made again with a row per link, keeps every row with its link;
+// no cursor changes.
+func TestRelease226KeepsItsCursors(t *testing.T) {
+	ctx := context.Background()
+	root := fixtureDB(t, "release-226.db")
+	old, err := sql.Open("sqlite", filepath.Join(root, File))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const outboxCols = `id, client, event, part, channel, thread, message, decoration, state, failures, ref, created_at, sent_at`
+	unchanged := map[string]string{
+		"chat_inbound":  `SELECT * FROM chat_inbound ORDER BY client, channel, thread`,
+		"chat_cursors":  `SELECT * FROM chat_cursors ORDER BY client`,
+		"chat_triggers": `SELECT * FROM chat_triggers ORDER BY client, channel, message`,
+		"chat_outbox":   `SELECT ` + outboxCols + ` FROM chat_outbox ORDER BY id`,
+		"links":         `SELECT * FROM links ORDER BY id`,
+	}
+	want := map[string][]string{}
+	for table, q := range unchanged {
+		if want[table] = dump(t, old, q); len(want[table]) == 0 {
+			t.Fatalf("the fixture has no rows in %s", table)
+		}
+	}
+	if n := len(dump(t, old, `SELECT * FROM chat_inbound WHERE thread != ''`)); n != 2 {
+		t.Fatalf("the fixture has %d thread cursors, want 2", n)
+	}
+	links := dump(t, old, `SELECT id, link FROM chat_outbox ORDER BY id`)
+	old.Close()
+
+	s, err := Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.LinkThreads(ctx, map[string]string{"c1": "fake-surface"}, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))); err != nil {
+		t.Fatal(err)
+	}
+	for table, q := range unchanged {
+		sameRows(t, table, dump(t, s.DB, q), want[table])
+	}
+	sameRows(t, "outbox links", dump(t, s.DB, `SELECT id, link FROM chat_outbox ORDER BY id`), links)
+	sameRows(t, "rows without a link", dump(t, s.DB, `SELECT count(*) FROM chat_outbox WHERE link = 0`), []string{"0|"})
+	// A row per link: the same event and part in another link is a row of its own.
+	if _, err := s.DB.Exec(`INSERT INTO chat_outbox (client, event, part, channel, thread, message, created_at, link)
+		SELECT client, event, part, channel, 'other', message, created_at, 99 FROM chat_outbox WHERE id = 1`); err != nil {
+		t.Fatalf("a second link's row of the same event: %v", err)
+	}
+	if _, err := s.DB.Exec(`INSERT INTO chat_outbox (client, event, part, channel, thread, message, created_at, link)
+		SELECT client, event, part, channel, thread, message, created_at, link FROM chat_outbox WHERE id = 1`); err == nil {
+		t.Fatal("a second row of one event, link and part was accepted")
+	}
 }

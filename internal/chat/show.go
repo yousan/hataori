@@ -78,7 +78,7 @@ func (f *FrontEnd) show(ctx context.Context) error {
 		return err
 	}
 	for _, t := range threads {
-		if _, ok := f.linkConv(t); ok && t.State == control.Running {
+		if len(f.linkConvs(t)) > 0 && t.State == control.Running {
 			if _, _, err := f.convOf(ctx, t.ID); err != nil {
 				return err
 			}
@@ -127,15 +127,16 @@ func (f *FrontEnd) show(ctx context.Context) error {
 		if e.Thread == 0 {
 			continue
 		}
-		// Shown in the conversation of the thread's link here; a thread
-		// with none is not shown by this front end.
-		conv, linked, err := f.convOf(ctx, e.Thread)
+		// Shown in the conversations of the thread's links here, each its
+		// own rows; a thread with none is not shown by this front end.
+		convs, err := f.convsOf(ctx, e.Thread)
 		if err != nil {
 			return err
 		}
+		linked := len(convs) > 0
 		var rows []Row
 		if linked {
-			if rows, err = f.rowsFor(ctx, r, e, conv); err != nil {
+			if rows, err = f.rowsFor(ctx, r, e, convs[0]); err != nil {
 				return err
 			}
 			// A thread seen for the first time since the start: what its
@@ -143,9 +144,9 @@ func (f *FrontEnd) show(ctx context.Context) error {
 			if err := r.catchUp(ctx, e.Thread, e.Pos); err != nil {
 				return err
 			}
-			rows = append(append(r.track(e), rows...), r.subagents(e)...)
+			rows = everyLink(append(append(r.track(e), rows...), r.subagents(e)...), convs)
 		}
-		lr, err := f.loginEvent(ctx, e)
+		lr, err := f.loginEvent(ctx, e, linked)
 		if err != nil {
 			return err
 		}
