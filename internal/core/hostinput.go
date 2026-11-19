@@ -87,6 +87,9 @@ func (e *paneBusy) Is(target error) bool { return target == ErrBusy }
 // checkHostInput allows OperateHost: only when host input is on, and only
 // to the owner's caller with OpHostInput. Every refusal is one log line.
 func (a *api) checkHostInput() error {
+	if err := a.granted("OperateHost", ""); err != nil {
+		return err
+	}
 	reason := ""
 	switch {
 	case a.c.HostInput == nil || a.c.HostTerms == nil:

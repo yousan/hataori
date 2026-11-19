@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/people"
 	"github.com/yousan/hataori/internal/registry"
 )
 
@@ -45,9 +46,56 @@ var operations = []string{"Answer", "AskInterrupt", "AttachTerminal", "Close", "
 	"OperateHost", "Remove", "Scopes", "Send", "SetName", "SignInLink", "Start", "Stop", "Terminal", "Thread", "ThreadEvents", "Threads", "Workspace"}
 
 // never are the operations no plugin is given, whatever its manifest and
-// its config say: the dashboard's sign-in, and the terminals on the host,
-// read or typed into.
-var never = []string{"SignInLink", "HostTerminals", "HostScreen", "OperateHost", "HostKeys", "End"}
+// its config say: the dashboard's sign-in; the terminals on the host, read
+// or typed into; a terminal attached to an agent, which reaches the agent
+// past the core's checks; and closing or removing a thread, which ends or
+// deletes a person's work.
+var never = []string{"SignInLink", "HostTerminals", "HostScreen", "OperateHost", "HostKeys", "End",
+	"AttachTerminal", "Close", "Remove"}
+
+// classes are the classes of Caller.May that the operations a plugin may
+// be given need; the core checks the operation's name besides
+// (control.Limit). Every operation is here or in never.
+var classes = map[string]control.Ops{
+	"Threads": control.OpRead, "Thread": control.OpRead, "ThreadEvents": control.OpRead, "Events": control.OpRead,
+	"Workspace": control.OpRead, "Terminal": control.OpRead, "Limits": control.OpRead, "Scopes": control.OpRead,
+	"Start": control.OpStart, "Send": control.OpSend, "Link": control.OpSend, "Answer": control.OpAnswer,
+	"Stop": control.OpStop, "AskInterrupt": control.OpAsk, "SetName": control.OpName,
+}
+
+// Client is the client name of plugins' ids: plugin P calls as the id
+// "plugin:P". The operator makes it a person by listing that id under a
+// person of the config, and lets it act in a scope by listing that person
+// in the scope's people. Without both, the core refuses its Start, Send,
+// Answer and Stop like a guest's.
+const Client = "plugin"
+
+// ID is the id plugin id calls as.
+func ID(id string) string { return people.Join(Client, id) }
+
+// Caller is the caller a plugin's connection is bound to (design, section
+// 7.3): its grant's scopes, operations and event kinds, and nothing more;
+// with the text left out unless it has the "conversation" grant. The
+// daemon builds it from the grant, never from what the plugin says.
+func (g Grant) Caller() control.Caller {
+	c := control.Caller{
+		From:   ID(g.ID),
+		Scopes: slices.Clone(g.Scopes),
+		NoText: !g.Conversation,
+		// Never nil, even when the grant names none: an empty limit allows
+		// nothing, a nil one everything.
+		Limit: &control.Limit{Operations: []string{}, Events: []control.EventKind{}},
+	}
+	for _, op := range g.Operations {
+		if slices.Contains(never, op) {
+			continue // Load refuses it; a Grant made otherwise gets it neither
+		}
+		c.May |= classes[op]
+		c.Limit.Operations = append(c.Limit.Operations, op)
+	}
+	c.Limit.Events = append(c.Limit.Events, g.Events...)
+	return c
+}
 
 // Grant is one plugin's effective grant: what its manifest asks for and
 // its config entry grants, and nothing more.

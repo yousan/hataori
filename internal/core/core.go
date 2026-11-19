@@ -328,9 +328,13 @@ type api struct {
 }
 
 // check is the one authorization function: the caller must be allowed op,
-// and scope, when it is not empty, must be one of the caller's. A refusal
-// writes one log line.
+// and the operation name when the caller is limited (granted), and scope,
+// when it is not empty, must be one of the caller's. A refusal writes one
+// log line.
 func (a *api) check(op control.Ops, name, scope string) error {
+	if err := a.granted(name, scope); err != nil {
+		return err
+	}
 	if a.caller.May.Has(op) && (scope == "" || slices.Contains(a.caller.Scopes, scope)) {
 		if op == control.OpRead && scope != "" && !a.personSees(scope) {
 			return a.refused(name, scope, "the person may not act in the scope")
@@ -339,6 +343,36 @@ func (a *api) check(op control.Ops, name, scope string) error {
 	}
 	a.c.Log.Warn("control call refused", "op", name, "principal", string(a.caller.Principal), "scope", scope)
 	return fmt.Errorf("core: %s in scope %q: %w", name, scope, ErrForbidden)
+}
+
+// protocolNames are the names in docs/protocol.md of the operations whose
+// method has another name.
+var protocolNames = map[string]string{"CloseThread": "Close", "RemoveThread": "Remove"}
+
+// granted refuses an operation that the caller's Limit does not name, by
+// its name in the protocol, with one log line naming the operation, the
+// scope and the caller. A caller without a Limit is granted every
+// operation; check then decides as before.
+func (a *api) granted(name, scope string) error {
+	l := a.caller.Limit
+	if l == nil {
+		return nil
+	}
+	if p, ok := protocolNames[name]; ok {
+		name = p
+	}
+	if slices.Contains(l.Operations, name) {
+		return nil
+	}
+	attrs := []any{"op", name, "scope", scope, "principal", string(a.caller.Principal), "reason", "the operation is not granted"}
+	if a.caller.From != "" {
+		attrs = append(attrs, "from", a.caller.From)
+	}
+	a.c.Log.Warn("control call refused", attrs...)
+	if scope == "" {
+		return fmt.Errorf("core: %s: not granted: %w", name, ErrForbidden)
+	}
+	return fmt.Errorf("core: %s in scope %q: not granted: %w", name, scope, ErrForbidden)
 }
 
 // act checks a call that gives the agent input, or stops it: check, and
@@ -760,6 +794,18 @@ func (a *api) ThreadEvents(ctx context.Context, id control.ThreadID, before uint
 		evs[i] = a.readable(evs[i])
 	}
 	return evs, err
+}
+
+// requestScope is the scope of the thread of request req, a question or an
+// approval; "" when there is no such request.
+func (c *Core) requestScope(ctx context.Context, req control.RequestID) string {
+	var scope string
+	if c.Store.DB.QueryRowContext(ctx, `SELECT t.scope FROM requests r JOIN sessions s ON s.id = r.session_id
+		JOIN threads t ON t.id = s.thread_id WHERE r.handle = ?`, string(req)).Scan(&scope) == nil {
+		return scope
+	}
+	c.Store.DB.QueryRowContext(ctx, `SELECT t.scope FROM approvals a JOIN threads t ON t.id = a.asks_in WHERE a.handle = ?`, string(req)).Scan(&scope)
+	return scope
 }
 
 // querier is the store's database or one of its transactions.
@@ -1520,6 +1566,11 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 }
 
 func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Answer) error {
+	if a.caller.Limit != nil && !slices.Contains(a.caller.Limit.Operations, "Answer") {
+		// The request's scope is read for the log line only: the caller is
+		// refused alike whether the request exists or not.
+		return a.granted("Answer", a.c.requestScope(ctx, req))
+	}
 	if err := a.check(control.OpAnswer, "Answer", ""); err != nil {
 		return err
 	}
@@ -1581,10 +1632,14 @@ func (a *api) Stop(ctx context.Context, id control.ThreadID) error {
 	return a.c.Runner.Interrupt(ctx, sid)
 }
 
-// mayRead reports whether the caller may see e: its scope, and every
-// scope its data lists under "scopes" (an event about threads in several
-// scopes, such as the end of a login outage).
+// mayRead reports whether the caller may see e: its kind, when the caller
+// is limited to some kinds, its scope, and every scope its data lists
+// under "scopes" (an event about threads in several scopes, such as the
+// end of a login outage).
 func (a *api) mayRead(e control.Event) bool {
+	if l := a.caller.Limit; l != nil && !slices.Contains(l.Events, e.Kind) {
+		return false
+	}
 	if !slices.Contains(a.caller.Scopes, e.Scope) || !a.personSees(e.Scope) {
 		return false
 	}

@@ -1658,6 +1658,24 @@ type Caller struct {
 	// leaves those scopes out. The chat front end's caller for a /status
 	// command has it (#256).
 	ReadAsPerson bool
+	// Limit, when set, limits the caller to the operations and event kinds
+	// it names, within May and Scopes; nil limits nothing. A plugin's
+	// caller has one, from its grant (section 7.3, #348).
+	Limit *Limit
+}
+
+// Limit is what a Caller is limited to.
+type Limit struct {
+	// Operations, by their names in docs/protocol.md ("Threads", "Close").
+	// Any other is refused with ErrForbidden and one log line naming the
+	// operation, the scope and the caller. HostKeys and End go with
+	// OperateHost.
+	Operations []string
+	// Events are the kinds it reads through Events, ThreadEvents and
+	// Thread; others are left out, and positions stay the instance's own,
+	// so a reader resuming after its last position skips none of these.
+	// CaughtUp is delivered whatever this says.
+	Events []EventKind
 }
 
 // A connection to the control socket is the owner's, unless its hello
@@ -1666,7 +1684,11 @@ type Caller struct {
 // issued for. wire.Server.Revoke forgets a token and closes its
 // connections. supervisor.Caller(scope, thread) is a supervisor's Caller: From
 // "supervisor:<scope>", Scopes [scope], OpRead|OpStart|OpSend|OpAsk, AsksIn thread, RefuseBusy,
-// and the Mark of section 7.1. wire.Server.Restore binds a token issued by
+// and the Mark of section 7.1. plugin.Grant.Caller() is a plugin's Caller
+// (section 7.3): From "plugin:<id>", the grant's Scopes, the classes of May
+// its operations need, a Limit to exactly its operations and event kinds
+// (empty, never nil, when it names none), and NoText without the
+// "conversation" grant. wire.Server.Restore binds a token issued by
 // an earlier run of the daemon again, for a client that still runs with it
 // (#270).
 
