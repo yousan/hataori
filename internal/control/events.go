@@ -57,7 +57,9 @@ var EventKinds = map[EventKind][]Field{
 	"login_lost":       {req("agent", String), req("outage", Integer), req("thread", Integer)},
 	"login_restored":   {req("agent", String), req("outage", Integer), req("threads", Array), req("scopes", Array)},
 	"session_replaced": {req("session", Integer), req("new_session", Integer), req("reason", String)},
-	CaughtUp:           {},
+	"removal_refused": {req("session", Integer), req("trigger", String), opt("principal", String), req("reason", String),
+		opt("repo", String), opt("kind", String), text("detail", String)},
+	CaughtUp: {},
 }
 
 // KindNames returns the event kinds, sorted.

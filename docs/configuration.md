@@ -171,6 +171,9 @@ A workspace is removed only when nothing in it exists nowhere else ([design, sec
 | `disposable` | array of strings | empty | Patterns of ignored files that are not work, such as `"node_modules"` or `"*.pyc"`. A pattern without a slash matches any path segment, so it covers everything under a directory of that name; a pattern with a slash matches the path from the top of the repository, or a leading part of it (`"build/out"` covers everything under `build/out`). Patterns use Go's `path.Match` syntax (`*`, `?`, `[...]`); `**` is not special. |
 | `trash_retention` | duration | `"168h"` | How long a removed workspace stays in `trash/` before it is deleted. A positive Go duration. Only entries the removal put there are ever deleted. |
 | `other_roots` | array of strings | empty | Absolute paths of the roots of other hataori instances on this host. A remote under one of them does not count. |
+| `remove_closed_after` | duration | absent: off | Turns on the automatic removal pass: the workspace of a thread that has been closed for longer than this is removed, with the same proof as `hataori remove`. A positive Go duration, such as `"720h"`. A refused removal leaves the thread closed, writes one `removal_refused` event, and is tried again only after the same duration. |
+
+A workspace is removed only when its thread is closed: `hataori close KEY` closes it, and `hataori remove KEY` removes it (see "Commands and flags" below). Nothing in chat removes a workspace, and no thread is closed by its idle age.
 
 Processes are found with `lsof`, on Linux and on macOS alike; without `lsof` every removal is refused. Unless hataori runs as root, `lsof` sees only the processes of the user hataori runs as.
 
@@ -197,6 +200,8 @@ hataori thread  [--root DIR] KEY
 hataori events  [--root DIR] [--after N] [--follow]
 hataori stop    [--root DIR] KEY
 hataori attach  [--root DIR] KEY
+hataori close   [--root DIR] KEY
+hataori remove  [--root DIR] KEY
 hataori signin  [--root DIR]
 hataori version
 ```
@@ -209,6 +214,8 @@ hataori version
 | `events` | Prints the event log, one JSON object per line. |
 | `stop KEY` | Interrupts the thread's running turn. |
 | `attach KEY` | Connects this terminal to the terminal of the thread's agent, on the host, for the owner. It shows the current screen, then passes every key to the agent; Ctrl-\ detaches and leaves the agent running. An asleep thread is woken first; a closed thread, and an agent without a terminal, are refused with a message. While attached the thread is not put to sleep, and a daemon restart does not end the attachment. A turn typed there is posted in chat after a line "(typed at the terminal)". Chat input is still delivered while you are attached, into the same input line: a chat message that arrives while you have typed part of a line is mixed with it, so finish or clear the line before you stop typing. The current screen is replayed from the end of the terminal's log and is exact only once the agent draws again. Output is the agent's terminal, not JSON. |
+| `close KEY` | Ends the agent process of an idle, asleep or failed thread and closes the thread; its workspace stays. A message in a closed thread starts nothing and gets one line saying the thread is closed. A thread with a turn running, a question open, or background tasks left running by its last turn is refused: stop it first. Prints `{"scope", "key", "state": "closed"}`. |
+| `remove KEY` | Moves the workspace of a closed thread into `<root>/trash/`, only when nothing in it would be lost (see `cleanup` above), and the thread becomes `removed`. Otherwise it changes nothing, prints the reason on standard error and exits with 1. Prints `{"scope", "key", "state": "removed"}`. |
 | `signin` | Prints `{"link": ...}`: a link that signs the owner in to the dashboard, once, within five minutes. Fails when the config has no `dashboard`. |
 | `version` | Prints the version. |
 
@@ -220,7 +227,7 @@ hataori version
 
 Flags may come before or after `KEY`. Exit codes: 0 success, 1 error (for example, no daemon runs for the root), 2 usage error, 3 no such thread.
 
-`threads`, `thread`, `events` and `stop` talk to the running daemon over its control socket, and only the OS user that runs the daemon may use them. The format of what they print is in [protocol.md](protocol.md).
+`threads`, `thread`, `events`, `stop`, `close`, `remove` and `signin` talk to the running daemon over its control socket, and only the OS user that runs the daemon may use them. The format of what they print is in [protocol.md](protocol.md).
 
 Two more commands are internal, run by hataori itself, and not for people: `hataori host <state-dir>` runs one agent session, and `hataori hook [--wait] [--timeout DURATION]` is the command Claude Code's hooks call.
 
