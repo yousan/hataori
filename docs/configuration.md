@@ -438,15 +438,17 @@ hataori opens a thread on the message, clones the repository into the thread's w
 /new repository:<url> prompt:<prompt> [model:<model>] [effort:<effort>]
 /stop
 /status
+/dashboard
 ```
 
-On a service without commands, the same words follow the trigger: `<trigger> new repo:<url> [agent:<name>] [model:<model>] [effort:<effort>] <prompt>`, `<trigger> stop` and `<trigger> status`.
+On a service without commands, the same words follow the trigger: `<trigger> new repo:<url> [agent:<name>] [model:<model>] [effort:<effort>] <prompt>`, `<trigger> stop`, `<trigger> status` and `<trigger> dashboard`.
 
 - `/new` in an enabled channel starts a thread as an order does: the thread is opened in the channel, and the full prompt is its first message. The same command delivered again starts nothing more. `<trigger> new` is the order itself, opened on the message. `/new` has no agent option: its thread runs the scope's agent; use the order or `<trigger> new` with `agent:` for another.
 - `/stop` in a hataori thread stops its running turn.
 - `/status` in a hataori thread shows its state, model and last output; in a channel, the open threads of the channel's own scope with their states. Threads of other scopes attached in the channel are not listed.
 - The answers are shown only to the person who used the command; the words after the trigger get a reply.
 - The person must be the owner or one of the scope's `people`, for `/status` too. From anyone else, a command shows nothing and writes one log line.
+- `/dashboard` sends a dashboard sign-in link in a direct message to the person who used it, for the web listener when the instance has one. Only the owner gets one; from anyone else it sends nothing anywhere and writes one log line. The link is posted at once: it is in no conversation, no database row and no log, and the log says only that a link was sent and to whom. The conversation the command was used in gets nothing. An instance without a dashboard answers with one line saying so.
 
 ## Showing a thread in another channel
 
