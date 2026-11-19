@@ -672,6 +672,15 @@ func (a *api) Start(ctx context.Context, r control.StartRequest) (control.Thread
 			dup = !ok
 			return err
 		}
+		// The table no longer refuses a second thread of one conversation
+		// (design, section 6.2), and a thread is still found by it.
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM threads WHERE scope = ? AND key = ?`, id.Scope, id.Key).Scan(&n); err != nil {
+			return fmt.Errorf("core: create thread: %w", err)
+		}
+		if n > 0 {
+			return fmt.Errorf("core: create thread: %v has a thread already", id)
+		}
 		now := time.Now().UnixMilli()
 		res, err := tx.ExecContext(ctx,
 			`INSERT INTO threads (scope, key, title, repo, started_by, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,

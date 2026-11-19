@@ -71,12 +71,21 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		return err
 	}
 	defer st.Close()
+	lg := slog.New(slog.NewTextHandler(logOut, nil))
+	// Before anything reads a thread: existing threads get their first
+	// link, once (design, section 6.2).
+	scopeClients := map[string]string{}
+	for _, s := range cfg.Scopes {
+		scopeClients[s.Key] = s.Client
+	}
+	if err := st.LinkThreads(ctx, scopeClients, lg); err != nil {
+		return err
+	}
 
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	lg := slog.New(slog.NewTextHandler(logOut, nil))
 	if cfg.OldForm {
 		lg.Warn("config: owner and posters are ids, the old form; they are read as people (see docs/configuration.md)")
 	}

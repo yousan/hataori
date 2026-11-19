@@ -39,6 +39,10 @@ type Store struct {
 type Migration struct {
 	Name string
 	Up   func(ctx context.Context, tx *sql.Tx) error
+	// ForeignKeysOff turns foreign key checks off while the step runs, as
+	// SQLite asks for a step that makes a table again; the step must leave
+	// no row that breaks a foreign key, and is refused if it does.
+	ForeignKeysOff bool
 }
 
 // Open opens <root>/state/hataori.db and brings it to the latest version.
@@ -264,8 +268,28 @@ func (s *Store) migrate(ctx context.Context, steps []Migration) error {
 	return nil
 }
 
-func (s *Store) apply(ctx context.Context, to int, m Migration) error {
-	tx, err := s.DB.BeginTx(ctx, nil)
+func (s *Store) apply(ctx context.Context, to int, m Migration) (err error) {
+	// One connection for the step, so that the pragma below is that of
+	// the connection the transaction runs on.
+	conn, err := s.DB.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("store: migration %d (%s): %w", to, m.Name, err)
+	}
+	defer conn.Close()
+	if m.ForeignKeysOff {
+		// Outside a transaction: inside one, SQLite ignores it.
+		if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+			return fmt.Errorf("store: migration %d (%s): %w", to, m.Name, err)
+		}
+		defer func() {
+			if _, ferr := conn.ExecContext(context.WithoutCancel(ctx), `PRAGMA foreign_keys = ON`); ferr != nil {
+				// The connection must not be used again without its checks.
+				conn.Raw(func(any) error { return driver.ErrBadConn })
+				err = errors.Join(err, fmt.Errorf("store: migration %d (%s): turn foreign keys on again: %w", to, m.Name, ferr))
+			}
+		}()
+	}
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: migration %d (%s): %w", to, m.Name, err)
 	}
@@ -281,6 +305,11 @@ func (s *Store) apply(ctx context.Context, to int, m Migration) error {
 	if err := m.Up(ctx, tx); err != nil {
 		return fmt.Errorf("store: migration %d (%s): %w", to, m.Name, err)
 	}
+	if m.ForeignKeysOff {
+		if err := foreignKeyCheck(ctx, tx); err != nil {
+			return fmt.Errorf("store: migration %d (%s): %w", to, m.Name, err)
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`); err != nil {
 		return fmt.Errorf("store: migration %d (%s): %w", to, m.Name, err)
 	}
@@ -294,4 +323,23 @@ func (s *Store) apply(ctx context.Context, to int, m Migration) error {
 		return fmt.Errorf("store: migration %d (%s): %w", to, m.Name, err)
 	}
 	return nil
+}
+
+// foreignKeyCheck fails when a row breaks a foreign key.
+func foreignKeyCheck(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	if rows.Next() {
+		var table, parent string
+		var rowid sql.NullInt64
+		var fk int
+		if err := rows.Scan(&table, &rowid, &parent, &fk); err != nil {
+			return err
+		}
+		return fmt.Errorf("row %d of %s refers to a missing row of %s", rowid.Int64, table, parent)
+	}
+	return rows.Err()
 }
