@@ -214,20 +214,23 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	// count of its sends and starts at the call. It tells a person in the
 	// supervisor's chat thread, through the scope's chat front end, which
 	// is set once the front ends are made.
+	// And its loop guard (section 7.1), the waker's first gate.
 	budgets := map[string]*supervisor.Budget{}
+	guards := map[string]*supervisor.LoopGuard{}
 	tells := map[string]func(ctx context.Context, id control.ThreadID, key, text string) error{}
 	for _, s := range cfg.Scopes {
 		if sv := s.Supervisor; sv != nil {
 			client := s.Client
+			tell := func(ctx context.Context, id control.ThreadID, key, text string) error {
+				if t := tells[client]; t != nil {
+					return t(ctx, id, key, text)
+				}
+				lg.Warn("supervisor: no chat front end to tell a person", "client", client, "text", text)
+				return nil
+			}
 			budgets[s.Key] = &supervisor.Budget{Core: c, Scope: s.Key, Zone: m.Zone, Log: lg,
-				Limits: supervisor.Limits{Turns: sv.TurnsPerHour, Sends: sv.SendsPerHour, Tokens: sv.TokensPerDay},
-				Tell: func(ctx context.Context, id control.ThreadID, key, text string) error {
-					if t := tells[client]; t != nil {
-						return t(ctx, id, key, text)
-					}
-					lg.Warn("supervisor: no chat front end to tell a person", "client", client, "text", text)
-					return nil
-				}}
+				Limits: supervisor.Limits{Turns: sv.TurnsPerHour, Sends: sv.SendsPerHour, Tokens: sv.TokensPerDay}, Tell: tell}
+			guards[s.Key] = &supervisor.LoopGuard{Core: c, Scope: s.Key, Cycles: sv.LoopCycles, Tell: tell, Log: lg}
 		}
 	}
 	sv := &supervisor.Sessions{Core: c, Tokens: srv, Root: abs, Hataori: exe, Scopes: supervisors,
@@ -305,10 +308,11 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 			if s.Supervisor == nil {
 				continue
 			}
-			// The loop guard (#274) goes before the budget in Gates.
+			// The loop guard goes before the budget, so that the threads it
+			// drops spend nothing.
 			b := budgets[s.Key]
 			w := &supervisor.Waker{Core: c, Scope: s.Key, Owner: control.Principal(cfg.Owner), Quiet: s.Supervisor.Quiet,
-				OutputMax: s.Supervisor.OutputMax, ThreadsMax: s.Supervisor.ThreadsMax, Gates: []supervisor.Gate{b}, Log: lg}
+				OutputMax: s.Supervisor.OutputMax, ThreadsMax: s.Supervisor.ThreadsMax, Gates: []supervisor.Gate{guards[s.Key], b}, Log: lg}
 			if wakerHook != nil {
 				wakerHook(w)
 			}
