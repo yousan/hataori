@@ -5,10 +5,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -651,5 +653,90 @@ func TestPluginOfWhileStarting(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("PluginOf did not answer")
+	}
+}
+
+// group starts a process group as a plugin's start would leave it: a
+// leader and a child, each running until killed, with run as EnvRun when
+// it is not empty. It returns the leader's and the child's pids, and a
+// channel closed when the leader is gone. The test ends both.
+func group(t *testing.T, run string) (int, int, <-chan struct{}) {
+	t.Helper()
+	dir := t.TempDir()
+	cmd := exec.Command("/bin/sh", "-c", `sh -c 'echo $$ > "$1/child.tmp"; mv "$1/child.tmp" "$1/child"; exec sleep 600' sh "$0" & exec sleep 600`, dir)
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
+	if run != "" {
+		cmd.Env = append(cmd.Env, EnvRun+"="+run)
+	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	gone := make(chan struct{})
+	go func() { cmd.Wait(); close(gone) }()
+	var child int
+	eventually(t, "the child", 10*time.Second, func() bool {
+		b, err := os.ReadFile(filepath.Join(dir, "child"))
+		child, _ = strconv.Atoi(strings.TrimSpace(string(b)))
+		return err == nil && child > 0
+	})
+	t.Cleanup(func() { syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); <-gone })
+	return cmd.Process.Pid, child, gone
+}
+
+// What an earlier run left is killed before the plugin starts again, and
+// only that: a group whose id is recorded but whose processes are of
+// another run, or of none, and a run of another boot, are not signalled.
+func TestLeftovers(t *testing.T) {
+	const run = "0123456789abcdef0123456789abcdef"
+	boot, err := bootID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name     string
+		marked   string // the group's EnvRun
+		boot     string // the record's
+		signaled bool
+	}{
+		{"the earlier run", run, boot, true},
+		{"a group id given again, of another run", "fedcba9876543210fedcba9876543210", boot, false},
+		{"a group id given again, of no run", "", boot, false},
+		{"another boot", run, "an earlier boot", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			leader, child, ended := group(t, tc.marked)
+			r := &Runner{State: t.TempDir(), Log: slog.New(slog.DiscardHandler)}
+			g := Grant{ID: "scan"}
+			os.MkdirAll(filepath.Dir(r.recordPath(g)), 0o700)
+			b, _ := json.Marshal(runRecord{Group: leader, Run: run, Boot: tc.boot})
+			if err := os.WriteFile(r.recordPath(g), b, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			r.leftovers(g)
+			if tc.signaled {
+				select {
+				case <-ended:
+				case <-time.After(5 * time.Second):
+					t.Fatal("the earlier run's leader is left")
+				}
+				if !gone(t, child) {
+					t.Fatal("the earlier run's child is left")
+				}
+			} else {
+				time.Sleep(200 * time.Millisecond)
+				select {
+				case <-ended:
+					t.Fatal("a process of no earlier run was signalled")
+				default:
+				}
+				if syscall.Kill(child, 0) != nil {
+					t.Fatal("a child of no earlier run was signalled")
+				}
+			}
+			if _, err := os.Stat(r.recordPath(g)); err == nil {
+				t.Fatal("the record is kept")
+			}
+		})
 	}
 }

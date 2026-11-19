@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -242,6 +243,7 @@ func or[T comparable](v, d T) T {
 
 // run starts g again and again until ctx ends or it stays stopped.
 func (r *Runner) run(ctx context.Context, g Grant) {
+	r.leftovers(g)
 	backoff := or(r.Backoff, DefaultBackoff)
 	window := or(r.Window, DefaultWindow)
 	var exits []time.Time
@@ -314,8 +316,16 @@ func (r *Runner) once(ctx context.Context, g Grant) (string, error) {
 	// out: its connections close, and the token is refused from then on.
 	defer r.Tokens.Revoke(token)
 
+	var runID [16]byte
+	if _, err := rand.Read(runID[:]); err != nil {
+		return "", err
+	}
+	rec := runRecord{Run: hex.EncodeToString(runID[:])}
+	if rec.Boot, err = bootID(); err != nil {
+		return "", fmt.Errorf("this boot's id: %w", err)
+	}
 	env := []string{EnvSocket + "=" + r.Socket, EnvToken + "=" + token, EnvID + "=" + g.ID,
-		EnvState + "=" + state, EnvSettings + "=" + settings, EnvProtocol + "=" + r.Speaks}
+		EnvState + "=" + state, EnvSettings + "=" + settings, EnvProtocol + "=" + r.Speaks, EnvRun + "=" + rec.Run}
 	allowed := map[string]bool{}
 	for _, k := range Env {
 		allowed[k] = true
@@ -374,6 +384,14 @@ func (r *Runner) once(ctx context.Context, g Grant) (string, error) {
 	}
 	pgid := cmd.Process.Pid
 	r.Log.Info("plugin started", "plugin", g.ID, "pid", pgid)
+	// What the next start kills if the daemon dies without stopping this
+	// one (leftovers); removed once the group is killed.
+	rec.Group = pgid
+	if b, err := json.Marshal(rec); err == nil {
+		if err := writeNew(r.recordPath(g), b, 0o600); err != nil {
+			r.Log.Warn("plugin: its run is not recorded; a daemon that dies leaves it", "plugin", g.ID, "err", err)
+		}
+	}
 	// A run that lasts the window ends the plugin's outage, while it runs.
 	stable := time.AfterFunc(or(r.Window, DefaultWindow), func() { r.closeOutage(context.WithoutCancel(ctx), g) })
 	defer stable.Stop()
@@ -388,6 +406,7 @@ func (r *Runner) once(ctx context.Context, g Grant) (string, error) {
 	// Whatever the plugin started and left in its group goes with it.
 	syscall.Kill(-pgid, syscall.SIGKILL)
 	r.group(pgid, "")
+	os.Remove(r.recordPath(g))
 	return "", err
 }
 

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/instance"
 	"github.com/yousan/hataori/internal/plugin"
 	"github.com/yousan/hataori/internal/wire"
 )
@@ -427,5 +429,72 @@ exec sleep 600`)
 	defer owner.Close()
 	if _, err := owner.Threads(context.Background(), control.Filter{}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// After the daemon is killed with SIGKILL while a plugin and a child it
+// started run, the next start of the daemon leaves no process of that
+// earlier run, and starts the plugin again.
+func TestPluginLeftoversOfADaemonThatDied(t *testing.T) {
+	path, sum := writePlugin(t, "keeper", `sh -c 'echo $$ > "$HATAORI_PLUGIN_STATE/child.tmp"; mv "$HATAORI_PLUGIN_STATE/child.tmp" "$HATAORI_PLUGIN_STATE/child"; exec sleep 600' &
+echo $$ > "$HATAORI_PLUGIN_STATE/pid.tmp"; mv "$HATAORI_PLUGIN_STATE/pid.tmp" "$HATAORI_PLUGIN_STATE/pid"; exec sleep 600`)
+	root := newRoot(t)
+	cfgPath := filepath.Join(root, instance.ConfigFile)
+	b, _ := os.ReadFile(cfgPath)
+	var cfg map[string]any
+	json.Unmarshal(b, &cfg)
+	cfg["plugins"] = []map[string]any{{"id": "keeper", "path": path, "sha256": sum, "scopes": []string{"s"}}}
+	b, _ = json.Marshal(cfg)
+	if err := os.WriteFile(cfgPath, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(root, "state", "plugins", "keeper")
+	read := func(name string) int {
+		var pid int
+		eventually(t, name, 20*time.Second, func() bool {
+			b, err := os.ReadFile(filepath.Join(state, name))
+			return err == nil && strings.HasSuffix(string(b), "\n") && json.Unmarshal(b[:len(b)-1], &pid) == nil
+		})
+		os.Remove(filepath.Join(state, name))
+		return pid
+	}
+
+	// A daemon of its own process, killed with SIGKILL.
+	cmd := exec.Command(os.Args[0], "daemon", root)
+	var log strings.Builder
+	var mu sync.Mutex
+	cmd.Stdout, cmd.Stderr = lockedWriter{&mu, &log}, lockedWriter{&mu, &log}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
+	leader, child := read("pid"), read("child")
+	if err := cmd.Process.Signal(syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	cmd.Wait()
+	earlier := []int{leader, child}
+	t.Cleanup(func() {
+		for _, pid := range earlier {
+			syscall.Kill(pid, syscall.SIGKILL)
+		}
+	})
+	time.Sleep(300 * time.Millisecond)
+	if !alive(child) || zombie(child) {
+		t.Fatalf("the earlier run's child %d did not outlive the daemon: the test shows nothing", child)
+	}
+
+	logged, _ := pluginDaemon(t, root)
+	again := read("pid")
+	for _, pid := range earlier {
+		eventually(t, fmt.Sprint("process ", pid, " of the earlier run gone"), 10*time.Second, func() bool {
+			return !alive(pid) || zombie(pid)
+		})
+	}
+	if again == leader || !alive(again) {
+		t.Fatalf("the plugin was not started again: %d, before %d", again, leader)
+	}
+	if !strings.Contains(logged(), "killed what an earlier run left") {
+		t.Fatalf("no log line: %s", logged())
 	}
 }

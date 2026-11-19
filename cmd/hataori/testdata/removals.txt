@@ -17,7 +17,8 @@ internal/connect/connect.go	conn.forward	os.Remove	Runs on the person's own mach
 internal/connect/connect.go	conn.leftOver	os.Remove	Runs on the person's own machine: removes only the control, forward and request sockets of this host in connect's private run directory, after ending a left-over master, under the host's lock.
 internal/connect/connect.go	conn.stop	os.Remove	Runs on the person's own machine: removes only this run's control and forward sockets in connect's private run directory, if ssh left them.
 internal/connect/connect.go	remember	os.Remove	Runs on the person's own machine: removes only the temporary file this call just created with os.CreateTemp beside the remembered hosts, which the rename has already taken unless a step failed.
-internal/plugin/run.go	Runner.once	os.Remove	Removes only the plugin's executable copy, state/plugin-run/<id>/exec-<random>, which prepare wrote for this start, outside the workspaces.
+internal/plugin/run.go	Runner.once	os.Remove	Removes only files of this start in the daemon's own state/plugin-run/<id>/: the executable copy exec-<random> that prepare wrote, and run.json once the run's group is killed; outside the workspaces.
+internal/plugin/leftover.go	Runner.leftovers	os.Remove	Removes only state/plugin-run/<id>/run.json, the record of an earlier run, after reading it; outside the workspaces.
 internal/plugin/run.go	Runner.prepare	os.Remove	Removes only the copies of earlier starts, state/plugin-run/<id>/exec-*, in the daemon's own directory for the plugin, outside the workspaces.
 internal/plugin/run.go	writeNew	os.Remove	Removes only <path>.new, the half-written file of the executable copy or the settings in state/plugin-run/<id>/, outside the workspaces.
 internal/agent/claudecode/plugin.go	Adapter.WritePlugin	os.Remove	Removes only its own temporary file next to a plugin file it failed to rename, in the plugin's directory under the instance root, outside every workspace.
