@@ -359,7 +359,7 @@ func (s *Server) operate(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
-	var endOnce sync.Once
+	ended := false // the page asked for the end: later keys are dropped
 	go func() {
 		defer close(batches)
 		defer cancel() // the page went away: the operation ends
@@ -374,8 +374,12 @@ func (s *Server) operate(w http.ResponseWriter, r *http.Request) {
 				c.send(operateOut{Error: "not a message of an operation: nothing was sent"})
 				continue
 			}
+			if ended {
+				continue
+			}
 			if m.End {
-				endOnce.Do(func() { close(endAsked) })
+				ended = true
+				close(endAsked)
 				continue
 			}
 			if len(m.Keys) == 0 {

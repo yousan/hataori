@@ -153,6 +153,9 @@ func (s *Server) hostScreen(w http.ResponseWriter, r *http.Request) {
 	n := 0
 	a := api(r)
 	stream(s, w, r, func(ctx context.Context) (<-chan hostScreen, error) {
+		// Each read takes the change notice before it reads, so that an
+		// operation that starts or ends after a read wakes the wait after it.
+		changed := s.operatedChange()
 		screen, err := s.readScreen(ctx, a, pane) // before the answer: a refusal is a 404
 		if err != nil {
 			return nil, err
@@ -173,7 +176,6 @@ func (s *Server) hostScreen(w http.ResponseWriter, r *http.Request) {
 					}
 					last = screen
 				}
-				changed := s.operatedChange() // before the rate is chosen, so that no change is missed
 				every := s.hostScreenInterval
 				if s.isOperated(pane) {
 					every = min(every, s.operatedScreenInterval)
@@ -189,6 +191,7 @@ func (s *Server) hostScreen(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				var err error
+				changed = s.operatedChange()
 				if screen, err = s.readScreen(ctx, a, pane); err != nil {
 					if ctx.Err() == nil && !errors.Is(err, errNotFound) {
 						s.Log.Warn("dashboard host screen", "pane", pane, "err", err)

@@ -585,7 +585,8 @@ func TestScreenStreamWhileOperated(t *testing.T) {
 }
 
 // An end the page sends after batches ends the operation after them: none
-// of the keys sent before it is lost, even while batches are slow.
+// of the keys sent before it is lost, even while batches are slow, and none
+// sent after it is sent.
 func TestOperateEndComesAfterTheBatchesBeforeIt(t *testing.T) {
 	a := &opAPI{slow: 50 * time.Millisecond}
 	s := operateServer(t, a, Config{})
@@ -603,6 +604,7 @@ func TestOperateEndComesAfterTheBatchesBeforeIt(t *testing.T) {
 		c.WriteJSON(map[string]any{"keys": []control.HostKey{{Key: k}}})
 	}
 	c.WriteJSON(map[string]any{"end": true})
+	c.WriteJSON(map[string]any{"keys": []control.HostKey{{Key: "End"}}}) // after the end: dropped
 	if m := readOut(t, c); m.Ended != control.HostEnded {
 		t.Fatalf("%+v", m)
 	}

@@ -788,6 +788,12 @@ func (s *Server) passkeyRemove(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such passkey", http.StatusNotFound)
 		return
 	}
+	// The floor first: an operation that sees the passkey gone must also
+	// see that this session was signed in before the removal (operate.go).
+	// A removal that then fails leaves only a stricter floor.
+	s.mu.Lock()
+	s.removed[ss.person] = s.now()
+	s.mu.Unlock()
 	var gone passkey
 	err = s.keys.change(func(keys []passkey) ([]passkey, bool, error) {
 		i := slices.IndexFunc(keys, func(k passkey) bool { return k.Person == ss.person && bytes.Equal(k.ID, id) })
@@ -806,9 +812,6 @@ func (s *Server) passkeyRemove(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such passkey", http.StatusNotFound)
 		return
 	}
-	s.mu.Lock()
-	s.removed[gone.Person] = s.now() // no session signed in before this operates without a check (operate.go)
-	s.mu.Unlock()
 	s.Log.Info("dashboard: passkey removed", "person", gone.Person, "passkey", shortID(gone.ID), "listener", string(listenerOfRequest(r).way))
 	w.WriteHeader(http.StatusNoContent)
 }
