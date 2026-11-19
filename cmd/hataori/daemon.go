@@ -24,6 +24,7 @@ import (
 	"github.com/yousan/hataori/internal/hostterm"
 	"github.com/yousan/hataori/internal/instance"
 	"github.com/yousan/hataori/internal/people"
+	"github.com/yousan/hataori/internal/plugin"
 	"github.com/yousan/hataori/internal/relay"
 	"github.com/yousan/hataori/internal/runner"
 	"github.com/yousan/hataori/internal/session"
@@ -47,6 +48,15 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	}
 	defer in.Close()
 	cfg := in.Config
+	// Each plugin's manifest and grant are checked before anything starts;
+	// nothing of a plugin runs yet (design, section 7.3).
+	var scopeKeys []string
+	for _, s := range cfg.Scopes {
+		scopeKeys = append(scopeKeys, s.Key)
+	}
+	if _, err := plugin.Load(cfg.Plugins, scopeKeys); err != nil {
+		return err
+	}
 
 	adapters := map[string]agent.Adapter{}
 	for name, settings := range cfg.Adapters {
