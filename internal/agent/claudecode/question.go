@@ -87,6 +87,7 @@ func (c *codec) question(k call, p payload) Actions {
 		for _, o := range qs.Questions[0].Options {
 			info.Choices = append(info.Choices, o.Label)
 		}
+		info.Multi = qs.Questions[0].MultiSelect
 	}
 	return c.events(agent.Event{Kind: agent.Request, Request: info})
 }

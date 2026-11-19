@@ -22,7 +22,7 @@
 //	{"t":"text","text":T,"final":true|false}   (on a terminal: in the transcript, with "turn":N)
 //	{"t":"tool","id":I,"name":N,"parent":P,"end":false|true}   (P: the subagent it runs in)
 //	{"t":"subagent","id":I,"name":N,"end":false|true}
-//	{"t":"ask","id":I,"text":Q,"choices":[C...]} (on a terminal: a waiting hook call; choices only when it has some)
+//	{"t":"ask","id":I,"text":Q,"choices":[C...],"multi":true} (on a terminal: a waiting hook call; choices only when it has some, multi only for askmany)
 //	{"t":"file","path":P,"more":[P...],"caption":C}
 //	{"t":"usage","in":N,"output":N,"cache_read":N,"cache_write":N,"context_used":N,"context_size":N,"model":M}
 //	{"t":"limits","at":MS,"every":S,"windows":[{"name":N,"minutes":M,"used":U,"resets":R}...]}
@@ -51,6 +51,9 @@
 //	                    their tokens joined by ", " (any text is ignored);
 //	                    the first " -- " starts the choices, which are
 //	                    trimmed, and empty ones are dropped
+//	askmany QUESTION -- CHOICE | CHOICE...
+//	                    ask, as ask does, a question whose choices may be
+//	                    chosen several at once
 //	background DURATION end the turn with one background task, then start a
 //	                    turn by itself after DURATION
 //	fail REASON         end the turn as failed with REASON

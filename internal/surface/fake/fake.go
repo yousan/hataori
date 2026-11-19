@@ -541,6 +541,13 @@ func (d *Driver) directConv(who string) surface.Conversation {
 // the press is delivered to the sink as a Selection. The message must be
 // one the driver posted and still shows that choice.
 func (d *Driver) Press(ref MessageRef, who, token string) error {
+	return d.PressMany(ref, who, token)
+}
+
+// PressMany chooses several options of a menu on the message ref as the
+// person who, as Press does one: the Selection's Token is the first and
+// Tokens are all of them.
+func (d *Driver) PressMany(ref MessageRef, who string, tokens ...string) error {
 	d.deliver.Lock()
 	defer d.deliver.Unlock()
 	d.mu.Lock()
@@ -553,15 +560,20 @@ func (d *Driver) Press(ref MessageRef, who, token string) error {
 	if !ok {
 		return ErrNoMessage
 	}
-	found := false
-	for _, c := range m.Choices {
-		found = found || c.Token == token
-	}
-	if !found {
+	if len(tokens) == 0 || (len(tokens) > 1 && !m.Multi) {
 		return ErrNoChoice
 	}
+	for _, token := range tokens {
+		found := false
+		for _, c := range m.Choices {
+			found = found || c.Token == token
+		}
+		if !found {
+			return ErrNoChoice
+		}
+	}
 	if sink != nil {
-		sink.Choice(surface.Selection{Ref: ref, Author: Person(who), Token: token})
+		sink.Choice(surface.Selection{Ref: ref, Author: Person(who), Token: tokens[0], Tokens: tokens})
 	}
 	return nil
 }

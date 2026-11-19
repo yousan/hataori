@@ -54,6 +54,7 @@ type report struct {
 	By         string   `json:"by"`
 	Text       string   `json:"text"`
 	Choices    []string `json:"choices"` // ask: its options, in order
+	Multi      bool     `json:"multi"`   // ask: several options may be chosen
 	Final      bool     `json:"final"`
 	ID         string   `json:"id"`
 	Name       string   `json:"name"`
@@ -225,7 +226,7 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 			c.asked = map[string]string{}
 		}
 		c.asked[id] = r.ID
-		a = c.events(agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: id, Text: r.Text, Choices: r.Choices}})
+		a = c.events(agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: id, Text: r.Text, Choices: r.Choices, Multi: r.Multi}})
 	case "usage":
 		a = c.events(agent.Event{Kind: agent.Usage, Usage: &agent.UsageCount{Model: r.Model, Input: r.In, Output: r.Output,
 			CacheRead: r.CacheRead, CacheWrite: r.CacheWrite, ContextUsed: r.ContextUsed, ContextSize: r.ContextSize}})

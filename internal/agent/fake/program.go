@@ -256,11 +256,11 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 				return 0, false
 			}
 			p.report(map[string]any{"t": "tool", "id": "t-" + name, "name": name, "end": true})
-		case "ask":
+		case "ask", "askmany":
 			p.asked++
 			id := fmt.Sprintf("q%d", p.asked)
 			question, choices := askArgs(arg)
-			answer, ok := p.ask(id, question, choices)
+			answer, ok := p.ask(id, question, choices, cmd == "askmany")
 			if !ok {
 				p.interrupted(end)
 				return 0, false
@@ -370,10 +370,13 @@ func askArgs(arg string) (question string, choices []string) {
 
 // ask asks a question, with its choices if any, and waits for its answer,
 // or for an interrupt.
-func (p *program) ask(id, text string, choices []string) (string, bool) {
+func (p *program) ask(id, text string, choices []string, multi bool) (string, bool) {
 	v := map[string]any{"t": "ask", "id": id, "text": text}
 	if len(choices) > 0 {
 		v["choices"] = choices
+	}
+	if multi {
+		v["multi"] = true
 	}
 	if !p.terminal {
 		ch := make(chan string, 1)

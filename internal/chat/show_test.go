@@ -148,8 +148,13 @@ func TestTextQuietAndTheFinalAnswerRepliesToTheTurnsMessage(t *testing.T) {
 	}
 }
 
+// More options than the surface's choices: the question is text, with its
+// options numbered.
 func TestQuestionWithNumberedOptions(t *testing.T) {
 	f := newFront(t, workspaces{})
+	l := fake.DefaultLimits
+	l.MaxChoices = 1
+	f.driver.SetLimits(l)
 	id, trigger := f.started(t)
 	f.showing(t)
 	turn(f, t, id, 1, trigger.Ref.ID)
