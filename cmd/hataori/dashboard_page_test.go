@@ -75,8 +75,9 @@ func chromePath(t *testing.T) string {
 	return ""
 }
 
-// newBrowser starts a headless browser on an empty page.
-func newBrowser(t *testing.T) *browser {
+// newBrowser starts a headless browser on an empty page, with flags of
+// the test's own added.
+func newBrowser(t *testing.T, flags ...string) *browser {
 	t.Helper()
 	// The profile is removed once every process of the browser is gone:
 	// its helpers write there until they end.
@@ -89,7 +90,8 @@ func newBrowser(t *testing.T) *browser {
 		// A throwaway profile needs no keychain; without these, macOS asks for one on the desktop
 		// each run when the test runs outside the graphical session.
 		"--use-mock-keychain", "--password-store=basic",
-		"--window-size=1400,900", "--user-data-dir="+dir, "--remote-debugging-port=0", "about:blank")
+		"--window-size=1400,900", "--user-data-dir="+dir, "--remote-debugging-port=0")
+	cmd.Args = append(append(cmd.Args, flags...), "about:blank")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // the browser and its helpers, in one group
 	if err := cmd.Start(); err != nil {
 		os.RemoveAll(dir)
