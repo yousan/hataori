@@ -35,12 +35,8 @@ import (
 const (
 	ThreadsPath = "/api/threads"
 	ThreadPath  = "/api/thread"
-	// ThreadEventsPath answers with a thread's events before ?before=P (its
-	// last ones without it), at most ?limit=N, newest last: the control
-	// API's ThreadEvents.
-	ThreadEventsPath = "/api/threadevents"
-	EventsPath       = "/api/events"
-	LimitsPath       = "/api/limits"
+	EventsPath  = "/api/events"
+	LimitsPath  = "/api/limits"
 	// WorkspacePath answers with the thread's WorkspaceState. A thread
 	// outside the caller's scopes answers as one that does not exist, and a
 	// workspace that cannot be read is an error, never zeros.
@@ -85,7 +81,6 @@ var errNotFound = core.ErrNotFound
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET "+ThreadsPath, s.threads)
 	s.mux.HandleFunc("GET "+ThreadPath, s.thread)
-	s.mux.HandleFunc("GET "+ThreadEventsPath, s.threadEvents)
 	s.mux.HandleFunc("GET "+EventsPath, s.events)
 	s.mux.HandleFunc("GET "+TerminalPath, s.terminal)
 	s.mux.HandleFunc("GET "+HostScreenPath, s.hostScreen)
@@ -232,35 +227,6 @@ func (s *Server) thread(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.Error(w, err.Error(), http.StatusBadRequest)
-}
-
-func (s *Server) threadEvents(w http.ResponseWriter, r *http.Request) {
-	id, err := threadParam(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	var before uint64
-	if v := r.URL.Query().Get("before"); v != "" {
-		if before, err = strconv.ParseUint(v, 10, 64); err != nil {
-			http.Error(w, "before: not a position", http.StatusBadRequest)
-			return
-		}
-	}
-	limit, err := count(r, "limit", control.MaxEvents, control.MaxEvents)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	evs, err := api(r).ThreadEvents(r.Context(), id, before, limit)
-	if err != nil {
-		s.apiError(w, err)
-		return
-	}
-	if evs == nil {
-		evs = []control.Event{}
-	}
-	writeJSON(w, evs)
 }
 
 // position is where a stream starts: after the Last-Event-ID a reconnecting

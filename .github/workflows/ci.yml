@@ -19,6 +19,9 @@ jobs:
       # The host terminal tests start a tmux server of their own.
       - name: install tmux
         run: command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
+      # The hataori connect tests start an sshd of their own, as this user.
+      - name: install sshd
+        run: test -x /usr/sbin/sshd || { sudo apt-get update && sudo apt-get install -y openssh-server; }
       - name: gofmt
         run: |
           unformatted="$(gofmt -l .)"
@@ -47,6 +50,28 @@ jobs:
         run: CGO_ENABLED=0 go build ./...
       - name: go test
         run: go test ./...
+
+  # hataori for macOS, where `hataori connect` runs on the person's
+  # machine: both architectures, kept as artifacts of the run.
+  build-macos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: build
+        run: |
+          set -eu
+          for arch in arm64 amd64; do
+            CGO_ENABLED=0 GOOS=darwin GOARCH=$arch go build -trimpath -o dist/hataori-darwin-$arch ./cmd/hataori
+            test -s dist/hataori-darwin-$arch
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hataori-darwin
+          path: dist/
+          if-no-files-found: error
 
   # The dashboard's page (design, section 7.2): its built files are
   # committed, so this builds them again and fails when they differ.

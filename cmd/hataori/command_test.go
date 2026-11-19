@@ -35,7 +35,7 @@ import (
 func TestMain(m *testing.M) {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
-		case "host", "hook", "login-guard", "mcp":
+		case "host", "hook", "login-guard", "mcp", "signin": // signin: as hataori on the host, run over SSH by hataori connect
 			os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 		case "app-server":
 			os.Exit(codexReplay(os.Args[2:]))

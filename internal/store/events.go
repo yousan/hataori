@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"math"
 	"slices"
 	"time"
 
@@ -160,21 +159,11 @@ func (s *Store) Events(ctx context.Context, f control.Filter, after uint64, limi
 // Last returns the last n committed events of a thread that keep accepts,
 // newest last.
 func (s *Store) Last(ctx context.Context, id control.ThreadID, n int, keep func(control.Event) bool) ([]control.Event, error) {
-	return s.LastBefore(ctx, id, 0, n, keep)
-}
-
-// LastBefore is Last of the events before position before; before 0 is
-// no bound.
-func (s *Store) LastBefore(ctx context.Context, id control.ThreadID, before uint64, n int, keep func(control.Event) bool) ([]control.Event, error) {
 	if n <= 0 {
 		return nil, nil
 	}
-	bound := int64(math.MaxInt64)
-	if before > 0 && before < math.MaxInt64 {
-		bound = int64(before)
-	}
 	rows, err := s.DB.QueryContext(ctx, `SELECT pos, scope, time, kind, data FROM events
-		WHERE thread_id = ? AND pos < ? ORDER BY pos DESC`, int64(id), bound)
+		WHERE thread_id = ? ORDER BY pos DESC`, int64(id))
 	if err != nil {
 		return nil, fmt.Errorf("store: read events: %w", err)
 	}

@@ -601,7 +601,6 @@ Not in the dashboard: diffs, boards of cards, a browser inside the page. Other t
 | open question, failure reason, last output | `Thread` (exists), the `request` and `turn_ended` events |
 | live updates, the live mark | `Events` from a position (exists) |
 | recent events of one thread | new optional argument of `Thread` |
-| a thread's conversation, read back to its first input | new operation `ThreadEvents`: events before a position, with a limit (#336) |
 | agent, model, effort, number of turns, last line, background tasks | new optional fields of `ThreadInfo` |
 | tokens this turn and today, context use | new optional fields of the `usage` event, which the core sums into `ThreadInfo` |
 | branch, lines added and removed against the branch point, uncommitted files, unpushed commits | new operation `Workspace` |
@@ -650,8 +649,8 @@ The rules for every way:
 **Over SSH without a chore.** Opening SSH by hand every time is not acceptable. `hataori connect [user@]host`, on the person's machine (Linux or macOS; the same binary), does it all:
 
 - It runs the system's `ssh`, so the person's keys, agent and config apply. hataori stores no SSH key, and sets nothing beyond the forward and the connection sharing below.
-- It opens one connection, shared through OpenSSH's control socket in a directory only the person can open. Through it it runs `hataori signin` on the host, forwards a local loopback port to the loopback address the link names, and opens the browser at the link with the port changed to the local one. The person authenticates once. The link is written to no file and no log. It does reach the browser through the system's launcher (`open`, `xdg-open`), whose command line other users of the same machine can read while it runs; the link is short-lived and works once, and a link someone else used first shows the person "already used" instead of signing in, so a theft is seen. On a machine shared with people one does not trust, the native window is the way.
-- It keeps running and keeps the connection alive. When the connection drops it reconnects with a backoff, on the same local port, and an open page resumes as after any reconnect: no gap, no repeat.
+- It opens one connection, shared through OpenSSH's control socket in a directory only the person can open. Through it it runs `hataori signin` on the host and forwards a socket in that directory to the loopback address the link names. It listens on a local port on `127.0.0.1` for its whole run and passes each connection on to that socket, and opens the browser at the link on `http://127.0.0.1:<local port>`. Holding the port means nobody else can take it while the connection is down, and `127.0.0.1` rather than `localhost`, which may resolve to `::1`, where it does not listen. The person authenticates once. The link is written to no file and no log. It does reach the browser through the system's launcher (`open`, `xdg-open`), whose command line other users of the same machine can read while it runs; the link is short-lived and works once, and a link someone else used first shows the person "already used" instead of signing in, so a theft is seen. On a machine shared with people one does not trust, the native window is the way.
+- It keeps running and keeps the connection alive. When the connection drops it reconnects with a backoff, asks the host for the dashboard's address again, and an open page resumes on the same local port as after any reconnect: no gap, no repeat.
 - It remembers `user@host`, the instance root on the host (`--root`) and the local port, so next time `hataori connect` alone is enough. Run again while one runs for the same host, it has the running one fetch a fresh link and open it: that is how one signs in again after the session ended.
 - `--hataori <path>` names the binary on the host for a non-interactive SSH session whose `PATH` does not have it. A missing `ssh`, forwarding refused by the server, and a link that does not name a loopback address each stop it with a message that says which.
 - By hand it is `ssh -L 127.0.0.1:<port>:127.0.0.1:<dashboard port> user@host` (the local address given, so that the person's `GatewayPorts` cannot open the port to the network), `hataori signin` there, and the link with the port changed. The native window later does the same from a saved `user@host`, as editors' remote-SSH modes do.
@@ -1375,12 +1374,6 @@ type API interface {
 	// recent bytes, and the thread's last events, at most events of them
 	// (and at most MaxEvents), newest last.
 	Thread(ctx context.Context, id ThreadID, recent, events int) (ThreadDetail, error)
-	// ThreadEvents returns the thread's events before position before, or
-	// its last ones when before is 0: at most n of them (and at most
-	// MaxEvents), newest last, as Thread returns them. Asking again before
-	// the oldest one returned reads the thread's log back to its start; an
-	// empty result is the start. Since protocol 3.3.
-	ThreadEvents(ctx context.Context, id ThreadID, before uint64, n int) ([]Event, error)
 
 	Start(ctx context.Context, r StartRequest) (ThreadID, error)
 	// key makes Send safe to repeat; for chat, the surface's message id.
@@ -1672,9 +1665,6 @@ type API interface {
 	// HostTerminals, HostScreen: declared above, since protocol 1.10 (#199),
 	// with OpHost.
 
-	// ThreadEvents: declared above, since protocol 3.3 (#336), for the
-	// dashboard's Conversation view.
-
 	// SignInLink: declared above, since protocol 1.7 (#200); for a chat
 	// caller with From since 1.11 (#252). The control socket's connections
 	// have OpSignIn, and so will the chat front end's caller for a person's
@@ -1747,7 +1737,6 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `AttachTerminal`, with `Ops` gaining `OpAttach` (#253) | minor: new operation; 2.1 |
 | `hello.token`, and `principal` and `from` in the `input` and `answer` events (#269) | minor: new optional fields; 2.2 |
 | `SignInLink`'s `way` (section 7.2, #359) | minor: new optional argument; 3.2 |
-| `ThreadEvents` (#336) | minor: new operation; 3.3 |
 | `OperateHost`, with `Ops` gaining `OpHostInput` (section 7.2) | minor: new operation, whose connection becomes a stream both ways |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 
