@@ -61,6 +61,10 @@ type FrontEnd struct {
 	// message then has no link and no button.
 	Instance string
 	Relay    LoginRelay
+	// SignInWay is the dashboard listener a sign-in link asked for in chat
+	// is for: control.WayWeb when the instance has a web listener, since a
+	// loopback link is of no use on a phone; empty otherwise.
+	SignInWay control.Way
 
 	loginOnce sync.Once
 	login     *logins

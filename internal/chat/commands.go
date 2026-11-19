@@ -15,7 +15,8 @@ import (
 // running turn of the thread it is used in, /status shows a thread or the
 // threads of a channel's scope. On a surface without commands the same
 // words follow the trigger: `<trigger> new repo:<url> <prompt>`,
-// `<trigger> stop`, `<trigger> status`. Whether the person may do any of
+// `<trigger> stop`, `<trigger> status`, and `/dashboard` (dashboard.go)
+// with `<trigger> dashboard`. Whether the person may do any of
 // it is the core's to decide: each call is made with From set to the
 // author's id, and a refused call shows nothing.
 const (
@@ -55,6 +56,10 @@ func (f *FrontEnd) Commands() []surface.CommandSpec {
 		Description: "Show this hataori thread, or the threads of this channel",
 		Private:     true,
 	}, {
+		Name:        dashboardCommand,
+		Description: "Get a dashboard sign-in link in a direct message",
+		Private:     true,
+	}, {
 		Name:        attachCommand,
 		Description: "Show a hataori thread here too",
 		Args:        []surface.ArgSpec{{Name: "number", Description: "The thread's number", Required: true}},
@@ -86,6 +91,8 @@ func (f *FrontEnd) command(ctx context.Context, c surface.Command) error {
 		return f.status(ctx, c)
 	case attachCommand:
 		return f.attach(ctx, c.Conv, c.Author, argOf(c, "number"), c.ID, c.Reply)
+	case dashboardCommand:
+		return f.dashboardLink(ctx, c)
 	}
 	return nil
 }
@@ -99,14 +106,14 @@ func argOf(c surface.Command, name string) string {
 	return ""
 }
 
-// textCommand returns the stop or status command a message gives in words
-// after the trigger, on a surface without commands.
+// textCommand returns the stop, status or dashboard command a message gives
+// in words after the trigger, on a surface without commands.
 func (f *FrontEnd) textCommand(in surface.Inbound) (surface.Command, bool) {
 	if f.Driver.Limits().Commands {
 		return surface.Command{}, false
 	}
 	o, ok := parseTrigger(f.Trigger, in.Text)
-	if !ok || o.Agent != "" || o.Repo != "" || o.Model != "" || o.Effort != "" || (o.Prompt != stopCommand && o.Prompt != statusCommand) {
+	if !ok || o.Agent != "" || o.Repo != "" || o.Model != "" || o.Effort != "" || (o.Prompt != stopCommand && o.Prompt != statusCommand && o.Prompt != dashboardCommand) {
 		return surface.Command{}, false
 	}
 	ref := in.Ref
