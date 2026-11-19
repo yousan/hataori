@@ -165,9 +165,10 @@ type Server struct {
 	keys  *passkeyFile
 
 	mu         sync.Mutex
-	links      map[[32]byte]link     // by hash of the token
-	grants     map[[32]byte]grant    // proofs for a registration, by hash of the token
-	ceremonies map[[32]byte]ceremony // passkey ceremonies under way, by hash of their id
+	links      map[[32]byte]link      // by hash of the token
+	grants     map[[32]byte]grant     // proofs for a registration, by hash of the token
+	ceremonies map[[32]byte]ceremony  // registrations and checks under way, by hash of their id
+	used       map[[32]byte]time.Time // sign-in challenges answered, by hash, until they expire
 }
 
 // listener is one way of reaching the dashboard.
@@ -211,7 +212,7 @@ func Listen(cfg Config, api func(person string) (control.API, bool), log *slog.L
 		return nil, errors.New("dashboard: neither a loopback nor a web listener")
 	}
 	s := &Server{For: api, Log: log, linkTTL: cfg.LinkTTL, now: cfg.Now,
-		links: map[[32]byte]link{}, grants: map[[32]byte]grant{}, ceremonies: map[[32]byte]ceremony{}, key: cfg.SessionKey,
+		links: map[[32]byte]link{}, grants: map[[32]byte]grant{}, ceremonies: map[[32]byte]ceremony{}, used: map[[32]byte]time.Time{}, key: cfg.SessionKey,
 		keepAlive: defaultKeepAlive, writeTimeout: defaultWriteTimeout, hostScreenInterval: defaultHostScreenInterval}
 	if len(s.key) == 0 {
 		s.key = make([]byte, 32)
@@ -768,24 +769,34 @@ func (s *Server) handler(l *listener) http.Handler {
 		}
 		ctx := context.WithValue(r.Context(), listenerKey{}, l)
 		if !signInRoute(r.URL.Path) && !isPageFile(r.URL.Path) {
-			token, ok := bearer(r)
+			ss, ok := s.sessionFrom(r, l)
 			if !ok {
 				http.Error(w, "not signed in", http.StatusUnauthorized)
 				return
 			}
-			c, ok := s.valid(token, l)
-			var a control.API
-			if ok {
-				a, ok = s.For(c.person)
-			}
-			if !ok || a == nil {
-				http.Error(w, "not signed in", http.StatusUnauthorized)
-				return
-			}
-			ctx = context.WithValue(ctx, sessionKey{}, session{claims: c, sum: sha256.Sum256([]byte(token)), api: a})
+			ctx = context.WithValue(ctx, sessionKey{}, ss)
 		}
 		s.mux.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// sessionFrom is the session r carries in its Authorization header, when
+// it is one of l's that this key signed, has not expired, and belongs to a
+// person who may still sign in.
+func (s *Server) sessionFrom(r *http.Request, l *listener) (session, bool) {
+	token, ok := bearer(r)
+	if !ok {
+		return session{}, false
+	}
+	c, ok := s.valid(token, l)
+	if !ok {
+		return session{}, false
+	}
+	a, ok := s.For(c.person)
+	if !ok || a == nil {
+		return session{}, false
+	}
+	return session{claims: c, sum: sha256.Sum256([]byte(token)), api: a}, true
 }
 
 func (s *Server) refuse(w http.ResponseWriter, r *http.Request, l *listener, code int, why string) {
@@ -818,7 +829,7 @@ func (s *Server) signIn(w http.ResponseWriter, r *http.Request) {
 	}
 	out := signedIn{Session: token}
 	if l.way == control.WayWeb && s.rp != nil && s.keys != nil {
-		if out.Register, err = s.newGrant(person, token); err != nil {
+		if out.Register, err = s.newGrant(person, token, nil); err != nil {
 			http.Error(w, "cannot make a session", http.StatusInternalServerError)
 			return
 		}

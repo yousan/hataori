@@ -456,7 +456,7 @@ func TestPasskeyRegistrationNeedsAProofMadeForIt(t *testing.T) {
 		t.Fatal("a loopback link came with a registration proof")
 	}
 	_, regE := d.webLink()
-	for _, path := range []string{dashboard.PasskeyRegisterBeginPath, dashboard.PasskeySignInBeginPath} {
+	for _, path := range []string{dashboard.PasskeyRegisterBeginPath, dashboard.PasskeySignInBeginPath, dashboard.PasskeyRegisterFinishPath, dashboard.PasskeySignInFinishPath} {
 		if code, b := d.do(http.MethodPost, base, path, ls, base, map[string]any{"register": regE}); code != http.StatusForbidden || !strings.Contains(string(b), "web listener") {
 			t.Fatalf("%s on loopback: %d %s, want 403", path, code, b)
 		}
@@ -843,4 +843,193 @@ func TestPasskeysInTheBrowser(t *testing.T) {
 	signOut()
 	b.press("[data-passkey=signin]")
 	b.until("the removed passkey refused", `!!document.querySelector('.signed-out [data-passkey-error=refused]')`)
+}
+
+// Each ceremony is used once, in time, by the session that began it: one
+// proof begun twice registers one passkey; a registration begun by one
+// session is not finished by another; a sign-in finished five minutes
+// after it began opens nothing; a passkey registered already is refused;
+// so is a body larger than 64 KiB. Sign-ins begun without a session keep
+// nothing, so a flood of them leaves room for everyone else's.
+func TestPasskeyCeremoniesAreUsedOnceInTimeAndByTheirSession(t *testing.T) {
+	clock := useClock(t)
+	d := newPasskeyDash(t)
+	startDaemon(t, d.root)
+	fresh := func() *softKey { return &softKey{rpID: webName, origin: d.web} }
+
+	s, reg := d.webLink()
+	var begun []ceremonyAnswer
+	for range 2 {
+		code, a, b := d.beginRegister(s, reg)
+		if code != http.StatusOK {
+			t.Fatalf("begin: %d %s", code, b)
+		}
+		begun = append(begun, a)
+	}
+	for i, a := range begun {
+		_, cred := fresh().create(t, a.Options)
+		code, b := d.post(dashboard.PasskeyRegisterFinishPath, s, map[string]any{"ceremony": a.Ceremony, "credential": cred})
+		if want := []int{http.StatusOK, http.StatusForbidden}[i]; code != want {
+			t.Fatalf("finish %d of one proof: %d %s, want %d", i+1, code, b, want)
+		}
+	}
+	if keys := d.stored(); len(keys) != 1 {
+		t.Fatalf("one proof registered %d passkeys", len(keys))
+	}
+
+	sA, regA := d.webLink()
+	sB, _ := d.webLink()
+	code, a, b := d.beginRegister(sA, regA)
+	if code != http.StatusOK {
+		t.Fatalf("begin: %d %s", code, b)
+	}
+	_, cred := fresh().create(t, a.Options)
+	if code, b := d.post(dashboard.PasskeyRegisterFinishPath, sB, map[string]any{"ceremony": a.Ceremony, "credential": cred}); code != http.StatusForbidden {
+		t.Fatalf("a registration finished by another session: %d %s, want 403", code, b)
+	}
+
+	// A sign-in finished after its five minutes.
+	k := fresh()
+	s, reg = d.webLink()
+	code, body, c := d.register(k, s, reg)
+	if code != http.StatusOK {
+		t.Fatalf("register: %d %s", code, body)
+	}
+	code, b = d.post(dashboard.PasskeySignInBeginPath, "", nil)
+	var si ceremonyAnswer
+	if code != http.StatusOK || json.Unmarshal(b, &si) != nil {
+		t.Fatalf("begin: %d %s", code, b)
+	}
+	answer := k.get(t, si.Options, c)
+	clock.add(5 * time.Minute)
+	if code, b := d.post(dashboard.PasskeySignInFinishPath, "", map[string]any{"ceremony": si.Ceremony, "credential": answer}); code != http.StatusUnauthorized {
+		t.Fatalf("a sign-in finished five minutes later: %d %s, want 401", code, b)
+	}
+
+	// The same credential id again, from another authenticator.
+	s, reg = d.webLink()
+	if code, body, _ := d.register(&softKey{rpID: webName, origin: d.web, fixedID: c.id}, s, reg); code != http.StatusConflict {
+		t.Fatalf("a credential id registered already: %d %s, want 409", code, body)
+	}
+
+	// A body larger than 64 KiB.
+	if code, b := d.post(dashboard.PasskeySignInFinishPath, "", map[string]any{"ceremony": si.Ceremony, "credential": strings.Repeat("x", 64<<10)}); code != http.StatusBadRequest {
+		t.Fatalf("a body over 64 KiB: %d %s, want 400", code, b)
+	}
+
+	// A flood of sign-ins begun without a session.
+	for range 600 {
+		if code, b := d.post(dashboard.PasskeySignInBeginPath, "", nil); code != http.StatusOK {
+			t.Fatalf("a sign-in among many: %d %s", code, b)
+		}
+	}
+	if code, body, _ := d.signInWith(k, c); code != http.StatusOK {
+		t.Fatalf("a sign-in after the flood: %d %s", code, body)
+	}
+	s, reg = d.webLink()
+	if code, body, _ := d.register(fresh(), s, reg); code != http.StatusOK {
+		t.Fatalf("a registration after the flood: %d %s", code, body)
+	}
+}
+
+// Adding a passkey later checks one of the signed-in person's own: only
+// theirs are asked for, another person's is refused and opens nothing,
+// a person with none has nothing to check, and a check needs the session.
+// A proof from a passkey stops working when that passkey is removed. One
+// person has at most MaxPasskeys.
+func TestPasskeyCheckIsOfTheSignedInPersonsOwn(t *testing.T) {
+	useClock(t)
+	d := newPasskeyDash(t)
+	setOwner(t, d.root, "ada")
+	stop := runDaemon(t, d.root)
+	ka := &softKey{rpID: webName, origin: d.web}
+	s, reg := d.webLink()
+	code, body, adas := d.register(ka, s, reg)
+	if code != http.StatusOK {
+		t.Fatalf("register: %d %s", code, body)
+	}
+	stop()
+	setOwner(t, d.root, "grace")
+	runDaemon(t, d.root)
+
+	check := func(s dashSession) (int, ceremonyAnswer, []byte) {
+		t.Helper()
+		code, b := d.post(dashboard.PasskeySignInBeginPath, s, map[string]any{"check": true})
+		var a ceremonyAnswer
+		json.Unmarshal(b, &a)
+		return code, a, b
+	}
+	gs, greg := d.webLink()
+	if code, _, b := check(gs); code != http.StatusForbidden {
+		t.Fatalf("a check by a person with no passkey: %d %s, want 403", code, b)
+	}
+	if code, _, b := check(""); code != http.StatusUnauthorized {
+		t.Fatalf("a check without a session: %d %s, want 401", code, b)
+	}
+	kg := &softKey{rpID: webName, origin: d.web}
+	code, body, graces := d.register(kg, gs, greg)
+	if code != http.StatusOK {
+		t.Fatalf("register: %d %s", code, body)
+	}
+
+	code, a, b := check(gs)
+	var o struct {
+		PublicKey struct {
+			Allow []struct{ ID string } `json:"allowCredentials"`
+		}
+	}
+	json.Unmarshal(a.Options, &o)
+	if code != http.StatusOK || len(o.PublicKey.Allow) != 1 || o.PublicKey.Allow[0].ID != b64(graces.id) {
+		t.Fatalf("a check asks for %s, want grace's passkey only", b)
+	}
+	before := d.stored()
+	code, b = d.post(dashboard.PasskeySignInFinishPath, gs, map[string]any{"ceremony": a.Ceremony, "credential": ka.get(t, a.Options, adas)})
+	if code != http.StatusForbidden || strings.Contains(string(b), "session") {
+		t.Fatalf("a check with another person's passkey: %d %s, want 403", code, b)
+	}
+	if after := d.stored(); after[0].SignCount != before[0].SignCount || after[0].Used != nil {
+		t.Fatalf("the refused check changed ada's passkey: %+v", after[0])
+	}
+	_, a, _ = check(gs)
+	other, _ := d.webLink()
+	if code, b := d.post(dashboard.PasskeySignInFinishPath, other, map[string]any{"ceremony": a.Ceremony, "credential": kg.get(t, a.Options, graces)}); code != http.StatusUnauthorized {
+		t.Fatalf("a check finished by another session: %d %s, want 401", code, b)
+	}
+	_, a, _ = check(gs)
+	code, b = d.post(dashboard.PasskeySignInFinishPath, gs, map[string]any{"ceremony": a.Ceremony, "credential": kg.get(t, a.Options, graces)})
+	var in signedInAnswer
+	if code != http.StatusOK || json.Unmarshal(b, &in) != nil || in.Register == nil || checkedAt(t, in.Session).IsZero() {
+		t.Fatalf("a check with grace's own passkey: %d %s", code, b)
+	}
+
+	// The proof of a passkey removed since registers nothing.
+	if code, b := d.do(http.MethodDelete, "", dashboard.PasskeysPath+"/"+b64(graces.id), in.Session, d.web, nil); code != http.StatusNoContent {
+		t.Fatalf("remove: %d %s", code, b)
+	}
+	if code, body, _ := d.register(&softKey{rpID: webName, origin: d.web}, in.Session, in.Register.Token); code != http.StatusForbidden {
+		t.Fatalf("the proof of a removed passkey: %d %s, want 403", code, body)
+	}
+
+	// At most MaxPasskeys each: grace adds hers one after the other, each
+	// with the proof of a sign-in with the one before.
+	s, reg = d.webLink()
+	k := &softKey{rpID: webName, origin: d.web}
+	code, body, c := d.register(k, s, reg)
+	if code != http.StatusOK {
+		t.Fatalf("register: %d %s", code, body)
+	}
+	for n := 1; n < dashboard.MaxPasskeys; n++ {
+		code, body, in := d.signInWith(k, c)
+		if code != http.StatusOK {
+			t.Fatalf("sign-in: %d %s", code, body)
+		}
+		k = &softKey{rpID: webName, origin: d.web}
+		if code, body, c = d.register(k, in.Session, in.Register.Token); code != http.StatusOK {
+			t.Fatalf("passkey %d: %d %s", n+1, code, body)
+		}
+	}
+	_, _, in = d.signInWith(k, c)
+	if code, body, _ := d.register(&softKey{rpID: webName, origin: d.web}, in.Session, in.Register.Token); code != http.StatusForbidden || !strings.Contains(body, "remove one") {
+		t.Fatalf("passkey %d: %d %s, want 403", dashboard.MaxPasskeys+1, code, body)
+	}
 }

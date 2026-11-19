@@ -89,11 +89,13 @@ interface Begun<O> {
 }
 
 // signInWithPasskey signs in with any passkey of this dashboard: no name
-// is asked for. The session it opens replaces the page's, and it brings a
-// proof that registers one more passkey.
-export async function signInWithPasskey(): Promise<void> {
+// is asked for. With check, it is a check of the signed-in person's own
+// passkey instead, and only theirs are offered. The session it opens
+// replaces the page's, and it brings a proof that registers one more
+// passkey.
+export async function signInWithPasskey(check = false): Promise<void> {
   type Request = Omit<PublicKeyCredentialRequestOptions, "challenge" | "allowCredentials"> & { challenge: string; allowCredentials?: Descriptor[] };
-  const b = await send<Begun<Request>>(signInBegin, {}, "refused");
+  const b = await send<Begun<Request>>(signInBegin, check ? { check: true } : {}, "refused");
   const o = b.options.publicKey;
   const cred = (await ask(() =>
     navigator.credentials.get({ publicKey: { ...o, challenge: fromB64(o.challenge), allowCredentials: descriptors(o.allowCredentials) } }),
@@ -172,7 +174,7 @@ export async function registerPasskey(): Promise<void> {
 export async function addPasskey(): Promise<void> {
   if (!registerProof()) {
     try {
-      await signInWithPasskey();
+      await signInWithPasskey(true);
     } catch (e) {
       // No passkey here to check, or the person closed the prompt: a link is the other way.
       throw e instanceof PasskeyError && e.why !== "failed" ? new PasskeyError("needsProof") : e;

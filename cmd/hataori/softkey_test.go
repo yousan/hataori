@@ -23,7 +23,9 @@ type softKey struct {
 	// noCounter makes credentials that keep no signature counter, as
 	// synced passkeys do.
 	noUV, noRK, noCounter bool
-	creds                 []*softCred
+	// fixedID, when set, is the id of every credential it makes.
+	fixedID []byte
+	creds   []*softCred
 }
 
 // softCred is one credential the authenticator holds.
@@ -151,6 +153,9 @@ func (k *softKey) create(t *testing.T, raw json.RawMessage) (*softCred, json.Raw
 	}
 	c := &softCred{id: make([]byte, 32), key: key, handle: unb64(t, o.PublicKey.User.ID), counting: !k.noCounter}
 	rand.Read(c.id)
+	if k.fixedID != nil {
+		c.id = k.fixedID
+	}
 	if c.counting {
 		c.count++
 	}

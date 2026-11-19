@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"sync"
 	"syscall"
 	"time"
@@ -98,6 +99,11 @@ func (f *passkeyFile) save(keys []passkey) error {
 	if err != nil {
 		return fmt.Errorf("dashboard: %w", err)
 	}
+	b = append(b, '\n')
+	// load refuses a larger file, which would stop the daemon.
+	if len(b) > maxPasskeysFile {
+		return errFileFull
+	}
 	tmp := PasskeysFile + ".new"
 	if err := f.root.Remove(tmp); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("dashboard: %w", err)
@@ -106,7 +112,7 @@ func (f *passkeyFile) save(keys []passkey) error {
 	if err != nil {
 		return fmt.Errorf("dashboard: %w", err)
 	}
-	_, err = h.Write(append(b, '\n'))
+	_, err = h.Write(b)
 	if err == nil {
 		err = h.Sync()
 	}
@@ -120,8 +126,22 @@ func (f *passkeyFile) save(keys []passkey) error {
 		f.root.Remove(tmp)
 		return fmt.Errorf("dashboard: %w", err)
 	}
+	// The rename is kept only once the directory is synced: until then a
+	// crash may bring the old file back, with a passkey removed since.
+	d, err := f.root.Open(path.Dir(PasskeysFile))
+	if err == nil {
+		err = d.Sync()
+		d.Close()
+	}
+	if err != nil {
+		return fmt.Errorf("dashboard: %s: %w", path.Dir(PasskeysFile), err)
+	}
 	return nil
 }
+
+// errFileFull is why a change that would make the file larger than load
+// reads is refused.
+var errFileFull = fmt.Errorf("the passkeys file would be larger than %d bytes: remove some passkeys first", maxPasskeysFile)
 
 // change reads the passkeys, gives them to fn, and writes what fn returns
 // when it says to, all under one lock. Nothing is written when fn fails.

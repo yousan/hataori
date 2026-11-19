@@ -2,12 +2,15 @@ package dashboard
 
 import (
 	"bytes"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"slices"
 	"strings"
@@ -27,8 +30,16 @@ import (
 // sign-in link was just used, or a passkey the person has was just
 // checked. Either gives the page a registration token, bound to the
 // session it came with and good for RegisterWithin, which one registration
-// uses up. A session alone, however new, adds no passkey, so whoever takes
+// uses up; a token from a passkey stops working when that passkey is
+// removed. A session alone, however new, adds no passkey, so whoever takes
 // a session cannot keep a way back in.
+//
+// Signing in with a passkey needs no session, so it keeps nothing on the
+// server until a passkey has answered: the ceremony is a challenge the
+// server signed, and a challenge that was answered is kept until it
+// expires so that it is answered once. A check of the signed-in person's
+// own passkey ({"check": true}, with the session) asks for that person's
+// passkeys only, and refuses anyone else's.
 //
 // On the loopback listener SSH or the host is already the proof: it
 // neither signs in with a passkey nor registers one. Either listener lists
@@ -37,8 +48,8 @@ import (
 // (changeRoute), and each such request must carry the listener's exact
 // Origin.
 //
-//	POST   /api/passkeys/signin/begin       {"ceremony", "options"}; no session needed
-//	POST   /api/passkeys/signin/finish      {"ceremony", "credential"} → {"session", "register"}; no session needed
+//	POST   /api/passkeys/signin/begin       [{"check": true}] → {"ceremony", "options"}; no session needed but for a check
+//	POST   /api/passkeys/signin/finish      {"ceremony", "credential"} → {"session", "register"}; no session needed but for a check
 //	POST   /api/passkeys/register/begin     {"register"} → {"ceremony", "options"}
 //	POST   /api/passkeys/register/finish    {"ceremony", "credential"} → {"passkey"}
 //	GET    /api/passkeys                    [{"id", "made", "used"}], the session's person's
@@ -59,14 +70,19 @@ const (
 // checked, a passkey may be registered with that proof.
 const RegisterWithin = 5 * time.Minute
 
+// MaxPasskeys is how many passkeys one person may have.
+const MaxPasskeys = 32
+
 const (
 	// ceremonyTTL is how long a sign-in ceremony may take.
 	ceremonyTTL = 5 * time.Minute
-	// maxCeremonies is how many ceremonies may be under way at once: a
-	// sign-in begins without a session.
+	// maxCeremonies is how many registrations and checks may be under way
+	// at once. Each needs a session; a sign-in keeps nothing here.
 	maxCeremonies = 256
-	// maxPasskeyBody is the largest request body a passkey route reads.
+	// maxPasskeyBody is the largest request body a passkey route reads,
+	// and bodyTimeout how long reading it may take.
 	maxPasskeyBody = 64 << 10
+	bodyTimeout    = 10 * time.Second
 )
 
 // changeRoute reports whether method and path name a route that takes a
@@ -96,21 +112,20 @@ func signInRoute(path string) bool {
 type grant struct {
 	person  string
 	session [32]byte // the hash of that session
+	passkey []byte   // the passkey that was checked; nil for a link
 	exp     time.Time
 }
 
-// ceremony is a WebAuthn ceremony under way, kept until it finishes or
-// expires, and used once.
+// ceremony is a registration or a check under way, kept until it finishes
+// or expires, and used once. Each belongs to the session that began it.
 type ceremony struct {
-	register bool
-	// Of a registration: whose passkey it makes, the session that began
-	// it, the grant it uses, and the user handle.
-	person  string
-	session [32]byte
-	grant   [32]byte
-	handle  []byte
-	data    webauthn.SessionData
-	exp     time.Time
+	register bool // else a check
+	person   string
+	session  [32]byte
+	grant    [32]byte // a registration's proof
+	handle   []byte   // a registration's user handle
+	data     webauthn.SessionData
+	exp      time.Time
 }
 
 // passkeyUser is a person as the WebAuthn library sees them.
@@ -124,6 +139,20 @@ func (u passkeyUser) WebAuthnID() []byte                         { return u.hand
 func (u passkeyUser) WebAuthnName() string                       { return u.person }
 func (u passkeyUser) WebAuthnDisplayName() string                { return u.person }
 func (u passkeyUser) WebAuthnCredentials() []webauthn.Credential { return u.creds }
+
+// userOf is person as the library sees them, with their passkeys in keys.
+func userOf(person string, keys []passkey) passkeyUser {
+	u := passkeyUser{person: person}
+	for _, k := range keys {
+		if k.Person == person {
+			if u.handle == nil {
+				u.handle = k.Handle
+			}
+			u.creds = append(u.creds, k.credential())
+		}
+	}
+	return u
+}
 
 // credential is k as the WebAuthn library checks it. The user was
 // verified when it was made.
@@ -187,9 +216,12 @@ func (s *Server) passkeysHere(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
-// readBody decodes r's JSON body into v, and answers when it cannot.
+// readBody decodes r's JSON body into v, and answers when it cannot. An
+// empty body is an empty object. The body may take bodyTimeout to arrive.
 func readBody(w http.ResponseWriter, r *http.Request, v any) bool {
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxPasskeyBody)).Decode(v); err != nil {
+	http.NewResponseController(w).SetReadDeadline(time.Now().Add(bodyTimeout))
+	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxPasskeyBody)).Decode(v)
+	if err != nil && !errors.Is(err, io.EOF) {
 		http.Error(w, "not a request this route reads", http.StatusBadRequest)
 		return false
 	}
@@ -197,8 +229,9 @@ func readBody(w http.ResponseWriter, r *http.Request, v any) bool {
 }
 
 // newGrant makes the proof for one registration by the person of session,
-// good for RegisterWithin.
-func (s *Server) newGrant(person, session string) (*registerToken, error) {
+// good for RegisterWithin; checked is the passkey that was checked, nil
+// for a link.
+func (s *Server) newGrant(person, session string, checked []byte) (*registerToken, error) {
 	tok, sum, err := secret()
 	if err != nil {
 		return nil, err
@@ -211,7 +244,7 @@ func (s *Server) newGrant(person, session string) (*registerToken, error) {
 			delete(s.grants, k)
 		}
 	}
-	s.grants[sum] = grant{person: person, session: sha256.Sum256([]byte(session)), exp: now.Add(RegisterWithin)}
+	s.grants[sum] = grant{person: person, session: sha256.Sum256([]byte(session)), passkey: checked, exp: now.Add(RegisterWithin)}
 	return &registerToken{Token: tok, ExpiresIn: int(RegisterWithin / time.Second)}, nil
 }
 
@@ -231,14 +264,20 @@ func (s *Server) grantOf(tok string, ss session) (grant, [32]byte, bool) {
 	return g, sum, ok && tok != "" && g.person == ss.person && g.session == ss.sum && s.now().Before(g.exp)
 }
 
-// useGrant takes the grant sum names out, and reports whether it was
+// useGrant takes the grant sum names out, and returns it when it was
 // still there and good.
-func (s *Server) useGrant(sum [32]byte) bool {
+func (s *Server) useGrant(sum [32]byte) (grant, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	g, ok := s.grants[sum]
 	delete(s.grants, sum)
-	return ok && s.now().Before(g.exp)
+	return g, ok && s.now().Before(g.exp)
+}
+
+// stillThere reports whether the passkey a grant came from, if any, is
+// still one of its person's.
+func (g grant) stillThere(keys []passkey) bool {
+	return g.passkey == nil || slices.ContainsFunc(keys, func(k passkey) bool { return k.Person == g.person && bytes.Equal(k.ID, g.passkey) })
 }
 
 // addCeremony keeps c and returns the id the page finishes it with.
@@ -273,10 +312,77 @@ func (s *Server) takeCeremony(id string, register bool) (ceremony, bool) {
 	return c, ok && id != "" && c.register == register && s.now().Before(c.exp)
 }
 
+// signInLabel names what a sign-in ceremony's signature covers: its
+// expiry, then the challenge.
+const signInLabel = "hataori dashboard passkey sign-in 1\x00"
+
+// signChallenge is the ceremony id of a sign-in: the challenge and its
+// expiry, signed with the session key.
+func (s *Server) signChallenge(challenge string, exp time.Time) string {
+	payload := binary.BigEndian.AppendUint64(nil, uint64(exp.Unix()))
+	payload = append(payload, challenge...)
+	m := hmac.New(sha256.New, s.key)
+	m.Write([]byte(signInLabel))
+	m.Write(payload)
+	return "s." + base64.RawURLEncoding.EncodeToString(payload) + "." + base64.RawURLEncoding.EncodeToString(m.Sum(nil))
+}
+
+// signedChallenge returns the challenge of a sign-in ceremony id that this
+// server signed and that has not expired, and when it expires.
+func (s *Server) signedChallenge(id string) (string, time.Time, bool) {
+	p, sig, ok := strings.Cut(strings.TrimPrefix(id, "s."), ".")
+	if !ok || !strings.HasPrefix(id, "s.") {
+		return "", time.Time{}, false
+	}
+	payload, err1 := base64.RawURLEncoding.DecodeString(p)
+	mac, err2 := base64.RawURLEncoding.DecodeString(sig)
+	if err1 != nil || err2 != nil || len(payload) <= 8 {
+		return "", time.Time{}, false
+	}
+	m := hmac.New(sha256.New, s.key)
+	m.Write([]byte(signInLabel))
+	m.Write(payload)
+	exp := time.Unix(int64(binary.BigEndian.Uint64(payload[:8])), 0)
+	if !hmac.Equal(mac, m.Sum(nil)) || !s.now().Before(exp) {
+		return "", time.Time{}, false
+	}
+	return string(payload[8:]), exp, true
+}
+
+// answered records that challenge was answered, until exp, and reports
+// whether it had been already.
+func (s *Server) answered(challenge string, exp time.Time) bool {
+	sum := sha256.Sum256([]byte(challenge))
+	now := s.now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k, until := range s.used {
+		if !now.Before(until) {
+			delete(s.used, k)
+		}
+	}
+	if _, ok := s.used[sum]; ok {
+		return true
+	}
+	s.used[sum] = exp
+	return false
+}
+
 // passkeySignInBegin starts signing in with a passkey: any passkey of this
-// relying party, so no name is asked for.
+// relying party, so no name is asked for, and nothing is kept. A check
+// asks for the signed-in person's own passkeys.
 func (s *Server) passkeySignInBegin(w http.ResponseWriter, r *http.Request) {
 	if !s.passkeysHere(w, r) {
+		return
+	}
+	var req struct {
+		Check bool `json:"check"`
+	}
+	if !readBody(w, r, &req) {
+		return
+	}
+	if req.Check {
+		s.checkBegin(w, r)
 		return
 	}
 	opts, data, err := s.rp.BeginDiscoverableLogin(webauthn.WithUserVerification(protocol.VerificationRequired))
@@ -285,14 +391,39 @@ func (s *Server) passkeySignInBegin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cannot start a passkey sign-in", http.StatusInternalServerError)
 		return
 	}
-	id, ok, err := s.addCeremony(ceremony{data: *data, exp: s.now().Add(ceremonyTTL)})
-	if err != nil {
-		http.Error(w, "cannot start a passkey sign-in", http.StatusInternalServerError)
+	writeJSON(w, struct {
+		Ceremony string                        `json:"ceremony"`
+		Options  *protocol.CredentialAssertion `json:"options"`
+	}{s.signChallenge(data.Challenge, s.now().Add(ceremonyTTL)), opts})
+}
+
+// checkBegin starts a check of the signed-in person's own passkey.
+func (s *Server) checkBegin(w http.ResponseWriter, r *http.Request) {
+	ss, ok := s.sessionFrom(r, listenerOfRequest(r))
+	if !ok {
+		http.Error(w, "not signed in", http.StatusUnauthorized)
 		return
 	}
-	if !ok {
-		s.Log.Warn("dashboard: passkey sign-in refused: too many ceremonies under way", "listener", string(control.WayWeb))
-		http.Error(w, "too many sign-ins under way: try again in a few minutes", http.StatusServiceUnavailable)
+	keys, err := s.keys.list()
+	if err != nil {
+		s.Log.Error("dashboard: passkeys", "err", err)
+		http.Error(w, "cannot read the passkeys", http.StatusInternalServerError)
+		return
+	}
+	u := userOf(ss.person, keys)
+	if len(u.creds) == 0 {
+		http.Error(w, "you have no passkey here to check: open a new sign-in link to add one", http.StatusForbidden)
+		return
+	}
+	opts, data, err := s.rp.BeginLogin(u, webauthn.WithUserVerification(protocol.VerificationRequired))
+	if err != nil {
+		s.Log.Error("dashboard: passkey check", "err", err)
+		http.Error(w, "cannot start a passkey check", http.StatusInternalServerError)
+		return
+	}
+	id, ok, err := s.addCeremony(ceremony{person: ss.person, session: ss.sum, data: *data, exp: s.now().Add(ceremonyTTL)})
+	if err != nil || !ok {
+		http.Error(w, "cannot start a passkey check now: try again in a few minutes", http.StatusServiceUnavailable)
 		return
 	}
 	writeJSON(w, struct {
@@ -310,14 +441,17 @@ type finishRequest struct {
 // Why a passkey sign-in opens nothing, as the page is told.
 var (
 	errUnknownPasskey = errors.New("this passkey is not registered here: it was removed, or made for another dashboard")
+	errNotYours       = errors.New("this passkey is not yours: check one of your own, or sign out first")
 	errCounterBack    = errors.New("this passkey's signature counter did not go up, so it may have been copied: it is refused")
 	errMayNotSignIn   = errors.New("the person of this passkey may no longer sign in")
+	errAnswered       = errors.New("this passkey sign-in was finished already: start again")
 )
 
 // passkeySignInFinish checks the passkey's signature and opens a session
 // of its person, which records when the passkey was checked. A passkey
 // whose signature counter did not go up, or whose person may no longer
-// sign in, opens nothing, and that is logged.
+// sign in, opens nothing, and that is logged. A check opens a session of
+// the person who asked, with their own passkey only.
 func (s *Server) passkeySignInFinish(w http.ResponseWriter, r *http.Request) {
 	if !s.passkeysHere(w, r) {
 		return
@@ -326,10 +460,16 @@ func (s *Server) passkeySignInFinish(w http.ResponseWriter, r *http.Request) {
 	if !readBody(w, r, &req) {
 		return
 	}
-	c, ok := s.takeCeremony(req.Ceremony, false)
-	if !ok {
-		http.Error(w, "this passkey sign-in has expired or was finished: start again", http.StatusUnauthorized)
-		return
+	challenge, exp, signed := s.signedChallenge(req.Ceremony)
+	var check ceremony
+	if !signed {
+		var ok bool
+		check, ok = s.takeCeremony(req.Ceremony, false)
+		ss, signedIn := s.sessionFrom(r, listenerOfRequest(r))
+		if !ok || !signedIn || ss.person != check.person || ss.sum != check.session {
+			http.Error(w, "this passkey sign-in has expired, was finished, or belongs to another sign-in: start again", http.StatusUnauthorized)
+			return
+		}
 	}
 	parsed, err := protocol.ParseCredentialRequestResponseBytes(req.Credential)
 	if err != nil {
@@ -339,26 +479,32 @@ func (s *Server) passkeySignInFinish(w http.ResponseWriter, r *http.Request) {
 	now := s.now()
 	var who passkey
 	err = s.keys.change(func(keys []passkey) ([]passkey, bool, error) {
-		i, unknown := -1, false
-		_, cred, err := s.rp.ValidatePasskeyLogin(func(rawID, _ []byte) (webauthn.User, error) {
-			i = slices.IndexFunc(keys, func(k passkey) bool { return bytes.Equal(k.ID, rawID) })
-			if i < 0 {
-				unknown = true
-				return nil, errUnknownPasskey
-			}
-			k := keys[i]
-			return passkeyUser{handle: k.Handle, person: k.Person, creds: []webauthn.Credential{k.credential()}}, nil
-		}, c.data, parsed)
-		if unknown {
+		i := slices.IndexFunc(keys, func(k passkey) bool { return bytes.Equal(k.ID, parsed.RawID) })
+		if i < 0 {
 			return nil, false, errUnknownPasskey
 		}
-		if i < 0 {
-			return nil, false, err // refused before the passkey was looked up
-		}
 		k := &keys[i]
+		var cred *webauthn.Credential
+		var err error
+		if signed {
+			data := webauthn.SessionData{Challenge: challenge, RelyingPartyID: s.rp.Config.RPID, UserVerification: protocol.VerificationRequired}
+			_, cred, err = s.rp.ValidatePasskeyLogin(func(_, _ []byte) (webauthn.User, error) {
+				return passkeyUser{handle: k.Handle, person: k.Person, creds: []webauthn.Credential{k.credential()}}, nil
+			}, data, parsed)
+		} else {
+			if k.Person != check.person {
+				return nil, false, errNotYours
+			}
+			cred, err = s.rp.ValidateLogin(userOf(check.person, keys), check.data, parsed)
+		}
 		if err != nil {
 			s.Log.Warn("dashboard: passkey sign-in refused", "person", k.Person, "passkey", shortID(k.ID), "err", err)
 			return nil, false, err
+		}
+		// A sign-in's challenge is answered once; a check's ceremony was
+		// taken out already.
+		if signed && s.answered(challenge, exp) {
+			return nil, false, errAnswered
 		}
 		if cred.Authenticator.CloneWarning {
 			s.Log.Warn("dashboard: passkey sign-in refused: its signature counter did not go up, so the passkey may have been copied",
@@ -376,8 +522,11 @@ func (s *Server) passkeySignInFinish(w http.ResponseWriter, r *http.Request) {
 		return keys, true, nil
 	})
 	switch {
-	case errors.Is(err, errUnknownPasskey), errors.Is(err, errCounterBack), errors.Is(err, errMayNotSignIn):
+	case errors.Is(err, errUnknownPasskey), errors.Is(err, errCounterBack), errors.Is(err, errMayNotSignIn), errors.Is(err, errAnswered):
 		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	case errors.Is(err, errNotYours):
+		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	case err != nil:
 		var pe *protocol.Error
@@ -394,12 +543,12 @@ func (s *Server) passkeySignInFinish(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cannot make a session", http.StatusInternalServerError)
 		return
 	}
-	reg, err := s.newGrant(who.Person, tok)
+	reg, err := s.newGrant(who.Person, tok, who.ID)
 	if err != nil {
 		http.Error(w, "cannot make a session", http.StatusInternalServerError)
 		return
 	}
-	s.Log.Info("dashboard: signed in with a passkey", "person", who.Person, "passkey", shortID(who.ID))
+	s.Log.Info("dashboard: signed in with a passkey", "person", who.Person, "passkey", shortID(who.ID), "check", !signed)
 	writeJSON(w, signedIn{Session: tok, Register: reg})
 }
 
@@ -409,6 +558,13 @@ type signedIn struct {
 	Session  string         `json:"session"`
 	Register *registerToken `json:"register,omitempty"`
 }
+
+// Why a registration is refused, as the page is told.
+var (
+	errNoProof = errors.New("registering a passkey needs a proof made for it: open a new sign-in link, or check a passkey you have, and register within five minutes")
+	errTooMany = fmt.Errorf("you have %d passkeys, the most one person may have: remove one first", MaxPasskeys)
+	errTaken   = errors.New("this passkey is registered already")
+)
 
 // passkeyRegisterBegin starts registering a passkey for the session's
 // person, with the proof the session got.
@@ -425,7 +581,7 @@ func (s *Server) passkeyRegisterBegin(w http.ResponseWriter, r *http.Request) {
 	}
 	g, sum, ok := s.grantOf(req.Register, ss)
 	if !ok {
-		http.Error(w, "registering a passkey needs a proof made for it: open a new sign-in link, or check a passkey you have, and register within five minutes", http.StatusForbidden)
+		http.Error(w, errNoProof.Error(), http.StatusForbidden)
 		return
 	}
 	keys, err := s.keys.list()
@@ -434,16 +590,18 @@ func (s *Server) passkeyRegisterBegin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cannot read the passkeys", http.StatusInternalServerError)
 		return
 	}
-	u := passkeyUser{person: ss.person}
+	if !g.stillThere(keys) {
+		http.Error(w, errNoProof.Error(), http.StatusForbidden)
+		return
+	}
+	u := userOf(ss.person, keys)
+	if len(u.creds) >= MaxPasskeys {
+		http.Error(w, errTooMany.Error(), http.StatusForbidden)
+		return
+	}
 	var exclude []protocol.CredentialDescriptor
-	for _, k := range keys {
-		if k.Person == ss.person {
-			if u.handle == nil {
-				u.handle = k.Handle
-			}
-			c := k.credential()
-			exclude = append(exclude, c.Descriptor())
-		}
+	for _, c := range u.creds {
+		exclude = append(exclude, c.Descriptor())
 	}
 	if u.handle == nil {
 		u.handle = make([]byte, 32)
@@ -452,6 +610,7 @@ func (s *Server) passkeyRegisterBegin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	u.creds = nil
 	opts, data, err := s.rp.BeginRegistration(u,
 		webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
 			ResidentKey:        protocol.ResidentKeyRequirementRequired,
@@ -510,25 +669,28 @@ func (s *Server) passkeyRegisterFinish(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "this authenticator made a passkey that cannot be found without a name: use another", http.StatusBadRequest)
 		return
 	}
-	if !s.useGrant(c.grant) {
-		http.Error(w, "registering a passkey needs a proof made for it: open a new sign-in link, or check a passkey you have, and register within five minutes", http.StatusForbidden)
-		return
-	}
 	now := s.now()
 	k := passkey{ID: cred.ID, Person: c.person, Handle: c.handle, PublicKey: cred.PublicKey, SignCount: cred.Authenticator.SignCount,
 		BackupEligible: cred.Flags.BackupEligible, BackupState: cred.Flags.BackupState, Made: now}
-	errTaken := errors.New("this passkey is registered already")
 	err = s.keys.change(func(keys []passkey) ([]passkey, bool, error) {
-		if slices.ContainsFunc(keys, func(x passkey) bool { return bytes.Equal(x.ID, k.ID) }) {
+		switch g, ok := s.useGrant(c.grant); {
+		case !ok || !g.stillThere(keys):
+			return nil, false, errNoProof
+		case slices.ContainsFunc(keys, func(x passkey) bool { return bytes.Equal(x.ID, k.ID) }):
 			return nil, false, errTaken
+		case len(userOf(c.person, keys).creds) >= MaxPasskeys:
+			return nil, false, errTooMany
 		}
 		return append(keys, k), true, nil
 	})
-	if errors.Is(err, errTaken) {
+	switch {
+	case errors.Is(err, errNoProof), errors.Is(err, errTooMany), errors.Is(err, errFileFull):
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	case errors.Is(err, errTaken):
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
-	}
-	if err != nil {
+	case err != nil:
 		s.Log.Error("dashboard: passkey registration", "err", err)
 		http.Error(w, "cannot keep the passkey", http.StatusInternalServerError)
 		return
@@ -570,7 +732,8 @@ func (s *Server) passkeyList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
-// passkeyRemove removes one of the session's person's passkeys.
+// passkeyRemove removes one of the session's person's passkeys. A proof
+// that a check of it gave stops working with it.
 func (s *Server) passkeyRemove(w http.ResponseWriter, r *http.Request) {
 	ss := sessionOf(r)
 	id, err := base64.RawURLEncoding.DecodeString(r.PathValue("id"))
