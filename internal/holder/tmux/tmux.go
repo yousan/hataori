@@ -20,7 +20,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync/atomic"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/yousan/hataori/internal/agent"
@@ -37,9 +38,9 @@ type Holder struct {
 	Tmux string        // the tmux program; "tmux" when empty
 	Poll time.Duration // how often Screen takes a snapshot; 500ms when zero
 
-	// noRawPaste is set once tmux has said it does not know paste-buffer's
-	// -S: a server before 3.7, which pastes a buffer as it is.
-	noRawPaste atomic.Bool
+	// noRawPaste holds, by socket, the servers that said they do not know
+	// paste-buffer's -S: before 3.7, which paste a buffer as it is.
+	noRawPaste sync.Map
 }
 
 var _ holder.Holder = (*Holder)(nil)
@@ -140,8 +141,7 @@ type tmuxError struct {
 func (e *tmuxError) Error() string { return fmt.Sprintf("tmux: %s: %v: %s", e.op, e.err, e.msg) }
 func (e *tmuxError) Unwrap() error { return e.err }
 
-// noServer reports whether err says that no server listens on the socket:
-// the server, and so every window of it, is gone.
+// noServer reports whether err says that no server listens on the socket.
 func noServer(err error) bool {
 	var te *tmuxError
 	if !errors.As(err, &te) {
@@ -149,6 +149,24 @@ func noServer(err error) bool {
 	}
 	return strings.Contains(te.msg, "no server running") ||
 		strings.HasPrefix(te.msg, "error connecting to") && strings.Contains(te.msg, "No such file or directory")
+}
+
+// serverGone is what no server on the socket means: the window is gone
+// when the reference's server process is too. A socket file that was
+// removed, as by a cleaner of temporary files, leaves a server that runs
+// on and cannot be reached: that is not known to be gone.
+func serverGone(r ref) error {
+	if errors.Is(syscall.Kill(r.Server, 0), syscall.ESRCH) {
+		return errGone
+	}
+	return errors.New("tmux: the server's socket does not answer, and its process runs")
+}
+
+// noPanes reports whether a list-panes error says that the server has no
+// pane to list, as a server with exit-empty off and no session left.
+func noPanes(err error) bool {
+	var te *tmuxError
+	return errors.As(err, &te) && (strings.Contains(te.msg, "no current target") || strings.Contains(te.msg, "no sessions"))
 }
 
 // pane is what list-panes says of the window's pane.
@@ -165,7 +183,7 @@ var errGone = errors.New("tmux: the window is gone")
 func (h *Holder) find(ctx context.Context, r ref) (pane, error) {
 	out, err := h.tmux(ctx, r, nil, "display-message", "-p", "#{pid}")
 	if noServer(err) {
-		return pane{}, errGone
+		return pane{}, serverGone(r)
 	}
 	if err != nil {
 		return pane{}, err
@@ -179,6 +197,9 @@ func (h *Holder) find(ctx context.Context, r ref) (pane, error) {
 	// a tab in a format as "_".
 	out, err = h.tmux(ctx, r, nil, "list-panes", "-a", "-F", "#{pane_id} #{pane_tty} #{pane_width} #{pane_height}")
 	if noServer(err) {
+		return pane{}, serverGone(r)
+	}
+	if noPanes(err) {
 		return pane{}, errGone
 	}
 	if err != nil {
@@ -218,8 +239,9 @@ func newBuffer() (string, error) {
 // paste-buffer -p -r -d, which pastes it unchanged, bracketed when the
 // program asked for bracketed paste, and deletes it; a key by send-keys
 // with tmux's name for it. A part it cannot encode refuses the whole input
-// before anything runs, and so does a window that is gone. When a paste
-// fails, its buffer is deleted. A failed part ends the input.
+// before anything runs, and so do an empty paste and a window that is gone.
+// When a paste fails, its buffer is deleted. A failed part ends the input,
+// and so does ctx: no part starts after it ended.
 func (h *Holder) Input(ctx context.Context, w holder.Window, parts []agent.Part) error {
 	r, err := parseRef(w)
 	if err != nil {
@@ -227,6 +249,9 @@ func (h *Holder) Input(ctx context.Context, w holder.Window, parts []agent.Part)
 	}
 	for i, p := range parts {
 		if p.Key == "" {
+			if p.Paste == "" {
+				return fmt.Errorf("tmux: part %d is empty", i+1)
+			}
 			continue
 		}
 		if p.Paste != "" {
@@ -240,6 +265,9 @@ func (h *Holder) Input(ctx context.Context, w holder.Window, parts []agent.Part)
 		return err
 	}
 	for _, p := range parts {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("tmux: the input was stopped: %w", err)
+		}
 		if p.Key != "" {
 			if _, err := h.tmux(ctx, r, nil, "send-keys", "-t", r.Pane, keyNames[p.Key]); err != nil {
 				return err
@@ -269,11 +297,11 @@ func (h *Holder) paste(ctx context.Context, r ref, text string) error {
 		// Since 3.7 tmux pastes a buffer's control characters as ^X unless
 		// given -S. An older server refuses -S before it does anything, and
 		// pastes the buffer as it is.
-		if !h.noRawPaste.Load() {
+		if _, old := h.noRawPaste.Load(r.Socket); !old {
 			_, err = h.tmux(cctx, r, nil, append(args, "-S")...)
 			var te *tmuxError
 			if errors.As(err, &te) && strings.Contains(te.msg, "unknown flag -S") {
-				h.noRawPaste.Store(true)
+				h.noRawPaste.Store(r.Socket, true)
 				_, err = h.tmux(cctx, r, nil, args...)
 			}
 		} else {
@@ -309,14 +337,16 @@ func process(ctx context.Context, pid int) (proc, error) {
 	ctx, cancel := context.WithTimeout(ctx, cmdTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "ps", "-o", "pgid=,tpgid=,tty=", "-p", strconv.Itoa(pid))
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	f := strings.Fields(string(out))
 	if err != nil && len(f) == 0 {
 		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			return proc{}, errNoProcess // ps lists nothing for a pid that has none
+		if errors.As(err, &ee) && stderr.Len() == 0 {
+			return proc{}, errNoProcess // ps lists nothing, and says nothing, for a pid that has none
 		}
-		return proc{}, fmt.Errorf("tmux: ps: %w", err)
+		return proc{}, fmt.Errorf("tmux: ps: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	if len(f) != 3 {
 		return proc{}, fmt.Errorf("tmux: ps: %q", out)

@@ -124,7 +124,7 @@ func (s *server) reader() (holder.Window, string) {
 	out, ready := filepath.Join(s.dir, fmt.Sprintf("out%d", s.n)), filepath.Join(s.dir, fmt.Sprintf("ready%d", s.n))
 	pane, pid := s.pane(fmt.Sprintf(`stty raw -echo; printf '\033[?2004h'; echo x > %s; exec cat > %s`, ready, out))
 	waitFile(s.t, ready)
-	time.Sleep(300 * time.Millisecond) // tmux has read the switch
+	time.Sleep(500 * time.Millisecond) // tmux has read the switch
 	return s.window(pane, pid), out
 }
 
@@ -156,6 +156,45 @@ func TestInputArrivesByteForByte(t *testing.T) {
 	want := "\x1b[200~" + paste + "\x1b[201~" + "\r" + "\x1b" + "\x1b[A" + "\x1b[B"
 	if got := waitBytes(t, out, len(want)); got != want {
 		t.Fatalf("the pane read\n%q\nwant\n%q", got, want)
+	}
+	if b := s.run("list-buffers", "-F", "#{buffer_name}"); b != "" {
+		t.Fatalf("buffers left: %q", b)
+	}
+}
+
+// An input that is refused hands over nothing, not even its parts before
+// the one refused: an unknown key, an empty paste, a window of another
+// server on the same socket, an input whose context has ended.
+func TestRefusedInputHandsOverNothing(t *testing.T) {
+	s := newServer(t)
+	w, out := s.reader()
+	h := &Holder{}
+	r, _ := parseRef(w)
+	stale, _ := Window(fmt.Sprintf("%s,%d,0", r.Socket, r.Server+1), r.Pane, w.Process)
+	ended, cancel := context.WithCancel(t.Context())
+	cancel()
+	for _, c := range []struct {
+		name  string
+		ctx   context.Context
+		w     holder.Window
+		parts []agent.Part
+	}{
+		{"an unknown key", t.Context(), w, []agent.Part{{Paste: "never"}, {Key: agent.Enter}, {Key: "Tab"}}},
+		{"an empty paste", t.Context(), w, []agent.Part{{Paste: "never"}, {Key: agent.Enter}, {}}},
+		{"a part both", t.Context(), w, []agent.Part{{Paste: "never"}, {Paste: "x", Key: agent.Enter}}},
+		{"another server", t.Context(), stale, []agent.Part{{Paste: "never"}, {Key: agent.Enter}}},
+		{"an ended context", ended, w, []agent.Part{{Paste: "never"}, {Key: agent.Enter}}},
+	} {
+		if err := h.Input(c.ctx, c.w, c.parts); err == nil {
+			t.Errorf("%s: handed over", c.name)
+		}
+	}
+	if err := h.Input(t.Context(), w, []agent.Part{{Paste: "ok"}}); err != nil {
+		t.Fatal(err)
+	}
+	want := "\x1b[200~ok\x1b[201~"
+	if got := waitBytes(t, out, len(want)); got != want {
+		t.Fatalf("the pane read %q, want only %q", got, want)
 	}
 	if b := s.run("list-buffers", "-F", "#{buffer_name}"); b != "" {
 		t.Fatalf("buffers left: %q", b)
@@ -341,6 +380,20 @@ func TestAlive(t *testing.T) {
 	gone.Run()
 	if st := state(s.window(pane, gone.Process.Pid)); st != holder.Exited {
 		t.Fatalf("a process that ended in a pane that stays: %v", st)
+	}
+
+	// A socket file removed under a server that runs on: it cannot be
+	// reached, and that is not gone.
+	moved := s.sock + ".moved"
+	if err := os.Rename(s.sock, moved); err != nil {
+		t.Fatal(err)
+	}
+	st := state(w)
+	if err := os.Rename(moved, s.sock); err != nil {
+		t.Fatal(err)
+	}
+	if st != holder.Unknown {
+		t.Fatalf("a server whose socket file was removed: %v", st)
 	}
 
 	s.run("kill-pane", "-t", pane)
