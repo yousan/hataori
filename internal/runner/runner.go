@@ -54,6 +54,10 @@ type Runner struct {
 	Poll           time.Duration // how often the logs are read; 50ms when zero
 	IdlePeriod     time.Duration // idle this long, a session's agent is stopped; 30 minutes when zero
 	ContextBytes   int           // the cap on the earlier context a replacing session starts with; 8192 when zero
+	// Cols and Rows are the size of the terminal a session's agent runs in,
+	// for an agent that runs in one; the session host's 80×24 when zero.
+	// Every launch takes them: a new session, a resumed one, one begun again.
+	Cols, Rows uint16
 
 	mu   sync.Mutex
 	live map[int64]*live
@@ -205,7 +209,8 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 			if err := host.WaitReady(dir); err != nil {
 				return err
 			}
-		} else if _, err := host.Start(r.Host, dir, host.Spec{Argv: launch.Argv, Env: launch.Env, Terminal: launch.Terminal, Dir: spec.Dir}); err != nil {
+		} else if _, err := host.Start(r.Host, dir, host.Spec{Argv: launch.Argv, Env: launch.Env, Terminal: launch.Terminal, Dir: spec.Dir,
+			Cols: r.Cols, Rows: r.Rows}); err != nil {
 			return err
 		}
 	}
