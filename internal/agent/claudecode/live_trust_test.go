@@ -1,7 +1,6 @@
 package claudecode
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -15,6 +14,7 @@ import (
 	"github.com/creack/pty"
 
 	"github.com/yousan/hataori/internal/agent"
+	"github.com/yousan/hataori/internal/holder"
 )
 
 // TestLiveTrustFiles starts the real CLI as hataori launches it, in a new
@@ -174,9 +174,13 @@ func liveTrust(t *testing.T, raw, name string, files map[string]string, spec age
 				done = true
 			}
 		}
-		for _, w := range x.Write {
+		for _, k := range x.Keys {
+			w, err := holder.Encode(k)
+			if err != nil {
+				t.Fatal(err)
+			}
 			keys = append(keys, fmt.Sprintf("after %s: %q", after, w))
-			if bytes.Equal(w, keyEnter) {
+			if k == keyEnter {
 				done = true
 			}
 			if _, err := tty.Write(w); err != nil {
@@ -231,7 +235,7 @@ func liveTrust(t *testing.T, raw, name string, files map[string]string, spec age
 		time.Sleep(20 * time.Millisecond)
 	}
 	time.Sleep(300 * time.Millisecond)
-	tty.Write(keyEnter)
+	tty.Write([]byte("\r"))
 	for wait := time.After(20 * time.Second); ; {
 		select {
 		case _, ok := <-chunks:
