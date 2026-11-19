@@ -251,6 +251,7 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 		}
 		l := threadLine(d.ThreadInfo)
 		l.Requests = len(d.Requests)
+		l.Cancelled = d.Cancelled
 		if err := enc.Encode(l); err != nil {
 			return fail(err)
 		}
@@ -368,6 +369,8 @@ type line struct {
 	Effort   string            `json:"effort,omitempty"`
 	Turns    int               `json:"turns"`
 	Requests int               `json:"requests,omitempty"` // open questions, for thread
+	// Cancelled are the posts a plugin cancelled, for thread (#352).
+	Cancelled []control.CancelledPost `json:"cancelled,omitempty"`
 }
 
 func threadLine(t control.ThreadInfo) line {

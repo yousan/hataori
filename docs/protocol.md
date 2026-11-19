@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.18**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.19**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -455,6 +455,8 @@ Calls the plugin's handler on one hook point (design, section 7.3). The handlers
 | before_prompt_build | no | no | yes | skip |
 | message_sending | yes | yes | no | skip |
 
+At `message_sending` (since 3.19) the chat front end calls the handlers before it posts a row of its outbox, and before an edit that changes the text a post shows; not before a lamp, a delete, or an edit that keeps the text. `text` is the post's text. `continue` with `text` posts that text instead, in every link that shows the same part with the same text; `stop` cancels the post: it stays in the outbox with the plugin and the reason, nothing is posted in its place, and the rows behind it go on. What the handlers made of a row is stored with it before it is posted, so a row posted again, after a restart too, is not hooked again; a daemon that stops during the call calls the handlers again. A row of a thread's link is called with the thread's number and scope; a row with no link in a scope's own channel, such as the reply to a trigger, with that scope and no thread; a row in neither, such as a direct message, is not hooked.
+
 At `before_prompt_build` each handler's `text` is the input with the text the handlers before it added, around it; what a handler adds goes around that. Before 3.18 `before_prompt_build` allowed `text` and not `before` and `after`; no version before 3.18 called it.
 
 | Field | Type | Presence | Meaning |
@@ -592,6 +594,22 @@ The fields of `ThreadInfo`, and:
 | `requests` | [`Request`] | required | the open questions and approvals; open approvals asked here are listed whatever the thread state; may be `null` |
 | `recent` | string | required | the end of its last output, at most the bytes asked for: its `text` events in order, each a whole message of the agent, with a blank line (`\n\n`) between two of them, also between two turns; cut at the start of a character, and with no part of a blank line left at the cut. Before 3.12 the messages were joined with nothing between them, and the cut could fall inside a character |
 | `events` | [`Event`] | optional | its last events, as many as `events` asked for, newest last, each as `Events` delivers it; since 1.5 |
+| `cancelled` | [`CancelledPost`] | optional | its last posts that a plugin's `message_sending` handler cancelled, at most 20, newest last, from its `post_cancelled` events; absent for none; since 3.19 |
+
+### Type `CancelledPost`
+
+Since 3.19. A post of the chat front end, or an edit of one, that a plugin's `message_sending` handler cancelled. It stays in the outbox, and nothing was sent in its place.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `time` | time | required | when it was cancelled |
+| `link` | `LinkRef` | required | the conversation it was to be posted in |
+| `event` | integer | required | the position of the event it was to show |
+| `part` | integer | required | which of that event's messages it was |
+| `plugin` | string | required | the plugin whose handler cancelled it |
+| `failed` | boolean | optional | the handler failed where its policy blocks, rather than answered `stop`; `reason` is then hataori's account of the failure |
+| `edit` | boolean | optional | it was an edit of a post, which keeps what it showed before |
+| `reason` | string | optional | why: the plugin's own, which is text and left out for a caller that may not read text, unless `failed` |
 
 ### Type `Context`
 
@@ -846,6 +864,32 @@ Exactly one per turn.
 | `outcome` | string | required | `completion`, `blocked` (on a question) or `failure` |
 | `reason` | string | optional | for a failure: `limit`, `login`, `api_error`, `crashed`, `interrupted`, `not delivered`, ... |
 | `background` | integer | required | background tasks still running; a reader that wants "really finished" waits for 0 |
+
+### Event `post_sent`
+
+Since 3.19. The chat front end posted a row of its outbox in a link of the thread. It is written in the transaction that marks the row as posted, so once per row, also when the row is posted again after a restart; never for a cancelled row, an edit, a lamp or a delete. The daemon writes it only while a plugin of the config is granted this event kind.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `link` | object | required | the link it was posted in, a `LinkRef` |
+| `event` | integer | required | the position of the event it shows |
+| `part` | integer | required | which of that event's messages it is |
+| `message` | string | required | the chat service's id of the posted message |
+| `text` | string | optional | the text posted, as the plugins left it; text |
+
+### Event `post_cancelled`
+
+Since 3.19. A plugin's `message_sending` handler cancelled a row of the chat front end's outbox in a link of the thread: nothing was posted. `ThreadDetail.cancelled` lists them.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `link` | object | required | the link it was to be posted in, a `LinkRef` |
+| `event` | integer | required | the position of the event it was to show |
+| `part` | integer | required | which of that event's messages it was |
+| `plugin` | string | required | the plugin whose handler cancelled it |
+| `failed` | boolean | optional | the handler failed where its policy blocks |
+| `edit` | boolean | optional | it was an edit of a post |
+| `reason` | string | optional | why; text unless `failed` |
 
 ### Event `input`
 

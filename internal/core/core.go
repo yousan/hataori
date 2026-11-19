@@ -932,11 +932,46 @@ func (a *api) Thread(ctx context.Context, id control.ThreadID, recent, events in
 			return d, err
 		}
 	}
+	if d.Cancelled, err = a.cancelled(ctx, id); err != nil {
+		return d, err
+	}
 	d.Events, err = a.c.Store.Last(ctx, id, min(events, control.MaxEvents), a.mayRead)
 	for i := range d.Events {
 		d.Events[i] = a.readable(d.Events[i])
 	}
 	return d, err
+}
+
+// cancelled is thread id's last posts that a plugin cancelled, from the
+// post_cancelled events the chat front end wrote (#352), newest last; a
+// plugin's reason, which is text, is left out for a caller that may not
+// read text.
+func (a *api) cancelled(ctx context.Context, id control.ThreadID) ([]control.CancelledPost, error) {
+	rows, err := a.c.Store.DB.QueryContext(ctx, `SELECT time, data FROM events WHERE thread_id = ? AND kind = 'post_cancelled'
+		ORDER BY pos DESC LIMIT ?`, int64(id), control.CancelledMax)
+	if err != nil {
+		return nil, fmt.Errorf("core: cancelled posts: %w", err)
+	}
+	defer rows.Close()
+	var out []control.CancelledPost
+	for rows.Next() {
+		var ms int64
+		var data []byte
+		if err := rows.Scan(&ms, &data); err != nil {
+			return nil, fmt.Errorf("core: cancelled posts: %w", err)
+		}
+		var c control.CancelledPost
+		if err := json.Unmarshal(data, &c); err != nil {
+			continue
+		}
+		c.Time = time.UnixMilli(ms).UTC()
+		if a.caller.NoText && !c.Failed {
+			c.Reason = ""
+		}
+		out = append(out, c)
+	}
+	slices.Reverse(out)
+	return out, rows.Err()
 }
 
 func (a *api) ThreadEvents(ctx context.Context, id control.ThreadID, before uint64, n int) ([]control.Event, error) {

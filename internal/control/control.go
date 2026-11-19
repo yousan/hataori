@@ -533,6 +533,26 @@ type ThreadDetail struct {
 	Requests []Request `json:"requests"`         // open questions and approvals
 	Recent   string    `json:"recent"`           // the last output, cut to the size asked for at a character; its messages apart by a blank line since 3.12
 	Events   []Event   `json:"events,omitempty"` // the last events asked for, newest last; since 1.5
+	// Cancelled are the thread's last posts that a plugin's message_sending
+	// handler cancelled, at most CancelledMax, newest last. Since 3.19.
+	Cancelled []CancelledPost `json:"cancelled,omitempty"`
+}
+
+// CancelledMax is how many cancelled posts ThreadDetail lists at most.
+const CancelledMax = 20
+
+// CancelledPost is a post, or an edit of one, that a plugin's
+// message_sending handler cancelled, from its post_cancelled event: it
+// stays in the outbox and was not sent. Since 3.19.
+type CancelledPost struct {
+	Time   time.Time `json:"time"`
+	Link   LinkRef   `json:"link"`  // where it was to be posted
+	Event  uint64    `json:"event"` // the position of the event it was to show
+	Part   int       `json:"part"`
+	Plugin string    `json:"plugin"`
+	Failed bool      `json:"failed,omitempty"` // the handler failed where its policy blocks; Reason is hataori's
+	Edit   bool      `json:"edit,omitempty"`   // an edit of a post, which keeps what it showed
+	Reason string    `json:"reason,omitempty"` // the plugin's own, which is text, unless Failed
 }
 
 // WorkspaceState is what a thread's workspace holds that may exist nowhere

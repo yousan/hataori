@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -351,8 +352,20 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		if fronts, err = frontEnds(abs, confDir, cfg, st, c, lr, lg); err != nil {
 			return err
 		}
+		// The outbox runs message_sending through the plugins' dispatcher
+		// (#352), and writes post_sent when a plugin may read it.
+		postSent := slices.ContainsFunc(grants, func(g plugin.Grant) bool { return slices.Contains(g.Events, "post_sent") })
 		for _, fe := range fronts {
 			tells[fe.Name] = fe.Notice
+			if len(grants) > 0 {
+				fe.Outbox.Hooks = hooks
+			}
+			fe.Outbox.PostSent = postSent
+			for _, s := range cfg.Scopes {
+				if s.Client == fe.Name {
+					fe.Outbox.Scopes = append(fe.Outbox.Scopes, s.Key)
+				}
+			}
 		}
 	}
 	// The front ends end, and are waited for, before what they use is closed.

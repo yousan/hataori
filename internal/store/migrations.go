@@ -449,6 +449,17 @@ var migrations = []Migration{
 	{Name: "threads.foreign", Up: execAll(
 		`ALTER TABLE threads ADD COLUMN foreign_workspace INTEGER NOT NULL DEFAULT 0`,
 	)},
+	// What the plugins' message_sending handlers made of a row (design,
+	// section 7.3), stored before it is posted, so that a row posted again
+	// is not hooked again: '' not yet, 'passed' (with hook_text when they
+	// rewrote it) or 'cancelled' (state 'cancelled', with who and why).
+	{Name: "chat_outbox: message_sending", Up: execAll(
+		`ALTER TABLE chat_outbox ADD COLUMN hook TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE chat_outbox ADD COLUMN hook_text TEXT`,
+		`ALTER TABLE chat_outbox ADD COLUMN hook_by TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE chat_outbox ADD COLUMN hook_reason TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE chat_outbox ADD COLUMN hook_failed INTEGER NOT NULL DEFAULT 0`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {
