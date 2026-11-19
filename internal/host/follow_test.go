@@ -182,8 +182,10 @@ func TestSlowFollowerIsCutOff(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The follower reads nothing, and the command's output still reaches
-	// the log in full.
-	waitFor(t, "the command to finish its output", func() bool {
+	// the log in full. That is 8.8 MB through a terminal: about 3 seconds
+	// on an idle machine with or without the follower, but a runner several
+	// times slower, as CI's sometimes is, needs more than waitFor's 10.
+	waitForWithin(t, "the command to finish its output", 60*time.Second, func() bool {
 		return bytes.HasSuffix(read(t, dir, TerminalLog), []byte("00799999\r\nflooded\r\n"))
 	})
 	if Gone(dir) {
