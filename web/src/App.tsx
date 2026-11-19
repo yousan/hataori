@@ -72,11 +72,11 @@ export function App() {
   const viewOf = (k: TabKey) => views.get(k);
   const chooseView = (k: TabKey) => (v: View) => setViews((have) => new Map(have).set(k, v));
   const current = threadOf(active(tabs));
-  const hosts = useHostTerminals();
+  const [hosts, hostSkew] = useHostTerminals();
   // The rows of host terminals the tree and the narrow list show: idle
   // shell panes are hidden with asleep threads, and counted with them. A
   // pane's tab and details still find it in hosts.
-  const shownHosts = hosts === null ? null : hosts.filter((h) => showsHost(showing, h, now));
+  const shownHosts = hosts === null ? null : hosts.filter((h) => showsHost(showing, h, now + hostSkew));
   const hidden = hiddenThreads + (hosts?.length ?? 0) - (shownHosts?.length ?? 0);
   const host = (id: string) => hosts?.find((h) => hostID(h) === id);
   const currentHost = hostOf(active(tabs));

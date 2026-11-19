@@ -20,16 +20,21 @@ export function hostID(h: HostTerminal): string {
 // feature is off, so that turning it on shows without a reload.
 const offEvery = 60000;
 
-export function useHostTerminals(): HostTerminal[] | null {
+// useHostTerminals returns the list, and how far the host's clock is ahead
+// of this browser's (hostTerminals), so that a time of the list is
+// measured on the host's clock.
+export function useHostTerminals(): [HostTerminal[] | null, number] {
   const [list, setList] = useState<HostTerminal[] | null>(null);
+  const [skew, setSkew] = useState(0);
   useEffect(() => {
     let gone = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const read = () =>
       hostTerminals()
-        .then((ts) => {
+        .then(({ list: ts, skew }) => {
           if (gone) return;
           setList(ts);
+          setSkew(skew);
           timer = setTimeout(read, every);
         })
         .catch((err) => {
@@ -47,7 +52,7 @@ export function useHostTerminals(): HostTerminal[] | null {
       clearTimeout(timer);
     };
   }, []);
-  return list;
+  return [list, skew];
 }
 
 // hostLabel names a host terminal: its tmux session and window, or its

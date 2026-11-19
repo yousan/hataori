@@ -36,8 +36,9 @@ const shells: ReadonlySet<string> = new Set(["sh", "bash", "zsh", "fish", "dash"
 const idleFor = 24 * 60 * 60 * 1000;
 
 // idleShell reports whether h is a tmux pane whose command is a shell and
-// whose window's last activity is more than a day before now. A terminal
-// outside tmux, and a pane whose activity is not known, never is.
+// whose window's last activity is more than a day before now, the host's
+// time. A terminal outside tmux, and a pane whose activity is not known,
+// never is.
 export function idleShell(h: HostTerminal, now: number): boolean {
   if (!h.tmux || !h.activity) return false;
   const at = Date.parse(h.activity);

@@ -76,6 +76,14 @@ func TestDashboardIdleShellPanes(t *testing.T) {
 		{Device: outside, Process: "bash", Activity: ago(72 * time.Hour)},
 		pane(unknown, "%6", "sh", nil),
 	}}
+	// One idle pane for each other shell of the list: all hidden.
+	var others []string
+	for i, sh := range []string{"sh", "dash", "ksh", "mksh", "tcsh", "csh", "nu"} {
+		dev := fmt.Sprintf("/dev/pts/%d", 911+i)
+		terms.list = append(terms.list, pane(dev, fmt.Sprintf("%%%d", 11+i), sh, ago(25*time.Hour)))
+		others = append(others, dev)
+	}
+	all := func(devs ...string) []string { return slices.Concat(devs, others) }
 	hostTermsSource = terms
 	t.Cleanup(func() { hostTermsSource = nil })
 	r := newChatRoot(t, func(cfg map[string]any) {
@@ -98,6 +106,20 @@ func TestDashboardIdleShellPanes(t *testing.T) {
 	eventually(t, "the asleep thread", 20*time.Second, func() bool { d, err := c.Thread(ctx, id, 0, 0); return err == nil && d.State == control.Asleep })
 
 	b := newBrowser(t)
+	// The browser's clock is two days ahead of the host's: the panes' times
+	// are the host's, and so must be the time they are measured from.
+	b.call("Page.enable", map[string]any{})
+	b.call("Page.addScriptToEvaluateOnNewDocument", map[string]any{"source": `(() => {
+		const ahead = 48 * 3600 * 1000, D = Date;
+		function Shifted(...a) {
+			if (!new.target) return new D(D.now() + ahead).toString();
+			return a.length ? new D(...a) : new D(D.now() + ahead);
+		}
+		Shifted.prototype = D.prototype;
+		Object.setPrototypeOf(Shifted, D);
+		Shifted.now = () => D.now() + ahead;
+		window.Date = Shifted;
+	})()`})
 	link, err := c.SignInLink(ctx, "")
 	if err != nil {
 		t.Fatal(err)
@@ -133,13 +155,14 @@ func TestDashboardIdleShellPanes(t *testing.T) {
 	// 1. By default: the idle shell panes are hidden, and counted with the
 	// asleep thread; the terminal outside tmux and the pane of unknown
 	// activity are shown.
-	untilShown("the idle shell panes hidden", tree, []string{bash, editor, outside, unknown}, "3")
+	b.until("the browser's clock ahead", `Date.now() - performance.timeOrigin - performance.now() > 47 * 3600 * 1000`)
+	untilShown("the idle shell panes hidden", tree, []string{bash, editor, outside, unknown}, "10")
 
 	// 2. The switch shows them, and hides them again.
 	b.click(`.tools .show [data-choice=all]`)
-	untilShown("all", tree, []string{loginZsh, bash, editor, fish, outside, unknown}, "")
+	untilShown("all", tree, all(loginZsh, bash, editor, fish, outside, unknown), "")
 	b.click(`.tools .show [data-choice=active]`)
-	untilShown("active again", tree, []string{bash, editor, outside, unknown}, "3")
+	untilShown("active again", tree, []string{bash, editor, outside, unknown}, "10")
 
 	// 3. Without a reload: a pane with an open tab becomes idle and leaves
 	// the tree, keeping its tab and its screen; an idle pane becomes active
@@ -149,11 +172,11 @@ func TestDashboardIdleShellPanes(t *testing.T) {
 	tab := fmt.Sprintf(`.tabbar .tab[data-tab="host:%s#%%2"]`, bash)
 	b.until("the pane's tab with its screen", fmt.Sprintf(`!!document.querySelector('%s') && [...document.querySelectorAll('.pane.active [data-host-screen="%%2"] .xterm-rows > div')].some(d => d.textContent.includes('screen of %%2'))`, tab))
 	terms.change(bash, func(h *control.HostTerminal) { h.Activity = ago(48 * time.Hour) })
-	untilShown("the pane that became idle", tree, []string{editor, outside, unknown}, "4")
+	untilShown("the pane that became idle", tree, []string{editor, outside, unknown}, "11")
 	b.until("its tab and its screen kept", fmt.Sprintf(`!!document.querySelector('%s') && [...document.querySelectorAll('.pane.active [data-host-screen="%%2"] .xterm-rows > div')].some(d => d.textContent.includes('screen of %%2'))`, tab))
 	terms.change(loginZsh, func(h *control.HostTerminal) { h.Activity = ago(time.Minute) })
 	terms.change(fish, func(h *control.HostTerminal) { h.Process = "make" })
-	untilShown("the panes active again", tree, []string{loginZsh, editor, fish, outside, unknown}, "2")
+	untilShown("the panes active again", tree, []string{loginZsh, editor, fish, outside, unknown}, "9")
 	var same bool
 	b.eval(`window.__samePage === true`, &same)
 	if !same {
@@ -163,7 +186,7 @@ func TestDashboardIdleShellPanes(t *testing.T) {
 	// 4. The narrow list hides and counts the same.
 	b.phone()
 	b.until("the narrow list", `document.querySelector('.shell')?.dataset.layout === 'narrow'`)
-	untilShown("the narrow list", ".narrow-list", []string{loginZsh, editor, fish, outside, unknown}, "2")
+	untilShown("the narrow list", ".narrow-list", []string{loginZsh, editor, fish, outside, unknown}, "9")
 	b.click(`.narrow-list .show [data-choice=all]`)
-	untilShown("the narrow list, all", ".narrow-list", []string{loginZsh, bash, editor, fish, outside, unknown}, "")
+	untilShown("the narrow list, all", ".narrow-list", all(loginZsh, bash, editor, fish, outside, unknown), "")
 }
