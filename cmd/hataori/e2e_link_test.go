@@ -32,6 +32,16 @@ func linksOf(t *testing.T, root, n string) []string {
 	return nil
 }
 
+func posts(d *fakesurface.Driver, conv surface.Conversation, text string) int {
+	n := 0
+	for _, c := range d.Calls(conv) {
+		if c.Op == fakesurface.OpPost && c.Message.Text == text {
+			n++
+		}
+	}
+	return n
+}
+
 func opened(d *fakesurface.Driver, conv surface.Conversation) []surface.Conversation {
 	var out []surface.Conversation
 	for _, c := range d.Calls(conv) {
@@ -118,6 +128,9 @@ func TestAttachAThreadOnASecondSurface(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	if l, o := linksOf(t, r.root, n), opened(two, d1); len(l) != 2 || len(o) != 1 {
 		t.Fatalf("attaching again: links %v, opened %v", l, o)
+	}
+	if n := posts(two, there, "Thread #"+n+" is shown here too."); n != 1 {
+		t.Fatalf("the attached chat thread got %d lines saying so, want 1", n)
 	}
 
 	// The thread's next answer is shown in both.

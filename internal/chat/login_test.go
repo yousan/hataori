@@ -205,11 +205,6 @@ func TestTheOwnersCodeGoesToTheRelayAndTheLinkStaysInTheDirectConversation(t *te
 		t.Fatalf("codes handed to the relay: %v", codes)
 	}
 	f.fe.LoginUpdate(relay.Update{Agent: "agent", Done: relay.LoggedIn})
-	// The front end has forgotten where the threads are shown, as after a
-	// restart: it looks their links up again.
-	f.fe.convs.mu.Lock()
-	f.fe.convs.m = nil
-	f.fe.convs.mu.Unlock()
 	f.raw(t, a, "login_restored", map[string]any{"agent": "agent", "outage": 1, "threads": []control.ThreadID{a, b}, "scopes": []string{channel}})
 	m = f.waitFirst(t, "the end of the outage", func(m surface.Message) bool { return strings.Contains(m.Text, "Logged in again.") })
 	if strings.Contains(m.Text, link) || len(m.Choices) != 0 {

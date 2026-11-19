@@ -78,6 +78,13 @@ func (f *FrontEnd) attach(ctx context.Context, conv surface.Conversation, author
 		return answer("Usage: /attach <number>, the number of a hataori thread.")
 	}
 	id := control.ThreadID(n)
+	// Whether the thread is shown in that channel here already: attaching
+	// it again changes nothing, and posts nothing there either.
+	var before int
+	if err := f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM links WHERE thread_id = ? AND client = ? AND channel = ?`,
+		int64(id), f.Name, conv.Channel).Scan(&before); err != nil {
+		return err
+	}
 	api := f.API(control.Caller{From: f.from(author), Scopes: f.scopeList(), May: control.OpRead | control.OpSend})
 	l, err := api.Link(ctx, id, control.LinkRef{Client: f.Name, Channel: conv.Channel, Thread: conv.Thread})
 	switch {
@@ -91,11 +98,10 @@ func (f *FrontEnd) attach(ctx context.Context, conv surface.Conversation, author
 		answer("Not attached: an error, which is in the log.")
 		return err
 	}
-	// The thread is shown in one more conversation from now on.
-	f.convs.mu.Lock()
-	delete(f.convs.m, id)
-	f.convs.mu.Unlock()
 	here := surface.Conversation{Channel: l.Channel, Thread: l.Thread}
+	if before > 0 {
+		return answer(fmt.Sprintf("Thread #%d is shown here already.", n))
+	}
 	if here != conv {
 		if err := f.notice(ctx, here, key, 1, surface.Message{Text: fmt.Sprintf("Thread #%d is shown here too.", n)}); err != nil {
 			return err

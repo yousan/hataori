@@ -13,13 +13,16 @@ import (
 
 // Link shows thread id in one more conversation (design, section 5.2).
 func (a *api) Link(ctx context.Context, id control.ThreadID, l control.LinkRef) (control.LinkRef, error) {
-	scope, err := a.actThread(ctx, control.OpSend, "Link", id)
-	if err != nil {
-		return control.LinkRef{}, err
-	}
 	if l.Client == "" || l.Channel == "" {
 		return control.LinkRef{}, fmt.Errorf("core: link thread %d: a link names a client and a channel", id)
 	}
+	scope, err := a.c.scopeOf(ctx, a.c.Store.DB, id)
+	if err != nil {
+		return control.LinkRef{}, err
+	}
+	// The channel first, so that every link refused for its channel is
+	// logged with the thread, the client and the channel; then the caller,
+	// as for Send.
 	sc := a.c.Scopes[scope]
 	own := l.Client == sc.Owner && l.Channel == scope
 	if !own && !slices.Contains(sc.ShowIn, l.Client+":"+l.Channel) {
@@ -27,6 +30,9 @@ func (a *api) Link(ctx context.Context, id control.ThreadID, l control.LinkRef) 
 			"scope", scope, "reason", "the channel is neither the scope's own nor in its show_in")
 		return control.LinkRef{}, fmt.Errorf("core: link thread %d in %s:%s: not in the show_in of scope %q: %w",
 			id, l.Client, l.Channel, scope, ErrForbidden)
+	}
+	if err := a.act(control.OpSend, "Link", scope); err != nil {
+		return control.LinkRef{}, err
 	}
 	// One link at a time per channel: two attaches of one thread there
 	// open one conversation.

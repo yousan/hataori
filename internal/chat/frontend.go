@@ -68,7 +68,6 @@ type FrontEnd struct {
 	inboundOnce sync.Once
 	in          *inbound
 	opening     sync.Mutex       // held while a trigger's thread is looked up or opened
-	convs       convCache        // the conversations of threads, by number
 	Now         func() time.Time // the clock; time.Now when nil
 
 	ctx context.Context
@@ -197,8 +196,12 @@ func (f *FrontEnd) handle(in surface.Inbound) error {
 	if !ok {
 		return nil
 	}
-	if arg, ok := attachArg(o); ok {
-		// On a surface without commands; a refusal shows nothing.
+	if arg, ok := attachArg(o); ok && !f.Driver.Limits().Commands {
+		// On a surface without commands only; a refusal shows nothing. A
+		// bot account's post is no one's request.
+		if in.Author.Kind == surface.Bot {
+			return nil
+		}
 		return f.attach(ctx, in.Ref.Conv, in.Author, arg, in.Ref.ID, nil)
 	}
 	refuse := func(reason string) {
