@@ -424,7 +424,7 @@ func TestHostInputConfig(t *testing.T) {
 	if c, err = with(`"host_input_idle": "1s"`); err != nil || c.HostInputIdle != time.Second {
 		t.Errorf("host_input_idle 1s: %v", err)
 	}
-	for _, bad := range []string{`"999ms"`, `"0s"`, `"-5m"`, `"five minutes"`, `"  "`} {
+	for _, bad := range []string{`"999ms"`, `"1.5s"`, `"0s"`, `"-5m"`, `"five minutes"`, `"  "`} {
 		_, err := with(`"host_input_idle": ` + bad)
 		if err == nil || !strings.Contains(err.Error(), `"host_input_idle"`) {
 			t.Errorf("host_input_idle %s: %v", bad, err)

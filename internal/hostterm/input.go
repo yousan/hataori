@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/yousan/hataori/internal/control"
 )
@@ -23,6 +24,17 @@ var (
 	deleteBufferCmd = command{"tmux", []string{"delete-buffer", "-b"}}                  // then the buffer
 	listBuffersCmd  = command{"tmux", []string{"list-buffers", "-F", "#{buffer_name}"}} // the buffers' names, one per line
 )
+
+// cmdTimeout bounds each command that types or deletes a buffer.
+const cmdTimeout = 10 * time.Second
+
+// whole returns a context for one command of a batch: it is not cut short
+// when ctx ends, since killing a tmux client does not undo what it already
+// asked of the server (a paste after the end, a buffer made after its
+// deletion), but it has a timeout of its own.
+func whole(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), cmdTimeout)
+}
 
 // bufferSuffix is what follows Buffers in an operation's buffer's name.
 var bufferSuffix = regexp.MustCompile(`^[0-9a-f]{16}$`)
@@ -98,8 +110,9 @@ func (l *Lister) Check(ctx context.Context, pane string, owned []int, procs bool
 // which deletes it. A pane that is not a pane id, a buffer not of this
 // instance, an empty or ambiguous key and a key name that
 // control.ValidHostKey refuses refuse the whole batch before anything
-// runs. When loading or pasting fails, the buffer is deleted. No error
-// holds a key or a text.
+// runs. When loading or pasting fails, the buffer is deleted. Once ctx
+// ends, no further command of the batch starts; one that has started runs
+// to its end. No error holds a key or a text.
 func (l *Lister) Keys(ctx context.Context, pane, buffer string, keys []control.HostKey) error {
 	if !paneID.MatchString(pane) {
 		return errors.New("hostterm: not a tmux pane id")
@@ -118,8 +131,14 @@ func (l *Lister) Keys(ctx context.Context, pane, buffer string, keys []control.H
 		}
 	}
 	for _, k := range keys {
+		if err := ctx.Err(); err != nil { // the operation ended: nothing more of the batch
+			return fmt.Errorf("hostterm: the batch was stopped: %w", err)
+		}
 		if k.Key != "" {
-			if _, err := l.exec(ctx, sendKeysCmd, pane, k.Key); err != nil {
+			cctx, cancel := whole(ctx)
+			_, err := l.exec(cctx, sendKeysCmd, pane, keyArg(k.Key))
+			cancel()
+			if err != nil {
 				return err
 			}
 			continue
@@ -131,20 +150,39 @@ func (l *Lister) Keys(ctx context.Context, pane, buffer string, keys []control.H
 	return nil
 }
 
+// keyArg is a key name as tmux's command line takes it. tmux ends a
+// command at an argument that ends in ";", and takes "\\;" at the end for a
+// ";": unescaped, "M-;" would reach the pane as the text "M-".
+func keyArg(name string) string {
+	if strings.HasSuffix(name, ";") {
+		return name[:len(name)-1] + `\;`
+	}
+	return name
+}
+
 // paste writes one text into pane through buffer, and deletes the buffer
-// when that fails.
+// when that fails, or when ctx ended after the load.
 func (l *Lister) paste(ctx context.Context, pane, buffer string, k control.HostKey) error {
-	_, err := l.execIn(ctx, []byte(k.Text), loadBufferCmd, buffer, "-")
+	cctx, cancel := whole(ctx)
+	_, err := l.execIn(cctx, []byte(k.Text), loadBufferCmd, buffer, "-")
+	cancel()
+	if err == nil {
+		err = ctx.Err()
+	}
 	if err == nil {
 		args := []string{buffer, "-t", pane}
 		if k.Paste {
 			args = append(args, "-p")
 		}
-		_, err = l.exec(ctx, pasteBufferCmd, args...)
+		cctx, cancel := whole(ctx)
+		_, err = l.exec(cctx, pasteBufferCmd, args...)
+		cancel()
 	}
 	if err != nil {
-		// A context that ended must not keep the text in tmux.
-		if derr := l.DropBuffer(context.WithoutCancel(ctx), buffer); derr != nil {
+		cctx, cancel := whole(ctx)
+		derr := l.DropBuffer(cctx, buffer)
+		cancel()
+		if derr != nil {
 			return errors.Join(err, derr)
 		}
 	}

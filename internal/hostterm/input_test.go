@@ -66,7 +66,7 @@ func TestInputCommands(t *testing.T) {
 	if !strings.HasPrefix(buf, testBuffers) || !l.ownBuffer(buf) {
 		t.Fatalf("buffer %q", buf)
 	}
-	keys := []control.HostKey{{Key: "Up"}, {Text: marker + "\x7f"}, {Key: "C-c"}, {Text: marker, Paste: true}, {Key: "C-M-x"}}
+	keys := []control.HostKey{{Key: "Up"}, {Text: marker + "\x7f"}, {Key: "C-c"}, {Text: marker, Paste: true}, {Key: "C-M-x"}, {Key: "M-;"}}
 	if err := l.Keys(ctx, "%4", buf, keys); err != nil {
 		t.Fatal(err)
 	}
@@ -78,6 +78,7 @@ func TestInputCommands(t *testing.T) {
 		{"tmux", "-L", "x", "load-buffer", "-b", buf, "-"},
 		{"tmux", "-L", "x", "paste-buffer", "-d", "-b", buf, "-t", "%4", "-p"},
 		{"tmux", "-L", "x", "send-keys", "-t", "%4", "C-M-x"},
+		{"tmux", "-L", "x", "send-keys", "-t", "%4", `M-\;`}, // a ";" at the end would end tmux's command
 	}
 	if !slices.EqualFunc(f.rec.argvs, want, slices.Equal) {
 		t.Errorf("ran\n%q\nwant\n%q", f.rec.argvs, want)
@@ -100,6 +101,10 @@ func TestInputCommands(t *testing.T) {
 		"a character alone":           {"%4", buf, []control.HostKey{{Key: "a"}}},
 		"a modifier twice":            {"%4", buf, []control.HostKey{{Key: "C-C-a"}}},
 		"two characters":              {"%4", buf, []control.HostKey{{Key: "C-ab"}}},
+		"S- with a character":         {"%4", buf, []control.HostKey{{Key: "S-a"}}},
+		"C- with a brace":             {"%4", buf, []control.HostKey{{Key: "C-{"}}},
+		"S-Tab, which tmux types":     {"%4", buf, []control.HostKey{{Key: "S-Tab"}}},
+		"C-Enter, which tmux drops":   {"%4", buf, []control.HostKey{{Key: "C-Enter"}}},
 		"text as a key":               {"%4", buf, []control.HostKey{{Key: marker}}},
 		"a key and a text":            {"%4", buf, []control.HostKey{{Key: "Up", Text: marker}}},
 		"a paste without text":        {"%4", buf, []control.HostKey{{Key: "Up", Paste: true}}},
@@ -137,6 +142,46 @@ func TestInputCommands(t *testing.T) {
 		}
 	}
 	noMarkerInArgs(t, f.rec.argvs)
+}
+
+// A batch whose context ends runs no further command.
+func TestKeysStopWhenTheContextEnds(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := &fake{answer: func([]string) ([]byte, error) { cancel(); return nil, nil }}
+	l := &Lister{Buffers: testBuffers, run: f.run}
+	buf, _ := l.NewBuffer()
+	if err := l.Keys(ctx, "%1", buf, []control.HostKey{{Key: "Up"}, {Key: "Down"}, {Text: marker}}); err == nil {
+		t.Error("a stopped batch is no error")
+	}
+	if len(f.rec.argvs) != 1 {
+		t.Errorf("ran %q", f.rec.argvs)
+	}
+}
+
+// A command that has started runs to its end when the batch's context ends:
+// a load is not cut short, and is followed by the buffer's deletion, not by
+// a paste.
+func TestACommandRunsToItsEnd(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var argvs [][]string
+	var cut []bool
+	l := &Lister{Buffers: testBuffers, run: func(cctx context.Context, _ []byte, name string, args ...string) ([]byte, error) {
+		argvs = append(argvs, args)
+		if args[0] == "load-buffer" {
+			cancel()
+		}
+		cut = append(cut, cctx.Err() != nil)
+		return nil, nil
+	}}
+	buf, _ := l.NewBuffer()
+	if err := l.Keys(ctx, "%1", buf, []control.HostKey{{Text: marker}, {Key: "Up"}}); err == nil {
+		t.Error("a batch stopped after a load is no error")
+	}
+	if len(argvs) != 2 || argvs[0][0] != "load-buffer" || argvs[1][0] != "delete-buffer" || slices.Contains(cut, true) {
+		t.Errorf("ran %q, cut short %v", argvs, cut)
+	}
 }
 
 // DropLeftovers deletes this instance's buffers and no other.
@@ -226,6 +271,7 @@ func TestTypingIntoARealPane(t *testing.T) {
 		{"cursor", `\033[?1h`, "READY-CURSOR", 3},
 		{"text", ``, "READY-TEXT", len(marker) + 4},
 		{"paste", `\033[?2004h`, "READY-PASTE", 14},
+		{"semicolon", ``, "READY-SEMICOLON", 3},
 	}
 	panes := map[string]string{}
 	for i, p := range progs {
@@ -292,8 +338,11 @@ func TestTypingIntoARealPane(t *testing.T) {
 		t.Fatal(err)
 	}
 	noBuffers("after a bracketed paste")
+	if err := l.Keys(ctx, panes["semicolon"], buf, []control.HostKey{{Key: "M-;"}, {Key: "C-\\"}}); err != nil {
+		t.Fatal(err)
+	}
 
-	want := map[string]string{"cursor": "\x1bOA", "text": text, "paste": "\x1b[200~xy\x1b[201~"}
+	want := map[string]string{"cursor": "\x1bOA", "text": text, "paste": "\x1b[200~xy\x1b[201~", "semicolon": "\x1b;\x1c"}
 	for name, w := range want {
 		var got []byte
 		waitFor(t, "what "+name+" read", func() bool {
@@ -391,4 +440,71 @@ func TestDropLeftoversOnARealServer(t *testing.T) {
 	if want := []string{"hataori-input-other-00112233445566ff", "mine"}; !slices.Equal(names, want) {
 		t.Errorf("buffers left %q, want %q", names, want)
 	}
+}
+
+// Every key name ValidHostKey accepts, with its modifiers in one order,
+// reaches a real tmux's pane as something: not nothing, and not its own
+// letters, which is what tmux types for a name it cannot encode.
+func TestEveryValidKeyIsEncodedByTmux(t *testing.T) {
+	_, tmux := ownTmux(t)
+	got := filepath.Join(t.TempDir(), "got")
+	if _, err := tmux("new-session", "-d", "-s", "keys", "sh", "-c", "stty raw -echo; printf READY; exec cat > "+got); err != nil {
+		t.Fatal(err)
+	}
+	pane, err := tmux("display-message", "-p", "-t", "keys:0", "#{pane_id}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pane = strings.TrimSpace(pane)
+	waitFor(t, "the pane", func() bool { s, _ := tmux("capture-pane", "-p", "-t", pane); return strings.Contains(s, "READY") })
+	var bases []string
+	for k := range anyKeysForTest() {
+		bases = append(bases, k)
+	}
+	for ch := byte(0x21); ch < 0x7f; ch++ {
+		bases = append(bases, string(ch))
+	}
+	slices.Sort(bases)
+	var names []string
+	for _, mods := range []string{"", "C-", "M-", "S-", "C-M-", "C-S-", "M-S-", "C-M-S-"} {
+		for _, b := range bases {
+			if control.ValidHostKey(mods + b) {
+				names = append(names, mods+b)
+			}
+		}
+	}
+	if len(names) < 300 {
+		t.Fatalf("only %d names", len(names))
+	}
+	// One tmux command line per few keys: each key, then a 0xff byte,
+	// which no key makes, to tell them apart.
+	for i := 0; i < len(names); i += 40 {
+		var args []string
+		for _, n := range names[i:min(i+40, len(names))] {
+			args = append(args, "send-keys", "-t", pane, keyArg(n), ";", "send-keys", "-t", pane, "-H", "ff", ";")
+		}
+		if _, err := tmux(args[:len(args)-1]...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var out []byte
+	waitFor(t, "every key", func() bool {
+		out, _ = os.ReadFile(got)
+		return bytes.Count(out, []byte{0xff}) == len(names)
+	})
+	chunks := bytes.Split(out, []byte{0xff})
+	for i, n := range names {
+		if len(chunks[i]) == 0 || bytes.Contains(chunks[i], []byte(n)) {
+			t.Errorf("%s reached the pane as %q", n, chunks[i])
+		}
+	}
+}
+
+// anyKeysForTest are the named keys, as control documents them.
+func anyKeysForTest() map[string]bool {
+	m := map[string]bool{}
+	for _, k := range strings.Fields("Enter Tab BTab BSpace Escape Up Down Left Right Home End PPage NPage IC DC F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12") {
+		m[k] = true
+	}
+	return m
 }

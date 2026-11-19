@@ -1583,7 +1583,8 @@ type HostOperation interface {
 // HostKey is one input to a pane. Key is one of a fixed list of tmux key
 // names (control.ValidHostKey: Enter, Tab, BTab, BSpace, Escape, the
 // arrows, Home, End, PPage, NPage, IC, DC, F1 to F12, and C-, M- and S-
-// with them or with one character), passed to send-keys. Otherwise Text is
+// with them or with one character, as far as tmux encodes each), passed
+// to send-keys. Otherwise Text is
 // written to the pane through a buffer of the operation's own (load-buffer
 // from standard input, then paste-buffer -d), with Paste as a paste
 // (paste-buffer -p). hataori logs and stores neither; Text is in the

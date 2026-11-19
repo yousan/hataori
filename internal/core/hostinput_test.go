@@ -17,6 +17,7 @@ import (
 
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/hostterm"
+	"github.com/yousan/hataori/internal/people"
 )
 
 // typedMarker is typed in the tests; it must be stored nowhere.
@@ -25,20 +26,28 @@ const typedMarker = "hataori-typed-marker-91d2"
 // fakeInput is a fake lister of one tmux pane, %1.
 type fakeInput struct {
 	mu      sync.Mutex
-	gone    bool  // tmux no longer lists the pane
-	ownTmux bool  // tmux reports hataori's command for it
-	ownPS   bool  // the process table shows hataori's process on it
-	fail    error // reading the pane fails
+	gone    bool          // tmux no longer lists the pane
+	ownTmux bool          // tmux reports hataori's command for it
+	ownPS   bool          // the process table shows hataori's process on it
+	fail    error         // reading the pane fails
+	slow    bool          // a check of the process table waits until its context ends
+	hold    chan struct{} // Keys says so here, then waits until its context ends
 	checks  []bool
 	keys    [][]control.HostKey
 	buffers int
 	dropped []string
 }
 
-func (f *fakeInput) Check(_ context.Context, pane string, _ []int, procs bool) (*control.TmuxPane, bool, error) {
+func (f *fakeInput) Check(ctx context.Context, pane string, _ []int, procs bool) (*control.TmuxPane, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.checks = append(f.checks, procs)
+	if f.slow && procs && len(f.checks) > 1 {
+		f.mu.Unlock()
+		<-ctx.Done()
+		f.mu.Lock()
+		return nil, false, ctx.Err()
+	}
 	if f.fail != nil {
 		return nil, false, f.fail
 	}
@@ -48,10 +57,16 @@ func (f *fakeInput) Check(_ context.Context, pane string, _ []int, procs bool) (
 	return &control.TmuxPane{Pane: "%1", Session: "work", Window: "2", Index: "0"}, f.ownTmux || procs && f.ownPS, nil
 }
 
-func (f *fakeInput) Keys(_ context.Context, _, _ string, keys []control.HostKey) error {
+func (f *fakeInput) Keys(ctx context.Context, _, _ string, keys []control.HostKey) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.keys = append(f.keys, keys)
+	hold := f.hold
+	f.mu.Unlock()
+	if hold != nil {
+		hold <- struct{}{}
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	return nil
 }
 
@@ -119,6 +134,7 @@ func TestOperateHostRefusals(t *testing.T) {
 		"the owner without OpHostInput":  {control.Caller{Principal: "owner", May: control.OpHost | all}, nil, "the caller may not type"},
 		"the owner with OpHost only":     {control.Caller{Principal: "owner", May: control.OpHost}, nil, "the caller may not type"},
 		"no person, every other op too":  {control.Caller{May: ^control.Ops(0)}, nil, "not the owner"},
+		"an instance with no owner":      {control.Caller{May: operator.May}, func(c *Core) { c.People = people.New(nil, "", nil) }, "not the owner"},
 		"another person, every op there": {control.Caller{Principal: "someone", May: ^control.Ops(0)}, nil, "not the owner"},
 	}
 	for name, tc := range cases {
@@ -488,4 +504,90 @@ func TestOperateHostStoresNothingTyped(t *testing.T) {
 	if files == 0 {
 		t.Error("no file under the root to look in")
 	}
+}
+
+// When the operation ends during a batch, the batch's context ends, so no
+// further key of it is sent.
+func TestOperateHostEndStopsABatch(t *testing.T) {
+	in := &fakeInput{hold: make(chan struct{})}
+	f := inputFixture(t, in)
+	op, err := f.core.As(operator).OperateHost(context.Background(), "%1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent := make(chan error, 1)
+	go func() { sent <- op.Send(context.Background(), []control.HostKey{{Key: "Up"}, {Key: "Enter"}}) }()
+	<-in.hold
+	op.End()
+	select {
+	case err := <-sent:
+		if err == nil {
+			t.Error("a batch stopped by the end is no error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the batch went on after the operation ended")
+	}
+	select {
+	case <-op.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the operation did not end")
+	}
+}
+
+// A check of the process table that hangs does not hold up the end: the
+// watcher still sees the context end at once.
+func TestOperateHostSlowCheck(t *testing.T) {
+	defer func(d time.Duration) { hostCheckEvery = d }(hostCheckEvery)
+	hostCheckEvery = 10 * time.Millisecond
+	in := &fakeInput{slow: true}
+	f := inputFixture(t, in)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	op, err := f.core.As(operator).OperateHost(ctx, "%1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		in.mu.Lock()
+		n := len(in.checks)
+		in.mu.Unlock()
+		if n > 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no check after the start")
+		}
+	}
+	time.Sleep(50 * time.Millisecond) // the check hangs now
+	start := time.Now()
+	cancel()
+	select {
+	case <-op.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("a hanging check holds up the end")
+	}
+	if d := time.Since(start); d > time.Second || op.Reason() != control.HostClosed {
+		t.Errorf("ended after %v with %q", d, op.Reason())
+	}
+}
+
+// StopHostInput ends every operation with "stopping" and returns once each
+// has logged its end.
+func TestStopHostInput(t *testing.T) {
+	in := &fakeInput{}
+	f := inputFixture(t, in)
+	op, err := f.core.As(operator).OperateHost(context.Background(), "%1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.core.StopHostInput(5 * time.Second)
+	select {
+	case <-op.Done():
+	default:
+		t.Fatal("StopHostInput returned before the operation finished")
+	}
+	if op.Reason() != control.HostStopping || len(logLines(f, "host input ended")) != 1 || !slices.Contains(in.dropped, "buf-1") {
+		t.Errorf("reason %q, log %q, dropped %v", op.Reason(), f.log.String(), in.dropped)
+	}
+	f.core.StopHostInput(time.Second) // none left: returns at once
 }

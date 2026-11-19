@@ -594,7 +594,7 @@ Since 3.11. `OperateHost`'s result.
 
 Since 3.11. One input to an operated pane: either `key` or `text`.
 
-A key name is one of `Enter`, `Tab`, `BTab`, `BSpace`, `Escape`, `Up`, `Down`, `Left`, `Right`, `Home`, `End`, `PPage`, `NPage`, `IC`, `DC` and `F1` to `F12`, alone or after one or more of the modifiers `C-`, `M-` and `S-`, each at most once; or one printable ASCII character other than a space after one or more modifiers, such as `C-a` or `M-x`. These are tmux's names. A character alone is text. A key name is on tmux's command line while it runs, so a name with a character shows that character to other users of the host; text never is.
+A key name is tmux's name for the key, after modifiers, each of `C-`, `M-` and `S-` at most once and in any order: `Up`, `Down`, `Left`, `Right`, `Home`, `End`, `PPage`, `NPage`, `IC`, `DC` and `F1` to `F12` with any modifiers; `Tab` with `C-` or `M-`; `Enter`, `BSpace`, `Escape` and `BTab` with `M-` only; or one printable ASCII character other than a space with `M-`, or with `C-` when it is a letter or one of `@ [ \ ] ^ _ ?`, never with `S-`. These are the names tmux 3.4 encodes for the pane; it types a name it cannot encode, such as `S-Tab`, into the pane as its letters, so such names are refused. A character alone is text. A key name is on tmux's command line while it runs, so a name with a character shows that character to other users of the host; text never is.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|

@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -595,36 +596,65 @@ type HostKey struct {
 	Paste bool   `json:"paste,omitempty"`
 }
 
-// hostKeyNames are the tmux key names a HostKey's Key may be, alone or
-// after modifiers.
-var hostKeyNames = map[string]bool{
-	"Enter": true, "Tab": true, "BTab": true, "BSpace": true, "Escape": true,
-	"Up": true, "Down": true, "Left": true, "Right": true, "Home": true, "End": true,
-	"PPage": true, "NPage": true, "IC": true, "DC": true,
-	"F1": true, "F2": true, "F3": true, "F4": true, "F5": true, "F6": true,
-	"F7": true, "F8": true, "F9": true, "F10": true, "F11": true, "F12": true,
-}
+// The tmux key names a HostKey's Key may be, by the modifiers tmux 3.4
+// encodes for each. tmux types a name it cannot encode, such as S-Tab or
+// S-a, into the pane as its letters, and drops some, such as C-Enter; those
+// are refused.
+var (
+	// anyModKeys take any of C-, M- and S-.
+	anyModKeys = map[string]bool{
+		"Up": true, "Down": true, "Left": true, "Right": true, "Home": true, "End": true,
+		"PPage": true, "NPage": true, "IC": true, "DC": true,
+		"F1": true, "F2": true, "F3": true, "F4": true, "F5": true, "F6": true,
+		"F7": true, "F8": true, "F9": true, "F10": true, "F11": true, "F12": true,
+	}
+	// metaKeys take M- only; Tab takes C- too.
+	metaKeys = map[string]bool{"Enter": true, "BSpace": true, "Escape": true, "BTab": true, "Tab": true}
+)
 
 // ValidHostKey reports whether name is a key name hataori passes to tmux's
-// send-keys: Enter, Tab, BTab, BSpace, Escape, Up, Down, Left, Right,
-// Home, End, PPage, NPage, IC, DC or F1 to F12, each alone or after one or
-// more of the modifiers C-, M- and S- (each at most once); or one
-// printable ASCII character other than a space after one or more
-// modifiers, such as C-a or M-x. A character alone is text, not a key.
+// send-keys: modifiers, each of C-, M- and S- at most once and in any
+// order, then one of
+//   - Up, Down, Left, Right, Home, End, PPage, NPage, IC, DC, F1 to F12,
+//     with any modifiers;
+//   - Tab, with C- or M-; Enter, BSpace, Escape, BTab, with M- only;
+//   - one printable ASCII character other than a space, with M-, or with
+//     C- when it is a letter or one of @ [ \ ] ^ _ ?; never with S-, and
+//     never alone: a character alone is text, not a key.
 func ValidHostKey(name string) bool {
-	mods := 0
-	for len(name) > 2 && name[1] == '-' && (name[0] == 'C' || name[0] == 'M' || name[0] == 'S') {
-		bit := map[byte]int{'C': 1, 'M': 2, 'S': 4}[name[0]]
-		if mods&bit != 0 {
+	var c, m, s bool
+	for len(name) > 2 && name[1] == '-' {
+		var mod *bool
+		switch name[0] {
+		case 'C':
+			mod = &c
+		case 'M':
+			mod = &m
+		case 'S':
+			mod = &s
+		default:
 			return false
 		}
-		mods |= bit
+		if *mod {
+			return false
+		}
+		*mod = true
 		name = name[2:]
 	}
-	if hostKeyNames[name] {
+	switch {
+	case anyModKeys[name]:
 		return true
+	case name == "Tab":
+		return !s
+	case metaKeys[name]:
+		return !c && !s
+	case len(name) != 1 || name[0] <= ' ' || name[0] >= 0x7f || s || !c && !m:
+		return false
+	case c:
+		ch := name[0]
+		return 'a' <= ch && ch <= 'z' || 'A' <= ch && ch <= 'Z' || strings.IndexByte(`@[\]^_?`, ch) >= 0
 	}
-	return mods != 0 && len(name) == 1 && name[0] > ' ' && name[0] < 0x7f
+	return true
 }
 
 // AgentLimits is an agent's remaining usage, as one of its sessions last

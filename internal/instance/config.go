@@ -383,8 +383,8 @@ func ParseConfig(data []byte) (*Config, error) {
 	if f.InputIdle != "" {
 		v := strings.TrimSpace(f.InputIdle)
 		d, err := time.ParseDuration(v)
-		if err != nil || d < time.Second {
-			return nil, fmt.Errorf("config: key %q: %q is not a duration of at least one second, such as \"5m\"", "host_input_idle", v)
+		if err != nil || d < time.Second || d%time.Second != 0 {
+			return nil, fmt.Errorf("config: key %q: %q is not a whole number of seconds, at least one, such as \"5m\" or \"90s\"", "host_input_idle", v)
 		}
 		c.HostInputIdle = d
 	}

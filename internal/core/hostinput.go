@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
@@ -40,8 +41,9 @@ const hostCmdTimeout = 10 * time.Second
 
 // hostOpSet is the panes being operated, by pane id.
 type hostOpSet struct {
-	mu     sync.Mutex
-	byPane map[string]*hostOp
+	mu      sync.Mutex
+	byPane  map[string]*hostOp
+	running sync.WaitGroup // until each has finished
 }
 
 // hostOp is one pane being operated: a control.HostOperation.
@@ -54,6 +56,13 @@ type hostOp struct {
 	idle   time.Duration
 
 	sendMu sync.Mutex // one batch at a time; the end waits for it
+
+	// live ends when the operation does, which stops a batch being sent
+	// and a check being made.
+	live     context.Context
+	stopLive context.CancelFunc
+	checking atomic.Bool    // a check runs now
+	checks   sync.WaitGroup // the checks running
 
 	mu      sync.Mutex
 	reason  string    // set once, by end
@@ -137,17 +146,20 @@ func (a *api) OperateHost(ctx context.Context, pane string) (control.HostOperati
 		idle = DefaultHostInputIdle
 	}
 	now := time.Now()
+	live, stopLive := context.WithCancel(context.Background())
 	o := &hostOp{c: c, pane: *p, person: string(a.caller.Principal), since: now, buffer: buffer, idle: idle,
-		lastKey: now, stop: make(chan struct{}), done: make(chan struct{})}
+		live: live, stopLive: stopLive, lastKey: now, stop: make(chan struct{}), done: make(chan struct{})}
 	c.hostOps.mu.Lock()
 	if busy := c.hostOps.byPane[p.Pane]; busy != nil {
 		c.hostOps.mu.Unlock()
+		stopLive()
 		return nil, &paneBusy{pane: p.Pane, person: busy.person, since: busy.since}
 	}
 	if c.hostOps.byPane == nil {
 		c.hostOps.byPane = map[string]*hostOp{}
 	}
 	c.hostOps.byPane[p.Pane] = o
+	c.hostOps.running.Add(1)
 	c.hostOps.mu.Unlock()
 	c.Log.Info("host input started", o.logAttrs()...)
 	go o.watch(ctx, hostCheckEvery)
@@ -167,6 +179,7 @@ func (o *hostOp) end(reason string) {
 	if o.reason == "" {
 		o.reason = reason
 		close(o.stop)
+		o.stopLive()
 	}
 }
 
@@ -206,7 +219,16 @@ func (o *hostOp) watch(ctx context.Context, every time.Duration) {
 				idle.Reset(left)
 			}
 		case <-tick.C:
-			o.check()
+			// A check runs on its own, so that a slow one holds up neither
+			// the end nor the next tick's; one at a time.
+			if o.checking.CompareAndSwap(false, true) {
+				o.checks.Add(1)
+				go func() {
+					defer o.checks.Done()
+					defer o.checking.Store(false)
+					o.check()
+				}()
+			}
 		}
 	}
 	o.finish()
@@ -216,7 +238,7 @@ func (o *hostOp) watch(ctx context.Context, every time.Duration) {
 // operation when the pane is gone or hataori's own. A check that fails
 // ends nothing; every batch is checked again before it is sent.
 func (o *hostOp) check() {
-	ctx, cancel := context.WithTimeout(context.Background(), hostCmdTimeout)
+	ctx, cancel := context.WithTimeout(o.live, hostCmdTimeout)
 	defer cancel()
 	owned, err := o.c.hostPIDs(ctx)
 	if err != nil {
@@ -224,7 +246,7 @@ func (o *hostOp) check() {
 	}
 	p, own, err := o.c.HostInput.Check(ctx, o.pane.Pane, owned, true)
 	switch {
-	case err != nil:
+	case err != nil || ctx.Err() != nil:
 	case p == nil:
 		o.end(control.HostGone)
 	case own:
@@ -235,6 +257,7 @@ func (o *hostOp) check() {
 // finish waits for a batch being sent, deletes the operation's buffer,
 // forgets the pane, logs the end and closes Done.
 func (o *hostOp) finish() {
+	o.checks.Wait() // live has ended, so they stop soon
 	o.sendMu.Lock()
 	defer o.sendMu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), hostCmdTimeout)
@@ -252,11 +275,30 @@ func (o *hostOp) finish() {
 	o.mu.Unlock()
 	o.c.Log.Info("host input ended", append(o.logAttrs(), "reason", reason)...)
 	close(o.done)
+	o.c.hostOps.running.Done()
+}
+
+// StopHostInput ends every operation of a pane with control.HostStopping
+// and waits, at most for timeout, until each has deleted its buffer and
+// logged its end. The daemon calls it as it stops.
+func (c *Core) StopHostInput(timeout time.Duration) {
+	c.hostOps.mu.Lock()
+	for _, o := range c.hostOps.byPane {
+		o.end(control.HostStopping)
+	}
+	c.hostOps.mu.Unlock()
+	done := make(chan struct{})
+	go func() { c.hostOps.running.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+	}
 }
 
 // Send checks the command tmux reports for the pane, then types keys. A
 // pane that is gone or hataori's own ends the operation and sends nothing;
-// a command that cannot be read sends nothing.
+// a command that cannot be read sends nothing. When the operation ends
+// during the batch, no further key of it is sent.
 func (o *hostOp) Send(ctx context.Context, keys []control.HostKey) error {
 	o.sendMu.Lock()
 	defer o.sendMu.Unlock()
@@ -274,6 +316,7 @@ func (o *hostOp) Send(ctx context.Context, keys []control.HostKey) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, hostCmdTimeout)
 	defer cancel()
+	defer context.AfterFunc(o.live, cancel)()
 	p, own, err := o.c.HostInput.Check(ctx, o.pane.Pane, nil, false)
 	switch {
 	case err != nil:

@@ -219,6 +219,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 				c.HostInput = hostInputSource
 			}
 			owner |= control.OpHostInput
+			defer c.StopHostInput(15 * time.Second) // each end logged and its buffer deleted before the daemon exits
 		}
 	}
 	srv, err := wire.Listen(abs, c.As(control.Caller{Principal: control.Principal(cfg.Owner), Scopes: keys, May: owner}), lg)
