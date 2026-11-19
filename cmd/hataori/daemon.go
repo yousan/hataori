@@ -57,7 +57,8 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	for _, s := range cfg.Scopes {
 		scopeKeys = append(scopeKeys, s.Key)
 	}
-	if _, err := plugin.Load(cfg.Plugins, scopeKeys); err != nil {
+	grants, err := plugin.Load(cfg.Plugins, scopeKeys)
+	if err != nil {
 		return err
 	}
 
@@ -260,6 +261,19 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	issueSupervisor := func(scope string) (string, error) { return srv.Issue(sv.API(scope, 0)) }
 	if supervisorHook != nil {
 		supervisorHook(issueSupervisor, srv.Revoke)
+	}
+	// A plugin's connection is bound by a token to the caller its grant
+	// makes (design, section 7.3), and to nothing it says itself.
+	issuePlugin := func(id string) (string, error) {
+		for _, g := range grants {
+			if g.ID == id {
+				return srv.Issue(c.As(g.Caller()))
+			}
+		}
+		return "", fmt.Errorf("no plugin %q in the config", id)
+	}
+	if pluginHook != nil {
+		pluginHook(issuePlugin, srv.Revoke)
 	}
 	r.Confine = sv.Confine
 	for scope := range supervisors {
@@ -493,6 +507,11 @@ var hostTermsSource core.HostTerms
 // supervisorHook, when a test sets it, is given what issues a supervisor's
 // token for a scope, and what revokes one.
 var supervisorHook func(issue func(scope string) (string, error), revoke func(token string))
+
+// pluginHook, when a test sets it, is given what issues a token for a
+// plugin of the config, by its id, and what revokes one. Starting plugins
+// with it comes later (#349).
+var pluginHook func(issue func(id string) (string, error), revoke func(token string))
 
 // wakerHook, when a test sets it, sees each supervisor's waker before it
 // runs, for a clock of the test's own.

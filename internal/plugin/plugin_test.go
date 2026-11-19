@@ -170,6 +170,12 @@ func TestRefused(t *testing.T) {
 		{"HostTerminals", with(`"Threads",`, `"HostTerminals", "Threads",`), `[` + entry + `}]`, []string{`"plugins[0].path"`, `"operations[0]"`, "never"}},
 		{"HostScreen", with(`"Threads",`, `"Threads", "HostScreen",`), `[` + entry + `}]`, []string{`"plugins[0].path"`, `"operations[1]"`, "never"}},
 		{"OperateHost", with(`"Threads",`, `"Threads", "OperateHost",`), `[` + entry + `}]`, []string{`"plugins[0].path"`, `"operations[1]"`, "never"}},
+		{"AttachTerminal", with(`"Threads",`, `"Threads", "AttachTerminal",`), `[` + entry + `}]`, []string{`"plugins[0].path"`, `"operations[1]"`, `"AttachTerminal" is never`}},
+		{"Close", with(`"Threads",`, `"Close", "Threads",`), `[` + entry + `}]`, []string{`"plugins[0].path"`, `"operations[0]"`, `"Close" is never`}},
+		{"Remove", with(`"Threads",`, `"Threads", "Remove",`), `[` + entry + `}]`, []string{`"plugins[0].path"`, `"operations[1]"`, `"Remove" is never`}},
+		{"AttachTerminal in the config", manifest, `[` + entry + `, "operations": ["Threads", "AttachTerminal"]}]`, []string{`"plugins[0].operations[1]"`, `"AttachTerminal" is never`}},
+		{"Close in the config", manifest, `[` + entry + `, "operations": ["Close"]}]`, []string{`"plugins[0].operations[0]"`, `"Close" is never`}},
+		{"Remove in the config", manifest, `[` + entry + `, "operations": ["Remove"]}]`, []string{`"plugins[0].operations[0]"`, `"Remove" is never`}},
 		{"HostScreen in the config", manifest, `[` + entry + `, "operations": ["HostScreen"]}]`, []string{`"plugins[0].operations[0]"`, "never"}},
 		{"relative path", manifest, `[{"id": "scan", "path": "bin/scan", "sha256": "` + sum + `", "scopes": ["c1"]}]`, []string{`"plugins[0].path"`}},
 		{"short sha256", manifest, `[{"id": "scan", "path": "PATH", "sha256": "` + sum[:63] + `", "scopes": ["c1"]}]`, []string{`"plugins[0].sha256"`}},
@@ -239,5 +245,69 @@ func TestOperationsAreTheProtocols(t *testing.T) {
 	slices.Sort(ops)
 	if !slices.Equal(ops, operations) {
 		t.Fatalf("docs/protocol.md has the operations %q, the package %q", ops, operations)
+	}
+}
+
+// A plugin's caller is its grant and nothing more: its scopes, the classes
+// its operations need, a limit to exactly its operations and event kinds,
+// and no text without "conversation". A grant of no operation or event
+// kind is a limit that allows none, never no limit.
+func TestCaller(t *testing.T) {
+	path := newPlugin(t, everyField)
+	grants, err := Load(entries(t, `[{"id": "scanner", "path": "PATH", "sha256": "`+sum+`", "scopes": ["c1", "c3"],
+		"operations": ["Threads", "Send", "Events"], "events": ["turn_ended"]}]`, path), scopes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := control.Caller{
+		From:   "plugin:scanner",
+		Scopes: []string{"c1", "c3"},
+		May:    control.OpRead | control.OpSend,
+		NoText: true,
+		Limit:  &control.Limit{Operations: []string{"Threads", "Send", "Events"}, Events: []control.EventKind{"turn_ended"}},
+	}
+	if got := grants[0].Caller(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("caller:\n%+v %+v\nwant:\n%+v %+v", got, got.Limit, want, want.Limit)
+	}
+	g := grants[0]
+	g.Conversation = true
+	if g.Caller().NoText {
+		t.Fatal("a plugin with \"conversation\" may not read text")
+	}
+
+	none := Grant{ID: "idle", Scopes: []string{"c1"}}.Caller()
+	if none.Limit == nil || none.Limit.Operations == nil || len(none.Limit.Operations) != 0 ||
+		none.Limit.Events == nil || len(none.Limit.Events) != 0 || none.May != 0 {
+		t.Fatalf("a grant of nothing: %+v %+v", none, none.Limit)
+	}
+
+	// A Grant not made by Load that names what no plugin is given gets it
+	// neither as a class nor in its limit.
+	wide := Grant{ID: "wide", Scopes: []string{"c1"}, Operations: slices.Clone(operations)}.Caller()
+	for _, op := range never {
+		if slices.Contains(wide.Limit.Operations, op) {
+			t.Errorf("%s is in the limit", op)
+		}
+	}
+	for _, o := range []control.Ops{control.OpSignIn, control.OpHost, control.OpAttach, control.OpClose, control.OpRemove, control.OpHostInput} {
+		if wide.May&o != 0 {
+			t.Errorf("the caller has class %b", o)
+		}
+	}
+}
+
+// Every operation of the protocol is one a plugin may be given, with the
+// class it needs, or one no plugin is given.
+func TestEveryOperationHasAClassOrIsNever(t *testing.T) {
+	for _, op := range operations {
+		_, ok := classes[op]
+		if ok == slices.Contains(never, op) {
+			t.Errorf("%s: a class %v, never %v", op, ok, !ok)
+		}
+	}
+	for op := range classes {
+		if !slices.Contains(operations, op) {
+			t.Errorf("%s has a class and is no operation", op)
+		}
 	}
 }

@@ -15,9 +15,13 @@ import (
 // Link shows thread id in one more conversation (design, section 5.2).
 func (a *api) Link(ctx context.Context, id control.ThreadID, l control.LinkRef) (control.LinkRef, error) {
 	if l.Client == "" || l.Channel == "" {
+		// A caller not granted Link is refused that first, as always.
+		if _, err := a.threadScope(ctx, "Link", id); errors.Is(err, ErrForbidden) {
+			return control.LinkRef{}, err
+		}
 		return control.LinkRef{}, fmt.Errorf("core: link thread %d: a link names a client and a channel", id)
 	}
-	scope, err := a.c.scopeOf(ctx, a.c.Store.DB, id)
+	scope, err := a.threadScope(ctx, "Link", id)
 	if err != nil {
 		return control.LinkRef{}, err
 	}
