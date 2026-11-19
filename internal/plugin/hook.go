@@ -238,6 +238,11 @@ func (d *Dispatcher) Run(ctx context.Context, c control.HookCall) control.HookRe
 // call calls one handler, and returns its answer, or why it failed.
 func (d *Dispatcher) call(ctx context.Context, x handler, c control.HookCall, text string) (control.HookAnswer, string) {
 	var a control.HookAnswer
+	if ctx.Err() != nil {
+		// Nothing is sent: a write with a context that has ended closes
+		// the plugin's connection (wire.Peer).
+		return a, "the call was given up"
+	}
 	conn := d.conn(x.g.ID)
 	if conn == nil {
 		return a, "it is not connected"

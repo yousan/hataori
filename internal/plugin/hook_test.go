@@ -601,3 +601,37 @@ func TestAMadeUpErrorCode(t *testing.T) {
 		t.Fatalf("the log has the plugin's code:\n%s", l)
 	}
 }
+
+// A point called with a context that has ended sends nothing, so it
+// closes no plugin's connection: the next call reaches the plugin.
+func TestAGivenUpCallClosesNothing(t *testing.T) {
+	skip := grant("a", "message_sending", 10, true)
+	skip.Hooks[0].OnFailure = Skip
+	block := grant("b", "message_sending", 0, true)
+	block.Hooks[0].OnFailure = Block
+	f := newHookFixture(t, skip, block)
+	var mu sync.Mutex
+	calls := 0
+	for _, id := range []string{"a", "b"} {
+		f.connect(id, hookHandler(func(control.HookRequest, json.RawMessage) (any, error) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+			return control.HookAnswer{Action: control.HookContinue}, nil
+		}))
+	}
+	ended, cancel := context.WithCancel(context.Background())
+	cancel()
+	call := control.HookCall{Point: "message_sending", Scope: "s", Text: "x"}
+	if res := f.d.Run(ended, call); !res.Stopped || res.By != "b" || res.Reason != "the call was given up" {
+		t.Fatalf("with an ended context: %+v", res)
+	}
+	if res := f.d.Run(context.Background(), call); res.Stopped {
+		t.Fatalf("the next call: %+v", res)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 2 {
+		t.Fatalf("%d calls reached the plugins, want the 2 of the second Run", calls)
+	}
+}

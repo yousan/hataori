@@ -399,7 +399,7 @@ Result: [`AgentLimits`]
 
 ## Requests the daemon sends
 
-Since 3.14. The daemon sends these to a plugin, on a connection made with the plugin's token that is not a stream: the oldest such connection that is still open. A connection that becomes a stream takes none from then on, so a plugin keeps one connection for requests, as the project's client does, and follows events on others. A plugin that does not know one answers `not_supported`, as for any request.
+Since 3.14. The daemon sends these to a plugin, on a connection made with the plugin's token that is not a stream: the oldest such connection that is still open. A connection that becomes a stream takes none from then on, so a plugin keeps one connection for requests, as the project's client does, and follows events on others. Until the daemon has read a connection's first request, it does not know that the connection will be a stream, and may send a request on it: a client skips such a line, unanswered, on its stream, and the daemon counts the request as failed once the stream starts. A plugin that does not know one answers `not_supported`, as for any request.
 
 ### Request `hook`
 
@@ -423,7 +423,7 @@ Result: `HookAnswer`
 
 ### Request `plugin_started`
 
-Tells the plugin that it is connected, with its grant: what its manifest asks for and the config grants. The daemon sends it on the plugin's first connection, and again on a connection made when it had none open, such as after the plugin was started again. It sends `hook` requests whether or not this one was answered; its answer, an error too, changes nothing and is logged.
+Tells the plugin that it is connected, with its grant: what its manifest asks for and the config grants. The daemon sends it on the plugin's first connection, and again on a connection made when it had no connection open that is not a stream, such as after the plugin was started again. It sends `hook` requests whether or not this one was answered; its answer, an error too, changes nothing and is logged.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|

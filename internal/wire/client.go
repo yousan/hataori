@@ -388,8 +388,8 @@ func (c *Client) pumpTerminal(ctx context.Context, conn net.Conn, dec *json.Deco
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
 	for {
-		var resp response
-		if err := dec.Decode(&resp); err != nil || resp.Terminal == nil {
+		resp, err := streamResponse(dec)
+		if err != nil || resp.Terminal == nil {
 			return run, after
 		}
 		select {
@@ -412,7 +412,7 @@ func (c *Client) openStream(ctx context.Context, op string, args any) (net.Conn,
 	var resp response
 	err = json.NewEncoder(conn).Encode(request{ID: 1, Op: op, Args: raw})
 	if err == nil {
-		err = dec.Decode(&resp)
+		resp, err = streamResponse(dec)
 	}
 	if err == nil && resp.Error != nil {
 		err = decodeError(resp.Error)
@@ -424,6 +424,28 @@ func (c *Client) openStream(ctx context.Context, op string, args any) (net.Conn,
 	return conn, dec, nil
 }
 
+// streamResponse reads the next response on a stream's connection. A
+// request the daemon sent before it read the stream's request, such as a
+// plugin's plugin_started, is skipped unanswered: the daemon counts it as
+// failed once the stream starts (docs/protocol.md).
+func streamResponse(dec *json.Decoder) (response, error) {
+	for {
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return response{}, err
+		}
+		var m message
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return response{}, err
+		}
+		if m.Op != "" {
+			continue
+		}
+		var resp response
+		return resp, json.Unmarshal(raw, &resp)
+	}
+}
+
 // pump delivers events from one connection until it breaks or ctx ends,
 // and returns the position of the last event delivered.
 func (c *Client) pump(ctx context.Context, conn net.Conn, dec *json.Decoder, out chan<- control.Event, after uint64) uint64 {
@@ -431,8 +453,8 @@ func (c *Client) pump(ctx context.Context, conn net.Conn, dec *json.Decoder, out
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
 	for {
-		var resp response
-		if err := dec.Decode(&resp); err != nil || resp.Event == nil {
+		resp, err := streamResponse(dec)
+		if err != nil || resp.Event == nil {
 			return after
 		}
 		if resp.Event.Kind == control.CaughtUp {
