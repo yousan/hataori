@@ -104,6 +104,13 @@ func TestStart(t *testing.T) {
 			c.Open()
 			c.Input(agent.Input{ID: "in-1", Text: text})
 			ev := clean(feed(t, c, lines, 0))
+			var core []agent.Event
+			for _, e := range ev {
+				if e.Kind == agent.SessionReady || e.Kind == agent.TurnStarted || e.Kind == agent.Text || e.Kind == agent.TurnEnded {
+					core = append(core, e)
+				}
+			}
+			ev = core
 			want := []agent.Kind{agent.SessionReady, agent.TurnStarted, agent.Text, agent.TurnEnded}
 			if scenario == "usage" {
 				want = []agent.Kind{agent.SessionReady, agent.TurnStarted, agent.Text, agent.Text, agent.TurnEnded}
@@ -144,11 +151,17 @@ func TestWrittenBytes(t *testing.T) {
 			writes = append(writes, c.Decode(agent.Output, l.Msg).Write...)
 		}
 	}
-	if len(writes) != 4 {
+	if len(writes) != 5 {
 		t.Fatalf("writes: %q", writes)
 	}
-	for i, method := range []string{"initialize", "initialized", "thread/start", "turn/start"} {
+	for i, method := range []string{"initialize", "initialized", "thread/start", "account/rateLimits/read", "turn/start"} {
 		got := parse(t, writes[i])
+		if method == RateLimitsRead {
+			if got.Method != method || len(got.Params) != 0 {
+				t.Fatal(got)
+			}
+			continue
+		}
 		want := send(t, lines, method)
 		if got.Method != want.Method {
 			t.Fatalf("%s: %+v", method, got)
@@ -272,13 +285,28 @@ func TestHeldInput(t *testing.T) {
 	}
 	for _, l := range lines[start+1 : end] {
 		if l.Dir == "recv" {
-			if a := c.Decode(agent.Output, l.Msg); len(a.Write) != 0 {
-				t.Fatal(a)
+			a := c.Decode(agent.Output, l.Msg)
+			for _, w := range a.Write {
+				if parse(t, w).Method == "turn/start" {
+					t.Fatal(a)
+				}
 			}
 		}
 	}
 	a := c.Decode(agent.Output, lines[end].Msg)
-	if len(a.Write) != 1 || len(a.Inputs) != 1 || a.Inputs[0] != "later" || parse(t, a.Write[0]).Method != "turn/start" {
+	if len(a.Write) != 1 || len(a.Inputs) != 1 || a.Inputs[0] != "later" {
+		t.Fatal(a)
+	}
+	written := parse(t, a.Write[0])
+	if written.Method != "turn/start" {
+		t.Fatal(a)
+	}
+	inputs, ok := written.Params["input"].([]any)
+	if !ok || len(inputs) != 1 {
+		t.Fatal(a)
+	}
+	input, ok := inputs[0].(map[string]any)
+	if !ok || input["text"] != "later" {
 		t.Fatal(a)
 	}
 }

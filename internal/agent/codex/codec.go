@@ -19,8 +19,6 @@ var skippedMethods = map[string]bool{
 	"item/fileChange/outputDelta":       true,
 	"thread/status/changed":             true,
 	"thread/readState/changed":          true,
-	"thread/tokenUsage/updated":         true,
-	"account/rateLimits/updated":        true,
 	"account/updated":                   true,
 	"mcpServer/startupStatus/updated":   true,
 	"remoteControl/status/changed":      true,
@@ -33,15 +31,7 @@ var skippedMethods = map[string]bool{
 }
 
 // Issues #320 and #321 turn some skipped items into events.
-var skippedItems = map[string]bool{
-	"reasoning":           true,
-	"commandExecution":    true,
-	"fileChange":          true,
-	"collabAgentToolCall": true,
-	"sleep":               true,
-	"webSearch":           true,
-	"mcpToolCall":         true,
-}
+var skippedItems = map[string]bool{"reasoning": true}
 
 // DefaultInputTimeout is the time allowed for an input to be reported.
 const DefaultInputTimeout = 30 * time.Second
@@ -78,7 +68,9 @@ type codec struct {
 	turnID   string          // current turn id
 	sent     []*pendingInput // written inputs awaiting their report
 	queue    []agent.Input   // inputs waiting to be written
-	held     *string         // latest agent text that may be final
+	toolState
+	usageState
+	held *string // latest agent text that may be final
 }
 
 // NewCodec returns a translator for one app-server process.
@@ -142,6 +134,7 @@ func (c *codec) Open() agent.Actions {
 		p["config"] = map[string]any{"model_reasoning_effort": c.spec.Effort}
 	}
 	c.write(&a, method, p, true)
+	c.readLimits(&a)
 	return a
 }
 
@@ -227,6 +220,7 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 	if c.closed {
 		return a
 	}
+	c.timestamp(&a, m.EmittedAtMS)
 	if m.Method == "" {
 		c.response(&a, m, line)
 		return a
@@ -241,9 +235,21 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 		return a
 	}
 	if p.ThreadID != "" && c.session != "" && p.ThreadID != c.session {
+		if _, ok := c.subagents[p.ThreadID]; ok {
+			switch m.Method {
+			case "item/started", "item/completed":
+				c.toolItem(&a, p, m.Method)
+			case "turn/completed":
+				c.endSubagent(&a, p.ThreadID)
+			}
+		}
 		return a
 	}
 	switch m.Method {
+	case RateLimitsUpdated:
+		c.readLimits(&a)
+	case "thread/tokenUsage/updated":
+		c.usage(&a, m.Params)
 	case "thread/started":
 	case "turn/started":
 		c.turnStarted(&a, p)
@@ -305,6 +311,9 @@ func (c *codec) response(a *agent.Actions, m message, line []byte) {
 		}
 		return
 	}
+	if c.limitResponse(a, method, m.Result, line) {
+		return
+	}
 	var r result
 	if json.Unmarshal(m.Result, &r) != nil {
 		c.unknown(a, line)
@@ -316,6 +325,7 @@ func (c *codec) response(a *agent.Actions, m message, line []byte) {
 			c.emit(a, agent.Event{Kind: agent.SessionEnded, Reason: agent.WrongSession})
 			return
 		}
+		c.model = r.Model
 		c.session = r.Thread.ID
 		c.ready = true
 		c.emit(a, agent.Event{Kind: agent.SessionReady, SessionID: c.session, Model: r.Model, Effort: r.Effort})
@@ -349,6 +359,7 @@ func (c *codec) reportStart(a *agent.Actions, starter agent.Starter, index int) 
 func (c *codec) turnStarted(a *agent.Actions, p params) {
 	c.running = true
 	c.started = false
+	c.beginUsage()
 	c.turnID = p.Turn.ID
 	c.held = nil
 	for i, s := range c.sent {
@@ -364,6 +375,9 @@ func normalize(s string) string { return strings.TrimSpace(strings.ReplaceAll(s,
 
 // item handles a started or completed item.
 func (c *codec) item(a *agent.Actions, p params, method string, line []byte) {
+	if c.toolItem(a, p, method) {
+		return
+	}
 	switch p.Item.Type {
 	case "userMessage":
 		if !c.started && method == "item/started" {
@@ -412,6 +426,7 @@ func (c *codec) turnCompleted(a *agent.Actions, p params) {
 	if !c.started {
 		c.reportStart(a, agent.ByAgent, -1)
 	}
+	c.endTools(a)
 	if c.held != nil {
 		c.emit(a, agent.Event{Kind: agent.Text, Text: *c.held, Final: true})
 		c.held = nil
