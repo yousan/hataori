@@ -68,6 +68,7 @@ func newPaneRig(t *testing.T, root string, input string, settled func(control.Th
 	}
 	r.base = link
 	b.call("Page.navigate", map[string]any{"url": link})
+	b.showAll() // a thread with a short idle period may be asleep already (#335)
 	b.until("the thread in the tree", fmt.Sprintf(`!!document.querySelector('[data-section=threads] .row[data-thread="%d"]')`, r.n))
 	b.eval(fmt.Sprintf(`document.querySelector('[data-section=threads] .row[data-thread="%d"]').click(), true`, r.n), nil)
 	r.b = b
