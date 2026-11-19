@@ -144,7 +144,10 @@ type Inbound struct {
 type Selection struct {
 	Ref    MessageRef
 	Author Author
-	Token  string // the token of the Choice that was used
+	Token  string // the token of the Choice that was used; the first one of a menu
+	// Tokens are the tokens of every Choice chosen: Token alone for a
+	// button, all the options chosen in a menu.
+	Tokens []string
 }
 
 // Command is a slash or text command.
@@ -172,6 +175,7 @@ type Message struct {
 	Text    string
 	Files   []File
 	Choices []Choice    // rendered as buttons or a menu; each carries an opaque token
+	Multi   bool        // several Choices may be chosen at once; needs Limits.MultiSelect
 	ReplyTo *MessageRef // quote-reply
 	Notify  []string    // ids of people to ping
 	Quiet   bool        // no notification
@@ -211,7 +215,7 @@ type ThreadMeta struct {
 // asking for what the service cannot do.
 type Limits struct {
 	MaxText    int // characters in one message
-	MaxChoices int // choices in one message
+	MaxChoices int // choices in one message, as buttons or as a menu
 	MaxFiles   int // files in one message
 	// MaxFileBytes is the size of the largest file a message may carry;
 	// 0 for no limit.
@@ -220,6 +224,7 @@ type Limits struct {
 	Delete       bool
 	SetStatus    bool
 	SetThread    bool
+	MultiSelect  bool // a Message can be Multi
 	Commands     bool // Run registers a Commander's commands and delivers their use
 }
 

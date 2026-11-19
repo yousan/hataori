@@ -59,6 +59,7 @@ The run fetches each of these messages through REST as soon as it arrives, so th
 | A thread opened again from its message | `rethread/rest-rethread-post.json`, `rest-rethread-first.json` (201), `rest-rethread-again.json` (400, code 160004), `rest-rethread-get-message.json` (the message names its thread) | |
 | Commands registered, and read back | `commands/rest-application.json`, `rest-commands-set.json`, `rest-commands-after.json` | |
 | A command used in a channel and in a thread, acknowledged and answered | `commands/rest-command-ack-*.json`, `rest-command-answer-*.json` | `commands/gw-01-INTERACTION_CREATE.json`, `gw-02-…` |
+| Several buttons and a menu posted, used, and removed | `choices/rest-post-buttons.json`, `rest-post-menu.json`, `rest-*-ack.json`, `rest-edit-remove-*.json` | `choices/gw-01-INTERACTION_CREATE.json` (button), `gw-02-…` (menu, two options) |
 | Who the bot is | `bot/rest-users-me.json` | `bot/gw-01-READY.json` |
 
 ## A thread opened again from its message (taken for #165)
@@ -74,6 +75,12 @@ The bot posted one message, opened a thread from it (201), and opened again from
 The run read the application (`rest-application.json`, trimmed to `id`), registered one command, `hataori-test`, with a required and an optional text argument (`rest-commands-set.json`, a `PUT` of the whole list), and read the list back (`rest-commands-after.json`: what the service reports for a registered command). It opened a thread, `rest-thread-for-commands.json`. A person then used the command once in the channel (`gw-01-INTERACTION_CREATE.json`, one argument) and once in the thread (`gw-02-INTERACTION_CREATE.json`, both arguments; its `channel` is the thread, with `parent_id`). The run acknowledged each with a deferred answer (`type 5`, 204): public in the channel, private (`flags 64`) in the thread, `rest-command-ack-*.json`, and replaced it with `PATCH /webhooks/<application>/<token>/messages/@original` (200, `rest-command-answer-*.json`; the private one comes back with `flags 64`).
 
 Before registering, the run read the commands the application had, and it put them back afterwards with one more `PUT`. That list is not committed. Only the two interactions were kept of the gateway dispatches: the bot is in servers with other traffic. `scrub.py` keeps names that start with `hataori-test`, and replaces the token in `/webhooks/` paths as in `/interactions/` paths.
+
+## Buttons and a menu (taken for #250)
+
+`v10/choices/`, taken on 2026-11-19 with API v10 by a test bot in a test server's channel: `capture.py choices /tmp/raw/choices 30`, then `capture.py cleanup /tmp/raw/choices`. Its ids are numbered on their own, from `1000000000000000001`.
+
+The run posted one message with three buttons (`rest-post-buttons.json`) and one with a string select menu of three options, of which one to three may be chosen (`rest-post-menu.json`). A person pressed button 2 (`gw-01-INTERACTION_CREATE.json`: `component_type` 2, `custom_id` the button's) and chose options 1 and 3 in the menu (`gw-02-INTERACTION_CREATE.json`: `component_type` 3, `custom_id` the menu's, `values` the chosen options' values in the order of the menu). Each was acknowledged with a deferred update (`type 6`, 204: `rest-button-ack.json`, `rest-menu-ack.json`). Editing each message with `components: []` removed its buttons and its menu: the service returned the messages with no components (`rest-edit-remove-buttons.json`, `rest-edit-remove-menu.json`). Only the two interactions were kept of the gateway dispatches.
 
 ## Observed, and worth knowing
 
