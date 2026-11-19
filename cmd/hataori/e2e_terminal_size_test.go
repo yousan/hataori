@@ -71,7 +71,11 @@ func TestSessionTerminalSize(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// The page before is marked, so nothing below acts on it while the
+		// new one loads.
+		b.eval(`document.documentElement.dataset.before = 'yes', true`, nil)
 		b.call("Page.navigate", map[string]any{"url": link})
+		b.until("the new page", `document.documentElement.dataset.before !== 'yes' && document.readyState === 'complete'`)
 		b.showAll() // the thread may be asleep
 		b.until("the thread in the tree", fmt.Sprintf(`!!document.querySelector('[data-section=threads] .row[data-thread="%d"]')`, n))
 		b.click(fmt.Sprintf(`[data-section=threads] .row[data-thread="%d"]`, n))
