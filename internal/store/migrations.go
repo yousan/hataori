@@ -435,6 +435,14 @@ var migrations = []Migration{
 	{Name: "approvals", Up: execAll(
 		`CREATE TABLE approvals (id INTEGER PRIMARY KEY, handle TEXT NOT NULL UNIQUE, asks_in INTEGER NOT NULL REFERENCES threads(id), action TEXT NOT NULL, target INTEGER NOT NULL REFERENCES threads(id), session_id INTEGER NOT NULL, turn_id INTEGER NOT NULL, reason TEXT NOT NULL, marked TEXT NOT NULL, principal TEXT NOT NULL, from_id TEXT NOT NULL, ask_key TEXT, state TEXT NOT NULL, opened_at INTEGER NOT NULL, closed_at INTEGER, UNIQUE(asks_in, ask_key))`,
 	)},
+	// One row per plugin that stays stopped (design, section 7.3), until a
+	// run of it lasts; opened_at keys the owner's one message about it.
+	{Name: "plugin outages", Up: execAll(
+		`CREATE TABLE plugin_outages (
+			plugin    TEXT PRIMARY KEY, -- the plugin's id
+			opened_at INTEGER NOT NULL  -- unix milliseconds
+		)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {
