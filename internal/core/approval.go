@@ -78,42 +78,6 @@ func (a *api) AskInterrupt(ctx context.Context, id control.ThreadID, key, reason
 	return handle, err
 }
 
-// interruptAsked interrupts the turn an approval was asked for, only while
-// it runs, and returns the approval's outcome: interrupted, or ended when
-// that turn ended or was interrupted already. The runner checks the turn in
-// the step that sends the interrupt (#457), so a turn that ends just before
-// it, and the turn after it, are never interrupted (#493).
-func (a *api) interruptAsked(ctx context.Context, req control.RequestID, target control.ThreadID, sid, turn int64) (string, error) {
-	var interrupted bool
-	err := a.c.Store.DB.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM approvals WHERE target = ? AND session_id = ? AND turn_id = ? AND state = 'interrupted')`, target, sid, turn).Scan(&interrupted)
-	if err != nil {
-		return "", err
-	}
-	if interrupted {
-		return "ended", nil
-	}
-	cur, state, err := a.c.current(ctx, a.c.Store.DB, target)
-	if err != nil {
-		return "", err
-	}
-	var open int64
-	if err := a.c.Store.DB.QueryRowContext(ctx, `SELECT coalesce(max(id), 0) FROM turns WHERE session_id = ? AND ended_at IS NULL`, sid).Scan(&open); err != nil {
-		return "", err
-	}
-	if cur != sid || state != control.Running || open != turn {
-		return "ended", nil
-	}
-	err = a.c.Runner.Interrupt(ctx, sid, turn)
-	if errors.Is(err, session.ErrRefused) {
-		a.c.Log.Info("approved interrupt: the turn ended first", "request", string(req), "thread", int64(target), "turn", turn)
-		return "ended", nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("core: approved interrupt of thread %d: %w", target, err)
-	}
-	return "interrupted", nil
-}
-
 // noRequestErr is Answer's error for request req when there is no such
 // question or approval, and for one of a scope the caller may not see.
 func noRequestErr(req control.RequestID) error {
@@ -125,8 +89,8 @@ func (a *api) answerApproval(ctx context.Context, req control.RequestID, ans con
 	defer unlock()
 	var scope, state, principal, from, marked string
 	var thread, target control.ThreadID
-	var asked struct{ session, turn int64 } // the turn that ran when asked
-	err := a.c.Store.DB.QueryRowContext(ctx, `SELECT t.scope, a.asks_in, a.target, a.session_id, a.turn_id, a.principal, a.from_id, a.marked, a.state FROM approvals a JOIN threads t ON t.id = a.asks_in WHERE a.handle = ?`, req).Scan(&scope, &thread, &target, &asked.session, &asked.turn, &principal, &from, &marked, &state)
+	var guard sendGuard
+	err := a.c.Store.DB.QueryRowContext(ctx, `SELECT t.scope, a.asks_in, a.target, a.session_id, a.turn_id, a.principal, a.from_id, a.marked, a.state FROM approvals a JOIN threads t ON t.id = a.asks_in WHERE a.handle = ?`, req).Scan(&scope, &thread, &target, &guard.session, &guard.turn, &principal, &from, &marked, &state)
 	if errors.Is(err, sql.ErrNoRows) {
 		a.c.Log.Warn("control call refused", "op", "Answer", "principal", string(a.caller.Principal), "request", string(req), "reason", ErrNotFound)
 		return noRequestErr(req)
@@ -154,19 +118,24 @@ func (a *api) answerApproval(ctx context.Context, req control.RequestID, ans con
 	allow := ans.Allow || (len(ans.Choices) == 1 && ans.Choices[0] == "approve")
 	outcome := "refused"
 	if allow {
-		unlockTurn := a.c.locks.lock(fmt.Sprintf("approval-turn:%d:%d:%d", target, asked.session, asked.turn))
+		unlockTurn := a.c.locks.lock(fmt.Sprintf("approval-turn:%d:%d:%d", target, guard.session, guard.turn))
 		defer unlockTurn()
-		var err error
-		if outcome, err = a.interruptAsked(ctx, req, target, asked.session, asked.turn); err != nil {
+		var interrupted bool
+		err := a.c.Store.DB.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM approvals WHERE target = ? AND session_id = ? AND turn_id = ? AND state = 'interrupted')`, target, guard.session, guard.turn).Scan(&interrupted)
+		if err != nil {
 			return err
 		}
-		if outcome == "interrupted" {
-			// The reason, once the turn was interrupted, as a message the
-			// asker sends: into that turn while it ends, or as the next
-			// one. Never as the answer to a question (NoAnswer).
-			sender := a.c.As(control.Caller{From: from, Principal: control.Principal(principal), Scopes: []string{scope}, May: control.OpSend, NoAnswer: true})
-			if err := sender.Send(ctx, target, "approval:"+string(req), control.Input{Text: marked}, control.Deliver); err != nil {
-				a.c.Log.Warn("approved interrupt: the reason was not given", "request", string(req), "thread", int64(target), "err", err)
+		if interrupted {
+			outcome = "ended"
+		} else {
+			sender := a.c.As(control.Caller{From: from, Principal: control.Principal(principal), Scopes: []string{scope}, May: control.OpSend}).(*api)
+			err := sender.send(ctx, target, "approval:"+string(req), control.Input{Text: marked}, control.Interrupt, &guard)
+			if errors.Is(err, errGuardEnded) || (err == nil && guard.ended) {
+				outcome = "ended"
+			} else if err != nil {
+				return err
+			} else {
+				outcome = "interrupted"
 			}
 		}
 	}

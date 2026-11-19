@@ -1420,10 +1420,10 @@ type API interface {
 	// AskInterrupt asks a person to approve interrupting the running turn of
 	// thread id, with reason. It stores an approval request in the caller's
 	// AsksIn thread and returns its id at once; nothing is interrupted until
-	// a person approves it with Answer. An approval interrupts the turn that
-	// ran when asked, checked in the step that interrupts, and then gives the
-	// reason as a delivered message; a turn that ended first is not
-	// interrupted and gets nothing (outcome "ended"). A repeated key returns the original
+	// a person approves it with Answer. The approved interrupt names the turn
+	// that ran when asked, checked in the step that interrupts: a turn that
+	// ended first is not interrupted, nor the one after it (outcome "ended").
+	// A repeated key returns the original
 	// request; an empty key makes no repeat check. An open request for the
 	// same running turn is returned instead of a second one. The caller's
 	// AsksIn thread cannot be the target (ErrForbidden). Since protocol 3.10.

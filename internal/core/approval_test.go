@@ -123,9 +123,10 @@ func TestApprovalAlreadyInterruptedTurn(t *testing.T) {
 }
 
 // #493: the asked turn ends, and the next one starts, after the approval
-// was checked and before the interrupt. The next turn keeps running:
-// nothing is interrupted, the reason is not given, and the outcome is
-// ended.
+// took the reason and before the interrupt. The next turn keeps running:
+// nothing is interrupted, and the outcome is ended. The reason, taken while
+// the asked turn ran, is handed over once, as any input of a turn that
+// ended first.
 func TestApprovalOfATurnThatEndsBeforeTheInterrupt(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, fakeOwner{key: "chat"})
@@ -151,7 +152,8 @@ func TestApprovalOfATurnThatEndsBeforeTheInterrupt(t *testing.T) {
 	if err := f.owner.Answer(ctx, req, control.Answer{Allow: true}); err != nil {
 		t.Fatal(err)
 	}
-	if calls := strings.TrimPrefix(f.runner.Calls(), before); strings.Contains(calls, "interrupt") || strings.Contains(calls, "urgent") {
+	if calls := strings.TrimPrefix(f.runner.Calls(), before); strings.Contains(calls, "interrupt") ||
+		strings.Count(calls, "deliver supervisor\nurgent") != 1 {
 		t.Fatalf("runner calls after the approval: %s", calls)
 	}
 	var next int64
