@@ -31,6 +31,7 @@ type wireItem struct {
 	Type              string              `json:"type"`
 	Text              string              `json:"text"`
 	Phase             string              `json:"phase"`
+	Delivery          string              `json:"delivery"`
 	Questions         []asyncWireQuestion `json:"questions"`
 	Changes           []struct {
 		Path string `json:"path"`

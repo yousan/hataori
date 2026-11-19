@@ -192,8 +192,12 @@ func codexReplay(args []string) int {
 			continue
 		}
 		if method != "" {
-			for pos < len(lines) && (lines[pos].Dir != "send" || lines[pos].Msg["method"] != method) {
-				pos++
+			next := pos
+			for next < len(lines) && (lines[next].Dir != "send" || lines[next].Msg["method"] != method) {
+				next++
+			}
+			if next < len(lines) {
+				pos = next
 			}
 		} else if pos < len(lines) && lines[pos].Dir == "send" && lines[pos].Msg["method"] == nil {
 			// A server request must receive the captured id and result.
@@ -528,5 +532,72 @@ func TestCodexQuestionsAndApprovalsInTheThread(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestCodexReplayKeepsPosition checks an unknown client request leaves the next capture available.
+func TestCodexReplayKeepsPosition(t *testing.T) {
+	capture, err := filepath.Abs("../../internal/agent/codex/testdata/0.163.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(filepath.Join(capture, "start/wire.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 4096), 4<<20)
+	var initialize map[string]any
+	for scanner.Scan() {
+		var line codexWire
+		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
+			t.Fatal(err)
+		}
+		if line.Dir == "send" && line.Msg["method"] == "initialize" {
+			initialize = line.Msg
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if initialize == nil {
+		t.Fatal("missing captured initialize")
+	}
+	// The unknown request is derived from the captured initialize with another method and id.
+	unknown := make(map[string]any, len(initialize))
+	for k, v := range initialize {
+		unknown[k] = v
+	}
+	unknown["method"] = "unknown/clientMethod"
+	unknown["id"] = float64(999)
+	first, _ := json.Marshal(unknown)
+	second, _ := json.Marshal(initialize)
+	cmd := exec.Command(os.Args[0], "app-server")
+	cmd.Env = append(os.Environ(), "HATAORI_TEST_CODEX_CAPTURE="+capture, "HATAORI_TEST_CODEX_RECORD="+filepath.Join(t.TempDir(), "env"), "HATAORI_TEST_CODEX_SCENARIO=start")
+	cmd.Stdin = bytes.NewReader(append(append(append(first, '\n'), second...), '\n'))
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("replay: %v: %s", err, stderr.String())
+	}
+	var responses []map[string]any
+	scan := bufio.NewScanner(&stdout)
+	for scan.Scan() {
+		var m map[string]any
+		if err := json.Unmarshal(scan.Bytes(), &m); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := m["id"]; ok && m["method"] == nil {
+			responses = append(responses, m)
+		}
+	}
+	if err := scan.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(responses) < 2 || responses[0]["id"] != float64(999) || responses[0]["error"] == nil || responses[1]["id"] != initialize["id"] || responses[1]["result"] == nil || responses[1]["error"] != nil {
+		t.Fatalf("responses: %v", responses)
 	}
 }

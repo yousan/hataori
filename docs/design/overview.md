@@ -2006,9 +2006,12 @@ type Codec interface {
 	// An agent message with questions and delivery: "async" becomes a Request
 	// answered by a user message: turn/steer while its turn runs, turn/start
 	// afterward. RequestWithdrawn reports an unanswered server request resolved
-	// by serverRequest/resolved, a server request still open at turn end, or an
-	// async question when a turn its answer did not start begins. Any other
-	// server request gets a JSON-RPC error and an Unknown event.
+	// by serverRequest/resolved, or a server request still open at its thread's
+	// turn end. An async question is withdrawn by a newer request, a user
+	// message in its thread, or a turn its answer did not start. Any other
+	// server request gets a JSON-RPC error and an Unknown event. The schema's
+	// item/permissions/requestApproval, execCommandApproval and
+	// applyPatchApproval have no captures yet and get the same error.
 	Decode(src Source, line []byte) Actions
 	// A user message; TurnStarted returns its ID. Input given while a turn
 	// runs is held until the turn ends (both adapters, for now). The Codex

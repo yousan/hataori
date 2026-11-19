@@ -639,3 +639,239 @@ func TestFileChangePathsForgotten(t *testing.T) {
 		})
 	}
 }
+
+// capturedMessage finds a received line by method and, when set, item type.
+func capturedMessage(t *testing.T, lines []wireLine, method, itemType string) []byte {
+	t.Helper()
+	for _, l := range lines {
+		if l.Dir != "recv" {
+			continue
+		}
+		var m message
+		_ = json.Unmarshal(l.Msg, &m)
+		var p params
+		_ = json.Unmarshal(m.Params, &p)
+		if m.Method == method && (itemType == "" || p.Item.Type == itemType && len(p.Item.Questions) > 0) {
+			return l.Msg
+		}
+	}
+	t.Fatalf("missing %s %s", method, itemType)
+	return nil
+}
+
+// alterCaptured changes fields of a captured message for an uncaptured case.
+func alterCaptured(t *testing.T, line []byte, change func(map[string]any)) []byte {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(line, &m); err != nil {
+		t.Fatal(err)
+	}
+	change(m)
+	b, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func TestNewRequestWithdrawsAsyncQuestion(t *testing.T) {
+	for _, kind := range []string{"async", "question", "approval", "allow_all"} {
+		t.Run(kind, func(t *testing.T) {
+			policy := agent.AskInChat
+			if kind == "allow_all" {
+				policy = agent.AllowAll
+			}
+			r := newRequestReplay(t, "question_async", policy)
+			var original *agent.RequestInfo
+			var line []byte
+			for original == nil {
+				_, a, ok := r.next()
+				if !ok {
+					t.Fatal("missing async question")
+				}
+				original = requestEvent(t, a)
+			}
+			switch kind {
+			case "async":
+				// The second question is derived from the captured item with a new item id.
+				line = alterCaptured(t, r.lines[r.pos-1].Msg, func(m map[string]any) {
+					m["params"].(map[string]any)["item"].(map[string]any)["id"] = "another-question"
+				})
+			case "question":
+				line = capturedMessage(t, replay(t, "question_plan"), "item/tool/requestUserInput", "")
+			default:
+				line = capturedMessage(t, replay(t, "approval_accept"), "item/commandExecution/requestApproval", "")
+			}
+			a := r.c.Decode(agent.Output, line)
+			if kind == "allow_all" {
+				if len(a.Events) != 0 || len(a.Write) != 1 {
+					t.Fatal(a)
+				}
+				if _, err := r.c.Answer(agent.Answer{Request: original.ID, Text: "blue"}); err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if len(a.Events) != 2 || a.Events[0].Kind != agent.RequestWithdrawn || a.Events[0].Request.ID != original.ID || a.Events[1].Kind != agent.Request || a.Events[1].Request.ID == original.ID {
+				t.Fatal(a.Events)
+			}
+			if kind == "async" && a.Events[1].Request.ID != "another-question" {
+				t.Fatal(a.Events)
+			}
+		})
+	}
+}
+
+func TestRebuiltUserMessageWithdrawsAsyncQuestion(t *testing.T) {
+	lines := replay(t, "question_async")
+	spec, opts, _ := fixture(t, lines)
+	c := NewCodec(spec, opts)
+	var question string
+	for _, l := range lines {
+		if l.Dir != "recv" {
+			continue
+		}
+		var m message
+		_ = json.Unmarshal(l.Msg, &m)
+		var p params
+		_ = json.Unmarshal(m.Params, &p)
+		isAnswer := m.Method == "item/started" && p.Item.Type == "userMessage" && len(p.Item.Content) > 0 && p.Item.Content[0].Text == "blue"
+		if isAnswer {
+			// The subagent user message is derived from the captured answer with another thread id.
+			other := alterCaptured(t, l.Msg, func(v map[string]any) { v["params"].(map[string]any)["threadId"] = "other-thread" })
+			for _, e := range c.Decode(agent.Output, other).Events {
+				if e.Kind == agent.RequestWithdrawn {
+					t.Fatal(e)
+				}
+			}
+		}
+		a := c.Decode(agent.Output, l.Msg)
+		if q := requestEvent(t, a); q != nil {
+			question = q.ID
+		}
+		if isAnswer {
+			if question == "" || len(a.Events) != 1 || a.Events[0].Kind != agent.RequestWithdrawn || a.Events[0].Request.ID != question {
+				t.Fatal(a.Events)
+			}
+			if _, err := c.Answer(agent.Answer{Request: question, Text: "blue"}); !errors.Is(err, ErrNotWaiting) {
+				t.Fatal(err)
+			}
+			return
+		}
+	}
+	t.Fatal("missing steered user message")
+}
+
+func TestTurnWithdrawsOnlyItsThreadRequests(t *testing.T) {
+	lines := replay(t, "approval_accept")
+	spec, opts, _ := fixture(t, lines)
+	spec.Approvals = agent.AskInChat
+	c := NewCodec(spec, opts)
+	var id string
+	var end []byte
+	for _, l := range lines {
+		if l.Dir != "recv" {
+			continue
+		}
+		var m message
+		_ = json.Unmarshal(l.Msg, &m)
+		if m.Method == "item/commandExecution/requestApproval" {
+			// The subagent approval is derived from the captured request with another thread id.
+			changed := alterCaptured(t, l.Msg, func(v map[string]any) { v["params"].(map[string]any)["threadId"] = "other-thread" })
+			q := requestEvent(t, c.Decode(agent.Output, changed))
+			if q == nil {
+				t.Fatal("missing request")
+			}
+			id = q.ID
+			continue
+		}
+		if m.Method == "serverRequest/resolved" {
+			continue
+		}
+		if m.Method == "turn/completed" {
+			end = l.Msg
+			a := c.Decode(agent.Output, l.Msg)
+			for _, e := range a.Events {
+				if e.Kind == agent.RequestWithdrawn {
+					t.Fatal(e)
+				}
+			}
+			break
+		}
+		c.Decode(agent.Output, l.Msg)
+	}
+	if id == "" || end == nil {
+		t.Fatal("missing approval or turn end")
+	}
+	// The subagent turn end is derived from the session turn end with another thread id.
+	changed := alterCaptured(t, end, func(v map[string]any) { v["params"].(map[string]any)["threadId"] = "other-thread" })
+	a := c.Decode(agent.Output, changed)
+	if len(a.Events) != 1 || a.Events[0].Kind != agent.RequestWithdrawn || a.Events[0].Request.ID != id {
+		t.Fatal(a.Events)
+	}
+}
+
+func TestQuestionRequiresAsyncDelivery(t *testing.T) {
+	lines := replay(t, "question_async")
+	c := NewCodec(agent.Spec{}, Options{})
+	question := capturedMessage(t, lines, "item/completed", "agentMessage")
+	// The non-async item is derived from the captured async question with null delivery.
+	changed := alterCaptured(t, question, func(m map[string]any) { m["params"].(map[string]any)["item"].(map[string]any)["delivery"] = nil })
+	var item params
+	var m message
+	_ = json.Unmarshal(changed, &m)
+	_ = json.Unmarshal(m.Params, &item)
+	for _, l := range lines {
+		if l.Dir != "recv" {
+			continue
+		}
+		if bytes.Equal(l.Msg, question) {
+			a := c.Decode(agent.Output, changed)
+			if requestEvent(t, a) != nil {
+				t.Fatal(a)
+			}
+			break
+		}
+		c.Decode(agent.Output, l.Msg)
+	}
+	state := c.(*codec)
+	if state.held == nil || *state.held != item.Item.Text {
+		t.Fatal("non-async question was not held as text")
+	}
+}
+
+func TestTurnWithdrawsThreadlessRequest(t *testing.T) {
+	lines := replay(t, "approval_accept")
+	spec, opts, _ := fixture(t, lines)
+	spec.Approvals = agent.AskInChat
+	c := NewCodec(spec, opts)
+	var id string
+	for _, l := range lines {
+		if l.Dir != "recv" {
+			continue
+		}
+		var m message
+		_ = json.Unmarshal(l.Msg, &m)
+		if m.Method == "item/commandExecution/requestApproval" {
+			// The threadless request is derived from the captured approval without its thread id.
+			line := alterCaptured(t, l.Msg, func(v map[string]any) { delete(v["params"].(map[string]any), "threadId") })
+			q := requestEvent(t, c.Decode(agent.Output, line))
+			if q == nil {
+				t.Fatal("missing request")
+			}
+			id = q.ID
+			continue
+		}
+		if m.Method == "serverRequest/resolved" {
+			continue
+		}
+		a := c.Decode(agent.Output, l.Msg)
+		if m.Method == "turn/completed" {
+			if id == "" || len(a.Events) == 0 || a.Events[0].Kind != agent.RequestWithdrawn || a.Events[0].Request.ID != id {
+				t.Fatal(a.Events)
+			}
+			return
+		}
+	}
+	t.Fatal("missing turn end")
+}

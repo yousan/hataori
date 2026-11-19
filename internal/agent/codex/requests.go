@@ -145,6 +145,7 @@ func (c *codec) serverRequest(a *agent.Actions, m message, line []byte) {
 			}
 		}
 	}
+	c.withdrawAsync(a)
 	if c.open == nil {
 		c.open = map[string]*openRequest{}
 	}
@@ -186,6 +187,7 @@ func (c *codec) asyncQuestion(a *agent.Actions, p params) {
 		}
 		qs = append(qs, w)
 	}
+	c.withdrawAsync(a)
 	if c.open == nil {
 		c.open = map[string]*openRequest{}
 	}
@@ -278,10 +280,19 @@ func (c *codec) withdraw(a *agent.Actions, match func(*openRequest) bool) {
 
 // withdrawThread withdraws server requests at turn end.
 func (c *codec) withdrawThread(a *agent.Actions, thread string) {
-	c.withdraw(a, func(r *openRequest) bool { return !r.async && (thread == c.session || r.thread == thread) })
+	if thread == "" {
+		thread = c.session
+	}
+	c.withdraw(a, func(r *openRequest) bool {
+		owner := r.thread
+		if owner == "" {
+			owner = c.session
+		}
+		return !r.async && owner == thread
+	})
 }
 
-// withdrawAsync withdraws unanswered async questions at turn start.
+// withdrawAsync withdraws unanswered async questions.
 func (c *codec) withdrawAsync(a *agent.Actions) {
 	c.withdraw(a, func(r *openRequest) bool { return r.async })
 }

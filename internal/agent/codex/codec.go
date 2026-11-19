@@ -403,6 +403,9 @@ func (c *codec) item(a *agent.Actions, p params, method string, line []byte) {
 	}
 	switch p.Item.Type {
 	case "userMessage":
+		if method == "item/started" && p.ThreadID == c.session {
+			c.withdrawAsync(a)
+		}
 		if !c.started && method == "item/started" {
 			var parts []string
 			for _, v := range p.Item.Content {
@@ -428,7 +431,7 @@ func (c *codec) item(a *agent.Actions, p params, method string, line []byte) {
 			c.emit(a, agent.Event{Kind: agent.Text, Text: *c.held})
 			c.held = nil
 		}
-		if len(p.Item.Questions) > 0 {
+		if p.Item.Delivery == "async" && len(p.Item.Questions) > 0 {
 			c.asyncQuestion(a, p)
 			return
 		}
