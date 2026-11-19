@@ -77,6 +77,12 @@ func (c *codec) toolItem(a *agent.Actions, p params, method string) bool {
 	default:
 		return false
 	}
+	if method == "item/completed" && c.tools[it.ID].Kind == agent.ToolEnded {
+		return true
+	}
+	if method == "item/completed" && !c.running && p.ThreadID == c.session {
+		return true
+	}
 	if !c.started && p.ThreadID == c.session {
 		c.reportStart(a, agent.ByAgent, -1)
 	}

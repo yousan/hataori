@@ -229,6 +229,8 @@ const (
 	// Limits is the remaining usage of the agent's account. It belongs to
 	// no turn and changes no state; the core keeps the newest per agent.
 	Limits
+	// InputTaken reports an input taken into an already running turn.
+	InputTaken
 )
 
 // Starter says who started a turn.
@@ -280,7 +282,7 @@ type Event struct {
 	Final bool   // Text: the turn's final answer
 
 	StartedBy Starter // TurnStarted
-	Input     string  // TurnStarted: the Input.ID of the input this turn reports; TurnEnded with NotDelivered: of the input never reported; "" when none or not known
+	Input     string  // TurnStarted, InputTaken: the Input.ID of the input this turn reports; TurnEnded with NotDelivered: of the input never reported; "" when none or not known
 
 	Tool string // ToolStarted, ToolEnded: the tool's name or label; SubagentStarted, SubagentEnded: the subagent's name or type
 	ID   string // ToolStarted, ToolEnded, SubagentStarted, SubagentEnded: pairs start and end

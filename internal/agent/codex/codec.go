@@ -49,23 +49,25 @@ type pendingInput struct {
 	at      time.Time
 	request int
 	turn    string
+	steer   bool
 }
 
 type codec struct {
-	mu       sync.Mutex      // protects all codec state
-	spec     agent.Spec      // session configuration
-	opts     Options         // app-server policies and input timeout
-	seq      uint64          // last event sequence number
-	next     int             // next request id
-	requests map[int]string  // outstanding request methods by id
-	session  string          // current thread id
-	ready    bool            // the thread has been reported
-	closed   bool            // the session has ended
-	running  bool            // a turn is running or requested
-	started  bool            // the current turn's start has been reported
-	turnID   string          // current turn id
-	sent     []*pendingInput // written inputs awaiting their report
-	queue    []agent.Input   // inputs waiting to be written
+	mu           sync.Mutex      // protects all codec state
+	spec         agent.Spec      // session configuration
+	opts         Options         // app-server policies and input timeout
+	seq          uint64          // last event sequence number
+	next         int             // next request id
+	requests     map[int]string  // outstanding request methods by id
+	session      string          // current thread id
+	ready        bool            // the thread has been reported
+	closed       bool            // the session has ended
+	running      bool            // a turn is running or requested
+	started      bool            // the current turn's start has been reported
+	steerBlocked bool            // a refused input waits for the next turn
+	turnID       string          // current turn id
+	sent         []*pendingInput // written inputs awaiting their report
+	queue        []agent.Input   // inputs waiting to be written
 	requestState
 	toolState
 	usageState
@@ -139,6 +141,9 @@ func (c *codec) Open() agent.Actions {
 
 // flush writes the next queued input when the session can accept it.
 func (c *codec) flush(a *agent.Actions) {
+	if c.flushSteers(a) {
+		return
+	}
 	if !c.ready || c.closed || c.running || len(c.sent) > 0 || len(c.queue) == 0 {
 		return
 	}
@@ -175,8 +180,16 @@ func (c *codec) Answer(answer agent.Answer) (agent.Actions, error) {
 	return c.answer(answer)
 }
 
-// Interrupt returns no actions until interrupts are supported.
-func (c *codec) Interrupt() agent.Actions { c.mu.Lock(); defer c.mu.Unlock(); return agent.Actions{} }
+// Interrupt requests an end to the current turn when its ID is known.
+func (c *codec) Interrupt() agent.Actions {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var a agent.Actions
+	if c.running && c.turnID != "" {
+		c.write(&a, "turn/interrupt", map[string]any{"threadId": c.session, "turnId": c.turnID}, true)
+	}
+	return a
+}
 
 // Tick expires unreported inputs and writes the next queued input.
 func (c *codec) Tick(now time.Time) agent.Actions {
@@ -185,6 +198,12 @@ func (c *codec) Tick(now time.Time) agent.Actions {
 	var a agent.Actions
 	remaining := c.sent[:0]
 	for _, s := range c.sent {
+		// The app-server answers steer requests; if it exits, the session ends.
+		// Expiring one would incorrectly end the still-running turn.
+		if s.steer {
+			remaining = append(remaining, s)
+			continue
+		}
 		if s.at.IsZero() {
 			s.at = now
 		}
@@ -192,7 +211,9 @@ func (c *codec) Tick(now time.Time) agent.Actions {
 			c.emit(&a, agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered, Input: s.input.ID})
 			if s.request != 0 {
 				delete(c.requests, s.request)
-				c.running = false
+				if !s.steer {
+					c.running = false
+				}
 			}
 		} else {
 			remaining = append(remaining, s)
@@ -317,7 +338,9 @@ func (c *codec) response(a *agent.Actions, m message, line []byte) {
 			c.closed = true
 			c.emit(a, agent.Event{Kind: agent.SessionEnded, Reason: agent.Reason(msg)})
 		case method == "turn/steer":
+			c.inputSteerFailed(a, id)
 			c.steerFailed(a, id)
+			c.flush(a)
 		case method == "turn/start":
 			for i, s := range c.sent {
 				if s.request == id {
@@ -334,6 +357,9 @@ func (c *codec) response(a *agent.Actions, m message, line []byte) {
 		return
 	}
 	delete(c.steers, id)
+	if method == "turn/steer" {
+		c.inputSteerAccepted(a, id)
+	}
 	if c.limitResponse(a, method, m.Result, line) {
 		return
 	}
@@ -380,17 +406,19 @@ func (c *codec) reportStart(a *agent.Actions, starter agent.Starter, index int) 
 
 // turnStarted records a turn start and reports it when its input is known.
 func (c *codec) turnStarted(a *agent.Actions, p params) {
+	c.steerBlocked = false
 	c.running = true
 	c.started = false
 	c.beginUsage()
 	c.turnID = p.Turn.ID
 	c.held = nil
 	for i, s := range c.sent {
-		if s.request != 0 && (s.turn == "" || s.turn == p.Turn.ID) {
+		if !s.steer && s.request != 0 && (s.turn == "" || s.turn == p.Turn.ID) {
 			c.reportStart(a, agent.ByCaller, i)
-			return
+			break
 		}
 	}
+	c.flush(a)
 }
 
 // normalize normalizes input text for matching.
@@ -403,6 +431,9 @@ func (c *codec) item(a *agent.Actions, p params, method string, line []byte) {
 	}
 	switch p.Item.Type {
 	case "userMessage":
+		if method == "item/started" && c.started {
+			c.matchWrittenSteer(a, p)
+		}
 		if method == "item/started" && p.ThreadID == c.session {
 			c.withdrawAsync(a)
 		}
@@ -479,8 +510,12 @@ func (c *codec) turnCompleted(a *agent.Actions, p params) {
 		}
 	}
 	c.emit(a, e)
+	if e.Status == agent.Interrupted {
+		c.write(a, "thread/backgroundTerminals/clean", map[string]any{"threadId": c.session}, true)
+	}
 	c.running = false
 	c.started = false
 	c.turnID = ""
+	c.steerBlocked = false
 	c.flush(a)
 }
