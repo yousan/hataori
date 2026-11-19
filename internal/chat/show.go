@@ -183,6 +183,9 @@ type eventData struct {
 	By       string   `json:"by"` // turn_started: who started the turn
 	// input, answer: the link it came through, since 3.6
 	Link *control.LinkRef `json:"link"`
+	// request, answer, request_withdrawn: the request; answer since 3.8
+	Request string `json:"request"`
+	Multi   bool   `json:"multi"` // request: several choices at once, since 3.8
 }
 
 // typedAtTerminal is the line that goes before the final answer of a turn a
@@ -204,7 +207,14 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		if _, seen := r.via[e.Thread]; !seen && r.turn[e.Thread] != "" {
 			r.via[e.Thread] = d.Link // the turn's first input or answer
 		}
+		if e.Kind == "answer" {
+			return f.questionDone(ctx, r, e, conv, d.Request)
+		}
 		return nil, nil
+	case "request_withdrawn":
+		var d eventData
+		json.Unmarshal(e.Data, &d)
+		return f.questionDone(ctx, r, e, conv, d.Request)
 	case "thread_created", "turn_started", "text", "request", "turn_ended", "file_out":
 	default:
 		return nil, nil // a kind the front end does not show, or does not know
@@ -274,7 +284,7 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		if d.Approval {
 			return nil, nil // allowed by the core in phase 1; nothing to answer
 		}
-		return row(surface.Message{Text: question(d.Text, d.Choices)}), nil
+		return row(f.questionMessage(d.Request, d.Text, d.Choices, d.Multi)), nil
 	case "file_out":
 		return f.fileRows(ctx, e, conv, d.Session, append([]string{d.File}, d.More...), d.Caption), nil
 	case "turn_ended":

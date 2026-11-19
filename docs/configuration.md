@@ -427,7 +427,7 @@ An order is a message in an enabled channel (not in a thread):
 - `effort:` is one of `low`, `medium`, `high`, `xhigh`, `max`. Any other value gets a reply saying nothing was started.
 - The author must be the owner or one of the scope's `people`. Posts by bot accounts are ignored; posts through a webhook are accepted when the webhook's id belongs to one of the scope's people.
 
-hataori opens a thread on the message, clones the repository into the thread's working directory, starts the agent there and posts its replies into the thread. Later messages in that thread from the owner or one of the scope's people go to the same agent session. An order that is refused for any reason other than the effort value starts nothing and writes one log line.
+hataori opens a thread on the message, clones the repository into the thread's working directory, starts the agent there and posts its replies into the thread. Later messages in that thread from the owner or one of the scope's people go to the same agent session. A question from the agent is shown with one button per option, or a menu when several may be chosen; pressing one answers it, also after a restart, and the question then loses its buttons. A question with more options than the service shows as buttons is shown with its options numbered. Either way, the next message in the thread answers an open question. A press by anyone but the owner or one of the scope's people, or on a question that is no longer open, answers nothing and writes one log line. An order that is refused for any reason other than the effort value starts nothing and writes one log line.
 
 ## Commands
 

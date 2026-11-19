@@ -411,13 +411,16 @@ func TestCodexLoginRelay(t *testing.T) {
 	checkLoginSecrets(t, r, logged, deviceLink, deviceCode)
 }
 
-// TestCodexQuestionsAndApprovalsInTheThread checks captured approvals are automatically accepted and hidden, and questions shown and answered by the next message on the fake surface.
+// TestCodexQuestionsAndApprovalsInTheThread checks captured approvals are automatically accepted and hidden, and questions shown with one choice per option and answered by the next message on the fake surface.
 func TestCodexQuestionsAndApprovalsInTheThread(t *testing.T) {
-	for _, tc := range []struct{ scenario, first, answer, last string }{
-		{"approval_accept", "Ran `touch approved.txt` successfully.", "continue", "Created `patch.txt` containing `hi`."},
-		{"question_async", "Which colour do you like?\n\n1. Blue\n2. Green\n3. Red\n4. Purple", "blue", "You like blue."},
-		{"question_after_turn", "Which colour do you like?\n\n1. Blue\n2. Green\n3. Red\n4. Purple", "blue", "Blue."},
-		{"question_plan", "What would you like help with?\n- Plan a change (Recommended): Explore the project and prepare a concrete implementation plan.\n- Explain something: Answer a question or clarify a topic.\n- Review work: Inspect existing code, writing, or a design.\n\n1. Plan a change (Recommended)\n2. Explain something\n3. Review work", "Plan a change (Recommended)", ""},
+	for _, tc := range []struct {
+		scenario, first, answer, last string
+		choices                       int // of the first post
+	}{
+		{"approval_accept", "Ran `touch approved.txt` successfully.", "continue", "Created `patch.txt` containing `hi`.", 0},
+		{"question_async", "Which colour do you like?", "blue", "You like blue.", 4},
+		{"question_after_turn", "Which colour do you like?", "blue", "Blue.", 4},
+		{"question_plan", "What would you like help with?\n- Plan a change (Recommended): Explore the project and prepare a concrete implementation plan.\n- Explain something: Answer a question or clarify a topic.\n- Review work: Inspect existing code, writing, or a design.", "Plan a change (Recommended)", "", 3},
 	} {
 		t.Run(tc.scenario, func(t *testing.T) {
 			temp := t.TempDir()
@@ -446,7 +449,14 @@ func TestCodexQuestionsAndApprovalsInTheThread(t *testing.T) {
 			r.connected(t)
 			r.driver.Inject(c1, fakesurface.Webhook(e2eHook), "!go repo:"+bareRepo(t)+" hello")
 			th := r.thread(t, 0)
-			r.posted(t, th, tc.first)
+			eventually(t, "a post of "+tc.first, r.within(15*time.Second), func() bool {
+				for _, c := range r.driver.Calls(th) {
+					if c.Op == fakesurface.OpPost && c.Message.Text == tc.first && len(c.Message.Choices) == tc.choices {
+						return true
+					}
+				}
+				return false
+			})
 			if tc.scenario == "question_after_turn" {
 				r.posted(t, th, "I haven’t received your answer yet. Which colour do you like?")
 			}

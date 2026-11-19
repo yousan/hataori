@@ -71,6 +71,20 @@ func TestQuestionBecomesARequest(t *testing.T) {
 	}
 }
 
+// A question that takes several options says so; one that takes one does
+// not. Both from real captures.
+func TestMultiSelectQuestionIsMarked(t *testing.T) {
+	for _, tc := range []struct {
+		scenario string
+		multi    bool
+	}{{"question", false}, {"question-multi", true}} {
+		a := decodeFile(t, newTestCodec(), "q1", tc.scenario+"/hooks/03-PreToolUse.json")
+		if len(a.Events) != 1 || a.Events[0].Request == nil || a.Events[0].Request.Multi != tc.multi {
+			t.Errorf("%s: events %+v, want a request with Multi %v", tc.scenario, a.Events, tc.multi)
+		}
+	}
+}
+
 func TestFreeTextAndSeveralOptions(t *testing.T) {
 	for _, tc := range []struct {
 		scenario string

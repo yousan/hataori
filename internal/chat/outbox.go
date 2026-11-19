@@ -111,6 +111,7 @@ type message struct {
 	Text    string           `json:"text,omitempty"`
 	Files   []surface.File   `json:"files,omitempty"`
 	Choices []surface.Choice `json:"choices,omitempty"`
+	Multi   bool             `json:"multi,omitempty"`
 	ReplyTo *ref             `json:"reply_to,omitempty"`
 	Notify  []string         `json:"notify,omitempty"`
 	Quiet   bool             `json:"quiet,omitempty"`
@@ -128,7 +129,7 @@ type ref struct {
 
 func encode(r Row) ([]byte, error) {
 	m := r.Message
-	s := message{Text: m.Text, Files: m.Files, Choices: m.Choices, Notify: m.Notify, Quiet: m.Quiet,
+	s := message{Text: m.Text, Files: m.Files, Choices: m.Choices, Multi: m.Multi, Notify: m.Notify, Quiet: m.Quiet,
 		ReplyRow: r.ReplyToRow, Op: r.Op, Target: r.Target}
 	if r := m.ReplyTo; r != nil {
 		s.ReplyTo = &ref{Channel: r.Conv.Channel, Thread: r.Conv.Thread, ID: r.ID}
@@ -141,7 +142,7 @@ func decode(data []byte) (surface.Message, message, error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return surface.Message{}, s, err
 	}
-	m := surface.Message{Text: s.Text, Files: s.Files, Choices: s.Choices, Notify: s.Notify, Quiet: s.Quiet}
+	m := surface.Message{Text: s.Text, Files: s.Files, Choices: s.Choices, Multi: s.Multi, Notify: s.Notify, Quiet: s.Quiet}
 	if r := s.ReplyTo; r != nil {
 		m.ReplyTo = &surface.MessageRef{Conv: surface.Conversation{Channel: r.Channel, Thread: r.Thread}, ID: r.ID}
 	}
