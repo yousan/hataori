@@ -79,7 +79,7 @@ func (s *server) pane(command string) (string, int) {
 	if s.n == 0 {
 		out = s.run("new-session", "-d", "-s", "t", "-x", "100", "-y", "30", "-P", "-F", format, command)
 	} else {
-		out = s.run("new-window", "-d", "-t", "t", "-P", "-F", format, command)
+		out = s.run("new-window", "-d", "-t", "t:", "-P", "-F", format, command)
 	}
 	s.n++
 	f := strings.Fields(out)
