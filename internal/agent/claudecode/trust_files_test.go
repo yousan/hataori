@@ -168,6 +168,9 @@ func TestConfinedWriteToProtectedFiles(t *testing.T) {
 		// The CLI names the directory as it resolved it.
 		{"Write", "file_path", "/private/var/w/a.txt", "/private/var/w", "/var/w", false},
 		{"Write", "file_path", "/private/var/w/.git/config", "/private/var/w", "/var/w", true},
+		// A cwd that is not the session's directory widens nothing.
+		{"Write", "file_path", "/etc/x", "/", "/var/w", true},
+		{"Write", "file_path", "/var/sibling/a.txt", "/var", "/var/w", true},
 	} {
 		c := (&Adapter{}).NewCodec(agent.Spec{Dir: tc.dir, Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
 		a := c.Decode(agent.Hook, request(tc.tool, tc.field, tc.path, tc.cwd))

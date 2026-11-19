@@ -788,9 +788,9 @@ var writeTools = map[string]string{"Write": "file_path", "Edit": "file_path", "M
 // leaves to a person or the permission handler, and a supervisor needs
 // none of them (#423). A path outside the directory, or one that cannot be
 // read, counts too; the CLI refuses the first itself. The directory is the
-// session's, or the request's cwd, which is how the CLI names the same
-// directory (it may have resolved a link in it). path is the path as the
-// request gives it.
+// session's, or the request's cwd when that ends with the session's: the
+// CLI may name the same directory with a link above it resolved, such as
+// /private/var/... for /var/.... path is the path as the request gives it.
 func protectedWrite(dir string, p payload) (path string, ok bool) {
 	field, ok := writeTools[p.ToolName]
 	if !ok {
@@ -802,7 +802,11 @@ func protectedWrite(dir string, p payload) (path string, ok bool) {
 	if path == "" {
 		return path, true
 	}
-	for _, base := range []string{dir, p.Cwd} {
+	bases := []string{dir}
+	if cwd, d := filepath.Clean(p.Cwd), filepath.Clean(dir); dir != "" && cwd != d && strings.HasSuffix(cwd, d) {
+		bases = append(bases, cwd)
+	}
+	for _, base := range bases {
 		if base == "" || !filepath.IsAbs(base) {
 			continue
 		}
