@@ -34,6 +34,19 @@ func lock(stateDir string) (*os.File, error) {
 	return f, nil
 }
 
+// unlock releases the lock f holds and closes f. The lock is released
+// first: it belongs to the open file, and a process started a moment ago
+// has a copy of the descriptor until it execs, so closing alone would
+// leave the lock held by that copy for that moment.
+func unlock(f *os.File) {
+	unix.Flock(int(f.Fd()), unix.LOCK_UN)
+	f.Close()
+}
+
+// probed, when a test sets it, is called with the probe's file while
+// Running holds the lock.
+var probed func(*os.File)
+
 // Running reports whether a host holds stateDir. A host that is starting
 // and has not taken the lock yet is not seen; it exits if it finds the
 // lock taken by another.
@@ -42,6 +55,9 @@ func Running(stateDir string) bool {
 	if err != nil {
 		return errors.Is(err, ErrHostRunning)
 	}
-	f.Close()
+	if probed != nil {
+		probed(f)
+	}
+	unlock(f)
 	return false
 }
