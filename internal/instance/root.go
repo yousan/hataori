@@ -99,7 +99,11 @@ func readConfig(r *os.Root) (*Config, error) {
 // Close releases the lock and the root.
 func (in *Instance) Close() error {
 	if in.lock != nil {
-		in.lock.Close() // closing the file releases the lock
+		// Unlocked before it is closed: a process started a moment ago has a
+		// copy of the descriptor until it execs, and closing ours would
+		// leave the lock with that copy.
+		syscall.Flock(int(in.lock.Fd()), syscall.LOCK_UN)
+		in.lock.Close()
 		in.lock = nil
 	}
 	return in.Root.Close()

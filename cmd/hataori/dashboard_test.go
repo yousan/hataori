@@ -119,15 +119,18 @@ func runDaemon(t *testing.T, root string) (stop func()) {
 }
 
 // runDaemonLog is runDaemon, and returns what the daemon logged so far,
-// whenever it is called.
+// whenever it is called. When the daemon does not serve, the test fails
+// with what it logged and whether run returned.
 func runDaemonLog(t *testing.T, root string) (stop func(), logged func() string) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
+	var code int // what run returned, once done is closed
 	var log bytes.Buffer
 	var mu sync.Mutex
+	logged = func() string { mu.Lock(); defer mu.Unlock(); return log.String() }
 	go func() {
-		runCtx(ctx, []string{"run", "--root", root}, io.Discard, lockedWriter{&mu, &log})
+		code = runCtx(ctx, []string{"run", "--root", root}, io.Discard, lockedWriter{&mu, &log})
 		close(done)
 	}()
 	stopped := false
@@ -139,14 +142,21 @@ func runDaemonLog(t *testing.T, root string) (stop func(), logged func() string)
 		}
 	}
 	t.Cleanup(func() { stop(); killSessions(root) })
-	eventually(t, "the daemon to serve", 10*time.Second, func() bool {
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
 		c, err := wire.Dial(root)
 		if err == nil {
 			c.Close()
+			return stop, logged
 		}
-		return err == nil
-	})
-	return stop, func() string { mu.Lock(); defer mu.Unlock(); return log.String() }
+		select {
+		case <-done:
+			t.Fatalf("the daemon ended before it served: run returned %d; dial: %v; it logged:\n%s", code, err, logged())
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the daemon did not serve within 10s and run has not returned; dial: %v; it logged:\n%s", err, logged())
+		}
+	}
 }
 
 // dashSignIn signs in with a link from `hataori signin` and returns the
