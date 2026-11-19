@@ -87,7 +87,7 @@ func TestRealClaudeCodeSupervisor(t *testing.T) {
 		// sv1 is not among c1's people: the supervisor reads, and cannot
 		// send to or start a worker that would do what it may not.
 		cfg["scopes"] = []map[string]any{{"key": "c1", "client": remoteSurface, "enabled": true,
-			"people": []string{"dispatch"}, "supervisor": map[string]any{}}}
+			"people": []string{"dispatch"}, "supervisor": map[string]any{"quiet": "1s"}}}
 		cfg["adapters"] = map[string]any{claudecode.Name: map[string]any{"command": wrapper}}
 	})
 	p.deadline = time.Now().Add(25 * time.Minute)
@@ -251,6 +251,10 @@ func TestRealClaudeCodeSupervisor(t *testing.T) {
 		if workDir == "" {
 			t.Fatal("the worker has no workspace")
 		}
+		// The worker's turn end wakes the supervisor once (#271), after a
+		// quiet period of a second: that turn ends before the attempts, so
+		// that each attempt's turn is the one it waits for.
+		eventually(t, "the supervisor's turn on being woken", p.within(4*time.Minute), func() bool { return len(p.turnsEnded(t, sv)) == 2 })
 	})
 	// plant writes the file f, below the supervisor's directory.
 	plant := func(t *testing.T, f, content string) {
