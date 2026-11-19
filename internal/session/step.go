@@ -196,7 +196,9 @@ func Step(s Snapshot, in Input) (Result, error) {
 		r.Out = append(r.Out, Out{Kind: KindAnswer, Data: given(in)})
 	case Close:
 		// No turn runs, no question is open and no session is starting:
-		// closing loses nothing the agent was doing.
+		// closing loses nothing the agent was doing. Background tasks and
+		// input not yet reported by a turn are checked by the runner's
+		// Shut, in the same transaction.
 		switch s.State {
 		case control.Idle, control.Asleep, control.Failed:
 		default:
