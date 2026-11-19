@@ -21,7 +21,7 @@ The protocol version is `major.minor`, now **2.0**. Both hellos carry it.
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 1.0`.
 - With the same major number and different minor numbers they work together.
 
-**A 1.x client and a 2.0 daemon.** 2.0 changed one thing: `title` in `ThreadInfo` and `ThreadDetail` became optional, and it is absent for a caller that may not read text. Because 1.x promised it, the two refuse each other. A 1.x client that connects gets the daemon's hello with an error, for example `{"version":"2.0","error":"wire: protocol version mismatch: client speaks 1.13, daemon speaks 2.0"}`, and the daemon closes the connection without reading a request. The project's 1.x client reports that refusal and makes no call. A client of 2.0 or later sees no other difference from 1.13 when it may read text.
+**A 1.x client and a 2.0 daemon.** 2.0 changed one thing: `title` in `ThreadInfo` and `ThreadDetail` became optional, and it is absent for a caller that may not read text. Because 1.x promised it, the two refuse each other. A 1.x client that connects gets the daemon's hello with an error, for example `{"version":"2.0","error":"wire: protocol version mismatch: client speaks 1.13, daemon speaks 2.0"}`, and the daemon closes the connection without reading a request. The project's 1.x client reports that refusal and makes no call. A client of 2.0 or later that may read text sees one other difference from 1.13: an empty title, from an empty first line, is left out instead of sent as `""`.
 
 What a change does to the version:
 
@@ -281,7 +281,7 @@ A field left empty matches everything the caller may see.
 |---|---|---|---|
 | `id` | `ThreadID` | required | the thread |
 | `number` | integer | required | a short number, unique in the instance |
-| `title` | string | optional | from the first line of the first prompt; text; absent for a caller that may not read text; optional since 2.0, required before |
+| `title` | string | optional | from the first line of the first prompt; text; absent for a caller that may not read text, and when it is empty; optional since 2.0, required before |
 | `repo` | string | required | the repository of its workspace |
 | `state` | string | required | `creating`, `idle`, `running`, `waiting`, `asleep`, `closed`, `removed` or `failed` |
 | `started_by` | string | required | the principal that started it |
