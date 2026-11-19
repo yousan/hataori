@@ -58,18 +58,51 @@ func testPlugin() int {
 		write()
 		return 1
 	}
-	enc.Encode(map[string]any{"id": 1, "op": "Threads", "args": map[string]any{"filter": map[string]any{}}})
-	var resp struct {
+	// Requests the daemon sends, such as plugin_started and plugin_stopping,
+	// come on this connection too: each is answered, with no result.
+	type message struct {
+		ID     uint64
+		Op     string
 		Result json.RawMessage
 		Error  *struct{ Code, Message string }
 	}
-	if err := dec.Decode(&resp); err != nil || resp.Error != nil {
-		run.Error = fmt.Sprint("Threads: ", resp.Error, err)
-	} else {
-		json.Unmarshal(resp.Result, &run.Threads)
+	answer := func(m message) {
+		if f, err := os.OpenFile(filepath.Join(os.Getenv(plugin.EnvState), "ops"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600); err == nil {
+			fmt.Fprintln(f, m.Op)
+			f.Close()
+		}
+		enc.Encode(map[string]any{"id": m.ID, "result": nil})
+	}
+	enc.Encode(map[string]any{"id": 1, "op": "Threads", "args": map[string]any{"filter": map[string]any{}}})
+	for {
+		var m message
+		if err := dec.Decode(&m); err != nil {
+			run.Error = fmt.Sprint("Threads: ", err)
+			break
+		}
+		if m.Op != "" {
+			answer(m)
+			continue
+		}
+		if m.ID == 1 {
+			if m.Error != nil {
+				run.Error = fmt.Sprint("Threads: ", m.Error)
+			} else {
+				json.Unmarshal(m.Result, &run.Threads)
+			}
+			break
+		}
 	}
 	write()
-	io.Copy(io.Discard, conn) // until the daemon closes the connection
+	for { // until the daemon closes the connection
+		var m message
+		if dec.Decode(&m) != nil {
+			break
+		}
+		if m.Op != "" {
+			answer(m)
+		}
+	}
 	for {
 		time.Sleep(time.Hour)
 	}
@@ -145,7 +178,8 @@ func pluginEntry(id, path, sum string) map[string]any {
 // A plugin is started with the documented environment, connects with its
 // token and calls Threads, which answers what its grant shows. Killed with
 // SIGKILL, it is started again with a new token, and the old token is
-// refused on the socket.
+// refused on the socket. It is sent plugin_started when it connects, and
+// plugin_stopping when the daemon stops.
 func TestPluginStartsAndStartsAgain(t *testing.T) {
 	path, sum := writePlugin(t, "scan", testPluginScript(t))
 	r := newChatRoot(t, func(cfg map[string]any) {
@@ -157,7 +191,7 @@ func TestPluginStartsAndStartsAgain(t *testing.T) {
 	})
 	runnerHook = func(pr *plugin.Runner) { pr.Backoff = 10 * time.Millisecond }
 	t.Cleanup(func() { runnerHook = nil })
-	logged, _ := pluginDaemon(t, r.root)
+	logged, stop := pluginDaemon(t, r.root)
 	ctx := context.Background()
 	owner, err := wire.Dial(r.root)
 	if err != nil {
@@ -212,6 +246,15 @@ func TestPluginStartsAndStartsAgain(t *testing.T) {
 	}
 	if strings.Contains(logged(), run.Token) || strings.Contains(logged(), again.Token) {
 		t.Fatal("the log has a token")
+	}
+
+	// It was told it started, each time, and it is told it is stopping
+	// before the daemon stops it.
+	owner.Close()
+	stop()
+	b, _ := os.ReadFile(filepath.Join(r.root, "state", "plugins", "scan", "ops"))
+	if ops := strings.Fields(string(b)); len(ops) < 3 || ops[0] != "plugin_started" || ops[len(ops)-1] != "plugin_stopping" {
+		t.Fatalf("the plugin was sent %v", ops)
 	}
 }
 

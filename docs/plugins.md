@@ -2,7 +2,7 @@
 
 A plugin is a separate program, in any language, that adds to what hataori does without changing it ([design, section 7.3](design/overview.md#73-plugins)). It talks to the daemon over the control socket ([protocol.md](protocol.md)). The operator lists it in the instance's config ([configuration.md, `plugins[]`](configuration.md#plugins)); this file describes what the plugin's author writes, its manifest.
 
-The daemon checks each plugin's manifest and config entry when it starts, then runs the plugins (below). It does not call hooks yet.
+The daemon checks each plugin's manifest and config entry when it starts, then runs the plugins (below). It has the hook calls and the dispatcher that runs them (below, [protocol.md, Requests the daemon sends](protocol.md#requests-the-daemon-sends)); the core and the chat front end do not call a hook point yet.
 
 ## What a plugin's connection may do
 
@@ -30,7 +30,7 @@ hataori starts each plugin that is not `external` as a child process when the da
 
 - **Output.** What the plugin writes to its standard output and standard error goes to the daemon's log, a line at a time. Each line is marked with the plugin's id and cut at 4096 bytes; a longer line is logged as soon as 4096 bytes of it came. The plugin's token is shown as `[token]`.
 - **Restarts.** When a plugin exits, its token is revoked and its connections close. It starts again after 1 second, then 2, 4 and so on, up to 1 minute. A plugin that exits 5 times within 10 minutes stays stopped until the daemon restarts, and so does one whose hash or protocol does not hold. The owner then gets one direct message, in the conversation of the login alert, and the log has one line. While it stays stopped, also across restarts of the daemon, the owner is not told again. A run that has lasted 10 minutes ends the outage, while it runs. If the owner cannot be reached, telling is tried again until it succeeds or the daemon stops.
-- **Stopping.** When the daemon stops, each plugin gets SIGTERM, and after 10 seconds SIGKILL. Both go to its process group: whatever it started in that group goes with it, and so it does when the plugin exits by itself. On Linux the plugin itself, not what it started, is also killed when the daemon dies without stopping it; on macOS it is not. Telling a plugin that it is stopping comes with hooks.
+- **Stopping.** When the daemon stops, each plugin it started is first sent `plugin_stopping` (below) and has 10 seconds to answer; then it gets SIGTERM, and after 10 more seconds SIGKILL. Both go to its process group: whatever it started in that group goes with it, and so it does when the plugin exits by itself. On Linux the plugin itself, not what it started, is also killed when the daemon dies without stopping it; on macOS it is not.
 - **An `external` plugin** is not started. The token in its `token_file` is bound to its grant when the daemon starts, and the program connects with it by itself. A connection with any other token is refused, and the log does not show the token. Two token files that hold the same token stop the daemon's start, naming both keys.
 
 ## The manifest
@@ -69,6 +69,20 @@ The manifest is `hataori-plugin.json`, in the same directory as the plugin's exe
 | `message_sending` | modify, gate | before a post is sent to the chat; may rewrite its text or cancel it | the handler is skipped |
 
 The operator can change the failure policy per plugin and point (`on_failure` in the config).
+
+### How a hook is called
+
+Since protocol 3.16. At a point, the daemon sends a `hook` request to each plugin whose grant has the point and the thread's scope, one after another: by priority, higher first, then in the config's order. Each gets the text as the one before left it, and answers `continue`, `continue` with a new `text` where the point may change it, or `stop` with a `reason` where the point may stop it. Without the `conversation` grant the request has no text.
+
+A handler fails, and its policy (`block` or `skip`) applies, when:
+
+- it does not answer within its timeout, 15 seconds unless the manifest or the config says otherwise;
+- its plugin is not connected, while it starts, starts again or stays stopped: so by default a `before_agent_run` handler blocks input in its scopes until the plugin is back. An operator who prefers that work goes on sets that plugin's `on_failure` to `skip`;
+- its connection closes before it answers;
+- it answers with an error, `not_supported` too;
+- its answer is one the point does not allow, such as `stop` at `before_prompt_build`.
+
+The daemon sends hook requests on the plugin's oldest connection that is still open and is not a stream: open a connection for requests first, and follow events on others. The project's Go client answers them with the handler given to `wire.DialTokenHandler`. When a plugin connects while it had no connection open, the daemon sends it `plugin_started` with its grant; before hataori stops a plugin it starts, it sends `plugin_stopping`, and SIGTERM follows when the plugin answers or after 10 seconds. Each call is logged with the plugin, the point, the thread and the outcome, never with text or a plugin's reason.
 
 ## An example
 

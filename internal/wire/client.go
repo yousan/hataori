@@ -42,6 +42,13 @@ func Dial(root string) (*Client, error) {
 // the daemon issued token for. Every connection the client opens, for
 // calls and for streams, presents it. An unknown token is refused.
 func DialToken(root, token string) (*Client, error) {
+	return DialTokenHandler(root, token, nil)
+}
+
+// DialTokenHandler is DialToken with h answering the requests the daemon
+// sends from the start, such as a plugin's plugin_started, which may come
+// as soon as the hellos are exchanged.
+func DialTokenHandler(root, token string, h Handler) (*Client, error) {
 	if token == "" {
 		return nil, errors.New("wire: no token")
 	}
@@ -49,13 +56,17 @@ func DialToken(root, token string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return dial(path, Version, token)
+	return dialHandler(path, Version, token, h)
 }
 
 func dialPath(path, version string) (*Client, error) { return dial(path, version, "") }
 
 func dial(path, version, token string) (*Client, error) {
-	c := &Client{path: path, version: version, token: token}
+	return dialHandler(path, version, token, nil)
+}
+
+func dialHandler(path, version, token string, h Handler) (*Client, error) {
+	c := &Client{path: path, version: version, token: token, handler: h}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.open(context.Background()); err != nil {
@@ -385,8 +396,8 @@ func (c *Client) pumpTerminal(ctx context.Context, conn net.Conn, dec *json.Deco
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
 	for {
-		var resp response
-		if err := dec.Decode(&resp); err != nil || resp.Terminal == nil {
+		resp, err := streamResponse(dec)
+		if err != nil || resp.Terminal == nil {
 			return run, after
 		}
 		select {
@@ -409,7 +420,7 @@ func (c *Client) openStream(ctx context.Context, op string, args any) (net.Conn,
 	var resp response
 	err = json.NewEncoder(conn).Encode(request{ID: 1, Op: op, Args: raw})
 	if err == nil {
-		err = dec.Decode(&resp)
+		resp, err = streamResponse(dec)
 	}
 	if err == nil && resp.Error != nil {
 		err = decodeError(resp.Error)
@@ -421,6 +432,28 @@ func (c *Client) openStream(ctx context.Context, op string, args any) (net.Conn,
 	return conn, dec, nil
 }
 
+// streamResponse reads the next response on a stream's connection. A
+// request the daemon sent before it read the stream's request, such as a
+// plugin's plugin_started, is skipped unanswered: the daemon counts it as
+// failed once the stream starts (docs/protocol.md).
+func streamResponse(dec *json.Decoder) (response, error) {
+	for {
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return response{}, err
+		}
+		var m message
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return response{}, err
+		}
+		if m.Op != "" {
+			continue
+		}
+		var resp response
+		return resp, json.Unmarshal(raw, &resp)
+	}
+}
+
 // pump delivers events from one connection until it breaks or ctx ends,
 // and returns the position of the last event delivered.
 func (c *Client) pump(ctx context.Context, conn net.Conn, dec *json.Decoder, out chan<- control.Event, after uint64) uint64 {
@@ -428,8 +461,8 @@ func (c *Client) pump(ctx context.Context, conn net.Conn, dec *json.Decoder, out
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
 	for {
-		var resp response
-		if err := dec.Decode(&resp); err != nil || resp.Event == nil {
+		resp, err := streamResponse(dec)
+		if err != nil || resp.Event == nil {
 			return after
 		}
 		if resp.Event.Kind == control.CaughtUp {

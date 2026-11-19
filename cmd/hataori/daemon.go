@@ -159,7 +159,9 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	// daemon with the reason.
 	var dash *dashboard.Server
 	if d := cfg.Dashboard; d != nil {
-		dc := dashboard.Config{HostInput: cfg.HostInput}
+		dc := dashboard.Config{HostInput: cfg.HostInput, MayOperate: func(person string) bool {
+			return c.MaySignIn(person) && dashboardCaller(cfg.People, keys, cfg.HostTerminals, cfg.HostInput, person).May.Has(control.OpHostInput)
+		}}
 		if l := d.Local; l != nil {
 			dc.Local = &dashboard.Local{Listen: l.Listen, URL: l.URL, Key: "dashboard."}
 		}
@@ -282,11 +284,16 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		supervisorHook(issueSupervisor, srv.Revoke)
 	}
 	// A plugin's connection is bound by a token to the caller its grant
-	// makes (design, section 7.3), and to nothing it says itself.
+	// makes (design, section 7.3), and to nothing it says itself. The
+	// dispatcher of its hooks knows its connections by that binding, and
+	// tells it plugin_started when it connects.
+	hooks := plugin.NewDispatcher(grants, lg)
+	asPlugin := plugin.BindAs(c.As)
+	srv.Peered = func(api control.API, p *wire.Peer) { hooks.Peered(api, p) }
 	issuePlugin := func(id string) (string, error) {
 		for _, g := range grants {
 			if g.ID == id {
-				return srv.Issue(c.As(g.Caller()))
+				return srv.Issue(asPlugin(g.Caller()))
 			}
 		}
 		return "", fmt.Errorf("no plugin %q in the config", id)
@@ -426,7 +433,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		return err
 	}
 	pr := &plugin.Runner{Grants: grants, State: filepath.Join(abs, "state"), Socket: socket, Speaks: wire.Version,
-		Tokens: srv, As: c.As, Outages: st, Log: lg,
+		Tokens: srv, As: asPlugin, Stopping: hooks.Stopping, Outages: st, Log: lg,
 		ReadToken: func(file string) ([]byte, error) { return in.Root.ReadFile(filepath.Join("config", file)) },
 		Tell: func(ctx context.Context, key, text string) error {
 			var errs []error
@@ -443,8 +450,20 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	if err := pr.Start(plCtx); err != nil {
 		return err
 	}
+	// The socket serves until the plugins have stopped, so that each is
+	// told plugin_stopping on its connection; then it closes.
+	serveCtx, serveCancel := context.WithCancel(context.WithoutCancel(ctx))
+	defer serveCancel()
+	go func() {
+		select {
+		case <-ctx.Done():
+			pr.Wait()
+		case <-serveCtx.Done():
+		}
+		serveCancel()
+	}()
 	lg.Info("hataori runs", "root", abs, "agent", agentName)
-	err = srv.Serve(ctx)
+	err = srv.Serve(serveCtx)
 	if errors.Is(err, context.Canceled) || ctx.Err() != nil {
 		return nil
 	}

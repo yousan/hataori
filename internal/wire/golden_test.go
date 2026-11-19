@@ -160,6 +160,31 @@ func examples(t *testing.T) map[string]any {
 		}
 		ex["response-"+op+".json"] = resp
 	}
+	// The requests the daemon sends a client, and their answers. Since 3.16.
+	changed := "Run the tests, then fix the build."
+	daemonArgs := map[string]any{
+		control.OpHook: control.HookRequest{Point: "before_agent_run", Thread: exampleID, Scope: "C0123", Text: "Run the tests.", Left: 15000},
+		control.OpPluginStarted: control.PluginStarted{Plugin: "secret-scan", Scopes: []string{"C0123"}, Operations: []string{"Threads"},
+			Events: []string{"turn_ended"}, Hooks: []control.GrantedHook{{Point: "message_sending", Priority: 100, Timeout: 5000, OnFailure: "block"}},
+			Conversation: true},
+		control.OpPluginStopping: control.PluginStopping{Plugin: "secret-scan", Left: 10000},
+	}
+	daemonResults := map[string]any{
+		control.OpHook: control.HookAnswer{Action: control.HookContinue, Text: &changed},
+	}
+	for op := range requests {
+		a, ok := daemonArgs[op]
+		if !ok {
+			t.Fatalf("no example of the arguments of the request %s", op)
+		}
+		ex["request-"+op+".json"] = request{ID: 1, Op: op, Args: mustJSON(a)}
+		resp := response{ID: 1}
+		if r, ok := daemonResults[op]; ok {
+			resp.Result = mustJSON(r)
+		}
+		ex["response-"+op+".json"] = resp
+	}
+	ex["response-hook-stop.json"] = response{ID: 2, Result: mustJSON(control.HookAnswer{Action: control.HookStop, Reason: "The input holds a secret."})}
 	for kind := range control.EventKinds {
 		d, ok := eventData[kind]
 		if !ok {

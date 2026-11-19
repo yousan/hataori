@@ -50,9 +50,15 @@ import (
 // of the start sends {"refused": "<reason>"} and closes with it. Closing
 // the WebSocket ends the operation at once. Nothing the page types is
 // logged.
+//
+// The page asks first whether the person may operate at all, and shows the
+// switch only then:
+//
+//	GET  /api/operate/may    {"may": true|false}
 const (
 	OperatePath      = "/api/operate"
 	OperateCheckPath = "/api/operate/check"
+	OperateMayPath   = "/api/operate/may"
 )
 
 // OperateSignInWithin is how recent a web session's sign-in must be for a
@@ -76,8 +82,19 @@ const (
 
 // operateRoutes adds the operate routes.
 func (s *Server) operateRoutes() {
+	s.mux.HandleFunc("GET "+OperateMayPath, s.operateMay)
 	s.mux.HandleFunc("POST "+OperateCheckPath, s.operateCheck)
 	s.mux.HandleFunc("GET "+OperatePath, s.operate)
+}
+
+// operateMay says whether the session's person may type into a host tmux
+// pane: host input is on and the daemon gives that person's Caller
+// OpHostInput. It changes nothing; the core still decides each start.
+func (s *Server) operateMay(w http.ResponseWriter, r *http.Request) {
+	may := s.hostInput && s.mayOperate != nil && s.mayOperate(sessionOf(r).person)
+	writeJSON(w, struct {
+		May bool `json:"may"`
+	}{may})
 }
 
 // errInputOff is the answer while the instance's host input is off.

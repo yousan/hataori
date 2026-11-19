@@ -33,11 +33,19 @@ type operateRig struct {
 	*passkeyDash
 	tmux   func(args ...string) string
 	pane   string
+	device string // the pane's terminal device
 	got    string // what the pane read
 	logged func() string
 }
 
 func newOperateRig(t *testing.T, idle string) *operateRig {
+	t.Helper()
+	return newOperateRigWith(t, idle, true)
+}
+
+// newOperateRigWith is newOperateRig with host_input set to input. The
+// pane shows a prompt first, which puts its cursor after it.
+func newOperateRigWith(t *testing.T, idle string, input bool) *operateRig {
 	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
 		if os.Getenv("CI") != "" {
@@ -62,13 +70,14 @@ func newOperateRig(t *testing.T, idle string) *operateRig {
 		}
 		return strings.TrimSpace(string(out))
 	}
-	r.tmux("new-session", "-d", "-s", "work", "sh", "-c", "stty raw -echo; exec cat > "+r.got)
+	r.tmux("new-session", "-d", "-s", "work", "-x", "100", "-y", "30", "sh", "-c", "printf 'ready> '; stty raw -echo; exec cat > "+r.got)
 	t.Cleanup(func() { exec.Command("tmux", slices.Concat(sock, []string{"kill-server"})...).Run() })
 	r.pane = r.tmux("display-message", "-p", "-t", "work:0", "#{pane_id}")
+	r.device = r.tmux("display-message", "-p", "-t", "work:0", "#{pane_tty}")
 	hostTermsHook = func(l *hostterm.Lister) { l.Tmux = sock }
 	t.Cleanup(func() { hostTermsHook = nil })
 	setConfig(t, r.root, func(cfg map[string]any) {
-		cfg["host_terminals"], cfg["host_input"], cfg["host_input_idle"] = true, true, idle
+		cfg["host_terminals"], cfg["host_input"], cfg["host_input_idle"] = true, input, idle
 	})
 	r.logged = startDaemonLog(t, r.root)
 	return r

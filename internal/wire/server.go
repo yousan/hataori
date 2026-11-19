@@ -29,6 +29,12 @@ import (
 type Server struct {
 	API control.API // bound to the owner's Caller
 	Log *slog.Logger
+	// Peered, when set before Serve, is told of each connection on which
+	// the daemon may send requests, once its hellos are exchanged: the API
+	// the connection is bound to (API, or what its token was issued for)
+	// and its Peer, whose Done is closed when it breaks or becomes a
+	// stream. It must not block.
+	Peered func(api control.API, p *Peer)
 
 	uid    int // the OS user allowed to connect
 	ln     *net.UnixListener
@@ -189,6 +195,9 @@ func (s *Server) serveConn(ctx context.Context, c *net.UnixConn) {
 	s.mu.Lock()
 	s.peers[p] = struct{}{}
 	s.mu.Unlock()
+	if s.Peered != nil {
+		s.Peered(api, p)
+	}
 	defer func() {
 		s.mu.Lock()
 		delete(s.peers, p)
@@ -201,6 +210,9 @@ func (s *Server) serveConn(ctx context.Context, c *net.UnixConn) {
 		s.mu.Lock()
 		delete(s.peers, p) // the connection is a stream now
 		s.mu.Unlock()
+		// And takes no more requests of the daemon's: Done is closed before
+		// the stream starts, not when it ends.
+		p.close(io.EOF)
 		if req.Op == "OperateHost" {
 			operate(ctx, api, c, dec, enc, req)
 		} else {

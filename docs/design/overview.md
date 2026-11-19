@@ -1722,7 +1722,46 @@ type Limit struct {
 // (empty, never nil, when it names none), and NoText without the
 // "conversation" grant. wire.Server.Restore binds a token issued by
 // an earlier run of the daemon again, for a client that still runs with it
-// (#270).
+// (#270). wire.Server.Peered is told of each connection on which the
+// daemon may send requests, with the API it is bound to; plugin.BindAs
+// marks the API of a plugin's caller, so that plugin.Dispatcher knows the
+// plugin's connections, tells it plugin_started on its first one, and
+// sends its hook requests on its oldest one still open (#350).
+
+// Hooks runs the handlers plugins have on a hook point (section 7.3):
+// plugin.Dispatcher. The core and the chat front end call it at their
+// points, and so name no plugin. The handlers of the connected plugins
+// whose grant has the point and the scope run by priority, higher first,
+// then in config order, each given the text as the one before left it. A
+// handler fails when it does not answer within its timeout, when its
+// plugin is not connected (decided 2026-11-19) or its connection closes,
+// when it answers with an error, not_supported too, and when its answer
+// is one the point does not allow; a failure blocks or skips by the
+// handler's on_failure, else its point's. Calls are logged without text.
+// A point with no handler calls nothing and waits for nothing. Since
+// protocol 3.16.
+type Hooks interface {
+	Run(ctx context.Context, c HookCall) HookResult
+}
+
+type HookCall struct {
+	Point  string   // before_agent_run, before_prompt_build, message_sending
+	Thread ThreadID // 0 at a point before the thread has a number
+	Scope  string
+	Text   string // the input, or the post; left out of the call for a handler without "conversation"
+}
+
+// HookResult: Text as the handlers left it. Stopped when a handler
+// stopped it or failed where its policy blocks; By names that plugin, and
+// Reason is the plugin's reason (text) or, when Failed, hataori's account
+// of the failure.
+type HookResult struct {
+	Text    string
+	Stopped bool
+	Failed  bool
+	By      string
+	Reason  string
+}
 
 // Not operations of the control API, for a client inside the daemon (#270):
 // core.Core.StartConfined(ctx, caller, r) is Start for a thread whose

@@ -82,7 +82,7 @@ type Runner struct {
 	Socket string // the control socket's path
 	Speaks string // the control protocol the daemon speaks, such as "3.12"
 	Tokens Tokens
-	As     func(control.Caller) control.API // the core's API as seen by a caller
+	As     func(control.Caller) control.API // the core's API as seen by a caller, bound for the hooks (BindAs)
 	// ReadToken reads an external plugin's token file, a path relative to
 	// the config directory.
 	ReadToken func(file string) ([]byte, error)
@@ -94,8 +94,8 @@ type Runner struct {
 	// tried again. Nil: the log line only.
 	Tell func(ctx context.Context, key, text string) error
 	// Stopping tells a running plugin that it is stopping, before it gets
-	// SIGTERM; it has until ctx ends. The notice itself comes with hooks
-	// (#350). Nil tells nothing.
+	// SIGTERM; it has until ctx ends, the grace period (Dispatcher.Stopping,
+	// plugin_stopping). Nil tells nothing.
 	Stopping func(ctx context.Context, g Grant)
 	Log      *slog.Logger
 

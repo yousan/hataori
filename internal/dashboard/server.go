@@ -108,6 +108,11 @@ type Config struct {
 	// ("host_input"): without it the operate routes refuse at once. Who may
 	// operate a pane is still the core's decision.
 	HostInput bool
+	// MayOperate reports whether person's sessions may type into a host
+	// tmux pane, so that the page shows the switch only to them
+	// (OperateMayPath); the daemon answers from the same rule that gives
+	// their Caller OpHostInput. Nil: nobody.
+	MayOperate func(person string) bool
 }
 
 // Local is the loopback listener: plain HTTP on a loopback address.
@@ -170,7 +175,8 @@ type Server struct {
 	// Stream timings; tests shorten them.
 	keepAlive, writeTimeout, hostScreenInterval, operatedScreenInterval time.Duration
 
-	hostInput bool // the config's host_input
+	hostInput  bool                     // the config's host_input
+	mayOperate func(person string) bool // Config.MayOperate
 
 	// Passkeys: the web listener's relying party, nil when there is none
 	// (rpOff says why), and where they are kept, nil for nowhere.
@@ -237,7 +243,7 @@ func Listen(cfg Config, api func(person string) (control.API, bool), log *slog.L
 	s := &Server{For: api, Log: log, linkTTL: cfg.LinkTTL, now: cfg.Now,
 		links: map[[32]byte]link{}, grants: map[[32]byte]grant{}, ceremonies: map[[32]byte]ceremony{}, used: map[[32]byte]time.Time{}, key: cfg.SessionKey,
 		keepAlive: defaultKeepAlive, writeTimeout: defaultWriteTimeout, hostScreenInterval: defaultHostScreenInterval,
-		operatedScreenInterval: defaultOperatedScreenInterval, hostInput: cfg.HostInput}
+		operatedScreenInterval: defaultOperatedScreenInterval, hostInput: cfg.HostInput, mayOperate: cfg.MayOperate}
 	if len(s.key) == 0 {
 		s.key = make([]byte, 32)
 		if _, err := rand.Read(s.key); err != nil {

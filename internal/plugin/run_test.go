@@ -472,6 +472,25 @@ func TestStoppingThatHangs(t *testing.T) {
 	}
 }
 
+// The stopping notice comes while the plugin still runs, before SIGTERM.
+func TestStoppingComesFirst(t *testing.T) {
+	path, sum := script(t, `echo $$ > "$HATAORI_PLUGIN_STATE/pid.tmp"; mv "$HATAORI_PLUGIN_STATE/pid.tmp" "$HATAORI_PLUGIN_STATE/pid"; exec sleep 600`)
+	var pid int
+	var alive bool
+	f := newRunner(t, Grant{Path: path, SHA256: sum}, func(r *Runner) {
+		r.Stopping = func(ctx context.Context, g Grant) {
+			_, hasDeadline := ctx.Deadline()
+			alive = g.ID == "scan" && hasDeadline && syscall.Kill(pid, 0) == nil
+		}
+	})
+	pid, _ = strconv.Atoi(f.file(t, "pid"))
+	f.cancel()
+	f.r.Wait()
+	if !alive {
+		t.Fatal("the stopping notice did not come while the plugin ran, with a deadline")
+	}
+}
+
 // When the owner cannot be told, it is tried again until it is.
 func TestTellIsTriedAgain(t *testing.T) {
 	path, sum := script(t, `exit 3`)

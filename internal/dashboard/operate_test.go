@@ -718,3 +718,33 @@ func TestNotRecent(t *testing.T) {
 		t.Error("a sign-in more than five minutes old")
 	}
 }
+
+// The page asks whether its person may operate before it shows the switch:
+// only with host input on and when the daemon says the person may.
+func TestOperateMay(t *testing.T) {
+	ask := func(s *Server) string {
+		t.Helper()
+		got := do(t, s, req{path: OperateMayPath, token: signIn(t, s)})
+		if got.StatusCode != http.StatusOK {
+			t.Fatalf("%s: %s", got.Status, got.body)
+		}
+		return strings.TrimSpace(got.body)
+	}
+	owner := func(p string) bool { return p == "owner" }
+	if got := ask(operateServer(t, &opAPI{}, Config{MayOperate: owner})); got != `{"may":true}` {
+		t.Errorf("the owner, host input on: %s", got)
+	}
+	if got := ask(operateServer(t, &opAPI{}, Config{MayOperate: func(string) bool { return false }})); got != `{"may":false}` {
+		t.Errorf("a person who may not: %s", got)
+	}
+	if got := ask(operateServer(t, &opAPI{}, Config{})); got != `{"may":false}` {
+		t.Errorf("no rule: %s", got)
+	}
+	if got := ask(start(t, Config{MayOperate: owner}, func(s *Server) { s.For = only(&opAPI{}) })); got != `{"may":false}` {
+		t.Errorf("host input off: %s", got)
+	}
+	s := operateServer(t, &opAPI{}, Config{MayOperate: owner})
+	if got := do(t, s, req{path: OperateMayPath}); got.StatusCode != http.StatusUnauthorized {
+		t.Errorf("without a session: %s", got.Status)
+	}
+}
