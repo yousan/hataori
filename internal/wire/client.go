@@ -147,6 +147,13 @@ func (c *Client) Close() error {
 // broke is opened again for the next call; the call itself is not
 // repeated, because the daemon may have run it.
 func (c *Client) call(ctx context.Context, op string, args, result any) error {
+	return c.callSince(ctx, "", "", op, args, result)
+}
+
+// callSince is call, refused without sending when the daemon of the
+// connection the request goes out on speaks a version older than since;
+// what names what needs it. An empty since needs nothing.
+func (c *Client) callSince(ctx context.Context, since, what, op string, args, result any) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -165,7 +172,11 @@ func (c *Client) call(ctx context.Context, op string, args, result any) error {
 		}
 	}
 	p := c.peer
+	daemon := c.daemon
 	c.mu.Unlock()
+	if since != "" && !atLeast(daemon, since) {
+		return fmt.Errorf("wire: the daemon speaks %s; %s needs %s or later: upgrade the daemon", daemon, what, since)
+	}
 	err := p.Request(ctx, op, args, result)
 	var re *remoteError
 	if err != nil && !errors.As(err, &re) && ctx.Err() == nil {
@@ -221,43 +232,19 @@ func (c *Client) Workspace(ctx context.Context, id control.ThreadID) (control.Wo
 }
 
 func (c *Client) SignInLink(ctx context.Context, way control.Way) (string, error) {
+	// An older daemon ignores the field and answers with its one
+	// listener's link, which may not be the listener asked for.
+	since := ""
 	if way != "" {
-		// An older daemon ignores the field and answers with its one
-		// listener's link, which may not be the listener asked for.
-		if err := c.needs(ctx, waysSince, "a sign-in link for one listener"); err != nil {
-			return "", err
-		}
+		since = waysSince
 	}
 	var out string
-	err := c.call(ctx, "SignInLink", signInLinkArgs{Way: way}, &out)
+	err := c.callSince(ctx, since, "a sign-in link for one listener", "SignInLink", signInLinkArgs{Way: way}, &out)
 	return out, err
 }
 
 // waysSince is the first version whose daemon honours SignInLink's way.
 const waysSince = "3.2"
-
-// needs connects if the client is not connected, and fails when the
-// daemon speaks a version older than min, naming what needs it.
-func (c *Client) needs(ctx context.Context, min, what string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.peer != nil {
-		select {
-		case <-c.peer.done:
-			c.peer = nil
-		default:
-		}
-	}
-	if c.peer == nil {
-		if err := c.open(ctx); err != nil {
-			return err
-		}
-	}
-	if !atLeast(c.daemon, min) {
-		return fmt.Errorf("wire: the daemon speaks %s; %s needs %s or later: upgrade the daemon", c.daemon, what, min)
-	}
-	return nil
-}
 
 func (c *Client) HostTerminals(ctx context.Context) ([]control.HostTerminal, error) {
 	var out []control.HostTerminal

@@ -973,7 +973,7 @@ func TestCloseBeforeServeFreesThePorts(t *testing.T) {
 func TestTheLoopbackListenerRefusesAProxy(t *testing.T) {
 	s := start(t, Config{})
 	token := signIn(t, s)
-	for _, h := range proxyHeaders {
+	for _, h := range []string{"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Real-IP", "Via"} {
 		for _, p := range []string{"/", "/events", SessionPath} {
 			if a := do(t, s, req{path: p, token: token, header: map[string]string{h: "192.0.2.1"}}); a.StatusCode != http.StatusForbidden {
 				t.Errorf("%s through a proxy (%s): %s, want 403", p, h, a.Status)
