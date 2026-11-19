@@ -19,7 +19,7 @@ var (
 	ErrForbidden = errors.New("not allowed")
 	// ErrUnknownEffort: a Start asked for an effort not in Efforts.
 	ErrUnknownEffort = errors.New("unknown effort")
-	// ErrUnknownAgent: a Start named an agent the instance has no adapter for. Since 3.7.
+	// ErrUnknownAgent: a Start named an agent the instance has no adapter for. Since 3.8.
 	ErrUnknownAgent = errors.New("unknown agent")
 	// ErrClosed: a Send to a thread that is closed or removed. Nothing was
 	// given to the agent, and a message does not wake the thread.
@@ -274,7 +274,7 @@ type StartRequest struct {
 	// open one (ScopeOwner.NewThread). Since 3.0 it names a link, not the
 	// thread.
 	Thread string `json:"thread"`
-	Agent  string `json:"agent,omitempty"` // registered agent name; empty for the scope's agent; since 3.7
+	Agent  string `json:"agent,omitempty"` // registered agent name; empty for the scope's agent; since 3.8
 	Repo   string `json:"repo"`            // the repository the thread's workspace is cloned from
 	Input  Input  `json:"input"`           // the first input
 	Model  string `json:"model"`           // empty for the scope's default

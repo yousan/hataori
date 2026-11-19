@@ -109,8 +109,8 @@ A supervisor is one more thread of the scope, started by the daemon (design, sec
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `agent` | string | the default agent (`agent`) | The adapter that runs it. It must be the default agent (`agent`); the scope's `agent` does not apply. Only Claude Code can start a supervisor today: with another adapter its thread fails, with that reason, and no agent process starts. |
-| `model` | string | the adapter's cheapest | Its model. Claude Code's cheapest is `haiku`. An adapter that names no cheapest model gets the scope's model, as any thread. |
-| `effort` | string | the scope's | Its effort, as `effort` above. |
+| `model` | string | the adapter's cheapest | Its model. Claude Code's cheapest is `haiku`. If the adapter names no cheapest model, the default agent's model order above applies: the scope's model when it runs the default agent, then the adapter section, then the top-level key. |
+| `effort` | string | the default agent's effort | Its effort follows the default agent's effort order above: the scope's effort when it runs the default agent, then the adapter section, then the top-level key. |
 | `instructions` | string | empty | Appended to the agent's own instructions at each start of its session. |
 | `quiet` | duration | `"30s"` | The quiet period: after the first turn end that wakes the supervisor, how long the waker waits, folding what comes until then into one message. |
 | `output_max` | integer | `1024` | The most bytes of each thread's last output in a wake message. |
@@ -437,9 +437,9 @@ hataori opens a thread on the message, clones the repository into the thread's w
 /status
 ```
 
-On a service without commands, the same words follow the trigger: `<trigger> new repo:<url> [model:<model>] [effort:<effort>] <prompt>`, `<trigger> stop` and `<trigger> status`.
+On a service without commands, the same words follow the trigger: `<trigger> new repo:<url> [agent:<name>] [model:<model>] [effort:<effort>] <prompt>`, `<trigger> stop` and `<trigger> status`.
 
-- `/new` in an enabled channel starts a thread as an order does: the thread is opened in the channel, and the full prompt is its first message. The same command delivered again starts nothing more. `<trigger> new` is the order itself, opened on the message.
+- `/new` in an enabled channel starts a thread as an order does: the thread is opened in the channel, and the full prompt is its first message. The same command delivered again starts nothing more. `<trigger> new` is the order itself, opened on the message. `/new` has no agent option: its thread runs the scope's agent; use the order or `<trigger> new` with `agent:` for another.
 - `/stop` in a hataori thread stops its running turn.
 - `/status` in a hataori thread shows its state, model and last output; in a channel, the open threads of the channel's own scope with their states. Threads of other scopes attached in the channel are not listed.
 - The answers are shown only to the person who used the command; the words after the trigger get a reply.
