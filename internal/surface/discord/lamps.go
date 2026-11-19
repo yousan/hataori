@@ -6,6 +6,7 @@ import (
 	"net/url"
 
 	"github.com/disgoorg/disgo/rest"
+	"github.com/disgoorg/snowflake/v2"
 
 	"github.com/yousan/hataori/internal/surface"
 )
@@ -36,6 +37,11 @@ func (d *Driver) SetStatus(ctx context.Context, ref surface.MessageRef, s surfac
 	if err != nil {
 		return err
 	}
+	// Two changes to one message's lamp run one after the other, so that
+	// both cannot read the same old lamps and leave two.
+	l := &d.lampLocks[id%snowflake.ID(len(d.lampLocks))]
+	l.Lock()
+	defer l.Unlock()
 	want, ok := lamps[s]
 	if !ok && s != surface.NoStatus {
 		return fmt.Errorf("discord: no lamp for status %d", s)

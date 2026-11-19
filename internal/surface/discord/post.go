@@ -230,7 +230,9 @@ func (d *Driver) Post(ctx context.Context, conv surface.Conversation, key string
 			Content:         part,
 			AllowedMentions: &discord.AllowedMentions{Parse: []discord.AllowedMentionType{}},
 		}
-		if len(m.Notify) > 0 {
+		// The pings are at the start of the first part; a later part
+		// pings nobody, even when its text names someone.
+		if i == 0 && len(m.Notify) > 0 {
 			for _, who := range m.Notify {
 				if id, err := snowflake.Parse(who); err == nil {
 					mc.AllowedMentions.Users = append(mc.AllowedMentions.Users, id)

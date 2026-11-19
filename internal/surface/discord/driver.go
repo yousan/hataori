@@ -70,6 +70,8 @@ type Driver struct {
 
 	commands map[string]surface.CommandSpec // by name, as registered by Run
 	answers  map[snowflake.ID]*answer       // command interactions that can still be answered
+
+	lampLocks [64]sync.Mutex // SetStatus, by message id
 }
 
 var _ surface.Driver = (*Driver)(nil)

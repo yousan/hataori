@@ -2,10 +2,15 @@ package discord
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/yousan/hataori/internal/surface"
 )
@@ -219,4 +224,74 @@ func allowed(body map[string]any) []string {
 		out = append(out, "replied_user")
 	}
 	return out
+}
+
+// Two lamps set at once on one message leave one lamp: the service here
+// keeps the bot's reactions and is slow to read them, so that two unordered
+// changes would both read the old lamp and leave both new ones.
+func TestSetStatusConcurrent(t *testing.T) {
+	ref, _ := lampMessage(t)
+	var mu sync.Mutex
+	mine := map[string]bool{"⏳": true}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" {
+			mu.Lock()
+			var rs []map[string]any
+			for e := range mine {
+				rs = append(rs, map[string]any{"me": true, "count": 1, "emoji": map[string]any{"id": nil, "name": e}})
+			}
+			mu.Unlock()
+			time.Sleep(50 * time.Millisecond)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"id": ref.ID, "reactions": rs})
+			return
+		}
+		e := strings.Split(r.URL.Path, "/")[6]
+		mu.Lock()
+		mine[e] = r.Method == "PUT"
+		if r.Method == "DELETE" {
+			delete(mine, e)
+		}
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	d := newDriver(botID(t), "test-token", srv.URL, "ws://127.0.0.1:1", nil)
+	var wg sync.WaitGroup
+	for _, s := range []surface.Status{surface.Done, surface.Failed} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := d.SetStatus(context.Background(), ref, s); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if len(mine) != 1 {
+		t.Fatalf("the bot's reactions %v, want one lamp", mine)
+	}
+}
+
+// A long post pings only in its first part, where the mentions are; a later
+// part that names the same person pings nobody.
+func TestNotifyOnlyFirstPart(t *testing.T) {
+	who := capture(t, "lamps/rest-post-notify.json")["request"].(map[string]any)["body"].(map[string]any)["allowed_mentions"].(map[string]any)["users"].([]any)[0].(string)
+	conv := surface.Conversation{Channel: id(payload(t, "lamps/rest-post-notify.json")["channel_id"])}
+	key := "POST /channels/" + conv.Channel + "/messages"
+	r := newFakeREST(t)
+	r.serve(t, key, "lamps/rest-post-notify.json")
+	text := strings.Repeat("a", maxText) + " <@" + who + ">"
+	if _, err := testDriver(t, botID(t), r, nil).Post(context.Background(), conv, "", surface.Message{Text: text, Notify: []string{who}}); err != nil {
+		t.Fatal(err)
+	}
+	reqs := r.requests(key)
+	if len(reqs) != 2 {
+		t.Fatalf("%d parts", len(reqs))
+	}
+	b1, _ := content(t, reqs[0])
+	b2, _ := content(t, reqs[1])
+	if !reflect.DeepEqual(allowed(b1), []string{"user:" + who}) || len(allowed(b2)) != 0 {
+		t.Fatalf("allowed %v, then %v", allowed(b1), allowed(b2))
+	}
 }
