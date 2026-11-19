@@ -35,7 +35,8 @@ const Name = "discord"
 //     replies to the login message. Their text comes without
 //     MESSAGE_CONTENT.
 //
-// A button press (INTERACTION_CREATE) needs no intent.
+// A button press or the use of a command (INTERACTION_CREATE) needs no
+// intent.
 //
 // The bot's role in an enabled channel needs: View Channel, Read Message
 // History, Create Public Threads, Send Messages in Threads and Attach Files.
@@ -66,6 +67,9 @@ type Driver struct {
 	mu      sync.Mutex
 	parents map[snowflake.ID]snowflake.ID // thread -> the channel it is in
 	direct  map[snowflake.ID]bool         // channel -> whether it is a direct conversation
+
+	commands map[string]surface.CommandSpec // by name, as registered by Run
+	answers  map[snowflake.ID]*answer       // command interactions that can still be answered
 }
 
 var _ surface.Driver = (*Driver)(nil)
@@ -114,6 +118,8 @@ func newDriver(botID snowflake.ID, token, restURL, gatewayURL string, log *slog.
 		pageSize:   100,
 		parents:    map[snowflake.ID]snowflake.ID{},
 		direct:     map[snowflake.ID]bool{},
+		commands:   map[string]surface.CommandSpec{},
+		answers:    map[snowflake.ID]*answer{},
 	}
 }
 
@@ -127,6 +133,10 @@ func newDriver(botID snowflake.ID, token, restURL, gatewayURL string, log *slog.
 // session is ready: after the first one, and after each resume or new
 // session. It is called in order with the messages, before any message the
 // session delivers.
+//
+// When sink implements surface.Commander, Run first makes its commands the
+// bot's commands (they can be used in server channels and their threads),
+// and fails when the service refuses them.
 func (d *Driver) Run(ctx context.Context, sink surface.Sink) error {
 	var me struct {
 		ID  snowflake.ID `json:"id"`
@@ -137,6 +147,11 @@ func (d *Driver) Run(ctx context.Context, sink surface.Sink) error {
 	}
 	if me.ID != d.botID {
 		return fmt.Errorf("discord: the token is for bot %s, but the config names bot %s", me.ID, d.botID)
+	}
+	if c, ok := sink.(surface.Commander); ok {
+		if err := d.register(ctx, c.Commands()); err != nil {
+			return err
+		}
 	}
 
 	fatal := make(chan error, 1)
@@ -238,7 +253,7 @@ func (d *Driver) dispatch(ctx context.Context, t string, payload io.Reader, sink
 			d.setParent(c)
 		}
 	case "INTERACTION_CREATE":
-		return d.press(ctx, payload, sink)
+		return d.interaction(ctx, payload, sink)
 	case "MESSAGE_CREATE":
 		var m wireMessage
 		if err := json.NewDecoder(payload).Decode(&m); err != nil {

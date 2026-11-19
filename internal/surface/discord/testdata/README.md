@@ -57,6 +57,8 @@ The run fetches each of these messages through REST as soon as it arrives, so th
 | Post with an idempotency key | `bot/rest-post-nonce-1.json`, `-2.json` (same `nonce`, `enforce_nonce`: the second returns the first message) | |
 | Edit, delete, delete again, set the thread title | `bot/rest-edit.json`, `rest-delete.json` (204), `rest-delete-again.json` (404, 10008), `rest-set-thread-title.json` | `bot/gw-14-MESSAGE_UPDATE`, `gw-15-MESSAGE_DELETE`, `gw-17-THREAD_UPDATE` |
 | A thread opened again from its message | `rethread/rest-rethread-post.json`, `rest-rethread-first.json` (201), `rest-rethread-again.json` (400, code 160004), `rest-rethread-get-message.json` (the message names its thread) | |
+| Commands registered, and read back | `commands/rest-application.json`, `rest-commands-set.json`, `rest-commands-after.json` | |
+| A command used in a channel and in a thread, acknowledged and answered | `commands/rest-command-ack-*.json`, `rest-command-answer-*.json` | `commands/gw-01-INTERACTION_CREATE.json`, `gw-02-…` |
 | Who the bot is | `bot/rest-users-me.json` | `bot/gw-01-READY.json` |
 
 ## A thread opened again from its message (taken for #165)
@@ -64,6 +66,14 @@ The run fetches each of these messages through REST as soon as it arrives, so th
 `v10/rethread/`, taken on 2026-11-17 with API v10 by the hataori bot in a test server's channel. It was a REST-only run, with no gateway connection: `capture.py rethread /tmp/raw/rethread`, then `capture.py cleanup /tmp/raw/rethread` and `scrub.py <new dir> /tmp/raw/rethread`. Its ids are numbered on their own, from `1000000000000000001`, so they do not continue the other captures.
 
 The bot posted one message, opened a thread from it (201), and opened again from the same message. The service refused with 400 `{"code": 160004, "message": "A thread has already been created for this message"}`. Fetching the message then returned it with `flags` 32 (has a thread) and a `thread` object: the thread, with the message's id and `parent_id` the channel. The cleanup run deleted the message. The bot may not delete the thread, so it was left for a person to delete.
+
+## Slash commands (taken for #249)
+
+`v10/commands/`, taken on 2026-11-19 with API v10 by a test bot in a test server's channel: `capture.py commands /tmp/raw/commands 45`, then `capture.py cleanup /tmp/raw/commands`. Its ids are numbered on their own, from `1000000000000000001`.
+
+The run read the application (`rest-application.json`, trimmed to `id`), registered one command, `hataori-test`, with a required and an optional text argument (`rest-commands-set.json`, a `PUT` of the whole list), and read the list back (`rest-commands-after.json`: what the service reports for a registered command). It opened a thread, `rest-thread-for-commands.json`. A person then used the command once in the channel (`gw-01-INTERACTION_CREATE.json`, one argument) and once in the thread (`gw-02-INTERACTION_CREATE.json`, both arguments; its `channel` is the thread, with `parent_id`). The run acknowledged each with a deferred answer (`type 5`, 204): public in the channel, private (`flags 64`) in the thread, `rest-command-ack-*.json`, and replaced it with `PATCH /webhooks/<application>/<token>/messages/@original` (200, `rest-command-answer-*.json`; the private one comes back with `flags 64`).
+
+Before registering, the run read the commands the application had, and it put them back afterwards with one more `PUT`. That list is not committed. Only the two interactions were kept of the gateway dispatches: the bot is in servers with other traffic. `scrub.py` keeps names that start with `hataori-test`, and replaces the token in `/webhooks/` paths as in `/interactions/` paths.
 
 ## Observed, and worth knowing
 

@@ -273,6 +273,7 @@ type sink struct {
 	mu       sync.Mutex
 	messages []surface.Inbound
 	choices  []surface.Selection
+	commands []surface.Command
 	got      chan struct{}
 }
 
@@ -292,7 +293,12 @@ func (s *sink) Choice(c surface.Selection) {
 	s.got <- struct{}{}
 }
 
-func (s *sink) Command(surface.Command) {}
+func (s *sink) Command(c surface.Command) {
+	s.mu.Lock()
+	s.commands = append(s.commands, c)
+	s.mu.Unlock()
+	s.got <- struct{}{}
+}
 
 func (s *sink) texts() []string {
 	s.mu.Lock()
