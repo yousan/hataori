@@ -17,7 +17,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.6**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.7**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -160,6 +160,7 @@ Starts a thread in a scope. The same `key` starts nothing twice and returns the 
 | `key` | string | required | makes the call safe to repeat |
 | `scope` | string | required | the scope; for chat, a channel |
 | `thread` | string | required | the conversation of the first link, in the scope's own channel, of the scope's owner; empty to let the scope's owner open one; since 3.0 it names a link, before it the thread's key |
+| `agent` | string | optional | the agent's registered name; empty for the scope's agent; since 3.7 |
 | `repo` | string | required | the repository the workspace is cloned from |
 | `input` | `Input` | required | the first input |
 | `model` | string | required | the model; empty for the scope's default |

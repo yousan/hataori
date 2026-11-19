@@ -43,6 +43,7 @@ var (
 type Scope struct {
 	Name    string // the config's name for it; wins over its channel's name
 	Enabled bool
+	Agent   string // the registered name of the agent of new threads; empty for Core.Agent
 	Owner   string // the name of the client that gives the scope its threads
 	Model   string // default model
 	Effort  string // default effort
@@ -197,6 +198,10 @@ func pend(ctx context.Context, tx *store.Tx, sid int64, req string, v any) (int6
 	return res.LastInsertId()
 }
 
+// AgentDefaults are the model and effort of the threads of one agent, from
+// its adapter's section of the config.
+type AgentDefaults struct{ Model, Effort string }
+
 // Core is the core of one instance. It has no operations of its own: use
 // As to get an API bound to a caller.
 type Core struct {
@@ -209,10 +214,13 @@ type Core struct {
 	People     *people.Directory
 	Workspaces Workspaces
 	Runner     Runner
-	Agent      string // the registered name of the agent new sessions use
-	Model      string // default model of a scope without one
-	Effort     string // default effort of a scope without one
-	Log        *slog.Logger
+	// Agents are the configured agents by registered name, with the defaults
+	// of each. Nil: Agent is the only one, with no defaults of its own.
+	Agents map[string]AgentDefaults
+	Agent  string // the registered name of the agent new sessions use
+	Model  string // default model of a scope without one
+	Effort string // default effort of a scope without one
+	Log    *slog.Logger
 	// SignIn makes dashboard sign-in links; nil when the instance has no
 	// dashboard.
 	SignIn SignIn
@@ -808,6 +816,18 @@ func (a *api) start(ctx context.Context, r control.StartRequest, confined bool) 
 		a.c.Log.Warn("start refused", "scope", r.Scope, "reason", "scope is not enabled")
 		return 0, fmt.Errorf("core: start in %q: %w", r.Scope, ErrDisabled)
 	}
+	chosen := cmp.Or(r.Agent, sc.Agent, a.c.Agent)
+	if confined {
+		chosen = cmp.Or(r.Agent, a.c.Agent)
+	}
+	defaults, known := a.c.Agents[chosen]
+	if a.c.Agents == nil {
+		known = chosen == a.c.Agent
+	}
+	if !known {
+		a.c.Log.Warn("start refused", "scope", r.Scope, "agent", chosen, "reason", "unknown agent")
+		return 0, fmt.Errorf("core: start in %q: agent %q: %w", r.Scope, chosen, control.ErrUnknownAgent)
+	}
 	if r.Effort != "" && !slices.Contains(control.Efforts, r.Effort) {
 		return 0, fmt.Errorf("core: start in %q: effort %q: %w", r.Scope, r.Effort, control.ErrUnknownEffort)
 	}
@@ -839,8 +859,15 @@ func (a *api) start(ctx context.Context, r control.StartRequest, confined bool) 
 		}
 		link = l
 	}
-	model := cmp.Or(r.Model, sc.Model, a.c.Model)
-	effort := cmp.Or(r.Effort, sc.Effort, a.c.Effort)
+	var scopeModel, scopeEffort, defaultModel, defaultEffort string
+	if chosen == cmp.Or(sc.Agent, a.c.Agent) {
+		scopeModel, scopeEffort = sc.Model, sc.Effort
+	}
+	if chosen == a.c.Agent {
+		defaultModel, defaultEffort = a.c.Model, a.c.Effort
+	}
+	model := cmp.Or(r.Model, scopeModel, defaults.Model, defaultModel)
+	effort := cmp.Or(r.Effort, scopeEffort, defaults.Effort, defaultEffort)
 
 	var (
 		id        control.ThreadID
@@ -883,7 +910,7 @@ func (a *api) start(ctx context.Context, r control.StartRequest, confined bool) 
 		res, err = tx.ExecContext(ctx,
 			`INSERT INTO sessions (thread_id, agent, state, model, effort, first_input, launch, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-			thread, a.c.Agent, string(control.Creating), model, effort, string(fi), now, now)
+			thread, chosen, string(control.Creating), model, effort, string(fi), now, now)
 		if err != nil {
 			return fmt.Errorf("core: create session: %w", err)
 		}
@@ -908,7 +935,7 @@ func (a *api) start(ctx context.Context, r control.StartRequest, confined bool) 
 		return 0, err
 	}
 
-	if err := a.c.launch(ctx, Launch{Session: sessionID, Thread: id, Agent: a.c.Agent,
+	if err := a.c.launch(ctx, Launch{Session: sessionID, Thread: id, Agent: chosen,
 		Model: model, Effort: effort, Principal: a.caller.Principal, From: a.caller.From, Key: r.Key, Input: r.Input,
 		Confined: confined}, r.Repo); err != nil {
 		return id, err

@@ -329,3 +329,137 @@ func TestStopEndsARunningToolWithinTenSeconds(t *testing.T) {
 	}
 	// The agent and its host stay, for the next message; the tool is gone.
 }
+
+func TestAThreadKeepsItsAgentAcrossSleepRestartAndAConfigChange(t *testing.T) {
+	conv := filepath.Join(t.TempDir(), "conversations")
+	if err := os.MkdirAll(conv, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	p := newProcRoot(t, func(cfg map[string]any) {
+		cfg["idle"] = "1s"
+		cfg["agent"] = fake.Name
+		cfg["scopes"].([]map[string]any)[0]["agent"] = secondAgent
+		cfg["adapters"] = map[string]any{
+			fake.Name:   map[string]any{"command": []string{os.Args[0], "fake"}, "env": []string{"PATH=" + os.Getenv("PATH")}},
+			secondAgent: map[string]any{"command": []string{os.Args[0], "fake"}, "env": []string{"PATH=" + os.Getenv("PATH")}, "conversations": conv, "model": "second-model"},
+		}
+	})
+	files := func(want int) {
+		t.Helper()
+		entries, err := os.ReadDir(conv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != want {
+			t.Fatalf("conversation files: %d, want %d", len(entries), want)
+		}
+	}
+	p.start(t)
+	p.in(c1, "!go repo:"+bareRepo(t)+" reply a")
+	th := p.thread(t, 0)
+	p.posted(t, th, "a")
+	files(1)
+	initialFiles, err := os.ReadDir(conv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialFile := initialFiles[0].Name()
+	var threadID, sessionID int64
+	var name, model, before string
+	if err := p.db(t).QueryRow(`SELECT id FROM threads ORDER BY id LIMIT 1`).Scan(&threadID); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.db(t).QueryRow(`SELECT id, agent, model, agent_session_id FROM sessions WHERE thread_id = ?`, threadID).Scan(&sessionID, &name, &model, &before); err != nil {
+		t.Fatal(err)
+	}
+	if name != secondAgent || model != "second-model" || before == "" {
+		t.Fatalf("agent %q model %q conversation %q", name, model, before)
+	}
+	check := func() {
+		t.Helper()
+		var count int
+		var agentName, id string
+		if err := p.db(t).QueryRow(`SELECT count(*), max(agent), max(agent_session_id) FROM sessions WHERE thread_id = ?`, threadID).Scan(&count, &agentName, &id); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 || agentName != secondAgent || id != before {
+			t.Fatalf("sessions %d, agent %q, conversation %q; want 1, %q, %q", count, agentName, id, secondAgent, before)
+		}
+		files(1)
+	}
+	sleep := func() {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join(runner.StateDir(p.root, sessionID), host.PIDFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, "the old thread's agent to sleep", 15*time.Second, func() bool { return !alive(pid) })
+	}
+	sleep()
+	p.in(th, "reply b")
+	p.posted(t, th, "b")
+	check()
+	sleep()
+	p.kill(t)
+	path := filepath.Join(p.root, instance.ConfigFile)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	delete(cfg["scopes"].([]any)[0].(map[string]any), "agent")
+	b, err = json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p.start(t)
+	p.in(th, "reply c")
+	p.posted(t, th, "c")
+	check()
+	p.in(c1, "!go repo:"+bareRepo(t)+" reply d")
+	newThread := p.thread(t, 1)
+	p.posted(t, newThread, "d")
+	var newAgent string
+	if err := p.db(t).QueryRow(`SELECT s.agent FROM sessions s JOIN threads t ON t.id = s.thread_id WHERE t.id != ? ORDER BY s.id DESC LIMIT 1`, threadID).Scan(&newAgent); err != nil || newAgent != fake.Name {
+		t.Fatalf("new thread agent %q: %v", newAgent, err)
+	}
+	files(1)
+	sleep()
+	entries, err := os.ReadDir(conv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if err := os.Remove(filepath.Join(conv, entry.Name())); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p.in(th, "reply e")
+	p.posted(t, th, "e")
+	var count int
+	if err := p.db(t).QueryRow(`SELECT count(*) FROM sessions WHERE thread_id = ?`, threadID).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("old thread has %d sessions: %v", count, err)
+	}
+	var replacementAgent string
+	if err := p.db(t).QueryRow(`SELECT agent FROM sessions WHERE thread_id = ? ORDER BY id DESC LIMIT 1`, threadID).Scan(&replacementAgent); err != nil || replacementAgent != secondAgent {
+		t.Fatalf("replacement agent %q: %v", replacementAgent, err)
+	}
+	files(1)
+	newFiles, err := os.ReadDir(conv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newFiles[0].Name() == initialFile {
+		t.Fatal("replacement reused the removed conversation file")
+	}
+}

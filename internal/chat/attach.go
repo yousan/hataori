@@ -49,7 +49,7 @@ func (f *FrontEnd) Command(c surface.Command) {
 
 // attachArg returns the number of a trigger line that asks to attach.
 func attachArg(o order) (string, bool) {
-	if o.Repo != "" || o.Model != "" || o.Effort != "" {
+	if o.Agent != "" || o.Repo != "" || o.Model != "" || o.Effort != "" {
 		return "", false
 	}
 	word, arg, _ := strings.Cut(o.Prompt, " ")

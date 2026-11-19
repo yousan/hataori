@@ -66,20 +66,23 @@ A complete example for one Discord channel and Claude Code, with the owner, one 
 | `people` | array | none | The people hataori knows, one object each (below). Without this key the config is read in the old form. |
 | `trigger` | string | required | The word that starts a thread. A message in an enabled channel that starts with this word, followed by a space or a line break, is an order (see [Orders](#orders)). |
 | `idle` | duration | required | How long a session may sit without a turn before its agent process is stopped. The next message resumes the same conversation. A positive Go duration, such as `"30m"` or `"2h"`. |
-| `model` | string | empty | The model of a thread whose order and scope name none. Empty leaves it to the agent's own default. |
-| `effort` | string | empty | The effort of a thread whose order and scope name none. Empty leaves it to the agent's own default. |
+| `agent` | string | the only adapter | The agent of new threads whose order and scope name none: a name under `adapters`. Required when `adapters` names more than one; refused at start when it names an adapter `adapters` does not configure. |
+| `model` | string | empty | The model of a thread of the default agent (`agent`) whose order, scope and adapter section name none. Empty leaves it to the agent's own default. |
+| `effort` | string | empty | The effort of a thread of the default agent (`agent`) whose order, scope and adapter section name none. Empty leaves it to the agent's own default. |
 | `context_bytes` | integer | `8192` | When the agent no longer has a thread's conversation and a new session replaces it, the thread's earlier inputs and final answers are given to the new session, cut to this many bytes. Must be greater than 0. |
 | `login_relay` | boolean | `true` | When turns fail because the agent is logged out, the owner gets one direct message about it. With `true`, hataori also runs the agent's login command, sends the owner the sign-in link, and passes the code the owner replies with back to it, or, for a login that takes no code back (Codex), shows the code to enter on the page. `false` keeps the alert and switches the relay off. |
 | `scopes` | array | empty | The channels hataori serves, one object each (below). A channel that is not listed, or not enabled, starts nothing. |
 | `drivers` | object | empty | One section per chat surface, by name. This binary has one: `discord` (below). A name it does not have is refused at start. |
-| `adapters` | object | empty | One section per coding agent, by name. This binary has two: `claude-code` and `codex` (below). Exactly one adapter must be named. |
+| `adapters` | object | empty | One section per coding agent, by name. This binary has two: `claude-code` and `codex` (below). One or more adapters must be named; with more than one, `agent` names the default. |
 | `terminal_size` | object | absent | The size of the terminal an agent session runs in, for an agent that runs in one (Claude Code): `{"cols": 200, "rows": 50}`. Give both keys: `cols` from 40 to 500 and `rows` from 10 to 200; anything else is refused at start. Each session the daemon starts or resumes takes it, so a change applies to a thread's next session; a running session keeps its size. Without this key a session's terminal is 80 columns by 24 rows. |
 | `host_terminals` | boolean | `false` | With `true`, the owner may list the terminals on the host that hataori does not own (tmux panes and other terminals) and read the screens of the panes of the default tmux server, for display only, through the control API's `HostTerminals` and `HostScreen`. hataori never sends these terminals anything. With `false`, both are refused for everyone. |
 | `dashboard` | object | absent | The web dashboard (below). Without this section the daemon serves none. |
 | `cleanup` | object | absent | How workspaces are removed (below). Without this section no ignored file is disposable and trash is kept for seven days. |
 | `plugins` | array | empty | The plugins of the instance, one object each (below). Each is checked against its manifest when the daemon starts, and an error stops the start. This version checks them and does not start them yet. |
 
-Model and effort are chosen in this order: the order's `model:` / `effort:`, then the scope's, then the top-level key, then the agent's own default.
+A new thread uses the order's `agent:`, then the scope's `agent`, then the top-level `agent`. It keeps that agent when waking, resuming after a restart, or starting a new session after the agent cannot resume, even after a config change. Removing its adapter section leaves the thread unable to start.
+
+Model and effort are chosen in this order: the order's `model:` / `effort:`, the scope's when the thread runs the scope's agent, the agent's adapter section, the top-level key for the default agent, then the agent's own default.
 
 Names in `drivers`, `adapters` and `scopes[].client` start with a lowercase letter and contain only lowercase letters, digits and `-`.
 
@@ -91,8 +94,9 @@ Names in `drivers`, `adapters` and `scopes[].client` start with a lowercase lett
 | `client` | string | required | The driver that owns the scope: `"discord"`. It must also be configured under `drivers`. |
 | `name` | string | empty | What the dashboard calls the scope. Without it, the dashboard shows the channel's name as the chat service shows it (for Discord, `#name`, looked up each time the driver connects), else the key. |
 | `enabled` | boolean | `false` | Whether orders in this scope start threads. |
-| `model` | string | empty | The model of threads started here whose order names none. |
-| `effort` | string | empty | The effort of threads started here whose order names none. |
+| `agent` | string | the default agent | The agent of new threads started here whose order names none: a name under `adapters`. Refused at start when it names an adapter `adapters` does not configure. |
+| `model` | string | empty | The model of threads started here that run the scope's agent and whose order names none. |
+| `effort` | string | empty | The effort of threads started here that run the scope's agent and whose order names none. |
 | `people` | array of strings | empty | Names of the people, under `people`, who may start threads here and post into them besides the owner. Empty strings are ignored. |
 | `show_in` | array of strings | empty | Other channels where this scope's threads may be shown, each as `<client>:<channel>`, such as `"discord:<channel id>"` (for another client, its name under `drivers`). A person allowed in this scope attaches a thread there with `/attach` (see "Showing a thread in another channel"). Without an entry, an attach in that channel makes no link, shows nothing there and writes one log line. The scope's own channel is never listed. |
 | `posters` | array of strings | empty | The old form only: ids, on this scope's client, of who may post here besides the owner. For Discord, user ids, or the id of a webhook for posts made through that webhook. Refused in a config with `people`. |
@@ -104,7 +108,7 @@ A supervisor is one more thread of the scope, started by the daemon (design, sec
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `agent` | string | the instance's adapter | The adapter that runs it. It must be the one adapter under `adapters`; another is refused at start. Only Claude Code can start a supervisor today: with another adapter its thread fails, with that reason, and no agent process starts. |
+| `agent` | string | the default agent (`agent`) | The adapter that runs it. It must be the default agent (`agent`); the scope's `agent` does not apply. Only Claude Code can start a supervisor today: with another adapter its thread fails, with that reason, and no agent process starts. |
 | `model` | string | the adapter's cheapest | Its model. Claude Code's cheapest is `haiku`. An adapter that names no cheapest model gets the scope's model, as any thread. |
 | `effort` | string | the scope's | Its effort, as `effort` above. |
 | `instructions` | string | empty | Appended to the agent's own instructions at each start of its session. |
@@ -163,9 +167,26 @@ becomes
 
 Unknown keys are refused. The token is read from this file only, never from the environment. Keep the file readable by its owner only (`chmod 600`); hataori checks the mode of `hataori.json` but not of the token file.
 
+To run one channel on Codex, add `agent` and the `codex` section, and name the agent in that scope:
+
+```json
+"agent": "claude-code",
+"scopes": [{"key": "<channel id>", "client": "discord", "enabled": true, "agent": "codex"}],
+"adapters": {"claude-code": {}, "codex": {"effort": "high"}}
+```
+
+### Keys of every adapter section
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `model` | string | empty | The model of threads that run this agent, when their order names none and their scope's `model` does not apply (see the order above). Empty leaves it to the next default. |
+| `effort` | string | empty | The effort of threads that run this agent, when their order names none and their scope's `effort` does not apply (see the order above). Empty leaves it to the next default. |
+
+hataori takes these two keys out before the adapter reads its section.
+
 ### `adapters.claude-code`
 
-The section may be empty (`{}`).
+The section may be empty (`{}`). The common `model` and `effort` keys are also allowed.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -175,11 +196,11 @@ The section may be empty (`{}`).
 | `input_timeout` | duration | `"30s"` | How long input pasted into Claude Code may go unreported by its `UserPromptSubmit` hook before it counts as not delivered. At least one second. |
 | `pass_env` | array of strings | empty | Names of variables in the daemon's environment to pass to Claude Code besides the fixed list below, for example an API key it logs in with. |
 
-Unknown keys are refused.
+Unknown keys are refused; `model` and `effort` are hataori's (see [Keys of every adapter section](#keys-of-every-adapter-section)).
 
 ### `adapters.codex`
 
-The section may be empty (`{}`).
+The section may be empty (`{}`). The common `model` and `effort` keys are also allowed.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -188,7 +209,7 @@ The section may be empty (`{}`).
 | `sandbox` | string | `"danger-full-access"` | Sandbox for every `thread/start` and `thread/resume`: `read-only`, `workspace-write`, or `danger-full-access`. |
 | `approval_policy` | string | `"never"` | Approval policy for every `thread/start` and `thread/resume`: `untrusted`, `on-request`, or `never`. |
 
-Unknown keys are refused. The defaults, like Claude Code's today, never ask for approval and allow commands to write anywhere and use the network.
+Unknown keys are refused; `model` and `effort` are hataori's (see [Keys of every adapter section](#keys-of-every-adapter-section)). The defaults, like Claude Code's today, never ask for approval and allow commands to write anywhere and use the network.
 
 Codex writes session files (rollouts) under `sessions/` and caches under `CODEX_HOME` (`~/.codex` by default), as for any thread. Codex would also record the workspace's trust in `config.toml`; hataori prevents that write by supplying `-c projects={...}` on the command line. Codex treats the workspace as a trusted project and reads the workspace's `.codex/` configuration, as it would after recording the trust itself. hataori never sets `CODEX_HOME`, runs a login, or writes the user's Codex configuration.
 
@@ -393,11 +414,12 @@ Three more commands are internal, run by hataori itself, and not for people: `ha
 An order is a message in an enabled channel (not in a thread):
 
 ```
-<trigger> repo:<url> [model:<model>] [effort:<effort>] <prompt>
+<trigger> repo:<url> [agent:<name>] [model:<model>] [effort:<effort>] <prompt>
 ```
 
 - The options are `name:value` words on the first line, after the trigger word. The prompt is everything after the last option, and may span many lines.
 - `repo:` is required. It is a URL with the scheme `https`, `http`, `ssh`, `git` or `file`, or the `user@host:path` form.
+- `agent:` is a name under `adapters`, such as `codex`: the thread runs that agent instead of the scope's. An unknown name starts nothing and writes one log line.
 - `effort:` is one of `low`, `medium`, `high`, `xhigh`, `max`. Any other value gets a reply saying nothing was started.
 - The author must be the owner or one of the scope's `people`. Posts by bot accounts are ignored; posts through a webhook are accepted when the webhook's id belongs to one of the scope's people.
 

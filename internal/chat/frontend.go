@@ -285,9 +285,9 @@ func (f *FrontEnd) start(ctx context.Context, in surface.Inbound, o order, n int
 	// No thread is named: once the core allows the Start, it asks this
 	// front end for one (NewThread), which opens it from the trigger.
 	id, startErr := api.Start(ctx, control.StartRequest{Key: in.Ref.ID, Scope: channel, Repo: o.Repo,
-		Model: o.Model, Effort: o.Effort, Input: control.Input{Text: o.Prompt}})
+		Agent: o.Agent, Model: o.Model, Effort: o.Effort, Input: control.Input{Text: o.Prompt}})
 	switch {
-	case errors.Is(startErr, control.ErrForbidden):
+	case errors.Is(startErr, control.ErrForbidden), errors.Is(startErr, control.ErrUnknownAgent):
 		return nil // the core logged it; nothing is shown to the author
 	case errors.Is(startErr, control.ErrUnknownEffort):
 		return f.refuseEffort(ctx, in, o, n)
