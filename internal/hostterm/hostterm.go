@@ -90,6 +90,13 @@ func (l *Lister) execIn(ctx context.Context, stdin []byte, c command, extra ...s
 	if l.run != nil {
 		return l.run(ctx, stdin, c.name, args...)
 	}
+	if c.name == "tmux" {
+		// -u: the client takes its output for UTF-8 whatever the locale.
+		// Without it, under a locale that is not UTF-8 (LC_CTYPE=C), tmux
+		// 3.5 prints every tab of a -F format, paneFormat's separator, as
+		// "_", and every character outside ASCII too (#483).
+		args = slices.Concat([]string{"-u"}, args)
+	}
 	cmd := exec.CommandContext(ctx, c.name, args...)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
