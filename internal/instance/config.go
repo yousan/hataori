@@ -105,6 +105,14 @@ type Supervisor struct {
 	// ThreadsMax is the most threads a wake message shows; the others are
 	// counted in one line. "threads_max"; 20 when absent.
 	ThreadsMax int
+	// The budget of the scope's supervisor (design, section 7.1); 0 turns
+	// a limit off. TurnsPerHour: its turns per hour, "turns_per_hour", 12
+	// when absent. SendsPerHour: its sends and starts per hour,
+	// "sends_per_hour", 20 when absent. TokensPerDay: its tokens per day,
+	// "tokens_per_day", 2,000,000 when absent.
+	TurnsPerHour int
+	SendsPerHour int
+	TokensPerDay int64
 }
 
 // The defaults of a supervisor's wake (decision 5 of #267).
@@ -112,6 +120,10 @@ const (
 	DefaultQuiet      = 30 * time.Second
 	DefaultOutputMax  = 1024
 	DefaultThreadsMax = 20
+
+	DefaultTurnsPerHour = 12
+	DefaultSendsPerHour = 20
+	DefaultTokensPerDay = 2_000_000
 )
 
 type fileSupervisor struct {
@@ -122,6 +134,9 @@ type fileSupervisor struct {
 	Quiet        string `json:"quiet"`
 	OutputMax    *int   `json:"output_max"`
 	ThreadsMax   *int   `json:"threads_max"`
+	TurnsPerHour *int   `json:"turns_per_hour"`
+	SendsPerHour *int   `json:"sends_per_hour"`
+	TokensPerDay *int64 `json:"tokens_per_day"`
 }
 
 // Dashboard is the "dashboard" section of the config: a loopback listener,
@@ -353,7 +368,8 @@ func ParseConfig(data []byte) (*Config, error) {
 		if sv := s.Supervisor; sv != nil {
 			sc.Supervisor = &Supervisor{Agent: strings.TrimSpace(sv.Agent), Model: strings.TrimSpace(sv.Model),
 				Effort: strings.TrimSpace(sv.Effort), Instructions: strings.TrimSpace(sv.Instructions),
-				Quiet: DefaultQuiet, OutputMax: DefaultOutputMax, ThreadsMax: DefaultThreadsMax}
+				Quiet: DefaultQuiet, OutputMax: DefaultOutputMax, ThreadsMax: DefaultThreadsMax,
+				TurnsPerHour: DefaultTurnsPerHour, SendsPerHour: DefaultSendsPerHour, TokensPerDay: DefaultTokensPerDay}
 			if a := sc.Supervisor.Agent; a != "" {
 				if err := registry.ValidName(a); err != nil {
 					return nil, fmt.Errorf("config: key %q: %v", key+".supervisor.agent", err)
@@ -378,6 +394,25 @@ func ParseConfig(data []byte) (*Config, error) {
 					return nil, fmt.Errorf("config: key %q: %d is not a positive number", key+".supervisor."+n.name, *n.v)
 				}
 				*n.to = *n.v
+			}
+			for _, n := range []struct {
+				name string
+				v    *int
+				to   *int
+			}{{"turns_per_hour", sv.TurnsPerHour, &sc.Supervisor.TurnsPerHour}, {"sends_per_hour", sv.SendsPerHour, &sc.Supervisor.SendsPerHour}} {
+				if n.v == nil {
+					continue
+				}
+				if *n.v < 0 {
+					return nil, fmt.Errorf("config: key %q: %d is not a number of 0 or more (0 turns the limit off)", key+".supervisor."+n.name, *n.v)
+				}
+				*n.to = *n.v
+			}
+			if v := sv.TokensPerDay; v != nil {
+				if *v < 0 {
+					return nil, fmt.Errorf("config: key %q: %d is not a number of 0 or more (0 turns the limit off)", key+".supervisor.tokens_per_day", *v)
+				}
+				sc.Supervisor.TokensPerDay = *v
 			}
 		}
 		for j, e := range s.ShowIn {

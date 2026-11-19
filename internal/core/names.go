@@ -120,7 +120,7 @@ func (a *api) Scopes(ctx context.Context) ([]control.ScopeInfo, error) {
 	var out []control.ScopeInfo
 	for _, key := range a.caller.Scopes {
 		sc, ok := a.c.Scopes[key]
-		if !ok {
+		if !ok || !a.personSees(key) {
 			continue
 		}
 		name := sc.Name

@@ -171,10 +171,22 @@ func (f *FrontEnd) direct(in surface.Inbound) {
 	}
 }
 
-// Choice handles a button: the login message's "New link".
+// Choice handles a button: the login message's "New link". A press that
+// does nothing writes one log line.
 func (f *FrontEnd) Choice(s surface.Selection) {
 	agent, ok := strings.CutPrefix(s.Token, "login:")
-	if !ok || !f.owner(s.Author) || f.Relay == nil {
+	reason := ""
+	switch {
+	case !ok:
+		reason = "no button of the front end's"
+	case !f.owner(s.Author):
+		reason = "not the owner's"
+	case f.Relay == nil:
+		reason = "the login relay is off"
+	}
+	if reason != "" {
+		f.Log.Warn("button ignored", "reason", reason, "client", f.Name, "id", s.Author.ID,
+			"channel", s.Ref.Conv.Channel, "message", s.Ref.ID)
 		return
 	}
 	if err := f.Relay.Start(f.context(), f.from(s.Author), agent); err != nil {

@@ -23,6 +23,7 @@ type starts struct {
 	mu    sync.Mutex
 	l     []core.Launch
 	calls []string // deliver TEXT, answer REQUEST TEXT
+	stops int      // Interrupt calls
 }
 
 func (r *starts) record(s string) {
@@ -51,7 +52,12 @@ func (r *starts) Answer(_ context.Context, _, _ int64, req string, a control.Ans
 	r.record("answer " + req + " " + a.Text)
 	return nil
 }
-func (r *starts) Interrupt(context.Context, int64) error    { return nil }
+func (r *starts) Interrupt(context.Context, int64) error {
+	r.mu.Lock()
+	r.stops++
+	r.mu.Unlock()
+	return nil
+}
 func (r *starts) Shut(context.Context, int64, string) error { return nil }
 func (r *starts) Device(context.Context, int64) string      { return "" }
 func (r *starts) Resume(context.Context, int64, control.Principal, string, string, control.Input) error {
@@ -114,6 +120,7 @@ type front struct {
 	driver *fake.Driver
 	runner *starts
 	log    *logBuf
+	core   *core.Core
 }
 
 const (
@@ -124,9 +131,14 @@ const (
 
 var chanConv = surface.Conversation{Channel: channel}
 
-// testPeople has the owner, and the hook as one of the channel's people.
+// outsider is a person allowed in no scope.
+const outsider = "grace-1"
+
+// testPeople has the owner, the hook as one of the channel's people, and
+// the outsider.
 func testPeople() *people.Directory {
-	return people.New([]people.Person{{Name: "owner", IDs: []string{"chat:" + owner}}, {Name: "hook", IDs: []string{"chat:" + hook}}},
+	return people.New([]people.Person{{Name: "owner", IDs: []string{"chat:" + owner}}, {Name: "hook", IDs: []string{"chat:" + hook}},
+		{Name: "grace", IDs: []string{"chat:" + outsider}}},
 		"owner", map[string][]string{channel: {"hook"}})
 }
 
@@ -153,7 +165,7 @@ func newFront(t *testing.T, ws workspaces, opts ...func(*FrontEnd)) *front {
 	done := make(chan struct{})
 	go func() { fe.Outbox.Run(ctx); close(done) }()
 	t.Cleanup(func() { cancel(); <-done })
-	return &front{fe: fe, driver: d, runner: r, log: lb}
+	return &front{fe: fe, driver: d, runner: r, log: lb, core: c}
 }
 
 // deliver receives a message on the fake surface and hands it to the
