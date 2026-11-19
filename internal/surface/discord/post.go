@@ -165,7 +165,8 @@ func (d *Driver) OpenThread(ctx context.Context, parent surface.Conversation, ti
 // Post posts m, split into several messages in order when its text is longer
 // than one message may be; its files go on the last one. A code block cut by
 // the split is closed in one message and opened again in the next. It
-// returns the first message.
+// returns the first message; with choices, the last one, which carries
+// them, so that an Edit of what it returns can remove them.
 //
 // key is sent as each message's nonce, with enforce_nonce: Discord then
 // returns the earlier message instead of posting again when the same nonce
@@ -190,7 +191,7 @@ func (d *Driver) Post(ctx context.Context, conv surface.Conversation, key string
 	if err != nil {
 		return surface.MessageRef{}, err
 	}
-	buttons, err := components(m.Choices)
+	buttons, err := components(m.Choices, m.Multi)
 	if err != nil {
 		return surface.MessageRef{}, err
 	}
@@ -278,6 +279,9 @@ func (d *Driver) Post(ctx context.Context, conv surface.Conversation, key string
 		if i == 0 {
 			first = surface.MessageRef{Conv: conv, ID: out.ID.String()}
 		}
+		if i == len(parts)-1 && len(m.Choices) > 0 {
+			first = surface.MessageRef{Conv: conv, ID: out.ID.String()}
+		}
 	}
 	return first, nil
 }
@@ -332,11 +336,12 @@ func (d *Driver) Edit(ctx context.Context, ref surface.MessageRef, m surface.Mes
 	if n := length(m.Text); n > maxText {
 		return &Error{Op: "edit", Status: http.StatusBadRequest, Message: fmt.Sprintf("%d characters, at most %d fit", n, maxText)}
 	}
-	buttons, err := components(m.Choices)
+	buttons, err := components(m.Choices, m.Multi)
 	if err != nil {
 		return err
 	}
-	// An edit replaces the message: no choices remove its buttons.
+	// An edit replaces the message: no choices remove its buttons and its
+	// menu.
 	body := map[string]any{"content": m.Text, "components": buttons}
 	return wrap("edit", d.client.Do(rest.UpdateMessage.Compile(nil, ch, id), body, nil, rest.WithCtx(ctx)))
 }
@@ -406,13 +411,14 @@ func (d *Driver) Name(ctx context.Context, conv surface.Conversation) (string, e
 // Limits reports what the driver can do.
 func (d *Driver) Limits() surface.Limits {
 	return surface.Limits{
-		MaxText:    maxText,
-		MaxChoices: maxChoices,
-		MaxFiles:   maxFiles,
-		Edit:       true,
-		Delete:     true,
-		SetThread:  true,
-		Commands:   true,
+		MaxText:     maxText,
+		MaxChoices:  maxChoices,
+		MaxFiles:    maxFiles,
+		Edit:        true,
+		Delete:      true,
+		SetThread:   true,
+		Commands:    true,
+		MultiSelect: true,
 	}
 }
 

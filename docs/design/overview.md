@@ -297,7 +297,7 @@ When an agent's login runs out, every turn fails until someone logs in on the ho
 
 The rules:
 
-- **Only the owner's direct message is ever passed to the login command, and only while the command is waiting for a code.** The owner is the person of section 5.5, reached at their id on each client; the relay resolves the author's `<client>:<id>` and compares the person. A direct message from anyone else, a guest included, does nothing. The owner's message at any other time gets "not waiting for a code". A reply that is not shaped like a code (one word, no spaces) is not passed on.
+- **Only the owner's direct message is ever passed to the login command, and only while the command is waiting for a code.** A login that takes no code back is passed nothing. The owner is the person of section 5.5, reached at their id on each client; the relay resolves the author's `<client>:<id>` and compares the person. A direct message from anyone else, a guest included, does nothing. The owner's message at any other time gets "not waiting for a code". A reply that is not shaped like a code (one word, no spaces) is not passed on.
 - **The link and the code exist only in the direct message and in memory.** They are not written to the database, the event log, any log file or any other conversation, and no client of the control API can read them. The log says that a code arrived and how long it was. For this reason the login command is a direct child of the daemon and does not run under the session host, which logs what it sees. A daemon restart ends a login that is in progress; the button starts another.
 - **Nothing is resent.** A message that failed is sent again by whoever sent it.
 - **If someone logs in on the host instead**, the next turn that completes closes the outage, the waiting login is stopped, and the message says the login is back.
@@ -305,7 +305,7 @@ The rules:
 
 This is the only input hataori takes from direct messages in phase 1, and the only button.
 
-For Claude Code the command is `claude auth login`. It was run with a throwaway config directory, so the existing login was not touched: it works on pipes without a terminal, prints the link on one line and then asks for the code, and answered a wrong code with one line and kept waiting (Appendix B). What it prints and how it ends after a correct code was not run **(unverified)**. Codex comes with its adapter: `codex login --device-auth` prints a link and a code and needs no reply, and `codex login status` reports the result (from its help text; not run).
+For Claude Code the command is `claude auth login`. It was run with a throwaway config directory, so the existing login was not touched: it works on pipes without a terminal, prints the link on one line and then asks for the code, and answered a wrong code with one line and kept waiting (Appendix B). What it prints and how it ends after a correct code was not run **(unverified)**. Codex runs `codex login --device-auth` with the sessions' `CODEX_HOME`; it prints a link and a code to enter on the page (captured in 0.163.0) and takes no code back. The owner's direct message shows both and asks for nothing. The command ends by itself; success is its clean end and `codex login status`, as for Claude Code. The end was not captured: Codex's source reports `Successfully logged in`, or `Error logging in: <error>` and exit 1, which the owner is shown.
 
 ### 4.8 Taking in a session a person started
 
@@ -1820,7 +1820,7 @@ type Namer interface {
 // Sink is implemented by the chat front end, not by the core.
 type Sink interface {
 	Message(Inbound)  // text, files, author, ids
-	Choice(Selection) // a button or menu was used
+	Choice(Selection) // a button or menu was used: Token, and Tokens for every option chosen
 	Command(Command)  // a slash or text command
 }
 
@@ -1881,6 +1881,7 @@ type Message struct {
 	Text    string
 	Files   []File
 	Choices []Choice    // rendered as buttons or a menu; each carries an opaque token
+	Multi   bool        // several may be chosen at once (a menu); needs Limits.MultiSelect
 	ReplyTo *MessageRef // quote-reply
 	Notify  []string    // ids of people to ping
 	Quiet   bool        // no notification
@@ -1910,6 +1911,10 @@ type Adapter interface {
 	NewCodec(spec Spec) Codec
 }
 
+// ErrNoCodeBack is returned by LoginCode, for every code, when the login
+// takes no code back: the owner only enters ShowCode on the link's page.
+var ErrNoCodeBack = errors.New("agent: this login takes no code back")
+
 // LoginFlow is implemented by an adapter whose agent can be logged in again
 // from chat. hataori runs the agent's own login command and passes on what it
 // prints and the owner's code; it keeps neither.
@@ -1920,12 +1925,13 @@ type LoginFlow interface {
 	// LoginDecode reads one line the login command printed.
 	LoginDecode(line []byte) LoginStep
 	// LoginCode returns the bytes that hand a code to the login command.
+	// A flow taking no code back returns ErrNoCodeBack for every code, even empty.
 	LoginCode(code string) ([]byte, error)
 }
 
 // LoginStep is what a line of the login command means: a link to show
 // (with a code to show beside it, if the agent gives one), a request for a
-// code, a refusal with its text, or nothing.
+// code, a refusal with its text, or nothing. ShowCode may arrive alone after Link.
 type LoginStep struct {
 	Link      string
 	ShowCode  string

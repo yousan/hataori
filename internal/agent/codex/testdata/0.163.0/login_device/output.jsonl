@@ -1,0 +1,15 @@
+{"t": 0.015414515044540167, "stream": "stderr", "line": "WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \"/tmp\" (codex_home: AbsolutePathBuf(\"/tmp/tmp.bwiSxnJutX\"))"}
+{"t": 0.8514840690186247, "stream": "stdout", "line": ""}
+{"t": 0.8516349120181985, "stream": "stdout", "line": "Welcome to Codex [v\u001b[90m0.163.0\u001b[0m]"}
+{"t": 0.8516461130348034, "stream": "stdout", "line": "\u001b[90mOpenAI's command-line coding agent\u001b[0m"}
+{"t": 0.8516512630158104, "stream": "stdout", "line": ""}
+{"t": 0.8516555009991862, "stream": "stdout", "line": "Follow these steps to sign in with ChatGPT using device code authorization:"}
+{"t": 0.8516586670302786, "stream": "stdout", "line": ""}
+{"t": 0.8516622030292638, "stream": "stdout", "line": "1. Open this link in your browser and sign in to your account"}
+{"t": 0.8516639970475808, "stream": "stdout", "line": "   \u001b[94mhttps://auth.openai.com/codex/device\u001b[0m"}
+{"t": 0.8516667620278895, "stream": "stdout", "line": ""}
+{"t": 0.8516687560477294, "stream": "stdout", "line": "2. Enter this one-time code \u001b[90m(expires in 15 minutes)\u001b[0m"}
+{"t": 0.8516715610167012, "stream": "stdout", "line": "   \u001b[94mXX00-0X00X\u001b[0m"}
+{"t": 0.8516732340212911, "stream": "stdout", "line": ""}
+{"t": 0.8516755280434154, "stream": "stdout", "line": "\u001b[90mContinue only if you started this login in Codex. If a website or another person gave you this code, cancel.\u001b[0m"}
+{"t": 0.8516777630429715, "stream": "stdout", "line": ""}

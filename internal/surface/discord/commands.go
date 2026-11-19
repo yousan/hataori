@@ -255,7 +255,7 @@ func (d *Driver) postAnswer(ctx context.Context, conv surface.Conversation, key 
 	if len(m.Files) > 0 {
 		return surface.MessageRef{}, &Error{Op: answerOp, Local: true, Err: errors.New("an answer to a command cannot carry files")}
 	}
-	buttons, err := components(m.Choices)
+	buttons, err := components(m.Choices, m.Multi)
 	if err != nil {
 		return surface.MessageRef{}, err
 	}

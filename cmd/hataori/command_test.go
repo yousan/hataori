@@ -40,6 +40,8 @@ func TestMain(m *testing.M) {
 		switch os.Args[1] {
 		case "host", "hook", "login-guard", "mcp", "statusline", "signin": // signin: as hataori on the host, run over SSH by hataori connect
 			os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+		case "--version", "login":
+			os.Exit(codexLogin(os.Args[1:]))
 		case "app-server":
 			os.Exit(codexReplay(os.Args[2:]))
 		case "fake":
