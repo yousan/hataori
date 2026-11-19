@@ -94,7 +94,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	m := &session.Machine{Store: st}
 	r := &runner.Runner{Store: st, Machine: m, Adapters: adapters,
 		Host: host.Command{Path: exe, Args: []string{"host"}}, Root: abs, Log: lg, IdlePeriod: cfg.Idle,
-		ContextBytes: cfg.ContextBytes}
+		ContextBytes: cfg.ContextBytes, Cols: uint16(cfg.TerminalCols), Rows: uint16(cfg.TerminalRows)}
 	defer r.Close()
 
 	scopes := map[string]core.Scope{}

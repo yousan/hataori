@@ -108,6 +108,13 @@ func TestConfigErrorsNameTheKey(t *testing.T) {
 		{"bad retention", `{"owner": "o", "trigger": "!go", "idle": "30m", "cleanup": {"trash_retention": "0s"}}`, `"cleanup.trash_retention"`},
 		{"bad removal age", `{"owner": "o", "trigger": "!go", "idle": "30m", "cleanup": {"remove_closed_after": "a month"}}`, `"cleanup.remove_closed_after"`},
 		{"relative root", `{"owner": "o", "trigger": "!go", "idle": "30m", "cleanup": {"other_roots": ["srv/other"]}}`, `"cleanup.other_roots[0]"`},
+		{"too few columns", `{"owner": "o", "trigger": "!go", "idle": "30m", "terminal_size": {"cols": 39, "rows": 24}}`, `"terminal_size.cols"`},
+		{"too many columns", `{"owner": "o", "trigger": "!go", "idle": "30m", "terminal_size": {"cols": 501, "rows": 24}}`, `"terminal_size.cols"`},
+		{"too few rows", `{"owner": "o", "trigger": "!go", "idle": "30m", "terminal_size": {"cols": 80, "rows": 9}}`, `"terminal_size.rows"`},
+		{"too many rows", `{"owner": "o", "trigger": "!go", "idle": "30m", "terminal_size": {"cols": 80, "rows": 201}}`, `"terminal_size.rows"`},
+		{"no rows", `{"owner": "o", "trigger": "!go", "idle": "30m", "terminal_size": {"cols": 80}}`, `"terminal_size.rows"`},
+		{"no columns", `{"owner": "o", "trigger": "!go", "idle": "30m", "terminal_size": {"rows": 30}}`, `"terminal_size.cols"`},
+		{"not a number", `{"owner": "o", "trigger": "!go", "idle": "30m", "terminal_size": {"cols": "wide", "rows": 30}}`, `cols`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := ParseConfig([]byte(tc.config))
@@ -334,6 +341,21 @@ func TestSecondProcessIsRefused(t *testing.T) {
 }
 
 // The host's terminals stay off unless the config turns them on.
+// The terminal size is 0×0, for the host's 80×24, without the key, and
+// the edges of the range are taken.
+func TestTerminalSizeConfig(t *testing.T) {
+	c, err := ParseConfig([]byte(validConfig))
+	if err != nil || c.TerminalCols != 0 || c.TerminalRows != 0 {
+		t.Fatalf("without terminal_size: %d×%d, %v", c.TerminalCols, c.TerminalRows, err)
+	}
+	for _, size := range [][2]int{{40, 10}, {500, 200}, {200, 50}} {
+		with := strings.Replace(validConfig, "{", fmt.Sprintf(`{"terminal_size": {"cols": %d, "rows": %d},`, size[0], size[1]), 1)
+		if c, err = ParseConfig([]byte(with)); err != nil || c.TerminalCols != size[0] || c.TerminalRows != size[1] {
+			t.Fatalf("terminal_size %v: %d×%d, %v", size, c.TerminalCols, c.TerminalRows, err)
+		}
+	}
+}
+
 func TestHostTerminalsOffByDefault(t *testing.T) {
 	c, err := ParseConfig([]byte(validConfig))
 	if err != nil {

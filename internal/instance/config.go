@@ -48,6 +48,11 @@ type Config struct {
 	// the host that hataori does not own (section 7.2); "host_terminals",
 	// off when absent.
 	HostTerminals bool
+	// TerminalCols and TerminalRows are the size of the terminal an agent
+	// session runs in, for an agent that runs in one: "terminal_size". Both
+	// are 0 when the key is absent, and the session host then makes the
+	// terminal 80×24.
+	TerminalCols, TerminalRows int
 
 	// Dashboard is how the instance serves its dashboard (section 7.2);
 	// nil when the config has no "dashboard" section.
@@ -129,12 +134,25 @@ type fileConfig struct {
 	Context    *int                       `json:"context_bytes"`
 	LoginRelay *bool                      `json:"login_relay"`
 	HostTerms  bool                       `json:"host_terminals"`
+	TermSize   *fileTerminalSize          `json:"terminal_size"`
 	Scopes     []fileScope                `json:"scopes"`
 	Dashboard  *fileDashboard             `json:"dashboard"`
 	Cleanup    *fileCleanup               `json:"cleanup"`
 	Drivers    map[string]json.RawMessage `json:"drivers"`
 	Adapters   map[string]json.RawMessage `json:"adapters"`
 }
+
+type fileTerminalSize struct {
+	Cols *int `json:"cols"`
+	Rows *int `json:"rows"`
+}
+
+// The bounds of "terminal_size": smaller is too small for an agent's own
+// screen, larger is no screen anyone reads.
+const (
+	MinTerminalCols, MaxTerminalCols = 40, 500
+	MinTerminalRows, MaxTerminalRows = 10, 200
+)
 
 type fileScope struct {
 	Key     string   `json:"key"`
@@ -198,6 +216,25 @@ func ParseConfig(data []byte) (*Config, error) {
 			return nil, fmt.Errorf("config: key %q: %d is not a positive number of bytes", "context_bytes", *f.Context)
 		}
 		c.ContextBytes = *f.Context
+	}
+	if s := f.TermSize; s != nil {
+		for _, d := range []struct {
+			key      string
+			v        *int
+			min, max int
+			to       *int
+		}{
+			{"terminal_size.cols", s.Cols, MinTerminalCols, MaxTerminalCols, &c.TerminalCols},
+			{"terminal_size.rows", s.Rows, MinTerminalRows, MaxTerminalRows, &c.TerminalRows},
+		} {
+			if d.v == nil {
+				return nil, missing(d.key)
+			}
+			if *d.v < d.min || *d.v > d.max {
+				return nil, fmt.Errorf("config: key %q: %d is outside %d to %d", d.key, *d.v, d.min, d.max)
+			}
+			*d.to = *d.v
+		}
 	}
 
 	if d := f.Dashboard; d != nil {
