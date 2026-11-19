@@ -9,6 +9,8 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -135,6 +137,11 @@ const screenTimeout = 2 * time.Second
 // are in the log it keeps: the log also holds earlier runs' output, and a
 // trim moves what it keeps (#520). When the host cannot be asked (on
 // pipes, or once it has gone), there is nothing.
+//
+// A host started by an earlier hataori, which a daemon that died during a
+// launch can leave running, does not know the request. Its log is read as
+// it was before, from the file's byte from on: what its run wrote, if it
+// is the log's first run and nothing was trimmed.
 func Screen(stateDir string, from uint64) ([]byte, uint64) {
 	ctx, cancel := context.WithTimeout(context.Background(), screenTimeout)
 	defer cancel()
@@ -146,9 +153,22 @@ func Screen(stateDir string, from uint64) ([]byte, uint64) {
 	c.conn.SetDeadline(time.Now().Add(screenTimeout))
 	resp, err := c.call(request{Op: "screen", After: from})
 	if err != nil {
+		if strings.HasPrefix(resp.Error, "unknown operation") {
+			return keptSince(stateDir, from)
+		}
 		return nil, from
 	}
 	return resp.Data, resp.Pos
+}
+
+// keptSince returns the terminal log kept in stateDir after its first from
+// bytes, and its length.
+func keptSince(stateDir string, from uint64) ([]byte, uint64) {
+	b, err := os.ReadFile(filepath.Join(stateDir, TerminalLog))
+	if err != nil || uint64(len(b)) <= from {
+		return nil, from
+	}
+	return b[from:], uint64(len(b))
 }
 
 // StopResult says what Stop did.
