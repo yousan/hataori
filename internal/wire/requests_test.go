@@ -11,7 +11,7 @@ import (
 // A request the daemon sent on a connection before it read the
 // connection's Events request, such as a plugin's plugin_started, is
 // skipped: the stream starts and delivers its events.
-func TestAStreamSkipsTheDaemonsRequests(t *testing.T) {
+func TestStreamSkipsRequests(t *testing.T) {
 	path := fakeDaemon(t, Version, func(m message) []string {
 		if m.Op != "Events" {
 			return nil
