@@ -217,6 +217,12 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 				p.say(final, false)
 			}
 			final, replied = arg, true
+		case "heard":
+			if replied {
+				p.say(final, false)
+			}
+			first, _, _ := strings.Cut(strings.TrimSpace(script), "\n")
+			final, replied = "heard: "+first, true
 		case "whoami":
 			if replied {
 				p.say(final, false)

@@ -9,6 +9,9 @@
 //	hataori stop [--root DIR] KEY               interrupt the thread's running turn
 //	hataori attach [--root DIR] KEY             this terminal on the agent's, until Ctrl-\
 //	hataori signin [--root DIR]                 a single-use dashboard sign-in link
+//	hataori mcp [--root DIR] --scope SCOPE [--output-max BYTES]
+//	                                            the supervisor's MCP server on stdio;
+//	                                            its token is $HATAORI_TOKEN
 //	hataori version
 //
 // The root is --root, or $HATAORI_ROOT. Output is one JSON object per line,
@@ -68,7 +71,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return runCtx(context.Background(), args, stdout, stderr)
 }
 
-const usage = "usage: hataori run|threads|thread KEY|events [--after N] [--follow]|stop KEY|attach KEY|signin [--root DIR] | hataori version | hataori host <state-dir> | hataori hook [--wait] [--timeout DURATION] | hataori statusline --last FILE [--run COMMAND]"
+const usage = "usage: hataori run|threads|thread KEY|events [--after N] [--follow]|stop KEY|attach KEY|signin [--root DIR] | hataori mcp --scope SCOPE [--root DIR] [--output-max BYTES] | hataori version | hataori host <state-dir> | hataori hook [--wait] [--timeout DURATION] | hataori statusline --last FILE [--run COMMAND]"
 
 func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -94,6 +97,8 @@ func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 	case "hook":
 		return host.HookMain(args[1:], os.Stdin, stdout, stderr, os.Getenv)
+	case "mcp":
+		return mcpMain(ctx, args[1:], os.Stdin, stdout, stderr, os.Getenv)
 	case "statusline":
 		return claudecode.StatusLineMain(args[1:], os.Stdin, stdout, stderr, os.Getenv)
 	case "run", "threads", "thread", "events", "stop", "attach", "signin":

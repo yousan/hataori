@@ -27,11 +27,14 @@ import (
 
 // Version is the protocol version this build speaks: major.minor. Two
 // sides work together when their major numbers are equal (docs/protocol.md).
-const Version = "2.1"
+const Version = "2.2"
 
 type hello struct {
 	Version string `json:"version"`
 	Error   string `json:"error,omitempty"`
+	// Token is a credential the daemon gave a client, which binds the
+	// connection to a limited caller; only a client sends it. Since 2.2.
+	Token string `json:"token,omitempty"`
 }
 
 type request struct {

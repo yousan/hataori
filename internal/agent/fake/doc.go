@@ -43,6 +43,7 @@
 //
 //	reply TEXT          say TEXT; the last reply is the final answer
 //	whoami              reply "model M effort E", as the program was started
+//	heard               reply "heard: L", L the first line of the input
 //	tool NAME DURATION  run a tool (a child process) for DURATION
 //	ask QUESTION [-- CHOICE | CHOICE...]
 //	                    ask, with its choices if any, wait for the answer,
