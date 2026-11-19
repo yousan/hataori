@@ -679,7 +679,7 @@ The order below was decided by the maintainer (section 10): Codex, people in cha
 Where Slack differs from what the driver interface assumes (Appendix B, "Documentation read on 2026-11-19"; nothing was run):
 
 - A thread is the replies to one message, named by that message's `ts` (`thread_ts`). A thread that hataori opens without a trigger message, as for a `Start` through the control API, starts from a message that hataori posts in the channel.
-- Custom slash commands "cannot, however, be invoked in message threads"; only Slack's built-in commands can. Their acknowledgment over HTTP must arrive within 3000 ms.
+- Custom slash commands "cannot, however, be invoked in message threads"; only Slack's built-in ones and Giphy's can. Their acknowledgment over HTTP must arrive within 3000 ms.
 - `chat.postMessage` takes no key that makes a post safe to repeat. It takes `metadata`, an event type and a payload that every member of the workspace can read, and `conversations.replies` returns it with `include_all_metadata`. `slack-go/slack` v0.36.0 has `MsgOptionMetadata`, and `IncludeAllMetadata` on both reads.
 - Text in `text` is Slack's own format; the `markdown` block (`NewMarkdownBlock`) renders standard Markdown, tables and code blocks included, with at most 12,000 characters across a message's markdown blocks. The documentation recommends at most 4,000 characters in `text` and cuts it after 40,000.
 - An incoming webhook posts only into the channel it was made for, and into a thread with `thread_ts`, under the name and icon of the app it belongs to.
