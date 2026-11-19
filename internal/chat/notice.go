@@ -44,3 +44,37 @@ func (f *FrontEnd) Notice(ctx context.Context, id control.ThreadID, key, text st
 	f.Outbox.Wake()
 	return nil
 }
+
+// TellOwner puts text in the owner's direct conversation on this service,
+// the one of the login alert (design, section 4.7), once for key: a key it
+// was given before, also before a restart, posts nothing. It goes through
+// the outbox like a notice. An owner with no id here is not told, and
+// that is logged.
+func (f *FrontEnd) TellOwner(ctx context.Context, key, text string) error {
+	conv, err := f.ownerConv(ctx)
+	if err != nil {
+		f.Log.Warn("chat: the owner could not be told", "key", key, "err", err)
+		return err
+	}
+	err = f.Outbox.Store.Update(ctx, func(tx *store.Tx) error {
+		res, err := tx.ExecContext(ctx, `INSERT INTO chat_notices (client, channel, message, received_at)
+			VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`, f.Name, conv.Channel, "owner:"+key, time.Now().UnixMilli())
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return nil // told before
+		}
+		var n int64
+		if err := tx.QueryRowContext(ctx, `SELECT rowid FROM chat_notices WHERE client = ? AND channel = ? AND message = ?`,
+			f.Name, conv.Channel, "owner:"+key).Scan(&n); err != nil {
+			return err
+		}
+		return f.Outbox.WriteTx(ctx, tx, Row{Event: 0, Part: -(1 << 40) - int(n), Conv: conv, Message: surface.Message{Text: text}})
+	})
+	if err != nil {
+		return err
+	}
+	f.Outbox.Wake()
+	return nil
+}

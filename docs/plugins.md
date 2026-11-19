@@ -2,13 +2,36 @@
 
 A plugin is a separate program, in any language, that adds to what hataori does without changing it ([design, section 7.3](design/overview.md#73-plugins)). It talks to the daemon over the control socket ([protocol.md](protocol.md)). The operator lists it in the instance's config ([configuration.md, `plugins[]`](configuration.md#plugins)); this file describes what the plugin's author writes, its manifest.
 
-This version reads and checks each plugin's manifest and config entry when the daemon starts. It has the hook calls and the dispatcher that runs them (below, [protocol.md, Requests the daemon sends](protocol.md#requests-the-daemon-sends)); the core and the chat front end do not call a hook point yet.
+The daemon checks each plugin's manifest and config entry when it starts, then runs the plugins (below). It has the hook calls and the dispatcher that runs them (below, [protocol.md, Requests the daemon sends](protocol.md#requests-the-daemon-sends)); the core and the chat front end do not call a hook point yet.
 
 ## What a plugin's connection may do
 
-Once hataori starts plugins, a plugin's connection is bound, by a token the daemon issues, to a caller made from its grant: what the manifest asks for and the config grants, and nothing more. The core refuses any other operation with `forbidden` and one log line naming the operation, the scope and the plugin. Events of kinds it was not granted are left out of `Events`, `ThreadEvents` and `Thread`; positions are the instance's own, so a plugin that reads again after the last position it kept misses no event of its kinds. `Threads` and `Thread` still summarize a thread's state, such as its turns, usage and open requests, whatever kinds were granted. Without the `conversation` grant the text is left out of what it reads, and `Terminal` is refused.
+A plugin's connection is bound, by its token, to a caller made from its grant: what the manifest asks for and the config grants, and nothing more. The core refuses any other operation with `forbidden` and one log line naming the operation, the scope and the plugin. Events of kinds it was not granted are left out of `Events`, `ThreadEvents` and `Thread`; positions are the instance's own, so a plugin that reads again after the last position it kept misses no event of its kinds. `Threads` and `Thread` still summarize a thread's state, such as its turns, usage and open requests, whatever kinds were granted. Without the `conversation` grant the text is left out of what it reads, and `Terminal` is refused.
 
 A plugin calls as the id `plugin:<id>`. Its `Start`, `Send`, `Answer`, `Stop` and `Link` are refused like a guest's unless the operator lists that id under a person of the config and that person in the scope's `people` ([configuration.md, `people[]`](configuration.md#people)), as for a supervisor. `AskInterrupt` is refused in this version whatever the grant: a plugin has no thread to ask in.
+
+## How a plugin runs
+
+hataori starts each plugin that is not `external` as a child process when the daemon starts, once the control socket listens.
+
+- **Before each start**, the manifest's `protocol` must have the daemon's major version and a minor version no higher than the daemon's, and the executable's SHA-256 must be the config's `sha256`. If either does not hold, nothing starts and one log line names both values (both versions, or the expected and the actual hash).
+- **The file that runs is the one that was hashed.** hataori reads the executable once into memory, hashes those bytes, and writes them to a new file, under a new name at each start, in a directory of its own, `state/plugin-run/<id>/` (mode 0700). That file is the one it starts. A file put in the executable's place after it was read does not run before the next start, which hashes it again. This guards the configured path, not the daemon's own files: a process of the daemon's own user can change those as it can the config.
+- **What runs is that copy**, in the executable's directory as its working directory. A binary gets its configured path as its first argument. A script finds its interpreter through its `#!` line as usual, but the interpreter gets the copy's path, so the script's own path, its directory, and what is found next to it through them (Python's `sys.path[0]` and `__file__`, Node's `require("./x")`, `$(dirname "$0")`) are the copy's. A plugin is therefore one file. A plugin that needs files next to it finds them through its working directory.
+- **The environment** has, of the daemon's own environment, only `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`, `TMPDIR`, `XDG_RUNTIME_DIR` and `XDG_CONFIG_HOME`, as an agent does. hataori adds:
+
+  | Variable | Value |
+  |---|---|
+  | `HATAORI_SOCKET` | The control socket's path. |
+  | `HATAORI_TOKEN` | The token of this start. Present it in the hello ([protocol.md](protocol.md)); it binds the connection to the plugin's grant. It is revoked when the plugin exits, and a new one is issued at the next start. |
+  | `HATAORI_PLUGIN_ID` | The plugin's id. |
+  | `HATAORI_PLUGIN_STATE` | Its state directory, `state/plugins/<id>/` (mode 0700), kept across starts and restarts of the daemon. Keep the event position here. |
+  | `HATAORI_PLUGIN_SETTINGS` | A file holding the config entry's `settings`, a JSON object, written again at each start. |
+  | `HATAORI_PROTOCOL` | The control protocol the daemon speaks, such as `3.12`. |
+
+- **Output.** What the plugin writes to its standard output and standard error goes to the daemon's log, a line at a time. Each line is marked with the plugin's id and cut at 4096 bytes; a longer line is logged as soon as 4096 bytes of it came. The plugin's token is shown as `[token]`.
+- **Restarts.** When a plugin exits, its token is revoked and its connections close. It starts again after 1 second, then 2, 4 and so on, up to 1 minute. A plugin that exits 5 times within 10 minutes stays stopped until the daemon restarts, and so does one whose hash or protocol does not hold. The owner then gets one direct message, in the conversation of the login alert, and the log has one line. While it stays stopped, also across restarts of the daemon, the owner is not told again. A run that has lasted 10 minutes ends the outage, while it runs. If the owner cannot be reached, telling is tried again until it succeeds or the daemon stops.
+- **Stopping.** When the daemon stops, each plugin it started is first sent `plugin_stopping` (below) and has 10 seconds to answer; then it gets SIGTERM, and after 10 more seconds SIGKILL. Both go to its process group: whatever it started in that group goes with it, and so it does when the plugin exits by itself. On Linux the plugin itself, not what it started, is also killed when the daemon dies without stopping it; on macOS it is not.
+- **An `external` plugin** is not started. The token in its `token_file` is bound to its grant when the daemon starts, and the program connects with it by itself. A connection with any other token is refused, and the log does not show the token. Two token files that hold the same token stop the daemon's start, naming both keys.
 
 ## The manifest
 
@@ -68,7 +91,7 @@ Since protocol 3.17 the core runs `before_agent_run`, then `before_prompt_build`
 - **A key accepted before runs no hook**, so a `Start` or `Send` given again, after a restart too, calls no handler twice, and input that was accepted before a restart reaches the agent as it was then, with its added text.
 - The caller waits for the handlers: at most their timeouts.
 
-The daemon sends hook requests on the plugin's oldest connection that is still open and is not a stream: open a connection for requests first, and follow events on others. The project's Go client answers them with the handler given to `wire.DialTokenHandler`. When a plugin connects while it had no connection open, the daemon sends it `plugin_started` with its grant; before hataori stops a plugin it starts, it is to send `plugin_stopping` (with the starting of plugins, #349). Each call is logged with the plugin, the point, the thread and the outcome, never with text or a plugin's reason.
+The daemon sends hook requests on the plugin's oldest connection that is still open and is not a stream: open a connection for requests first, and follow events on others. The project's Go client answers them with the handler given to `wire.DialTokenHandler`. When a plugin connects while it had no connection open, the daemon sends it `plugin_started` with its grant; before hataori stops a plugin it starts, it sends `plugin_stopping`, and SIGTERM follows when the plugin answers or after 10 seconds. Each call is logged with the plugin, the point, the thread and the outcome, never with text or a plugin's reason.
 
 ## An example
 

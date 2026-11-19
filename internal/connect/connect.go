@@ -118,7 +118,7 @@ func remember(path, target string, h host) error {
 	if err != nil {
 		return err
 	}
-	defer lock.Close()
+	defer unlockFile(lock)
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil { // a connect for another host may write it too
 		return err
 	}
@@ -254,7 +254,7 @@ func Run(ctx context.Context, opts Options) error {
 		}
 		return c.askRunning(ctx)
 	}
-	defer lock.Close()
+	defer unlockFile(lock)
 	c.leftOver()
 	ipc, err := net.Listen("unix", c.ipc)
 	if err != nil {
@@ -342,6 +342,15 @@ func Run(ctx context.Context, opts Options) error {
 			}
 		}
 	}
+}
+
+// unlockFile releases the lock f holds and closes f. The lock is released
+// first: it belongs to the open file, and a process started a moment ago
+// (ssh, the browser) has a copy of the descriptor until it execs, so
+// closing alone would leave the lock held by that copy for that moment.
+func unlockFile(f *os.File) {
+	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	f.Close()
 }
 
 // lockFile takes the lock of path, a file only this user can open, and

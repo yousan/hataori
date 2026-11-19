@@ -70,7 +70,7 @@ func Run(stateDir string) (err error) {
 	if err != nil {
 		return err
 	}
-	defer lk.Close()
+	defer unlock(lk)
 	hl := openHostLog(stateDir)
 	hl.printf("started, pid %d", os.Getpid())
 	hl.recordSignals()

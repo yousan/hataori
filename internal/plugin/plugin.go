@@ -1,8 +1,8 @@
 // Package plugin reads what each plugin of an instance asks for, its
 // manifest, and what the operator grants it, its entry in the config's
 // "plugins" list, and makes of the two the plugin's effective grant
-// (design, section 7.3). It runs nothing: of a plugin's files it reads
-// only the manifest.
+// (design, section 7.3). Load runs nothing: of a plugin's files it reads
+// only the manifest. Runner starts, starts again and stops the plugins.
 package plugin
 
 import (

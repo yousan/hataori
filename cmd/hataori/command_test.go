@@ -59,6 +59,8 @@ func TestMain(m *testing.M) {
 				time.Sleep(50 * time.Millisecond)
 			}
 			os.Exit(0)
+		case "test-plugin":
+			os.Exit(testPlugin())
 		case "orphan-terminal":
 			os.Exit(orphanTerminal(os.Args[2]))
 		}
