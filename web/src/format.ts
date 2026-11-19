@@ -1,4 +1,4 @@
-import type { LimitWindow, State, ThreadInfo } from "./api";
+import type { LimitWindow, ScopeInfo, State, ThreadInfo } from "./api";
 import { type Key, lang, t } from "./catalog";
 
 // stateName is a state as the page shows it.
@@ -24,6 +24,13 @@ export function contextUse(x: ThreadInfo): string {
 // mark is the agent's mark: the first letter of its name.
 export function mark(x: ThreadInfo): string {
   return x.agent ? x.agent.slice(0, 1).toUpperCase() : t("thread.noAgent");
+}
+
+// scopeLabel is what the page calls a scope: its name from Scopes (the
+// config's, else its channel's as the chat service shows it), else its
+// key. The tree's nodes and the All threads table's groups both use it.
+export function scopeLabel(key: string, scopes: readonly ScopeInfo[] | null): string {
+  return scopes?.find((s) => s.key === key)?.name || key;
 }
 
 // fullTitle is a thread's title as the page names it: the chat thread's
