@@ -220,12 +220,12 @@ The holders, in the order they come:
 | Holder | Start | Input | Screen | Stop | Alive | Checked |
 |---|---|---|---|---|---|---|
 | hataori's own host | yes | bytes to its pseudo-terminal | raw | yes | socket and status file | yes |
-| tmux, a window a person started (section 4.8) | no | `load-buffer -b <own> -`, then `paste-buffer -p -r -d -b <own>`; `send-keys` with tmux's key names | snapshots (`capture-pane`) | no | `list-panes`, and the process the hooks named | yes, Appendix B |
+| tmux, a window a person started (section 4.8) | no | `load-buffer -b <own> -`, then `paste-buffer -p -r -d -b <own>`, with `-S` from tmux 3.7 on; `send-keys` with tmux's key names | snapshots (`capture-pane`) | no | `list-panes`, and the process the hooks named | yes, Appendix B; built (#399) |
 | tmux, a window hataori starts | yes | as above | raw, through `pipe-pane -O` | yes | `remain-on-exit` and `#{pane_dead_status}` | the parts, Appendix B; the whole is not built |
 | cmux (macOS) | **(unverified)** | `cmux paste`, `cmux send-key` | `cmux read-screen`, text | `cmux close-surface` | `cmux surface-health` | documentation only |
 | iTerm2 (macOS) | **(unverified)** | Python API `Session.async_send_text` | `Session.async_get_screen_contents` | **(unverified)** | **(unverified)** | documentation only |
 
-*tmux.* A window is named by the server and the pane: `TMUX` holds the server's socket path and process id, and `TMUX_PANE` the pane id. The server's process id is part of the reference because pane ids start again at `%0` on a new server (Appendix B). Input follows the path chosen for host panes in section 7.2, with one change: `paste-buffer` replaces every line feed with a carriage return unless it is given `-r`, so a paste for an agent always uses `-r`. `display-message` on a pane that no longer exists exits 0 with empty fields, so whether a pane exists is read from `list-panes`. The process tmux starts in a pane leads its own process group, so Stop signals that group as the host does. For a window hataori starts:
+*tmux.* A window is named by the server and the pane: `TMUX` holds the server's socket path and process id, and `TMUX_PANE` the pane id. The server's process id is part of the reference because pane ids start again at `%0` on a new server (Appendix B). Input follows the path chosen for host panes in section 7.2, with two changes: `paste-buffer` replaces every line feed with a carriage return unless it is given `-r`, so a paste for an agent always uses `-r`; and from tmux 3.7 on it shows a pasted control character as `^X` unless it is given `-S`, so a paste for an agent uses `-S` where the server knows it. `display-message` on a pane that no longer exists exits 0 with empty fields, so whether a pane exists is read from `list-panes`. The process tmux starts in a pane leads its own process group, so Stop signals that group as the host does. For a window hataori starts:
 
 1. A relay host with no command starts first, so the first hook call finds its socket, as today.
 2. The pane is created in a tmux session of hataori's own name, on the person's default tmux server, with a placeholder command. The person sees the window among their own and can switch to it; what they type there is reported by the hooks as typed at the terminal (Attach, above).
@@ -1263,6 +1263,8 @@ Run on 2026-11-19 against tmux 3.4 on Linux, on a tmux server of its own (`-L`, 
 | The default of `window-size` | `latest` |
 | `attach-session -f` in the manual page | the client flags include `ignore-size`; `-r` is `read-only,ignore-size` |
 
+On tmux 3.5a on macOS (#399), the holder's checks passed against `stty raw` and `cat` in a pane: a paste of several lines with a tab, a DEL, Japanese and a leading `-` arrived byte for byte between the marks, and `send-keys Enter Escape Up Down` as `\r`, `ESC`, `ESC [ A`, `ESC [ B`. There a tab in a `-F` format, in `list-panes` and in `new-session -P`, was printed as `_`.
+
 Later, for #362: on tmux 3.4, `send-keys` typed a name it cannot encode (`S-Tab`, `S-a`, `C-{`) into the pane as its letters and dropped some (`C-Enter`, `C-BSpace`), and an argument ending in `;` ended the command (`M-;` typed `M-`; `M-\;` sent `ESC ;`); `paste-buffer -S` was refused with "unknown flag -S" and the buffer kept. On tmux 3.8 (macOS CI), `paste-buffer` without `-S` gave a DEL as `^?`: tmux 3.7 passes a paste through vis(3) unless given `-S`.
 
 ### Claude Code plugins, and hooks in a tmux pane (#384)
@@ -2299,6 +2301,8 @@ type Liveness struct {
 ```
 
 hataori's own host writes a paste as `ESC [200~`, the text, `ESC [201~`, and the keys from a fixed table: Enter `\r`, Escape `ESC`, Up `ESC [A`, Down `ESC [B`, each part in one write, the bytes the Claude Code codec wrote itself before it returned parts (`holder.Encode`, tested). Its `Alive` reads the state directory and never takes the host's lock: Exited once the status is recorded and the socket gone, Gone when the host's process no longer exists and recorded no end, Unknown before the host recorded its process id, else Running. Beyond `Holder` it offers what only it does so far, and a later holder that needs one of them adds it to the interface then: `Write` (input on pipes), `Since` (the raw screen by position, for a codec watching the start), `Tail` (the end of the raw log, for a start that timed out), and `WaitReleased` and `Reset` (a state directory whose host ended, made ready for the next).
+
+The holder for a tmux window a person started is `internal/holder/tmux` (#399). Its `Window` is built from a hook's `TMUX` and `TMUX_PANE`, with the Claude Code process that reported as `Process`; its `Ref` holds the server's socket path and process id and the pane id. `Caps` is empty, `Start` returns `ErrCannotStart` and `Stop` `ErrNotOwned`. `Alive` is Gone for a pane `list-panes` no longer lists, for a server whose process id is not the reference's, and when no server answers on the socket and the reference's server process is gone (a socket file removed under a running server is Unknown), Running while that Claude Code process leads the foreground process group of the pane's terminal, Exited (with no status) once the process is gone and the pane stays, and Unknown otherwise. Beyond `Holder` it has `CheckTakeIn`, the check before a take-in (section 4.8). `Screen` sends a snapshot from `capture-pane` each time it changes.
 
 ### Control API: taking in a window (proposal)
 
