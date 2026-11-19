@@ -35,16 +35,18 @@ func settle(c *codec, screen []byte, t0 time.Time) (string, time.Time) {
 
 func keysOf(a Actions) string {
 	var ks []string
-	for _, w := range a.Write {
+	for _, w := range a.Keys {
 		switch {
-		case bytes.Equal(w, keyUp):
+		case w == keyUp:
 			ks = append(ks, "up")
-		case bytes.Equal(w, keyDown):
+		case w == keyDown:
 			ks = append(ks, "down")
-		case bytes.Equal(w, keyEnter):
+		case w == keyEnter:
 			ks = append(ks, "enter")
+		case w.Key == "":
+			ks = append(ks, pasteStart+w.Paste+pasteEnd)
 		default:
-			ks = append(ks, string(w))
+			ks = append(ks, string(w.Key))
 		}
 	}
 	return strings.Join(ks, " ")

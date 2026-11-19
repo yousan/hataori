@@ -24,8 +24,8 @@ const firstText = "Smoke test 2. Reply with the single word ok and change nothin
 // and SessionStart.
 func firstStart(t *testing.T) *codec {
 	c := screenCodec("/tmp/capture-work/sessions/first_enter_lost")
-	if a := c.Decode(agent.Screen, readScreen(t, firstEnter+"screen-before.raw")); len(a.Write) != 0 {
-		t.Fatalf("keys %q for the screen before the start", a.Write)
+	if a := c.Decode(agent.Screen, readScreen(t, firstEnter+"screen-before.raw")); len(a.Keys) != 0 {
+		t.Fatalf("keys %q for the screen before the start", a.Keys)
 	}
 	start := readScreen(t, firstEnter+"hooks/01-SessionStart.json")
 	c.Decode(agent.Hook, envelope("s1", "first_enter_lost/hooks/01-SessionStart.json", start))
@@ -37,23 +37,23 @@ func firstStart(t *testing.T) *codec {
 func TestFirstInputWaitsForTheInputBox(t *testing.T) {
 	c := firstStart(t)
 	a, _ := c.Input(agent.Input{ID: "first", Text: firstText})
-	if len(a.Write) != 0 {
-		t.Fatalf("written %q at the start, before the CLI reads keys", a.Write)
+	if len(a.Keys) != 0 {
+		t.Fatalf("written %q at the start, before the CLI reads keys", a.Keys)
 	}
 	if !c.watch {
 		t.Fatal("the watch ended at the start, before the first input")
 	}
 	now := time.Now()
 	for i := 0; i < 5; i++ {
-		if a := c.Tick(now.Add(time.Duration(i) * time.Second)); len(a.Write) != 0 {
-			t.Fatalf("written %q before the input box came up", a.Write)
+		if a := c.Tick(now.Add(time.Duration(i) * time.Second)); len(a.Keys) != 0 {
+			t.Fatalf("written %q before the input box came up", a.Keys)
 		}
 	}
 	now = now.Add(5 * time.Second)
 
 	a = c.Decode(agent.Screen, readScreen(t, firstEnter+"screen-after.raw"))
-	if len(a.Write) != 1 || !bytes.Equal(a.Write[0], []byte(pasteStart+firstText+pasteEnd)) || len(a.Inputs) != 1 {
-		t.Fatalf("once the box came up: writes %q, inputs %q; want the paste alone", a.Write, a.Inputs)
+	if len(a.Keys) != 1 || a.Keys[0] != (agent.Part{Paste: firstText}) || len(a.Inputs) != 1 {
+		t.Fatalf("once the box came up: writes %q, inputs %q; want the paste alone", a.Keys, a.Inputs)
 	}
 	if got := keysOf(c.Tick(now)); got != "" {
 		t.Fatalf("keys %q with the paste", got)
@@ -85,8 +85,8 @@ func TestNoEnterAgainForAnEmptyBox(t *testing.T) {
 		t.Fatal("the capture's first frame is not where the test expects it")
 	}
 	c.Decode(agent.Screen, after[:second])
-	if a, _ := c.Input(agent.Input{ID: "first", Text: firstText}); len(a.Write) != 1 {
-		t.Fatalf("writes %q with the box up, want the paste", a.Write)
+	if a, _ := c.Input(agent.Input{ID: "first", Text: firstText}); len(a.Keys) != 1 {
+		t.Fatalf("writes %q with the box up, want the paste", a.Keys)
 	}
 	now := time.Now()
 	var keys []string
@@ -110,8 +110,8 @@ func TestNoEnterAgainForAnEmptyBox(t *testing.T) {
 func TestNoEnterDuringATurn(t *testing.T) {
 	c := firstStart(t)
 	c.Decode(agent.Screen, readScreen(t, firstEnter+"screen-after.raw"))
-	if a, _ := c.Input(agent.Input{Text: firstText}); len(a.Write) != 1 {
-		t.Fatalf("writes %q, want the paste", a.Write)
+	if a, _ := c.Input(agent.Input{Text: firstText}); len(a.Keys) != 1 {
+		t.Fatalf("writes %q, want the paste", a.Keys)
 	}
 	typed := []byte(`{"hook":"u1","wait":false,"payload":{"hook_event_name":"UserPromptSubmit","prompt_id":"p1","prompt":"typed"}}`)
 	if summary(c.Decode(agent.Hook, typed)) != "turn(terminal)" {
@@ -132,10 +132,10 @@ func TestFirstInputGoesAfterPasteWait(t *testing.T) {
 	c.Input(agent.Input{Text: firstText})
 	now := time.Now()
 	c.Tick(now)
-	if a := c.Tick(now.Add(pasteWait - time.Second)); len(a.Write) != 0 {
-		t.Fatalf("written %q before pasteWait", a.Write)
+	if a := c.Tick(now.Add(pasteWait - time.Second)); len(a.Keys) != 0 {
+		t.Fatalf("written %q before pasteWait", a.Keys)
 	}
-	if a := c.Tick(now.Add(pasteWait)); len(a.Write) != 1 {
-		t.Fatalf("writes %q after pasteWait, want the paste", a.Write)
+	if a := c.Tick(now.Add(pasteWait)); len(a.Keys) != 1 {
+		t.Fatalf("writes %q after pasteWait, want the paste", a.Keys)
 	}
 }

@@ -120,12 +120,18 @@ type Codec interface {
 
 // Actions is what the caller of a Codec does next.
 type Actions struct {
-	Events []Event     // for the core
-	Write  [][]byte    // to the agent's input (terminal or stdin), in order
+	Events []Event // for the core
+	// Keys is the input of an agent in a terminal, in order: pastes and
+	// named keys, which the terminal's holder encodes (design, section 4.3).
+	Keys []Part
+	// Write is the input of an agent on pipes, in order: bytes for its
+	// standard input, unchanged.
+	Write  [][]byte
 	Reply  []HookReply // to hook calls that are waiting for an answer
 	Follow []string    // files to start following, such as a transcript
-	// Inputs are the Input.IDs of the inputs that Write carries, whichever
-	// call produced it: the caller records them as written before it writes.
+	// Inputs are the Input.IDs of the inputs that Keys or Write carries,
+	// whichever call produced it: the caller records them as written before
+	// it hands them over.
 	Inputs []string
 	// WatchScreen, from Open only, asks for the terminal's output (Source
 	// Screen) until the codec says StopScreen: for what no hook reports,
@@ -138,6 +144,25 @@ type Actions struct {
 	// reporting SessionReady does not.
 	StopScreen bool
 }
+
+// Part is one piece of input for an agent in a terminal: a paste when Key
+// is empty, else one named key.
+type Part struct {
+	Paste string // delivered as one bracketed paste, its bytes unchanged
+	Key   Key
+}
+
+// Key is a name from a fixed table. A terminal's holder maps every name or
+// refuses the whole input; it never guesses.
+type Key string
+
+// The named keys.
+const (
+	Enter  Key = "Enter"
+	Escape Key = "Escape"
+	Up     Key = "Up"
+	Down   Key = "Down"
+)
 
 // HookReply answers one hook call that is waiting.
 type HookReply struct {
