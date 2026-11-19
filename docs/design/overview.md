@@ -1422,8 +1422,8 @@ type API interface {
 	// AsksIn thread cannot be the target (ErrForbidden). Since protocol 3.10.
 	AskInterrupt(ctx context.Context, id ThreadID, key string, reason string) (RequestID, error)
 	// Stop interrupts the thread's running turn. A turn other than 0 names
-	// it by turn_started's number: nothing is interrupted unless it is the
-	// running turn, checked in the step that interrupts, and the call is
+	// it by turn_started's number, checked in the step that interrupts: when
+	// it is not the running turn, nothing is interrupted and the call is
 	// refused. Since protocol 3.14.
 	Stop(ctx context.Context, id ThreadID, turn int64) error
 
