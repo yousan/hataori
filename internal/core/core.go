@@ -1746,6 +1746,8 @@ func (a *api) noSessionScreen(ctx context.Context, pane string, owned []int) err
 	_, own, err := a.c.HostTerms.Check(cctx, pane, owned, true)
 	cancel()
 	switch {
+	case err != nil && ctx.Err() != nil: // the caller went away: not a refusal
+		return fmt.Errorf("core: HostScreen: %w", ctx.Err())
 	case err != nil:
 		a.refused("HostScreen", "", "the caller may not read text, and whether the pane shows a session could not be told")
 		return fmt.Errorf("core: HostScreen: tmux pane %q: %w: %w", pane, err, ErrForbidden)
