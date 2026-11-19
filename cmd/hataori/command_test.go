@@ -31,6 +31,9 @@ import (
 	"github.com/yousan/hataori/internal/wire"
 )
 
+// secondAgent is a second name the fake agent is registered under, for an instance with two adapters.
+const secondAgent = "fake-second"
+
 // The test binary is also `hataori host`, `hataori hook`, `hataori mcp`,
 // `hataori statusline`, the login guard and the fake agent: every command
 // that a session's agent or host runs as the hataori binary, which in a
@@ -51,6 +54,9 @@ func TestMain(m *testing.M) {
 		}
 	}
 	if err := agent.Register(fake.Name, fake.New); err != nil {
+		panic(err)
+	}
+	if err := agent.Register(secondAgent, fake.New); err != nil {
 		panic(err)
 	}
 	if err := surface.Register(fakeSurface, fakeDriver); err != nil {
