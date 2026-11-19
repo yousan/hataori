@@ -235,7 +235,7 @@ type Caller struct {
 	// authenticated itself.
 	From      string
 	Principal Principal // a person's name
-	Scopes    []string  // the scopes it may see and act in
+	Scopes    []string  // the scopes it may see and act in; a thread of another is answered as none (ErrNotFound)
 	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName, OpAsk, OpHostInput, OpTakeIn
 	// NoText leaves text written by a person or an agent out of what the
 	// caller reads: ThreadInfo.Title, ThreadInfo.Last and ThreadInfo.Name,

@@ -91,7 +91,7 @@ Events are stored, and a reader reads them from a position, possibly long after 
 | `forbidden` | error code | - | the caller may not make this call in this scope |
 | `disabled` | error code | - | the scope is not enabled |
 | `busy` | error code | - | a turn is running and the call said to refuse; for `OperateHost`, the pane is being operated already (since 3.11) |
-| `not_found` | error code | - | no such thread or request |
+| `not_found` | error code | - | no such thread or request; also a thread, a request or a conversation's thread of a scope that is not the caller's, which is answered as one that does not exist, with the same message |
 | `closed` | error code | - | the thread is closed or removed: nothing was sent, and a message does not wake it; since 2.3 |
 | `removal_refused` | error code | - | the workspace may hold work that exists nowhere else, so it was not removed; the message says why; since 2.3 |
 | `linked_elsewhere` | error code | - | the conversation shows another thread; since 3.4 |
