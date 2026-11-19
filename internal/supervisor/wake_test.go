@@ -40,7 +40,7 @@ func TestDigestOfCapturedEvents(t *testing.T) {
 		if err := control.CheckEvent(e); err != nil {
 			t.Fatalf("the capture's event %d: %v", e.Pos, err)
 		}
-		Fold(ended, e, c.Supervisor)
+		Fold(ended, e, e.Thread == c.Supervisor)
 	}
 	var threads []Ended
 	for id, e := range ended {

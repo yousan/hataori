@@ -40,7 +40,11 @@ type Gate interface {
 	// Admit is given the threads of a wake, by number, before its message
 	// is made, and returns those that may wake the supervisor. The events
 	// of the others are dropped as read. When it returns none, nothing is
-	// sent.
+	// sent. It is asked only when the supervisor's thread is idle or
+	// asleep, but the thread may still start a turn before the wake is
+	// sent; the wake is then made again later, and Admit asked again about
+	// the same threads. A count of wakes therefore counts the supervisor's
+	// turn_started events whose key starts with WakeKeyPrefix, not calls.
 	Admit(ctx context.Context, scope string, threads []Ended) []Ended
 }
 
@@ -128,6 +132,7 @@ type waking struct {
 	ended   map[control.ThreadID]control.Event // folded: each thread's last turn end
 	sending *wake                              // stored, not known to be accepted
 	sv      control.ThreadID                   // the supervisor's thread, as last looked up
+	own     map[control.ThreadID]bool          // whether a thread is a supervisor's, as asked
 	quiet   <-chan time.Time                   // the quiet period, while it runs
 	retry   <-chan time.Time                   // a send to try again after an error
 	held    bool                               // waits for the supervisor's thread to change
@@ -143,7 +148,7 @@ func (w *Waker) clock() Clock {
 func (w *Waker) run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	r := &waking{w: w, ended: map[control.ThreadID]control.Event{},
+	r := &waking{w: w, ended: map[control.ThreadID]control.Event{}, own: map[control.ThreadID]bool{},
 		api: w.Core.As(control.Caller{Principal: w.Owner, Scopes: []string{w.Scope}, May: control.OpRead | control.OpSend})}
 	if err := r.load(ctx); err != nil {
 		return err
@@ -231,7 +236,20 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 		}
 		return nil
 	}
-	if !Fold(r.ended, e, r.sv) {
+	if e.Kind != TurnEnded {
+		return nil
+	}
+	// A supervisor's thread of the scope other than the current one, as
+	// one a person closed and the daemon replaced, wakes nothing either.
+	own, ok := r.own[e.Thread]
+	if !ok {
+		var err error
+		if own, err = r.w.Core.Confined(ctx, e.Thread); err != nil {
+			return err
+		}
+		r.own[e.Thread] = own
+	}
+	if !Fold(r.ended, e, own) {
 		return nil
 	}
 	if r.quiet == nil && r.sending == nil {
@@ -247,23 +265,23 @@ func (r *waking) attempt(ctx context.Context) error {
 		r.held = false
 		return nil
 	}
-	sv, state, err := r.w.Core.LastConfined(ctx, r.w.Scope)
-	if err != nil {
+	sv, ready, err := r.ready(ctx)
+	if err != nil || !ready {
 		return err
 	}
-	r.sv = sv
-	switch state {
-	case control.Idle, control.Asleep, control.Running:
-		// Send tells a running turn from an idle one itself, atomically.
-	default:
-		// None yet, starting, failed or closed; or waiting on a question,
-		// which a Send would answer. It waits for the thread to change.
-		r.held = true
-		return nil
-	}
 	if r.sending == nil {
-		ok, err := r.prepare(ctx)
+		w, ok, err := r.prepare(ctx)
 		if err != nil || !ok {
+			return err
+		}
+		// Making it read every thread: the supervisor's may have started a
+		// turn since, which could also have asked a question by now.
+		if again, ready, err := r.ready(ctx); err != nil || !ready || again != sv {
+			r.held = true
+			return err
+		}
+		r.sending = w
+		if err := r.store(ctx); err != nil {
 			return err
 		}
 		if err := r.hook("stored"); err != nil {
@@ -286,8 +304,9 @@ func (r *waking) attempt(ctx context.Context) error {
 			r.quiet = r.w.clock().After(r.w.Quiet)
 		}
 		return nil
-	case errors.Is(err, core.ErrBusy) || errors.Is(err, control.ErrClosed):
-		// Not accepted. The next wake is made again, with what came since.
+	case errors.Is(err, core.ErrBusy):
+		// Not accepted: a repeated key is ignored before a running turn is
+		// refused. The next wake is made again, with what came since.
 		r.sending, r.held = nil, true
 		return r.store(ctx)
 	default:
@@ -307,9 +326,29 @@ func (r *waking) hook(step string) error {
 	return nil
 }
 
-// prepare makes the wake of what is folded and stores it. Without a
-// thread the gate admits, the events are handled and nothing is sent.
-func (r *waking) prepare(ctx context.Context) (bool, error) {
+// ready looks up the supervisor's thread and reports whether it may be
+// woken now: idle or asleep. Running, it is not sent to, so that a wake
+// never goes in while its turn may ask a question: a Send to a thread
+// waiting on one would be the answer, and Send refuses only a running
+// thread. None yet, starting, waiting, failed or closed, it is not sent
+// to either. In each case the wake waits for the thread's next turn end
+// or change of state.
+func (r *waking) ready(ctx context.Context) (control.ThreadID, bool, error) {
+	sv, state, err := r.w.Core.LastConfined(ctx, r.w.Scope)
+	if err != nil {
+		return 0, false, err
+	}
+	r.sv = sv
+	if state != control.Idle && state != control.Asleep {
+		r.held = true
+		return sv, false, nil
+	}
+	return sv, true, nil
+}
+
+// prepare makes the wake of what is folded. Without a thread the gate
+// admits, the events are handled and nothing is sent.
+func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 	var threads []Ended
 	for id, e := range r.ended {
 		threads = append(threads, Ended{Thread: id, Event: e})
@@ -319,23 +358,22 @@ func (r *waking) prepare(ctx context.Context) (bool, error) {
 		threads = r.w.Gate.Admit(ctx, r.w.Scope, threads)
 	}
 	if len(threads) == 0 {
-		return false, r.advance(ctx, r.read)
+		return nil, false, r.advance(ctx, r.read)
 	}
 	text, err := DigestOf(threads, func(id control.ThreadID) (control.ThreadDetail, error) {
 		return r.api.Thread(ctx, id, r.w.OutputMax+utf8.UTFMax, 0)
 	}, r.w.OutputMax, r.w.ThreadsMax)
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
-	r.sending = &wake{to: r.read, key: WakeKeyPrefix + strconv.FormatUint(r.read, 10), text: text}
-	return true, r.store(ctx)
+	return &wake{to: r.read, key: WakeKeyPrefix + strconv.FormatUint(r.read, 10), text: text}, true, nil
 }
 
 // Fold folds e into ended, each thread's last turn end, and reports
-// whether it did: only a turn_ended, of a thread other than sv, the
-// supervisor's own.
-func Fold(ended map[control.ThreadID]control.Event, e control.Event, sv control.ThreadID) bool {
-	if e.Kind != TurnEnded || e.Thread == 0 || e.Thread == sv {
+// whether it did: only a turn_ended, of a thread that is not a
+// supervisor's (own).
+func Fold(ended map[control.ThreadID]control.Event, e control.Event, own bool) bool {
+	if e.Kind != TurnEnded || e.Thread == 0 || own {
 		return false
 	}
 	ended[e.Thread] = e

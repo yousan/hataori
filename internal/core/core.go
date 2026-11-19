@@ -951,6 +951,17 @@ func (c *Core) LastConfined(ctx context.Context, scope string) (control.ThreadID
 	return control.ThreadID(id), control.State(state), nil
 }
 
+// Confined reports whether thread id was started confined, as a
+// supervisor's thread is.
+func (c *Core) Confined(ctx context.Context, id control.ThreadID) (bool, error) {
+	var confined bool
+	err := c.Store.DB.QueryRowContext(ctx, `SELECT confined FROM threads WHERE id = ?`, int64(id)).Scan(&confined)
+	if err != nil {
+		return false, fmt.Errorf("core: thread %d: %w", id, err)
+	}
+	return confined, nil
+}
+
 // sameConfinement refuses a key that started a thread before whose
 // confinement is not the one asked for now: an ordinary Start never
 // returns a confined thread, and StartConfined never an ordinary one.

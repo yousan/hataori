@@ -71,6 +71,9 @@ type wakeTest struct {
 	clk   *wakeClock
 	waker *supervisor.Waker
 	hook  atomic.Pointer[func(step string) error] // the next waker's Hook
+	// before, when set, runs before the next waker does, in the daemon's
+	// start.
+	before atomic.Pointer[func()]
 }
 
 func newWakeTest(t *testing.T, more ...func(cfg map[string]any)) *wakeTest {
@@ -78,6 +81,9 @@ func newWakeTest(t *testing.T, more ...func(cfg map[string]any)) *wakeTest {
 	r, _ := svRoot(t, true, more...)
 	wt := &wakeTest{r: r, repo: bareRepo(t)}
 	wakerHook = func(w *supervisor.Waker) {
+		if b := wt.before.Swap(nil); b != nil {
+			(*b)()
+		}
 		wt.mu.Lock()
 		defer wt.mu.Unlock()
 		if w.Scope != "c1" {
@@ -445,5 +451,109 @@ func TestWakeOnceAcrossARestart(t *testing.T) {
 				t.Fatalf("%d supervisor turns, want 2: its first and one wake", n)
 			}
 		})
+	}
+}
+
+// A turn end while the supervisor's thread waits on a question is not sent
+// to it, since the send would be the answer: it wakes the supervisor once,
+// after a person answered and that turn ended.
+func TestWakeNotIntoAnOpenQuestion(t *testing.T) {
+	wt := newWakeTest(t)
+	stop, owner, sv := wt.start(t)
+	defer stop()
+	ctx := context.Background()
+	if err := owner.Send(ctx, sv.ID, "ask", control.Input{Text: "ask Go on? -- yes | no"}, control.Refuse); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the supervisor's question", 10*time.Second, func() bool {
+		d, err := owner.Thread(ctx, sv.ID, 0, 0)
+		return err == nil && d.State == control.Waiting
+	})
+	a, pos := wt.worker(t, owner, "c1", "a", "reply alpha")
+	wt.read(t, pos)
+	wt.quiet(t)
+	time.Sleep(300 * time.Millisecond)
+	d, err := owner.Thread(ctx, sv.ID, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.State != control.Waiting || len(d.Requests) != 1 {
+		t.Fatalf("the supervisor's thread is %s with %d requests after the quiet period; want its question still open", d.State, len(d.Requests))
+	}
+	if got := wt.wakes(t, sv.ID); len(got) != 0 {
+		t.Fatalf("woken while its question was open: %q", got)
+	}
+	if err := owner.Send(ctx, sv.ID, "answer", control.Input{Text: "yes"}, control.Refuse); err != nil {
+		t.Fatal(err)
+	}
+	got := wt.woken(t, owner, sv.ID, 1)
+	if !strings.Contains(got[0], fmt.Sprintf("\nThread %d: reply alpha\n", a)) {
+		t.Fatalf("the digest after the answer:\n%s", got[0])
+	}
+	var answers []string
+	rows, err := wt.db.Query(`SELECT data FROM events WHERE thread_id = ? AND kind = 'answer' ORDER BY pos`, int64(sv.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var data []byte
+		rows.Scan(&data)
+		var in struct{ Text string }
+		json.Unmarshal(data, &in)
+		answers = append(answers, in.Text)
+	}
+	rows.Close()
+	if len(answers) != 1 || answers[0] != "yes" {
+		t.Fatalf("the supervisor's question was answered with %q, want only the person's \"yes\"", answers)
+	}
+}
+
+// The turn end of an earlier supervisor's thread, one a person closed and
+// the daemon replaced, does not wake the new supervisor, though it is read
+// again after the restart while the new thread is the current one.
+func TestWakeNotByAnEarlierSupervisor(t *testing.T) {
+	wt := newWakeTest(t)
+	stop, owner, first := wt.start(t)
+	ctx := context.Background()
+	a, _ := wt.worker(t, owner, "c1", "a", "reply alpha")
+	if err := owner.Send(ctx, first.ID, "own", control.Input{Text: "reply hello"}, control.Refuse); err != nil {
+		t.Fatal(err)
+	}
+	pos := wt.ended(t, first.ID, 2)
+	wt.read(t, pos)
+	if n := wt.clock().waiting(); n != 1 {
+		t.Fatalf("%d timers, want the quiet period of thread %d's turn end", n, a)
+	}
+	if err := owner.CloseThread(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	stop()
+	// The new daemon's waker reads both turn ends again, once the
+	// supervisor's new thread is there.
+	db := wt.db
+	b := func() { // on the daemon's goroutine: no t.Fatal
+		for deadline := time.Now().Add(15 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+			var n int
+			db.QueryRow(`SELECT count(*) FROM threads WHERE scope = 'c1' AND confined = 1`).Scan(&n)
+			if n == 2 {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Error("timed out waiting for the supervisor's new thread")
+				return
+			}
+		}
+	}
+	wt.before.Store(&b)
+	stop, owner, sv := wt.start(t)
+	defer stop()
+	if sv.ID == first.ID {
+		t.Fatalf("the closed supervisor %d was not replaced", first.ID)
+	}
+	wt.read(t, pos)
+	wt.quiet(t)
+	got := wt.woken(t, owner, sv.ID, 1)
+	if !strings.Contains(got[0], fmt.Sprintf("\nThread %d: reply alpha\n", a)) || strings.Contains(got[0], fmt.Sprintf("Thread %d", first.ID)) {
+		t.Fatalf("the new supervisor's digest; want thread %d and not the earlier supervisor %d:\n%s", a, first.ID, got[0])
 	}
 }
