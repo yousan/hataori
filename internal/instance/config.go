@@ -102,9 +102,10 @@ type Scope struct {
 	// ShowIn lists the channels, besides the scope's own, where its threads
 	// may be shown, each as "<client>:<channel>" (design, section 5.2).
 	ShowIn []string
-	// TrustFiles are the files the folder-trust dialog of a new workspace
-	// may name, such as ".claude/settings.json", that hataori answers it
-	// for in this scope's threads (agent.Spec.TrustFiles); empty for none.
+	// TrustFiles are the files, such as a project settings file, that a
+	// start-up dialog of a new workspace may name and that hataori may let
+	// this scope's threads past it for (agent.Spec.TrustFiles); empty for
+	// none.
 	TrustFiles []string
 	// Supervisor is the scope's supervisor (design, section 7.1); nil when
 	// the scope names none.
@@ -534,7 +535,7 @@ func ParseConfig(data []byte) (*Config, error) {
 			k := fmt.Sprintf("%s.trust_files[%d]", key, j)
 			f = strings.TrimSpace(f)
 			if f == "" || strings.ContainsAny(f, " ()") {
-				return nil, fmt.Errorf("config: key %q: %q is not a file name as the folder-trust dialog writes it, such as \".claude/settings.json\"", k, f)
+				return nil, fmt.Errorf("config: key %q: %q is not a file name as the agent's start-up dialog writes it, a path with no space or parenthesis", k, f)
 			}
 			if slices.Contains(sc.TrustFiles, f) {
 				return nil, fmt.Errorf("config: key %q: %q is listed twice", k, f)
