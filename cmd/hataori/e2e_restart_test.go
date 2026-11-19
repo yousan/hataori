@@ -341,7 +341,7 @@ func TestAThreadKeepsItsAgentAcrossSleepRestartAndAConfigChange(t *testing.T) {
 		cfg["scopes"].([]map[string]any)[0]["agent"] = secondAgent
 		cfg["adapters"] = map[string]any{
 			fake.Name:   map[string]any{"command": []string{os.Args[0], "fake"}, "env": []string{"PATH=" + os.Getenv("PATH")}},
-			secondAgent: map[string]any{"command": []string{os.Args[0], "fake"}, "env": []string{"PATH=" + os.Getenv("PATH")}, "conversations": conv, "model": "second-model"},
+			secondAgent: map[string]any{"command": []string{os.Args[0], "fake"}, "env": []string{"PATH=" + os.Getenv("PATH")}, "conversations": conv, "model": "second-model", "effort": "low", "report_effort": "max"},
 		}
 	})
 	files := func(want int) {
@@ -365,25 +365,28 @@ func TestAThreadKeepsItsAgentAcrossSleepRestartAndAConfigChange(t *testing.T) {
 	}
 	initialFile := initialFiles[0].Name()
 	var threadID, sessionID int64
-	var name, model, before string
+	var name, model, effort, before string
 	if err := p.db(t).QueryRow(`SELECT id FROM threads ORDER BY id LIMIT 1`).Scan(&threadID); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.db(t).QueryRow(`SELECT id, agent, model, agent_session_id FROM sessions WHERE thread_id = ?`, threadID).Scan(&sessionID, &name, &model, &before); err != nil {
+	if err := p.db(t).QueryRow(`SELECT id, agent, model, effort, agent_session_id FROM sessions WHERE thread_id = ?`, threadID).Scan(&sessionID, &name, &model, &effort, &before); err != nil {
 		t.Fatal(err)
 	}
-	if name != secondAgent || model != "second-model" || before == "" {
-		t.Fatalf("agent %q model %q conversation %q", name, model, before)
+	if name != secondAgent || model != "second-model" || effort != "max" || before == "" {
+		t.Fatalf("agent %q model %q effort %q conversation %q", name, model, effort, before)
 	}
 	check := func() {
 		t.Helper()
 		var count int
-		var agentName, id string
-		if err := p.db(t).QueryRow(`SELECT count(*), max(agent), max(agent_session_id) FROM sessions WHERE thread_id = ?`, threadID).Scan(&count, &agentName, &id); err != nil {
+		var agentName, id, reportedEffort string
+		if err := p.db(t).QueryRow(`SELECT count(*), max(agent), max(agent_session_id), max(effort) FROM sessions WHERE thread_id = ?`, threadID).Scan(&count, &agentName, &id, &reportedEffort); err != nil {
 			t.Fatal(err)
 		}
 		if count != 1 || agentName != secondAgent || id != before {
 			t.Fatalf("sessions %d, agent %q, conversation %q; want 1, %q, %q", count, agentName, id, secondAgent, before)
+		}
+		if reportedEffort != "max" {
+			t.Fatalf("effort %q, want max; a wake by another adapter reports low", reportedEffort)
 		}
 		files(1)
 	}
