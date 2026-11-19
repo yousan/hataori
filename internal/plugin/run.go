@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -113,6 +114,9 @@ type Runner struct {
 	// afterStart, when a test sets it, runs between the start of the
 	// plugin's process and the record of its group.
 	afterStart func(pid int)
+	// processes, when a test sets it, lists this user's processes instead
+	// of ownProcesses.
+	processes func() ([]int, error)
 
 	wg       sync.WaitGroup
 	mu       sync.Mutex
@@ -148,6 +152,22 @@ func (r *Runner) Start(ctx context.Context) error {
 			return fmt.Errorf("plugin %q: %w", g.ID, err)
 		}
 		r.Log.Info("plugin: an external plugin may connect", "plugin", g.ID)
+	}
+	// What a plugin that is no longer in the config left, when the daemon
+	// that ran it died.
+	configured := map[string]bool{}
+	for _, g := range r.Grants {
+		configured[g.ID] = !g.External // an external plugin's earlier runs, when hataori started it, are leftovers too
+	}
+	dirs, _ := filepath.Glob(filepath.Join(r.State, "plugin-run", "*"))
+	for _, d := range dirs {
+		if id := filepath.Base(d); !configured[id] {
+			r.wg.Add(1)
+			go func() {
+				defer r.wg.Done()
+				r.leftovers(ctx, Grant{ID: id})
+			}()
+		}
 	}
 	for _, g := range r.Grants {
 		if g.External {
@@ -242,6 +262,7 @@ func or[T comparable](v, d T) T {
 
 // run starts g again and again until ctx ends or it stays stopped.
 func (r *Runner) run(ctx context.Context, g Grant) {
+	r.leftovers(ctx, g)
 	backoff := or(r.Backoff, DefaultBackoff)
 	window := or(r.Window, DefaultWindow)
 	var exits []time.Time
@@ -314,8 +335,15 @@ func (r *Runner) once(ctx context.Context, g Grant) (string, error) {
 	// out: its connections close, and the token is refused from then on.
 	defer r.Tokens.Revoke(token)
 
+	var runID [16]byte
+	if _, err := rand.Read(runID[:]); err != nil {
+		return "", err
+	}
+	rec := runRecord{Run: hex.EncodeToString(runID[:])}
+	var boot error
+	rec.Boot, boot = bootID()
 	env := []string{EnvSocket + "=" + r.Socket, EnvToken + "=" + token, EnvID + "=" + g.ID,
-		EnvState + "=" + state, EnvSettings + "=" + settings, EnvProtocol + "=" + r.Speaks}
+		EnvState + "=" + state, EnvSettings + "=" + settings, EnvProtocol + "=" + r.Speaks, EnvRun + "=" + rec.Run}
 	allowed := map[string]bool{}
 	for _, k := range Env {
 		allowed[k] = true
@@ -337,10 +365,32 @@ func (r *Runner) once(ctx context.Context, g Grant) (string, error) {
 		return "", err
 	}
 	cmd.Stdout, cmd.Stderr = outW, errW
+	// What the next start kills if the daemon dies without stopping this
+	// run (leftovers), written before anything of it runs; removed once
+	// its group is killed. Without it, nothing starts.
+	recPath := r.recordPath(g, rec.Run)
+	if boot != nil {
+		// Without the boot's id a record could not be told from one of an
+		// earlier boot: the plugin runs, unrecorded, rather than not at all.
+		r.Log.Warn("plugin: this boot's id cannot be read; if the daemon dies, what this run leaves is not killed", "plugin", g.ID, "err", boot)
+		recPath = ""
+	} else if b, err := json.Marshal(rec); err != nil {
+		return "", err
+	} else if err := writeNew(recPath, b, 0o600); err != nil {
+		outR.Close()
+		outW.Close()
+		errR.Close()
+		errW.Close()
+		r.Log.Error("plugin not started: its run cannot be recorded", "plugin", g.ID, "err", err)
+		return "", err
+	}
 	r.starts(1, 0, "")
 	err = startRetrying(cmd)
 	if err != nil {
 		r.starts(-1, 0, "")
+		if recPath != "" {
+			os.Remove(recPath) // nothing of the run started
+		}
 	} else {
 		if r.afterStart != nil {
 			r.afterStart(cmd.Process.Pid)
@@ -388,6 +438,16 @@ func (r *Runner) once(ctx context.Context, g Grant) (string, error) {
 	// Whatever the plugin started and left in its group goes with it.
 	syscall.Kill(-pgid, syscall.SIGKILL)
 	r.group(pgid, "")
+	if recPath != "" {
+		// What it started that left the group, and kept its environment.
+		killed, done := r.sweep(context.WithoutCancel(ctx), g, rec.Run)
+		if killed > 0 {
+			r.Log.Warn("plugin: killed what it started outside its group", "plugin", g.ID, "processes", killed)
+		}
+		if done {
+			os.Remove(recPath)
+		}
+	}
 	return "", err
 }
 

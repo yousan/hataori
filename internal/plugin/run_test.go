@@ -5,10 +5,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -651,5 +653,232 @@ func TestPluginOfWhileStarting(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("PluginOf did not answer")
+	}
+}
+
+// group starts a process group as a plugin's start would leave it: a
+// leader and a child, each running until killed. env is put in their
+// environment and arg among the leader's arguments, each when not empty.
+// It returns the leader's and the child's pids, and a channel closed when
+// the leader is gone. The test ends both.
+func group(t *testing.T, env, arg string) (int, int, <-chan struct{}) {
+	t.Helper()
+	dir := t.TempDir()
+	args := []string{"-c", `sh -c 'echo $$ > "$1/child.tmp"; mv "$1/child.tmp" "$1/child"; exec sleep 600' sh "$0"; while :; do sleep 1; done`, dir}
+	if arg != "" {
+		args = append(args, arg)
+	}
+	cmd := exec.Command("/bin/sh", args...)
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
+	if env != "" {
+		cmd.Env = append(cmd.Env, env)
+	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	gone := make(chan struct{})
+	go func() { cmd.Wait(); close(gone) }()
+	var child int
+	eventually(t, "the child", 10*time.Second, func() bool {
+		b, err := os.ReadFile(filepath.Join(dir, "child"))
+		child, _ = strconv.Atoi(strings.TrimSpace(string(b)))
+		return err == nil && child > 0
+	})
+	t.Cleanup(func() { syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); <-gone })
+	return cmd.Process.Pid, child, gone
+}
+
+// What an earlier run left is killed before the plugin starts again, and
+// only that: processes of another run, of none, with the run's value in an
+// argument instead of the environment, and of a run recorded in another
+// boot, are not signalled.
+func TestLeftovers(t *testing.T) {
+	const run = "0123456789abcdef0123456789abcdef"
+	boot, err := bootID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name      string
+		env, arg  string
+		boot      string // the record's
+		signalled bool
+	}{
+		{"the earlier run", EnvRun + "=" + run, "", boot, true},
+		{"another run", EnvRun + "=fedcba9876543210fedcba9876543210", "", boot, false},
+		{"no run", "", "", boot, false},
+		{"the run's value in an argument", "", EnvRun + "=" + run, boot, false},
+		{"another boot", EnvRun + "=" + run, "", "an earlier boot", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, child, ended := group(t, tc.env, tc.arg)
+			r := &Runner{State: t.TempDir(), Log: slog.New(slog.DiscardHandler)}
+			g := Grant{ID: "scan"}
+			os.MkdirAll(filepath.Dir(r.recordPath(g, run)), 0o700)
+			b, _ := json.Marshal(runRecord{Run: run, Boot: tc.boot})
+			if err := os.WriteFile(r.recordPath(g, run), b, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			r.leftovers(context.Background(), g)
+			if tc.signalled {
+				select {
+				case <-ended:
+				case <-time.After(5 * time.Second):
+					t.Fatal("the earlier run's leader is left")
+				}
+				if !gone(t, child) {
+					t.Fatal("the earlier run's child is left")
+				}
+			} else {
+				time.Sleep(200 * time.Millisecond)
+				select {
+				case <-ended:
+					t.Fatal("a process of no earlier run was signalled")
+				default:
+				}
+				if !running(child) {
+					t.Fatal("a child of no earlier run was signalled")
+				}
+			}
+			if _, err := os.Stat(r.recordPath(g, run)); err == nil {
+				t.Fatal("the record is kept")
+			}
+		})
+	}
+}
+
+// A run is recorded before anything of it runs: the plugin, as it starts,
+// finds its own record.
+func TestRunIsRecordedBeforeItStarts(t *testing.T) {
+	path, sum := script(t, `if [ -e "$HATAORI_PLUGIN_STATE/../../plugin-run/$HATAORI_PLUGIN_ID/run-$HATAORI_PLUGIN_RUN.json" ]; then echo yes; else echo no; fi > "$HATAORI_PLUGIN_STATE/seen.tmp"
+mv "$HATAORI_PLUGIN_STATE/seen.tmp" "$HATAORI_PLUGIN_STATE/seen"; exec sleep 600`)
+	f := newRunner(t, Grant{Path: path, SHA256: sum}, nil)
+	if got := f.file(t, "seen"); got != "yes" {
+		t.Fatalf("the plugin, as it started, found its record: %s", got)
+	}
+}
+
+// When a run ends, what it started that left its group, and kept its
+// environment, goes too.
+func TestRunEndsWithWhatLeftItsGroup(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("no python3 to leave a process group with")
+	}
+	path, sum := script(t, `[ -e "$HATAORI_PLUGIN_STATE/away" ] && exec sleep 600
+python3 -c 'import os, time; os.setpgid(0, 0); open(os.environ["HATAORI_PLUGIN_STATE"] + "/away.tmp", "w").write("%d\n" % os.getpid()); os.rename(os.environ["HATAORI_PLUGIN_STATE"] + "/away.tmp", os.environ["HATAORI_PLUGIN_STATE"] + "/away"); time.sleep(600)' &
+while [ ! -e "$HATAORI_PLUGIN_STATE/away" ]; do sleep 0.05; done; exit 3`)
+	f := newRunner(t, Grant{Path: path, SHA256: sum}, nil)
+	away, _ := strconv.Atoi(f.file(t, "away"))
+	t.Cleanup(func() { syscall.Kill(away, syscall.SIGKILL) })
+	if pg, err := syscall.Getpgid(away); err == nil && pg != away {
+		t.Fatalf("the process did not leave the plugin's group: %d", pg)
+	}
+	if !gone(t, away) {
+		t.Fatal("what the plugin started outside its group is left after it exited")
+	}
+}
+
+// A record whose processes could not be looked for is kept, and done at
+// the next start.
+func TestLeftoversTriedAgain(t *testing.T) {
+	const run = "0123456789abcdef0123456789abcdef"
+	boot, _ := bootID()
+	_, _, ended := group(t, EnvRun+"="+run, "")
+	r := &Runner{State: t.TempDir(), Log: slog.New(slog.DiscardHandler),
+		processes: func() ([]int, error) { return nil, errors.New("cannot list") }}
+	g := Grant{ID: "scan"}
+	os.MkdirAll(filepath.Dir(r.recordPath(g, run)), 0o700)
+	b, _ := json.Marshal(runRecord{Run: run, Boot: boot})
+	os.WriteFile(r.recordPath(g, run), b, 0o600)
+	r.leftovers(context.Background(), g)
+	if _, err := os.Stat(r.recordPath(g, run)); err != nil {
+		t.Fatal("a record that could not be done is dropped")
+	}
+	r.processes = nil
+	r.leftovers(context.Background(), g)
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the earlier run is left after the second try")
+	}
+	if _, err := os.Stat(r.recordPath(g, run)); err == nil {
+		t.Fatal("the record is kept once done")
+	}
+}
+
+// What a plugin that is no longer in the config left is killed too, and
+// so is what one that is external now left of when hataori started it.
+func TestLeftoversOfAPluginNoLongerConfigured(t *testing.T) {
+	t.Run("removed", func(t *testing.T) { leftoversOf(t, nil) })
+	t.Run("external now", func(t *testing.T) {
+		leftoversOf(t, []Grant{{ID: "removed", External: true, TokenFile: "t", Scopes: []string{"c1"}}})
+	})
+}
+
+func leftoversOf(t *testing.T, grants []Grant) {
+	const run = "0123456789abcdef0123456789abcdef"
+	boot, _ := bootID()
+	_, _, ended := group(t, EnvRun+"="+run, "")
+	r := &Runner{State: t.TempDir(), Log: slog.New(slog.DiscardHandler), Grants: grants,
+		Tokens: &fakeTokens{live: map[string]bool{}}, As: func(control.Caller) control.API { return nil },
+		ReadToken: func(string) ([]byte, error) { return []byte("tok"), nil }}
+	old := Grant{ID: "removed"}
+	os.MkdirAll(filepath.Dir(r.recordPath(old, run)), 0o700)
+	b, _ := json.Marshal(runRecord{Run: run, Boot: boot})
+	os.WriteFile(r.recordPath(old, run), b, 0o600)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := r.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("what a plugin no longer configured left is left")
+	}
+	cancel()
+	r.Wait()
+}
+
+// A look that the daemon's stop ends keeps its record.
+func TestLeftoversStopWithTheDaemon(t *testing.T) {
+	const run = "0123456789abcdef0123456789abcdef"
+	boot, _ := bootID()
+	r := &Runner{State: t.TempDir(), Log: slog.New(slog.DiscardHandler)}
+	g := Grant{ID: "scan"}
+	os.MkdirAll(filepath.Dir(r.recordPath(g, run)), 0o700)
+	b, _ := json.Marshal(runRecord{Run: run, Boot: boot})
+	os.WriteFile(r.recordPath(g, run), b, 0o600)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r.leftovers(ctx, g)
+	if _, err := os.Stat(r.recordPath(g, run)); err != nil {
+		t.Fatal("a look that did not happen dropped its record")
+	}
+}
+
+// A process of the run that the first listing did not show, as one forked
+// meanwhile, is found by the next pass.
+func TestLeftoversLookAgain(t *testing.T) {
+	const run = "0123456789abcdef0123456789abcdef"
+	boot, _ := bootID()
+	leader, child, ended := group(t, EnvRun+"="+run, "")
+	calls := 0
+	r := &Runner{State: t.TempDir(), Log: slog.New(slog.DiscardHandler), processes: func() ([]int, error) {
+		calls++
+		if calls == 1 {
+			return []int{leader}, nil // the child came after this listing
+		}
+		return []int{leader, child}, nil
+	}}
+	g := Grant{ID: "scan"}
+	os.MkdirAll(filepath.Dir(r.recordPath(g, run)), 0o700)
+	b, _ := json.Marshal(runRecord{Run: run, Boot: boot})
+	os.WriteFile(r.recordPath(g, run), b, 0o600)
+	r.leftovers(context.Background(), g)
+	<-ended
+	if !gone(t, child) {
+		t.Fatal("a process the first listing did not show is left")
 	}
 }
