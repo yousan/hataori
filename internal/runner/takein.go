@@ -130,7 +130,7 @@ func (r *Runner) TakeIn(ctx context.Context, l core.Launch, rep window.Report) e
 		Socket: host.SocketPath(dir), Thread: int64(l.Thread), Session: l.Session}); err != nil {
 		return fail(err)
 	}
-	if err := r.follow(l.Session, ad, spec, fresh); err != nil {
+	if err := r.follow(l.Session, ad, spec, fresh, 0); err != nil {
 		return fail(err)
 	}
 	return nil
