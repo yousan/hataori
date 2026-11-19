@@ -32,7 +32,7 @@ func (f *front) runningThread(t *testing.T) control.ThreadID {
 func TestFollowUpIsDeliveredIntoTheRunningTurnOnce(t *testing.T) {
 	f := newFront(t, workspaces{})
 	id := f.runningThread(t)
-	in := f.deliver(conv(id), fake.Webhook(hook), "also do this")
+	in := f.deliver(f.conv(id), fake.Webhook(hook), "also do this")
 	f.fe.Message(in) // delivered twice
 	got := strings.Join(f.runner.handed(), "; ")
 	if got != "deliver first input; deliver also do this" {
@@ -53,7 +53,7 @@ func TestFollowUpAnswersAnOpenQuestion(t *testing.T) {
 		Agent: agent.Event{Seq: 2, Kind: agent.Request, Request: &agent.RequestInfo{ID: "q1", Text: "which?"}}}); err != nil {
 		t.Fatal(err)
 	}
-	f.deliver(conv(id), fake.Person(owner), "the blue one")
+	f.deliver(f.conv(id), fake.Person(owner), "the blue one")
 	if got := strings.Join(f.runner.handed(), "; "); got != "deliver first input; answer q1 the blue one" {
 		t.Fatalf("handed to the agent: %s", got)
 	}
@@ -65,11 +65,11 @@ func TestMessagesThatAreNotFollowUps(t *testing.T) {
 	other := surface.Conversation{Channel: channel, Thread: "not-ours"}
 	f.deliver(other, fake.Webhook(hook), "hello")
 	f.deliver(other, fake.Webhook(hook), "!go repo:https://example.com/r.git do it")
-	rename := f.driver.Inject(conv(id), fake.Person(owner), "renamed the thread")
+	rename := f.driver.Inject(f.conv(id), fake.Person(owner), "renamed the thread")
 	rename.Service = true
 	f.fe.Message(rename)
-	f.deliver(conv(id), fake.Bot("the bot"), "a post of the bot's own")
-	f.deliver(conv(id), fake.Webhook("stranger"), "not allowed")
+	f.deliver(f.conv(id), fake.Bot("the bot"), "a post of the bot's own")
+	f.deliver(f.conv(id), fake.Webhook("stranger"), "not allowed")
 	if got := f.runner.handed(); len(got) != 1 {
 		t.Fatalf("handed to the agent: %v", got)
 	}

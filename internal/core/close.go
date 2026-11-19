@@ -36,10 +36,10 @@ const (
 )
 
 // threadLock is the key that serializes Close and Remove of one thread.
-func threadLock(id control.ThreadID) string { return "thread:" + id.Scope + "\x00" + id.Key }
+func threadLock(id control.ThreadID) string { return fmt.Sprintf("thread:%d", id) }
 
 func (a *api) CloseThread(ctx context.Context, id control.ThreadID) error {
-	if err := a.act(control.OpClose, "CloseThread", id.Scope); err != nil {
+	if _, err := a.actThread(ctx, control.OpClose, "CloseThread", id); err != nil {
 		return err
 	}
 	defer a.c.locks.lock(threadLock(id))()
@@ -57,13 +57,13 @@ func (a *api) CloseThread(ctx context.Context, id control.ThreadID) error {
 		return fmt.Errorf("core: close %v (%s): %w", id, state, err)
 	}
 	if state != control.Closed {
-		a.c.Log.Info("thread closed", "scope", id.Scope, "thread", id.Key, "principal", string(a.caller.Principal))
+		a.c.Log.Info("thread closed", "thread", int64(id), "principal", string(a.caller.Principal))
 	}
 	return nil
 }
 
 func (a *api) RemoveThread(ctx context.Context, id control.ThreadID) error {
-	if err := a.act(control.OpRemove, "RemoveThread", id.Scope); err != nil {
+	if _, err := a.actThread(ctx, control.OpRemove, "RemoveThread", id); err != nil {
 		return err
 	}
 	return a.c.remove(ctx, id, a.caller.Principal, ByCommand)
@@ -112,7 +112,7 @@ func (c *Core) remove(ctx context.Context, id control.ThreadID, principal contro
 			// The remover moved it and then could not finish, as when the
 			// rename out of trash/pending- fails: it is in trash, and its
 			// detail says where. The thread stays closed.
-			c.Log.Error("removal refused after the workspace was moved", "scope", id.Scope, "thread", id.Key, "detail", detail)
+			c.Log.Error("removal refused after the workspace was moved", "thread", int64(id), "detail", detail)
 			reason = MovedNotRemoved + ": " + reason
 		}
 		c.refuseRemoval(ctx, id, sid, principal, trigger, reason, repo, kind, detail)
@@ -122,11 +122,11 @@ func (c *Core) remove(ctx context.Context, id control.ThreadID, principal contro
 	// workspace is still in trash for the retention, and the log says where.
 	// A caller that gave up meanwhile does not keep it from being recorded.
 	if err := c.Machine.Apply(context.WithoutCancel(ctx), sid, session.Input{Kind: session.Remove, Reason: trigger}); err != nil {
-		c.Log.Error("workspace moved to trash, but the thread was not marked removed", "scope", id.Scope, "thread", id.Key,
+		c.Log.Error("workspace moved to trash, but the thread was not marked removed", "thread", int64(id),
 			"trash", trash, "err", err)
 		return fmt.Errorf("core: remove %v: the workspace is in trash, but: %w", id, err)
 	}
-	c.Log.Info("workspace removed", "scope", id.Scope, "thread", id.Key, "trigger", trigger,
+	c.Log.Info("workspace removed", "thread", int64(id), "trigger", trigger,
 		"principal", string(principal), "trash", trash)
 	return nil
 }
@@ -135,7 +135,7 @@ func (c *Core) remove(ctx context.Context, id control.ThreadID, principal contro
 // refused removal. A failure to write the event is logged.
 func (c *Core) refuseRemoval(ctx context.Context, id control.ThreadID, sid int64, principal control.Principal,
 	trigger, reason, repo, kind, detail string) {
-	c.Log.Warn("removal refused", "scope", id.Scope, "thread", id.Key, "trigger", trigger,
+	c.Log.Warn("removal refused", "thread", int64(id), "trigger", trigger,
 		"principal", string(principal), "reason", reason, "repo", repo, "detail", detail)
 	d := map[string]any{"session": sid, "trigger": trigger, "reason": reason}
 	if principal != "" {
@@ -155,7 +155,7 @@ func (c *Core) refuseRemoval(ctx context.Context, id control.ThreadID, sid int64
 		return err
 	})
 	if err != nil {
-		c.Log.Error("recording a refused removal", "scope", id.Scope, "thread", id.Key, "err", err)
+		c.Log.Error("recording a refused removal", "thread", int64(id), "err", err)
 	}
 }
 
@@ -169,8 +169,8 @@ func (c *Core) RemoveClosed(ctx context.Context, age time.Duration) (int, error)
 		return 0, errors.New("core: removal pass: no age set")
 	}
 	since := c.now().Add(-age).UnixMilli()
-	rows, err := c.Store.DB.QueryContext(ctx, `SELECT t.scope, t.key FROM threads t WHERE t.state = ? AND t.updated_at <= ?
-		AND NOT EXISTS (SELECT 1 FROM events e WHERE e.scope = t.scope AND e.thread = t.key AND e.kind = ? AND e.time > ?
+	rows, err := c.Store.DB.QueryContext(ctx, `SELECT t.id FROM threads t WHERE t.state = ? AND t.updated_at <= ?
+		AND NOT EXISTS (SELECT 1 FROM events e WHERE e.thread_id = t.id AND e.kind = ? AND e.time > ?
 			AND json_extract(CAST(e.data AS TEXT), '$.trigger') = ?)
 		ORDER BY t.id`, string(control.Closed), since, string(KindRemovalRefused), since, ByClosedAge)
 	if err != nil {
@@ -179,7 +179,7 @@ func (c *Core) RemoveClosed(ctx context.Context, age time.Duration) (int, error)
 	var ids []control.ThreadID
 	for rows.Next() {
 		var id control.ThreadID
-		if err := rows.Scan(&id.Scope, &id.Key); err != nil {
+		if err := rows.Scan(&id); err != nil {
 			rows.Close()
 			return 0, fmt.Errorf("core: removal pass: %w", err)
 		}

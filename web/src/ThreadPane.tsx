@@ -13,7 +13,7 @@ const probeRetry = 2000;
 export function ThreadPane(props: { x: ThreadInfo; subscribe: (f: (e: Event) => void) => () => void; opens: number; fit?: boolean }) {
   const { x, subscribe, opens, fit } = props;
   const [terminal, setTerminal] = useState<boolean | null>(null);
-  const { scope, key } = x.id;
+  const id = x.id;
 
   // Only an answer of the server decides the view; a failed probe, such as
   // while the daemon restarts, is tried again.
@@ -22,7 +22,7 @@ export function ThreadPane(props: { x: ThreadInfo; subscribe: (f: (e: Event) => 
     let retry: ReturnType<typeof setTimeout> | undefined;
     setTerminal(null);
     const probe = () =>
-      hasTerminal({ scope, key })
+      hasTerminal(id)
         .then((ok) => !gone && setTerminal(ok))
         .catch(() => {
           if (!gone) retry = setTimeout(probe, probeRetry);
@@ -32,7 +32,7 @@ export function ThreadPane(props: { x: ThreadInfo; subscribe: (f: (e: Event) => 
       gone = true;
       clearTimeout(retry);
     };
-  }, [scope, key]);
+  }, [id]);
 
   if (terminal === null) return null;
   return (

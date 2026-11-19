@@ -193,7 +193,7 @@ func TestRunFailsWithOneLine(t *testing.T) {
 
 func TestNoDaemon(t *testing.T) {
 	root := newRoot(t)
-	for _, args := range [][]string{{"threads"}, {"thread", "k"}, {"events"}, {"stop", "k"}} {
+	for _, args := range [][]string{{"threads"}, {"thread", "1"}, {"events"}, {"stop", "1"}} {
 		code, out, errOut := cli(t, append(args, "--root", root)...)
 		if code != exitError || out != "" || !strings.Contains(errOut, "no hataori daemon runs for "+root) {
 			t.Errorf("%v: exit %d, stdout %q, stderr %q", args, code, out, errOut)
@@ -233,7 +233,7 @@ func TestCommands(t *testing.T) {
 	waitState := func(want string) {
 		t.Helper()
 		for deadline := time.Now().Add(15 * time.Second); ; time.Sleep(20 * time.Millisecond) {
-			_, out, _ := cli(t, "thread", "--root", root, "t1")
+			_, out, _ := cli(t, "thread", "--root", root, "1")
 			if strings.Contains(out, `"state":"`+want+`"`) {
 				return
 			}
@@ -246,11 +246,18 @@ func TestCommands(t *testing.T) {
 
 	code, out, _ := cli(t, "threads", "--root", root)
 	ts := lines(t, out)
-	if code != 0 || len(ts) != 1 || ts[0]["scope"] != "s" || ts[0]["key"] != "t1" || ts[0]["number"] != 1.0 || ts[0]["state"] != "running" {
+	if code != 0 || len(ts) != 1 || ts[0]["scope"] != "s" || ts[0]["thread"] != 1.0 || ts[0]["state"] != "running" ||
+		!reflect.DeepEqual(ts[0]["links"], []any{map[string]any{"client": "chat", "channel": "s", "thread": "t1"}}) {
 		t.Fatalf("threads: exit %d, %v", code, ts)
 	}
-	if code, out, _ := cli(t, "thread", "--root", root, "not-ours"); code != exitNoThread || out != "" {
-		t.Fatalf("thread not-ours: exit %d, stdout %q", code, out)
+	if code, out, _ := cli(t, "thread", "--root", root, "99"); code != exitNoThread || out != "" {
+		t.Fatalf("thread 99: exit %d, stdout %q", code, out)
+	}
+	if code, out, _ := cli(t, "thread", "--root", root, "#1"); code != 0 || !strings.Contains(out, `"thread":1,`) {
+		t.Fatalf("thread #1: exit %d, stdout %q", code, out)
+	}
+	if code, out, _ := cli(t, "thread", "--root", root, "t1"); code != exitUsage || out != "" {
+		t.Fatalf("thread t1, not a number: exit %d, stdout %q", code, out)
 	}
 
 	// events --after n: exactly the events above n, and then it exits.
@@ -282,7 +289,7 @@ func TestCommands(t *testing.T) {
 	}()
 	defer func() { fcancel(); pr.Close(); <-fdone }() // a write blocked on the pipe ends too
 
-	code, out, _ = cli(t, "stop", "--root", root, "t1")
+	code, out, _ = cli(t, "stop", "--root", root, "1")
 	if m := lines(t, out); code != 0 || len(m) != 1 || m[0]["running"] != true {
 		t.Fatalf("stop: exit %d, %q", code, out)
 	}
@@ -302,7 +309,7 @@ func TestCommands(t *testing.T) {
 		t.Fatal("events --follow did not print the end of the stopped turn")
 	}
 	waitState("idle")
-	code, out, _ = cli(t, "stop", "--root", root, "t1")
+	code, out, _ = cli(t, "stop", "--root", root, "1")
 	if m := lines(t, out); code != 0 || m[0]["running"] != false {
 		t.Fatalf("stop when idle: exit %d, %q", code, out)
 	}

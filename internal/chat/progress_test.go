@@ -49,7 +49,7 @@ func (f *front) at(t *testing.T, id control.ThreadID, s int, kind string, data m
 // lines are shown now.
 func (f *front) lines(id control.ThreadID) (calls []string, shown int) {
 	lines := map[string]bool{}
-	for _, c := range f.driver.Calls(conv(id)) {
+	for _, c := range f.driver.Calls(f.conv(id)) {
 		switch {
 		case c.Op == fake.OpPost && strings.HasPrefix(c.Message.Text, "Still working"):
 			lines[c.Ref.ID] = true

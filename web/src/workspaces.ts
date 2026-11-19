@@ -31,7 +31,7 @@ export function useWorkspaces(threads: ThreadInfo[] | null, shown: boolean, sele
     while (running.current < atOnce && queue.current.length > 0) {
       const x = queue.current.shift()!;
       const n = ++seq.current;
-      asked.current.set(x.number, n);
+      asked.current.set(x.id, n);
       running.current++;
       workspace(x.id)
         .then((w): Workspace => w)
@@ -39,21 +39,21 @@ export function useWorkspaces(threads: ThreadInfo[] | null, shown: boolean, sele
         .then((w) => {
           running.current--;
           // An older read, or one of a thread that is no longer listed, is dropped.
-          const still = latest.current.some((y) => y.number === x.number && y.id.scope === x.id.scope && y.id.key === x.id.key);
-          if (asked.current.get(x.number) === n && still) {
-            setStates((m) => new Map(m).set(x.number, w));
+          const still = latest.current.some((y) => y.id === x.id);
+          if (asked.current.get(x.id) === n && still) {
+            setStates((m) => new Map(m).set(x.id, w));
           }
           pump();
         });
     }
   }).current;
   const ask = (x: ThreadInfo) => {
-    queue.current = [...queue.current.filter((y) => y.number !== x.number), x];
+    queue.current = [...queue.current.filter((y) => y.id !== x.id), x];
     pump();
   };
 
   useEffect(() => {
-    const listed = new Set((threads ?? []).map((x) => x.number));
+    const listed = new Set((threads ?? []).map((x) => x.id));
     for (const n of read.current.keys()) if (!listed.has(n)) read.current.delete(n);
     setStates((m) => {
       if ([...m.keys()].every((n) => listed.has(n))) return m;
@@ -61,15 +61,15 @@ export function useWorkspaces(threads: ThreadInfo[] | null, shown: boolean, sele
     });
     for (const x of threads ?? []) {
       const m = moment(x);
-      if (read.current.get(x.number) !== m) {
-        read.current.set(x.number, m);
+      if (read.current.get(x.id) !== m) {
+        read.current.set(x.id, m);
         ask(x);
       }
     }
   }, [threads]);
 
   useEffect(() => {
-    const x = latest.current.find((y) => y.number === selected);
+    const x = latest.current.find((y) => y.id === selected);
     if (x) ask(x);
   }, [selected]);
 

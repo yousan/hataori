@@ -25,7 +25,7 @@ const attachScreen = 256 << 10
 // attachStdin is what `hataori attach` reads keys from; tests change it.
 var attachStdin io.Reader = os.Stdin
 
-// attachTerminal is `hataori attach KEY`: it connects this terminal to the
+// attachTerminal is `hataori attach NUMBER`: it connects this terminal to the
 // terminal of the thread's agent, through the thread's session host, until
 // the person presses the detach key, their input ends, or the agent ends.
 // The agent keeps running after a detach.

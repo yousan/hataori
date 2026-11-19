@@ -37,13 +37,13 @@ export function TerminalView({ x, fit }: { x: ThreadInfo; fit?: boolean }) {
   const host = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLDivElement>(null);
   const [noProcess, setNoProcess] = useState(false);
-  const { scope, key } = x.id;
+  const id = x.id;
 
   useEffect(() => {
     if (!host.current) return;
     const term = openReadOnly(host.current);
     const fitting = fit && box.current ? fitted(term, box.current) : null;
-    const source = new EventSource(terminalPath({ scope, key }));
+    const source = new EventSource(terminalPath(id));
     // xterm.js parses what it is given later, while reset and resize act at
     // once: each chunk waits for the bytes before it to be drawn, so a reset
     // never lands under output that came before it.
@@ -78,13 +78,13 @@ export function TerminalView({ x, fit }: { x: ThreadInfo; fit?: boolean }) {
       source.close();
       term.dispose();
     };
-  }, [scope, key, fit]);
+  }, [id, fit]);
 
   // An asleep session has no process. A stream that was open when its host
   // ended sends nothing more until the next run, so the thread's state says
   // so; a stream opened later starts with the last run's log and no run.
   return (
-    <div className={fit ? "terminal-view fit" : "terminal-view"} data-terminal={x.number}>
+    <div className={fit ? "terminal-view fit" : "terminal-view"} data-terminal={x.id}>
       {(noProcess || x.state === "asleep") && (
         <p className="no-process" data-no-process="">
           {t("pane.noProcess")}

@@ -111,7 +111,7 @@ func TestSignInLinkForAPersonInChat(t *testing.T) {
 	base := link[:strings.Index(link, "/signin")]
 	eventually(t, "both threads in the owner's session", 10*time.Second, func() bool {
 		code, threads := dashGet(t, base, cookie, "/api/threads")
-		return code == http.StatusOK && strings.Contains(threads, `"key":"t1"`) && strings.Contains(threads, `"key":"t2"`)
+		return code == http.StatusOK && strings.Contains(threads, `"thread":"t1"`) && strings.Contains(threads, `"thread":"t2"`)
 	})
 
 	stop() // the database and the logs as the daemon left them

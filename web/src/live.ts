@@ -169,7 +169,7 @@ export function useDashboard(): Dashboard {
         const attention = new Map<number, Attention>();
         for (const d of details) {
           const a = d && attentionOf(d);
-          if (d && a) attention.set(d.number, a);
+          if (d && a) attention.set(d.id, a);
         }
         setState((s) => ({ ...s, threads: ts, attention }));
       } catch (err) {

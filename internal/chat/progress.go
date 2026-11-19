@@ -95,7 +95,7 @@ func (r *reader) track(e control.Event) []Row {
 	// The line was due, so it may have been posted, also by a reader
 	// before a restart; a delete of a line never posted is dropped.
 	if q.line || e.Time.Sub(q.since) >= r.quietAfter {
-		rows = append(rows, Row{Event: e.Pos, Part: deletePart, Conv: convOf(e.Thread), Decoration: true,
+		rows = append(rows, Row{Event: e.Pos, Part: deletePart, Conv: r.conv(e.Thread), Decoration: true,
 			Op: Delete, Target: &RowKey{Event: q.anchor, Part: linePart}})
 		// A line is posted only once the delete before it is done, so
 		// while one is waiting, this stretch had no line to delete.
@@ -134,7 +134,7 @@ func (f *FrontEnd) tick(ctx context.Context, r *reader, now time.Time) []Row {
 			q.line = true
 			if last, _, err := f.Outbox.lineChanges(ctx, q.anchor); err != nil || last.IsZero() {
 				// Not posted yet (also not before a restart): post it.
-				rows = append(rows, Row{Event: q.anchor, Part: linePart, Conv: convOf(id), Message: m, Decoration: true})
+				rows = append(rows, Row{Event: q.anchor, Part: linePart, Conv: r.conv(id), Message: m, Decoration: true})
 				continue
 			}
 		}
@@ -149,7 +149,7 @@ func (f *FrontEnd) tick(ctx context.Context, r *reader, now time.Time) []Row {
 			continue
 		}
 		q.edit = n
-		rows = append(rows, Row{Event: q.anchor, Part: linePart + int(n), Conv: convOf(id), Message: m, Decoration: true,
+		rows = append(rows, Row{Event: q.anchor, Part: linePart + int(n), Conv: r.conv(id), Message: m, Decoration: true,
 			Op: Edit, Target: &RowKey{Event: q.anchor, Part: linePart}})
 	}
 	return rows
@@ -162,8 +162,4 @@ func progressText(el time.Duration, tools []tool) string {
 		s += " Running " + tools[len(tools)-1].name + "."
 	}
 	return s
-}
-
-func convOf(id control.ThreadID) surface.Conversation {
-	return surface.Conversation{Channel: id.Scope, Thread: id.Key}
 }

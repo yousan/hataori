@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/yousan/hataori/internal/control"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -37,13 +38,14 @@ func (r *chatRoot) idleThread(t *testing.T, n int, word string) (surface.Convers
 		t.Fatalf("thread_created %v", created)
 	}
 	sid := int64(created[0]["session"].(float64))
-	return th, sid, workspace.Path(r.root, fakeSurface, th.Channel, th.Thread)
+	num, _ := strconv.ParseInt(numberOf(t, r.root, th), 10, 64)
+	return th, sid, workspace.Path(r.root, control.ThreadID(num))
 }
 
 // state is the thread's state as `hataori thread` prints it.
 func (r *chatRoot) state(t *testing.T, th surface.Conversation) string {
 	t.Helper()
-	code, out, errOut := cli(t, "thread", "--root", r.root, th.Thread)
+	code, out, errOut := cli(t, "thread", "--root", r.root, numberOf(t, r.root, th))
 	if code != 0 {
 		t.Fatalf("hataori thread: %d %s", code, errOut)
 	}
@@ -131,7 +133,7 @@ func TestCloseThenRemoveAThread(t *testing.T) {
 	before := snapshot(t, ws)
 
 	// Remove before close is refused, and changes nothing.
-	code, _, errOut := cli(t, "remove", "--root", r.root, other.Thread)
+	code, _, errOut := cli(t, "remove", "--root", r.root, numberOf(t, r.root, other))
 	if code != exitError || !strings.Contains(errOut, "not closed") {
 		t.Fatalf("remove of an idle thread: %d %q", code, errOut)
 	}
@@ -145,7 +147,7 @@ func TestCloseThenRemoveAThread(t *testing.T) {
 		t.Fatalf("removal_refused of the idle thread: %v", ev)
 	}
 
-	code, out, errOut := cli(t, "close", "--root", r.root, th.Thread)
+	code, out, errOut := cli(t, "close", "--root", r.root, numberOf(t, r.root, th))
 	if code != 0 || !strings.Contains(out, `"state":"closed"`) {
 		t.Fatalf("hataori close: %d %q %q", code, out, errOut)
 	}
@@ -180,14 +182,14 @@ func TestCloseThenRemoveAThread(t *testing.T) {
 		t.Fatal("a message woke the closed thread's agent")
 	}
 
-	code, out, errOut = cli(t, "remove", "--root", r.root, th.Thread)
+	code, out, errOut = cli(t, "remove", "--root", r.root, numberOf(t, r.root, th))
 	if code != 0 || !strings.Contains(out, `"state":"removed"`) {
 		t.Fatalf("hataori remove: %d %q %q", code, out, errOut)
 	}
 	if _, err := os.Lstat(ws); !os.IsNotExist(err) {
 		t.Fatalf("the workspace is still in place: %v", err)
 	}
-	trashed, _ := filepath.Glob(filepath.Join(r.root, workspace.TrashDir, "*-"+workspace.Segment(th.Thread)))
+	trashed, _ := filepath.Glob(filepath.Join(r.root, workspace.TrashDir, "*-"+filepath.Base(ws)))
 	if len(trashed) != 1 {
 		t.Fatalf("trash holds %v", trashed)
 	}
@@ -220,12 +222,12 @@ func TestRemoveRefusesAnUnpushedCommit(t *testing.T) {
 	os.WriteFile(filepath.Join(ws, "work.txt"), []byte("only here\n"), 0o600)
 	gitIn(t, ws, "add", "work.txt")
 	gitIn(t, ws, "commit", "-q", "-m", "work that exists nowhere else")
-	if code, _, errOut := cli(t, "close", "--root", r.root, th.Thread); code != 0 {
+	if code, _, errOut := cli(t, "close", "--root", r.root, numberOf(t, r.root, th)); code != 0 {
 		t.Fatalf("hataori close: %d %q", code, errOut)
 	}
 	before := snapshot(t, ws)
 
-	code, _, errOut := cli(t, "remove", "--root", r.root, th.Thread)
+	code, _, errOut := cli(t, "remove", "--root", r.root, numberOf(t, r.root, th))
 	if code != exitError || !strings.Contains(errOut, "removal refused") || !strings.Contains(errOut, "unpushed commit") {
 		t.Fatalf("hataori remove: %d %q", code, errOut)
 	}
@@ -256,7 +258,7 @@ func TestRemovalPassRemovesAThreadClosedLongEnough(t *testing.T) {
 	r.connected(t)
 	th, _, ws := r.idleThread(t, 0, "first")
 	open, _, openWS := r.idleThread(t, 1, "second")
-	if code, _, errOut := cli(t, "close", "--root", r.root, th.Thread); code != 0 {
+	if code, _, errOut := cli(t, "close", "--root", r.root, numberOf(t, r.root, th)); code != 0 {
 		t.Fatalf("hataori close: %d %q", code, errOut)
 	}
 	eventually(t, "the removal pass", r.within(30*time.Second), func() bool { return r.state(t, th) == "removed" })

@@ -660,7 +660,7 @@ func TestAPartBodyHoldsNothingOpen(t *testing.T) {
 	api := &screenAPI{screen: "x"}
 	s := start(t, Config{}, func(s *Server) { s.For = only(api) })
 	c := signIn(t, s)
-	for _, path := range []string{TerminalPath + "?scope=s&key=t1", HostScreenPath + "?pane=%251"} {
+	for _, path := range []string{TerminalPath + "?thread=1", HostScreenPath + "?pane=%251"} {
 		conn, err := net.Dial("tcp", s.ln.Addr().String())
 		if err != nil {
 			t.Fatal(err)

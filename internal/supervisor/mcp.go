@@ -248,11 +248,7 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 		if err != nil {
 			return "", reason(err)
 		}
-		d, err := api.Thread(ctx, id, 0, 0)
-		if err != nil {
-			return "Started a thread.", nil
-		}
-		return fmt.Sprintf("Started thread #%d.", d.Number), nil
+		return fmt.Sprintf("Started thread #%d.", id), nil
 	}
 	if a.Number == nil {
 		return "", errors.New("bad arguments: number is required")
@@ -288,16 +284,14 @@ func (m *MCP) outputMax() int {
 
 // find returns the thread of the scope with number n.
 func (m *MCP) find(ctx context.Context, api control.API, n int64) (control.ThreadID, error) {
-	ts, err := api.Threads(ctx, control.Filter{Scope: m.Scope})
-	if err != nil {
-		return control.ThreadID{}, reason(err)
+	ts, err := api.Threads(ctx, control.Filter{Scope: m.Scope, Thread: control.ThreadID(n)})
+	if err != nil && !errors.Is(err, control.ErrForbidden) { // forbidden: the number is another scope's
+		return 0, reason(err)
 	}
-	for _, t := range ts {
-		if t.Number == n {
-			return t.ID, nil
-		}
+	if len(ts) == 0 {
+		return 0, fmt.Errorf("not in this scope: no thread #%d in this channel", n)
 	}
-	return control.ThreadID{}, fmt.Errorf("not in this scope: no thread #%d in this channel", n)
+	return ts[0].ID, nil
 }
 
 // reason turns an error of the control API into what the model reads:
@@ -330,7 +324,7 @@ func listing(ts []control.ThreadInfo) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%d threads in this channel:\n", len(ts))
 	for _, t := range ts {
-		fmt.Fprintf(&b, "#%d %s %q, started by %s, updated %s", t.Number, t.State, t.Title, t.StartedBy, t.Updated.UTC().Format("2006-01-02 15:04Z"))
+		fmt.Fprintf(&b, "#%d %s %q, started by %s, updated %s", t.ID, t.State, t.Title, t.StartedBy, t.Updated.UTC().Format("2006-01-02 15:04Z"))
 		if t.Last != "" {
 			fmt.Fprintf(&b, "; last: %s", t.Last)
 		}
@@ -341,7 +335,7 @@ func listing(ts []control.ThreadInfo) string {
 
 func detail(d control.ThreadDetail, max int) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Thread #%d: %s\nState: %s, since %s\nStarted by: %s\nRepository: %s\n", d.Number, d.Title, d.State,
+	fmt.Fprintf(&b, "Thread #%d: %s\nState: %s, since %s\nStarted by: %s\nRepository: %s\n", d.ID, d.Title, d.State,
 		d.Updated.UTC().Format("2006-01-02 15:04Z"), d.StartedBy, d.Repo)
 	for _, r := range d.Requests {
 		kind := "Open question"

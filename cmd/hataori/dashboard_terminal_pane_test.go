@@ -55,7 +55,7 @@ func newPaneRig(t *testing.T, root string, input string, settled func(control.Th
 		t.Fatal(err)
 	}
 	r := &paneRig{t: t, root: root, c: c, id: id, log: logged}
-	eventually(t, "the thread to settle", 20*time.Second, func() bool { x := r.info(); r.n = x.Number; return settled(x) })
+	eventually(t, "the thread to settle", 20*time.Second, func() bool { x := r.info(); r.n = int64(x.ID); return settled(x) })
 
 	b := newBrowser(t)
 	b.call("Page.enable", map[string]any{})
@@ -210,20 +210,16 @@ func TestDashboardTerminalPaneIsReadOnly(t *testing.T) {
 			// and the headers are those a browser sends by itself.
 			number := regexp.MustCompile(`^[0-9]+$`)
 			for name, vs := range u.Query() {
-				allowed := map[string][]string{"/api/thread": {"scope", "key", "recent", "events"},
-					"/api/terminal": {"scope", "key"}, "/api/workspace": {"scope", "key"}, "/api/hostscreen": {"pane"}, "/api/events": {"after"}, "/signin": {"t"}}[u.Path]
+				allowed := map[string][]string{"/api/thread": {"thread", "recent", "events"},
+					"/api/terminal": {"thread"}, "/api/workspace": {"thread"}, "/api/hostscreen": {"pane"}, "/api/events": {"after"}, "/signin": {"t"}}[u.Path]
 				if !slices.Contains(allowed, name) || len(vs) != 1 {
 					t.Fatalf("a request has a parameter %q it does not need: %s", name, q.URL)
 				}
 				v := vs[0]
 				switch name {
-				case "scope":
-					if v != r.id.Scope {
-						t.Fatalf("a request names scope %q: %s", v, q.URL)
-					}
-				case "key":
-					if v != r.id.Key {
-						t.Fatalf("a request names key %q: %s", v, q.URL)
+				case "thread":
+					if v != fmt.Sprint(int64(r.id)) {
+						t.Fatalf("a request names thread %q: %s", v, q.URL)
 					}
 				case "recent", "events", "after":
 					if !number.MatchString(v) {
@@ -349,7 +345,7 @@ func TestDashboardEventsPane(t *testing.T) {
 		var ps []string
 		for _, e := range lines(t, out) {
 			k := e["kind"].(string)
-			if th, _ := e["thread"].(map[string]any); th["key"] != r.id.Key {
+			if e["thread"] != float64(r.id) {
 				continue
 			}
 			d, _ := e["data"].(map[string]any)

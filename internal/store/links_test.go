@@ -18,13 +18,13 @@ import (
 // recorded paths start with it.
 const fixtureRoot = "/tmp/hataori-fixture/root"
 
-// fixtureDB copies testdata/schema19.db, made by the release before thread
-// numbers, into a new instance root, with the recorded paths moved from
-// fixtureRoot to that root, and returns the root.
-func fixtureDB(t *testing.T) string {
+// fixtureDB copies testdata/name, a database a release made (README.md),
+// into a new instance root, with the recorded paths moved from fixtureRoot
+// to that root, and returns the root.
+func fixtureDB(t *testing.T, name string) string {
 	t.Helper()
 	root := newRoot(t)
-	b, err := os.ReadFile(filepath.Join("testdata", "schema19.db"))
+	b, err := os.ReadFile(filepath.Join("testdata", name))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func tree(t *testing.T, dir string) map[string]string {
 // row, and move no workspace.
 func TestLinkThreadsOnTheReleasedDatabase(t *testing.T) {
 	ctx := context.Background()
-	root := fixtureDB(t)
+	root := fixtureDB(t, "schema19.db")
 
 	// The workspaces where their sessions recorded them, with a file each.
 	dirs := map[int64]string{
@@ -209,7 +209,8 @@ func TestLinkThreadsOnTheReleasedDatabase(t *testing.T) {
 	if n := len(dump(t, s.DB, `SELECT id FROM links`)); n != 2 || log.Len() != 0 {
 		t.Fatalf("second LinkThreads: %d links, log %q", n, log.String())
 	}
-	sameRows(t, "startup steps", dump(t, s.DB, `SELECT name FROM startup_steps`), []string{"thread numbers: links|"})
+	sameRows(t, "startup steps", dump(t, s.DB, `SELECT name FROM startup_steps ORDER BY name`), []string{
+		"thread numbers: links|", "thread numbers: rows written before the API used them|"})
 
 	// No workspace moved, was renamed or written; nothing was made beside them.
 	after := tree(t, root)
@@ -256,5 +257,86 @@ func TestLinkThreadsNewDatabase(t *testing.T) {
 	if err := s.LinkThreads(ctx, nil, lg); err != nil {
 		t.Fatal(err)
 	}
-	sameRows(t, "startup steps", dump(t, s.DB, `SELECT name FROM startup_steps`), []string{"thread numbers: links|"})
+	sameRows(t, "startup steps", dump(t, s.DB, `SELECT name FROM startup_steps ORDER BY name`), []string{
+		"thread numbers: links|", "thread numbers: rows written before the API used them|"})
+}
+
+// The release with the migration but before the control API named threads
+// by number made this database: its daemon ran the first step on a new
+// database, then started one thread, whose link, events' thread number,
+// outbox rows' link and workspace path it did not write. The second step
+// writes them, once, and moves no workspace.
+func TestLinkThreadsRowsWrittenBetween(t *testing.T) {
+	ctx := context.Background()
+	root := fixtureDB(t, "schema20-unlinked.db")
+	dir := filepath.Join(root, "workspaces", "fake-surface", "c1", "thread2")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "work.txt"), []byte("unpushed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := tree(t, filepath.Join(root, "workspaces"))
+
+	s, err := Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	// As the release left it.
+	sameRows(t, "steps before", dump(t, s.DB, `SELECT name FROM startup_steps`), []string{"thread numbers: links|"})
+	sameRows(t, "links before", dump(t, s.DB, `SELECT id FROM links`), nil)
+	sameRows(t, "workspace before", dump(t, s.DB, `SELECT id, workspace FROM threads`), []string{"1||"})
+	sameRows(t, "events before", dump(t, s.DB, `SELECT count(*) FROM events WHERE thread_id IS NOT NULL`), []string{"0|"})
+	sameRows(t, "outbox before", dump(t, s.DB, `SELECT count(*) FROM chat_outbox WHERE link IS NOT NULL`), []string{"0|"})
+	events := dump(t, s.DB, `SELECT pos, scope, thread, time, kind, data FROM events ORDER BY pos`)
+	if len(events) == 0 || len(dump(t, s.DB, `SELECT id FROM chat_outbox`)) == 0 {
+		t.Fatal("the fixture has no events or outbox rows")
+	}
+
+	var log bytes.Buffer
+	if err := s.LinkThreads(ctx, map[string]string{"c1": "fake-surface"}, slog.New(slog.NewTextHandler(&log, nil))); err != nil {
+		t.Fatal(err)
+	}
+	sameRows(t, "links", dump(t, s.DB, `SELECT thread_id, client, channel, thread, made_by FROM links`), []string{
+		"1|fake-surface|c1|thread2|fake-surface/hook-1|"})
+	sameRows(t, "workspace", dump(t, s.DB, `SELECT id, workspace FROM threads`), []string{"1|" + dir + "|"})
+	sameRows(t, "events", dump(t, s.DB, `SELECT count(*) FROM events WHERE thread_id IS NOT 1`), []string{"0|"})
+	sameRows(t, "events unchanged", dump(t, s.DB, `SELECT pos, scope, thread, time, kind, data FROM events ORDER BY pos`), events)
+	sameRows(t, "outbox", dump(t, s.DB, `SELECT count(*) FROM chat_outbox WHERE link IS NOT 1`), []string{"0|"})
+	sameRows(t, "steps", dump(t, s.DB, `SELECT name FROM startup_steps ORDER BY name`), []string{
+		"thread numbers: links|", "thread numbers: rows written before the API used them|"})
+	if log.Len() != 0 {
+		t.Fatalf("log: %s", log.String())
+	}
+	after := tree(t, filepath.Join(root, "workspaces"))
+	if fmt.Sprint(after) != fmt.Sprint(before) {
+		t.Fatalf("workspaces changed:\n%v\n%v", before, after)
+	}
+}
+
+// A login outage's threads, kept by scope and key before thread numbers,
+// are kept by number.
+func TestLoginThreadsByNumber(t *testing.T) {
+	ctx := context.Background()
+	root := newRoot(t)
+	s, err := open(ctx, filepath.Join(root, File), migrations[:20])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO threads (id, scope, key, started_by, state, created_at, updated_at) VALUES (4, 'c1', 'k4', 'p', 'idle', 0, 0), (7, 'c2', 'k7', 'p', 'idle', 0, 0)`,
+		`INSERT INTO chat_logins (client, outage, agent, threads) VALUES ('x', 1, 'a', '[{"scope":"c1","key":"k4"},{"scope":"c2","key":"k7"}]'), ('x', 2, 'a', '[]')`,
+	} {
+		if _, err := s.DB.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Close()
+	s, err = Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	sameRows(t, "chat_logins", dump(t, s.DB, `SELECT outage, threads FROM chat_logins ORDER BY outage`), []string{"1|[4,7]|", "2|[]|"})
 }

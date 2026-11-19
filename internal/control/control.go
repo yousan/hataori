@@ -189,19 +189,28 @@ const (
 // Has reports whether every operation in o is in ops.
 func (ops Ops) Has(o Ops) bool { return ops&o == o }
 
-// ThreadID identifies a thread by its scope and key. Both are opaque strings
-// given by a client; for a chat surface the scope is a channel and the key
-// is the surface's thread.
-type ThreadID struct {
-	Scope string `json:"scope"`
-	Key   string `json:"key"`
+// ThreadID is a thread's number, unique in the instance (threads.id). It
+// names the thread in every operation and event; a chat conversation is a
+// link to it (LinkRef). Since 3.0; 0 names no thread.
+type ThreadID int64
+
+// LinkRef is where a thread is shown: one conversation of one client. For
+// a chat surface, the channel and the thread on that service.
+type LinkRef struct {
+	Client  string `json:"client"`  // the client's name, such as a chat front end's
+	Channel string `json:"channel"` // opaque; for chat, a channel
+	Thread  string `json:"thread"`  // opaque; for chat, the service's thread
 }
 
 // StartRequest is the argument of API.Start.
 type StartRequest struct {
-	Key    string `json:"key"`    // safe to repeat: the same key starts nothing twice
-	Scope  string `json:"scope"`  // opaque; for chat, a channel
-	Thread string `json:"thread"` // opaque key, or empty to let the scope's owner make one
+	Key   string `json:"key"`   // safe to repeat: the same key starts nothing twice
+	Scope string `json:"scope"` // opaque; for chat, a channel
+	// Thread makes the first link itself: the conversation Thread in the
+	// scope's own channel, of the scope's owner. Empty to let the owner
+	// open one (ScopeOwner.NewThread). Since 3.0 it names a link, not the
+	// thread.
+	Thread string `json:"thread"`
 	Repo   string `json:"repo"`   // the repository the thread's workspace is cloned from
 	Input  Input  `json:"input"`  // the first input
 	Model  string `json:"model"`  // empty for the scope's default
@@ -237,7 +246,10 @@ type Answer struct {
 // caller may see.
 type Filter struct {
 	Scope  string   `json:"scope"`
-	Thread ThreadID `json:"thread"`
+	Thread ThreadID `json:"thread"` // the thread's number; 0 for any
+	// Link matches the one thread linked to the conversation, or none.
+	// Since 3.0.
+	Link *LinkRef `json:"link,omitempty"`
 }
 
 // State is the state of a thread's current session (design, section 4.2).
@@ -257,8 +269,9 @@ const (
 
 // ThreadInfo is one line of Threads.
 type ThreadInfo struct {
-	ID        ThreadID  `json:"id"`
-	Number    int64     `json:"number"`          // short number, unique in the instance
+	ID        ThreadID  `json:"id"`              // the thread's number; since 3.0, it replaces number
+	Scope     string    `json:"scope"`           // the scope the thread belongs to; since 3.0
+	Links     []LinkRef `json:"links"`           // where it is shown, the first link first; since 3.0
 	Title     string    `json:"title,omitempty"` // text: absent for a caller that may not read text, since 2.0
 	Repo      string    `json:"repo"`
 	State     State     `json:"state"`
@@ -384,18 +397,20 @@ const CaughtUp EventKind = "caught_up"
 // in the instance, so a reader can resume after the last Pos it saw.
 type Event struct {
 	Pos    uint64          `json:"pos"`
-	Thread ThreadID        `json:"thread"`
+	Thread ThreadID        `json:"thread,omitempty"` // the thread's number; absent for an event of no thread
+	Scope  string          `json:"scope,omitempty"`  // the thread's scope; since 3.0
 	Time   time.Time       `json:"time"`
 	Kind   EventKind       `json:"kind"`
 	Data   json.RawMessage `json:"data,omitempty"` // the fields of Kind; see EventKinds
 }
 
-// ScopeOwner is the client that gives a scope its threads. When a Start has
-// no Thread, the core asks the owner for the key, after the call is
-// allowed; key is the Start's key. A chat front end opens a chat thread,
-// from the trigger message when key is one, and returns its id.
+// ScopeOwner is the client that gives a scope its threads. The core asks
+// the owner for a new thread's first link, after the Start is allowed; key
+// is the Start's key. A chat front end opens a chat thread, from the
+// trigger message when key is one, and returns where. The core stores the
+// link with the thread, in the same transaction.
 type ScopeOwner interface {
-	NewThread(ctx context.Context, scope, key, title string) (thread string, err error)
+	NewThread(ctx context.Context, scope, key, title string) (LinkRef, error)
 }
 
 // HostTerminal is a terminal on the host that hataori does not own.

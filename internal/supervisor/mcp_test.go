@@ -139,10 +139,13 @@ type fakeAPI struct {
 	recent int
 }
 
-var fakeID = control.ThreadID{Scope: "C0123", Key: "T1"}
+var fakeID = control.ThreadID(7)
 
-func (f *fakeAPI) Threads(context.Context, control.Filter) ([]control.ThreadInfo, error) {
-	return []control.ThreadInfo{{ID: fakeID, Number: 7, Title: "Fix it", State: control.Idle}}, nil
+func (f *fakeAPI) Threads(_ context.Context, flt control.Filter) ([]control.ThreadInfo, error) {
+	if flt.Thread != 0 && flt.Thread != fakeID {
+		return nil, nil
+	}
+	return []control.ThreadInfo{{ID: fakeID, Scope: "C0123", Title: "Fix it", State: control.Idle}}, nil
 }
 
 func (f *fakeAPI) Thread(_ context.Context, id control.ThreadID, recent, _ int) (control.ThreadDetail, error) {
@@ -151,7 +154,7 @@ func (f *fakeAPI) Thread(_ context.Context, id control.ThreadID, recent, _ int) 
 	if len(out) > recent {
 		out = out[len(out)-recent:]
 	}
-	return control.ThreadDetail{ThreadInfo: control.ThreadInfo{ID: id, Number: 7, Title: "Fix it", State: control.Idle}, Recent: out}, nil
+	return control.ThreadDetail{ThreadInfo: control.ThreadInfo{ID: id, Scope: "C0123", Title: "Fix it", State: control.Idle}, Recent: out}, nil
 }
 
 func call(t *testing.T, m *MCP, name string, args string) (string, bool) {

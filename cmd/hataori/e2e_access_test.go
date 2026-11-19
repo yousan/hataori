@@ -67,14 +67,15 @@ func TestTwoInstancesIgnoreEachOthersScopes(t *testing.T) {
 		th         surface.Conversation
 		own, other string
 	}{{a, ta, "ca", "cb"}, {b, tb, "cb", "ca"}} {
-		clone := filepath.Join(x.r.root, "workspaces", fakeSurface, x.own, x.th.Thread)
-		if _, err := os.Stat(filepath.Join(clone, "README")); err != nil {
+		// A new workspace is at workspaces/<number>.
+		n := numberOf(t, x.r.root, x.th)
+		clone := filepath.Join(x.r.root, "workspaces", n)
+		if _, err := os.Stat(filepath.Join(clone, "README")); n == "" || err != nil {
 			t.Fatalf("no clone at %s: %v", clone, err)
 		}
-		own, _ := filepath.Glob(filepath.Join(x.r.root, "workspaces", fakeSurface, x.own, "*"))
-		other, _ := filepath.Glob(filepath.Join(x.r.root, "workspaces", fakeSurface, x.other, "*"))
-		if len(own) != 1 || len(other) != 0 {
-			t.Fatalf("clones under %s: %v in its scope, %v in the other's", x.r.root, own, other)
+		all, _ := filepath.Glob(filepath.Join(x.r.root, "workspaces", "*"))
+		if len(all) != 1 {
+			t.Fatalf("clones under %s: %v, want its own thread's only", x.r.root, all)
 		}
 	}
 }
@@ -112,11 +113,12 @@ func TestThreadCommandTellsAHataoriThread(t *testing.T) {
 	th := r.order(t, 0, "!go repo:"+bareRepo(t)+" reply hi")
 	r.posted(t, th, "hi")
 	ordinary, _ := r.driver.OpenThread(nil, c1, "a thread of people")
-	if code, out, _ := cli(t, "thread", "--root", r.root, th.Thread); code != 0 || !strings.Contains(out, `"key":"`+th.Thread+`"`) || !strings.Contains(out, `"state":`) {
-		t.Fatalf("thread %s: exit %d, %s", th.Thread, code, out)
+	n := numberOf(t, r.root, th)
+	if code, out, _ := cli(t, "thread", "--root", r.root, n); n == "" || code != 0 || !strings.Contains(out, `"thread":"`+th.Thread+`"`) || !strings.Contains(out, `"state":`) {
+		t.Fatalf("thread %s: exit %d, %s", n, code, out)
 	}
-	if code, out, _ := cli(t, "thread", "--root", r.root, ordinary.Thread); code != exitNoThread || out != "" {
-		t.Fatalf("thread %s (not hataori's): exit %d, %q", ordinary.Thread, code, out)
+	if n := numberOf(t, r.root, ordinary); n != "" {
+		t.Fatalf("a thread of people has the number %s", n)
 	}
 }
 

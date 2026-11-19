@@ -54,15 +54,15 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 		id        control.ThreadID
 	)
 	err := tx.QueryRowContext(ctx, `
-		SELECT s.state, s.last_seq, s.agent, t.id, t.scope, t.key
-		FROM sessions s JOIN threads t ON t.id = s.thread_id
-		WHERE s.id = ?`, sessionID).Scan(&state, &lastSeq, &agentName, &thread, &id.Scope, &id.Key)
+		SELECT s.state, s.last_seq, s.agent, s.thread_id
+		FROM sessions s WHERE s.id = ?`, sessionID).Scan(&state, &lastSeq, &agentName, &thread)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("session: no session %d", sessionID)
 	}
 	if err != nil {
 		return fmt.Errorf("session: load %d: %w", sessionID, err)
 	}
+	id = control.ThreadID(thread)
 	if in.Kind == AgentEvent && in.Agent.Seq <= lastSeq {
 		return nil // seen before
 	}

@@ -49,7 +49,7 @@ export function App() {
       // Not kept; the page still switches.
     }
   };
-  const thread = (n: number) => d.threads?.find((x) => x.number === n);
+  const thread = (n: number) => d.threads?.find((x) => x.id === n);
   const current = threadOf(active(tabs));
   const hosts = useHostTerminals();
   const host = (id: string) => hosts?.find((h) => hostID(h) === id);
@@ -127,7 +127,7 @@ export function App() {
   }, [narrow]);
   // A thread that has gone from the list closes, and so does its entry.
   useEffect(() => {
-    if (opened !== null && d.threads !== null && !d.threads.some((x) => x.number === opened)) {
+    if (opened !== null && d.threads !== null && !d.threads.some((x) => x.id === opened)) {
       setOpened(null);
       history.replaceState(null, "");
     }
@@ -149,8 +149,8 @@ export function App() {
           ) : loading ? null : x ? (
             <NarrowThread
               x={x}
-              attention={d.attention.get(x.number)}
-              workspace={workspaces.get(x.number)}
+              attention={d.attention.get(x.id)}
+              workspace={workspaces.get(x.id)}
               subscribe={d.subscribe}
               opens={d.opens}
               onBack={backNarrow}

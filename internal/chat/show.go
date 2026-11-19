@@ -32,6 +32,9 @@ type reader struct {
 	ctx    context.Context
 	// quietAfter is FrontEnd.QuietAfter.
 	quietAfter time.Duration
+	// conv is the conversation a thread is shown in here (FrontEnd.convOf),
+	// looked up before the thread's events are read.
+	conv func(control.ThreadID) surface.Conversation
 }
 
 // show reads the events of the front end's scopes, from where it stopped
@@ -58,6 +61,10 @@ func (f *FrontEnd) show(ctx context.Context) error {
 		ctx:    ctx,
 
 		quietAfter: f.quietAfter(),
+		conv: func(id control.ThreadID) surface.Conversation {
+			c, _, _ := f.convOf(ctx, id)
+			return c
+		},
 	}
 	var after uint64
 	err := f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT pos FROM chat_cursors WHERE client = ?`, f.Name).Scan(&after)
@@ -71,7 +78,10 @@ func (f *FrontEnd) show(ctx context.Context) error {
 		return err
 	}
 	for _, t := range threads {
-		if t.State == control.Running {
+		if _, ok := f.linkConv(t); ok && t.State == control.Running {
+			if _, _, err := f.convOf(ctx, t.ID); err != nil {
+				return err
+			}
 			if err := r.catchUp(ctx, t.ID, after+1); err != nil {
 				return err
 			}
@@ -114,19 +124,27 @@ func (f *FrontEnd) show(ctx context.Context) error {
 			caughtUp = true
 			continue
 		}
-		if e.Thread.Key == "" {
+		if e.Thread == 0 {
 			continue
 		}
-		rows, err := f.rowsFor(ctx, r, e)
+		// Shown in the conversation of the thread's link here; a thread
+		// with none is not shown by this front end.
+		conv, linked, err := f.convOf(ctx, e.Thread)
 		if err != nil {
 			return err
 		}
-		// A thread seen for the first time since the start: what its
-		// earlier events tell about the progress line, first.
-		if err := r.catchUp(ctx, e.Thread, e.Pos); err != nil {
-			return err
+		var rows []Row
+		if linked {
+			if rows, err = f.rowsFor(ctx, r, e, conv); err != nil {
+				return err
+			}
+			// A thread seen for the first time since the start: what its
+			// earlier events tell about the progress line, first.
+			if err := r.catchUp(ctx, e.Thread, e.Pos); err != nil {
+				return err
+			}
+			rows = append(append(r.track(e), rows...), r.subagents(e)...)
 		}
-		rows = append(append(r.track(e), rows...), r.subagents(e)...)
 		lr, err := f.loginEvent(ctx, e)
 		if err != nil {
 			return err
@@ -171,7 +189,7 @@ type eventData struct {
 const typedAtTerminal = "(typed at the terminal)"
 
 // rowsFor returns the rows that show e. A kind it does not show gives none.
-func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event) ([]Row, error) {
+func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv surface.Conversation) ([]Row, error) {
 	switch e.Kind {
 	case "thread_created", "turn_started", "text", "request", "turn_ended", "file_out":
 	default:
@@ -184,7 +202,6 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event) ([]R
 			return nil, nil
 		}
 	}
-	conv := surface.Conversation{Channel: e.Thread.Scope, Thread: e.Thread.Key}
 	row := func(m surface.Message) []Row { return []Row{{Event: e.Pos, Conv: conv, Message: m}} }
 	switch e.Kind {
 	case "thread_created":
@@ -210,7 +227,7 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event) ([]R
 		if key == "" {
 			return rows, nil // the agent started the turn by itself
 		}
-		trigger, err := f.isTrigger(ctx, e.Thread.Scope, key)
+		trigger, err := f.isTrigger(ctx, conv.Channel, key)
 		if err != nil {
 			return nil, err
 		}

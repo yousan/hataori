@@ -71,8 +71,8 @@ func CloseLoginOutage(ctx context.Context, tx *store.Tx, agentName string) (bool
 		return false, fmt.Errorf("session: login outage: %w", err)
 	}
 	var id control.ThreadID
-	err = tx.QueryRowContext(ctx, `SELECT t.scope, t.key FROM login_outage_threads o JOIN threads t ON t.id = o.thread_id
-		WHERE o.outage_id = ? ORDER BY t.id LIMIT 1`, outage).Scan(&id.Scope, &id.Key)
+	err = tx.QueryRowContext(ctx, `SELECT thread_id FROM login_outage_threads
+		WHERE outage_id = ? ORDER BY thread_id LIMIT 1`, outage).Scan(&id)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, fmt.Errorf("session: login outage: %w", err)
 	}
@@ -82,31 +82,32 @@ func CloseLoginOutage(ctx context.Context, tx *store.Tx, agentName string) (bool
 // closeOutage closes an open outage and writes login_restored on id.
 func closeOutage(ctx context.Context, tx *store.Tx, agentName string, outage int64, id control.ThreadID, now int64) error {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT t.scope, t.key FROM login_outage_threads o JOIN threads t ON t.id = o.thread_id
+		SELECT t.id, t.scope FROM login_outage_threads o JOIN threads t ON t.id = o.thread_id
 		WHERE o.outage_id = ? ORDER BY t.id`, outage)
 	if err != nil {
 		return fmt.Errorf("session: login outage: %w", err)
 	}
-	var stopped []control.ThreadID
+	var (
+		stopped []control.ThreadID
+		scopes  []string // "scopes" lets a reader withhold the event from a caller that may not see every thread it names
+	)
 	for rows.Next() {
-		var t control.ThreadID
-		if err := rows.Scan(&t.Scope, &t.Key); err != nil {
+		var (
+			t     control.ThreadID
+			scope string
+		)
+		if err := rows.Scan(&t, &scope); err != nil {
 			rows.Close()
 			return err
 		}
 		stopped = append(stopped, t)
+		if !slices.Contains(scopes, scope) {
+			scopes = append(scopes, scope)
+		}
 	}
 	rows.Close()
 	if _, err := tx.ExecContext(ctx, `UPDATE login_outages SET closed_at = ? WHERE id = ?`, now, outage); err != nil {
 		return fmt.Errorf("session: close login outage: %w", err)
-	}
-	// "scopes" lets a reader withhold the event from a caller that may
-	// not see every thread it names.
-	var scopes []string
-	for _, t := range stopped {
-		if !slices.Contains(scopes, t.Scope) {
-			scopes = append(scopes, t.Scope)
-		}
 	}
 	return appendLogin(ctx, tx, id, KindLoginRestored, map[string]any{"agent": agentName, "outage": outage, "threads": stopped, "scopes": scopes})
 }
