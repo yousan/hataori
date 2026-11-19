@@ -424,6 +424,7 @@ function HostRow(props: {
 }) {
   const { h, now, selected, onOpen, parent, level } = props;
   const p = h.tmux;
+  const r = p ? h.reported : undefined;
   return (
     <li
       className={selected ? "row host-row selected" : "row host-row"}
@@ -451,6 +452,21 @@ function HostRow(props: {
         {p && <span className="device">{h.device}</span>}
         {h.activity && <span className="age">{age(h.activity, now)}</span>}
       </div>
+      {r && (
+        // What the session's own hooks reported, as they said it: no state.
+        <div className="line2 reported" data-reported={r.session}>
+          <span className="reported-event">{r.event}</span>
+          <time className="age" dateTime={r.at}>
+            {age(r.at, now)}
+          </time>
+          <span className="reported-session" title={t("host.reportedSession")}>
+            {r.session}
+          </span>
+          <span className="reported-dir" title={t("host.reportedDir")}>
+            {r.dir}
+          </span>
+        </div>
+      )}
     </li>
   );
 }

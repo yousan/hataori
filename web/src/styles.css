@@ -344,6 +344,13 @@ body {
   display: none;
 }
 
+/* What a session's hooks reported: its id and directory may be long. */
+.line2.reported .reported-session,
+.line2.reported .reported-dir {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .agent-mark {
   flex: none;
   width: 16px;

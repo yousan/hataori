@@ -138,6 +138,22 @@ export interface HostTerminal {
     dir?: string;
     attached: boolean;
   };
+  // reported is what the hooks of the session in this tmux pane reported,
+  // through hataori's Claude Code plugin: no text of the session, and no
+  // state hataori judged. Since protocol 3.15.
+  reported?: ReportedSession;
+}
+
+// ReportedSession is what a session a person started last reported
+// (docs/protocol.md).
+export interface ReportedSession {
+  window: string;
+  agent: string;
+  session: string;
+  dir: string;
+  event: string;
+  at: string;
+  thread?: number;
 }
 
 // HostTerminalsOff is thrown when the server does not list the host's
