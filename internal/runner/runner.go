@@ -1447,6 +1447,17 @@ func (r *Runner) Shut(ctx context.Context, id int64, reason string) error {
 			if background > 0 && control.State(state) == control.Idle {
 				return fmt.Errorf("runner: session %d: %d background tasks still run: %w", id, background, session.ErrRefused)
 			}
+			// Input or an answer the core accepted and no turn has reported
+			// yet, such as a message the codec holds until the turn that
+			// was running ended: closing would lose it without a trace.
+			// Checked here, so none is accepted between this and the Close.
+			var pending int
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pending_inputs WHERE session_id = ?`, id).Scan(&pending); err != nil {
+				return fmt.Errorf("runner: session %d: %w", id, err)
+			}
+			if pending > 0 && control.State(state) == control.Idle {
+				return fmt.Errorf("runner: session %d: %d pending inputs not reported by a turn: %w", id, pending, session.ErrRefused)
+			}
 			return r.Machine.ApplyTx(ctx, tx, id, session.Input{Kind: session.Close, Reason: reason})
 		})
 	}
