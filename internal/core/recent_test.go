@@ -85,9 +85,19 @@ func TestRecentCap(t *testing.T) {
 			t.Errorf("thread 2, cap %d: %q, want %q", limit, got, want)
 		}
 	}
-	// Thread 3's one message is over 1 KB of two-byte characters.
-	whole, _ := f.core.recentText(ctx, ids[3], 1<<20)
+	// Thread 3's one message is over 1 KB, with two-byte characters.
+	whole, err := f.core.recentText(ctx, ids[3], 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(whole) < 1010 || !strings.Contains(whole, "ünïcödé") {
+		t.Fatalf("thread 3 is not the capture's long text: %d bytes %.20q", len(whole), whole)
+	}
+	inside := 0 // caps that land inside a character
 	for limit := 1000; limit < 1010; limit++ {
+		if !utf8.RuneStart(whole[len(whole)-limit]) {
+			inside++
+		}
 		got, err := f.core.recentText(ctx, ids[3], limit)
 		if err != nil {
 			t.Fatal(err)
@@ -95,5 +105,8 @@ func TestRecentCap(t *testing.T) {
 		if len(got) > limit || len(got) < limit-utf8.UTFMax+1 || !utf8.ValidString(got) || !strings.HasSuffix(whole, got) {
 			t.Errorf("thread 3, cap %d: %d bytes, valid %t, a suffix %t", limit, len(got), utf8.ValidString(got), strings.HasSuffix(whole, got))
 		}
+	}
+	if inside == 0 {
+		t.Fatal("no cap lands inside a character")
 	}
 }
