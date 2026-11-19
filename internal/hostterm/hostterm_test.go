@@ -48,7 +48,7 @@ func TestParsePanes(t *testing.T) {
 
 // Real list-panes output of tmux 3.5a on macOS, with -u, from the same
 // layout as list-panes-tmux-3.4.txt, and a session whose name holds a tab,
-// which tmux 3.5 prints as "\t". It reads into the same panes as tmux
+// which tmux prints as "\t" (3.4 did too). It reads into the same panes as tmux
 // 3.4's; only the devices, the times and the shell's name, which is the
 // system's, differ. The directory was changed as in the 3.4 capture.
 func TestParsePanesTmux35(t *testing.T) {
