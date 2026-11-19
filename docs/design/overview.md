@@ -583,15 +583,15 @@ The first hook points, and the events, next to the OpenClaw hook with the same m
 | `before_agent_run` | Gate | core: before input from `Start` or `Send` reaches the agent | `before_agent_run` |
 | `before_prompt_build` | Modify | core: at the same point; may add text before or after the input | `before_prompt_build` |
 | `message_sending` | Modify, Gate | chat front end: before an outbox row is posted; may rewrite the text or cancel the post | `message_sending` |
-| thread created | Observe | core event | `session_start` |
-| turn started | Observe | core event | none |
-| tool progress | Observe | core event | `after_tool_call` (closest) |
-| question asked | Observe | core event | none |
-| turn ended | Observe | core event | `agent_end` |
-| post sent | Observe | chat front end event | `message_sent` |
+| `thread_created` | Observe | core event | `session_start` |
+| `turn_started` | Observe | core event | none |
+| `tool_started`, `tool_ended` | Observe | core event | `after_tool_call` (closest) |
+| `request` | Observe | core event: a question or an approval | none |
+| `turn_ended` | Observe | core event | `agent_end` |
+| `post_sent` | Observe | chat front end event, new in this phase: an outbox row was posted | `message_sent` |
 | plugin started, stopping | Observe | told to the plugin itself | `gateway_start`, `gateway_stop` |
 
-The event names follow the session state machine (#16) and may still change. A cancelled post stays in the outbox with the plugin and the reason, and is visible through `hataori thread`. Nothing is posted in its place unless the plugin returned new text.
+The observe rows are event kinds of [docs/protocol.md](../protocol.md), and the manifest's `events` names kinds from there; any other kind there can be asked for too. A cancelled post stays in the outbox with the plugin and the reason, and is visible through `hataori thread`. Nothing is posted in its place unless the plugin returned new text.
 
 **Order, timeout and failure.** Handlers on one point run one after another, by priority (higher first) and then in config order, and each sees the result of the one before. The defaults follow OpenClaw. Each handler has 15 seconds. When a `before_agent_run` handler fails or times out, the input is blocked (fail closed), and the thread says which plugin blocked it. When a `before_prompt_build` or `message_sending` handler fails or times out, that handler is skipped and the other results are kept. The operator can change the timeout and the failure policy per plugin, for example to make a secret scanner on `message_sending` fail closed.
 
@@ -664,7 +664,7 @@ It has the criterion of the later phases below, with three additions that the da
 
 ### After phase 1
 
-The order below was decided by the maintainer (section 10): Codex, people in chat and cleanup, the supervisor, plugins, then Slack and Teams. Each later phase also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter; the supervisor phase may also let the control socket bind a connection to a limited `Caller` (which plugins use too, section 7.3) and let a session be started confined (no shell, only the listed tools, section 7.1); the plugin phase may also add hook points. Appendix E has the acceptance criteria of each.
+The order below was decided by the maintainer (section 10): Codex, people in chat and cleanup, the supervisor, plugins, then Slack and Teams. Each later phase also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter; the supervisor phase may also let the control socket bind a connection to a limited `Caller` (which plugins use too, section 7.3) and let a session be started confined (no shell, only the listed tools, section 7.1); the plugin phase may also limit a `Caller` to the operations and event kinds a plugin was granted, and add hook points (section 7.3). Appendix E has the acceptance criteria of each.
 
 **Codex.** The second agent adapter (section 3.4). It comes before the buttons of "people in chat", so it is built and tested with what phase 1 offers in chat. The adapter's code is written by Codex (`codex exec`), and reviewed and fixed by Claude.
 
@@ -675,6 +675,14 @@ The order below was decided by the maintainer (section 10): Codex, people in cha
 **Plugins.** Section 7.3. Right after the supervisor (section 10).
 
 **Slack.** Go has no official Slack SDK (official ones are for Java, JavaScript, Python and Deno). The adapter uses `github.com/slack-go/slack` (BSD-2-Clause, actively released; v0.36.0 on 2026-11-14), which Slack lists among community-developed tools, and its `socketmode` package. It covers Socket Mode, Block Kit buttons, `chat.update` (`UpdateMessageContext`), thread replies (`MsgOptionTS`) and the current file upload flow (`UploadFileContext`). Socket Mode needs no inbound endpoint. Catch-up (`Since`) reads `conversations.replies`, which allows 50+ requests per minute (Tier 3) for an app installed as an internal (customer-built) app and for a Marketplace app; a commercially distributed app outside the Marketplace gets 1 request per minute and 15 messages per request, which is too little for catch-up. hataori is therefore installed as an internal app in each workspace. `chat.update` is also Tier 3, so progress-line edits are paced. These facts come from Slack's documentation and the library's source (Appendix B, "Documentation read on 2026-11-18"); the library was not run.
+
+Where Slack differs from what the driver interface assumes (Appendix B, "Documentation read on 2026-11-19"; nothing was run):
+
+- A thread is the replies to one message, named by that message's `ts` (`thread_ts`). A thread that hataori opens without a trigger message, as for a `Start` through the control API, starts from a message that hataori posts in the channel.
+- Custom slash commands "cannot, however, be invoked in message threads"; only Slack's built-in commands can. Their acknowledgment over HTTP must arrive within 3000 ms.
+- `chat.postMessage` takes no key that makes a post safe to repeat. It takes `metadata`, an event type and a payload that every member of the workspace can read, and `conversations.replies` returns it with `include_all_metadata`. `slack-go/slack` v0.36.0 has `MsgOptionMetadata`, and `IncludeAllMetadata` on both reads.
+- Text in `text` is Slack's own format; the `markdown` block (`NewMarkdownBlock`) renders standard Markdown, tables and code blocks included, with at most 12,000 characters across a message's markdown blocks. The documentation recommends at most 4,000 characters in `text` and cuts it after 40,000.
+- An incoming webhook posts only into the channel it was made for, and into a thread with `thread_ts`, under the name and icon of the app it belongs to.
 
 **Microsoft Teams.** Microsoft's bot SDKs are C#, TypeScript and Python; the older Bot Framework SDK is archived. There is nothing for Go, so the adapter is written against the HTTP protocol. By hand (from Microsoft's documentation, Appendix B, "Documentation read on 2026-11-18"; nothing was run):
 
@@ -1064,6 +1072,17 @@ Read for section 8 (Slack, Microsoft Teams) and for the Codex rows above. Nothin
 - Codex Unix socket transport, https://github.com/openai/codex/blob/main/codex-rs/app-server-transport/src/transport/unix_socket.rs: each connection is accepted with `tokio_tungstenite::accept_hdr_async_with_config`, a WebSocket upgrade; https://github.com/openai/codex/blob/main/codex-rs/app-server-transport/src/transport/websocket.rs reads each text frame as one message.
 - Codex questions: https://github.com/openai/codex/blob/main/codex-rs/protocol/src/config_types.rs (`allows_request_user_input` is true only for `ModeKind::Plan`), https://github.com/openai/codex/blob/main/codex-rs/tools/src/tool_config.rs (or in the default mode with the feature `DefaultModeRequestUserInput`), https://github.com/openai/codex/blob/main/codex-rs/core/src/tools/handlers/request_user_input_async.rs (the `request_user_input_async` tool emits an agent message with `questions` and `delivery: Async`), https://github.com/openai/codex/blob/main/codex-rs/prompts/src/model_messages.rs (its description: "any reply arrives asynchronously as a new user message").
 - Codex methods, https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/src/protocol/common.rs: `thread/backgroundTerminals/clean`, `…/list` and `…/terminate`, each `#[experimental]`, with `threadId` in the params.
+
+### Documentation read on 2026-11-19
+
+Read to split the Slack phase (section 8). Nothing here was run.
+
+- Slack slash commands, https://docs.slack.dev/interactivity/implementing-slash-commands: "Slash commands created by developers cannot, however, be invoked in message threads"; built-in commands and Giphy's can; the acknowledgment "must be received by Slack within 3000 milliseconds of the original request being sent" (HTTP; the page does not mention Socket Mode).
+- Slack `chat.postMessage`, https://docs.slack.dev/reference/methods/chat.postMessage/: its arguments include `thread_ts`, `blocks`, `text`, `markdown_text` and `metadata`, and none that makes a post safe to repeat; `metadata` is "accessible to any app or user who is a member of that workspace"; keep `text` within 4,000 characters, and more than 40,000 are cut with a `message_truncated` warning; `markdown_text` is not combined with `text` or `blocks`; about one message per second per channel, with bursts allowed.
+- Slack `markdown` block, https://docs.slack.dev/reference/block-kit/blocks/markdown-block: standard Markdown in messages, tables and code blocks included; 12,000 characters across the markdown blocks of one payload; headers render at one size and images become links.
+- Slack `conversations.replies`, https://docs.slack.dev/reference/methods/conversations.replies/: `ts` of the parent or of any message in the thread, `oldest`, `latest`, `inclusive`, `cursor`, `limit` and `include_all_metadata`; Tier 3.
+- Slack incoming webhooks, https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/: a webhook is tied to one channel, which cannot be overridden, nor can the name or icon; a reply goes into a thread with `thread_ts`; the response carries no `ts`.
+- `slack-go/slack` v0.36.0: `MsgOptionMetadata` in https://github.com/slack-go/slack/blob/v0.36.0/chat.go, `NewMarkdownBlock` in https://github.com/slack-go/slack/blob/v0.36.0/block_markdown.go, `IncludeAllMetadata` on the history and replies parameters in https://github.com/slack-go/slack/blob/v0.36.0/conversation.go.
 
 ## Appendix C: c-lord bug issues by group
 
@@ -1579,7 +1598,7 @@ type Factory func(settings []byte) (Adapter, error)
 
 ## Appendix E: acceptance criteria after phase 1
 
-Every phase here also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter; the supervisor phase may also let the control socket bind a connection to a limited `Caller` (which plugins use too, section 7.3) and let a session be started confined (no shell, only the listed tools, section 7.1); the plugin phase may also add hook points.
+Every phase here also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter; the supervisor phase may also let the control socket bind a connection to a limited `Caller` (which plugins use too, section 7.3) and let a session be started confined (no shell, only the listed tools, section 7.1); the plugin phase may also limit a `Caller` to the operations and event kinds a plugin was granted, and add hook points (section 7.3).
 
 ### Codex
 
