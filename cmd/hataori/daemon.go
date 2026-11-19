@@ -284,11 +284,16 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		supervisorHook(issueSupervisor, srv.Revoke)
 	}
 	// A plugin's connection is bound by a token to the caller its grant
-	// makes (design, section 7.3), and to nothing it says itself.
+	// makes (design, section 7.3), and to nothing it says itself. The
+	// dispatcher of its hooks knows its connections by that binding, and
+	// tells it plugin_started when it connects.
+	hooks := plugin.NewDispatcher(grants, lg)
+	asPlugin := plugin.BindAs(c.As)
+	srv.Peered = func(api control.API, p *wire.Peer) { hooks.Peered(api, p) }
 	issuePlugin := func(id string) (string, error) {
 		for _, g := range grants {
 			if g.ID == id {
-				return srv.Issue(c.As(g.Caller()))
+				return srv.Issue(asPlugin(g.Caller()))
 			}
 		}
 		return "", fmt.Errorf("no plugin %q in the config", id)
