@@ -188,6 +188,15 @@ func TestDashboardTreeChannels(t *testing.T) {
 			}
 		}
 	}
+	// The tree is one Tab stop: its first item, then the item last focused.
+	tabStops := func() []string {
+		var ss []string
+		b.eval(`[...document.querySelectorAll('.tree [role=tree] [tabindex="0"]')].map(i => i.dataset.treeItem)`, &ss)
+		return ss
+	}
+	if ss := tabStops(); !slices.Equal(ss, []string{"scope:c1"}) {
+		t.Fatalf("the tree's Tab stops: %q, want the first item only", ss)
+	}
 	b.eval(`document.querySelector('.tree [data-node="scope:c1"]').focus(), true`, nil)
 	expectFocus("the first node", "scope:c1")
 	key("ArrowRight", 39)
@@ -197,6 +206,9 @@ func TestDashboardTreeChannels(t *testing.T) {
 	expectFocus("right goes to the first thread", fmt.Sprintf("thread:%d", older))
 	key("ArrowDown", 40)
 	expectFocus("down", fmt.Sprintf("thread:%d", newer))
+	if ss := tabStops(); !slices.Equal(ss, []string{fmt.Sprintf("thread:%d", newer)}) {
+		t.Fatalf("the tree's Tab stops after moving: %q", ss)
+	}
 	key("ArrowUp", 38)
 	expectFocus("up", fmt.Sprintf("thread:%d", older))
 	key("ArrowLeft", 37)
@@ -226,6 +238,14 @@ func TestDashboardTreeChannels(t *testing.T) {
 	// as before; kept unfolded across a reload.
 	b.unfoldHosts()
 	b.until("the pane under its session", fmt.Sprintf(`!!document.querySelector('.tree [data-node=host] [data-session=work] [data-host=%q]')`, rig.device))
+	// A tmux session folds from the keyboard as the other nodes do.
+	b.eval(`document.querySelector('.tree [data-session=work]').focus(), true`, nil)
+	expectFocus("the tmux session", "host-session:work")
+	key("ArrowLeft", 37)
+	b.until("the tmux session folded", `document.querySelector('.tree [data-session=work]').dataset.open === 'no' && !document.querySelector('.tree [data-session=work] [data-host]')`)
+	expectFocus("the tmux session, folded", "host-session:work")
+	key("ArrowRight", 39)
+	b.until("the tmux session unfolded", fmt.Sprintf(`!!document.querySelector('.tree [data-session=work] [data-host=%q]')`, rig.device))
 	// Each tree item is in the tree or in the group of the item it is under.
 	var misplaced []string
 	b.eval(`[...document.querySelectorAll('.tree [role=tree] [role=treeitem]')].filter(i => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { type HostTerminal, type ScopeInfo, type State, states, type ThreadInfo } from "./api";
 import { hostID, hostMatches } from "./hostTerminals";
 import { t } from "./catalog";
@@ -66,7 +66,7 @@ export function Row(props: {
       aria-level={parent ? 2 : undefined}
       data-tree-item={parent ? `thread:${x.id}` : undefined}
       data-parent={parent}
-      tabIndex={0}
+      tabIndex={parent ? -1 : 0}
       aria-selected={selected}
       onClick={() => onSelect(x.id)}
       onKeyDown={(e) => {
@@ -123,7 +123,7 @@ function Node(props: {
       aria-level={1}
       aria-expanded={open}
       aria-label={label}
-      tabIndex={0}
+      tabIndex={-1}
       data-tree-item={node}
       data-node={node}
       data-open={open ? "yes" : "no"}
@@ -196,6 +196,16 @@ export function Tree(props: Props) {
   const { threads, scopes, attention, now, filter, onFilter, density, onDensity, selected, onSelect, show, hidden, hosts, selectedHost, onOpenHost } =
     props;
   const [folded, setFolded] = useFolds();
+  // The tree is one Tab stop: the item last focused in it, else its first;
+  // the arrow keys move in it.
+  const tree = useRef<HTMLDivElement>(null);
+  const current = useRef<string | null>(null);
+  const tabStop = () => {
+    const items = [...(tree.current?.querySelectorAll<HTMLElement>("[data-tree-item]") ?? [])];
+    const stop = items.find((i) => i.dataset.treeItem === current.current) ?? items[0];
+    for (const i of items) i.tabIndex = i === stop ? 0 : -1;
+  };
+  useLayoutEffect(tabStop);
   // While the filter is on, a node opens by itself when the filter finds
   // something in it, and a fold lasts until the filter is cleared.
   const filtering = filter.trim() !== "";
@@ -269,7 +279,20 @@ export function Tree(props: Props) {
             </ul>
           </section>
         )}
-        <div className="threads" role="tree" aria-label={t("tree.label")} onKeyDown={(e) => treeKeys(e, fold)}>
+        <div
+          className="threads"
+          role="tree"
+          aria-label={t("tree.label")}
+          ref={tree}
+          onKeyDown={(e) => treeKeys(e, fold)}
+          onFocus={(e) => {
+            const item = (e.target as HTMLElement).closest<HTMLElement>("[data-tree-item]");
+            if (item) {
+              current.current = item.dataset.treeItem ?? null;
+              tabStop();
+            }
+          }}
+        >
           <div data-section="threads" role="none">
             {all.length === 0 && threads !== null && <p className="none">{t("tree.none")}</p>}
             {all.length > 0 && visible.length === 0 && <p className="none">{t("tree.noActive", { n: hidden })}</p>}
@@ -302,7 +325,7 @@ export function Tree(props: Props) {
                 open={open(hostNode, hostsShown.length > 0)}
                 onFold={fold}
               >
-                <HostTree hosts={hostsShown} now={now} selected={selectedHost} onOpen={onOpenHost} />
+                <HostTree hosts={hostsShown} now={now} selected={selectedHost} onOpen={onOpenHost} open={(n) => open(n, true)} onFold={fold} />
               </Node>
             </ul>
           )}
@@ -325,8 +348,15 @@ export function Tree(props: Props) {
 // HostTree is what the host terminals' node holds: each tmux session with
 // its panes, then the other terminals, as tree items. They show no state:
 // hataori judges none.
-function HostTree(props: { hosts: HostTerminal[]; now: number; selected: string | null; onOpen: (device: string) => void }) {
-  const { hosts, now, selected, onOpen } = props;
+function HostTree(props: {
+  hosts: HostTerminal[];
+  now: number;
+  selected: string | null;
+  onOpen: (device: string) => void;
+  open: (node: string) => boolean;
+  onFold: (node: string, folded: boolean) => void;
+}) {
+  const { hosts, now, selected, onOpen, open, onFold } = props;
   const sessions = new Map<string, HostTerminal[]>();
   for (const h of hosts) {
     if (!h.tmux) continue;
@@ -335,27 +365,45 @@ function HostTree(props: { hosts: HostTerminal[]; now: number; selected: string 
     sessions.set(h.tmux.session, list);
   }
   const others = hosts.filter((h) => !h.tmux);
-  const group = (item: string, label: string, list: HostTerminal[], attrs: Record<string, string>) => (
-    <li
-      key={item}
-      className="subnode"
-      role="treeitem"
-      aria-level={2}
-      aria-expanded={true}
-      aria-label={label}
-      tabIndex={0}
-      data-tree-item={item}
-      data-parent={hostNode}
-      {...attrs}
-    >
-      <div className="subnode-head">{label}</div>
-      <ul role="group">
-        {list.map((h) => (
-          <HostRow key={hostID(h)} h={h} now={now} selected={selected === hostID(h)} onOpen={onOpen} parent={item} level={3} />
-        ))}
-      </ul>
-    </li>
-  );
+  const group = (item: string, label: string, list: HostTerminal[], attrs: Record<string, string>) => {
+    const isOpen = open(item);
+    return (
+      <li
+        key={item}
+        className="subnode"
+        role="treeitem"
+        aria-level={2}
+        aria-expanded={isOpen}
+        aria-label={label}
+        tabIndex={-1}
+        data-tree-item={item}
+        data-node={item}
+        data-open={isOpen ? "yes" : "no"}
+        data-parent={hostNode}
+        {...attrs}
+        onKeyDown={(e) => {
+          if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+            e.preventDefault();
+            onFold(item, isOpen);
+          }
+        }}
+      >
+        <div className="subnode-head" onClick={() => onFold(item, isOpen)}>
+          <span className="fold-mark" aria-hidden="true">
+            {t(isOpen ? "tree.openMark" : "tree.foldedMark")}
+          </span>
+          {label}
+        </div>
+        {isOpen && (
+          <ul role="group">
+            {list.map((h) => (
+              <HostRow key={hostID(h)} h={h} now={now} selected={selected === hostID(h)} onOpen={onOpen} parent={item} level={3} />
+            ))}
+          </ul>
+        )}
+      </li>
+    );
+  };
   return (
     <>
       {[...sessions].map(([session, list]) => group(`host-session:${session}`, t("tree.tmuxSession", { session }), list, { "data-session": session }))}
@@ -383,7 +431,7 @@ function HostRow(props: {
       aria-level={parent ? level : undefined}
       data-tree-item={parent ? `host:${hostID(h)}` : undefined}
       data-parent={parent}
-      tabIndex={0}
+      tabIndex={parent ? -1 : 0}
       aria-selected={selected}
       onClick={() => onOpen(hostID(h))}
       onKeyDown={(e) => {
