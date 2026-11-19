@@ -472,6 +472,24 @@ func TestStartKeyIsPerScope(t *testing.T) {
 	}
 }
 
+// A second start in a conversation that has a thread is refused, under
+// another key too.
+func TestStartInAConversationWithAThread(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{key: "new"})
+	if _, err := f.owner.Start(ctx, control.StartRequest{Key: "k1", Scope: "s", Thread: "t1"}); err != nil {
+		t.Fatal(err)
+	}
+	if id, err := f.owner.Start(ctx, control.StartRequest{Key: "k2", Scope: "s", Thread: "t1"}); err == nil {
+		t.Fatalf("a second Start in s/t1 made %v", id)
+	}
+	var n int
+	f.core.Store.DB.QueryRow(`SELECT count(*) FROM threads WHERE scope = 's' AND key = 't1'`).Scan(&n)
+	if n != 1 {
+		t.Fatalf("%d threads in s/t1", n)
+	}
+}
+
 // An event that names threads of other scopes is not shown to a caller
 // that may not see them.
 func TestEventNamingOtherScopes(t *testing.T) {
