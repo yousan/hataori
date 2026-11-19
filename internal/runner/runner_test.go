@@ -78,7 +78,7 @@ type workDir struct {
 }
 
 func (w workDir) Make(_ context.Context, th control.ThreadID, _ string, placed func(core.Placement) error) (string, error) {
-	target := filepath.Join(w.root, th.Key)
+	target := filepath.Join(w.root, fmt.Sprint(int64(th)))
 	if _, err := os.Lstat(target); err == nil {
 		return "", fmt.Errorf("workspace exists: %s", target)
 	}
@@ -109,7 +109,7 @@ func (w workDir) Make(_ context.Context, th control.ThreadID, _ string, placed f
 }
 
 func (w workDir) Adopt(_ context.Context, th control.ThreadID, p core.Placement) (string, bool, error) {
-	target := filepath.Join(w.root, th.Key)
+	target := filepath.Join(w.root, fmt.Sprint(int64(th)))
 	st, err := os.Lstat(target)
 	if os.IsNotExist(err) {
 		return "", false, nil
@@ -181,7 +181,7 @@ func owner(c *core.Core) control.API {
 	return c.As(control.Caller{From: ownerFrom, Scopes: []string{"s"}, May: all})
 }
 
-var thread = control.ThreadID{Scope: "s", Key: "t1"}
+var thread = control.ThreadID(1)
 
 // killSessions kills every host and agent the runner started under root,
 // and only those, and removes the socket directories that killed hosts

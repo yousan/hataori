@@ -344,22 +344,64 @@ func (a *api) marked(in control.Input) control.Input {
 }
 
 // filterScope checks a read with filter f and returns the one scope f
-// names, or "" for all of the caller's. A filter that names two different
-// scopes matches nothing, and is refused.
-func (a *api) filterScope(name string, f control.Filter) (string, error) {
+// names, or "" for all of the caller's. A filter whose thread is in
+// another scope than the one it names matches nothing, and is refused. A
+// thread or link that does not exist names no scope: the read finds
+// nothing.
+func (a *api) filterScope(ctx context.Context, name string, f control.Filter) (string, error) {
 	scope := f.Scope
-	if scope == "" {
-		scope = f.Thread.Scope
-	}
-	if f.Scope != "" && f.Thread.Scope != "" && f.Scope != f.Thread.Scope {
-		a.c.Log.Warn("control call refused", "op", name, "principal", string(a.caller.Principal), "scope", f.Scope, "thread_scope", f.Thread.Scope)
-		return "", fmt.Errorf("core: %s: filter names scopes %q and %q: %w", name, f.Scope, f.Thread.Scope, ErrForbidden)
+	if f.Thread != 0 {
+		ts, err := a.c.scopeOf(ctx, a.c.Store.DB, f.Thread)
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return "", err
+		}
+		if f.Scope != "" && ts != "" && f.Scope != ts {
+			a.c.Log.Warn("control call refused", "op", name, "principal", string(a.caller.Principal), "scope", f.Scope, "thread_scope", ts)
+			return "", fmt.Errorf("core: %s: filter names scopes %q and %q: %w", name, f.Scope, ts, ErrForbidden)
+		}
+		if scope == "" {
+			scope = ts
+		}
 	}
 	return scope, a.check(control.OpRead, name, scope)
 }
 
+// scopeOf returns the scope of thread id; ErrNotFound when there is no
+// such thread.
+func (c *Core) scopeOf(ctx context.Context, q querier, id control.ThreadID) (string, error) {
+	var scope string
+	err := q.QueryRowContext(ctx, `SELECT scope FROM threads WHERE id = ?`, int64(id)).Scan(&scope)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("core: thread %d: %w", id, ErrNotFound)
+	}
+	if err != nil {
+		return "", fmt.Errorf("core: thread %d: %w", id, err)
+	}
+	return scope, nil
+}
+
+// checkThread checks a call on thread id with check, in the thread's scope,
+// and returns that scope.
+func (a *api) checkThread(ctx context.Context, op control.Ops, name string, id control.ThreadID) (string, error) {
+	scope, err := a.c.scopeOf(ctx, a.c.Store.DB, id)
+	if err != nil {
+		return "", err
+	}
+	return scope, a.check(op, name, scope)
+}
+
+// actThread is checkThread for a call that gives the agent input, or stops
+// it: act in the thread's scope.
+func (a *api) actThread(ctx context.Context, op control.Ops, name string, id control.ThreadID) (string, error) {
+	scope, err := a.c.scopeOf(ctx, a.c.Store.DB, id)
+	if err != nil {
+		return "", err
+	}
+	return scope, a.act(op, name, scope)
+}
+
 func (a *api) Threads(ctx context.Context, f control.Filter) ([]control.ThreadInfo, error) {
-	scope, err := a.filterScope("Threads", f)
+	scope, err := a.filterScope(ctx, "Threads", f)
 	if err != nil {
 		return nil, err
 	}
@@ -375,9 +417,13 @@ func (a *api) Threads(ctx context.Context, f control.Filter) ([]control.ThreadIn
 	for _, s := range scopes {
 		args = append(args, s)
 	}
-	if f.Thread.Key != "" {
-		q += ` AND key = ?`
-		args = append(args, f.Thread.Key)
+	if f.Thread != 0 {
+		q += ` AND id = ?`
+		args = append(args, int64(f.Thread))
+	}
+	if l := f.Link; l != nil {
+		q += ` AND id IN (SELECT thread_id FROM links WHERE client = ? AND channel = ? AND thread = ?)`
+		args = append(args, l.Client, l.Channel, l.Thread)
 	}
 	rows, err := a.c.Store.DB.QueryContext(ctx, q+` ORDER BY id`, args...)
 	if err != nil {
@@ -440,7 +486,7 @@ func (a *api) summary(ctx context.Context, t *control.ThreadInfo) (int64, error)
 	var sid int64
 	err := db.QueryRowContext(ctx, `SELECT s.id, s.agent, s.model, s.effort,
 		(SELECT count(*) FROM turns u JOIN sessions v ON v.id = u.session_id WHERE v.thread_id = s.thread_id)
-		FROM sessions s WHERE s.thread_id = ? ORDER BY s.id DESC LIMIT 1`, t.Number).Scan(&sid, &t.Agent, &t.Model, &t.Effort, &t.Turns)
+		FROM sessions s WHERE s.thread_id = ? ORDER BY s.id DESC LIMIT 1`, int64(t.ID)).Scan(&sid, &t.Agent, &t.Model, &t.Effort, &t.Turns)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("core: thread summary: %w", err)
 	}
@@ -453,7 +499,7 @@ func (a *api) summary(ctx context.Context, t *control.ThreadInfo) (int64, error)
 		day              string
 	)
 	err = db.QueryRowContext(ctx, `SELECT tokens_turn, tokens_today, tokens_day, context_used, context_size FROM threads WHERE id = ?`,
-		t.Number).Scan(&turn, &today, &day, &used, &size)
+		int64(t.ID)).Scan(&turn, &today, &day, &used, &size)
 	if err != nil {
 		return 0, fmt.Errorf("core: thread summary: %w", err)
 	}
@@ -467,8 +513,8 @@ func (a *api) summary(ctx context.Context, t *control.ThreadInfo) (int64, error)
 		t.Context = &control.Context{Used: used.Int64, Size: size.Int64}
 	}
 	var data []byte
-	err = db.QueryRowContext(ctx, `SELECT data FROM events WHERE scope = ? AND thread = ? AND kind = 'turn_ended'
-		ORDER BY pos DESC LIMIT 1`, t.ID.Scope, t.ID.Key).Scan(&data)
+	err = db.QueryRowContext(ctx, `SELECT data FROM events WHERE thread_id = ? AND kind = 'turn_ended'
+		ORDER BY pos DESC LIMIT 1`, int64(t.ID)).Scan(&data)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("core: thread summary: %w", err)
 	}
@@ -479,6 +525,9 @@ func (a *api) summary(ctx context.Context, t *control.ThreadInfo) (int64, error)
 		json.Unmarshal(data, &e)
 		t.Background = e.Background
 	}
+	if t.Links, err = a.c.links(ctx, t.ID); err != nil {
+		return 0, err
+	}
 	if a.caller.NoText {
 		t.Title = "" // a person wrote it
 	} else {
@@ -487,6 +536,24 @@ func (a *api) summary(ctx context.Context, t *control.ThreadInfo) (int64, error)
 		}
 	}
 	return sid, nil
+}
+
+// links returns the thread's links, the first one first; never nil.
+func (c *Core) links(ctx context.Context, id control.ThreadID) ([]control.LinkRef, error) {
+	rows, err := c.Store.DB.QueryContext(ctx, `SELECT client, channel, thread FROM links WHERE thread_id = ? ORDER BY id`, int64(id))
+	if err != nil {
+		return nil, fmt.Errorf("core: links of thread %d: %w", id, err)
+	}
+	defer rows.Close()
+	out := []control.LinkRef{}
+	for rows.Next() {
+		var l control.LinkRef
+		if err := rows.Scan(&l.Client, &l.Channel, &l.Thread); err != nil {
+			return nil, fmt.Errorf("core: links of thread %d: %w", id, err)
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
 }
 
 // hasProcess reports whether a thread in state s may have an agent
@@ -513,7 +580,7 @@ func (c *Core) now() time.Time {
 // two events.
 func (c *Core) lastLine(ctx context.Context, id control.ThreadID) (string, error) {
 	rows, err := c.Store.DB.QueryContext(ctx,
-		`SELECT data FROM events WHERE scope = ? AND thread = ? AND kind = 'text' ORDER BY pos DESC`, id.Scope, id.Key)
+		`SELECT data FROM events WHERE thread_id = ? AND kind = 'text' ORDER BY pos DESC`, int64(id))
 	if err != nil {
 		return "", fmt.Errorf("core: last line: %w", err)
 	}
@@ -548,7 +615,7 @@ func cut(s string, n int) string {
 	return s[:n]
 }
 
-const threadSelect = `SELECT id, scope, key, title, repo, started_by, state, created_at, updated_at FROM threads`
+const threadSelect = `SELECT id, scope, title, repo, started_by, state, created_at, updated_at FROM threads`
 
 func scanThread(row interface{ Scan(...any) error }) (control.ThreadInfo, error) {
 	var (
@@ -556,7 +623,7 @@ func scanThread(row interface{ Scan(...any) error }) (control.ThreadInfo, error)
 		by, state  string
 		created, u int64
 	)
-	if err := row.Scan(&t.Number, &t.ID.Scope, &t.ID.Key, &t.Title, &t.Repo, &by, &state, &created, &u); err != nil {
+	if err := row.Scan(&t.ID, &t.Scope, &t.Title, &t.Repo, &by, &state, &created, &u); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return t, fmt.Errorf("core: thread: %w", ErrNotFound)
 		}
@@ -568,10 +635,10 @@ func scanThread(row interface{ Scan(...any) error }) (control.ThreadInfo, error)
 }
 
 func (a *api) Thread(ctx context.Context, id control.ThreadID, recent, events int) (control.ThreadDetail, error) {
-	if err := a.check(control.OpRead, "Thread", id.Scope); err != nil {
+	if _, err := a.checkThread(ctx, control.OpRead, "Thread", id); err != nil {
 		return control.ThreadDetail{}, err
 	}
-	t, err := scanThread(a.c.Store.DB.QueryRowContext(ctx, threadSelect+` WHERE scope = ? AND key = ?`, id.Scope, id.Key))
+	t, err := scanThread(a.c.Store.DB.QueryRowContext(ctx, threadSelect+` WHERE id = ?`, int64(id)))
 	if err != nil {
 		return control.ThreadDetail{}, err
 	}
@@ -619,9 +686,8 @@ func (c *Core) openRequest(ctx context.Context, q querier, id control.ThreadID) 
 	err := q.QueryRowContext(ctx, `
 		SELECT r.handle, r.approval, r.text, r.choices FROM requests r
 		WHERE r.state = 'open' AND r.session_id = (
-			SELECT s.id FROM sessions s JOIN threads t ON t.id = s.thread_id
-			WHERE t.scope = ? AND t.key = ? ORDER BY s.id DESC LIMIT 1)
-		ORDER BY r.id DESC LIMIT 1`, id.Scope, id.Key).Scan(&r.ID, &approval, &r.Text, &choices)
+			SELECT s.id FROM sessions s WHERE s.thread_id = ? ORDER BY s.id DESC LIMIT 1)
+		ORDER BY r.id DESC LIMIT 1`, int64(id)).Scan(&r.ID, &approval, &r.Text, &choices)
 	if errors.Is(err, sql.ErrNoRows) {
 		return control.Request{}, false, nil
 	}
@@ -647,7 +713,7 @@ func (c *Core) recentText(ctx context.Context, id control.ThreadID, max int) (st
 		return "", nil
 	}
 	rows, err := c.Store.DB.QueryContext(ctx,
-		`SELECT data FROM events WHERE scope = ? AND thread = ? AND kind = 'text' ORDER BY pos DESC`, id.Scope, id.Key)
+		`SELECT data FROM events WHERE thread_id = ? AND kind = 'text' ORDER BY pos DESC`, int64(id))
 	if err != nil {
 		return "", fmt.Errorf("core: recent output: %w", err)
 	}
@@ -683,7 +749,7 @@ func title(prompt string) string {
 
 func (a *api) Start(ctx context.Context, r control.StartRequest) (control.ThreadID, error) {
 	if err := a.act(control.OpStart, "Start", r.Scope); err != nil {
-		return control.ThreadID{}, err
+		return 0, err
 	}
 	// The title is the first line of what the caller wrote, not its mark.
 	name := title(r.Input.Text)
@@ -691,10 +757,10 @@ func (a *api) Start(ctx context.Context, r control.StartRequest) (control.Thread
 	sc, ok := a.c.Scopes[r.Scope]
 	if !ok || !sc.Enabled {
 		a.c.Log.Warn("start refused", "scope", r.Scope, "reason", "scope is not enabled")
-		return control.ThreadID{}, fmt.Errorf("core: start in %q: %w", r.Scope, ErrDisabled)
+		return 0, fmt.Errorf("core: start in %q: %w", r.Scope, ErrDisabled)
 	}
 	if r.Effort != "" && !slices.Contains(control.Efforts, r.Effort) {
-		return control.ThreadID{}, fmt.Errorf("core: start in %q: effort %q: %w", r.Scope, r.Effort, control.ErrUnknownEffort)
+		return 0, fmt.Errorf("core: start in %q: effort %q: %w", r.Scope, r.Effort, control.ErrUnknownEffort)
 	}
 	// The key is per scope, so a caller cannot reach another scope's thread
 	// by reusing its key. Starts with one key run one at a time, so the
@@ -705,47 +771,54 @@ func (a *api) Start(ctx context.Context, r control.StartRequest) (control.Thread
 		return id, err
 	}
 
-	id := control.ThreadID{Scope: r.Scope, Key: r.Thread}
-	if id.Key == "" {
+	// The first link: in the scope's own channel, of the scope's owner.
+	link := control.LinkRef{Client: sc.Owner, Channel: r.Scope, Thread: r.Thread}
+	if r.Thread == "" {
 		owner, ok := a.c.Owners[sc.Owner]
 		if !ok {
-			return control.ThreadID{}, fmt.Errorf("core: start in %q: no owner %q", r.Scope, sc.Owner)
+			return 0, fmt.Errorf("core: start in %q: no owner %q", r.Scope, sc.Owner)
 		}
-		key, err := owner.NewThread(ctx, r.Scope, r.Key, name)
+		l, err := owner.NewThread(ctx, r.Scope, r.Key, name)
 		if err != nil {
-			return control.ThreadID{}, fmt.Errorf("core: start in %q: owner: %w", r.Scope, err)
+			return 0, fmt.Errorf("core: start in %q: owner: %w", r.Scope, err)
 		}
-		id.Key = key
+		if l.Client != sc.Owner || l.Channel != r.Scope || l.Thread == "" {
+			return 0, fmt.Errorf("core: start in %q: owner %q returned a link elsewhere: %s %s %s", r.Scope, sc.Owner, l.Client, l.Channel, l.Thread)
+		}
+		link = l
 	}
 	model := cmp.Or(r.Model, sc.Model, a.c.Model)
 	effort := cmp.Or(r.Effort, sc.Effort, a.c.Effort)
 
-	var sessionID int64
-	dup := false
+	var (
+		id        control.ThreadID
+		sessionID int64
+	)
+	errDup := errors.New("the key was accepted before")
 	err := a.c.Store.Update(ctx, func(tx *store.Tx) error {
-		ref, _ := json.Marshal(id)
-		ok, err := tx.Accept(ctx, inboxKey, ref)
-		if err != nil || !ok {
-			dup = !ok
-			return err
-		}
-		// The table no longer refuses a second thread of one conversation
-		// (design, section 6.2), and a thread is still found by it.
-		var n int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM threads WHERE scope = ? AND key = ?`, id.Scope, id.Key).Scan(&n); err != nil {
-			return fmt.Errorf("core: create thread: %w", err)
-		}
-		if n > 0 {
-			return fmt.Errorf("core: create thread: %v has a thread already", id)
-		}
 		now := time.Now().UnixMilli()
 		res, err := tx.ExecContext(ctx,
 			`INSERT INTO threads (scope, key, title, repo, started_by, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			id.Scope, id.Key, name, r.Repo, string(a.caller.Principal), string(control.Creating), now, now)
+			r.Scope, link.Thread, name, r.Repo, string(a.caller.Principal), string(control.Creating), now, now)
 		if err != nil {
 			return fmt.Errorf("core: create thread: %w", err)
 		}
 		thread, _ := res.LastInsertId()
+		id = control.ThreadID(thread)
+		ref, _ := json.Marshal(id)
+		ok, err := tx.Accept(ctx, inboxKey, ref)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errDup // nothing of this call is kept
+		}
+		// The first link, with the thread. A conversation links to one
+		// thread at most, so a second thread in it is refused here.
+		if _, err := tx.ExecContext(ctx, `INSERT INTO links (thread_id, client, channel, thread, made_by, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			thread, link.Client, link.Channel, link.Thread, string(a.caller.Principal), now); err != nil {
+			return fmt.Errorf("core: create thread: link %s %s %s: %w", link.Client, link.Channel, link.Thread, err)
+		}
 		fi, _ := json.Marshal(FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: r.Key, Text: r.Input.Text})
 		res, err = tx.ExecContext(ctx,
 			`INSERT INTO sessions (thread_id, agent, state, model, effort, first_input, launch, created_at, updated_at)
@@ -761,15 +834,15 @@ func (a *api) Start(ctx context.Context, r control.StartRequest) (control.Thread
 			d["from"] = a.caller.From
 		}
 		data, _ := json.Marshal(d)
-		_, err = tx.Append(ctx, control.Event{Thread: id, Kind: "thread_created", Data: data})
+		_, err = tx.Append(ctx, control.Event{Thread: id, Scope: r.Scope, Kind: "thread_created", Data: data})
 		return err
 	})
-	if err != nil {
-		return control.ThreadID{}, err
-	}
-	if dup { // a concurrent call with the same key won
+	if errors.Is(err, errDup) { // a concurrent call with the same key won
 		id, _, err := a.c.started(ctx, inboxKey)
 		return id, err
+	}
+	if err != nil {
+		return 0, err
 	}
 
 	if err := a.c.launch(ctx, Launch{Session: sessionID, Thread: id, Agent: a.c.Agent,
@@ -786,8 +859,17 @@ func (c *Core) launch(ctx context.Context, l Launch, repo string) error {
 	record := func(f FirstInput) error {
 		f.Principal, f.From, f.Key, f.Text, f.Context = l.Principal, l.From, l.Key, l.Input.Text, l.Context
 		fi, _ := json.Marshal(f)
-		_, err := c.Store.DB.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, string(fi), l.Session)
-		return err
+		return c.Store.Update(ctx, func(tx *store.Tx) error {
+			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, string(fi), l.Session); err != nil {
+				return err
+			}
+			if f.Dir == "" {
+				return nil
+			}
+			// Where the thread's workspace is, read from here on.
+			_, err := tx.ExecContext(ctx, `UPDATE threads SET workspace = ? WHERE id = ?`, f.Dir, int64(l.Thread))
+			return err
+		})
 	}
 	if l.Dir == "" && l.placed != nil {
 		// A Make before the daemon died may have put it in place.
@@ -835,7 +917,7 @@ func (c *Core) resume(ctx context.Context, sid int64, principal control.Principa
 // never launched. Input and answers for running agents are handed over by
 // the runner when it reconnects. Call it after the runner has reconnected.
 func (c *Core) Recover(ctx context.Context) error {
-	rows, err := c.Store.DB.QueryContext(ctx, `SELECT s.id, s.agent, s.model, s.effort, s.first_input, t.scope, t.key, t.repo
+	rows, err := c.Store.DB.QueryContext(ctx, `SELECT s.id, s.agent, s.model, s.effort, s.first_input, t.id, t.repo
 		FROM sessions s JOIN threads t ON t.id = s.thread_id WHERE s.state = ? AND s.launch IN (1, 2) ORDER BY s.id`, string(control.Creating))
 	if err != nil {
 		return fmt.Errorf("core: recover: %w", err)
@@ -849,7 +931,7 @@ func (c *Core) Recover(ctx context.Context) error {
 	for rows.Next() {
 		var x todo
 		var fi string
-		if err := rows.Scan(&x.l.Session, &x.l.Agent, &x.l.Model, &x.l.Effort, &fi, &x.l.Thread.Scope, &x.l.Thread.Key, &x.repo); err != nil {
+		if err := rows.Scan(&x.l.Session, &x.l.Agent, &x.l.Model, &x.l.Effort, &fi, &x.l.Thread, &x.repo); err != nil {
 			rows.Close()
 			return fmt.Errorf("core: recover: %w", err)
 		}
@@ -914,7 +996,7 @@ func (a *api) Limits(ctx context.Context) ([]control.AgentLimits, error) {
 }
 
 func (a *api) Workspace(ctx context.Context, id control.ThreadID) (control.WorkspaceState, error) {
-	if err := a.check(control.OpRead, "Workspace", id.Scope); err != nil {
+	if _, err := a.checkThread(ctx, control.OpRead, "Workspace", id); err != nil {
 		return control.WorkspaceState{}, err
 	}
 	dir, err := a.c.workspaceDir(ctx, id)
@@ -936,7 +1018,7 @@ const terminalSessionCheck = 500 * time.Millisecond
 // thread gets a new session, the stream goes on with it, starting with a
 // chunk marked Reset; it ends when the new session has no terminal.
 func (a *api) Terminal(ctx context.Context, id control.ThreadID, run string, after uint64) (<-chan control.TerminalChunk, error) {
-	if err := a.check(control.OpRead, "Terminal", id.Scope); err != nil {
+	if _, err := a.checkThread(ctx, control.OpRead, "Terminal", id); err != nil {
 		return nil, err
 	}
 	sid, _, err := a.c.current(ctx, a.c.Store.DB, id)
@@ -984,74 +1066,52 @@ func (a *api) Terminal(ctx context.Context, id control.ThreadID, run string, aft
 	return out, nil
 }
 
-// workspaceDir is the directory of the thread's workspace, as its newest
-// session that knows one recorded it: in its first input while it starts,
-// in its spec once its agent was launched.
+// workspaceDir is the directory of the thread's workspace, as stored with
+// the thread. It is never computed from the thread's ids: a thread made
+// before thread numbers keeps the directory it had.
 func (c *Core) workspaceDir(ctx context.Context, id control.ThreadID) (string, error) {
-	var n int
-	if err := c.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM threads WHERE scope = ? AND key = ?`, id.Scope, id.Key).Scan(&n); err != nil {
-		return "", fmt.Errorf("core: thread %v: %w", id, err)
+	var dir string
+	err := c.Store.DB.QueryRowContext(ctx, `SELECT workspace FROM threads WHERE id = ?`, int64(id)).Scan(&dir)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("core: thread %d: %w", id, ErrNotFound)
 	}
-	if n == 0 {
-		return "", fmt.Errorf("core: thread %v: %w", id, ErrNotFound)
-	}
-	rows, err := c.Store.DB.QueryContext(ctx, `
-		SELECT s.id, s.first_input, s.spec FROM sessions s JOIN threads t ON t.id = s.thread_id
-		WHERE t.scope = ? AND t.key = ? ORDER BY s.id DESC`, id.Scope, id.Key)
 	if err != nil {
-		return "", fmt.Errorf("core: thread %v: %w", id, err)
+		return "", fmt.Errorf("core: thread %d: %w", id, err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var (
-			sid       int64
-			fi, spec  string
-			first     FirstInput
-			specified struct {
-				Spec struct {
-					Dir string `json:"dir"`
-				} `json:"spec"`
-			}
-		)
-		if err := rows.Scan(&sid, &fi, &spec); err != nil {
-			return "", fmt.Errorf("core: thread %v: %w", id, err)
-		}
-		if fi != "" {
-			if err := json.Unmarshal([]byte(fi), &first); err != nil {
-				return "", fmt.Errorf("core: session %d: first input: %w", sid, err)
-			}
-		}
-		if first.Dir != "" {
-			return first.Dir, nil
-		}
-		if spec != "" {
-			if err := json.Unmarshal([]byte(spec), &specified); err != nil {
-				return "", fmt.Errorf("core: session %d: spec: %w", sid, err)
-			}
-		}
-		if specified.Spec.Dir != "" {
-			return specified.Spec.Dir, nil
-		}
+	if dir == "" {
+		return "", fmt.Errorf("core: thread %d has no workspace yet", id)
 	}
-	if err := rows.Err(); err != nil {
-		return "", fmt.Errorf("core: thread %v: %w", id, err)
-	}
-	return "", fmt.Errorf("core: thread %v has no workspace yet", id)
+	return dir, nil
+}
+
+// WorkspaceDir is the directory of the thread's workspace, as stored with
+// the thread; an error when it has none yet.
+func (c *Core) WorkspaceDir(ctx context.Context, id control.ThreadID) (string, error) {
+	return c.workspaceDir(ctx, id)
 }
 
 // started returns the thread a Start key created, if it was used before.
+// A key accepted before thread numbers holds the thread's scope and key.
 func (c *Core) started(ctx context.Context, inboxKey string) (control.ThreadID, bool, error) {
 	var data []byte
 	err := c.Store.DB.QueryRowContext(ctx, `SELECT data FROM inbox WHERE key = ?`, inboxKey).Scan(&data)
 	if errors.Is(err, sql.ErrNoRows) {
-		return control.ThreadID{}, false, nil
+		return 0, false, nil
 	}
 	if err != nil {
-		return control.ThreadID{}, false, fmt.Errorf("core: inbox: %w", err)
+		return 0, false, fmt.Errorf("core: inbox: %w", err)
 	}
 	var id control.ThreadID
-	if err := json.Unmarshal(data, &id); err != nil {
-		return id, false, fmt.Errorf("core: inbox: %w", err)
+	if json.Unmarshal(data, &id) == nil {
+		return id, true, nil
+	}
+	var old struct{ Scope, Key string }
+	if err := json.Unmarshal(data, &old); err != nil {
+		return 0, false, fmt.Errorf("core: inbox: %w", err)
+	}
+	err = c.Store.DB.QueryRowContext(ctx, `SELECT id FROM threads WHERE scope = ? AND key = ? ORDER BY id LIMIT 1`, old.Scope, old.Key).Scan(&id)
+	if err != nil {
+		return 0, false, fmt.Errorf("core: inbox: the thread of %q: %w", inboxKey, err)
 	}
 	return id, true, nil
 }
@@ -1063,19 +1123,19 @@ func (c *Core) current(ctx context.Context, q querier, id control.ThreadID) (int
 		state string
 	)
 	err := q.QueryRowContext(ctx, `
-		SELECT s.id, s.state FROM sessions s JOIN threads t ON t.id = s.thread_id
-		WHERE t.scope = ? AND t.key = ? ORDER BY s.id DESC LIMIT 1`, id.Scope, id.Key).Scan(&sid, &state)
+		SELECT s.id, s.state FROM sessions s WHERE s.thread_id = ? ORDER BY s.id DESC LIMIT 1`, int64(id)).Scan(&sid, &state)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, "", fmt.Errorf("core: thread %v: %w", id, ErrNotFound)
+		return 0, "", fmt.Errorf("core: thread %d: %w", id, ErrNotFound)
 	}
 	if err != nil {
-		return 0, "", fmt.Errorf("core: thread %v: %w", id, err)
+		return 0, "", fmt.Errorf("core: thread %d: %w", id, err)
 	}
 	return sid, control.State(state), nil
 }
 
 func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in control.Input, busy control.Busy) error {
-	if err := a.act(control.OpSend, "Send", id.Scope); err != nil {
+	scope, err := a.actThread(ctx, control.OpSend, "Send", id)
+	if err != nil {
 		return err
 	}
 	asked := busy
@@ -1096,7 +1156,7 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 	)
 	// The state is read in the write transaction, so it cannot change
 	// between the Busy decision and the input.
-	err := a.c.Store.Update(ctx, func(tx *store.Tx) error {
+	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
 		var state control.State
 		var err error
 		sid, state, err = a.c.current(ctx, tx, id)
@@ -1109,7 +1169,7 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 		}
 		if key != "" {
 			data, _ := json.Marshal(map[string]any{"thread": id, "session": sid, "text": in.Text})
-			ok, err := tx.Accept(ctx, "send:"+id.Scope+"\x00"+key, data)
+			ok, err := tx.Accept(ctx, "send:"+scope+"\x00"+key, data)
 			if err != nil || !ok {
 				return err // a repeated key is ignored, whatever Busy says
 			}
@@ -1118,7 +1178,7 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 			switch busy {
 			case control.Refuse:
 				if asked != control.Refuse {
-					a.c.Log.Warn("control call refused", "op", "Send", "principal", string(a.caller.Principal), "scope", id.Scope,
+					a.c.Log.Warn("control call refused", "op", "Send", "principal", string(a.caller.Principal), "scope", scope,
 						"reason", "the caller may not deliver into or interrupt a turn")
 				}
 				return fmt.Errorf("core: send to %v: %w", id, ErrBusy)
@@ -1187,15 +1247,15 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 		return err
 	}
 	var (
-		id       control.ThreadID
+		scope    string
 		sid      int64
 		agentReq string
 		state    string
 	)
 	err := a.c.Store.DB.QueryRowContext(ctx, `
-		SELECT t.scope, t.key, r.session_id, r.request, r.state FROM requests r
+		SELECT t.scope, r.session_id, r.request, r.state FROM requests r
 		JOIN sessions s ON s.id = r.session_id JOIN threads t ON t.id = s.thread_id
-		WHERE r.handle = ?`, string(req)).Scan(&id.Scope, &id.Key, &sid, &agentReq, &state)
+		WHERE r.handle = ?`, string(req)).Scan(&scope, &sid, &agentReq, &state)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -1203,7 +1263,7 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 		a.c.Log.Warn("control call refused", "op", "Answer", "principal", string(a.caller.Principal), "request", string(req), "reason", err)
 		return fmt.Errorf("core: answer %q: %w", req, err)
 	}
-	if err := a.act(control.OpAnswer, "Answer", id.Scope); err != nil {
+	if err := a.act(control.OpAnswer, "Answer", scope); err != nil {
 		return err
 	}
 	if state != session.RequestOpen {
@@ -1230,7 +1290,7 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 }
 
 func (a *api) Stop(ctx context.Context, id control.ThreadID) error {
-	if err := a.act(control.OpStop, "Stop", id.Scope); err != nil {
+	if _, err := a.actThread(ctx, control.OpStop, "Stop", id); err != nil {
 		return err
 	}
 	sid, state, err := a.c.current(ctx, a.c.Store.DB, id)
@@ -1244,7 +1304,7 @@ func (a *api) Stop(ctx context.Context, id control.ThreadID) error {
 // scope its data lists under "scopes" (an event about threads in several
 // scopes, such as the end of a login outage).
 func (a *api) mayRead(e control.Event) bool {
-	if !slices.Contains(a.caller.Scopes, e.Thread.Scope) {
+	if !slices.Contains(a.caller.Scopes, e.Scope) {
 		return false
 	}
 	var d struct {
@@ -1271,7 +1331,7 @@ func (a *api) readable(e control.Event) control.Event {
 }
 
 func (a *api) Events(ctx context.Context, f control.Filter, after uint64) (<-chan control.Event, error) {
-	if _, err := a.filterScope("Events", f); err != nil {
+	if _, err := a.filterScope(ctx, "Events", f); err != nil {
 		return nil, err
 	}
 	in := make(chan control.Event)
@@ -1387,18 +1447,19 @@ const attachTimeout = 90 * time.Second
 // anything changes. An asleep thread is woken with no input first.
 func (a *api) AttachTerminal(ctx context.Context, id control.ThreadID) (control.Attachment, error) {
 	const name = "AttachTerminal"
-	if err := a.check(control.OpAttach, name, id.Scope); err != nil {
+	scope, err := a.checkThread(ctx, control.OpAttach, name, id)
+	if err != nil {
 		return control.Attachment{}, err
 	}
 	if owner := a.c.People.Owner(); owner == "" || a.caller.Principal != control.Principal(owner) {
-		return control.Attachment{}, a.refused(name, id.Scope, "only the owner may attach a terminal")
+		return control.Attachment{}, a.refused(name, scope, "only the owner may attach a terminal")
 	}
 	var (
 		sid    int64
-		number int64
+		number = int64(id)
 		wake   bool
 	)
-	err := a.c.Store.Update(ctx, func(tx *store.Tx) error {
+	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
 		wake = false
 		var (
 			state control.State
@@ -1406,9 +1467,6 @@ func (a *api) AttachTerminal(ctx context.Context, id control.ThreadID) (control.
 		)
 		if sid, state, err = a.c.current(ctx, tx, id); err != nil {
 			return err
-		}
-		if err := tx.QueryRowContext(ctx, `SELECT id FROM threads WHERE scope = ? AND key = ?`, id.Scope, id.Key).Scan(&number); err != nil {
-			return fmt.Errorf("core: thread %v: %w", id, err)
 		}
 		switch state {
 		case control.Closed, control.Removed:
@@ -1454,6 +1512,6 @@ func (a *api) AttachTerminal(ctx context.Context, id control.ThreadID) (control.
 	if err != nil {
 		return control.Attachment{}, fmt.Errorf("core: attach to thread %d: %w", number, err)
 	}
-	a.c.Log.Info("a terminal attaches", "scope", id.Scope, "thread", number, "person", string(a.caller.Principal))
+	a.c.Log.Info("a terminal attaches", "scope", scope, "thread", number, "person", string(a.caller.Principal))
 	return control.Attachment{Socket: sock, Number: number}, nil
 }

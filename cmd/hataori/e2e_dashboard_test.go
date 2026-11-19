@@ -78,8 +78,7 @@ func TestDashboardFollowsTurnsAcrossReconnectAndRestart(t *testing.T) {
 			}
 			for _, event := range lines(t, out) {
 				pos, ok := event["pos"].(float64)
-				thread, _ := event["thread"].(map[string]any)
-				if ok && uint64(pos) > last && event["kind"] == kind && thread["scope"] == id.Scope && thread["key"] == id.Key {
+				if ok && uint64(pos) > last && event["kind"] == kind && event["thread"] == float64(id) {
 					return true
 				}
 			}

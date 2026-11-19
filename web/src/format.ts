@@ -32,7 +32,7 @@ export function matches(x: ThreadInfo, q: string): boolean {
   const f = q.trim().toLowerCase();
   if (f === "") return true;
   if ((x.title ?? "").toLowerCase().includes(f)) return true;
-  if (String(x.number) === f.replace(/^#/, "")) return true;
+  if (String(x.id) === f.replace(/^#/, "")) return true;
   return !!x.terminal && x.terminal.toLowerCase().includes(f);
 }
 

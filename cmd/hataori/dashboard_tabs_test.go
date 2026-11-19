@@ -87,7 +87,7 @@ func TestDashboardTabsAndPanes(t *testing.T) {
 	eventually(t, "the threads to settle", 20*time.Second, func() bool {
 		return state(asking).State == control.Waiting && state(idle).State == control.Idle && state(running).State == control.Running
 	})
-	nF, nQ, nI, nR := state(failing).Number, state(asking).Number, state(idle).Number, state(running).Number
+	nF, nQ, nI, nR := int64(state(failing).ID), int64(state(asking).ID), int64(state(idle).ID), int64(state(running).ID)
 	tab := func(n int64) string { return fmt.Sprintf("thread:%d", n) }
 	row := func(n int64) string { return fmt.Sprintf(`[data-section=threads] .row[data-thread="%d"]`, n) }
 

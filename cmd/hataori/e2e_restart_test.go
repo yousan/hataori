@@ -262,7 +262,7 @@ func TestIdlePeriodEndsTheAgentAndTheNextPostResumes(t *testing.T) {
 	pid := p.agentPID(t)
 	_, before := p.agentSession(t)
 	eventually(t, "the agent to be put to sleep", 15*time.Second, func() bool { return !alive(pid) })
-	_, out, _ := cli(t, "thread", "--root", p.root, th.Thread)
+	_, out, _ := cli(t, "thread", "--root", p.root, numberOf(t, p.root, th))
 	if !strings.Contains(out, `"state":"asleep"`) {
 		t.Fatalf("thread after the idle period: %s", out)
 	}
@@ -319,7 +319,7 @@ func TestStopEndsARunningToolWithinTenSeconds(t *testing.T) {
 	}
 	eventually(t, "the tool's process in the session's group", 10*time.Second, func() bool { return len(others()) > 0 })
 	start := time.Now()
-	if code, _, errOut := cli(t, "stop", "--root", p.root, th.Thread); code != 0 {
+	if code, _, errOut := cli(t, "stop", "--root", p.root, numberOf(t, p.root, th)); code != 0 {
 		t.Fatalf("stop: exit %d, %s", code, errOut)
 	}
 	eventually(t, "the end of the turn", 10*time.Second, func() bool { return len(p.events(t, "turn_ended", th)) == 1 })

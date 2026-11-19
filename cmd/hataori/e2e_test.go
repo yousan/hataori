@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -137,18 +138,41 @@ func (r *chatRoot) posted(t *testing.T, conv surface.Conversation, text string) 
 	return got
 }
 
+// numberOf returns the number of the thread linked to conv, as `hataori
+// threads` prints it, or "" when none is.
+func numberOf(t *testing.T, root string, conv surface.Conversation) string {
+	t.Helper()
+	_, out, _ := cli(t, "threads", "--root", root)
+	for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
+		var x struct {
+			Thread int64
+			Links  []struct{ Channel, Thread string }
+		}
+		if json.Unmarshal([]byte(l), &x) != nil {
+			continue
+		}
+		for _, k := range x.Links {
+			if k.Channel == conv.Channel && k.Thread == conv.Thread {
+				return strconv.FormatInt(x.Thread, 10)
+			}
+		}
+	}
+	return ""
+}
+
 // events returns the instance's events, as `hataori events` prints them.
 func (r *chatRoot) events(t *testing.T, kind string, thread surface.Conversation) []map[string]any {
 	t.Helper()
+	n := numberOf(t, r.root, thread)
 	_, out, _ := cli(t, "events", "--root", r.root)
 	var got []map[string]any
 	for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
 		var e struct {
 			Kind   string
-			Thread struct{ Scope, Key string }
+			Thread int64
 			Data   map[string]any
 		}
-		if json.Unmarshal([]byte(l), &e) == nil && e.Kind == kind && e.Thread.Key == thread.Thread {
+		if json.Unmarshal([]byte(l), &e) == nil && e.Kind == kind && n != "" && strconv.FormatInt(e.Thread, 10) == n {
 			got = append(got, e.Data)
 		}
 	}

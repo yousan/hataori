@@ -53,7 +53,7 @@ export function NarrowList({ threads, attention, now, onOpen, hosts, onOpenHost,
   const rows = (list: ThreadInfo[], why: boolean, label: string) => (
     <ul role="listbox" aria-label={label}>
       {list.map((x) => (
-        <Row key={x.number} x={x} attention={attention.get(x.number)} why={why} now={now} selected={false} onSelect={onOpen} />
+        <Row key={x.id} x={x} attention={attention.get(x.id)} why={why} now={now} selected={false} onSelect={onOpen} />
       ))}
     </ul>
   );
@@ -119,12 +119,12 @@ interface ThreadProps {
 // terminal or its rebuilt output, then the details panel, and a way back.
 export function NarrowThread({ x, attention, workspace, subscribe, opens, onBack }: ThreadProps) {
   return (
-    <div className="narrow-thread" data-narrow-thread={x.number}>
+    <div className="narrow-thread" data-narrow-thread={x.id}>
       <div className="narrow-bar">
         <button type="button" className="narrow-back" onClick={onBack}>
           {t("narrow.back")}
         </button>
-        <h2 className="narrow-title">{t("narrow.thread", { n: x.number, title: x.title ?? "" })}</h2>
+        <h2 className="narrow-title">{t("narrow.thread", { n: x.id, title: x.title ?? "" })}</h2>
       </div>
       {attention && <Waiting a={attention} />}
       <div className="narrow-pane">

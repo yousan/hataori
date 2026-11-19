@@ -5,14 +5,20 @@ export type State = "creating" | "idle" | "running" | "waiting" | "asleep" | "cl
 
 export const states: readonly State[] = ["creating", "idle", "running", "waiting", "asleep", "closed", "removed", "failed"];
 
-export interface ThreadID {
-  scope: string;
-  key: string;
+// ThreadID is a thread's number (protocol 3.0).
+export type ThreadID = number;
+
+// LinkRef is a conversation a thread is shown in.
+export interface LinkRef {
+  client: string;
+  channel: string;
+  thread: string;
 }
 
 export interface ThreadInfo {
   id: ThreadID;
-  number: number;
+  scope: string;
+  links: LinkRef[];
   title?: string; // left out when empty, and for a caller that may not read text (protocol 2.0)
   repo: string;
   state: State;
@@ -39,7 +45,8 @@ export interface Request {
 
 export interface Event {
   pos: number;
-  thread: ThreadID;
+  thread?: ThreadID; // absent for an event of no thread
+  scope?: string;
   time: string;
   kind: string;
   data?: { [field: string]: unknown };
@@ -81,7 +88,7 @@ export function threads(): Promise<ThreadInfo[]> {
 }
 
 export function thread(id: ThreadID, events: number): Promise<ThreadDetail> {
-  const q = new URLSearchParams({ scope: id.scope, key: id.key, recent: "0", events: String(events) });
+  const q = new URLSearchParams({ thread: String(id), recent: "0", events: String(events) });
   return get<ThreadDetail>(`/api/thread?${q}`);
 }
 
@@ -139,7 +146,7 @@ export interface WorkspaceState {
 // workspace that cannot be read, is an error: the page shows no numbers
 // for it rather than zeros.
 export async function workspace(id: ThreadID): Promise<WorkspaceState> {
-  return get<WorkspaceState>(`/api/workspace?${new URLSearchParams({ scope: id.scope, key: id.key })}`);
+  return get<WorkspaceState>(`/api/workspace?${new URLSearchParams({ thread: String(id) })}`);
 }
 
 // TerminalChunk is one message of a terminal stream (docs/protocol.md).
@@ -153,7 +160,7 @@ export interface TerminalChunk {
 }
 
 export function terminalPath(id: ThreadID): string {
-  return `/api/terminal?${new URLSearchParams({ scope: id.scope, key: id.key })}`;
+  return `/api/terminal?${new URLSearchParams({ thread: String(id) })}`;
 }
 
 // hasTerminal reports whether a thread's session has a terminal stream:
@@ -168,6 +175,6 @@ export async function hasTerminal(id: ThreadID): Promise<boolean> {
   return true;
 }
 
-export function sameThread(a: ThreadID, b: ThreadID): boolean {
-  return a.scope === b.scope && a.key === b.key;
+export function sameThread(a: ThreadID | undefined, b: ThreadID): boolean {
+  return a === b;
 }

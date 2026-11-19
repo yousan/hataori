@@ -1408,6 +1408,7 @@ type ThreadDetail struct {
 type StartRequest struct {
 	Key    string // safe to repeat: the same key starts nothing twice
 	Scope  string // from the config; for chat, the scope's own channel
+	Thread string // the first link's conversation in the scope's own channel, of the scope's owner; empty to ask the owner
 	Repo   string
 	Input  Input
 	Model  string

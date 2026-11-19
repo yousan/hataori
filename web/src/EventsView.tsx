@@ -15,7 +15,7 @@ export function EventsView(props: { x: ThreadInfo; subscribe: (f: (e: Event) => 
   const { x, subscribe, opens } = props;
   const { events } = useThreadEvents(x.id, subscribe, opens, options);
   return (
-    <ol className="events-view" data-events={x.number}>
+    <ol className="events-view" data-events={x.id}>
       {events.map((e) => (
         <li key={e.pos} className={`ev ev-${e.kind}`} data-kind={e.kind} data-pos={e.pos}>
           <time className="ev-time" dateTime={e.time}>

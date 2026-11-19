@@ -22,7 +22,6 @@ import (
 	"github.com/yousan/hataori/internal/runner"
 	"github.com/yousan/hataori/internal/surface"
 	fakesurface "github.com/yousan/hataori/internal/surface/fake"
-	"github.com/yousan/hataori/internal/workspace"
 )
 
 // TestRealClaudeCode checks phase 1 against the real Claude Code CLI: the
@@ -165,7 +164,7 @@ func TestRealClaudeCode(t *testing.T) {
 		p.in(th, "Run this Bash command in the foreground, with a timeout of 300000 ms: "+
 			"python3 -c 'import time; time.sleep(120)'. Then reply with just: slept")
 		bash(t, tools)
-		if code, _, errOut := cli(t, "stop", "--root", p.root, th.Thread); code != 0 {
+		if code, _, errOut := cli(t, "stop", "--root", p.root, numberOf(t, p.root, th)); code != 0 {
 			t.Fatalf("stop: exit %d, %s", code, errOut)
 		}
 		var ended []realEvent
@@ -227,7 +226,8 @@ func TestRealClaudeCode(t *testing.T) {
 		// The daemon is down: its events are read from the store.
 		stored := func(kind string) int {
 			var n int
-			p.db(t).QueryRow(`SELECT count(*) FROM events WHERE thread = ? AND kind = ?`, th.Thread, kind).Scan(&n)
+			p.db(t).QueryRow(`SELECT count(*) FROM events
+				WHERE thread_id = (SELECT thread_id FROM links WHERE channel = ? AND thread = ?) AND kind = ?`, th.Channel, th.Thread, kind).Scan(&n)
 			return n
 		}
 		if stored("tool_ended") != toolsEnded || stored("turn_ended") != before {
@@ -293,7 +293,10 @@ func TestRealClaudeCode(t *testing.T) {
 			t.Skip("no thread was opened")
 		}
 		cmd := exec.Command("git", "status", "--ignored", "--porcelain")
-		cmd.Dir = workspace.Path(p.root, remoteSurface, th.Channel, th.Thread)
+		var dir string
+		p.db(t).QueryRow(`SELECT t.workspace FROM threads t JOIN links l ON l.thread_id = t.id WHERE l.channel = ? AND l.thread = ?`,
+			th.Channel, th.Thread).Scan(&dir)
+		cmd.Dir = dir
 		out, err := cmd.Output()
 		if err != nil {
 			t.Fatalf("git status: %v", err)
@@ -315,7 +318,8 @@ func (p *procRoot) dump(t *testing.T, conv surface.Conversation) {
 	if conv.Thread == "" {
 		return
 	}
-	rows, err := p.db(t).Query(`SELECT time, kind, data FROM events WHERE thread = ? ORDER BY pos`, conv.Thread)
+	rows, err := p.db(t).Query(`SELECT time, kind, data FROM events
+		WHERE thread_id = (SELECT thread_id FROM links WHERE channel = ? AND thread = ?) ORDER BY pos`, conv.Channel, conv.Thread)
 	if err == nil {
 		for rows.Next() {
 			var at int64
@@ -405,16 +409,17 @@ type realEvent struct {
 
 func (p *procRoot) list(t *testing.T, kind string, conv surface.Conversation) []realEvent {
 	t.Helper()
+	n := numberOf(t, p.root, conv)
 	_, out, _ := cli(t, "events", "--root", p.root)
 	var got []realEvent
 	for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
 		var e struct {
 			Time   time.Time
 			Kind   string
-			Thread struct{ Scope, Key string }
+			Thread int64
 			Data   map[string]any
 		}
-		if json.Unmarshal([]byte(l), &e) == nil && e.Kind == kind && e.Thread.Key == conv.Thread {
+		if json.Unmarshal([]byte(l), &e) == nil && e.Kind == kind && n != "" && strconv.FormatInt(e.Thread, 10) == n {
 			got = append(got, realEvent{Time: e.Time, Data: e.Data})
 		}
 	}

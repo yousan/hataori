@@ -19,12 +19,12 @@ import (
 // caller may see.
 //
 //	GET /api/threads                          [ThreadInfo]
-//	GET /api/thread?scope=S&key=K[&recent=N][&events=N]   ThreadDetail
+//	GET /api/thread?thread=N[&recent=N][&events=N]   ThreadDetail
 //	GET /api/events[?after=N]                 a stream of Event (Server-Sent Events)
-//	GET /api/terminal?scope=S&key=K           a stream of TerminalChunk (Server-Sent Events)
+//	GET /api/terminal?thread=N                a stream of TerminalChunk (Server-Sent Events)
 //	GET /api/hostscreen?pane=P                a stream of a tmux pane's screen (Server-Sent Events)
 //	GET /api/limits                           [AgentLimits]
-//	GET /api/workspace?scope=S&key=K          WorkspaceState
+//	GET /api/workspace?thread=N               WorkspaceState
 //	GET /api/hostterminals                    [HostTerminal]
 //
 // The event stream sends each event as one message whose id is the event's
@@ -106,10 +106,9 @@ func (s *Server) limits(w http.ResponseWriter, r *http.Request) {
 const workspaceTimeout = 10 * time.Second
 
 func (s *Server) workspace(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	id := control.ThreadID{Scope: q.Get("scope"), Key: q.Get("key")}
-	if id.Scope == "" || id.Key == "" {
-		http.Error(w, "scope and key are required", http.StatusBadRequest)
+	id, err := threadParam(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), workspaceTimeout)
@@ -121,7 +120,7 @@ func (s *Server) workspace(w http.ResponseWriter, r *http.Request) {
 		// scopes cannot be told from no thread.
 		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 	case err != nil:
-		s.Log.Warn("dashboard workspace", "scope", id.Scope, "key", id.Key, "err", err)
+		s.Log.Warn("dashboard workspace", "thread", int64(id), "err", err)
 		http.Error(w, "the workspace cannot be read", http.StatusInternalServerError)
 	default:
 		writeJSON(w, st)
@@ -199,11 +198,19 @@ func count(r *http.Request, name string, def, max int) (int, error) {
 	return n, nil
 }
 
+// threadParam is the thread a route names: ?thread=N, its number.
+func threadParam(r *http.Request) (control.ThreadID, error) {
+	n, err := strconv.ParseInt(r.URL.Query().Get("thread"), 10, 64)
+	if err != nil || n <= 0 {
+		return 0, errors.New("thread is required: the thread's number")
+	}
+	return control.ThreadID(n), nil
+}
+
 func (s *Server) thread(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	id := control.ThreadID{Scope: q.Get("scope"), Key: q.Get("key")}
-	if id.Scope == "" || id.Key == "" {
-		http.Error(w, "scope and key are required", http.StatusBadRequest)
+	id, err := threadParam(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	recent, err := count(r, "recent", defaultRecent, maxRecent)

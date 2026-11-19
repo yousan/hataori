@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -128,14 +129,14 @@ func cases(t *testing.T, c *core.Core, api control.API) []string {
 	ths, err := api.Threads(ctx, control.Filter{})
 	var states []string
 	for _, th := range ths {
-		states = append(states, th.ID.Key+"="+string(th.State)+"/"+th.Title)
+		states = append(states, fmt.Sprint(int64(th.ID))+"="+string(th.State)+"/"+th.Title)
 	}
 	note("threads", states, err)
 	d, err := api.Thread(ctx, id, 6, 0)
 	note("thread", []string{string(d.State), d.Recent}, err)
 	ws, err := api.Workspace(ctx, id)
 	note("workspace", []string{ws.Branch}, err)
-	_, err = api.Workspace(ctx, control.ThreadID{Scope: "s", Key: "none"})
+	_, err = api.Workspace(ctx, control.ThreadID(999))
 	note("workspace of no thread", nil, err)
 
 	evctx, cancel := context.WithCancel(ctx)
@@ -161,7 +162,7 @@ func sprint(v any) string {
 	case []string:
 		return strings.Join(v, ",")
 	case control.ThreadID:
-		return v.Scope + "/" + v.Key
+		return fmt.Sprint(int64(v))
 	}
 	return "?"
 }
@@ -216,7 +217,7 @@ func TestEventsResumeAfterReconnect(t *testing.T) {
 	appendN := func(n int) {
 		c.Store.Update(ctx, func(tx *store.Tx) error {
 			for range n {
-				tx.Append(ctx, control.Event{Thread: control.ThreadID{Scope: "s", Key: "k"}, Kind: "usage", Data: []byte(`{"session":1}`)})
+				tx.Append(ctx, control.Event{Scope: "s", Kind: "usage", Data: []byte(`{"session":1}`)})
 			}
 			return nil
 		})
@@ -285,6 +286,7 @@ func TestDeepRootUsesShortSocketPath(t *testing.T) {
 // A daemon older than 2.2 ignores a hello's token and would make the
 // connection the owner's, so a client with a token refuses it.
 func TestTokenClientRefusesADaemonWithoutTokens(t *testing.T) {
+	// A 2.2 client: since 3.0 a 2.x daemon is refused by its major version.
 	dir, err := os.MkdirTemp("/tmp", "hw") // short: macOS's temporary directory is too deep for a socket
 	if err != nil {
 		t.Fatal(err)
@@ -307,10 +309,10 @@ func TestTokenClientRefusesADaemonWithoutTokens(t *testing.T) {
 			json.NewEncoder(c).Encode(hello{Version: "2.1"})
 		}
 	}()
-	if _, err := dial(path, Version, "a-token"); err == nil || !strings.Contains(err.Error(), "does not know tokens") {
+	if _, err := dial(path, "2.2", "a-token"); err == nil || !strings.Contains(err.Error(), "does not know tokens") {
 		t.Fatalf("a client with a token and a 2.1 daemon: %v, want refused", err)
 	}
-	c, err := dial(path, Version, "")
+	c, err := dial(path, "2.2", "")
 	if err != nil {
 		t.Fatalf("a client without a token and a 2.1 daemon: %v", err)
 	}

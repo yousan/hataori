@@ -82,6 +82,22 @@ func (f *front) raw(t *testing.T, id control.ThreadID, kind string, data map[str
 	}
 }
 
+// bareThread makes a thread in the channel, linked to its conversation
+// key, with no session.
+func (f *front) bareThread(t *testing.T, key string) control.ThreadID {
+	t.Helper()
+	db := f.fe.Outbox.Store.DB
+	res, err := db.Exec(`INSERT INTO threads (scope, key, started_by, state, created_at, updated_at) VALUES (?, ?, 'owner', 'idle', 0, 0)`, channel, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := res.LastInsertId()
+	if _, err := db.Exec(`INSERT INTO links (thread_id, client, channel, thread, created_at) VALUES (?, ?, ?, ?, 0)`, id, f.fe.Name, channel, key); err != nil {
+		t.Fatal(err)
+	}
+	return control.ThreadID(id)
+}
+
 func (f *front) lost(t *testing.T, id control.ThreadID, outage int) {
 	t.Helper()
 	f.event(t, id, "turn_ended", map[string]any{"turn": 1, "by": "caller", "outcome": "failure", "reason": "login", "background": 0})
@@ -130,7 +146,7 @@ func (f *front) twoThreads(t *testing.T) (a, b control.ThreadID) {
 	f.deliver(chanConv, fake.Webhook(hook), "!go repo:https://example.com/r.git first")
 	f.deliver(chanConv, fake.Webhook(hook), "!go repo:https://example.com/r.git second")
 	ths := f.threads()
-	return control.ThreadID{Scope: channel, Key: ths[0].Opened.Thread}, control.ThreadID{Scope: channel, Key: ths[1].Opened.Thread}
+	return f.threadAt(t, ths[0].Opened), f.threadAt(t, ths[1].Opened)
 }
 
 func TestOneDirectMessagePerOutage(t *testing.T) {
@@ -160,14 +176,14 @@ func TestAtMostFifteenThreadsAreNamed(t *testing.T) {
 	f.running(t)
 	ids := make([]control.ThreadID, 17)
 	for i := range ids {
-		ids[i] = control.ThreadID{Scope: channel, Key: fmt.Sprintf("k%02d", i+1)}
+		ids[i] = f.bareThread(t, fmt.Sprintf("k%02d", i+1))
 	}
 	f.lost(t, ids[0], 1)
 	for _, id := range ids[1:] {
 		f.stopped(t, id)
 	}
 	m := f.waitFirst(t, "17 threads", func(m surface.Message) bool { return strings.Contains(m.Text, "Stopped threads (17)") })
-	if n := strings.Count(m.Text, "\n- "); n != 15 || !strings.Contains(m.Text, "…and 2 more.") || strings.Contains(m.Text, "k16") {
+	if n := strings.Count(m.Text, "\n- "); n != 15 || !strings.Contains(m.Text, "…and 2 more.") || strings.Contains(m.Text, fmt.Sprintf("#%d", ids[15])) {
 		t.Fatalf("alert names %d threads:\n%s", n, m.Text)
 	}
 }
@@ -189,6 +205,11 @@ func TestTheOwnersCodeGoesToTheRelayAndTheLinkStaysInTheDirectConversation(t *te
 		t.Fatalf("codes handed to the relay: %v", codes)
 	}
 	f.fe.LoginUpdate(relay.Update{Agent: "agent", Done: relay.LoggedIn})
+	// The front end has forgotten where the threads are shown, as after a
+	// restart: it looks their links up again.
+	f.fe.convs.mu.Lock()
+	f.fe.convs.m = nil
+	f.fe.convs.mu.Unlock()
 	f.raw(t, a, "login_restored", map[string]any{"agent": "agent", "outage": 1, "threads": []control.ThreadID{a, b}, "scopes": []string{channel}})
 	m = f.waitFirst(t, "the end of the outage", func(m surface.Message) bool { return strings.Contains(m.Text, "Logged in again.") })
 	if strings.Contains(m.Text, link) || len(m.Choices) != 0 {
@@ -206,7 +227,7 @@ func TestTheOwnersCodeGoesToTheRelayAndTheLinkStaysInTheDirectConversation(t *te
 	}
 	// The link is nowhere else: no other conversation, no outbox row, no
 	// stored outage.
-	for _, conv := range []surface.Conversation{chanConv, conv(a), conv(b)} {
+	for _, conv := range []surface.Conversation{chanConv, f.conv(a), f.conv(b)} {
 		for _, c := range f.driver.Calls(conv) {
 			if strings.Contains(c.Message.Text, "SECRETLINK") {
 				t.Fatalf("the link is in %+v", conv)

@@ -91,13 +91,13 @@ export function Details({ x, attention, workspace, subscribe, opens, withWaiting
   const pct = x.context && x.context.size > 0 ? Math.round((100 * x.context.used) / x.context.size) : null;
   const n = (v: number | undefined) => (v === undefined ? dash() : numbers.format(v));
   return (
-    <div className="details-body" data-details={x.number}>
+    <div className="details-body" data-details={x.id}>
       {withWaiting && attention && <Waiting a={attention} />}
       <section data-block="thread">
         <h3>{t("details.thread")}</h3>
         <dl>
           <Field name="state" label={t("details.state")} value={stateName(x.state)} />
-          <Field name="scope" label={t("details.scope")} value={x.id.scope || dash()} />
+          <Field name="scope" label={t("details.scope")} value={x.scope || dash()} />
           <Field name="startedBy" label={t("details.startedBy")} value={x.started_by || dash()} />
           <Field name="created" label={t("details.created")} value={new Date(x.created).toLocaleString()} time={x.created} />
           {/* turns is left out for none: that is zero, not unknown */}
@@ -135,7 +135,7 @@ export function Details({ x, attention, workspace, subscribe, opens, withWaiting
           <Field name="terminal" label={t("details.terminal")} value={x.terminal || dash()} />
         </dl>
       </section>
-      <Recent key={x.number} x={x} subscribe={subscribe} opens={opens} />
+      <Recent key={x.id} x={x} subscribe={subscribe} opens={opens} />
     </div>
   );
 }

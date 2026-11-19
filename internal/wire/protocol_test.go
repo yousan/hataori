@@ -19,7 +19,7 @@ func TestVersions(t *testing.T) {
 	root := t.TempDir()
 	_, owner := newCore(t, root)
 	srv := serve(t, root, owner)
-	c, err := dialPath(srv.Path(), "2.9")
+	c, err := dialPath(srv.Path(), "3.9")
 	if err != nil {
 		t.Fatalf("a newer minor version is refused: %v", err)
 	}
@@ -27,16 +27,16 @@ func TestVersions(t *testing.T) {
 		t.Fatalf("a call with a newer minor version: %v", err)
 	}
 	c.Close()
-	for _, v := range []string{"3.0", "1.13"} {
+	for _, v := range []string{"4.0", "2.0", "1.13"} {
 		_, err := dialPath(srv.Path(), v)
 		if err == nil || !strings.Contains(err.Error(), "client speaks "+v) || !strings.Contains(err.Error(), "daemon speaks "+Version) {
 			t.Errorf("client %s: %v", v, err)
 		}
 	}
 	// And the client refuses a daemon of another major version.
-	path := fakeDaemon(t, "3.3", nil)
-	if _, err := dialPath(path, Version); err == nil || !strings.Contains(err.Error(), "3.3") || !strings.Contains(err.Error(), Version) {
-		t.Errorf("daemon 3.3: %v", err)
+	path := fakeDaemon(t, "2.3", nil)
+	if _, err := dialPath(path, Version); err == nil || !strings.Contains(err.Error(), "2.3") || !strings.Contains(err.Error(), Version) {
+		t.Errorf("daemon 2.3: %v", err)
 	}
 }
 
@@ -83,15 +83,15 @@ func fakeDaemon(t *testing.T, version string, answer func(req message) []string)
 
 // A field or an event kind the client does not know is ignored.
 func TestUnknownFieldsAndKinds(t *testing.T) {
-	path := fakeDaemon(t, "2.4", func(m message) []string {
+	path := fakeDaemon(t, "3.4", func(m message) []string {
 		switch m.Op {
 		case "Threads":
-			return []string{`{"id":1,"result":[{"id":{"scope":"s","key":"k","shard":7},"number":1,"state":"idle","colour":"red"}],"later":{"x":1}}`}
+			return []string{`{"id":1,"result":[{"id":1,"scope":"s","links":[{"client":"c","channel":"s","thread":"k","shard":7}],"state":"idle","colour":"red"}],"later":{"x":1}}`}
 		case "Events":
 			return []string{
 				`{"id":1}`,
-				`{"id":1,"event":{"pos":1,"thread":{"scope":"s","key":"k"},"time":"2026-01-02T03:04:05Z","kind":"from_the_future","data":{"x":[1]},"extra":true}}`,
-				`{"id":1,"event":{"pos":2,"thread":{"scope":"s","key":"k"},"time":"2026-01-02T03:04:05Z","kind":"usage","data":{"session":1}}}`,
+				`{"id":1,"event":{"pos":1,"thread":1,"scope":"s","time":"2026-01-02T03:04:05Z","kind":"from_the_future","data":{"x":[1]},"extra":true}}`,
+				`{"id":1,"event":{"pos":2,"thread":1,"scope":"s","time":"2026-01-02T03:04:05Z","kind":"usage","data":{"session":1}}}`,
 			}
 		}
 		return nil
@@ -102,7 +102,7 @@ func TestUnknownFieldsAndKinds(t *testing.T) {
 	}
 	defer c.Close()
 	ts, err := c.Threads(context.Background(), control.Filter{})
-	if err != nil || len(ts) != 1 || ts[0].ID.Key != "k" || ts[0].State != control.Idle {
+	if err != nil || len(ts) != 1 || ts[0].ID != 1 || ts[0].Links[0].Thread != "k" || ts[0].State != control.Idle {
 		t.Fatalf("threads: %+v, %v", ts, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())

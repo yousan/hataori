@@ -73,7 +73,7 @@ func returnsAfterItsSubscription(t *testing.T, h *heldEvents, fn func()) {
 }
 
 func TestStartOutcomeWaitsForItsSubscription(t *testing.T) {
-	id := control.ThreadID{Scope: channel, Key: "t"}
+	id := control.ThreadID(1)
 	h := &heldEvents{release: make(chan struct{}), send: []control.Event{
 		{Pos: 1, Thread: id, Kind: "thread_created"}, {Pos: 1, Kind: control.CaughtUp}}}
 	returnsAfterItsSubscription(t, h, func() { startOutcome(context.Background(), h, id) })
@@ -83,7 +83,7 @@ func TestScanWaitsForItsSubscription(t *testing.T) {
 	h := &heldEvents{release: make(chan struct{}), send: []control.Event{{Pos: 0, Kind: control.CaughtUp}}}
 	r := &reader{api: h}
 	returnsAfterItsSubscription(t, h, func() {
-		r.scan(context.Background(), control.ThreadID{Scope: channel, Key: "t"}, 10, func(control.Event) {})
+		r.scan(context.Background(), control.ThreadID(1), 10, func(control.Event) {})
 	})
 }
 

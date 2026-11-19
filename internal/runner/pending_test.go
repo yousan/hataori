@@ -35,7 +35,7 @@ func (dying) Resume(context.Context, int64, control.Principal, string, string, c
 // (the open request, through Send).
 func dieBeforeHandOver(st *store.Store, c *core.Core, call, text string) error {
 	ctx := context.Background()
-	th := control.ThreadID{Scope: "s", Key: "t1"}
+	th := control.ThreadID(1)
 	in := control.Input{Text: text}
 	switch call {
 	case "start":

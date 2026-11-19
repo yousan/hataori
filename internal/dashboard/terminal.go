@@ -49,17 +49,17 @@ func terminalPosition(r *http.Request) (run string, after uint64, err error) {
 // dropInput refuses a request that tries to send something on a terminal
 // route, and logs it. The body is not read, and the connection is closed
 // after the answer, so a body sent in part holds nothing open.
-func (s *Server) dropInput(w http.ResponseWriter, r *http.Request, id control.ThreadID) bool {
+func (s *Server) dropInput(w http.ResponseWriter, r *http.Request, what string) bool {
 	body := r.ContentLength != 0 || len(r.TransferEncoding) > 0
 	up := r.Header.Get("Upgrade")
 	if !body && up == "" {
 		return false
 	}
 	if body {
-		s.Log.Warn("dashboard: input to a terminal dropped", "scope", id.Scope, "key", id.Key, "bytes", r.ContentLength)
+		s.Log.Warn("dashboard: input to a terminal dropped", "terminal", what, "bytes", r.ContentLength)
 	}
 	if up != "" {
-		s.Log.Warn("dashboard: upgrade of a terminal stream dropped", "scope", id.Scope, "key", id.Key, "upgrade", up)
+		s.Log.Warn("dashboard: upgrade of a terminal stream dropped", "terminal", what, "upgrade", up)
 	}
 	// The server would otherwise wait for the rest of the body to drain it.
 	http.NewResponseController(w).SetReadDeadline(time.Now())
@@ -78,13 +78,12 @@ func (s *Server) notFound(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	id := control.ThreadID{Scope: q.Get("scope"), Key: q.Get("key")}
-	if s.dropInput(w, r, id) {
+	if s.dropInput(w, r, "thread "+r.URL.Query().Get("thread")) {
 		return
 	}
-	if id.Scope == "" || id.Key == "" {
-		http.Error(w, "scope and key are required", http.StatusBadRequest)
+	id, err := threadParam(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	run, after, err := terminalPosition(r)
@@ -123,7 +122,7 @@ type hostScreen struct {
 
 func (s *Server) hostScreen(w http.ResponseWriter, r *http.Request) {
 	pane := r.URL.Query().Get("pane")
-	if s.dropInput(w, r, control.ThreadID{Key: pane}) {
+	if s.dropInput(w, r, "pane "+pane) {
 		return
 	}
 	if pane == "" {
