@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/people"
 )
 
 // Link shows thread id in one more conversation (design, section 5.2).
@@ -95,10 +96,15 @@ func (a *api) Link(ctx context.Context, id control.ThreadID, l control.LinkRef) 
 	return l, nil
 }
 
-// ownLink returns l when it is one of thread id's links, and nil otherwise:
-// an input or answer names only a link it can have come through.
-func (c *Core) ownLink(ctx context.Context, q querier, id control.ThreadID, l *control.LinkRef) (*control.LinkRef, error) {
+// ownLink returns l when it is one of thread id's links and of the client
+// the input came from (from, "<client>:<id>"), and nil otherwise: an input
+// or answer names only a link it can have come through. A caller with no
+// From, such as the supervisor or the control socket, came through none.
+func (c *Core) ownLink(ctx context.Context, q querier, id control.ThreadID, l *control.LinkRef, from string) (*control.LinkRef, error) {
 	if l == nil {
+		return nil, nil
+	}
+	if client, _, ok := people.Split(from); !ok || client != l.Client {
 		return nil, nil
 	}
 	var n int

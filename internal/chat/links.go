@@ -99,8 +99,9 @@ func everyLink(rows []Row, convs []surface.Conversation) []Row {
 
 // mirrorRows returns the lines that show an input or answer event of a
 // thread shown in convs in every one of them but the link it came through,
-// as "<person>: <text>" (design, section 5.2). An input that came through
-// no link, as from the supervisor, is shown in each.
+// as "<person>: <text>" (design, section 5.2). Only what a person wrote in
+// a link is shown: an input that came through none, such as the
+// supervisor's, is not.
 func (f *FrontEnd) mirrorRows(e control.Event, convs []surface.Conversation) []Row {
 	if e.Kind != "input" && e.Kind != "answer" {
 		return nil
@@ -110,7 +111,7 @@ func (f *FrontEnd) mirrorRows(e control.Event, convs []surface.Conversation) []R
 		Principal string           `json:"principal"`
 		Link      *control.LinkRef `json:"link"`
 	}
-	if json.Unmarshal(e.Data, &d) != nil || strings.TrimSpace(d.Text) == "" {
+	if json.Unmarshal(e.Data, &d) != nil || strings.TrimSpace(d.Text) == "" || d.Link == nil {
 		return nil
 	}
 	who := d.Principal

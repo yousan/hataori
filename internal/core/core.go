@@ -871,9 +871,14 @@ func (a *api) start(ctx context.Context, r control.StartRequest, confined bool) 
 			thread, link.Client, link.Channel, link.Thread, string(a.caller.Principal), now); err != nil {
 			return fmt.Errorf("core: create thread: link %s %s %s: %w", link.Client, link.Channel, link.Thread, err)
 		}
-		// The first input came through the first link.
-		first := link
-		r.Input.Link = &first
+		// The first input came through the first link when the client that
+		// opened it relayed the start; a start from elsewhere, such as the
+		// supervisor's, came through no link.
+		r.Input.Link = nil
+		if client, _, ok := people.Split(a.caller.From); ok && client == link.Client {
+			first := link
+			r.Input.Link = &first
+		}
 		fi, _ := json.Marshal(FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: r.Key, Text: r.Input.Text, Link: r.Input.Link})
 		res, err = tx.ExecContext(ctx,
 			`INSERT INTO sessions (thread_id, agent, state, model, effort, first_input, launch, created_at, updated_at)
@@ -1304,7 +1309,7 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 			// Nothing is accepted: a message does not wake a closed thread.
 			return fmt.Errorf("core: send to %v: %w", id, ErrClosed)
 		}
-		if in.Link, err = a.c.ownLink(ctx, tx, id, in.Link); err != nil {
+		if in.Link, err = a.c.ownLink(ctx, tx, id, in.Link, a.caller.From); err != nil {
 			return err
 		}
 		if key != "" {
@@ -1414,7 +1419,7 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 	var pending int64
 	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
 		var err error
-		if ans.Link, err = a.c.ownLink(ctx, tx, thread, ans.Link); err != nil {
+		if ans.Link, err = a.c.ownLink(ctx, tx, thread, ans.Link, a.caller.From); err != nil {
 			return err
 		}
 		if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal, From: a.caller.From,
