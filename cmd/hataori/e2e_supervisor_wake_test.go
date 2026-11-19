@@ -13,15 +13,39 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/core"
 	"github.com/yousan/hataori/internal/supervisor"
 	"github.com/yousan/hataori/internal/wire"
 )
 
-// wakeClock is a supervisor waker's clock that a test moves forward.
+// wakeClock is the clock of a test's daemons that the test moves forward:
+// their wakers' and budgets' time, and the time of their events. It
+// starts at wakeBase and goes on across restarts.
 type wakeClock struct {
 	mu     sync.Mutex
 	now    time.Duration
 	timers []wakeTimer
+}
+
+// wakeBase is when a wakeClock starts: on the hour, so that a test knows
+// its windows, and the next one, so that its events are never older than
+// the real time, which the daemon's idle sleep goes by.
+var wakeBase = func() time.Time {
+	now := time.Now()
+	return time.Date(now.Year(), now.Month(), now.Day(), now.Hour()+1, 0, 0, 0, time.Local)
+}()
+
+func (c *wakeClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return wakeBase.Add(c.now)
+}
+
+// reset drops the timers, those of a waker that stopped.
+func (c *wakeClock) reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.timers = nil
 }
 
 type wakeTimer struct {
@@ -60,9 +84,8 @@ func (c *wakeClock) waiting() int {
 	return len(c.timers)
 }
 
-// wakeTest is a root whose scope c1 has a supervisor, and whose daemons'
-// wakers run on clocks of the test's own: each start of the daemon gets a
-// new one.
+// wakeTest is a root whose scope c1 has a supervisor, and whose daemons
+// run on a clock of the test's own.
 type wakeTest struct {
 	r     *chatRoot
 	db    *sql.DB
@@ -79,7 +102,8 @@ type wakeTest struct {
 func newWakeTest(t *testing.T, more ...func(cfg map[string]any)) *wakeTest {
 	t.Helper()
 	r, _ := svRoot(t, true, more...)
-	wt := &wakeTest{r: r, repo: bareRepo(t)}
+	wt := &wakeTest{r: r, repo: bareRepo(t), clk: &wakeClock{}}
+	coreHook = func(c *core.Core) { c.Machine.Now = wt.clk.Now }
 	wakerHook = func(w *supervisor.Waker) {
 		if b := wt.before.Swap(nil); b != nil {
 			(*b)()
@@ -89,17 +113,23 @@ func newWakeTest(t *testing.T, more ...func(cfg map[string]any)) *wakeTest {
 		if w.Scope != "c1" {
 			t.Errorf("a waker for scope %q, which names no supervisor", w.Scope)
 		}
-		if w.Quiet != 30*time.Second || w.OutputMax != 1024 || w.ThreadsMax != 20 {
-			t.Errorf("waker defaults: quiet %v, output %d, threads %d; want 30s, 1024, 20", w.Quiet, w.OutputMax, w.ThreadsMax)
+		if len(more) == 0 {
+			if w.Quiet != 30*time.Second || w.OutputMax != 1024 || w.ThreadsMax != 20 {
+				t.Errorf("waker defaults: quiet %v, output %d, threads %d; want 30s, 1024, 20", w.Quiet, w.OutputMax, w.ThreadsMax)
+			}
+			want := supervisor.Limits{Turns: 12, Sends: 20, Tokens: 2_000_000}
+			if len(w.Gates) != 1 || w.Gates[0].(*supervisor.Budget).Limits != want {
+				t.Errorf("the waker's gates %v; want the budget with the defaults %+v", w.Gates, want)
+			}
 		}
-		wt.clk = &wakeClock{}
+		wt.clk.reset()
 		w.Clock = wt.clk
 		if h := wt.hook.Swap(nil); h != nil {
 			w.Hook = *h
 		}
 		wt.waker = w
 	}
-	t.Cleanup(func() { wakerHook = nil })
+	t.Cleanup(func() { wakerHook, coreHook = nil, nil })
 	return wt
 }
 

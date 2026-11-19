@@ -205,12 +205,32 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	// A supervisor's connection is bound to its scope by a token (design,
 	// section 7.1): each of its sessions gets one, and every launch of the
 	// session is confined, with hataori's MCP server holding that token.
-	issueSupervisor := func(scope string) (string, error) { return srv.Issue(c.As(supervisor.Caller(scope))) }
+	// Each scope's budget (design, section 7.1): the waker's gate, and the
+	// count of its sends and starts at the call. It tells a person in the
+	// supervisor's chat thread, through the scope's chat front end, which
+	// is set once the front ends are made.
+	budgets := map[string]*supervisor.Budget{}
+	tells := map[string]func(ctx context.Context, id control.ThreadID, key, text string) error{}
+	for _, s := range cfg.Scopes {
+		if sv := s.Supervisor; sv != nil {
+			client := s.Client
+			budgets[s.Key] = &supervisor.Budget{Core: c, Scope: s.Key, Zone: m.Zone, Log: lg,
+				Limits: supervisor.Limits{Turns: sv.TurnsPerHour, Sends: sv.SendsPerHour, Tokens: sv.TokensPerDay},
+				Tell: func(ctx context.Context, id control.ThreadID, key, text string) error {
+					if t := tells[client]; t != nil {
+						return t(ctx, id, key, text)
+					}
+					lg.Warn("supervisor: no chat front end to tell a person", "client", client, "text", text)
+					return nil
+				}}
+		}
+	}
+	sv := &supervisor.Sessions{Core: c, Tokens: srv, Root: abs, Hataori: exe, Scopes: supervisors,
+		Owner: control.Principal(cfg.Owner), Cheap: cheap, Budgets: budgets, Log: lg}
+	issueSupervisor := func(scope string) (string, error) { return srv.Issue(sv.API(scope)) }
 	if supervisorHook != nil {
 		supervisorHook(issueSupervisor, srv.Revoke)
 	}
-	sv := &supervisor.Sessions{Core: c, Tokens: srv, Root: abs, Hataori: exe, Scopes: supervisors,
-		Owner: control.Principal(cfg.Owner), Cheap: cheap, Log: lg}
 	r.Confine = sv.Confine
 	for scope := range supervisors {
 		if name, ok := cfg.People.Resolve(supervisor.ID(scope)); !ok || !cfg.People.May(name, scope) {
@@ -241,6 +261,9 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		defer confDir.Close()
 		if fronts, err = frontEnds(abs, confDir, cfg, st, c, lr, lg); err != nil {
 			return err
+		}
+		for _, fe := range fronts {
+			tells[fe.Name] = fe.Notice
 		}
 	}
 	// The front ends end, and are waited for, before what they use is closed.
@@ -277,11 +300,14 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 			if s.Supervisor == nil {
 				continue
 			}
+			// The loop guard (#274) goes before the budget in Gates.
+			b := budgets[s.Key]
 			w := &supervisor.Waker{Core: c, Scope: s.Key, Owner: control.Principal(cfg.Owner), Quiet: s.Supervisor.Quiet,
-				OutputMax: s.Supervisor.OutputMax, ThreadsMax: s.Supervisor.ThreadsMax, Log: lg}
+				OutputMax: s.Supervisor.OutputMax, ThreadsMax: s.Supervisor.ThreadsMax, Gates: []supervisor.Gate{b}, Log: lg}
 			if wakerHook != nil {
 				wakerHook(w)
 			}
+			b.Clock = w.Clock // a test's clock, when it set one
 			svDone.Add(1)
 			go func() {
 				defer svDone.Done()
