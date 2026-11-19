@@ -33,6 +33,8 @@ func daemon(args []string) int {
 			mode, o.inputTimeout = m, "1s"
 		} else if m, ok := strings.CutSuffix(mode, "+dieplaced"); ok { // killed right after a workspace is in place
 			mode, o.dieWhenPlaced = m, true
+		} else if m, ok := strings.CutSuffix(mode, "+dialog"); ok { // the fake shows wakeDialog at each start
+			mode, o.dialog = m, wakeDialog
 		} else {
 			break
 		}
@@ -79,6 +81,29 @@ func daemon(args []string) int {
 		os.Stdout.WriteString("up\n")
 		owner(c).Start(context.Background(), control.StartRequest{Key: "k1", Scope: "s", Thread: "t1",
 			Repo: "file:///unused", Input: control.Input{Text: args[4]}})
+		return 1 // it should have died
+	}
+	if mode == "die-wake" { // start t1, let it sleep, and kill itself at a point of the launch that wakes it
+		point := args[3]
+		os.Stdout.WriteString("up\n")
+		if _, err := owner(c).Start(context.Background(), control.StartRequest{Key: "k1", Scope: "s", Thread: "t1",
+			Repo: "file:///unused", Input: control.Input{Text: args[4]}}); err != nil {
+			fmt.Fprintln(log, err)
+			return 1
+		}
+		for state := ""; state != "asleep"; time.Sleep(20 * time.Millisecond) {
+			st.DB.QueryRow(`SELECT state FROM sessions WHERE id = 1`).Scan(&state)
+		}
+		for !r.alive(StateDir(root, 1)).Ended() {
+			time.Sleep(20 * time.Millisecond)
+		}
+		r.point = func(p string) {
+			if p == point {
+				syscall.Kill(os.Getpid(), syscall.SIGKILL) // this process only
+				select {}
+			}
+		}
+		owner(c).Send(context.Background(), control.ThreadID(1), "m2", control.Input{Text: args[5]}, control.Deliver)
 		return 1 // it should have died
 	}
 	if mode == "die" {
