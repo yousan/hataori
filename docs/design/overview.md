@@ -488,6 +488,7 @@ One database file. A schema version table and forward-only migrations (c-lord ha
 | `inbox` | accepted calls by their key; for chat, the catch-up cursor per conversation |
 | `events` | the numbered event log that clients read from a position |
 | `outbox` | the chat front end's pending and sent posts by `(event, link, part)`, with the surface message id |
+| `chat_senders` | per key of input a chat front end gave, the message that gets the turn's lamp and who to ping at its end, as the service told it when the message came (#258) |
 | `requests` | open questions and approvals, their message, their answer |
 | `bindings` | channel to repository, and per-thread overrides |
 | `settings` | model and other choices per scope |

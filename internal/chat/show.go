@@ -28,6 +28,10 @@ type reader struct {
 	gone  map[control.ThreadID]*RowKey              // the last delete of a progress line
 	known map[control.ThreadID]bool                 // threads whose earlier events were read
 	subs  map[control.ThreadID]map[string]*subagent // running subagents, by id
+	// lamp is each thread's lamps (lamps.go); lampKnown, the threads whose
+	// earlier turn events were read for it.
+	lamp      map[control.ThreadID]*lampState
+	lampKnown map[control.ThreadID]bool
 	// outbox and ctx are the front end's, for looking up rows.
 	outbox *Outbox
 	ctx    context.Context
@@ -54,6 +58,9 @@ func (f *FrontEnd) show(ctx context.Context) error {
 		gone:  map[control.ThreadID]*RowKey{},
 		known: map[control.ThreadID]bool{},
 		subs:  map[control.ThreadID]map[string]*subagent{},
+
+		lamp:      map[control.ThreadID]*lampState{},
+		lampKnown: map[control.ThreadID]bool{},
 
 		outbox: f.Outbox,
 		ctx:    ctx,
@@ -144,6 +151,11 @@ func (f *FrontEnd) show(ctx context.Context) error {
 			}
 			rows = everyLink(append(append(r.track(e), rows...), r.subagents(e)...), convs)
 			rows = append(rows, f.mirrorRows(e, convs)...)
+			lr, err := f.lampRows(ctx, r, e, convs)
+			if err != nil {
+				return err
+			}
+			rows = append(rows, lr...)
 		}
 		lr, err := f.loginEvent(ctx, e, linked)
 		if err != nil {

@@ -302,6 +302,15 @@ func (f *FrontEnd) start(ctx context.Context, r request, o order, n int64) (cont
 	channel := r.conv.Channel
 	api := f.API(control.Caller{From: f.from(r.author), Scopes: []string{channel},
 		May: control.OpRead | control.OpStart})
+	// The trigger message gets the turn's lamp; a command has none, and
+	// its prompt stands for it.
+	s := sender{lamp: "message", msg: surface.MessageRef{Conv: surface.Conversation{Channel: channel}, ID: r.key}, ping: pingOf(r.author)}
+	if strings.HasPrefix(r.key, commandKey) {
+		s = sender{lamp: "prompt", ping: s.ping}
+	}
+	if err := f.rememberSender(ctx, r.key, s); err != nil {
+		return 0, err
+	}
 	// No thread is named: once the core allows the Start, it asks this
 	// front end for one (NewThread), which opens it from the trigger.
 	id, startErr := api.Start(ctx, control.StartRequest{Key: r.key, Scope: channel, Repo: o.Repo,
@@ -445,6 +454,9 @@ func (f *FrontEnd) followUp(in surface.Inbound) error {
 	// delivered, an open question gets it as the answer. Whether the author
 	// may give input at all, the core decides too, and it refuses input to a
 	// closed thread, which a message does not wake.
+	if err := f.rememberSender(ctx, in.Ref.ID, sender{lamp: "message", msg: in.Ref, ping: pingOf(in.Author)}); err != nil {
+		return err
+	}
 	err = api.Send(ctx, id, in.Ref.ID, control.Input{Text: in.Text,
 		Link: &control.LinkRef{Client: f.Name, Channel: conv.Channel, Thread: conv.Thread}}, control.Deliver)
 	if errors.Is(err, control.ErrForbidden) {

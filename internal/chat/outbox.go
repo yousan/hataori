@@ -35,8 +35,13 @@ type Row struct {
 	// Op is what the row does: post (the default), or edit or delete the
 	// message that the row Target posted. An edit or a delete whose target
 	// was never posted is dropped. A delete is never dropped for failing.
+	// Lamp shows Status on the message On names, or on the one the row
+	// Target posted; a lamp is a decoration, and is dropped once a later
+	// lamp on the same message is written.
 	Op     Op
 	Target *RowKey
+	On     *surface.MessageRef
+	Status surface.Status
 }
 
 // Op is what a row does.
@@ -47,6 +52,7 @@ const (
 	Post   Op = ""
 	Edit   Op = "edit"
 	Delete Op = "delete"
+	Lamp   Op = "lamp"
 )
 
 // RowKey names a row.
@@ -119,6 +125,11 @@ type message struct {
 	ReplyRow *RowKey `json:"reply_row,omitempty"`
 	Op       Op      `json:"op,omitempty"`
 	Target   *RowKey `json:"target,omitempty"`
+	On       *ref    `json:"on,omitempty"`
+	Status   int     `json:"status,omitempty"`
+	// Lit names the message a lamp is on, the same for every lamp on it:
+	// "row:<event>.<part>" or "msg:<channel>/<thread>/<id>".
+	Lit string `json:"lit,omitempty"`
 }
 
 type ref struct {
@@ -133,6 +144,18 @@ func encode(r Row) ([]byte, error) {
 		ReplyRow: r.ReplyToRow, Op: r.Op, Target: r.Target}
 	if r := m.ReplyTo; r != nil {
 		s.ReplyTo = &ref{Channel: r.Conv.Channel, Thread: r.Conv.Thread, ID: r.ID}
+	}
+	if r.Op == Lamp {
+		s.Status = int(r.Status)
+		switch {
+		case r.On != nil:
+			s.On = &ref{Channel: r.On.Conv.Channel, Thread: r.On.Conv.Thread, ID: r.On.ID}
+			s.Lit = "msg:" + r.On.Conv.Channel + "/" + r.On.Conv.Thread + "/" + r.On.ID
+		case r.Target != nil:
+			s.Lit = "row:" + key(r.Target.Event, r.Target.Part)
+		default:
+			return nil, errors.New("a lamp on no message")
+		}
 	}
 	return json.Marshal(s)
 }
@@ -437,6 +460,9 @@ func (o *Outbox) send(ctx context.Context, conv surface.Conversation, r pending)
 	if meta.Op == Edit || meta.Op == Delete {
 		return o.change(ctx, conv, r, meta, m)
 	}
+	if meta.Op == Lamp {
+		return o.lamp(ctx, conv, r, meta)
+	}
 	ref, err := o.Driver.Post(ctx, conv, k, m)
 	if err == nil {
 		return o.record(ctx, posted, r.id, `UPDATE chat_outbox SET state = 'sent', ref = ?, sent_at = ? WHERE id = ?`,
@@ -493,6 +519,53 @@ func (o *Outbox) change(ctx context.Context, conv surface.Conversation, r pendin
 		return o.record(ctx, failedPost, r.id, `UPDATE chat_outbox SET state = 'dropped', failures = failures + 1 WHERE id = ?`, r.id)
 	}
 	o.Log.Warn("chat outbox: "+string(meta.Op)+" failed", "key", k, "decoration", r.decoration, "err", err)
+	return o.record(ctx, failedPost, r.id, `UPDATE chat_outbox SET failures = failures + 1 WHERE id = ?`, r.id)
+}
+
+// lamp shows a status on a message. A later lamp on the same message, in
+// the order rows are written, makes this one moot: it is dropped, so a
+// lamp that failed and is tried again never covers a newer one.
+func (o *Outbox) lamp(ctx context.Context, conv surface.Conversation, r pending, meta message) outcome {
+	k := key(r.event, r.part)
+	var later int
+	err := o.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM chat_outbox WHERE client = ? AND channel = ? AND thread = ?
+		AND json_extract(message, '$.lit') = ? AND (event > ? OR (event = ? AND part > ?))`,
+		o.Client, conv.Channel, conv.Thread, meta.Lit, r.event, r.event, r.part).Scan(&later)
+	if err != nil {
+		return stuck
+	}
+	if later > 0 {
+		return o.record(ctx, posted, r.id, `UPDATE chat_outbox SET state = 'dropped' WHERE id = ?`, r.id)
+	}
+	var to surface.MessageRef
+	switch {
+	case meta.On != nil:
+		to = surface.MessageRef{Conv: surface.Conversation{Channel: meta.On.Channel, Thread: meta.On.Thread}, ID: meta.On.ID}
+	case meta.Target != nil:
+		state, ref, err := o.state(ctx, conv, *meta.Target)
+		switch {
+		case err != nil:
+			return stuck
+		case state == "pending" && r.failures+1 < o.MaxFailures:
+			return o.record(ctx, failedPost, r.id, `UPDATE chat_outbox SET failures = failures + 1 WHERE id = ?`, r.id)
+		case state != "sent":
+			return o.record(ctx, failedPost, r.id, `UPDATE chat_outbox SET state = 'dropped' WHERE id = ?`, r.id)
+		}
+		to = ref
+	}
+	err = o.Driver.SetStatus(ctx, to, surface.Status(meta.Status))
+	if err == nil {
+		return o.record(ctx, posted, r.id, `UPDATE chat_outbox SET state = 'sent', ref = ?, sent_at = ? WHERE id = ?`,
+			to.ID, o.now().UnixMilli(), r.id)
+	}
+	if ctx.Err() != nil {
+		return stuck
+	}
+	if r.failures+1 >= o.MaxFailures {
+		o.Log.Warn("chat outbox: dropping a lamp", "key", k, "failures", r.failures+1, "err", err)
+		return o.record(ctx, failedPost, r.id, `UPDATE chat_outbox SET state = 'dropped', failures = failures + 1 WHERE id = ?`, r.id)
+	}
+	o.Log.Warn("chat outbox: lamp failed", "key", k, "err", err)
 	return o.record(ctx, failedPost, r.id, `UPDATE chat_outbox SET failures = failures + 1 WHERE id = ?`, r.id)
 }
 
