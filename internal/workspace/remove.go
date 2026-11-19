@@ -233,8 +233,15 @@ func segmentWritten(s string) bool {
 		return false
 	}
 	p := s[:cut]
-	if strings.Contains(p, "%2E") { // only dots, all escaped
-		return strings.HasPrefix(strings.Repeat("%2E", cut), p)
+	if strings.Contains(p, "%2E") {
+		// Only dots, all escaped: the input is one of these, so its hash
+		// is known. A name has at most 255 bytes.
+		for n := maxSegment/3 + 1; n <= 255; n++ {
+			if Segment(strings.Repeat(".", n)) == s {
+				return true
+			}
+		}
+		return false
 	}
 	for i := 0; i < len(p); i++ {
 		c := p[i]

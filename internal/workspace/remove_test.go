@@ -1180,7 +1180,8 @@ func TestTrashNameIsWhatRemoveWrites(t *testing.T) {
 		"%41", "a%2D", ".", "..", "a%2E", // escapes Segment does not write, dots it escapes
 		"abc" + hash, strings.Repeat("a", 39) + hash, strings.Repeat("a", 41) + hash, // a cut that is not at 40
 		strings.Repeat("a", 37) + "%41" + hash, strings.Repeat("a", 38) + "%g" + hash, "%2E.%2E" + strings.Repeat("a", 33) + hash,
-		strings.Repeat("a", 40) + "%abcdef0123456789ABCDEF01"} {
+		strings.Repeat("a", 40) + "%abcdef0123456789ABCDEF01",
+		strings.Repeat("%2E", 13) + "%" + strings.Repeat("0", 24)} { // the hash of no input of dots
 		if trashName(prefix + tail) {
 			t.Errorf("%q, which Remove does not write, is taken", prefix+tail)
 		}
