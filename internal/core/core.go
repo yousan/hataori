@@ -1082,6 +1082,9 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 	if a.caller.RefuseBusy {
 		busy = control.Refuse
 	}
+	// An answer to an open question is not marked: the agent's question
+	// tool takes it as the answer, line by line or as a choice's label.
+	given := in
 	in = a.marked(in)
 	var (
 		sid       int64
@@ -1146,10 +1149,10 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 			if err == nil {
 				answer = req
 				if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal, From: a.caller.From,
-					Key: key, Text: in.Text, Request: req}); err != nil {
+					Key: key, Text: given.Text, Request: req}); err != nil {
 					return err
 				}
-				pending, err = pend(ctx, tx, sid, req, control.Answer{Text: in.Text})
+				pending, err = pend(ctx, tx, sid, req, control.Answer{Text: given.Text})
 				return err
 			}
 		}
@@ -1163,7 +1166,7 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 		return err
 	}
 	if answer != "" {
-		return a.c.Runner.Answer(ctx, sid, pending, answer, control.Answer{Text: in.Text})
+		return a.c.Runner.Answer(ctx, sid, pending, answer, control.Answer{Text: given.Text})
 	}
 	if wake {
 		if err := a.c.resume(ctx, sid, a.caller.Principal, a.caller.From, key, in); err != nil {

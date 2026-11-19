@@ -139,7 +139,7 @@ Result: `ThreadID`
 
 Gives input to a thread. A thread with an open question takes it as the answer; an asleep thread is woken with it. A closed or removed thread takes nothing and is not woken: `closed`, since 2.3.
 
-On a supervisor's connection (a token, since 2.2) `busy` is always taken as 0: a `Send` with 1 or 2 to a running thread is refused with `busy` and logged, nothing is queued and the turn goes on. There, and in `Start`, the daemon puts the line `From the supervisor of this channel:` before the input's text; the `input` event has the text with that line, and the thread's title is made without it.
+On a supervisor's connection (a token, since 2.2) `busy` is always taken as 0: a `Send` with 1 or 2 to a running thread is refused with `busy` and logged, nothing is queued and the turn goes on. There, and in `Start`, the daemon puts the line `From the supervisor of this channel:` before the input's text; the `input` event has the text with that line, and the thread's title is made without it. A `Send` that answers an open question is not marked: the agent gets the answer, and the `answer` event its text, as given.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -216,7 +216,7 @@ Result: `WorkspaceState`
 
 Makes a link that signs a person in to the instance's dashboard. The link works once and only for a few minutes, and the dashboard session it opens belongs to the person it was made for: that session sees only the threads of the scopes the person may act in, every scope for the owner. Since 1.7.
 
-On this socket the link is the owner's: every connection acts as the owner. Since 1.11 a chat front end inside the daemon may also ask, for the person who asked in chat: the daemon resolves the author's id to a person and makes the link only for a person who may sign in, which is the owner alone in this version. A guest, and a person who may not sign in, are refused with `forbidden` and get no link. The dashboard's own client is always refused. An instance without a dashboard answers with `error`. The link and its token are not written to the event log or to any log.
+On this socket the link is the owner's, for a connection without a token; a connection with a token is refused unless its caller may sign in, which a supervisor's may not. Since 1.11 a chat front end inside the daemon may also ask, for the person who asked in chat: the daemon resolves the author's id to a person and makes the link only for a person who may sign in, which is the owner alone in this version. A guest, and a person who may not sign in, are refused with `forbidden` and get no link. The dashboard's own client is always refused. An instance without a dashboard answers with `error`. The link and its token are not written to the event log or to any log.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|

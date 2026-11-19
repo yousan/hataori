@@ -153,7 +153,9 @@ type Caller struct {
 	// Mark, when set, is a line the core puts before the text of every
 	// input of the caller's Start and Send, so that the agent sees who it
 	// came from. The client cannot leave it out: the daemon sets it when it
-	// binds the caller. A thread's title is made from the text without it.
+	// binds the caller. A thread's title is made from the text without it,
+	// and a Send that answers an open question is not marked: the agent's
+	// question tool takes the answer as it is given.
 	Mark string
 }
 
