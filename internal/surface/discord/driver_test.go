@@ -335,3 +335,18 @@ func TestNoReconnectAfterRun(t *testing.T) {
 		t.Fatalf("reconnected after Run returned: %d identifies, %d resumes", g.identify, g.resume)
 	}
 }
+
+// A thread's name is told when the thread is created and when it is
+// renamed, with the thread's channel.
+func TestThreadNamesTold(t *testing.T) {
+	d := testDriver(t, 1, newFakeREST(t), nil)
+	s := newSink()
+	created, updated := payload(t, "bot/gw-05-THREAD_CREATE.json"), payload(t, "bot/gw-17-THREAD_UPDATE.json")
+	deliver(t, d, s, "bot/gw-05-THREAD_CREATE.json")
+	deliver(t, d, s, "bot/gw-17-THREAD_UPDATE.json")
+	conv := surface.Conversation{Channel: id(created["parent_id"]), Thread: id(created["id"])}
+	want := []renaming{{conv, created["name"].(string)}, {conv, updated["name"].(string)}}
+	if !slices.Equal(s.renamed, want) || want[0].name == want[1].name {
+		t.Fatalf("told %+v, want %+v", s.renamed, want)
+	}
+}

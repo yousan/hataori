@@ -1,6 +1,6 @@
 import type { Event, ThreadInfo } from "./api";
 import { lang, t } from "./catalog";
-import { stateName } from "./format";
+import { fullTitle, stateName } from "./format";
 import type { Attention } from "./live";
 import { eventLine, useThreadEvents } from "./threadEvents";
 import type { Workspace } from "./workspaces";
@@ -96,6 +96,7 @@ export function Details({ x, attention, workspace, subscribe, opens, withWaiting
       <section data-block="thread">
         <h3>{t("details.thread")}</h3>
         <dl>
+          <Field name="title" label={t("details.title")} value={fullTitle(x) || dash()} />
           <Field name="state" label={t("details.state")} value={stateName(x.state)} />
           <Field name="scope" label={t("details.scope")} value={x.scope || dash()} />
           <Field name="startedBy" label={t("details.startedBy")} value={x.started_by || dash()} />

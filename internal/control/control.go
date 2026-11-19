@@ -198,6 +198,13 @@ type Caller struct {
 	// and a Send that answers an open question is not marked: the agent's
 	// question tool takes the answer as it is given.
 	Mark string
+	// ReadAsPerson checks the caller's reads like its input: the person From
+	// resolves to must be allowed in a scope to read its threads, events and name.
+	// A read in a scope it is not allowed in is refused and logged, as
+	// Start is; a list of every scope leaves those scopes out. A chat front
+	// end's caller for a person's command has it, so that a guest's status
+	// command shows nothing.
+	ReadAsPerson bool
 }
 
 // Principal is the name of a person of the instance's config. The core
@@ -340,10 +347,15 @@ type ScopeInfo struct {
 
 // ThreadInfo is one line of Threads.
 type ThreadInfo struct {
-	ID        ThreadID  `json:"id"`              // the thread's number; since 3.0, it replaces number
-	Scope     string    `json:"scope"`           // the scope the thread belongs to; since 3.0
-	Links     []LinkRef `json:"links"`           // where it is shown, the first link first; since 3.0
-	Title     string    `json:"title,omitempty"` // text: absent for a caller that may not read text, since 2.0
+	ID    ThreadID  `json:"id"`              // the thread's number; since 3.0, it replaces number
+	Scope string    `json:"scope"`           // the scope the thread belongs to; since 3.0
+	Links []LinkRef `json:"links"`           // where it is shown, the first link first; since 3.0
+	Title string    `json:"title,omitempty"` // text: absent for a caller that may not read text, since 2.0
+	// Name is the chat thread's own name as the chat service shows it, of
+	// the thread's first link (SetName), which follows a rename; text,
+	// absent for a caller that may not read text, and when none is known.
+	// Since 3.7.
+	Name      string    `json:"name,omitempty"`
 	Repo      string    `json:"repo"`
 	State     State     `json:"state"`
 	StartedBy Principal `json:"started_by"`

@@ -73,6 +73,9 @@ type Sessions struct {
 	Scopes  map[string]Scope  // the scopes that name a supervisor, by key
 	Owner   control.Principal // whose Start makes the threads: the instance's owner
 	Cheap   string            // the adapter's cheapest model; "" when it names none
+	// Budgets are the scopes' budgets, by key: a scope's sends and starts
+	// are counted, and refused over budget, on its token's connection.
+	Budgets map[string]*Budget
 	Log     *slog.Logger
 
 	mu     sync.Mutex
@@ -114,7 +117,7 @@ func (s *Sessions) Confine(ctx context.Context, l runner.ConfinedLaunch) (runner
 // new one; without, it is left without. The token of an older session of
 // the same thread, as one a session replaced, is revoked.
 func (s *Sessions) bind(session int64, thread control.ThreadID, scope, stateDir string, issue bool) (string, error) {
-	api := s.Core.As(Caller(scope))
+	api := s.API(scope)
 	file := filepath.Join(stateDir, TokenFile)
 	b, err := os.ReadFile(file)
 	token := strings.TrimSpace(string(b))
@@ -151,6 +154,16 @@ func (s *Sessions) bind(session int64, thread control.ThreadID, scope, stateDir 
 		s.Tokens.Revoke(old.token)
 	}
 	return token, nil
+}
+
+// API is what the connection of scope's supervisor is bound to: its
+// Caller, with its sends and starts counted against the scope's budget.
+func (s *Sessions) API(scope string) control.API {
+	api := s.Core.As(Caller(scope))
+	if b := s.Budgets[scope]; b != nil {
+		api = b.API(api)
+	}
+	return api
 }
 
 // writeToken writes token to file, readable by this user only, and syncs it.

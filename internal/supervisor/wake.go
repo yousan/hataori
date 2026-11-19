@@ -34,28 +34,39 @@ type Ended struct {
 	Event  control.Event // its last turn_ended event
 }
 
-// Gate decides whether a wake happens. It is the one place where the
-// budget (#273) and the loop guard (#274) plug in.
+// Gate decides whether a wake happens. The waker's Gates are where the
+// loop guard (#274) and the budget (Budget, #273) plug in.
 type Gate interface {
 	// Admit is given the threads of a wake, by number, before its message
 	// is made, and returns those that may wake the supervisor. The events
 	// of the others are dropped as read. When it returns none, nothing is
-	// sent. It is asked only when the supervisor's thread is idle or
-	// asleep, but the thread may still start a turn before the wake is
-	// sent; the wake is then made again later, and Admit asked again about
-	// the same threads. A count of wakes therefore counts the supervisor's
+	// sent.
+	//
+	// A time instead holds the whole wake until then: nothing is dropped,
+	// the turn ends wait, those that come meanwhile are folded in, and
+	// the wake is made again at that time.
+	//
+	// It is asked only when the supervisor's thread is idle or asleep, but
+	// the thread may still start a turn before the wake is sent; the wake
+	// is then made again later, and Admit asked again about the same
+	// threads. A count of wakes therefore counts the supervisor's
 	// turn_started events whose key starts with WakeKeyPrefix, not calls.
-	Admit(ctx context.Context, scope string, threads []Ended) []Ended
+	Admit(ctx context.Context, scope string, threads []Ended) ([]Ended, time.Time, error)
 }
 
-// Clock is the waker's time: time.After, or a test's.
+// Clock is the waker's time: the real clock, or a test's.
 type Clock interface {
+	Now() time.Time
 	After(d time.Duration) <-chan time.Time
 }
 
 type realClock struct{}
 
+func (realClock) Now() time.Time                         { return time.Now() }
 func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
+
+// RealClock is the clock a Waker and a Budget use when none is given.
+var RealClock Clock = realClock{}
 
 // Waker wakes one scope's supervisor (design, section 7.1). It never polls:
 // it reads the scope's events from its stored position, and a turn_ended
@@ -79,9 +90,11 @@ type Waker struct {
 	Quiet      time.Duration     // the quiet period
 	OutputMax  int               // the cap, in bytes, of each thread's last output
 	ThreadsMax int               // the most threads a digest shows
-	Gate       Gate              // nil admits every wake
-	Clock      Clock             // nil for the real clock
-	Log        *slog.Logger
+	// Gates are asked in order about each wake: the loop guard (#274)
+	// comes before the budget, so that threads it drops spend nothing.
+	Gates []Gate
+	Clock Clock // nil for the real clock
+	Log   *slog.Logger
 	// Hook, when a test sets it, is called at two steps of a wake:
 	// "stored", once it is stored and before it is sent, and "sent", once
 	// it was accepted and before its position is stored. An error stops
@@ -135,6 +148,8 @@ type waking struct {
 	own     map[control.ThreadID]bool          // whether a thread is a supervisor's, as asked
 	quiet   <-chan time.Time                   // the quiet period, while it runs
 	retry   <-chan time.Time                   // a send to try again after an error
+	later   <-chan time.Time                   // a step towards the end of a gate's hold
+	until   time.Time                          // the end of a gate's hold; zero for none
 	held    bool                               // waits for the supervisor's thread to change
 }
 
@@ -193,6 +208,13 @@ func (w *Waker) run(ctx context.Context) error {
 		case <-r.retry:
 			r.retry = nil
 			err = r.attempt(ctx)
+		case <-r.later:
+			r.later = nil
+			if r.hold() {
+				continue
+			}
+			r.until = time.Time{}
+			err = r.attempt(ctx)
 		}
 		if err != nil {
 			return err
@@ -231,7 +253,7 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 	}
 	if e.Thread == r.sv {
 		// Its own turns never wake it, but end what holds a wake.
-		if r.held && r.quiet == nil && (e.Kind == TurnEnded || e.Kind == "state") {
+		if r.held && r.quiet == nil && r.later == nil && (e.Kind == TurnEnded || e.Kind == "state") {
 			return r.attempt(ctx)
 		}
 		return nil
@@ -252,7 +274,8 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 	if !Fold(r.ended, e, own) {
 		return nil
 	}
-	if r.quiet == nil && r.sending == nil {
+	// While a gate holds the wake, what comes waits for the hold's end.
+	if r.quiet == nil && r.sending == nil && r.later == nil {
 		r.quiet = r.w.clock().After(r.w.Quiet)
 	}
 	return nil
@@ -354,8 +377,23 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 		threads = append(threads, Ended{Thread: id, Event: e})
 	}
 	sort.Slice(threads, func(i, j int) bool { return threads[i].Thread < threads[j].Thread })
-	if r.w.Gate != nil {
-		threads = r.w.Gate.Admit(ctx, r.w.Scope, threads)
+	for _, g := range r.w.Gates {
+		if len(threads) == 0 {
+			break
+		}
+		var until time.Time
+		var err error
+		if threads, until, err = g.Admit(ctx, r.w.Scope, threads); err != nil {
+			return nil, false, err
+		}
+		if !until.IsZero() {
+			// Held: the turn ends wait for it, with what comes meanwhile.
+			if r.later == nil {
+				r.until = until
+				r.hold()
+			}
+			return nil, false, nil
+		}
 	}
 	if len(threads) == 0 {
 		return nil, false, r.advance(ctx, r.read)
@@ -367,6 +405,21 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 		return nil, false, err
 	}
 	return &wake{to: r.read, key: WakeKeyPrefix + strconv.FormatUint(r.read, 10), text: text}, true, nil
+}
+
+// holdStep is the longest a gate's hold waits on one timer: a timer does
+// not count the time the host slept, the wall clock does.
+const holdStep = time.Minute
+
+// hold waits, a step at a time, for the end of the gate's hold, and
+// reports whether it has not come yet by the wall clock.
+func (r *waking) hold() bool {
+	left := r.until.Sub(r.w.clock().Now())
+	if left <= 0 {
+		return false
+	}
+	r.later = r.w.clock().After(min(left, holdStep))
+	return true
 }
 
 // Fold folds e into ended, each thread's last turn end, and reports

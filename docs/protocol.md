@@ -385,6 +385,7 @@ One scope the caller may see; since 3.5.
 | `scope` | string | required | the scope it belongs to; since 3.0 |
 | `links` | [`LinkRef`] | required | where it is shown, the first link first; empty for a thread from before 3.0 whose scope is no longer in the config; since 3.0 |
 | `title` | string | optional | from the first line of the first prompt; text; absent for a caller that may not read text, and when it is empty; optional since 2.0, required before |
+| `name` | string | optional | the chat thread's own name as the chat service shows it, of the thread's first link (`SetName`), which follows a rename; text; absent for a caller that may not read text, and when none is known; since 3.7 |
 | `repo` | string | required | the repository of its workspace |
 | `state` | string | required | `creating`, `idle`, `running`, `waiting`, `asleep`, `closed`, `removed` or `failed` |
 | `started_by` | string | required | the principal that started it |
@@ -410,6 +411,7 @@ The fields of `ThreadInfo`, and:
 | `scope` | string | required | as in `ThreadInfo` |
 | `links` | [`LinkRef`] | required | as in `ThreadInfo` |
 | `title` | string | optional | as in `ThreadInfo` |
+| `name` | string | optional | as in `ThreadInfo` |
 | `repo` | string | required | as in `ThreadInfo` |
 | `state` | string | required | as in `ThreadInfo` |
 | `started_by` | string | required | as in `ThreadInfo` |

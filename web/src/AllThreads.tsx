@@ -1,6 +1,6 @@
 import type { ThreadInfo } from "./api";
 import { type Key, lang, t } from "./catalog";
-import { age, stateName } from "./format";
+import { age, displayTitle, fullTitle, stateName } from "./format";
 import { type Show, shows } from "./show";
 import type { Workspace } from "./workspaces";
 
@@ -60,8 +60,8 @@ function Row(props: { x: ThreadInfo; w: Workspace | undefined; now: number; sele
           {t("thread.number", { n: x.id })}
         </button>
       </td>
-      <td data-col="title" className="cell-title">
-        {x.title || dash()}
+      <td data-col="title" className="cell-title" title={fullTitle(x) || undefined}>
+        {displayTitle(x) || dash()}
       </td>
       <td data-col="agent">{t("table.agentModel", { agent: x.agent || dash(), model: x.model || dash() })}</td>
       <td data-col="age" data-since={x.updated}>

@@ -382,7 +382,7 @@ Every call is made as a `Caller`: who it is, which scopes it may see, and which 
 
 **A thread is named by its number** in every operation and event: `Thread`, `Send`, `Stop`, `Link` and the dashboard's operations take it, `Start` returns it, and every event carries it with the thread's scope. Chat ids appear only in links. A client that knows only a chat conversation finds the number through the link: `Threads` with a filter that names the link (client, channel, thread) returns the one thread linked there, or nothing. `Link` (section 5.2) adds a link to a thread.
 
-**Whose input reaches the agent.** A client that relays input from a chat service says where it came from: `Caller.From`, an id of the form `<client>:<id>` (section 5.5). The core resolves that id to a person; the client does not. Then, for `Start`, `Send`, `Answer` and `Stop`, the core allows the call only when the person is the owner or is listed in the scope of the thread (for `Start`, the scope asked for; for `Answer`, the scope of the request's thread). An id that no person lists is a guest, and a guest is refused every one of the four. A refusal changes nothing and writes one log line with the operation, the scope, the client and the id, and the person when there is one. This is the only check of who may give input, for every client: a chat front end, a second surface, a driver in another process, the `hataori` command. A caller that the daemon authenticates itself, such as the OS user on the control socket, which is the owner, names the person directly and has no `From`. Reads (`Threads`, `Thread`, `Events`) are checked against the caller's scopes as before; they give the agent nothing.
+**Whose input reaches the agent.** A client that relays input from a chat service says where it came from: `Caller.From`, an id of the form `<client>:<id>` (section 5.5). The core resolves that id to a person; the client does not. Then, for `Start`, `Send`, `Answer` and `Stop`, the core allows the call only when the person is the owner or is listed in the scope of the thread (for `Start`, the scope asked for; for `Answer`, the scope of the request's thread). An id that no person lists is a guest, and a guest is refused every one of the four. A refusal changes nothing and writes one log line with the operation, the scope, the client and the id, and the person when there is one. This is the only check of who may give input, for every client: a chat front end, a second surface, a driver in another process, the `hataori` command. A caller that the daemon authenticates itself, such as the OS user on the control socket, which is the owner, names the person directly and has no `From`. Reads (`Threads`, `Thread`, `Events`) are checked against the caller's scopes as before; they give the agent nothing. A caller with `Caller.ReadAsPerson` has its reads checked like its input, so that the chat front end's status command shows a guest nothing (#256): a read in a scope the person may not act in is refused and logged the same way, and a list of every scope leaves those scopes out.
 
 Every record of input keeps both the person and the id it came from (section 6.2).
 
@@ -558,6 +558,8 @@ One limit is not enforced by this: the supervisor can *ask* a worker thread to m
 - *No events, no turns.* An idle scope costs nothing.
 - *Small input per wake.* The wake message is a digest: thread, how the turn ended, the last lines. Reading more is an explicit tool call with a capped answer.
 - *A budget per scope:* supervisor turns per hour, sends and starts per hour, and tokens per day, counted from the usage the agent records for each turn. Over budget, the supervisor is not woken; a person is told once.
+
+  How (#273; decision 5 of #267): `scopes[].supervisor.turns_per_hour` (12), `sends_per_hour` (20) and `tokens_per_day` (2,000,000), each turned off by 0. `supervisor.Budget` counts from the event log, so a restart keeps the counts. Turns are the `turn_started` events of the scope's supervisor threads in the current hour, whoever started the turn. Sends and starts are the `input` and `answer` events whose `from` is the supervisor's id in the current hour, a start counting once through its first input; and a `thread_created` of its own whose thread has no input of its yet, as a start that failed before its first input. Tokens follow `Tokens.Today`'s rule over the `usage` events of its threads: each report adds what it raises its turn's highest total by, counted in the day it came. Hours and days are those of the daemon's clock and time zone; the core stamps `thread_created` with that clock too, as every other event of a thread. The budget is used up when any limit is reached. It is the waker's gate: a wake is then held, not dropped, until the windows of every limit reached have ended, and the turn ends until then are folded into the one wake that follows. Once the sends limit is reached, the daemon also refuses the supervisor's `Start` and `Send` at the call, on its token's connection, with `ErrForbidden` and a message that says why and until when, so that one long turn cannot send without bound. In both cases a person is told in the supervisor's chat thread: one line saying what is used up and until when, once for each end of a hold and the limits reached by then, so a limit reached later in the same hold is told too. The line is the chat front end's notice, keyed by `hataori-budget-<end>-<limits>`, which is posted once also across restarts. Hours are taken from the instant, so the hour repeated when the clocks go back is one of its own, and a hold waits at most a minute on one timer and goes by the wall clock, which goes on while the host sleeps. The loop guard (#274) goes before the budget in the waker's gates.
 - *A loop guard.* A supervisor send that ends a worker turn that wakes the supervisor is a cycle. After a set number of cycles on one thread with no person's message in between, that thread stops waking the supervisor until a person acts.
 - *The ordinary limits apply:* the cap on turns running at once, and sleep when idle.
 - *A cheaper model by default.* Its job is reading digests and routing.
@@ -571,7 +573,7 @@ The unit is the thread, not the terminal, so the page does not depend on how hat
 **Layout.** One page in five parts.
 
 - **Tree, on the left.** A filter box on top, matching title, number and terminal. Under it a *needs attention* block: the threads waiting on a question or failed, each with the question or the failure reason. Then the tree itself, which reads like the chat it mirrors (#405), driven from the keyboard as a tree view (up, down, left folds or goes up, right unfolds or goes in, Enter opens):
-  1. *One node per scope* the person may see (`Scopes`), also one with no thread, named as the chat service names its channel (`#name` on Discord, through the control API), by the config's name when it has one, else by its key. It shows the number of its threads and one state dot per thread, and folds; the folds are kept in the browser. Under it its threads, the most recently active first. A thread's row shows the agent's mark coloured by state, its number and title, and its age; a second line shows the model, the context use in percent and the last line of output, with a question or a failure highlighted.
+  1. *One node per scope* the person may see (`Scopes`), also one with no thread, named as the chat service names its channel (`#name` on Discord, through the control API), by the config's name when it has one, else by its key. It shows the number of its threads and one state dot per thread, and folds; the folds are kept in the browser. Under it its threads, the most recently active first. A thread's row shows the agent's mark coloured by state, its number and title, and its age. Its title is the chat thread's own name, following a rename, else the first line of its first prompt; an issue's or a pull request's address in it is shown short, as `repo#N`, with the whole title in the tooltip and the details panel (#406); a second line shows the model, the context use in percent and the last line of output, with a question or a failure highlighted.
   2. *Host terminals*, one node after the scopes, folded at first. In it, *tmux on the host*, sessions that hataori does not own: session, then window. A row shows the window, its process, its terminal device and its last activity. A pane whose foreground process is a shell and whose window has shown no activity for more than a day is hidden by default, by the same switch that hides asleep threads (#335), and counted with them.
      Then *other terminals on the host* that hataori does not own: terminal device and process.
 
@@ -1581,6 +1583,12 @@ type Caller struct {
 	// the title is made without it. Set by the
 	// daemon when it binds the caller, never by the client.
 	Mark string
+	// ReadAsPerson checks the caller's reads like its input: the person
+	// From resolves to must be allowed in a scope to read its threads,
+	// events and name, else the read is refused and logged; a list of every scope
+	// leaves those scopes out. The chat front end's caller for a /status
+	// command has it (#256).
+	ReadAsPerson bool
 }
 
 // A connection to the control socket is the owner's, unless its hello
@@ -1606,6 +1614,7 @@ type Caller struct {
 type ThreadInfo struct {
 	// ...
 	Title      string // the first line of the first prompt; text, so optional since protocol 2.0
+	Name       string // the chat thread's own name, of the first link (SetName), following a rename; text; since protocol 3.7
 	Agent      string // the agent's registered name
 	Model      string // as the agent reports it; as asked for until then
 	Effort     string // the same
@@ -1769,6 +1778,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `SignInLink`'s `way` (section 7.2, #359) | minor: new optional argument; 3.2 |
 | `ThreadEvents` (#336) | minor: new operation; 3.3 |
 | `SetName`, with `Ops` gaining `OpName`, `Scopes` and `ScopeInfo`, and the `named` event (#405) | minor: new operations and event kind; 3.5 |
+| `ThreadInfo.Name`, the chat thread's own name (#406) | minor: new optional field; 3.7 |
 | `OperateHost`, with `Ops` gaining `OpHostInput` (section 7.2) | minor: new operation, whose connection becomes a stream both ways |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 
@@ -1816,6 +1826,15 @@ type Factory func(config *os.Root, settings []byte) (Driver, error)
 // connect, and records the names with SetName (#405).
 type Namer interface {
 	Name(ctx context.Context, conv Conversation) (string, error)
+}
+
+// Renamer is implemented by a Sink that wants the names of conversations
+// as the service shows them: Run calls Renamed when it learns a thread's
+// name, and when the name changes. The chat front end records them with
+// SetName, and the dashboard shows a thread by its chat thread's name
+// (#406).
+type Renamer interface {
+	Renamed(conv Conversation, name string)
 }
 
 // Sink is implemented by the chat front end, not by the core.

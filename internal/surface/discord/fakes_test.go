@@ -271,6 +271,7 @@ func (g *fakeGateway) drop() {
 // sink records what the driver delivers.
 type sink struct {
 	mu       sync.Mutex
+	renamed  []renaming
 	messages []surface.Inbound
 	choices  []surface.Selection
 	commands []surface.Command
@@ -278,6 +279,18 @@ type sink struct {
 }
 
 func newSink() *sink { return &sink{got: make(chan struct{}, 64)} }
+
+// renaming is one call of Renamed.
+type renaming struct {
+	conv surface.Conversation
+	name string
+}
+
+func (s *sink) Renamed(conv surface.Conversation, name string) {
+	s.mu.Lock()
+	s.renamed = append(s.renamed, renaming{conv, name})
+	s.mu.Unlock()
+}
 
 func (s *sink) Message(in surface.Inbound) {
 	s.mu.Lock()
