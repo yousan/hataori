@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -21,6 +23,7 @@ import (
 )
 
 type codexWire struct {
+	T   float64        `json:"t"`
 	Dir string         `json:"dir"`
 	Msg map[string]any `json:"msg"`
 }
@@ -131,6 +134,23 @@ func codexReplay(args []string) int {
 	if scenario == "" {
 		scenario = "start"
 	}
+	if choices := strings.Split(scenario, ","); len(choices) > 1 {
+		counter := os.Getenv("HATAORI_TEST_CODEX_LAUNCHES")
+		if counter == "" {
+			fmt.Fprintln(os.Stderr, "codex replay: launch counter required")
+			return 2
+		}
+		b, _ := os.ReadFile(counter)
+		n := len(b)
+		if n >= len(choices) {
+			fmt.Fprintln(os.Stderr, "codex replay: unexpected launch")
+			return 2
+		}
+		if err := os.WriteFile(counter, append(b, 'x'), 0600); err != nil {
+			return 2
+		}
+		scenario = choices[n]
+	}
 	lines := read(filepath.Join(capture, scenario, "wire.jsonl"))
 	usage := read(filepath.Join(capture, "usage/wire.jsonl"))
 	var rate map[string]any
@@ -145,7 +165,16 @@ func codexReplay(args []string) int {
 			break
 		}
 	}
+	var standin *exec.Cmd
+	defer func() {
+		if standin != nil && standin.Process != nil {
+			_ = standin.Process.Kill()
+			_ = standin.Wait()
+		}
+	}()
+	scale, _ := strconv.ParseFloat(os.Getenv("HATAORI_TEST_CODEX_PACE"), 64)
 	pos := 0
+	skippedRates := map[any]bool{}
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 4096), 4<<20)
 	out := json.NewEncoder(os.Stdout)
@@ -163,6 +192,11 @@ func codexReplay(args []string) int {
 			continue
 		}
 		method, _ := m["method"].(string)
+		if method == "thread/backgroundTerminals/clean" && standin != nil {
+			_ = standin.Process.Kill()
+			_ = standin.Wait()
+			standin = nil
+		}
 		if method == "thread/start" {
 			p, _ := m["params"].(map[string]any)
 			cwd, _ := p["cwd"].(string)
@@ -216,8 +250,43 @@ func codexReplay(args []string) int {
 		if pos < len(lines) && lines[pos].Dir == "send" && (lines[pos].Msg["method"] == method || (method == "" && lines[pos].Msg["method"] == nil)) {
 			requestPos := pos
 			pos++
-			for pos < len(lines) && lines[pos].Dir == "recv" {
+			lastTime := lines[requestPos].T
+			for pos < len(lines) {
 				v := lines[pos].Msg
+				if lines[pos].Dir == "send" {
+					if v["method"] != "account/rateLimits/read" {
+						break
+					}
+					skippedRates[v["id"]] = true
+					pos++
+					continue
+				}
+				if v["method"] == nil && skippedRates[v["id"]] {
+					delete(skippedRates, v["id"])
+					pos++
+					continue
+				}
+				if scale > 0 {
+					delay := lines[pos].T - lastTime
+					if delay > 0 {
+						time.Sleep(time.Duration(delay * scale * float64(time.Second)))
+					}
+				}
+				lastTime = lines[pos].T
+				if scenario == "interrupt" && v["method"] == "item/started" && os.Getenv("HATAORI_TEST_CODEX_COMMAND_PID") != "" {
+					params, _ := v["params"].(map[string]any)
+					item, _ := params["item"].(map[string]any)
+					if item["type"] == "commandExecution" {
+						standin = exec.Command(os.Args[0], "codex-standin", strconv.Itoa(os.Getpid()))
+						standin.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+						if err := standin.Start(); err != nil {
+							return 2
+						}
+						if err := os.WriteFile(os.Getenv("HATAORI_TEST_CODEX_COMMAND_PID"), []byte(strconv.Itoa(standin.Process.Pid)), 0600); err != nil {
+							return 2
+						}
+					}
+				}
 				if _, ok := v["id"]; ok && v["method"] == nil {
 					v["id"] = m["id"]
 				}
