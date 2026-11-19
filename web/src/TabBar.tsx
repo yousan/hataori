@@ -51,7 +51,7 @@ function Tab(props: {
   const n = threadOf(k);
   const device = hostOf(k);
   const name =
-    n !== null ? (x ? x.title : t("thread.number", { n })) : device !== null ? (h ? hostLabel(h) : device) : t("tabs.all");
+    n !== null ? (x?.title || t("thread.number", { n })) : device !== null ? (h ? hostLabel(h) : device) : t("tabs.all");
   const b = badge(x);
   return (
     <div className={active ? "tab active" : "tab"} data-tab={k} role="presentation">

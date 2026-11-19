@@ -13,7 +13,7 @@ export interface ThreadID {
 export interface ThreadInfo {
   id: ThreadID;
   number: number;
-  title: string;
+  title?: string; // left out when empty, and for a caller that may not read text (protocol 2.0)
   repo: string;
   state: State;
   started_by: string;

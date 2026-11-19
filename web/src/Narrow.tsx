@@ -114,7 +114,7 @@ export function NarrowThread({ x, attention, workspace, subscribe, opens, onBack
         <button type="button" className="narrow-back" onClick={onBack}>
           {t("narrow.back")}
         </button>
-        <h2 className="narrow-title">{t("narrow.thread", { n: x.number, title: x.title })}</h2>
+        <h2 className="narrow-title">{t("narrow.thread", { n: x.number, title: x.title ?? "" })}</h2>
       </div>
       {attention && <Waiting a={attention} />}
       <div className="narrow-pane">
