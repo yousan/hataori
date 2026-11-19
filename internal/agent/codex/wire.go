@@ -3,11 +3,12 @@ package codex
 import "encoding/json"
 
 type message struct {
-	ID     *int            `json:"id,omitempty"`
-	Method string          `json:"method,omitempty"`
-	Params json.RawMessage `json:"params,omitempty"`
-	Result json.RawMessage `json:"result,omitempty"`
-	Error  *wireError      `json:"error,omitempty"`
+	EmittedAtMS *int64          `json:"emittedAtMs"`
+	ID          *int            `json:"id,omitempty"`
+	Method      string          `json:"method,omitempty"`
+	Params      json.RawMessage `json:"params,omitempty"`
+	Result      json.RawMessage `json:"result,omitempty"`
+	Error       *wireError      `json:"error,omitempty"`
 }
 type wireError struct {
 	Message string `json:"message"`
@@ -20,10 +21,17 @@ type wireTurn struct {
 	} `json:"error"`
 }
 type wireItem struct {
-	Type    string `json:"type"`
-	Text    string `json:"text"`
-	Phase   string `json:"phase"`
-	Content []struct {
+	ID                string   `json:"id"`
+	Tool              string   `json:"tool"`
+	Server            string   `json:"server"`
+	Kind              string   `json:"kind"`
+	AgentThreadID     string   `json:"agentThreadId"`
+	AgentPath         string   `json:"agentPath"`
+	ReceiverThreadIDs []string `json:"receiverThreadIds"`
+	Type              string   `json:"type"`
+	Text              string   `json:"text"`
+	Phase             string   `json:"phase"`
+	Content           []struct {
 		Text string `json:"text"`
 	} `json:"content"`
 }
