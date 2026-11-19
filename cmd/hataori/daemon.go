@@ -293,6 +293,12 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	// dispatcher of its hooks knows its connections by that binding, and
 	// tells it plugin_started when it connects.
 	hooks := plugin.NewDispatcher(grants, lg)
+	// The core runs the input hook points through it (#351), before any
+	// input can come: nothing has served or recovered yet. Without plugins
+	// it has none, and input goes as it did before hooks.
+	if len(grants) > 0 {
+		c.Hooks = hooks
+	}
 	asPlugin := plugin.BindAs(c.As)
 	srv.Peered = func(api control.API, p *wire.Peer) { hooks.Peered(api, p) }
 	issuePlugin := func(id string) (string, error) {
