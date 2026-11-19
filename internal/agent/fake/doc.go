@@ -98,8 +98,12 @@
 // ones it was started with.
 //
 // The spec's instructions are the start-up script: a line "never-start"
-// makes the program never report that it is ready, and "input-delay D"
-// makes it wait D before it takes each input.
+// makes the program never report that it is ready, "input-delay D"
+// makes it wait D before it takes each input, and "relay A B" makes it a
+// supervisor that relays between threads A and B: each turn whose input
+// has a line starting "Thread A:", as a wake message does, ends by
+// sending "reply relayed from A" to thread B with the MCP server's
+// send_to_thread, and the other way round.
 //
 // The codec holds input while a turn runs and writes it when the turn
 // ends, as an agent that takes one prompt at a time would. Written input
