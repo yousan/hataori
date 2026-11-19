@@ -94,14 +94,15 @@ export function App() {
   const operations = useRef(new Map<TabKey, Operation>());
   const opOf = (k: TabKey) => ops.get(k);
   // The switch toggles the tab's operation as it is now, not as it was
-  // last drawn: a second click while it starts switches it off.
+  // last drawn: a second click while it starts switches it off. One that
+  // ended on the page while the server sends what was typed before it is
+  // left to close itself.
   const switchOp = (k: TabKey, pane: string) => () => {
     const now = operations.current.get(k);
     if (now?.live) {
       now.stop();
       return;
     }
-    now?.close();
     const op: Operation = new Operation(pane, (s) => {
       if (operations.current.get(k) === op) setOps((m) => new Map(m).set(k, s));
     });

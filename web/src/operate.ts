@@ -165,6 +165,7 @@ export class Operation {
       else if (a.error) this.set({ error: a.error });
     };
     ws.onclose = (e) => {
+      clearTimeout(this.stopTimer);
       if (this.done) return;
       if (e.code === 1000 && serverReasons.includes(e.reason)) this.end(e.reason as EndReason);
       else if (e.code === 1008) this.end("refused", e.reason);
@@ -194,8 +195,8 @@ export class Operation {
       // same, but keeps the connection open a while, since closing it
       // would cancel what the server has not sent yet.
       this.stopTimer = setTimeout(() => {
+        this.stopTimer = setTimeout(() => ws.close(), 15000); // before the owner hears of the end, which may close it
         this.set({ phase: "ended", reason: "ended" });
-        this.stopTimer = setTimeout(() => ws.close(), 15000);
       }, 900);
       return;
     }
