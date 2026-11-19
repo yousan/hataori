@@ -361,8 +361,17 @@ func TestDashboardTreeAndStatusBar(t *testing.T) {
 
 	// 3. The filter: title, number, terminal; empty shows everything.
 	ts = threads()
-	term := ts["reply done"].Terminal
-	if term == "" {
+	// The terminal case uses the longest terminal: a shorter one can sit
+	// inside the others (/dev/pts/1 in /dev/pts/10 and /dev/pts/11).
+	var term string
+	var termHit int64
+	for _, x := range ts {
+		if len(x.Terminal) > len(term) {
+			term, termHit = x.Terminal, int64(x.ID)
+		}
+	}
+	term2 := ts["reply done"].Terminal
+	if term2 == "" {
 		t.Fatalf("thread %d has no terminal: %+v", n2, ts["reply done"])
 	}
 	// expect is the threads, in the page's order, that the filter q
@@ -380,15 +389,34 @@ func TestDashboardTreeAndStatusBar(t *testing.T) {
 		slices.Sort(out)
 		return out
 	}
-	for _, f := range []struct {
+	type filterCase struct {
 		q   string
 		hit int64 // a thread the filter must show
-	}{
+	}
+	cases := []filterCase{
 		{"DEPLOY", n1},
 		{"#" + strconv.FormatInt(n2, 10), n2},
-		{strconv.FormatInt(n3, 10), n3},
-		{term, n2},
-	} {
+		{term, termHit},
+	}
+	// A bare number also matches every terminal that holds its digits,
+	// and the terminals are whatever devices the host hands out (thread 3
+	// on /dev/pts/13 beside /dev/pts/23 and /dev/pts/30). So the bare
+	// number is a thread's whose title and terminal do not hold it (only
+	// its number shows it) and that leaves at least one thread out.
+	bare := false
+	for _, x := range ts {
+		q := strconv.FormatInt(int64(x.ID), 10)
+		if strings.Contains(x.Title, q) || strings.Contains(x.Terminal, q) || len(expect(q)) == 3 {
+			continue
+		}
+		cases = append(cases, filterCase{q, int64(x.ID)})
+		bare = true
+		break
+	}
+	if !bare {
+		t.Logf("no thread's bare number singles it out on these terminals, so it is not checked: %+v", ts)
+	}
+	for _, f := range cases {
 		want := expect(f.q)
 		if !slices.Contains(want, f.hit) || len(want) == 3 {
 			t.Fatalf("filter %q: the case does not single out thread %d: %v", f.q, f.hit, want)
@@ -416,7 +444,7 @@ func TestDashboardTreeAndStatusBar(t *testing.T) {
 	b.call("Input.dispatchKeyEvent", map[string]any{"type": "keyDown", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13})
 	b.call("Input.dispatchKeyEvent", map[string]any{"type": "keyUp", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13})
 	b.until("the selected thread in the status bar", fmt.Sprintf(
-		`document.querySelector('.status-item').dataset.selected == %d && document.querySelector('.status-item').textContent.includes(%q)`, n2, term))
+		`document.querySelector('.status-item').dataset.selected == %d && document.querySelector('.status-item').textContent.includes(%q)`, n2, term2))
 
 	// 5. The live mark: the position of the last event of the caller's
 	// threads, also after a new one; off when the stream is down.
