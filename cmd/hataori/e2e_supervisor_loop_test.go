@@ -178,3 +178,54 @@ func TestLoopGuard(t *testing.T) {
 		t.Fatalf("the wake after a person's message in the supervisor's thread:\n%s", got[before+2])
 	}
 }
+
+// A person is told when the wake that makes the last cycle is accepted,
+// before any turn end of the thread is dropped; the next one is dropped
+// and tells nobody again.
+func TestLoopGuardTellsAtTheLastCycle(t *testing.T) {
+	var (
+		mu    sync.Mutex
+		issue func(string) (string, error)
+	)
+	supervisorHook = func(i func(string) (string, error), _ func(string)) { mu.Lock(); issue = i; mu.Unlock() }
+	t.Cleanup(func() { supervisorHook = nil })
+	wt := newWakeTest(t, budget(0, 0, 0))
+	stop, owner, sv := wt.start(t)
+	defer stop()
+	ctx := context.Background()
+	w, pos := wt.worker(t, owner, "c1", "w", "reply w")
+	wt.read(t, pos)
+	wt.quiet(t)
+	wt.woken(t, owner, sv.ID, 1)
+	mu.Lock()
+	svc := svConn(t, wt.r.root, issue)
+	mu.Unlock()
+	// The supervisor sends, the turn ends, and a wake tells it: one cycle.
+	cycle := func(i int) {
+		t.Helper()
+		if err := svc.Send(ctx, w, fmt.Sprintf("sv-%d", i), control.Input{Text: fmt.Sprintf("reply round %d", i)}, control.Refuse); err != nil {
+			t.Fatal(err)
+		}
+		wt.read(t, wt.ended(t, w, i+1))
+	}
+	for i := 1; i <= 3; i++ {
+		if n := len(wt.loopNotices(sv)); n != 0 {
+			t.Fatalf("a loop notice before cycle %d: %q", i, wt.loopNotices(sv))
+		}
+		cycle(i)
+		wt.quiet(t)
+		wt.woken(t, owner, sv.ID, 1+i)
+	}
+	eventually(t, "the notice at the last cycle", 10*time.Second, func() bool { return len(wt.loopNotices(sv)) == 1 })
+	if got := wt.loopNotices(sv)[0]; !strings.Contains(got, fmt.Sprintf("Thread #%d went back and forth with the supervisor 3 times", w)) {
+		t.Fatalf("the notice: %s", got)
+	}
+	cycle(4)
+	wt.settle(t, "the waker", func() bool { return true })
+	if got := wt.wakes(t, sv.ID); len(got) != 4 {
+		t.Fatalf("%d wakes after the fourth round, want still 4", len(got))
+	}
+	if n := len(wt.loopNotices(sv)); n != 1 {
+		t.Fatalf("%d loop notices, want 1", n)
+	}
+}

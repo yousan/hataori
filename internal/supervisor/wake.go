@@ -54,6 +54,14 @@ type Gate interface {
 	Admit(ctx context.Context, scope string, threads []Ended) ([]Ended, time.Time, error)
 }
 
+// Woken is a Gate that is also told of each wake once the supervisor's
+// thread accepted it, with the threads the gates admitted to it. A wake
+// that an earlier run of the waker stored, and this one sent again, is not
+// told: its threads are not stored.
+type Woken interface {
+	Woken(ctx context.Context, scope string, threads []Ended) error
+}
+
 // Clock is the waker's time: the real clock, or a test's.
 type Clock interface {
 	Now() time.Time
@@ -134,6 +142,7 @@ func (w *Waker) Run(ctx context.Context) {
 type wake struct {
 	to        uint64
 	key, text string
+	threads   []Ended // what the gates admitted; nil for a wake stored by an earlier run
 }
 
 // waking is one run of the waker, from the stored position.
@@ -318,6 +327,13 @@ func (r *waking) attempt(ctx context.Context) error {
 			return err
 		}
 		r.w.Log.Info("supervisor woken", "scope", r.w.Scope, "thread", int64(sv), "to", r.sending.to)
+		for _, g := range r.w.Gates {
+			if t, ok := g.(Woken); ok && r.sending.threads != nil {
+				if err := t.Woken(ctx, r.w.Scope, r.sending.threads); err != nil {
+					r.w.Log.Error("supervisor waker: a gate on a wake", "scope", r.w.Scope, "err", err)
+				}
+			}
+		}
 		to := r.sending.to
 		r.sending, r.held = nil, false
 		if err := r.advance(ctx, to); err != nil {
@@ -404,7 +420,7 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	return &wake{to: r.read, key: WakeKeyPrefix + strconv.FormatUint(r.read, 10), text: text}, true, nil
+	return &wake{to: r.read, key: WakeKeyPrefix + strconv.FormatUint(r.read, 10), text: text, threads: threads}, true, nil
 }
 
 // holdStep is the longest a gate's hold waits on one timer: a timer does
