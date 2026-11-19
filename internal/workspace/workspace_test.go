@@ -229,3 +229,33 @@ func TestAdoptOnlyTheDirectoryItPlaced(t *testing.T) {
 		t.Fatal("the other directory was touched")
 	}
 }
+
+// A clone a release before thread numbers placed, at its own path, is
+// adopted there by its device and inode; a placement outside the
+// workspaces directory is refused.
+func TestAdoptAPlacementOfTheReleaseBefore(t *testing.T) {
+	root := t.TempDir()
+	m := Maker{Root: root}
+	old := filepath.Join(root, Dir, "chat", "c1", "t1")
+	if err := os.MkdirAll(old, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Lstat(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, ino, _ := identity(st)
+	got, ok, err := m.Adopt(context.Background(), 1, core.Placement{Dir: old, Dev: dev, Inode: ino})
+	if err != nil || !ok || got != old {
+		t.Fatalf("adopt the old placement: %q, %v, %v", got, ok, err)
+	}
+	if _, ok, err := m.Adopt(context.Background(), 1, core.Placement{Dir: old, Dev: dev, Inode: ino + 1}); ok || !errors.Is(err, ErrExists) {
+		t.Fatalf("another directory at the old place: %v, %v", ok, err)
+	}
+	outside := t.TempDir()
+	for _, dir := range []string{outside, filepath.Join(root, Dir), filepath.Join(root, Dir, "..", "state")} {
+		if _, ok, err := m.Adopt(context.Background(), 1, core.Placement{Dir: dir, Dev: dev, Inode: ino}); ok || err == nil {
+			t.Fatalf("a placement at %s: %v, %v", dir, ok, err)
+		}
+	}
+}

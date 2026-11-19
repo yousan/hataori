@@ -140,9 +140,16 @@ func (m Maker) Make(ctx context.Context, thread control.ThreadID, repo string, p
 // only at the directory itself, and changes nothing. It implements the
 // core's Workspaces.
 func (m Maker) Adopt(ctx context.Context, thread control.ThreadID, p core.Placement) (string, bool, error) {
+	// Where a Make of this release puts it, or, for a Make of a release
+	// before thread numbers, where that one did: inside the workspaces
+	// directory. Its device and inode are checked either way.
 	target := Path(m.Root, thread)
 	if p.Dir != target {
-		return "", false, fmt.Errorf("workspace: %s is not the workspace of thread %d", p.Dir, thread)
+		rel, err := filepath.Rel(filepath.Join(m.Root, Dir), p.Dir)
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || !filepath.IsAbs(p.Dir) {
+			return "", false, fmt.Errorf("workspace: %s is not the workspace of thread %d", p.Dir, thread)
+		}
+		target = p.Dir
 	}
 	st, err := os.Lstat(target)
 	if errors.Is(err, os.ErrNotExist) {
