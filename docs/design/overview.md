@@ -1214,7 +1214,9 @@ type API interface {
 
 	// CloseThread ends the agent process of an idle, asleep or failed thread
 	// and closes it (section 4.5): the workspace stays, and Send is
-	// ErrClosed. RemoveThread removes the workspace of a closed thread only
+	// ErrClosed. An idle thread whose last turn left background tasks
+	// running, or with a message or an answer accepted and not yet reported
+	// by a turn, is ErrRefused and stays as it is. RemoveThread removes the workspace of a closed thread only
 	// through the proof of section 4.6, by a rename into trash; a proof that
 	// does not hold is ErrRemovalRefused with the reason, and the thread
 	// stays closed. Each removal and refusal writes one event. Both are

@@ -62,9 +62,11 @@ type API interface {
 	// CloseThread ends the agent process of an idle, asleep or failed thread and
 	// closes it: the workspace stays, and a message does not wake it (Send
 	// is ErrClosed). A thread with a turn running, a question open or a
-	// session starting is refused, and so is an idle
-	// one whose last turn left background tasks running. A closed thread is not closed again, but
-	// its agent is stopped if it still runs.
+	// session starting is refused, and so is an idle one whose last turn
+	// left background tasks running, or that has a message or an answer the
+	// core accepted and no turn has reported yet, such as a message held
+	// until the turn that was running ended. A closed thread is not closed
+	// again, but its agent is stopped if it still runs.
 	// It is checked like Stop and needs OpClose. On the wire it is the
 	// operation Close.
 	CloseThread(ctx context.Context, id ThreadID) error
