@@ -382,7 +382,7 @@ Every call is made as a `Caller`: who it is, which scopes it may see, and which 
 
 **A thread is named by its number** in every operation and event: `Thread`, `Send`, `Stop`, `Link` and the dashboard's operations take it, `Start` returns it, and every event carries it with the thread's scope. Chat ids appear only in links. A client that knows only a chat conversation finds the number through the link: `Threads` with a filter that names the link (client, channel, thread) returns the one thread linked there, or nothing. `Link` (section 5.2) adds a link to a thread.
 
-**Whose input reaches the agent.** A client that relays input from a chat service says where it came from: `Caller.From`, an id of the form `<client>:<id>` (section 5.5). The core resolves that id to a person; the client does not. Then, for `Start`, `Send`, `Answer` and `Stop`, the core allows the call only when the person is the owner or is listed in the scope of the thread (for `Start`, the scope asked for; for `Answer`, the scope of the request's thread). An id that no person lists is a guest, and a guest is refused every one of the four. A refusal changes nothing and writes one log line with the operation, the scope, the client and the id, and the person when there is one. This is the only check of who may give input, for every client: a chat front end, a second surface, a driver in another process, the `hataori` command. A caller that the daemon authenticates itself, such as the OS user on the control socket, which is the owner, names the person directly and has no `From`. Reads (`Threads`, `Thread`, `Events`) are checked against the caller's scopes as before; they give the agent nothing.
+**Whose input reaches the agent.** A client that relays input from a chat service says where it came from: `Caller.From`, an id of the form `<client>:<id>` (section 5.5). The core resolves that id to a person; the client does not. Then, for `Start`, `Send`, `Answer` and `Stop`, the core allows the call only when the person is the owner or is listed in the scope of the thread (for `Start`, the scope asked for; for `Answer`, the scope of the request's thread). An id that no person lists is a guest, and a guest is refused every one of the four. A refusal changes nothing and writes one log line with the operation, the scope, the client and the id, and the person when there is one. This is the only check of who may give input, for every client: a chat front end, a second surface, a driver in another process, the `hataori` command. A caller that the daemon authenticates itself, such as the OS user on the control socket, which is the owner, names the person directly and has no `From`. Reads (`Threads`, `Thread`, `Events`) are checked against the caller's scopes as before; they give the agent nothing. A caller with `Caller.ReadAsPerson` has its reads checked like its input, so that the chat front end's status command shows a guest nothing (#256): a read in a scope the person may not act in is refused and logged the same way, and a list of every scope leaves those scopes out.
 
 Every record of input keeps both the person and the id it came from (section 6.2).
 
@@ -1583,6 +1583,12 @@ type Caller struct {
 	// the title is made without it. Set by the
 	// daemon when it binds the caller, never by the client.
 	Mark string
+	// ReadAsPerson checks the caller's reads like its input: the person
+	// From resolves to must be allowed in a scope to read its threads,
+	// events and name, else the read is refused and logged; a list of every scope
+	// leaves those scopes out. The chat front end's caller for a /status
+	// command has it (#256).
+	ReadAsPerson bool
 }
 
 // A connection to the control socket is the owner's, unless its hello

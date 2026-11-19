@@ -407,6 +407,22 @@ An order is a message in an enabled channel (not in a thread):
 
 hataori opens a thread on the message, clones the repository into the thread's working directory, starts the agent there and posts its replies into the thread. Later messages in that thread from the owner or one of the scope's people go to the same agent session. An order that is refused for any reason other than the effort value starts nothing and writes one log line.
 
+## Commands
+
+```
+/new repository:<url> prompt:<prompt> [model:<model>] [effort:<effort>]
+/stop
+/status
+```
+
+On a service without commands, the same words follow the trigger: `<trigger> new repo:<url> [model:<model>] [effort:<effort>] <prompt>`, `<trigger> stop` and `<trigger> status`.
+
+- `/new` in an enabled channel starts a thread as an order does: the thread is opened in the channel, and the full prompt is its first message. The same command delivered again starts nothing more. `<trigger> new` is the order itself, opened on the message.
+- `/stop` in a hataori thread stops its running turn.
+- `/status` in a hataori thread shows its state, model and last output; in a channel, the open threads of the channel's own scope with their states. Threads of other scopes attached in the channel are not listed.
+- The answers are shown only to the person who used the command; the words after the trigger get a reply.
+- The person must be the owner or one of the scope's `people`, for `/status` too. From anyone else, a command shows nothing and writes one log line.
+
 ## Showing a thread in another channel
 
 A thread can be shown in more than one chat conversation, on one chat service or on several. Each is a link of the thread; every link gets the agent's answers, and input given in any of them goes to the same session.

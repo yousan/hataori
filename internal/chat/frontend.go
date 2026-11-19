@@ -178,6 +178,9 @@ func (f *FrontEnd) handle(in surface.Inbound) error {
 		return nil
 	}
 	if in.Ref.Conv.Thread != "" {
+		if c, ok := f.textCommand(in); ok {
+			return f.command(f.context(), c)
+		}
 		return f.followUp(in)
 	}
 	ctx := f.context()
@@ -190,12 +193,16 @@ func (f *FrontEnd) handle(in surface.Inbound) error {
 		return err
 	}
 	if !seen {
+		if c, ok := f.textCommand(in); ok {
+			return f.command(ctx, c)
+		}
 		text = in.Text
 	}
 	o, ok := parseTrigger(f.Trigger, text)
 	if !ok {
 		return nil
 	}
+	o = f.newWords(o)
 	if arg, ok := attachArg(o); ok && !f.Driver.Limits().Commands {
 		// On a surface without commands only; a refusal shows nothing. A
 		// bot account's post is no one's request.
@@ -233,20 +240,30 @@ func (f *FrontEnd) handle(in surface.Inbound) error {
 	if o, ok = parseTrigger(f.Trigger, text); !ok {
 		return nil // stored by a concurrent delivery of another text
 	}
-	return f.start(ctx, in, o, n)
+	ref := in.Ref
+	_, err = f.start(ctx, request{author: in.Author, conv: in.Ref.Conv, key: in.Ref.ID, reply: &ref}, f.newWords(o), n)
+	return err
+}
+
+// request is what asked for a Start: a trigger message, or a /new command.
+type request struct {
+	author surface.Author
+	conv   surface.Conversation // where it was asked; its channel is the scope
+	key    string               // the Start's key, under which chat_triggers keeps it
+	reply  *surface.MessageRef  // what an answer replies to
 }
 
 // refuseEffort answers a trigger whose effort the core does not know. It
 // is not about an event: the row is keyed by event 0 and the trigger's
 // number n, so a second delivery writes it once.
-func (f *FrontEnd) refuseEffort(ctx context.Context, in surface.Inbound, o order, n int64) error {
-	f.Log.Warn("trigger ignored", "reason", "unknown effort "+strconv.Quote(o.Effort), "scope", in.Ref.Conv.Channel,
-		"author", in.Author.ID, "message", in.Ref.ID)
-	err := f.Outbox.Write(ctx, Row{Event: 0, Part: int(n), Conv: in.Ref.Conv, Message: surface.Message{
+func (f *FrontEnd) refuseEffort(ctx context.Context, r request, o order, n int64) error {
+	f.Log.Warn("trigger ignored", "reason", "unknown effort "+strconv.Quote(o.Effort), "scope", r.conv.Channel,
+		"author", r.author.ID, "message", r.key)
+	err := f.Outbox.Write(ctx, Row{Event: 0, Part: int(n), Conv: r.conv, Message: surface.Message{
 		Text:    "Nothing was started: effort " + strconv.Quote(o.Effort) + " is not one of " + strings.Join(Efforts, ", ") + ".",
-		ReplyTo: &in.Ref}})
+		ReplyTo: r.reply}})
 	if err != nil {
-		f.Log.Error("trigger: writing the refusal", "message", in.Ref.ID, "err", err)
+		f.Log.Error("trigger: writing the refusal", "message", r.key, "err", err)
 	}
 	return err
 }
@@ -278,23 +295,25 @@ func (f *FrontEnd) remember(ctx context.Context, ref surface.MessageRef, text st
 	return text, n, err
 }
 
-func (f *FrontEnd) start(ctx context.Context, in surface.Inbound, o order, n int64) error {
-	channel := in.Ref.Conv.Channel
-	api := f.API(control.Caller{From: f.from(in.Author), Scopes: []string{channel},
+// start starts the thread r asks for, and returns it; 0 when nothing was
+// started.
+func (f *FrontEnd) start(ctx context.Context, r request, o order, n int64) (control.ThreadID, error) {
+	channel := r.conv.Channel
+	api := f.API(control.Caller{From: f.from(r.author), Scopes: []string{channel},
 		May: control.OpRead | control.OpStart})
 	// No thread is named: once the core allows the Start, it asks this
 	// front end for one (NewThread), which opens it from the trigger.
-	id, startErr := api.Start(ctx, control.StartRequest{Key: in.Ref.ID, Scope: channel, Repo: o.Repo,
+	id, startErr := api.Start(ctx, control.StartRequest{Key: r.key, Scope: channel, Repo: o.Repo,
 		Model: o.Model, Effort: o.Effort, Input: control.Input{Text: o.Prompt}})
 	switch {
 	case errors.Is(startErr, control.ErrForbidden):
-		return nil // the core logged it; nothing is shown to the author
+		return 0, nil // the core logged it; nothing is shown to the author
 	case errors.Is(startErr, control.ErrUnknownEffort):
-		return f.refuseEffort(ctx, in, o, n)
+		return 0, f.refuseEffort(ctx, r, o, n)
 	}
 	if id == 0 {
-		f.Log.Error("trigger: start failed", "scope", channel, "message", in.Ref.ID, "err", startErr)
-		return startErr
+		f.Log.Error("trigger: start failed", "scope", channel, "message", r.key, "err", startErr)
+		return 0, startErr
 	}
 	// The thread's rows are keyed by its first event, and what they show
 	// is read from the thread's events, so a trigger delivered again
@@ -302,7 +321,7 @@ func (f *FrontEnd) start(ctx context.Context, in surface.Inbound, o order, n int
 	pos, failure, err := startOutcome(ctx, api, id)
 	if err != nil {
 		f.Log.Error("trigger: reading the new thread", "thread", id, "err", err)
-		return err
+		return 0, err
 	}
 	conv, ok, err := f.convOf(ctx, id)
 	if err == nil && !ok {
@@ -310,7 +329,7 @@ func (f *FrontEnd) start(ctx context.Context, in surface.Inbound, o order, n int
 	}
 	if err != nil {
 		f.Log.Error("trigger: reading the new thread", "thread", id, "err", err)
-		return err
+		return 0, err
 	}
 	if failure == "" && startErr != nil {
 		failure = startErr.Error() // not recorded as the session's end
@@ -322,14 +341,15 @@ func (f *FrontEnd) start(ctx context.Context, in surface.Inbound, o order, n int
 	}
 	if err := f.Outbox.Write(ctx, rows...); err != nil {
 		f.Log.Error("trigger: writing the prompt", "thread", id, "err", err)
-		return err
+		return 0, err
 	}
-	return nil
+	return id, nil
 }
 
 // threadOf returns the chat thread of the trigger message ref: the one
 // opened for it before, or one opened now from the message and stored
-// with it, so that the trigger delivered again opens no second thread.
+// with it, so that the trigger delivered again opens no second thread. A
+// /new command is no message: its thread is opened in the channel alone.
 // Its title is the prompt's first line; the driver cuts it to what the
 // service takes.
 func (f *FrontEnd) threadOf(ctx context.Context, ref surface.MessageRef, prompt string) (string, error) {
@@ -345,7 +365,11 @@ func (f *FrontEnd) threadOf(ctx context.Context, ref surface.MessageRef, prompt 
 		return thread, nil
 	}
 	title, _, _ := strings.Cut(strings.TrimSpace(prompt), "\n")
-	conv, err := f.Driver.OpenThread(ctx, surface.Conversation{Channel: ref.Conv.Channel, Thread: ref.ID}, strings.TrimSpace(title))
+	from := ref.ID
+	if strings.HasPrefix(from, commandKey) {
+		from = ""
+	}
+	conv, err := f.Driver.OpenThread(ctx, surface.Conversation{Channel: ref.Conv.Channel, Thread: from}, strings.TrimSpace(title))
 	if err != nil {
 		return "", err
 	}

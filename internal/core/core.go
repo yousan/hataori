@@ -309,6 +309,9 @@ type api struct {
 // writes one log line.
 func (a *api) check(op control.Ops, name, scope string) error {
 	if a.caller.May.Has(op) && (scope == "" || slices.Contains(a.caller.Scopes, scope)) {
+		if op == control.OpRead && scope != "" && !a.personSees(scope) {
+			return a.refused(name, scope, "the person may not act in the scope")
+		}
 		return nil
 	}
 	a.c.Log.Warn("control call refused", "op", name, "principal", string(a.caller.Principal), "scope", scope)
@@ -326,6 +329,13 @@ func (a *api) act(op control.Ops, name, scope string) error {
 		return nil
 	}
 	return a.refused(name, scope, "the person may not act in the scope")
+}
+
+// personSees reports whether the caller may read scope as far as its
+// person goes: always, unless the caller has ReadAsPerson, whose reads
+// need the person to be allowed in the scope as its input does.
+func (a *api) personSees(scope string) bool {
+	return !a.caller.ReadAsPerson || a.c.People.May(string(a.caller.Principal), scope)
 }
 
 // refused logs one line for a call refused because of the caller's person,
@@ -420,7 +430,12 @@ func (a *api) Threads(ctx context.Context, f control.Filter) ([]control.ThreadIn
 	if err != nil {
 		return nil, err
 	}
-	scopes := a.caller.Scopes
+	var scopes []string
+	for _, s := range a.caller.Scopes {
+		if a.personSees(s) {
+			scopes = append(scopes, s)
+		}
+	}
 	if scope != "" {
 		scopes = []string{scope}
 	}
@@ -1453,7 +1468,7 @@ func (a *api) Stop(ctx context.Context, id control.ThreadID) error {
 // scope its data lists under "scopes" (an event about threads in several
 // scopes, such as the end of a login outage).
 func (a *api) mayRead(e control.Event) bool {
-	if !slices.Contains(a.caller.Scopes, e.Scope) {
+	if !slices.Contains(a.caller.Scopes, e.Scope) || !a.personSees(e.Scope) {
 		return false
 	}
 	var d struct {
@@ -1463,7 +1478,7 @@ func (a *api) mayRead(e control.Event) bool {
 		json.Unmarshal(e.Data, &d) // data that is not an object names no scopes
 	}
 	for _, s := range d.Scopes {
-		if !slices.Contains(a.caller.Scopes, s) {
+		if !slices.Contains(a.caller.Scopes, s) || !a.personSees(s) {
 			return false
 		}
 	}
