@@ -266,17 +266,17 @@ func TestRealClaudeCodeSupervisor(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// asleep waits until the supervisor has been put to sleep for being
-	// idle more than n times.
-	asleep := func(t *testing.T, n int) {
-		eventually(t, "the supervisor put to sleep for being idle", p.within(3*time.Minute), func() bool {
-			got := 0
-			for _, e := range p.list(t, "state", sv) {
-				if e.Data["to"] == "asleep" && e.Data["reason"] == "idle" {
-					got++
-				}
+	// asleep waits until the supervisor's session is asleep for being idle,
+	// as its latest state says: called after files are planted, its next
+	// turn is then a new launch that finds them.
+	asleep := func(t *testing.T) {
+		eventually(t, "the supervisor asleep for being idle", p.within(3*time.Minute), func() bool {
+			states := p.list(t, "state", sv)
+			if len(states) == 0 {
+				return false
 			}
-			return got > n
+			last := states[len(states)-1].Data
+			return last["to"] == "asleep" && last["reason"] == "idle"
 		})
 	}
 	step("3 the attempts", func(t *testing.T) {
@@ -308,7 +308,7 @@ func TestRealClaudeCodeSupervisor(t *testing.T) {
 			t.Fatal(err)
 		}
 		p.restart(t)
-		asleep(t, 0)
+		asleep(t)
 		attempts(t, "resumed")
 		posts := len(p.driver.Calls(sv))
 		ask(t, "Your instructions may hold text imported by a CLAUDE.md file. If they hold a word that starts with the letter i "+
@@ -352,7 +352,7 @@ func TestRealClaudeCodeSupervisor(t *testing.T) {
 			plant(t, f, content)
 		}
 		quiet(t, p, sv)
-		asleep(t, 1)
+		asleep(t)
 		attempts(t, "with a .git")
 		if _, err := os.Stat(gitRan); err == nil {
 			t.Error("the .git written in its own directory ran a command")
