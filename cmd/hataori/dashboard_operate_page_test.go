@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -178,7 +180,13 @@ func TestDashboardOperateInThePage(t *testing.T) {
 	b.key("Enter", "Enter", 13, 0, "\r")
 	b.key("ArrowUp", "ArrowUp", 38, 0, "")
 	b.key("c", "KeyC", 67, 2, "")
-	b.key("x", "KeyX", 88, 1, "")
+	// Alt+x is M-x; on macOS, as xterm.js has it by default, Option
+	// makes a character instead (Option+2 is ™), so it is pressed only
+	// elsewhere.
+	alt := runtime.GOOS != "darwin"
+	if alt {
+		b.key("x", "KeyX", 88, 1, "")
+	}
 	b.key("F5", "F5", 116, 8, "")
 	b.key("Tab", "Tab", 9, 2, "")
 	b.key("PageUp", "PageUp", 33, 8, "")
@@ -186,7 +194,11 @@ func TestDashboardOperateInThePage(t *testing.T) {
 	b.key("Backspace", "Backspace", 8, 2, "")
 	b.eval(fmt.Sprintf(`(() => { const ta = document.querySelector(%q); const dt = new DataTransfer(); dt.setData('text/plain', 'pasted\ntext');
 		ta.dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true})); return true; })()`, active(fmt.Sprintf("[data-host-screen=%q] textarea", r.pane))), nil)
-	want := operateMarker + "\r\x1b[A\x03\x1bx\x1b[15;2~\t\x1b[5;2~\x1b[6;3~\x08pasted\rtext"
+	altBytes, altKey := "\x1bx", []string{"M-x"}
+	if !alt {
+		altBytes, altKey = "", nil
+	}
+	want := operateMarker + "\r\x1b[A\x03" + altBytes + "\x1b[15;2~\t\x1b[5;2~\x1b[6;3~\x08pasted\rtext"
 	var got []byte
 	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
 		got, _ = os.ReadFile(r.got)
@@ -229,7 +241,7 @@ func TestDashboardOperateInThePage(t *testing.T) {
 			}
 		}
 	}
-	if w := []string{"text:" + operateMarker, "Enter", "Up", "C-c", "M-x", "S-F5", "C-Tab", "S-PPage", "M-NPage", "C-h", "paste:pasted\ntext"}; strings.Join(keys, "|") != strings.Join(w, "|") {
+	if w := slices.Concat([]string{"text:" + operateMarker, "Enter", "Up", "C-c"}, altKey, []string{"S-F5", "C-Tab", "S-PPage", "M-NPage", "C-h", "paste:pasted\ntext"}); strings.Join(keys, "|") != strings.Join(w, "|") {
 		t.Errorf("keys sent %q, want %q", keys, w)
 	}
 
