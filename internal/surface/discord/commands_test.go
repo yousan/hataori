@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -331,5 +333,60 @@ func TestCommandsAcknowledgedWhileSinkBlocks(t *testing.T) {
 func TestLimitsCommands(t *testing.T) {
 	if !testDriver(t, snowflake.ID(1), newFakeREST(t), nil).Limits().Commands {
 		t.Fatal("Limits does not report commands")
+	}
+}
+
+// A long answer whose second part fails is retried with the same key: only
+// the missing part is sent.
+func TestAnswerRetryResumes(t *testing.T) {
+	r := newFakeREST(t)
+	d := testDriver(t, botID(t), r, nil)
+	in, c := command(t, d, r, "commands/gw-01-INTERACTION_CREATE.json", "commands/rest-command-ack-channel.json")
+	follow := "POST /webhooks/" + id(in["application_id"]) + "/" + in["token"].(string)
+	r.serve(t, "PATCH "+answerKey(in), "commands/rest-command-answer-channel.json")
+	r.serveJSON(t, follow, 400, map[string]any{"message": "refused", "code": 50035})
+	r.serve(t, follow, "commands/rest-command-answer-channel.json")
+	long := strings.Repeat("a", maxText) + "b"
+	m := surface.Message{Text: long, ReplyTo: c.Reply}
+	if _, err := d.Post(context.Background(), c.Conv, "k", m); err == nil {
+		t.Fatal("the failed part did not fail the Post")
+	}
+	ref, err := d.Post(context.Background(), c.Conv, "k", m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := r.called("PATCH " + answerKey(in)); n != 1 {
+		t.Fatalf("the first part was sent %d times", n)
+	}
+	if n := r.called(follow); n != 2 {
+		t.Fatalf("%d follow-ups, want the failed one and its retry", n)
+	}
+	if ref.ID != id(payload(t, "commands/rest-command-answer-channel.json")["id"]) {
+		t.Fatalf("%+v", ref)
+	}
+}
+
+// Two answers at once: one replaces the deferred response, the other is a
+// follow-up.
+func TestConcurrentAnswers(t *testing.T) {
+	r := newFakeREST(t)
+	d := testDriver(t, botID(t), r, nil)
+	in, c := command(t, d, r, "commands/gw-01-INTERACTION_CREATE.json", "commands/rest-command-ack-channel.json")
+	follow := "POST /webhooks/" + id(in["application_id"]) + "/" + in["token"].(string)
+	r.serve(t, "PATCH "+answerKey(in), "commands/rest-command-answer-channel.json")
+	r.serve(t, follow, "commands/rest-command-answer-channel.json")
+	var wg sync.WaitGroup
+	for _, k := range []string{"a", "b"} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := d.Post(context.Background(), c.Conv, k, surface.Message{Text: k, ReplyTo: c.Reply}); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if p, f := r.called("PATCH "+answerKey(in)), r.called(follow); p != 1 || f != 1 {
+		t.Fatalf("%d replacements and %d follow-ups, want 1 and 1", p, f)
 	}
 }

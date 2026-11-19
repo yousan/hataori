@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -163,13 +164,23 @@ func sameCommands(a, b []wireCommand) bool {
 }
 
 // answer is what the driver keeps to answer one command interaction.
+// mu serializes the answers to it, so that two answers cannot both replace
+// the deferred response.
 type answer struct {
+	mu      sync.Mutex
 	app     snowflake.ID
 	token   string
 	private bool
 	at      time.Time
-	posted  map[string]surface.MessageRef // by key
-	started bool                          // the deferred response has been replaced
+	posted  map[string]*progress // by key
+	started bool                 // the deferred response has been replaced
+}
+
+// progress is how far the answer posted with one key got, so that a retry
+// after a failed part sends only the parts that are missing.
+type progress struct {
+	first surface.MessageRef
+	sent  int
 }
 
 // command handles the use of a command. It is acknowledged first, as a
@@ -225,7 +236,7 @@ func (d *Driver) command(ctx context.Context, in wireInteraction, sink surface.S
 				delete(d.answers, id)
 			}
 		}
-		d.answers[in.ID] = &answer{app: app, token: in.Token, private: private, at: now, posted: map[string]surface.MessageRef{}}
+		d.answers[in.ID] = &answer{app: app, token: in.Token, private: private, at: now, posted: map[string]*progress{}}
 		d.mu.Unlock()
 		c.Reply = &surface.MessageRef{Conv: conv, ID: commandReplyPrefix + in.ID.String()}
 	}
@@ -234,8 +245,8 @@ func (d *Driver) command(ctx context.Context, in wireInteraction, sink surface.S
 }
 
 // postAnswer answers a command: the first part replaces the deferred
-// response, and each further part is a follow-up. A repeated key returns
-// what that key posted.
+// response, and each further part is a follow-up. A repeated key sends only
+// the parts that key has not sent yet, and returns its first message.
 func (d *Driver) postAnswer(ctx context.Context, conv surface.Conversation, key string, m surface.Message) (surface.MessageRef, error) {
 	id, err := snowflake.Parse(strings.TrimPrefix(m.ReplyTo.ID, commandReplyPrefix))
 	if err != nil {
@@ -261,17 +272,18 @@ func (d *Driver) postAnswer(ctx context.Context, conv surface.Conversation, key 
 		delete(d.answers, id)
 		a = nil
 	}
-	var done surface.MessageRef
-	repeat := false
-	if a != nil && key != "" {
-		done, repeat = a.posted[key]
-	}
 	d.mu.Unlock()
 	if a == nil {
 		return surface.MessageRef{}, &Error{Op: answerOp, Local: true, Err: errors.New("the command can no longer be answered")}
 	}
-	if repeat {
-		return done, nil
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	p := &progress{}
+	if key != "" {
+		if a.posted[key] == nil {
+			a.posted[key] = p
+		}
+		p = a.posted[key]
 	}
 	mentions := map[string]any{"parse": []string{}}
 	var users []string
@@ -284,17 +296,13 @@ func (d *Driver) postAnswer(ctx context.Context, conv surface.Conversation, key 
 		mentions["users"] = users
 	}
 	parts := split(text, maxText)
-	var first surface.MessageRef
-	for i, part := range parts {
-		body := map[string]any{"content": part, "allowed_mentions": mentions}
+	for i := p.sent; i < len(parts); i++ {
+		body := map[string]any{"content": parts[i], "allowed_mentions": mentions}
 		if i == len(parts)-1 && len(m.Choices) > 0 {
 			body["components"] = buttons
 		}
 		var out wireMessage
-		d.mu.Lock()
-		started := a.started
-		d.mu.Unlock()
-		if !started {
+		if !a.started {
 			err = d.client.Do(rest.UpdateInteractionResponse.Compile(nil, a.app, a.token), body, &out, rest.WithCtx(ctx))
 		} else {
 			if a.private {
@@ -303,19 +311,13 @@ func (d *Driver) postAnswer(ctx context.Context, conv surface.Conversation, key 
 			err = d.client.Do(rest.CreateFollowupMessage.Compile(nil, a.app, a.token), body, &out, rest.WithCtx(ctx))
 		}
 		if err != nil {
-			return first, wrap(answerOp, err)
+			return p.first, wrap(answerOp, err)
 		}
-		d.mu.Lock()
 		a.started = true
-		d.mu.Unlock()
 		if i == 0 {
-			first = surface.MessageRef{Conv: conv, ID: out.ID.String()}
+			p.first = surface.MessageRef{Conv: conv, ID: out.ID.String()}
 		}
+		p.sent = i + 1
 	}
-	if key != "" {
-		d.mu.Lock()
-		a.posted[key] = first
-		d.mu.Unlock()
-	}
-	return first, nil
+	return p.first, nil
 }
