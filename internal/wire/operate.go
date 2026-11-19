@@ -15,6 +15,10 @@ import (
 // operateSince is the first version whose daemon knows OperateHost.
 const operateSince = "3.11"
 
+// maxQueuedBatches is how many HostKeys may wait behind the one being
+// sent; one more is refused.
+const maxQueuedBatches = 64
+
 // operate serves an OperateHost request: it starts the operation, answers
 // with its idle period, then carries out the client's HostKeys and End
 // requests in order, answering each, until the operation ends; its last
@@ -42,7 +46,29 @@ func operate(ctx context.Context, api control.API, c net.Conn, dec *json.Decoder
 	if err := send(response{ID: req.ID, Result: result}); err != nil {
 		return
 	}
+	// Batches are carried out in order by one goroutine, while this one
+	// keeps reading, so that an End or the client going away takes effect
+	// during a batch, not after it.
+	batches := make(chan message, maxQueuedBatches)
 	go func() {
+		for m := range batches {
+			var k hostKeysArgs
+			var err error
+			if err = json.Unmarshal(m.Args, &k); err == nil {
+				err = op.Send(ctx, k.Keys)
+			} else {
+				// The message of a decoding error may quote the text.
+				err = errors.New("wire: HostKeys: bad arguments")
+			}
+			resp := response{ID: m.ID}
+			if err != nil {
+				resp.Error = encodeError(err)
+			}
+			send(resp)
+		}
+	}()
+	go func() {
+		defer close(batches)
 		defer cancel() // the client went away: the operation ends
 		for {
 			var m message
@@ -55,12 +81,11 @@ func operate(ctx context.Context, api control.API, c net.Conn, dec *json.Decoder
 			var err error
 			switch m.Op {
 			case "HostKeys":
-				var k hostKeysArgs
-				if err = json.Unmarshal(m.Args, &k); err == nil {
-					err = op.Send(ctx, k.Keys)
-				} else {
-					// The message of a decoding error may quote the text.
-					err = errors.New("wire: HostKeys: bad arguments")
+				select {
+				case batches <- m:
+					continue // answered when carried out
+				default:
+					err = fmt.Errorf("wire: HostKeys: more than %d batches wait to be sent; nothing was sent", maxQueuedBatches)
 				}
 			case "End":
 				op.End()

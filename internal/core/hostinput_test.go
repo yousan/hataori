@@ -590,4 +590,7 @@ func TestStopHostInput(t *testing.T) {
 		t.Errorf("reason %q, log %q, dropped %v", op.Reason(), f.log.String(), in.dropped)
 	}
 	f.core.StopHostInput(time.Second) // none left: returns at once
+	if _, err := f.core.As(operator).OperateHost(context.Background(), "%1"); err == nil {
+		t.Error("an operation starts after StopHostInput")
+	}
 }

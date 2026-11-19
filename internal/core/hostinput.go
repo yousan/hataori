@@ -44,6 +44,7 @@ type hostOpSet struct {
 	mu      sync.Mutex
 	byPane  map[string]*hostOp
 	running sync.WaitGroup // until each has finished
+	stopped bool           // StopHostInput was called: no operation starts
 }
 
 // hostOp is one pane being operated: a control.HostOperation.
@@ -150,6 +151,11 @@ func (a *api) OperateHost(ctx context.Context, pane string) (control.HostOperati
 	o := &hostOp{c: c, pane: *p, person: string(a.caller.Principal), since: now, buffer: buffer, idle: idle,
 		live: live, stopLive: stopLive, lastKey: now, stop: make(chan struct{}), done: make(chan struct{})}
 	c.hostOps.mu.Lock()
+	if c.hostOps.stopped {
+		c.hostOps.mu.Unlock()
+		stopLive()
+		return nil, errors.New("core: OperateHost: the daemon is stopping")
+	}
 	if busy := c.hostOps.byPane[p.Pane]; busy != nil {
 		c.hostOps.mu.Unlock()
 		stopLive()
@@ -278,11 +284,12 @@ func (o *hostOp) finish() {
 	o.c.hostOps.running.Done()
 }
 
-// StopHostInput ends every operation of a pane with control.HostStopping
-// and waits, at most for timeout, until each has deleted its buffer and
+// StopHostInput ends every operation of a pane with control.HostStopping,
+// refuses every OperateHost after it, and waits, at most for timeout, until each has deleted its buffer and
 // logged its end. The daemon calls it as it stops.
 func (c *Core) StopHostInput(timeout time.Duration) {
 	c.hostOps.mu.Lock()
+	c.hostOps.stopped = true // and so nothing is added to running from here
 	for _, o := range c.hostOps.byPane {
 		o.end(control.HostStopping)
 	}

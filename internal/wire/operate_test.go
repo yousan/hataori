@@ -17,6 +17,7 @@ type hostFake struct {
 	mu      sync.Mutex
 	keys    []control.HostKey
 	dropped int
+	hold    chan struct{} // Keys says so here, then waits until its context ends
 }
 
 func (h *hostFake) List(context.Context, []int) ([]control.HostTerminal, error) { return nil, nil }
@@ -29,10 +30,16 @@ func (h *hostFake) Check(_ context.Context, pane string, _ []int, _ bool) (*cont
 	}
 	return &control.TmuxPane{Pane: "%1", Session: "work", Window: "0", Index: "0"}, false, nil
 }
-func (h *hostFake) Keys(_ context.Context, _, _ string, keys []control.HostKey) error {
+func (h *hostFake) Keys(ctx context.Context, _, _ string, keys []control.HostKey) error {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	h.keys = append(h.keys, keys...)
+	hold := h.hold
+	h.mu.Unlock()
+	if hold != nil {
+		hold <- struct{}{}
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	return nil
 }
 func (h *hostFake) NewBuffer() (string, error) { return "b", nil }
@@ -172,5 +179,65 @@ func TestOperateHostNeedsANewerDaemon(t *testing.T) {
 	case op := <-asked:
 		t.Errorf("the old daemon was sent %s", op)
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// An End, and a client that goes away, take effect while a batch is being
+// sent: the daemon keeps reading the connection during a batch.
+func TestOperateHostEndDuringABatch(t *testing.T) {
+	root := t.TempDir()
+	c, _ := newCore(t, root)
+	h := &hostFake{hold: make(chan struct{})}
+	c.HostTerms, c.HostInput = h, h
+	srv := serve(t, root, c.As(control.Caller{Principal: "owner", May: control.OpHost | control.OpHostInput}))
+	cl, err := dialPath(srv.Path(), Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cl.Close()
+	ctx := context.Background()
+	for _, how := range []string{"End", "the client goes"} {
+		cctx, cancel := context.WithCancel(ctx)
+		op, err := cl.OperateHost(cctx, "%1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		sent := make(chan error, 1)
+		go func() { sent <- op.Send(cctx, []control.HostKey{{Key: "Up"}}) }()
+		<-h.hold
+		start := time.Now()
+		if how == "End" {
+			go op.End()
+		} else {
+			cancel()
+		}
+		select {
+		case <-op.Done():
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: the operation did not end during the batch", how)
+		}
+		if err := <-sent; err == nil {
+			t.Errorf("%s: the stopped batch is no error", how)
+		}
+		// The daemon's side has ended too: the pane is free.
+		var again control.HostOperation
+		for again, err = cl.OperateHost(ctx, "%1"); errors.Is(err, core.ErrBusy) && time.Since(start) < 5*time.Second; again, err = cl.OperateHost(ctx, "%1") {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if err != nil {
+			t.Fatalf("%s: %v", how, err)
+		}
+		if d := time.Since(start); d > 2*time.Second {
+			t.Errorf("%s: took %v", how, d)
+		}
+		h.mu.Lock()
+		h.hold = nil
+		h.mu.Unlock()
+		again.End()
+		<-again.Done()
+		h.mu.Lock()
+		h.hold = make(chan struct{})
+		h.mu.Unlock()
+		cancel()
 	}
 }

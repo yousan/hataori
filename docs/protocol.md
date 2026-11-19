@@ -14,7 +14,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 - An `Events` request turns the connection into a stream: the daemon answers it once with an empty `response`, then sends one `response` with `event` set per event, until the client closes the connection. A client follows events on a connection of its own.
 - A `Terminal` request does the same with terminal output: an empty `response`, then one `response` with `terminal` set per chunk. Since 1.9.
 - On an `Events` or a `Terminal` stream the daemon reads nothing the client sends: no request on that connection is answered or carried out, and nothing reaches a terminal.
-- An `OperateHost` request turns the connection into a stream in both directions, for typing into one tmux pane on the host. Since 3.11. The daemon answers it once with a `response` whose `result` is a `HostOperation`. Then the client sends `HostKeys` requests, and may send one `End`, numbered as on any connection; the daemon carries them out in order and answers each. When the operation ends, for whatever reason, the daemon sends one last `response` with the `id` of the `OperateHost` request and `ended` set to the reason, and closes the connection. A connection that closes ends the operation. No other request is carried out on that connection: one is answered `not_supported`.
+- An `OperateHost` request turns the connection into a stream in both directions, for typing into one tmux pane on the host. Since 3.11. The daemon answers it once with a `response` whose `result` is a `HostOperation`. Then the client sends `HostKeys` requests, and may send one `End`, numbered as on any connection. The daemon carries out the batches in order and answers each when it is done; at most 64 may wait behind the one being sent, and one more is answered `error` and not sent. `End`, and a connection that closes, take effect at once, also while a batch is being sent: no further key of it is sent. When the operation ends, for whatever reason, the daemon sends one last `response` with the `id` of the `OperateHost` request and `ended` set to the reason, and closes the connection. A connection that closes ends the operation. No other request is carried out on that connection: one is answered `not_supported`.
 
 ## Versions
 
@@ -336,7 +336,7 @@ The operation ends, and the daemon sends its last message, with one of these rea
 - `closed`: the connection closed, or the caller's context ended;
 - `idle`: no batch with a key came for the idle period (`host_input_idle`, 5 minutes by default);
 - `pane gone`: tmux no longer lists the pane;
-- `hataori's own`: one of hataori's processes runs in the pane now, by the command tmux reports for it or by the process table, which is read at least once a second;
+- `hataori's own`: one of hataori's processes runs in the pane now, by the command tmux reports for it or by the process table. The table is read once a second, or as soon as the previous read has finished when one takes longer;
 - `stopping`: the daemon stops.
 
 | Field | Type | Presence | Meaning |
