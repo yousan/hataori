@@ -45,9 +45,15 @@ func (wt *wakeTest) noticed(t *testing.T, sv control.ThreadInfo, n int) []string
 	return got
 }
 
-// until moves the clock to at, firing what is due.
-func (wt *wakeTest) until(at time.Time) {
-	wt.clock().advance(at.Sub(wt.clock().Now()))
+// until moves the clock to at, firing what is due. The clock does not go
+// back: at must not be before it.
+func (wt *wakeTest) until(t *testing.T, at time.Time) {
+	t.Helper()
+	d := at.Sub(wt.clock().Now())
+	if d < 0 {
+		t.Fatalf("moving the clock back by %v, to %v", -d, at)
+	}
+	wt.clock().advance(d)
 }
 
 // held waits until a turn end read up to pos has been held by the budget:
@@ -97,7 +103,7 @@ func TestBudgetTurns(t *testing.T) {
 	}
 	wt.noticed(t, sv, 1)
 
-	wt.until(wakeBase.Add(time.Hour))
+	wt.until(t, wakeBase.Add(time.Hour))
 	got = wt.woken(t, owner, sv.ID, 3)
 	for _, id := range []control.ThreadID{c, d} {
 		if !strings.Contains(got[2], fmt.Sprintf("\nThread %d: ", id)) {
@@ -132,14 +138,19 @@ func TestBudgetTokens(t *testing.T) {
 		!strings.Contains(got[0], "until "+nextDay.Format("2006-01-02 15:04 MST")) {
 		t.Fatalf("the notice: %s", got[0])
 	}
-	wt.until(nextDay.Add(-time.Hour))
+	// The clock starts on the next hour of the real time, so run between
+	// 22:00 and 23:00 it starts in the last hour before the next day and
+	// already passed nextDay - 1h.
+	if at := nextDay.Add(-time.Hour); at.After(wt.clock().Now()) {
+		wt.until(t, at)
+	}
 	time.Sleep(300 * time.Millisecond)
 	if got := wt.wakes(t, sv.ID); len(got) != 0 {
 		t.Fatalf("woken before the next day: %q", got)
 	}
-	// The host sleeps through the last hour: no timer counts that, but the
-	// hold ends within a minute by the wall clock.
-	wt.clock().sleep(time.Hour)
+	// The host sleeps through the rest of the day: no timer counts that,
+	// but the hold ends within a minute by the wall clock.
+	wt.clock().sleep(nextDay.Sub(wt.clock().Now()))
 	time.Sleep(300 * time.Millisecond)
 	if got := wt.wakes(t, sv.ID); len(got) != 0 {
 		t.Fatalf("woken before a timer fired: %q", got)
@@ -192,7 +203,7 @@ func TestBudgetSends(t *testing.T) {
 		t.Fatalf("the worker ran %d turns, want 2: its first and the one send", n)
 	}
 	// The next hour: the held turn ends wake it first, then it may send.
-	wt.until(wakeBase.Add(time.Hour))
+	wt.until(t, wakeBase.Add(time.Hour))
 	wt.woken(t, owner, sv.ID, 1)
 	if a := call("s6", send("reply four")); strings.HasPrefix(a, "mcp error") {
 		t.Fatalf("a send in the next hour: %s", a)
