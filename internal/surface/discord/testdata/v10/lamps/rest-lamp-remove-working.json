@@ -1,0 +1,21 @@
+{
+ "body": null,
+ "date": "2026-11-19T08:43:52Z",
+ "headers": {
+  "content-type": "text/html; charset=utf-8",
+  "via": "1.1 google",
+  "x-ratelimit-bucket": "00000000000000000000000000000001",
+  "x-ratelimit-limit": "1",
+  "x-ratelimit-remaining": "0",
+  "x-ratelimit-reset": "1795077833.002",
+  "x-ratelimit-reset-after": "0.250"
+ },
+ "request": {
+  "body": null,
+  "files": [],
+  "method": "DELETE",
+  "path": "/channels/1000000000000000003/messages/1000000000000000005/reactions/%E2%8F%B3/@me"
+ },
+ "source": "rest",
+ "status": 204
+}
