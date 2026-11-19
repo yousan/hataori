@@ -97,6 +97,17 @@ Since protocol 3.18 the core runs `before_agent_run`, then `before_prompt_build`
 
 The daemon sends hook requests on the plugin's oldest connection that is still open and is not a stream: open a connection for requests first, and follow events on others. The project's Go client answers them with the handler given to `wire.DialTokenHandler`. When a plugin connects while it had no connection open, the daemon sends it `plugin_started` with its grant; before hataori stops a plugin it starts, it sends `plugin_stopping`, and SIGTERM follows when the plugin answers or after 10 seconds. Each call is logged with the plugin, the point, the thread and the outcome, never with text or a plugin's reason.
 
+### The outbox point
+
+Since protocol 3.19 the chat front end calls `message_sending` before it posts a message of a thread, and before an edit that changes the text a post shows, as the post or its last edit left it ([protocol.md, `hook`](protocol.md#request-hook)). The progress line's edits are hooked like any other; when they are made is not changed. Lamps, deletes and edits that keep the text are not hooked.
+
+- **A rewrite** (`continue` with `text`) is what is posted. The same message in the thread's other links is posted with the same text, and the plugin is called once for it.
+- **A cancel** (`stop`) posts nothing in its place. The message stays in the outbox with the plugin and the reason, and the messages behind it go on. `hataori thread <number>` lists it under `cancelled`, and a `post_cancelled` event records it. A reply to a cancelled message is posted without the reply; an edit or a lamp on it is dropped.
+- **Stored before the post.** What the handlers made of a message is stored with it before it is posted, so a message posted again, after a restart too, is not hooked again. A daemon that stops while a handler is called calls the handlers again for that message.
+- A message of a thread's link is called with the thread's number and scope. A message with no link in a scope's own channel or one of its chat threads, such as the reply to a trigger or to a command, is called with that scope and no thread. A direct message is not hooked.
+- **`skip` lets text out.** While a handler whose policy is `skip` fails, or its plugin is not connected, messages go out as they are. That includes an edit that rebuilds a post's text from the event, such as a question's "Answered" line, so text the plugin rewrote in the first post can come back. A plugin that must not let text through sets `on_failure` to `block`.
+- **`post_sent`** is the event of a message posted in a link of a thread, written once per message in the transaction that marks it posted. It carries the link, the event and part it shows, the chat service's message id, and the text for a plugin with the `conversation` grant. The daemon writes it only while a plugin of the config is granted the event kind `post_sent`.
+
 ## An example
 
 ```json

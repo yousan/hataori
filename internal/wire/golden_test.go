@@ -42,6 +42,8 @@ var eventData = map[control.EventKind]string{
 	"state":             `{"detail":"last lines of the terminal","from":"running","reason":"interrupted","session":3,"to":"asleep"}`,
 	"turn_started":      `{"by":"caller","from":"discord:W1","key":"M0789","principal":"dispatch","session":3,"turn":12}`,
 	"turn_ended":        `{"background":0,"by":"caller","from":"discord:W1","outcome":"failure","principal":"dispatch","reason":"limit","session":3,"turn":12}`,
+	"post_sent":         `{"event":41,"link":{"channel":"C0123","client":"discord","thread":"T0456"},"message":"M0999","part":0,"text":"All tests pass."}`,
+	"post_cancelled":    `{"edit":true,"event":41,"failed":true,"link":{"channel":"C0123","client":"discord","thread":"T0456"},"part":0,"plugin":"secret-scan","reason":"it did not answer within 5s"}`,
 	"input":             `{"after":"Say which tests failed.","before":"Answer in English.","from":"discord:W1","link":{"channel":"C0123","client":"discord","thread":"T0456"},"principal":"dispatch","session":3,"text":"Run the tests.","turn":12}`,
 	"answer":            `{"from":"discord:W1","link":{"channel":"C0123","client":"discord","thread":"T0456"},"principal":"dispatch","request":"3:toolu_2","session":3,"text":"blue","turn":13}`,
 	"text":              `{"final":true,"session":3,"text":"All tests pass."}`,
@@ -116,6 +118,8 @@ func examples(t *testing.T) map[string]any {
 	results := map[string]any{
 		"Threads": []control.ThreadInfo{exampleInfo},
 		"Thread": control.ThreadDetail{ThreadInfo: exampleInfo, Recent: "Reading the code.\n\nRunning the tests...",
+			Cancelled: []control.CancelledPost{{Time: exampleTime, Link: exampleLink, Event: 41, Part: 0, Plugin: "secret-scan",
+				Failed: true, Edit: true, Reason: "The post holds a secret."}},
 			Requests: []control.Request{{ID: "3:toolu_2", Kind: control.Question, Text: "Which colour?",
 				Choices: []control.Choice{{Label: "red", Token: "red"}, {Label: "blue", Token: "blue"}}}},
 			Events: []control.Event{{Pos: 42, Thread: exampleID, Scope: "C0123", Time: exampleTime, Kind: "text",

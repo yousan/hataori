@@ -9,10 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/store"
 	"github.com/yousan/hataori/internal/surface"
 )
@@ -82,6 +84,19 @@ type Outbox struct {
 	// again (default 5s).
 	Retry time.Duration
 	Now   func() time.Time // the clock of sent_at; time.Now when nil
+	// Hooks runs the plugins' message_sending handlers (design, section
+	// 7.3) before a row is posted, and before an edit that changes a
+	// post's text. Nil: none, and rows go as they are.
+	Hooks control.Hooks
+	// Scopes are the keys of the scopes this front end shows: a row with
+	// no link in a scope's own channel, such as a reply to a trigger, is
+	// hooked in that scope. A row in no link and no scope's channel, such
+	// as a direct message, is not hooked.
+	Scopes []string
+	// PostSent writes a post_sent event for each row of a link once it is
+	// posted. The daemon sets it when a plugin is granted that event kind;
+	// without one, no reader needs it, and posting writes no event.
+	PostSent bool
 
 	once sync.Once
 	wake chan struct{}
@@ -335,6 +350,8 @@ type pending struct {
 	decoration bool
 	failures   int
 	link       int64
+	hook       string         // what message_sending made of it: "", "passed"
+	hookText   sql.NullString // its text as the handlers rewrote it
 }
 
 // drain posts conv's pending rows in order until none is left or a reply
@@ -380,7 +397,7 @@ func (o *Outbox) drain(ctx context.Context, conv surface.Conversation) {
 }
 
 func (o *Outbox) pendingRows(ctx context.Context, conv surface.Conversation) ([]pending, error) {
-	rows, err := o.Store.DB.QueryContext(ctx, `SELECT id, event, part, message, decoration, failures, link FROM chat_outbox
+	rows, err := o.Store.DB.QueryContext(ctx, `SELECT id, event, part, message, decoration, failures, link, hook, hook_text FROM chat_outbox
 		WHERE client = ? AND channel = ? AND thread = ? AND state = 'pending' ORDER BY event, part`,
 		o.Client, conv.Channel, conv.Thread)
 	if err != nil {
@@ -390,7 +407,7 @@ func (o *Outbox) pendingRows(ctx context.Context, conv surface.Conversation) ([]
 	var out []pending
 	for rows.Next() {
 		var p pending
-		if err := rows.Scan(&p.id, &p.event, &p.part, &p.message, &p.decoration, &p.failures, &p.link); err != nil {
+		if err := rows.Scan(&p.id, &p.event, &p.part, &p.message, &p.decoration, &p.failures, &p.link, &p.hook, &p.hookText); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -463,10 +480,14 @@ func (o *Outbox) send(ctx context.Context, conv surface.Conversation, r pending)
 	if meta.Op == Lamp {
 		return o.lamp(ctx, conv, r, meta)
 	}
+	text, out, ok := o.hooked(ctx, conv, r, m.Text, false)
+	if !ok {
+		return out
+	}
+	m.Text = text
 	ref, err := o.Driver.Post(ctx, conv, k, m)
 	if err == nil {
-		return o.record(ctx, posted, r.id, `UPDATE chat_outbox SET state = 'sent', ref = ?, sent_at = ? WHERE id = ?`,
-			ref.ID, o.now().UnixMilli(), r.id)
+		return o.sent(ctx, r, ref, m.Text)
 	}
 	if ctx.Err() != nil {
 		return stuck
@@ -514,6 +535,32 @@ func (o *Outbox) change(ctx context.Context, conv surface.Conversation, r pendin
 	case state != "sent":
 		// Never posted, or dropped: there is nothing to change.
 		return o.record(ctx, failedPost, r.id, `UPDATE chat_outbox SET state = 'dropped' WHERE id = ?`, r.id)
+	}
+	if meta.Op == Edit && o.Hooks != nil {
+		// Only an edit that changes the text the post shows is hooked: as
+		// the post, or its last edit that was sent, left it.
+		var data []byte
+		var shown sql.NullString
+		err := o.Store.DB.QueryRowContext(ctx, `SELECT message, hook_text FROM chat_outbox
+			WHERE client = ? AND channel = ? AND thread = ? AND state = 'sent' AND ((event = ? AND part = ?)
+				OR (json_extract(message, '$.op') = 'edit' AND json_extract(message, '$.target.event') = ?
+					AND json_extract(message, '$.target.part') = ?))
+			ORDER BY event DESC, part DESC LIMIT 1`,
+			o.Client, conv.Channel, conv.Thread, meta.Target.Event, meta.Target.Part, meta.Target.Event, meta.Target.Part).Scan(&data, &shown)
+		if err != nil {
+			return stuck
+		}
+		before, _, _ := decode(data)
+		if shown.Valid {
+			before.Text = shown.String
+		}
+		if m.Text != before.Text {
+			text, out, ok := o.hooked(ctx, conv, r, m.Text, true)
+			if !ok {
+				return out
+			}
+			m.Text = text
+		}
 	}
 	if meta.Op == Edit {
 		err = o.Driver.Edit(ctx, to, m)
@@ -580,6 +627,206 @@ func (o *Outbox) lamp(ctx context.Context, conv surface.Conversation, r pending,
 	}
 	o.Log.Warn("chat outbox: lamp failed", "key", k, "err", err)
 	return o.record(ctx, failedPost, r.id, `UPDATE chat_outbox SET failures = failures + 1 WHERE id = ?`, r.id)
+}
+
+// PointMessageSending is the hook point of the outbox (design, section 7.3).
+const PointMessageSending = "message_sending"
+
+// where is the thread, scope and link of row r in conv: those of its link,
+// or, for a row with no link in a scope's own channel or a chat thread of
+// it, that scope with no thread. ok is false for a row in neither, which is not hooked.
+func (o *Outbox) where(ctx context.Context, conv surface.Conversation, r pending) (thread control.ThreadID, scope string, link control.LinkRef, ok bool, err error) {
+	if r.link != 0 {
+		var id int64
+		err = o.Store.DB.QueryRowContext(ctx, `SELECT l.thread_id, t.scope, l.client, l.channel, l.thread FROM links l
+			JOIN threads t ON t.id = l.thread_id WHERE l.id = ?`, r.link).Scan(&id, &scope, &link.Client, &link.Channel, &link.Thread)
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, "", link, false, nil
+		}
+		return control.ThreadID(id), scope, link, err == nil, err
+	}
+	if slices.Contains(o.Scopes, conv.Channel) {
+		return 0, conv.Channel, control.LinkRef{Client: o.Client, Channel: conv.Channel}, true, nil
+	}
+	return 0, "", link, false, nil
+}
+
+// hooked runs message_sending on row r, whose text is text, unless it was
+// run before: the result is stored in the row before anything is posted,
+// so that a row posted again, after a restart too, is not hooked again; a
+// daemon that dies during the call calls it again. The same event's part
+// with the same text in another link takes the result stored there, so
+// that every link shows the same. It returns the text to post, or ok
+// false with the outcome when the row is cancelled or the result could
+// not be stored.
+func (o *Outbox) hooked(ctx context.Context, conv surface.Conversation, r pending, text string, edit bool) (string, outcome, bool) {
+	if r.hook == "passed" {
+		if r.hookText.Valid {
+			return r.hookText.String, posted, true
+		}
+		return text, posted, true
+	}
+	if o.Hooks == nil {
+		return text, posted, true
+	}
+	thread, scope, link, ok, err := o.where(ctx, conv, r)
+	if err != nil {
+		return "", stuck, false
+	}
+	if !ok {
+		return text, posted, true
+	}
+	var res control.HookResult
+	var hook, by, reason string
+	var failed bool
+	var rewritten sql.NullString
+	if r.event != 0 {
+		unlock := lockPart(RowKey{Event: r.event, Part: r.part})
+		defer unlock()
+		// Another link's copy of the same part, with the same text.
+		err = o.Store.DB.QueryRowContext(ctx, `SELECT hook, hook_text, hook_by, hook_reason, hook_failed FROM chat_outbox
+			WHERE event = ? AND part = ? AND id != ? AND hook != '' AND coalesce(json_extract(message, '$.text'), '') = ?
+			ORDER BY id LIMIT 1`, r.event, r.part, r.id, text).Scan(&hook, &rewritten, &by, &reason, &failed)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return "", stuck, false
+		}
+	}
+	switch hook {
+	case "passed":
+		res = control.HookResult{Text: text}
+		if rewritten.Valid {
+			res.Text = rewritten.String
+		}
+	case "cancelled":
+		res = control.HookResult{Stopped: true, By: by, Reason: reason, Failed: failed}
+	default:
+		res = o.Hooks.Run(ctx, control.HookCall{Point: PointMessageSending, Thread: thread, Scope: scope, Text: text})
+		if ctx.Err() != nil {
+			return "", stuck, false
+		}
+	}
+	k := key(r.event, r.part)
+	if res.Stopped {
+		err := o.Store.Update(ctx, func(tx *store.Tx) error {
+			x, err := tx.ExecContext(ctx, `UPDATE chat_outbox SET state = 'cancelled', hook = 'cancelled', hook_by = ?, hook_reason = ?,
+				hook_failed = ? WHERE id = ? AND state = 'pending'`, res.By, res.Reason, res.Failed, r.id)
+			if err != nil {
+				return err
+			}
+			if n, _ := x.RowsAffected(); n == 0 || thread == 0 {
+				return nil
+			}
+			d := map[string]any{"link": link, "event": r.event, "part": r.part, "plugin": res.By}
+			if res.Failed {
+				d["failed"] = true
+			}
+			if edit {
+				d["edit"] = true
+			}
+			if res.Reason != "" {
+				d["reason"] = res.Reason
+			}
+			data, _ := json.Marshal(d)
+			_, err = tx.Append(ctx, control.Event{Thread: thread, Scope: scope, Time: o.now(), Kind: "post_cancelled", Data: data})
+			return err
+		})
+		if err != nil {
+			if ctx.Err() == nil {
+				o.Log.Error("chat outbox: recording a cancelled post", "key", k, "err", err)
+			}
+			return "", stuck, false
+		}
+		// Without the reason, which may quote the post.
+		o.Log.Warn("chat outbox: a plugin cancelled a post", "key", k, "thread", int64(thread), "scope", scope,
+			"plugin", res.By, "failed", res.Failed, "edit", edit)
+		return "", posted, false // done: the rows behind it go on
+	}
+	rewritten = sql.NullString{}
+	if res.Text != text {
+		rewritten = sql.NullString{String: res.Text, Valid: true}
+	}
+	if o.record(ctx, posted, r.id, `UPDATE chat_outbox SET hook = 'passed', hook_text = ? WHERE id = ?`, rewritten, r.id) == stuck {
+		return "", stuck, false
+	}
+	return res.Text, posted, true
+}
+
+// hooking holds the parts being hooked, by the event log's position, which
+// is the instance's: the copies of one part in several links, of one
+// front end or of several, which are sent by goroutines of their own, are
+// hooked one after another, and the later ones take the first's result.
+var hooking = struct {
+	sync.Mutex
+	parts map[RowKey]*partLock
+}{parts: map[RowKey]*partLock{}}
+
+type partLock struct {
+	sync.Mutex
+	users int // holding or waiting, under hooking's lock
+}
+
+// lockPart locks the hooking of part k and returns its unlock.
+func lockPart(k RowKey) func() {
+	hooking.Lock()
+	l := hooking.parts[k]
+	if l == nil {
+		l = &partLock{}
+		hooking.parts[k] = l
+	}
+	l.users++
+	hooking.Unlock()
+	l.Lock()
+	return func() {
+		l.Unlock()
+		hooking.Lock()
+		if l.users--; l.users == 0 {
+			delete(hooking.parts, k)
+		}
+		hooking.Unlock()
+	}
+}
+
+// sent records that row r was posted as ref with text, and, for a row of a
+// link, writes its post_sent event in the same transaction: once per row,
+// also when it was posted again after a restart.
+func (o *Outbox) sent(ctx context.Context, r pending, ref surface.MessageRef, text string) outcome {
+	err := o.Store.Update(ctx, func(tx *store.Tx) error {
+		x, err := tx.ExecContext(ctx, `UPDATE chat_outbox SET state = 'sent', ref = ?, sent_at = ? WHERE id = ? AND state = 'pending'`,
+			ref.ID, o.now().UnixMilli(), r.id)
+		if err != nil {
+			return err
+		}
+		if n, _ := x.RowsAffected(); n == 0 || r.link == 0 || !o.PostSent {
+			return nil
+		}
+		var (
+			thread int64
+			scope  string
+			link   control.LinkRef
+		)
+		err = tx.QueryRowContext(ctx, `SELECT l.thread_id, t.scope, l.client, l.channel, l.thread FROM links l
+			JOIN threads t ON t.id = l.thread_id WHERE l.id = ?`, r.link).Scan(&thread, &scope, &link.Client, &link.Channel, &link.Thread)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		d := map[string]any{"link": link, "event": r.event, "part": r.part, "message": ref.ID}
+		if text != "" {
+			d["text"] = text
+		}
+		data, _ := json.Marshal(d)
+		_, err = tx.Append(ctx, control.Event{Thread: control.ThreadID(thread), Scope: scope, Time: o.now(), Kind: "post_sent", Data: data})
+		return err
+	})
+	if err != nil {
+		if ctx.Err() == nil {
+			o.Log.Error("chat outbox: recording a post", "row", r.id, "err", err)
+		}
+		return stuck
+	}
+	return posted
 }
 
 // record runs q on row id and returns ok, or stuck when it fails.
