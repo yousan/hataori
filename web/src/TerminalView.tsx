@@ -3,6 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "react";
 import { type TerminalChunk, type ThreadInfo, terminalPath } from "./api";
 import { t } from "./catalog";
+import { fitted, sized } from "./fit";
 
 // bytes decodes a chunk's base64 data.
 function bytes(data: string | undefined): Uint8Array {
@@ -23,21 +24,25 @@ export function openReadOnly(el: HTMLElement): Terminal {
   return term;
 }
 
-// TerminalView draws a session's live terminal, read-only.
+// TerminalView draws a session's live terminal, read-only. With fit, the
+// font is sized so that the session's grid fills the view's width or its
+// height (fit.ts); the session's own columns and rows are kept.
 //
 // Read-only means nothing goes back: the terminal is made with stdin
 // disabled, so xterm.js turns neither keys, a paste nor its answers to
 // terminal queries into data, and nothing here listens for data it would
 // send (onData, onBinary). The only request this view makes is the stream
 // it reads, a GET; Server-Sent Events have no way back.
-export function TerminalView({ x }: { x: ThreadInfo }) {
+export function TerminalView({ x, fit }: { x: ThreadInfo; fit?: boolean }) {
   const host = useRef<HTMLDivElement>(null);
+  const box = useRef<HTMLDivElement>(null);
   const [noProcess, setNoProcess] = useState(false);
   const { scope, key } = x.id;
 
   useEffect(() => {
     if (!host.current) return;
     const term = openReadOnly(host.current);
+    const fitting = fit && box.current ? fitted(term, box.current) : null;
     const source = new EventSource(terminalPath({ scope, key }));
     // xterm.js parses what it is given later, while reset and resize act at
     // once: each chunk waits for the bytes before it to be drawn, so a reset
@@ -48,7 +53,11 @@ export function TerminalView({ x }: { x: ThreadInfo }) {
       new Promise<void>((done) => {
         if (gone) return done();
         if (c.reset) term.reset(); // the end of the log, not a continuation: draw it afresh
-        if (c.cols > 0 && c.rows > 0 && (c.cols !== term.cols || c.rows !== term.rows)) term.resize(c.cols, c.rows);
+        if (c.cols > 0 && c.rows > 0 && (c.cols !== term.cols || c.rows !== term.rows)) {
+          term.resize(c.cols, c.rows); // the page's copy only: nothing goes to the session
+          fitting?.refit();
+        }
+        sized(term);
         setNoProcess(c.run === "");
         const b = bytes(c.data);
         if (b.length > 0) term.write(b, done);
@@ -65,22 +74,25 @@ export function TerminalView({ x }: { x: ThreadInfo }) {
     };
     return () => {
       gone = true;
+      fitting?.stop();
       source.close();
       term.dispose();
     };
-  }, [scope, key]);
+  }, [scope, key, fit]);
 
   // An asleep session has no process. A stream that was open when its host
   // ended sends nothing more until the next run, so the thread's state says
   // so; a stream opened later starts with the last run's log and no run.
   return (
-    <div className="terminal-view" data-terminal={x.number}>
+    <div className={fit ? "terminal-view fit" : "terminal-view"} data-terminal={x.number}>
       {(noProcess || x.state === "asleep") && (
         <p className="no-process" data-no-process="">
           {t("pane.noProcess")}
         </p>
       )}
-      <div className="xterm-host" ref={host} />
+      <div className="xterm-box" ref={box}>
+        <div className="xterm-host" ref={host} />
+      </div>
     </div>
   );
 }
