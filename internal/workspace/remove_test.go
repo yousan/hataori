@@ -1152,23 +1152,25 @@ func TestPurgeDeletesOnlyOldTrash(t *testing.T) {
 	}
 }
 
-// The purge takes a name only as Remove writes it: every last segment
-// Segment can give, short, escaped, empty, dots only or too long and
-// hashed, and nothing else.
+// The purge takes a name only as Remove writes it: what Segment gives for
+// every base name a directory can have, short, escaped, dots only or too
+// long and hashed, and nothing else.
 func TestTrashNameIsWhatRemoveWrites(t *testing.T) {
 	prefix := "20000101T000000Z-0123abcd-"
-	segments := []string{"", ".", "..", "k", "a b", "%", "%zz", "ü", strings.Repeat("x", 200), strings.Repeat("é", 50)}
+	segments := []string{"...", "k", "a b", "%", "%zz", "ü", strings.Repeat("x", 200), strings.Repeat("é", 50), strings.Repeat("x", 255), strings.Repeat(".", 255)}
 	for n := 30; n <= 90; n++ { // the cut at 40 bytes falls at each place of an escape
-		segments = append(segments, strings.Repeat("a", n%3)+strings.Repeat("/", n), strings.Repeat(".", n))
+		segments = append(segments, strings.Repeat("a", n%3)+strings.Repeat(" ", n), strings.Repeat(".", n))
 	}
 	rnd := rand.New(rand.NewPCG(1, 2))
-	const bytes = "aZ09_-.%/ \x00\xff\xc3\xa9"
+	const bytes = "aZ09_-.% \x01\xff\xc3\xa9"
 	for range 5000 {
-		b := make([]byte, rnd.IntN(120))
+		b := make([]byte, 1+rnd.IntN(120))
 		for i := range b {
 			b[i] = bytes[rnd.IntN(len(bytes))]
 		}
-		segments = append(segments, string(b))
+		if s := string(b); s != "." && s != ".." {
+			segments = append(segments, s)
+		}
 	}
 	for _, seg := range segments {
 		if name := prefix + Segment(seg); !trashName(name) {
@@ -1181,7 +1183,10 @@ func TestTrashNameIsWhatRemoveWrites(t *testing.T) {
 		"abc" + hash, strings.Repeat("a", 39) + hash, strings.Repeat("a", 41) + hash, // a cut that is not at 40
 		strings.Repeat("a", 37) + "%41" + hash, strings.Repeat("a", 38) + "%g" + hash, "%2E.%2E" + strings.Repeat("a", 33) + hash,
 		strings.Repeat("a", 40) + "%abcdef0123456789ABCDEF01",
-		strings.Repeat("%2E", 13) + "%" + strings.Repeat("0", 24)} { // the hash of no input of dots
+		strings.Repeat("%2E", 13) + "%" + strings.Repeat("0", 24), // the hash of no input of dots
+		// What Segment gives for no base name: empty, ".", "..", NUL, '/'.
+		Segment(""), Segment("."), Segment(".."), Segment("a\x00"), Segment("a/b"),
+		strings.Repeat("a", 37) + "%00" + hash, strings.Repeat("a", 37) + "%2F" + hash} {
 		if trashName(prefix + tail) {
 			t.Errorf("%q, which Remove does not write, is taken", prefix+tail)
 		}

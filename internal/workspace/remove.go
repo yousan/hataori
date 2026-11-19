@@ -210,22 +210,20 @@ func realDir(dir string, make bool) (string, error) {
 // hex digits.
 var trashPrefix = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}-`)
 
-// trashName reports whether name is one Remove gives: trashPrefix, then a
-// last segment that Segment writes.
+// trashName reports whether name is one Remove gives: trashPrefix, then
+// what Segment writes for the base name of a directory.
 func trashName(name string) bool {
 	loc := trashPrefix.FindStringIndex(name)
 	return loc != nil && segmentWritten(name[loc[1]:])
 }
 
-// segmentWritten reports whether Segment returns s for some input. A
+// segmentWritten reports whether Segment returns s for a base name: at
+// most 255 bytes, none of them NUL or '/', and not empty, "." or "..". A
 // segment of at most maxSegment bytes is the one its unescaped bytes give.
 // A longer one was cut: the first 40 bytes of what Segment wrote, which
 // may end inside an escape, "%" and 24 hex digits of a hash.
 func segmentWritten(s string) bool {
-	if s == "%" { // an empty one
-		return true
-	}
-	if raw, ok := unescapeSegment(s); ok && Segment(raw) == s {
+	if raw, ok := unescapeSegment(s); ok && baseName(raw) && Segment(raw) == s {
 		return true
 	}
 	const cut = 40
@@ -256,12 +254,17 @@ func segmentWritten(s string) bool {
 			return len(rest) == 0 || upperHex(rest[0])
 		}
 		b, err := strconv.ParseUint(rest[:2], 16, 8)
-		if err != nil || !upperHex(rest[0]) || !upperHex(rest[1]) || segmentKeeps(byte(b)) {
+		if err != nil || !upperHex(rest[0]) || !upperHex(rest[1]) || segmentKeeps(byte(b)) || b == 0 || b == '/' {
 			return false
 		}
 		i += 2
 	}
 	return true
+}
+
+// baseName reports whether s can be the base name of a directory.
+func baseName(s string) bool {
+	return s != "" && s != "." && s != ".." && len(s) <= 255 && !strings.ContainsAny(s, "\x00/")
 }
 
 // unescapeSegment undoes Segment's %XX escapes.
