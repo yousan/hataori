@@ -107,7 +107,8 @@ type Status struct {
 	Error    string `json:"error,omitempty"`     // the command could not be started
 	// Relay says the host ran no command (Spec.Relay): it relayed hook
 	// calls until it was told to stop, and had nothing to signal. Exited is
-	// then false and Stopped true.
+	// then false and Stopped true. A relay refused at start records Error
+	// only.
 	Relay bool `json:"relay,omitempty"`
 }
 

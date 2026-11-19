@@ -74,14 +74,15 @@ func (c *Client) Tail(n int) ([]byte, error) {
 	return resp.Data, err
 }
 
-// PID returns the command's process id.
+// PID returns the command's process id; 0 for a relay, which runs none.
 func (c *Client) PID() (int, error) {
 	resp, err := c.call(request{Op: "status"})
 	return resp.PID, err
 }
 
 // Device returns the name of the terminal the command runs in, such as
-// /dev/pts/3 or /dev/ttys003; "" when it runs on pipes.
+// /dev/pts/3 or /dev/ttys003; "" when it runs on pipes, and for a relay,
+// whose terminal another holder holds.
 // It gives up at ctx's deadline, or after a second when ctx has none.
 func (c *Client) Device(ctx context.Context) (string, error) {
 	by, ok := ctx.Deadline()

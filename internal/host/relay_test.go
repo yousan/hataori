@@ -157,6 +157,7 @@ func TestRelayCallOutlivesTheDaemon(t *testing.T) {
 	if err := daemon.Start(); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { daemon.Process.Kill(); daemon.Wait() })
 	if line, _ := bufio.NewReader(out).ReadString('\n'); line != "started\n" {
 		daemon.Process.Kill()
 		daemon.Wait()

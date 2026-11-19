@@ -172,11 +172,10 @@ func (h *host) relay() error {
 	go h.serve()
 	<-h.done
 	h.log.printf("told to stop")
-	h.stops.Wait() // the stop's answer is sent before the socket goes
 	h.stopMu.Lock()
-	h.closing = true
+	h.closing = true // no stop registers from now on, so Wait races no Add
 	h.stopMu.Unlock()
-	h.stops.Wait()
+	h.stops.Wait() // every stop's answer is written before the host ends
 	h.ln.Close()
 	h.removeSocket()
 	return writeStatus(h.dir, Status{Relay: true, Stopped: true})
@@ -371,6 +370,14 @@ func (h *host) serve() {
 	for {
 		c, err := h.ln.AcceptUnix()
 		if err != nil {
+			// A relay has no command whose end ends it: only a stop on this
+			// socket does, so it keeps accepting through a passing error,
+			// such as running out of descriptors.
+			if h.spec.Relay && !errors.Is(err, net.ErrClosed) {
+				h.log.dropped("accepting a connection", err)
+				time.Sleep(50 * time.Millisecond)
+				continue
+			}
 			return
 		}
 		go h.serveConn(c)
