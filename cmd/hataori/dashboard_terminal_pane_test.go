@@ -337,21 +337,67 @@ func TestDashboardTerminalPaneResetAndAsleep(t *testing.T) {
 	r.noViolations()
 }
 
-// A session without a terminal shows only its conversation (#336): its
-// entries in order, those before the tab opened and those after.
+// A session without a terminal shows its text, tool and turn events in
+// order, those before the tab opened and those after.
 func TestDashboardEventsPane(t *testing.T) {
 	root := newRoot(t) // the fake agent on pipes: no terminal
 	withDashboard(t, root, map[string]any{"listen": "127.0.0.1:0"})
 	r := newPaneRig(t, root, "tool quick 50ms\nreply alpha", func(x control.ThreadInfo) bool { return x.State == control.Idle && x.Turns == 1 })
-	conv := fmt.Sprintf(`.pane.active [data-conversation="%d"]`, r.n)
-	r.b.until("the conversation, and no terminal", fmt.Sprintf(`!!document.querySelector('%s') && !document.querySelector('.pane.active .xterm') && !document.querySelector('.pane.active .view-switch')`, conv))
-	if n := len(r.b.untilConversation("the events before the tab opened", conv, r.c, r.id)); n < 5 {
-		t.Fatalf("only %d entries shown", n)
+	shown := func() []string {
+		var ps []string
+		r.b.eval(fmt.Sprintf(`[...document.querySelectorAll('[data-events="%d"] .ev')].map(e => e.dataset.kind + ':' + e.dataset.pos + ':' + e.querySelector('.ev-line').textContent)`, r.n), &ps)
+		return ps
+	}
+	want := func() []string {
+		_, out, _ := cli(t, "events", "--root", root)
+		var ps []string
+		for _, e := range lines(t, out) {
+			k := e["kind"].(string)
+			if e["thread"] != float64(r.id) {
+				continue
+			}
+			d, _ := e["data"].(map[string]any)
+			var line string
+			switch k {
+			case "text":
+				line = d["text"].(string)
+			case "tool_started":
+				line = "tool " + d["tool"].(string)
+			case "tool_ended":
+				line = "tool " + d["tool"].(string) + " done"
+			case "turn_started":
+				line = "turn started"
+			case "turn_ended":
+				line = "turn ended: " + d["outcome"].(string)
+			default:
+				continue
+			}
+			ps = append(ps, fmt.Sprintf("%s:%d:%s", k, int64(e["pos"].(float64)), line))
+		}
+		return ps
+	}
+	same := func(what string) {
+		t.Helper()
+		var got, w []string
+		for deadline := time.Now().Add(20 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+			got, w = shown(), want()
+			if slices.Equal(got, w) {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: the pane shows\n%q\nthe server has\n%q", what, got, w)
+			}
+		}
+	}
+	r.b.until("the events pane", fmt.Sprintf(`!!document.querySelector('[data-events="%d"]') && !document.querySelector('.pane.active .xterm')`, r.n))
+	same("the events before the tab opened")
+	if n := len(shown()); n < 5 {
+		t.Fatalf("only %d events shown: %q", n, shown())
 	}
 	if err := r.c.Send(context.Background(), r.id, "k2", control.Input{Text: "tool slow 100ms\nreply beta"}, control.Refuse); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, "the second turn to end", 15*time.Second, func() bool { x := r.info(); return x.Turns == 2 && x.State == control.Idle })
-	r.b.untilConversation("the events of a turn after the tab opened", conv, r.c, r.id)
+	same("the events of a turn after the tab opened")
 	r.noViolations()
 }

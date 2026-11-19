@@ -197,12 +197,6 @@ func (c *Client) Thread(ctx context.Context, id control.ThreadID, recent, events
 	return out, err
 }
 
-func (c *Client) ThreadEvents(ctx context.Context, id control.ThreadID, before uint64, n int) ([]control.Event, error) {
-	var out []control.Event
-	err := c.call(ctx, "ThreadEvents", threadEventsArgs{ID: id, Before: before, Limit: n}, &out)
-	return out, err
-}
-
 func (c *Client) Start(ctx context.Context, r control.StartRequest) (control.ThreadID, error) {
 	var out control.ThreadID
 	err := c.call(ctx, "Start", r, &out)

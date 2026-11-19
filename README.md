@@ -106,6 +106,12 @@ Not built yet:
 
    hataori opens a thread on the message and the agent's replies appear there. Post into the thread to continue. From another terminal, `./hataori threads` lists the threads and `./hataori events --follow` shows the turns as they start and end.
 
+### The dashboard from your own machine
+
+`hataori connect` runs on your laptop and opens the dashboard of an instance on a server you reach by SSH: `hataori connect user@host --root <the instance root>`. It uses your own `ssh`, keeps the connection up and reconnects by itself, and remembers the host for next time. See [the configuration reference](docs/configuration.md#dashboard).
+
+To get `hataori` on a Mac, either build it with Go (`go install github.com/yousan/hataori/cmd/hataori@latest`, which puts it in `$(go env GOPATH)/bin`), or take the build CI makes for every run: the `hataori-darwin` artifact of a run on `main` in the repository's Actions tab, `hataori-darwin-arm64` for Apple silicon and `hataori-darwin-amd64` for Intel. A downloaded binary needs `chmod +x`, and macOS may refuse to run it until you remove its quarantine mark (`xattr -d com.apple.quarantine hataori-darwin-arm64`).
+
 ## Documentation
 
 - [Configuration reference](docs/configuration.md)

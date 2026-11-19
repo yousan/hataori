@@ -41,12 +41,6 @@ type API interface {
 	// recent bytes, and the thread's last events, at most events of them
 	// (and at most MaxEvents), newest last.
 	Thread(ctx context.Context, id ThreadID, recent, events int) (ThreadDetail, error)
-	// ThreadEvents returns the thread's events before position before, or
-	// its last ones when before is 0: at most n of them (and at most
-	// MaxEvents), newest last, as Thread returns them. Asking again before
-	// the oldest one returned reads the thread's log back to its start; an
-	// empty result is the start. Since protocol 3.3.
-	ThreadEvents(ctx context.Context, id ThreadID, before uint64, n int) ([]Event, error)
 
 	// Start starts a thread in a scope. A repeated r.Key starts nothing and
 	// returns the thread the first call started.

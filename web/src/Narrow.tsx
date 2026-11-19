@@ -6,7 +6,7 @@ import { t } from "./catalog";
 import { Details, Waiting } from "./Details";
 import type { Attention } from "./live";
 import { type Show, ShowChoice, shows } from "./show";
-import { ThreadPane, type View } from "./ThreadPane";
+import { ThreadPane } from "./ThreadPane";
 import { HostSections, Row } from "./Tree";
 import type { Workspace } from "./workspaces";
 
@@ -113,13 +113,11 @@ interface ThreadProps {
   subscribe: (f: (e: Event) => void) => () => void;
   opens: number;
   onBack: () => void;
-  view: View | undefined; // the view this thread's tab shows
-  onView: (v: View) => void;
 }
 
 // NarrowThread is one thread opened from the list: what it waits on, its
 // terminal or its rebuilt output, then the details panel, and a way back.
-export function NarrowThread({ x, attention, workspace, subscribe, opens, onBack, view, onView }: ThreadProps) {
+export function NarrowThread({ x, attention, workspace, subscribe, opens, onBack }: ThreadProps) {
   return (
     <div className="narrow-thread" data-narrow-thread={x.id}>
       <div className="narrow-bar">
@@ -130,7 +128,7 @@ export function NarrowThread({ x, attention, workspace, subscribe, opens, onBack
       </div>
       {attention && <Waiting a={attention} />}
       <div className="narrow-pane">
-        <ThreadPane x={x} subscribe={subscribe} opens={opens} view={view} onView={onView} />
+        <ThreadPane x={x} subscribe={subscribe} opens={opens} />
       </div>
       <Details x={x} attention={attention} workspace={workspace} subscribe={subscribe} opens={opens} withWaiting={false} />
     </div>

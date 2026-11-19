@@ -205,6 +205,26 @@ A link's token is in the part after `#`, which a browser does not send: the page
 
 The loopback listener refuses a request that came through a reverse proxy (one that carries `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Real-IP` or `Via`): put a proxy in front of the web listener instead.
 
+**On another machine, over SSH, with `hataori connect`.** On your machine (Linux or macOS), run
+
+```sh
+hataori connect user@host --root /path/to/the/instance
+```
+
+It uses your `ssh`, with your keys, agent and SSH config, and asks for a password or passphrase as `ssh` would, once per connection. It opens one shared SSH connection, runs `hataori signin` on the host through it, listens on a local port on `127.0.0.1` and passes each connection to it through SSH to the dashboard's loopback listener, and opens your browser at the link on `http://127.0.0.1:<local port>`. Then it keeps running and keeps the connection up: when the connection drops, it connects again, and since it holds the local port the whole time, nobody else can take it in between, and an open page goes on by itself. Stop it with Ctrl-C. One `hataori connect` runs per host at a time.
+
+It remembers the host, the root, `--hataori` and the local port, so next time `hataori connect` alone is enough. Run it again while it runs for the same host to have the running one open a fresh sign-in link, for example after the session ended. It writes no SSH key and no SSH config, and keeps the hosts in `hataori/connect.json` in your configuration directory, readable by you only.
+
+| Flag | Meaning |
+|---|---|
+| `--root DIR` | The instance root on the host; without it, the host's `$HATAORI_ROOT` in a non-interactive SSH session, which is often unset. |
+| `--hataori PATH` | The `hataori` binary on the host, when a non-interactive SSH session's `PATH` does not have it. |
+| `--port N` | The local port. Without it: the one remembered for the host if it is free, else the dashboard's own number if that is free, else any free port. |
+
+The link is written to no file and no log, and passed to no process but your browser's launcher (`open` on macOS, `xdg-open` on Linux). While that launcher runs, other users of the same machine can read its command line, the link included. The link works once and only for a few minutes. If someone else uses it first, the page tells you the link was already used instead of signing you in: ask for a new one. On a machine you share with people you do not trust, wait for the native window.
+
+The host's sshd must allow forwarding (`AllowTcpForwarding`); `hataori connect` says so when it does not.
+
 **On another machine, over SSH, by hand.** Forward a local port to the loopback listener, with the local address given so that your `GatewayPorts` setting cannot open the port to the network:
 
 ```sh
@@ -314,6 +334,7 @@ hataori attach  [--root DIR] NUMBER
 hataori close   [--root DIR] NUMBER
 hataori remove  [--root DIR] NUMBER
 hataori signin  [--root DIR] [--web]
+hataori connect [[user@]host] [--root DIR] [--hataori PATH] [--port N]
 hataori version
 ```
 
@@ -328,6 +349,7 @@ hataori version
 | `close NUMBER` | Ends the agent process of an idle, asleep or failed thread and closes the thread; its workspace stays. A message in a closed thread starts nothing and gets one line saying the thread is closed. A thread with a turn running, a question open, or background tasks left running by its last turn is refused: stop it first. Prints `{"thread", "scope", "state": "closed"}`. |
 | `remove NUMBER` | Moves the workspace of a closed thread into `<root>/trash/`, only when nothing in it would be lost (see `cleanup` above), and the thread becomes `removed`. Otherwise it changes nothing, prints the reason on standard error and exits with 1. Prints `{"thread", "scope", "state": "removed"}`. |
 | `signin` | Prints `{"link": ...}`: a link that signs the owner in to the dashboard's loopback listener, or with `--web` its web listener, once, within five minutes. Fails when the config has no `dashboard`, or when it has no such listener. |
+| `connect` | Runs on your own machine, not on the host: the dashboard of the instance on `host`, over SSH, until stopped (see "On another machine, over SSH, with `hataori connect`" above). Without a host, the one it connected to last. |
 | `version` | Prints the version. |
 
 | Flag | Default | Meaning |

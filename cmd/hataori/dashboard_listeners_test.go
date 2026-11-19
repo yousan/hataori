@@ -419,3 +419,33 @@ func TestDashboardSessionsInTheBrowser(t *testing.T) {
 		}
 	}
 }
+
+// A link that someone used first does not sign in, and the page says it
+// was already used, which a signed-out page does not.
+func TestDashboardSaysALinkWasAlreadyUsed(t *testing.T) {
+	root := newRoot(t)
+	withDashboard(t, root, map[string]any{"listen": "127.0.0.1:0"})
+	startDaemon(t, root)
+	link := signinLink(t, root)
+	openLink(t, link) // someone else, first
+	b := newBrowser(t)
+	b.call("Page.navigate", map[string]any{"url": link})
+	b.until("the page to say the link was used", `(document.querySelector('.signed-out') || {}).textContent?.includes('already used')`)
+	var loc string
+	b.eval(`location.pathname + location.hash`, &loc)
+	if loc != "/" {
+		t.Fatalf("the used link stayed in the address: %q", loc)
+	}
+	b.call("Page.navigate", map[string]any{"url": strings.TrimSuffix(link[:strings.Index(link, "/signin")], "/") + "/"})
+	b.until("the plain signed-out message", `(document.querySelector('.signed-out') || {}).textContent?.includes('Not signed in')`)
+
+	// Signed in with a session of its own, the page still says so when a
+	// link it is opened with was used by someone first.
+	startThread(t, root, "t1", "reply signed in")
+	b.call("Page.navigate", map[string]any{"url": signinLink(t, root)})
+	b.until("the thread, signed in", `[...document.querySelectorAll('[data-section=threads] .row')].some(r => r.textContent.includes('reply signed in'))`)
+	stolen := signinLink(t, root)
+	openLink(t, stolen)
+	b.call("Page.navigate", map[string]any{"url": stolen})
+	b.until("the warning while still signed in", `(document.querySelector('.signed-out') || {}).textContent?.includes('already used') && [...document.querySelectorAll('[data-section=threads] .row')].some(r => r.textContent.includes('reply signed in'))`)
+}

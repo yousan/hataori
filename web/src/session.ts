@@ -15,6 +15,15 @@ const signInPath = "/signin";
 const sessionPath = "/api/session";
 
 let current: string | null = null;
+// refused is true when this page was opened with a sign-in link that did
+// not sign in: used already, by the person or by someone else, or expired.
+let refused = false;
+
+// linkRefused reports whether the page was opened with a sign-in link that
+// did not sign in, so that it can say so instead of only "signed out".
+export function linkRefused(): boolean {
+  return refused;
+}
 
 // adoptSession finds the session once, before the page asks for anything.
 // On a sign-in link it takes the link's token out of the address at once,
@@ -35,6 +44,7 @@ export async function adoptSession(): Promise<void> {
         credentials: "omit",
         cache: "no-store",
       });
+      if (r.status === 401) refused = true; // used, by anyone, or expired; not a network failure
       const session = r.ok ? ((await r.json()) as { session?: unknown }).session : undefined;
       if (typeof session === "string" && session) {
         current = session;
