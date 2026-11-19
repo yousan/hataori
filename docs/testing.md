@@ -55,7 +55,7 @@ The check skips when Codex is not installed or is not signed in. It uses the ins
 7. Drive an approval through the adapter's `Answer` with `AskInChat`.
 8. With `HATAORI_REAL_CODEX_LONG=1`, wait for four foreground sleeps and check that the turn takes at least 30 minutes and ends once. Without the flag this step is skipped.
 
-The check cleans up processes it starts and never writes the user's Codex configuration. It compares the checksum of `config.toml` in the Codex home before and after the check; the adapter passes its trust override on the command line.
+The check ends every process it starts, also after a failed step, provided `go test` does not stop it first: it keeps two minutes of the `-timeout` for that, and refuses to start when the time left is too short for its steps. It never writes the user's Codex configuration. It compares the checksum of `config.toml` in the Codex home before and after the check; the adapter passes its trust override on the command line.
 
 ### Codex criteria (Appendix E) and their tests
 
@@ -68,8 +68,9 @@ The check cleans up processes it starts and never writes the user's Codex config
 | The daemon is killed with SIGKILL during a turn and started again: the turn finishes, every reply appears once, and its end event once (phase 1’s criterion, for Codex) | `TestCodexDaemonKilledDuringATurnFinishesIt` | `daemon restart during turn` |
 | Captures are in `testdata/` and the codec passes on them | `TestCapturedTools`, `TestApprovalsAskInChat`, `TestAsyncQuestions`, `TestInterruptCapture` (in `internal/agent/codex`) | — |
 
+Until the buttons of #248, the daemon allows Codex's approvals automatically (`TestCodexQuestionsAndApprovalsInTheThread`, `approval_accept`). The approval tests therefore drive the adapter itself, over pipes, with `AskInChat`: against the replayed capture, where the replay checks each answer against the captured one, and against the real `codex app-server`, where the accepted command's file must exist.
 
-Last run: not yet run with these steps.
+Last run: 2026-11-19, codex-cli 0.163.0, Linux, logged in with ChatGPT: all 8 steps passed in 33.6 minutes, the 30-minute turn in 32 m 6 s. `config.toml` had the same checksum before and after, and no process of the check was left.
 
 ## Claude Code
 
