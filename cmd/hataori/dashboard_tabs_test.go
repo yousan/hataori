@@ -92,7 +92,7 @@ func TestDashboardTabsAndPanes(t *testing.T) {
 	row := func(n int64) string { return fmt.Sprintf(`[data-section=threads] .row[data-thread="%d"]`, n) }
 
 	b := newBrowser(t)
-	link, err := c.SignInLink(ctx)
+	link, err := c.SignInLink(ctx, "")
 	if err != nil {
 		t.Fatal(err)
 	}

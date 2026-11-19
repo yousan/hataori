@@ -154,7 +154,7 @@ func TestDashboardTerminalFillsPane(t *testing.T) {
 	}
 	window := func(w, h int) { t.Helper(); dense(w, h, 1) }
 	window(1400, 900)
-	link, err := c.SignInLink(ctx)
+	link, err := c.SignInLink(ctx, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,5 +1,8 @@
 // The routes of the dashboard's server (internal/dashboard/api.go). Their
-// JSON is the control protocol's (docs/protocol.md).
+// JSON is the control protocol's (docs/protocol.md). Every request carries
+// the page's session (session.ts).
+
+import { authorized } from "./session";
 
 export type State = "creating" | "idle" | "running" | "waiting" | "asleep" | "closed" | "removed" | "failed";
 
@@ -77,7 +80,7 @@ export interface LimitWindow {
 export class SignedOut extends Error {}
 
 async function get<T>(path: string): Promise<T> {
-  const r = await fetch(path, { credentials: "same-origin", cache: "no-store" });
+  const r = await fetch(path, authorized());
   if (r.status === 401) throw new SignedOut();
   if (!r.ok) throw new Error(`${path}: ${r.status}`);
   return (await r.json()) as T;
@@ -120,7 +123,7 @@ export interface HostTerminal {
 export class HostTerminalsOff extends Error {}
 
 export async function hostTerminals(): Promise<HostTerminal[]> {
-  const r = await fetch("/api/hostterminals", { credentials: "same-origin", cache: "no-store" });
+  const r = await fetch("/api/hostterminals", authorized());
   if (r.status === 401) throw new SignedOut();
   if (r.status === 403) throw new HostTerminalsOff();
   if (!r.ok) throw new Error(`hostterminals: ${r.status}`);
@@ -168,7 +171,7 @@ export function terminalPath(id: ThreadID): string {
 // the stream's status and sends no chunk. Any other answer, or none, is an
 // error: the caller asks again.
 export async function hasTerminal(id: ThreadID): Promise<boolean> {
-  const r = await fetch(terminalPath(id), { method: "HEAD", credentials: "same-origin", cache: "no-store" });
+  const r = await fetch(terminalPath(id), authorized({ method: "HEAD" }));
   if (r.status === 401) throw new SignedOut();
   if (r.status === 404) return false;
   if (!r.ok) throw new Error(`terminal: ${r.status}`);

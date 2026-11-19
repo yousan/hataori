@@ -24,6 +24,7 @@ type Client struct {
 	conn    net.Conn
 	peer    *Peer
 	handler Handler
+	daemon  string // the version the daemon said it speaks on the connection open made
 }
 
 var _ control.API = (*Client)(nil)
@@ -83,12 +84,12 @@ func (c *Client) handle(ctx context.Context, op string, args json.RawMessage) (a
 
 // open connects the client's connection for calls; c.mu is held.
 func (c *Client) open(ctx context.Context) error {
-	conn, dec, err := c.connect(ctx)
+	conn, dec, version, err := c.connect(ctx)
 	if err != nil {
 		return err
 	}
 	p := newPeer(conn, c.handle)
-	c.conn, c.peer = conn, p
+	c.conn, c.peer, c.daemon = conn, p, version
 	go func() {
 		p.serve(context.Background(), dec, nil)
 		conn.Close()
@@ -96,39 +97,40 @@ func (c *Client) open(ctx context.Context) error {
 	return nil
 }
 
-// connect opens a connection and exchanges hellos.
-func (c *Client) connect(ctx context.Context) (net.Conn, *json.Decoder, error) {
+// connect opens a connection and exchanges hellos, and returns the
+// version the daemon speaks.
+func (c *Client) connect(ctx context.Context) (net.Conn, *json.Decoder, string, error) {
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "unix", c.path)
 	if err != nil {
-		return nil, nil, fmt.Errorf("wire: connect to %s: %w", c.path, err)
+		return nil, nil, "", fmt.Errorf("wire: connect to %s: %w", c.path, err)
 	}
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
 	dec := json.NewDecoder(bufio.NewReader(conn))
 	if err := json.NewEncoder(conn).Encode(hello{Version: c.version, Token: c.token}); err != nil {
 		conn.Close()
-		return nil, nil, fmt.Errorf("wire: hello: %w", err)
+		return nil, nil, "", fmt.Errorf("wire: hello: %w", err)
 	}
 	var h hello
 	if err := dec.Decode(&h); err != nil {
 		conn.Close()
-		return nil, nil, fmt.Errorf("wire: hello: %w", err)
+		return nil, nil, "", fmt.Errorf("wire: hello: %w", err)
 	}
 	if h.Error != "" {
 		conn.Close()
-		return nil, nil, fmt.Errorf("wire: daemon refused the connection: %s", h.Error)
+		return nil, nil, "", fmt.Errorf("wire: daemon refused the connection: %s", h.Error)
 	}
 	if major(h.Version) != major(c.version) {
 		conn.Close()
-		return nil, nil, versionError(c.version, h.Version)
+		return nil, nil, "", versionError(c.version, h.Version)
 	}
 	if c.token != "" && !atLeast(h.Version, tokensSince) {
 		// It would make this connection the owner's.
 		conn.Close()
-		return nil, nil, fmt.Errorf("wire: the daemon speaks %s, which does not know tokens (since %s); refusing to connect as the owner", h.Version, tokensSince)
+		return nil, nil, "", fmt.Errorf("wire: the daemon speaks %s, which does not know tokens (since %s); refusing to connect as the owner", h.Version, tokensSince)
 	}
-	return conn, dec, nil
+	return conn, dec, h.Version, nil
 }
 
 // Close closes the client's connection.
@@ -145,6 +147,13 @@ func (c *Client) Close() error {
 // broke is opened again for the next call; the call itself is not
 // repeated, because the daemon may have run it.
 func (c *Client) call(ctx context.Context, op string, args, result any) error {
+	return c.callSince(ctx, "", "", op, args, result)
+}
+
+// callSince is call, refused without sending when the daemon of the
+// connection the request goes out on speaks a version older than since;
+// what names what needs it. An empty since needs nothing.
+func (c *Client) callSince(ctx context.Context, since, what, op string, args, result any) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -163,7 +172,11 @@ func (c *Client) call(ctx context.Context, op string, args, result any) error {
 		}
 	}
 	p := c.peer
+	daemon := c.daemon
 	c.mu.Unlock()
+	if since != "" && !atLeast(daemon, since) {
+		return fmt.Errorf("wire: the daemon speaks %s; %s needs %s or later: upgrade the daemon", daemon, what, since)
+	}
 	err := p.Request(ctx, op, args, result)
 	var re *remoteError
 	if err != nil && !errors.As(err, &re) && ctx.Err() == nil {
@@ -218,11 +231,20 @@ func (c *Client) Workspace(ctx context.Context, id control.ThreadID) (control.Wo
 	return out, err
 }
 
-func (c *Client) SignInLink(ctx context.Context) (string, error) {
+func (c *Client) SignInLink(ctx context.Context, way control.Way) (string, error) {
+	// An older daemon ignores the field and answers with its one
+	// listener's link, which may not be the listener asked for.
+	since := ""
+	if way != "" {
+		since = waysSince
+	}
 	var out string
-	err := c.call(ctx, "SignInLink", signInLinkArgs{}, &out)
+	err := c.callSince(ctx, since, "a sign-in link for one listener", "SignInLink", signInLinkArgs{Way: way}, &out)
 	return out, err
 }
+
+// waysSince is the first version whose daemon honours SignInLink's way.
+const waysSince = "3.2"
 
 func (c *Client) HostTerminals(ctx context.Context) ([]control.HostTerminal, error) {
 	var out []control.HostTerminal
@@ -331,7 +353,7 @@ func (c *Client) pumpTerminal(ctx context.Context, conn net.Conn, dec *json.Deco
 }
 
 func (c *Client) openStream(ctx context.Context, op string, args any) (net.Conn, *json.Decoder, error) {
-	conn, dec, err := c.connect(ctx)
+	conn, dec, _, err := c.connect(ctx)
 	if err != nil {
 		return nil, nil, err
 	}

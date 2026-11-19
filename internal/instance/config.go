@@ -78,14 +78,33 @@ type Scope struct {
 	People  []string // names of the people who may act here besides the owner
 }
 
-// Dashboard is the "dashboard" section of the config. Whether the
-// addresses fit together is checked when the dashboard starts.
+// Dashboard is the "dashboard" section of the config: a loopback listener,
+// a web listener, or both (design, section 7.2). Whether the addresses fit
+// together is checked when the dashboard starts.
 type Dashboard struct {
-	Listen  string // "listen": the address to listen on; loopback when empty
-	URL     string // "url": the address people open; made from Listen when empty
+	Local *DashboardLocal // the loopback listener; nil for none
+	Web   *DashboardWeb   // the web listener; nil for none
+	// OldForm is true for a section in the form before the web listener:
+	// "url", "tls_cert", "tls_key" or "proxy" directly in it. With TLS or a
+	// proxy it is the web listener, otherwise the loopback listener.
+	OldForm bool
+}
+
+// DashboardLocal is the loopback listener: "dashboard.listen".
+type DashboardLocal struct {
+	Listen string // the address; loopback, and the default when empty
+	URL    string // the old form's "url": where its links point; made from Listen when empty
+}
+
+// DashboardWeb is the web listener: "dashboard.web", or, in the old form,
+// the keys directly in "dashboard".
+type DashboardWeb struct {
+	Listen  string // "listen": the address to listen on
+	URL     string // "url": the address people open
 	TLSCert string // "tls_cert": a PEM certificate file under config/, with "tls_key"
 	TLSKey  string // "tls_key": its PEM private key file under config/
 	Proxy   string // "proxy": the IP address of the reverse proxy in front
+	Key     string // the prefix of its keys in messages: "dashboard.web." or "dashboard."
 }
 
 // Cleanup is the "cleanup" section of the config.
@@ -116,6 +135,15 @@ type fileCleanup struct {
 }
 
 type fileDashboard struct {
+	Listen  string   `json:"listen"`
+	URL     string   `json:"url"`
+	TLSCert string   `json:"tls_cert"`
+	TLSKey  string   `json:"tls_key"`
+	Proxy   string   `json:"proxy"`
+	Web     *fileWeb `json:"web"`
+}
+
+type fileWeb struct {
 	Listen  string `json:"listen"`
 	URL     string `json:"url"`
 	TLSCert string `json:"tls_cert"`
@@ -237,11 +265,9 @@ func ParseConfig(data []byte) (*Config, error) {
 		}
 	}
 
-	if d := f.Dashboard; d != nil {
-		c.Dashboard = &Dashboard{Listen: strings.TrimSpace(d.Listen), URL: strings.TrimSpace(d.URL),
-			TLSCert: strings.TrimSpace(d.TLSCert), TLSKey: strings.TrimSpace(d.TLSKey), Proxy: strings.TrimSpace(d.Proxy)}
-		if (c.Dashboard.TLSCert == "") != (c.Dashboard.TLSKey == "") {
-			return nil, errors.New(`config: keys "dashboard.tls_cert" and "dashboard.tls_key" go together: give both or neither`)
+	if f.Dashboard != nil {
+		if c.Dashboard, err = dashboardSection(f.Dashboard); err != nil {
+			return nil, err
 		}
 	}
 
@@ -535,4 +561,45 @@ func kindName(k string) string {
 		return "true or false"
 	}
 	return "a " + k
+}
+
+// dashboardSection reads the "dashboard" section: "listen" is the loopback
+// listener and "web" the web listener. A section with "url", "tls_cert",
+// "tls_key" or "proxy" directly in it is in the old form, one listener:
+// with TLS or a proxy the web listener, otherwise the loopback listener.
+func dashboardSection(d *fileDashboard) (*Dashboard, error) {
+	trim := strings.TrimSpace
+	old := trim(d.URL) != "" || trim(d.TLSCert) != "" || trim(d.TLSKey) != "" || trim(d.Proxy) != ""
+	if old && d.Web != nil {
+		return nil, errors.New(`config: key "dashboard.web": not with "url", "tls_cert", "tls_key" or "proxy" directly in "dashboard", the one-listener form: move them into "dashboard.web"`)
+	}
+	out := &Dashboard{OldForm: old}
+	web := func(w fileWeb, key string) (*DashboardWeb, error) {
+		x := &DashboardWeb{Listen: trim(w.Listen), URL: trim(w.URL), TLSCert: trim(w.TLSCert), TLSKey: trim(w.TLSKey),
+			Proxy: trim(w.Proxy), Key: key}
+		if (x.TLSCert == "") != (x.TLSKey == "") {
+			return nil, fmt.Errorf("config: keys %q and %q go together: give both or neither", key+"tls_cert", key+"tls_key")
+		}
+		return x, nil
+	}
+	var err error
+	switch {
+	case old && (trim(d.TLSCert) != "" || trim(d.TLSKey) != "" || trim(d.Proxy) != ""):
+		out.Web, err = web(fileWeb{Listen: d.Listen, URL: d.URL, TLSCert: d.TLSCert, TLSKey: d.TLSKey, Proxy: d.Proxy}, "dashboard.")
+	case old:
+		out.Local = &DashboardLocal{Listen: trim(d.Listen), URL: trim(d.URL)}
+	default:
+		if d.Web == nil || trim(d.Listen) != "" {
+			out.Local = &DashboardLocal{Listen: trim(d.Listen)}
+		}
+		if d.Web != nil {
+			if out.Web, err = web(*d.Web, "dashboard.web."); err == nil && out.Web.Listen == "" {
+				err = errors.New(`config: key "dashboard.web.listen": missing: name the address the web listener listens on`)
+			}
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }

@@ -91,7 +91,7 @@ func examples(t *testing.T) map[string]any {
 		"Remove":         removeArgs{ID: exampleID},
 		"Events":         eventsArgs{Filter: control.Filter{}, After: 41},
 		"Workspace":      workspaceArgs{ID: exampleID},
-		"SignInLink":     signInLinkArgs{},
+		"SignInLink":     signInLinkArgs{Way: control.WayWeb},
 		"Terminal":       terminalArgs{ID: exampleID, Run: "5f0c9a1e7b3d4c2a8e6f1b0d9c7a5e3f", After: 1024},
 		"HostTerminals":  hostTerminalsArgs{},
 		"HostScreen":     hostScreenArgs{Pane: "%3"},
@@ -108,7 +108,7 @@ func examples(t *testing.T) map[string]any {
 		"Start": exampleID,
 		"Workspace": control.WorkspaceState{Branch: "fix-build", Base: "9fceb02d0ae598e95dc970b74767f19372d61af8",
 			Added: 12, Removed: 3, Uncommitted: 2, Unpushed: 1, Fetched: &exampleTime},
-		"SignInLink": "https://dashboard.example.com/signin?t=Q2hhbmdlIG1lIGV2ZXJ5IHRpbWU",
+		"SignInLink": "https://dashboard.example.com/signin#t=Q2hhbmdlIG1lIGV2ZXJ5IHRpbWU",
 		"HostTerminals": []control.HostTerminal{
 			{Device: "/dev/pts/3", Process: "vim", Activity: &exampleTime, Tmux: &control.TmuxPane{Pane: "%3",
 				Session: "work", Window: "1", WindowName: "editor", Index: "0", Dir: "/home/alice/src", Attached: true}},

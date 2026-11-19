@@ -35,11 +35,13 @@ func page() fs.FS {
 }
 
 // pageRoutes serves the page: index.html at "/", its files under /assets/.
-// Like every route, they answer only a signed-in session.
+// They hold no data, so they answer without a session (isPageFile): the
+// page reads its session from its own storage once it runs, and every
+// route it reads needs one.
 func (s *Server) pageRoutes() {
 	files := page()
 	s.mux.Handle("GET /assets/", http.FileServerFS(files))
-	s.mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFileFS(w, r, files, "index.html")
-	})
+	index := func(w http.ResponseWriter, r *http.Request) { http.ServeFileFS(w, r, files, "index.html") }
+	s.mux.HandleFunc("GET /{$}", index)
+	s.mux.HandleFunc("GET "+SignInPath, index) // the page reads the link from the address's fragment
 }
