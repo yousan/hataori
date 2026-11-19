@@ -30,7 +30,8 @@ type browser struct {
 	t       browserTest
 	conn    *websocket.Conn
 	id      int
-	timeout time.Duration
+	timeout time.Duration // how long until waits
+	poll    time.Duration // how long until waits between two tries
 	// events are the DevTools events read so far, in order, such as the
 	// page's requests once Network.enable is called.
 	events []cdpEvent
@@ -139,11 +140,22 @@ func newBrowser(t *testing.T, flags ...string) *browser {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { conn.Close() })
-	return &browser{t: t, conn: conn, timeout: 20 * time.Second}
+	return &browser{t: t, conn: conn, timeout: 20 * time.Second, poll: 50 * time.Millisecond}
 }
 
 // call sends one DevTools command and returns its result.
 func (b *browser) call(method string, params any) json.RawMessage {
+	b.t.Helper()
+	r, err := b.send(method, params)
+	if err != "" {
+		b.t.Fatalf("%s: %s", method, err)
+	}
+	return r
+}
+
+// send sends one DevTools command and returns its result, or the error
+// DevTools answered with. A broken connection fails the test.
+func (b *browser) send(method string, params any) (json.RawMessage, string) {
 	b.t.Helper()
 	b.id++
 	b.conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
@@ -170,10 +182,17 @@ func (b *browser) call(method string, params any) json.RawMessage {
 			continue
 		}
 		if m.Error != nil {
-			b.t.Fatalf("%s: %s", method, m.Error.Message)
+			return nil, m.Error.Message
 		}
-		return m.Result
+		return m.Result, ""
 	}
+}
+
+// navigatedAway reports whether a DevTools error says the command's
+// document went away under it: the page navigated, and DevTools moved to
+// the new document, in another process when the page changed sites.
+func navigatedAway(err string) bool {
+	return strings.Contains(err, "Inspected target navigated or closed")
 }
 
 // eval runs expr in the page and decodes its value into v.
@@ -187,6 +206,19 @@ func (b *browser) eval(expr string, v any) {
 // evalException runs expr and returns the exception, if it threw.
 func (b *browser) evalException(expr string, v any) string {
 	b.t.Helper()
+	return b.evaluate(expr, v, false)
+}
+
+// evalNavigating is evalException for a page that may be navigating: an
+// evaluation cut short because the document went away is returned as the
+// exception too, for the caller to try again on the new document.
+func (b *browser) evalNavigating(expr string, v any) string {
+	b.t.Helper()
+	return b.evaluate(expr, v, true)
+}
+
+func (b *browser) evaluate(expr string, v any, navigating bool) string {
+	b.t.Helper()
 	var r struct {
 		Result           struct{ Value json.RawMessage }
 		ExceptionDetails *struct {
@@ -194,7 +226,15 @@ func (b *browser) evalException(expr string, v any) string {
 			Exception *struct{ Description string }
 		}
 	}
-	json.Unmarshal(b.call("Runtime.evaluate", map[string]any{"expression": expr, "returnByValue": true, "awaitPromise": true}), &r)
+	params := map[string]any{"expression": expr, "returnByValue": true, "awaitPromise": true}
+	res, err := b.send("Runtime.evaluate", params)
+	if err != "" {
+		if navigating && navigatedAway(err) {
+			return err
+		}
+		b.t.Fatalf("Runtime.evaluate: %s", err)
+	}
+	json.Unmarshal(res, &r)
 	if e := r.ExceptionDetails; e != nil {
 		text := e.Text
 		if e.Exception != nil && e.Exception.Description != "" {
@@ -217,16 +257,16 @@ func (b *browser) evalException(expr string, v any) string {
 func (b *browser) until(what, expr string) {
 	b.t.Helper()
 	var lastException string
-	for deadline := time.Now().Add(b.timeout); ; time.Sleep(50 * time.Millisecond) {
+	for deadline := time.Now().Add(b.timeout); ; time.Sleep(b.poll) {
 		var ok bool
-		if exception := b.evalException("!!("+expr+")", &ok); exception != "" {
+		if exception := b.evalNavigating("!!("+expr+")", &ok); exception != "" {
 			lastException = exception
 		} else if ok {
 			return
 		}
 		if time.Now().After(deadline) {
 			var html string
-			if exception := b.evalException("document.body.innerHTML", &html); exception != "" {
+			if exception := b.evalNavigating("document.body.innerHTML", &html); exception != "" {
 				html = "reading the page's HTML threw: " + exception
 			}
 			if lastException != "" {

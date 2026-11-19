@@ -1,13 +1,17 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 // browserRecorder captures a fatal message from a browser running in a goroutine.
@@ -67,5 +71,77 @@ func TestBrowserUntilDuringNavigation(t *testing.T) {
 		}
 	default:
 		t.Fatal("until returned without failing")
+	}
+}
+
+// fakeDevTools is a DevTools endpoint that answers each Runtime.evaluate
+// with the next of answers (an error as Chrome sends it, or nil for true),
+// and true once they are used up. It returns a browser connected to it.
+func fakeDevTools(t *testing.T, answers ...[]byte) *browser {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		for {
+			var req struct {
+				ID     int    `json:"id"`
+				Method string `json:"method"`
+			}
+			if err := c.ReadJSON(&req); err != nil {
+				return
+			}
+			var answer map[string]any
+			if req.Method == "Runtime.evaluate" && len(answers) > 0 {
+				json.Unmarshal(answers[0], &answer)
+				answers = answers[1:]
+			}
+			if answer == nil {
+				answer = map[string]any{"result": map[string]any{"result": map[string]any{"type": "boolean", "value": true}}}
+			}
+			answer["id"] = req.ID
+			if c.WriteJSON(answer) != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(srv.Close)
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	return &browser{t: t, conn: conn, timeout: 5 * time.Second, poll: time.Millisecond}
+}
+
+// TestBrowserUntilAfterTheTargetNavigated checks that until tries again
+// when DevTools answers an evaluation with "Inspected target navigated or
+// closed", as Chrome does for one sent while the page moves to another
+// document, and that any other DevTools error still fails at once.
+func TestBrowserUntilAfterTheTargetNavigated(t *testing.T) {
+	navigated, err := os.ReadFile("testdata/devtools/chrome-138/evaluate-navigated.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fakeDevTools(t, navigated, navigated).until("the condition after two navigations", "true")
+
+	b := fakeDevTools(t, []byte(`{"error":{"code":-32000,"message":"Cannot do that"}}`))
+	recorder := &browserRecorder{message: make(chan string, 1)}
+	b.t = recorder
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		b.until("the condition", "true")
+	}()
+	<-done
+	select {
+	case message := <-recorder.message:
+		if !strings.Contains(message, "Cannot do that") {
+			t.Errorf("until failed with %q, want the DevTools error", message)
+		}
+	default:
+		t.Fatal("until went on after a DevTools error that is not a navigation")
 	}
 }
