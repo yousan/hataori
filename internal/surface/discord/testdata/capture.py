@@ -13,6 +13,8 @@ usage:
   capture.py choices RAW_DIR MIN  post a message with three buttons and one with a menu of three options,
                                  wait up to MIN minutes for a press and a selection of two (README),
                                  then remove the buttons and the menu by editing
+  capture.py lamps RAW_DIR       reactions set, read and removed on a bot message, a rejected one, and posts
+                                 that mention the bot itself, @everyone and a role (no gateway connection)
   capture.py cleanup RAW_DIR     delete what the bot posted in the runs above
 
 Environment:
@@ -534,6 +536,43 @@ def choices_run(raw, minutes):
          {"content": "[hataori test] answered", "components": []})
 
 
+LAMPS = {"working": "\u23f3", "done": "\u2705", "error": "\u274c"}
+
+
+def lamps_run(raw):
+    """Lamps as the bot's reactions, and mentions. The posts that mention someone mention
+    only the bot itself, so that no person is notified."""
+    from urllib.parse import quote
+    ch = os.environ["HATAORI_DISCORD_CHANNEL"]
+    st, me = rest(None, None, "GET", "/users/@me")
+    st, m = rest(raw, "lamp-post", "POST", f"/channels/{ch}/messages",
+                 {"content": "[hataori test] a message that gets lamps", "allowed_mentions": {"parse": []}})
+    raw.note("messages", [ch, m["id"]])
+    base = f"/channels/{ch}/messages/{m['id']}/reactions"
+    rest(raw, "lamp-add-working", "PUT", f"{base}/{quote(LAMPS['working'])}/@me")
+    rest(raw, "lamp-get-working", "GET", f"/channels/{ch}/messages/{m['id']}")
+    rest(raw, "lamp-add-done", "PUT", f"{base}/{quote(LAMPS['done'])}/@me")
+    rest(raw, "lamp-remove-working", "DELETE", f"{base}/{quote(LAMPS['working'])}/@me")
+    rest(raw, "lamp-get-done", "GET", f"/channels/{ch}/messages/{m['id']}")
+    rest(raw, "lamp-remove-absent", "DELETE", f"{base}/{quote(LAMPS['error'])}/@me")
+    rest(raw, "lamp-add-again", "PUT", f"{base}/{quote(LAMPS['done'])}/@me")
+    rest(raw, "lamp-add-unknown-message", "PUT",
+         f"/channels/{ch}/messages/{int(m['id']) - 1}/reactions/{quote(LAMPS['working'])}/@me")
+    st, p = rest(raw, "post-notify", "POST", f"/channels/{ch}/messages",
+                 {"content": f"<@{me['id']}> [hataori test] a ping of the bot itself",
+                  "allowed_mentions": {"parse": [], "users": [me["id"]]}})
+    raw.note("messages", [ch, p["id"]])
+    guild = m.get("guild_id") or rest(None, None, "GET", f"/channels/{ch}")[1]["guild_id"]
+    st, p = rest(raw, "post-everyone", "POST", f"/channels/{ch}/messages",
+                 {"content": f"@everyone <@&{guild}> [hataori test] mentions that notify nobody",
+                  "allowed_mentions": {"parse": []}})
+    raw.note("messages", [ch, p["id"]])
+    st, p = rest(raw, "post-quiet", "POST", f"/channels/{ch}/messages",
+                 {"content": "[hataori test] a post without a notification", "flags": 4096,
+                  "allowed_mentions": {"parse": []}})
+    raw.note("messages", [ch, p["id"]])
+
+
 def cleanup(raw):
     for conv, mid in raw.created["messages"]:
         st, _ = rest(None, None, "DELETE", f"/channels/{conv}/messages/{mid}")
@@ -552,4 +591,4 @@ if __name__ == "__main__":
     {"bot": lambda: bot_run(raw), "person": lambda: person_run(raw, float(sys.argv[3])),
      "second": lambda: second_run(raw), "lookups": lambda: lookups(raw), "pages": lambda: pages_run(raw), "rethread": lambda: rethread_run(raw),
      "commands": lambda: commands_run(raw, float(sys.argv[3])),
-     "choices": lambda: choices_run(raw, float(sys.argv[3])), "cleanup": lambda: cleanup(raw)}[cmd]()
+     "choices": lambda: choices_run(raw, float(sys.argv[3])), "lamps": lambda: lamps_run(raw), "cleanup": lambda: cleanup(raw)}[cmd]()

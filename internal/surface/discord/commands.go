@@ -33,16 +33,17 @@ var commandName = regexp.MustCompile(`^[-_a-z0-9]{1,32}$`)
 
 // Discord's values the driver uses for commands.
 const (
-	interactionCommand     = 2
-	commandChatInput       = 1
-	optionString           = 3
-	contextGuild           = 0
-	installGuild           = 0
-	callbackDeferMessage   = 5
-	messageFlagEphemeral   = 64
-	commandReplyPrefix     = "command:"
-	answerOp               = "answer a command"
-	registerCommandsOpName = "register the commands"
+	interactionCommand               = 2
+	commandChatInput                 = 1
+	optionString                     = 3
+	contextGuild                     = 0
+	installGuild                     = 0
+	callbackDeferMessage             = 5
+	messageFlagEphemeral             = 64
+	messageFlagSuppressNotifications = 4096
+	commandReplyPrefix               = "command:"
+	answerOp                         = "answer a command"
+	registerCommandsOpName           = "register the commands"
 )
 
 // wireCommand is a command as the driver registers it, and the part of a
@@ -298,6 +299,9 @@ func (d *Driver) postAnswer(ctx context.Context, conv surface.Conversation, key 
 	parts := split(text, maxText)
 	for i := p.sent; i < len(parts); i++ {
 		body := map[string]any{"content": parts[i], "allowed_mentions": mentions}
+		if i > 0 {
+			body["allowed_mentions"] = map[string]any{"parse": []string{}} // the pings are in the first part
+		}
 		if i == len(parts)-1 && len(m.Choices) > 0 {
 			body["components"] = buttons
 		}
@@ -305,8 +309,15 @@ func (d *Driver) postAnswer(ctx context.Context, conv surface.Conversation, key 
 		if !a.started {
 			err = d.client.Do(rest.UpdateInteractionResponse.Compile(nil, a.app, a.token), body, &out, rest.WithCtx(ctx))
 		} else {
+			flags := 0
 			if a.private {
-				body["flags"] = messageFlagEphemeral
+				flags |= messageFlagEphemeral
+			}
+			if m.Quiet {
+				flags |= messageFlagSuppressNotifications
+			}
+			if flags != 0 {
+				body["flags"] = flags
 			}
 			err = d.client.Do(rest.CreateFollowupMessage.Compile(nil, a.app, a.token), body, &out, rest.WithCtx(ctx))
 		}

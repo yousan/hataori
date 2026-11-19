@@ -240,6 +240,14 @@ func TestCommandInThread(t *testing.T) {
 	if b["flags"] != 64.0 {
 		t.Fatalf("follow-up %v is not private", b)
 	}
+	// A quiet one is private and sends no notification.
+	if _, err := d.Post(context.Background(), c.Conv, "", surface.Message{Text: "quiet", ReplyTo: c.Reply, Quiet: true}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ = content(t, r.requests(follow)[1])
+	if b["flags"] != 64.0+4096.0 {
+		t.Fatalf("quiet follow-up %v", b)
+	}
 }
 
 // A command that can no longer be answered, here after a restart, fails

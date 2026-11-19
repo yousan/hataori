@@ -60,6 +60,7 @@ The run fetches each of these messages through REST as soon as it arrives, so th
 | Commands registered, and read back | `commands/rest-application.json`, `rest-commands-set.json`, `rest-commands-after.json` | |
 | A command used in a channel and in a thread, acknowledged and answered | `commands/rest-command-ack-*.json`, `rest-command-answer-*.json` | `commands/gw-01-INTERACTION_CREATE.json`, `gw-02-…` |
 | Several buttons and a menu posted, used, and removed | `choices/rest-post-buttons.json`, `rest-post-menu.json`, `rest-*-ack.json`, `rest-edit-remove-*.json` | `choices/gw-01-INTERACTION_CREATE.json` (button), `gw-02-…` (menu, two options) |
+| Lamps as reactions: added, read, replaced, refused; posts with a mention, `@everyone` and a role, and a quiet post | `lamps/rest-lamp-*.json`, `rest-post-notify.json`, `rest-post-everyone.json`, `rest-post-quiet.json` | |
 | Who the bot is | `bot/rest-users-me.json` | `bot/gw-01-READY.json` |
 
 ## A thread opened again from its message (taken for #165)
@@ -81,6 +82,14 @@ Before registering, the run read the commands the application had, and it put th
 `v10/choices/`, taken on 2026-11-19 with API v10 by a test bot in a test server's channel: `capture.py choices /tmp/raw/choices 30`, then `capture.py cleanup /tmp/raw/choices`. Its ids are numbered on their own, from `1000000000000000001`.
 
 The run posted one message with three buttons (`rest-post-buttons.json`) and one with a string select menu of three options, of which one to three may be chosen (`rest-post-menu.json`). A person pressed button 2 (`gw-01-INTERACTION_CREATE.json`: `component_type` 2, `custom_id` the button's) and chose options 1 and 3 in the menu (`gw-02-INTERACTION_CREATE.json`: `component_type` 3, `custom_id` the menu's, `values` the chosen options' values in the order of the menu). Each was acknowledged with a deferred update (`type 6`, 204: `rest-button-ack.json`, `rest-menu-ack.json`). Editing each message with `components: []` removed its buttons and its menu: the service returned the messages with no components (`rest-edit-remove-buttons.json`, `rest-edit-remove-menu.json`). Only the two interactions were kept of the gateway dispatches.
+
+## Lamps and mentions (taken for #251)
+
+`v10/lamps/`, taken on 2026-11-19 with API v10 by a test bot in a test server's channel. It was a REST-only run, with no gateway connection: `capture.py lamps /tmp/raw/lamps`, then `capture.py cleanup /tmp/raw/lamps`. Its ids are numbered on their own, from `1000000000000000001`.
+
+The bot posted a message (`rest-lamp-post.json`) and reacted to it with the working lamp, ⏳ (`rest-lamp-add-working.json`, 204). Reading the message back shows the reaction with `me: true` (`rest-lamp-get-working.json`). It then added the done lamp, ✅, and removed its own ⏳ (`rest-lamp-add-done.json`, `rest-lamp-remove-working.json`, both 204), after which the message had only ✅ (`rest-lamp-get-done.json`). Removing a reaction the bot does not have answers 204 too (`rest-lamp-remove-absent.json`), as does adding one it has (`rest-lamp-add-again.json`). A reaction on a message that does not exist is refused with 404, code 10008 (`rest-lamp-add-unknown-message.json`).
+
+Three posts show mentions. `rest-post-notify.json` mentions the bot itself, so that no person is pinged, with `allowed_mentions` `{parse: [], users: [<bot>]}`; the service reports exactly that user in `mentions`. `rest-post-everyone.json` holds `@everyone` and a role mention with `{parse: []}`; the service reports `mention_everyone: false`, no roles and no users. `rest-post-quiet.json` has flag 4096 (suppress notifications) and comes back with it. `scrub.py` keeps names made only of symbols, such as an emoji's.
 
 ## Observed, and worth knowing
 
