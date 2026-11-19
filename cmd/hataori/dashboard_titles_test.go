@@ -50,8 +50,10 @@ func TestDashboardThreadTitles(t *testing.T) {
 		pull   = "https://github.com/acme/widgets/pull/34#discussion_r1 review the docs"
 		plain  = "reply a plain title"
 		toName = "reply to be renamed"
+		inside = "See (https://github.com/acme/widgets/issues/12#issuecomment-1). Next"
+		notOne = "https://example.com/widgets/issues/12abc is no issue"
 	)
-	c, ids := titlesRig(t, r, issue+"\nreply ok", pull+"\nreply ok", plain, toName)
+	c, ids := titlesRig(t, r, issue+"\nreply ok", pull+"\nreply ok", plain, toName, inside+"\nreply ok", notOne+"\nreply ok")
 	ctx := context.Background()
 	b := newBrowser(t)
 	link, err := c.SignInLink(ctx, "")
@@ -89,6 +91,8 @@ func TestDashboardThreadTitles(t *testing.T) {
 	untilShown("a pull request's address first", ids[1], "widgets#34 review the docs", pull)
 	untilShown("a title without an address", ids[2], plain, plain)
 	untilShown("the thread before its rename", ids[3], toName, toName)
+	untilShown("an address in brackets, with punctuation after it", ids[4], "See (widgets#12). Next", inside)
+	untilShown("an address whose number does not stand alone", ids[5], notOne, notOne)
 
 	// 2. The tab and the pane show it short too; the details panel whole.
 	b.click(fmt.Sprintf(`[data-section=threads] .row[data-thread="%d"]`, ids[0]))

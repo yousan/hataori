@@ -35,8 +35,10 @@ export function fullTitle(x: ThreadInfo): string {
 
 // issueURL matches the address of an issue or a pull request: .../<repo>/
 // issues/<n> or .../<repo>/pull/<n>, also with "-/" before them and as a
-// merge request, with whatever follows the number up to a space.
-const issueURL = /\bhttps?:\/\/[^\s/]+\/(?:[^\s/]+\/)*?([^\s/]+)\/(?:-\/)?(?:issues|pulls?|merge_requests)\/(\d+)(?:[/?#]\S*)?/g;
+// merge request, with what follows the number (a fragment, a query, a
+// path) up to a space. The number stands alone, and closing punctuation
+// after the address is not part of it.
+const issueURL = /\bhttps?:\/\/[^\s/]+\/(?:[^\s/]+\/)*?([^\s/]+)\/(?:-\/)?(?:issues|pulls?|merge_requests)\/(\d+)(?:[/?#]\S*?)?(?=[)\]}>,.;:!?"']*(?:\s|$))/g;
 
 // shortTitle is s with each address of an issue or a pull request written
 // short, as repo#N, so that the part that tells threads apart shows in a
