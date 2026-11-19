@@ -61,7 +61,7 @@ func daemon(args []string) int {
 			}
 		}
 		os.Stdout.WriteString("up\n")
-		if err := owner(c).Send(context.Background(), control.ThreadID{Scope: "s", Key: "t1"}, "d1",
+		if err := owner(c).Send(context.Background(), control.ThreadID(1), "d1",
 			control.Input{Text: args[4]}, control.Deliver); err != nil {
 			fmt.Fprintln(log, err)
 			return 1

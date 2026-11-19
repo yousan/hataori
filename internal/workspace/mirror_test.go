@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -48,7 +47,7 @@ func TestMirrorKey(t *testing.T) {
 func TestMirrorCloneSurvivesDeletion(t *testing.T) {
 	repo := bareRepo(t)
 	m := Maker{Root: t.TempDir()}
-	dir, err := m.Clone(context.Background(), "chat", "scope", "one", repo, nil)
+	dir, err := m.Clone(context.Background(), 1, repo, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +56,7 @@ func TestMirrorCloneSurvivesDeletion(t *testing.T) {
 		t.Fatalf("mirror not created: %v", err)
 	}
 	mirrorGit(t, m, mirror, "fsck", "--full")
-	if _, err := m.Clone(context.Background(), "chat", "scope", "two", repo+"/", nil); err != nil {
+	if _, err := m.Clone(context.Background(), 2, repo+"/", nil); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := os.ReadDir(filepath.Join(m.Root, "mirrors"))
@@ -84,7 +83,7 @@ func TestConcurrentMirrors(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, err := m.Make(context.Background(), control.ThreadID{Scope: "scope", Key: fmt.Sprint(i)}, repo, nil)
+			_, err := m.Make(context.Background(), control.ThreadID(i+1), repo, nil)
 			if err != nil {
 				t.Error(err)
 			}
@@ -119,7 +118,7 @@ func TestMirrorTimeout(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	dir, err := m.Clone(ctx, "chat", "scope", "stale", repo, nil)
+	dir, err := m.Clone(ctx, 3, repo, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +153,7 @@ func TestMirrorTimeout(t *testing.T) {
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 700*time.Millisecond)
 	defer cancel2()
 	missing := srv.URL + "/missing.git"
-	if _, err := m.Clone(ctx2, "chat", "scope", "missing", missing, nil); err == nil || ctx2.Err() == nil {
+	if _, err := m.Clone(ctx2, 4, missing, nil); err == nil || ctx2.Err() == nil {
 		t.Fatalf("direct fallback: %v, context: %v", err, ctx2.Err())
 	}
 	if _, err := os.Lstat(filepath.Join(m.Root, "mirrors", MirrorKey(missing)+".git")); !os.IsNotExist(err) {
@@ -179,7 +178,7 @@ func TestMirrorPublishedOnlyWhenComplete(t *testing.T) {
 	script := "#!/bin/sh\ncase \" $* \" in *' clone --bare '*) [ ! -e '" + mirror + "' ] || exit 91\n '" + real + "' \"$@\" || exit $?\n [ ! -e '" + mirror + "' ] || exit 92\n exit 0;; esac\nexec '" + real + "' \"$@\"\n"
 	os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o700)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if _, err := m.Clone(context.Background(), "chat", "scope", "one", repo, nil); err != nil {
+	if _, err := m.Clone(context.Background(), 1, repo, nil); err != nil {
 		t.Fatal(err)
 	}
 	mirrorGit(t, m, mirror, "fsck", "--full")

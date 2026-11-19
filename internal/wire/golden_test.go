@@ -26,8 +26,9 @@ const sumsFile = "testdata/protocol/SUMS"
 
 var (
 	exampleTime = time.Date(2026, 1, 2, 3, 4, 5, 678000000, time.UTC)
-	exampleID   = control.ThreadID{Scope: "C0123", Key: "T0456"}
-	exampleInfo = control.ThreadInfo{ID: exampleID, Number: 7, Title: "Fix the build", Repo: "https://example.com/repo.git",
+	exampleID   = control.ThreadID(7)
+	exampleLink = control.LinkRef{Client: "discord", Channel: "C0123", Thread: "T0456"}
+	exampleInfo = control.ThreadInfo{ID: exampleID, Scope: "C0123", Links: []control.LinkRef{exampleLink}, Title: "Fix the build", Repo: "https://example.com/repo.git",
 		State: control.Running, StartedBy: "webhook:W1", Created: exampleTime, Updated: exampleTime,
 		Agent: "claude-code", Model: "opus", Effort: "high", Turns: 12, Last: "Running the tests...", Background: 1,
 		Context: &control.Context{Used: 45000, Size: 200000}, Tokens: &control.TokenCount{Turn: 2450, Today: 98000}, Terminal: "/dev/pts/3"}
@@ -51,7 +52,7 @@ var eventData = map[control.EventKind]string{
 	"file_out":          `{"caption":"The report and its data.","file":"/srv/hataori/state/sessions/3/out/report.pdf","more":["/srv/hataori/state/sessions/3/out/data.csv"],"session":3}`,
 	"usage":             `{"cache_read":1200,"cache_write":300,"context_size":200000,"context_used":45000,"input":800,"model":"opus","output":150,"session":3,"turn":12}`,
 	"login_lost":        `{"agent":"claude-code","outage":1,"thread":7}`,
-	"login_restored":    `{"agent":"claude-code","outage":1,"scopes":["C0123"],"threads":[{"scope":"C0123","key":"T0456"}]}`,
+	"login_restored":    `{"agent":"claude-code","outage":1,"scopes":["C0123"],"threads":[7]}`,
 	"session_replaced":  `{"new_session":4,"reason":"cannot resume","session":3}`,
 	"removal_refused":   `{"detail":"commit 9fceb02 on refs/heads/fix-build","kind":"submodule","principal":"dispatch","reason":"unpushed commit on a branch","repo":"vendor/lib","session":3,"trigger":"command"}`,
 	control.CaughtUp:    ``,
@@ -74,12 +75,12 @@ func examples(t *testing.T) map[string]any {
 	ex := map[string]any{
 		"hello.json":         hello{Version: Version},
 		"hello-token.json":   hello{Version: Version, Token: "example-token-never-issued"},
-		"hello-refusal.json": hello{Version: Version, Error: versionError("3.0", Version).Error()},
+		"hello-refusal.json": hello{Version: Version, Error: versionError("2.0", Version).Error()},
 		"response-error.json": response{ID: 5, Error: &wireError{Code: "not_supported",
 			Message: `wire: operation "Unheard": not supported`}},
 	}
 	args := map[string]any{
-		"Threads": threadsArgs{Filter: control.Filter{Scope: "C0123"}},
+		"Threads": threadsArgs{Filter: control.Filter{Scope: "C0123", Link: &exampleLink}},
 		"Thread":  threadArgs{ID: exampleID, Recent: 2000, Events: 5},
 		"Start": control.StartRequest{Key: "M0789", Scope: "C0123", Repo: "https://example.com/repo.git",
 			Input: control.Input{Text: "Fix the build."}, Model: "opus", Effort: "high"},
@@ -102,7 +103,7 @@ func examples(t *testing.T) map[string]any {
 		"Thread": control.ThreadDetail{ThreadInfo: exampleInfo, Recent: "Running the tests...",
 			Requests: []control.Request{{ID: "3:toolu_2", Kind: control.Question, Text: "Which colour?",
 				Choices: []control.Choice{{Label: "red", Token: "red"}, {Label: "blue", Token: "blue"}}}},
-			Events: []control.Event{{Pos: 42, Thread: exampleID, Time: exampleTime, Kind: "text",
+			Events: []control.Event{{Pos: 42, Thread: exampleID, Scope: "C0123", Time: exampleTime, Kind: "text",
 				Data: raw(`{"final":false,"session":3,"text":"Running the tests..."}`)}}},
 		"Start": exampleID,
 		"Workspace": control.WorkspaceState{Branch: "fix-build", Base: "9fceb02d0ae598e95dc970b74767f19372d61af8",
@@ -138,12 +139,12 @@ func examples(t *testing.T) map[string]any {
 		if !ok {
 			t.Fatalf("no example of the event %s", kind)
 		}
-		e := control.Event{Pos: 42, Thread: exampleID, Time: exampleTime, Kind: kind}
+		e := control.Event{Pos: 42, Thread: exampleID, Scope: "C0123", Time: exampleTime, Kind: kind}
 		if d != "" {
 			e.Data = raw(d)
 		}
 		if kind == control.CaughtUp {
-			e.Thread = control.ThreadID{}
+			e.Thread, e.Scope = 0, ""
 		} else if err := control.CheckEvent(e); err != nil {
 			t.Fatalf("the example of %s: %v", kind, err)
 		}

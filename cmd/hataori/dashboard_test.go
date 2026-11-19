@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -422,16 +423,16 @@ func TestDashboardSendsOnlyWhatTheCallerMayRead(t *testing.T) {
 
 	var bodies []string
 	code, threads := dashGet(t, base, cookie, "/api/threads")
-	if code != http.StatusOK || !strings.Contains(threads, `"key":"t1"`) || strings.Contains(threads, `"t2"`) {
+	if code != http.StatusOK || !strings.Contains(threads, `"thread":"t1"`) || strings.Contains(threads, `"t2"`) {
 		t.Fatalf("threads: %d %s", code, threads)
 	}
 	bodies = append(bodies, threads)
-	code, one := dashGet(t, base, cookie, "/api/thread?scope=s&key=t1&events=100")
+	code, one := dashGet(t, base, cookie, "/api/thread?thread=1&events=100")
 	if code != http.StatusOK || !strings.Contains(one, `"kind":"text"`) {
 		t.Fatalf("thread t1: %d %s", code, one)
 	}
 	bodies = append(bodies, one)
-	if code, body := dashGet(t, base, cookie, "/api/thread?scope=x&key=t2"); code != http.StatusForbidden {
+	if code, body := dashGet(t, base, cookie, "/api/thread?thread=2"); code != http.StatusForbidden {
 		t.Fatalf("thread t2 in another scope: %d %s", code, body)
 	}
 
@@ -443,7 +444,7 @@ func TestDashboardSendsOnlyWhatTheCallerMayRead(t *testing.T) {
 		if m.kind == "caught_up" {
 			break
 		}
-		if m.event.Thread.Scope != "s" {
+		if m.event.Scope != "s" {
 			t.Fatalf("an event of another scope: %s", m.raw)
 		}
 		if m.event.Kind == "text" {
@@ -509,7 +510,7 @@ func terminalRoot(t *testing.T) string {
 // when it is not empty.
 func terminalStream(t *testing.T, base string, c *http.Cookie, id control.ThreadID, lastID string) (<-chan sseEvent, func()) {
 	t.Helper()
-	return openSSE(t, base+"/api/terminal?"+url.Values{"scope": {id.Scope}, "key": {id.Key}}.Encode(), c, lastID)
+	return openSSE(t, base+"/api/terminal?"+url.Values{"thread": {fmt.Sprint(int64(id))}}.Encode(), c, lastID)
 }
 
 // chunk is the terminal chunk a message carries.
@@ -607,7 +608,7 @@ func TestDashboardTerminalStream(t *testing.T) {
 	// Nothing the page sends reaches the session.
 	send := func(method string, header map[string]string) int {
 		t.Helper()
-		u := base + "/api/terminal?" + url.Values{"scope": {"s"}, "key": {"t1"}}.Encode()
+		u := base + "/api/terminal?" + url.Values{"thread": {"1"}}.Encode()
 		rctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		// A bracketed paste and Enter: what the fake agent takes as a prompt
@@ -657,8 +658,8 @@ func TestDashboardTerminalStream(t *testing.T) {
 	}
 
 	// Another scope's thread answers as no thread does.
-	_, none := dashGet(t, base, cookie, "/api/terminal?scope=s&key=no-such-thread")
-	for _, q := range []string{"scope=x&key=t2", "scope=s&key=no-such-thread"} {
+	_, none := dashGet(t, base, cookie, "/api/terminal?thread=9999")
+	for _, q := range []string{"thread=2", "thread=9999"} {
 		code, body := dashGet(t, base, cookie, "/api/terminal?"+q)
 		if code != http.StatusNotFound || body != none {
 			t.Fatalf("%s: %d %q", q, code, body)

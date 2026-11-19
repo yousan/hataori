@@ -73,8 +73,20 @@ func (tx *Tx) Accept(ctx context.Context, key string, data []byte) (bool, error)
 }
 
 // Append adds e to the event log and returns its position. e.Pos is
-// ignored; e.Time is set to now when it is zero.
+// ignored; e.Time is set to now when it is zero. An event of a thread is
+// stored with the thread's scope; e.Scope, when set, must be that scope.
 func (tx *Tx) Append(ctx context.Context, e control.Event) (uint64, error) {
+	var thread any // NULL for an event of no thread
+	if e.Thread != 0 {
+		var scope string
+		if err := tx.QueryRowContext(ctx, `SELECT scope FROM threads WHERE id = ?`, int64(e.Thread)).Scan(&scope); err != nil {
+			return 0, fmt.Errorf("store: append event: thread %d: %w", e.Thread, err)
+		}
+		if e.Scope != "" && e.Scope != scope {
+			return 0, fmt.Errorf("store: append event: thread %d is in scope %q, not %q", e.Thread, scope, e.Scope)
+		}
+		e.Scope, thread = scope, int64(e.Thread)
+	}
 	if tx.check != nil {
 		if err := tx.check(e); err != nil {
 			return 0, fmt.Errorf("store: append event: %w", err)
@@ -89,8 +101,8 @@ func (tx *Tx) Append(ctx context.Context, e control.Event) (uint64, error) {
 	}
 	var pos uint64
 	err := tx.QueryRowContext(ctx,
-		`INSERT INTO events (scope, thread, time, kind, data) VALUES (?, ?, ?, ?, ?) RETURNING pos`,
-		e.Thread.Scope, e.Thread.Key, e.Time.UnixMilli(), string(e.Kind), data).Scan(&pos)
+		`INSERT INTO events (scope, thread, thread_id, time, kind, data) VALUES (?, '', ?, ?, ?, ?) RETURNING pos`,
+		e.Scope, thread, e.Time.UnixMilli(), string(e.Kind), data).Scan(&pos)
 	if err != nil {
 		return 0, fmt.Errorf("store: append event: %w", err)
 	}
@@ -101,15 +113,19 @@ func (tx *Tx) Append(ctx context.Context, e control.Event) (uint64, error) {
 // Events returns up to limit committed events after position after that
 // match f, in order.
 func (s *Store) Events(ctx context.Context, f control.Filter, after uint64, limit int) ([]control.Event, error) {
-	q := `SELECT pos, scope, thread, time, kind, data FROM events WHERE pos > ?`
+	q := `SELECT pos, scope, coalesce(thread_id, 0), time, kind, data FROM events WHERE pos > ?`
 	args := []any{after}
 	if f.Scope != "" {
 		q += ` AND scope = ?`
 		args = append(args, f.Scope)
 	}
-	if f.Thread != (control.ThreadID{}) {
-		q += ` AND scope = ? AND thread = ?`
-		args = append(args, f.Thread.Scope, f.Thread.Key)
+	if f.Thread != 0 {
+		q += ` AND thread_id = ?`
+		args = append(args, int64(f.Thread))
+	}
+	if l := f.Link; l != nil {
+		q += ` AND thread_id = (SELECT thread_id FROM links WHERE client = ? AND channel = ? AND thread = ?)`
+		args = append(args, l.Client, l.Channel, l.Thread)
 	}
 	q += ` ORDER BY pos LIMIT ?`
 	args = append(args, limit)
@@ -126,7 +142,7 @@ func (s *Store) Events(ctx context.Context, f control.Filter, after uint64, limi
 			kind string
 			data []byte
 		)
-		if err := rows.Scan(&e.Pos, &e.Thread.Scope, &e.Thread.Key, &ms, &kind, &data); err != nil {
+		if err := rows.Scan(&e.Pos, &e.Scope, &e.Thread, &ms, &kind, &data); err != nil {
 			return nil, fmt.Errorf("store: read events: %w", err)
 		}
 		e.Time = time.UnixMilli(ms)
@@ -146,8 +162,8 @@ func (s *Store) Last(ctx context.Context, id control.ThreadID, n int, keep func(
 	if n <= 0 {
 		return nil, nil
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT pos, time, kind, data FROM events
-		WHERE scope = ? AND thread = ? ORDER BY pos DESC`, id.Scope, id.Key)
+	rows, err := s.DB.QueryContext(ctx, `SELECT pos, scope, time, kind, data FROM events
+		WHERE thread_id = ? ORDER BY pos DESC`, int64(id))
 	if err != nil {
 		return nil, fmt.Errorf("store: read events: %w", err)
 	}
@@ -160,7 +176,7 @@ func (s *Store) Last(ctx context.Context, id control.ThreadID, n int, keep func(
 			kind string
 			data []byte
 		)
-		if err := rows.Scan(&e.Pos, &ms, &kind, &data); err != nil {
+		if err := rows.Scan(&e.Pos, &e.Scope, &ms, &kind, &data); err != nil {
 			return nil, fmt.Errorf("store: read events: %w", err)
 		}
 		e.Time = time.UnixMilli(ms)

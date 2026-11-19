@@ -289,14 +289,14 @@ func TestSupervisorSendIsRefusedWhenBusyAndMarked(t *testing.T) {
 		return err == nil && d.State == control.Running
 	})
 	m := &supervisor.MCP{Dial: func() (control.API, error) { return wire.DialToken(r.root, token) }, Scope: "c1"}
-	out := mcpCall(t, m, supervisor.ToolSend, map[string]any{"number": d.Number, "text": "reply no"})
+	out := mcpCall(t, m, supervisor.ToolSend, map[string]any{"number": int64(d.ID), "text": "reply no"})
 	if !out.IsError || !strings.HasPrefix(out.Text, "busy") {
 		t.Fatalf("send_to_thread to a busy thread: %+v, want a busy tool error", out)
 	}
 	eventually(t, "the turn to end", 15*time.Second, func() bool {
 		return len(threadEvents(t, sv, id, "turn_ended")) == 2
 	})
-	out = mcpCall(t, m, supervisor.ToolSend, map[string]any{"number": d.Number, "text": "heard"})
+	out = mcpCall(t, m, supervisor.ToolSend, map[string]any{"number": int64(d.ID), "text": "heard"})
 	if out.IsError {
 		t.Fatalf("send_to_thread to an idle thread: %+v", out)
 	}

@@ -96,8 +96,8 @@ type fakeOwner struct {
 	err error
 }
 
-func (o fakeOwner) NewThread(context.Context, string, string, string) (string, error) {
-	return o.key, o.err
+func (o fakeOwner) NewThread(_ context.Context, scope, _, _ string) (control.LinkRef, error) {
+	return control.LinkRef{Client: "chat", Channel: scope, Thread: o.key}, o.err
 }
 
 type fakeWorkspaces struct{}
@@ -179,6 +179,16 @@ func (f *fixture) running(t *testing.T, key string) (control.ThreadID, int64) {
 		t.Fatal(err)
 	}
 	return id, sid
+}
+
+// scopeOf is the scope of thread id.
+func (f *fixture) scopeOf(t *testing.T, id control.ThreadID) string {
+	t.Helper()
+	s, err := f.core.scopeOf(context.Background(), f.core.Store.DB, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
 }
 
 func count(t *testing.T, st *store.Store, table string) int {
@@ -264,7 +274,7 @@ func TestTerminalOfAThread(t *testing.T) {
 	if !strings.HasSuffix(f.runner.Calls(), fmt.Sprint("terminal ", sid)) {
 		t.Fatalf("runner calls: %s", f.runner.Calls())
 	}
-	if _, err := f.owner.Terminal(context.Background(), control.ThreadID{Scope: "s", Key: "none"}, "", 0); !errors.Is(err, ErrNotFound) {
+	if _, err := f.owner.Terminal(context.Background(), control.ThreadID(999), "", 0); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("no such thread: %v", err)
 	}
 }
@@ -278,7 +288,7 @@ func TestWorkspaceOfAThread(t *testing.T) {
 	if err != nil || st.Branch != "main" || st.Uncommitted != len("dir")+1 {
 		t.Fatalf("Workspace: %+v, %v", st, err)
 	}
-	if _, err := f.owner.Workspace(ctx, control.ThreadID{Scope: "s", Key: "none"}); !errors.Is(err, ErrNotFound) {
+	if _, err := f.owner.Workspace(ctx, control.ThreadID(999)); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Workspace of no thread: %v", err)
 	}
 }
@@ -392,8 +402,17 @@ func TestStartAsksTheOwner(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, fakeOwner{key: "from-owner"})
 	id, err := f.owner.Start(ctx, control.StartRequest{Key: "k1", Scope: "s"})
-	if err != nil || id.Key != "from-owner" {
+	if err != nil {
 		t.Fatalf("Start: %v, %v", id, err)
+	}
+	// The owner's link is the thread's first, stored with it.
+	ts, err := f.owner.Threads(ctx, control.Filter{Link: &control.LinkRef{Client: "chat", Channel: "s", Thread: "from-owner"}})
+	if err != nil || len(ts) != 1 || ts[0].ID != id || ts[0].Scope != "s" ||
+		!reflect.DeepEqual(ts[0].Links, []control.LinkRef{{Client: "chat", Channel: "s", Thread: "from-owner"}}) {
+		t.Fatalf("the thread by its link: %+v, %v", ts, err)
+	}
+	if ts, err := f.owner.Threads(ctx, control.Filter{Link: &control.LinkRef{Client: "chat", Channel: "s", Thread: "other"}}); err != nil || len(ts) != 0 {
+		t.Fatalf("a conversation with no link: %+v, %v", ts, err)
 	}
 
 	f = newFixture(t, fakeOwner{err: errors.New("cannot open a thread")})
@@ -501,7 +520,7 @@ func TestStartKeyIsPerScope(t *testing.T) {
 	}
 	other := f.core.As(control.Caller{Principal: "owner", Scopes: []string{"s2"}, May: all})
 	b, err := other.Start(ctx, control.StartRequest{Key: "k1", Scope: "s2", Thread: "t2"})
-	if err != nil || b == a || b.Scope != "s2" {
+	if err != nil || b == a || f.scopeOf(t, b) != "s2" {
 		t.Fatalf("Start in another scope with the same key: %v, %v", b, err)
 	}
 }
@@ -533,8 +552,8 @@ func TestEventNamingOtherScopes(t *testing.T) {
 	f.core.Store.CheckEvent = nil // events of the test's own kinds
 	f.core.Store.CheckEvent = nil // events of the test's own kinds
 	f.core.Store.Update(ctx, func(tx *store.Tx) error {
-		tx.Append(ctx, control.Event{Thread: control.ThreadID{Scope: "s", Key: "k"}, Kind: "x", Data: []byte(`{"scopes":["s","hidden"]}`)})
-		tx.Append(ctx, control.Event{Thread: control.ThreadID{Scope: "s", Key: "k"}, Kind: "y", Data: []byte(`{"scopes":["s"]}`)})
+		tx.Append(ctx, control.Event{Scope: "s", Kind: "x", Data: []byte(`{"scopes":["s","hidden"]}`)})
+		tx.Append(ctx, control.Event{Scope: "s", Kind: "y", Data: []byte(`{"scopes":["s"]}`)})
 		return nil
 	})
 	evs, err := f.core.As(control.Caller{Scopes: []string{"s"}, May: all}).Events(ctx, control.Filter{}, 0)
@@ -672,9 +691,9 @@ func TestTitleCutAtACharacter(t *testing.T) {
 // countingOwner counts the threads it is asked for.
 type countingOwner struct{ n int }
 
-func (o *countingOwner) NewThread(context.Context, string, string, string) (string, error) {
+func (o *countingOwner) NewThread(_ context.Context, scope, _, _ string) (control.LinkRef, error) {
 	o.n++
-	return fmt.Sprintf("new-%d", o.n), nil
+	return control.LinkRef{Client: "chat", Channel: scope, Thread: fmt.Sprintf("new-%d", o.n)}, nil
 }
 
 // Input reaches the agent only from the owner or one of the people of the

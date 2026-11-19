@@ -20,7 +20,7 @@ One instance is one directory, its root. hataori reads and writes only under it.
 
 - The root is given by `--root DIR`, or by the environment variable `HATAORI_ROOT` when `--root` is not given. Every command except `version`, `host` and `hook` needs one.
 - `hataori run` creates `state/`, `workspaces/` and `mirrors/` (mode 0700) if they are missing, and holds a lock in `state/`. A second daemon on the same root refuses to start.
-- A thread's working directory is `workspaces/<client>/<scope>/<thread>/`; for Discord, `workspaces/discord/<channel id>/<thread id>/`.
+- A thread's working directory is `workspaces/<number>/`, by the thread's number. A thread started before thread numbers keeps the directory it was made in, `workspaces/<client>/<scope>/<thread>/`; hataori reads each thread's directory from its database and never moves one.
 - Two instances with different roots on one host are independent. Give each its own config and its own bot; do not share or link one instance's `config/` into another.
 
 ## The config file
@@ -173,7 +173,7 @@ A workspace is removed only when nothing in it exists nowhere else ([design, sec
 | `other_roots` | array of strings | empty | Absolute paths of the roots of other hataori instances on this host. A remote under one of them does not count. |
 | `remove_closed_after` | duration | absent: off | Turns on the automatic removal pass: the workspace of a thread that has been closed for longer than this is removed, with the same proof as `hataori remove`. A positive Go duration, such as `"720h"`. A refused removal leaves the thread closed, writes one `removal_refused` event, and is tried again only after the same duration. |
 
-A workspace is removed only when its thread is closed: `hataori close KEY` closes it, and `hataori remove KEY` removes it (see "Commands and flags" below). Nothing in chat removes a workspace, and no thread is closed by its idle age.
+A workspace is removed only when its thread is closed: `hataori close NUMBER` closes it, and `hataori remove NUMBER` removes it (see "Commands and flags" below). Nothing in chat removes a workspace, and no thread is closed by its idle age.
 
 Processes are found with `lsof`, on Linux and on macOS alike; without `lsof` every removal is refused. Unless hataori runs as root, `lsof` sees only the processes of the user hataori runs as.
 
@@ -196,12 +196,12 @@ Claude Code does not inherit the daemon's whole environment. It gets only `PATH`
 ```
 hataori run     [--root DIR]
 hataori threads [--root DIR]
-hataori thread  [--root DIR] KEY
+hataori thread  [--root DIR] NUMBER
 hataori events  [--root DIR] [--after N] [--follow]
-hataori stop    [--root DIR] KEY
-hataori attach  [--root DIR] KEY
-hataori close   [--root DIR] KEY
-hataori remove  [--root DIR] KEY
+hataori stop    [--root DIR] NUMBER
+hataori attach  [--root DIR] NUMBER
+hataori close   [--root DIR] NUMBER
+hataori remove  [--root DIR] NUMBER
 hataori signin  [--root DIR]
 hataori version
 ```
@@ -209,13 +209,13 @@ hataori version
 | Command | Meaning |
 |---|---|
 | `run` | Runs the daemon in the foreground until SIGINT or SIGTERM. Logs go to standard error. Agent sessions keep running when the daemon stops, and the daemon picks them up when it starts again. |
-| `threads` | Prints every thread, one JSON object per line. |
-| `thread KEY` | Prints one thread and its state. Exits with 3 when no thread has that key. |
+| `threads` | Prints every thread, one JSON object per line: its number (`thread`), its scope, its links (the chat conversations it is shown in), its state, title and repository. |
+| `thread NUMBER` | Prints one thread and its state, by its number, with or without `#` (`7` or `#7`). Exits with 3 when no thread has that number, and with 2 when the argument is not a number. |
 | `events` | Prints the event log, one JSON object per line. |
-| `stop KEY` | Interrupts the thread's running turn. |
-| `attach KEY` | Connects this terminal to the terminal of the thread's agent, on the host, for the owner. It shows the current screen, then passes every key to the agent; Ctrl-\ detaches and leaves the agent running. An asleep thread is woken first; a closed thread, and an agent without a terminal, are refused with a message. While attached the thread is not put to sleep, and a daemon restart does not end the attachment. A turn typed there is posted in chat after a line "(typed at the terminal)". Chat input is still delivered while you are attached, into the same input line: a chat message that arrives while you have typed part of a line is mixed with it, so finish or clear the line before you stop typing. The current screen is replayed from the end of the terminal's log and is exact only once the agent draws again. Output is the agent's terminal, not JSON. |
-| `close KEY` | Ends the agent process of an idle, asleep or failed thread and closes the thread; its workspace stays. A message in a closed thread starts nothing and gets one line saying the thread is closed. A thread with a turn running, a question open, or background tasks left running by its last turn is refused: stop it first. Prints `{"scope", "key", "state": "closed"}`. |
-| `remove KEY` | Moves the workspace of a closed thread into `<root>/trash/`, only when nothing in it would be lost (see `cleanup` above), and the thread becomes `removed`. Otherwise it changes nothing, prints the reason on standard error and exits with 1. Prints `{"scope", "key", "state": "removed"}`. |
+| `stop NUMBER` | Interrupts the running turn of the thread with that number, as `thread` takes it. |
+| `attach NUMBER` | Connects this terminal to the terminal of the thread's agent, on the host, for the owner. It shows the current screen, then passes every key to the agent; Ctrl-\ detaches and leaves the agent running. An asleep thread is woken first; a closed thread, and an agent without a terminal, are refused with a message. While attached the thread is not put to sleep, and a daemon restart does not end the attachment. A turn typed there is posted in chat after a line "(typed at the terminal)". Chat input is still delivered while you are attached, into the same input line: a chat message that arrives while you have typed part of a line is mixed with it, so finish or clear the line before you stop typing. The current screen is replayed from the end of the terminal's log and is exact only once the agent draws again. Output is the agent's terminal, not JSON. |
+| `close NUMBER` | Ends the agent process of an idle, asleep or failed thread and closes the thread; its workspace stays. A message in a closed thread starts nothing and gets one line saying the thread is closed. A thread with a turn running, a question open, or background tasks left running by its last turn is refused: stop it first. Prints `{"thread", "scope", "state": "closed"}`. |
+| `remove NUMBER` | Moves the workspace of a closed thread into `<root>/trash/`, only when nothing in it would be lost (see `cleanup` above), and the thread becomes `removed`. Otherwise it changes nothing, prints the reason on standard error and exits with 1. Prints `{"thread", "scope", "state": "removed"}`. |
 | `signin` | Prints `{"link": ...}`: a link that signs the owner in to the dashboard, once, within five minutes. Fails when the config has no `dashboard`. |
 | `version` | Prints the version. |
 
@@ -225,7 +225,7 @@ hataori version
 | `--after N` | `0` | `events` only: print the events after position `N`. |
 | `--follow` | off | `events` only: keep printing new events as they happen. |
 
-Flags may come before or after `KEY`. Exit codes: 0 success, 1 error (for example, no daemon runs for the root), 2 usage error, 3 no such thread.
+Flags may come before or after `NUMBER`. Exit codes: 0 success, 1 error (for example, no daemon runs for the root), 2 usage error, 3 no such thread.
 
 `threads`, `thread`, `events`, `stop`, `close`, `remove` and `signin` talk to the running daemon over its control socket, and only the OS user that runs the daemon may use them. The format of what they print is in [protocol.md](protocol.md).
 

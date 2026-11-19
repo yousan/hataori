@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -44,17 +45,16 @@ type Maker struct {
 	Root string
 	// FetchTimeout bounds mirror work, including waiting for its lock; zero means two minutes.
 	FetchTimeout time.Duration
-	// Client names the client that owns a scope: the first path segment.
-	Client func(scope string) string
 	// Environ is the daemon's environment; os.Environ when nil.
 	Environ func() []string
 }
 
-// Path returns where the workspace of (client, scope, key) is:
-// <root>/workspaces/<client>/<scope>/<key>, each part made safe as one path
-// segment.
-func Path(root, client, scope, key string) string {
-	return filepath.Join(root, Dir, Segment(client), Segment(scope), Segment(key))
+// Path returns where a new workspace of thread is made:
+// <root>/workspaces/<number>. A thread made before thread numbers has its
+// workspace where it was made, <root>/workspaces/<client>/<scope>/<key>;
+// a reader takes the path stored with the thread, never this one.
+func Path(root string, thread control.ThreadID) string {
+	return filepath.Join(root, Dir, strconv.FormatInt(int64(thread), 10))
 }
 
 // maxSegment bounds a path segment; a longer one is shortened and given a
@@ -132,14 +132,7 @@ func redactErr(err error) string { return redact(err.Error()) }
 
 // Make clones repo for thread. It implements the core's Workspaces.
 func (m Maker) Make(ctx context.Context, thread control.ThreadID, repo string, placed func(core.Placement) error) (string, error) {
-	return m.Clone(ctx, m.client(thread), thread.Scope, thread.Key, repo, placed)
-}
-
-func (m Maker) client(thread control.ThreadID) string {
-	if m.Client != nil {
-		return m.Client(thread.Scope)
-	}
-	return "client"
+	return m.Clone(ctx, thread, repo, placed)
 }
 
 // Adopt returns the workspace of thread when it is the directory a Make
@@ -147,9 +140,9 @@ func (m Maker) client(thread control.ThreadID) string {
 // only at the directory itself, and changes nothing. It implements the
 // core's Workspaces.
 func (m Maker) Adopt(ctx context.Context, thread control.ThreadID, p core.Placement) (string, bool, error) {
-	target := Path(m.Root, m.client(thread), thread.Scope, thread.Key)
+	target := Path(m.Root, thread)
 	if p.Dir != target {
-		return "", false, fmt.Errorf("workspace: %s is not the workspace of %v", p.Dir, thread)
+		return "", false, fmt.Errorf("workspace: %s is not the workspace of thread %d", p.Dir, thread)
 	}
 	st, err := os.Lstat(target)
 	if errors.Is(err, os.ErrNotExist) {
@@ -174,18 +167,21 @@ func identity(st os.FileInfo) (dev, ino uint64, ok bool) {
 	return uint64(sys.Dev), uint64(sys.Ino), true
 }
 
-// Clone makes the workspace of (client, scope, key) from repo's mirror when
+// Clone makes the workspace of thread from repo's mirror when
 // it can, falling back to repo. The workspace's origin is repo.
 // The address is checked before git runs. The clone is made outside the
 // workspaces directory and renamed into place when complete, so a failed
 // clone never appears there. An existing directory is never touched.
 // Right before the rename, placed, when not nil, is called with the clone's
 // identity; when it fails, the clone is not renamed.
-func (m Maker) Clone(ctx context.Context, client, scope, key, repo string, placed func(core.Placement) error) (string, error) {
+func (m Maker) Clone(ctx context.Context, thread control.ThreadID, repo string, placed func(core.Placement) error) (string, error) {
 	if err := CheckAddress(repo); err != nil {
 		return "", err
 	}
-	target := Path(m.Root, client, scope, key)
+	if thread <= 0 {
+		return "", fmt.Errorf("workspace: no thread %d", thread)
+	}
+	target := Path(m.Root, thread)
 	if _, err := os.Lstat(target); err == nil {
 		return "", fmt.Errorf("%w: %s", ErrExists, target)
 	} else if !errors.Is(err, os.ErrNotExist) {

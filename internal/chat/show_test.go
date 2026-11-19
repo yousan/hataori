@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -33,7 +34,7 @@ func (f *front) started(t *testing.T) (control.ThreadID, surface.Inbound) {
 	if len(ths) != 1 {
 		t.Fatalf("%d threads", len(ths))
 	}
-	return control.ThreadID{Scope: channel, Key: ths[0].Opened.Thread}, in
+	return f.threadAt(t, ths[0].Opened), in
 }
 
 // event appends an event of thread id with data given as fields.
@@ -52,8 +53,24 @@ func (f *front) event(t *testing.T, id control.ThreadID, kind string, data map[s
 	return pos
 }
 
-func conv(id control.ThreadID) surface.Conversation {
-	return surface.Conversation{Channel: id.Scope, Thread: id.Key}
+// conv is the conversation thread id is shown in, through its link.
+func (f *front) conv(id control.ThreadID) surface.Conversation {
+	c, ok, err := f.fe.convOf(context.Background(), id)
+	if err != nil || !ok {
+		panic(fmt.Sprintf("thread %d has no link: %v", id, err))
+	}
+	return c
+}
+
+// threadAt is the thread linked to conv.
+func (f *front) threadAt(t *testing.T, conv surface.Conversation) control.ThreadID {
+	t.Helper()
+	api := f.fe.API(control.Caller{Principal: "owner", Scopes: []string{channel}, May: control.OpRead})
+	th, ok, err := f.fe.threadIn(context.Background(), api, conv)
+	if err != nil || !ok {
+		t.Fatalf("no thread linked to %+v: %v", conv, err)
+	}
+	return th.ID
 }
 
 // postedUntil waits for a post with text last in the thread, and returns
@@ -63,7 +80,7 @@ func (f *front) postedUntil(t *testing.T, id control.ThreadID, last string) []fa
 	var calls []fake.Call
 	waitFor(t, "a post of "+last, func() bool {
 		calls = nil
-		for _, c := range f.driver.Calls(conv(id)) {
+		for _, c := range f.driver.Calls(f.conv(id)) {
 			if c.Op == fake.OpPost {
 				calls = append(calls, c)
 			}
@@ -111,7 +128,7 @@ func TestTextQuietAndTheFinalAnswerRepliesToTheTurnsMessage(t *testing.T) {
 	f.event(t, id, "text", map[string]any{"text": "Done.", "final": true})
 	ended(f, t, id, 1, "completion", "")
 	// A follow-up in the thread starts the second turn.
-	follow := f.driver.Inject(conv(id), fake.Webhook(hook), "and the docs")
+	follow := f.driver.Inject(f.conv(id), fake.Webhook(hook), "and the docs")
 	turn(f, t, id, 2, follow.Ref.ID)
 	f.event(t, id, "text", map[string]any{"text": "Docs done.", "final": true})
 	ended(f, t, id, 2, "completion", "")

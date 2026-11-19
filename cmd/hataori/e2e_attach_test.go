@@ -106,7 +106,7 @@ func TestAttachTypeDetachAndTheSessionGoesOn(t *testing.T) {
 	pid := p.agentPID(t)
 	_, session := p.agentSession(t)
 
-	a := attach(t, p.root, th.Thread)
+	a := attach(t, p.root, numberOf(t, p.root, th))
 	eventually(t, "the screen", 15*time.Second, func() bool { return strings.Contains(a.out.String(), "on-the-screen") })
 
 	// Attached for longer than the idle period: not put to sleep.
@@ -152,7 +152,7 @@ func TestAttachTypeDetachAndTheSessionGoesOn(t *testing.T) {
 
 	// Attaching to an asleep thread resumes it first, with no turn.
 	turns := len(p.events(t, "turn_started", th))
-	a = attach(t, p.root, th.Thread)
+	a = attach(t, p.root, numberOf(t, p.root, th))
 	eventually(t, "the attach to an asleep thread", 15*time.Second, func() bool {
 		return strings.Contains(a.errOut.String(), "attached to thread")
 	})
@@ -176,7 +176,7 @@ func TestAttachToAnAgentOnPipesIsRefused(t *testing.T) {
 	p.in(c1, "!go repo:"+bareRepo(t)+" reply a")
 	th := p.thread(t, 0)
 	p.posted(t, th, "a")
-	code, _, errOut := cli(t, "attach", "--root", p.root, th.Thread)
+	code, _, errOut := cli(t, "attach", "--root", p.root, numberOf(t, p.root, th))
 	if code != exitError || !strings.Contains(errOut, "no terminal") {
 		t.Fatalf("attach to an agent on pipes: exit %d, %q", code, errOut)
 	}

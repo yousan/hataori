@@ -200,7 +200,7 @@ func (f *FrontEnd) loginEvent(ctx context.Context, e control.Event) ([]Row, erro
 		Outage  int64
 		Outcome string
 		Reason  string
-		Threads []control.ThreadID
+		Threads []json.RawMessage // numbers; {"scope", "key"} in an event from before thread numbers
 	}
 	switch e.Kind {
 	case "login_lost", "login_restored", "turn_ended":
@@ -245,9 +245,10 @@ func (f *FrontEnd) loginEvent(ctx context.Context, e control.Event) ([]Row, erro
 				f.Name, d.Outage); err != nil {
 				return err
 			}
-			for i, t := range d.Threads {
-				if _, ours := f.Scopes[t.Scope]; ours {
-					rows = append(rows, Row{Event: e.Pos, Part: i, Conv: convOf(t), Message: surface.Message{
+			for i, raw := range d.Threads {
+				conv, ok := f.stoppedConv(ctx, raw)
+				if ok {
+					rows = append(rows, Row{Event: e.Pos, Part: i, Conv: conv, Message: surface.Message{
 						Text: "The agent is logged in again. Send your last message again to go on."}})
 				}
 			}
@@ -258,6 +259,25 @@ func (f *FrontEnd) loginEvent(ctx context.Context, e control.Event) ([]Row, erro
 		f.loginState().poke()
 	}
 	return rows, err
+}
+
+// stoppedConv returns the conversation, here, of one thread a
+// login_restored event names: its number, or its scope and key in an event
+// from before thread numbers.
+func (f *FrontEnd) stoppedConv(ctx context.Context, raw json.RawMessage) (surface.Conversation, bool) {
+	var id control.ThreadID
+	if json.Unmarshal(raw, &id) == nil {
+		conv, ok, err := f.convOf(ctx, id)
+		return conv, ok && err == nil
+	}
+	var old struct{ Scope, Key string }
+	if json.Unmarshal(raw, &old) != nil {
+		return surface.Conversation{}, false
+	}
+	if _, ours := f.Scopes[old.Scope]; !ours {
+		return surface.Conversation{}, false
+	}
+	return surface.Conversation{Channel: old.Scope, Thread: old.Key}, true
 }
 
 func contains(ts []control.ThreadID, t control.ThreadID) bool {
@@ -382,9 +402,9 @@ func (f *FrontEnd) loginMessage(ctx context.Context, o outage) surface.Message {
 			fmt.Fprintf(&b, "…and %d more.\n", len(o.threads)-maxListed)
 			break
 		}
-		name := t.Key
+		name := fmt.Sprintf("#%d", t)
 		if d, err := api.Thread(ctx, t, 0, 0); err == nil {
-			name = fmt.Sprintf("#%d %s", d.Number, d.Title)
+			name = fmt.Sprintf("#%d %s", d.ID, d.Title)
 		}
 		fmt.Fprintf(&b, "- %s\n", name)
 	}

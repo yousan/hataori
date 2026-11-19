@@ -63,7 +63,7 @@ func TestDaemonKilledAfterTheWorkspaceIsPlaced(t *testing.T) {
 	root := t.TempDir()
 	t.Cleanup(func() { killSessions(root) })
 	runDaemon(t, root, false, "die-at+dieplaced", "no such point", "reply once").waitKilled(t)
-	work := filepath.Join(root, "work", "t1")
+	work := filepath.Join(root, "work", "1")
 	before, err := os.ReadDir(work)
 	if err != nil {
 		t.Fatalf("the workspace is not in place: %v", err)

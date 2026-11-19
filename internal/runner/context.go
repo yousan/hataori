@@ -28,8 +28,8 @@ func (r *Runner) contextBytes() int {
 // to the context cap and marked as earlier context; "" when there are none.
 // They are read newest first, and no more than the cap needs.
 func (r *Runner) earlier(ctx context.Context, thread control.ThreadID) (string, error) {
-	rows, err := r.Store.DB.QueryContext(ctx, `SELECT kind, data FROM events WHERE scope = ? AND thread = ?
-		AND (kind IN ('input', 'answer') OR (kind = 'text' AND json_extract(data, '$.final'))) ORDER BY pos DESC`, thread.Scope, thread.Key)
+	rows, err := r.Store.DB.QueryContext(ctx, `SELECT kind, data FROM events WHERE thread_id = ?
+		AND (kind IN ('input', 'answer') OR (kind = 'text' AND json_extract(data, '$.final'))) ORDER BY pos DESC`, int64(thread))
 	if err != nil {
 		return "", fmt.Errorf("runner: %w", err)
 	}

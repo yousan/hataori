@@ -56,16 +56,16 @@ export function Row(props: {
   return (
     <li
       className={selected ? "row selected" : "row"}
-      data-thread={x.number}
+      data-thread={x.id}
       data-state={x.state}
       role="option"
       tabIndex={0}
       aria-selected={selected}
-      onClick={() => onSelect(x.number)}
+      onClick={() => onSelect(x.id)}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          onSelect(x.number);
+          onSelect(x.id);
         }
       }}
     >
@@ -73,7 +73,7 @@ export function Row(props: {
         <span className={`agent-mark state-${x.state}`} title={stateName(x.state)}>
           {mark(x)}
         </span>
-        <span className="num">{t("thread.number", { n: x.number })}</span>
+        <span className="num">{t("thread.number", { n: x.id })}</span>
         <span className="title">{x.title}</span>
         <span className="age">{age(x.updated, now)}</span>
       </div>
@@ -96,25 +96,25 @@ export function Tree(props: Props) {
   const all = threads ?? [];
   const visible = all.filter((x) => shows(show, x));
   const shown = visible.filter((x) => matches(x, filter));
-  const waiting = shown.filter((x) => attention.has(x.number));
+  const waiting = shown.filter((x) => attention.has(x.id));
 
   const scopes = new Map<string, ThreadInfo[]>();
   for (const x of shown) {
-    const list = scopes.get(x.id.scope) ?? [];
+    const list = scopes.get(x.scope) ?? [];
     list.push(x);
-    scopes.set(x.id.scope, list);
+    scopes.set(x.scope, list);
   }
   const counts = new Map<State, number>();
   for (const x of all) counts.set(x.state, (counts.get(x.state) ?? 0) + 1);
 
   const row = (why: boolean) => (x: ThreadInfo) => (
     <Row
-      key={x.number}
+      key={x.id}
       x={x}
-      attention={attention.get(x.number)}
+      attention={attention.get(x.id)}
       why={why}
       now={now}
-      selected={selected === x.number}
+      selected={selected === x.id}
       onSelect={onSelect}
     />
   );
@@ -160,7 +160,7 @@ export function Tree(props: Props) {
                 <span className="scope-name">{scope}</span>
                 <span className="dots">
                   {list.map((x) => (
-                    <span key={x.number} className={`dot state-${x.state}`} title={stateName(x.state)} />
+                    <span key={x.id} className={`dot state-${x.state}`} title={stateName(x.state)} />
                   ))}
                 </span>
               </h3>

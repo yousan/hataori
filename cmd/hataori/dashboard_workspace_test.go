@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -94,7 +95,7 @@ func TestDashboardWorkspaceRoute(t *testing.T) {
 	ws := workspaceDir(t, root)
 	base, cookie := dashSignIn(t, root)
 	path := func(id control.ThreadID) string {
-		return "/api/workspace?" + url.Values{"scope": {id.Scope}, "key": {id.Key}}.Encode()
+		return "/api/workspace?" + url.Values{"thread": {fmt.Sprint(int64(id))}}.Encode()
 	}
 	// state reads the route and the control API, and checks they agree.
 	state := func(what string) control.WorkspaceState {
@@ -192,13 +193,13 @@ func TestDashboardWorkspaceRoute(t *testing.T) {
 		t.Fatalf("the other thread's workspace cannot be read: the check would test nothing: %v", err)
 	}
 	outCode, outBody := dashGet(t, base, cookie, path(other))
-	noneCode, noneBody := dashGet(t, base, cookie, path(control.ThreadID{Scope: "x", Key: "no-such-thread"}))
-	inCode, inBody := dashGet(t, base, cookie, path(control.ThreadID{Scope: "s", Key: "no-such-thread"}))
+	noneCode, noneBody := dashGet(t, base, cookie, path(control.ThreadID(9999)))
+	inCode, inBody := noneCode, noneBody // a number names no scope: one thread that does not exist
 	if outCode != http.StatusNotFound || outCode != noneCode || outBody != noneBody || inCode != noneCode || inBody != noneBody {
 		t.Fatalf("another scope's thread: %d %q; no thread there: %d %q; no thread in the caller's scope: %d %q",
 			outCode, outBody, noneCode, noneBody, inCode, inBody)
 	}
-	if code, _ := dashGet(t, base, cookie, "/api/workspace?scope=s"); code != http.StatusBadRequest {
-		t.Fatalf("no key: %d, want 400", code)
+	if code, _ := dashGet(t, base, cookie, "/api/workspace?thread=x"); code != http.StatusBadRequest {
+		t.Fatalf("no thread number: %d, want 400", code)
 	}
 }

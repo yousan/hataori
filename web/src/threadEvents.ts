@@ -40,16 +40,15 @@ export function useThreadEvents(
 ): { events: Event[]; read: boolean } {
   const [events, setEvents] = useState<Event[]>([]);
   const [read, setRead] = useState(false);
-  const { scope, key } = id;
 
   // The stream: from now on, for this thread.
   useEffect(() => {
     setEvents([]);
     setRead(false);
     return subscribe((e) => {
-      if (sameThread(e.thread, { scope, key })) setEvents((have) => merge(have, [e], opts));
+      if (sameThread(e.thread, id)) setEvents((have) => merge(have, [e], opts));
     });
-  }, [scope, key, subscribe, opts]);
+  }, [id, subscribe, opts]);
 
   // The history: now, again after the stream opens, and again after a
   // failed read.
@@ -57,7 +56,7 @@ export function useThreadEvents(
     let gone = false;
     let retry: ReturnType<typeof setTimeout> | undefined;
     const fetchHistory = () =>
-      thread({ scope, key }, opts.history)
+      thread(id, opts.history)
         .then((d) => {
           if (gone) return;
           setEvents((have) => merge(have, d.events ?? [], opts));
@@ -71,7 +70,7 @@ export function useThreadEvents(
       gone = true;
       clearTimeout(retry);
     };
-  }, [scope, key, opens, opts]);
+  }, [id, opens, opts]);
 
   return { events, read };
 }

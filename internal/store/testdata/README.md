@@ -8,3 +8,9 @@
   events, outbox rows, catch-up cursors, triggers and inbox. The database was
   copied with `VACUUM INTO` after the daemon stopped. Tests move the recorded
   paths from that root to their own.
+- `schema20-unlinked.db`: a database made by hataori at schema version 20,
+  the release with the migration to links but before the control API named
+  threads by number. Its daemon ran the first startup step on a new
+  database, under the same instance root, with one channel `c1`, and then
+  started one thread there, whose link, events' thread number, outbox rows'
+  link and workspace path it did not write. Copied as above.

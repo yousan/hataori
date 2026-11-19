@@ -182,7 +182,7 @@ func TestTriggerStartsAThread(t *testing.T) {
 		t.Fatalf("opened %+v, want one thread from the trigger %s, titled from the first line", ths, in.Ref.ID)
 	}
 	l := f.runner.all()
-	if len(l) != 1 || l[0].Key != in.Ref.ID || l[0].Input.Text != prompt || l[0].Thread.Key != ths[0].Opened.Thread ||
+	if len(l) != 1 || l[0].Key != in.Ref.ID || l[0].Input.Text != prompt || l[0].Thread != f.threadAt(t, ths[0].Opened) ||
 		l[0].Principal != "hook" {
 		t.Fatalf("started %+v", l)
 	}
@@ -230,7 +230,7 @@ func TestThreadOfAnotherClientOpensInTheChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 	ths := f.threads()
-	if len(ths) != 1 || ths[0].From != "" || ths[0].Opened.Thread != id.Key || ths[0].Title != "From elsewhere" {
+	if len(ths) != 1 || ths[0].From != "" || f.threadAt(t, ths[0].Opened) != id || ths[0].Title != "From elsewhere" {
 		t.Fatalf("opened %+v for %+v, want one thread in the channel alone", ths, id)
 	}
 }
@@ -244,9 +244,9 @@ type failStart struct {
 
 func (s failStart) Start(ctx context.Context, r control.StartRequest) (control.ThreadID, error) {
 	if _, err := s.fe.NewThread(ctx, r.Scope, r.Key, r.Input.Text); err != nil {
-		return control.ThreadID{}, err
+		return 0, err
 	}
-	return control.ThreadID{}, errors.New("stopped")
+	return 0, errors.New("stopped")
 }
 
 // The thread is opened once per trigger: delivered again after a restart,
@@ -270,7 +270,7 @@ func TestTriggerAfterARestartOpensNoSecondThread(t *testing.T) {
 	if len(ths) != 1 {
 		t.Fatalf("opened %+v, want one thread", ths)
 	}
-	if l := f.runner.all(); len(l) != 1 || l[0].Thread.Key != ths[0].Opened.Thread {
+	if l := f.runner.all(); len(l) != 1 || l[0].Thread != f.threadAt(t, ths[0].Opened) {
 		t.Fatalf("started %+v, want one start in %s", l, ths[0].Opened.Thread)
 	}
 }
@@ -292,7 +292,7 @@ func TestTriggerAfterALostThreadAnswerOpensOneThread(t *testing.T) {
 	if len(ths) != 1 {
 		t.Fatalf("opened %+v, want one thread", ths)
 	}
-	if l := f.runner.all(); len(l) != 1 || l[0].Thread.Key != ths[0].Opened.Thread {
+	if l := f.runner.all(); len(l) != 1 || l[0].Thread != f.threadAt(t, ths[0].Opened) {
 		t.Fatalf("started %+v, want one start in %s", l, ths[0].Opened.Thread)
 	}
 }
