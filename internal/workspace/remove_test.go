@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math/rand/v2"
 	"net"
 	"os"
 	"os/exec"
@@ -1158,15 +1159,29 @@ func TestTrashNameIsWhatRemoveWrites(t *testing.T) {
 	prefix := "20000101T000000Z-0123abcd-"
 	segments := []string{"", ".", "..", "k", "a b", "%", "%zz", "ü", strings.Repeat("x", 200), strings.Repeat("é", 50)}
 	for n := 30; n <= 90; n++ { // the cut at 40 bytes falls at each place of an escape
-		segments = append(segments, strings.Repeat("a", n%3)+strings.Repeat("/", n))
+		segments = append(segments, strings.Repeat("a", n%3)+strings.Repeat("/", n), strings.Repeat(".", n))
+	}
+	rnd := rand.New(rand.NewPCG(1, 2))
+	const bytes = "aZ09_-.%/ \x00\xff\xc3\xa9"
+	for range 5000 {
+		b := make([]byte, rnd.IntN(120))
+		for i := range b {
+			b[i] = bytes[rnd.IntN(len(bytes))]
+		}
+		segments = append(segments, string(b))
 	}
 	for _, seg := range segments {
-		if name := prefix + Segment(seg); !trashName.MatchString(name) {
+		if name := prefix + Segment(seg); !trashName(name) {
 			t.Errorf("%q, the name Remove gives for %q, is not taken", name, seg)
 		}
 	}
-	for _, tail := range []string{"%zz", "a%", "%2", "%2e", "%%", "a%g0", "x%ab", "%a", "a/b", ""} {
-		if trashName.MatchString(prefix + tail) {
+	hash := "%abcdef0123456789abcdef01" // "%ab" is no escape Segment writes
+	for _, tail := range []string{"%zz", "a%", "%2", "%2e", "%%", "a%g0", "x%ab", "%a", "a/b", "",
+		"%41", "a%2D", ".", "..", "a%2E", // escapes Segment does not write, dots it escapes
+		"abc" + hash, strings.Repeat("a", 39) + hash, strings.Repeat("a", 41) + hash, // a cut that is not at 40
+		strings.Repeat("a", 37) + "%41" + hash, strings.Repeat("a", 38) + "%g" + hash, "%2E.%2E" + strings.Repeat("a", 33) + hash,
+		strings.Repeat("a", 40) + "%abcdef0123456789ABCDEF01"} {
+		if trashName(prefix + tail) {
 			t.Errorf("%q, which Remove does not write, is taken", prefix+tail)
 		}
 	}

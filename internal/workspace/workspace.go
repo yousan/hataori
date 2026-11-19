@@ -72,7 +72,7 @@ func Segment(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); i++ {
 		c := s[i]
-		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-' || c == '.' {
+		if segmentKeeps(c) {
 			b.WriteByte(c)
 		} else {
 			fmt.Fprintf(&b, "%%%02X", c)
@@ -87,6 +87,11 @@ func Segment(s string) string {
 		out = out[:40] + "%" + hex.EncodeToString(sum[:12])
 	}
 	return out
+}
+
+// segmentKeeps reports whether Segment keeps the byte c as it is.
+func segmentKeeps(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-' || c == '.'
 }
 
 // scpLike is git's SSH form [user@]host:path. The host has no '/', so

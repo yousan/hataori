@@ -206,13 +206,79 @@ func realDir(dir string, make bool) (string, error) {
 	return dir, nil
 }
 
-// trashName matches the names Remove gives: the time, eight hex digits and
-// the workspace's last segment as Segment writes it. That is "%" for an
-// empty one, or kept bytes and %XX escapes, and when it was too long, the
-// first 40 bytes of that (which may end inside an escape), "%" and 24 hex
-// digits of a hash.
-var trashName = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}-` +
-	`(?:%|(?:[A-Za-z0-9._-]|%[0-9A-F]{2})+|(?:[A-Za-z0-9._-]|%[0-9A-F]{2})*(?:%[0-9A-F]?)?%[0-9a-f]{24})$`)
+// trashPrefix is the start of the names Remove gives: the time and eight
+// hex digits.
+var trashPrefix = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}-`)
+
+// trashName reports whether name is one Remove gives: trashPrefix, then a
+// last segment that Segment writes.
+func trashName(name string) bool {
+	loc := trashPrefix.FindStringIndex(name)
+	return loc != nil && segmentWritten(name[loc[1]:])
+}
+
+// segmentWritten reports whether Segment returns s for some input. A
+// segment of at most maxSegment bytes is the one its unescaped bytes give.
+// A longer one was cut: the first 40 bytes of what Segment wrote, which
+// may end inside an escape, "%" and 24 hex digits of a hash.
+func segmentWritten(s string) bool {
+	if s == "%" { // an empty one
+		return true
+	}
+	if raw, ok := unescapeSegment(s); ok && Segment(raw) == s {
+		return true
+	}
+	const cut = 40
+	if len(s) != cut+1+24 || s[cut] != '%' || !lowerHex(s[cut+1:]) {
+		return false
+	}
+	p := s[:cut]
+	if strings.Contains(p, "%2E") { // only dots, all escaped
+		return strings.HasPrefix(strings.Repeat("%2E", cut), p)
+	}
+	for i := 0; i < len(p); i++ {
+		c := p[i]
+		if c != '%' {
+			if !segmentKeeps(c) {
+				return false
+			}
+			continue
+		}
+		rest := p[i+1:]
+		if len(rest) < 2 { // an escape the cut ends inside
+			return len(rest) == 0 || upperHex(rest[0])
+		}
+		b, err := strconv.ParseUint(rest[:2], 16, 8)
+		if err != nil || !upperHex(rest[0]) || !upperHex(rest[1]) || segmentKeeps(byte(b)) {
+			return false
+		}
+		i += 2
+	}
+	return true
+}
+
+// unescapeSegment undoes Segment's %XX escapes.
+func unescapeSegment(s string) (string, bool) {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] != '%' {
+			b.WriteByte(s[i])
+			continue
+		}
+		if i+3 > len(s) || !upperHex(s[i+1]) || !upperHex(s[i+2]) {
+			return "", false
+		}
+		v, err := strconv.ParseUint(s[i+1:i+3], 16, 8)
+		if err != nil {
+			return "", false
+		}
+		b.WriteByte(byte(v))
+		i += 2
+	}
+	return b.String(), true
+}
+
+func upperHex(c byte) bool { return c >= '0' && c <= '9' || c >= 'A' && c <= 'F' }
 
 // Purge deletes the entries of trash/ that were moved there longer than
 // Retention ago, by the time in their names, and returns them. An entry
@@ -263,7 +329,7 @@ func (r Remover) Purge() ([]string, error) {
 	)
 	for _, e := range entries {
 		name := e.Name()
-		if !trashName.MatchString(name) {
+		if !trashName(name) {
 			continue
 		}
 		// The name has the time in whole seconds, rounded down: the entry
