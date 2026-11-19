@@ -71,15 +71,12 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		}
 		adapters[name] = ad
 	}
-	if len(adapters) != 1 {
-		return fmt.Errorf("config: key %q: name exactly one agent adapter (%d given)", "adapters", len(adapters))
+	if len(adapters) == 0 {
+		return fmt.Errorf("config: key %q: name at least one agent adapter", "adapters")
 	}
-	var agentName string
-	for name := range adapters {
-		agentName = name
-	}
+	agentName := cfg.Agent
 	// The scopes that name a supervisor (design, section 7.1). It runs on the
-	// instance's one adapter, with that adapter's cheapest model by default.
+	// default adapter, with that adapter's cheapest model by default.
 	supervisors := map[string]supervisor.Scope{}
 	for i, s := range cfg.Scopes {
 		sv := s.Supervisor
@@ -87,7 +84,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 			continue
 		}
 		if sv.Agent != "" && sv.Agent != agentName {
-			return fmt.Errorf("config: key %q: %q is not the instance's agent adapter %q", fmt.Sprintf("scopes[%d].supervisor.agent", i), sv.Agent, agentName)
+			return fmt.Errorf("config: key %q: %q is not the default agent adapter %q", fmt.Sprintf("scopes[%d].supervisor.agent", i), sv.Agent, agentName)
 		}
 		supervisors[s.Key] = supervisor.Scope{Model: sv.Model, Effort: sv.Effort, Instructions: sv.Instructions}
 	}
@@ -128,7 +125,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	scopes := map[string]core.Scope{}
 	var keys []string
 	for _, s := range cfg.Scopes {
-		scopes[s.Key] = core.Scope{Name: s.Name, Enabled: s.Enabled, Owner: s.Client, Model: s.Model, Effort: s.Effort, ShowIn: s.ShowIn}
+		scopes[s.Key] = core.Scope{Name: s.Name, Enabled: s.Enabled, Owner: s.Client, Agent: s.Agent, Model: s.Model, Effort: s.Effort, ShowIn: s.ShowIn}
 		keys = append(keys, s.Key)
 	}
 	sort.Strings(keys)
@@ -136,7 +133,12 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	// The only way the daemon removes a workspace (design, section 4.6).
 	remover := workspace.Remover{Maker: maker, Disposable: cfg.Cleanup.Disposable, OtherRoots: cfg.Cleanup.OtherRoots,
 		Retention: cfg.Cleanup.TrashRetention}
-	c := &core.Core{Store: st, Machine: m, Scopes: scopes, Owners: map[string]control.ScopeOwner{}, People: cfg.People,
+	agents := make(map[string]core.AgentDefaults, len(adapters))
+	for name := range adapters {
+		d := cfg.AgentDefaults[name]
+		agents[name] = core.AgentDefaults{Model: d.Model, Effort: d.Effort}
+	}
+	c := &core.Core{Agents: agents, Store: st, Machine: m, Scopes: scopes, Owners: map[string]control.ScopeOwner{}, People: cfg.People,
 		Workspaces: maker, Remover: remover,
 		Runner: r, Agent: agentName, Model: cfg.Model, Effort: cfg.Effort, Log: lg}
 	if coreHook != nil {
@@ -195,6 +197,9 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 			hostTermsHook(lister)
 		}
 		c.HostTerms = lister
+		if hostTermsSource != nil {
+			c.HostTerms = hostTermsSource
+		}
 		owner |= control.OpHost
 	}
 	srv, err := wire.Listen(abs, c.As(control.Caller{Principal: control.Principal(cfg.Owner), Scopes: keys, May: owner}), lg)
@@ -431,6 +436,11 @@ var dashboardHook func(*control.Caller)
 // hostTermsHook, when a test sets it, changes how the daemon lists the
 // host's terminals, such as to read a tmux server of the test's own.
 var hostTermsHook func(*hostterm.Lister)
+
+// hostTermsSource, when a test sets it, is what the daemon lists the
+// host's terminals from instead of tmux and the process table, such as a
+// list the test changes as it goes.
+var hostTermsSource core.HostTerms
 
 // supervisorHook, when a test sets it, is given what issues a supervisor's
 // token for a scope, and what revokes one.

@@ -31,6 +31,10 @@ type Config struct {
 	// OldForm is set when the config has no "people": its owner and
 	// posters were raw ids, converted into People.
 	OldForm bool
+	// Agent is "agent": the adapter new threads run unless their scope or
+	// order names another. The one adapter when the key is absent and only
+	// one is configured.
+	Agent   string
 	Trigger string        // the word that starts a thread
 	Idle    time.Duration // idle period before a session is put to sleep
 	Model   string        // default model of a scope without one; empty for the agent's own default
@@ -66,11 +70,17 @@ type Config struct {
 	// the config, by registered name, unparsed.
 	Drivers  map[string][]byte
 	Adapters map[string][]byte
+	// AgentDefaults holds the model and effort keys of each adapter section,
+	// by adapter name, taken out of Adapters.
+	AgentDefaults map[string]AgentDefaults
 
 	// Plugins is the "plugins" list, each entry unparsed: internal/plugin
 	// reads and checks it. Nil when the config has none.
 	Plugins []json.RawMessage
 }
+
+// AgentDefaults are the model and effort keys read from an adapter section.
+type AgentDefaults struct{ Model, Effort string }
 
 // Scope is the config of one scope.
 type Scope struct {
@@ -78,6 +88,7 @@ type Scope struct {
 	Name    string   // what the dashboard calls it; empty for its channel's name, else its key
 	Client  string   // name of the client that owns the scope
 	Enabled bool     // whether threads may be started in it
+	Agent   string   // "agent": the adapter of threads started here; empty for Config.Agent
 	Model   string   // default model; empty for the agent's own default
 	Effort  string   // default effort; empty for the agent's own default
 	People  []string // names of the people who may act here besides the owner
@@ -215,6 +226,7 @@ type fileWeb struct {
 // The config as written in the file.
 type fileConfig struct {
 	Owner      string                     `json:"owner"`
+	Agent      string                     `json:"agent"`
 	People     *[]filePerson              `json:"people"`
 	Trigger    string                     `json:"trigger"`
 	Idle       string                     `json:"idle"`
@@ -249,6 +261,7 @@ type fileScope struct {
 	Name       string          `json:"name"`
 	Client     string          `json:"client"`
 	Enabled    bool            `json:"enabled"`
+	Agent      string          `json:"agent"`
 	Model      string          `json:"model"`
 	Effort     string          `json:"effort"`
 	People     []string        `json:"people"`
@@ -282,12 +295,54 @@ func ParseConfig(data []byte) (*Config, error) {
 		LoginRelay:    f.LoginRelay == nil || *f.LoginRelay,
 		HostTerminals: f.HostTerms,
 		Owner:         strings.TrimSpace(f.Owner),
+		Agent:         strings.TrimSpace(f.Agent),
 		Trigger:       strings.TrimSpace(f.Trigger),
 		Model:         strings.TrimSpace(f.Model),
 		Effort:        strings.TrimSpace(f.Effort),
 		Drivers:       raw(f.Drivers),
 		Adapters:      raw(f.Adapters),
 		Plugins:       f.Plugins,
+	}
+	if c.Agent == "" && len(c.Adapters) == 1 {
+		for name := range c.Adapters {
+			c.Agent = name
+		}
+	}
+	if c.Agent == "" && len(c.Adapters) > 1 {
+		return nil, fmt.Errorf("config: key %q: name the default agent adapter; %q names %d", "agent", "adapters", len(c.Adapters))
+	}
+	if c.Agent != "" {
+		if _, ok := c.Adapters[c.Agent]; !ok {
+			return nil, fmt.Errorf("config: key %q: %q is not configured under %q", "agent", c.Agent, "adapters")
+		}
+	}
+	c.AgentDefaults = map[string]AgentDefaults{}
+	for name, section := range c.Adapters {
+		var obj map[string]json.RawMessage
+		if json.Unmarshal(section, &obj) != nil || obj == nil {
+			continue
+		}
+		var defaults AgentDefaults
+		found := false
+		for _, field := range []struct {
+			key  string
+			dest *string
+		}{{"model", &defaults.Model}, {"effort", &defaults.Effort}} {
+			value, ok := obj[field.key]
+			if !ok {
+				continue
+			}
+			found = true
+			if len(value) == 0 || value[0] != '"' || json.Unmarshal(value, field.dest) != nil {
+				return nil, fmt.Errorf("config: key %q: not a string", "adapters."+name+"."+field.key)
+			}
+			*field.dest = strings.TrimSpace(*field.dest)
+			delete(obj, field.key)
+		}
+		if found {
+			c.AgentDefaults[name] = defaults
+			c.Adapters[name], _ = json.Marshal(obj)
+		}
 	}
 	if c.Owner == "" {
 		return nil, missing("owner")
@@ -349,8 +404,14 @@ func ParseConfig(data []byte) (*Config, error) {
 			Name:    strings.TrimSpace(s.Name),
 			Client:  strings.TrimSpace(s.Client),
 			Enabled: s.Enabled,
+			Agent:   strings.TrimSpace(s.Agent),
 			Model:   strings.TrimSpace(s.Model),
 			Effort:  strings.TrimSpace(s.Effort),
+		}
+		if sc.Agent != "" {
+			if _, ok := c.Adapters[sc.Agent]; !ok {
+				return nil, fmt.Errorf("config: key %q: %q is not configured under %q", key+".agent", sc.Agent, "adapters")
+			}
 		}
 		if sc.Key == "" {
 			return nil, missing(key + ".key")

@@ -197,7 +197,11 @@ func Step(s Snapshot, in Input) (Result, error) {
 		}
 		to(control.Running, "")
 		start(OpenTurn{By: ByCaller, Principal: in.Principal, From: in.From}, in.Key)
-		r.Out = append(r.Out, Out{Kind: KindAnswer, Data: given(in)})
+		d := given(in)
+		if in.Request != "" {
+			d["request"] = in.Request // the machine makes it the handle
+		}
+		r.Out = append(r.Out, Out{Kind: KindAnswer, Data: d})
 	case Close:
 		// No turn runs, no question is open and no session is starting:
 		// closing loses nothing the agent was doing. Background tasks and
@@ -378,6 +382,9 @@ func agentOut(e agent.Event) Out {
 			d["request"] = e.Request.ID
 			if e.Kind == agent.Request {
 				d["text"], d["approval"], d["choices"] = e.Request.Text, e.Request.Approval, e.Request.Choices
+				if e.Request.Multi {
+					d["multi"] = true
+				}
 			}
 		}
 	case agent.FileOut:

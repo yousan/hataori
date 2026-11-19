@@ -832,7 +832,7 @@ How the dashboard is reached from another machine, passkeys on the web, typing i
 
 The order below was decided by the maintainer (section 10): Codex, people in chat and cleanup, the supervisor, plugins, then Slack and Teams. Each later phase also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter; the supervisor phase may also let the control socket bind a connection to a limited `Caller` (which plugins use too, section 7.3) and let a session be started confined (no shell, only the listed tools, section 7.1); the plugin phase may also limit a `Caller` to the operations and event kinds a plugin was granted, and add hook points (section 7.3). Appendix E has the acceptance criteria of each.
 
-**Codex.** The second agent adapter (section 3.4). It comes before the buttons of "people in chat", so it is built and tested with what phase 1 offers in chat. The adapter's code is written by Codex (`codex exec`), and reviewed and fixed by Claude.
+**Codex.** The second agent adapter (section 3.4). It comes before the buttons of "people in chat", so it is built and tested with what phase 1 offers in chat. The adapter's code is written by Codex (`codex exec`), and reviewed and fixed by Claude. Choosing the agent per scope (`agent`) or order (`agent:`), with `model` and `effort` per adapter section, counts as registering an adapter under the phase criterion (#318).
 
 **People in chat, and cleanup.** Slash commands, buttons for questions, lamps, pings, attach by hand (`hataori attach`, the agent's terminal on the host), and removing workspaces behind the proof in section 4.6. This is what lets c-lord be switched off. The dashboard's sign-in link from chat comes with it. A second chat link (`/attach <number>`, section 5.2) is built with thread numbers (#215), not in this phase.
 
@@ -1643,6 +1643,7 @@ type ThreadDetail struct {
 // one of the people of the thread's scope.
 
 type StartRequest struct {
+	Agent  string // empty for the scope's agent
 	Key    string // safe to repeat: the same key starts nothing twice
 	Scope  string // from the config; for chat, the scope's own channel
 	Thread string // the first link's conversation in the scope's own channel, of the scope's owner; empty to ask the owner
@@ -1682,7 +1683,7 @@ Changing `ThreadID` from a scope and a key to a number changes how every thread 
 
 Sleep, close and remove join the interface with the phase that needs them.
 
-The types carry lowercase JSON names, and the data of every event kind is declared in `control.EventKinds`; the store refuses an event that does not match. A `turn_started` event carries the key of the call that started the turn, so a chat front end can reply to the message that started it. A `subagent_started` event carries the subagent's name, and a `tool_started` event the subagent the tool runs in (`agent.Event.Parent`), so a front end can count a subagent's tool calls. A `file_out` event carries every file of one hand-over (`More`) and its caption (`Caption`). A `usage` event carries the counts of `agent.Event.Usage`, each the running turn's total so far, and the turn; the core keeps the thread's `Tokens` and `Context` from them in the same transaction. The Claude Code adapter fills the counts and `Model` from the usage of each model message in the transcript, and leaves the context use out: neither its transcript nor its hooks give the context window. How all of this is encoded on the socket, and when the protocol version changes, is in [docs/protocol.md](../protocol.md).
+The types carry lowercase JSON names, and the data of every event kind is declared in `control.EventKinds`; the store refuses an event that does not match. A `turn_started` event carries the key of the call that started the turn, so a chat front end can reply to the message that started it. A `subagent_started` event carries the subagent's name, and a `tool_started` event the subagent the tool runs in (`agent.Event.Parent`), so a front end can count a subagent's tool calls. A `file_out` event carries every file of one hand-over (`More`) and its caption (`Caption`). A `request` event carries `multi` when several of its choices may be chosen at once, and an `answer` event the `request` it answers, so a chat front end can take a question's buttons off once it is answered (#257). A `usage` event carries the counts of `agent.Event.Usage`, each the running turn's total so far, and the turn; the core keeps the thread's `Tokens` and `Context` from them in the same transaction. The Claude Code adapter fills the counts and `Model` from the usage of each model message in the transcript, and leaves the context use out: neither its transcript nor its hooks give the context window. How all of this is encoded on the socket, and when the protocol version changes, is in [docs/protocol.md](../protocol.md).
 
 ### Control API: additions for the dashboard (proposal)
 
@@ -2091,7 +2092,9 @@ type Event struct {
 	Kind Kind
 	// Plus the fields each kind needs: the text and whether it is final,
 	// who started a turn and the Input.ID of the message it reports, the
-	// request id and its questions, the subagent a tool runs in (Parent),
+	// request id and its questions (RequestInfo: ID, Approval, Text,
+	// Choices, and Multi when several choices may be chosen at once, since
+	// #257), the subagent a tool runs in (Parent),
 	// the files handed over with their caption (File, More, Caption),
 	// the end status and reason, the background tasks still running,
 	// the tokens of the turn so far and the context use (Usage), the
@@ -2104,7 +2107,10 @@ type Event struct {
 	// conversation at the terminal.
 }
 
-// Factory makes an Adapter from its opaque section of the instance's config.
+// Factory makes an Adapter from its section of the instance's config,
+// which is opaque to everything but the adapter, except for the keys
+// "model" and "effort": hataori reads those as the defaults of the
+// agent's threads and takes them out of settings.
 // Register(name, f) fails when name is taken; Lookup(name) finds it.
 type Factory func(settings []byte) (Adapter, error)
 ```
@@ -2224,6 +2230,8 @@ type ReportedSession struct {
 Every phase here also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter; the supervisor phase may also let the control socket bind a connection to a limited `Caller` (which plugins use too, section 7.3) and let a session be started confined (no shell, only the listed tools, section 7.1); the plugin phase may also limit a `Caller` to the operations and event kinds a plugin was granted, and add hook points (section 7.3).
 
 ### Codex
+
+Choosing the agent per scope (`agent`) or order (`agent:`), with `model` and `effort` per adapter section, counts as registering an adapter under the phase criterion (#318).
 
 - [ ] A channel or thread can be set to Codex; start, continue, sleep and wake work as in phase 1.
 - [ ] Approvals and questions from Codex appear in the thread and can be answered. Until the buttons of #248, chat allows approvals automatically, so for approvals this is read as: answered in the codec and the end-to-end test (#321).

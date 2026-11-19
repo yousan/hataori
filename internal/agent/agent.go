@@ -343,10 +343,13 @@ type RequestInfo struct {
 	Approval bool // an approval rather than a question
 	Text     string
 	Choices  []string
+	Multi    bool // several of Choices may be chosen at once
 }
 
-// Factory makes an Adapter from its section of the instance's config, which
-// is opaque to everything but the adapter.
+// Factory makes an Adapter from its section of the instance's config,
+// which is opaque to everything but the adapter, except for the keys
+// "model" and "effort": hataori reads those as the defaults of the
+// agent's threads and takes them out of settings.
 type Factory func(settings []byte) (Adapter, error)
 
 var adapters registry.Registry[Factory]

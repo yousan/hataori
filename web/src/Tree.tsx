@@ -25,8 +25,8 @@ interface Props {
   // count every thread.
   show: Show;
   hidden: number;
-  // The host's terminals hataori does not own; null when the server does
-  // not list them, and then neither section is shown.
+  // The host's terminals hataori does not own that the choice shows; null
+  // when the server does not list them, and then neither section is shown.
   hosts: HostTerminal[] | null;
   selectedHost: string | null;
   onOpenHost: (device: string) => void;

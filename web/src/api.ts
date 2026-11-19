@@ -144,12 +144,18 @@ export interface HostTerminal {
 // terminals: the feature is off, or the caller is not the owner.
 export class HostTerminalsOff extends Error {}
 
-export async function hostTerminals(): Promise<HostTerminal[]> {
+// hostTerminals lists the host's terminals, with skew: how far the host's
+// clock, as its answer's Date header gives it, is ahead of this browser's,
+// in milliseconds; 0 when the answer does not say. Their times are the
+// host's.
+export async function hostTerminals(): Promise<{ list: HostTerminal[]; skew: number }> {
   const r = await fetch("/api/hostterminals", authorized());
   if (r.status === 401) throw new SignedOut();
   if (r.status === 403) throw new HostTerminalsOff();
   if (!r.ok) throw new Error(`hostterminals: ${r.status}`);
-  return (await r.json()) as HostTerminal[];
+  const date = Date.parse(r.headers.get("Date") ?? "");
+  const skew = Number.isFinite(date) ? date - Date.now() : 0;
+  return { list: (await r.json()) as HostTerminal[], skew };
 }
 
 export function hostScreenPath(pane: string): string {

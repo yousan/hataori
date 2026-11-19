@@ -214,3 +214,91 @@ func TestUnknownEffortStartsNothingAndSaysWhatIsAllowed(t *testing.T) {
 		t.Fatalf("refusal %+v, want a reply to the trigger naming the allowed values", msg)
 	}
 }
+
+func TestUnknownAgentStartsNothing(t *testing.T) {
+	f := newFront(t, workspaces{})
+	f.deliver(chanConv, fake.Person(owner), "!go repo:file:///unused agent:missing reply done")
+	if len(f.threads()) != 0 || len(f.runner.all()) != 0 {
+		t.Fatal("unknown agent opened a thread or started a session")
+	}
+	for _, c := range f.driver.Calls(chanConv) {
+		if c.Op == fake.OpPost {
+			t.Fatal("unknown agent posted a message")
+		}
+	}
+	n := 0
+	for _, line := range f.log.lines() {
+		if strings.Contains(line, "missing") || strings.Contains(line, "unknown agent") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("got %d log lines: %v", n, f.log.lines())
+	}
+}
+
+func TestAgentAndItsDefaultsFromTheTriggerLineOrTheScope(t *testing.T) {
+	root := t.TempDir()
+	t.Cleanup(func() { killSessions(root) })
+	st := openStore(t, root)
+	cfg, _ := json.Marshal(fakeagent.Config{Command: []string{os.Args[0], "role", "fake"}, Hataori: os.Args[0], Env: []string{"PATH=" + os.Getenv("PATH")}})
+	ad, err := fakeagent.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reps := map[string]*reports{}
+	adapters := map[string]agent.Adapter{}
+	for _, name := range []string{"fake", "second", "third"} {
+		reps[name] = &reports{Adapter: ad, ready: map[string][2]string{}}
+		adapters[name] = reps[name]
+	}
+	lg := slog.New(slog.NewTextHandler(&logBuf{}, nil))
+	m := &session.Machine{Store: st}
+	r := &runner.Runner{Store: st, Machine: m, Adapters: adapters, Host: host.Command{Path: os.Args[0], Args: []string{"role", "host"}}, Root: root, Log: lg, InterruptGrace: 5 * time.Second, Poll: 20 * time.Millisecond}
+	t.Cleanup(func() { r.Close(); st.Close() })
+	d := fake.New()
+	fe := &FrontEnd{Name: "chat", Driver: d, Trigger: "!go", People: testPeople(), Log: lg,
+		Outbox: &Outbox{Store: st, Client: "chat", Driver: d, Log: lg, Retry: 5 * time.Millisecond},
+		Scopes: map[string]Scope{"withdefaults": {Enabled: true}, "secondscope": {Enabled: true}}}
+	work := workspaceDirs(filepath.Join(root, "work"))
+	c := &core.Core{Store: st, Machine: m, Runner: r, Agent: "fake", Log: lg, Workspaces: work, People: testPeople(),
+		Agents: map[string]core.AgentDefaults{"fake": {}, "second": {Model: "second-model", Effort: "high"}, "third": {}},
+		Model:  "instance-model", Effort: "low",
+		Scopes: map[string]core.Scope{"withdefaults": {Enabled: true, Owner: "chat", Model: "scope-model", Effort: "medium"},
+			"secondscope": {Enabled: true, Owner: "chat", Agent: "second", Model: "second-scope", Effort: "medium"}},
+		Owners: map[string]control.ScopeOwner{"chat": fe}}
+	fe.API = c.As
+	for _, tc := range []struct{ scope, text, adapter, model, effort string }{
+		{"withdefaults", "!go repo:file:///unused reply done", "fake", "scope-model", "medium"},
+		{"withdefaults", "!go repo:file:///unused agent:second reply done", "second", "second-model", "high"},
+		{"withdefaults", "!go repo:file:///unused agent:second model:override reply done", "second", "override", "high"},
+		{"withdefaults", "!go repo:file:///unused agent:third reply done", "third", "", ""},
+		{"secondscope", "!go repo:file:///unused reply done", "second", "second-scope", "medium"},
+		{"secondscope", "!go repo:file:///unused agent:fake reply done", "fake", "instance-model", "low"},
+	} {
+		in := d.Inject(surfaceConv(tc.scope), fake.Person(owner), tc.text)
+		fe.Message(in)
+		var th string
+		for _, call := range d.Calls(surfaceConv(tc.scope)) {
+			if call.Op == fake.OpOpenThread {
+				th = call.Opened.Thread
+			}
+		}
+		var id control.ThreadID
+		waitFor(t, "the thread of "+tc.text, func() bool {
+			return st.DB.QueryRow(`SELECT thread_id FROM links WHERE channel = ? AND thread = ?`, tc.scope, th).Scan(&id) == nil
+		})
+		dir := filepath.Join(string(work), fmt.Sprint(int64(id)))
+		waitFor(t, "the agent of "+tc.text+" to be ready", func() bool { _, ok := reps[tc.adapter].of(dir); return ok })
+		for name, rep := range reps {
+			got, ok := rep.of(dir)
+			if name == tc.adapter {
+				if !ok || got != [2]string{tc.model, tc.effort} {
+					t.Errorf("%q: %s reports %v, ready %v; want %s/%s", tc.text, name, got, ok, tc.model, tc.effort)
+				}
+			} else if ok {
+				t.Errorf("%q: unexpected adapter %s ran", tc.text, name)
+			}
+		}
+	}
+}
