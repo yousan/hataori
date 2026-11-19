@@ -86,6 +86,9 @@ func newBrowser(t *testing.T) *browser {
 	}
 	cmd := exec.Command(chromePath(t), "--headless=new", "--no-sandbox", "--disable-gpu", "--no-first-run",
 		"--no-default-browser-check", "--disable-background-networking", "--disable-extensions",
+		// A throwaway profile needs no keychain; without these, macOS asks for one on the desktop
+		// each run when the test runs outside the graphical session.
+		"--use-mock-keychain", "--password-store=basic",
 		"--window-size=1400,900", "--user-data-dir="+dir, "--remote-debugging-port=0", "about:blank")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // the browser and its helpers, in one group
 	if err := cmd.Start(); err != nil {
@@ -307,7 +310,7 @@ func TestDashboardTreeAndStatusBar(t *testing.T) {
 	n1, n2, n3 := int64(ts["ask Proceed with the deploy?"].ID), int64(ts["reply done"].ID), int64(ts["tool long 10m"].ID)
 
 	b := newBrowser(t)
-	link, err := c.SignInLink(ctx)
+	link, err := c.SignInLink(ctx, "")
 	if err != nil {
 		t.Fatal(err)
 	}

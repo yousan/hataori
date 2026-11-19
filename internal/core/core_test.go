@@ -228,7 +228,7 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 		"Workspace":    func(a control.API) error { _, err := a.Workspace(ctx, id); return err },
 		// Every other operation is allowed to "other scope": only the
 		// socket's owner connection has OpSignIn.
-		"SignInLink":    func(a control.API) error { _, err := a.SignInLink(ctx); return err },
+		"SignInLink":    func(a control.API) error { _, err := a.SignInLink(ctx, ""); return err },
 		"Terminal":      func(a control.API) error { _, err := a.Terminal(ctx, id, "", 0); return err },
 		"HostTerminals": func(a control.API) error { _, err := a.HostTerminals(ctx); return err },
 		"HostScreen":    func(a control.API) error { _, err := a.HostScreen(ctx, "%0"); return err },
@@ -294,12 +294,40 @@ func TestWorkspaceOfAThread(t *testing.T) {
 	}
 }
 
-// fakeSignIn records the people it made links for.
-type fakeSignIn struct{ people *[]string }
+// fakeSignIn records the people it made links for, and the listeners.
+type fakeSignIn struct {
+	people *[]string
+	ways   *[]control.Way
+}
 
-func (f fakeSignIn) NewLink(_ context.Context, person string) (string, error) {
+func (f fakeSignIn) NewLink(_ context.Context, person string, way control.Way) (string, error) {
 	*f.people = append(*f.people, person)
+	if f.ways != nil {
+		*f.ways = append(*f.ways, way)
+	}
 	return "https://dash.example.com/signin?t=x", nil
+}
+
+// SignInLink passes the listener it is asked for to the dashboard, the
+// default as empty, and refuses a way that names no listener.
+func TestSignInLinkNamesItsListener(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{})
+	var made []string
+	var ways []control.Way
+	f.core.SignIn = fakeSignIn{&made, &ways}
+	socket := f.core.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all | control.OpSignIn})
+	for _, w := range []control.Way{"", control.WayLocal, control.WayWeb} {
+		if _, err := socket.SignInLink(ctx, w); err != nil {
+			t.Fatalf("%q: %v", w, err)
+		}
+	}
+	if _, err := socket.SignInLink(ctx, "lan"); err == nil || !strings.Contains(err.Error(), "is not a listener") {
+		t.Fatalf("an unknown way: %v", err)
+	}
+	if want := []control.Way{"", control.WayLocal, control.WayWeb}; !slices.Equal(ways, want) {
+		t.Fatalf("ways %q, want %q", ways, want)
+	}
 }
 
 // SignInLink needs OpSignIn, which a caller with every other operation,
@@ -308,19 +336,19 @@ func TestSignInLinkNeedsOpSignIn(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, fakeOwner{})
 	socket := f.core.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all | control.OpSignIn})
-	if _, err := socket.SignInLink(ctx); !errors.Is(err, ErrNoDashboard) {
+	if _, err := socket.SignInLink(ctx, ""); !errors.Is(err, ErrNoDashboard) {
 		t.Fatalf("without a dashboard: %v", err)
 	}
 	var made []string
-	f.core.SignIn = fakeSignIn{&made}
-	if link, err := socket.SignInLink(ctx); err != nil || link == "" || !slices.Equal(made, []string{"owner"}) {
+	f.core.SignIn = fakeSignIn{people: &made}
+	if link, err := socket.SignInLink(ctx, ""); err != nil || link == "" || !slices.Equal(made, []string{"owner"}) {
 		t.Fatalf("the socket's owner: %q, %v, links for %q", link, err, made)
 	}
 	for _, c := range []control.Caller{
 		{Principal: "owner", Scopes: []string{"s"}, May: all},
 		{Principal: "owner", Scopes: []string{"s"}, May: control.OpRead},
 	} {
-		if _, err := f.core.As(c).SignInLink(ctx); !errors.Is(err, ErrForbidden) {
+		if _, err := f.core.As(c).SignInLink(ctx, ""); !errors.Is(err, ErrForbidden) {
 			t.Errorf("caller %+v: %v", c, err)
 		}
 	}
@@ -336,11 +364,11 @@ func TestSignInLinkForAPersonInChat(t *testing.T) {
 	f.core.People = people.New([]people.Person{{Name: "ada", IDs: []string{"chat:111"}}, {Name: "grace", IDs: []string{"chat:333"}}},
 		"ada", map[string][]string{"s": {"grace"}})
 	var made []string
-	f.core.SignIn = fakeSignIn{&made}
+	f.core.SignIn = fakeSignIn{people: &made}
 	chat := func(from string) control.API {
 		return f.core.As(control.Caller{From: from, Principal: "ada", Scopes: []string{"s"}, May: all | control.OpSignIn})
 	}
-	if link, err := chat("chat:111").SignInLink(ctx); err != nil || link == "" || !slices.Equal(made, []string{"ada"}) {
+	if link, err := chat("chat:111").SignInLink(ctx, ""); err != nil || link == "" || !slices.Equal(made, []string{"ada"}) {
 		t.Fatalf("the owner in chat: %q, %v, links for %q", link, err, made)
 	}
 	for _, c := range []struct{ from, reason string }{
@@ -349,7 +377,7 @@ func TestSignInLinkForAPersonInChat(t *testing.T) {
 	} {
 		f.log.Reset()
 		made = nil
-		if _, err := chat(c.from).SignInLink(ctx); !errors.Is(err, ErrForbidden) {
+		if _, err := chat(c.from).SignInLink(ctx, ""); !errors.Is(err, ErrForbidden) {
 			t.Errorf("%s: %v", c.from, err)
 		}
 		if len(made) != 0 {

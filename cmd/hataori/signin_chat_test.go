@@ -71,7 +71,7 @@ func TestSignInLinkForAPersonInChat(t *testing.T) {
 	}
 	for _, from := range []string{"chat:999", "chat:333"} {
 		before := strings.Count(logged(), "\n")
-		if link, err := chat(from).SignInLink(ctx); !errors.Is(err, control.ErrForbidden) {
+		if link, err := chat(from).SignInLink(ctx, ""); !errors.Is(err, control.ErrForbidden) {
 			t.Fatalf("%s: %q, %v", from, link, err)
 		}
 		var refused []string
@@ -86,27 +86,19 @@ func TestSignInLinkForAPersonInChat(t *testing.T) {
 		}
 	}
 
-	link, err := chat("chat:111").SignInLink(ctx)
+	link, err := chat("chat:111").SignInLink(ctx, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	u, err := url.Parse(link)
-	token := u.Query().Get("t")
+	fragment, _ := url.ParseQuery(u.Fragment)
+	token := fragment.Get("t")
 	if err != nil || len(token) < 32 {
 		t.Fatalf("link %q", link)
 	}
-	hc := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	resp, err := hc.Get(link)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusSeeOther || len(resp.Cookies()) != 1 {
-		t.Fatalf("sign-in: %s", resp.Status)
-	}
-	cookie := resp.Cookies()[0]
-	if resp, err := hc.Get(link); err != nil || resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("the link a second time: %v %v", resp, err)
+	cookie := openLink(t, link)
+	if code, _, s := tryLink(t, &http.Client{}, link); code != http.StatusUnauthorized || s != "" {
+		t.Fatalf("the link a second time: %d", code)
 	}
 	base := link[:strings.Index(link, "/signin")]
 	eventually(t, "both threads in the owner's session", 10*time.Second, func() bool {

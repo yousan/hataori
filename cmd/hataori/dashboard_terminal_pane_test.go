@@ -62,7 +62,7 @@ func newPaneRig(t *testing.T, root string, input string, settled func(control.Th
 	b.call("Network.enable", map[string]any{})
 	b.call("Page.addScriptToEvaluateOnNewDocument", map[string]any{"source": `window.__csp = [];
 		document.addEventListener('securitypolicyviolation', e => window.__csp.push(e.violatedDirective + ' ' + e.blockedURI + ' ' + (e.sample || '')));`})
-	link, err := c.SignInLink(ctx)
+	link, err := c.SignInLink(ctx, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestDashboardTerminalPaneIsReadOnly(t *testing.T) {
 	// Every request of the page: a GET or HEAD of its own routes, with no
 	// body, and nothing typed in its address.
 	page, _ := url.Parse(r.base)
-	routes := []string{"/", "/signin", "/favicon.ico", "/api/threads", "/api/thread", "/api/events", "/api/terminal", "/api/limits", "/api/workspace", "/api/hostterminals", "/api/hostscreen"}
+	routes := []string{"/", "/signin", "/api/session", "/favicon.ico", "/api/threads", "/api/thread", "/api/events", "/api/terminal", "/api/limits", "/api/workspace", "/api/hostterminals", "/api/hostscreen"}
 	requests := 0
 	for _, e := range b.events {
 		switch e.Method {
@@ -207,7 +207,8 @@ func TestDashboardTerminalPaneIsReadOnly(t *testing.T) {
 			}
 			// Nothing can ride in the address or a header: each route takes
 			// only its own parameters, with this thread's id or a number,
-			// and the headers are those a browser sends by itself.
+			// and the headers are those a browser sends by itself, and the
+			// session, which is the server's own token. No cookie.
 			number := regexp.MustCompile(`^[0-9]+$`)
 			for name, vs := range u.Query() {
 				allowed := map[string][]string{"/api/thread": {"thread", "recent", "events"},
@@ -228,9 +229,16 @@ func TestDashboardTerminalPaneIsReadOnly(t *testing.T) {
 				}
 			}
 			browserHeaders := []string{"accept", "accept-encoding", "accept-language", "cache-control", "pragma", "user-agent",
-				"upgrade-insecure-requests", "referer", "origin", "last-event-id", "cookie", "range", "if-none-match", "if-modified-since", "priority"}
+				"upgrade-insecure-requests", "referer", "origin", "last-event-id", "range", "if-none-match", "if-modified-since", "priority"}
 			for h, v := range q.Headers {
 				h = strings.ToLower(h)
+				if h == "authorization" {
+					if !regexp.MustCompile(`^Bearer [A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$`).MatchString(v) &&
+						!(u.Path == "/api/session" && regexp.MustCompile(`^Link [A-Za-z0-9_-]+$`).MatchString(v)) {
+						t.Fatalf("a request's Authorization is %q", v)
+					}
+					continue
+				}
 				if strings.HasPrefix(h, "sec-") || slices.Contains(browserHeaders, h) {
 					if h == "last-event-id" && !regexp.MustCompile(`^[0-9]+(:[0-9a-f]*)?$`).MatchString(v) {
 						t.Fatalf("a request's Last-Event-ID is %q", v)

@@ -532,11 +532,13 @@ Appendix D lists the new operations and fields as a proposal. Each is a minor pr
 The rules for every way:
 
 - **Listeners.** The loopback listener (way 2 and a browser on the host) and the web listener (way 3) are configured apart: `dashboard.listen`, which must be loopback, and `dashboard.web`, with its address, the name people open, and TLS of its own or a reverse proxy in front. Either may be left out. A config in today's form, one listener, keeps meaning what it means: with TLS or a proxy it is the web listener, otherwise the loopback listener, and the daemon logs one line saying the config uses the old form. The native window's socket comes with the native window.
-- No route answers without a session, including the event stream and the terminal streams, except the sign-in routes: opening a link, and the passkey sign-in ceremony. On the native window's socket the connection is the session.
+- No route answers without a session, including the event stream and the terminal streams, except the sign-in routes (opening a link, and the passkey sign-in ceremony) and the page's own files, which hold no data: the page reads its session from its own storage once it runs. On the native window's socket the connection is the session.
 - A sign-in link is short-lived and single-use, and the session it opens belongs to the person who got it (through `SignInLink`, Appendix D): today the owner only, from `hataori signin` on the host or, with the "people in chat" phase, from chat (section 10). A link and the session it opens belong to one listener. `hataori signin` makes a link for the loopback listener, `hataori signin --web` one for the web listener, and a link asked for in chat is for the web listener when there is one. A link or a session presented on the other listener is refused.
+- A session lasts seven days on the loopback listener and twelve hours on the web listener (the maintainer, 2026-11-19). On loopback the person reached the host by SSH as the instance's user, or is on the host, which is already the proof, and signing in again every twelve hours is the chore `hataori connect` is there to avoid.
 - A person sees a thread only if their `Caller` includes its scope. The channel decides who can read a thread in chat, and the dashboard must not widen that.
 - The server checks `Host` and `Origin` on every request, so a web page elsewhere cannot reach it through the person's browser. On the web listener the `Host` must be its configured name. On the loopback listener it may be `localhost`, `127.0.0.1` or `[::1]` with any port, since a forwarded port need not have the same number as the daemon's. An `Origin`, when sent, must be exactly the listener's scheme, the request's host and its port: on the web listener the configured address, on the loopback listener `http://` and the request's `Host`. A page under another name that resolves to loopback still sends its own name, and is refused.
-- **No session cookie.** A browser sends a cookie to every port of the host that set it, so a service that someone else runs on another port of the same machine, or of the web listener's name, would receive the session whenever the person's browser was led there. A session is therefore a token that the page keeps in its own origin's storage, which browsers keep apart by scheme, host and port, and sends in a header with each request. The page reads its event and terminal streams with `fetch` instead of `EventSource`, which cannot send a header, so the streams carry it too; the operate WebSocket gets it in its first message, before which the server accepts nothing on it. The token never goes into an address, since a reverse proxy's access log keeps addresses. Opening a link hands the page its session without leaving the token in an address kept in the browser's history. Two instances forwarded to two ports of one machine keep their sessions apart for the same reason. Since a script in the page could read the token, the page keeps its strict content security policy: no script runs but its own.
+- **No session cookie.** A browser sends a cookie to every port of the host that set it, so a service that someone else runs on another port of the same machine, or of the web listener's name, would receive the session whenever the person's browser was led there. A session is therefore a token that the page keeps in its own origin's storage, which browsers keep apart by scheme, host and port, and sends in a header with each request. The page reads its event and terminal streams with `fetch` instead of `EventSource`, which cannot send a header, so the streams carry it too; the operate WebSocket gets it in its first message, before which the server accepts nothing on it. The token never goes into an address, since a reverse proxy's access log keeps addresses. A link's token is in its address's fragment, which no server and no preview crawler sees: the page takes it out of the address and trades it for the session with a request of its own, so a chat app that fetches the link for a preview uses nothing up, and the session is in no address. Two instances forwarded to two ports of one machine keep their sessions apart for the same reason. Since a script in the page could read the token, the page keeps its strict content security policy: no script runs but its own.
+- The loopback listener refuses a request that came through a reverse proxy (`Forwarded`, `X-Forwarded-*`, `X-Real-IP`, `Via`): SSH adds none, and a proxy that rewrote the `Host` to a loopback name would otherwise open it to whoever the proxy serves.
 - Only `GET` and `HEAD` are served, except on a fixed list of routes: those of passkeys and the operate connection (below). A request to one of them, the WebSocket handshake included, must carry an `Origin` that matches as above; a missing `Origin`, or `null`, is refused.
 
 **Over SSH without a chore.** Opening SSH by hand every time is not acceptable. `hataori connect [user@]host`, on the person's machine (Linux or macOS; the same binary), does it all:
@@ -1202,7 +1204,7 @@ type API interface {
 	// its last ones when before is 0: at most n of them (and at most
 	// MaxEvents), newest last, as Thread returns them. Asking again before
 	// the oldest one returned reads the thread's log back to its start; an
-	// empty result is the start. Since protocol 3.1.
+	// empty result is the start. Since protocol 3.3.
 	ThreadEvents(ctx context.Context, id ThreadID, before uint64, n int) ([]Event, error)
 
 	Start(ctx context.Context, r StartRequest) (ThreadID, error)
@@ -1247,8 +1249,12 @@ type API interface {
 	// the dashboard's caller never has it. Who may get a link is one rule in the core, today the
 	// owner only (section 10); a guest and anyone else are refused and
 	// logged with the client and the id. The token is never logged or
-	// stored as an event. Since protocol 1.7; for a chat caller since 1.11.
-	SignInLink(ctx context.Context) (string, error)
+	// stored as an event. way names the dashboard's listener the link is
+	// for, and the session it opens works only there: WayLocal, WayWeb, or
+	// empty for the loopback listener when the instance has one and the web
+	// listener otherwise (section 7.2). Since protocol 1.7; for a chat
+	// caller since 1.11; way since 3.2.
+	SignInLink(ctx context.Context, way Way) (string, error)
 
 	// Workspace reads the state of a thread's workspace and changes nothing.
 	// It is the check of section 4.6 as numbers, answering from the
@@ -1292,6 +1298,15 @@ type API interface {
 
 // Attachment: Socket is the session host's socket path, Number the
 // thread's number.
+
+// Way is one of the dashboard's listeners (section 7.2), "local" or "web"
+// on the wire.
+type Way string
+
+const (
+	WayLocal Way = "local" // the loopback listener: the host, and ports forwarded to it over SSH
+	WayWeb   Way = "web"   // the web listener, over HTTPS
+)
 
 // AgentLimits: At is when the report was made, Every how often the
 // agent's sessions report while one runs. Older than Every, a report is
@@ -1472,7 +1487,7 @@ type API interface {
 	// HostTerminals, HostScreen: declared above, since protocol 1.10 (#199),
 	// with OpHost.
 
-	// ThreadEvents: declared above, since protocol 3.1 (#336), for the
+	// ThreadEvents: declared above, since protocol 3.3 (#336), for the
 	// dashboard's Conversation view.
 
 	// SignInLink: declared above, since protocol 1.7 (#200); for a chat
@@ -1482,12 +1497,8 @@ type API interface {
 	// OpRead only, OpHost for the owner when host terminals are on, and
 	// OpHostInput for the owner when host input is on.
 
-	// SignInLink gains the listener the link is for (section 7.2). A call
-	// without one gets the loopback listener's link when the instance has
-	// that listener, and the web listener's otherwise, so today's clients
-	// are unchanged. A chat front end asks for WayWeb when there is a web
-	// listener.
-	SignInLink(ctx context.Context, way Way) (string, error)
+	// SignInLink's way: declared above, since protocol 3.2 (#359). A chat
+	// front end asks for WayWeb when there is a web listener (#259).
 
 	// OperateHost lets the caller type into one tmux pane on the host that
 	// no session host owns, by HostTerminals' TmuxPane.Pane (section 7.2).
@@ -1500,9 +1511,7 @@ type API interface {
 	OperateHost(ctx context.Context, pane string) (HostOperation, error)
 }
 
-// Way is one of the dashboard's listeners: WayLocal, the loopback
-// listener, or WayWeb.
-type Way int
+// Way: declared above, with SignInLink.
 
 // HostOperation is one pane being operated. It ends when ctx ends, when
 // End is called, when no key came for Idle, when the pane goes or comes
@@ -1552,8 +1561,8 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `ThreadInfo.title` left out for `Caller.NoText` (#236) | major: a required field becomes optional; 2.0 |
 | `AttachTerminal`, with `Ops` gaining `OpAttach` (#253) | minor: new operation; 2.1 |
 | `hello.token`, and `principal` and `from` in the `input` and `answer` events (#269) | minor: new optional fields; 2.2 |
-| `ThreadEvents` (#336) | minor: new operation; 3.1 |
-| `SignInLink`'s `way` (section 7.2) | minor: new optional argument |
+| `SignInLink`'s `way` (section 7.2, #359) | minor: new optional argument; 3.2 |
+| `ThreadEvents` (#336) | minor: new operation; 3.3 |
 | `OperateHost`, with `Ops` gaining `OpHostInput` (section 7.2) | minor: new operation, whose connection becomes a stream both ways |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 
@@ -1834,7 +1843,7 @@ Every phase here also has this criterion: the change touches no core package, ex
 
 ### Dashboard, read-only
 
-- [ ] Without a signed-in session every route but the sign-in routes, including the event stream and the terminal streams, answers 401. A request with an unknown `Host` or a foreign `Origin` is refused. With a listening address other than loopback and neither TLS nor a named reverse proxy, the dashboard does not start.
+- [ ] Without a signed-in session every route but the sign-in routes and the page's own files, including the event stream and the terminal streams, answers 401. A request with an unknown `Host` or a foreign `Origin` is refused. With a listening address other than loopback and neither TLS nor a named reverse proxy, the dashboard does not start.
 - [ ] Each thread in the user's scopes is in the tree and in the "All threads" table, and its state and last output follow the events within 2 seconds. A thread outside those scopes is never sent to the browser.
 - [ ] After a daemon restart the open page catches up with no gap and no repeat (the end-to-end test with a fake agent).
 - [ ] Every request that is not a read is refused, except on the routes of passkeys and the operate connection (section 7.2), and no byte from the page reaches a thread's terminal.

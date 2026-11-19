@@ -151,7 +151,7 @@ func TestDashboardConversation(t *testing.T) {
 	b.call("Network.enable", map[string]any{})
 	b.call("Page.addScriptToEvaluateOnNewDocument", map[string]any{"source": `window.__csp = [];
 		document.addEventListener('securitypolicyviolation', e => window.__csp.push(e.violatedDirective + ' ' + e.blockedURI));`})
-	link, err := c.SignInLink(ctx)
+	link, err := c.SignInLink(ctx, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +346,7 @@ func TestDashboardConversationLongThread(t *testing.T) {
 	}
 
 	b := newBrowser(t)
-	link, err := c.SignInLink(ctx)
+	link, err := c.SignInLink(ctx, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -462,7 +462,7 @@ func TestDashboardConversationSkipsWhatItDoesNotShow(t *testing.T) {
 		t.Fatalf("only %d events", n)
 	}
 	b := newBrowser(t)
-	link, err := c.SignInLink(ctx)
+	link, err := c.SignInLink(ctx, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -507,7 +507,7 @@ func TestDashboardConversationWithheld(t *testing.T) {
 	})
 
 	b := newBrowser(t)
-	link, err := c.SignInLink(ctx)
+	link, err := c.SignInLink(ctx, "")
 	if err != nil {
 		t.Fatal(err)
 	}

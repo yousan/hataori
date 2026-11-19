@@ -17,7 +17,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.1**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.3**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -123,7 +123,7 @@ Result: `ThreadDetail`
 
 ### Operation `ThreadEvents`
 
-One thread's events before a position, newest last, each as `Events` delivers it and as `Thread` returns them, with text left out for a caller that may not read it. Asking again before the oldest event returned reads the thread's log back to its start; an empty result is the start. Since 3.1.
+One thread's events before a position, newest last, each as `Events` delivers it and as `Thread` returns them, with text left out for a caller that may not read it. Asking again before the oldest event returned reads the thread's log back to its start; an empty result is the start. Since 3.3.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -234,8 +234,11 @@ Makes a link that signs a person in to the instance's dashboard. The link works 
 
 On this socket the link is the owner's, for a connection without a token; a connection with a token is refused unless its caller may sign in, which a supervisor's may not. Since 1.11 a chat front end inside the daemon may also ask, for the person who asked in chat: the daemon resolves the author's id to a person and makes the link only for a person who may sign in, which is the owner alone in this version. A guest, and a person who may not sign in, are refused with `forbidden` and get no link. The dashboard's own client is always refused. An instance without a dashboard answers with `error`. The link and its token are not written to the event log or to any log.
 
+Since 3.2 the request may name the dashboard's listener the link is for: `local`, the loopback listener (a browser on the host, or one on another machine through a port forwarded over SSH), or `web`, the web listener, over HTTPS. Without it the link is for the loopback listener when the instance has one, and for the web listener otherwise, which is what a link was before. A listener the instance does not have, and a value that names no listener, answer with `error`. A link signs in only on its listener, and the session it opens works only there.
+
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
+| `way` | string | optional | the listener: `local` or `web`; since 3.2 |
 
 Result: string
 

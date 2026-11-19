@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -165,5 +168,47 @@ func TestDaemonAsksTheClient(t *testing.T) {
 	// And the other way: an operation the daemon does not know.
 	if err := c.call(ctx, "Unheard", nil, nil); !errors.Is(err, ErrNotSupported) {
 		t.Fatalf("an operation the daemon does not know: %v", err)
+	}
+}
+
+// A sign-in link for one listener is asked for only of a daemon that knows
+// listeners (3.2): an older one would ignore the field and answer with its
+// one listener's link, whichever that is. Without a way, any 3.x daemon is
+// asked.
+func TestWayNeeds32(t *testing.T) {
+	var mu sync.Mutex
+	var asked []string
+	answer := func(m message) []string {
+		mu.Lock()
+		asked = append(asked, string(m.Args))
+		mu.Unlock()
+		return []string{fmt.Sprintf(`{"id":%d,"result":"http://127.0.0.1:7466/signin?t=x"}`, m.ID)}
+	}
+	old, err := dialPath(fakeDaemon(t, "3.0", answer), Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer old.Close()
+	ctx := context.Background()
+	for _, way := range []control.Way{control.WayWeb, control.WayLocal} {
+		if link, err := old.SignInLink(ctx, way); err == nil || !strings.Contains(err.Error(), "3.0") || !strings.Contains(err.Error(), "3.2") {
+			t.Fatalf("%s from a 3.0 daemon: %q, %v", way, link, err)
+		}
+	}
+	if link, err := old.SignInLink(ctx, ""); err != nil || link == "" {
+		t.Fatalf("the default from a 3.0 daemon: %q, %v", link, err)
+	}
+	current, err := dialPath(fakeDaemon(t, "3.2", answer), Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer current.Close()
+	if _, err := current.SignInLink(ctx, control.WayWeb); err != nil {
+		t.Fatalf("web from a 3.2 daemon: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if want := []string{`{}`, `{"way":"web"}`}; !reflect.DeepEqual(asked, want) {
+		t.Fatalf("asked %q, want %q", asked, want)
 	}
 }
