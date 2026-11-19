@@ -1,7 +1,3 @@
-// Package codex holds what hataori reads from Codex's app-server. The
-// adapter itself comes with the Codex phase (design, section 8); this file
-// is the part of it that reads the remaining usage
-// (docs/notes/agent-usage-limits.md).
 package codex
 
 import (

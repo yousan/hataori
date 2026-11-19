@@ -650,8 +650,8 @@ The rules for every way:
 **Over SSH without a chore.** Opening SSH by hand every time is not acceptable. `hataori connect [user@]host`, on the person's machine (Linux or macOS; the same binary), does it all:
 
 - It runs the system's `ssh`, so the person's keys, agent and config apply. hataori stores no SSH key, and sets nothing beyond the forward and the connection sharing below.
-- It opens one connection, shared through OpenSSH's control socket in a directory only the person can open. Through it it runs `hataori signin` on the host, forwards a local loopback port to the loopback address the link names, and opens the browser at the link with the port changed to the local one. The person authenticates once. The link is written to no file and no log. It does reach the browser through the system's launcher (`open`, `xdg-open`), whose command line other users of the same machine can read while it runs; the link is short-lived and works once, and a link someone else used first shows the person "already used" instead of signing in, so a theft is seen. On a machine shared with people one does not trust, the native window is the way.
-- It keeps running and keeps the connection alive. When the connection drops it reconnects with a backoff, on the same local port, and an open page resumes as after any reconnect: no gap, no repeat.
+- It opens one connection, shared through OpenSSH's control socket in a directory only the person can open. Through it it runs `hataori signin` on the host and forwards a socket in that directory to the loopback address the link names. It listens on a local port on `127.0.0.1` for its whole run and passes each connection on to that socket, and opens the browser at the link on `http://127.0.0.1:<local port>`. Holding the port means nobody else can take it while the connection is down, and `127.0.0.1` rather than `localhost`, which may resolve to `::1`, where it does not listen. The person authenticates once. The link is written to no file and no log. It does reach the browser through the system's launcher (`open`, `xdg-open`), whose command line other users of the same machine can read while it runs; the link is short-lived and works once, and a link someone else used first shows the person "already used" instead of signing in, so a theft is seen. On a machine shared with people one does not trust, the native window is the way.
+- It keeps running and keeps the connection alive. When the connection drops it reconnects with a backoff, asks the host for the dashboard's address again, and an open page resumes on the same local port as after any reconnect: no gap, no repeat.
 - It remembers `user@host`, the instance root on the host (`--root`) and the local port, so next time `hataori connect` alone is enough. Run again while one runs for the same host, it has the running one fetch a fresh link and open it: that is how one signs in again after the session ended.
 - `--hataori <path>` names the binary on the host for a non-interactive SSH session whose `PATH` does not have it. A missing `ssh`, forwarding refused by the server, and a link that does not name a loopback address each stop it with a message that says which.
 - By hand it is `ssh -L 127.0.0.1:<port>:127.0.0.1:<dashboard port> user@host` (the local address given, so that the person's `GatewayPorts` cannot open the port to the network), `hataori signin` there, and the link with the port changed. The native window later does the same from a saved `user@host`, as editors' remote-SSH modes do.
@@ -1883,10 +1883,16 @@ type Message struct {
 
 type Adapter interface {
 	// Probe reports whether the agent is installed and logged in.
+	// The Codex adapter runs `codex --version` and reads the exit status of `codex login status`.
 	Probe(ctx context.Context) (Health, error)
 
 	// Launch returns how to start the agent for spec: a new session,
 	// or a resumed one when spec.ResumeID is set.
+	// The Codex adapter runs `codex app-server` on pipes, with no files,
+	// the fixed environment plus pass_env, and the workspace's trust level
+	// given with -c, so that Codex does not record it in the user's
+	// configuration; a resumed session gets the same command (the codec
+	// sends thread/resume).
 	Launch(spec Spec) (Launch, error)
 
 	// NewCodec returns the translator for one running session.

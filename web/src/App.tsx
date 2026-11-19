@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { t } from "./catalog";
 import { useLayout } from "./layout";
+import { linkRefused } from "./session";
 import { useDashboard, useNow } from "./live";
 import { StatusBar } from "./StatusBar";
 import { TabBar, tabID } from "./TabBar";
@@ -157,9 +158,9 @@ export function App() {
     const loading = opened !== null && d.threads === null;
     return (
       <div className="shell narrow" data-layout="narrow">
-        {d.signedOut && (
+        {(d.signedOut || linkRefused()) && (
           <p className="signed-out" role="alert">
-            {t("app.signedOut")}
+            {t(linkRefused() ? "app.linkUsed" : "app.signedOut")}
           </p>
         )}
         <div className="narrow-body">
@@ -197,9 +198,9 @@ export function App() {
 
   return (
     <div className="shell" data-layout="wide">
-      {d.signedOut && (
+      {(d.signedOut || linkRefused()) && (
         <p className="signed-out" role="alert">
-          {t("app.signedOut")}
+          {t(linkRefused() ? "app.linkUsed" : "app.signedOut")}
         </p>
       )}
       <div className="body">

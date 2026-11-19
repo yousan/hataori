@@ -72,7 +72,7 @@ A complete example for one Discord channel and Claude Code, with the owner, one 
 | `login_relay` | boolean | `true` | When turns fail because the agent is logged out, the owner gets one direct message about it. With `true`, hataori also runs the agent's login command, sends the owner the sign-in link, and passes the code the owner replies with back to it. `false` keeps the alert and switches the relay off. |
 | `scopes` | array | empty | The channels hataori serves, one object each (below). A channel that is not listed, or not enabled, starts nothing. |
 | `drivers` | object | empty | One section per chat surface, by name. This binary has one: `discord` (below). A name it does not have is refused at start. |
-| `adapters` | object | empty | One section per coding agent, by name. This binary has one: `claude-code` (below). Exactly one adapter must be named. |
+| `adapters` | object | empty | One section per coding agent, by name. This binary has two: `claude-code` and `codex` (below). Exactly one adapter must be named. |
 | `terminal_size` | object | absent | The size of the terminal an agent session runs in, for an agent that runs in one (Claude Code): `{"cols": 200, "rows": 50}`. Give both keys: `cols` from 40 to 500 and `rows` from 10 to 200; anything else is refused at start. Each session the daemon starts or resumes takes it, so a change applies to a thread's next session; a running session keeps its size. Without this key a session's terminal is 80 columns by 24 rows. |
 | `host_terminals` | boolean | `false` | With `true`, the owner may list the terminals on the host that hataori does not own (tmux panes and other terminals) and read the screens of the panes of the default tmux server, for display only, through the control API's `HostTerminals` and `HostScreen`. hataori never sends these terminals anything. With `false`, both are refused for everyone. |
 | `dashboard` | object | absent | The web dashboard (below). Without this section the daemon serves none. |
@@ -172,6 +172,21 @@ The section may be empty (`{}`).
 
 Unknown keys are refused.
 
+### `adapters.codex`
+
+The section may be empty (`{}`).
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `command` | string | `"codex"`, found on `PATH` | The Codex command to run. |
+| `pass_env` | array of strings | empty | Names of variables in the daemon's environment to pass to Codex besides the fixed list below, for example an API key it logs in with. |
+| `sandbox` | string | `"danger-full-access"` | Sandbox for every `thread/start` and `thread/resume`: `read-only`, `workspace-write`, or `danger-full-access`. |
+| `approval_policy` | string | `"never"` | Approval policy for every `thread/start` and `thread/resume`: `untrusted`, `on-request`, or `never`. |
+
+Unknown keys are refused. The defaults, like Claude Code's today, never ask for approval and allow commands to write anywhere and use the network.
+
+Codex writes session files (rollouts) under `sessions/` and caches under `CODEX_HOME` (`~/.codex` by default), as for any thread. Codex would also record the workspace's trust in `config.toml`; hataori prevents that write by supplying `-c projects={...}` on the command line. Codex treats the workspace as a trusted project and reads the workspace's `.codex/` configuration, as it would after recording the trust itself. hataori never sets `CODEX_HOME`, runs a login, or writes the user's Codex configuration.
+
 ### `dashboard`
 
 The web dashboard ([design, section 7.2](design/overview.md#72-dashboard)). It serves the page, the thread list, one thread, the event stream, each session's live terminal and, with `host_terminals` on, the screens of tmux panes, read-only, to a signed-in session. It has up to two listeners, one for each way of reaching it, and each knows who is at the other end in its own way:
@@ -205,6 +220,26 @@ There is no session cookie: a browser sends a cookie to every port of its host, 
 A link's token is in the part after `#`, which a browser does not send: the page trades it for the session with a request of its own. So a chat app or a link checker that fetches the link, for a preview, uses nothing up.
 
 The loopback listener refuses a request that came through a reverse proxy (one that carries `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Real-IP` or `Via`): put a proxy in front of the web listener instead.
+
+**On another machine, over SSH, with `hataori connect`.** On your machine (Linux or macOS), run
+
+```sh
+hataori connect user@host --root /path/to/the/instance
+```
+
+It uses your `ssh`, with your keys, agent and SSH config, and asks for a password or passphrase as `ssh` would, once per connection. It opens one shared SSH connection, runs `hataori signin` on the host through it, listens on a local port on `127.0.0.1` and passes each connection to it through SSH to the dashboard's loopback listener, and opens your browser at the link on `http://127.0.0.1:<local port>`. Then it keeps running and keeps the connection up: when the connection drops, it connects again, and since it holds the local port the whole time, nobody else can take it in between, and an open page goes on by itself. Stop it with Ctrl-C. One `hataori connect` runs per host at a time.
+
+It remembers the host, the root, `--hataori` and the local port, so next time `hataori connect` alone is enough. Run it again while it runs for the same host to have the running one open a fresh sign-in link, for example after the session ended. It writes no SSH key and no SSH config, and keeps the hosts in `hataori/connect.json` in your configuration directory, readable by you only.
+
+| Flag | Meaning |
+|---|---|
+| `--root DIR` | The instance root on the host; without it, the host's `$HATAORI_ROOT` in a non-interactive SSH session, which is often unset. |
+| `--hataori PATH` | The `hataori` binary on the host, when a non-interactive SSH session's `PATH` does not have it. |
+| `--port N` | The local port. Without it: the one remembered for the host if it is free, else the dashboard's own number if that is free, else any free port. |
+
+The link is written to no file and no log, and passed to no process but your browser's launcher (`open` on macOS, `xdg-open` on Linux). While that launcher runs, other users of the same machine can read its command line, the link included. The link works once and only for a few minutes. If someone else uses it first, the page tells you the link was already used instead of signing you in: ask for a new one. On a machine you share with people you do not trust, wait for the native window.
+
+The host's sshd must allow forwarding (`AllowTcpForwarding`); `hataori connect` says so when it does not.
 
 **On another machine, over SSH, by hand.** Forward a local port to the loopback listener, with the local address given so that your `GatewayPorts` setting cannot open the port to the network:
 
@@ -301,6 +336,8 @@ hataori reads these:
 
 Claude Code does not inherit the daemon's whole environment. It gets only `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`, `TMPDIR`, `XDG_RUNTIME_DIR`, `XDG_CONFIG_HOME`, `CLAUDE_CONFIG_DIR`, the variables named in `pass_env`, and `TERM=xterm-256color`.
 
+Codex gets only `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`, `TMPDIR`, `XDG_RUNTIME_DIR`, `XDG_CONFIG_HOME`, `CODEX_HOME`, and variables named in `pass_env`, when present.
+
 `git` gets the daemon's environment without the variables that would point it at another repository (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_NAMESPACE`, `GIT_CEILING_DIRECTORIES`), and with `GIT_TERMINAL_PROMPT=0`: a clone that would ask for a password fails instead. Credentials for private repositories must work without a prompt, for example through an SSH key or a credential helper.
 
 ## Commands and flags
@@ -315,6 +352,7 @@ hataori attach  [--root DIR] NUMBER
 hataori close   [--root DIR] NUMBER
 hataori remove  [--root DIR] NUMBER
 hataori signin  [--root DIR] [--web]
+hataori connect [[user@]host] [--root DIR] [--hataori PATH] [--port N]
 hataori version
 ```
 
@@ -329,6 +367,7 @@ hataori version
 | `close NUMBER` | Ends the agent process of an idle, asleep or failed thread and closes the thread; its workspace stays. A message in a closed thread starts nothing and gets one line saying the thread is closed. A thread with a turn running, a question open, or background tasks left running by its last turn is refused: stop it first. Prints `{"thread", "scope", "state": "closed"}`. |
 | `remove NUMBER` | Moves the workspace of a closed thread into `<root>/trash/`, only when nothing in it would be lost (see `cleanup` above), and the thread becomes `removed`. Otherwise it changes nothing, prints the reason on standard error and exits with 1. Prints `{"thread", "scope", "state": "removed"}`. |
 | `signin` | Prints `{"link": ...}`: a link that signs the owner in to the dashboard's loopback listener, or with `--web` its web listener, once, within five minutes. Fails when the config has no `dashboard`, or when it has no such listener. |
+| `connect` | Runs on your own machine, not on the host: the dashboard of the instance on `host`, over SSH, until stopped (see "On another machine, over SSH, with `hataori connect`" above). Without a host, the one it connected to last. |
 | `version` | Prints the version. |
 
 | Flag | Default | Meaning |

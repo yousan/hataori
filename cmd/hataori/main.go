@@ -12,6 +12,9 @@
 //	hataori remove [--root DIR] NUMBER          move a closed thread's workspace into trash, if nothing would be lost
 //	hataori signin [--root DIR] [--web]         a single-use dashboard sign-in link, for the
 //	                                            loopback listener or, with --web, the web listener
+//	hataori connect [[user@]host] [--root DIR] [--hataori PATH] [--port N]
+//	                                            on the person's machine: the dashboard of
+//	                                            the instance on host, over SSH, until stopped
 //	hataori mcp [--root DIR] --scope SCOPE [--output-max BYTES]
 //	                                            the supervisor's MCP server on stdio;
 //	                                            its token is $HATAORI_TOKEN
@@ -41,6 +44,7 @@ import (
 
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/agent/claudecode"
+	"github.com/yousan/hataori/internal/agent/codex"
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/relay"
@@ -62,6 +66,9 @@ func init() {
 	if err := agent.Register(claudecode.Name, claudecode.New); err != nil {
 		panic(err)
 	}
+	if err := agent.Register(codex.Name, codex.New); err != nil {
+		panic(err)
+	}
 	if err := surface.Register(discord.Name, discord.New); err != nil {
 		panic(err)
 	}
@@ -77,7 +84,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return runCtx(context.Background(), args, stdout, stderr)
 }
 
-const usage = "usage: hataori run|threads|thread NUMBER|events [--after N] [--follow]|stop NUMBER|attach NUMBER|close NUMBER|remove NUMBER|signin [--web] [--root DIR] | hataori mcp --scope SCOPE [--root DIR] [--output-max BYTES] | hataori version | hataori host <state-dir> | hataori hook [--wait] [--timeout DURATION] | hataori statusline --last FILE [--run COMMAND]"
+const usage = "usage: hataori run|threads|thread NUMBER|events [--after N] [--follow]|stop NUMBER|attach NUMBER|close NUMBER|remove NUMBER|signin [--web] [--root DIR] | hataori connect [[user@]host] [--root DIR] [--hataori PATH] [--port N] | hataori mcp --scope SCOPE [--root DIR] [--output-max BYTES] | hataori version | hataori host <state-dir> | hataori hook [--wait] [--timeout DURATION] | hataori statusline --last FILE [--run COMMAND]"
 
 func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -105,6 +112,13 @@ func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return host.HookMain(args[1:], os.Stdin, stdout, stderr, os.Getenv)
 	case "mcp":
 		return mcpMain(ctx, args[1:], os.Stdin, stdout, stderr, os.Getenv)
+	case "connect":
+		env, err := machineEnv()
+		if err != nil {
+			fmt.Fprintln(stderr, "hataori connect:", err)
+			return exitError
+		}
+		return connectMain(ctx, args[1:], stderr, env)
 	case "statusline":
 		return claudecode.StatusLineMain(args[1:], os.Stdin, stdout, stderr, os.Getenv)
 	case "run", "threads", "thread", "events", "stop", "attach", "close", "remove", "signin":
