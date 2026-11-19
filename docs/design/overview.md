@@ -662,13 +662,15 @@ It has the criterion of the later phases below, with three additions that the da
 
 ### After phase 1
 
-The order below is a recommendation (section 10). Each later phase also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter; the supervisor phase may also let the control socket bind a connection to a limited `Caller` (which plugins use too, section 7.3) and let a session be started confined (no shell, only the listed tools, section 7.1); the plugin phase may also add hook points. Appendix E has the acceptance criteria of each.
+The order below was decided by the maintainer (section 10): Codex, people in chat and cleanup, the supervisor, plugins, then Slack and Teams. Each later phase also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter; the supervisor phase may also let the control socket bind a connection to a limited `Caller` (which plugins use too, section 7.3) and let a session be started confined (no shell, only the listed tools, section 7.1); the plugin phase may also add hook points. Appendix E has the acceptance criteria of each.
+
+**Codex.** The second agent adapter (section 3.4). It comes before the buttons of "people in chat", so it is built and tested with what phase 1 offers in chat. The adapter's code is written by Codex (`codex exec`), and reviewed and fixed by Claude.
 
 **People in chat, and cleanup.** Slash commands, buttons for questions, lamps, pings, attach by hand (`hataori attach`, the agent's terminal on the host), and removing workspaces behind the proof in section 4.6. This is what lets c-lord be switched off. The dashboard's sign-in link from chat comes with it. A second chat link (`/attach <number>`, section 5.2) is built with thread numbers (#215), not in this phase.
 
 **Supervisor.** Section 7.1.
 
-**Codex.** The second agent adapter (section 3.4).
+**Plugins.** Section 7.3. Right after the supervisor (section 10).
 
 **Slack.** Go has no official Slack SDK (official ones are for Java, JavaScript, Python and Deno). The adapter uses `github.com/slack-go/slack` (BSD-2-Clause, actively released; v0.36.0 on 2026-11-14), which Slack lists among community-developed tools, and its `socketmode` package. It covers Socket Mode, Block Kit buttons, `chat.update` (`UpdateMessageContext`), thread replies (`MsgOptionTS`) and the current file upload flow (`UploadFileContext`). Socket Mode needs no inbound endpoint. Catch-up (`Since`) reads `conversations.replies`, which allows 50+ requests per minute (Tier 3) for an app installed as an internal (customer-built) app and for a Marketplace app; a commercially distributed app outside the Marketplace gets 1 request per minute and 15 messages per request, which is too little for catch-up. hataori is therefore installed as an internal app in each workspace. `chat.update` is also Tier 3, so progress-line edits are paced. These facts come from Slack's documentation and the library's source (Appendix B, "Documentation read on 2026-11-18"); the library was not run.
 
@@ -687,8 +689,6 @@ The order below is a recommendation (section 10). Each later phase also has this
 
 Teams calls hataori at a public HTTPS address, which is a deployment decision. Teams also has a socket mode (public preview, new bots only, not recommended for production by Microsoft); from Go it needs the SignalR hub protocol written by hand, so hataori does not use it in this phase.
 
-**Plugins.** Section 7.3. Where this goes in the order is open (section 10).
-
 ## 9. Future work, not designed here
 
 **Surfaces without threads.** The core names a thread by its number and a link is opaque to it, so a surface with no native threads only needs a front end that makes the links' keys up. The intended rules: a reply to a hataori message continues that message's thread; any other message goes to the thread used last; `/new` starts one; every hataori message begins with the thread's name. If the bot cannot see what a message replies to, one chat is one thread. A surface whose threads expire (LINE OpenChat: 24 hours or two weeks) counts as having none.
@@ -697,7 +697,7 @@ Teams calls hataori at a public HTTPS address, which is a deployment decision. T
 
 ### Open
 
-1. **Where do plugins go in the order after phase 1?** *Recommendation:* right after the supervisor. The supervisor is the first program outside the daemon with a limited `Caller` that reads events from a position; plugins add the manifest, the grant and hooks on top of that.
+None.
 
 ### Decided
 
@@ -707,11 +707,12 @@ Teams calls hataori at a public HTTPS address, which is a deployment decision. T
 - **Claude Code is not driven through `claude -p`.** Decided by the maintainer; section 3.4. Live attach comes back with the terminal, so the earlier question about take-over between turns is closed.
 - **A message that arrives while a turn runs is delivered into the turn**; stopping is the explicit way to interrupt. On the Claude Code path it is held until the turn ends, until delivery during a turn has been checked (section 3.5).
 - **Permission requests are allowed automatically** by default, so unattended orders do not stall. "Ask in chat" becomes a per-channel setting with the buttons.
-- **Phase 1 is only the dispatched orders.** Nothing a person types into chat directly is in it. c-lord stays for hands-on threads until the next phase.
+- **Phase 1 is only the dispatched orders.** Nothing a person types into chat directly is in it. c-lord stays for hands-on threads until the phase "people in chat, and cleanup".
 - **Dropped:** the HTTP API (replaced by the `hataori` command, the control API and webhook triggers), scheduled tasks and notifications, docker container tracking, table images, the status board (replaced by the dashboard). Scheduled tasks come back first if they are missed.
 - **One bot identity per instance**, including a second host.
 - **The read-only dashboard starts now**, in parallel with the rest of phase 1 and the later phases (the maintainer, 2026-11-18). This replaces its earlier place in the order, after people in chat. Phase 1's acceptance does not wait for it. Section 8.
-- **Order after phase 1:** people in chat and cleanup, then the supervisor, then Codex, Slack, Teams.
+- **Order after phase 1:** Codex, then people in chat and cleanup, then the supervisor, then plugins, then Slack and Teams (the maintainer, 2026-11-19). Codex moves ahead of people in chat and the supervisor; this replaces the earlier order, people in chat and cleanup, the supervisor, Codex, Slack, Teams. Section 8.
+- **Plugins come right after the supervisor** (the maintainer, 2026-11-19; this was Open 1). The supervisor is the first program outside the daemon with a limited `Caller` that reads events from a position; plugins add the manifest, the grant and hooks on top of that. Section 7.3.
 - **The dashboard's layout** is a tree of threads and host terminals, tabs with up to three panes side by side, a details panel and a status bar; the same page becomes a list on a narrow screen (the maintainer, 2026-11-18). It also shows terminals on the host that hataori does not own, for the owner only and for display only; no state is inferred from them and no key is sent to them. Section 7.2.
 - **A supervisor has no shell:** control API tools and files in its own directory only.
 - **Dashboard sign-in is a single-use link**, owner-only at first. In the first version the operator prints it with a `hataori` command on the host; the link issued in chat comes with the "people in chat" phase (2026-11-18).
@@ -1548,6 +1549,14 @@ type Factory func(settings []byte) (Adapter, error)
 
 Every phase here also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter; the supervisor phase may also let the control socket bind a connection to a limited `Caller` (which plugins use too, section 7.3) and let a session be started confined (no shell, only the listed tools, section 7.1); the plugin phase may also add hook points.
 
+### Codex
+
+- [ ] A channel or thread can be set to Codex; start, continue, sleep and wake work as in phase 1.
+- [ ] Approvals and questions from Codex appear in the thread and can be answered.
+- [ ] After an interrupt, no command started by that turn is still running.
+- [ ] A turn of 30 minutes completes.
+- [ ] Captures of real `app-server` output are in `testdata/`, and the codec passes on them.
+
 ### People in chat, and cleanup
 
 - [ ] Slash commands start a thread, stop a turn and show status. A message, a command and a button press from a user who is not allowed each do nothing and are logged.
@@ -1573,14 +1582,6 @@ Every phase here also has this criterion: the change touches no core package, ex
 - [ ] Sending to a busy thread is refused. Interrupting happens only after a person approved that call.
 - [ ] Attempts by the supervisor's session to write outside its directory, to run a command, and to remove a workspace each fail (tested).
 - [ ] When the budget is used up no supervisor turn starts, and a person is told once. The loop guard stops a two-thread ping-pong at the set count.
-
-### Codex
-
-- [ ] A channel or thread can be set to Codex; start, continue, sleep and wake work as in phase 1.
-- [ ] Approvals and questions from Codex appear in the thread and can be answered.
-- [ ] After an interrupt, no command started by that turn is still running.
-- [ ] A turn of 30 minutes completes.
-- [ ] Captures of real `app-server` output are in `testdata/`, and the codec passes on them.
 
 ### Slack
 
