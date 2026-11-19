@@ -242,3 +242,60 @@ func TestLoopGuardTellsAtTheLastCycle(t *testing.T) {
 		t.Fatalf("%d loop notices, want 1", n)
 	}
 }
+
+// A person's message delivered into a turn the supervisor started is a
+// reset that takes that turn out of the count: the thread stops only after
+// three more cycles, not two (#454).
+func TestLoopGuardResetInsideATurn(t *testing.T) {
+	var (
+		mu    sync.Mutex
+		issue func(string) (string, error)
+	)
+	supervisorHook = func(i func(string) (string, error), _ func(string)) { mu.Lock(); issue = i; mu.Unlock() }
+	t.Cleanup(func() { supervisorHook = nil })
+	wt := newWakeTest(t, budget(0, 0, 0))
+	stop, owner, sv := wt.start(t)
+	defer stop()
+	ctx := context.Background()
+	w, pos := wt.worker(t, owner, "c1", "w", "reply w")
+	wt.read(t, pos)
+	wt.quiet(t)
+	wt.woken(t, owner, sv.ID, 1)
+	mu.Lock()
+	svc := svConn(t, wt.r.root, issue)
+	mu.Unlock()
+	ends := func() int { return len(threadEvents(t, owner, w, "turn_ended")) }
+	// round sends as the supervisor; with a person, a person's message goes
+	// into that turn while it runs. It returns once the wake of its end ended.
+	wakes := 1
+	round := func(i int, person bool) {
+		t.Helper()
+		n := ends()
+		text := fmt.Sprintf("reply round %d", i)
+		if person {
+			text = "tool wait 2s\n" + text
+		}
+		if err := svc.Send(ctx, w, fmt.Sprintf("sv-%d", i), control.Input{Text: text}, control.Refuse); err != nil {
+			t.Fatal(err)
+		}
+		if person {
+			eventually(t, "the supervisor's turn to run", 10*time.Second, func() bool {
+				return len(threadEvents(t, owner, w, "tool_started")) > 0
+			})
+			if err := owner.Send(ctx, w, fmt.Sprintf("person-%d", i), control.Input{Text: "a person looked"}, control.Deliver); err != nil {
+				t.Fatal(err)
+			}
+		}
+		eventually(t, fmt.Sprintf("round %d's turn end", i), 20*time.Second, func() bool { return ends() > n })
+		wt.settle(t, fmt.Sprintf("round %d's wake", i), func() bool { return len(wt.wakes(t, sv.ID)) > wakes })
+		wakes = len(wt.wakes(t, sv.ID))
+	}
+	round(1, true)
+	round(2, false)
+	round(3, false)
+	if got := wt.loopNotices(sv); len(got) != 0 {
+		t.Fatalf("a loop notice after a person's message and two cycles: %q", got)
+	}
+	round(4, false)
+	eventually(t, "the notice at the third cycle after the person's message", 10*time.Second, func() bool { return len(wt.loopNotices(sv)) == 1 })
+}

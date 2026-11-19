@@ -21,7 +21,9 @@ import (
 // section 7.1). A cycle on thread W is a turn of W started by the
 // supervisor's input, its end, and the supervisor's wake that told it: a
 // wake (a supervisor turn whose key starts with WakeKeyPrefix) that covers
-// such a turn end. Several such ends in one wake are one cycle.
+// such a turn end. Only a turn that started after the last reset counts,
+// so a person's message delivered into one takes it out. Several such ends
+// in one wake are one cycle.
 //
 // What a person does resets W's count: in W, an input or an answer from
 // anyone but the supervisor, or a turn typed at W's terminal; in a
@@ -200,9 +202,12 @@ func (g *LoopGuard) count(ctx context.Context, w control.ThreadID, svReset uint6
 	}
 	reset := max(uint64(inW), svReset)
 
-	// The ends of w's turns that the supervisor started, since the reset.
-	ends, err := positions(ctx, db, `SELECT pos FROM events WHERE thread_id = ? AND kind = 'turn_ended' AND pos > ?
-		AND json_extract(data, '$.from') = ? ORDER BY pos`, int64(w), int64(reset), from)
+	// The ends of w's turns that the supervisor started since the reset:
+	// started, not only ended, after it, so that a person's message
+	// delivered into such a turn takes that turn out of the count (#454).
+	// One pass over w's turn events since the reset, on its (thread, pos)
+	// index.
+	ends, err := supervisorEnds(ctx, db, w, reset, from)
 	if err != nil || len(ends) == 0 {
 		return 0, reset, err
 	}
@@ -239,19 +244,37 @@ func (g *LoopGuard) count(ctx context.Context, w control.ThreadID, svReset uint6
 	return len(told), reset, nil
 }
 
-func positions(ctx context.Context, db *sql.DB, q string, args ...any) ([]uint64, error) {
-	rows, err := db.QueryContext(ctx, q, args...)
+// supervisorEnds returns the positions of the turn ends of w after reset
+// whose turns the caller from started, and started after reset too.
+func supervisorEnds(ctx context.Context, db *sql.DB, w control.ThreadID, reset uint64, from string) ([]uint64, error) {
+	rows, err := db.QueryContext(ctx, `SELECT pos, kind, json_extract(data, '$.session'), json_extract(data, '$.turn'),
+		coalesce(json_extract(data, '$.from'), '') FROM events
+		WHERE thread_id = ? AND pos > ? AND kind IN ('turn_started', 'turn_ended') ORDER BY pos`, int64(w), int64(reset))
 	if err != nil {
 		return nil, fmt.Errorf("supervisor: loop guard: %w", err)
 	}
 	defer rows.Close()
+	started := map[turnRef]bool{}
 	var out []uint64
 	for rows.Next() {
-		var p int64
-		if err := rows.Scan(&p); err != nil {
+		var (
+			pos           int64
+			kind, by      string
+			session, turn sql.NullInt64
+		)
+		if err := rows.Scan(&pos, &kind, &session, &turn, &by); err != nil {
 			return nil, fmt.Errorf("supervisor: loop guard: %w", err)
 		}
-		out = append(out, uint64(p))
+		if !session.Valid || !turn.Valid {
+			continue // the schema has both; a row without them matches nothing
+		}
+		ref := turnRef{session.Int64, turn.Int64}
+		switch {
+		case kind == "turn_started":
+			started[ref] = true
+		case by == from && started[ref]:
+			out = append(out, uint64(pos))
+		}
 	}
 	return out, rows.Err()
 }
