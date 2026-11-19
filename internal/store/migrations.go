@@ -412,6 +412,26 @@ var migrations = []Migration{
 			PRIMARY KEY (client, channel, thread)
 		)`,
 	)},
+	// Who sent the input a chat front end gave the core under each key, as
+	// the front end saw it: the message that gets the turn's lamp, and the
+	// id to ping when the turn ends ('' for a webhook, which cannot be
+	// pinged). The service tells kinds of authors only when a message
+	// arrives, so they are kept here.
+	{Name: "chat: senders", Up: execAll(
+		`CREATE TABLE chat_senders (
+			client  TEXT NOT NULL, -- the chat front end's name
+			key     TEXT NOT NULL, -- the Start, Send or Answer key
+			lamp    TEXT NOT NULL, -- 'message': the message below; 'prompt': the thread's prompt; 'answer': a press, pinging the turn's caller
+			channel TEXT NOT NULL DEFAULT '',
+			thread  TEXT NOT NULL DEFAULT '',
+			message TEXT NOT NULL DEFAULT '',
+			ping    TEXT NOT NULL DEFAULT '', -- the service's id of the sender, '' for none
+			PRIMARY KEY (client, key)
+		)`,
+	)},
+	// One row per approval a limited caller asked for (AskInterrupt): shown
+	// and answered in the thread asks_in; state is open, refused,
+	// interrupted or ended.
 	{Name: "approvals", Up: execAll(
 		`CREATE TABLE approvals (id INTEGER PRIMARY KEY, handle TEXT NOT NULL UNIQUE, asks_in INTEGER NOT NULL REFERENCES threads(id), action TEXT NOT NULL, target INTEGER NOT NULL REFERENCES threads(id), session_id INTEGER NOT NULL, turn_id INTEGER NOT NULL, reason TEXT NOT NULL, marked TEXT NOT NULL, principal TEXT NOT NULL, from_id TEXT NOT NULL, ask_key TEXT, state TEXT NOT NULL, opened_at INTEGER NOT NULL, closed_at INTEGER, UNIQUE(asks_in, ask_key))`,
 	)},

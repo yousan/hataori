@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { type HostTerminal, type ScopeInfo, type State, states, type ThreadInfo } from "./api";
 import { hostID, hostMatches } from "./hostTerminals";
 import { t } from "./catalog";
-import { age, contextUse, displayTitle, fullTitle, mark, matches, stateName } from "./format";
+import { age, contextUse, displayTitle, fullTitle, mark, matches, scopeLabel, stateName } from "./format";
 import type { Attention } from "./live";
 import { type Show, shows } from "./show";
 import { hostNode, scopeNode, useFolds } from "./folds";
@@ -226,7 +226,7 @@ export function Tree(props: Props) {
   for (const s of scopes ?? []) lists.set(s.key, []);
   for (const x of all) if (!lists.has(x.scope)) lists.set(x.scope, []);
   for (const x of shown) lists.get(x.scope)!.push(x);
-  const label = (key: string) => scopes?.find((s) => s.key === key)?.name || key;
+  const label = (key: string) => scopeLabel(key, scopes);
   const nodes = [...lists]
     .filter(([, list]) => !filtering || list.length > 0)
     .map(([scope, list]) => ({ scope, label: label(scope), list: [...list].sort(newestFirst) }))

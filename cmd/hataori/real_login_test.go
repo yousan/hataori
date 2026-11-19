@@ -15,7 +15,7 @@ import (
 func TestRealCheckLeavesTheLoginAlone(t *testing.T) {
 	// The supervisor's check uses the phase 1 check's helpers, so it names
 	// the config directory nowhere itself.
-	for file, configDir := range map[string]int{"real_test.go": 1, "real_supervisor_test.go": 0} {
+	for file, configDir := range map[string]int{"real_test.go": 1, "real_supervisor_test.go": 0, "real_codex_test.go": 0} {
 		b, err := os.ReadFile(file)
 		if err != nil {
 			t.Fatal(err)
@@ -33,6 +33,14 @@ func TestRealCheckLeavesTheLoginAlone(t *testing.T) {
 		if n := strings.Count(string(b), "CLAUDE_CONFIG_DIR"); n != configDir ||
 			configDir > 0 && !strings.Contains(string(b), `dir := os.Getenv("CLAUDE_CONFIG_DIR")`) {
 			t.Errorf("%s names the config directory %d times; want %d, read for the settings file", file, n, configDir)
+		}
+		if file == "real_codex_test.go" {
+			if strings.Count(string(b), "CODEX_HOME") != 1 || !strings.Contains(string(b), `dir := os.Getenv("CODEX_HOME")`) || !strings.Contains(string(b), `filepath.Join(dir, "config.toml")`) {
+				t.Errorf("%s must name CODEX_HOME only to locate config.toml", file)
+			}
+			if strings.Contains(string(b), `"-c"`) || strings.Contains(string(b), "'-c'") {
+				t.Errorf("%s passes an adapter flag", file)
+			}
 		}
 		if !strings.Contains(string(b), `cfg["login_relay"] = false`) {
 			t.Errorf("%s does not switch the login relay off", file)

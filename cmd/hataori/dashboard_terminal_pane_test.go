@@ -71,6 +71,11 @@ func newPaneRig(t *testing.T, root string, input string, settled func(control.Th
 	b.showAll() // a thread with a short idle period may be asleep already (#335)
 	b.until("the thread in the tree", fmt.Sprintf(`!!document.querySelector('[data-section=threads] .row[data-thread="%d"]')`, r.n))
 	b.eval(fmt.Sprintf(`document.querySelector('[data-section=threads] .row[data-thread="%d"]').click(), true`, r.n), nil)
+	// An asleep thread opens on its conversation (#336), and a thread with
+	// a short idle period may be asleep already: these tests look at the
+	// terminal, so the pane shows it when the session has one.
+	b.until("the thread's pane", `!!document.querySelector('.pane.active .thread-pane')`)
+	b.eval(`(() => { const v = document.querySelector('.pane.active .view-switch [data-view=terminal]'); if (v) v.click(); return true; })()`, nil)
 	r.b = b
 	return r
 }

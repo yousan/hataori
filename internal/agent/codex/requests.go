@@ -258,8 +258,8 @@ func (c *codec) answer(answer agent.Answer) (agent.Actions, error) {
 func (c *codec) steerFailed(a *agent.Actions, id int) {
 	if text, ok := c.steers[id]; ok {
 		delete(c.steers, id)
+		c.steerBlocked = c.running
 		c.queue = append(c.queue, agent.Input{Text: text})
-		c.flush(a)
 	}
 }
 

@@ -205,6 +205,12 @@ type Caller struct {
 	// interrupts it. A Send with Deliver or Interrupt to a running thread is
 	// refused with ErrBusy and logged.
 	RefuseBusy bool
+	// NoAnswer makes the caller's Send refused with ErrBusy, like one with
+	// Refuse to a running thread, when the thread waits on a question,
+	// instead of being its answer. The state is read in the transaction
+	// that would take the input. The supervisor's waker has it, so that a
+	// wake never answers the supervisor's own question.
+	NoAnswer bool
 	// Mark, when set, is a line the core puts before the text of every
 	// input of the caller's Start and Send, so that the agent sees who it
 	// came from. The client cannot leave it out: the daemon sets it when it

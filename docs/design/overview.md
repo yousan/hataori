@@ -151,7 +151,7 @@ Each hook is the command `hataori hook`. It hands its payload to the session hos
 - **A tab in a paste arrives as four spaces.** Claude Code 2.1.328's input box turned each tab of a bracketed paste into four spaces, on its own pseudo-terminal and through tmux alike (Appendix B). The codec compares the pasted text with the prompt the hook reports after trimming and line-ending changes only, so an input with a tab is never matched: the agent runs it, the turn is reported as typed at the terminal, and the input later fails as `not delivered` (#393).
 - **Whether the usage-limit menu still needs an answer** on screen when a limit is hit is **unverified**; c-lord answers it by keys.
 - **Codex `app-server` is marked experimental** in its own help text. Captures per version, unknown messages skipped.
-- **Codex interrupt leaves the command running** (observed). The session host runs the agent in its own process group so hataori can end what the agent left behind.
+- **Codex interrupt leaves the command running** (observed). hataori ends it with `thread/backgroundTerminals/clean` (#317 `interrupt`). This ends every background terminal of the thread, including commands moved to the background in earlier turns.
 
 For every version of an agent CLI: decode against captures of that version's real output, skip what is unknown, and run the capture suite before the version is used for real work.
 
@@ -488,6 +488,7 @@ One database file. A schema version table and forward-only migrations (c-lord ha
 | `inbox` | accepted calls by their key; for chat, the catch-up cursor per conversation |
 | `events` | the numbered event log that clients read from a position |
 | `outbox` | the chat front end's pending and sent posts by `(event, link, part)`, with the surface message id |
+| `chat_senders` | per key of input a chat front end gave, the message that gets the turn's lamp and who to ping at its end, as the service told it when the message came (#258) |
 | `requests` | open questions and approvals, their message, their answer |
 | `bindings` | channel to repository, and per-thread overrides |
 | `settings` | model and other choices per scope |
@@ -552,7 +553,7 @@ One limit is not enforced by this: the supervisor can *ask* a worker thread to m
 
 **When it runs.** It never polls. hataori wakes it by sending it one message when something happens in its scope: a turn ended, a question was asked, a turn failed, a usage limit was hit. Its own thread is excluded. Events that arrive while it is busy, or within a short quiet period after the first, are folded into one message.
 
-**How it is woken** (#271; decision 5 of #267). Each scope that names a supervisor has one waker in the daemon (`supervisor.Waker`). It reads the scope's events from its position, kept in the store (`supervisor_wakes`); a scope seen for the first time starts after the events already stored. What wakes is a `turn_ended` of a thread of the scope that is no supervisor's thread, neither the current one nor one a person closed and the daemon replaced: completed, blocked on a question, or failed, a usage limit included (`reason` `limit`). Other kinds, and other scopes, wake nothing. The first such event opens the quiet period (`scopes[].supervisor.quiet`, 30 s); the turn ends until it is over, and those while the supervisor's turn runs, are folded, each thread once with its latest turn end. The waker then gives the supervisor's thread one message, the digest, with `Send` and `Refuse`, as the owner. The digest names each thread, by number: its title, how its turn ended with the reason, its background count and its last output, cut to `output_max` bytes (1 KB) at a character and quoted line by line; at most `threads_max` threads (20), then one line counting the others. Its format is fixed by a golden file. A wake is sent only to a supervisor thread that is idle or asleep, looked up before the digest is made and again after: one that is running, starting, waiting on a question, failed, closed or not there yet is not sent to, and the events wait for its next turn end or change of state, which makes the digest again with what came since. So the turn ends during one supervisor turn start exactly one more. A running one is not sent to, though `Send` would refuse it, because `Send` refuses only a running thread: a turn that asks a question between the look-up and the send would take the digest as its answer. If the thread starts a turn in that moment anyway, `Send` refuses the wake as busy, it is not accepted, and it waits the same way. The wake is stored, with its text and its key (`hataori-wake-<position>`), before it is sent, and the position once it was accepted: a daemon that died in between sends the stored text under the same key again, which the core ignores if it was accepted, and events up to the stored position are not folded again; so each event wakes the supervisor once across restarts, not twice and not never. Before a wake is made, one `supervisor.Gate` is given its threads, each with its `turn_ended` event, and returns those that may wake it; nothing is sent when it returns none. It is where the budget (#273) and the loop guard (#274) plug in. A wake refused as busy after the gate admitted it is made again later, and the gate is asked again, so wakes are counted from the supervisor's `turn_started` events with the wake's key, not from the gate's calls. A wake's input names the owner as its principal; its `turn_started` has the wake's key, which tells it from a person's input.
+**How it is woken** (#271; decision 5 of #267). Each scope that names a supervisor has one waker in the daemon (`supervisor.Waker`). It reads the scope's events from its position, kept in the store (`supervisor_wakes`); a scope seen for the first time starts after the events already stored. What wakes is a `turn_ended` of a thread of the scope that is no supervisor's thread, neither the current one nor one a person closed and the daemon replaced: completed, blocked on a question, or failed, a usage limit included (`reason` `limit`). Other kinds, and other scopes, wake nothing. The first such event opens the quiet period (`scopes[].supervisor.quiet`, 30 s); the turn ends until it is over, and those while the supervisor's turn runs, are folded, each thread once with its latest turn end. The waker then gives the supervisor's thread one message, the digest, with `Send` and `Refuse`, as the owner. The digest names each thread, by number: its title, how its turn ended with the reason, its background count and its last output, cut to `output_max` bytes (1 KB) at a character and quoted line by line; at most `threads_max` threads (20), then one line counting the others. Its format is fixed by a golden file. A wake is sent only to a supervisor thread that is idle or asleep, looked up before the digest is made and again after: one that is running, starting, waiting on a question, failed, closed or not there yet is not sent to, and the events wait for its next turn end or change of state, which makes the digest again with what came since. So the turn ends during one supervisor turn start exactly one more. A running one is not sent to, though `Send` would refuse it, because `Send` refuses only a running thread: a turn that asks a question between the look-up and the send would take the digest as its answer. For that moment, the waker's caller has `NoAnswer`: its `Send` to a thread waiting on a question is refused as busy, in the transaction that would take the input, and the wake waits as above (#441). If the thread starts a turn in that moment anyway, `Send` refuses the wake as busy, it is not accepted, and it waits the same way. The wake is stored, with its text and its key (`hataori-wake-<position>`), before it is sent, and the position once it was accepted: a daemon that died in between sends the stored text under the same key again, which the core ignores if it was accepted, and events up to the stored position are not folded again; so each event wakes the supervisor once across restarts, not twice and not never. Before a wake is made, one `supervisor.Gate` is given its threads, each with its `turn_ended` event, and returns those that may wake it; nothing is sent when it returns none. It is where the budget (#273) and the loop guard (#274) plug in. A wake refused as busy after the gate admitted it is made again later, and the gate is asked again, so wakes are counted from the supervisor's `turn_started` events with the wake's key, not from the gate's calls. A wake's input names the owner as its principal; its `turn_started` has the wake's key, which tells it from a person's input.
 
 **Where this runs.** Waking, the budget and the loop guard below are one client of the control API inside the daemon, as the chat front end is: it reads events from a position, keeps its position, and wakes the supervisor with `Send` to the supervisor's thread. The core has no supervisor code; to the core the supervisor's thread is an ordinary thread and its tools are an ordinary limited `Caller`.
 
@@ -1594,6 +1595,11 @@ type Caller struct {
 	// Busy it gives; Deliver or Interrupt to a running thread is refused
 	// with ErrBusy and logged. A supervisor's caller has it (section 7.1).
 	RefuseBusy bool
+	// NoAnswer refuses the caller's Send with ErrBusy when the thread waits
+	// on a question, instead of taking it as the answer, in the
+	// transaction that would take the input. The supervisor's waker has it
+	// (section 7.1, #441).
+	NoAnswer bool
 	// Mark is a line the core puts before the text of every input of the
 	// caller's Start and Send, except a Send that answers an open question;
 	// the title is made without it. Set by the
@@ -2030,12 +2036,17 @@ type Codec interface {
 	// item/permissions/requestApproval, execCommandApproval and
 	// applyPatchApproval have no captures yet and get the same error.
 	Decode(src Source, line []byte) Actions
-	// A user message; TurnStarted returns its ID. Input given while a turn
-	// runs is held until the turn ends (both adapters, for now). The Codex
-	// codec ties a turn to its input by the turn/start it wrote, or, for an
-	// input written before a restart, by the text of the turn's user message.
+	// A user message; TurnStarted returns its ID. Codex steers input into a
+	// running turn and reports InputTaken; Claude Code holds it until the turn
+	// ends. The Codex codec ties a turn to its input by the turn/start it
+	// wrote, or, for an input written before a restart, by the text of the
+	// turn's user message; a steer refused because the turn ended becomes a
+	// turn/start.
 	Input(in Input) (Actions, error)
 	Answer(a Answer) (Actions, error)       // to an approval or a question
+	// Codex interrupts with turn/interrupt, then cleans background terminals
+	// at turn end. This ends every background terminal in the thread, including
+	// commands moved to the background in earlier turns.
 	Interrupt() Actions
 	// Tick gives the codec the time for its deadlines (input not reported
 	// as delivered); the codec has no clock of its own.
@@ -2097,7 +2108,7 @@ type MCPServer struct {
 
 // Event is one thing the agent did. Kind is one of SessionReady, TurnStarted,
 // Text, ToolStarted, ToolEnded, SubagentStarted, SubagentEnded, Request,
-// RequestWithdrawn, FileOut, Usage, TurnEnded, SessionEnded, Limits, Unknown.
+// RequestWithdrawn, FileOut, Usage, TurnEnded, SessionEnded, Limits, InputTaken, Unknown.
 type Event struct {
 	Seq  uint64
 	Kind Kind

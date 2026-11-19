@@ -173,7 +173,7 @@ func (w *Waker) run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	r := &waking{w: w, ended: map[control.ThreadID]control.Event{}, own: map[control.ThreadID]bool{},
-		api: w.Core.As(control.Caller{Principal: w.Owner, Scopes: []string{w.Scope}, May: control.OpRead | control.OpSend})}
+		api: w.Core.As(control.Caller{Principal: w.Owner, Scopes: []string{w.Scope}, May: control.OpRead | control.OpSend, NoAnswer: true})}
 	if err := r.load(ctx); err != nil {
 		return err
 	}
@@ -367,9 +367,9 @@ func (r *waking) hook(step string) error {
 
 // ready looks up the supervisor's thread and reports whether it may be
 // woken now: idle or asleep. Running, it is not sent to, so that a wake
-// never goes in while its turn may ask a question: a Send to a thread
-// waiting on one would be the answer, and Send refuses only a running
-// thread. None yet, starting, waiting, failed or closed, it is not sent
+// never goes in while its turn may ask a question; should the turn start
+// and ask one before the Send, the waker's caller (NoAnswer) has the Send
+// refused as busy instead of taken as the answer. None yet, starting, waiting, failed or closed, it is not sent
 // to either. In each case the wake waits for the thread's next turn end
 // or change of state.
 func (r *waking) ready(ctx context.Context) (control.ThreadID, bool, error) {

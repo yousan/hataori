@@ -275,42 +275,6 @@ func TestWrittenTimeout(t *testing.T) {
 	}
 }
 
-func TestHeldInput(t *testing.T) {
-	c, lines, _ := setup(t)
-	start := findMethod(t, lines, "turn/started")
-	end := findMethod(t, lines, "turn/completed")
-	feed(t, c, lines[:start+1], 0)
-	if a, _ := c.Input(agent.Input{ID: "later", Text: "later"}); len(a.Write) != 0 {
-		t.Fatal(a)
-	}
-	for _, l := range lines[start+1 : end] {
-		if l.Dir == "recv" {
-			a := c.Decode(agent.Output, l.Msg)
-			for _, w := range a.Write {
-				if parse(t, w).Method == "turn/start" {
-					t.Fatal(a)
-				}
-			}
-		}
-	}
-	a := c.Decode(agent.Output, lines[end].Msg)
-	if len(a.Write) != 1 || len(a.Inputs) != 1 || a.Inputs[0] != "later" {
-		t.Fatal(a)
-	}
-	written := parse(t, a.Write[0])
-	if written.Method != "turn/start" {
-		t.Fatal(a)
-	}
-	inputs, ok := written.Params["input"].([]any)
-	if !ok || len(inputs) != 1 {
-		t.Fatal(a)
-	}
-	input, ok := inputs[0].(map[string]any)
-	if !ok || input["text"] != "later" {
-		t.Fatal(a)
-	}
-}
-
 func TestUnknown(t *testing.T) {
 	c, lines, _ := setup(t)
 	end := findMethod(t, lines, "turn/completed")

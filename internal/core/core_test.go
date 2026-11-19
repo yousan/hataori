@@ -701,6 +701,50 @@ func TestSendAnswersTheOpenQuestion(t *testing.T) {
 	}
 }
 
+// A caller with NoAnswer never answers an open question with its Send: it
+// is refused as busy, the question stays open, no answer is recorded, and
+// the key is not taken, so the same Send goes in once the thread is idle
+// again (#441).
+func TestNoAnswerCallerIsRefusedByAnOpenQuestion(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{})
+	id, sid := f.running(t, "t1")
+	f.agentEvent(t, sid, 2, agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: "r1", Text: "which?"}})
+	calls := f.runner.Calls()
+	waker := f.core.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: control.OpRead | control.OpSend, NoAnswer: true})
+
+	err := waker.Send(ctx, id, "wake-1", control.Input{Text: "digest"}, control.Refuse)
+	if !errors.Is(err, ErrBusy) {
+		t.Fatalf("send to a thread waiting on a question: %v, want ErrBusy", err)
+	}
+	if got := f.runner.Calls(); got != calls {
+		t.Fatalf("runner calls after the refusal: %q", strings.TrimPrefix(got, calls))
+	}
+	if s := requestState(t, f, "r1"); s != "open" {
+		t.Fatalf("request is %s, want open", s)
+	}
+	var answers int
+	f.core.Store.DB.QueryRow(`SELECT count(*) FROM events WHERE kind = 'answer'`).Scan(&answers)
+	if answers != 0 {
+		t.Fatalf("%d answers recorded", answers)
+	}
+	// The person answers; the same key is then taken as new input.
+	if err := f.owner.Send(ctx, id, "m1", control.Input{Text: "blue"}, control.Refuse); err != nil {
+		t.Fatal(err)
+	}
+	if s := requestState(t, f, "r1"); s != "answered" {
+		t.Fatalf("request is %s after the person's answer", s)
+	}
+	f.agentEvent(t, sid, 3, agent.Event{Kind: agent.TurnEnded})
+	calls = f.runner.Calls()
+	if err := waker.Send(ctx, id, "wake-1", control.Input{Text: "digest"}, control.Refuse); err != nil {
+		t.Fatalf("the same send once the thread is idle: %v", err)
+	}
+	if got := f.runner.Calls(); got == calls {
+		t.Fatal("the same send once the thread is idle did not reach the runner: its key was taken by the refusal")
+	}
+}
+
 // Agents number their requests per session, so two sessions can ask "q1".
 func TestSameRequestIDInTwoSessions(t *testing.T) {
 	ctx := context.Background()
