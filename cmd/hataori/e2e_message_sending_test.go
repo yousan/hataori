@@ -203,8 +203,9 @@ func TestMessageSendingTimeout(t *testing.T) {
 			}
 			c := r.cancelledOf(t, th)
 			if !block {
-				if r.postsWith(th, "SLOW") == 0 || len(c) != 0 {
-					t.Fatalf("skipped: %d posts of SLOW, cancelled %+v", r.postsWith(th, "SLOW"), c)
+				// The answer, exactly "SLOW", went out unchanged.
+				if r.count(th, "SLOW") != 1 || len(c) != 0 {
+					t.Fatalf("skipped: %d posts of SLOW, cancelled %+v", r.count(th, "SLOW"), c)
 				}
 				return
 			}

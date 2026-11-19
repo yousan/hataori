@@ -459,6 +459,8 @@ var migrations = []Migration{
 		`ALTER TABLE chat_outbox ADD COLUMN hook_by TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE chat_outbox ADD COLUMN hook_reason TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE chat_outbox ADD COLUMN hook_failed INTEGER NOT NULL DEFAULT 0`,
+		// ThreadDetail.cancelled reads a thread's post_cancelled events.
+		`CREATE INDEX events_thread_kind ON events (thread_id, kind, pos)`,
 	)},
 }
 

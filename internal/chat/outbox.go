@@ -102,10 +102,6 @@ type Outbox struct {
 	wake chan struct{}
 	mu   sync.Mutex
 	busy map[surface.Conversation]bool
-	// hooking holds the parts being hooked, so that the copies of one part
-	// in several links, which are sent by goroutines of their own, are
-	// hooked one after another and the later ones take the first's result.
-	hooking map[RowKey]*partLock
 }
 
 func (o *Outbox) init() {
@@ -541,12 +537,16 @@ func (o *Outbox) change(ctx context.Context, conv surface.Conversation, r pendin
 		return o.record(ctx, failedPost, r.id, `UPDATE chat_outbox SET state = 'dropped' WHERE id = ?`, r.id)
 	}
 	if meta.Op == Edit && o.Hooks != nil {
-		// Only an edit that changes the text the post shows is hooked.
+		// Only an edit that changes the text the post shows is hooked: as
+		// the post, or its last edit that was sent, left it.
 		var data []byte
 		var shown sql.NullString
 		err := o.Store.DB.QueryRowContext(ctx, `SELECT message, hook_text FROM chat_outbox
-			WHERE client = ? AND channel = ? AND thread = ? AND event = ? AND part = ?`,
-			o.Client, conv.Channel, conv.Thread, meta.Target.Event, meta.Target.Part).Scan(&data, &shown)
+			WHERE client = ? AND channel = ? AND thread = ? AND state = 'sent' AND ((event = ? AND part = ?)
+				OR (json_extract(message, '$.op') = 'edit' AND json_extract(message, '$.target.event') = ?
+					AND json_extract(message, '$.target.part') = ?))
+			ORDER BY event DESC, part DESC LIMIT 1`,
+			o.Client, conv.Channel, conv.Thread, meta.Target.Event, meta.Target.Part, meta.Target.Event, meta.Target.Part).Scan(&data, &shown)
 		if err != nil {
 			return stuck
 		}
@@ -633,8 +633,8 @@ func (o *Outbox) lamp(ctx context.Context, conv surface.Conversation, r pending,
 const PointMessageSending = "message_sending"
 
 // where is the thread, scope and link of row r in conv: those of its link,
-// or, for a row with no link in a scope's own channel, that scope with no
-// thread. ok is false for a row in neither, which is not hooked.
+// or, for a row with no link in a scope's own channel or a chat thread of
+// it, that scope with no thread. ok is false for a row in neither, which is not hooked.
 func (o *Outbox) where(ctx context.Context, conv surface.Conversation, r pending) (thread control.ThreadID, scope string, link control.LinkRef, ok bool, err error) {
 	if r.link != 0 {
 		var id int64
@@ -645,7 +645,7 @@ func (o *Outbox) where(ctx context.Context, conv surface.Conversation, r pending
 		}
 		return control.ThreadID(id), scope, link, err == nil, err
 	}
-	if conv.Thread == "" && slices.Contains(o.Scopes, conv.Channel) {
+	if slices.Contains(o.Scopes, conv.Channel) {
 		return 0, conv.Channel, control.LinkRef{Client: o.Client, Channel: conv.Channel}, true, nil
 	}
 	return 0, "", link, false, nil
@@ -681,11 +681,11 @@ func (o *Outbox) hooked(ctx context.Context, conv surface.Conversation, r pendin
 	var failed bool
 	var rewritten sql.NullString
 	if r.event != 0 {
-		unlock := o.lockPart(RowKey{Event: r.event, Part: r.part})
+		unlock := lockPart(RowKey{Event: r.event, Part: r.part})
 		defer unlock()
 		// Another link's copy of the same part, with the same text.
 		err = o.Store.DB.QueryRowContext(ctx, `SELECT hook, hook_text, hook_by, hook_reason, hook_failed FROM chat_outbox
-			WHERE event = ? AND part = ? AND id != ? AND hook != '' AND json_extract(message, '$.text') IS ?
+			WHERE event = ? AND part = ? AND id != ? AND hook != '' AND coalesce(json_extract(message, '$.text'), '') = ?
 			ORDER BY id LIMIT 1`, r.event, r.part, r.id, text).Scan(&hook, &rewritten, &by, &reason, &failed)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return "", stuck, false
@@ -751,33 +751,39 @@ func (o *Outbox) hooked(ctx context.Context, conv surface.Conversation, r pendin
 	return res.Text, posted, true
 }
 
-// lockPart locks the hooking of part k and returns its unlock.
-func (o *Outbox) lockPart(k RowKey) func() {
-	o.mu.Lock()
-	if o.hooking == nil {
-		o.hooking = map[RowKey]*partLock{}
-	}
-	l := o.hooking[k]
-	if l == nil {
-		l = &partLock{}
-		o.hooking[k] = l
-	}
-	l.users++
-	o.mu.Unlock()
-	l.Lock()
-	return func() {
-		l.Unlock()
-		o.mu.Lock()
-		if l.users--; l.users == 0 {
-			delete(o.hooking, k)
-		}
-		o.mu.Unlock()
-	}
-}
+// hooking holds the parts being hooked, by the event log's position, which
+// is the instance's: the copies of one part in several links, of one
+// front end or of several, which are sent by goroutines of their own, are
+// hooked one after another, and the later ones take the first's result.
+var hooking = struct {
+	sync.Mutex
+	parts map[RowKey]*partLock
+}{parts: map[RowKey]*partLock{}}
 
 type partLock struct {
 	sync.Mutex
-	users int // holding or waiting, under Outbox.mu
+	users int // holding or waiting, under hooking's lock
+}
+
+// lockPart locks the hooking of part k and returns its unlock.
+func lockPart(k RowKey) func() {
+	hooking.Lock()
+	l := hooking.parts[k]
+	if l == nil {
+		l = &partLock{}
+		hooking.parts[k] = l
+	}
+	l.users++
+	hooking.Unlock()
+	l.Lock()
+	return func() {
+		l.Unlock()
+		hooking.Lock()
+		if l.users--; l.users == 0 {
+			delete(hooking.parts, k)
+		}
+		hooking.Unlock()
+	}
 }
 
 // sent records that row r was posted as ref with text, and, for a row of a

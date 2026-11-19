@@ -965,8 +965,8 @@ func (a *api) cancelled(ctx context.Context, id control.ThreadID) ([]control.Can
 			continue
 		}
 		c.Time = time.UnixMilli(ms).UTC()
-		if a.caller.NoText && !c.Failed {
-			c.Reason = ""
+		if a.caller.NoText {
+			c.Reason = "" // as the event's text field is left out
 		}
 		out = append(out, c)
 	}

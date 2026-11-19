@@ -297,7 +297,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	// The core runs the input hook points through it (#351), before any
 	// input can come: nothing has served or recovered yet. Without plugins
 	// it has none, and input goes as it did before hooks.
-	if len(grants) > 0 {
+	if handles(grants, core.PointBeforeAgentRun, core.PointBeforePromptBuild) {
 		c.Hooks = hooks
 	}
 	asPlugin := plugin.BindAs(c.As)
@@ -357,7 +357,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		postSent := slices.ContainsFunc(grants, func(g plugin.Grant) bool { return slices.Contains(g.Events, "post_sent") })
 		for _, fe := range fronts {
 			tells[fe.Name] = fe.Notice
-			if len(grants) > 0 {
+			if handles(grants, chat.PointMessageSending) {
 				fe.Outbox.Hooks = hooks
 			}
 			fe.Outbox.PostSent = postSent
@@ -614,6 +614,19 @@ var runnerHook func(*plugin.Runner)
 // wakerHook, when a test sets it, sees each supervisor's waker before it
 // runs, for a clock of the test's own.
 var wakerHook func(*supervisor.Waker)
+
+// handles reports whether one of grants has a handler on one of points:
+// without one, nothing calls the dispatcher, and nothing waits for it.
+func handles(grants []plugin.Grant, points ...string) bool {
+	for _, g := range grants {
+		for _, h := range g.Hooks {
+			if slices.Contains(points, h.Point) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // coreHook, when a test sets it, is given the daemon's core, so that the
 // test can call it as an in-process client such as a chat front end.
