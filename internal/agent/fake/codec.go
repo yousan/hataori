@@ -32,6 +32,11 @@ type codec struct {
 	opened   bool   // Open was called: a codec rebuilt after a restart is not
 	stopped  bool   // the watch ended: the screen must not come any more
 	seenOnce bool   // the screen showed the dialog again after the start
+
+	// A session a person started and hataori took in (agent.Spec.TakenIn).
+	takenIn bool
+	session string
+	model   string
 }
 
 // written is an input written and not yet reported.
@@ -104,6 +109,9 @@ func (c *codec) Open() agent.Actions {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.opened = true
+	if c.takenIn {
+		return c.events(agent.Event{Kind: agent.SessionReady, SessionID: c.session, Model: c.model})
+	}
 	return agent.Actions{WatchScreen: c.dialog != ""}
 }
 
@@ -164,6 +172,13 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 		}
 	}
 	var a agent.Actions
+	// In a person's window every report names the transcript: the "ready"
+	// one went to the dashboard's list before the take-in.
+	var follow []string
+	if r.T != "ready" && r.Transcript != "" && c.terminal && !c.followed[r.Transcript] {
+		c.followed[r.Transcript] = true
+		follow = []string{r.Transcript}
+	}
 	switch r.T {
 	case "ready":
 		id := r.Session
@@ -262,6 +277,7 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 	default:
 		a = c.events(agent.Event{Kind: agent.Unknown, Text: string(line)})
 	}
+	a.Follow = append(follow, a.Follow...)
 	return a
 }
 

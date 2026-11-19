@@ -18,6 +18,10 @@
 //	hataori mcp [--root DIR] --scope SCOPE [--output-max BYTES]
 //	                                            the supervisor's MCP server on stdio;
 //	                                            its token is $HATAORI_TOKEN
+//	hataori take [--root DIR] WINDOW --scope SCOPE [--key KEY]
+//	                                            make a thread of a window a person started, as
+//	                                            HostTerminals' reported.window names it
+//	hataori release [--root DIR] NUMBER         let a window taken in go: the thread goes asleep
 //	hataori plugin [--root DIR]                 write the instance's Claude Code plugin under the
 //	                                            root, and print the two commands that install it
 //	hataori version
@@ -88,7 +92,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return runCtx(context.Background(), args, stdout, stderr)
 }
 
-const usage = "usage: hataori run|threads|thread NUMBER|events [--after N] [--follow]|stop NUMBER|attach NUMBER|close NUMBER|remove NUMBER|signin [--web] [--root DIR] | hataori connect [[user@]host] [--root DIR] [--hataori PATH] [--port N] | hataori mcp --scope SCOPE [--root DIR] [--output-max BYTES] | hataori plugin [--root DIR] | hataori version | hataori host <state-dir> | hataori hook [--wait] [--timeout DURATION] | hataori hook --window --root DIR | hataori statusline --last FILE [--run COMMAND]"
+const usage = "usage: hataori run|threads|thread NUMBER|events [--after N] [--follow]|stop NUMBER|attach NUMBER|close NUMBER|remove NUMBER|signin [--web]|take WINDOW --scope SCOPE [--key KEY]|release NUMBER [--root DIR] | hataori connect [[user@]host] [--root DIR] [--hataori PATH] [--port N] | hataori mcp --scope SCOPE [--root DIR] [--output-max BYTES] | hataori plugin [--root DIR] | hataori version | hataori host <state-dir> | hataori hook [--wait] [--timeout DURATION] | hataori hook --window --root DIR | hataori statusline --last FILE [--run COMMAND]"
 
 func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -115,8 +119,14 @@ func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	case "hook":
 		if slices.Contains(args[1:], "--window") {
 			// The hook of the Claude Code plugin (hataori plugin). It prints
-			// nothing, whatever happens: the person's window shows it.
-			return claudecode.WindowHookMain(args[1:], os.Stdin, stderr, os.Getenv)
+			// nothing, whatever happens, but the answer to a call of a
+			// window taken in: the person's window shows it.
+			main, ok := windowHooks[flagValue(args[1:], "--agent", claudecode.Name)]
+			if !ok {
+				fmt.Fprint(stderr, claudecode.WindowHookUsage)
+				return host.HookUsage
+			}
+			return main(args[1:], os.Stdin, stdout, stderr, os.Getenv)
 		}
 		return host.HookMain(args[1:], os.Stdin, stdout, stderr, os.Getenv)
 	case "plugin":
@@ -132,11 +142,33 @@ func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return connectMain(ctx, args[1:], stderr, env)
 	case "statusline":
 		return claudecode.StatusLineMain(args[1:], os.Stdin, stdout, stderr, os.Getenv)
-	case "run", "threads", "thread", "events", "stop", "attach", "close", "remove", "signin":
+	case "run", "threads", "thread", "events", "stop", "attach", "close", "remove", "signin", "take", "release":
 		return command(ctx, args[0], args[1:], stdout, stderr)
 	}
 	fmt.Fprintln(stderr, usage)
 	return exitUsage
+}
+
+// windowHooks are the hooks of `hataori hook --window`, by the adapter
+// named with --agent: what reads that agent's hook payloads.
+var windowHooks = map[string]func(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string) int{
+	claudecode.Name: func(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string) int {
+		return claudecode.WindowHookMain(args, stdin, stderr, getenv)
+	},
+}
+
+// flagValue is the value given to the flag name in args, as "name value"
+// or "name=value"; def when it is not given.
+func flagValue(args []string, name, def string) string {
+	for i, a := range args {
+		if a == name && i+1 < len(args) {
+			return args[i+1]
+		}
+		if v, ok := strings.CutPrefix(a, name+"="); ok {
+			return v
+		}
+	}
+	return def
 }
 
 func command(ctx context.Context, name string, args []string, stdout, stderr io.Writer) int {
@@ -146,6 +178,8 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 	after := fs.Uint64("after", 0, "events: print the events after this position")
 	follow := fs.Bool("follow", false, "events: keep printing new events")
 	web := fs.Bool("web", false, "signin: a link for the dashboard's web listener instead of its loopback listener")
+	scope := fs.String("scope", "", "take: the scope the window's thread is made in")
+	key := fs.String("key", "", "take: makes the call safe to repeat; a new one each time by default")
 	var pos []string // flags may come before or after the key
 	for {
 		if err := fs.Parse(args); err != nil {
@@ -158,10 +192,14 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 		args = fs.Args()[1:]
 	}
 	want := 0
-	if name == "thread" || name == "stop" || name == "attach" || name == "close" || name == "remove" {
+	if name == "thread" || name == "stop" || name == "attach" || name == "close" || name == "remove" || name == "take" || name == "release" {
 		want = 1
 	}
-	if want == 1 && len(pos) == 1 && !isNumber(pos[0]) {
+	if (name == "take") != (*scope != "") || name != "take" && *key != "" {
+		fmt.Fprintln(stderr, usage)
+		return exitUsage
+	}
+	if want == 1 && len(pos) == 1 && name != "take" && !isNumber(pos[0]) {
 		fmt.Fprintf(stderr, "hataori: %q is not a thread number\n", pos[0])
 		fmt.Fprintln(stderr, usage)
 		return exitUsage
@@ -256,6 +294,37 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 			return fail(err)
 		}
 		if err := enc.Encode(map[string]any{"thread": t.ID, "scope": t.Scope, "running": running}); err != nil {
+			return fail(err)
+		}
+	case "take":
+		// Said before anything changes: from the window's next hook on, its
+		// permission requests are the scope's to answer (design, section 4.8).
+		fmt.Fprintf(stderr, "hataori take: from the window's next hook on, the rules of scope %q answer its permission requests; "+
+			"today they are allowed automatically\n", *scope)
+		k := *key
+		if k == "" {
+			k = "take-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+		}
+		id, err := c.TakeIn(ctx, control.TakeInRequest{Window: pos[0], Scope: *scope, Key: k})
+		if err != nil {
+			return fail(err)
+		}
+		if err := enc.Encode(map[string]any{"thread": id, "scope": *scope, "window": pos[0]}); err != nil {
+			return fail(err)
+		}
+	case "release":
+		t, ok, err := find(ctx, c, pos[0])
+		if err != nil {
+			return fail(err)
+		}
+		if !ok {
+			fmt.Fprintf(stderr, "hataori: no thread of this instance has the number %s\n", pos[0])
+			return exitNoThread
+		}
+		if err := c.Release(ctx, t.ID); err != nil {
+			return fail(err)
+		}
+		if err := enc.Encode(map[string]any{"thread": t.ID, "scope": t.Scope, "state": control.Asleep}); err != nil {
 			return fail(err)
 		}
 	case "close", "remove":
