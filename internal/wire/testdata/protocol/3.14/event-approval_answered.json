@@ -1,0 +1,1 @@
+{"id":1,"event":{"pos":42,"thread":7,"scope":"C0123","time":"2026-01-02T03:04:05.678Z","kind":"approval_answered","data":{"request":"approval-1","allow":true,"outcome":"interrupted","target":8,"principal":"alice","from":"discord:W1","link":{"client":"discord","channel":"C0123","thread":"T0456"}}}}

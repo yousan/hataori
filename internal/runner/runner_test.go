@@ -480,7 +480,7 @@ func TestStopEndsARunningTool(t *testing.T) {
 			t.Fatal("the tool's process is not in the session's group")
 		}
 		start := time.Now()
-		if err := owner(f.core).Stop(context.Background(), thread); err != nil {
+		if err := owner(f.core).Stop(context.Background(), thread, 0); err != nil {
 			t.Fatal(err)
 		}
 		waitFor(t, "the end of the turn", 10*time.Second, f.has("turn_ended", 1))
@@ -516,7 +516,7 @@ func TestNextTurnAfterAStopIsNotStopped(t *testing.T) {
 			}
 		}
 		api := owner(f.core)
-		if err := api.Stop(context.Background(), thread); err != nil {
+		if err := api.Stop(context.Background(), thread, 0); err != nil {
 			t.Fatal(err)
 		}
 		if err := api.Send(context.Background(), thread, "k2", control.Input{Text: "tool wait 7s\nreply second"}, control.Deliver); err != nil {

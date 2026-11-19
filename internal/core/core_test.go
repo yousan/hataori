@@ -49,7 +49,12 @@ func (r *fakeRunner) Deliver(_ context.Context, _, _ int64, in control.Input) er
 func (r *fakeRunner) Answer(_ context.Context, _, _ int64, req string, _ control.Answer) error {
 	return r.record("answer " + req)
 }
-func (r *fakeRunner) Interrupt(context.Context, int64) error { return r.record("interrupt") }
+func (r *fakeRunner) Interrupt(_ context.Context, _, turn int64) error {
+	if turn != 0 {
+		return r.record(fmt.Sprintf("interrupt turn %d", turn))
+	}
+	return r.record("interrupt")
+}
 func (r *fakeRunner) Shut(ctx context.Context, sid int64, reason string) error {
 	if r.shutErr != nil {
 		return r.shutErr
@@ -233,7 +238,7 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 		"Answer": func(a control.API) error {
 			return a.Answer(ctx, session.RequestHandle(sid, "r1"), control.Answer{Text: "x"})
 		},
-		"Stop":         func(a control.API) error { return a.Stop(ctx, id) },
+		"Stop":         func(a control.API) error { return a.Stop(ctx, id, 0) },
 		"CloseThread":  func(a control.API) error { return a.CloseThread(ctx, id) },
 		"RemoveThread": func(a control.API) error { return a.RemoveThread(ctx, id) },
 		"Events":       func(a control.API) error { _, err := a.Events(ctx, control.Filter{Scope: "s"}, 0); return err },
@@ -832,7 +837,7 @@ func TestOnlyThePeopleOfTheScopeAct(t *testing.T) {
 		"Answer": func(a control.API) error {
 			return a.Answer(ctx, session.RequestHandle(sid, "r1"), control.Answer{Text: "x"})
 		},
-		"Stop":         func(a control.API) error { return a.Stop(ctx, id) },
+		"Stop":         func(a control.API) error { return a.Stop(ctx, id, 0) },
 		"CloseThread":  func(a control.API) error { return a.CloseThread(ctx, id) },
 		"RemoveThread": func(a control.API) error { return a.RemoveThread(ctx, id) },
 		"Link": func(a control.API) error {

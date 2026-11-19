@@ -122,7 +122,7 @@ func TestSupervisorConnectionIsLimitedToItsScope(t *testing.T) {
 	if _, err := sv.Start(ctx, control.StartRequest{Key: "k-c", Scope: "c2", Thread: "tc", Repo: repo, Input: control.Input{Text: "reply no"}}); !errors.Is(err, control.ErrForbidden) {
 		t.Fatalf("Start in c2: %v, want forbidden", err)
 	}
-	if err := sv.Stop(ctx, a); !errors.Is(err, control.ErrForbidden) {
+	if err := sv.Stop(ctx, a, 0); !errors.Is(err, control.ErrForbidden) {
 		t.Fatalf("Stop in c1: %v, want forbidden", err)
 	}
 	if _, err := sv.SignInLink(ctx, ""); !errors.Is(err, control.ErrForbidden) {
