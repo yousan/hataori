@@ -126,7 +126,7 @@ func (c *codec) onScreen(b []byte) agent.Actions {
 		return agent.Actions{}
 	}
 	c.answered = true
-	return agent.Actions{Write: [][]byte{[]byte("\r")}}
+	return agent.Actions{Keys: []agent.Part{{Key: agent.Enter}}}
 }
 
 // SawScreenAfterStart reports whether the codec was given the screen the
@@ -273,9 +273,11 @@ func (c *codec) events(evs ...agent.Event) agent.Actions {
 	return agent.Actions{Events: evs}
 }
 
-const (
-	pasteKey  = "\r"
-	escapeKey = "\x1b"
+// The keys the codec presses on a terminal: Enter after a paste, Escape to
+// interrupt.
+var (
+	pasteKey  = agent.Part{Key: agent.Enter}
+	escapeKey = agent.Part{Key: agent.Escape}
 )
 
 // ended writes the input held during the turn that ended.
@@ -292,6 +294,7 @@ func (c *codec) ended() agent.Actions {
 func merge(a, b agent.Actions) agent.Actions {
 	a.StopScreen = a.StopScreen || b.StopScreen
 	a.Events = append(a.Events, b.Events...)
+	a.Keys = append(a.Keys, b.Keys...)
 	a.Write = append(a.Write, b.Write...)
 	a.Reply = append(a.Reply, b.Reply...)
 	a.Follow = append(a.Follow, b.Follow...)
@@ -326,7 +329,7 @@ func (c *codec) write(in agent.Input) agent.Actions {
 		in.Text = inputIDPrefix + in.ID + "\n" + in.Text
 	}
 	if c.terminal {
-		a.Write = [][]byte{[]byte(pasteStart + in.Text + pasteEnd), []byte(pasteKey)}
+		a.Keys = []agent.Part{{Paste: in.Text}, pasteKey}
 		return a
 	}
 	b, _ := json.Marshal(map[string]string{"input": in.Text})
@@ -362,7 +365,7 @@ func (c *codec) Answer(a agent.Answer) (agent.Actions, error) {
 // Interrupt stops the running turn: Escape on a terminal.
 func (c *codec) Interrupt() agent.Actions {
 	if c.terminal {
-		return agent.Actions{Write: [][]byte{[]byte(escapeKey)}}
+		return agent.Actions{Keys: []agent.Part{escapeKey}}
 	}
 	return agent.Actions{Write: [][]byte{[]byte("{\"interrupt\":true}\n")}}
 }

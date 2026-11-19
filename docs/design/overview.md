@@ -240,7 +240,7 @@ Choosing tmux for the sessions hataori starts is a config option, later (section
 
 Orca is not a holder. It is an orchestrator at the same level as hataori, and its terminals are listed like any other terminal (section 10).
 
-**The first step changes nothing a session does.** Today the runner calls the host package directly. The first step puts those calls behind the holder operations, with hataori's own host as the only holder, and changes the codec of an agent in a terminal to return pastes and named keys instead of bytes. The own host writes exactly the bytes written today. An agent on pipes, Codex, keeps writing its bytes, and hataori's own host stays its only holder. Appendix D has the proposed interface.
+**The first step changes nothing a session does.** Today the runner calls the host package directly. The first step puts those calls behind the holder operations, with hataori's own host as the only holder, and changes the codec of an agent in a terminal to return pastes and named keys instead of bytes. The own host writes exactly the bytes written today. An agent on pipes, Codex, keeps writing its bytes, and hataori's own host stays its only holder. Done in #395; Appendix D has the interface.
 
 ### 4.4 Running a turn
 
@@ -2074,10 +2074,11 @@ type Codec interface {
 // Actions is what the caller of a Codec does next.
 type Actions struct {
 	Events []Event     // for the core
-	Write  [][]byte    // to the agent's input (terminal or stdin), in order
+	Keys   []Part      // an agent in a terminal: pastes and named keys, in order, for its holder (Terminal holder, below)
+	Write  [][]byte    // an agent on pipes: bytes for its standard input, in order
 	Reply  []HookReply // to hook calls that are waiting for an answer
 	Follow []string    // files to start following, such as a transcript
-	Inputs []string    // the Input.IDs of the messages Write carries
+	Inputs []string    // the Input.IDs of the messages Keys or Write carries
 	// WatchScreen, from Open only: give Decode the terminal (Source Screen)
 	// until StopScreen, for what no hook reports (a start-up dialog, whether
 	// the agent reads keys yet). A codec rebuilt after a restart never
@@ -2155,18 +2156,40 @@ type Event struct {
 type Factory func(settings []byte) (Adapter, error)
 ```
 
-### Terminal holder (proposal)
+### Terminal holder
 
-Section 4.3. A holder sits below the core, next to the session host; the core stores a session's `Window` and nothing else of it. For an agent in a terminal, the codec's `Actions` carry `Keys []Part` in place of `Write`; an agent on pipes keeps `Write`, and its holder is always hataori's own host.
+Section 4.3. Package `internal/holder`; hataori's own session host (`holder.Host`) is the only holder so far (#395). A holder sits below the core, next to the session host. For an agent in a terminal, the codec's `Actions` carry `Keys []agent.Part`; an agent on pipes keeps `Write`, and its holder is always hataori's own host. The runner reaches starting, input, the screen, stopping and whether an agent is alive only through the holder; it still talks to the session host directly for the relay (hook calls that wait, and their answers), for attach (and the count of attached terminals the idle check reads) and for the terminal's device name.
+
+```go
+// Package agent: input for an agent in a terminal.
+
+// Part is a paste when Key is empty, else one named key.
+type Part struct {
+	Paste string // delivered as one bracketed paste, its bytes unchanged
+	Key   Key
+}
+
+// Key is a name from a fixed table. Each holder maps every name or
+// refuses the whole input; it never guesses.
+type Key string
+
+const (
+	Enter  Key = "Enter"
+	Escape Key = "Escape"
+	Up     Key = "Up"
+	Down   Key = "Down"
+)
+```
 
 ```go
 // Package holder: what holds an agent's terminal. The relay of hook calls
 // is not part of it: hataori's session host keeps that job for every holder.
 
 type Holder interface {
-	// Caps says what this holder offers. The runner asks Start only of a
-	// holder with CanStart, and starts a session that needs the screen
-	// watched (Actions.WatchScreen) only on a holder with RawScreen.
+	// Caps says what this holder offers: only a holder with CanStart
+	// starts agents, and only one with RawScreen holds a session whose
+	// screen is watched (Actions.WatchScreen). With one holder, the runner
+	// does not ask yet.
 	Caps() Caps
 
 	// Start starts the agent with exactly spec's arguments, environment
@@ -2175,8 +2198,9 @@ type Holder interface {
 	Start(ctx context.Context, stateDir string, spec Spec) (Window, error)
 
 	// Input hands the parts to the terminal in order and returns once
-	// all of them were handed over. Text never goes on a command line.
-	Input(ctx context.Context, w Window, parts []Part) error
+	// all of them were handed over. It refuses the whole input when it
+	// cannot encode one part. Text never goes on a command line.
+	Input(ctx context.Context, w Window, parts []agent.Part) error
 
 	// Screen streams the terminal from a position: raw output when
 	// Caps().RawScreen, else one snapshot, marked Reset, each time it
@@ -2196,37 +2220,39 @@ type Caps struct {
 	RawScreen bool // raw output from the first byte, with positions
 }
 
-// Window names one window of one holder. Ref is opaque to the core and is
-// never reused for another window: for tmux it holds the server's socket
-// path and process id and the pane id.
+type Spec struct {
+	Argv       []string
+	Env        []string // exactly the agent's environment
+	Dir        string
+	Terminal   bool // else pipes, which only hataori's own host offers
+	Cols, Rows uint16
+	// Again: a daemon that died had begun this start and may have started
+	// the agent. It holds the window recorded before that start began
+	// (Process 0 when none was); a window that start made is taken instead
+	// of making another.
+	Again *Window
+}
+
+// Window names one window of one holder. Ref is opaque to the core. For
+// hataori's own host it is the session's state directory, and each run of a
+// host there is told apart by its run id; for tmux it will hold the
+// server's socket path and process id and the pane id.
 type Window struct {
-	Holder string // the holder's registered name
-	Ref    string
-	Owned  bool   // hataori started it; false for a window taken in
+	Holder  string // the holder's name
+	Ref     string
+	Owned   bool // hataori started it; false for a window taken in
+	Process int  // the process that holds it, recorded as the session's host_pid; 0 when not known
 }
 
-// Part is one piece of input: a paste, or one named key.
-type Part struct {
-	Paste string // delivered as one bracketed paste, its bytes unchanged
-	Key   Key
-}
-
-// Key is a name from a fixed table. Each holder maps every name or
-// refuses the whole input; it never guesses.
-type Key string
-
-const (
-	Enter  Key = "Enter"
-	Escape Key = "Escape"
-	Up     Key = "Up"
-	Down   Key = "Down"
-)
+type StopResult = host.StopResult
 
 type Liveness struct {
-	State  State       // Running, Exited, Gone or Unknown
-	Status *host.Status // how it ended, when the holder knows
+	State  State        // Unknown, Running, Exited or Gone
+	Status *host.Status // how it ended, when the holder recorded it
 }
 ```
+
+hataori's own host writes a paste as `ESC [200~`, the text, `ESC [201~`, and the keys from a fixed table: Enter `\r`, Escape `ESC`, Up `ESC [A`, Down `ESC [B`, each part in one write, the bytes the Claude Code codec wrote itself before it returned parts (`holder.Encode`, tested). Its `Alive` reads the state directory and never takes the host's lock: Exited once the status is recorded and the socket gone, Gone when the host's process no longer exists and recorded no end, Unknown before the host recorded its process id, else Running. Beyond `Holder` it offers what only it does so far, and a later holder that needs one of them adds it to the interface then: `Write` (input on pipes), `Since` (the raw screen by position, for a codec watching the start), `Tail` (the end of the raw log, for a start that timed out), and `WaitReleased` and `Reset` (a state directory whose host ended, made ready for the next).
 
 ### Control API: taking in a window (proposal)
 

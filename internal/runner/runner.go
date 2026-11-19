@@ -29,12 +29,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
+	"github.com/yousan/hataori/internal/holder"
 	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
@@ -82,7 +82,7 @@ type live struct {
 	adapter agent.Adapter
 	spec    agent.Spec
 	codec   agent.Codec
-	client  *host.Client
+	client  *host.Client // to the session host: the relay of hook calls, and the first sign that it answers
 	started time.Time
 	ready   bool  // the session left creating; no start check any more
 	resend  bool  // after a reconnect: send a first input that was not confirmed
@@ -261,46 +261,45 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 		return fmt.Errorf("runner: %w", err)
 	}
 	r.at("before host start")
-	pid := hostPID(dir)
-	if before == 2 && (pid > 0 && pid != recorded || host.Running(dir)) {
-		// A daemon that died had started this host, which runs or has run:
-		// it is followed, not started again. The old host of a woken
-		// session had let go of the state directory before launch was 2.
-		if err := host.WaitReady(dir); err != nil {
-			return err
-		}
-	} else {
-		if host.Running(dir) {
-			if before != 2 {
-				return fmt.Errorf("runner: session %d: another host still holds its state directory", id)
-			}
-			// The host the daemon that died started took the lock just now.
-			if err := host.WaitReady(dir); err != nil {
-				return err
-			}
-		} else if _, err := host.Start(r.Host, dir, host.Spec{Argv: launch.Argv, Env: launch.Env, Terminal: launch.Terminal, Dir: spec.Dir,
-			Cols: r.Cols, Rows: r.Rows}); err != nil {
-			return err
-		}
+	hs := holder.Spec{Argv: launch.Argv, Env: launch.Env, Terminal: launch.Terminal, Dir: spec.Dir, Cols: r.Cols, Rows: r.Rows}
+	if before == 2 {
+		// A daemon that died had begun this launch: a host it started is
+		// followed, not started again.
+		hs.Again = &holder.Window{Holder: holder.HostName, Process: recorded}
 	}
-	// The host writes its pid before it listens; a process that found the
-	// state directory taken exits, so the file names the one that runs.
-	pid = hostPID(dir)
+	w, err := r.hold().Start(ctx, dir, hs)
+	if errors.Is(err, holder.ErrHeld) {
+		return fmt.Errorf("runner: session %d: another host still holds its state directory", id)
+	}
+	if err != nil {
+		return err
+	}
 	r.at("after host start")
-	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET host_pid = ?, launch = 0 WHERE id = ?`, pid, id); err != nil {
+	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET host_pid = ?, launch = 0 WHERE id = ?`, w.Process, id); err != nil {
 		return fmt.Errorf("runner: %w", err)
 	}
 	return nil
 }
 
-// hostPID is the pid the host of dir recorded, or 0.
-func hostPID(dir string) int {
-	b, err := os.ReadFile(filepath.Join(dir, host.HostPIDFile))
-	if err != nil {
-		return 0
-	}
-	pid, _ := strconv.Atoi(string(bytes.TrimSpace(b)))
-	return pid
+// own is hataori's own session host, the holder of every session's terminal.
+func (r *Runner) own() *holder.Host { return &holder.Host{Command: r.Host, Poll: r.poll()} }
+
+// hold is the holder of every session's terminal, for the holder's
+// operations: start, input, screen, stop and alive.
+func (r *Runner) hold() holder.Holder { return r.own() }
+
+// window is the window of the session whose state directory is dir.
+func (r *Runner) window(dir string) holder.Window { return r.own().Window(dir) }
+
+// alive is what the holder says of the session whose state directory is dir.
+func (r *Runner) alive(dir string) holder.Liveness {
+	l, _ := r.hold().Alive(context.Background(), r.window(dir))
+	return l
+}
+
+// stop stops the agent of the session whose state directory is dir.
+func (r *Runner) stop(dir string, interrupt, terminate time.Duration) (holder.StopResult, error) {
+	return r.hold().Stop(context.Background(), r.window(dir), interrupt, terminate)
 }
 
 // at calls the test hook for a point of a launch.
@@ -357,21 +356,20 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 	// launch = 2: a daemon that died had begun this launch, after the old
 	// host was gone; a host running now is the new one.
 	if launching != 2 {
-		if !host.Gone(s.Spec.StateDir) && !hostLost(s.Spec.StateDir) {
+		if !r.alive(s.Spec.StateDir).Ended() {
 			return fmt.Errorf("runner: session %d: its host is still running", id)
 		}
 		// An ended host records its end before it lets go of the state
 		// directory.
-		for deadline := time.Now().Add(5 * time.Second); host.Running(s.Spec.StateDir); time.Sleep(10 * time.Millisecond) {
-			if time.Now().After(deadline) {
-				return fmt.Errorf("runner: session %d: its ended host still holds the state directory", id)
-			}
+		w := r.window(s.Spec.StateDir)
+		if !r.own().WaitReleased(w, 5*time.Second) {
+			return fmt.Errorf("runner: session %d: its ended host still holds the state directory", id)
 		}
 		if err := r.skipRest(ctx, id, s.Spec.StateDir); err != nil {
 			return err
 		}
 		// The status of the ended host would make the new one look ended.
-		if err := os.Remove(filepath.Join(s.Spec.StateDir, host.StatusFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := r.own().Reset(w); err != nil {
 			return fmt.Errorf("runner: %w", err)
 		}
 	}
@@ -496,11 +494,11 @@ func (r *Runner) stopSleepers(ctx context.Context) error {
 	rows.Close()
 	for _, id := range ids {
 		dir := StateDir(r.Root, id)
-		if _, err := os.Stat(filepath.Join(dir, host.HostPIDFile)); err != nil || host.Gone(dir) || hostLost(dir) {
+		if r.alive(dir).State != holder.Running {
 			continue
 		}
 		r.Log.Warn("stopping the agent of an asleep or closed session", "session", id)
-		go host.Stop(dir, time.Second, 2*time.Second)
+		go r.stop(dir, time.Second, 2*time.Second)
 	}
 	return nil
 }
@@ -871,23 +869,6 @@ func (r *Runner) storedReads(lv *live) (map[string]int64, []readRange, error) {
 	return starts, out, rows.Err()
 }
 
-// hostLost reports whether the host of dir is gone without recording an
-// end: its process no longer exists, as after a host reboot.
-func hostLost(dir string) bool {
-	if _, ok, _ := host.ReadStatus(dir); ok {
-		return false
-	}
-	b, err := os.ReadFile(filepath.Join(dir, host.HostPIDFile))
-	if err != nil {
-		return false // not started yet, or never: the start check handles it
-	}
-	pid, err := strconv.Atoi(string(bytes.TrimSpace(b)))
-	if err != nil || pid <= 1 {
-		return false
-	}
-	return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
-}
-
 // source tells a hook call, as the host records it, from the agent's
 // own output.
 func source(line []byte) agent.Source {
@@ -1030,9 +1011,9 @@ func (r *Runner) step(lv *live) bool {
 // stepLocked is step with lv.mu held.
 func (r *Runner) stepLocked(lv *live) bool {
 	if lv.asleep {
-		return !host.Gone(lv.dir) && !hostLost(lv.dir)
+		return !r.alive(lv.dir).Ended()
 	}
-	exited := host.Gone(lv.dir) || hostLost(lv.dir) // looked at before reading, so nothing written before the exit is missed
+	exited := r.alive(lv.dir).Ended() // looked at before reading, so nothing written before the exit is missed
 	b := r.read(lv)
 	r.watchScreen(lv, &b)
 	first, err := r.commit(lv, b)
@@ -1061,7 +1042,7 @@ func (r *Runner) stepLocked(lv *live) bool {
 		}
 		if e.Kind == agent.SessionEnded && e.Reason == agent.WrongSession {
 			// The session failed; its agent runs another conversation.
-			go host.Stop(lv.dir, time.Second, 2*time.Second)
+			go r.stop(lv.dir, time.Second, 2*time.Second)
 		}
 	}
 	for _, a := range b.actions {
@@ -1142,7 +1123,7 @@ func (r *Runner) watchScreen(lv *live, b *batch) {
 	if !lv.screen {
 		return
 	}
-	data, next := host.Screen(lv.dir, lv.seenTo)
+	data, next := r.own().Since(r.window(lv.dir), lv.seenTo)
 	lv.seenTo = next
 	if len(data) > 0 {
 		r.decode(lv, b, agent.Screen, data)
@@ -1335,17 +1316,17 @@ func (r *Runner) do(lv *live, a agent.Actions) error {
 	return r.act(lv, a)
 }
 
-// act writes to the agent and answers waiting hook calls. It returns the
-// first error, which it has logged.
+// act hands input to the agent through its holder and answers waiting hook
+// calls. It returns the first error, which it has logged.
 func (r *Runner) act(lv *live, a agent.Actions) error {
-	if len(a.Write) == 0 && len(a.Reply) == 0 {
+	if len(a.Keys) == 0 && len(a.Write) == 0 && len(a.Reply) == 0 {
 		return nil
 	}
 	if len(a.Inputs) > 0 {
 		if err := r.markWritten(lv, a.Inputs); err != nil {
 			// Not written: the codec, which counts it written, fails its
 			// turn as "not delivered" when no report comes.
-			a.Write = nil
+			a.Keys, a.Write = nil, nil
 			if len(a.Reply) == 0 {
 				return err
 			}
@@ -1362,8 +1343,16 @@ func (r *Runner) act(lv *live, a agent.Actions) error {
 		lv.client = c
 	}
 	var first error
-	for _, w := range a.Write {
-		if err := lv.client.Input(w); err != nil {
+	ctx, w := context.Background(), r.window(lv.dir)
+	if len(a.Keys) > 0 {
+		if err := r.hold().Input(ctx, w, a.Keys); err != nil {
+			r.Log.Error("input", "session", lv.id, "err", err)
+			first = err
+		}
+	}
+	if len(a.Write) > 0 {
+		// An agent on pipes: hataori's own host is its only holder.
+		if err := r.own().Write(ctx, w, a.Write); err != nil {
 			r.Log.Error("input", "session", lv.id, "err", err)
 			first = cmp.Or(first, err)
 		}
@@ -1379,10 +1368,10 @@ func (r *Runner) act(lv *live, a agent.Actions) error {
 
 // exit records that the agent's process ended.
 func (r *Runner) exit(lv *live) {
-	st, recorded, _ := host.ReadStatus(lv.dir)
+	st := r.alive(lv.dir).Status
 	in := session.Input{Kind: session.Exit}
 	switch {
-	case !recorded:
+	case st == nil:
 		in.Reason = session.ReasonInterrupted // the host died with it, as in a reboot (section 4.5)
 	case st.Stopped:
 		in.Reason = "stopped"
@@ -1445,7 +1434,7 @@ func (r *Runner) checkIdle(lv *live) {
 	}
 	if slept {
 		lv.asleep = true
-		go host.Stop(lv.dir, time.Second, 2*time.Second)
+		go r.stop(lv.dir, time.Second, 2*time.Second)
 	}
 }
 
@@ -1544,12 +1533,9 @@ func (r *Runner) Shut(ctx context.Context, id int64, reason string) error {
 		return err
 	}
 	dir := StateDir(r.Root, id)
-	running := func() bool {
-		_, err := os.Stat(filepath.Join(dir, host.HostPIDFile))
-		return err == nil && !host.Gone(dir) && !hostLost(dir)
-	}
+	running := func() bool { return r.alive(dir).State == holder.Running }
 	if running() {
-		if _, err := host.Stop(dir, time.Second, 2*time.Second); err != nil {
+		if _, err := r.stop(dir, time.Second, 2*time.Second); err != nil {
 			return fmt.Errorf("runner: session %d is closed, but stopping its agent: %w", id, err)
 		}
 	}
@@ -1664,14 +1650,14 @@ func (r *Runner) checkStart(lv *live) {
 	}
 	var tail []byte
 	if lv.client != nil {
-		tail, _ = lv.client.Tail(4000)
+		tail, _ = r.own().Tail(context.Background(), r.window(lv.dir), 4000)
 	}
 	if err := r.Machine.Apply(context.Background(), lv.id, session.Input{Kind: session.StartTimeout, Detail: string(tail)}); err != nil {
 		r.Log.Error("start timeout", "session", lv.id, "err", err)
 		return
 	}
 	lv.failed = true
-	go host.Stop(lv.dir, time.Second, time.Second)
+	go r.stop(lv.dir, time.Second, time.Second)
 }
 
 // Deliver gives input to a session's agent.
@@ -1738,7 +1724,7 @@ func (r *Runner) Interrupt(ctx context.Context, id int64) error {
 			time.Sleep(r.poll())
 		}
 		r.Log.Warn("the turn did not end after the interrupt; stopping the session", "session", id)
-		host.Stop(lv.dir, time.Second, 2*time.Second)
+		r.stop(lv.dir, time.Second, 2*time.Second)
 	}()
 	return nil
 }
