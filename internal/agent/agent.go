@@ -341,6 +341,7 @@ type RequestInfo struct {
 	Approval bool // an approval rather than a question
 	Text     string
 	Choices  []string
+	Multi    bool // several of Choices may be chosen at once
 }
 
 // Factory makes an Adapter from its section of the instance's config,
