@@ -2,7 +2,10 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -11,9 +14,10 @@ import (
 	"github.com/yousan/hataori/internal/people"
 )
 
-// A filter that names a thread of a scope the caller may not see is
-// answered as one that names a thread that does not exist, and the answer
-// names no scope outside the caller's (#469). The log line names both.
+// A filter that names a thread of a scope the caller may not see, by its
+// number or by a link, is answered as one that names a thread that does
+// not exist, and the answer names no scope outside the caller's but the
+// one the filter names (#469). The log line names the thread's scope.
 func TestFilterOfAThreadOfAnotherScope(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, fakeOwner{key: "new"})
@@ -32,7 +36,13 @@ func TestFilterOfAThreadOfAnotherScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	missing := hidden + 1000
+	var hiddenLink control.LinkRef
+	if err := f.core.Store.DB.QueryRow(`SELECT client, channel, thread FROM links WHERE thread_id = ?`, int64(hidden)).
+		Scan(&hiddenLink.Client, &hiddenLink.Channel, &hiddenLink.Thread); err != nil {
+		t.Fatal(err)
+	}
+	noLink := hiddenLink
+	noLink.Thread = "no-such-conversation"
 
 	callers := map[string]control.Caller{
 		// A supervisor's or a plugin's: limited to one scope.
@@ -41,12 +51,26 @@ func TestFilterOfAThreadOfAnotherScope(t *testing.T) {
 		// its person may not read it.
 		"a person's": {From: "chat:2", Scopes: []string{"s", hiddenScope}, May: control.OpRead, ReadAsPerson: true},
 	}
-	// The filters with the thread left out: one naming the caller's scope,
-	// one naming none, and one naming a scope that is not the caller's.
+	// The filters without the thread: one naming the caller's scope, one
+	// naming none, and one naming a scope that is not the caller's.
 	filters := map[string]control.Filter{
 		"the caller's scope": {Scope: "s"},
 		"no scope":           {},
 		"another scope":      {Scope: "elsewhere"},
+	}
+	// How a filter names the thread: the hidden one, and one that does
+	// not exist.
+	names := map[string]func(control.Filter) (hidden, missing control.Filter){
+		"by number": func(fl control.Filter) (control.Filter, control.Filter) {
+			h, m := fl, fl
+			h.Thread, m.Thread = hidden, hidden+1000
+			return h, m
+		},
+		"by link": func(fl control.Filter) (control.Filter, control.Filter) {
+			h, m := fl, fl
+			h.Link, m.Link = &hiddenLink, &noLink
+			return h, m
+		},
 	}
 	threads := func(a control.API, fl control.Filter) string {
 		ts, err := a.Threads(ctx, fl)
@@ -70,11 +94,15 @@ func TestFilterOfAThreadOfAnotherScope(t *testing.T) {
 		}
 		return "no caught_up mark"
 	}
+	reads := map[string]func(control.API, control.Filter) string{"Threads": threads, "Events": events}
 
-	// The thread exists, and the caller reads its own scope's thread.
-	if got := threads(f.core.As(control.Caller{Principal: "owner", Scopes: []string{hiddenScope}, May: control.OpRead}),
-		control.Filter{Thread: hidden}); got != "1 threads, error <nil>" {
-		t.Fatalf("the hidden scope's own caller: %s", got)
+	// The thread exists, by its number and by its link, and each caller
+	// reads its own scope's thread.
+	for nname, name := range names {
+		h, _ := name(control.Filter{})
+		if got := threads(f.core.As(control.Caller{Principal: "owner", Scopes: []string{hiddenScope}, May: control.OpRead}), h); got != "1 threads, error <nil>" {
+			t.Fatalf("the hidden scope's own caller, %s: %s", nname, got)
+		}
 	}
 	for cname, c := range callers {
 		if got := threads(f.core.As(c), control.Filter{Scope: "s", Thread: own}); got != "1 threads, error <nil>" {
@@ -85,23 +113,43 @@ func TestFilterOfAThreadOfAnotherScope(t *testing.T) {
 	for cname, c := range callers {
 		a := f.core.As(c)
 		for fname, fl := range filters {
-			for oname, read := range map[string]func(control.API, control.Filter) string{"Threads": threads, "Events": events} {
-				hf, mf := fl, fl
-				hf.Thread, mf.Thread = hidden, missing
-				f.log.Reset()
-				gotHidden := read(a, hf)
-				logged := f.log.String()
-				gotMissing := read(a, mf)
-				if gotHidden != gotMissing {
-					t.Errorf("%s by %s caller, %s: a thread of the hidden scope: %s; no such thread: %s", oname, cname, fname, gotHidden, gotMissing)
+			// The scopes the answer may not name: every scope that is not
+			// the caller's, but the one the filter names; and the hidden
+			// one, which even the person's caller does not learn of here.
+			var unnamed []string
+			for _, s := range []string{"s", "off", hiddenScope} {
+				if s == hiddenScope || (!slices.Contains(c.Scopes, s) && s != fl.Scope) {
+					unnamed = append(unnamed, s)
 				}
-				if strings.Contains(gotHidden, hiddenScope) {
-					t.Errorf("%s by %s caller, %s: the answer names the hidden scope: %s", oname, cname, fname, gotHidden)
-				}
-				if !strings.Contains(logged, "thread_scope="+hiddenScope) {
-					t.Errorf("%s by %s caller, %s: the log does not name the thread's scope: %q", oname, cname, fname, logged)
+			}
+			for nname, name := range names {
+				hf, mf := name(fl)
+				for oname, read := range reads {
+					what := fmt.Sprintf("%s by %s caller, %s, %s", oname, cname, fname, nname)
+					f.log.Reset()
+					gotHidden := read(a, hf)
+					logged := f.log.String()
+					gotMissing := read(a, mf)
+					if gotHidden != gotMissing {
+						t.Errorf("%s: a thread of the hidden scope: %s; no such thread: %s", what, gotHidden, gotMissing)
+					}
+					for _, s := range unnamed {
+						if strings.Contains(gotHidden, strconv.Quote(s)) {
+							t.Errorf("%s: the answer names scope %q: %s", what, s, gotHidden)
+						}
+					}
+					if !strings.Contains(logged, "thread_scope="+hiddenScope) {
+						t.Errorf("%s: the log does not name the thread's scope: %q", what, logged)
+					}
 				}
 			}
 		}
+	}
+
+	// A filter whose thread is in another of the caller's own scopes is
+	// still refused.
+	both := f.core.As(control.Caller{Principal: "owner", Scopes: []string{"s", hiddenScope}, May: control.OpRead})
+	if _, err := both.Threads(ctx, control.Filter{Scope: "s", Thread: hidden}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("a filter naming two of the caller's scopes: %v, want refused", err)
 	}
 }

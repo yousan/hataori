@@ -399,12 +399,13 @@ const noThread control.ThreadID = -1
 
 // filterScope checks a read with filter f and returns the one scope f
 // names, or "" for all of the caller's. A thread or link that does not
-// exist names no scope: the read finds nothing. A thread of a scope the
-// caller may not see is read as one that does not exist: f is changed to
-// name noThread, so that the answer, the caught_up mark's position too,
-// tells the caller neither that the thread exists nor its scope. The log
-// line names both scopes. A filter whose thread is in another of the
-// caller's scopes than the one it names matches nothing, and is refused.
+// exist names no scope: the read finds nothing. A thread, or a link's
+// thread, of a scope the caller may not see is read as a thread that does
+// not exist: f is changed to name noThread, so that the answer, the
+// caught_up mark's position too, tells the caller neither that the thread
+// exists nor its scope. The log line names both scopes. A filter whose
+// thread is in another of the caller's scopes than the one it names
+// matches nothing, and is refused.
 func (a *api) filterScope(ctx context.Context, name string, f *control.Filter) (string, error) {
 	scope := f.Scope
 	if f.Thread != 0 {
@@ -413,8 +414,7 @@ func (a *api) filterScope(ctx context.Context, name string, f *control.Filter) (
 			return "", err
 		}
 		if ts != "" && !a.sees(ts) {
-			a.c.Log.Warn("control read names a thread the caller may not see", "op", name, "principal", string(a.caller.Principal),
-				"scope", f.Scope, "thread", int64(f.Thread), "thread_scope", ts)
+			a.unseen(name, *f, f.Thread, ts)
 			f.Thread, ts = noThread, ""
 		}
 		if f.Scope != "" && ts != "" && f.Scope != ts {
@@ -425,7 +425,30 @@ func (a *api) filterScope(ctx context.Context, name string, f *control.Filter) (
 			scope = ts
 		}
 	}
+	if l := f.Link; l != nil && f.Thread != noThread {
+		var id control.ThreadID
+		var ts string
+		err := a.c.Store.DB.QueryRowContext(ctx, `SELECT t.id, t.scope FROM links l JOIN threads t ON t.id = l.thread_id
+			WHERE l.client = ? AND l.channel = ? AND l.thread = ?`, l.Client, l.Channel, l.Thread).Scan(&id, &ts)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("core: %s: link: %w", name, err)
+		}
+		if err == nil && !a.sees(ts) {
+			a.unseen(name, *f, id, ts)
+			f.Thread = noThread
+		}
+	}
 	return scope, a.check(control.OpRead, name, scope)
+}
+
+// unseen logs a read whose filter f names thread id of scope ts, which the
+// caller may not see: with the filter's scope, the thread's, and who asked.
+func (a *api) unseen(name string, f control.Filter, id control.ThreadID, ts string) {
+	attrs := []any{"op", name, "principal", string(a.caller.Principal), "scope", f.Scope, "thread", int64(id), "thread_scope", ts}
+	if client, cid, ok := people.Split(a.caller.From); ok {
+		attrs = append(attrs, "client", client, "id", cid)
+	}
+	a.c.Log.Warn("control read names a thread the caller may not see", attrs...)
 }
 
 // scopeOf returns the scope of thread id; ErrNotFound when there is no
