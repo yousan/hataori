@@ -175,7 +175,7 @@ func TestDaemonAsksTheClient(t *testing.T) {
 // listeners (3.2): an older one would ignore the field and answer with its
 // one listener's link, whichever that is. Without a way, any 3.x daemon is
 // asked.
-func TestSignInLinkForAListenerNeedsADaemonThatKnowsThem(t *testing.T) {
+func TestWayNeeds32(t *testing.T) {
 	var mu sync.Mutex
 	var asked []string
 	answer := func(m message) []string {
