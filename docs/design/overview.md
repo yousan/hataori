@@ -1751,17 +1751,33 @@ type HookCall struct {
 	Text   string // the input, or the post; left out of the call for a handler without "conversation"
 }
 
-// HookResult: Text as the handlers left it. Stopped when a handler
-// stopped it or failed where its policy blocks; By names that plugin, and
-// Reason is the plugin's reason (text) or, when Failed, hataori's account
-// of the failure.
+// HookResult: Text as the handlers left it, and Before and After the text
+// they added around it where the point allows (before_prompt_build, since
+// protocol 3.17): each handler's around what the ones before it left.
+// Stopped when a handler stopped it or failed where its policy blocks; By
+// names that plugin, and Reason is the plugin's reason (text) or, when
+// Failed, hataori's account of the failure.
 type HookResult struct {
-	Text    string
-	Stopped bool
-	Failed  bool
-	By      string
-	Reason  string
+	Text          string
+	Before, After string
+	Stopped       bool
+	Failed        bool
+	By            string
+	Reason        string
 }
+
+// core.Core.Hooks is the Hooks the core runs the input points with
+// (#351), inside Start and Send, before the input is accepted (decided
+// 2026-11-19): before_agent_run, then before_prompt_build. A stopped
+// input is refused with a *control.Stopped (Point, Plugin, Reason,
+// Failed), which errors.Is matches to control.ErrStopped, the wire's
+// error code "stopped"; it changes nothing, as every refusal of section
+// 5.1, and writes one log line. A key accepted before, and a closed or
+// removed thread, run no hook. control.Input gains Before and After, set
+// by the core only and never on the wire: the agent gets Before, Text and
+// After on lines of their own (Input.ForAgent), and the input event keeps
+// Text, with Before and After beside it. Nil Hooks, as without plugins,
+// calls nothing. Since protocol 3.17.
 
 // Not operations of the control API, for a client inside the daemon (#270):
 // core.Core.StartConfined(ctx, caller, r) is Start for a thread whose

@@ -46,7 +46,7 @@ var EventKinds = map[EventKind][]Field{
 	"turn_ended": {req("session", Integer), req("turn", Integer), req("by", String), opt("principal", String), opt("from", String),
 		req("outcome", String), opt("reason", String), req("background", Integer)},
 	"input": {req("session", Integer), req("turn", Integer), text("text", String), opt("principal", String), opt("from", String),
-		opt("link", Object)},
+		opt("link", Object), text("before", String), text("after", String)},
 	"answer": {req("session", Integer), req("turn", Integer), text("text", String), opt("principal", String), opt("from", String),
 		opt("link", Object), opt("request", String)},
 	"text":              {req("session", Integer), text("text", String), req("final", Boolean)},

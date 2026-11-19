@@ -15,12 +15,13 @@ import (
 )
 
 // may is what a handler at a point may do besides letting it pass as it
-// is: stop it (a gate) and change its text (modify).
-type may struct{ stop, change bool }
+// is: stop it (a gate), change its text, or add text before and after it
+// (modify).
+type may struct{ stop, change, add bool }
 
 var kinds = map[string]may{
 	"before_agent_run":    {stop: true},
-	"before_prompt_build": {change: true},
+	"before_prompt_build": {add: true},
 	"message_sending":     {stop: true, change: true},
 }
 
@@ -209,7 +210,9 @@ func (d *Dispatcher) Run(ctx context.Context, c control.HookCall) control.HookRe
 	res := control.HookResult{Text: c.Text}
 	for _, x := range hs {
 		began := time.Now()
-		a, why := d.call(ctx, x, c, res.Text)
+		// Each handler sees what the ones before it left: with the text
+		// they added, around it.
+		a, why := d.call(ctx, x, c, control.Input{Before: res.Before, Text: res.Text, After: res.After}.ForAgent())
 		log := []any{"plugin", x.g.ID, "point", c.Point, "thread", c.Thread, "scope", c.Scope, "took", time.Since(began)}
 		if why == "" {
 			why = allowed(c.Point, a)
@@ -229,6 +232,11 @@ func (d *Dispatcher) Run(ctx context.Context, c control.HookCall) control.HookRe
 		outcome := "continue"
 		if a.Text != nil {
 			res.Text, outcome = *a.Text, "changed"
+		}
+		if a.Before != "" || a.After != "" {
+			res.Before = control.Input{Before: a.Before, Text: res.Before}.ForAgent()
+			res.After = control.Input{Text: res.After, After: a.After}.ForAgent()
+			outcome = "added"
 		}
 		d.log.Info("plugin hook", append(log, "outcome", outcome)...)
 	}
@@ -272,6 +280,8 @@ func allowed(point string, a control.HookAnswer) string {
 		return "it answered stop with a text"
 	case a.Action == control.HookContinue && a.Text != nil && !k.change:
 		return fmt.Sprintf("it answered a changed text, which %s does not allow", point)
+	case (a.Before != "" || a.After != "") && (a.Action != control.HookContinue || !k.add):
+		return fmt.Sprintf("it answered text to add, which %s does not allow with %s", point, a.Action)
 	case a.Action != control.HookStop && a.Action != control.HookContinue:
 		return fmt.Sprintf("its answer's action is neither %s nor %s", control.HookContinue, control.HookStop)
 	}

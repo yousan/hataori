@@ -49,7 +49,7 @@ The operator can change the failure policy per plugin and point (`on_failure` in
 
 ### How a hook is called
 
-Since protocol 3.16. At a point, the daemon sends a `hook` request to each plugin whose grant has the point and the thread's scope, one after another: by priority, higher first, then in the config's order. Each gets the text as the one before left it, and answers `continue`, `continue` with a new `text` where the point may change it, or `stop` with a `reason` where the point may stop it. Without the `conversation` grant the request has no text.
+Since protocol 3.16. At a point, the daemon sends a `hook` request to each plugin whose grant has the point and the thread's scope, one after another: by priority, higher first, then in the config's order. Each gets the text as the one before left it, and answers `continue`, `continue` with a new `text` where the point may change it (`message_sending`), `continue` with text to add in `before` and `after` where the point may add it (`before_prompt_build`, since protocol 3.17), or `stop` with a `reason` where the point may stop it. Without the `conversation` grant the request has no text.
 
 A handler fails, and its policy (`block` or `skip`) applies, when:
 
@@ -57,7 +57,16 @@ A handler fails, and its policy (`block` or `skip`) applies, when:
 - its plugin is not connected, while it starts, starts again or stays stopped: so by default a `before_agent_run` handler blocks input in its scopes until the plugin is back. An operator who prefers that work goes on sets that plugin's `on_failure` to `skip`;
 - its connection closes before it answers;
 - it answers with an error, `not_supported` too;
-- its answer is one the point does not allow, such as `stop` at `before_prompt_build`.
+- its answer is one the point does not allow, such as `stop` or `text` at `before_prompt_build`.
+
+### The input points
+
+Since protocol 3.17 the core runs `before_agent_run`, then `before_prompt_build`, inside each `Start` and `Send`, before it accepts the input ([protocol.md, `Start`](protocol.md#operation-start)):
+
+- **A stopped input is refused** with the error code `stopped`, which names the plugin and the reason, and nothing of it is kept: no thread, chat thread or workspace for a `Start`, no `input` event for a `Send`. In chat, the trigger of a stopped `Start` gets one reply naming the plugin and the reason, and a stopped message in a thread gets one line, as a reply to it. The daemon writes one log line, without the text or the reason.
+- **Text `before_prompt_build` adds** reaches the agent around the input, each part on lines of its own. Each handler sees the input with what the handlers before it added, and adds around that. The `input` event keeps the input as it was given in `text`, which is what the other links of the thread show, and the added text in `before` and `after`, which `hataori events` shows. An answer to an open question gets no added text, but `before_agent_run` can stop it.
+- **A key accepted before runs no hook**, so a `Start` or `Send` given again, after a restart too, calls no handler twice, and input that was accepted before a restart reaches the agent as it was then, with its added text.
+- The caller waits for the handlers: at most their timeouts.
 
 The daemon sends hook requests on the plugin's oldest connection that is still open and is not a stream: open a connection for requests first, and follow events on others. The project's Go client answers them with the handler given to `wire.DialTokenHandler`. When a plugin connects while it had no connection open, the daemon sends it `plugin_started` with its grant; before hataori stops a plugin it starts, it is to send `plugin_stopping` (with the starting of plugins, #349). Each call is logged with the plugin, the point, the thread and the outcome, never with text or a plugin's reason.
 

@@ -27,7 +27,7 @@ import (
 
 // Version is the protocol version this build speaks: major.minor. Two
 // sides work together when their major numbers are equal (docs/protocol.md).
-const Version = "3.16"
+const Version = "3.17"
 
 type hello struct {
 	Version string `json:"version"`
@@ -310,6 +310,7 @@ var codes = []struct {
 	{"removal_refused", core.ErrRemovalRefused},      // since 2.3
 	{"linked_elsewhere", control.ErrLinkedElsewhere}, // since 3.4
 	{"ended", control.ErrEnded},                      // since 3.11
+	{"stopped", control.ErrStopped},                  // since 3.17
 	{"not_supported", ErrNotSupported},
 }
 

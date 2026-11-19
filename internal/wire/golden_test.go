@@ -42,7 +42,7 @@ var eventData = map[control.EventKind]string{
 	"state":             `{"detail":"last lines of the terminal","from":"running","reason":"interrupted","session":3,"to":"asleep"}`,
 	"turn_started":      `{"by":"caller","from":"discord:W1","key":"M0789","principal":"dispatch","session":3,"turn":12}`,
 	"turn_ended":        `{"background":0,"by":"caller","from":"discord:W1","outcome":"failure","principal":"dispatch","reason":"limit","session":3,"turn":12}`,
-	"input":             `{"from":"discord:W1","link":{"channel":"C0123","client":"discord","thread":"T0456"},"principal":"dispatch","session":3,"text":"Run the tests.","turn":12}`,
+	"input":             `{"after":"Say which tests failed.","before":"Answer in English.","from":"discord:W1","link":{"channel":"C0123","client":"discord","thread":"T0456"},"principal":"dispatch","session":3,"text":"Run the tests.","turn":12}`,
 	"answer":            `{"from":"discord:W1","link":{"channel":"C0123","client":"discord","thread":"T0456"},"principal":"dispatch","request":"3:toolu_2","session":3,"text":"blue","turn":13}`,
 	"text":              `{"final":true,"session":3,"text":"All tests pass."}`,
 	"tool_started":      `{"id":"toolu_1","parent":"agent_1","session":3,"tool":"Bash"}`,
@@ -185,6 +185,10 @@ func examples(t *testing.T) map[string]any {
 		ex["response-"+op+".json"] = resp
 	}
 	ex["response-hook-stop.json"] = response{ID: 2, Result: mustJSON(control.HookAnswer{Action: control.HookStop, Reason: "The input holds a secret."})}
+	ex["response-hook-add.json"] = response{ID: 3, Result: mustJSON(control.HookAnswer{Action: control.HookContinue,
+		Before: "Answer in English.", After: "Say which tests failed."})}
+	ex["response-error-stopped.json"] = response{ID: 6, Error: encodeError(fmt.Errorf("core: Send in %q: %w", "C0123",
+		&control.Stopped{Point: "before_agent_run", Plugin: "secret-scan", Reason: "The input holds a secret."}))}
 	for kind := range control.EventKinds {
 		d, ok := eventData[kind]
 		if !ok {

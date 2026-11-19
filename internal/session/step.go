@@ -51,6 +51,9 @@ type Input struct {
 	Reason    string            // Exit: why; empty for "crashed". Close, Remove: what asked for it, such as "command"
 	Detail    string            // StartTimeout, Exit: what a person may want to read, such as the end of the terminal log
 	Link      *control.LinkRef  // Send, Answer: the link it came through, if any
+	// Before and After, Send: the text the plugins added around Text, which
+	// the agent gets with it; the input event keeps them beside it.
+	Before, After string
 }
 
 // given is the data of the input or answer event of in: its text, and who
@@ -65,6 +68,12 @@ func given(in Input) map[string]any {
 	}
 	if l := in.Link; l != nil {
 		d["link"] = map[string]any{"client": l.Client, "channel": l.Channel, "thread": l.Thread}
+	}
+	if in.Before != "" {
+		d["before"] = in.Before // since protocol 3.17
+	}
+	if in.After != "" {
+		d["after"] = in.After
 	}
 	return d
 }

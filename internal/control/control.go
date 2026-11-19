@@ -360,6 +360,24 @@ type Input struct {
 	// when it is one of the thread's links, and the input event names it,
 	// so that every other link can show the input. Since 3.6.
 	Link *LinkRef `json:"link,omitempty"`
+	// Before and After are the text the plugins' before_prompt_build
+	// handlers added before and after Text (design, section 7.3). The core
+	// sets them; they are never read from a client, nor sent on the
+	// socket as part of an input.
+	Before string `json:"-"`
+	After  string `json:"-"`
+}
+
+// ForAgent is what the agent gets of in: Before, Text and After, each
+// that is not empty on lines of its own.
+func (in Input) ForAgent() string {
+	var parts []string
+	for _, p := range []string{in.Before, in.Text, in.After} {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 // Busy says what Send does when a turn is running.
