@@ -17,7 +17,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.6**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.7**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -356,6 +356,7 @@ A field left empty matches everything the caller may see.
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `text` | string | required | what is given to the agent |
+| `link` | `LinkRef` | optional | the conversation it came through, a link of the thread; the daemon keeps it only when it is one, and the `input` event names it; since 3.6 |
 
 ### Type `Answer`
 
@@ -364,6 +365,7 @@ A field left empty matches everything the caller may see.
 | `text` | string | required | a free-text answer to a question |
 | `choices` | [string] | required | the tokens of the chosen options, for a question with choices; may be `null` |
 | `allow` | boolean | required | the decision, for an approval |
+| `link` | `LinkRef` | optional | the conversation it came through, as in `Input`; since 3.6 |
 
 ### Type `ScopeInfo`
 
@@ -382,7 +384,7 @@ One scope the caller may see; since 3.5.
 | `scope` | string | required | the scope it belongs to; since 3.0 |
 | `links` | [`LinkRef`] | required | where it is shown, the first link first; empty for a thread from before 3.0 whose scope is no longer in the config; since 3.0 |
 | `title` | string | optional | from the first line of the first prompt; text; absent for a caller that may not read text, and when it is empty; optional since 2.0, required before |
-| `name` | string | optional | the chat thread's own name as the chat service shows it, of the thread's first link (`SetName`), which follows a rename; text; absent for a caller that may not read text, and when none is known; since 3.6 |
+| `name` | string | optional | the chat thread's own name as the chat service shows it, of the thread's first link (`SetName`), which follows a rename; text; absent for a caller that may not read text, and when none is known; since 3.7 |
 | `repo` | string | required | the repository of its workspace |
 | `state` | string | required | `creating`, `idle`, `running`, `waiting`, `asleep`, `closed`, `removed` or `failed` |
 | `started_by` | string | required | the principal that started it |
@@ -622,6 +624,7 @@ Exactly one per turn.
 | `text` | string | optional | the input |
 | `principal` | string | optional | the person who gave it; since 2.2 |
 | `from` | string | optional | the `<client>:<id>` it came from, as in `thread_created`; since 2.2 |
+| `link` | object | optional | the link it came through, a `LinkRef`: `client`, `channel` and `thread`; absent for input from outside chat, such as the supervisor's; since 3.6 |
 
 ### Event `answer`
 
@@ -632,6 +635,7 @@ Exactly one per turn.
 | `text` | string | optional | the answer |
 | `principal` | string | optional | the person who gave it; since 2.2 |
 | `from` | string | optional | the `<client>:<id>` it came from, as in `thread_created`; since 2.2 |
+| `link` | object | optional | the link it came through, as in `input`; since 3.6 |
 
 ### Event `text`
 

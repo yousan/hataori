@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/people"
 )
 
 // clientOwner opens conversations of the client name and counts them.
@@ -94,5 +95,73 @@ func TestLinkOnlyWhereShowInAllows(t *testing.T) {
 	}
 	if n := len(links(t, f, a)); n != before || owner.n != opened+1 {
 		t.Fatalf("refused links made %d links and opened %d conversations", n-before, owner.n-opened-1)
+	}
+}
+
+// An input names only a link of its thread and of the client it came
+// from: another thread's link, a conversation that is no link, a link of
+// the same thread on another client, and any link from a caller with no
+// client are left out of the input event.
+func TestInputNamesOnlyALinkOfItsThread(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{key: "new"})
+	f.core.People = people.New([]people.Person{{Name: "owner", IDs: []string{"chat:1"}}}, "owner", nil)
+	a, _ := f.running(t, "t1")
+	b, _ := f.running(t, "t2")
+	own := links(t, f, a)[0]
+	other := links(t, f, b)[0]
+	elsewhere := control.LinkRef{Client: "two", Channel: "d1", Thread: "x1"}
+	if _, err := f.core.Store.DB.Exec(`INSERT INTO links (thread_id, client, channel, thread, created_at) VALUES (?, 'two', 'd1', 'x1', 0)`, int64(a)); err != nil {
+		t.Fatal(err)
+	}
+	chat := f.core.As(control.Caller{From: "chat:1", Scopes: []string{"s"}, May: all})
+	for i, c := range []struct {
+		api control.API
+		l   control.LinkRef
+	}{{chat, own}, {chat, other}, {chat, control.LinkRef{Client: "chat", Channel: "s", Thread: "nowhere"}}, {chat, elsewhere}, {f.owner, own}} {
+		l := c.l
+		if err := c.api.Send(ctx, a, fmt.Sprint("m", i), control.Input{Text: fmt.Sprint("text ", i), Link: &l}, control.Deliver); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := f.core.Store.DB.Query(`SELECT json_extract(data, '$.text'), coalesce(json_extract(data, '$.link.thread'), '') FROM events
+		WHERE thread_id = ? AND kind = 'input' AND json_extract(data, '$.text') LIKE 'text %' ORDER BY pos`, int64(a))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var text, link string
+		rows.Scan(&text, &link)
+		got = append(got, text+"="+link)
+	}
+	if want := "text 0=" + own.Thread + ",text 1=,text 2=,text 3=,text 4="; strings.Join(got, ",") != want {
+		t.Fatalf("input events %v, want %s", got, want)
+	}
+}
+
+// A thread's first input came through its first link only when the start
+// came from that link's client.
+func TestFirstInputLinkOnlyFromItsClient(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{key: "new"})
+	f.core.People = people.New([]people.Person{{Name: "owner", IDs: []string{"chat:1"}}}, "owner", nil)
+	chat := f.core.As(control.Caller{From: "chat:1", Scopes: []string{"s"}, May: all})
+	for _, c := range []struct {
+		api    control.API
+		thread string
+	}{{chat, "from-chat"}, {f.owner, "from-socket"}} {
+		if _, err := c.api.Start(ctx, control.StartRequest{Key: c.thread, Scope: "s", Thread: c.thread, Input: control.Input{Text: "go"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var chatLink, socketLink string
+	f.core.Store.DB.QueryRow(`SELECT coalesce(json_extract(first_input, '$.link.thread'), '') FROM sessions s JOIN threads t ON t.id = s.thread_id
+		WHERE t.key = 'from-chat'`).Scan(&chatLink)
+	f.core.Store.DB.QueryRow(`SELECT coalesce(json_extract(first_input, '$.link.thread'), '') FROM sessions s JOIN threads t ON t.id = s.thread_id
+		WHERE t.key = 'from-socket'`).Scan(&socketLink)
+	if chatLink != "from-chat" || socketLink != "" {
+		t.Fatalf("first inputs' links %q and %q, want the chat start's only", chatLink, socketLink)
 	}
 }

@@ -274,6 +274,11 @@ type StartRequest struct {
 // Input is what a client gives an agent.
 type Input struct {
 	Text string `json:"text"`
+	// Link is the conversation the input came through, a link of the
+	// thread; absent for input from outside chat. The core keeps it only
+	// when it is one of the thread's links, and the input event names it,
+	// so that every other link can show the input. Since 3.6.
+	Link *LinkRef `json:"link,omitempty"`
 }
 
 // Busy says what Send does when a turn is running.
@@ -294,6 +299,9 @@ type Answer struct {
 	Text    string   `json:"text"`    // a free-text answer to a question
 	Choices []string `json:"choices"` // tokens of the chosen options, for a question with choices
 	Allow   bool     `json:"allow"`   // the decision, for an approval
+	// Link is the conversation the answer came through, as Input.Link.
+	// Since 3.6.
+	Link *LinkRef `json:"link,omitempty"`
 }
 
 // Filter narrows Threads and Events. A zero field matches everything the
@@ -336,7 +344,7 @@ type ThreadInfo struct {
 	// Name is the chat thread's own name as the chat service shows it, of
 	// the thread's first link (SetName), which follows a rename; text,
 	// absent for a caller that may not read text, and when none is known.
-	// Since 3.6.
+	// Since 3.7.
 	Name      string    `json:"name,omitempty"`
 	Repo      string    `json:"repo"`
 	State     State     `json:"state"`

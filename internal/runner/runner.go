@@ -186,7 +186,7 @@ func (r *Runner) Start(ctx context.Context, l core.Launch) error {
 	}
 	spec := agent.Spec{Dir: l.Dir, StateDir: StateDir(r.Root, l.Session), Model: l.Model, Effort: l.Effort,
 		Instructions: r.Instructions, Approvals: agent.AllowAll}
-	first := firstInput{Principal: l.Principal, From: l.From, Key: l.Key, Text: l.Input.Text, Context: l.Context}
+	first := firstInput{Principal: l.Principal, From: l.From, Key: l.Key, Text: l.Input.Text, Context: l.Context, Link: l.Input.Link}
 	if err := r.launch(ctx, l.Session, l.Agent, ad, spec, first); err != nil {
 		return err
 	}
@@ -313,7 +313,7 @@ func (r *Runner) at(point string) {
 // Resume starts the agent of an asleep session again, resuming its
 // conversation, and sends in once the agent reports that it is ready.
 func (r *Runner) Resume(ctx context.Context, id int64, principal control.Principal, from, key string, in control.Input) error {
-	return r.resume(ctx, id, firstInput{Principal: principal, From: from, Key: key, Text: in.Text, Wake: true})
+	return r.resume(ctx, id, firstInput{Principal: principal, From: from, Key: key, Text: in.Text, Wake: true, Link: in.Link})
 }
 
 // Wake starts the agent of an asleep session again, resuming its
@@ -1227,7 +1227,7 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 		case f.NoInput:
 			return nil
 		case !f.Sent && control.State(state) == control.Idle:
-			if err := r.Machine.ApplyTx(ctx, tx, lv.id, session.Input{Kind: session.Send, Principal: f.Principal, From: f.From, Key: f.Key, Text: f.Text}); err != nil {
+			if err := r.Machine.ApplyTx(ctx, tx, lv.id, session.Input{Kind: session.Send, Principal: f.Principal, From: f.From, Key: f.Key, Text: f.Text, Link: f.Link}); err != nil {
 				return err
 			}
 			f.Sent = true

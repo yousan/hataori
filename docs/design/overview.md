@@ -1606,7 +1606,7 @@ type Caller struct {
 type ThreadInfo struct {
 	// ...
 	Title      string // the first line of the first prompt; text, so optional since protocol 2.0
-	Name       string // the chat thread's own name, of the first link (SetName), following a rename; text; since protocol 3.6
+	Name       string // the chat thread's own name, of the first link (SetName), following a rename; text; since protocol 3.7
 	Agent      string // the agent's registered name
 	Model      string // as the agent reports it; as asked for until then
 	Effort     string // the same
@@ -1658,7 +1658,7 @@ type LinkRef struct {
 }
 
 // Filter gains Link: Threads with a Link returns the thread linked there,
-// or none. Input gains Link, the conversation it came through. ThreadInfo gains Scope and Links; Event carries Thread (the
+// or none. Input and Answer gain Link, the conversation they came through (since protocol 3.6); the core keeps it only when it is a link of the thread, and the `input` and `answer` events name it with the person, so that every other link shows them as `<person>: <text>`. ThreadInfo gains Scope and Links; Event carries Thread (the
 // number) and Scope.
 
 // ScopeOwner is the client that gives a scope its threads. The core asks
@@ -1769,7 +1769,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `SignInLink`'s `way` (section 7.2, #359) | minor: new optional argument; 3.2 |
 | `ThreadEvents` (#336) | minor: new operation; 3.3 |
 | `SetName`, with `Ops` gaining `OpName`, `Scopes` and `ScopeInfo`, and the `named` event (#405) | minor: new operations and event kind; 3.5 |
-| `ThreadInfo.Name`, the chat thread's own name (#406) | minor: new optional field; 3.6 |
+| `ThreadInfo.Name`, the chat thread's own name (#406) | minor: new optional field; 3.7 |
 | `OperateHost`, with `Ops` gaining `OpHostInput` (section 7.2) | minor: new operation, whose connection becomes a stream both ways |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 

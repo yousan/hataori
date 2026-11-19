@@ -23,7 +23,7 @@ export interface ThreadInfo {
   scope: string;
   links: LinkRef[];
   title?: string; // left out when empty, and for a caller that may not read text (protocol 2.0)
-  name?: string; // the chat thread's own name, following a rename; text, so left out the same way (protocol 3.6)
+  name?: string; // the chat thread's own name, following a rename; text, so left out the same way (protocol 3.7)
   repo: string;
   state: State;
   started_by: string;
