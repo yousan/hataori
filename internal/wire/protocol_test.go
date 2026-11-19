@@ -22,7 +22,7 @@ func TestVersions(t *testing.T) {
 	root := t.TempDir()
 	_, owner := newCore(t, root)
 	srv := serve(t, root, owner)
-	c, err := dialPath(srv.Path(), "3.9")
+	c, err := dialPath(srv.Path(), "3.11")
 	if err != nil {
 		t.Fatalf("a newer minor version is refused: %v", err)
 	}

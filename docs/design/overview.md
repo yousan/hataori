@@ -532,7 +532,10 @@ A supervisor is one ordinary session, Claude Code or Codex, that looks after the
 | list threads | `Threads` |
 | read one thread: state, open question, latest output | `Thread`, output capped |
 | send to a thread | `Send` with `Refuse` when busy |
+| ask to interrupt a thread | `AskInterrupt`, approved by a person |
 | start a thread | `Start` |
+
+**How an interrupt is approved** (#272; decision 4 of #267). The supervisor asks with a reason and receives a request id immediately. The request is shown in the supervisor's chat thread with Approve and Refuse buttons; a person of the scope, other than the asker, answers it. Approval sends the marked reason as the supervisor, whose person must still be allowed in the scope, while interrupting only the session and turn that were running when asked. If that turn ended, nothing is sent or interrupted. One line in the chat thread says how it ended: interrupted, the turn had already ended, or refused. An approved interrupt ends the worker's turn, and that turn end wakes the supervisor as any other; a refusal or an approval after the turn ended is said in the supervisor's chat thread. The request survives a daemon restart.
 
 **What it cannot do.**
 
@@ -1406,6 +1409,14 @@ type API interface {
 	// in.Link names the link the input came through, if any.
 	Send(ctx context.Context, id ThreadID, key string, in Input, busy Busy) error
 	Answer(ctx context.Context, req RequestID, a Answer) error
+	// AskInterrupt asks a person to approve interrupting the running turn of
+	// thread id, with reason. It stores an approval request in the caller's
+	// AsksIn thread and returns its id at once; nothing is interrupted until
+	// a person approves it with Answer. A repeated key returns the original
+	// request; an empty key makes no repeat check. An open request for the
+	// same running turn is returned instead of a second one. The caller's
+	// AsksIn thread cannot be the target (ErrForbidden). Since protocol 3.10.
+	AskInterrupt(ctx context.Context, id ThreadID, key string, reason string) (RequestID, error)
 	Stop(ctx context.Context, id ThreadID) error
 
 	// CloseThread ends the agent process of an idle, asleep or failed thread
@@ -1566,6 +1577,9 @@ type WorkspaceState struct {
 // Caller is who is asking. An API value is bound to one Caller,
 // and the core checks every call against it.
 type Caller struct {
+	// AsksIn is where approvals the caller asks for are shown and answered.
+	// The daemon sets it when it binds the caller; zero: it cannot ask.
+	AsksIn ThreadID
 	// From is the "<client>:<id>" a relayed input came from, such as a chat
 	// message's author. The core resolves it to a person and sets Principal;
 	// an id no person lists is a guest, with no Principal. Empty for a
@@ -1573,7 +1587,7 @@ type Caller struct {
 	From      string
 	Principal Principal // a person's name (section 5.5)
 	Scopes    []string  // the scopes it may see and act in
-	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName
+	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName, OpAsk
 	// NoText leaves text written by a person or an agent out of what the
 	// caller reads: ThreadInfo.Title and ThreadInfo.Last,
 	// ThreadDetail.Recent, the text of its requests, and the text fields of
@@ -1605,8 +1619,8 @@ type Caller struct {
 // carries a token that the daemon issued (wire.Server.Issue, since
 // protocol 2.2): then it is bound to the API of the Caller the token was
 // issued for. wire.Server.Revoke forgets a token and closes its
-// connections. supervisor.Caller(scope) is a supervisor's Caller: From
-// "supervisor:<scope>", Scopes [scope], OpRead|OpStart|OpSend, RefuseBusy,
+// connections. supervisor.Caller(scope, thread) is a supervisor's Caller: From
+// "supervisor:<scope>", Scopes [scope], OpRead|OpStart|OpSend|OpAsk, AsksIn thread, RefuseBusy,
 // and the Mark of section 7.1. wire.Server.Restore binds a token issued by
 // an earlier run of the daemon again, for a client that still runs with it
 // (#270).

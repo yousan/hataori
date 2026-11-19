@@ -6,7 +6,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 - The socket is `<root>/state/control.sock`. When that path is too long for a Unix socket, the daemon listens on a short path in the user's runtime or temporary directory and writes that path into `<root>/state/control.sock.path`.
 - Only the OS user that runs the daemon may connect. A connection whose client hello has no `token` acts as the instance's owner.
-- A connection whose client hello has a `token` acts as the caller the daemon issued that token for, with the scopes and operations the daemon chose; nothing the client sends widens them. The daemon issues a token for each supervisor session, limited to that supervisor's scope (design, section 7.1). A token the daemon does not know, or no longer knows, is refused: the daemon's hello carries `error`, it logs the refusal without the token, and it closes the connection. A client that streams events or terminal output presents the token on that connection too. Since 2.2; an older daemon ignores the field and makes the connection the owner's, so a client with a token checks that the daemon speaks 2.2 or later.
+- A connection whose client hello has a `token` acts as the caller the daemon issued that token for, with the scopes and operations the daemon chose; nothing the client sends widens them. The daemon issues a token for each supervisor session, limited to that supervisor's scope (design, section 7.1). It may also ask for approvals shown in its own thread. A token the daemon does not know, or no longer knows, is refused: the daemon's hello carries `error`, it logs the refusal without the token, and it closes the connection. A client that streams events or terminal output presents the token on that connection too. Since 2.2; an older daemon ignores the field and makes the connection the owner's, so a client with a token checks that the daemon speaks 2.2 or later.
 - Each message is one JSON object on one line.
 - Each side sends a `hello` first. The daemon reads the client's hello before it answers with its own. When the daemon refuses the client, its hello carries `error` and the daemon closes the connection.
 - After the hellos, **either side may send requests**. A request has `op` set; a response has no `op`. Each side numbers its own requests, and a response carries the `id` of the request it answers. Several requests may be outstanding at once, and the answers may come in any order.
@@ -17,7 +17,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.9**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.10**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -187,7 +187,7 @@ Result: none
 
 ### Operation `Answer`
 
-Answers an open question or approval.
+Answers an open question or approval. An approval asked with `AskInterrupt` is approved by `allow: true` or `choices: ["approve"]`; otherwise it is refused. The asker's own person, a guest and a person not in the scope are `forbidden`.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -195,6 +195,18 @@ Answers an open question or approval.
 | `answer` | `Answer` | required | the answer |
 
 Result: none
+
+### Operation `AskInterrupt`
+
+Since 3.10. Asks a person in the scope to approve interrupting the running turn. The request is shown in the thread the daemon bound the caller to, a supervisor's own thread. The caller must have been given asking: a supervisor's connection has it; the owner's connection without such a thread is `forbidden`. Nothing is interrupted until approval. Once approved, the daemon gives the target the reason as `Send` with busy 2 would, as the asker, only if the turn that ran when asked still runs. A repeated key returns the same request; an empty key makes no repeat check. An open request for the same running turn is returned instead of a second one. The caller's own approval thread cannot be the target (`forbidden`). A thread without a running turn is `refused`; send instead.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `id` | integer | required | the target thread's number |
+| `key` | string | required | makes the request safe to repeat; empty for no repeat check |
+| `reason` | string | required | the reason given to the thread |
+
+Result: string
 
 ### Operation `Stop`
 
@@ -426,7 +438,7 @@ The fields of `ThreadInfo`, and:
 | `context` | `Context` | optional | as in `ThreadInfo` |
 | `tokens` | `TokenCount` | optional | as in `ThreadInfo` |
 | `terminal` | string | optional | as in `ThreadInfo` |
-| `requests` | [`Request`] | required | the open questions and approvals; may be `null` |
+| `requests` | [`Request`] | required | the open questions and approvals; open approvals asked here are listed whatever the thread state; may be `null` |
 | `recent` | string | required | the end of its last output, at most the bytes asked for |
 | `events` | [`Event`] | optional | its last events, as many as `events` asked for, newest last, each as `Events` delivers it; since 1.5 |
 
@@ -678,6 +690,34 @@ Exactly one per turn.
 |---|---|---|---|
 | `session` | integer | required | the session |
 | `id` | string | required | as in `subagent_started` |
+
+### Event `approval_asked`
+
+An interrupt approval request in the asker's thread, since 3.10.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `request` | string | required | what `Answer` names |
+| `action` | string | required | `interrupt` |
+| `target` | integer | required | the target thread |
+| `turn` | integer | required | the target's turn that was running when asked |
+| `reason` | string | optional | the reason, text |
+| `principal` | string | optional | the person who asked |
+| `from` | string | optional | the `<client>:<id>` it came from, as in `thread_created` |
+
+### Event `approval_answered`
+
+The decision in the asker's thread, since 3.10.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `request` | string | required | what `Answer` names |
+| `allow` | boolean | required | whether approved |
+| `outcome` | string | required | `interrupted`, `ended`, or `refused` |
+| `target` | integer | required | the target thread |
+| `principal` | string | optional | the person who answered |
+| `from` | string | optional | the `<client>:<id>` it came from, as in `thread_created` |
+| `link` | object | optional | the conversation where answered |
 
 ### Event `request`
 

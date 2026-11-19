@@ -120,7 +120,7 @@ func (fakeWorkspaces) State(_ context.Context, dir string) (control.WorkspaceSta
 	return control.WorkspaceState{Branch: "main", Uncommitted: len(dir) + 1}, nil
 }
 
-const all = control.OpRead | control.OpStart | control.OpSend | control.OpAnswer | control.OpStop
+const all = control.OpRead | control.OpStart | control.OpSend | control.OpAnswer | control.OpStop | control.OpAsk
 
 type fixture struct {
 	core   *Core
@@ -227,7 +227,8 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 			_, err := a.Start(ctx, control.StartRequest{Key: "k2", Scope: "s", Thread: "t2"})
 			return err
 		},
-		"Send": func(a control.API) error { return a.Send(ctx, id, "m9", control.Input{Text: "x"}, control.Deliver) },
+		"Send":         func(a control.API) error { return a.Send(ctx, id, "m9", control.Input{Text: "x"}, control.Deliver) },
+		"AskInterrupt": func(a control.API) error { _, err := a.AskInterrupt(ctx, id, "key", "reason"); return err },
 		"Answer": func(a control.API) error {
 			return a.Answer(ctx, session.RequestHandle(sid, "r1"), control.Answer{Text: "x"})
 		},

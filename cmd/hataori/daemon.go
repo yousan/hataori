@@ -235,7 +235,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	}
 	sv := &supervisor.Sessions{Core: c, Tokens: srv, Root: abs, Hataori: exe, Scopes: supervisors,
 		Owner: control.Principal(cfg.Owner), Cheap: cheap, Budgets: budgets, Log: lg}
-	issueSupervisor := func(scope string) (string, error) { return srv.Issue(sv.API(scope)) }
+	issueSupervisor := func(scope string) (string, error) { return srv.Issue(sv.API(scope, 0)) }
 	if supervisorHook != nil {
 		supervisorHook(issueSupervisor, srv.Revoke)
 	}

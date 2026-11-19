@@ -697,9 +697,33 @@ func (a *api) Thread(ctx context.Context, id control.ThreadID, recent, events in
 			if a.caller.NoText {
 				r.Text, r.Choices = "", nil
 			}
-			d.Requests = []control.Request{r}
+			d.Requests = append(d.Requests, r)
 		}
 	}
+	rows, err := a.c.Store.DB.QueryContext(ctx, `SELECT handle, target, reason FROM approvals WHERE asks_in = ? AND state = 'open' ORDER BY id`, id)
+	if err != nil {
+		return d, err
+	}
+	for rows.Next() {
+		var r control.Request
+		var target int64
+		var reason string
+		if err := rows.Scan(&r.ID, &target, &reason); err != nil {
+			rows.Close()
+			return d, err
+		}
+		r.Kind = control.Approval
+		if !a.caller.NoText {
+			r.Text = fmt.Sprintf("Interrupt thread %d? %s", target, reason)
+		}
+		r.Choices = []control.Choice{{Label: "Approve", Token: "approve"}, {Label: "Refuse", Token: "refuse"}}
+		d.Requests = append(d.Requests, r)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return d, err
+	}
+	rows.Close()
 	if !a.caller.NoText {
 		if d.Recent, err = a.c.recentText(ctx, id, recent); err != nil {
 			return d, err
@@ -1341,6 +1365,14 @@ func (c *Core) current(ctx context.Context, q querier, id control.ThreadID) (int
 }
 
 func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in control.Input, busy control.Busy) error {
+	return a.send(ctx, id, key, in, busy, nil)
+}
+
+type sendGuard struct{ session, turn int64 }
+
+var errGuardEnded = errors.New("the requested turn ended")
+
+func (a *api) send(ctx context.Context, id control.ThreadID, key string, in control.Input, busy control.Busy, guard *sendGuard) error {
 	scope, err := a.actThread(ctx, control.OpSend, "Send", id)
 	if err != nil {
 		return err
@@ -1370,7 +1402,7 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 		if err != nil {
 			return err
 		}
-		if state == control.Closed || state == control.Removed {
+		if guard == nil && (state == control.Closed || state == control.Removed) {
 			// Nothing is accepted: a message does not wake a closed thread.
 			return fmt.Errorf("core: send to %v: %w", id, ErrClosed)
 		}
@@ -1382,6 +1414,16 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 			ok, err := tx.Accept(ctx, "send:"+scope+"\x00"+key, data)
 			if err != nil || !ok {
 				return err // a repeated key is ignored, whatever Busy says
+			}
+		}
+		if guard != nil {
+			var turn int64
+			err := tx.QueryRowContext(ctx, `SELECT id FROM turns WHERE session_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1`, sid).Scan(&turn)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			if errors.Is(err, sql.ErrNoRows) || sid != guard.session || state != control.Running || turn != guard.turn {
+				return errGuardEnded
 			}
 		}
 		if state == control.Running {
@@ -1472,7 +1514,7 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 		JOIN sessions s ON s.id = r.session_id JOIN threads t ON t.id = s.thread_id
 		WHERE r.handle = ?`, string(req)).Scan(&scope, &thread, &sid, &agentReq, &state)
 	if errors.Is(err, sql.ErrNoRows) {
-		err = ErrNotFound
+		return a.answerApproval(ctx, req, ans)
 	}
 	if err != nil {
 		a.c.Log.Warn("control call refused", "op", "Answer", "principal", string(a.caller.Principal), "request", string(req), "reason", err)

@@ -52,9 +52,9 @@ func toolNames(t *testing.T, result any) []string {
 var four = []string{ToolList, ToolRead, ToolSend, ToolStart}
 
 // What Claude Code sent is answered as it was then: every request gets one
-// answer with its id, initialize in the version Claude Code asked for, and
-// tools/list with exactly the four tools. Claude Code took them: its init
-// message lists the server as connected with those four.
+// answer with its id and initialize in the version Claude Code asked for.
+// The four captured tools are what Claude Code was given then; the current
+// server also offers interrupt_thread.
 func TestClaudeCodeToolsList(t *testing.T) {
 	client, err := os.ReadFile(filepath.Join(captured, "client.jsonl"))
 	if err != nil {
@@ -97,14 +97,21 @@ func TestClaudeCodeToolsList(t *testing.T) {
 				t.Fatalf("initialize answered %v, Claude Code asked for %v", v, asked)
 			}
 		case "tools/list":
-			if names := toolNames(t, r["result"]); !slices.Equal(names, four) {
-				t.Fatalf("tools/list gives %v, want %v", names, four)
+			if names := toolNames(t, r["result"]); !slices.Equal(names, []string{ToolList, ToolRead, ToolSend, ToolInterrupt, ToolStart}) {
+				t.Fatalf("tools/list gives %v, want the five current tools", names)
 			}
-			// The tools are those Claude Code was given in the capture.
-			a, _ := json.Marshal(r["result"])
+			// Compare the tools Claude Code was given in the capture.
+			result := r["result"].(map[string]any)
+			var capturedTools []any
+			for _, item := range result["tools"].([]any) {
+				if item.(map[string]any)["name"] != ToolInterrupt {
+					capturedTools = append(capturedTools, item)
+				}
+			}
+			a, _ := json.Marshal(map[string]any{"tools": capturedTools})
 			b, _ := json.Marshal(want[string(id)]["result"])
 			if !bytes.Equal(a, b) {
-				t.Fatalf("tools/list changed since the capture; take it again with testdata/capture.sh:\n%s\n%s", a, b)
+				t.Fatalf("tools/list changed since the capture:\n%s\n%s", a, b)
 			}
 		default:
 			if r["error"] == nil {

@@ -227,6 +227,12 @@ func (c *Client) Answer(ctx context.Context, req control.RequestID, a control.An
 	return c.call(ctx, "Answer", answerArgs{Request: req, Answer: a}, nil)
 }
 
+func (c *Client) AskInterrupt(ctx context.Context, id control.ThreadID, key, reason string) (control.RequestID, error) {
+	var out control.RequestID
+	err := c.call(ctx, "AskInterrupt", askInterruptArgs{ID: id, Key: key, Reason: reason}, &out)
+	return out, err
+}
+
 func (c *Client) Stop(ctx context.Context, id control.ThreadID) error {
 	return c.call(ctx, "Stop", stopArgs{ID: id}, nil)
 }

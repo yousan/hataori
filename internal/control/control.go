@@ -77,6 +77,17 @@ type API interface {
 	Send(ctx context.Context, id ThreadID, key string, in Input, busy Busy) error
 	// Answer answers an open question or approval.
 	Answer(ctx context.Context, req RequestID, a Answer) error
+	// AskInterrupt asks a person to approve interrupting the running turn of
+	// thread id, with reason. It stores an approval request in the caller's
+	// AsksIn thread and returns its id at once; nothing is interrupted until
+	// a person approves it with Answer. It needs OpAsk, the caller's person
+	// allowed in id's scope, and AsksIn a thread of that scope. A thread
+	// without a running turn is refused (send instead). A repeated key
+	// returns the original request; an empty key makes no repeat check. An
+	// open request for the same running turn is returned instead of a second
+	// one. The caller's AsksIn thread cannot be the target (ErrForbidden).
+	// Since protocol 3.10.
+	AskInterrupt(ctx context.Context, id ThreadID, key string, reason string) (RequestID, error)
 	// Stop interrupts the thread's running turn.
 	Stop(ctx context.Context, id ThreadID) error
 	// CloseThread ends the agent process of an idle, asleep or failed thread and
@@ -175,6 +186,9 @@ type API interface {
 // Start, Send, Answer, Stop, Close and Remove are refused unless the
 // Principal is the owner or one of the people of the thread's scope.
 type Caller struct {
+	// AsksIn is where approval requests are shown. The daemon sets it when
+	// binding the caller; zero forbids asking.
+	AsksIn ThreadID
 	// From is the "<client>:<id>" a relayed input came from, such as a
 	// chat message's author. The core resolves it to a person and uses that
 	// person as the Principal, whatever Principal says; an id no person
@@ -183,7 +197,7 @@ type Caller struct {
 	From      string
 	Principal Principal // a person's name
 	Scopes    []string  // the scopes it may see and act in
-	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove
+	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName, OpAsk
 	// NoText leaves text written by a person or an agent out of what the
 	// caller reads: ThreadInfo.Title and ThreadInfo.Last,
 	// ThreadDetail.Recent, the text of its requests, and the text fields of
@@ -244,6 +258,7 @@ const (
 	// OpName may record the names the chat service shows (SetName): a chat
 	// front end's caller, and the owner's connection on the control socket.
 	OpName
+	OpAsk // AskInterrupt
 )
 
 // Way is one of the dashboard's listeners, each a way of reaching it with
