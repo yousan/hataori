@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -308,5 +309,62 @@ func TestLimitedOperatorMayNotOperateHost(t *testing.T) {
 		t.Fatalf("the same caller without the limit: %v", err)
 	} else {
 		op.End()
+	}
+}
+
+// A caller not granted an operation on a thread is refused it alike, with
+// one log line, whether the thread exists or not; and the host's
+// terminals, which only the owner reads, are refused to it with the line
+// naming who it is.
+func TestLimitedCallerLearnsNothingOfThreads(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{key: "new"})
+	f.core.HostTerms = &fakeHostTerms{}
+	id, _ := f.running(t, "t1")
+	c := control.Caller{From: "plugin:scan", Scopes: []string{"s"}, May: control.Ops(^uint16(0)),
+		Limit: &control.Limit{Operations: []string{"Threads"}}}
+	a := f.core.As(c)
+	for _, th := range []control.ThreadID{id, 999} {
+		for name, call := range map[string]func() error{
+			"Thread":         func() error { _, err := a.Thread(ctx, th, 0, 0); return err },
+			"ThreadEvents":   func() error { _, err := a.ThreadEvents(ctx, th, 0, 1); return err },
+			"Workspace":      func() error { _, err := a.Workspace(ctx, th); return err },
+			"Send":           func() error { return a.Send(ctx, th, "k", control.Input{Text: "x"}, control.Refuse) },
+			"Stop":           func() error { return a.Stop(ctx, th) },
+			"Remove":         func() error { return a.RemoveThread(ctx, th) },
+			"AttachTerminal": func() error { _, err := a.AttachTerminal(ctx, th); return err },
+			"Link": func() error {
+				_, err := a.Link(ctx, th, control.LinkRef{Client: "elsewhere", Channel: "x"})
+				return err
+			},
+			"Link ": func() error { _, err := a.Link(ctx, th, control.LinkRef{}); return err },
+			"Events": func() error {
+				_, err := a.Events(ctx, control.Filter{Scope: "elsewhere", Thread: th}, 0)
+				return err
+			},
+			"SetName": func() error {
+				return a.SetName(ctx, control.LinkRef{Client: "chat", Channel: "s", Thread: fmt.Sprint("no-", th)}, "n")
+			},
+		} {
+			f.log.Reset()
+			if err := call(); !errors.Is(err, ErrForbidden) {
+				t.Errorf("%s of thread %d: %v", name, th, err)
+			}
+			if lines := logLines(f, "not granted"); len(lines) != 1 || strings.Count(f.log.String(), "\n") != 1 || !strings.Contains(lines[0], "op="+strings.TrimSpace(name)+" ") {
+				t.Errorf("%s of thread %d logged %q", name, th, f.log.String())
+			}
+		}
+	}
+	for name, call := range map[string]func() error{
+		"HostTerminals": func() error { _, err := a.HostTerminals(ctx); return err },
+		"HostScreen":    func() error { _, err := a.HostScreen(ctx, "%1"); return err },
+	} {
+		f.log.Reset()
+		if err := call(); !errors.Is(err, ErrForbidden) {
+			t.Errorf("%s: %v", name, err)
+		}
+		if lines := logLines(f, "op="+name+" "); len(lines) != 1 || !strings.Contains(lines[0], "from=plugin:scan") {
+			t.Errorf("%s logged %q", name, f.log.String())
+		}
 	}
 }

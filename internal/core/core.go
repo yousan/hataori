@@ -431,6 +431,9 @@ func (a *api) marked(in control.Input) control.Input {
 // thread or link that does not exist names no scope: the read finds
 // nothing.
 func (a *api) filterScope(ctx context.Context, name string, f control.Filter) (string, error) {
+	if err := a.granted(name, f.Scope); err != nil {
+		return "", err
+	}
 	scope := f.Scope
 	if f.Thread != 0 {
 		ts, err := a.c.scopeOf(ctx, a.c.Store.DB, f.Thread)
@@ -465,17 +468,32 @@ func (c *Core) scopeOf(ctx context.Context, q querier, id control.ThreadID) (str
 // checkThread checks a call on thread id with check, in the thread's scope,
 // and returns that scope.
 func (a *api) checkThread(ctx context.Context, op control.Ops, name string, id control.ThreadID) (string, error) {
-	scope, err := a.c.scopeOf(ctx, a.c.Store.DB, id)
+	scope, err := a.threadScope(ctx, name, id)
 	if err != nil {
 		return "", err
 	}
 	return scope, a.check(op, name, scope)
 }
 
+// threadScope is the scope of thread id for operation name. A caller not
+// granted the operation is refused first, whether the thread exists or
+// not, so that it learns nothing of the thread; the refusal is logged
+// with the thread's scope when there is one.
+func (a *api) threadScope(ctx context.Context, name string, id control.ThreadID) (string, error) {
+	scope, err := a.c.scopeOf(ctx, a.c.Store.DB, id)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return "", err
+	}
+	if gerr := a.granted(name, scope); gerr != nil {
+		return "", gerr
+	}
+	return scope, err
+}
+
 // actThread is checkThread for a call that gives the agent input, or stops
 // it: act in the thread's scope.
 func (a *api) actThread(ctx context.Context, op control.Ops, name string, id control.ThreadID) (string, error) {
-	scope, err := a.c.scopeOf(ctx, a.c.Store.DB, id)
+	scope, err := a.threadScope(ctx, name, id)
 	if err != nil {
 		return "", err
 	}
@@ -1725,6 +1743,9 @@ func (a *api) SignInLink(ctx context.Context, way control.Way) (string, error) {
 // checkHost allows HostTerminals and HostScreen: only when they are on, and
 // only to the owner's caller with OpHost.
 func (a *api) checkHost(name string) error {
+	if err := a.granted(name, ""); err != nil {
+		return err
+	}
 	if a.c.HostTerms != nil && a.c.People != nil && a.c.People.Owner() != "" &&
 		a.caller.Principal == control.Principal(a.c.People.Owner()) {
 		return a.check(control.OpHost, name, "")

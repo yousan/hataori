@@ -332,7 +332,7 @@ When the daemon starts, it reads each plugin's manifest, `hataori-plugin.json` i
 | `conversation` | boolean | `false` | Whether it may read message text: inputs, the agent's text, posts and thread titles. Only for a manifest that asks for `conversation`; without this grant, what the plugin gets has the text left out. |
 | `settings` | object | `{}` | The plugin's own settings. hataori checks only that they are an object and gives them to the plugin as written, `null` values included. The manifest's `config` schema is not applied to them. |
 
-No plugin is given `SignInLink`, `HostTerminals`, `HostScreen`, `OperateHost` (with `HostKeys` and `End`), `AttachTerminal`, `Close` or `Remove`: a manifest or an entry that names one is refused with one line naming the key. A plugin calls as the id `plugin:<id>`; to let it `Start`, `Send`, `Answer` or `Stop`, list that id under a person and the person in the scope's `people`.
+No plugin is given `SignInLink`, `HostTerminals`, `HostScreen`, `OperateHost` (with `HostKeys` and `End`), `AttachTerminal`, `Close` or `Remove`: a manifest or an entry that names one is refused with one line naming the key. A plugin calls as the id `plugin:<id>`; to let it `Start`, `Send`, `Answer`, `Stop` or `Link`, list that id under a person and the person in the scope's `people`.
 
 #### `plugins[].hooks[]`
 

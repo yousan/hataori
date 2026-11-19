@@ -100,6 +100,8 @@ func TestPluginConnectionIsItsGrant(t *testing.T) {
 	if _, err := p.Thread(ctx, id, 100, 10); !errors.Is(err, control.ErrForbidden) {
 		t.Fatalf("Thread, not granted: %v", err)
 	}
+	// Terminal is refused for the text too (#263), and Send for want of
+	// a person; the core's tests show each refused for the limit alone.
 	if _, err := p.Terminal(ctx, id, "", 0); !errors.Is(err, control.ErrForbidden) {
 		t.Fatalf("Terminal, not granted: %v", err)
 	}
