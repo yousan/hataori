@@ -38,7 +38,7 @@ func write(t *testing.T, path string, n int) string {
 
 func fileCalls(f *front, id control.ThreadID) []fake.Call {
 	var out []fake.Call
-	for _, c := range f.driver.Calls(conv(id)) {
+	for _, c := range f.driver.Calls(f.conv(id)) {
 		if c.Op == fake.OpPost && c.Message.Text != "the prompt" {
 			out = append(out, c)
 		}
@@ -142,7 +142,7 @@ func TestFileReplacedAfterTheCheckIsNotWhatIsPosted(t *testing.T) {
 	report := write(t, filepath.Join(ws, "report.txt"), 3)
 	secret := write(t, filepath.Join(outside, "secret.txt"), 7)
 	f.event(t, id, "file_out", map[string]any{"file": report})
-	waitFor(t, "a post of the file to be tried", func() bool { return len(fl.tries(conv(id))) >= 2 })
+	waitFor(t, "a post of the file to be tried", func() bool { return len(fl.tries(f.conv(id))) >= 2 })
 	os.Remove(report)
 	os.Symlink(secret, report)
 	fl.setFail(nil)

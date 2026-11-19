@@ -120,7 +120,7 @@ func TestBusySessionStaysAwake(t *testing.T) {
 func TestRebootThenResume(t *testing.T) {
 	root := t.TempDir()
 	t.Cleanup(func() { killSessions(root) })
-	threads := []control.ThreadID{{Scope: "s", Key: "t1"}, {Scope: "s", Key: "t2"}}
+	threads := []control.ThreadID{1, 2}
 	d := runDaemon(t, root, false, "start", "tool wait 60s", "tool wait 60s")
 	st0 := openStore(t, root)
 	until(t, "both tools", st0, "tool_started", 2)
@@ -139,17 +139,17 @@ func TestRebootThenResume(t *testing.T) {
 	waitFor(t, "both asleep", 20*time.Second, func() bool {
 		return sessionState(t, st, 1) == "asleep" && sessionState(t, st, 2) == "asleep"
 	})
-	rows, _ := st.DB.Query(`SELECT thread, count(*) FROM events WHERE kind = 'state'
-		AND json_extract(data, '$.to') = 'asleep' AND json_extract(data, '$.reason') = 'interrupted' GROUP BY thread`)
-	notices := map[string]int{}
+	rows, _ := st.DB.Query(`SELECT thread_id, count(*) FROM events WHERE kind = 'state'
+		AND json_extract(data, '$.to') = 'asleep' AND json_extract(data, '$.reason') = 'interrupted' GROUP BY thread_id`)
+	notices := map[int64]int{}
 	for rows.Next() {
-		var th string
+		var th int64
 		var n int
 		rows.Scan(&th, &n)
 		notices[th] = n
 	}
 	rows.Close()
-	if notices["t1"] != 1 || notices["t2"] != 1 {
+	if notices[1] != 1 || notices[2] != 1 {
 		t.Fatalf("notices per thread: %v", notices)
 	}
 

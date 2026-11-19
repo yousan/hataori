@@ -49,10 +49,10 @@ export function StatusBar({ selected: x, live, limits, now }: Props) {
   }
   return (
     <footer className="status" aria-label={t("status.label")}>
-      <div className="status-item" data-selected={x ? x.number : ""}>
+      <div className="status-item" data-selected={x ? x.id : ""}>
         {x ? (
           <>
-            <span>{t("thread.number", { n: x.number })}</span>
+            <span>{t("thread.number", { n: x.id })}</span>
             <span className={`state-text state-${x.state}`}>{stateName(x.state)}</span>
             {x.model && <span>{x.model}</span>}
             {contextUse(x) && <span>{contextUse(x)}</span>}

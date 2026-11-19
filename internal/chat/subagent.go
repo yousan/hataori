@@ -28,7 +28,7 @@ func (r *reader) subagents(e control.Event) []Row {
 	json.Unmarshal(e.Data, &d)
 	open := r.subs[e.Thread]
 	line := func(part int, text string) Row {
-		return Row{Event: e.Pos, Part: part, Conv: convOf(e.Thread), Message: surface.Message{Text: text, Quiet: true}}
+		return Row{Event: e.Pos, Part: part, Conv: r.conv(e.Thread), Message: surface.Message{Text: text, Quiet: true}}
 	}
 	switch e.Kind {
 	case "subagent_started":

@@ -122,7 +122,7 @@ func TestDashboardDetailsPanel(t *testing.T) {
 	}
 
 	// 1. The question and its choices, as text only.
-	nQ := info(asking).Number
+	nQ := int64(info(asking).ID)
 	open(nQ)
 	b.until("the question and its choices", `document.querySelector('.details [data-field=question]')?.textContent === 'Which colour?'`+
 		` && JSON.stringify([...document.querySelectorAll('.details [data-field=choices] li')].map(li => li.textContent)) === '["red","green","blue"]'`)
@@ -175,7 +175,7 @@ func TestDashboardDetailsPanel(t *testing.T) {
 	expect := func(x control.ThreadInfo) map[string]string {
 		t.Helper()
 		m := map[string]string{
-			"state": string(x.State), "scope": x.ID.Scope, "startedBy": or(string(x.StartedBy)),
+			"state": string(x.State), "scope": x.Scope, "startedBy": or(string(x.StartedBy)),
 			"agent": or(x.Agent), "model": or(x.Model), "effort": or(x.Effort), "repo": or(x.Repo), "terminal": or(x.Terminal),
 			"turns": grouped(int64(x.Turns)), "background": dash, "context": dash, "tokensTurn": dash, "tokensToday": dash,
 			"branch": dash, "lines": dash, "uncommitted": dash, "unpushed": dash,
@@ -189,7 +189,7 @@ func TestDashboardDetailsPanel(t *testing.T) {
 		if x.Tokens != nil {
 			m["tokensTurn"], m["tokensToday"] = num(&x.Tokens.Turn), num(&x.Tokens.Today)
 		}
-		code, body := dashGet(t, base, cookie, "/api/workspace?"+url.Values{"scope": {x.ID.Scope}, "key": {x.ID.Key}}.Encode())
+		code, body := dashGet(t, base, cookie, "/api/workspace?"+url.Values{"thread": {fmt.Sprint(int64(x.ID))}}.Encode())
 		if code == http.StatusOK {
 			var ws control.WorkspaceState
 			json.Unmarshal([]byte(body), &ws)
@@ -235,13 +235,13 @@ func TestDashboardDetailsPanel(t *testing.T) {
 		}
 	}
 	matches(asking, "the question")
-	nF := info(failed).Number
+	nF := int64(info(failed).ID)
 	open(nF)
 	matches(failed, "the failure")
 	var reason string
 	_, out, _ := cli(t, "events", "--root", root)
 	for _, e := range lines(t, out) {
-		if th, _ := e["thread"].(map[string]any); e["kind"] == "state" && th["key"] == failed.Key && e["data"].(map[string]any)["to"] == "failed" {
+		if e["kind"] == "state" && e["thread"] == float64(failed) && e["data"].(map[string]any)["to"] == "failed" {
 			reason, _ = e["data"].(map[string]any)["reason"].(string)
 		}
 	}
@@ -249,7 +249,7 @@ func TestDashboardDetailsPanel(t *testing.T) {
 		t.Fatal("the failure has no reason in its state event: the check would test nothing")
 	}
 	b.until("the failure's reason", fmt.Sprintf(`document.querySelector('.details [data-block=failure] [data-field=reason]')?.textContent === %q`, reason))
-	nFull, nSparse := info(full).Number, info(sparse).Number
+	nFull, nSparse := int64(info(full).ID), int64(info(sparse).ID)
 	open(nFull)
 	matches(full, "the thread with every field")
 	if x := apiThread(full); x.Model == "" || x.Context == nil || x.Tokens == nil || x.Turns == 0 || x.Terminal == "" {
@@ -293,7 +293,7 @@ func TestDashboardDetailsPanel(t *testing.T) {
 		_, out, _ := cli(t, "events", "--root", root)
 		var want []string
 		for _, e := range lines(t, out) {
-			if th, _ := e["thread"].(map[string]any); th["key"] == full.Key && th["scope"] == full.Scope {
+			if e["thread"] == float64(full) {
 				want = append([]string{strconv.FormatInt(int64(e["pos"].(float64)), 10) + " " + e["kind"].(string)}, want...)
 			}
 		}

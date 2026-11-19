@@ -201,7 +201,9 @@ func (f *FrontEnd) toCatchUp(ctx context.Context) ([]surface.Conversation, error
 		switch t.State {
 		case control.Closed, control.Removed, control.Failed:
 		default:
-			convs = append(convs, convOf(t.ID))
+			if conv, ok := f.linkConv(t); ok {
+				convs = append(convs, conv)
+			}
 		}
 	}
 	return convs, nil

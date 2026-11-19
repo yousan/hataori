@@ -27,7 +27,7 @@ func appendEvents(t *testing.T, s *Store, scope string, n int) {
 	err := s.Update(context.Background(), func(tx *Tx) error {
 		for i := range n {
 			if _, err := tx.Append(context.Background(), control.Event{
-				Thread: control.ThreadID{Scope: scope, Key: "k"}, Kind: "test", Data: []byte(fmt.Sprintf(`{"i":%d}`, i)),
+				Scope: scope, Kind: "test", Data: []byte(fmt.Sprintf(`{"i":%d}`, i)),
 			}); err != nil {
 				return err
 			}
@@ -158,8 +158,8 @@ func TestFollowByScope(t *testing.T) {
 	appendEvents(t, s, "a", 3)
 	appendEvents(t, s, "b", 5)
 	for range 3 {
-		if e := <-out; e.Thread.Scope != "a" {
-			t.Fatalf("follower of scope a got scope %q", e.Thread.Scope)
+		if e := <-out; e.Scope != "a" {
+			t.Fatalf("follower of scope a got scope %q", e.Scope)
 		}
 	}
 	evs, _ := s.Events(ctx, control.Filter{Scope: "a"}, 0, 100)
@@ -181,7 +181,7 @@ func TestRolledBackEventIsNeverSeen(t *testing.T) {
 	go s.Follow(ctx, control.Filter{}, 0, out)
 
 	err := s.Update(ctx, func(tx *Tx) error {
-		if _, err := tx.Append(ctx, control.Event{Thread: control.ThreadID{Scope: "a", Key: "k"}, Kind: "rolled-back"}); err != nil {
+		if _, err := tx.Append(ctx, control.Event{Scope: "a", Kind: "rolled-back"}); err != nil {
 			return err
 		}
 		return errors.New("injected failure")

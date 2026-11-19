@@ -45,7 +45,7 @@ func TestPathSegmentsAreSafe(t *testing.T) {
 	keys := []string{"..", ".", "a/b", "../../etc", "", long, long + "x", "%", "~", "plain-key_1.2"}
 	seen := map[string]string{}
 	for _, k := range keys {
-		p := Path(root, "chat", "scope/1", k)
+		p := filepath.Join(root, Dir, Segment("chat"), Segment("scope/1"), Segment(k))
 		rel, err := filepath.Rel(filepath.Join(root, Dir), p)
 		if err != nil || strings.HasPrefix(rel, "..") {
 			t.Errorf("key %.20q: %s is outside workspaces", k, p)
@@ -70,11 +70,11 @@ func TestPathSegmentsAreSafe(t *testing.T) {
 func TestCloneIntoPlace(t *testing.T) {
 	root := t.TempDir()
 	m := Maker{Root: root}
-	dir, err := m.Clone(context.Background(), "chat", "c1", "t1", bareRepo(t), nil)
+	dir, err := m.Clone(context.Background(), 1, bareRepo(t), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dir != Path(root, "chat", "c1", "t1") {
+	if dir != Path(root, 1) {
 		t.Fatalf("cloned at %s", dir)
 	}
 	if b, err := os.ReadFile(filepath.Join(dir, "README")); err != nil || string(b) != "hello\n" {
@@ -98,10 +98,10 @@ func TestRenameNeverReplaces(t *testing.T) {
 
 func TestExistingDirectoryIsUntouched(t *testing.T) {
 	root := t.TempDir()
-	target := Path(root, "chat", "c1", "t1")
+	target := Path(root, 1)
 	os.MkdirAll(target, 0o700)
 	os.WriteFile(filepath.Join(target, "work.txt"), []byte("mine"), 0o600)
-	_, err := Maker{Root: root}.Clone(context.Background(), "chat", "c1", "t1", bareRepo(t), nil)
+	_, err := Maker{Root: root}.Clone(context.Background(), 1, bareRepo(t), nil)
 	if !errors.Is(err, ErrExists) {
 		t.Fatalf("clone over an existing directory: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestBadAddressesRefusedBeforeGit(t *testing.T) {
 	root := t.TempDir()
 	for _, repo := range []string{"host/owner/repo", "git@host/owner/repo", "", " https://h/r", "ftp://host/repo",
 		"https://", "https://host", "-upload-pack=x", "owner/repo"} {
-		_, err := Maker{Root: root}.Clone(context.Background(), "chat", "c1", "t1", repo, nil)
+		_, err := Maker{Root: root}.Clone(context.Background(), 1, repo, nil)
 		if err == nil || !strings.Contains(err.Error(), "repository address") {
 			t.Errorf("%q: %v", repo, err)
 		}
@@ -143,7 +143,7 @@ func TestCloneIsMadeOutsideWorkspaces(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	root := t.TempDir()
 	repo := bareRepo(t)
-	if _, err := (Maker{Root: root}).Clone(context.Background(), "chat", "c1", "t1", repo, nil); err != nil {
+	if _, err := (Maker{Root: root}).Clone(context.Background(), 1, repo, nil); err != nil {
 		t.Fatal(err)
 	}
 	args, _ := os.ReadFile(log)
@@ -152,11 +152,11 @@ func TestCloneIsMadeOutsideWorkspaces(t *testing.T) {
 	}
 
 	// A clone that fails never appears under workspaces/.
-	_, err = Maker{Root: root}.Clone(context.Background(), "chat", "c1", "t2", "file://"+filepath.Join(t.TempDir(), "missing.git"), nil)
+	_, err = Maker{Root: root}.Clone(context.Background(), 2, "file://"+filepath.Join(t.TempDir(), "missing.git"), nil)
 	if err == nil {
 		t.Fatal("a clone of a missing repository succeeded")
 	}
-	if _, err := os.Lstat(Path(root, "chat", "c1", "t2")); !os.IsNotExist(err) {
+	if _, err := os.Lstat(Path(root, 2)); !os.IsNotExist(err) {
 		t.Fatalf("a failed clone appeared: %v", err)
 	}
 }
@@ -167,7 +167,7 @@ func TestFailedCloneHidesCredentials(t *testing.T) {
 	defer srv.Close()
 	addr := strings.Replace(srv.URL, "http://", "http://someone:s3cret-pass@", 1) + "/repo.git"
 	m := Maker{Root: t.TempDir(), Environ: func() []string { return []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir()} }}
-	_, err := m.Clone(context.Background(), "chat", "c1", "t1", addr, nil)
+	_, err := m.Clone(context.Background(), 1, addr, nil)
 	if err == nil {
 		t.Fatal("clone succeeded")
 	}
@@ -186,7 +186,7 @@ func TestGitIgnoresTheDaemonsGitVariables(t *testing.T) {
 	t.Setenv("GIT_WORK_TREE", elsewhere)
 	t.Setenv("GIT_COMMON_DIR", elsewhere)
 	root := t.TempDir()
-	dir, err := Maker{Root: root}.Clone(context.Background(), "chat", "c1", "t1", repo, nil)
+	dir, err := Maker{Root: root}.Clone(context.Background(), 1, repo, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,8 +204,8 @@ var _ core.Workspaces = Maker{}
 // same place without touching it.
 func TestAdoptOnlyTheDirectoryItPlaced(t *testing.T) {
 	root := t.TempDir()
-	m := Maker{Root: root, Client: func(string) string { return "chat" }}
-	th := control.ThreadID{Scope: "c1", Key: "t1"}
+	m := Maker{Root: root}
+	th := control.ThreadID(1)
 	var p core.Placement
 	dir, err := m.Make(context.Background(), th, bareRepo(t), func(got core.Placement) error { p = got; return nil })
 	if err != nil {
@@ -227,5 +227,35 @@ func TestAdoptOnlyTheDirectoryItPlaced(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(dir, "theirs.txt")); string(b) != "theirs" {
 		t.Fatal("the other directory was touched")
+	}
+}
+
+// A clone a release before thread numbers placed, at its own path, is
+// adopted there by its device and inode; a placement outside the
+// workspaces directory is refused.
+func TestAdoptAPlacementOfTheReleaseBefore(t *testing.T) {
+	root := t.TempDir()
+	m := Maker{Root: root}
+	old := filepath.Join(root, Dir, "chat", "c1", "t1")
+	if err := os.MkdirAll(old, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Lstat(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, ino, _ := identity(st)
+	got, ok, err := m.Adopt(context.Background(), 1, core.Placement{Dir: old, Dev: dev, Inode: ino})
+	if err != nil || !ok || got != old {
+		t.Fatalf("adopt the old placement: %q, %v, %v", got, ok, err)
+	}
+	if _, ok, err := m.Adopt(context.Background(), 1, core.Placement{Dir: old, Dev: dev, Inode: ino + 1}); ok || !errors.Is(err, ErrExists) {
+		t.Fatalf("another directory at the old place: %v, %v", ok, err)
+	}
+	outside := t.TempDir()
+	for _, dir := range []string{outside, filepath.Join(root, Dir), filepath.Join(root, Dir, "..", "state")} {
+		if _, ok, err := m.Adopt(context.Background(), 1, core.Placement{Dir: dir, Dev: dev, Inode: ino}); ok || err == nil {
+			t.Fatalf("a placement at %s: %v, %v", dir, ok, err)
+		}
 	}
 }

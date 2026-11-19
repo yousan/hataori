@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -73,7 +74,7 @@ func (workspaceDirs) State(context.Context, string) (control.WorkspaceState, err
 }
 
 func (w workspaceDirs) Make(_ context.Context, id control.ThreadID, _ string, _ func(core.Placement) error) (string, error) {
-	d := filepath.Join(string(w), id.Scope, id.Key)
+	d := filepath.Join(string(w), fmt.Sprint(int64(id)))
 	return d, os.MkdirAll(d, 0o700)
 }
 
@@ -149,13 +150,16 @@ func TestModelAndEffortFromTheTriggerLineOrTheDefaults(t *testing.T) {
 				th = call.Opened.Thread
 			}
 		}
-		dir := filepath.Join(string(work), tc.scope, th)
+		var id control.ThreadID
+		waitFor(t, "the thread of "+tc.text, func() bool {
+			return st.DB.QueryRow(`SELECT thread_id FROM links WHERE channel = ? AND thread = ?`, tc.scope, th).Scan(&id) == nil
+		})
+		dir := filepath.Join(string(work), fmt.Sprint(int64(id)))
 		waitFor(t, "the agent of "+tc.text+" to be ready", func() bool { _, ok := rep.of(dir); return ok })
 		if got, _ := rep.of(dir); got != [2]string{tc.model, tc.effort} {
 			t.Errorf("%q: the agent reports %v, want %s/%s", tc.text, got, tc.model, tc.effort)
 		}
 		// The agent receives the prompt without the options.
-		id := control.ThreadID{Scope: tc.scope, Key: th}
 		waitFor(t, "the input of "+tc.text, func() bool { return inputOf(t, st, id) != "" })
 		if got := inputOf(t, st, id); got != "reply done" {
 			t.Errorf("%q: the agent got %q", tc.text, got)
@@ -169,8 +173,7 @@ func surfaceConv(channel string) surface.Conversation { return surface.Conversat
 func inputOf(t *testing.T, st *store.Store, id control.ThreadID) string {
 	t.Helper()
 	var data []byte
-	st.DB.QueryRow(`SELECT data FROM events WHERE scope = ? AND thread = ? AND kind = 'input' ORDER BY pos LIMIT 1`,
-		id.Scope, id.Key).Scan(&data)
+	st.DB.QueryRow(`SELECT data FROM events WHERE thread_id = ? AND kind = 'input' ORDER BY pos LIMIT 1`, int64(id)).Scan(&data)
 	var d struct{ Text string }
 	json.Unmarshal(data, &d)
 	return d.Text

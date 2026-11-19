@@ -344,6 +344,13 @@ var migrations = []Migration{
 			PRIMARY KEY (client, channel, message)
 		)`,
 	)},
+	// The chat front end's list of the threads a login outage stopped holds
+	// their numbers; before, each was {"scope", "key"}.
+	{Name: "chat_logins.threads by number", Up: execAll(
+		`UPDATE chat_logins SET threads = coalesce((SELECT json_group_array(t.id) FROM json_each(chat_logins.threads) j
+			JOIN threads t ON t.scope = json_extract(j.value, '$.scope') AND t.key = json_extract(j.value, '$.key')), '[]')
+		WHERE json_type(threads, '$[0]') = 'object'`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

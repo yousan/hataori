@@ -39,10 +39,10 @@ function Row(props: { x: ThreadInfo; w: Workspace | undefined; now: number; sele
   return (
     <tr
       className={selected ? "selected" : undefined}
-      data-thread={x.number}
+      data-thread={x.id}
       data-state={x.state}
       aria-current={selected ? "true" : undefined}
-      onClick={() => onOpen(x.number)}
+      onClick={() => onOpen(x.id)}
     >
       <td data-col="state">
         <span className={`dot state-${x.state}`} title={stateName(x.state)} />
@@ -51,13 +51,13 @@ function Row(props: { x: ThreadInfo; w: Workspace | undefined; now: number; sele
         <button
           type="button"
           className="row-open"
-          aria-label={t("table.open", { n: x.number })}
+          aria-label={t("table.open", { n: x.id })}
           onClick={(e) => {
             e.stopPropagation();
-            onOpen(x.number);
+            onOpen(x.id);
           }}
         >
-          {t("thread.number", { n: x.number })}
+          {t("thread.number", { n: x.id })}
         </button>
       </td>
       <td data-col="title" className="cell-title">
@@ -103,9 +103,9 @@ function Row(props: { x: ThreadInfo; w: Workspace | undefined; now: number; sele
 export function AllThreads({ threads, workspaces, now, selected, onOpen, show }: Props) {
   const scopes = new Map<string, ThreadInfo[]>();
   for (const x of (threads ?? []).filter((x) => shows(show, x))) {
-    const list = scopes.get(x.id.scope) ?? [];
+    const list = scopes.get(x.scope) ?? [];
     list.push(x);
-    scopes.set(x.id.scope, list);
+    scopes.set(x.scope, list);
   }
   return (
     <table className="all-threads" aria-label={t("table.label")}>
@@ -126,7 +126,7 @@ export function AllThreads({ threads, workspaces, now, selected, onOpen, show }:
             </th>
           </tr>
           {list.map((x) => (
-            <Row key={x.number} x={x} w={workspaces.get(x.number)} now={now} selected={selected === x.number} onOpen={onOpen} />
+            <Row key={x.id} x={x} w={workspaces.get(x.id)} now={now} selected={selected === x.id} onOpen={onOpen} />
           ))}
         </tbody>
       ))}

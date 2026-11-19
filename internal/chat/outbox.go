@@ -165,10 +165,13 @@ func (o *Outbox) WriteTx(ctx context.Context, tx *store.Tx, rows ...Row) error {
 		if err != nil {
 			return fmt.Errorf("chat: outbox: %w", err)
 		}
+		// link: the link of the conversation, if it is one (design, section 6.2).
 		_, err = tx.ExecContext(ctx, `INSERT INTO chat_outbox
-			(client, event, part, channel, thread, message, decoration, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			(client, event, part, channel, thread, message, decoration, created_at, link) VALUES (?, ?, ?, ?, ?, ?, ?, ?,
+			(SELECT id FROM links WHERE client = ? AND channel = ? AND thread = ?))
 			ON CONFLICT (client, event, part) DO NOTHING`,
-			o.Client, r.Event, r.Part, r.Conv.Channel, r.Conv.Thread, string(msg), r.Decoration, now)
+			o.Client, r.Event, r.Part, r.Conv.Channel, r.Conv.Thread, string(msg), r.Decoration, now,
+			o.Client, r.Conv.Channel, r.Conv.Thread)
 		if err != nil {
 			return fmt.Errorf("chat: outbox: write %s: %w", r.Key(), err)
 		}

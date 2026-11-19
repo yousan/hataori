@@ -28,11 +28,10 @@ func setThreadState(t *testing.T, root string, id control.ThreadID, s control.St
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(`UPDATE threads SET state = ? WHERE scope = ? AND key = ?`, string(s), id.Scope, id.Key); err != nil {
+	if _, err := db.Exec(`UPDATE threads SET state = ? WHERE id = ?`, string(s), int64(id)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`UPDATE sessions SET state = ? WHERE thread_id = (SELECT id FROM threads WHERE scope = ? AND key = ?)`,
-		string(s), id.Scope, id.Key); err != nil {
+	if _, err := db.Exec(`UPDATE sessions SET state = ? WHERE thread_id = ?`, string(s), int64(id)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -138,7 +137,7 @@ func TestDashboardActiveThreadsOnly(t *testing.T) {
 		return os.IsNotExist(err) && info(creating).State == control.Creating
 	})
 
-	num := func(id control.ThreadID) int64 { return info(id).Number }
+	num := func(id control.ThreadID) int64 { return int64(info(id).ID) }
 	nums := func(ids ...control.ThreadID) []int64 {
 		var ns []int64
 		for _, id := range ids {

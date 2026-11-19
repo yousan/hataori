@@ -98,15 +98,13 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	defer r.Close()
 
 	scopes := map[string]core.Scope{}
-	clients := map[string]string{}
 	var keys []string
 	for _, s := range cfg.Scopes {
 		scopes[s.Key] = core.Scope{Enabled: s.Enabled, Owner: s.Client, Model: s.Model, Effort: s.Effort}
-		clients[s.Key] = s.Client
 		keys = append(keys, s.Key)
 	}
 	sort.Strings(keys)
-	maker := workspace.Maker{Root: abs, Client: func(scope string) string { return clients[scope] }}
+	maker := workspace.Maker{Root: abs}
 	// The only way the daemon removes a workspace (design, section 4.6).
 	remover := workspace.Remover{Maker: maker, Disposable: cfg.Cleanup.Disposable, OtherRoots: cfg.Cleanup.OtherRoots,
 		Retention: cfg.Cleanup.TrashRetention}
@@ -389,13 +387,16 @@ func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.St
 			}
 			scopes[s.Key] = chat.Scope{Enabled: s.Enabled}
 		}
-		client := name
 		fe := &chat.FrontEnd{Name: name, Driver: d, API: c.As, Trigger: cfg.Trigger, People: cfg.People,
 			Scopes: scopes, Log: lg.With("client", name), Instance: filepath.Base(root),
 			Outbox:  &chat.Outbox{Store: st, Client: name, Driver: d, Log: lg.With("client", name)},
 			FileDir: filepath.Join(root, "state", "chat", name, "files"),
-			FileRoots: func(_ context.Context, id control.ThreadID, session int64) ([]string, error) {
-				return []string{workspace.Path(root, client, id.Scope, id.Key), runner.StateDir(root, session)}, nil
+			FileRoots: func(ctx context.Context, id control.ThreadID, session int64) ([]string, error) {
+				dir, err := c.WorkspaceDir(ctx, id) // as stored with the thread
+				if err != nil {
+					return nil, err
+				}
+				return []string{dir, runner.StateDir(root, session)}, nil
 			}}
 		if cfg.LoginRelay {
 			fe.Relay = lr

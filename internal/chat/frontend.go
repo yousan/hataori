@@ -65,6 +65,7 @@ type FrontEnd struct {
 	inboundOnce sync.Once
 	in          *inbound
 	opening     sync.Mutex       // held while a trigger's thread is looked up or opened
+	convs       convCache        // the conversations of threads, by number
 	Now         func() time.Time // the clock; time.Now when nil
 
 	ctx context.Context
@@ -117,25 +118,30 @@ func (f *FrontEnd) context() context.Context {
 	return f.ctx
 }
 
-// NewThread opens a chat thread in the channel scope and returns its id.
-// The core calls it once a Start is allowed. For a trigger's Start, whose
-// key is the trigger message's id, the thread is opened from the trigger
-// message (threadOf); for one another client makes, in the channel.
-func (f *FrontEnd) NewThread(ctx context.Context, scope, key, title string) (string, error) {
+// NewThread opens a chat thread in the channel scope and returns it as the
+// thread's first link. The core calls it once a Start is allowed. For a
+// trigger's Start, whose key is the trigger message's id, the thread is
+// opened from the trigger message (threadOf); for one another client
+// makes, in the channel.
+func (f *FrontEnd) NewThread(ctx context.Context, scope, key, title string) (control.LinkRef, error) {
 	var n int
 	err := f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM chat_triggers WHERE client = ? AND channel = ? AND message = ?`,
 		f.Name, scope, key).Scan(&n)
 	if err != nil {
-		return "", err
+		return control.LinkRef{}, err
 	}
+	thread := ""
 	if n > 0 {
-		return f.threadOf(ctx, surface.MessageRef{Conv: surface.Conversation{Channel: scope}, ID: key}, title)
+		thread, err = f.threadOf(ctx, surface.MessageRef{Conv: surface.Conversation{Channel: scope}, ID: key}, title)
+	} else {
+		var conv surface.Conversation
+		conv, err = f.Driver.OpenThread(ctx, surface.Conversation{Channel: scope}, title)
+		thread = conv.Thread
 	}
-	conv, err := f.Driver.OpenThread(ctx, surface.Conversation{Channel: scope}, title)
 	if err != nil {
-		return "", err
+		return control.LinkRef{}, err
 	}
-	return conv.Thread, nil
+	return control.LinkRef{Client: f.Name, Channel: scope, Thread: thread}, nil
 }
 
 // from is the id the core resolves an author's input by.
@@ -276,7 +282,7 @@ func (f *FrontEnd) start(ctx context.Context, in surface.Inbound, o order, n int
 	case errors.Is(startErr, control.ErrUnknownEffort):
 		return f.refuseEffort(ctx, in, o, n)
 	}
-	if id.Key == "" {
+	if id == 0 {
 		f.Log.Error("trigger: start failed", "scope", channel, "message", in.Ref.ID, "err", startErr)
 		return startErr
 	}
@@ -285,20 +291,27 @@ func (f *FrontEnd) start(ctx context.Context, in surface.Inbound, o order, n int
 	// writes the same rows, which the outbox keeps once.
 	pos, failure, err := startOutcome(ctx, api, id)
 	if err != nil {
-		f.Log.Error("trigger: reading the new thread", "thread", id.Key, "err", err)
+		f.Log.Error("trigger: reading the new thread", "thread", id, "err", err)
+		return err
+	}
+	conv, ok, err := f.convOf(ctx, id)
+	if err == nil && !ok {
+		err = fmt.Errorf("chat: thread %d has no link here", id)
+	}
+	if err != nil {
+		f.Log.Error("trigger: reading the new thread", "thread", id, "err", err)
 		return err
 	}
 	if failure == "" && startErr != nil {
 		failure = startErr.Error() // not recorded as the session's end
 	}
-	conv := surface.Conversation{Channel: channel, Thread: id.Key}
 	rows := []Row{{Event: pos, Part: 0, Conv: conv, Message: surface.Message{Text: o.Prompt, Quiet: true}}}
 	if failure != "" {
 		rows = append(rows, Row{Event: pos, Part: 1, Conv: conv,
 			Message: surface.Message{Text: "This thread could not start: " + failure}})
 	}
 	if err := f.Outbox.Write(ctx, rows...); err != nil {
-		f.Log.Error("trigger: writing the prompt", "thread", id.Key, "err", err)
+		f.Log.Error("trigger: writing the prompt", "thread", id, "err", err)
 		return err
 	}
 	return nil
@@ -361,7 +374,7 @@ func startOutcome(ctx context.Context, api control.API, id control.ThreadID) (fi
 		}
 	}
 	if first == 0 {
-		return 0, "", fmt.Errorf("chat: thread %s: %w", id.Key, errNoEvent)
+		return 0, "", fmt.Errorf("chat: thread %d: %w", id, errNoEvent)
 	}
 	return first, failure, nil
 }
@@ -379,17 +392,17 @@ func (f *FrontEnd) followUp(in surface.Inbound) error {
 	}
 	api := f.API(control.Caller{From: f.from(in.Author), Scopes: []string{conv.Channel},
 		May: control.OpRead | control.OpSend})
-	id := control.ThreadID{Scope: conv.Channel, Key: conv.Thread}
-	ts, err := api.Threads(ctx, control.Filter{Thread: id})
+	t, ok, err := f.threadIn(ctx, api, conv)
 	if err != nil {
 		return err // not known yet whether it is one of ours: try again
 	}
-	if len(ts) == 0 {
+	if !ok {
 		return nil // not a hataori thread
 	}
-	if ts[0].State == control.Failed {
+	id := t.ID
+	if t.State == control.Failed {
 		// Its session cannot take input; the message is not for later.
-		f.Log.Warn("follow-up ignored", "reason", "the thread is "+string(ts[0].State), "scope", conv.Channel,
+		f.Log.Warn("follow-up ignored", "reason", "the thread is "+string(t.State), "scope", conv.Channel,
 			"thread", conv.Thread, "message", in.Ref.ID)
 		return nil
 	}

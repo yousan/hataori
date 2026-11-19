@@ -55,7 +55,7 @@ func TestGoneConversationIsAskedForOnce(t *testing.T) {
 		fe.Driver = g
 	})
 	id := f.runningThread(t)
-	g.setGone(conv(id))
+	g.setGone(f.conv(id))
 	api := f.fe.API(control.Caller{Principal: "owner", Scopes: []string{channel}, May: control.OpRead})
 	before, err := api.Threads(context.Background(), control.Filter{})
 	if err != nil || len(before) != 1 {
@@ -63,7 +63,7 @@ func TestGoneConversationIsAskedForOnce(t *testing.T) {
 	}
 
 	f.connect(t)
-	waitFor(t, "the first catch-up", func() bool { return g.asked(conv(id)) == 1 && g.asked(chanConv) >= 1 })
+	waitFor(t, "the first catch-up", func() bool { return g.asked(f.conv(id)) == 1 && g.asked(chanConv) >= 1 })
 	// A reconnect catches up again, and the channel is still read.
 	f.driver.Disconnect()
 	f.driver.Inject(chanConv, fake.Webhook(hook), "!go repo:https://example.com/r.git while down")
@@ -71,18 +71,18 @@ func TestGoneConversationIsAskedForOnce(t *testing.T) {
 	waitFor(t, "the trigger while down", func() bool { return len(f.runner.all()) == 2 })
 	// Retries: something in each conversation fails again.
 	for i := 0; i < 5; i++ {
-		f.fe.inboundState().setBehind(conv(id), true)
+		f.fe.inboundState().setBehind(f.conv(id), true)
 		f.fe.inboundState().setBehind(chanConv, true)
 		time.Sleep(20 * time.Millisecond) // four retry periods
 	}
 	waitFor(t, "the channel caught up", func() bool { return !f.fe.inboundState().isBehind(chanConv) })
 
-	if n := g.asked(conv(id)); n != 1 {
+	if n := g.asked(f.conv(id)); n != 1 {
 		t.Errorf("the gone thread was asked for %d times, want 1", n)
 	}
 	var logged []string
 	for _, l := range f.log.lines() {
-		if strings.Contains(l, "thread="+id.Key) && strings.Contains(l, "catch-up") {
+		if strings.Contains(l, "thread="+f.conv(id).Thread) && strings.Contains(l, "catch-up") {
 			logged = append(logged, l)
 		}
 	}

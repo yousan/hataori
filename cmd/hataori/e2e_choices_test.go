@@ -63,7 +63,7 @@ func TestQuestionWithChoicesThroughTheCore(t *testing.T) {
 				found := false
 				_, out, _ := cli(t, "events", "--root", root)
 				for _, e := range lines(t, out) {
-					if th, _ := e["thread"].(map[string]any); e["kind"] == "request" && th["key"] == tc.key {
+					if e["kind"] == "request" && e["thread"] == float64(id) {
 						data := e["data"].(map[string]any)
 						event, _ = data["choices"].([]any)
 						found = data["text"] == tc.question

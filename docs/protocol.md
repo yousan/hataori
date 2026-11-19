@@ -17,10 +17,12 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **2.3**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.0**. Both hellos carry it.
 
-- A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 1.0`.
+- A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
+
+**A 2.x client and a 3.0 daemon.** 3.0 names a thread by its number. Every operation that took a thread (`Thread`, `Send`, `Stop`, `Workspace`, `Terminal`, `AttachTerminal`, `CloseThread`, `RemoveThread`) takes the number as `id`, `Start` returns it, and every event carries it as `thread`, with the thread's `scope` beside it. The chat thread a thread is shown in is a link (`LinkRef`): `ThreadInfo` lists them in `links`, and `Filter.link` finds the thread linked to one conversation. `ThreadInfo.number` is gone, since `id` is the number; `login_restored` lists numbers in `threads`; `Start.thread` names the first link's conversation in the scope's own channel. The two refuse each other as below. Events written before 3.0 are read back with their thread's number and scope.
 
 **A 1.x client and a 2.0 daemon.** 2.0 changed one thing: `title` in `ThreadInfo` and `ThreadDetail` became optional, and it is absent for a caller that may not read text. Because 1.x promised it, the two refuse each other. A 1.x client that connects gets the daemon's hello with an error, for example `{"version":"2.0","error":"wire: protocol version mismatch: client speaks 1.13, daemon speaks 2.0"}`, and the daemon closes the connection without reading a request. The project's 1.x client reports that refusal and makes no call. A client of 2.0 or later that may read text sees one other difference from 1.13: an empty title, from an empty first line, is left out instead of sent as `""`.
 
@@ -113,7 +115,7 @@ One thread's state, open requests, last output and last events.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
-| `id` | `ThreadID` | required | the thread |
+| `id` | integer | required | the thread's number; since 3.0, before it a `{scope, key}` object |
 | `recent` | integer | required | how many bytes of its last output to return |
 | `events` | integer | optional | how many of its last events to return, at most 100; absent or 0 for none; since 1.5 |
 
@@ -127,13 +129,15 @@ Starts a thread in a scope. The same `key` starts nothing twice and returns the 
 |---|---|---|---|
 | `key` | string | required | makes the call safe to repeat |
 | `scope` | string | required | the scope; for chat, a channel |
-| `thread` | string | required | the thread's key, or empty to let the scope's owner make one |
+| `thread` | string | required | the conversation of the first link, in the scope's own channel, of the scope's owner; empty to let the scope's owner open one; since 3.0 it names a link, before it the thread's key |
 | `repo` | string | required | the repository the workspace is cloned from |
 | `input` | `Input` | required | the first input |
 | `model` | string | required | the model; empty for the scope's default |
 | `effort` | string | required | the effort; empty for the scope's default |
 
-Result: `ThreadID`
+Result: integer
+
+The new thread's number; since 3.0, before it a `{scope, key}` object.
 
 ### Operation `Send`
 
@@ -143,7 +147,7 @@ On a supervisor's connection (a token, since 2.2) `busy` is always taken as 0: a
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
-| `id` | `ThreadID` | required | the thread |
+| `id` | integer | required | the thread's number; since 3.0, before it a `{scope, key}` object |
 | `key` | string | required | makes the call safe to repeat: a key accepted before is ignored |
 | `input` | `Input` | required | the input |
 | `busy` | integer | required | when a turn is running: 0 refuse (`busy`), 1 deliver into the turn, 2 interrupt it and then send |
@@ -167,7 +171,7 @@ Interrupts the thread's running turn. Nothing happens when no turn runs.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
-| `id` | `ThreadID` | required | the thread |
+| `id` | integer | required | the thread's number; since 3.0, before it a `{scope, key}` object |
 
 Result: none
 
@@ -177,7 +181,7 @@ Since 2.3. Ends the agent process of an idle, asleep or failed thread and closes
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
-| `id` | `ThreadID` | required | the thread |
+| `id` | integer | required | the thread's number; since 3.0, before it a `{scope, key}` object |
 
 Result: none
 
@@ -187,7 +191,7 @@ Since 2.3. Removes the workspace of a closed thread, and only when every step of
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
-| `id` | `ThreadID` | required | the thread |
+| `id` | integer | required | the thread's number; since 3.0, before it a `{scope, key}` object |
 
 Result: none
 
@@ -208,7 +212,7 @@ What the thread's workspace holds that may exist nowhere else, as numbers; since
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
-| `id` | `ThreadID` | required | the thread |
+| `id` | integer | required | the thread's number; since 3.0, before it a `{scope, key}` object |
 
 Result: `WorkspaceState`
 
@@ -233,7 +237,7 @@ A session whose host has ended (an asleep session, for one) sends the end of its
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
-| `id` | `ThreadID` | required | the thread |
+| `id` | integer | required | the thread's number; since 3.0, before it a `{scope, key}` object |
 | `run` | string | required | the run that `after` counts in; empty for none |
 | `after` | integer | required | the position to continue after; 0 for the end of the log |
 
@@ -268,7 +272,7 @@ The result names the socket of the thread's session host. The terminal connects 
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
-| `id` | `ThreadID` | required | the thread |
+| `id` | integer | required | the thread's number; since 3.0, before it a `{scope, key}` object |
 
 Result: `Attachment`
 
@@ -283,12 +287,15 @@ Result: [`AgentLimits`]
 
 ## Types
 
-### Type `ThreadID`
+### Type `LinkRef`
+
+Where a thread is shown: one conversation of one client; since 3.0. A thread has one or more, and a conversation links to one thread at most.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
-| `scope` | string | required | opaque; for chat, a channel |
-| `key` | string | required | opaque; for chat, the chat thread |
+| `client` | string | required | the client's name, such as the chat front end's |
+| `channel` | string | required | opaque; for chat, a channel |
+| `thread` | string | required | opaque; for chat, the chat thread |
 
 ### Type `Filter`
 
@@ -297,7 +304,8 @@ A field left empty matches everything the caller may see.
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `scope` | string | required | only this scope |
-| `thread` | `ThreadID` | required | only this thread; a key without a scope matches it in every scope |
+| `thread` | integer | required | only the thread of this number; 0 for any; since 3.0, before it a `{scope, key}` object |
+| `link` | `LinkRef` | optional | only the thread linked to this conversation; none when no thread is; since 3.0 |
 
 ### Type `Input`
 
@@ -317,8 +325,9 @@ A field left empty matches everything the caller may see.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
-| `id` | `ThreadID` | required | the thread |
-| `number` | integer | required | a short number, unique in the instance |
+| `id` | integer | required | the thread's number, unique in the instance; since 3.0, before it a `{scope, key}` object beside `number` |
+| `scope` | string | required | the scope it belongs to; since 3.0 |
+| `links` | [`LinkRef`] | required | where it is shown, the first link first; empty for a thread from before 3.0 whose scope is no longer in the config; since 3.0 |
 | `title` | string | optional | from the first line of the first prompt; text; absent for a caller that may not read text, and when it is empty; optional since 2.0, required before |
 | `repo` | string | required | the repository of its workspace |
 | `state` | string | required | `creating`, `idle`, `running`, `waiting`, `asleep`, `closed`, `removed` or `failed` |
@@ -341,8 +350,9 @@ The fields of `ThreadInfo`, and:
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
-| `id` | `ThreadID` | required | as in `ThreadInfo` |
-| `number` | integer | required | as in `ThreadInfo` |
+| `id` | integer | required | as in `ThreadInfo` |
+| `scope` | string | required | as in `ThreadInfo` |
+| `links` | [`LinkRef`] | required | as in `ThreadInfo` |
 | `title` | string | optional | as in `ThreadInfo` |
 | `repo` | string | required | as in `ThreadInfo` |
 | `state` | string | required | as in `ThreadInfo` |
@@ -486,7 +496,8 @@ One entry of the event log. `hataori events` prints each event as this object, o
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `pos` | integer | required | its position: unique and increasing in the instance; read on after the last one seen |
-| `thread` | `ThreadID` | required | the thread it belongs to |
+| `thread` | integer | optional | the number of the thread it belongs to; absent for an event of no thread; since 3.0, before it a required `{scope, key}` object |
+| `scope` | string | optional | the scope of that thread, or of the event; since 3.0 |
 | `time` | time | required | when it was written |
 | `kind` | string | required | one of the kinds below |
 | `data` | any | optional | an object with the fields of its kind |
@@ -667,7 +678,7 @@ A turn failed with reason `login`, and a login outage of the agent opened.
 |---|---|---|---|
 | `agent` | string | required | the agent's registered name |
 | `outage` | integer | required | the outage that closed |
-| `threads` | array | required | the threads it stopped, as `ThreadID` objects |
+| `threads` | array | required | the numbers of the threads it stopped; since 3.0, before it `{scope, key}` objects |
 | `scopes` | array | required | their scopes; a caller that may not see all of them does not get the event |
 
 ### Event `session_replaced`

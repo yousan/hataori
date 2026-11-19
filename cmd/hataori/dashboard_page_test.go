@@ -304,7 +304,7 @@ func TestDashboardTreeAndStatusBar(t *testing.T) {
 		return len(ts) == 3 && ts["ask Proceed with the deploy?"].State == control.Waiting &&
 			ts["reply done"].State == control.Idle && ts["tool long 10m"].State == control.Running
 	})
-	n1, n2, n3 := ts["ask Proceed with the deploy?"].Number, ts["reply done"].Number, ts["tool long 10m"].Number
+	n1, n2, n3 := int64(ts["ask Proceed with the deploy?"].ID), int64(ts["reply done"].ID), int64(ts["tool long 10m"].ID)
 
 	b := newBrowser(t)
 	link, err := c.SignInLink(ctx)
@@ -369,9 +369,9 @@ func TestDashboardTreeAndStatusBar(t *testing.T) {
 		var out []int64
 		for _, x := range ts {
 			f := strings.ToLower(q)
-			if strings.Contains(strings.ToLower(x.Title), f) || strconv.FormatInt(x.Number, 10) == strings.TrimPrefix(f, "#") ||
+			if strings.Contains(strings.ToLower(x.Title), f) || strconv.FormatInt(int64(x.ID), 10) == strings.TrimPrefix(f, "#") ||
 				(x.Terminal != "" && strings.Contains(strings.ToLower(x.Terminal), f)) {
-				out = append(out, x.Number)
+				out = append(out, int64(x.ID))
 			}
 		}
 		slices.Sort(out)
@@ -422,7 +422,7 @@ func TestDashboardTreeAndStatusBar(t *testing.T) {
 		_, out, _ := cli(t, "events", "--root", root)
 		var pos uint64
 		for _, e := range lines(t, out) {
-			if th, _ := e["thread"].(map[string]any); th["scope"] == "s" {
+			if e["scope"] == "s" {
 				pos = max(pos, uint64(e["pos"].(float64)))
 			}
 		}

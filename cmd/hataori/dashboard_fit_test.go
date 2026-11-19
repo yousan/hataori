@@ -159,7 +159,7 @@ func TestDashboardTerminalFillsPane(t *testing.T) {
 		t.Fatal(err)
 	}
 	b.call("Page.navigate", map[string]any{"url": link})
-	n := x.Number
+	n := int64(x.ID)
 	b.until("the thread in the tree", fmt.Sprintf(`!!document.querySelector('[data-section=threads] .row[data-thread="%d"]')`, n))
 	b.click(fmt.Sprintf(`[data-section=threads] .row[data-thread="%d"]`, n))
 	view := fmt.Sprintf(`.pane[data-pane="0"] [data-terminal="%d"]`, n)

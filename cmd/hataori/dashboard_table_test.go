@@ -131,7 +131,7 @@ func TestDashboardAllThreadsTable(t *testing.T) {
 				s.x = x
 			}
 		}
-		code, body = dashGet(t, base, cookie, "/api/workspace?"+url.Values{"scope": {id.Scope}, "key": {id.Key}}.Encode())
+		code, body = dashGet(t, base, cookie, "/api/workspace?"+url.Values{"thread": {fmt.Sprint(int64(id))}}.Encode())
 		if code == http.StatusOK {
 			s.ws = &control.WorkspaceState{}
 			json.Unmarshal([]byte(body), s.ws)
@@ -149,7 +149,7 @@ func TestDashboardAllThreadsTable(t *testing.T) {
 			return v
 		}
 		c := map[string]string{
-			"number": "#" + strconv.FormatInt(x.Number, 10),
+			"number": "#" + strconv.FormatInt(int64(x.ID), 10),
 			"title":  x.Title,
 			"agent":  or(x.Agent) + " · " + or(x.Model),
 			"last":   or(x.Last),
@@ -181,7 +181,7 @@ func TestDashboardAllThreadsTable(t *testing.T) {
 	b.call("Page.navigate", map[string]any{"url": link})
 	b.showAll() // one thread is asleep
 	b.until("the table with both threads", `document.querySelectorAll('.all-threads tr[data-thread]').length === 2`)
-	nFull, nSparse := info(full).Number, info(sparse).Number
+	nFull, nSparse := int64(info(full).ID), int64(info(sparse).ID)
 	shown := func(n int64) map[string]string {
 		var m map[string]string
 		b.eval(fmt.Sprintf(`Object.fromEntries([...document.querySelectorAll('.all-threads tr[data-thread="%d"] td')].map(td => [td.dataset.col, td.textContent]))`, n), &m)
@@ -273,7 +273,7 @@ func TestDashboardAllThreadsTable(t *testing.T) {
 		_, out, _ := cli(t, "events", "--root", root)
 		var at time.Time
 		for _, e := range lines(t, out) {
-			if th, _ := e["thread"].(map[string]any); e["kind"] != "state" || th["scope"] != id.Scope || th["key"] != id.Key {
+			if e["kind"] != "state" || e["thread"] != float64(id) {
 				continue
 			}
 			d, _ := e["data"].(map[string]any)

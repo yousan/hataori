@@ -130,7 +130,7 @@ func TestDashboardNarrowList(t *testing.T) {
 	})
 	num := make([]int64, len(ids))
 	for i, id := range ids {
-		num[i] = stateOf(c, id).Number
+		num[i] = int64(stateOf(c, id).ID)
 	}
 
 	// 1. No sideways scroll; needs attention, running, the rest folded.
@@ -261,7 +261,7 @@ func TestDashboardNarrowRebuiltOutput(t *testing.T) {
 	withDashboard(t, root, map[string]any{"listen": "127.0.0.1:0"})
 	c, ids, b := narrowRig(t, root, []string{"tool quick 10ms\nreply a line long enough to wrap on a phone held upright, which is the point of this line"},
 		func(c *wire.Client, ids []control.ThreadID) bool { return stateOf(c, ids[0]).State == control.Idle })
-	n := stateOf(c, ids[0]).Number
+	n := int64(stateOf(c, ids[0]).ID)
 	b.click(`.narrow-list [data-section=rest] summary`)
 	b.click(fmt.Sprintf(`.narrow-list .row[data-thread="%d"]`, n))
 	b.until("the rebuilt output", fmt.Sprintf(`document.querySelectorAll('[data-narrow-thread="%d"] .narrow-pane [data-events] .ev').length >= 5 && !document.querySelector('.narrow-pane .xterm')`, n))

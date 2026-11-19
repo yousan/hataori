@@ -1504,11 +1504,12 @@ func (r *Runner) replace(lv *live) {
 	err := r.Store.Update(ctx, func(tx *store.Tx) error {
 		l = core.Launch{}
 		var thread int64
-		if err := tx.QueryRowContext(ctx, `SELECT s.state, s.thread_id, s.agent, s.model, s.effort, s.first_input, t.scope, t.key
-			FROM sessions s JOIN threads t ON t.id = s.thread_id WHERE s.id = ?`, lv.id).
-			Scan(&state, &thread, &l.Agent, &l.Model, &l.Effort, &fi, &l.Thread.Scope, &l.Thread.Key); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT s.state, s.thread_id, s.agent, s.model, s.effort, s.first_input
+			FROM sessions s WHERE s.id = ?`, lv.id).
+			Scan(&state, &thread, &l.Agent, &l.Model, &l.Effort, &fi); err != nil {
 			return err
 		}
+		l.Thread = control.ThreadID(thread)
 		var newer int
 		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM sessions WHERE thread_id = ? AND id > ?`, thread, lv.id).Scan(&newer); err != nil {
 			return err

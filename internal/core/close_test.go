@@ -72,8 +72,8 @@ func (f *fixture) threadState(t *testing.T, id control.ThreadID) control.State {
 // eventsOf returns the data of the thread's events of kind.
 func (f *fixture) eventsOf(t *testing.T, id control.ThreadID, kind control.EventKind) []map[string]any {
 	t.Helper()
-	rows, err := f.core.Store.DB.Query(`SELECT data FROM events WHERE scope = ? AND thread = ? AND kind = ? ORDER BY pos`,
-		id.Scope, id.Key, string(kind))
+	rows, err := f.core.Store.DB.Query(`SELECT data FROM events WHERE thread_id = ? AND kind = ? ORDER BY pos`,
+		int64(id), string(kind))
 	if err != nil {
 		t.Fatal(err)
 	}

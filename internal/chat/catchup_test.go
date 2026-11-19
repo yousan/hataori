@@ -53,7 +53,7 @@ func TestThreeMessagesWhileDownRunOnceEachInOrder(t *testing.T) {
 	f := newFront(t, workspaces{})
 	id := f.runningThread(t)
 	for _, s := range []string{"one", "two", "three"} {
-		f.driver.Inject(conv(id), fake.Webhook(hook), s) // nobody is connected
+		f.driver.Inject(f.conv(id), fake.Webhook(hook), s) // nobody is connected
 	}
 	f.connect(t)
 	want := "deliver first input; deliver one; deliver two; deliver three"
@@ -86,9 +86,9 @@ func TestMessageLiveAndCaughtUpIsOneInput(t *testing.T) {
 	id := f.runningThread(t)
 	f.connect(t)
 	f.driver.Disconnect()
-	in := f.driver.Inject(conv(id), fake.Webhook(hook), "once")
+	in := f.driver.Inject(f.conv(id), fake.Webhook(hook), "once")
 	f.driver.Reconnect()
-	f.fe.catchUp(context.Background(), conv(id))
+	f.fe.catchUp(context.Background(), f.conv(id))
 	f.fe.Message(in) // it comes live as well, late
 	if got := strings.Join(f.runner.handed(), "; "); got != "deliver first input; deliver once" {
 		t.Fatalf("handed %s", got)
@@ -100,7 +100,7 @@ func TestCursorStaysWhenAFailureComesBetween(t *testing.T) {
 	id := f.runningThread(t)
 	var ins []surface.Inbound
 	for _, s := range []string{"one", "two", "three"} {
-		ins = append(ins, f.driver.Inject(conv(id), fake.Webhook(hook), s))
+		ins = append(ins, f.driver.Inject(f.conv(id), fake.Webhook(hook), s))
 	}
 	db := f.fe.Outbox.Store.DB
 	// The second message is accepted, then storing its cursor fails.
@@ -110,8 +110,8 @@ func TestCursorStaysWhenAFailureComesBetween(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	f.fe.catchUp(context.Background(), conv(id))
-	if c := f.storedCursor(conv(id)); c != ins[0].Cursor {
+	f.fe.catchUp(context.Background(), f.conv(id))
+	if c := f.storedCursor(f.conv(id)); c != ins[0].Cursor {
 		t.Fatalf("cursor %q after the failure, want %q (the first message's)", c, ins[0].Cursor)
 	}
 	if got := strings.Join(f.runner.handed(), "; "); got != "deliver first input; deliver one; deliver two" {
@@ -120,7 +120,7 @@ func TestCursorStaysWhenAFailureComesBetween(t *testing.T) {
 	db.Exec(`DROP TRIGGER fail_INSERT`)
 	db.Exec(`DROP TRIGGER fail_UPDATE`)
 	f.connect(t) // catches up again
-	waitFor(t, "the cursor at the end", func() bool { return f.storedCursor(conv(id)) == ins[2].Cursor })
+	waitFor(t, "the cursor at the end", func() bool { return f.storedCursor(f.conv(id)) == ins[2].Cursor })
 	if got := strings.Join(f.runner.handed(), "; "); got != "deliver first input; deliver one; deliver two; deliver three" {
 		t.Fatalf("handed %s", got)
 	}
@@ -131,13 +131,13 @@ func TestCursorStaysWhenAFailureComesBetween(t *testing.T) {
 func TestLiveMessageWaitsForTheCatchUp(t *testing.T) {
 	f := newFront(t, workspaces{})
 	id := f.runningThread(t)
-	f.driver.Inject(conv(id), fake.Webhook(hook), "one") // while down
-	f.fe.inboundState().setBehind(conv(id), true)        // as Connected leaves it until caught up
-	f.fe.Message(f.driver.Inject(conv(id), fake.Webhook(hook), "two"))
+	f.driver.Inject(f.conv(id), fake.Webhook(hook), "one") // while down
+	f.fe.inboundState().setBehind(f.conv(id), true)        // as Connected leaves it until caught up
+	f.fe.Message(f.driver.Inject(f.conv(id), fake.Webhook(hook), "two"))
 	if got := f.runner.handed(); len(got) != 1 {
 		t.Fatalf("handed before the catch-up: %v", got)
 	}
-	f.fe.catchUp(context.Background(), conv(id))
+	f.fe.catchUp(context.Background(), f.conv(id))
 	if got := strings.Join(f.runner.handed(), "; "); got != "deliver first input; deliver one; deliver two" {
 		t.Fatalf("handed %s", got)
 	}

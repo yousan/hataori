@@ -9,8 +9,15 @@ import (
 	"time"
 )
 
-// linkThreadsStep is the name LinkThreads is recorded under.
-const linkThreadsStep = "thread numbers: links"
+// The names LinkThreads records its steps under.
+const (
+	linkThreadsStep = "thread numbers: links"
+	// The rows a daemon wrote after the first step and before it named
+	// threads by number in the control API: threads with no link or
+	// workspace path, events with no thread number, outbox rows with no
+	// link.
+	linkLaterStep = "thread numbers: rows written before the API used them"
+)
 
 // LinkThreads fills in what the migration "thread numbers: links" could
 // not without the config (design, section 6.2), once: the daemon calls it
@@ -23,45 +30,73 @@ const linkThreadsStep = "thread numbers: links"
 // gets no link, and one line in lg. Nothing outside the database is read
 // or written: no workspace moves.
 //
-// It is recorded in startup_steps, and does nothing when it was.
+// A second step does the same, once, for the rows written after the first
+// step by a daemon that did not write them itself yet: threads started
+// since the first step, and events and outbox rows that still have no
+// thread number or link. When both run in one call, the second finds
+// nothing.
+//
+// Each step is recorded in startup_steps, and does nothing when it was.
 func (s *Store) LinkThreads(ctx context.Context, clients map[string]string, lg *slog.Logger) error {
+	since, err := s.linkStep(ctx, linkThreadsStep, clients, -1, lg)
+	if err != nil {
+		return err
+	}
+	if since < 0 { // the first step ran before; threads started after it
+		if err := s.DB.QueryRowContext(ctx, `SELECT done_at FROM startup_steps WHERE name = ?`, linkThreadsStep).Scan(&since); err != nil {
+			return fmt.Errorf("store: link threads: %w", err)
+		}
+	} else {
+		since = time.Now().UnixMilli() + 1 // it ran now: none
+	}
+	_, err = s.linkStep(ctx, linkLaterStep, clients, since, lg)
+	return err
+}
+
+// linkStep runs linkThreads as the step name, for the threads started at
+// or after since (every thread when since < 0), unless the step was
+// recorded. It returns when the step was recorded now, or -1 when it was
+// before.
+func (s *Store) linkStep(ctx context.Context, name string, clients map[string]string, since int64, lg *slog.Logger) (int64, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("store: link threads: %w", err)
+		return 0, fmt.Errorf("store: link threads: %w", err)
 	}
 	defer tx.Rollback()
 	var n int
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM startup_steps WHERE name = ?`, linkThreadsStep).Scan(&n); err != nil {
-		return fmt.Errorf("store: link threads: %w", err)
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM startup_steps WHERE name = ?`, name).Scan(&n); err != nil {
+		return 0, fmt.Errorf("store: link threads: %w", err)
 	}
 	if n > 0 {
-		return nil
+		return -1, nil
 	}
-	var unlinked []string
-	if unlinked, err = linkThreads(ctx, tx, clients); err != nil {
-		return fmt.Errorf("store: link threads: %w", err)
+	unlinked, err := linkThreads(ctx, tx, clients, since)
+	if err != nil {
+		return 0, fmt.Errorf("store: link threads: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO startup_steps (name, done_at) VALUES (?, ?)`,
-		linkThreadsStep, time.Now().UnixMilli()); err != nil {
-		return fmt.Errorf("store: link threads: %w", err)
+	now := time.Now().UnixMilli()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO startup_steps (name, done_at) VALUES (?, ?)`, name, now); err != nil {
+		return 0, fmt.Errorf("store: link threads: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("store: link threads: %w", err)
+		return 0, fmt.Errorf("store: link threads: %w", err)
 	}
 	for _, l := range unlinked {
 		lg.Warn(l)
 	}
-	return nil
+	return now, nil
 }
 
-func linkThreads(ctx context.Context, tx *sql.Tx, clients map[string]string) (unlinked []string, err error) {
+func linkThreads(ctx context.Context, tx *sql.Tx, clients map[string]string, since int64) (unlinked []string, err error) {
 	type thread struct {
 		id                    int64
 		scope, key, startedBy string
 		created               int64
 	}
 	var threads []thread
-	rows, err := tx.QueryContext(ctx, `SELECT id, scope, key, started_by, created_at FROM threads ORDER BY id`)
+	// A thread that has a link was started by a daemon that stored it.
+	rows, err := tx.QueryContext(ctx, `SELECT id, scope, key, started_by, created_at FROM threads
+		WHERE created_at >= ? AND id NOT IN (SELECT thread_id FROM links) ORDER BY id`, since)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +117,7 @@ func linkThreads(ctx context.Context, tx *sql.Tx, clients map[string]string) (un
 		if err != nil {
 			return nil, err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE threads SET workspace = ? WHERE id = ?`, dir, t.id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE threads SET workspace = ? WHERE id = ? AND workspace = ''`, dir, t.id); err != nil {
 			return nil, fmt.Errorf("thread %d: %w", t.id, err)
 		}
 		client, ok := clients[t.scope]
@@ -96,11 +131,12 @@ func linkThreads(ctx context.Context, tx *sql.Tx, clients map[string]string) (un
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE events SET thread_id =
-		(SELECT t.id FROM threads t WHERE t.scope = events.scope AND t.key = events.thread)`); err != nil {
+		(SELECT t.id FROM threads t WHERE t.scope = events.scope AND t.key = events.thread) WHERE thread_id IS NULL`); err != nil {
 		return nil, fmt.Errorf("events: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE chat_outbox SET link =
-		(SELECT l.id FROM links l WHERE l.client = chat_outbox.client AND l.channel = chat_outbox.channel AND l.thread = chat_outbox.thread)`); err != nil {
+		(SELECT l.id FROM links l WHERE l.client = chat_outbox.client AND l.channel = chat_outbox.channel AND l.thread = chat_outbox.thread)
+		WHERE link IS NULL`); err != nil {
 		return nil, fmt.Errorf("outbox: %w", err)
 	}
 	return unlinked, nil
