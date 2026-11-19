@@ -44,6 +44,7 @@ Each scenario directory holds:
 | `usage` | `thread/tokenUsage/updated` and `account/rateLimits/updated` during the turn; `account/rateLimits/read` answered during it. |
 | `background` | `(sleep 40; echo bg-done) &`: the command item completed at once and the turn ended. Nothing it started was running 0 s, 45 s or 60 s after the turn, and no message and no turn followed in 60 s. |
 | `exit` | Input closed between turns: the app-server wrote nothing more and exited with status 0 within a second. A second app-server killed (SIGKILL to its group) during `sleep 600`; a third one resumed that thread: `thread/resume` succeeded, the thread `idle`, the killed turn `interrupted` with only its `userMessage` item. |
+| `login_device` | The device login link and code, stopped before anyone signed in; the end is from Codex source. The code was replaced by its shape by hand after this run; see `notes.json`. |
 | `login_status` | `codex login status`: exit status 0, `Logged in using ChatGPT` on standard error, nothing on standard output. `account/read` gives the account type. |
 | `trust` | Not run (below). |
 
@@ -112,3 +113,13 @@ What they show (each row of the design's Appendix B comes from these):
 - **The user's configuration:** before `--disable apps`, one server that this script did not make, the account's connectors, was loaded from it. With `apps` and `plugins` off, only `sv` was.
 - **`project_config`:** the working directory held `.codex/config.toml` with `sandbox_mode = "danger-full-access"`, `approval_policy = "never"` and an MCP server `project`. The thread kept the `sandbox` it was started with: the write outside was refused. The project's MCP server was loaded: the model called it, and the call was refused for want of an approval. In this run a parent of the directory was trusted in the user's configuration. **`codex app-server` wrote the directory into the user's `~/.codex/config.toml` as a trusted project** (`[projects."<dir>"]`, `trust_level = "trusted"`), one entry per run of this scenario: four in all. The Claude Code session that ran the check removed them by hand, before the maintainer asked for the file to be left alone, and checked the file against its checksum from before the runs. `confine.py` now runs these scenarios only with `CODEX_HOME` set to a directory other than the user's own, and otherwise records them as not run. It never writes the user's configuration.
 - **Session state:** even with `ephemeral: true`, the app-server wrote rollout files under the user's `~/.codex/sessions` for some of these threads (22 of a full run name the capture directories), and refreshed its caches there. They are not configuration, and the script does not remove them.
+
+## Device login capture
+
+`login_capture.py` captures the device login prompt into a new directory, scrubbing the link, one-time code and identifying values before writing. It stops as soon as the link and code appear; nobody signs in.
+
+```sh
+CODEX_HOME=$(mktemp -d) python3 login_capture.py 0.163.0/login_device
+```
+
+It refuses an unset or empty `CODEX_HOME`, the user's own directory (including a symlink or a directory holding the user's config), a directory that does not exist, a `CODEX_HOME` holding `auth.json`, or an existing output directory. It checks that the user's configuration and authentication files remain unchanged. The capture's description of the login's end comes from the Codex source, because the script stops before that point.

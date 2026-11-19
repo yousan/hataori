@@ -55,11 +55,13 @@ const (
 )
 
 // Update is what the owner's client is told about a flow. Each flow sends
-// one Update with Link (unless the command prints none), any number with
-// Refused, and one last with Done.
+// one Update with Link (unless the command prints none), another with the
+// same Link and ShowCode if the code arrives later, any number with Refused,
+// and one last with Done.
 type Update struct {
 	Agent    string
 	Link     string    // the sign-in link
+	NoCode   bool      // the login takes no code back
 	ShowCode string    // a code to show beside it, if the agent gives one
 	Expires  time.Time // with Link: until when a code is taken
 	Refused  string    // the command's own line refusing a code
@@ -109,11 +111,16 @@ type flow struct {
 	since   uint64        // the last event position when it started: older events are not about it
 	read    chan struct{} // closed when all its output is decoded
 
-	mu      sync.Mutex
-	waiting bool // the command asked for a code and has not had one since
-	done    bool
-	end     Outcome // why the relay ended it, if it did
-	exited  chan struct{}
+	mu       sync.Mutex
+	noCode   bool   // the command takes no code back
+	sentCode bool   // a code has been handed to the command
+	link     string // the link printed by the command
+	showCode string // the code to enter on the link's page
+	refusal  string // the no-code command's error line, for a failed end
+	waiting  bool   // the command asked for a code and has not had one since
+	done     bool
+	end      Outcome // why the relay ended it, if it did
+	exited   chan struct{}
 }
 
 // Run starts a flow when a login outage opens, and ends a waiting flow
@@ -184,14 +191,14 @@ func (r *Relay) Code(from, agentName, code string) error {
 		r.Log.Warn("login relay refused", "op", "code", "from", from)
 		return ErrForbidden
 	}
-	if code == "" || strings.IndexFunc(code, func(c rune) bool { return unicode.IsSpace(c) || !unicode.IsPrint(c) }) >= 0 {
-		return ErrNotACode
-	}
 	r.mu.Lock()
 	f := r.flows[agentName]
 	r.mu.Unlock()
-	if f == nil {
+	if f == nil || f.noCode {
 		return ErrNotWaiting
+	}
+	if code == "" || strings.IndexFunc(code, func(c rune) bool { return unicode.IsSpace(c) || !unicode.IsPrint(c) }) >= 0 {
+		return ErrNotACode
 	}
 	b, err := f.login.LoginCode(code)
 	if err != nil {
@@ -203,6 +210,7 @@ func (r *Relay) Code(from, agentName, code string) error {
 		return ErrNotWaiting
 	}
 	f.waiting = false
+	f.sentCode = true
 	f.mu.Unlock()
 	r.Log.Info("login code arrived", "agent", agentName, "length", len(code))
 	// Written without the flow's lock: a command that stops reading can
@@ -259,7 +267,8 @@ func (r *Relay) start(ctx context.Context, agentName string) error {
 	}
 	pr, pw := io.Pipe()
 	cmd.Stdout, cmd.Stderr = pw, pw // the refusal may come on either
-	f := &flow{agent: agentName, login: lf, adapter: ad, cmd: cmd, stdin: stdin, exited: make(chan struct{}),
+	_, codeErr := lf.LoginCode("")
+	f := &flow{noCode: errors.Is(codeErr, agent.ErrNoCodeBack), agent: agentName, login: lf, adapter: ad, cmd: cmd, stdin: stdin, exited: make(chan struct{}),
 		read: make(chan struct{}), expires: time.Now().Add(r.timeout())}
 	if err := r.Store.DB.QueryRowContext(ctx, `SELECT coalesce(max(pos), 0) FROM events`).Scan(&f.since); err != nil {
 		if guardWrite != nil {
@@ -357,15 +366,26 @@ func (r *Relay) line(f *flow, l []byte) {
 		f.mu.Unlock()
 		return
 	}
-	if st.WantsCode {
+	if st.WantsCode && !f.noCode {
 		f.waiting = true
 	}
+	var u Update
+	if st.Link != "" {
+		f.link, f.showCode = st.Link, st.ShowCode
+		u = Update{Agent: f.agent, Link: f.link, ShowCode: f.showCode, Expires: f.expires, NoCode: f.noCode}
+	} else if st.ShowCode != "" && f.link != "" && f.showCode == "" && !f.sentCode {
+		f.showCode = st.ShowCode
+		u = Update{Agent: f.agent, Link: f.link, ShowCode: f.showCode, Expires: f.expires, NoCode: f.noCode}
+	} else if st.Refused != "" {
+		if f.noCode {
+			f.refusal = st.Refused
+		} else {
+			u = Update{Agent: f.agent, Refused: st.Refused}
+		}
+	}
 	f.mu.Unlock()
-	switch {
-	case st.Link != "":
-		r.notify(Update{Agent: f.agent, Link: st.Link, ShowCode: st.ShowCode, Expires: f.expires})
-	case st.Refused != "":
-		r.notify(Update{Agent: f.agent, Refused: st.Refused})
+	if u.Link != "" || u.Refused != "" {
+		r.notify(u)
 	}
 }
 
@@ -396,6 +416,9 @@ func (r *Relay) decide(f *flow, waitErr error) Update {
 	u := Update{Agent: f.agent, Done: Failed}
 	if waitErr != nil {
 		u.Detail = "the login command failed: " + waitErr.Error()
+		if f.noCode && f.refusal != "" {
+			u.Detail = f.refusal
+		}
 		return u
 	}
 	h, err := f.adapter.Probe(context.Background())

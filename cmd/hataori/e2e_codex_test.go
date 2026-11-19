@@ -15,12 +15,85 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/instance"
+	"github.com/yousan/hataori/internal/surface"
 	fakesurface "github.com/yousan/hataori/internal/surface/fake"
 )
 
 type codexWire struct {
 	Dir string         `json:"dir"`
 	Msg map[string]any `json:"msg"`
+}
+
+const deviceLink = "https://auth.example.invalid/codex/device"
+const deviceCode = "TE57-7F3AQ"
+const codexLoggedFile = "hataori-test-logged-in"
+const codexSignedInFile = "hataori-test-signed-in"
+
+func codexLoggedIn() bool {
+	_, err := os.Stat(filepath.Join(os.Getenv("CODEX_HOME"), codexLoggedFile))
+	return err == nil
+}
+
+func codexLogin(args []string) int {
+	capture := os.Getenv("HATAORI_TEST_CODEX_CAPTURE")
+	if capture == "" {
+		fmt.Fprintln(os.Stderr, "codex replay: capture environment variable is required")
+		return 2
+	}
+	if args[0] == "--version" {
+		b, err := os.ReadFile(filepath.Join(capture, "VERSION"))
+		if err != nil {
+			return 2
+		}
+		fmt.Fprintln(os.Stdout, strings.Split(string(b), "\n")[0])
+		return 0
+	}
+	if len(args) > 1 && args[1] == "status" {
+		if codexLoggedIn() {
+			fmt.Fprintln(os.Stderr, "Logged in using ChatGPT")
+			return 0
+		}
+		fmt.Fprintln(os.Stderr, "Not logged in")
+		return 1
+	}
+	if len(args) > 1 && args[1] == "--device-auth" {
+		f, err := os.Open(filepath.Join(capture, "login_device/output.jsonl"))
+		if err != nil {
+			return 2
+		}
+		defer f.Close()
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			var row struct{ Stream, Line string }
+			if json.Unmarshal(scanner.Bytes(), &row) != nil {
+				return 2
+			}
+			line := strings.ReplaceAll(strings.ReplaceAll(row.Line, "https://auth.openai.com/codex/device", deviceLink), "XX00-0X00X", deviceCode)
+			if row.Stream == "stderr" {
+				fmt.Fprintln(os.Stderr, line)
+			} else {
+				fmt.Fprintln(os.Stdout, line)
+			}
+		}
+		deadline := time.Now().Add(60 * time.Second)
+		for {
+			if _, err := os.Stat(filepath.Join(os.Getenv("CODEX_HOME"), codexSignedInFile)); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				fmt.Fprintln(os.Stderr, "Error logging in: device auth timed out after 15 minutes")
+				return 1
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if os.WriteFile(filepath.Join(os.Getenv("CODEX_HOME"), codexLoggedFile), nil, 0600) != nil {
+			return 1
+		}
+		fmt.Fprintln(os.Stderr, "Successfully logged in")
+		return 0
+	}
+	fmt.Fprintln(os.Stderr, "codex replay: unsupported login command")
+	return 2
 }
 
 func codexReplay(args []string) int {
@@ -105,6 +178,7 @@ func codexReplay(args []string) int {
 			continue
 		}
 		if pos < len(lines) && lines[pos].Dir == "send" && lines[pos].Msg["method"] == method {
+			requestPos := pos
 			pos++
 			for pos < len(lines) && lines[pos].Dir == "recv" {
 				v := lines[pos].Msg
@@ -112,6 +186,14 @@ func codexReplay(args []string) int {
 					v["id"] = m["id"]
 				}
 				out.Encode(v)
+				if method == "turn/start" && v["method"] == "turn/started" && !codexLoggedIn() {
+					// The failed turn shape comes from the 0.163.0 schema, not a capture.
+					params := v["params"].(map[string]any)
+					turn := params["turn"].(map[string]any)
+					out.Encode(map[string]any{"method": "turn/completed", "params": map[string]any{"threadId": params["threadId"], "turn": map[string]any{"id": turn["id"], "status": "failed", "error": map[string]any{"message": "unauthorized", "codexErrorInfo": "unauthorized"}}}})
+					pos = requestPos
+					break
+				}
 				pos++
 			}
 			continue
@@ -131,6 +213,7 @@ func TestCodexStartsAndAnswers(t *testing.T) {
 	original := []byte("# user configuration\n")
 	os.WriteFile(config, original, 0600)
 	t.Setenv("CODEX_HOME", home)
+	os.WriteFile(filepath.Join(home, codexLoggedFile), nil, 0600)
 	t.Setenv("HATAORI_TEST_NOT_PASSED", "1")
 	capture, err := filepath.Abs("../../internal/agent/codex/testdata/0.163.0")
 	if err != nil {
@@ -225,4 +308,69 @@ func TestCodexConfigInTheDaemon(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestCodexLoginRelay(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	capture, err := filepath.Abs("../../internal/agent/codex/testdata/0.163.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HATAORI_TEST_CODEX_CAPTURE", capture)
+	t.Setenv("HATAORI_TEST_CODEX_RECORD", filepath.Join(t.TempDir(), "env"))
+	r := newChatRoot(t, func(cfg map[string]any) {
+		cfg["adapters"] = map[string]any{"codex": map[string]any{"command": os.Args[0], "pass_env": []string{"HATAORI_TEST_CODEX_CAPTURE", "HATAORI_TEST_CODEX_RECORD"}}}
+	})
+	logged := startDaemonLog(t, r.root)
+	r.connected(t)
+	repo := bareRepo(t)
+	a := r.order(t, 0, "!go repo:"+repo+" reply one")
+	r.posted(t, a, "The turn failed: the agent is not logged in.")
+	b := r.order(t, 1, "!go repo:"+repo+" reply two")
+	r.posted(t, b, "The turn failed: the agent is not logged in.")
+	dm, _ := r.driver.OpenDirect(nil, e2eOwner)
+	eventually(t, "device prompt", 15*time.Second, func() bool {
+		for _, c := range r.driver.Calls(dm) {
+			if strings.Contains(c.Message.Text, "Stopped threads (2)") && strings.Contains(c.Message.Text, deviceLink) && strings.Contains(c.Message.Text, deviceCode) && strings.Contains(c.Message.Text, "Nothing to send back here:") {
+				return true
+			}
+		}
+		return false
+	})
+	r.driver.InjectDirect(e2eOwner, "test")
+	r.posted(t, dm, "Not waiting for a code.")
+	postsBeforeSignIn := 0
+	for _, c := range r.driver.Calls(dm) {
+		if c.Op == fakesurface.OpPost && strings.Contains(c.Message.Text, "is logged out") {
+			postsBeforeSignIn++
+		}
+	}
+	if postsBeforeSignIn != 1 {
+		t.Fatalf("%d outage messages before sign-in", postsBeforeSignIn)
+	}
+	if err := os.WriteFile(filepath.Join(home, codexSignedInFile), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, th := range []surface.Conversation{a, b} {
+		r.posted(t, th, "The agent is logged in again. Send your last message again to go on.")
+	}
+	r.posted(t, dm, "Logged in again.")
+	for _, th := range []surface.Conversation{a, b} {
+		if n := r.count(th, "The agent is logged in again. Send your last message again to go on."); n != 1 {
+			t.Fatalf("%d restoration messages", n)
+		}
+	}
+	posts := 0
+	for _, c := range r.driver.Calls(dm) {
+		if c.Op == fakesurface.OpPost && strings.Contains(c.Message.Text, "is logged out") {
+			posts++
+		}
+	}
+	if posts != 1 {
+		t.Fatalf("%d outage messages", posts)
+	}
+	r.driver.Inject(a, fakesurface.Webhook(e2eHook), "try again")
+	r.posted(t, a, "I’ll run the requested shell command, then answer the arithmetic question.")
+	checkLoginSecrets(t, r, logged, deviceLink, deviceCode)
 }

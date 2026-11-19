@@ -489,3 +489,34 @@ func TestGuardRequiresOwnGroup(t *testing.T) {
 		t.Fatalf("guard exit: %v, output: %q; want exit 1 and no child output", err, out.String())
 	}
 }
+
+func TestDeviceLogin(t *testing.T) {
+	for _, fail := range []string{"", "Error logging in: device auth timed out after 15 minutes"} {
+		t.Run(fail, func(t *testing.T) {
+			f := newFixture(t, fake.Login{Device: true, Code: "ABCD-12345", DeviceFail: fail}, 5*time.Second)
+			f.turn(agent.Failed, agent.Login)
+			first := f.next("link")
+			if first.Link == "" || !first.NoCode || first.ShowCode != "" {
+				t.Fatalf("first: %+v", first)
+			}
+			if err := f.relay.Code("chat:owner", "fake", "anything"); !errors.Is(err, ErrNotWaiting) {
+				t.Fatalf("Code: %v", err)
+			}
+			second := f.next("code")
+			if second.Link != first.Link || second.ShowCode != "ABCD-12345" || !second.NoCode {
+				t.Fatalf("second: %+v", second)
+			}
+			end := f.next("end")
+			if fail == "" {
+				if end.Done != LoggedIn {
+					t.Fatalf("end: %+v", end)
+				}
+				if f.loginEvents(session.KindLoginRestored) != 1 {
+					t.Fatal("outage not closed")
+				}
+			} else if end.Done != Failed || end.Detail != fail || end.Refused != "" {
+				t.Fatalf("end: %+v", end)
+			}
+		})
+	}
+}
