@@ -812,6 +812,11 @@ func (s *Server) passkeyRemove(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such passkey", http.StatusNotFound)
 		return
 	}
+	// And again once it is gone: a session signed in while the removal
+	// was being written needs a new link too.
+	s.mu.Lock()
+	s.removed[ss.person] = s.now()
+	s.mu.Unlock()
 	s.Log.Info("dashboard: passkey removed", "person", gone.Person, "passkey", shortID(gone.ID), "listener", string(listenerOfRequest(r).way))
 	w.WriteHeader(http.StatusNoContent)
 }
