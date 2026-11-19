@@ -103,7 +103,8 @@
 // supervisor that relays between threads A and B: each turn whose input
 // has a line starting "Thread A:", as a wake message does, ends by
 // sending "reply relayed from A" to thread B with the MCP server's
-// send_to_thread, and the other way round.
+// send_to_thread, and the other way round; a send refused as busy is
+// tried again for up to 10 seconds.
 //
 // The codec holds input while a turn runs and writes it when the turn
 // ends, as an agent that takes one prompt at a time would. Written input
