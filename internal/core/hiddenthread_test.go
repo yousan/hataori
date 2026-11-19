@@ -106,19 +106,20 @@ func TestOperationOnAThreadOfAnotherScope(t *testing.T) {
 		},
 		"SetName": func(a control.API, x target) error { return a.SetName(ctx, x.link, "a name") },
 	}
+	// ids are the caller's own input as the messages quote it.
 	ids := func(op string, x target) []string {
 		switch op {
 		case "Answer a question":
-			return []string{string(x.request)}
+			return []string{strconv.Quote(string(x.request))}
 		case "Answer an approval":
 			if x.thread == missing {
-				return []string{"approval-00000000000000000000000000000000"}
+				return []string{strconv.Quote("approval-00000000000000000000000000000000")}
 			}
-			return []string{string(approval)}
+			return []string{strconv.Quote(string(approval))}
 		case "SetName":
-			return []string{x.link.Thread}
+			return []string{"/" + x.link.Thread + " "}
 		}
-		return []string{strconv.FormatInt(int64(x.thread), 10)}
+		return []string{"thread " + strconv.FormatInt(int64(x.thread), 10) + ":"}
 	}
 	answer := func(op string, a control.API, x target) string {
 		err := ops[op](a, x)
