@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { t } from "./catalog";
 import { useLayout } from "./layout";
 import { linkRefused } from "./session";
@@ -15,6 +15,8 @@ import { hostID, hostLabel, useHostTerminals } from "./hostTerminals";
 import { HostDetails, HostPane } from "./HostViews";
 import { active, allTab, close, hostOf, hostTab, initialTabs, panes, type Split, type TabKey, type Tabs, threadOf, threadTab, view } from "./tabs";
 import { useTheme } from "./theme";
+import type { HostKey } from "./keys";
+import { Operation, type OpState, useMayOperate } from "./operate";
 import { displayTitle } from "./format";
 import { hiddenCount, showsHost, useShow } from "./show";
 import { type Density, Tree } from "./Tree";
@@ -83,6 +85,43 @@ export function App() {
   const currentHost = hostOf(active(tabs));
   const openHost = (device: string) => setTabs((s) => view(s, hostTab(device)));
   const workspaces = useWorkspaces(d.threads, panes(tabs, split).includes(allTab) || layout.details, current);
+
+  // Operating host tmux panes: the server says whether this person may;
+  // each host pane's tab has its own operation, off when the tab opens and
+  // ended when it closes.
+  const may = useMayOperate();
+  const [ops, setOps] = useState<ReadonlyMap<TabKey, OpState>>(new Map());
+  const operations = useRef(new Map<TabKey, Operation>());
+  const opOf = (k: TabKey) => ops.get(k);
+  const switchOp = (k: TabKey, pane: string) => (on: boolean) => {
+    if (!on) {
+      operations.current.get(k)?.stop();
+      return;
+    }
+    operations.current.get(k)?.close();
+    operations.current.set(
+      k,
+      new Operation(pane, (s) => {
+        if (operations.current.has(k)) setOps((m) => new Map(m).set(k, s));
+      }),
+    );
+  };
+  const keysTo = (k: TabKey) => (keys: HostKey[]) => operations.current.get(k)?.send(keys);
+  const closeTab = (k: TabKey) => {
+    operations.current.get(k)?.close();
+    operations.current.delete(k);
+    setOps((m) => {
+      if (!m.has(k)) return m;
+      const next = new Map(m);
+      next.delete(k);
+      return next;
+    });
+    setTabs((s) => close(s, k));
+  };
+  // Leaving the page closes every operation's WebSocket with it; so does
+  // unmounting.
+  useEffect(() => () => operations.current.forEach((o) => o.close()), []);
+  const operating = (ops.get(active(tabs))?.phase === "on" ? ops.get(active(tabs)) : undefined) ?? [...ops.values()].find((s) => s.phase === "on");
 
   const paneThread = (k: TabKey) => {
     const n = threadOf(k);
@@ -229,9 +268,10 @@ export function App() {
             active={active(tabs)}
             thread={thread}
             host={host}
+            op={opOf}
             now={now}
             onView={(k) => setTabs((s) => view(s, k))}
-            onClose={(k) => setTabs((s) => close(s, k))}
+            onClose={closeTab}
             split={split}
             onSplit={setSplit}
             layout={layout}
@@ -266,7 +306,15 @@ export function App() {
                         scopes={d.scopes}
                       />
                     ) : hostOf(k) !== null ? (
-                      <HostPane h={host(hostOf(k)!)} now={now} fit />
+                      <HostPane
+                        h={host(hostOf(k)!)}
+                        now={now}
+                        fit
+                        may={may}
+                        op={opOf(k)}
+                        onSwitch={host(hostOf(k)!)?.tmux ? switchOp(k, host(hostOf(k)!)!.tmux!.pane) : undefined}
+                        onKeys={keysTo(k)}
+                      />
                     ) : paneThread(k) ? (
                       <ThreadPane
                         key={k}
@@ -304,7 +352,14 @@ export function App() {
           </aside>
         )}
       </div>
-      <StatusBar selected={current === null ? undefined : thread(current)} live={d.live} limits={d.limits} now={now} signedIn={!d.signedOut} />
+      <StatusBar
+        selected={current === null ? undefined : thread(current)}
+        live={d.live}
+        limits={d.limits}
+        now={now}
+        signedIn={!d.signedOut}
+        operating={operating}
+      />
     </div>
   );
 }

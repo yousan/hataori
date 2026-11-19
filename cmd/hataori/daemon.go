@@ -159,7 +159,9 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	// daemon with the reason.
 	var dash *dashboard.Server
 	if d := cfg.Dashboard; d != nil {
-		dc := dashboard.Config{HostInput: cfg.HostInput}
+		dc := dashboard.Config{HostInput: cfg.HostInput, MayOperate: func(person string) bool {
+			return c.MaySignIn(person) && dashboardCaller(cfg.People, keys, cfg.HostTerminals, cfg.HostInput, person).May.Has(control.OpHostInput)
+		}}
 		if l := d.Local; l != nil {
 			dc.Local = &dashboard.Local{Listen: l.Listen, URL: l.URL, Key: "dashboard."}
 		}

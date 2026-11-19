@@ -88,40 +88,44 @@ interface Begun<O> {
   options: { publicKey: O };
 }
 
+// AssertionOptions is a check's options as the server sends them.
+export type AssertionOptions = Omit<PublicKeyCredentialRequestOptions, "challenge" | "allowCredentials"> & {
+  challenge: string;
+  allowCredentials?: Descriptor[];
+};
+
+// passkeyAnswer runs the browser's passkey prompt for a check's options
+// and returns the credential in its JSON form, as the server takes it.
+export async function passkeyAnswer(o: AssertionOptions): Promise<unknown> {
+  const cred = (await ask(() =>
+    navigator.credentials.get({ publicKey: { ...o, challenge: fromB64(o.challenge), allowCredentials: descriptors(o.allowCredentials) } }),
+  )) as PublicKeyCredential | null;
+  if (!cred) throw new PasskeyError("cancelled");
+  const a = cred.response as AuthenticatorAssertionResponse;
+  return {
+    id: cred.id,
+    rawId: toB64(cred.rawId),
+    type: cred.type,
+    authenticatorAttachment: cred.authenticatorAttachment ?? undefined,
+    response: {
+      clientDataJSON: toB64(a.clientDataJSON),
+      authenticatorData: toB64(a.authenticatorData),
+      signature: toB64(a.signature),
+      userHandle: a.userHandle ? toB64(a.userHandle) : undefined,
+    },
+    clientExtensionResults: {},
+  };
+}
+
 // signInWithPasskey signs in with any passkey of this dashboard: no name
 // is asked for. With check, it is a check of the signed-in person's own
 // passkey instead, and only theirs are offered. The session it opens
 // replaces the page's, and it brings a proof that registers one more
 // passkey.
 export async function signInWithPasskey(check = false): Promise<void> {
-  type Request = Omit<PublicKeyCredentialRequestOptions, "challenge" | "allowCredentials"> & { challenge: string; allowCredentials?: Descriptor[] };
-  const b = await send<Begun<Request>>(signInBegin, check ? { check: true } : {}, "refused");
-  const o = b.options.publicKey;
-  const cred = (await ask(() =>
-    navigator.credentials.get({ publicKey: { ...o, challenge: fromB64(o.challenge), allowCredentials: descriptors(o.allowCredentials) } }),
-  )) as PublicKeyCredential | null;
-  if (!cred) throw new PasskeyError("cancelled");
-  const a = cred.response as AuthenticatorAssertionResponse;
-  const answer = await send<SignedIn>(
-    signInFinish,
-    {
-      ceremony: b.ceremony,
-      credential: {
-        id: cred.id,
-        rawId: toB64(cred.rawId),
-        type: cred.type,
-        authenticatorAttachment: cred.authenticatorAttachment ?? undefined,
-        response: {
-          clientDataJSON: toB64(a.clientDataJSON),
-          authenticatorData: toB64(a.authenticatorData),
-          signature: toB64(a.signature),
-          userHandle: a.userHandle ? toB64(a.userHandle) : undefined,
-        },
-        clientExtensionResults: {},
-      },
-    },
-    "refused",
-  );
+  const b = await send<Begun<AssertionOptions>>(signInBegin, check ? { check: true } : {}, "refused");
+  const credential = await passkeyAnswer(b.options.publicKey);
+  const answer = await send<SignedIn>(signInFinish, { ceremony: b.ceremony, credential }, "refused");
   if (!adopt(answer, "passkey")) throw new PasskeyError("failed");
 }
 

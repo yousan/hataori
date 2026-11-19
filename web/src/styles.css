@@ -1243,3 +1243,55 @@ body {
   color: var(--muted);
   font-style: italic;
 }
+
+/* A host tmux pane that may be operated: the switch over its screen, which
+   takes the rest of the pane as a thread's does. */
+.host-operable {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.operate {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.operate [role="switch"] {
+  font: inherit;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0 10px;
+}
+
+.operate [role="switch"][aria-checked="true"],
+.mark.operating,
+.tab-operating {
+  color: var(--bg);
+  background: var(--st-running);
+  border-color: var(--st-running);
+}
+
+.operating {
+  font-weight: 600;
+}
+
+.tab-operating {
+  font-size: 11px;
+  padding: 0 5px;
+  border-radius: 8px;
+}
+
+.operate-end {
+  color: var(--muted);
+}
+
+/* While operated, the screen takes keys: its frame says so. */
+.terminal-view[data-operating="on"] .xterm-box {
+  outline: 2px solid var(--st-running);
+  outline-offset: -2px;
+}
