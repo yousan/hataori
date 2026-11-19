@@ -3,6 +3,7 @@ import { hostID, hostMatches } from "./hostTerminals";
 import { t } from "./catalog";
 import { age, contextUse, mark, matches, stateName } from "./format";
 import type { Attention } from "./live";
+import { type Show, shows } from "./show";
 
 export type Density = "dense" | "normal";
 
@@ -16,6 +17,11 @@ interface Props {
   onDensity: (d: Density) => void;
   selected: number | null;
   onSelect: (n: number) => void;
+  // show: the active threads or all of them; hidden is how many the choice
+  // hides. The filter works on the threads shown; the counts in the footer
+  // count every thread.
+  show: Show;
+  hidden: number;
   // The host's terminals hataori does not own; null when the server does
   // not list them, and then neither section is shown.
   hosts: HostTerminal[] | null;
@@ -86,9 +92,10 @@ export function Row(props: {
 }
 
 export function Tree(props: Props) {
-  const { threads, attention, now, filter, onFilter, density, onDensity, selected, onSelect, hosts, selectedHost, onOpenHost } = props;
+  const { threads, attention, now, filter, onFilter, density, onDensity, selected, onSelect, show, hidden, hosts, selectedHost, onOpenHost } = props;
   const all = threads ?? [];
-  const shown = all.filter((x) => matches(x, filter));
+  const visible = all.filter((x) => shows(show, x));
+  const shown = visible.filter((x) => matches(x, filter));
   const waiting = shown.filter((x) => attention.has(x.number));
 
   const scopes = new Map<string, ThreadInfo[]>();
@@ -143,7 +150,10 @@ export function Tree(props: Props) {
         <section className="threads" data-section="threads">
           <h2>{t("tree.threads")}</h2>
           {all.length === 0 && threads !== null && <p className="none">{t("tree.none")}</p>}
-          {all.length > 0 && shown.length === 0 && <p className="none">{t("tree.noMatch")}</p>}
+          {all.length > 0 && visible.length === 0 && <p className="none">{t("tree.noActive", { n: hidden })}</p>}
+          {visible.length > 0 && shown.length === 0 && (
+            <p className="none">{hidden > 0 ? t("tree.noMatchHidden", { n: hidden }) : t("tree.noMatch")}</p>
+          )}
           {[...scopes].map(([scope, list]) => (
             <div className="scope" key={scope} data-scope={scope}>
               <h3>
