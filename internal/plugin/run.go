@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -72,8 +73,9 @@ type Tokens interface {
 // speaks and the executable's SHA-256 the config's. The bytes that are
 // hashed are the bytes that run: the executable is read once into memory,
 // hashed there, and written to a new file in a directory of the daemon's
-// own (state/plugin-run/<id>/, mode 0700), which is the file started. A
-// file put in the place of the executable after it was read is not run.
+// own (state/plugin-run/<id>/, mode 0700), under a new random name at
+// each start, which is the file started. A file put in the place of the
+// executable after it was read is not run.
 type Runner struct {
 	Grants []Grant
 	State  string // the instance's state directory, absolute
@@ -88,9 +90,9 @@ type Runner struct {
 	// told once per outage, also across restarts of the daemon.
 	Outages *store.Store
 	// Tell tells the owner, once per key whatever the number of calls:
-	// the direct message of the login alert (section 4.7). Nil: the log
-	// line only.
-	Tell func(ctx context.Context, key, text string)
+	// the direct message of the login alert (section 4.7). An error is
+	// tried again. Nil: the log line only.
+	Tell func(ctx context.Context, key, text string) error
 	// Stopping tells a running plugin that it is stopping, before it gets
 	// SIGTERM; it has until ctx ends. The notice itself comes with hooks
 	// (#350). Nil tells nothing.
@@ -114,9 +116,11 @@ type Runner struct {
 
 // Start binds each external plugin's token to its caller, then starts the
 // other plugins, each in its own goroutine, until ctx ends. An external
-// plugin's token that cannot be read is an error naming the key, and
-// starts nothing. Wait waits for every plugin to have stopped.
+// plugin's token that cannot be read, or that another external plugin's
+// file holds too, is an error naming the key, and starts nothing. Wait
+// waits for every plugin to have stopped.
 func (r *Runner) Start(ctx context.Context) error {
+	seen := map[string]string{} // token: the key of the file that holds it
 	for i, g := range r.Grants {
 		if !g.External {
 			continue
@@ -126,9 +130,14 @@ func (r *Runner) Start(ctx context.Context) error {
 			return fmt.Errorf("config: key %q: plugin %q: %w", fmt.Sprintf("plugins[%d].token_file", i), g.ID, err)
 		}
 		token := strings.TrimSpace(string(b))
+		key := fmt.Sprintf("plugins[%d].token_file", i)
 		if token == "" {
-			return fmt.Errorf("config: key %q: plugin %q: the token file is empty", fmt.Sprintf("plugins[%d].token_file", i), g.ID)
+			return fmt.Errorf("config: key %q: plugin %q: the token file is empty", key, g.ID)
 		}
+		if other, ok := seen[token]; ok {
+			return fmt.Errorf("config: keys %q and %q: two plugins' token files hold the same token", other, key)
+		}
+		seen[token] = key
 		if err := r.Tokens.Restore(token, r.As(g.Caller())); err != nil {
 			return fmt.Errorf("plugin %q: %w", g.ID, err)
 		}
@@ -230,11 +239,14 @@ func (r *Runner) once(ctx context.Context, g Grant) (string, error) {
 		r.Log.Error("plugin not started", "plugin", g.ID, "err", err)
 		return "", err
 	}
+	defer os.Remove(exe)
 	token, err := r.Tokens.Issue(r.As(g.Caller()))
 	if err != nil {
 		return "", err
 	}
-	defer r.Tokens.Revoke(token) // its connections close, and the token is refused from now on
+	// Revoked as soon as the plugin exits, below, and on every other way
+	// out: its connections close, and the token is refused from then on.
+	defer r.Tokens.Revoke(token)
 
 	env := []string{EnvSocket + "=" + r.Socket, EnvToken + "=" + token, EnvID + "=" + g.ID,
 		EnvState + "=" + state, EnvSettings + "=" + settings, EnvProtocol + "=" + r.Speaks}
@@ -264,8 +276,8 @@ func (r *Runner) once(ctx context.Context, g Grant) (string, error) {
 	errW.Close()
 	var lines sync.WaitGroup
 	lines.Add(2)
-	go func() { defer lines.Done(); r.output(g, "stdout", outR) }()
-	go func() { defer lines.Done(); r.output(g, "stderr", errR) }()
+	go func() { defer lines.Done(); r.output(g, "stdout", outR, token) }()
+	go func() { defer lines.Done(); r.output(g, "stderr", errR, token) }()
 	defer func() {
 		// The output ends when every process holding the pipes is gone; one
 		// that left the plugin's group is not waited for long.
@@ -287,6 +299,9 @@ func (r *Runner) once(ctx context.Context, g Grant) (string, error) {
 	}
 	pgid := cmd.Process.Pid
 	r.Log.Info("plugin started", "plugin", g.ID, "pid", pgid)
+	// A run that lasts the window ends the plugin's outage, while it runs.
+	stable := time.AfterFunc(or(r.Window, DefaultWindow), func() { r.closeOutage(context.WithoutCancel(ctx), g) })
+	defer stable.Stop()
 	exited := make(chan error, 1)
 	go func() { exited <- cmd.Wait() }()
 	select {
@@ -294,6 +309,7 @@ func (r *Runner) once(ctx context.Context, g Grant) (string, error) {
 	case <-ctx.Done():
 		err = r.stop(g, pgid, exited)
 	}
+	r.Tokens.Revoke(token)
 	// Whatever the plugin started and left in its group goes with it.
 	syscall.Kill(-pgid, syscall.SIGKILL)
 	return "", err
@@ -303,8 +319,14 @@ func (r *Runner) once(ctx context.Context, g Grant) (string, error) {
 func (r *Runner) stop(g Grant, pgid int, exited <-chan error) error {
 	grace := or(r.Grace, DefaultGrace)
 	if r.Stopping != nil {
+		// It has the grace period, and SIGTERM follows whether it returned.
 		sctx, cancel := context.WithTimeout(context.Background(), grace)
-		r.Stopping(sctx, g)
+		told := make(chan struct{})
+		go func() { defer close(told); r.Stopping(sctx, g) }()
+		select {
+		case <-told:
+		case <-sctx.Done():
+		}
 		cancel()
 	}
 	syscall.Kill(-pgid, syscall.SIGTERM)
@@ -383,7 +405,17 @@ func (r *Runner) prepare(g Grant, data []byte) (exe, settings, state string, err
 			return "", "", "", err
 		}
 	}
-	exe = filepath.Join(run, "exec")
+	// A new name at each start, so that no file of an earlier start, or a
+	// name known before, is the one started.
+	old, _ := filepath.Glob(filepath.Join(run, "exec-*"))
+	for _, f := range old {
+		os.Remove(f)
+	}
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", "", "", err
+	}
+	exe = filepath.Join(run, "exec-"+hex.EncodeToString(b[:]))
 	if err := writeNew(exe, data, 0o500); err != nil {
 		return "", "", "", fmt.Errorf("copy of the executable: %w", err)
 	}
@@ -435,22 +467,39 @@ func writeNew(path string, data []byte, mode os.FileMode) error {
 }
 
 // output logs what the plugin writes to one stream, a line at a time, each
-// marked with the plugin's id and cut at LineMax bytes.
-func (r *Runner) output(g Grant, stream string, in io.Reader) {
+// marked with the plugin's id and cut at LineMax bytes: a longer line is
+// logged as soon as LineMax bytes of it came, and the rest of it is
+// dropped. The plugin's token is never logged, even when it prints it.
+func (r *Runner) output(g Grant, stream string, in io.Reader, token string) {
 	max := or(r.LineMax, DefaultLineMax)
 	br := bufio.NewReaderSize(in, max)
+	log := func(line []byte, cut bool) {
+		text := string(bytes.TrimRight(line, "\r\n"))
+		if token != "" {
+			text = strings.ReplaceAll(text, token, "[token]")
+			if cut { // a token the cut went through: its first part
+				for k := len(token) - 1; k > 0; k-- {
+					if strings.HasSuffix(text, token[:k]) {
+						text = text[:len(text)-k] + "[token]"
+						break
+					}
+				}
+			}
+		}
+		text = strings.ToValidUTF8(text, "\uFFFD")
+		if text != "" || cut {
+			r.Log.Info("plugin output", "plugin", g.ID, "stream", stream, "line", text, "cut", cut)
+		}
+	}
 	for {
 		line, err := br.ReadSlice('\n')
-		cut := false
 		if errors.Is(err, bufio.ErrBufferFull) {
-			cut = true
-			line = bytes.Clone(line)                  // the reads below reuse the buffer
+			log(line, true)
 			for errors.Is(err, bufio.ErrBufferFull) { // the rest of the line is dropped
 				_, err = br.ReadSlice('\n')
 			}
-		}
-		if line = bytes.TrimRight(line, "\r\n"); len(line) > 0 || cut {
-			r.Log.Info("plugin output", "plugin", g.ID, "stream", stream, "line", strings.ToValidUTF8(string(line), "�"), "cut", cut)
+		} else {
+			log(line, false)
 		}
 		if err != nil {
 			return
@@ -459,25 +508,41 @@ func (r *Runner) output(g Grant, stream string, in io.Reader) {
 }
 
 // stayStopped leaves g stopped: one log line, the outage kept, and the
-// owner told once for it.
+// owner told once for it, tried again until that succeeds or ctx ends.
 func (r *Runner) stayStopped(ctx context.Context, g Grant, why string) {
 	r.Log.Error("plugin stays stopped", "plugin", g.ID, "reason", why)
-	ctx = context.WithoutCancel(ctx)
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
 	var opened int64
-	err := r.Outages.Update(ctx, func(tx *store.Tx) error {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO plugin_outages (plugin, opened_at) VALUES (?, ?) ON CONFLICT DO NOTHING`,
+	err := r.Outages.Update(dctx, func(tx *store.Tx) error {
+		if _, err := tx.ExecContext(dctx, `INSERT INTO plugin_outages (plugin, opened_at) VALUES (?, ?) ON CONFLICT DO NOTHING`,
 			g.ID, time.Now().UnixMilli()); err != nil {
 			return err
 		}
-		return tx.QueryRowContext(ctx, `SELECT opened_at FROM plugin_outages WHERE plugin = ?`, g.ID).Scan(&opened)
+		return tx.QueryRowContext(dctx, `SELECT opened_at FROM plugin_outages WHERE plugin = ?`, g.ID).Scan(&opened)
 	})
 	if err != nil {
 		r.Log.Error("plugin: recording its outage", "plugin", g.ID, "err", err)
 		return
 	}
-	if r.Tell != nil {
-		r.Tell(ctx, "plugin-stopped:"+g.ID+":"+strconv.FormatInt(opened, 10),
-			fmt.Sprintf("The plugin %s is stopped and is not started again until hataori restarts: %s.", g.ID, why))
+	if r.Tell == nil {
+		return
+	}
+	key := "plugin-stopped:" + g.ID + ":" + strconv.FormatInt(opened, 10)
+	text := fmt.Sprintf("The plugin %s is stopped and is not started again until hataori restarts: %s.", g.ID, why)
+	for wait := or(r.Backoff, DefaultBackoff); ; wait = min(2*wait, or(r.MaxBackoff, DefaultMaxBackoff)) {
+		tctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		err := r.Tell(tctx, key, text)
+		cancel()
+		if err == nil {
+			return
+		}
+		r.Log.Warn("plugin: the owner could not be told that it stays stopped; trying again", "plugin", g.ID, "err", err, "in", wait)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
 	}
 }
 

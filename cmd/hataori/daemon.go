@@ -409,10 +409,12 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	pr := &plugin.Runner{Grants: grants, State: filepath.Join(abs, "state"), Socket: socket, Speaks: wire.Version,
 		Tokens: srv, As: c.As, Outages: st, Log: lg,
 		ReadToken: func(file string) ([]byte, error) { return in.Root.ReadFile(filepath.Join("config", file)) },
-		Tell: func(ctx context.Context, key, text string) {
-			for _, fe := range fronts {
-				fe.TellOwner(ctx, key, text)
+		Tell: func(ctx context.Context, key, text string) error {
+			var errs []error
+			for _, fe := range fronts { // each tells once per key; one that told before posts nothing
+				errs = append(errs, fe.TellOwner(ctx, key, text))
 			}
+			return errors.Join(errs...)
 		}}
 	if runnerHook != nil {
 		runnerHook(pr)

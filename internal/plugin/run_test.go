@@ -81,10 +81,11 @@ type told struct {
 	keys []string
 }
 
-func (t *told) tell(_ context.Context, key, _ string) {
+func (t *told) tell(_ context.Context, key, _ string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.keys = append(t.keys, key)
+	return nil
 }
 
 func (t *told) all() []string {
@@ -166,6 +167,17 @@ func (f *runnerFixture) file(t *testing.T, name string) string {
 		return err == nil && len(b) > 0 && b[len(b)-1] == '\n'
 	})
 	return strings.TrimSpace(string(b))
+}
+
+// gone reports whether process pid is gone within a few seconds.
+func gone(t *testing.T, pid int) bool {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
+			return true
+		}
+	}
+	return false
 }
 
 func eventually(t *testing.T, what string, d time.Duration, ok func() bool) {
@@ -312,7 +324,8 @@ func TestReplacedExecutableDoesNotRun(t *testing.T) {
 // number of exits, and the owner is told; its outage is kept, so the next
 // runner tells with the same key.
 func TestRestartsAndStaysStopped(t *testing.T) {
-	path, sum := script(t, `echo "$$ $HATAORI_TOKEN" > "$HATAORI_PLUGIN_STATE/run.tmp"; mv "$HATAORI_PLUGIN_STATE/run.tmp" "$HATAORI_PLUGIN_STATE/run"; exec sleep 600`)
+	path, sum := script(t, `[ -e "$HATAORI_PLUGIN_STATE/child" ] || { sh -c 'echo $$ > "$HATAORI_PLUGIN_STATE/child.tmp"; mv "$HATAORI_PLUGIN_STATE/child.tmp" "$HATAORI_PLUGIN_STATE/child"; exec sleep 600' & }
+echo "$$ $HATAORI_TOKEN" > "$HATAORI_PLUGIN_STATE/run.tmp"; mv "$HATAORI_PLUGIN_STATE/run.tmp" "$HATAORI_PLUGIN_STATE/run"; exec sleep 600`)
 	f := newRunner(t, Grant{Path: path, SHA256: sum}, nil)
 	pid, token, _ := strings.Cut(f.file(t, "run"), " ")
 	os.Remove(filepath.Join(f.state, "plugins", "scan", "run"))
@@ -323,6 +336,9 @@ func TestRestartsAndStaysStopped(t *testing.T) {
 	pid2, token2, _ := strings.Cut(f.file(t, "run"), " ")
 	if pid2 == pid || token2 == token || token2 == "" {
 		t.Fatalf("after SIGKILL: pid %s token %s, before %s %s", pid2, token2, pid, token)
+	}
+	if child, _ := strconv.Atoi(f.file(t, "child")); child == 0 || !gone(t, child) {
+		t.Fatalf("the child %d of the killed plugin is left", child)
 	}
 	if f.tokens.isLive(token) || !f.tokens.isLive(token2) {
 		t.Fatalf("the old token is live %v, the new one %v", f.tokens.isLive(token), f.tokens.isLive(token2))
@@ -365,7 +381,8 @@ func TestRestartsAndStaysStopped(t *testing.T) {
 	}
 }
 
-// A run as long as the window ends the outage: a later one is told anew.
+// A run as long as the window ends the outage, while it runs: a later one
+// is told anew.
 func TestALongRunEndsTheOutage(t *testing.T) {
 	path, sum := script(t, `exit 3`)
 	f := newRunner(t, Grant{Path: path, SHA256: sum}, nil)
@@ -377,7 +394,7 @@ func TestALongRunEndsTheOutage(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("%d outages", n)
 	}
-	path, sum = script(t, `sleep 0.3; exit 3`)
+	path, sum = script(t, `exec sleep 600`) // it runs, and runs on
 	f2 := &Runner{Grants: []Grant{{ID: "scan", Path: path, SHA256: sum, Protocol: Protocol{3, 0}, Settings: []byte(`{}`)}},
 		State: f.state, Speaks: "3.12", Tokens: f.tokens, As: f.r.As, Outages: f.r.Outages, Log: f.r.Log, Tell: f.told.tell,
 		Backoff: 10 * time.Millisecond, Failures: 100, Window: 200 * time.Millisecond}
@@ -389,6 +406,97 @@ func TestALongRunEndsTheOutage(t *testing.T) {
 	})
 	cancel()
 	f2.Wait()
+}
+
+// Two external plugins whose token files hold the same token are refused
+// with one line naming both keys: either would get the other's grant.
+func TestExternalTokensDiffer(t *testing.T) {
+	a := Grant{ID: "a", External: true, TokenFile: "a-token", Scopes: []string{"c1"}}
+	b := Grant{ID: "b", External: true, TokenFile: "b-token", Scopes: []string{"c2"}}
+	r := &Runner{Grants: []Grant{a, b}, Tokens: &fakeTokens{live: map[string]bool{}}, As: func(control.Caller) control.API { return nil },
+		Log: slog.New(slog.DiscardHandler), ReadToken: func(string) ([]byte, error) { return []byte("same\n"), nil }}
+	err := r.Start(context.Background())
+	if err == nil || !strings.Contains(err.Error(), `"plugins[0].token_file"`) || !strings.Contains(err.Error(), `"plugins[1].token_file"`) {
+		t.Fatalf("one token in two files: %v", err)
+	}
+}
+
+// A plugin that prints its token does not put it in the log, and a line
+// with no end is logged, cut, while the plugin runs.
+func TestPluginOutputHidesItsTokenAndCutsAtOnce(t *testing.T) {
+	path, sum := script(t, `echo "mine is $HATAORI_TOKEN"; printf '%0300d' 0; exec sleep 600`)
+	f := newRunner(t, Grant{Path: path, SHA256: sum}, func(r *Runner) { r.LineMax = 100 })
+	eventually(t, "the cut line", 10*time.Second, func() bool { return strings.Contains(f.log.String(), "cut=true") })
+	l := f.log.String()
+	if !strings.Contains(l, "line=\"mine is [token]\"") || strings.Contains(l, "is t1") {
+		t.Fatalf("log: %s", l)
+	}
+}
+
+// A token the cut goes through is not logged in part either.
+func TestPluginOutputHidesACutToken(t *testing.T) {
+	// The token is t1001: the cut goes after four of its five bytes, then
+	// after two of them.
+	path, sum := script(t, `printf '%096d%s\n' 0 "$HATAORI_TOKEN"; printf '%098d%s\n' 0 "$HATAORI_TOKEN"; echo after; exec sleep 600`)
+	f := newRunner(t, Grant{Path: path, SHA256: sum}, func(r *Runner) {
+		r.LineMax = 100
+		r.Tokens = &fakeTokens{live: map[string]bool{}, n: 1000}
+	})
+	eventually(t, "the output", 10*time.Second, func() bool { return strings.Contains(f.log.String(), "line=after") })
+	l := f.log.String()
+	if strings.Count(l, "0[token] cut=true") != 2 || strings.Contains(l, "0t1") {
+		t.Fatalf("a cut token is logged in part:\n%s", l)
+	}
+}
+
+// A stopping notice that does not return in the grace period does not
+// keep the plugin from getting SIGTERM, and then SIGKILL.
+func TestStoppingThatHangs(t *testing.T) {
+	path, sum := script(t, `echo $$ > "$HATAORI_PLUGIN_STATE/pid.tmp"; mv "$HATAORI_PLUGIN_STATE/pid.tmp" "$HATAORI_PLUGIN_STATE/pid"; exec sleep 600`)
+	hang := make(chan struct{})
+	defer close(hang)
+	f := newRunner(t, Grant{Path: path, SHA256: sum}, func(r *Runner) {
+		r.Stopping = func(context.Context, Grant) { <-hang }
+	})
+	pid, _ := strconv.Atoi(f.file(t, "pid"))
+	done := make(chan struct{})
+	go func() { f.cancel(); f.r.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a stopping notice that hangs held the stop")
+	}
+	if !errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
+		t.Fatal("the plugin still runs")
+	}
+}
+
+// When the owner cannot be told, it is tried again until it is.
+func TestTellIsTriedAgain(t *testing.T) {
+	path, sum := script(t, `exit 3`)
+	var mu sync.Mutex
+	tries := 0
+	f := newRunner(t, Grant{Path: path, SHA256: sum}, func(r *Runner) {
+		r.Tell = func(context.Context, string, string) error {
+			mu.Lock()
+			defer mu.Unlock()
+			tries++
+			if tries < 3 {
+				return errors.New("the chat service is down")
+			}
+			return nil
+		}
+	})
+	eventually(t, "three tries", 10*time.Second, func() bool { mu.Lock(); defer mu.Unlock(); return tries == 3 })
+	time.Sleep(200 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if tries != 3 {
+		t.Fatalf("%d tries after it succeeded", tries)
+	}
+	if n := strings.Count(f.log.String(), "could not be told"); n != 2 {
+		t.Fatalf("%d lines say the owner could not be told", n)
+	}
 }
 
 // When the runner stops, no process of a plugin is left: not one that

@@ -17,3 +17,6 @@ internal/connect/connect.go	conn.forward	os.Remove	Runs on the person's own mach
 internal/connect/connect.go	conn.leftOver	os.Remove	Runs on the person's own machine: removes only the control, forward and request sockets of this host in connect's private run directory, after ending a left-over master, under the host's lock.
 internal/connect/connect.go	conn.stop	os.Remove	Runs on the person's own machine: removes only this run's control and forward sockets in connect's private run directory, if ssh left them.
 internal/connect/connect.go	remember	os.Remove	Runs on the person's own machine: removes only the temporary file this call just created with os.CreateTemp beside the remembered hosts, which the rename has already taken unless a step failed.
+internal/plugin/run.go	Runner.once	os.Remove	Removes only the plugin's executable copy, state/plugin-run/<id>/exec-<random>, which prepare wrote for this start, outside the workspaces.
+internal/plugin/run.go	Runner.prepare	os.Remove	Removes only the copies of earlier starts, state/plugin-run/<id>/exec-*, in the daemon's own directory for the plugin, outside the workspaces.
+internal/plugin/run.go	writeNew	os.Remove	Removes only <path>.new, the half-written file of the executable copy or the settings in state/plugin-run/<id>/, outside the workspaces.
