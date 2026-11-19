@@ -48,10 +48,11 @@ type host struct {
 	ln       *net.UnixListener
 	sock     string
 
-	events *lineLog
-	calls  callTable
-	log    *hostLog      // the host's own record; nil when it could not be opened
-	done   chan struct{} // closed when the command has exited
+	events   *lineLog
+	calls    callTable
+	log      *hostLog      // the host's own record; nil when it could not be opened
+	done     chan struct{} // closed when the command has exited; for a relay, when it is told to stop
+	endRelay sync.Once     // closes done, once, for a relay
 
 	stopMu   sync.Mutex
 	stopOne  sync.Mutex     // one stop at a time
@@ -98,12 +99,19 @@ func Run(stateDir string) (err error) {
 		return fmt.Errorf("host: %w", err)
 	}
 	defer h.events.Close()
+	if h.spec.Relay && (len(h.spec.Argv) > 0 || h.spec.Terminal) {
+		writeStatus(stateDir, Status{Error: errRelayCommand.Error(), Code: -1})
+		return errRelayCommand
+	}
 
 	// Listen before the command starts, so that its first hook call finds
 	// the socket; connections wait in the backlog until serve accepts them.
 	if err := h.listen(); err != nil {
 		writeStatus(stateDir, Status{Error: err.Error(), Code: -1})
 		return err
+	}
+	if h.spec.Relay {
+		return h.relay()
 	}
 	readers, err := h.start()
 	if err != nil {
@@ -154,6 +162,23 @@ func Run(stateDir string) (err error) {
 		st.Stopped, st.StopNote = true, h.stopNote
 	}
 	return writeStatus(stateDir, st)
+}
+
+// relay serves the socket with no command until a stop arrives, then
+// records that it ran none. It writes no command.pid and opens no log of
+// a terminal: the terminal is another holder's.
+func (h *host) relay() error {
+	h.log.printf("a relay: no command")
+	go h.serve()
+	<-h.done
+	h.log.printf("told to stop")
+	h.stopMu.Lock()
+	h.closing = true // no stop registers from now on, so Wait races no Add
+	h.stopMu.Unlock()
+	h.stops.Wait() // every stop's answer is written before the host ends
+	h.ln.Close()
+	h.removeSocket()
+	return writeStatus(h.dir, Status{Relay: true, Stopped: true})
 }
 
 func exitStatus(cmd *exec.Cmd, err error) Status {
@@ -345,6 +370,14 @@ func (h *host) serve() {
 	for {
 		c, err := h.ln.AcceptUnix()
 		if err != nil {
+			// A relay has no command whose end ends it: only a stop on this
+			// socket does, so it keeps accepting through a passing error,
+			// such as running out of descriptors.
+			if h.spec.Relay && !errors.Is(err, net.ErrClosed) {
+				h.log.dropped("accepting a connection", err)
+				time.Sleep(50 * time.Millisecond)
+				continue
+			}
 			return
 		}
 		go h.serveConn(c)
@@ -373,6 +406,10 @@ func startInTerminal(cmd *exec.Cmd, size *pty.Winsize) (*os.File, string, error)
 	}
 	return m, t.Name(), nil
 }
+
+// errNoTerminal answers, on a relay, the requests that need the terminal:
+// another holder holds it.
+const errNoTerminal = "the host runs no command: its terminal is another holder's"
 
 // request is one call on the host's socket; response its answer.
 type request struct {
@@ -462,6 +499,9 @@ func (h *host) serveConn(c *net.UnixConn) {
 func (h *host) handle(req request) response {
 	switch req.Op {
 	case "input":
+		if h.spec.Relay {
+			return response{Error: errNoTerminal}
+		}
 		h.inMu.Lock()
 		defer h.inMu.Unlock()
 		select {
@@ -474,6 +514,9 @@ func (h *host) handle(req request) response {
 		}
 		return response{OK: true}
 	case "status":
+		if h.spec.Relay { // no command: no process id and no terminal
+			return response{OK: true}
+		}
 		device := h.ptyName
 		select {
 		case <-h.done: // the command has exited; its terminal only drains
@@ -497,8 +540,11 @@ func (h *host) handle(req request) response {
 
 // tail returns the last n bytes of the raw log: the terminal's, or
 // standard error on pipes. It is for a person to read; the host passes it
-// on without looking at it.
+// on without looking at it. A relay has none.
 func (h *host) tail(n int) []byte {
+	if h.spec.Relay {
+		return nil
+	}
 	name := StderrLog
 	if h.spec.Terminal {
 		name = TerminalLog
