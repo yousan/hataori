@@ -273,6 +273,32 @@ func (f *FrontEnd) refuseEffort(ctx context.Context, r request, o order, n int64
 	return err
 }
 
+// refuseStopped answers a trigger whose Start a plugin stopped, naming the
+// plugin and why; the core logged it. Nothing was started, so the reply
+// is to the trigger, keyed by the trigger's number as an effort refusal
+// is.
+func (f *FrontEnd) refuseStopped(ctx context.Context, r request, n int64, err error) error {
+	err = f.Outbox.Write(ctx, Row{Event: 0, Part: int(n), Conv: r.conv, Message: surface.Message{
+		Text: "Nothing was started: " + StoppedLine(err), ReplyTo: r.reply}})
+	if err != nil {
+		f.Log.Error("trigger: writing the refusal", "message", r.key, "err", err)
+	}
+	return err
+}
+
+// StoppedLine says which plugin stopped an input and why, from the error
+// of a Start or Send that a plugin stopped.
+func StoppedLine(err error) string {
+	var s *control.Stopped
+	if !errors.As(err, &s) {
+		return "a plugin stopped it."
+	}
+	if s.Failed {
+		return fmt.Sprintf("the plugin %s failed (%s), and its policy blocks the input.", s.Plugin, s.Reason)
+	}
+	return fmt.Sprintf("the plugin %s stopped it: %s", s.Plugin, s.Reason)
+}
+
 // stored returns the text of a trigger message as it was first received.
 func (f *FrontEnd) stored(ctx context.Context, ref surface.MessageRef) (string, bool, error) {
 	var text string
@@ -324,6 +350,8 @@ func (f *FrontEnd) start(ctx context.Context, r request, o order, n int64) (cont
 		return 0, nil // the core logged it; nothing is shown to the author
 	case errors.Is(startErr, control.ErrUnknownEffort):
 		return 0, f.refuseEffort(ctx, r, o, n)
+	case errors.Is(startErr, control.ErrStopped):
+		return 0, f.refuseStopped(ctx, r, n, startErr)
 	}
 	if id == 0 {
 		f.Log.Error("trigger: start failed", "scope", channel, "message", r.key, "err", startErr)
@@ -471,6 +499,9 @@ func (f *FrontEnd) followUp(in surface.Inbound) error {
 			"thread", conv.Thread, "message", in.Ref.ID)
 		return f.closedNotice(ctx, in)
 	}
+	if errors.Is(err, control.ErrStopped) {
+		return f.refusedNotice(ctx, in, "Not sent to the agent: "+StoppedLine(err)) // the core logged it
+	}
 	if err != nil {
 		f.Log.Error("follow-up: send failed", "scope", conv.Channel, "thread", conv.Thread, "message", in.Ref.ID, "err", err)
 		return err
@@ -486,6 +517,12 @@ const ClosedLine = "This thread is closed: nothing was sent to the agent."
 // delivered again writes it once. Its event is 0 and its part negative,
 // which no other row uses.
 func (f *FrontEnd) closedNotice(ctx context.Context, in surface.Inbound) error {
+	return f.refusedNotice(ctx, in, ClosedLine)
+}
+
+// refusedNotice answers a message that reached no agent with text, once: the row
+// is keyed by the message's place in chat_notices, as closedNotice's.
+func (f *FrontEnd) refusedNotice(ctx context.Context, in surface.Inbound, text string) error {
 	err := f.Outbox.Store.Update(ctx, func(tx *store.Tx) error {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO chat_notices (client, channel, message, received_at)
 			VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`, f.Name, in.Ref.Conv.Channel, in.Ref.ID, time.Now().UnixMilli()); err != nil {
@@ -498,10 +535,10 @@ func (f *FrontEnd) closedNotice(ctx context.Context, in surface.Inbound) error {
 		}
 		ref := in.Ref
 		return f.Outbox.WriteTx(ctx, tx, Row{Event: 0, Part: -int(n), Conv: in.Ref.Conv,
-			Message: surface.Message{Text: ClosedLine, ReplyTo: &ref}})
+			Message: surface.Message{Text: text, ReplyTo: &ref}})
 	})
 	if err != nil {
-		f.Log.Error("follow-up: writing the closed notice", "scope", in.Ref.Conv.Channel, "thread", in.Ref.Conv.Thread,
+		f.Log.Error("follow-up: writing a notice", "scope", in.Ref.Conv.Channel, "thread", in.Ref.Conv.Thread,
 			"message", in.Ref.ID, "err", err)
 		return err
 	}

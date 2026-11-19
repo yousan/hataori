@@ -1,6 +1,10 @@
 package control
 
-import "context"
+import (
+	"context"
+	"errors"
+	"fmt"
+)
 
 // Hooks runs the handlers that plugins have on a hook point (design,
 // section 7.3). The core and the chat front end call it at their points,
@@ -23,6 +27,11 @@ type HookResult struct {
 	// Text is what passes the point: HookCall.Text, as the handlers
 	// changed it one after another.
 	Text string
+	// Before and After are the text the handlers added before and after
+	// it, at a point that allows that (before_prompt_build): each
+	// handler's around what the ones before it left, on lines of their
+	// own.
+	Before, After string
 	// Stopped is whether it does not pass: a handler stopped it, or failed
 	// where its policy blocks. By names that handler's plugin, and Reason
 	// says why: the plugin's own reason, which is text, or, when Failed,
@@ -73,6 +82,11 @@ type HookAnswer struct {
 	Text *string `json:"text,omitempty"`
 	// Reason, with HookStop, is why, which the thread shows; text.
 	Reason string `json:"reason,omitempty"`
+	// Before and After, with HookContinue, are text to add before and
+	// after what passes the point, at a point that allows that. Since
+	// 3.18.
+	Before string `json:"before,omitempty"`
+	After  string `json:"after,omitempty"`
 }
 
 // PluginStarted is the arguments of OpPluginStarted: the plugin's grant,
@@ -101,3 +115,27 @@ type PluginStopping struct {
 	// milliseconds.
 	Left int64 `json:"left"`
 }
+
+// ErrStopped is returned by Start and Send when a plugin's handler on an
+// input hook point stopped the input, or failed where its policy blocks:
+// nothing was accepted. The error is a *Stopped. Since 3.18.
+var ErrStopped = errors.New("stopped by a plugin")
+
+// Stopped says which plugin stopped an input, at which point, and why.
+type Stopped struct {
+	Point  string
+	Plugin string
+	// Reason is the plugin's own, which is text, or, when Failed,
+	// hataori's account of the plugin's failure.
+	Reason string
+	Failed bool
+}
+
+func (s *Stopped) Error() string {
+	if s.Failed {
+		return fmt.Sprintf("the plugin %s failed at %s, and its policy blocks the input: %s", s.Plugin, s.Point, s.Reason)
+	}
+	return fmt.Sprintf("the plugin %s stopped the input at %s: %s", s.Plugin, s.Point, s.Reason)
+}
+
+func (s *Stopped) Is(target error) bool { return target == ErrStopped }

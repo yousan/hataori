@@ -226,13 +226,13 @@ func (s *Sessions) Start(ctx context.Context) {
 				id, err := s.StartOne(ctx, scope)
 				if err == nil || id != 0 || final(err) {
 					if err != nil {
-						s.Log.Error("supervisor not started", "scope", scope, "thread", int64(id), "err", err)
+						s.Log.Error("supervisor not started", "scope", scope, "thread", int64(id), "err", ErrText(err))
 					} else {
 						s.Log.Info("supervisor's thread", "scope", scope, "thread", int64(id))
 					}
 					return
 				}
-				s.Log.Warn("supervisor not started; trying again", "scope", scope, "in", wait.String(), "err", err)
+				s.Log.Warn("supervisor not started; trying again", "scope", scope, "in", wait.String(), "err", ErrText(err))
 				select {
 				case <-ctx.Done():
 					return
@@ -251,8 +251,26 @@ var ErrNoChat = errors.New("the scope's client has no chat front end in this dae
 // final reports whether a Start refused with err would be refused again.
 func final(err error) bool {
 	return errors.Is(err, control.ErrForbidden) || errors.Is(err, core.ErrDisabled) || errors.Is(err, core.ErrConfinedKey) ||
-		errors.Is(err, ErrNoChat) ||
+		errors.Is(err, ErrNoChat) || stoppedByPlugin(err) ||
 		errors.Is(err, control.ErrUnknownEffort) || errors.Is(err, context.Canceled)
+}
+
+// stoppedByPlugin reports whether a plugin's handler stopped the input of
+// err; one that failed, such as a plugin not connected yet, did not, and
+// the input is tried again.
+func stoppedByPlugin(err error) bool {
+	var s *control.Stopped
+	return errors.As(err, &s) && !s.Failed
+}
+
+// ErrText is err as a log line shows it: a plugin's stop without its
+// reason, which may quote the input.
+func ErrText(err error) string {
+	var s *control.Stopped
+	if errors.As(err, &s) && !s.Failed {
+		return fmt.Sprintf("the plugin %s stopped the input at %s", s.Plugin, s.Point)
+	}
+	return err.Error()
 }
 
 // StartOne starts the supervisor thread of scope, or returns the one it

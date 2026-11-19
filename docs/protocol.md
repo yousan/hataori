@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.17**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.18**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -97,6 +97,7 @@ Events are stored, and a reader reads them from a position, possibly long after 
 | `linked_elsewhere` | error code | - | the conversation shows another thread; since 3.4 |
 | `ended` | error code | - | the operation of a host pane has ended: nothing was sent; since 3.11 |
 | `refused` | error code | - | the session's state does not allow the call |
+| `stopped` | error code | - | a plugin's handler on an input hook point stopped the input, or failed where its policy blocks: nothing was accepted; the message names the plugin, the point and why; since 3.18 |
 | `not_supported` | error code | - | the receiver does not know the operation |
 | `error` | error code | - | any other failure |
 
@@ -159,6 +160,8 @@ Result: none
 
 Starts a thread in a scope. The same `key` starts nothing twice and returns the thread the first call started.
 
+Since 3.18, when plugins handle the input hook points in the scope, the daemon runs them in the call, before it accepts the input (design, section 7.3): `before_agent_run`, then `before_prompt_build`. One that stops the input makes the call `stopped`: no thread, no chat thread and no workspace is made, and nothing is recorded; the daemon logs the stop, without the text or the reason. The text `before_prompt_build` adds reaches the agent around the input, on lines of their own; the `input` event has the input as given in `text`, and the added text in `before` and `after`. A key accepted before runs no hook again.
+
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `key` | string | required | makes the call safe to repeat |
@@ -177,6 +180,8 @@ The new thread's number; since 3.0, before it a `{scope, key}` object.
 ### Operation `Send`
 
 Gives input to a thread. A thread with an open question takes it as the answer; an asleep thread is woken with it. A closed or removed thread takes nothing and is not woken: `closed`, since 2.3.
+
+Since 3.18 the input hook points run in the call, before the input is accepted, as for `Start`: a stopped input is `stopped`, takes nothing, and writes no event. An answer to an open question runs `before_agent_run` only, and reaches the agent as given, as the supervisor's mark does not go before it. A key accepted before, and a closed or removed thread, run no hook. The reason an approved `AskInterrupt` gives the thread is a `Send` too: a stopped one makes the approving `Answer` `stopped`, and the approval stays open.
 
 On a supervisor's connection (a token, since 2.2) `busy` is always taken as 0: a `Send` with 1 or 2 to a running thread is refused with `busy` and logged, nothing is queued and the turn goes on. There, and in `Start`, the daemon puts the line `From the supervisor of this channel:` before the input's text; the `input` event has the text with that line, and the thread's title is made without it. A `Send` that answers an open question is not marked: the agent gets the answer, and the `answer` event its text, as given.
 
@@ -444,11 +449,13 @@ Since 3.16. The daemon sends these to a plugin, on a connection made with the pl
 
 Calls the plugin's handler on one hook point (design, section 7.3). The handlers of a point run one after another: by the priority of the plugin's grant, higher first, then in the config's order, each given the text as the one before left it. A handler fails when it does not answer within its timeout (`left`), when its plugin has no connection open or the connection closes before the answer, when it answers with an error (`not_supported` too), and when its answer is one the point does not allow. A failure blocks or skips by the handler's policy (`GrantedHook.on_failure`): blocked, what passes the point is stopped, with hataori's account of the failure and the plugin's name; skipped, the next handler gets the text as it was. The daemon logs each call with the plugin, the point, the thread and the outcome, and no text.
 
-| Point | May answer `stop` | May answer `text` | Policy unless the config says otherwise |
-|---|---|---|---|
-| before_agent_run | yes | no | block |
-| before_prompt_build | no | yes | skip |
-| message_sending | yes | yes | skip |
+| Point | May answer `stop` | May answer `text` | May answer `before`, `after` | Policy unless the config says otherwise |
+|---|---|---|---|---|
+| before_agent_run | yes | no | no | block |
+| before_prompt_build | no | no | yes | skip |
+| message_sending | yes | yes | no | skip |
+
+At `before_prompt_build` each handler's `text` is the input with the text the handlers before it added, around it; what a handler adds goes around that. Before 3.18 `before_prompt_build` allowed `text` and not `before` and `after`; no version before 3.18 called it.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -735,6 +742,8 @@ Since 3.16. A plugin's answer to `hook`.
 | `action` | string | required | `continue`: it passes; `stop`: it does not, at a point that allows it |
 | `text` | string | optional | with `continue`, what passes the point instead, at a point that allows it; absent, it passes unchanged |
 | `reason` | string | optional | with `stop`, why, which the thread shows; text |
+| `before` | string | optional | with `continue`, text to add before what passes the point, on lines of its own, at a point that allows it; text; since 3.18 |
+| `after` | string | optional | with `continue`, text to add after it, likewise; text; since 3.18 |
 
 ### Type `GrantedHook`
 
@@ -848,6 +857,8 @@ Exactly one per turn.
 | `principal` | string | optional | the person who gave it; since 2.2 |
 | `from` | string | optional | the `<client>:<id>` it came from, as in `thread_created`; since 2.2 |
 | `link` | object | optional | the link it came through, a `LinkRef`: `client`, `channel` and `thread`; absent for input from outside chat, such as the supervisor's; since 3.6 |
+| `before` | string | optional | text the plugins' `before_prompt_build` handlers added before the input, which the agent got on lines of their own before `text`; absent when none did; since 3.18 |
+| `after` | string | optional | the same, after it; since 3.18 |
 
 ### Event `answer`
 
