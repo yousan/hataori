@@ -52,6 +52,13 @@ type Config struct {
 	// the host that hataori does not own (section 7.2); "host_terminals",
 	// off when absent.
 	HostTerminals bool
+	// HostInput is whether the owner may type into tmux panes on the host
+	// that hataori does not own (section 7.2); "host_input", off when
+	// absent. It needs HostTerminals.
+	HostInput bool
+	// HostInputIdle ends an operation of a pane after this long without a
+	// key: "host_input_idle", 5 minutes when absent, at least one second.
+	HostInputIdle time.Duration
 	// TerminalCols and TerminalRows are the size of the terminal an agent
 	// session runs in, for an agent that runs in one: "terminal_size". Both
 	// are 0 when the key is absent, and the session host then makes the
@@ -242,6 +249,8 @@ type fileConfig struct {
 	Context    *int                       `json:"context_bytes"`
 	LoginRelay *bool                      `json:"login_relay"`
 	HostTerms  bool                       `json:"host_terminals"`
+	HostInput  bool                       `json:"host_input"`
+	InputIdle  string                     `json:"host_input_idle"`
 	TermSize   *fileTerminalSize          `json:"terminal_size"`
 	Scopes     []fileScope                `json:"scopes"`
 	Dashboard  *fileDashboard             `json:"dashboard"`
@@ -301,6 +310,8 @@ func ParseConfig(data []byte) (*Config, error) {
 	c := &Config{
 		LoginRelay:    f.LoginRelay == nil || *f.LoginRelay,
 		HostTerminals: f.HostTerms,
+		HostInput:     f.HostInput,
+		HostInputIdle: 5 * time.Minute,
 		Owner:         strings.TrimSpace(f.Owner),
 		Agent:         strings.TrimSpace(f.Agent),
 		Trigger:       strings.TrimSpace(f.Trigger),
@@ -366,6 +377,17 @@ func ParseConfig(data []byte) (*Config, error) {
 		return nil, fmt.Errorf("config: key %q: %q is not a positive duration such as \"30m\"", "idle", idle)
 	}
 	c.Idle = d
+	if c.HostInput && !c.HostTerminals {
+		return nil, fmt.Errorf("config: key %q is true, which needs key %q to be true as well", "host_input", "host_terminals")
+	}
+	if f.InputIdle != "" {
+		v := strings.TrimSpace(f.InputIdle)
+		d, err := time.ParseDuration(v)
+		if err != nil || d < time.Second || d%time.Second != 0 {
+			return nil, fmt.Errorf("config: key %q: %q is not a whole number of seconds, at least one, such as \"5m\" or \"90s\"", "host_input_idle", v)
+		}
+		c.HostInputIdle = d
+	}
 	c.ContextBytes = 8192
 	if f.Context != nil {
 		if *f.Context <= 0 {

@@ -105,6 +105,10 @@ func examples(t *testing.T) map[string]any {
 		"HostScreen":     hostScreenArgs{Pane: "%3"},
 		"Limits":         limitsArgs{},
 		"AttachTerminal": attachTerminalArgs{ID: exampleID},
+		"OperateHost":    operateHostArgs{Pane: "%3"},
+		"HostKeys": hostKeysArgs{Keys: []control.HostKey{{Key: "C-c"}, {Text: "make test"}, {Key: "Enter"},
+			{Text: "line one\nline two", Paste: true}}},
+		"End": endArgs{},
 	}
 	results := map[string]any{
 		"Threads": []control.ThreadInfo{exampleInfo},
@@ -128,6 +132,7 @@ func examples(t *testing.T) map[string]any {
 			{Device: "/dev/pts/5", Process: "bash"},
 		},
 		"HostScreen":     "$ make\nok\n",
+		"OperateHost":    hostOperation{Idle: 300},
 		"AttachTerminal": control.Attachment{Socket: "/srv/hataori/state/sessions/7/host.sock", Number: 7},
 		"Limits": []control.AgentLimits{{Agent: "claude-code", At: exampleTime, Every: 300, Windows: []control.LimitWindow{
 			{Name: "five_hour", Minutes: 300, Used: 4, Resets: &exampleTime},
@@ -135,6 +140,7 @@ func examples(t *testing.T) map[string]any {
 	}
 	ex["terminal.json"] = response{ID: 1, Terminal: &control.TerminalChunk{Run: "5f0c9a1e7b3d4c2a8e6f1b0d9c7a5e3f",
 		Pos: 1046, Reset: false, Cols: 120, Rows: 40, Data: []byte("\x1b[32mok\x1b[0m tests pass\r\n")}}
+	ex["operate-ended.json"] = response{ID: 1, Ended: control.HostIdle}
 	for op := range operations {
 		a, ok := args[op]
 		if !ok {

@@ -1,0 +1,1 @@
+{"id":1,"event":{"pos":42,"thread":7,"scope":"C0123","time":"2026-01-02T03:04:05.678Z","kind":"state","data":{"detail":"last lines of the terminal","from":"running","reason":"interrupted","session":3,"to":"asleep"}}}

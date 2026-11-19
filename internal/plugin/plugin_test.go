@@ -169,6 +169,7 @@ func TestRefused(t *testing.T) {
 		{"SignInLink", with(`"Threads",`, `"Threads", "SignInLink",`), `[` + entry + `}]`, []string{`"plugins[0].path"`, `"operations[1]"`, "never"}},
 		{"HostTerminals", with(`"Threads",`, `"HostTerminals", "Threads",`), `[` + entry + `}]`, []string{`"plugins[0].path"`, `"operations[0]"`, "never"}},
 		{"HostScreen", with(`"Threads",`, `"Threads", "HostScreen",`), `[` + entry + `}]`, []string{`"plugins[0].path"`, `"operations[1]"`, "never"}},
+		{"OperateHost", with(`"Threads",`, `"Threads", "OperateHost",`), `[` + entry + `}]`, []string{`"plugins[0].path"`, `"operations[1]"`, "never"}},
 		{"HostScreen in the config", manifest, `[` + entry + `, "operations": ["HostScreen"]}]`, []string{`"plugins[0].operations[0]"`, "never"}},
 		{"relative path", manifest, `[{"id": "scan", "path": "bin/scan", "sha256": "` + sum + `", "scopes": ["c1"]}]`, []string{`"plugins[0].path"`}},
 		{"short sha256", manifest, `[{"id": "scan", "path": "PATH", "sha256": "` + sum[:63] + `", "scopes": ["c1"]}]`, []string{`"plugins[0].sha256"`}},
