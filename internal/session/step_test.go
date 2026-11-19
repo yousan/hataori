@@ -70,12 +70,13 @@ var allowed = map[control.State]map[string]control.State{
 	control.Creating: {"ready": control.Idle, "exit": control.Failed, "start timeout": control.Failed,
 		"cannot resume": control.Failed},
 	control.Idle: {"send": control.Running, "turn started": control.Running, "idle timeout": control.Asleep,
-		"exit": control.Asleep},
+		"exit": control.Asleep, "close": control.Closed},
 	control.Running: {"send": control.Running, "turn started": control.Running, "turn ended": control.Idle,
 		"request": control.Waiting, "exit": control.Asleep},
 	control.Waiting: {"answer": control.Running, "withdrawn": control.Running, "exit": control.Asleep},
 	control.Asleep:  {"ready": control.Idle, "close": control.Closed, "wake": control.Creating},
 	control.Closed:  {"remove": control.Removed},
+	control.Failed:  {"close": control.Closed},
 }
 
 func TestEveryStateAndInput(t *testing.T) {

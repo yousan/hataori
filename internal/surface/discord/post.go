@@ -174,7 +174,18 @@ func (d *Driver) OpenThread(ctx context.Context, parent surface.Conversation, ti
 // When the message posted with the key was deleted meanwhile, the service
 // answers 404 Unknown Message (seen on 2026-11-17), which comes back as an
 // Error that is not temporary.
+//
+// A Post whose ReplyTo is a command's Reply answers that command in place
+// instead (it cannot carry files). Its first part replaces the service's
+// "thinking" note under the command and later parts are follow-ups; they are
+// private when the command's spec says so. A private answer can be neither
+// edited nor deleted afterwards. The service takes answers for 15 minutes
+// after the command; after that, or after a restart, the Post fails with an
+// Error that is not temporary.
 func (d *Driver) Post(ctx context.Context, conv surface.Conversation, key string, m surface.Message) (surface.MessageRef, error) {
+	if m.ReplyTo != nil && strings.HasPrefix(m.ReplyTo.ID, commandReplyPrefix) {
+		return d.postAnswer(ctx, conv, key, m)
+	}
 	ch, err := target(conv)
 	if err != nil {
 		return surface.MessageRef{}, err
@@ -372,6 +383,7 @@ func (d *Driver) Limits() surface.Limits {
 		Edit:       true,
 		Delete:     true,
 		SetThread:  true,
+		Commands:   true,
 	}
 }
 

@@ -333,3 +333,47 @@ func mcpCall(t *testing.T, m *supervisor.MCP, name string, args map[string]any) 
 	}
 	return toolAnswer{resp.Result.Content[0].Text, resp.Result.IsError}
 }
+
+// A supervisor's send that answers a worker's open question reaches the
+// agent as given, without the mark, and the answer event names its person.
+func TestSupervisorAnswerIsNotMarked(t *testing.T) {
+	r, _, issue, _ := supervisorRoot(t)
+	ctx := context.Background()
+	owner, err := wire.Dial(r.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Close()
+	id, err := owner.Start(ctx, control.StartRequest{Key: "k-q", Scope: "c1", Thread: "tq", Repo: bareRepo(t), Input: control.Input{Text: "ask Which colour?"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the question", 15*time.Second, func() bool {
+		d, err := owner.Thread(ctx, id, 0, 0)
+		return err == nil && d.State == control.Waiting
+	})
+	token, err := issue("c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sv, err := wire.DialToken(r.root, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sv.Close()
+	if err := sv.Send(ctx, id, "a-1", control.Input{Text: "blue"}, control.Refuse); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the answer's reply", 15*time.Second, func() bool {
+		texts := threadEvents(t, sv, id, "text")
+		return len(texts) > 0 && strings.HasPrefix(texts[len(texts)-1]["text"].(string), "answer: ")
+	})
+	texts := threadEvents(t, sv, id, "text")
+	if got := texts[len(texts)-1]["text"]; got != "answer: blue" {
+		t.Fatalf("the agent got the answer %q, want it unmarked", got)
+	}
+	answers := threadEvents(t, sv, id, "answer")
+	if len(answers) != 1 || answers[0]["text"] != "blue" || answers[0]["principal"] != "sv1" || answers[0]["from"] != supervisor.ID("c1") {
+		t.Fatalf("answer events %v", answers)
+	}
+}

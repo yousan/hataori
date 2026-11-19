@@ -13,6 +13,7 @@ import (
 	"sort"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/chat"
@@ -105,9 +106,13 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		keys = append(keys, s.Key)
 	}
 	sort.Strings(keys)
+	maker := workspace.Maker{Root: abs, Client: func(scope string) string { return clients[scope] }}
+	// The only way the daemon removes a workspace (design, section 4.6).
+	remover := workspace.Remover{Maker: maker, Disposable: cfg.Cleanup.Disposable, OtherRoots: cfg.Cleanup.OtherRoots,
+		Retention: cfg.Cleanup.TrashRetention}
 	c := &core.Core{Store: st, Machine: m, Scopes: scopes, Owners: map[string]control.ScopeOwner{}, People: cfg.People,
-		Workspaces: workspace.Maker{Root: abs, Client: func(scope string) string { return clients[scope] }},
-		Runner:     r, Agent: agentName, Model: cfg.Model, Effort: cfg.Effort, Log: lg}
+		Workspaces: maker, Remover: remover,
+		Runner: r, Agent: agentName, Model: cfg.Model, Effort: cfg.Effort, Log: lg}
 	if coreHook != nil {
 		coreHook(c)
 	}
@@ -145,8 +150,10 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	}
 
 	// The socket's connections are the owner's, and only they may make a
-	// dashboard sign-in link and attach a terminal on the host.
-	owner := control.OpRead | control.OpStart | control.OpSend | control.OpAnswer | control.OpStop | control.OpSignIn | control.OpAttach
+	// dashboard sign-in link, attach a terminal on the host, and close and
+	// remove threads.
+	owner := control.OpRead | control.OpStart | control.OpSend | control.OpAnswer | control.OpStop | control.OpSignIn | control.OpAttach |
+		control.OpClose | control.OpRemove
 	if cfg.HostTerminals { // off unless the config turns it on; only the owner gets it
 		lister := &hostterm.Lister{Own: filepath.Base(exe)}
 		if hostTermsHook != nil {
@@ -204,6 +211,16 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 			lg.Error("login relay", "err", err)
 		}
 	}()
+	if age := cfg.Cleanup.RemoveClosedAfter; age > 0 {
+		// It ends, and is waited for, before the store is closed.
+		passCtx, passCancel := context.WithCancel(ctx)
+		passDone := make(chan struct{})
+		defer func() { passCancel(); <-passDone }()
+		go func() {
+			defer close(passDone)
+			removalPass(passCtx, c, age, lg)
+		}()
+	}
 	if dash != nil {
 		go func() {
 			if err := dash.Serve(ctx); err != nil {
@@ -218,6 +235,27 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		return nil
 	}
 	return err
+}
+
+// removalPass runs the automatic removal pass until ctx ends: at the start
+// and then every quarter of age, at least every second and at most every
+// ten minutes.
+func removalPass(ctx context.Context, c *core.Core, age time.Duration, lg *slog.Logger) {
+	every := min(max(age/4, time.Second), 10*time.Minute)
+	for {
+		n, err := c.RemoveClosed(ctx, age)
+		if err != nil && ctx.Err() == nil {
+			lg.Error("removal pass", "err", err)
+		}
+		if n > 0 {
+			lg.Info("removal pass", "removed", n)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(every):
+		}
+	}
 }
 
 // dashboardCaller is the read-only Caller of a dashboard session of person:

@@ -65,15 +65,21 @@ func components(choices []surface.Choice) ([]map[string]any, error) {
 
 // wireInteraction is the part of an interaction the driver reads.
 type wireInteraction struct {
-	ID        snowflake.ID `json:"id"`
-	Type      int          `json:"type"`
-	Token     string       `json:"token"`
-	ChannelID snowflake.ID `json:"channel_id"`
-	GuildID   snowflake.ID `json:"guild_id"`
-	Channel   wireChannel  `json:"channel"`
-	Data      struct {
+	ID            snowflake.ID `json:"id"`
+	ApplicationID snowflake.ID `json:"application_id"`
+	Type          int          `json:"type"`
+	Token         string       `json:"token"`
+	ChannelID     snowflake.ID `json:"channel_id"`
+	GuildID       snowflake.ID `json:"guild_id"`
+	Channel       wireChannel  `json:"channel"`
+	Data          struct {
 		ComponentType int    `json:"component_type"`
 		CustomID      string `json:"custom_id"`
+		Name          string `json:"name"` // of a command
+		Options       []struct {
+			Name  string          `json:"name"`
+			Value json.RawMessage `json:"value"`
+		} `json:"options"`
 	} `json:"data"`
 	User   *wireUser `json:"user"` // in a direct conversation
 	Member *struct {
@@ -89,6 +95,36 @@ type wireUser struct {
 	ID         snowflake.ID `json:"id"`
 	Username   string       `json:"username"`
 	GlobalName string       `json:"global_name"`
+	Bot        bool         `json:"bot"`
+}
+
+func (u *wireUser) name() string {
+	if u.GlobalName != "" {
+		return u.GlobalName
+	}
+	return u.Username
+}
+
+// user is who used the interaction: user in a direct conversation, the
+// member's user in a server.
+func (in *wireInteraction) user() *wireUser {
+	if in.User != nil {
+		return in.User
+	}
+	if in.Member != nil {
+		return &in.Member.User
+	}
+	return nil
+}
+
+// interactionConv is where an interaction was used. A thread is named with
+// its channel, from the channel object the interaction carries.
+func (d *Driver) interactionConv(in wireInteraction) surface.Conversation {
+	if isThread(in.Channel.Type) && in.Channel.ParentID != 0 {
+		d.setParent(in.Channel)
+		return surface.Conversation{Channel: in.Channel.ParentID.String(), Thread: in.ChannelID.String()}
+	}
+	return surface.Conversation{Channel: in.ChannelID.String()}
 }
 
 // Interaction and callback types the driver uses.
@@ -97,19 +133,27 @@ const (
 	callbackDeferUpdate  = 6
 )
 
+// interaction handles a button press or the use of a command.
+func (d *Driver) interaction(ctx context.Context, payload io.Reader, sink surface.Sink) error {
+	var in wireInteraction
+	if err := json.NewDecoder(payload).Decode(&in); err != nil {
+		return err
+	}
+	switch in.Type {
+	case interactionComponent:
+		return d.press(ctx, in, sink)
+	case interactionCommand:
+		return d.command(ctx, in, sink)
+	}
+	return nil
+}
+
 // press handles a button press. It is acknowledged first, as a deferred
 // update that changes nothing on screen, so that the service's 3-second
 // deadline is met however long the sink takes. The press carries the
 // choice's token in the message itself, so a button posted before a
 // restart still works after it.
-func (d *Driver) press(ctx context.Context, payload io.Reader, sink surface.Sink) error {
-	var in wireInteraction
-	if err := json.NewDecoder(payload).Decode(&in); err != nil {
-		return err
-	}
-	if in.Type != interactionComponent {
-		return nil
-	}
+func (d *Driver) press(ctx context.Context, in wireInteraction, sink surface.Sink) error {
 	actx, cancel := context.WithTimeout(ctx, ackWithin)
 	err := d.client.Do(rest.CreateInteractionResponse.Compile(nil, in.ID, in.Token),
 		map[string]any{"type": callbackDeferUpdate}, nil, rest.WithCtx(actx))
@@ -117,28 +161,17 @@ func (d *Driver) press(ctx context.Context, payload io.Reader, sink surface.Sink
 	if err != nil {
 		d.log.Warn("discord: a button press was not acknowledged in time", "err", err)
 	}
-	u := in.User
-	if u == nil && in.Member != nil {
-		u = &in.Member.User
-	}
+	u := in.user()
 	if u == nil {
 		return fmt.Errorf("discord: a press without a user")
 	}
 	if u.ID == d.botID {
 		return nil
 	}
-	name := u.GlobalName
-	if name == "" {
-		name = u.Username
-	}
-	conv := surface.Conversation{Channel: in.ChannelID.String()}
-	if isThread(in.Channel.Type) && in.Channel.ParentID != 0 {
-		d.setParent(in.Channel)
-		conv = surface.Conversation{Channel: in.Channel.ParentID.String(), Thread: in.ChannelID.String()}
-	}
+	conv := d.interactionConv(in)
 	sink.Choice(surface.Selection{
 		Ref:    surface.MessageRef{Conv: conv, ID: in.Message.ID.String()},
-		Author: surface.Author{Kind: surface.Person, ID: u.ID.String(), Name: name},
+		Author: surface.Author{Kind: surface.Person, ID: u.ID.String(), Name: u.name()},
 		Token:  in.Data.CustomID,
 	})
 	return nil

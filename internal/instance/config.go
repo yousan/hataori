@@ -94,6 +94,10 @@ type Cleanup struct {
 	// OtherRoots are the roots of the other hataori instances on this host;
 	// "other_roots". A remote under one does not count for a removal.
 	OtherRoots []string
+	// RemoveClosedAfter turns on the automatic removal pass: the workspace
+	// of a thread closed for longer is removed, through the same proof as
+	// hataori remove; "remove_closed_after". Zero, when absent: off.
+	RemoveClosedAfter time.Duration
 }
 
 // DefaultTrashRetention is the trash retention of a config that names none.
@@ -103,6 +107,7 @@ type fileCleanup struct {
 	Disposable     []string `json:"disposable"`
 	TrashRetention string   `json:"trash_retention"`
 	OtherRoots     []string `json:"other_roots"`
+	RemoveClosed   string   `json:"remove_closed_after"`
 }
 
 type fileDashboard struct {
@@ -282,6 +287,13 @@ func cleanup(f *fileCleanup) (Cleanup, error) {
 			return c, fmt.Errorf("config: key %q: %q is not an absolute path", key, r)
 		}
 		c.OtherRoots = append(c.OtherRoots, filepath.Clean(r))
+	}
+	if r := strings.TrimSpace(f.RemoveClosed); r != "" {
+		d, err := time.ParseDuration(r)
+		if err != nil || d <= 0 {
+			return c, fmt.Errorf("config: key %q: %q is not a positive duration such as \"720h\"", "cleanup.remove_closed_after", r)
+		}
+		c.RemoveClosedAfter = d
 	}
 	return c, nil
 }

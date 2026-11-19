@@ -12,6 +12,7 @@ How to read it:
 - Section 3 first recommended `claude -p`. The maintainer decided against it; sections 3.4 and 3.5 describe the path chosen instead, and the earlier checks stay in the document as the record.
 - OpenClaw facts (section 7.3) come from its documentation for version 2026.10.6, read on 2026-11-12.
 - Slack and Microsoft Teams facts in section 8, and the source notes in Appendix B's Codex rows, come from documentation and source code read on 2026-11-18 (Appendix B); they were not run.
+- The tmux facts behind typing into a host pane (section 7.2) were checked on 2026-11-19 against tmux 3.4 on Linux (Appendix B). The SSH and browser facts there (OpenSSH's connection sharing and forwarding, `localhost` as a secure origin, cookies shared across ports) were not run or read again for it, and count as **(unverified)** until the issues that use them check them.
 - Anything marked **(unverified)** was not checked by running it.
 
 ## 1. Summary
@@ -282,7 +283,7 @@ Every call is made as a `Caller`: who it is, which scopes it may see, and which 
 
 Every record of input keeps both the person and the id it came from (section 6.2).
 
-Sleep, close and remove join the interface with the phase that needs them. There is no operation to reset or merge anything, for any caller.
+Sleep joins the interface with the phase that needs it. Close and remove joined it in the cleanup phase (#255): `Close` and `Remove`, checked like `Stop`, and given only to the owner's connection on the control socket, so they are reached through `hataori close` and `hataori remove` on the host; besides them, only the removal pass that the config's `cleanup.remove_closed_after` turns on (off by default) removes, and only threads closed longer than that. Nothing in chat closes or removes in that phase, and no thread is closed by its idle age. There is no operation to reset or merge anything, for any caller.
 
 ### 5.2 Chat front end and surface driver
 
@@ -437,9 +438,9 @@ A supervisor is one ordinary session, Claude Code or Codex, that looks after the
   - *Claude Code 2.1.327:* `--restricted --strict-mcp-config --mcp-config <file> --tools "Read,Write,Edit,Glob,Grep"`. A shell command, a web fetch, a subagent and a wake-up were not available. A write and a read outside its directory were refused. A write inside it and a call to the listed MCP server were allowed. Under `--tools ""` only the MCP tools are left, so no built-in tool can write a file. The confinement held across `--resume` with the same flags and across a model switch. Project settings, `--settings`, the user's own settings, skills and plugins, and `--plugin-dir` added no tool back. Two limits: the flags must be given at every launch, since a `--resume` without them had a shell again; and `/model` typed in the session wrote the model into the user's settings file. hataori therefore changes a supervisor's model by relaunching with `--model`, never with `/model`.
   - *Codex 0.163.0:* neither sandbox removes the shell, the subagent tool or web search, and neither confines reads: `read-only` and `workspace-write` confine writes and the network only. The setting under which every attempt but the MCP call and the write inside was refused or not available is `sandbox: "workspace-write"` with `approvalPolicy: "never"` and `-c sandbox_workspace_write.exclude_slash_tmp=true -c sandbox_workspace_write.exclude_tmpdir_env_var=true --disable shell_tool --disable unified_exec --disable multi_agent --disable goals --disable sleep_tool --disable apps --disable plugins --disable hooks -c web_search="disabled" -c agents.max_depth=0`, with the MCP server's `default_tools_approval_mode = "approve"`. Without the two `exclude_*` settings a write to `/tmp` is allowed. Under this setting no built-in tool reads a file. In both CLIs, what the session can still do outside its directory is then only what the listed MCP servers' tools do, so those tools must be limited too: the check used one tool that only answers. Still open for the Codex phase: which of the `--disable` flags are each needed, a resume and a model switch, and whether a project's `.codex/config.toml` can add tools when a parent directory is not trusted. That file did load an MCP server in the check, and `codex app-server` recorded the directory as trusted in the user's configuration. The scripts now run the `/model` and project-configuration scenarios only with a configuration directory of their own (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), since both write the user's configuration.
 
-**Who its tools are** (#269; decisions 1 and 2 of #267). `hataori mcp --scope <scope>` connects to the control socket with a token in its hello (`$HATAORI_TOKEN`), which the daemon issues for each supervisor session and puts in that session's MCP config, in its state directory, outside the workspace. The daemon binds the connection to the Caller it issued the token for: that scope only, `OpRead | OpStart | OpSend`, every `Send` treated as `Refuse` (`Caller.RefuseBusy`), and every input marked (`Caller.Mark`). Nothing `hataori mcp` sends widens it. An unknown or revoked token is refused and logged without the token; a connection with no token is still the owner. The caller's id is `supervisor:<scope>`, and the operator makes it a person by listing that id under a person of its own and that person in the scope's `people`: then the core's one check (section 5.1) allows its `Start` and `Send`, and its events name that person. Without the entry it can read its scope but gives no input, and removing the entry turns the supervisor off for that scope. Each input it gives starts with the line `From the supervisor of this channel:`, added by the core from the caller, never by `hataori mcp`; a thread's title is made from the text without it. `read_thread` returns at most `--output-max` bytes of output (4096 when not given), with a line saying it was cut. A tool's refusal is a tool error that starts with the reason: `busy`, `not in this scope` or `not allowed`.
+**Who its tools are** (#269; decisions 1 and 2 of #267). `hataori mcp --scope <scope>` connects to the control socket with a token in its hello (`$HATAORI_TOKEN`), which the daemon issues for each supervisor session and puts in that session's MCP config, in its state directory, outside the workspace. The daemon binds the connection to the Caller it issued the token for: that scope only, `OpRead | OpStart | OpSend`, every `Send` treated as `Refuse` (`Caller.RefuseBusy`), and every input marked (`Caller.Mark`) except an answer to an open question. Nothing `hataori mcp` sends widens it. An unknown or revoked token is refused and logged without the token; a connection with no token is still the owner. The caller's id is `supervisor:<scope>`, and the operator makes it a person by listing that id under a person of its own and that person in the scope's `people`: then the core's one check (section 5.1) allows its `Start` and `Send`, and its events name that person. Without the entry it can read its scope but gives no input, and removing the entry turns the supervisor off for that scope. Each input it gives, other than an answer to an open question, starts with the line `From the supervisor of this channel:`, added by the core from the caller, never by `hataori mcp`; a thread's title is made from the text without it. A send that answers a worker's open question is not marked, since the question tool takes the answer line by line or as a choice's label; the `answer` event names the supervisor's person. `read_thread` returns at most `--output-max` bytes of output (4096 when not given), with a line saying it was cut. A tool's refusal is a tool error that starts with the reason: `busy`, `not in this scope` or `not allowed`.
 
-One limit is not enforced by this: the supervisor can *ask* a worker thread to merge or delete. What a worker may do is decided by that worker's own rules. Messages from a supervisor are marked as such, so a worker's instructions can treat them differently from a person's.
+One limit is not enforced by this: the supervisor can *ask* a worker thread to merge or delete. What a worker may do is decided by that worker's own rules. Messages from a supervisor are marked as such, so a worker's instructions can treat them differently from a person's; an answer to a worker's question is not marked, and its `answer` event names the supervisor.
 
 **When it runs.** It never polls. hataori wakes it by sending it one message when something happens in its scope: a turn ended, a question was asked, a turn failed, a usage limit was hit. Its own thread is excluded. Events that arrive while it is busy, or within a short quiet period after the first, are folded into one message.
 
@@ -456,7 +457,7 @@ One limit is not enforced by this: the supervisor can *ask* a worker thread to m
 
 ### 7.2 Dashboard
 
-A web page that shows every thread a person may see: its state, its numbers, and its terminal, live. It changes nothing. The maintainer chose the layout and started the work on 2026-11-18, in parallel with the remaining phases (section 10).
+A web page that shows every thread a person may see: its state, its numbers, and its terminal, live. It changes nothing in a thread. The one thing it may change is a tmux pane on the host that hataori does not own, which the owner can type into when the config allows it (below). The maintainer chose the layout and started the work on 2026-11-18, in parallel with the remaining phases, and chose how the dashboard is reached and who may type into host panes on 2026-11-19 (section 10).
 
 The unit is the thread, not the terminal, so the page does not depend on how hataori talks to the agent. A Claude Code session runs in a terminal and shows it live; a Codex session has none and shows its output rebuilt from events.
 
@@ -464,12 +465,12 @@ The unit is the thread, not the terminal, so the page does not depend on how hat
 
 - **Tree, on the left.** A filter box on top, matching title, number and terminal. Under it a *needs attention* block: the threads waiting on a question or failed, each with the question or the failure reason. Then three sections:
   1. *Threads*, grouped by scope. A scope's header shows one state dot per thread. A thread's row shows the agent's mark coloured by state, its number and title, and its age; a second line shows the model, the context use in percent and the last line of output, with a question or a failure highlighted.
-  2. *tmux on the host*, sessions that hataori does not own: session, then window. A row shows the window, its process, its terminal device and its last activity.
+  2. *tmux on the host*, sessions that hataori does not own: session, then window. A row shows the window, its process, its terminal device and its last activity. A pane whose foreground process is a shell and whose window has shown no activity for more than a day is hidden by default, by the same switch that hides asleep threads (#335), and counted with them.
   3. *Other terminals on the host* that hataori does not own: terminal device and process.
 
   A footer counts the threads per state.
 - **Tab bar, above the main area.** An "All threads" tab is pinned first; the items opened from the tree follow. A tab shows the agent's mark coloured by state, the title, the time since the turn started while one runs, a badge for an open question or a failure, and a close button. The tabs are flat; the active one has the terminal's background. At the right end: show or hide the tree, split, show or hide the details, light or dark. Split goes from one pane to two to three, side by side; the extra panes show the tabs viewed before.
-- **Main panes.** The selected session's terminal, live and read-only. A Codex session: its output rebuilt from events. An asleep session: its last screen, marked "no process".
+- **Main panes.** The selected session's terminal, live and read-only. A Codex session: its output rebuilt from events. An asleep session: its last screen, marked "no process". A tmux pane on the host: its screen, read-only until the owner switches the tab to "operate" (below).
 - **Details panel, on the right, shown on demand.** On top, the open question or the failure reason. Then:
   - *thread*: state, scope, who started it, when, number of turns;
   - *agent*: kind, model, effort, context use, tokens this turn and today, background tasks running;
@@ -477,7 +478,7 @@ The unit is the thread, not the terminal, so the page does not depend on how hat
   - *recent events*, with their times.
 
   For a terminal hataori does not own: tmux session, window and pane, terminal device, process, directory, last activity, and a line saying that hataori does not judge its state.
-- **Status bar, at the bottom.** On the left, the selected item: number, state, model, context use, terminal device. On the right: the remaining usage of each agent with its reset time, a live mark with the position of the last event read, and "read-only".
+- **Status bar, at the bottom.** On the left, the selected item: number, state, model, context use, terminal device. On the right: the remaining usage of each agent with its reset time, a live mark with the position of the last event read, and "read-only", or the pane being operated.
 
 The **"All threads" tab** is a table with one row per thread, grouped by scope: state, number, title, agent and model, state with its age, context use as a bar, tokens today, branch, changes (lines added and removed, uncommitted files), unpushed commits, pull request, last output. Clicking a row opens the thread's tab.
 
@@ -485,7 +486,7 @@ Rows are dense by default; the normal density hides the second line of a tree ro
 
 Not in the dashboard: diffs, boards of cards, a browser inside the page. Other tools do these well.
 
-**Read-only.** The first version makes no call that changes anything, and no terminal view takes input. A question's choices are shown, not offered as buttons. Sending, answering and stopping come later, through the same API and the same checks.
+**Read-only for threads.** No call changes a thread, and no view of a thread's terminal ever takes input: input to an agent goes through chat or the control API, never as keys into its terminal. A question's choices are shown, not offered as buttons. Sending, answering and stopping come later, through the same API and the same checks. Besides a host tmux pane that the owner operates, the dashboard changes only the person's own passkeys (below).
 
 **Where the data comes from.** Everything goes through the control API, versioned as [docs/protocol.md](../protocol.md) says. The dashboard reads no database, no state directory and no workspace by itself.
 
@@ -500,6 +501,8 @@ Not in the dashboard: diffs, boards of cards, a browser inside the page. Other t
 | branch, lines added and removed against the branch point, uncommitted files, unpushed commits | new operation `Workspace` |
 | the live terminal of a session | new operation `Terminal`, a read-only stream from the session host |
 | terminals hataori does not own | new operations `HostTerminals` and `HostScreen` |
+| typing into a tmux pane on the host | new operation `OperateHost` |
+| a sign-in link for one of the listeners | new optional argument of `SignInLink` |
 | pull request | no known source: research first |
 | remaining usage per agent, reset time | new operation `Limits`: Claude Code's status line input, Codex's `account/rateLimits/read` (research #191) |
 
@@ -507,30 +510,76 @@ Appendix D lists the new operations and fields as a proposal. Each is a minor pr
 
 - **Model and effort** are what the agent reports when it reports them, and what was asked for until then. **Tokens today** are counted per calendar day in the instance's time zone.
 - **Workspace state** is the same check that section 4.6 needs, built once and used by both. The dashboard's use only reads, and it answers from the remote refs as last fetched, with the time of that fetch, because it is asked often. Removal still asks the remote at that moment.
-- **The live terminal.** The session host already keeps the terminal's raw output in a bounded log (section 4.3). It also counts every byte it writes, so a byte keeps its position when the log is trimmed. `Terminal` first sends the end of the log with the terminal's size and the position after it, then output as it comes. A viewer that reconnects asks from its last position; when that is no longer kept, it gets the end of the log again and redraws. The host still interprets nothing. The page draws the bytes with a terminal emulator and drops everything the emulator would send back, keys and answers to terminal queries alike: no byte goes from the page to any terminal.
+- **The live terminal.** The session host already keeps the terminal's raw output in a bounded log (section 4.3). It also counts every byte it writes, so a byte keeps its position when the log is trimmed. `Terminal` first sends the end of the log with the terminal's size and the position after it, then output as it comes. A viewer that reconnects asks from its last position; when that is no longer kept, it gets the end of the log again and redraws. The host still interprets nothing. The page draws the bytes with a terminal emulator and drops everything the emulator would send back, keys and answers to terminal queries alike: no byte goes from the page to a thread's terminal.
 - **Pull request and remaining usage** each wait for a research issue. For remaining usage: what Claude Code and Codex (`codex app-server`) report about remaining usage and reset times, run against the real CLIs. For pull requests: whether a thread's pull request can be found without hataori calling a code host. A field with no source is left out, not guessed.
 
 **Terminals hataori does not own.** This widens the dashboard beyond hataori's own threads. The rules:
 
-- Display only. hataori shows a screen and metadata, never sends a key, and never infers a state from them; the details panel says so.
+- Display only, except a tmux pane that the owner operates (below). hataori never infers a state from them; the details panel says so. A terminal outside tmux never gets a key.
 - Owner only, and off unless the instance's config turns it on.
+- A pane counts as an idle shell when the command tmux reports for it is a shell (`sh`, `bash`, `zsh`, `fish`, `dash`, `ksh`, `mksh`, `tcsh`, `csh`, `nu`, a leading `-` ignored) and its window's last activity is more than a day old. tmux reports activity per window, not per pane, so a shell in a busy window is not idle. Such a pane is hidden by default (layout, above); a pane with an open tab keeps its tab.
 - tmux panes are listed with tmux's own commands, which report session, window, pane, terminal device, current command, directory and last activity. A pane's screen is read with `capture-pane` while a tab shows it.
 - Other terminals are found from the process table through `ps`, not `/proc`, so the same code runs on Linux and macOS (section 6.4). A program that does not hold a terminal cannot read its screen, so only metadata is shown for these.
 - A terminal that a session host owns is shown once, as its thread.
 
-**Sign-in and network.**
+**Three ways in, and who is at the other end.** A terminal app on one's own machine knows its user: whoever has the window. The dashboard is served by a daemon that may run on another machine, so before it shows anything, and above all before it lets anyone type, it must know who is at the other end. It is opened in one of three ways, and each has its own proof. The daemon tells the ways apart by the listener a connection arrived on, never by anything the request says.
 
-- No route answers without a signed-in session, including the event stream and the terminal streams.
-- Sign-in is a short-lived, single-use link. In the first version the operator prints one on the host with a `hataori` command (through `SignInLink`, Appendix D), and the session belongs to the owner. A link asked for in chat and sent privately comes with the "people in chat" phase, for the owner only in that phase (section 10); that session belongs to the chat identity, so there are no extra passwords and no surface-specific login. Other ways (the chat service's own sign-in) can be added.
-- A person sees a thread only if their `Caller` includes its scope. The channel decides who can read a thread in chat, and the dashboard must not widen that. The first version is owner-only.
-- The server listens on loopback by default. Any other address needs TLS, either hataori's own or a reverse proxy in front that the config names; without one of them the dashboard does not start. The server checks `Host` and `Origin` on every request against the configured address, so a web page elsewhere cannot reach it through the user's browser. Cookies are not readable by scripts.
+1. **Same machine: a native window** (Electron, later; not designed here). It connects to a Unix socket in the instance's state directory that only the OS user running the daemon can open, like the control socket. That user is the owner (section 5.1), so a connection there is the owner's, with no sign-in.
+2. **Another machine, over SSH.** This is the default for remote use: most people who run hataori on a Linux server can reach it by SSH, and far fewer can give it HTTPS and a domain name. The daemon listens on loopback only. The person's machine forwards a local port to it over SSH and opens `http://localhost:<port>`, which browsers treat as a secure origin, so no certificate and no name are needed. The sign-in link is fetched over the same SSH connection, by running `hataori signin` on the host. Logging in by SSH as the instance's OS user is the proof: that person can already do anything that user can, the control socket included. Another user of either machine can reach the port, but not the link. The same listener serves a browser on the host itself, signed in with `hataori signin` there.
+3. **The web, over HTTPS with a stable name**, set up by the operator, for a phone or a machine without SSH. The first sign-in is the single-use link, sent in chat or printed on the host. After that the person can register a passkey and sign in with it (below). An address that is neither loopback nor served over HTTPS gets no dashboard: the daemon does not start with one.
+
+The rules for every way:
+
+- **Listeners.** The loopback listener (way 2 and a browser on the host) and the web listener (way 3) are configured apart: `dashboard.listen`, which must be loopback, and `dashboard.web`, with its address, the name people open, and TLS of its own or a reverse proxy in front. Either may be left out. A config in today's form, one listener, keeps meaning what it means: with TLS or a proxy it is the web listener, otherwise the loopback listener, and the daemon logs one line saying the config uses the old form. The native window's socket comes with the native window.
+- No route answers without a session, including the event stream and the terminal streams, except the sign-in routes: opening a link, and the passkey sign-in ceremony. On the native window's socket the connection is the session.
+- A sign-in link is short-lived and single-use, and the session it opens belongs to the person who got it (through `SignInLink`, Appendix D): today the owner only, from `hataori signin` on the host or, with the "people in chat" phase, from chat (section 10). A link and the session it opens belong to one listener. `hataori signin` makes a link for the loopback listener, `hataori signin --web` one for the web listener, and a link asked for in chat is for the web listener when there is one. A link or a session presented on the other listener is refused.
+- A person sees a thread only if their `Caller` includes its scope. The channel decides who can read a thread in chat, and the dashboard must not widen that.
+- The server checks `Host` and `Origin` on every request, so a web page elsewhere cannot reach it through the person's browser. On the web listener the `Host` must be its configured name. On the loopback listener it may be `localhost`, `127.0.0.1` or `[::1]` with any port, since a forwarded port need not have the same number as the daemon's. An `Origin`, when sent, must be exactly the listener's scheme, the request's host and its port: on the web listener the configured address, on the loopback listener `http://` and the request's `Host`. A page under another name that resolves to loopback still sends its own name, and is refused.
+- **No session cookie.** A browser sends a cookie to every port of the host that set it, so a service that someone else runs on another port of the same machine, or of the web listener's name, would receive the session whenever the person's browser was led there. A session is therefore a token that the page keeps in its own origin's storage, which browsers keep apart by scheme, host and port, and sends in a header with each request. The page reads its event and terminal streams with `fetch` instead of `EventSource`, which cannot send a header, so the streams carry it too; the operate WebSocket gets it in its first message, before which the server accepts nothing on it. The token never goes into an address, since a reverse proxy's access log keeps addresses. Opening a link hands the page its session without leaving the token in an address kept in the browser's history. Two instances forwarded to two ports of one machine keep their sessions apart for the same reason. Since a script in the page could read the token, the page keeps its strict content security policy: no script runs but its own.
+- Only `GET` and `HEAD` are served, except on a fixed list of routes: those of passkeys and the operate connection (below). A request to one of them, the WebSocket handshake included, must carry an `Origin` that matches as above; a missing `Origin`, or `null`, is refused.
+
+**Over SSH without a chore.** Opening SSH by hand every time is not acceptable. `hataori connect [user@]host`, on the person's machine (Linux or macOS; the same binary), does it all:
+
+- It runs the system's `ssh`, so the person's keys, agent and config apply. hataori stores no SSH key, and sets nothing beyond the forward and the connection sharing below.
+- It opens one connection, shared through OpenSSH's control socket in a directory only the person can open. Through it it runs `hataori signin` on the host, forwards a local loopback port to the loopback address the link names, and opens the browser at the link with the port changed to the local one. The person authenticates once. The link is written to no file and no log. It does reach the browser through the system's launcher (`open`, `xdg-open`), whose command line other users of the same machine can read while it runs; the link is short-lived and works once, and a link someone else used first shows the person "already used" instead of signing in, so a theft is seen. On a machine shared with people one does not trust, the native window is the way.
+- It keeps running and keeps the connection alive. When the connection drops it reconnects with a backoff, on the same local port, and an open page resumes as after any reconnect: no gap, no repeat.
+- It remembers `user@host`, the instance root on the host (`--root`) and the local port, so next time `hataori connect` alone is enough. Run again while one runs for the same host, it has the running one fetch a fresh link and open it: that is how one signs in again after the session ended.
+- `--hataori <path>` names the binary on the host for a non-interactive SSH session whose `PATH` does not have it. A missing `ssh`, forwarding refused by the server, and a link that does not name a loopback address each stop it with a message that says which.
+- By hand it is `ssh -L 127.0.0.1:<port>:127.0.0.1:<dashboard port> user@host` (the local address given, so that the person's `GatewayPorts` cannot open the port to the network), `hataori signin` there, and the link with the port changed. The native window later does the same from a saved `user@host`, as editors' remote-SSH modes do.
+
+**Passkeys on the web.** WebAuthn, with `github.com/go-webauthn/webauthn`.
+
+- The relying party is the web listener's name. A passkey is registered only with a proof made for that registration: right after opening a fresh sign-in link, in a ceremony bound to that use of the link and good for five minutes, or after a check of a passkey the person already has. A session alone, however new, cannot add one, so whoever takes a session cannot keep a way back in. User verification is required, and the passkey is discoverable, so signing in asks for no name.
+- Signing in with a passkey opens a session like a link does, and the session records when the passkey was checked.
+- The dashboard server keeps each person's passkeys in a file of its own in the state directory, next to its session key: credential id, public key, signature counter, when made and when last used. They decide who may open the dashboard and nothing in the core, so the control API does not change for them. A person's passkeys stop working when that person may no longer sign in. The dashboard lists the person's passkeys and removes one, from either listener; removing the file removes them all at the next start.
+- Passkeys are for the web listener only. On the loopback listener and the native window, SSH or the OS user is already the proof.
+
+**A VPN or tunnel** fits the web way without hataori depending on it. A product that gives the daemon an HTTPS address with a stable name inside a private network, such as a mesh VPN's built-in HTTPS proxy, makes way 3 work with nothing else to set up, passkeys included: its name is the web listener's name, and its address the reverse proxy. The configuration reference shows that as one example. Nothing in hataori requires or detects such a product.
+
+**Typing into a tmux pane on the host.** A tab that shows a tmux pane hataori does not own can be switched to "operate"; the person's keys then go to that pane.
+
+- Owner only, and off unless the config turns it on (`host_input`, which needs `host_terminals`).
+- Only tmux panes on the host. A thread's terminal is never operated. A pane in which one of hataori's own processes runs, such as `hataori attach`, shows an agent and is refused. That is checked when the operation starts and before each batch of keys, by the command tmux reports for the pane, and at least once a second against the process table; a batch is not sent when the check fails or cannot be made. A program started in the pane between a check and the keys can still get them; the one typing is the owner, who could type there anyway.
+- On the native window and on the loopback listener, the switch starts it at once. On the web listener it first asks for a passkey check; a person with no passkey registered needs a session signed in less than five minutes ago, and is otherwise asked to sign in again.
+- One pane is operated from one tab at a time; a second is refused, with since when and by whom.
+- It ends after five minutes without a key (configurable), when the tab is closed or the page left, when the person switches it off, when the pane goes away or becomes hataori's own, and when the session ends. The tab goes back to read-only and says why.
+- Each start is one log line with the person, the time and the pane (id, session, window and index), and each end one with the same and the reason. hataori writes what was typed to no log, database or file, nor how much. Text passes through a tmux buffer of the operation's own for as long as one paste takes; the paste deletes it, and so does every failure, the end of the operation and the daemon's start, for any such buffer left over. What the program in the pane keeps, such as a shell's history, is that program's.
+- While a pane is operated its screen is read at least five times a second instead of once, with the cursor position, so what is typed shows within a fifth of a second.
+
+**How keys reach the pane: `tmux send-keys`, not an attached client.** Every key other than text goes by `send-keys` with tmux's own name for it (`Enter`, `Up`, `C-c`, `F5`), from a fixed table into which the page turns what its terminal emulator produces. Text and pastes go by `load-buffer -` into a buffer of the operation's own, then `paste-buffer -d`, with `-p` for a paste, so typed text is never on a command line where other users of the host could read it in the process table. Key names are on the command line, and a name with a character, such as `C-a` or `M-x`, shows that character; text is never sent that way. Why:
+
+- tmux knows the pane's modes and encodes a named key for them. `Up` reached a program as `ESC [ A`, and as `ESC O A` once the program had turned on application cursor keys; `paste-buffer -p` wrapped a paste in bracketed-paste marks when the program had asked for them (Appendix B). The page cannot know those modes: it draws a screen captured with `capture-pane`, not the pane's byte stream, so bytes made by the page would be wrong in exactly the programs that change modes, such as editors and pagers.
+- No tmux client is attached. After the keys the window had its size and the session was still not attached (Appendix B); the keys themselves change what the pane's program does, for everyone who watches it. An attached client, `tmux attach` in a terminal that hataori opens, would show a whole window instead of the pane, mark the session attached and run the client hooks, change the session's current window for every other client when it changed window, and under tmux's default `window-size latest` resize the window on the person's own terminal to the dashboard's size whenever the dashboard typed last. `attach -f ignore-size` avoids the size, and none of the rest.
+- The cost: what is typed shows at the next screen read, up to that interval later; the mouse is not passed on; and the screen is drawn at the pane's own size, scaled to fill the dashboard's pane (#333), never resized.
+
+The operate connection is a WebSocket of its own, opened when the tab switches to "operate" and closed when it ends. Closing the tab closes it, which ends the operation at once; and on plain HTTP a browser's few connections per host are already held by the event and terminal streams, which leaves no room for a request per key. The screen streams stay Server-Sent Events and keep refusing input.
 
 **How it is built.**
 
-- The server is part of the `hataori` binary and is a client of the control API with a read-only `Caller`.
+- The server is part of the `hataori` binary and is a client of the control API with a `Caller` that reads, and that may also operate host tmux panes for the owner when host input is on.
 - The page is TypeScript, React and xterm.js, built with Vite. The built files are committed and embedded with `go:embed`, so `go build` needs no Node. CI builds them again and fails when the result differs from what is committed.
 - The UI is in English and Japanese. Every string is in a catalog; choose a language with `?lang=ja` or `?lang=en`, and the choice is kept in this browser; without a choice, the page follows the browser's language.
-- A native window later (Wails or Electron) wraps the same pages. Not designed here.
+- A native window later (Electron) wraps the same pages; it is way 1 above, and not designed here.
 
 **Tests.** As the repository's rules say, and one end-to-end test with a fake agent: the dashboard lists a thread, shows a turn's start and end from the event stream, and after a reconnect shows no gap and no repeat.
 
@@ -653,7 +702,7 @@ Acceptance:
 - [ ] When turns fail because the agent is logged out, the owner gets one direct message for the outage, also across a daemon restart, and threads that stop later are added to it.
 - [ ] The owner's reply with the code, and nothing else, reaches the login command; on success the message says so and each stopped thread gets one line; no message is resent.
 - [ ] After a login through the relay, the sign-in link and the code are found nowhere in the database, the event log or the log files.
-- [ ] No code path in the binary removes or resets a working directory.
+- [ ] No code path in the binary removes or resets a working directory, except the removal of section 4.6 (`internal/workspace/remove.go`), and that only through `Remove` (#255).
 - [ ] Two instances with different roots on one host each ignore the other's channels.
 - [ ] No core package imports a driver, an agent adapter or a client, or contains the name of a surface or an agent (checked in CI).
 - [ ] For one week, every order the deployment's manager sends runs on hataori and none on c-lord.
@@ -663,6 +712,8 @@ Acceptance:
 Section 7.2. It starts now and runs in parallel with the rest of phase 1 and with the phases after it (decided 2026-11-18, section 10). It does not hold up phase 1: phase 1's acceptance does not wait for it, and its issues are tracked apart.
 
 It has the criterion of the later phases below, with three additions that the dashboard needs in core packages: the new operations and fields of Appendix D, the workspace check of section 4.6 (read-only use), and the session host's byte count for the terminal stream. Its acceptance criteria are in Appendix E.
+
+How the dashboard is reached from another machine, passkeys on the web, typing into host tmux panes and hiding idle shell panes (decided 2026-11-19, section 10) are built the same way, tracked in #366. The native window is not part of that work.
 
 ### After phase 1
 
@@ -713,6 +764,14 @@ None.
 
 ### Decided
 
+- **How the dashboard is reached, and typing into host tmux panes** (#356; the maintainer, 2026-11-19, after using the dashboard). Section 7.2 and Appendix E.
+  1. *Three ways in, each with its own proof of who is at the other end:* a native window (Electron, later) of the same OS user, through a socket only that user can open, is the owner with no sign-in; another machine over SSH, with the daemon on loopback, a forwarded port opened as `http://localhost:<port>` and the sign-in link fetched over the same SSH connection, where SSH as the instance's OS user is the proof; the web over HTTPS with a stable name, set up by the operator, with the single-use link first and passkeys after. Plain HTTP that is not loopback still gets no dashboard. *Why:* an app on one's own machine knows its user because whoever has the window is the user; a daemon that may run elsewhere has to find out, and each way of reaching it offers a different proof.
+  2. *SSH is the default for remote use, and must not be a chore.* `hataori connect [user@]host` on the person's machine, built for macOS too, uses the system's `ssh` and the person's own keys and config, keeps the forward up, reconnects by itself and remembers the host, so `user@host` is typed once. hataori stores no SSH key. *Why:* most people who run hataori on a Linux server can use SSH, far fewer can give it HTTPS and a domain name, and opening SSH by hand every time is not acceptable.
+  3. *No dependency on one network product.* A VPN or tunnel that gives the daemon an HTTPS name inside a private network is documented as one example of the web way; nothing in hataori requires or detects it.
+  4. *Typing into host tmux panes,* for the owner only, off by default. hataori's own session terminals stay read-only: input to an agent goes through chat or the control API. On the native window and over SSH a tab switches to "operate" directly; on the web it needs a fresh passkey check, or a recent sign-in when no passkey is registered. It ends after a few minutes without input and when the tab closes. Every start and end is logged with who, when and which pane, never what was typed. How the keys reach the pane was left to the design: by `tmux send-keys` and `paste-buffer`, not an attached client, so that tmux encodes each key for the pane's modes and no window changes size for anyone (section 7.2).
+  5. *Idle shell panes are hidden by default,* by the switch that hides asleep threads (#335).
+
+  This replaces, for tmux panes only, "no key is sent to them" in the layout decision of 2026-11-18 below. The details in section 7.2 are the design's, not the maintainer's: one listener per way, with links and sessions bound to it; the `Host` and `Origin` rules on loopback; sessions kept in the page's own storage instead of a cookie; a passkey registered only right after a fresh link or a passkey check; five minutes for the idle period and the sign-in age; where passkeys are kept; and the WebSocket.
 - **People in chat, and cleanup: the seven points of #248** (the maintainer, 2026-11-19, all as recommended). Section 8 and Appendix E.
   1. *Commands* are separate: `/new` (repository, prompt, model, effort), `/stop`, `/status`, `/dashboard`, and the same words after the trigger on a surface without commands.
   2. *Order:* the chat commands and buttons (#256 to #259) wait for thread numbers and links (#226, #227), so they are written once against thread numbers; the `discord`, `signin`, `attach` and `cleanup` groups start at once. The thread-number issues (#225 to #229) start without waiting for the people-settings trial.
@@ -740,9 +799,9 @@ None.
 - **The read-only dashboard starts now**, in parallel with the rest of phase 1 and the later phases (the maintainer, 2026-11-18). This replaces its earlier place in the order, after people in chat. Phase 1's acceptance does not wait for it. Section 8.
 - **Order after phase 1:** Codex, then people in chat and cleanup, then the supervisor, then plugins, then Slack and Teams (the maintainer, 2026-11-19). Codex moves ahead of people in chat and the supervisor; this replaces the earlier order, people in chat and cleanup, the supervisor, Codex, Slack, Teams. Section 8.
 - **Plugins come right after the supervisor** (the maintainer, 2026-11-19; this was Open 1). The supervisor is the first program outside the daemon with a limited `Caller` that reads events from a position; plugins add the manifest, the grant and hooks on top of that. Section 7.3.
-- **The dashboard's layout** is a tree of threads and host terminals, tabs with up to three panes side by side, a details panel and a status bar; the same page becomes a list on a narrow screen (the maintainer, 2026-11-18). It also shows terminals on the host that hataori does not own, for the owner only and for display only; no state is inferred from them and no key is sent to them. Section 7.2.
+- **The dashboard's layout** is a tree of threads and host terminals, tabs with up to three panes side by side, a details panel and a status bar; the same page becomes a list on a narrow screen (the maintainer, 2026-11-18). It also shows terminals on the host that hataori does not own, for the owner only and for display only; no state is inferred from them and no key is sent to them (for tmux panes the owner operates, replaced on 2026-11-19, above). Section 7.2.
 - **A supervisor has no shell:** control API tools and files in its own directory only.
-- **Dashboard sign-in is a single-use link**, owner-only at first. In the first version the operator prints it with a `hataori` command on the host; the link issued in chat comes with the "people in chat" phase (2026-11-18).
+- **Dashboard sign-in is a single-use link**, owner-only at first. In the first version the operator prints it with a `hataori` command on the host; the link issued in chat comes with the "people in chat" phase (2026-11-18). On the web, passkeys follow the first link (2026-11-19, above).
 - **The dashboard's page is TypeScript, React and xterm.js, built with Vite**, with the built files committed and embedded, so building hataori needs no Node (2026-11-18).
 - **A dashboard field with no source is left out, not guessed.** Pull requests and remaining usage wait for research (2026-11-18).
 - **Existing c-lord threads do not move.** Both run side by side on different channels.
@@ -1028,6 +1087,21 @@ Claude Code 2.1.327 and codex-cli 0.163.0, Linux, 2026-11-18. Every attempt ran 
 
 Without `--tools` (the set of section 7.1 before this check): `Agent`, `ScheduleWakeup`, `Skill`, `ToolSearch`, `ListAgents`, `AskUserQuestion` and the file tools were listed, with 16 deferred tools (`WebSearch`, `CronList`, `PushNotification`, `SendMessage`, `TaskStop` among them), 17 skills and 6 agent types.
 
+### tmux: typing into a pane (#356)
+
+Run on 2026-11-19 against tmux 3.4 on Linux, on a tmux server of its own (`-L`, no configuration file), in a 100×30 window with no client attached. The program in the pane was bash running `od -c` on what it read, with the terminal in raw mode where a byte would otherwise be edited by the terminal driver. Not run on macOS.
+
+| Check | Result |
+|---|---|
+| `send-keys Up`, the program in normal cursor mode | `ESC [ A` |
+| `send-keys Up` after the program printed `ESC [?1h` (application cursor keys; `#{keypad_cursor_flag}` became 1) | `ESC O A` |
+| `set-buffer`, then `paste-buffer -p`, after the program printed `ESC [?2004h` | `ESC [200~` and the text; the program read 8 bytes, so the closing mark was not read |
+| Text with a DEL in it given on standard input to `load-buffer -b <name> -`, then `paste-buffer -d -b <name>` | the same bytes, the DEL included; the buffer was gone afterwards |
+| `#{window_width}x#{window_height}` and `#{session_attached}` before and after the keys | `100x30` and `0`, both times |
+| `#{pane_current_command}` of panes started as `exec -a -bash bash` and `exec -a -zsh zsh` (how a login shell names itself) | `bash` and `zsh` |
+| The default of `window-size` | `latest` |
+| `attach-session -f` in the manual page | the client flags include `ignore-size`; `-r` is `read-only,ignore-size` |
+
 **Codex**, `codex app-server` (stdio), `thread/start` with `approvalPolicy: "never"`, `ephemeral: true` and the sandbox below, the MCP server given with `-c` and `default_tools_approval_mode = "approve"`. The prompt asked for one real attempt, since the model otherwise often declined without trying. "Locked" is `workspace-write` with `exclude_slash_tmp` and `exclude_tmpdir_env_var`, `--disable shell_tool --disable unified_exec --disable multi_agent --disable goals --disable sleep_tool --disable apps --disable plugins --disable hooks`, `-c web_search="disabled"` and `-c agents.max_depth=0`.
 
 | Attempt | `read-only` | `workspace-write` | `workspace-write`, `/tmp` and `$TMPDIR` excluded | Locked |
@@ -1130,6 +1204,19 @@ type API interface {
 	Send(ctx context.Context, id ThreadID, key string, in Input, busy Busy) error
 	Answer(ctx context.Context, req RequestID, a Answer) error
 	Stop(ctx context.Context, id ThreadID) error
+
+	// CloseThread ends the agent process of an idle, asleep or failed thread
+	// and closes it (section 4.5): the workspace stays, and Send is
+	// ErrClosed. RemoveThread removes the workspace of a closed thread only
+	// through the proof of section 4.6, by a rename into trash; a proof that
+	// does not hold is ErrRemovalRefused with the reason, and the thread
+	// stays closed. Each removal and refusal writes one event. Both are
+	// checked like Stop and need OpClose and OpRemove, which only the
+	// owner's connection on the control socket has. On the wire they are the operations
+	// Close and Remove (the client's Close closes its connection). Since
+	// protocol 2.3.
+	CloseThread(ctx context.Context, id ThreadID) error
+	RemoveThread(ctx context.Context, id ThreadID) error
 
 	// Link shows the thread in one more conversation. It is checked like
 	// Send, and refused when l.Channel is neither the scope's own channel
@@ -1261,7 +1348,7 @@ type Caller struct {
 	From      string
 	Principal Principal // a person's name (section 5.5)
 	Scopes    []string  // the scopes it may see and act in
-	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach
+	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove
 	// NoText leaves text written by a person or an agent out of what the
 	// caller reads: ThreadInfo.Title and ThreadInfo.Last,
 	// ThreadDetail.Recent, the text of its requests, and the text fields of
@@ -1272,7 +1359,8 @@ type Caller struct {
 	// with ErrBusy and logged. A supervisor's caller has it (section 7.1).
 	RefuseBusy bool
 	// Mark is a line the core puts before the text of every input of the
-	// caller's Start and Send; the title is made without it. Set by the
+	// caller's Start and Send, except a Send that answers an open question;
+	// the title is made without it. Set by the
 	// daemon when it binds the caller, never by the client.
 	Mark string
 }
@@ -1378,7 +1466,55 @@ type API interface {
 	// caller with From since 1.11 (#252). The control socket's connections
 	// have OpSignIn, and so will the chat front end's caller for a person's
 	// request (#259); a dashboard session's Caller has
-	// OpRead only, and OpHost for the owner when host terminals are on.
+	// OpRead only, OpHost for the owner when host terminals are on, and
+	// OpHostInput for the owner when host input is on.
+
+	// SignInLink gains the listener the link is for (section 7.2). A call
+	// without one gets the loopback listener's link when the instance has
+	// that listener, and the web listener's otherwise, so today's clients
+	// are unchanged. A chat front end asks for WayWeb when there is a web
+	// listener.
+	SignInLink(ctx context.Context, way Way) (string, error)
+
+	// OperateHost lets the caller type into one tmux pane on the host that
+	// no session host owns, by HostTerminals' TmuxPane.Pane (section 7.2).
+	// It needs OpHostInput, which the core grants only to the owner and
+	// only when the config's host_input and host_terminals are both true.
+	// It refuses a pane in which one of hataori's own processes runs, and a
+	// pane already being operated (ErrBusy, naming since when and by whom).
+	// It logs the start and the end with the person, the pane and the
+	// reason, and never a key.
+	OperateHost(ctx context.Context, pane string) (HostOperation, error)
+}
+
+// Way is one of the dashboard's listeners: WayLocal, the loopback
+// listener, or WayWeb.
+type Way int
+
+// HostOperation is one pane being operated. It ends when ctx ends, when
+// End is called, when no key came for Idle, when the pane goes or comes
+// to run one of hataori's processes, or when the daemon stops. Done is
+// then closed and Reason says which: "ended", "idle", "pane gone",
+// "hataori's own" or "stopping".
+type HostOperation interface {
+	Send(ctx context.Context, keys []HostKey) error // in order; ErrEnded once it ended
+	Idle() time.Duration                             // the config's host_input_idle
+	Done() <-chan struct{}
+	Reason() string
+	End()
+}
+
+// HostKey is one input to a pane. Key is one of a fixed list of tmux key
+// names (Enter, Tab, BTab, BSpace, Escape, the arrows, Home, End, PPage,
+// NPage, IC, DC, F1 to F12, and C-, M- and S- with them or with one
+// character), passed to send-keys. Otherwise Text is written to the pane
+// through a buffer of the operation's own (load-buffer from standard
+// input, then paste-buffer -d), with Paste as a paste (paste-buffer -p).
+// hataori logs and stores neither; Text is in the buffer for one paste.
+type HostKey struct {
+	Key   string
+	Text  string
+	Paste bool
 }
 
 // WorkspaceState: declared above, with Workspace.
@@ -1387,6 +1523,8 @@ type API interface {
 
 // HostTerminal, TmuxPane: declared above, with HostTerminals.
 ```
+
+On the socket, `OperateHost` turns its connection into a stream in both directions, after its reply: the client sends batches of keys and may send an end; the daemon answers each batch and sends one message with the reason when the operation ends. A connection that closes ends the operation.
 
 Remaining usage per agent is `Limits`, declared above (#211), from the sources the research found (#191, [docs/notes/agent-usage-limits.md](../notes/agent-usage-limits.md)). An adapter reports it as an agent event of kind `Limits`; the session machine keeps the newest report per agent in the same transaction and writes no control event, since it belongs to no thread. Claude Code: hataori's `--settings` sets `statusLine` to `hataori statusline`, which hands the input's `rate_limits` to the session host when they change and every 5 minutes, refreshes at least once a minute, and runs and prints the status line the user would have had (the workspace's local and shared settings, then the user's own; only read, never written), so the user's line still shows. Codex: the decoder of `account/rateLimits/read` is in `internal/agent/codex`; the Codex adapter reads it at start and after each turn when it comes (section 8).
 
@@ -1401,6 +1539,8 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `ThreadInfo.title` left out for `Caller.NoText` (#236) | major: a required field becomes optional; 2.0 |
 | `AttachTerminal`, with `Ops` gaining `OpAttach` (#253) | minor: new operation; 2.1 |
 | `hello.token`, and `principal` and `from` in the `input` and `answer` events (#269) | minor: new optional fields; 2.2 |
+| `SignInLink`'s `way` (section 7.2) | minor: new optional argument |
+| `OperateHost`, with `Ops` gaining `OpHostInput` (section 7.2) | minor: new operation, whose connection becomes a stream both ways |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 
 Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event. In protocol 1.9: `Terminal`, which turns its connection into a stream as `Events` does. In protocol 1.12: `ThreadInfo.terminal`, the terminal device its session host opened, for the tree's filter, the status bar and the details panel (#285); `HostTerminals` still leaves these terminals out.
@@ -1432,7 +1572,7 @@ type Driver interface {
 	SetStatus(ctx context.Context, ref MessageRef, s Status) error        // lamp on a message
 	SetThread(ctx context.Context, conv Conversation, t ThreadMeta) error // title, archived
 
-	Limits() Limits // message length, choices and files per message, file size, which optional calls work
+	Limits() Limits // message length, choices and files per message, file size, which optional calls work, whether commands work
 }
 
 // Factory makes a Driver from its opaque section of the instance's config.
@@ -1452,6 +1592,38 @@ type Sink interface {
 // Connected after it connects and after each reconnect.
 type Reconnected interface {
 	Connected()
+}
+
+// Commander is implemented by a Sink that handles commands. Run makes the
+// commands it returns the service's commands for the bot when it starts,
+// and changes nothing on the service when they are already these.
+type Commander interface {
+	Commands() []CommandSpec
+}
+
+type CommandSpec struct {
+	Name        string
+	Description string
+	Args        []ArgSpec // text arguments, required ones first
+	Private     bool      // the answer is shown only to the person who used it
+}
+
+type ArgSpec struct {
+	Name, Description string
+	Required          bool
+}
+
+// Command is the use of a command. Reply, when the driver sets it, is where
+// the answer goes: a Post into Conv with ReplyTo set to Reply answers the
+// command in place (privately when its spec says Private). A driver
+// acknowledges the command itself, before the sink sees it.
+type Command struct {
+	Conv   Conversation
+	Author Author
+	ID     string // safe-to-repeat key of the command
+	Name   string
+	Args   []Arg  // {Name, Value}, in the order given
+	Reply  *MessageRef
 }
 
 // Inbound is a received message. Direct says that its conversation is a
@@ -1640,12 +1812,25 @@ Every phase here also has this criterion: the change touches no core package, ex
 
 ### Dashboard, read-only
 
-- [ ] Without a signed-in session every route, including the event stream and the terminal streams, answers 401. A request with an unknown `Host` or a foreign `Origin` is refused. With a listening address other than loopback and neither TLS nor a named reverse proxy, the dashboard does not start.
+- [ ] Without a signed-in session every route but the sign-in routes, including the event stream and the terminal streams, answers 401. A request with an unknown `Host` or a foreign `Origin` is refused. With a listening address other than loopback and neither TLS nor a named reverse proxy, the dashboard does not start.
 - [ ] Each thread in the user's scopes is in the tree and in the "All threads" table, and its state and last output follow the events within 2 seconds. A thread outside those scopes is never sent to the browser.
 - [ ] After a daemon restart the open page catches up with no gap and no repeat (the end-to-end test with a fake agent).
-- [ ] Every request that is not a read is refused, and no byte from the page reaches any terminal.
-- [ ] Terminals hataori does not own are listed only for the owner and only when the config turns them on, on Linux and on macOS, and no key is sent to them.
+- [ ] Every request that is not a read is refused, except on the routes of passkeys and the operate connection (section 7.2), and no byte from the page reaches a thread's terminal.
+- [ ] Terminals hataori does not own are listed only for the owner and only when the config turns them on, on Linux and on macOS, and no key is sent to them unless the owner operates a tmux pane (below).
 - [ ] `go build` works without Node, and CI fails when the committed build of the page differs from a fresh one.
+
+### Dashboard: ways in, and typing into host tmux panes
+
+- [ ] On the loopback listener, after opening a link from `hataori signin` through a forwarded port with another number, the page shows the thread list and receives the event stream. A request whose `Host` is not a loopback name, or whose `Origin` is not exactly `http://` and its `Host`, is refused. A link or a session made on one listener is refused on the other.
+- [ ] No response of the dashboard sets a cookie, and no request of the page carries the session in its address. A service on another loopback port, opened in the same browser after signing in, receives no credential of the dashboard (browser test). Two instances forwarded to two ports of one machine each keep their own session.
+- [ ] `hataori connect user@host` on Linux and on macOS opens a signed-in page, and the next time `hataori connect` alone does. After the SSH connection is cut, it reconnects by itself and the open page goes on with no gap and no repeat. hataori writes no SSH key and puts the link in no file or log.
+- [ ] On the web listener a passkey can be registered right after opening a fresh link, or after a check of an existing passkey, and then signs its person in. Registering with only a session, however new, is refused, and so is registering on the loopback listener. A removed passkey no longer signs in.
+- [ ] With `host_input` off, no route, operation or control of the page sends a key to any pane. With it on, only the owner can operate, only a tmux pane hataori does not own, and a pane running `hataori attach` is refused.
+- [ ] On the web listener, operating starts only after a passkey check, or within five minutes of a sign-in for a person with no passkey; on the loopback listener it starts at once.
+- [ ] An operation ends after the idle period without a key and when the tab is closed, and the tab is read-only again.
+- [ ] Each start is one log line with the person, the time and the pane, and each end one with the same and the reason. With a program in the pane that keeps nothing, a marker string typed during an operation is found afterwards in no log line, no database, no file under the instance root, no tmux buffer and no process's command line.
+- [ ] A program in application cursor mode gets `ESC O A` for Up from the page, and the pane's window size and its session's attached count are the same before, during and after an operation.
+- [ ] Idle shell panes are hidden by default, and the switch that shows asleep threads shows them.
 
 ### Supervisor
 

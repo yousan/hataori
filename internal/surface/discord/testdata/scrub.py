@@ -9,7 +9,7 @@ The same value is replaced the same way in every file:
   snowflakes (17-20 digits, anywhere) -> 1000000000000000001 and up, in the order of the
                                           real ids, so that comparing ids still orders them
   32-digit hex values (hashes, session ids, rate-limit buckets) -> 000...0N
-  interaction tokens (also in paths)  -> REDACTED-TOKEN-N
+  interaction tokens (also in paths)  -> REDACTED-TOKEN-N (in /interactions/ and /webhooks/ paths)
   signed URL parameters (ex, is, hm)  -> ex=00000000&is=00000000&hm=REDACTED
   user, guild, channel and role names -> name-N (thread names and test texts are kept)
   e-mail addresses                    -> userN@example.com
@@ -78,7 +78,7 @@ def main():
         return hexmap.setdefault(m.group(0), "%032x" % (len(hexmap) + 1))
 
     def name(v):
-        if not isinstance(v, str) or v.startswith("[hataori test]") or v == "":
+        if not isinstance(v, str) or v.startswith(("[hataori test]", "hataori-test")) or v == "":
             return v
         return namemap.setdefault(v, "name-%d" % (len(namemap) + 1))
 
@@ -88,7 +88,7 @@ def main():
         if k in NAME_KEYS:
             return name(v)
         if k == "path" and isinstance(v, str):
-            return re.sub(r"(/interactions/[0-9]+/)([^/]+)",
+            return re.sub(r"(/(?:interactions|webhooks)/[0-9]+/)([^/]+)",
                           lambda m: m.group(1) + tokmap.setdefault(m.group(2), "REDACTED-TOKEN-%d" % (len(tokmap) + 1)), v)
         if k == "tag" and isinstance(v, str):
             return "TAG"
@@ -98,7 +98,7 @@ def main():
             return ["REDACTED"]
         if k == "resume_gateway_url":
             return "wss://gateway.discord.gg"
-        if k == "name" and isinstance(v, str) and not v.startswith("[hataori test]"):
+        if k == "name" and isinstance(v, str):
             return name(v)
         return v
 

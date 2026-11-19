@@ -33,8 +33,10 @@ var (
 	// ErrNoTerminal: the thread's agent runs without a terminal, so there
 	// is nothing to attach to.
 	ErrNoTerminal = errors.New("the agent has no terminal to attach to")
-	// ErrClosed: the thread is closed or removed.
-	ErrClosed = errors.New("the thread is closed")
+	// ErrClosed: the thread is closed or removed (control.ErrClosed).
+	ErrClosed = control.ErrClosed
+	// ErrRemovalRefused is control.ErrRemovalRefused.
+	ErrRemovalRefused = control.ErrRemovalRefused
 )
 
 // Scope is what the core needs to know about one scope.
@@ -104,6 +106,29 @@ type Runner interface {
 	// Device returns the name of the terminal a session's agent runs in,
 	// such as /dev/pts/3; "" when it runs on pipes or no process runs.
 	Device(ctx context.Context, sessionID int64) string
+	// Shut closes a session: it applies session.Close with reason, in step
+	// with what the runner reads of the agent, so nothing the agent reports
+	// after it is read, and then stops the agent's process, when one runs,
+	// and waits for it to end. A refused Close is returned and stops
+	// nothing.
+	Shut(ctx context.Context, sessionID int64, reason string) error
+}
+
+// Remover removes workspaces behind the proof of design section 4.6.
+type Remover interface {
+	// Remove proves that nothing in the workspace at dir would be lost and
+	// then renames it into trash, returning where it went. Any error means
+	// the workspace was not removed; a refusal of the proof implements
+	// RemovalRefusal.
+	Remove(ctx context.Context, dir string) (trash string, err error)
+}
+
+// RemovalRefusal is a Remover's error that says why the proof did not
+// hold: the reason, and where in the workspace it was found (repo, and
+// what kind of repository that is), with a detail for a person.
+type RemovalRefusal interface {
+	error
+	RemovalRefused() (reason, repo, kind, detail string)
 }
 
 // Launch is what Runner.Start needs.
@@ -181,6 +206,9 @@ type Core struct {
 	// when the config leaves them off: HostTerminals and HostScreen are
 	// then refused for every caller.
 	HostTerms HostTerms
+	// Remover removes the workspaces of closed threads. It is the only way
+	// the core removes a workspace; nil refuses every Remove.
+	Remover Remover
 
 	locks keyedMutex
 }
@@ -1054,6 +1082,9 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 	if a.caller.RefuseBusy {
 		busy = control.Refuse
 	}
+	// An answer to an open question is not marked: the agent's question
+	// tool takes it as the answer, line by line or as a choice's label.
+	given := in
 	in = a.marked(in)
 	var (
 		sid       int64
@@ -1071,6 +1102,10 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 		sid, state, err = a.c.current(ctx, tx, id)
 		if err != nil {
 			return err
+		}
+		if state == control.Closed || state == control.Removed {
+			// Nothing is accepted: a message does not wake a closed thread.
+			return fmt.Errorf("core: send to %v: %w", id, ErrClosed)
 		}
 		if key != "" {
 			data, _ := json.Marshal(map[string]any{"thread": id, "session": sid, "text": in.Text})
@@ -1114,10 +1149,10 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 			if err == nil {
 				answer = req
 				if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal, From: a.caller.From,
-					Key: key, Text: in.Text, Request: req}); err != nil {
+					Key: key, Text: given.Text, Request: req}); err != nil {
 					return err
 				}
-				pending, err = pend(ctx, tx, sid, req, control.Answer{Text: in.Text})
+				pending, err = pend(ctx, tx, sid, req, control.Answer{Text: given.Text})
 				return err
 			}
 		}
@@ -1131,7 +1166,7 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 		return err
 	}
 	if answer != "" {
-		return a.c.Runner.Answer(ctx, sid, pending, answer, control.Answer{Text: in.Text})
+		return a.c.Runner.Answer(ctx, sid, pending, answer, control.Answer{Text: given.Text})
 	}
 	if wake {
 		if err := a.c.resume(ctx, sid, a.caller.Principal, a.caller.From, key, in); err != nil {

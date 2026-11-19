@@ -28,6 +28,10 @@ type fakeRunner struct {
 	// device, when set, answers Device.
 	device func(ctx context.Context, sid int64) string
 	pipes  bool // OnPipes answers this
+	// machine applies the Close of Shut; shutErr, when set, is what Shut
+	// returns, as when an agent could not be stopped.
+	machine *session.Machine
+	shutErr error
 }
 
 func (r *fakeRunner) record(s string) error {
@@ -46,6 +50,19 @@ func (r *fakeRunner) Answer(_ context.Context, _, _ int64, req string, _ control
 	return r.record("answer " + req)
 }
 func (r *fakeRunner) Interrupt(context.Context, int64) error { return r.record("interrupt") }
+func (r *fakeRunner) Shut(ctx context.Context, sid int64, reason string) error {
+	if r.shutErr != nil {
+		return r.shutErr
+	}
+	var state string
+	r.machine.Store.DB.QueryRow(`SELECT state FROM sessions WHERE id = ?`, sid).Scan(&state)
+	if control.State(state) != control.Closed {
+		if err := r.machine.Apply(ctx, sid, session.Input{Kind: session.Close, Reason: reason}); err != nil {
+			return err
+		}
+	}
+	return r.record("shut")
+}
 func (r *fakeRunner) Device(ctx context.Context, sid int64) string {
 	if r.device != nil {
 		return r.device(ctx, sid)
@@ -118,9 +135,10 @@ func newFixture(t *testing.T, owner fakeOwner) *fixture {
 	}
 	t.Cleanup(func() { st.Close() })
 	f := &fixture{runner: &fakeRunner{}, log: &bytes.Buffer{}}
+	f.runner.machine = &session.Machine{Store: st}
 	f.core = &Core{
 		Store:   st,
-		Machine: &session.Machine{Store: st},
+		Machine: f.runner.machine,
 		Scopes: map[string]Scope{
 			"s":   {Enabled: true, Owner: "chat", Model: "m-default", Effort: "e-default"},
 			"off": {Enabled: false, Owner: "chat"},
@@ -192,9 +210,11 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 		"Answer": func(a control.API) error {
 			return a.Answer(ctx, session.RequestHandle(sid, "r1"), control.Answer{Text: "x"})
 		},
-		"Stop":      func(a control.API) error { return a.Stop(ctx, id) },
-		"Events":    func(a control.API) error { _, err := a.Events(ctx, control.Filter{Scope: "s"}, 0); return err },
-		"Workspace": func(a control.API) error { _, err := a.Workspace(ctx, id); return err },
+		"Stop":         func(a control.API) error { return a.Stop(ctx, id) },
+		"CloseThread":  func(a control.API) error { return a.CloseThread(ctx, id) },
+		"RemoveThread": func(a control.API) error { return a.RemoveThread(ctx, id) },
+		"Events":       func(a control.API) error { _, err := a.Events(ctx, control.Filter{Scope: "s"}, 0); return err },
+		"Workspace":    func(a control.API) error { _, err := a.Workspace(ctx, id); return err },
 		// Every other operation is allowed to "other scope": only the
 		// socket's owner connection has OpSignIn.
 		"SignInLink":    func(a control.API) error { _, err := a.SignInLink(ctx); return err },
@@ -436,10 +456,14 @@ func TestThreadDetail(t *testing.T) {
 	}
 }
 
-// The API offers nothing that removes, resets or merges.
+// The API offers nothing that resets or merges, and one operation that
+// removes: RemoveThread, behind the proof of design section 4.6.
 func TestNoDestructiveOperation(t *testing.T) {
 	typ := reflect.TypeFor[control.API]()
 	for i := range typ.NumMethod() {
+		if typ.Method(i).Name == "RemoveThread" {
+			continue
+		}
 		name := strings.ToLower(typ.Method(i).Name)
 		for _, bad := range []string{"remove", "delete", "reset", "merge", "clean", "purge"} {
 			if strings.Contains(name, bad) {
@@ -655,8 +679,8 @@ func (o *countingOwner) NewThread(context.Context, string, string, string) (stri
 
 // Input reaches the agent only from the owner or one of the people of the
 // thread's scope; a guest and a person of another scope are refused each
-// of Start, Send, Answer and Stop, change nothing, and are logged with
-// their client and id.
+// of Start, Send, Answer, Stop, CloseThread and RemoveThread, change
+// nothing, and are logged with their client and id.
 func TestOnlyThePeopleOfTheScopeAct(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, fakeOwner{key: "new"})
@@ -679,11 +703,14 @@ func TestOnlyThePeopleOfTheScopeAct(t *testing.T) {
 		"Answer": func(a control.API) error {
 			return a.Answer(ctx, session.RequestHandle(sid, "r1"), control.Answer{Text: "x"})
 		},
-		"Stop": func(a control.API) error { return a.Stop(ctx, id) },
+		"Stop":         func(a control.API) error { return a.Stop(ctx, id) },
+		"CloseThread":  func(a control.API) error { return a.CloseThread(ctx, id) },
+		"RemoveThread": func(a control.API) error { return a.RemoveThread(ctx, id) },
 	}
 	caller := func(from string) control.API {
 		// A Principal given with a From is not trusted.
-		return f.core.As(control.Caller{From: from, Principal: "owner", Scopes: []string{"s", "s2"}, May: all})
+		return f.core.As(control.Caller{From: from, Principal: "owner", Scopes: []string{"s", "s2"},
+			May: all | control.OpClose | control.OpRemove})
 	}
 	before := func() string {
 		return fmt.Sprint(count(t, f.core.Store, "events"), count(t, f.core.Store, "threads"), count(t, f.core.Store, "inbox"),
