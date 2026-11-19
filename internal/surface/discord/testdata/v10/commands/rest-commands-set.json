@@ -1,0 +1,83 @@
+{
+ "body": [
+  {
+   "application_id": "1000000000000000004",
+   "contexts": [
+    0
+   ],
+   "default_member_permissions": null,
+   "description": "[hataori test] a command for captures",
+   "description_localizations": null,
+   "dm_permission": false,
+   "id": "1000000000000000007",
+   "integration_types": [
+    0
+   ],
+   "name": "hataori-test",
+   "name_localizations": null,
+   "nsfw": false,
+   "options": [
+    {
+     "description": "[hataori test] required text",
+     "description_localizations": null,
+     "name": "hataori-test-text",
+     "name_localizations": null,
+     "required": true,
+     "type": 3
+    },
+    {
+     "description": "[hataori test] optional text",
+     "description_localizations": null,
+     "name": "hataori-test-note",
+     "name_localizations": null,
+     "type": 3
+    }
+   ],
+   "type": 1,
+   "version": "1000000000000000008"
+  }
+ ],
+ "date": "2026-11-19T04:10:31Z",
+ "headers": {
+  "content-type": "application/json",
+  "via": "1.1 google",
+  "x-ratelimit-bucket": "00000000000000000000000000000006",
+  "x-ratelimit-limit": "2",
+  "x-ratelimit-remaining": "1",
+  "x-ratelimit-reset": "1795061461.533",
+  "x-ratelimit-reset-after": "30.000"
+ },
+ "request": {
+  "body": [
+   {
+    "contexts": [
+     0
+    ],
+    "description": "[hataori test] a command for captures",
+    "integration_types": [
+     0
+    ],
+    "name": "hataori-test",
+    "options": [
+     {
+      "description": "[hataori test] required text",
+      "name": "hataori-test-text",
+      "required": true,
+      "type": 3
+     },
+     {
+      "description": "[hataori test] optional text",
+      "name": "hataori-test-note",
+      "type": 3
+     }
+    ],
+    "type": 1
+   }
+  ],
+  "files": [],
+  "method": "PUT",
+  "path": "/applications/1000000000000000004/commands"
+ },
+ "source": "rest",
+ "status": 200
+}

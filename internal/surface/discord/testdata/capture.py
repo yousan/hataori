@@ -8,6 +8,8 @@ usage:
   capture.py pages RAW_DIR       consecutive pages of history (no gateway connection)
   capture.py lookups RAW_DIR     the channel objects the driver looks up (no gateway connection)
   capture.py rethread RAW_DIR    a thread opened from a message, then opened again from it (no gateway connection)
+  capture.py commands RAW_DIR MIN  register test commands, wait up to MIN minutes for the person to use
+                                 them in the channel and in a thread (README), then restore the commands
   capture.py cleanup RAW_DIR     delete what the bot posted in the runs above
 
 Environment:
@@ -410,6 +412,74 @@ def lookups(raw):
         raw.save(f"rest-{name}", d)
 
 
+# The test command. Its name and its options' names start with "hataori-test", which
+# scrub.py keeps.
+TEST_COMMANDS = [{
+    "name": "hataori-test", "type": 1, "description": "[hataori test] a command for captures",
+    "contexts": [0], "integration_types": [0],
+    "options": [
+        {"type": 3, "name": "hataori-test-text", "description": "[hataori test] required text", "required": True},
+        {"type": 3, "name": "hataori-test-note", "description": "[hataori test] optional text"},
+    ],
+}]
+
+
+def commands_run(raw, minutes):
+    """Register the test command, wait for one use in the channel and one in a thread, answer
+    each, and put the application's commands back as they were."""
+    ch = os.environ["HATAORI_DISCORD_CHANNEL"]
+    st, app = rest(None, None, "GET", "/applications/@me")
+    raw.save("rest-application", {"source": "rest", "request": {"method": "GET", "path": "/applications/@me"},
+                                  "status": st, "body": {"id": app["id"]}, "trimmed": ["id"]})
+    appid = app["id"]
+    st, before = rest(raw, "commands-before", "GET", f"/applications/{appid}/commands")
+    rest(raw, "commands-set", "PUT", f"/applications/{appid}/commands", TEST_COMMANDS)
+    rest(raw, "commands-after", "GET", f"/applications/{appid}/commands")
+    st, th = rest(raw, "thread-for-commands", "POST", f"/channels/{ch}/threads",
+                  {"name": "[hataori test] commands", "type": 11, "auto_archive_duration": 60})
+    raw.note("threads", th["id"])
+    seen, done = set(), threading.Event()
+
+    def on_dispatch(ev):
+        d = ev["d"]
+        if ev["t"] != "INTERACTION_CREATE" or d.get("type") != 2:
+            return
+        where = "thread" if d["channel_id"] == th["id"] else "channel"
+        # In the channel the answer is public, in the thread private (flag 64, ephemeral).
+        flags = 64 if where == "thread" else 0
+        rest(raw, f"command-ack-{where}", "POST", f"/interactions/{d['id']}/{d['token']}/callback",
+             {"type": 5, "data": {"flags": flags}})
+        st, m = rest(raw, f"command-answer-{where}", "PATCH",
+                     f"/webhooks/{d['application_id']}/{d['token']}/messages/@original",
+                     {"content": f"[hataori test] answered in the {where}", "allowed_mentions": {"parse": []}})
+        if st == 200 and not flags:
+            raw.note("messages", [d["channel_id"], m["id"]])
+        seen.add(where)
+        print("seen: " + ", ".join(sorted(seen)), file=sys.stderr)
+        if {"channel", "thread"} <= seen:
+            done.set()
+
+    gw = Gateway(raw, on_dispatch)
+    gw.connect()
+    try:
+        if not gw.ready.wait(30):
+            raise RuntimeError("no READY")
+        print("waiting for the commands (README)", file=sys.stderr)
+        end = time.time() + 60 * minutes
+        try:
+            while time.time() < end and not gw.closed.is_set() and not done.is_set():
+                time.sleep(1)
+        except KeyboardInterrupt:
+            pass
+        time.sleep(2)
+    finally:
+        gw.close()
+        keep = ("type", "name", "description", "options", "contexts", "integration_types",
+                "default_member_permissions", "nsfw", "name_localizations", "description_localizations")
+        rest(None, None, "PUT", f"/applications/{appid}/commands",
+             [{k: c[k] for k in keep if k in c} for c in before or []])
+
+
 def cleanup(raw):
     for conv, mid in raw.created["messages"]:
         st, _ = rest(None, None, "DELETE", f"/channels/{conv}/messages/{mid}")
@@ -426,4 +496,5 @@ if __name__ == "__main__":
     cmd, path = sys.argv[1], sys.argv[2]
     raw = Raw(path)
     {"bot": lambda: bot_run(raw), "person": lambda: person_run(raw, float(sys.argv[3])),
-     "second": lambda: second_run(raw), "lookups": lambda: lookups(raw), "pages": lambda: pages_run(raw), "rethread": lambda: rethread_run(raw), "cleanup": lambda: cleanup(raw)}[cmd]()
+     "second": lambda: second_run(raw), "lookups": lambda: lookups(raw), "pages": lambda: pages_run(raw), "rethread": lambda: rethread_run(raw),
+     "commands": lambda: commands_run(raw, float(sys.argv[3])), "cleanup": lambda: cleanup(raw)}[cmd]()

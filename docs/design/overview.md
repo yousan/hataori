@@ -1432,7 +1432,7 @@ type Driver interface {
 	SetStatus(ctx context.Context, ref MessageRef, s Status) error        // lamp on a message
 	SetThread(ctx context.Context, conv Conversation, t ThreadMeta) error // title, archived
 
-	Limits() Limits // message length, choices and files per message, file size, which optional calls work
+	Limits() Limits // message length, choices and files per message, file size, which optional calls work, whether commands work
 }
 
 // Factory makes a Driver from its opaque section of the instance's config.
@@ -1452,6 +1452,38 @@ type Sink interface {
 // Connected after it connects and after each reconnect.
 type Reconnected interface {
 	Connected()
+}
+
+// Commander is implemented by a Sink that handles commands. Run makes the
+// commands it returns the service's commands for the bot when it starts,
+// and changes nothing on the service when they are already these.
+type Commander interface {
+	Commands() []CommandSpec
+}
+
+type CommandSpec struct {
+	Name        string
+	Description string
+	Args        []ArgSpec // text arguments, required ones first
+	Private     bool      // the answer is shown only to the person who used it
+}
+
+type ArgSpec struct {
+	Name, Description string
+	Required          bool
+}
+
+// Command is the use of a command. Reply, when the driver sets it, is where
+// the answer goes: a Post into Conv with ReplyTo set to Reply answers the
+// command in place (privately when its spec says Private). A driver
+// acknowledges the command itself, before the sink sees it.
+type Command struct {
+	Conv   Conversation
+	Author Author
+	ID     string // safe-to-repeat key of the command
+	Name   string
+	Args   []Arg  // {Name, Value}, in the order given
+	Reply  *MessageRef
 }
 
 // Inbound is a received message. Direct says that its conversation is a
