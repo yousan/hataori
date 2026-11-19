@@ -17,7 +17,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.0**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.1**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -120,6 +120,18 @@ One thread's state, open requests, last output and last events.
 | `events` | integer | optional | how many of its last events to return, at most 100; absent or 0 for none; since 1.5 |
 
 Result: `ThreadDetail`
+
+### Operation `ThreadEvents`
+
+One thread's events before a position, newest last, each as `Events` delivers it and as `Thread` returns them, with text left out for a caller that may not read it. Asking again before the oldest event returned reads the thread's log back to its start; an empty result is the start. Since 3.1.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `id` | integer | required | the thread's number |
+| `before` | integer | optional | the position to read before; absent or 0 for the thread's last events |
+| `limit` | integer | required | how many events to return, at most 100 |
+
+Result: [`Event`]
 
 ### Operation `Start`
 
