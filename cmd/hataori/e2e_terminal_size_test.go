@@ -14,11 +14,13 @@ import (
 // a thread started without terminal_size is 80×24; after the config sets
 // 120×40 and the daemon starts again, the same thread resumed is 120×40,
 // and so is a new one; without the key again, it is back to 80×24. The
-// thread's tab, open on the dashboard across the restarts, fits each size
-// into its pane.
+// thread's tab, open on the dashboard when its session comes back at
+// another size, fits each size into its pane.
+//
+// No session runs when the daemon stops, and the daemon listens on a new
+// address each time: the page signs in again after each start.
 func TestSessionTerminalSize(t *testing.T) {
 	root := terminalRoot(t)
-	setConfig(t, root, func(cfg map[string]any) { cfg["dashboard"] = map[string]any{"listen": freePort(t)} })
 	stop := runDaemon(t, root)
 	c, err := wire.Dial(root)
 	if err != nil {
@@ -57,30 +59,44 @@ func TestSessionTerminalSize(t *testing.T) {
 		t.Fatalf("without terminal_size the terminal is %s, not 80x24", got)
 	}
 	n := int64(first)
+	view := fmt.Sprintf(`.pane[data-pane="0"] [data-terminal="%d"]`, n)
 
-	// The thread's tab on the dashboard, fitted at 80×24.
+	// open signs the browser in to the daemon running now and opens the
+	// first thread's tab, asleep or not, showing a terminal of cols columns.
 	b := newBrowser(t)
 	b.call("Emulation.setDeviceMetricsOverride", map[string]any{"width": 1400, "height": 900, "deviceScaleFactor": 1, "mobile": false})
-	link, err := c.SignInLink(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b.call("Page.navigate", map[string]any{"url": link})
-	b.until("the thread in the tree", fmt.Sprintf(`!!document.querySelector('[data-section=threads] .row[data-thread="%d"]')`, n))
-	b.click(fmt.Sprintf(`[data-section=threads] .row[data-thread="%d"]`, n))
-	view := fmt.Sprintf(`.pane[data-pane="0"] [data-terminal="%d"]`, n)
-	b.untilFilled("the thread at 80x24", view, 80, 24)
-
-	// restart puts the thread to sleep, then starts the daemon again with
-	// the config changed by f.
-	sleeps := 0
-	restart := func(f func(cfg map[string]any)) {
+	open := func(cols int) {
 		t.Helper()
-		sleeps++
-		if err := c.Send(ctx, first, fmt.Sprint("k-exit-", sleeps), control.Input{Text: "exit"}, control.Refuse); err != nil {
+		link, err := c.SignInLink(ctx)
+		if err != nil {
 			t.Fatal(err)
 		}
-		eventually(t, "the thread to fall asleep", 20*time.Second, func() bool { return info(first).State == control.Asleep })
+		// The page before is marked, so nothing below acts on it while the
+		// new one loads.
+		b.eval(`document.documentElement.dataset.before = 'yes', true`, nil)
+		b.call("Page.navigate", map[string]any{"url": link})
+		b.until("the new page", `document.documentElement.dataset.before !== 'yes' && document.readyState === 'complete'`)
+		b.showAll() // the thread may be asleep
+		b.until("the thread in the tree", fmt.Sprintf(`!!document.querySelector('[data-section=threads] .row[data-thread="%d"]')`, n))
+		b.click(fmt.Sprintf(`[data-section=threads] .row[data-thread="%d"]`, n))
+		b.until(fmt.Sprintf("the thread's terminal at %d columns", cols), fmt.Sprintf(`document.querySelector('%s .xterm')?.dataset.cols === '%d'`, view, cols))
+	}
+	open(80)
+	b.untilFilled("the thread at 80x24", view, 80, 24)
+
+	// restart puts each running thread to sleep, then starts the daemon
+	// again with the config changed by f, and opens the first thread's tab
+	// on it.
+	sleeps := 0
+	restart := func(f func(cfg map[string]any), cols int, running ...control.ThreadID) {
+		t.Helper()
+		for _, id := range running {
+			sleeps++
+			if err := c.Send(ctx, id, fmt.Sprint("k-exit-", sleeps), control.Input{Text: "exit"}, control.Refuse); err != nil {
+				t.Fatal(err)
+			}
+			eventually(t, "a thread to fall asleep", 20*time.Second, func() bool { return info(id).State == control.Asleep })
+		}
 		c.Close()
 		stop()
 		setConfig(t, root, f)
@@ -88,8 +104,9 @@ func TestSessionTerminalSize(t *testing.T) {
 		if c, err = wire.Dial(root); err != nil {
 			t.Fatal(err)
 		}
+		open(cols)
 	}
-	restart(func(cfg map[string]any) { cfg["terminal_size"] = map[string]any{"cols": 120, "rows": 40} })
+	restart(func(cfg map[string]any) { cfg["terminal_size"] = map[string]any{"cols": 120, "rows": 40} }, 80, first)
 
 	// Resumed: 120×40, and the open tab fits the new size.
 	if err := c.Send(ctx, first, "k-wake", control.Input{Text: "reply two"}, control.Refuse); err != nil {
@@ -113,9 +130,9 @@ func TestSessionTerminalSize(t *testing.T) {
 	// the smaller grid again even though the pane keeps its size: the
 	// "no process" line, which comes and goes with the session, is held
 	// out of the layout here.
-	restart(func(cfg map[string]any) { delete(cfg, "terminal_size") })
+	restart(func(cfg map[string]any) { delete(cfg, "terminal_size") }, 120, first, second)
 	b.eval(`(() => { const s = document.createElement('style'); s.textContent = '.terminal-view .no-process { position: absolute; visibility: hidden; }'; document.head.append(s); return true; })()`, nil)
-	b.until("the asleep thread's last screen at 120x40", fmt.Sprintf(`document.querySelector('%s .xterm')?.dataset.cols === '120'`, view))
+	b.untilFilled("the asleep thread's last screen at 120x40", view, 120, 40)
 	if err := c.Send(ctx, first, "k-back", control.Input{Text: "reply three"}, control.Refuse); err != nil {
 		t.Fatal(err)
 	}
