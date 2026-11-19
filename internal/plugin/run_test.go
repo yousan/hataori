@@ -632,3 +632,24 @@ echo $$ > "$HATAORI_PLUGIN_STATE/pid.tmp"; mv "$HATAORI_PLUGIN_STATE/pid.tmp" "$
 		t.Errorf("groups kept after the stop: %v", f.r.groups)
 	}
 }
+
+// A plugin that connects while it is being started, before its group is
+// recorded, is not taken for the owner: PluginOf waits for the start.
+func TestPluginOfWhileStarting(t *testing.T) {
+	path, sum := script(t, `exec sleep 600`)
+	got := make(chan string, 1)
+	newRunner(t, Grant{Path: path, SHA256: sum}, func(r *Runner) {
+		r.afterStart = func(pid int) {
+			go func() { got <- r.PluginOf(pid) }()
+			time.Sleep(100 * time.Millisecond) // the plugin connects now
+		}
+	})
+	select {
+	case id := <-got:
+		if id != "scan" {
+			t.Fatalf("a plugin connecting while it starts: %q", id)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("PluginOf did not answer")
+	}
+}

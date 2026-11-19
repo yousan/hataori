@@ -110,10 +110,14 @@ type Runner struct {
 	// afterRead, when a test sets it, runs between reading the executable
 	// and starting it.
 	afterRead func(g Grant)
+	// afterStart, when a test sets it, runs between the start of the
+	// plugin's process and the record of its group.
+	afterStart func(pid int)
 
-	wg     sync.WaitGroup
-	mu     sync.Mutex
-	groups map[int]string // the process groups of the plugins running now: their ids
+	wg       sync.WaitGroup
+	mu       sync.Mutex
+	groups   map[int]string // the process groups of the plugins running now: their ids
+	starting int            // plugins being started, whose group is not known yet
 }
 
 // Start binds each external plugin's token to its caller, then starts the
@@ -165,8 +169,17 @@ func (r *Runner) Wait() { r.wg.Wait() }
 // is in, or "": the guard against a plugin that connects to the socket
 // without its token, and so as the owner (wire.Server.NotOwner). It is no
 // boundary: a process can leave its group.
+//
+// While a plugin is being started, whose group is not known yet, it waits
+// for that start, up to startWait: a plugin that connects at once is not
+// taken for the owner.
 func (r *Runner) PluginOf(pid int) string {
 	r.mu.Lock()
+	for deadline := time.Now().Add(startWait); r.starting > 0 && time.Now().Before(deadline); {
+		r.mu.Unlock()
+		time.Sleep(5 * time.Millisecond)
+		r.mu.Lock()
+	}
 	empty := len(r.groups) == 0
 	r.mu.Unlock()
 	if empty {
@@ -181,9 +194,27 @@ func (r *Runner) PluginOf(pid int) string {
 	return r.groups[pgid]
 }
 
+// startWait bounds how long PluginOf waits for a plugin being started.
+const startWait = 2 * time.Second
+
+// starts counts a start that begins (+1) or ends (-1); a start that ends
+// gives its group, when it started.
+func (r *Runner) starts(n, pgid int, id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.starting += n
+	if pgid > 0 {
+		r.group0(pgid, id)
+	}
+}
+
 func (r *Runner) group(pgid int, id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.group0(pgid, id)
+}
+
+func (r *Runner) group0(pgid int, id string) {
 	if id == "" {
 		delete(r.groups, pgid)
 		return
@@ -306,7 +337,16 @@ func (r *Runner) once(ctx context.Context, g Grant) (string, error) {
 		return "", err
 	}
 	cmd.Stdout, cmd.Stderr = outW, errW
+	r.starts(1, 0, "")
 	err = startRetrying(cmd)
+	if err != nil {
+		r.starts(-1, 0, "")
+	} else {
+		if r.afterStart != nil {
+			r.afterStart(cmd.Process.Pid)
+		}
+		r.starts(-1, cmd.Process.Pid, g.ID) // its group from here on: Setpgid made it the plugin's pid
+	}
 	outW.Close()
 	errW.Close()
 	var lines sync.WaitGroup
@@ -333,7 +373,6 @@ func (r *Runner) once(ctx context.Context, g Grant) (string, error) {
 		return "", err
 	}
 	pgid := cmd.Process.Pid
-	r.group(pgid, g.ID)
 	r.Log.Info("plugin started", "plugin", g.ID, "pid", pgid)
 	// A run that lasts the window ends the plugin's outage, while it runs.
 	stable := time.AfterFunc(or(r.Window, DefaultWindow), func() { r.closeOutage(context.WithoutCancel(ctx), g) })
