@@ -99,6 +99,8 @@ func TestOrdinaryLaunchUnchanged(t *testing.T) {
 // the spec's servers only, on every launch of the spec, a resumed one too.
 func TestConfinedLaunch(t *testing.T) {
 	a := newAdapter(t, `{"hataori": "/opt/hataori/bin/hataori"}`)
+	home := t.TempDir() // no user's status line
+	a.environ = func() []string { return []string{"PATH=/usr/bin:/bin", "HOME=" + home} }
 	s := spec(t)
 	s.Confine = &agent.Confinement{MCP: []agent.MCPServer{{Name: "hataori",
 		Argv: []string{"/opt/hataori/bin/hataori", "mcp", "--scope", "C1", "--root", "/srv/root"}, Env: []string{"HATAORI_TOKEN=t0k=en"}}}}
@@ -118,7 +120,8 @@ func TestConfinedLaunch(t *testing.T) {
 			t.Fatal("the launch does not say it is confined")
 		}
 		mcp := filepath.Join(s.StateDir, MCPConfigFile)
-		want := append(slices.Clone(plain.Argv), "--restricted", "--strict-mcp-config", "--mcp-config", mcp, "--tools", "Read,Write,Edit,Glob,Grep")
+		want := append(slices.Clone(plain.Argv), "--restricted", "--strict-mcp-config", "--mcp-config", mcp, "--tools", "Read,Write,Edit,Glob,Grep",
+			"--setting-sources", "user")
 		got := slices.Clone(l.Argv)
 		if resume == "" { // two new sessions have two random ids
 			i := slices.Index(got, "--session-id")
@@ -265,9 +268,9 @@ func TestConfinedFlagsAreTheCheckedOnes(t *testing.T) {
 
 // A confined session may write its own directory, so the status line of a
 // project settings file there is not taken into its launch, where it would
-// run unconfined at the next start; the user's own status line still is.
-// An ordinary session takes both, as before.
-func TestConfinedLaunchTakesNoStatusLineFromItsDirectory(t *testing.T) {
+// run unconfined at the next start; nor is the user's own, which runs in
+// that directory. An ordinary session takes them, as before.
+func TestConfinedLaunchRunsNoStatusLineButHataoris(t *testing.T) {
 	a := newAdapter(t, `{"hataori": "/opt/hataori/bin/hataori"}`)
 	home := t.TempDir()
 	a.environ = func() []string { return []string{"HOME=" + home} }
@@ -294,11 +297,14 @@ func TestConfinedLaunchTakesNoStatusLineFromItsDirectory(t *testing.T) {
 	if got := settings(s); !strings.Contains(got, "touch planted") {
 		t.Fatalf("an ordinary session lost its project's status line: %s", got)
 	}
-	s.Confine = &agent.Confinement{}
-	if got := settings(s); strings.Contains(got, "touch planted") || strings.Contains(got, "--run") {
+	confined := s
+	confined.Confine = &agent.Confinement{}
+	if got := settings(confined); strings.Contains(got, "touch planted") || strings.Contains(got, "--run") ||
+		!strings.Contains(got, "statusline --last") {
 		t.Fatalf("a confined session runs the status line of its own directory: %s", got)
 	}
-	// The user's own, in the config directory, which the session cannot write.
+	// The user's own, which an ordinary session shows, as before.
+	os.RemoveAll(filepath.Join(s.Dir, ".claude"))
 	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +312,10 @@ func TestConfinedLaunchTakesNoStatusLineFromItsDirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), b, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := settings(s); !strings.Contains(got, "users-own-line") || strings.Contains(got, "touch planted") {
-		t.Fatalf("a confined session's status line: %s; want the user's own only", got)
+	if got := settings(s); !strings.Contains(got, "users-own-line") {
+		t.Fatalf("an ordinary session lost the user's status line: %s", got)
+	}
+	if got := settings(confined); strings.Contains(got, "users-own-line") || strings.Contains(got, "--run") {
+		t.Fatalf("a confined session runs the user's status line in its own directory: %s", got)
 	}
 }

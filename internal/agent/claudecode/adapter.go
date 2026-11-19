@@ -101,9 +101,14 @@ const (
 // (design, Appendix B, "Confining a supervisor session").
 const ConfinedTools = "Read,Write,Edit,Glob,Grep"
 
-// ConfinedEnv is added to a confined session's environment: no CLAUDE.md
-// files and no automatic memory, as the real checks run the CLI.
-var ConfinedEnv = []string{"CLAUDE_CODE_DISABLE_CLAUDE_MDS=1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1"}
+// ConfinedEnv is added to a confined session's environment, so that what
+// the session can write in its own directory reaches nothing: no CLAUDE.md
+// files, no automatic memory and no claude.ai connectors, as the real
+// checks run the CLI, and no git repository, since a .git it wrote there
+// could name commands that git runs, as the CLI's own look at the
+// directory at its start would.
+var ConfinedEnv = []string{"CLAUDE_CODE_DISABLE_CLAUDE_MDS=1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1",
+	"ENABLE_CLAUDEAI_MCP_SERVERS=false", "GIT_DIR=/dev/null"}
 
 // CheapModel is the model of a supervisor whose config names none.
 func (a *Adapter) CheapModel() string { return "haiku" }
@@ -154,11 +159,11 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 			return agent.Launch{}, err
 		}
 		files[MCPConfigFile] = mcp
+		// --setting-sources user: the project's and the local settings are
+		// files in its own directory, which it can write; they stay out by
+		// the flag, not only by --restricted.
 		l.Argv = append(l.Argv, "--restricted", "--strict-mcp-config", "--mcp-config", stateFile(spec, MCPConfigFile),
-			"--tools", ConfinedTools)
-		// Nor does it load instructions from files it can write, such as a
-		// CLAUDE.md in its directory whose imports name files outside it,
-		// or keep a memory outside its directory.
+			"--tools", ConfinedTools, "--setting-sources", "user")
 		l.Env = append(l.Env, ConfinedEnv...)
 		l.Confined = true
 	}
