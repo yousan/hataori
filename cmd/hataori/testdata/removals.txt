@@ -23,3 +23,7 @@ internal/plugin/run.go	writeNew	os.Remove	Removes only <path>.new, the half-writ
 internal/agent/claudecode/plugin.go	Adapter.WritePlugin	os.Remove	Removes only its own temporary file next to a plugin file it failed to rename, in the plugin's directory under the instance root, outside every workspace.
 internal/window/window.go	Listen	os.Remove	Removes the stale report socket at the computed socket path in the instance's state/windows directory or its private directory under /tmp, outside every workspace.
 internal/window/window.go	Server.Close	os.Remove	Removes the private directory made for the report socket under /tmp only when it is empty, never recursively; it is never under a workspace.
+internal/runner/takein.go	Runner.letGo	os.Remove	Removes only the taken-in.json note in the session's state directory when a take-in ends; the window's directory is never touched.
+internal/runner/takein.go	writeAtomic	os.Remove	Removes only its own temporary file in the session's state directory after a rename that failed, outside every workspace.
+internal/window/window.go	WriteRecord	os.Remove	Removes only its own temporary file in the private directory of take-in records next to the report socket, outside every workspace.
+internal/window/window.go	RemoveRecord	os.Remove	Removes only one take-in record file in the private directory next to the report socket; the window and its directory are not touched.
