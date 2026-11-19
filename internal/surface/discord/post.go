@@ -190,7 +190,7 @@ func (d *Driver) Post(ctx context.Context, conv surface.Conversation, key string
 	if err != nil {
 		return surface.MessageRef{}, err
 	}
-	buttons, err := components(m.Choices)
+	buttons, err := components(m.Choices, m.Multi)
 	if err != nil {
 		return surface.MessageRef{}, err
 	}
@@ -332,11 +332,12 @@ func (d *Driver) Edit(ctx context.Context, ref surface.MessageRef, m surface.Mes
 	if n := length(m.Text); n > maxText {
 		return &Error{Op: "edit", Status: http.StatusBadRequest, Message: fmt.Sprintf("%d characters, at most %d fit", n, maxText)}
 	}
-	buttons, err := components(m.Choices)
+	buttons, err := components(m.Choices, m.Multi)
 	if err != nil {
 		return err
 	}
-	// An edit replaces the message: no choices remove its buttons.
+	// An edit replaces the message: no choices remove its buttons and its
+	// menu.
 	body := map[string]any{"content": m.Text, "components": buttons}
 	return wrap("edit", d.client.Do(rest.UpdateMessage.Compile(nil, ch, id), body, nil, rest.WithCtx(ctx)))
 }
@@ -377,13 +378,14 @@ func (d *Driver) SetThread(ctx context.Context, conv surface.Conversation, t sur
 // Limits reports what the driver can do.
 func (d *Driver) Limits() surface.Limits {
 	return surface.Limits{
-		MaxText:    maxText,
-		MaxChoices: maxChoices,
-		MaxFiles:   maxFiles,
-		Edit:       true,
-		Delete:     true,
-		SetThread:  true,
-		Commands:   true,
+		MaxText:     maxText,
+		MaxChoices:  maxChoices,
+		MaxFiles:    maxFiles,
+		Edit:        true,
+		Delete:      true,
+		SetThread:   true,
+		Commands:    true,
+		MultiSelect: true,
 	}
 }
 

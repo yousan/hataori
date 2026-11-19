@@ -10,6 +10,9 @@ usage:
   capture.py rethread RAW_DIR    a thread opened from a message, then opened again from it (no gateway connection)
   capture.py commands RAW_DIR MIN  register test commands, wait up to MIN minutes for the person to use
                                  them in the channel and in a thread (README), then restore the commands
+  capture.py choices RAW_DIR MIN  post a message with three buttons and one with a menu of three options,
+                                 wait up to MIN minutes for a press and a selection of two (README),
+                                 then remove the buttons and the menu by editing
   capture.py cleanup RAW_DIR     delete what the bot posted in the runs above
 
 Environment:
@@ -480,6 +483,57 @@ def commands_run(raw, minutes):
              [{k: c[k] for k in keep if k in c} for c in before or []])
 
 
+def choices_run(raw, minutes):
+    ch = os.environ["HATAORI_DISCORD_CHANNEL"]
+    buttons = [{"type": 1, "components": [
+        {"type": 2, "style": 2, "label": f"[hataori test] button {i}", "custom_id": f"hataori-test-button-{i}"}
+        for i in (1, 2, 3)]}]
+    menu = [{"type": 1, "components": [{
+        "type": 3, "custom_id": "hataori-test-menu", "placeholder": "[hataori test] pick two",
+        "min_values": 1, "max_values": 3,
+        "options": [{"label": f"[hataori test] option {i}", "value": f"hataori-test-option-{i}"} for i in (1, 2, 3)]}]}]
+    st, b = rest(raw, "post-buttons", "POST", f"/channels/{ch}/messages",
+                 {"content": "[hataori test] Please press button 2.", "components": buttons,
+                  "allowed_mentions": {"parse": []}})
+    raw.note("messages", [ch, b["id"]])
+    st, m = rest(raw, "post-menu", "POST", f"/channels/{ch}/messages",
+                 {"content": "[hataori test] Please pick options 1 and 3.", "components": menu,
+                  "allowed_mentions": {"parse": []}})
+    raw.note("messages", [ch, m["id"]])
+    seen, done = set(), threading.Event()
+
+    def on_dispatch(ev):
+        d = ev["d"]
+        if ev["t"] != "INTERACTION_CREATE" or d.get("type") != 3:
+            return
+        kind = "menu" if d["data"].get("component_type") == 3 else "button"
+        rest(raw, f"{kind}-ack", "POST", f"/interactions/{d['id']}/{d['token']}/callback", {"type": 6})
+        seen.add(kind)
+        print("seen: " + ", ".join(sorted(seen)), file=sys.stderr)
+        if {"button", "menu"} <= seen:
+            done.set()
+
+    gw = Gateway(raw, on_dispatch)
+    gw.connect()
+    try:
+        if not gw.ready.wait(30):
+            raise RuntimeError("no READY")
+        print("waiting for the press and the selection (README)", file=sys.stderr)
+        end = time.time() + 60 * minutes
+        try:
+            while time.time() < end and not gw.closed.is_set() and not done.is_set():
+                time.sleep(1)
+        except KeyboardInterrupt:
+            pass
+        time.sleep(2)
+    finally:
+        gw.close()
+    rest(raw, "edit-remove-buttons", "PATCH", f"/channels/{ch}/messages/{b['id']}",
+         {"content": "[hataori test] answered", "components": []})
+    rest(raw, "edit-remove-menu", "PATCH", f"/channels/{ch}/messages/{m['id']}",
+         {"content": "[hataori test] answered", "components": []})
+
+
 def cleanup(raw):
     for conv, mid in raw.created["messages"]:
         st, _ = rest(None, None, "DELETE", f"/channels/{conv}/messages/{mid}")
@@ -497,4 +551,5 @@ if __name__ == "__main__":
     raw = Raw(path)
     {"bot": lambda: bot_run(raw), "person": lambda: person_run(raw, float(sys.argv[3])),
      "second": lambda: second_run(raw), "lookups": lambda: lookups(raw), "pages": lambda: pages_run(raw), "rethread": lambda: rethread_run(raw),
-     "commands": lambda: commands_run(raw, float(sys.argv[3])), "cleanup": lambda: cleanup(raw)}[cmd]()
+     "commands": lambda: commands_run(raw, float(sys.argv[3])),
+     "choices": lambda: choices_run(raw, float(sys.argv[3])), "cleanup": lambda: cleanup(raw)}[cmd]()
