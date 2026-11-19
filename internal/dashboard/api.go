@@ -39,8 +39,8 @@ const (
 	// last ones without it), at most ?limit=N, newest last: the control
 	// API's ThreadEvents.
 	ThreadEventsPath = "/api/threadevents"
-	EventsPath  = "/api/events"
-	LimitsPath  = "/api/limits"
+	EventsPath       = "/api/events"
+	LimitsPath       = "/api/limits"
 	// WorkspacePath answers with the thread's WorkspaceState. A thread
 	// outside the caller's scopes answers as one that does not exist, and a
 	// workspace that cannot be read is an error, never zeros.
