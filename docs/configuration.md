@@ -93,6 +93,7 @@ Names in `drivers`, `adapters` and `scopes[].client` start with a lowercase lett
 | `model` | string | empty | The model of threads started here whose order names none. |
 | `effort` | string | empty | The effort of threads started here whose order names none. |
 | `people` | array of strings | empty | Names of the people, under `people`, who may start threads here and post into them besides the owner. Empty strings are ignored. |
+| `show_in` | array of strings | empty | Other channels where this scope's threads may be shown, each as `<client>:<channel>`, such as `"discord:<channel id>"` (for another client, its name under `drivers`). A person allowed in this scope attaches a thread there with `/attach` (see "Showing a thread in another channel"). Without an entry, an attach in that channel makes no link, shows nothing there and writes one log line. The scope's own channel is never listed. |
 | `posters` | array of strings | empty | The old form only: ids, on this scope's client, of who may post here besides the owner. For Discord, user ids, or the id of a webhook for posts made through that webhook. Refused in a config with `people`. |
 | `supervisor` | object | absent | The scope's supervisor (below). Without it the scope has none, and nothing changes. |
 
@@ -396,3 +397,17 @@ An order is a message in an enabled channel (not in a thread):
 - The author must be the owner or one of the scope's `people`. Posts by bot accounts are ignored; posts through a webhook are accepted when the webhook's id belongs to one of the scope's people.
 
 hataori opens a thread on the message, clones the repository into the thread's working directory, starts the agent there and posts its replies into the thread. Later messages in that thread from the owner or one of the scope's people go to the same agent session. An order that is refused for any reason other than the effort value starts nothing and writes one log line.
+
+## Showing a thread in another channel
+
+A thread can be shown in more than one chat conversation, on one chat service or on several. Each is a link of the thread; every link gets the agent's answers, and input given in any of them goes to the same session.
+
+```
+/attach <number>
+<trigger> attach <number>
+```
+
+- `/attach <number>` in a channel opens a chat thread there, titled like the hataori thread, and links it. Used inside a chat thread, it links that chat thread. Its answer is shown only to the person who used it. `<trigger> attach <number>`, posted in a channel, does the same on a service without commands, and answers nothing.
+- The channel must be the scope's own or listed in the scope's `show_in`. The person must be the owner or one of the scope's `people`, as for posting into the thread.
+- Attaching a thread where it is shown already changes nothing. A chat thread that shows one hataori thread is not linked to another.
+- A refused attach links nothing, opens nothing and writes one log line.

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -127,7 +128,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	scopes := map[string]core.Scope{}
 	var keys []string
 	for _, s := range cfg.Scopes {
-		scopes[s.Key] = core.Scope{Enabled: s.Enabled, Owner: s.Client, Model: s.Model, Effort: s.Effort}
+		scopes[s.Key] = core.Scope{Enabled: s.Enabled, Owner: s.Client, Model: s.Model, Effort: s.Effort, ShowIn: s.ShowIn}
 		keys = append(keys, s.Key)
 	}
 	sort.Strings(keys)
@@ -492,8 +493,17 @@ func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.St
 			}
 			scopes[s.Key] = chat.Scope{Enabled: s.Enabled}
 		}
+		// The channels of this client that may show other scopes' threads.
+		showIn := map[string][]string{}
+		for _, s := range cfg.Scopes {
+			for _, e := range s.ShowIn {
+				if client, channel, _ := strings.Cut(e, ":"); client == name {
+					showIn[channel] = append(showIn[channel], s.Key)
+				}
+			}
+		}
 		fe := &chat.FrontEnd{Name: name, Driver: d, API: c.As, Trigger: cfg.Trigger, People: cfg.People,
-			Scopes: scopes, Log: lg.With("client", name), Instance: filepath.Base(root),
+			Scopes: scopes, ShowIn: showIn, Log: lg.With("client", name), Instance: filepath.Base(root),
 			Outbox:  &chat.Outbox{Store: st, Client: name, Driver: d, Log: lg.With("client", name)},
 			FileDir: filepath.Join(root, "state", "chat", name, "files"),
 			FileRoots: func(ctx context.Context, id control.ThreadID, session int64) ([]string, error) {

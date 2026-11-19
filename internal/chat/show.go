@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -42,11 +41,7 @@ type reader struct {
 func (f *FrontEnd) show(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel() // ends the subscription when reading stops on an error
-	var scopes []string
-	for s := range f.Scopes {
-		scopes = append(scopes, s)
-	}
-	sort.Strings(scopes)
+	scopes := f.scopeList()
 	r := &reader{
 		api:   f.API(control.Caller{Principal: f.ownerPrincipal(), Scopes: scopes, May: control.OpRead}),
 		first: map[control.ThreadID]uint64{},

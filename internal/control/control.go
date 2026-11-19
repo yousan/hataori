@@ -26,6 +26,9 @@ var (
 	// 4.6). The thread stays closed and its workspace is unchanged; the
 	// error says why.
 	ErrRemovalRefused = errors.New("removal refused")
+	// ErrLinkedElsewhere: a Link of a conversation that is linked to
+	// another thread. Since 3.4.
+	ErrLinkedElsewhere = errors.New("the conversation shows another thread")
 )
 
 // Efforts are the effort values hataori knows. An agent adapter maps each
@@ -78,6 +81,19 @@ type API interface {
 	// refusal writes one event. It is checked like Stop and needs OpRemove.
 	// On the wire it is the operation Remove.
 	RemoveThread(ctx context.Context, id ThreadID) error
+	// Link shows the thread in one more conversation and returns its link
+	// (design, section 5.2). It is checked like Send: the caller's person
+	// must be allowed in the thread's scope. It is refused, with one log
+	// line naming the thread, the client and the channel, when l.Channel
+	// is neither the scope's own channel nor in its show_in for l.Client;
+	// a refused link makes nothing. With l.Thread empty, the core asks the
+	// client (its ScopeOwner) to open a conversation in l.Channel, titled
+	// like the thread, only once the link is allowed; when the thread has
+	// a link in that channel of that client already, it returns that one
+	// and opens nothing. Linking a conversation twice to the same thread
+	// changes nothing; a conversation linked to another thread is
+	// ErrLinkedElsewhere. Since 3.4.
+	Link(ctx context.Context, id ThreadID, l LinkRef) (LinkRef, error)
 
 	// Events delivers events after a position, then live ones, until ctx ends.
 	// Once the events stored when it was called are delivered, it delivers
