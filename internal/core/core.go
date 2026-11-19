@@ -1388,6 +1388,10 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 			}
 			return nil
 		}
+		if state == control.Waiting && a.caller.NoAnswer {
+			// The key is not taken: the transaction is rolled back.
+			return fmt.Errorf("core: send to %v: waiting on a question: %w", id, ErrBusy)
+		}
 		if state == control.Waiting {
 			// The input is the answer to the open question.
 			var req string
