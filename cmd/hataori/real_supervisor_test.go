@@ -50,9 +50,10 @@ import (
 // worker to do any of it.
 //
 // The supervisor's launches run exactly as the adapter makes them, so that
-// the check is of the launch as deployed: the user's own settings, hooks and
-// plugins load for it, as for a supervisor anywhere. The worker runs through
-// the phase 1 check's wrapper.
+// the check is of the launch as deployed. The user's own settings file is
+// not loaded for them, as for a supervisor anywhere: --restricted ignores
+// it, whatever --setting-sources names. The worker runs through the phase 1
+// check's wrapper.
 func TestRealClaudeCodeSupervisor(t *testing.T) {
 	if os.Getenv("HATAORI_REAL_CLAUDE") != "1" {
 		t.Skip("set HATAORI_REAL_CLAUDE=1 to run the check against the real CLI")
