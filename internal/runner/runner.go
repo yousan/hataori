@@ -78,6 +78,9 @@ type Runner struct {
 	mu   sync.Mutex
 	live map[int64]*live
 
+	startedMu sync.Mutex
+	started   map[int64]bool // the sessions Start started in this process (claim)
+
 	point func(name string) // for tests: called at the named points of a launch
 }
 
@@ -195,6 +198,13 @@ func (r *Runner) confinement(ctx context.Context, id int64) (control.ThreadID, s
 // Start starts the agent of a new session through a session host. The
 // first input is sent once the agent reports that it is ready.
 func (r *Runner) Start(ctx context.Context, l core.Launch) error {
+	// Once per session in this process: replace may start a session that
+	// Recover finds to launch as well, when a follower of Reconnect
+	// replaces one while Recover runs (#508).
+	if !r.claim(l.Session) {
+		r.Log.Info("the session is being started already", "session", l.Session)
+		return nil
+	}
 	ad, ok := r.Adapters[l.Agent]
 	if !ok {
 		return fmt.Errorf("runner: no agent %q", l.Agent)
@@ -1665,19 +1675,7 @@ func (r *Runner) replace(lv *live) {
 		l     core.Launch
 		first firstInput
 	)
-	thread, err := r.threadOf(ctx, lv.id)
-	if err != nil {
-		r.Log.Error("replacing a session that cannot resume", "session", lv.id, "err", err)
-		return
-	}
-	// What the new session's agent gets before the input: the thread's
-	// earlier conversation. It is read before the transaction, which the
-	// store's one connection holds.
-	earlier, err := r.earlier(ctx, thread)
-	if err != nil {
-		r.Log.Error("the thread's earlier context", "session", lv.id, "err", err) // the new session starts without it
-	}
-	err = r.Store.Update(ctx, func(tx *store.Tx) error {
+	err := r.Store.Update(ctx, func(tx *store.Tx) error {
 		l = core.Launch{}
 		var state, fi string
 		var tid int64
@@ -1697,6 +1695,12 @@ func (r *Runner) replace(lv *live) {
 		var old firstInput
 		if fi != "" {
 			json.Unmarshal([]byte(fi), &old)
+		}
+		// What the new session's agent gets before the input: the thread's
+		// earlier conversation, as this transaction sees it.
+		earlier, err := r.earlier(ctx, tx, l.Thread)
+		if err != nil {
+			r.Log.Error("the thread's earlier context", "session", lv.id, "err", err) // the new session starts without it
 		}
 		// The input the old session was woken for, as a new session's first
 		// input: not sent, not written, and in the old session's workspace.
@@ -1736,13 +1740,6 @@ func (r *Runner) replace(lv *live) {
 			r.Log.Error("recording a failed start", "session", l.Session, "err", err)
 		}
 	}
-}
-
-// threadOf returns the thread of session id.
-func (r *Runner) threadOf(ctx context.Context, id int64) (control.ThreadID, error) {
-	var thread int64
-	err := r.Store.DB.QueryRowContext(ctx, `SELECT thread_id FROM sessions WHERE id = ?`, id).Scan(&thread)
-	return control.ThreadID(thread), err
 }
 
 // KindSessionReplaced is the event of a thread whose conversation the agent
@@ -1857,4 +1854,19 @@ func (r *Runner) Interrupt(ctx context.Context, id, named int64) error {
 		r.stop(lv.dir, time.Second, 2*time.Second)
 	}()
 	return nil
+}
+
+// claim reports whether session id was not started in this process before,
+// and marks it started.
+func (r *Runner) claim(id int64) bool {
+	r.startedMu.Lock()
+	defer r.startedMu.Unlock()
+	if r.started == nil {
+		r.started = map[int64]bool{}
+	}
+	if r.started[id] {
+		return false
+	}
+	r.started[id] = true
+	return true
 }

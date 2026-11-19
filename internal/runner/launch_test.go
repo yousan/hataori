@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -141,6 +142,41 @@ func TestDaemonKilledAfterAReplace(t *testing.T) {
 			if got := counts(t, st); got["turn_started"] != 2 || got["input"] != 2 || got["session_replaced"] != 1 {
 				t.Errorf("events %v", got)
 			}
+			// The agent got the plugins' text with the input, as the input
+			// event of the new session records it.
+			var before, after, link string
+			st.DB.QueryRow(`SELECT json_extract(data, '$.before'), json_extract(data, '$.after'), json_extract(data, '$.link.thread') FROM events
+				WHERE kind = 'input' AND json_extract(data, '$.session') = 2`).Scan(&before, &after, &link)
+			if before != "plugin before" || after != "plugin after" || link != "t1" {
+				t.Errorf("the new session's input came with %q and %q, through %q", before, after, link)
+			}
 		})
+	}
+}
+
+// A session is started once in a process: a second Start of it, as from
+// Recover while a replace started it, starts no second host and changes
+// nothing (#508).
+func TestStartTwiceStartsOnce(t *testing.T) {
+	f := newFixture(t, options{})
+	f.start("reply hello")
+	until(t, "the turn's end", f.st, "turn_ended", 1)
+	var spec string
+	f.st.DB.QueryRow(`SELECT spec FROM sessions WHERE id = 1`).Scan(&spec)
+	if err := f.run.Start(context.Background(), core.Launch{Session: 1, Thread: 1, Agent: "fake", Dir: f.root,
+		Input: control.Input{Text: "reply again"}}); err != nil {
+		t.Fatalf("a second Start: %v", err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if got := counts(t, f.st); got["turn_started"] != 1 || got["text"] != 1 {
+		t.Errorf("events %v", got)
+	}
+	if h := hosts(t, StateDir(f.root, 1)); len(h) != 1 {
+		t.Errorf("%d hosts run for the session: %v", len(h), h)
+	}
+	var again string
+	f.st.DB.QueryRow(`SELECT spec FROM sessions WHERE id = 1`).Scan(&again)
+	if again != spec {
+		t.Errorf("the session's spec changed: %s, then %s", spec, again)
 	}
 }
