@@ -2158,7 +2158,7 @@ type Factory func(settings []byte) (Adapter, error)
 
 ### Terminal holder
 
-Section 4.3. Package `internal/holder`; hataori's own session host (`holder.Host`) is the only holder so far (#395). A holder sits below the core, next to the session host. For an agent in a terminal, the codec's `Actions` carry `Keys []agent.Part`; an agent on pipes keeps `Write`, and its holder is always hataori's own host. The runner reaches starting, input, the screen, stopping and whether an agent is alive only through the holder; it still talks to the session host directly for the relay (hook calls that wait, and their answers), for attach and for the terminal's device name.
+Section 4.3. Package `internal/holder`; hataori's own session host (`holder.Host`) is the only holder so far (#395). A holder sits below the core, next to the session host. For an agent in a terminal, the codec's `Actions` carry `Keys []agent.Part`; an agent on pipes keeps `Write`, and its holder is always hataori's own host. The runner reaches starting, input, the screen, stopping and whether an agent is alive only through the holder; it still talks to the session host directly for the relay (hook calls that wait, and their answers), for attach (and the count of attached terminals the idle check reads) and for the terminal's device name.
 
 ```go
 // Package agent: input for an agent in a terminal.
@@ -2186,9 +2186,10 @@ const (
 // is not part of it: hataori's session host keeps that job for every holder.
 
 type Holder interface {
-	// Caps says what this holder offers. The runner asks Start only of a
-	// holder with CanStart, and starts a session that needs the screen
-	// watched (Actions.WatchScreen) only on a holder with RawScreen.
+	// Caps says what this holder offers: only a holder with CanStart
+	// starts agents, and only one with RawScreen holds a session whose
+	// screen is watched (Actions.WatchScreen). With one holder, the runner
+	// does not ask yet.
 	Caps() Caps
 
 	// Start starts the agent with exactly spec's arguments, environment
@@ -2226,8 +2227,9 @@ type Spec struct {
 	Terminal   bool // else pipes, which only hataori's own host offers
 	Cols, Rows uint16
 	// Again: a daemon that died had begun this start and may have started
-	// the agent. It holds the window recorded before that start began; a
-	// window that start made is taken instead of making another.
+	// the agent. It holds the window recorded before that start began
+	// (Process 0 when none was); a window that start made is taken instead
+	// of making another.
 	Again *Window
 }
 

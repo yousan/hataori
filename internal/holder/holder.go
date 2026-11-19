@@ -19,9 +19,10 @@ import (
 
 // Holder holds agents' terminals.
 type Holder interface {
-	// Caps says what this holder offers. The runner asks Start only of a
-	// holder with CanStart, and starts a session that needs the screen
-	// watched (agent.Actions.WatchScreen) only on a holder with RawScreen.
+	// Caps says what this holder offers: only a holder with CanStart
+	// starts agents, and only one with RawScreen can hold a session whose
+	// screen is watched (agent.Actions.WatchScreen). With hataori's own
+	// host the only holder, the runner does not ask yet.
 	Caps() Caps
 
 	// Start starts the agent with exactly spec's arguments, environment
@@ -65,8 +66,8 @@ type Spec struct {
 	Rows     uint16
 	// Again is set when a daemon that died had begun this start and may
 	// have started the agent before it died: the window recorded for the
-	// session before that start began, the zero Window when there was none.
-	// A window that start made is taken instead of making another.
+	// session before that start began, with Process 0 when none was. A
+	// window that start made is taken instead of making another.
 	Again *Window
 }
 
