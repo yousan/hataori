@@ -80,6 +80,24 @@ type Scope struct {
 	Model   string   // default model; empty for the agent's own default
 	Effort  string   // default effort; empty for the agent's own default
 	People  []string // names of the people who may act here besides the owner
+	// Supervisor is the scope's supervisor (design, section 7.1); nil when
+	// the scope names none.
+	Supervisor *Supervisor
+}
+
+// Supervisor is the "supervisor" section of a scope.
+type Supervisor struct {
+	Agent        string // "agent": the adapter that runs it; the instance's when empty
+	Model        string // "model": the adapter's cheapest when empty
+	Effort       string // "effort": the scope's default when empty
+	Instructions string // "instructions": appended to the agent's own instructions
+}
+
+type fileSupervisor struct {
+	Agent        string `json:"agent"`
+	Model        string `json:"model"`
+	Effort       string `json:"effort"`
+	Instructions string `json:"instructions"`
 }
 
 // Dashboard is the "dashboard" section of the config: a loopback listener,
@@ -188,13 +206,14 @@ const (
 )
 
 type fileScope struct {
-	Key     string   `json:"key"`
-	Client  string   `json:"client"`
-	Enabled bool     `json:"enabled"`
-	Model   string   `json:"model"`
-	Effort  string   `json:"effort"`
-	People  []string `json:"people"`
-	Posters []string `json:"posters"`
+	Key        string          `json:"key"`
+	Client     string          `json:"client"`
+	Enabled    bool            `json:"enabled"`
+	Model      string          `json:"model"`
+	Effort     string          `json:"effort"`
+	People     []string        `json:"people"`
+	Posters    []string        `json:"posters"`
+	Supervisor *fileSupervisor `json:"supervisor"`
 }
 
 type filePerson struct {
@@ -303,6 +322,15 @@ func ParseConfig(data []byte) (*Config, error) {
 		}
 		if err := registry.ValidName(sc.Client); err != nil {
 			return nil, fmt.Errorf("config: key %q: %v", key+".client", err)
+		}
+		if sv := s.Supervisor; sv != nil {
+			sc.Supervisor = &Supervisor{Agent: strings.TrimSpace(sv.Agent), Model: strings.TrimSpace(sv.Model),
+				Effort: strings.TrimSpace(sv.Effort), Instructions: strings.TrimSpace(sv.Instructions)}
+			if a := sc.Supervisor.Agent; a != "" {
+				if err := registry.ValidName(a); err != nil {
+					return nil, fmt.Errorf("config: key %q: %v", key+".supervisor.agent", err)
+				}
+			}
 		}
 		c.Scopes = append(c.Scopes, sc)
 	}

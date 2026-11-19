@@ -67,6 +67,14 @@
 //	                    report the account's remaining usage as given AGE
 //	                    seconds ago, reported every EVERY seconds; RESETS is
 //	                    Unix seconds, 0 for none
+//	mcp TOOL [ARGUMENTS]
+//	                    call TOOL of the session's MCP server, ARGUMENTS a JSON
+//	                    object, and reply "mcp: TEXT", "mcp error: TEXT" for a
+//	                    tool error, or "mcp failed: ..." when it was not reached
+//
+// With --mcp-config FILE (a confined spec, Config.Confines) the program has
+// the MCP servers in FILE. It starts the first one on the first "mcp" and
+// keeps it until it exits, as an agent keeps its MCP servers.
 //
 // With --conversations DIR the program keeps one file per session it starts
 // in DIR, and a resume whose file is gone reports "cannot-resume".

@@ -42,11 +42,12 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	conversations := fs.String("conversations", "", "a directory with one file per session started")
 	configDir := fs.String("config", "", "where its login is kept; turns fail until it is logged in")
 	dialog := fs.String("dialog", "", "a start-up dialog to show on the terminal, answered by Enter")
+	mcpConfig := fs.String("mcp-config", "", "a confined spec's MCP servers, for the script command mcp")
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
 	p := &program{out: stdout, hook: *hook, terminal: *terminal, answers: map[string]chan string{}, configDir: *configDir,
-		model: *model, effort: *effort}
+		model: *model, effort: *effort, mcp: &mcpClient{config: *mcpConfig}}
 	if *terminal {
 		if f, ok := stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
 			if old, err := term.MakeRaw(int(f.Fd())); err == nil {
@@ -149,7 +150,8 @@ type program struct {
 	configDir  string
 	model      string // as started, for whoami
 	effort     string
-	turns      int // turns started since the program started
+	turns      int        // turns started since the program started
+	mcp        *mcpClient // the confined spec's MCP server
 }
 
 // report sends one report: a line on stdout, or a hook call.
@@ -228,6 +230,23 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 				p.say(final, false)
 			}
 			final, replied = "model "+p.model+" effort "+p.effort, true
+		case "mcp":
+			// mcp TOOL [ARGUMENTS]: call a tool of the MCP server, ARGUMENTS
+			// a JSON object; reply "mcp: TEXT" or "mcp error: TEXT".
+			if replied {
+				p.say(final, false)
+			}
+			tool, args, _ := strings.Cut(arg, " ")
+			text, isError, err := p.mcp.call(tool, args)
+			switch {
+			case err != nil:
+				final = "mcp failed: " + err.Error()
+			case isError:
+				final = "mcp error: " + text
+			default:
+				final = "mcp: " + text
+			}
+			replied = true
 		case "tool":
 			name, dur, _ := strings.Cut(arg, " ")
 			d, _ := time.ParseDuration(dur)

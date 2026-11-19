@@ -77,6 +77,23 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	for name := range adapters {
 		agentName = name
 	}
+	// The scopes that name a supervisor (design, section 7.1). It runs on the
+	// instance's one adapter, with that adapter's cheapest model by default.
+	supervisors := map[string]supervisor.Scope{}
+	for i, s := range cfg.Scopes {
+		sv := s.Supervisor
+		if sv == nil {
+			continue
+		}
+		if sv.Agent != "" && sv.Agent != agentName {
+			return fmt.Errorf("config: key %q: %q is not the instance's agent adapter %q", fmt.Sprintf("scopes[%d].supervisor.agent", i), sv.Agent, agentName)
+		}
+		supervisors[s.Key] = supervisor.Scope{Model: sv.Model, Effort: sv.Effort, Instructions: sv.Instructions}
+	}
+	var cheap string
+	if cm, ok := adapters[agentName].(agent.CheapModel); ok {
+		cheap = cm.CheapModel()
+	}
 
 	st, err := store.Open(ctx, abs)
 	if err != nil {
@@ -185,10 +202,25 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	}
 	defer srv.Close()
 	// A supervisor's connection is bound to its scope by a token (design,
-	// section 7.1). The supervisor's session, which gets one, comes with #270.
+	// section 7.1): each of its sessions gets one, and every launch of the
+	// session is confined, with hataori's MCP server holding that token.
 	issueSupervisor := func(scope string) (string, error) { return srv.Issue(c.As(supervisor.Caller(scope))) }
 	if supervisorHook != nil {
 		supervisorHook(issueSupervisor, srv.Revoke)
+	}
+	sv := &supervisor.Sessions{Core: c, Tokens: srv, Root: abs, Hataori: exe, Scopes: supervisors,
+		Owner: control.Principal(cfg.Owner), Cheap: cheap, Log: lg}
+	r.Confine = sv.Confine
+	for scope := range supervisors {
+		if name, ok := cfg.People.Resolve(supervisor.ID(scope)); !ok || !cfg.People.May(name, scope) {
+			lg.Warn("the supervisor of a scope is no person of that scope: it may read its threads, but not send or start",
+				"scope", scope, "id", supervisor.ID(scope))
+		}
+	}
+	// Before the socket serves: the MCP servers of supervisor sessions that
+	// kept running connect again with their tokens.
+	if err := sv.Restore(ctx); err != nil {
+		return err
 	}
 	if err := r.Reconnect(ctx); err != nil {
 		return err
@@ -228,6 +260,17 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 			lg.Error("login relay", "err", err)
 		}
 	}()
+	if len(supervisors) > 0 {
+		// Each scope's supervisor thread, once; found again after a restart.
+		// It ends, and is waited for, before the store is closed.
+		svCtx, svCancel := context.WithCancel(feCtx)
+		svDone := make(chan struct{})
+		defer func() { svCancel(); <-svDone }()
+		go func() {
+			defer close(svDone)
+			sv.Start(svCtx)
+		}()
+	}
 	if age := cfg.Cleanup.RemoveClosedAfter; age > 0 {
 		// It ends, and is waited for, before the store is closed.
 		passCtx, passCancel := context.WithCancel(ctx)

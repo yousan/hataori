@@ -1,0 +1,92 @@
+[
+  {
+    "Argv": [
+      "claude",
+      "--settings",
+      "/nonexistent/state/sessions/7/claude-settings.json",
+      "--permission-mode",
+      "default",
+      "--session-id",
+      "\u003cnew session id\u003e",
+      "--model",
+      "opus",
+      "--effort",
+      "high",
+      "--append-system-prompt-file",
+      "/nonexistent/state/sessions/7/claude-instructions.md"
+    ],
+    "Env": [
+      "PATH=/usr/bin:/bin",
+      "HOME=/nonexistent/home",
+      "LANG=C.UTF-8",
+      "ANTHROPIC_API_KEY=k",
+      "TERM=xterm-256color",
+      "HATAORI_HOST_SOCKET=/nonexistent/state/sessions/7/host.sock"
+    ],
+    "Terminal": true,
+    "Files": [
+      {
+        "Name": "claude-settings.json",
+        "Text": "{\n  \"editorMode\": \"normal\",\n  \"hooks\": {\n    \"PermissionRequest\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook --wait --timeout 86400s\",\n            \"timeout\": 86400\n          }\n        ]\n      }\n    ],\n    \"PostCompact\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"PostToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"PostToolUseFailure\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"PreCompact\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      },\n      {\n        \"matcher\": \"AskUserQuestion\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook --wait --timeout 86400s\",\n            \"timeout\": 86400\n          }\n        ]\n      }\n    ],\n    \"SessionEnd\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"SessionStart\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"Stop\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"StopFailure\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"SubagentStart\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"SubagentStop\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"UserPromptSubmit\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"'/opt/hataori/bin/hataori' statusline --last '/nonexistent/state/sessions/7/claude-statusline-last.json'\",\n    \"refreshInterval\": 60\n  }\n}"
+      },
+      {
+        "Name": "claude-instructions.md",
+        "Text": "Be brief."
+      }
+    ]
+  },
+  {
+    "Argv": [
+      "claude",
+      "--settings",
+      "/nonexistent/state/sessions/8/claude-settings.json",
+      "--permission-mode",
+      "default",
+      "--session-id",
+      "\u003cnew session id\u003e"
+    ],
+    "Env": [
+      "PATH=/usr/bin:/bin",
+      "HOME=/nonexistent/home",
+      "LANG=C.UTF-8",
+      "ANTHROPIC_API_KEY=k",
+      "TERM=xterm-256color",
+      "HATAORI_HOST_SOCKET=/nonexistent/state/sessions/8/host.sock"
+    ],
+    "Terminal": true,
+    "Files": [
+      {
+        "Name": "claude-settings.json",
+        "Text": "{\n  \"editorMode\": \"normal\",\n  \"hooks\": {\n    \"PermissionRequest\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook --wait --timeout 86400s\",\n            \"timeout\": 86400\n          }\n        ]\n      }\n    ],\n    \"PostCompact\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"PostToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"PostToolUseFailure\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"PreCompact\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      },\n      {\n        \"matcher\": \"AskUserQuestion\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook --wait --timeout 86400s\",\n            \"timeout\": 86400\n          }\n        ]\n      }\n    ],\n    \"SessionEnd\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"SessionStart\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"Stop\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"StopFailure\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"SubagentStart\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"SubagentStop\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"UserPromptSubmit\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"'/opt/hataori/bin/hataori' statusline --last '/nonexistent/state/sessions/8/claude-statusline-last.json'\",\n    \"refreshInterval\": 60\n  }\n}"
+      }
+    ]
+  },
+  {
+    "Argv": [
+      "claude",
+      "--settings",
+      "/nonexistent/state/sessions/7/claude-settings.json",
+      "--permission-mode",
+      "default",
+      "--resume",
+      "00000000-0000-4000-8000-000000000007",
+      "--model",
+      "opus"
+    ],
+    "Env": [
+      "PATH=/usr/bin:/bin",
+      "HOME=/nonexistent/home",
+      "LANG=C.UTF-8",
+      "ANTHROPIC_API_KEY=k",
+      "TERM=xterm-256color",
+      "HATAORI_HOST_SOCKET=/nonexistent/state/sessions/7/host.sock"
+    ],
+    "Terminal": true,
+    "Files": [
+      {
+        "Name": "claude-settings.json",
+        "Text": "{\n  \"editorMode\": \"normal\",\n  \"hooks\": {\n    \"PermissionRequest\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook --wait --timeout 86400s\",\n            \"timeout\": 86400\n          }\n        ]\n      }\n    ],\n    \"PostCompact\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"PostToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"PostToolUseFailure\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"PreCompact\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      },\n      {\n        \"matcher\": \"AskUserQuestion\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook --wait --timeout 86400s\",\n            \"timeout\": 86400\n          }\n        ]\n      }\n    ],\n    \"SessionEnd\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"SessionStart\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"Stop\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"StopFailure\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"SubagentStart\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"SubagentStop\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ],\n    \"UserPromptSubmit\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"'/opt/hataori/bin/hataori' hook\"\n          }\n        ]\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"'/opt/hataori/bin/hataori' statusline --last '/nonexistent/state/sessions/7/claude-statusline-last.json'\",\n    \"refreshInterval\": 60\n  }\n}"
+      }
+    ]
+  }
+]

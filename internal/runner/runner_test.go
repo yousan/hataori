@@ -128,6 +128,11 @@ func (workDir) State(context.Context, string) (control.WorkspaceState, error) {
 	return control.WorkspaceState{}, nil
 }
 
+func (w workDir) Empty(_ context.Context, th control.ThreadID) (string, error) {
+	dir := filepath.Join(w.root, "confined-"+fmt.Sprint(int64(th)))
+	return dir, os.MkdirAll(dir, 0o700)
+}
+
 type options struct {
 	terminal      bool
 	instructions  string

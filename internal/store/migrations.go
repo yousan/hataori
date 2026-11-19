@@ -383,6 +383,11 @@ var migrations = []Migration{
 		`ALTER TABLE chat_outbox_new RENAME TO chat_outbox`,
 		`CREATE INDEX chat_outbox_pending ON chat_outbox (client, channel, thread, id) WHERE state = 'pending'`,
 	)},
+	// A thread started confined (design, section 7.1): every launch of its
+	// sessions is confined, in a directory of its own with no repository.
+	{Name: "threads.confined", Up: execAll(
+		`ALTER TABLE threads ADD COLUMN confined INTEGER NOT NULL DEFAULT 0`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {
