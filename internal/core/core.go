@@ -862,7 +862,14 @@ func (c *Core) openRequest(ctx context.Context, q querier, id control.ThreadID) 
 	return r, true, nil
 }
 
-// recentText returns the end of the thread's text output, at most max bytes.
+// recentSep goes between two text events in recentText: each is a whole
+// agent message, and joined without it the end of one message ran into the
+// next (#420). It is part of the protocol (ThreadDetail.recent).
+const recentSep = "\n\n"
+
+// recentText returns the end of the thread's text output: its text events,
+// oldest first, with recentSep between them, cut to its last max bytes at
+// the start of a character.
 func (c *Core) recentText(ctx context.Context, id control.ThreadID, max int) (string, error) {
 	if max <= 0 {
 		return "", nil
@@ -885,12 +892,16 @@ func (c *Core) recentText(ctx context.Context, id control.ThreadID, max int) (st
 		}
 		json.Unmarshal(data, &e)
 		parts = append(parts, e.Text)
-		n += len(e.Text)
+		n += len(e.Text) + len(recentSep)
 	}
 	slices.Reverse(parts)
-	s := strings.Join(parts, "")
+	s := strings.Join(parts, recentSep)
 	if len(s) > max {
-		s = s[len(s)-max:]
+		i := len(s) - max
+		for i < len(s) && !utf8.RuneStart(s[i]) {
+			i++
+		}
+		s = s[i:]
 	}
 	return s, rows.Err()
 }
