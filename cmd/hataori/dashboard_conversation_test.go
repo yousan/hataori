@@ -367,9 +367,9 @@ func TestDashboardConversationLongThread(t *testing.T) {
 		t.Fatal("the conversation starts at the thread's first input, not at its end")
 	}
 
-	// Older entries keep the entry at the top in place, even when a new
-	// turn's entries come while they are read. The read of older entries
-	// is held until the new turn's are shown.
+	// Older entries keep the entry at the top where the person sees it when
+	// they come, even when the person scrolled and a new turn's entries came
+	// while they were read. The read of older entries is held until then.
 	b.call("Fetch.enable", map[string]any{"patterns": []map[string]any{{"urlPattern": "*/api/threadevents*before=*", "requestStage": "Request"}}})
 	b.eval(fmt.Sprintf(`(() => { const c = document.querySelector('%s'); c.scrollTop = 0; c.dispatchEvent(new Event('scroll')); return true; })()`, conv), nil)
 	held := b.paused("the read of older entries")
@@ -385,10 +385,26 @@ func TestDashboardConversationLongThread(t *testing.T) {
 		return x
 	}
 	before := topOf()
+	offsetOf := func(pos string) float64 {
+		var o float64
+		b.eval(fmt.Sprintf(`(() => { const c = document.querySelector('%s'); const l = c.querySelector('.conv-list > li[data-pos="%s"]');
+			return l.getBoundingClientRect().top - c.getBoundingClientRect().top; })()`, conv, pos), &o)
+		return o
+	}
+	b.eval(fmt.Sprintf(`(() => { const c = document.querySelector('%s'); c.scrollTop += 120; return true; })()`, conv), nil)
+	b.until("the scroll", fmt.Sprintf(`document.querySelector('%s').scrollTop >= 100`, conv))
+	scrolled := offsetOf(before.Pos)
+	if scrolled > before.Offset-100 {
+		t.Fatalf("the view did not scroll: the entry is at %v px, was at %v", scrolled, before.Offset)
+	}
+	before.Offset = scrolled
 	if err := c.Send(ctx, id, "k-live", control.Input{Text: "reply live-while-reading"}, control.Refuse); err != nil {
 		t.Fatal(err)
 	}
 	b.until("the new turn while older entries are read", fmt.Sprintf(`[...document.querySelectorAll('%s .conv-text')].some(e => e.textContent === 'live-while-reading')`, conv))
+	if o := offsetOf(before.Pos); o < before.Offset-2 || o > before.Offset+2 {
+		t.Fatalf("a new turn moved the view the person scrolled: the entry went from %v to %v px", before.Offset, o)
+	}
 	b.call("Fetch.continueRequest", map[string]any{"requestId": held})
 	b.until("the older entries", fmt.Sprintf(`document.querySelectorAll('%s .conv-list > li').length > %d && document.querySelector('%s .conv-list > li').dataset.pos !== %q`, conv, before.N+2, conv, before.Pos))
 	var kept float64

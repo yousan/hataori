@@ -96,7 +96,7 @@ export function thread(id: ThreadID, events: number): Promise<ThreadDetail> {
 }
 
 // threadEvents reads a thread's events before position before, or its last
-// ones when before is 0: at most limit, newest last (protocol 3.1). An
+// ones when before is 0: at most limit, newest last (protocol 3.3). An
 // empty answer is the thread's start.
 export function threadEvents(id: ThreadID, before: number, limit: number): Promise<Event[]> {
   const q = new URLSearchParams({ thread: String(id), limit: String(limit) });

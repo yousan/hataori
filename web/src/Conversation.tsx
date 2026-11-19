@@ -131,8 +131,8 @@ export function Conversation(props: { x: ThreadInfo; subscribe: (f: (e: Event) =
   const reading = useRef(false);
   const atEnd = useRef(true); // the view shows the newest entry: it follows new ones
   // anchor is the entry at the top of the view when older entries were
-  // asked for, and where it was: it stays there until they come, whatever
-  // else comes meanwhile.
+  // asked for. When they come, it stays where the person sees it then;
+  // until they come, nothing moves it.
   const anchor = useRef<{ pos: number; offset: number; done: boolean } | null>(null);
 
   const add = (more: readonly Event[]) => {
@@ -227,11 +227,11 @@ export function Conversation(props: { x: ThreadInfo; subscribe: (f: (e: Event) =
     const el = box.current;
     if (!el) return;
     const a = anchor.current;
-    if (a) {
+    if (a?.done) {
       const li = el.querySelector<HTMLElement>(`.conv-list > li[data-pos="${a.pos}"]`);
       if (li) el.scrollTop += offsetIn(el, li) - a.offset;
-      if (a.done) anchor.current = null;
-    } else if (atEnd.current) {
+      anchor.current = null;
+    } else if (!a && atEnd.current) {
       el.scrollTop = el.scrollHeight;
     }
     if (el.scrollTop < nearTop && !start && !reading.current) older();
