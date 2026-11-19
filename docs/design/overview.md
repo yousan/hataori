@@ -1263,7 +1263,7 @@ Run on 2026-11-19 against tmux 3.4 on Linux, on a tmux server of its own (`-L`, 
 | The default of `window-size` | `latest` |
 | `attach-session -f` in the manual page | the client flags include `ignore-size`; `-r` is `read-only,ignore-size` |
 
-On tmux 3.5a on macOS (#399), the holder's checks passed against `stty raw` and `cat` in a pane: a paste of several lines with a tab, a DEL, Japanese and a leading `-` arrived byte for byte between the marks, and `send-keys Enter Escape Up Down` as `\r`, `ESC`, `ESC [ A`, `ESC [ B`. There a tab in a `-F` format, in `list-panes` and in `new-session -P`, was printed as `_`.
+On tmux 3.5a on macOS (#399), the holder's checks passed against `stty raw` and `cat` in a pane: a paste of several lines with a tab, a DEL, Japanese and a leading `-` arrived byte for byte between the marks, and `send-keys Enter Escape Up Down` as `\r`, `ESC`, `ESC [ A`, `ESC [ B`. There, under a locale that is not UTF-8 (`LC_CTYPE=C`) and with `TMUX` unset, the client printed every tab of a `-F` format, in `list-panes` and in `new-session -P`, as `_`, and every character outside ASCII too; with `-u`, or with `TMUX` set in its environment even empty, it printed them as they are. A tab inside a value, such as a session's name, it printed as `\t` either way (#483).
 
 Later, for #362: on tmux 3.4, `send-keys` typed a name it cannot encode (`S-Tab`, `S-a`, `C-{`) into the pane as its letters and dropped some (`C-Enter`, `C-BSpace`), and an argument ending in `;` ended the command (`M-;` typed `M-`; `M-\;` sent `ESC ;`); `paste-buffer -S` was refused with "unknown flag -S" and the buffer kept. On tmux 3.8 (macOS CI), `paste-buffer` without `-S` gave a DEL as `^?`: tmux 3.7 passes a paste through vis(3) unless given `-S`.
 
