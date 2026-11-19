@@ -18,6 +18,7 @@ English for code, comments, commit messages, issues, pull requests and docs.
 - One issue per concern. Write acceptance criteria that are either met or not.
 - One branch per issue, one pull request per branch. Reference the issue (`Closes #N`).
 - Do not push to `main` directly.
+- Before every merge, the pull request's diff against the current `main` lists only the pull request's own changes.
 
 ## Claiming an issue
 
