@@ -420,7 +420,8 @@ func (f *FrontEnd) followUp(in surface.Inbound) error {
 	// delivered, an open question gets it as the answer. Whether the author
 	// may give input at all, the core decides too, and it refuses input to a
 	// closed thread, which a message does not wake.
-	err = api.Send(ctx, id, in.Ref.ID, control.Input{Text: in.Text}, control.Deliver)
+	err = api.Send(ctx, id, in.Ref.ID, control.Input{Text: in.Text,
+		Link: &control.LinkRef{Client: f.Name, Channel: conv.Channel, Thread: conv.Thread}}, control.Deliver)
 	if errors.Is(err, control.ErrForbidden) {
 		return nil // the core logged it
 	}

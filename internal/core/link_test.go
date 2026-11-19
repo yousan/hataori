@@ -96,3 +96,34 @@ func TestLinkOnlyWhereShowInAllows(t *testing.T) {
 		t.Fatalf("refused links made %d links and opened %d conversations", n-before, owner.n-opened-1)
 	}
 }
+
+// An input names only a link of its thread: one that is not is left out of
+// the input event.
+func TestInputNamesOnlyALinkOfItsThread(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{key: "new"})
+	a, _ := f.running(t, "t1")
+	b, _ := f.running(t, "t2")
+	own := links(t, f, a)[0]
+	other := links(t, f, b)[0]
+	for i, l := range []control.LinkRef{own, other, {Client: "chat", Channel: "s", Thread: "nowhere"}} {
+		if err := f.owner.Send(ctx, a, fmt.Sprint("m", i), control.Input{Text: fmt.Sprint("text ", i), Link: &l}, control.Deliver); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := f.core.Store.DB.Query(`SELECT json_extract(data, '$.text'), coalesce(json_extract(data, '$.link.thread'), '') FROM events
+		WHERE thread_id = ? AND kind = 'input' AND json_extract(data, '$.text') LIKE 'text %' ORDER BY pos`, int64(a))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var text, link string
+		rows.Scan(&text, &link)
+		got = append(got, text+"="+link)
+	}
+	if strings.Join(got, ",") != "text 0="+own.Thread+",text 1=,text 2=" {
+		t.Fatalf("input events %v", got)
+	}
+}

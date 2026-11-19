@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +23,7 @@ type reader struct {
 	first map[control.ThreadID]uint64               // position of each thread's first event
 	turn  map[control.ThreadID]string               // key of the call that started the open turn
 	by    map[control.ThreadID]string               // who started the open turn: caller, agent or terminal
+	via   map[control.ThreadID]*control.LinkRef     // the link the open turn's first input came through; nil for none
 	quiet map[control.ThreadID]*quiet               // open turns, for the progress line
 	gone  map[control.ThreadID]*RowKey              // the last delete of a progress line
 	known map[control.ThreadID]bool                 // threads whose earlier events were read
@@ -47,6 +49,7 @@ func (f *FrontEnd) show(ctx context.Context) error {
 		first: map[control.ThreadID]uint64{},
 		turn:  map[control.ThreadID]string{},
 		by:    map[control.ThreadID]string{},
+		via:   map[control.ThreadID]*control.LinkRef{},
 		quiet: map[control.ThreadID]*quiet{},
 		gone:  map[control.ThreadID]*RowKey{},
 		known: map[control.ThreadID]bool{},
@@ -131,7 +134,7 @@ func (f *FrontEnd) show(ctx context.Context) error {
 		linked := len(convs) > 0
 		var rows []Row
 		if linked {
-			if rows, err = f.rowsFor(ctx, r, e, convs[0]); err != nil {
+			if rows, err = f.rowsFor(ctx, r, e, convs); err != nil {
 				return err
 			}
 			// A thread seen for the first time since the start: what its
@@ -140,6 +143,7 @@ func (f *FrontEnd) show(ctx context.Context) error {
 				return err
 			}
 			rows = everyLink(append(append(r.track(e), rows...), r.subagents(e)...), convs)
+			rows = append(rows, f.mirrorRows(e, convs)...)
 		}
 		lr, err := f.loginEvent(ctx, e, linked)
 		if err != nil {
@@ -177,6 +181,8 @@ type eventData struct {
 	More     []string `json:"more"`
 	Caption  string   `json:"caption"`
 	By       string   `json:"by"` // turn_started: who started the turn
+	// input, answer: the link it came through, since 3.6
+	Link *control.LinkRef `json:"link"`
 }
 
 // typedAtTerminal is the line that goes before the final answer of a turn a
@@ -185,8 +191,20 @@ type eventData struct {
 const typedAtTerminal = "(typed at the terminal)"
 
 // rowsFor returns the rows that show e. A kind it does not show gives none.
-func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv surface.Conversation) ([]Row, error) {
+//
+// The rows are for the thread's first conversation here, convs[0], and
+// everyLink copies them to the others; a final answer's is for the
+// conversation its turn's input came through, when that is one of convs.
+func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, convs []surface.Conversation) ([]Row, error) {
+	conv := convs[0]
 	switch e.Kind {
+	case "input", "answer":
+		var d eventData
+		json.Unmarshal(e.Data, &d)
+		if _, seen := r.via[e.Thread]; !seen && r.turn[e.Thread] != "" {
+			r.via[e.Thread] = d.Link // the turn's first input or answer
+		}
+		return nil, nil
 	case "thread_created", "turn_started", "text", "request", "turn_ended", "file_out":
 	default:
 		return nil, nil // a kind the front end does not show, or does not know
@@ -205,6 +223,7 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 	case "turn_started":
 		r.turn[e.Thread] = d.Key
 		r.by[e.Thread] = d.By
+		delete(r.via, e.Thread)
 	case "text":
 		if strings.TrimSpace(d.Text) == "" {
 			return nil, nil
@@ -216,12 +235,24 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		if err != nil {
 			return nil, err
 		}
+		// The reply goes where the turn's input was written; a link of
+		// another client, or one this front end no longer has, gets none.
+		replies := true
+		if l := r.via[e.Thread]; l != nil {
+			c := surface.Conversation{Channel: l.Channel, Thread: l.Thread}
+			if l.Client == f.Name && slices.Contains(convs, c) {
+				conv = c
+			} else {
+				replies = false
+			}
+		}
+		row = func(m surface.Message) []Row { return []Row{{Event: e.Pos, Conv: conv, Message: m}} }
 		if by == "terminal" {
 			return row(surface.Message{Text: typedAtTerminal + "\n" + d.Text}), nil
 		}
 		rows := row(surface.Message{Text: d.Text})
-		if key == "" {
-			return rows, nil // the agent started the turn by itself
+		if key == "" || !replies {
+			return rows, nil // the agent started the turn by itself, or it came through no link here
 		}
 		trigger, err := f.isTrigger(ctx, conv.Channel, key)
 		if err != nil {
@@ -249,6 +280,7 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 	case "turn_ended":
 		delete(r.turn, e.Thread)
 		delete(r.by, e.Thread)
+		delete(r.via, e.Thread)
 		if d.Outcome == "failure" {
 			return row(surface.Message{Text: failureLine(d.Reason)}), nil
 		}
@@ -305,9 +337,17 @@ func (r *reader) turnKey(ctx context.Context, e control.Event) (key, by string, 
 			json.Unmarshal(ev.Data, &d)
 			r.turn[e.Thread] = d.Key
 			r.by[e.Thread] = d.By
+			delete(r.via, e.Thread)
+		case "input", "answer":
+			var d eventData
+			json.Unmarshal(ev.Data, &d)
+			if _, seen := r.via[e.Thread]; !seen {
+				r.via[e.Thread] = d.Link
+			}
 		case "turn_ended":
 			delete(r.turn, e.Thread)
 			delete(r.by, e.Thread)
+			delete(r.via, e.Thread)
 		}
 	})
 	return r.turn[e.Thread], r.by[e.Thread], err

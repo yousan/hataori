@@ -50,6 +50,7 @@ type Input struct {
 	Agent     agent.Event       // AgentEvent
 	Reason    string            // Exit: why; empty for "crashed". Close, Remove: what asked for it, such as "command"
 	Detail    string            // StartTimeout, Exit: what a person may want to read, such as the end of the terminal log
+	Link      *control.LinkRef  // Send, Answer: the link it came through, if any
 }
 
 // given is the data of the input or answer event of in: its text, and who
@@ -61,6 +62,9 @@ func given(in Input) map[string]any {
 	}
 	if in.From != "" {
 		d["from"] = in.From
+	}
+	if l := in.Link; l != nil {
+		d["link"] = map[string]any{"client": l.Client, "channel": l.Channel, "thread": l.Thread}
 	}
 	return d
 }

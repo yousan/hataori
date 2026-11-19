@@ -94,3 +94,20 @@ func (a *api) Link(ctx context.Context, id control.ThreadID, l control.LinkRef) 
 		"person", string(a.caller.Principal))
 	return l, nil
 }
+
+// ownLink returns l when it is one of thread id's links, and nil otherwise:
+// an input or answer names only a link it can have come through.
+func (c *Core) ownLink(ctx context.Context, q querier, id control.ThreadID, l *control.LinkRef) (*control.LinkRef, error) {
+	if l == nil {
+		return nil, nil
+	}
+	var n int
+	if err := q.QueryRowContext(ctx, `SELECT count(*) FROM links WHERE thread_id = ? AND client = ? AND channel = ? AND thread = ?`,
+		int64(id), l.Client, l.Channel, l.Thread).Scan(&n); err != nil {
+		return nil, fmt.Errorf("core: link of thread %d: %w", id, err)
+	}
+	if n == 0 {
+		return nil, nil
+	}
+	return l, nil
+}

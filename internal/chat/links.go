@@ -2,6 +2,8 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/yousan/hataori/internal/control"
@@ -61,32 +63,68 @@ func (f *FrontEnd) convsOf(ctx context.Context, id control.ThreadID) ([]surface.
 	return out, rows.Err()
 }
 
-// everyLink returns rows, written for the first conversation of thread id
-// (convs[0]), and a copy of each for every other conversation in convs.
-// Which messages each link gets (design, section 5.2): every link gets
-// the agent's output, its questions, files, failures, progress and
-// subagent lines. A reply to the message that started the turn, and to
-// the prompt the trigger posted, stays in the first link, where those
-// messages are; the copies are posted without the reply.
+// everyLink returns rows, each written for one of convs, and a copy of
+// each for every other conversation in convs. Which messages each link gets
+// (design, section 5.2): every link gets the agent's output, its questions,
+// files, failures, progress and subagent lines. A reply stays in the
+// conversation of the message it replies to: the reply of a final answer
+// to the message that started the turn, or to the prompt a trigger posted,
+// is in the link the turn's input came through; the copies are posted
+// without it.
 func everyLink(rows []Row, convs []surface.Conversation) []Row {
 	if len(convs) < 2 {
 		return rows
 	}
 	out := append([]Row(nil), rows...)
-	for _, conv := range convs[1:] {
-		for _, r := range rows {
-			if r.Conv != convs[0] {
+	for _, r := range rows {
+		if !slices.Contains(convs, r.Conv) {
+			continue
+		}
+		from := r.Conv
+		for _, conv := range convs {
+			if conv == from {
 				continue
 			}
-			r.Conv = conv
-			r.ReplyToRow = nil
-			if r.Message.ReplyTo != nil && r.Message.ReplyTo.Conv == convs[0] {
-				r.Message.ReplyTo = nil
+			c := r
+			c.Conv = conv
+			c.ReplyToRow = nil
+			if c.Message.ReplyTo != nil && c.Message.ReplyTo.Conv != conv {
+				c.Message.ReplyTo = nil
 			}
-			out = append(out, r)
+			out = append(out, c)
 		}
 	}
 	return out
+}
+
+// mirrorRows returns the lines that show an input or answer event of a
+// thread shown in convs in every one of them but the link it came through,
+// as "<person>: <text>" (design, section 5.2). An input that came through
+// no link, as from the supervisor, is shown in each.
+func (f *FrontEnd) mirrorRows(e control.Event, convs []surface.Conversation) []Row {
+	if e.Kind != "input" && e.Kind != "answer" {
+		return nil
+	}
+	var d struct {
+		Text      string           `json:"text"`
+		Principal string           `json:"principal"`
+		Link      *control.LinkRef `json:"link"`
+	}
+	if json.Unmarshal(e.Data, &d) != nil || strings.TrimSpace(d.Text) == "" {
+		return nil
+	}
+	who := d.Principal
+	if who == "" {
+		who = "someone"
+	}
+	var rows []Row
+	for _, conv := range convs {
+		if l := d.Link; l != nil && l.Client == f.Name && l.Channel == conv.Channel && l.Thread == conv.Thread {
+			continue // where it was written
+		}
+		rows = append(rows, Row{Event: e.Pos, Part: 0, Conv: conv, Message: surface.Message{Text: who + ": " + d.Text, Quiet: true}})
+	}
+	return rows
 }
 
 // threadIn returns the thread linked to conv on this front end, as api sees
