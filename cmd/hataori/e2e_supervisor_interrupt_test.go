@@ -167,8 +167,25 @@ func TestInterruptApproved(t *testing.T) {
 	})
 	f.root.posted(t, f.conv, fmt.Sprintf("Approved by boss: thread %d's turn was interrupted, and it got the reason.", f.worker))
 	f.press(t, q, e2eOwner, "Approve")
+	asked := threadEvents(t, f.owner, f.sv.ID, "approval_asked")
+	if len(asked) != 1 {
+		t.Fatalf("approval_asked events: %v", asked)
+	}
+	request, ok := asked[0]["request"].(string)
+	if !ok || request == "" {
+		t.Fatalf("approval request: %v", asked[0])
+	}
+	if err := f.owner.Answer(context.Background(), control.RequestID(request), control.Answer{Allow: true}); err == nil {
+		t.Fatal("answering an already answered approval succeeded")
+	}
 	time.Sleep(200 * time.Millisecond)
-	if len(threadEvents(t, f.owner, f.sv.ID, "approval_answered")) != 1 || len(threadEvents(t, f.owner, f.worker, "input")) != 2 {
+	interrupted := 0
+	for _, e := range threadEvents(t, f.owner, f.worker, "turn_ended") {
+		if e["reason"] == "interrupted" {
+			interrupted++
+		}
+	}
+	if len(threadEvents(t, f.owner, f.sv.ID, "approval_answered")) != 1 || interrupted != 1 || len(threadEvents(t, f.owner, f.worker, "input")) != 2 {
 		t.Fatal("duplicate approval changed the worker")
 	}
 }
