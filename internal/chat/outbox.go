@@ -490,6 +490,19 @@ func (o *Outbox) change(ctx context.Context, conv surface.Conversation, r pendin
 	if meta.Target != nil {
 		state, to, err = o.state(ctx, conv, *meta.Target)
 	}
+	if meta.Op == Edit && meta.Target != nil && err == nil {
+		// A later edit of the same message makes this one moot: one that
+		// failed and is tried again never puts back what a newer one took
+		// away, as a progress line's button.
+		var later int
+		err = o.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM chat_outbox WHERE client = ? AND channel = ? AND thread = ?
+			AND json_extract(message, '$.op') = 'edit' AND json_extract(message, '$.target.event') = ?
+			AND json_extract(message, '$.target.part') = ? AND (event > ? OR (event = ? AND part > ?))`,
+			o.Client, conv.Channel, conv.Thread, meta.Target.Event, meta.Target.Part, r.event, r.event, r.part).Scan(&later)
+		if err == nil && later > 0 {
+			return o.record(ctx, posted, r.id, `UPDATE chat_outbox SET state = 'dropped' WHERE id = ?`, r.id)
+		}
+	}
 	switch {
 	case err != nil:
 		return stuck

@@ -171,11 +171,15 @@ func (f *FrontEnd) direct(in surface.Inbound) {
 	}
 }
 
-// Choice handles a button: a question's option, or the login message's
-// "New link". A press that does nothing writes one log line.
+// Choice handles a button: a question's option, a turn's Stop, or the
+// login message's "New link". A press that does nothing writes one log line.
 func (f *FrontEnd) Choice(s surface.Selection) {
 	if rest, ok := strings.CutPrefix(s.Token, askToken); ok {
 		f.press(s, rest)
+		return
+	}
+	if rest, ok := strings.CutPrefix(s.Token, stopToken); ok {
+		f.pressStop(s, rest)
 		return
 	}
 	agent, ok := strings.CutPrefix(s.Token, "login:")
