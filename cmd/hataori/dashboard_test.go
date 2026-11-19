@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -151,7 +152,8 @@ func runDaemonLog(t *testing.T, root string) (stop func(), logged func() string)
 		dialErr = err
 		select {
 		case <-done:
-			t.Fatalf("the daemon ended with %d before it served: %v\n%s", code, dialErr, logged())
+			holders, _ := exec.Command("lsof", filepath.Join(root, instance.LockFile)).CombinedOutput()
+			t.Fatalf("the daemon ended with %d before it served: %v\n%s\nprocesses with the lock file open:\n%s", code, dialErr, logged(), holders)
 		default:
 		}
 		if time.Now().After(deadline) {
