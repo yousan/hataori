@@ -1,0 +1,58 @@
+{
+ "body": {
+  "attachments": [],
+  "author": {
+   "accent_color": null,
+   "avatar": null,
+   "avatar_decoration_data": null,
+   "banner": null,
+   "banner_color": null,
+   "bot": true,
+   "clan": null,
+   "collectibles": null,
+   "discriminator": "0000",
+   "display_name_styles": null,
+   "flags": 0,
+   "global_name": null,
+   "id": "1000000000000000004",
+   "primary_guild": null,
+   "public_flags": 0,
+   "username": "name-1"
+  },
+  "channel_id": "1000000000000000006",
+  "components": [],
+  "content": "[hataori test] answered",
+  "edited_timestamp": "2026-11-19T08:14:08.853724+00:00",
+  "embeds": [],
+  "flags": 0,
+  "id": "1000000000000000007",
+  "mention_everyone": false,
+  "mention_roles": [],
+  "mentions": [],
+  "pinned": false,
+  "timestamp": "2026-11-19T08:03:07.215000+00:00",
+  "tts": false,
+  "type": 0
+ },
+ "date": "2026-11-19T08:14:08Z",
+ "headers": {
+  "content-type": "application/json",
+  "via": "1.1 google",
+  "x-ratelimit-bucket": "00000000000000000000000000000004",
+  "x-ratelimit-limit": "5",
+  "x-ratelimit-remaining": "4",
+  "x-ratelimit-reset": "1795076049.817",
+  "x-ratelimit-reset-after": "1.000"
+ },
+ "request": {
+  "body": {
+   "components": [],
+   "content": "[hataori test] answered"
+  },
+  "files": [],
+  "method": "PATCH",
+  "path": "/channels/1000000000000000006/messages/1000000000000000007"
+ },
+ "source": "rest",
+ "status": 200
+}
