@@ -5,6 +5,7 @@ Real output of the interactive `claude` CLI, for testing the adapter's codec. Th
 - `2.1.322/`: Claude Code 2.1.322, captured on 2026-11-12 (also in `2.1.322/VERSION`), on Linux, with the model `haiku` (it reports itself as `claude-haiku-5-5`).
 - `2.1.326/`: Claude Code 2.1.326, captured on 2026-11-17 (also in `2.1.326/VERSION`), on Linux, with the model `haiku`: `subagent_tools`, taken for #142, and `trust_answered`, taken for #56 (see below).
 - `2.1.327/`: Claude Code 2.1.327, on 2026-11-18 (also in `2.1.327/VERSION`), on Linux: `first_enter_lost`, a real start of a session that hataori ran, taken for #178, `usage`, taken by `capture.py` for #195, and the `confine_*` scenarios, taken by `confine.py` for #268 (see below).
+- `2.1.328/`: Claude Code 2.1.328, on 2026-11-20 (also in `2.1.328/VERSION`), on Linux: `paste_tabs`, taken for #393 (see below).
 - `capture.py` took them (`confine.py`, the `confine_*` ones); `scrub.py` made them committable. `captures_test.go` in the package fails when a capture holds a home directory path, an e-mail address, an unscrubbed UUID or something shaped like a token.
 
 ## How they were taken
@@ -207,3 +208,16 @@ Notes:
 - The model kept to the prompts except in `confine_mcp_only_shell`: it called `mcp__sv__ping` before answering `no-tool`.
 - Every session also leaves the CLI's own state in the user's configuration: a transcript under `projects/`, its prompts in `history.jsonl`, and a project entry in `~/.claude.json`. A full run of `confine.py` adds about 65 of each, one per session. They are not settings, and the script does not remove them.
 - A person at the terminal could still type commands such as `/add-dir`, `/cd` or `!`. Those were not tried: the confinement is about what the model can do.
+
+## Pasted tabs (2.1.328, taken for #393)
+
+`2.1.328/paste_tabs/`, by `capture.py RAW_DIR paste_tabs`, then `scrub.py`. The command line, environment and recorder hook are the ones above, except that `CLAUDE_CONFIG_DIR` is a new, empty temporary directory, so there is no login. The script writes only a `.claude.json` into it, with `hasCompletedOnboarding`, a theme and `hasTrustDialogAccepted` for the session's directory, so that no first-run screen comes before the input box; the directory is deleted afterwards. `UserPromptSubmit` is called before any request is made, so no login is needed.
+
+Two inputs were sent, each as one bracketed paste and then Enter. The text pasted is kept byte for byte next to the hooks:
+
+| Pasted | Hook | What the prompt holds |
+|---|---|---|
+| `pasted-1.txt`: `tab<TAB>here, two<TAB><TAB>tabs; end`, one line | `02-UserPromptSubmit.json` | `tab    here, two        tabs; end`: each tab is exactly four spaces, not spaces up to the next tab stop |
+| `pasted-2.txt`: Go source of 41 lines, indented with tabs, with Japanese, backticks, `$HOME` and a literal `\t` | `04-UserPromptSubmit.json` | the same text with each tab as four spaces and every other byte unchanged; not inside a `pasted_content` tag |
+
+Each prompt is followed by `StopFailure` (`authentication_failed`, `Not logged in · Please run /login`); `SessionEnd` after `/exit`. The transcript shows the same prompts.

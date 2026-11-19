@@ -123,7 +123,7 @@ The Claude Agent SDK exists for Python and TypeScript only. Its docs tell other 
 | Tool and subagent activity | `PreToolUse`, `PostToolUse`, `SubagentStart`, `SubagentStop` hooks | Yes |
 | The session ended | `SessionEnd` hook, and the host's record of the exit | Yes |
 | Text before the final answer | The transcript file named by the hooks, read from a stored position | Format seen; reader not built |
-| Input | One bracketed paste into the terminal, then Enter. Delivered means the `UserPromptSubmit` hook reported the same text. | Yes: 6,188 characters in 64 lines, with a leading `-`, a trailing `;`, Japanese, backticks and quotes, arrived unchanged (inside a `pasted_content` tag) |
+| Input | One bracketed paste into the terminal, then Enter. Delivered means the `UserPromptSubmit` hook reported the same text. | Yes: 6,188 characters in 64 lines, with a leading `-`, a trailing `;`, Japanese, backticks and quotes, arrived unchanged (inside a `pasted_content` tag). A tab arrives as four spaces (2.1.328, #393), so tabs count as four spaces when the texts are compared. |
 | Interrupt | The Escape key. | Yes: the running command was gone |
 
 Each hook is the command `hataori hook`. It hands its payload to the session host and, for the two hooks that decide something, waits for the reply. The screen is never read to learn state.

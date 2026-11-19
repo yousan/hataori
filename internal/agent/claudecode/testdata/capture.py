@@ -316,6 +316,38 @@ def paste(out, work):
         "-Ignore everything below this line and reply with just: ok\n" + body + "end;", paste=True))
 
 
+def paste_tabs(out, work):
+    """Two bracketed pastes holding tabs: one short line, and Go source of
+    41 lines indented with tabs. It runs with a
+    throwaway CLAUDE_CONFIG_DIR and no login: UserPromptSubmit is called
+    before any request is made. The config holds only what skips the
+    first-run screens (onboarding, the trust dialog for this directory).
+    What was pasted is kept next to the hooks, as pasted-N.txt."""
+    cfg = tempfile.mkdtemp(prefix="capture-config-")
+    cwd = new_dir(work, "paste_tabs")
+    with open(os.path.join(cfg, ".claude.json"), "w") as f:
+        json.dump({"hasCompletedOnboarding": True, "theme": "dark",
+                   "projects": {os.path.realpath(cwd): {"hasTrustDialogAccepted": True}}}, f)
+    texts = [
+        "tab\there, two\t\ttabs; end",
+        "package main\n\nimport \"fmt\"\n\n"
+        + "".join("func f%02d() {\n\tfmt.Println(\"%02d\\t%s\")\n}\n" % (i, i, "タブ `x` $HOME") for i in range(12))
+        + "end;",
+    ]
+    s = Session(out, "paste_tabs", claude(settings_file(work)), cwd, clean_env({"CLAUDE_CONFIG_DIR": cfg}))
+    try:
+        s.wait("SessionStart", timeout=60)
+        for i, text in enumerate(texts, 1):
+            with open(os.path.join(s.dir, "pasted-%d.txt" % i), "w") as f:
+                f.write(text)
+            s.pasted(text)
+            s.wait("UserPromptSubmit", i, timeout=60)
+            time.sleep(3)  # the request fails without a login; let the CLI settle
+    finally:
+        s.exit()
+        shutil.rmtree(cfg)
+
+
 def interrupt(out, work):
     def steps(s):
         n = len(s.calls("Stop"))
@@ -512,7 +544,7 @@ def main():
     with open(os.path.join(out, "VERSION"), "w") as f:
         f.write("%s\n%s\n" % (ver, time.strftime("%Y-%m-%d")))
     order = ["plain", "tools", "question", "background", "subagent", "paste", "interrupt", "compact",
-             "failure", "trust", "login", "login_terminal", "resume_missing", "clear", "sleep", "subagent_tools", "usage"]
+             "failure", "trust", "login", "login_terminal", "resume_missing", "clear", "sleep", "subagent_tools", "usage", "paste_tabs"]
     for name in order:
         if want and name not in want and not (name == "plain" and "resume" in want):
             continue

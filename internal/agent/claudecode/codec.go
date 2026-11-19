@@ -802,8 +802,13 @@ func unwrapPaste(prompt string) string {
 	return strings.TrimSuffix(s[open+1:], end)
 }
 
+// normalize is the text an input and a prompt are compared by: trimmed,
+// with CRLF as LF, and each tab as four spaces. The CLI's input box turns a
+// pasted tab into exactly four spaces, not spaces up to the next tab stop
+// (2.1.328, testdata/2.1.328/paste_tabs).
 func normalize(s string) string {
-	return strings.TrimSpace(strings.ReplaceAll(s, "\r\n", "\n"))
+	s = strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\t", "    ")
+	return strings.TrimSpace(s)
 }
 
 // failureReason maps StopFailure's error type. Only model_not_found has
