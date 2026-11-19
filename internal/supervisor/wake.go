@@ -410,8 +410,17 @@ func (r *waking) attempt(ctx context.Context) error {
 		// refused. The next wake is made again, with what came since.
 		r.sending, r.held = nil, true
 		return r.store(ctx)
+	case stoppedByPlugin(err):
+		// A plugin's handler stopped this wake (design, section 7.3): the
+		// same text would be stopped again, so it is dropped, and the turn
+		// ends it named wake no one. A handler that failed is not this
+		// case: the wake is tried again until the plugin is back.
+		r.w.Log.Warn("supervisor wake stopped by a plugin", "scope", r.w.Scope, "thread", int64(sv), "err", ErrText(err))
+		to := r.sending.to
+		r.sending, r.held = nil, false
+		return r.advance(ctx, to)
 	default:
-		r.w.Log.Warn("waking the supervisor; trying again", "scope", r.w.Scope, "thread", int64(sv), "err", err)
+		r.w.Log.Warn("waking the supervisor; trying again", "scope", r.w.Scope, "thread", int64(sv), "err", ErrText(err))
 		r.retry = r.w.clock().After(max(r.w.Quiet, time.Second))
 		return nil
 	}

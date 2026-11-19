@@ -44,14 +44,17 @@ func (r *Runner) earlier(ctx context.Context, thread control.ThreadID) (string, 
 			return "", fmt.Errorf("runner: %w", err)
 		}
 		var d struct {
-			Text string `json:"text"`
+			Text   string `json:"text"`
+			Before string `json:"before"`
+			After  string `json:"after"`
 		}
 		json.Unmarshal(data, &d)
 		who := "user"
 		if kind == "text" {
 			who = "agent"
 		}
-		l := who + ": " + d.Text + "\n"
+		// An input as the agent got it, with the text plugins added (#351).
+		l := who + ": " + control.Input{Before: d.Before, Text: d.Text, After: d.After}.ForAgent() + "\n"
 		lines = append(lines, l)
 		n += len(l)
 	}

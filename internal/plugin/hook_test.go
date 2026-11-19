@@ -635,3 +635,47 @@ func TestAGivenUpCallClosesNothing(t *testing.T) {
 		t.Fatalf("%d calls reached the plugins, want the 2 of the second Run", calls)
 	}
 }
+
+// At before_prompt_build each handler adds text around what the ones
+// before it left, and sees it so; text to add is a failure at a point
+// that does not allow it, and so is a changed text at before_prompt_build.
+func TestBeforePromptBuildAdds(t *testing.T) {
+	f := newHookFixture(t, grant("inner", "before_prompt_build", 10, true), grant("outer", "before_prompt_build", 0, true))
+	var mu sync.Mutex
+	seen := map[string]string{}
+	for _, id := range []string{"inner", "outer"} {
+		f.connect(id, hookHandler(func(r control.HookRequest, _ json.RawMessage) (any, error) {
+			mu.Lock()
+			seen[id] = r.Text
+			mu.Unlock()
+			return control.HookAnswer{Action: control.HookContinue, Before: "b-" + id, After: "a-" + id}, nil
+		}))
+	}
+	res := f.d.Run(context.Background(), control.HookCall{Point: "before_prompt_build", Scope: "s", Text: "x"})
+	if res.Stopped || res.Text != "x" || res.Before != "b-outer\nb-inner" || res.After != "a-inner\na-outer" {
+		t.Fatalf("result %+v", res)
+	}
+	mu.Lock()
+	if seen["inner"] != "x" || seen["outer"] != "b-inner\nx\na-inner" {
+		t.Fatalf("the handlers saw %q", seen)
+	}
+	mu.Unlock()
+
+	for _, tc := range []struct {
+		point  string
+		answer control.HookAnswer
+	}{
+		{"before_prompt_build", control.HookAnswer{Action: control.HookContinue, Text: ptr("other")}},
+		{"message_sending", control.HookAnswer{Action: control.HookContinue, Before: "b"}},
+		{"before_agent_run", control.HookAnswer{Action: control.HookContinue, After: "a"}},
+		{"message_sending", control.HookAnswer{Action: control.HookStop, Reason: "no", After: "a"}},
+	} {
+		g := grant("p", tc.point, 0, true)
+		g.Hooks[0].OnFailure = Block
+		f := newHookFixture(t, g)
+		f.connect("p", hookHandler(func(control.HookRequest, json.RawMessage) (any, error) { return tc.answer, nil }))
+		if res := f.d.Run(context.Background(), control.HookCall{Point: tc.point, Scope: "s", Text: "x"}); !res.Stopped || !res.Failed {
+			t.Errorf("%s answered %+v: %+v, want a failure", tc.point, tc.answer, res)
+		}
+	}
+}

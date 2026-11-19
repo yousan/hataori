@@ -186,6 +186,11 @@ type FirstInput struct {
 	// Context goes before Text when the input is handed to the agent; the
 	// input event records Text alone. See Launch.Context.
 	Context string `json:"context,omitempty"`
+	// Before and After are the text the plugins added around Text
+	// (control.Input.Before): the agent gets them with it, and the input
+	// event keeps them beside it.
+	Before string `json:"before,omitempty"`
+	After  string `json:"after,omitempty"`
 	// Placed is the workspace a Make was about to put in place, until Dir
 	// records what it returned.
 	Placed *Placement `json:"placed,omitempty"`
@@ -250,6 +255,10 @@ type Core struct {
 	// Remover removes the workspaces of closed threads. It is the only way
 	// the core removes a workspace; nil refuses every Remove.
 	Remover Remover
+	// Hooks runs the plugins' handlers on the input hook points (design,
+	// section 7.3) inside Start and Send, before the input is accepted.
+	// Nil: there are none, and input is not held up.
+	Hooks control.Hooks
 
 	locks   keyedMutex
 	hostOps hostOpSet
@@ -439,6 +448,58 @@ func (a *api) marked(in control.Input) control.Input {
 		in.Text = a.caller.Mark + "\n" + in.Text
 	}
 	return in
+}
+
+// Input is the first input as Start or Send gave it: its text, link and
+// the text the plugins added.
+func (f FirstInput) Input() control.Input {
+	return control.Input{Text: f.Text, Link: f.Link, Before: f.Before, After: f.After}
+}
+
+// The input hook points, in the order they run (design, section 7.3).
+const (
+	PointBeforeAgentRun    = "before_agent_run"
+	PointBeforePromptBuild = "before_prompt_build"
+)
+
+// inputHooks runs the input hook points for in, an input of op (Start or
+// Send) to thread, 0 for a Start, in scope, before the core accepts it:
+// before_agent_run, which may stop it, then before_prompt_build, whose
+// added text it returns in in.Before and in.After, never the caller's. A
+// stopped input is refused with a *control.Stopped and one log line, and
+// nothing of it is kept. Without Hooks it calls nothing.
+func (a *api) inputHooks(ctx context.Context, op string, thread control.ThreadID, scope string, in control.Input) (control.Input, error) {
+	return a.runInputHooks(ctx, op, thread, scope, in, PointBeforeAgentRun, PointBeforePromptBuild)
+}
+
+// runInputHooks is inputHooks at points.
+func (a *api) runInputHooks(ctx context.Context, op string, thread control.ThreadID, scope string, in control.Input, points ...string) (control.Input, error) {
+	in.Before, in.After = "", ""
+	if a.c.Hooks == nil {
+		return in, nil
+	}
+	for _, point := range points {
+		r := a.c.Hooks.Run(ctx, control.HookCall{Point: point, Thread: thread, Scope: scope, Text: in.Text})
+		if err := ctx.Err(); err != nil {
+			return in, err // the caller gave up: no plugin stopped it
+		}
+		if r.Stopped {
+			attrs := []any{"op", op, "scope", scope, "point", point, "plugin", r.By, "failed", r.Failed,
+				"principal", string(a.caller.Principal)}
+			if thread != 0 {
+				attrs = append(attrs, "thread", int64(thread))
+			}
+			if a.caller.From != "" {
+				attrs = append(attrs, "from", a.caller.From)
+			}
+			a.c.Log.Warn("input stopped by a plugin", attrs...) // without the text, and the reason, which may quote it
+			return in, fmt.Errorf("core: %s in %q: %w", op, scope, &control.Stopped{Point: point, Plugin: r.By, Reason: r.Reason, Failed: r.Failed})
+		}
+		if point == PointBeforePromptBuild {
+			in.Before, in.After = r.Before, r.After
+		}
+	}
+	return in, nil
 }
 
 // noThread is a thread number no thread has.
@@ -1049,6 +1110,12 @@ func (a *api) start(ctx context.Context, r control.StartRequest, confined bool) 
 		}
 		return id, a.c.sameConfinement(ctx, id, confined)
 	}
+	// Before anything is made: a stopped input opens no chat thread and
+	// no workspace. A key accepted before, above, runs no hook again.
+	var err error
+	if r.Input, err = a.inputHooks(ctx, "Start", 0, r.Scope, r.Input); err != nil {
+		return 0, err
+	}
 
 	// The first link: in the scope's own channel, of the scope's owner.
 	link := control.LinkRef{Client: sc.Owner, Channel: r.Scope, Thread: r.Thread}
@@ -1081,7 +1148,7 @@ func (a *api) start(ctx context.Context, r control.StartRequest, confined bool) 
 		sessionID int64
 	)
 	errDup := errors.New("the key was accepted before")
-	err := a.c.Store.Update(ctx, func(tx *store.Tx) error {
+	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
 		now := time.Now().UnixMilli()
 		res, err := tx.ExecContext(ctx,
 			`INSERT INTO threads (scope, key, title, repo, started_by, state, created_at, updated_at, confined) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1113,7 +1180,8 @@ func (a *api) start(ctx context.Context, r control.StartRequest, confined bool) 
 			first := link
 			r.Input.Link = &first
 		}
-		fi, _ := json.Marshal(FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: r.Key, Text: r.Input.Text, Link: r.Input.Link})
+		fi, _ := json.Marshal(FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: r.Key, Text: r.Input.Text, Link: r.Input.Link,
+			Before: r.Input.Before, After: r.Input.After})
 		res, err = tx.ExecContext(ctx,
 			`INSERT INTO sessions (thread_id, agent, state, model, effort, first_input, launch, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
@@ -1248,6 +1316,7 @@ func (c *Core) launch(ctx context.Context, l Launch, repo string) error {
 	var err error
 	record := func(f FirstInput) error {
 		f.Principal, f.From, f.Key, f.Text, f.Context, f.Link = l.Principal, l.From, l.Key, l.Input.Text, l.Context, l.Input.Link
+		f.Before, f.After = l.Input.Before, l.Input.After
 		fi, _ := json.Marshal(f)
 		return c.Store.Update(ctx, func(tx *store.Tx) error {
 			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, string(fi), l.Session); err != nil {
@@ -1339,7 +1408,7 @@ func (c *Core) Recover(ctx context.Context) error {
 	}
 	rows.Close()
 	for _, x := range found {
-		in := control.Input{Text: x.f.Text, Link: x.f.Link}
+		in := x.f.Input()
 		if x.f.Wake && x.f.NoInput {
 			if err = c.Runner.Wake(ctx, x.l.Session, x.f.Principal); err != nil {
 				if ferr := c.Machine.Apply(ctx, x.l.Session, session.Input{Kind: session.Exit, Reason: "resume: " + err.Error()}); ferr != nil {
@@ -1564,6 +1633,14 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 	// tool takes it as the answer, line by line or as a choice's label.
 	given := in
 	in = a.marked(in)
+	if key != "" {
+		// One Send of a key at a time, so that the key's check below and the
+		// transaction that takes it see the same.
+		defer a.c.locks.lock("send:" + scope + "\x00" + key)()
+	}
+	if in, err = a.sendHooks(ctx, id, scope, key, in); err != nil {
+		return err
+	}
 	var (
 		sid       int64
 		pending   int64
@@ -1623,7 +1700,8 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 			if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Wake}); err != nil {
 				return err
 			}
-			fi, _ := json.Marshal(FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: key, Text: in.Text, Wake: true, Link: in.Link})
+			fi, _ := json.Marshal(FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: key, Text: in.Text, Wake: true, Link: in.Link,
+				Before: in.Before, After: in.After})
 			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ?, launch = 1 WHERE id = ?`, string(fi), sid); err != nil {
 				return fmt.Errorf("core: wake: %w", err)
 			}
@@ -1651,10 +1729,11 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 				return err
 			}
 		}
-		if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Send, Principal: a.caller.Principal, From: a.caller.From, Key: key, Text: in.Text, Link: in.Link}); err != nil {
+		if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Send, Principal: a.caller.Principal, From: a.caller.From, Key: key,
+			Text: in.Text, Link: in.Link, Before: in.Before, After: in.After}); err != nil {
 			return err
 		}
-		pending, err = pend(ctx, tx, sid, "", in)
+		pending, err = pend(ctx, tx, sid, "", forAgent(in))
 		return err
 	})
 	if err != nil || !accepted {
@@ -1690,7 +1769,52 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 			guard.interrupted = true
 		}
 	}
-	return a.c.Runner.Deliver(ctx, sid, pending, in)
+	return a.c.Runner.Deliver(ctx, sid, pending, forAgent(in))
+}
+
+// forAgent is in as the agent gets it: the text the plugins added is in
+// its Text.
+func forAgent(in control.Input) control.Input {
+	in.Text, in.Before, in.After = in.ForAgent(), "", ""
+	return in
+}
+
+// sendHooks runs the input hook points for in, a Send of key to thread id
+// in scope (inputHooks), unless the key was accepted before or the thread
+// is closed: the Send then takes nothing, and a hook runs once for one
+// accepted input, also when the input is given again after a restart.
+// The caller holds the key's lock.
+func (a *api) sendHooks(ctx context.Context, id control.ThreadID, scope, key string, in control.Input) (control.Input, error) {
+	in.Before, in.After = "", ""
+	if a.c.Hooks == nil {
+		return in, nil
+	}
+	if key != "" {
+		var n int
+		if err := a.c.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM inbox WHERE key = ?`, "send:"+scope+"\x00"+key).Scan(&n); err != nil {
+			return in, fmt.Errorf("core: send key: %w", err)
+		}
+		if n > 0 {
+			return in, nil
+		}
+	}
+	sid, state, err := a.c.current(ctx, a.c.Store.DB, id)
+	if err == nil && (state == control.Closed || state == control.Removed) {
+		return in, nil
+	}
+	if err == nil && state == control.Waiting && !a.caller.NoAnswer {
+		var open int
+		if err := a.c.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM requests WHERE session_id = ? AND state = 'open'`, sid).Scan(&open); err != nil {
+			return in, fmt.Errorf("core: request: %w", err)
+		}
+		if open > 0 {
+			// It is the answer to the open question, which reaches the agent as
+			// given: only the gate runs. Should the question close before the
+			// input is taken, it goes as input without added text.
+			return a.runInputHooks(ctx, "Send", id, scope, in, PointBeforeAgentRun)
+		}
+	}
+	return a.inputHooks(ctx, "Send", id, scope, in)
 }
 
 func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Answer) error {
