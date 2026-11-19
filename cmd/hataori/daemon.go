@@ -34,6 +34,7 @@ import (
 	"github.com/yousan/hataori/internal/store"
 	"github.com/yousan/hataori/internal/supervisor"
 	"github.com/yousan/hataori/internal/surface"
+	"github.com/yousan/hataori/internal/window"
 	"github.com/yousan/hataori/internal/wire"
 	"github.com/yousan/hataori/internal/workspace"
 )
@@ -206,9 +207,22 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		if hostTermsHook != nil {
 			hostTermsHook(lister)
 		}
-		c.HostTerms = lister
+		var terms window.HostTerms = lister
 		if hostTermsSource != nil {
-			c.HostTerms = hostTermsSource
+			terms = hostTermsSource
+		}
+		// The hooks of the plugin a person installed (hataori plugin)
+		// report the sessions they started; the list of terminals shows
+		// them, from memory only.
+		// Without them the terminals are listed as before: a socket that
+		// cannot be made, such as a directory under /tmp that another
+		// user made first, does not stop the daemon.
+		c.HostTerms = terms
+		if reports, err := window.Listen(abs); err != nil {
+			lg.Warn("window reports: not taken; panes show no session a person started", "err", err)
+		} else {
+			defer reports.Close()
+			c.HostTerms = reports.Terms(terms)
 		}
 		owner |= control.OpHost
 		if cfg.HostInput { // off unless the config turns it on; only the owner gets it

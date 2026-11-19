@@ -130,6 +130,11 @@ func examples(t *testing.T) map[string]any {
 		"HostTerminals": []control.HostTerminal{
 			{Device: "/dev/pts/3", Process: "vim", Activity: &exampleTime, Tmux: &control.TmuxPane{Pane: "%3",
 				Session: "work", Window: "1", WindowName: "editor", Index: "0", Dir: "/home/alice/src", Attached: true}},
+			{Device: "/dev/pts/4", Process: "claude", Activity: &exampleTime, Tmux: &control.TmuxPane{Pane: "%4",
+				Session: "work", Window: "2", Index: "0", Dir: "/home/alice/src/api", Attached: true},
+				Reported: &control.ReportedSession{Window: "tmux:/tmp/tmux-1000/default,4242,%4", Agent: "claude-code",
+					Session: "00000000-0000-4000-8000-000000000001", Dir: "/home/alice/src/api", Event: "UserPromptSubmit",
+					At: exampleTime, Thread: &exampleID}},
 			{Device: "/dev/pts/5", Process: "bash"},
 		},
 		"HostScreen":     "$ make\nok\n",
