@@ -113,9 +113,16 @@ func testLines() []byte {
 }
 
 // waitFor polls cond until it holds or the time limit passes.
+// waitFor waits up to 10 seconds for cond.
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
+	waitForWithin(t, what, 10*time.Second, cond)
+}
+
+// waitForWithin waits up to d for cond.
+func waitForWithin(t *testing.T, what string, d time.Duration, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(d)
 	for !cond() {
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s", what)
