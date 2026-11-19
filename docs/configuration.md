@@ -81,7 +81,7 @@ A complete example for one Discord channel and Claude Code, with the owner, one 
 | `host_input_idle` | duration | `"5m"` | How long an operation of a host pane lasts without a key before it ends: a whole number of seconds, at least one, such as `"90s"`. |
 | `dashboard` | object | absent | The web dashboard (below). Without this section the daemon serves none. |
 | `cleanup` | object | absent | How workspaces are removed (below). Without this section no ignored file is disposable and trash is kept for seven days. |
-| `plugins` | array | empty | The plugins of the instance, one object each (below). Each is checked against its manifest when the daemon starts, and an error stops the start. This version checks them and does not start them yet. |
+| `plugins` | array | empty | The plugins of the instance, one object each (below). Each is checked against its manifest when the daemon starts, and an error stops the start. Then hataori runs them ([plugins.md, How a plugin runs](plugins.md#how-a-plugin-runs)). |
 
 A new thread uses the order's `agent:`, then the scope's `agent`, then the top-level `agent`. It keeps that agent when waking, resuming after a restart, or starting a new session after the agent cannot resume, even after a config change. Removing its adapter section leaves the thread unable to start.
 
@@ -328,7 +328,7 @@ Processes are found with `lsof`, on Linux and on macOS alike; without `lsof` eve
 
 A plugin is a separate program that adds to what hataori does ([design, section 7.3](design/overview.md#73-plugins)). Its manifest, which its author writes, says what it asks for: [plugins.md](plugins.md). Its entry here says where it is and what the operator grants it. The plugin gets what its manifest asks for and its entry grants, and nothing more: an entry that names anything the manifest does not ask for is refused, not ignored.
 
-When the daemon starts, it reads each plugin's manifest, `hataori-plugin.json` in the directory of `path`, and checks it with the entry. It reads no other file of the plugin and runs nothing. Any error stops the start with one line that names the key, and for an error in a manifest the manifest's key too.
+When the daemon starts, it reads each plugin's manifest, `hataori-plugin.json` in the directory of `path`, and checks it with the entry. It reads no other file of the plugin and runs nothing then. Any error stops the start with one line that names the key, and for an error in a manifest the manifest's key too.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -336,7 +336,7 @@ When the daemon starts, it reads each plugin's manifest, `hataori-plugin.json` i
 | `path` | string | required | The absolute path of the plugin's executable; its manifest is in the same directory. For an `external` plugin, which hataori does not start, only the directory is used, for the manifest: the file itself need not exist. |
 | `sha256` | string | required unless `external` | The SHA-256 of the executable: 64 hexadecimal digits. Refused with `external`, since hataori does not start that program. |
 | `external` | boolean | `false` | The plugin is a program that hataori does not start, which connects to the control socket by itself with the token in `token_file`. |
-| `token_file` | string | required with `external` | The file in `<root>/config/` that holds an external plugin's token, relative to `config/`: an absolute path, a path out of `config/` and `config/` itself are refused. Refused without `external`: a plugin that hataori starts gets a token at each start. |
+| `token_file` | string | required with `external` | The file in `<root>/config/` that holds an external plugin's token, relative to `config/`: an absolute path, a path out of `config/` and `config/` itself are refused. Spaces and line breaks around the token are ignored; a file that cannot be read, or is empty, stops the daemon's start with one line naming the key. Refused without `external`: a plugin that hataori starts gets a token at each start. |
 | `scopes` | array of strings | required | The scopes the plugin may see and act in, by their keys under `scopes`; at least one. |
 | `operations` | array of strings | the manifest's | The control operations it may call: some or all of its manifest's `operations`. |
 | `events` | array of strings | the manifest's | The event kinds it may read: some or all of its manifest's `events`. An empty list grants none. |

@@ -51,8 +51,8 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	}
 	defer in.Close()
 	cfg := in.Config
-	// Each plugin's manifest and grant are checked before anything starts;
-	// nothing of a plugin runs yet (design, section 7.3).
+	// Each plugin's manifest and grant are checked before anything starts
+	// (design, section 7.3); the plugins start once the socket listens.
 	var scopeKeys []string
 	for _, s := range cfg.Scopes {
 		scopeKeys = append(scopeKeys, s.Key)
@@ -400,6 +400,28 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 			}
 		}
 	}
+	// The plugins (design, section 7.3): started once the socket listens;
+	// stopped, and waited for, before it closes.
+	socket, err := wire.SocketPath(abs)
+	if err != nil {
+		return err
+	}
+	pr := &plugin.Runner{Grants: grants, State: filepath.Join(abs, "state"), Socket: socket, Speaks: wire.Version,
+		Tokens: srv, As: c.As, Outages: st, Log: lg,
+		ReadToken: func(file string) ([]byte, error) { return in.Root.ReadFile(filepath.Join("config", file)) },
+		Tell: func(ctx context.Context, key, text string) {
+			for _, fe := range fronts {
+				fe.TellOwner(ctx, key, text)
+			}
+		}}
+	if runnerHook != nil {
+		runnerHook(pr)
+	}
+	plCtx, plCancel := context.WithCancel(ctx)
+	defer func() { plCancel(); pr.Wait() }()
+	if err := pr.Start(plCtx); err != nil {
+		return err
+	}
 	lg.Info("hataori runs", "root", abs, "agent", agentName)
 	err = srv.Serve(ctx)
 	if errors.Is(err, context.Canceled) || ctx.Err() != nil {
@@ -509,9 +531,13 @@ var hostTermsSource core.HostTerms
 var supervisorHook func(issue func(scope string) (string, error), revoke func(token string))
 
 // pluginHook, when a test sets it, is given what issues a token for a
-// plugin of the config, by its id, and what revokes one. Starting plugins
-// with it comes later (#349).
+// plugin of the config, by its id, and what revokes one, as the runner
+// issues one at each start.
 var pluginHook func(issue func(id string) (string, error), revoke func(token string))
+
+// runnerHook, when a test sets it, sees the plugin runner before it
+// starts, for limits of the test's own.
+var runnerHook func(*plugin.Runner)
 
 // wakerHook, when a test sets it, sees each supervisor's waker before it
 // runs, for a clock of the test's own.
