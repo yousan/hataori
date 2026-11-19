@@ -152,8 +152,16 @@ func runDaemonLog(t *testing.T, root string) (stop func(), logged func() string)
 		dialErr = err
 		select {
 		case <-done:
-			holders, _ := exec.Command("lsof", filepath.Join(root, instance.LockFile)).CombinedOutput()
-			t.Fatalf("the daemon ended with %d before it served: %v\n%s\nprocesses with the lock file open:\n%s", code, dialErr, logged(), holders)
+			holders, _ := exec.Command("lsof", "-n", filepath.Join(root, instance.LockFile)).CombinedOutput()
+			ps, _ := exec.Command("ps", "-A", "-o", "pid,ppid,stat,command").CombinedOutput()
+			var mine []string
+			for _, l := range strings.Split(string(ps), "\n") {
+				if strings.Contains(l, filepath.Base(os.Args[0])) || strings.Contains(l, " "+strconv.Itoa(os.Getpid())+" ") {
+					mine = append(mine, l)
+				}
+			}
+			t.Fatalf("the daemon ended with %d before it served: %v\n%s\nprocesses with the lock file open:\n%s\nthis test's processes (pid %d):\n%s",
+				code, dialErr, logged(), holders, os.Getpid(), strings.Join(mine, "\n"))
 		default:
 		}
 		if time.Now().After(deadline) {
