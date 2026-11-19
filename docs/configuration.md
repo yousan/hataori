@@ -75,6 +75,7 @@ A complete example for one Discord channel and Claude Code, with the owner, one 
 | `host_terminals` | boolean | `false` | With `true`, the owner may list the terminals on the host that hataori does not own (tmux panes and other terminals) and read the screens of the panes of the default tmux server, for display only, through the control API's `HostTerminals` and `HostScreen`. hataori never sends these terminals anything. With `false`, both are refused for everyone. |
 | `dashboard` | object | absent | The web dashboard (below). Without this section the daemon serves none. |
 | `cleanup` | object | absent | How workspaces are removed (below). Without this section no ignored file is disposable and trash is kept for seven days. |
+| `plugins` | array | empty | The plugins of the instance, one object each (below). Each is checked against its manifest when the daemon starts, and an error stops the start. This version checks them and does not start them yet. |
 
 Model and effort are chosen in this order: the order's `model:` / `effort:`, then the scope's, then the top-level key, then the agent's own default.
 
@@ -218,6 +219,52 @@ A workspace is removed only when nothing in it exists nowhere else ([design, sec
 A workspace is removed only when its thread is closed: `hataori close NUMBER` closes it, and `hataori remove NUMBER` removes it (see "Commands and flags" below). Nothing in chat removes a workspace, and no thread is closed by its idle age.
 
 Processes are found with `lsof`, on Linux and on macOS alike; without `lsof` every removal is refused. Unless hataori runs as root, `lsof` sees only the processes of the user hataori runs as.
+
+### `plugins[]`
+
+A plugin is a separate program that adds to what hataori does ([design, section 7.3](design/overview.md#73-plugins)). Its manifest, which its author writes, says what it asks for: [plugins.md](plugins.md). Its entry here says where it is and what the operator grants it. The plugin gets what its manifest asks for and its entry grants, and nothing more: an entry that names anything the manifest does not ask for is refused, not ignored.
+
+When the daemon starts, it reads each plugin's manifest, `hataori-plugin.json` in the directory of `path`, and checks it with the entry. It reads no other file of the plugin and runs nothing. Any error stops the start with one line that names the key, and for an error in a manifest the manifest's key too.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `id` | string | required | The plugin's name, the same as its manifest's `id`. It follows the rule of driver names. Each id may be listed once. |
+| `path` | string | required | The absolute path of the plugin's executable; its manifest is in the same directory. For an `external` plugin, the path of its program, next to which its manifest is. |
+| `sha256` | string | required unless `external` | The SHA-256 of the executable: 64 hexadecimal digits. Refused with `external`, since hataori does not start that program. |
+| `external` | boolean | `false` | The plugin is a program that hataori does not start, which connects to the control socket by itself with the token in `token_file`. |
+| `token_file` | string | required with `external` | The file in `<root>/config/` that holds an external plugin's token, relative to `config/`: an absolute path or a path out of `config/` is refused. Refused without `external`: a plugin that hataori starts gets a token at each start. |
+| `scopes` | array of strings | required | The scopes the plugin may see and act in, by their keys under `scopes`; at least one. |
+| `operations` | array of strings | the manifest's | The control operations it may call: some or all of its manifest's `operations`. |
+| `events` | array of strings | the manifest's | The event kinds it may read: some or all of its manifest's `events`. An empty list grants none. |
+| `hooks` | array | the manifest's | The hook points it handles, one object each (below): some or all of its manifest's `hooks`. Without this key, every hook point of the manifest with its defaults. |
+| `conversation` | boolean | `false` | Whether it may read message text: inputs, the agent's text, posts and thread titles. Only for a manifest that asks for `conversation`; without this grant, what the plugin gets has the text left out. |
+| `settings` | object | `{}` | The plugin's own settings. hataori checks only that they are an object and gives them to the plugin as written, `null` values included. The manifest's `config` schema is not applied to them. |
+
+No plugin is given `SignInLink`, `HostTerminals` or `HostScreen`: a manifest that asks for one is refused.
+
+#### `plugins[].hooks[]`
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `point` | string | required | A hook point of the manifest's `hooks`, listed once. |
+| `timeout` | duration | the manifest's, else `"15s"` | How long the plugin's handler has at this point. A positive Go duration. |
+| `on_failure` | string | the point's | `block` or `skip`: whether what passes the point is stopped, or the handler skipped, when the handler fails or times out. `before_agent_run` blocks unless this says otherwise; the other points skip. |
+
+For example, a plugin that reads posts before they are sent, made to block a post when it fails:
+
+```json
+"plugins": [
+  {
+    "id": "secret-scan",
+    "path": "/opt/hataori-plugins/secret-scan/secret-scan",
+    "sha256": "<the executable's SHA-256>",
+    "scopes": ["<channel id>"],
+    "hooks": [{"point": "message_sending", "on_failure": "block"}],
+    "conversation": true,
+    "settings": {"patterns": ["AKIA[0-9A-Z]{16}"]}
+  }
+]
+```
 
 ## Environment variables
 
