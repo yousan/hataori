@@ -275,6 +275,63 @@ var migrations = []Migration{
 			windows TEXT NOT NULL
 		)`,
 	)},
+	// Thread numbers (design, section 6.2): a thread is named by its id, and
+	// a chat conversation is a link to it. The rows of existing threads are
+	// filled once at daemon start, by LinkThreads, since that needs the
+	// config.
+	{Name: "thread numbers: links", ForeignKeysOff: true, Up: execAll(
+		// threads again, without UNIQUE (scope, key) and with the
+		// workspace's path, so that the path is read, never computed.
+		`CREATE TABLE threads_new (
+			id           INTEGER PRIMARY KEY, -- the thread's number
+			scope        TEXT NOT NULL,
+			key          TEXT NOT NULL, -- no longer an identity
+			title        TEXT NOT NULL DEFAULT '',
+			repo         TEXT NOT NULL DEFAULT '',
+			started_by   TEXT NOT NULL,
+			state        TEXT NOT NULL,
+			created_at   INTEGER NOT NULL, -- unix milliseconds
+			updated_at   INTEGER NOT NULL,
+			tokens_turn  INTEGER,
+			tokens_day   TEXT NOT NULL DEFAULT '',
+			tokens_today INTEGER NOT NULL DEFAULT 0,
+			context_used INTEGER,
+			context_size INTEGER,
+			workspace    TEXT NOT NULL DEFAULT '' -- as the sessions recorded it; '' until one is made
+		)`,
+		`INSERT INTO threads_new (id, scope, key, title, repo, started_by, state, created_at, updated_at,
+			tokens_turn, tokens_day, tokens_today, context_used, context_size)
+		SELECT id, scope, key, title, repo, started_by, state, created_at, updated_at,
+			tokens_turn, tokens_day, tokens_today, context_used, context_size FROM threads`,
+		`DROP TABLE threads`,
+		`ALTER TABLE threads_new RENAME TO threads`,
+		`CREATE INDEX threads_scope ON threads (scope, key)`,
+		// A chat conversation that shows a thread: the client's name, and
+		// the channel and thread on that service. A thread has any number.
+		`CREATE TABLE links (
+			id         INTEGER PRIMARY KEY,
+			thread_id  INTEGER NOT NULL REFERENCES threads (id),
+			client     TEXT NOT NULL, -- the chat front end's name
+			channel    TEXT NOT NULL,
+			thread     TEXT NOT NULL DEFAULT '',
+			made_by    TEXT NOT NULL DEFAULT '', -- the person who made it
+			created_at INTEGER NOT NULL, -- unix milliseconds
+			UNIQUE (client, channel, thread)
+		)`,
+		`CREATE INDEX links_thread ON links (thread_id)`,
+		// The thread's number beside (scope, thread), which stay for reads
+		// by scope. NULL for an event of no thread.
+		`ALTER TABLE events ADD COLUMN thread_id INTEGER REFERENCES threads (id)`,
+		`CREATE INDEX events_thread ON events (thread_id, pos)`,
+		// The link a post goes to; NULL for a post outside a linked
+		// conversation.
+		`ALTER TABLE chat_outbox ADD COLUMN link INTEGER REFERENCES links (id)`,
+		// Steps that run once at daemon start, after the migrations, by name.
+		`CREATE TABLE startup_steps (
+			name    TEXT PRIMARY KEY,
+			done_at INTEGER NOT NULL -- unix milliseconds
+		)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {
