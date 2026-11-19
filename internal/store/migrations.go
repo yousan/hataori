@@ -388,6 +388,18 @@ var migrations = []Migration{
 	{Name: "threads.confined", Up: execAll(
 		`ALTER TABLE threads ADD COLUMN confined INTEGER NOT NULL DEFAULT 0`,
 	)},
+	// The names the chat services show for conversations: a scope's own
+	// channel (thread ''), or a linked thread (SetName).
+	{Name: "names", Up: execAll(
+		`CREATE TABLE names (
+			client     TEXT NOT NULL,
+			channel    TEXT NOT NULL,
+			thread     TEXT NOT NULL DEFAULT '',
+			name       TEXT NOT NULL,
+			updated_at INTEGER NOT NULL, -- unix milliseconds
+			PRIMARY KEY (client, channel, thread)
+		)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

@@ -127,7 +127,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	scopes := map[string]core.Scope{}
 	var keys []string
 	for _, s := range cfg.Scopes {
-		scopes[s.Key] = core.Scope{Enabled: s.Enabled, Owner: s.Client, Model: s.Model, Effort: s.Effort}
+		scopes[s.Key] = core.Scope{Name: s.Name, Enabled: s.Enabled, Owner: s.Client, Model: s.Model, Effort: s.Effort}
 		keys = append(keys, s.Key)
 	}
 	sort.Strings(keys)
@@ -187,7 +187,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	// dashboard sign-in link, attach a terminal on the host, and close and
 	// remove threads.
 	owner := control.OpRead | control.OpStart | control.OpSend | control.OpAnswer | control.OpStop | control.OpSignIn | control.OpAttach |
-		control.OpClose | control.OpRemove
+		control.OpClose | control.OpRemove | control.OpName
 	if cfg.HostTerminals { // off unless the config turns it on; only the owner gets it
 		lister := &hostterm.Lister{Own: filepath.Base(exe)}
 		if hostTermsHook != nil {

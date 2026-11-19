@@ -234,6 +234,43 @@ body {
   font-weight: 600;
 }
 
+/* A node of the tree: a scope with its threads, or the host terminals. */
+.node-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px 3px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.node-head:focus-visible,
+.tree .row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.fold-mark {
+  width: 10px;
+  color: var(--muted);
+}
+
+.node-count {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.tree .host-heading {
+  padding-left: 22px;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.node-body .row {
+  padding-left: 22px;
+}
+
 .scope-name {
   overflow: hidden;
   text-overflow: ellipsis;

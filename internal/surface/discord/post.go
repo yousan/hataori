@@ -374,6 +374,35 @@ func (d *Driver) SetThread(ctx context.Context, conv surface.Conversation, t sur
 	return wrap("set the thread", d.client.Do(rest.UpdateChannel.Compile(nil, th), body, nil, rest.WithCtx(ctx)))
 }
 
+var _ surface.Namer = (*Driver)(nil)
+
+// Name is the name Discord shows for conv: "#" and the channel's name for
+// a channel, its own name for a thread, and none for a direct conversation.
+func (d *Driver) Name(ctx context.Context, conv surface.Conversation) (string, error) {
+	what, v := "channel", conv.Channel
+	if conv.Thread != "" {
+		what, v = "thread", conv.Thread
+	}
+	ch, err := parseID(what, v)
+	if err != nil {
+		return "", err
+	}
+	var c wireChannel
+	if err := d.client.Do(rest.GetChannel.Compile(nil, ch), nil, &c, rest.WithCtx(ctx)); err != nil {
+		return "", wrap("look up the conversation's name", err)
+	}
+	switch {
+	case c.Type == 1 || c.Type == 3: // a direct or group direct conversation
+		return "", nil
+	case isThread(c.Type):
+		d.setParent(c)
+		return c.Name, nil
+	case c.Name == "":
+		return "", nil
+	}
+	return "#" + c.Name, nil
+}
+
 // Limits reports what the driver can do.
 func (d *Driver) Limits() surface.Limits {
 	return surface.Limits{

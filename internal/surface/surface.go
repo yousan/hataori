@@ -55,6 +55,13 @@ type Driver interface {
 	Limits() Limits
 }
 
+// Namer is implemented by a Driver that can tell the name the service shows
+// people for a conversation, such as "#general" for a channel. A
+// conversation the service gives no name, such as a direct one, has "".
+type Namer interface {
+	Name(ctx context.Context, conv Conversation) (string, error)
+}
+
 // Sink is implemented by the chat front end, not by the core.
 type Sink interface {
 	// Message delivers an inbound message: text, files, author, ids.

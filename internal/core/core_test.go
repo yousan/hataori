@@ -217,6 +217,9 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 		"Threads":      func(a control.API) error { _, err := a.Threads(ctx, control.Filter{Scope: "s"}); return err },
 		"Thread":       func(a control.API) error { _, err := a.Thread(ctx, id, 10, 0); return err },
 		"ThreadEvents": func(a control.API) error { _, err := a.ThreadEvents(ctx, id, 0, 10); return err },
+		"SetName": func(a control.API) error {
+			return a.SetName(ctx, control.LinkRef{Client: f.core.Scopes["s"].Owner, Channel: "s"}, "#s")
+		},
 		"Start": func(a control.API) error {
 			_, err := a.Start(ctx, control.StartRequest{Key: "k2", Scope: "s", Thread: "t2"})
 			return err

@@ -191,3 +191,20 @@ func TestSinceTellsUnreadableFromEmpty(t *testing.T) {
 		}
 	}
 }
+
+// A channel's name is "#" and its name; a direct conversation has none.
+func TestNameOfChannelAndDirect(t *testing.T) {
+	r := newFakeREST(t)
+	c := payload(t, "third/rest-get-channel.json")
+	dm := payload(t, "third/rest-get-direct-channel.json")
+	r.serve(t, "GET /channels/"+id(c["id"]), "third/rest-get-channel.json")
+	r.serve(t, "GET /channels/"+id(dm["id"]), "third/rest-get-direct-channel.json")
+	d := testDriver(t, botID(t), r, nil)
+	got, err := d.Name(context.Background(), surface.Conversation{Channel: id(c["id"])})
+	if err != nil || got != "#"+c["name"].(string) {
+		t.Fatalf("channel: %q, %v", got, err)
+	}
+	if got, err := d.Name(context.Background(), surface.Conversation{Channel: id(dm["id"])}); err != nil || got != "" {
+		t.Fatalf("direct: %q, %v", got, err)
+	}
+}

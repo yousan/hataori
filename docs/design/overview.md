@@ -568,10 +568,10 @@ The unit is the thread, not the terminal, so the page does not depend on how hat
 
 **Layout.** One page in five parts.
 
-- **Tree, on the left.** A filter box on top, matching title, number and terminal. Under it a *needs attention* block: the threads waiting on a question or failed, each with the question or the failure reason. Then three sections:
-  1. *Threads*, grouped by scope. A scope's header shows one state dot per thread. A thread's row shows the agent's mark coloured by state, its number and title, and its age; a second line shows the model, the context use in percent and the last line of output, with a question or a failure highlighted.
-  2. *tmux on the host*, sessions that hataori does not own: session, then window. A row shows the window, its process, its terminal device and its last activity. A pane whose foreground process is a shell and whose window has shown no activity for more than a day is hidden by default, by the same switch that hides asleep threads (#335), and counted with them.
-  3. *Other terminals on the host* that hataori does not own: terminal device and process.
+- **Tree, on the left.** A filter box on top, matching title, number and terminal. Under it a *needs attention* block: the threads waiting on a question or failed, each with the question or the failure reason. Then the tree itself, which reads like the chat it mirrors (#405), driven from the keyboard as a tree view (up, down, left folds or goes up, right unfolds or goes in, Enter opens):
+  1. *One node per scope*, named as the chat service names its channel (`#name` on Discord, through the control API), by the config's name when it has one, else by its key. It shows the number of its threads and one state dot per thread, and folds; the folds are kept in the browser. Under it its threads, the most recently active first. A thread's row shows the agent's mark coloured by state, its number and title, and its age; a second line shows the model, the context use in percent and the last line of output, with a question or a failure highlighted.
+  2. *Host terminals*, one node after the scopes, folded at first. In it, *tmux on the host*, sessions that hataori does not own: session, then window. A row shows the window, its process, its terminal device and its last activity. A pane whose foreground process is a shell and whose window has shown no activity for more than a day is hidden by default, by the same switch that hides asleep threads (#335), and counted with them.
+     Then *other terminals on the host* that hataori does not own: terminal device and process.
 
   A footer counts the threads per state.
 - **Tab bar, above the main area.** An "All threads" tab is pinned first; the items opened from the tree follow. A tab shows the agent's mark coloured by state, the title, the time since the turn started while one runs, a badge for an open question or a failure, and a close button. The tabs are flat; the active one has the terminal's background. At the right end: show or hide the tree, split, show or hide the details, light or dark. Split goes from one pane to two to three, side by side; the extra panes show the tabs viewed before.
@@ -1381,6 +1381,13 @@ type API interface {
 	// the oldest one returned reads the thread's log back to its start; an
 	// empty result is the start. Since protocol 3.3.
 	ThreadEvents(ctx context.Context, id ThreadID, before uint64, n int) ([]Event, error)
+	// SetName records the name the chat service shows people for a
+	// conversation: a scope's own channel when l.Thread is empty (l.Client
+	// owns the scope and l.Channel is its key), else a linked thread. An
+	// empty name forgets it. A change writes one named event; the same
+	// name again changes nothing. It needs OpName in the conversation's
+	// scope: a chat front end's caller has it. Since protocol 3.4.
+	SetName(ctx context.Context, l LinkRef, name string) error
 
 	Start(ctx context.Context, r StartRequest) (ThreadID, error)
 	// key makes Send safe to repeat; for chat, the surface's message id.
@@ -1547,7 +1554,7 @@ type Caller struct {
 	From      string
 	Principal Principal // a person's name (section 5.5)
 	Scopes    []string  // the scopes it may see and act in
-	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove
+	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName
 	// NoText leaves text written by a person or an agent out of what the
 	// caller reads: ThreadInfo.Title and ThreadInfo.Last,
 	// ThreadDetail.Recent, the text of its requests, and the text fields of
@@ -1587,6 +1594,7 @@ type Caller struct {
 type ThreadInfo struct {
 	// ...
 	Title      string // the first line of the first prompt; text, so optional since protocol 2.0
+	ScopeName  string // the config's name of the scope, else its channel's from SetName (text); since protocol 3.4
 	Agent      string // the agent's registered name
 	Model      string // as the agent reports it; as asked for until then
 	Effort     string // the same
@@ -1748,6 +1756,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `hello.token`, and `principal` and `from` in the `input` and `answer` events (#269) | minor: new optional fields; 2.2 |
 | `SignInLink`'s `way` (section 7.2, #359) | minor: new optional argument; 3.2 |
 | `ThreadEvents` (#336) | minor: new operation; 3.3 |
+| `SetName`, with `Ops` gaining `OpName`, `ThreadInfo.ScopeName` and the `named` event (#405) | minor: new operation, field and event kind; 3.4 |
 | `OperateHost`, with `Ops` gaining `OpHostInput` (section 7.2) | minor: new operation, whose connection becomes a stream both ways |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 
@@ -1788,6 +1797,14 @@ type Driver interface {
 // a secret from. Register(name, f) fails when name is taken; Lookup(name)
 // finds it.
 type Factory func(config *os.Root, settings []byte) (Driver, error)
+
+// Namer is implemented by a Driver that can tell the name the service shows
+// people for a conversation, such as "#general" for a Discord channel; ""
+// for none. The chat front end asks it for each scope's channel after each
+// connect, and records the names with SetName (#405).
+type Namer interface {
+	Name(ctx context.Context, conv Conversation) (string, error)
+}
 
 // Sink is implemented by the chat front end, not by the core.
 type Sink interface {

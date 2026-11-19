@@ -42,7 +42,7 @@ var points = map[string]Failure{
 // operations are the operations of the control protocol, as
 // docs/protocol.md lists them; a test keeps the two equal.
 var operations = []string{"Answer", "AttachTerminal", "Close", "Events", "HostScreen", "HostTerminals", "Limits",
-	"Remove", "Send", "SignInLink", "Start", "Stop", "Terminal", "Thread", "ThreadEvents", "Threads", "Workspace"}
+	"Remove", "Send", "SetName", "SignInLink", "Start", "Stop", "Terminal", "Thread", "ThreadEvents", "Threads", "Workspace"}
 
 // never are the operations no plugin is given, whatever its manifest and
 // its config say: the dashboard's sign-in and the terminals on the host.

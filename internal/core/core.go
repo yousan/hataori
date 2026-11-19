@@ -41,6 +41,7 @@ var (
 
 // Scope is what the core needs to know about one scope.
 type Scope struct {
+	Name    string // the config's name for it; wins over its channel's name
 	Enabled bool
 	Owner   string // the name of the client that gives the scope its threads
 	Model   string // default model
@@ -457,6 +458,9 @@ func (a *api) Threads(ctx context.Context, f control.Filter) ([]control.ThreadIn
 			return nil, err
 		}
 	}
+	if err := a.scopeNames(ctx, out); err != nil {
+		return nil, err
+	}
 	a.c.terminals(ctx, out, sids)
 	return out, nil
 }
@@ -656,6 +660,9 @@ func (a *api) Thread(ctx context.Context, id control.ThreadID, recent, events in
 		return control.ThreadDetail{}, err
 	}
 	ts := []control.ThreadInfo{t}
+	if err := a.scopeNames(ctx, ts); err != nil {
+		return control.ThreadDetail{}, err
+	}
 	a.c.terminals(ctx, ts, []int64{sid})
 	d := control.ThreadDetail{ThreadInfo: ts[0]}
 	if t.State == control.Waiting {

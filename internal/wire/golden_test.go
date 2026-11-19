@@ -28,7 +28,7 @@ var (
 	exampleTime = time.Date(2026, 1, 2, 3, 4, 5, 678000000, time.UTC)
 	exampleID   = control.ThreadID(7)
 	exampleLink = control.LinkRef{Client: "discord", Channel: "C0123", Thread: "T0456"}
-	exampleInfo = control.ThreadInfo{ID: exampleID, Scope: "C0123", Links: []control.LinkRef{exampleLink}, Title: "Fix the build", Repo: "https://example.com/repo.git",
+	exampleInfo = control.ThreadInfo{ID: exampleID, Scope: "C0123", Links: []control.LinkRef{exampleLink}, Title: "Fix the build", ScopeName: "#builds", Repo: "https://example.com/repo.git",
 		State: control.Running, StartedBy: "webhook:W1", Created: exampleTime, Updated: exampleTime,
 		Agent: "claude-code", Model: "opus", Effort: "high", Turns: 12, Last: "Running the tests...", Background: 1,
 		Context: &control.Context{Used: 45000, Size: 200000}, Tokens: &control.TokenCount{Turn: 2450, Today: 98000}, Terminal: "/dev/pts/3"}
@@ -54,6 +54,7 @@ var eventData = map[control.EventKind]string{
 	"login_lost":        `{"agent":"claude-code","outage":1,"thread":7}`,
 	"login_restored":    `{"agent":"claude-code","outage":1,"scopes":["C0123"],"threads":[7]}`,
 	"session_replaced":  `{"new_session":4,"reason":"cannot resume","session":3}`,
+	"named":             `{"channel":"C0123","client":"discord","name":"Fix the build","thread":"T0456"}`,
 	"removal_refused":   `{"detail":"commit 9fceb02 on refs/heads/fix-build","kind":"submodule","principal":"dispatch","reason":"unpushed commit on a branch","repo":"vendor/lib","session":3,"trigger":"command"}`,
 	control.CaughtUp:    ``,
 }
@@ -83,6 +84,7 @@ func examples(t *testing.T) map[string]any {
 		"Threads":      threadsArgs{Filter: control.Filter{Scope: "C0123", Link: &exampleLink}},
 		"Thread":       threadArgs{ID: exampleID, Recent: 2000, Events: 5},
 		"ThreadEvents": threadEventsArgs{ID: exampleID, Before: 42, Limit: 100},
+		"SetName":      setNameArgs{Link: control.LinkRef{Client: "discord", Channel: "C0123"}, Name: "#builds"},
 		"Start": control.StartRequest{Key: "M0789", Scope: "C0123", Repo: "https://example.com/repo.git",
 			Input: control.Input{Text: "Fix the build."}, Model: "opus", Effort: "high"},
 		"Send":           sendArgs{ID: exampleID, Key: "M0790", Input: control.Input{Text: "And the docs."}, Busy: control.Deliver},

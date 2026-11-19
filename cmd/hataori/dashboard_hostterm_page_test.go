@@ -112,7 +112,9 @@ func TestDashboardHostTerminalsInThePage(t *testing.T) {
 	hostRow := func(dev string) string { return fmt.Sprintf(`[data-host=%q]`, dev) }
 
 	// 1. On: both sections, with the pane under its session and the other
-	// terminal; no state for either.
+	// terminal; no state for either. They are under the host terminals'
+	// node, folded at first (#405).
+	b.unfoldHosts()
 	b.until("the pane and the other terminal in their sections", fmt.Sprintf(
 		`!!document.querySelector('[data-section=tmux] [data-session=work] %s') && !!document.querySelector('[data-section=others] %s')`, hostRow(rig.device), hostRow(rig.outside)))
 	b.noStateFor(rig.device, "the pane's row")

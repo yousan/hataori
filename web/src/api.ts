@@ -23,6 +23,7 @@ export interface ThreadInfo {
   scope: string;
   links: LinkRef[];
   title?: string; // left out when empty, and for a caller that may not read text (protocol 2.0)
+  scope_name?: string; // the scope's name: the config's, else its channel's as the chat service shows it (protocol 3.4)
   repo: string;
   state: State;
   started_by: string;

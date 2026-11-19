@@ -47,6 +47,13 @@ type API interface {
 	// the oldest one returned reads the thread's log back to its start; an
 	// empty result is the start. Since protocol 3.3.
 	ThreadEvents(ctx context.Context, id ThreadID, before uint64, n int) ([]Event, error)
+	// SetName records the name the chat service shows people for a
+	// conversation: a scope's own channel when l.Thread is empty (l.Client
+	// owns the scope and l.Channel is its key), else a linked thread. An
+	// empty name forgets it. A change writes one named event; the same
+	// name again changes nothing. It needs OpName in the conversation's
+	// scope: a chat front end's caller has it. Since protocol 3.4.
+	SetName(ctx context.Context, l LinkRef, name string) error
 
 	// Start starts a thread in a scope. A repeated r.Key starts nothing and
 	// returns the thread the first call started.
@@ -195,6 +202,9 @@ const (
 	OpAttach
 	OpClose  // CloseThread: the owner's connection on the control socket only
 	OpRemove // RemoveThread: the owner's connection on the control socket only
+	// OpName may record the names the chat service shows (SetName): a chat
+	// front end's caller, and the owner's connection on the control socket.
+	OpName
 )
 
 // Way is one of the dashboard's listeners, each a way of reaching it with
@@ -292,10 +302,14 @@ const (
 
 // ThreadInfo is one line of Threads.
 type ThreadInfo struct {
-	ID        ThreadID  `json:"id"`              // the thread's number; since 3.0, it replaces number
-	Scope     string    `json:"scope"`           // the scope the thread belongs to; since 3.0
-	Links     []LinkRef `json:"links"`           // where it is shown, the first link first; since 3.0
-	Title     string    `json:"title,omitempty"` // text: absent for a caller that may not read text, since 2.0
+	ID    ThreadID  `json:"id"`              // the thread's number; since 3.0, it replaces number
+	Scope string    `json:"scope"`           // the scope the thread belongs to; since 3.0
+	Links []LinkRef `json:"links"`           // where it is shown, the first link first; since 3.0
+	Title string    `json:"title,omitempty"` // text: absent for a caller that may not read text, since 2.0
+	// ScopeName is the scope's name: the config's, else its channel's as
+	// the chat service shows it (SetName), which is text and absent for a
+	// caller that may not read text; absent when neither is known. Since 3.4.
+	ScopeName string    `json:"scope_name,omitempty"`
 	Repo      string    `json:"repo"`
 	State     State     `json:"state"`
 	StartedBy Principal `json:"started_by"`
