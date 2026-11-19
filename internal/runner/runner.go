@@ -203,7 +203,7 @@ func (r *Runner) Start(ctx context.Context, l core.Launch) error {
 	if err != nil {
 		return err
 	}
-	return r.follow(l.Session, ad, spec, fresh)
+	return r.follow(l.Session, ad, spec, fresh, 0)
 }
 
 // launch writes what the agent asks for into the session's state directory,
@@ -375,6 +375,7 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 	}
 	// launch = 2: a daemon that died had begun this launch, after the old
 	// host was gone; a host running now is the new one.
+	var screenFrom int64
 	if launching != 2 {
 		if !r.alive(s.Spec.StateDir).Ended() {
 			return fmt.Errorf("runner: session %d: its host is still running", id)
@@ -392,6 +393,10 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 		if err := r.own().Reset(w); err != nil {
 			return fmt.Errorf("runner: %w", err)
 		}
+		// The new host appends to the terminal log the last one kept: the
+		// new codec watches from its end, so that it reads only the new
+		// agent's screen (#505).
+		_, screenFrom = r.own().Since(w, 0)
 	}
 	if t, ok := takenOf(s.Spec.StateDir); ok {
 		// Left by a take-in that ended another way: the new agent's input
@@ -407,7 +412,7 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 	if err != nil {
 		return err
 	}
-	return r.follow(id, ad, spec, wake)
+	return r.follow(id, ad, spec, wake, screenFrom)
 }
 
 // skipRest moves the session's offsets to the end of what its last agent
@@ -487,7 +492,7 @@ func (r *Runner) Reconnect(ctx context.Context) error {
 			r.Log.Error("session of an agent not registered", "session", x.id, "agent", s.Agent)
 			continue
 		}
-		if err := r.follow(x.id, ad, s.Spec, reconnect); err != nil {
+		if err := r.follow(x.id, ad, s.Spec, reconnect, 0); err != nil {
 			r.Log.Error("reconnect", "session", x.id, "err", err)
 		}
 	}
@@ -544,10 +549,13 @@ func (r *Runner) stopSleepers(ctx context.Context) error {
 
 // follow starts following a session. On reconnect, the codec first reads
 // what was read before, with its results discarded, to rebuild its state.
-func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) error {
+// A codec that watches the screen is given the terminal log from byte
+// screenFrom on: where the agent it follows began writing.
+func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode, screenFrom int64) error {
 	resumed := m == reconnect
 	lv := &live{id: id, dir: spec.StateDir, adapter: ad, codec: ad.NewCodec(spec), spec: spec,
-		files: map[string]int64{}, stop: make(chan struct{}), done: make(chan struct{}), started: time.Now()}
+		files: map[string]int64{}, stop: make(chan struct{}), done: make(chan struct{}), started: time.Now(),
+		seenTo: screenFrom}
 	if t, ok := takenOf(spec.StateDir); ok {
 		lv.taken = &t
 	}
