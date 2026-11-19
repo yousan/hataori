@@ -906,6 +906,33 @@ func TestPasskeyCeremoniesAreUsedOnceInTimeAndByTheirSession(t *testing.T) {
 		t.Fatalf("a sign-in finished five minutes later: %d %s, want 401", code, b)
 	}
 
+	// An answer replayed after its ceremony expired, with the ceremony's
+	// expiry changed: the server signed the ceremony, so it opens nothing.
+	// The passkey keeps no counter, which would refuse it anyway.
+	nc := &softKey{rpID: webName, origin: d.web, noCounter: true}
+	s, reg = d.webLink()
+	code, body, ncc := d.register(nc, s, reg)
+	if code != http.StatusOK {
+		t.Fatalf("register: %d %s", code, body)
+	}
+	code, b = d.post(dashboard.PasskeySignInBeginPath, "", nil)
+	var old ceremonyAnswer
+	if code != http.StatusOK || json.Unmarshal(b, &old) != nil {
+		t.Fatalf("begin: %d %s", code, b)
+	}
+	replayed := nc.get(t, old.Options, ncc)
+	if code, b := d.post(dashboard.PasskeySignInFinishPath, "", map[string]any{"ceremony": old.Ceremony, "credential": replayed}); code != http.StatusOK {
+		t.Fatalf("finish: %d %s", code, b)
+	}
+	clock.add(6 * time.Minute)
+	parts := strings.Split(old.Ceremony, ".")
+	payload := unb64(t, parts[1])
+	binary.BigEndian.PutUint64(payload[:8], uint64(clock.now().Add(5*time.Minute).Unix()))
+	forged := parts[0] + "." + b64(payload) + "." + parts[2]
+	if code, b := d.post(dashboard.PasskeySignInFinishPath, "", map[string]any{"ceremony": forged, "credential": replayed}); code != http.StatusUnauthorized {
+		t.Fatalf("an old answer with a forged ceremony: %d %s, want 401", code, b)
+	}
+
 	// The same credential id again, from another authenticator.
 	s, reg = d.webLink()
 	if code, body, _ := d.register(&softKey{rpID: webName, origin: d.web, fixedID: c.id}, s, reg); code != http.StatusConflict {
