@@ -377,16 +377,45 @@ done
 exec claude --setting-sources project,local "$@"
 `
 
-// userSettings is the modification time and checksum of the person's
-// Claude Code settings file, or "absent": settings.json in the CLI's
-// config directory, ~/.claude unless the environment names another.
-func userSettings(t *testing.T) string {
-	t.Helper()
+// cliDir is the CLI's config directory: ~/.claude unless the environment
+// names another. The checks only read it.
+func cliDir() string {
 	dir := os.Getenv("CLAUDE_CONFIG_DIR")
 	if dir == "" {
 		dir = filepath.Join(os.Getenv("HOME"), ".claude")
 	}
-	path := filepath.Join(dir, "settings.json")
+	return dir
+}
+
+// transcriptHolds reports whether the CLI's own transcript of the
+// conversation id, which holds what each tool returned, holds word.
+func transcriptHolds(t *testing.T, id, word string) bool {
+	t.Helper()
+	if id == "" {
+		t.Fatal("no conversation id to find the transcript by")
+	}
+	files, _ := filepath.Glob(filepath.Join(cliDir(), "projects", "*", id+".jsonl"))
+	if len(files) == 0 {
+		t.Fatalf("no transcript of the conversation %s", id)
+	}
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err) // unread, it could hold the word
+		}
+		if bytes.Contains(b, []byte(word)) {
+			return true
+		}
+	}
+	return false
+}
+
+// userSettings is the modification time and checksum of the person's
+// Claude Code settings file, or "absent": settings.json in the CLI's
+// config directory.
+func userSettings(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(cliDir(), "settings.json")
 	st, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return "absent"
