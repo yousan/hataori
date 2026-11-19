@@ -203,6 +203,20 @@ export function toKeys(data: string): HostKey[] {
     const ch = chars[i];
     if (ch === "\x1b" && i + 1 < chars.length) {
       const next = chars[i + 1];
+      // A string sequence (OSC, DCS, APC, PM, SOS), such as a terminal's
+      // answer to a query: dropped whole, up to its BEL or ESC \. ESC and
+      // one of these characters alone is Alt with it, below.
+      if ("]P_^X".includes(next) && i + 2 < chars.length) {
+        const rest = chars.slice(i + 2).join("");
+        const bel = rest.indexOf("\x07");
+        const st = rest.indexOf("\x1b\\");
+        const cut = [bel, st].filter((n) => n >= 0);
+        flush();
+        if (cut.length === 0) break; // cut short: the rest is part of it
+        const at = Math.min(...cut);
+        i += 2 + [...rest.slice(0, at)].length + (at === st && (bel < 0 || st < bel) ? 2 : 1);
+        continue;
+      }
       if ((next === "[" || next === "O") && i + 2 < chars.length) {
         const [k, n] = parseSequence(chars.slice(i).join(""));
         key(k);
@@ -231,6 +245,78 @@ export function toKeys(data: string): HostKey[] {
   }
   flush();
   return out;
+}
+
+// eventKeys are the named keys by their KeyboardEvent.key: the page takes
+// these from the keyboard itself while operating, before the terminal
+// emulator sees them, since the emulator drops some of their modifiers
+// (Ctrl+Tab is a plain Tab, Alt+PageUp a plain PageUp, Shift+PageUp
+// scrolls its own view).
+export const eventKeys: Readonly<Record<string, string>> = {
+  Enter: "Enter",
+  Tab: "Tab",
+  Backspace: "BSpace",
+  Escape: "Escape",
+  ArrowUp: "Up",
+  ArrowDown: "Down",
+  ArrowLeft: "Left",
+  ArrowRight: "Right",
+  Home: "Home",
+  End: "End",
+  PageUp: "PPage",
+  PageDown: "NPage",
+  Insert: "IC",
+  Delete: "DC",
+  F1: "F1",
+  F2: "F2",
+  F3: "F3",
+  F4: "F4",
+  F5: "F5",
+  F6: "F6",
+  F7: "F7",
+  F8: "F8",
+  F9: "F9",
+  F10: "F10",
+  F11: "F11",
+  F12: "F12",
+};
+
+// KeyPress is what eventKey reads of a KeyboardEvent.
+export interface KeyPress {
+  key: string;
+  ctrlKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+  metaKey: boolean;
+}
+
+// eventKey is the key a named key's press sends, with its modifiers as
+// far as tmux names them: Shift+Tab is BTab, Ctrl+Backspace is C-h as a
+// terminal sends it, and a modifier tmux has no name for with that key is
+// left out (Ctrl+Enter is Enter). null for any other press, which the
+// terminal emulator turns into text or a control character, and for one
+// with the Meta key, which has no tmux name.
+export function eventKey(e: KeyPress): string | null {
+  const base = eventKeys[e.key];
+  if (base === undefined || e.metaKey) return null;
+  if (base === "BSpace" && e.ctrlKey) return e.altKey ? "C-M-h" : "C-h";
+  let name = base;
+  let shift = e.shiftKey;
+  if (base === "Tab" && shift) {
+    name = "BTab";
+    shift = false;
+  }
+  const tries: [boolean, boolean, boolean][] = [
+    [e.ctrlKey, e.altKey, shift],
+    [e.ctrlKey, e.altKey, false],
+    [false, e.altKey, shift],
+    [false, e.altKey, false],
+  ];
+  for (const [c, m, s] of tries) {
+    const k = `${c ? "C-" : ""}${m ? "M-" : ""}${s ? "S-" : ""}${name}`;
+    if (validKey(k)) return k;
+  }
+  return name;
 }
 
 // pasted is what a paste of s sends: one paste, or nothing for an empty

@@ -242,6 +242,7 @@ const en = {
   "operate.end.passkeyCancelled": "The passkey prompt was closed: typing did not start.",
   "operate.end.failed": "Typing could not start. Try again.",
   "operate.end.lost": "Typing ended: the connection was lost.",
+  "operate.keyRefused": "Not sent: {reason}",
   "status.operating": "typing into {pane} · {left} left",
 
   "status.label": "Status",
@@ -490,6 +491,7 @@ const ja: Catalog = {
   "operate.end.passkeyCancelled": "パスキーの確認が閉じられたので、入力を開始しませんでした。",
   "operate.end.failed": "入力を開始できませんでした。もう一度試してください。",
   "operate.end.lost": "入力が終わりました: 接続が切れました。",
+  "operate.keyRefused": "送れませんでした: {reason}",
   "status.operating": "{pane} に入力中 · 残り {left}",
   "status.label": "ステータス",
   "status.noSelection": "スレッドが選択されていません",

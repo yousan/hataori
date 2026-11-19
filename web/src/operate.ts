@@ -64,6 +64,7 @@ export interface OpState {
   lastKey: number; // when a key was last sent, or the start, in ms since the epoch
   reason?: EndReason;
   detail?: string; // the server's words for a refusal
+  error?: string; // the server's words for the last batch it refused, while on
 }
 
 // left is how long, in seconds, the operation has before its idle end. The
@@ -80,10 +81,24 @@ export class Operation {
   private done = false;
   private stopping = false; // switched off: no key goes after the end
 
+  // stopTimer ends the operation on the page when the server does not
+  // answer a switch turned off.
+  private stopTimer: ReturnType<typeof setTimeout> | undefined;
+
   constructor(pane: string, private readonly onChange: (s: OpState) => void) {
     this.state = { pane, phase: "starting", idle: 0, lastKey: Date.now() };
-    onChange(this.state);
-    this.start();
+  }
+
+  // live reports whether it has not ended: starting, on, or stopping.
+  get live(): boolean {
+    return !this.done;
+  }
+
+  // begin starts it, once its owner keeps it: its first state is
+  // "starting".
+  begin(): void {
+    this.onChange(this.state);
+    this.start().catch(() => this.end("failed"));
   }
 
   private set(s: Partial<OpState>): void {
@@ -94,7 +109,8 @@ export class Operation {
   }
 
   private end(reason: EndReason, detail?: string): void {
-    this.set({ phase: "ended", reason, detail });
+    clearTimeout(this.stopTimer);
+    this.set({ phase: "ended", reason, detail, error: undefined });
     this.ws?.close();
   }
 
@@ -107,8 +123,12 @@ export class Operation {
         checkPath,
         authorized({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pane: this.state.pane }) }),
       );
-      if (r.status === 403 && location.protocol === "https:") return this.end("signIn");
-      if (!r.ok) return this.end("refused", (await r.text()).trim());
+      if (!r.ok) {
+        const why = (await r.text()).trim();
+        // The web listener's refusal of a sign-in too old, as the server
+        // words it (operate.go, notRecent).
+        return this.end(r.status === 403 && why.includes("sign in again") ? "signIn" : "refused", why);
+      }
       const a = (await r.json()) as { needs?: string; ceremony?: string; options?: { publicKey: AssertionOptions } };
       if (a.needs === "passkey" && a.ceremony && a.options) {
         const credential = await passkeyAnswer(a.options.publicKey);
@@ -117,12 +137,17 @@ export class Operation {
     } catch (e) {
       return this.end(e instanceof PasskeyError && e.why === "cancelled" ? "passkeyCancelled" : "failed");
     }
-    if (this.done) return; // closed while the check ran
-    const ws = new WebSocket(`${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}${operatePath}`);
+    if (this.done) return; // closed or switched off while the check ran
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(`${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}${operatePath}`);
+    } catch {
+      return this.end("failed");
+    }
     this.ws = ws;
     ws.onopen = () => ws.send(JSON.stringify(first));
     ws.onmessage = (m) => {
-      let a: { started?: { idle?: number }; ended?: string; refused?: string };
+      let a: { started?: { idle?: number }; ended?: string; refused?: string; error?: string };
       try {
         a = JSON.parse(String(m.data));
       } catch {
@@ -131,6 +156,7 @@ export class Operation {
       if (a.started) this.set({ phase: "on", idle: a.started.idle ?? 0, lastKey: Date.now() });
       else if (a.ended) this.end(serverReasons.includes(a.ended) ? (a.ended as EndReason) : "lost");
       else if (a.refused) this.end("refused", a.refused);
+      else if (a.error) this.set({ error: a.error });
     };
     ws.onclose = (e) => {
       if (this.done) return;
@@ -146,16 +172,19 @@ export class Operation {
   send(keys: HostKey[]): void {
     if (this.stopping || this.state.phase !== "on" || keys.length === 0 || this.ws?.readyState !== WebSocket.OPEN) return;
     this.ws.send(JSON.stringify({ keys }));
-    this.set({ lastKey: Date.now() });
+    this.set({ lastKey: Date.now(), error: undefined });
   }
 
   // stop is the switch turned off: the server ends the operation after the
   // keys sent before, and answers with the reason.
   stop(): void {
-    if (this.done) return;
+    if (this.done || this.stopping) return;
     this.stopping = true;
     if (this.ws?.readyState === WebSocket.OPEN && this.state.phase === "on") {
       this.ws.send(JSON.stringify({ end: true }));
+      // The server answers at once; a page that hears nothing is
+      // read-only again within a second all the same.
+      this.stopTimer = setTimeout(() => this.end("ended"), 900);
       return;
     }
     this.end("ended");
@@ -165,6 +194,7 @@ export class Operation {
   // operation on the server.
   close(): void {
     this.done = true;
+    clearTimeout(this.stopTimer);
     this.ws?.close();
   }
 }

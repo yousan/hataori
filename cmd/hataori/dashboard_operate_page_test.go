@@ -170,7 +170,9 @@ func TestDashboardOperateInThePage(t *testing.T) {
 		t.Fatalf("tmux has the cursor at %s", c)
 	}
 
-	// Typed: text, Enter, Up, Ctrl+C, Alt+x, Shift+F5, and a paste.
+	// Typed: text, Enter, Up, Ctrl+C, Alt+x, Shift+F5; Ctrl+Tab,
+	// Shift+PageUp, Alt+PageDown and Ctrl+Backspace, whose modifiers the
+	// terminal emulator alone would drop; and a paste.
 	r.focusPane(b)
 	b.call("Input.insertText", map[string]any{"text": operateMarker})
 	b.key("Enter", "Enter", 13, 0, "\r")
@@ -178,16 +180,22 @@ func TestDashboardOperateInThePage(t *testing.T) {
 	b.key("c", "KeyC", 67, 2, "")
 	b.key("x", "KeyX", 88, 1, "")
 	b.key("F5", "F5", 116, 8, "")
+	b.key("Tab", "Tab", 9, 2, "")
+	b.key("PageUp", "PageUp", 33, 8, "")
+	b.key("PageDown", "PageDown", 34, 1, "")
+	b.key("Backspace", "Backspace", 8, 2, "")
 	b.eval(fmt.Sprintf(`(() => { const ta = document.querySelector(%q); const dt = new DataTransfer(); dt.setData('text/plain', 'pasted\ntext');
 		ta.dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true})); return true; })()`, active(fmt.Sprintf("[data-host-screen=%q] textarea", r.pane))), nil)
-	want := operateMarker + "\r\x1b[A\x03\x1bx\x1b[15;2~pasted\rtext"
+	want := operateMarker + "\r\x1b[A\x03\x1bx\x1b[15;2~\t\x1b[5;2~\x1b[6;3~\x08pasted\rtext"
 	var got []byte
-	eventually(t, "the pane to read what was typed", 10*time.Second, func() bool {
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
 		got, _ = os.ReadFile(r.got)
-		return len(got) >= len(want)
-	})
+		if len(got) >= len(want) || time.Now().After(deadline) {
+			break
+		}
+	}
 	if string(got) != want {
-		t.Errorf("the pane read %q, want %q", got, want)
+		t.Fatalf("the pane read %q, want %q", got, want)
 	}
 
 	// Nothing else left the page: the session first, then keys.
@@ -221,9 +229,23 @@ func TestDashboardOperateInThePage(t *testing.T) {
 			}
 		}
 	}
-	if w := []string{"text:" + operateMarker, "Enter", "Up", "C-c", "M-x", "S-F5", "paste:pasted\ntext"}; strings.Join(keys, "|") != strings.Join(w, "|") {
+	if w := []string{"text:" + operateMarker, "Enter", "Up", "C-c", "M-x", "S-F5", "C-Tab", "S-PPage", "M-NPage", "C-h", "paste:pasted\ntext"}; strings.Join(keys, "|") != strings.Join(w, "|") {
 		t.Errorf("keys sent %q, want %q", keys, w)
 	}
+
+	// Away to another tab and back while on: the pane's terminal, made
+	// again, still takes keys.
+	had, _ := os.ReadFile(r.got) // the pane's cat writes on after what it wrote
+	b.click(`.tab[data-tab=all] .tab-main`)
+	b.until("the All threads tab", `!!document.querySelector('.tab.active[data-tab=all]')`)
+	b.click(r.paneTab() + " .tab-main")
+	b.until("the pane's tab again, still on", fmt.Sprintf(`document.querySelector('.pane.active [data-operate]')?.dataset.operate === 'on' && !!document.querySelector(%q)`, active(fmt.Sprintf("[data-host-screen=%q] textarea", r.pane))))
+	r.focusPane(b)
+	b.call("Input.insertText", map[string]any{"text": "again"})
+	eventually(t, "the pane to read what was typed after the tab came back", 10*time.Second, func() bool {
+		got, _ := os.ReadFile(r.got)
+		return string(got) == string(had)+"again"
+	})
 
 	// Switched off: read-only within a second, and it says so.
 	ends := r.ends()
@@ -232,6 +254,11 @@ func TestDashboardOperateInThePage(t *testing.T) {
 	r.endedWithin(t, b, "ended", ends)
 	if d := time.Since(start); d > 2*time.Second {
 		t.Errorf("switched off after %v", d)
+	}
+	// The server ended it because the page asked, not because the page
+	// went away.
+	if log := r.logged(); !strings.HasSuffix(strings.TrimSpace(log[strings.LastIndex(log, `msg="host input ended"`):]), "reason=ended") {
+		t.Errorf("the end after switching off:\n%s", log)
 	}
 	var says string
 	b.eval(`document.querySelector('.pane.active [data-operate-end]').textContent`, &says)
@@ -251,6 +278,22 @@ func TestDashboardOperateInThePage(t *testing.T) {
 	}
 	r.openPane(b)
 	b.until("the switch, off again", `document.querySelector('.pane.active [data-operate]')?.dataset.operate === 'off' && !document.querySelector('.pane.active [data-operate-end]')`)
+
+	// A second click while it starts switches it off: the switch shows
+	// "starting", not off, so it never starts twice.
+	starts := strings.Count(r.logged(), `msg="host input started"`)
+	b.eval(`(() => { const s = document.querySelector('.pane.active [role=switch]'); s.click(); s.click(); return true; })()`, nil)
+	b.until("switched off while starting", `document.querySelector('.pane.active [data-operate]')?.dataset.operate === 'ended' && document.querySelector('.pane.active [data-operate-end]')?.dataset.operateEnd === 'ended'`)
+	time.Sleep(time.Second)
+	if phase, _ := b.switchState(); phase != "ended" {
+		t.Errorf("after two clicks the switch is %s", phase)
+	}
+	if n := strings.Count(r.logged(), `msg="host input started"`) - starts; n > 1 {
+		t.Errorf("two clicks started %d operations", n)
+	}
+	if strings.Count(r.logged(), `msg="host input started"`) != r.ends() {
+		t.Errorf("an operation is left open after two clicks:\n%s", r.logged())
+	}
 
 	// Closing the browser's tab ends it too.
 	b.press(active("[role=switch]"))

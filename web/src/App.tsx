@@ -93,18 +93,20 @@ export function App() {
   const [ops, setOps] = useState<ReadonlyMap<TabKey, OpState>>(new Map());
   const operations = useRef(new Map<TabKey, Operation>());
   const opOf = (k: TabKey) => ops.get(k);
-  const switchOp = (k: TabKey, pane: string) => (on: boolean) => {
-    if (!on) {
-      operations.current.get(k)?.stop();
+  // The switch toggles the tab's operation as it is now, not as it was
+  // last drawn: a second click while it starts switches it off.
+  const switchOp = (k: TabKey, pane: string) => () => {
+    const now = operations.current.get(k);
+    if (now?.live) {
+      now.stop();
       return;
     }
-    operations.current.get(k)?.close();
-    operations.current.set(
-      k,
-      new Operation(pane, (s) => {
-        if (operations.current.has(k)) setOps((m) => new Map(m).set(k, s));
-      }),
-    );
+    now?.close();
+    const op: Operation = new Operation(pane, (s) => {
+      if (operations.current.get(k) === op) setOps((m) => new Map(m).set(k, s));
+    });
+    operations.current.set(k, op);
+    op.begin();
   };
   const keysTo = (k: TabKey) => (keys: HostKey[]) => operations.current.get(k)?.send(keys);
   const closeTab = (k: TabKey) => {
@@ -234,7 +236,14 @@ export function App() {
             />
           )}
         </div>
-        <StatusBar selected={openedHost !== null ? undefined : x} live={d.live} limits={d.limits} now={now} signedIn={!d.signedOut} />
+        <StatusBar
+          selected={openedHost !== null ? undefined : x}
+          live={d.live}
+          limits={d.limits}
+          now={now}
+          signedIn={!d.signedOut}
+          operating={operating}
+        />
       </div>
     );
   }

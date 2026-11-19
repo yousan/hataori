@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { finals, modifiers, pasted, sequences, singles, tildes, toKeys, validKey } from "../src/keys.ts";
+import { eventKey, eventKeys, finals, type KeyPress, modifiers, pasted, sequences, singles, tildes, toKeys, validKey } from "../src/keys.ts";
 
 const ESC = "\x1b";
 
@@ -29,6 +29,19 @@ const modifierCases: [string, string][] = [
   ["2", "S-"], ["3", "M-"], ["4", "M-S-"], ["5", "C-"], ["6", "C-S-"], ["7", "C-M-"], ["8", "C-M-S-"],
 ];
 const sequenceCases: [string, string][] = [[`${ESC}[Z`, "BTab"]];
+const eventCases: [string, string][] = [
+  ["Enter", "Enter"], ["Tab", "Tab"], ["Backspace", "BSpace"], ["Escape", "Escape"],
+  ["ArrowUp", "Up"], ["ArrowDown", "Down"], ["ArrowLeft", "Left"], ["ArrowRight", "Right"],
+  ["Home", "Home"], ["End", "End"], ["PageUp", "PPage"], ["PageDown", "NPage"], ["Insert", "IC"], ["Delete", "DC"],
+  ["F1", "F1"], ["F2", "F2"], ["F3", "F3"], ["F4", "F4"], ["F5", "F5"], ["F6", "F6"],
+  ["F7", "F7"], ["F8", "F8"], ["F9", "F9"], ["F10", "F10"], ["F11", "F11"], ["F12", "F12"],
+];
+
+// press is a KeyboardEvent of key with the modifiers mods names (C, M, S,
+// W for the Meta key).
+function press(key: string, mods = ""): KeyPress {
+  return { key, ctrlKey: mods.includes("C"), altKey: mods.includes("M"), shiftKey: mods.includes("S"), metaKey: mods.includes("W") };
+}
 
 // keysOf is toKeys of data as key names, a text as "text:…".
 function keysOf(data: string): string[] {
@@ -44,6 +57,7 @@ test("every entry of the table is tested", () => {
   same(tildes, tildeCases, "tildes");
   same(modifiers, modifierCases, "modifiers");
   same(sequences, sequenceCases, "sequences");
+  same(eventKeys, eventCases, "eventKeys");
 });
 
 for (const [b, want] of singleCases) {
@@ -133,4 +147,40 @@ test("validKey is the server's rule", () => {
 test("every key the table makes is one the server takes", () => {
   for (const [, k] of [...singleCases, ...finalCases, ...tildeCases, ...sequenceCases]) assert.ok(validKey(k), k);
   for (const [, p] of modifierCases) for (const [, k] of [...finalCases, ...tildeCases]) assert.ok(validKey(p + k), p + k);
+});
+
+for (const [k, want] of eventCases) {
+  test(`the key ${k} is ${want}`, () => assert.equal(eventKey(press(k)), want));
+}
+
+test("a named key's modifiers, as tmux names them", () => {
+  const cases: [string, string, string][] = [
+    ["PageUp", "S", "S-PPage"], ["PageUp", "M", "M-PPage"], ["PageDown", "C", "C-NPage"], ["Insert", "M", "M-IC"],
+    ["ArrowUp", "CMS", "C-M-S-Up"], ["F5", "S", "S-F5"], ["F12", "CM", "C-M-F12"], ["Home", "C", "C-Home"], ["Delete", "MS", "M-S-DC"],
+    ["Tab", "C", "C-Tab"], ["Tab", "M", "M-Tab"], ["Tab", "S", "BTab"], ["Tab", "MS", "M-BTab"], ["Tab", "CS", "BTab"],
+    ["Enter", "C", "Enter"], ["Enter", "S", "Enter"], ["Enter", "M", "M-Enter"], ["Enter", "CM", "M-Enter"],
+    ["Backspace", "C", "C-h"], ["Backspace", "CM", "C-M-h"], ["Backspace", "M", "M-BSpace"], ["Backspace", "S", "BSpace"],
+    ["Escape", "C", "Escape"], ["Escape", "M", "M-Escape"],
+  ];
+  for (const [k, mods, want] of cases) {
+    assert.equal(eventKey(press(k, mods)), want, `${mods} ${k}`);
+    assert.ok(validKey(want), want);
+  }
+});
+
+test("other presses are the terminal emulator's", () => {
+  for (const k of ["a", "A", " ", "Shift", "Control", "Alt", "Meta", "CapsLock", "ArrowUpp", "F13", "Dead", "Process", "Unidentified"]) {
+    assert.equal(eventKey(press(k)), null, k);
+    assert.equal(eventKey(press(k, "C")), null, `C ${k}`);
+  }
+  assert.equal(eventKey(press("ArrowUp", "W")), null, "with the Meta key");
+});
+
+test("a terminal's answers to queries are dropped whole", () => {
+  for (const s of [`${ESC}]11;rgb:0000/0000/0000${ESC}\\`, `${ESC}]10;rgb:ffff/ffff/ffff\x07`, `${ESC}P1$r0m${ESC}\\`, `${ESC}_x${ESC}\\`]) {
+    assert.deepEqual(keysOf(s), [], JSON.stringify(s));
+  }
+  assert.deepEqual(keysOf(`${ESC}]11;rgb:0000/0000/0000${ESC}\\ok`), ["text:ok"]);
+  assert.deepEqual(keysOf(`${ESC}]`), ["M-]"]);
+  assert.deepEqual(keysOf(`${ESC}P`), ["M-P"]);
 });

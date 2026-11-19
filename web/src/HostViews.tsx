@@ -3,7 +3,7 @@ import { type HostTerminal, hostScreenPath } from "./api";
 import { type Key, t } from "./catalog";
 import { age } from "./format";
 import { fitted, sized } from "./fit";
-import { type HostKey, pasted, toKeys } from "./keys";
+import { eventKey, type HostKey, pasted, toKeys } from "./keys";
 import { clock, type EndReason, left, type OpState } from "./operate";
 import { openReadOnly } from "./TerminalView";
 import { Stream } from "./stream";
@@ -48,15 +48,19 @@ function HostScreen({ h, fit, operating, onKeys }: { h: HostTerminal; fit?: bool
   live.current = { operating: !!operating, onKeys };
   const pane = h.tmux?.pane ?? "";
   useEffect(() => {
-    const term = termRef.current;
-    if (!term) return;
-    term.options.disableStdin = !operating;
-    if (operating) term.focus();
-  }, [operating]);
-  useEffect(() => {
     if (!el.current || !pane) return;
     const term = openReadOnly(el.current);
     termRef.current = term;
+    // A named key is taken from the keyboard while operating, before the
+    // terminal sees it: the terminal would drop some of its modifiers.
+    term.attachCustomKeyEventHandler((e) => {
+      if (!live.current.operating || e.isComposing || e.metaKey) return true;
+      const k = eventKey(e);
+      if (k === null) return true;
+      e.preventDefault(); // Tab would move the focus
+      if (e.type === "keydown") live.current.onKeys?.([{ key: k }]);
+      return false;
+    });
     // The page's own copy of the terminal sends nothing unless the pane is
     // operated; then only the keys of the table leave it.
     const data = term.onData((d) => {
@@ -72,6 +76,7 @@ function HostScreen({ h, fit, operating, onKeys }: { h: HostTerminal; fit?: bool
       live.current.onKeys?.(pasted(e.clipboardData?.getData("text/plain") ?? ""));
     };
     host.addEventListener("paste", onPaste, true);
+    term.options.disableStdin = !live.current.operating; // made again while operated: it takes keys at once
     const fitting = fit && box.current ? fitted(term, box.current) : null;
     const source = new Stream(hostScreenPath(pane));
     // Each message is the whole screen. It is drawn after the one before
@@ -84,10 +89,13 @@ function HostScreen({ h, fit, operating, onKeys }: { h: HostTerminal; fit?: bool
       new Promise<void>((done) => {
         if (gone) return done();
         const lines = screen.split("\n");
-        const cols = Math.max(20, ...lines.map(cells));
+        // tmux leaves out the spaces at the end of a line: the cursor may
+        // be past the widest line, or below the last.
+        const cols = Math.max(20, cursor ? cursor.x + 1 : 0, ...lines.map(cells));
+        const rows = Math.max(1, lines.length, cursor ? cursor.y + 1 : 0);
         term.reset();
-        if (cols !== term.cols || lines.length !== term.rows) {
-          term.resize(cols, Math.max(1, lines.length));
+        if (cols !== term.cols || rows !== term.rows) {
+          term.resize(cols, rows);
           fitting?.refit();
         }
         sized(term);
@@ -117,6 +125,14 @@ function HostScreen({ h, fit, operating, onKeys }: { h: HostTerminal; fit?: bool
       term.dispose();
     };
   }, [pane, fit]);
+  // Declared after the effect that makes the terminal, so that it runs
+  // after it, also when that terminal is made again.
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    term.options.disableStdin = !operating;
+    if (operating) term.focus();
+  }, [operating, pane, fit]);
   return (
     <div className={fit ? "terminal-view fit" : "terminal-view"} data-host-screen={pane} data-operating={operating ? "on" : "off"} ref={view}>
       <div className="xterm-box" ref={box}>
@@ -177,17 +193,22 @@ const endText: Record<EndReason, Key> = {
 // Operate is a tmux pane's switch, and what the operation's state is: the
 // switch is off whenever the tab opens, and again whenever the operation
 // ends, with why.
-function Operate({ op, now, onSwitch }: { op: OpState | undefined; now: number; onSwitch: (on: boolean) => void }) {
+function Operate({ op, now, onSwitch }: { op: OpState | undefined; now: number; onSwitch: () => void }) {
   const on = op !== undefined && op.phase !== "ended";
   return (
     <div className="operate" data-operate={op?.phase ?? "off"}>
-      <button type="button" role="switch" aria-checked={on} data-operate-switch="" onClick={() => onSwitch(!on)}>
+      <button type="button" role="switch" aria-checked={on} data-operate-switch="" onClick={onSwitch}>
         {t("operate.switch")}
       </button>
       {op?.phase === "starting" && <span className="muted">{t("operate.starting")}</span>}
       {op?.phase === "on" && (
         <span className="operating" data-operating-left={left(op, now)}>
           {t("operate.on", { pane: op.pane, left: clock(left(op, now)) })}
+        </span>
+      )}
+      {op?.phase === "on" && op.error && (
+        <span className="operate-end" data-operate-error="" role="status">
+          {t("operate.keyRefused", { reason: op.error })}
         </span>
       )}
       {op?.phase === "ended" && op.reason && (
@@ -210,7 +231,7 @@ export function HostPane(props: {
   fit?: boolean;
   may?: boolean;
   op?: OpState;
-  onSwitch?: (on: boolean) => void;
+  onSwitch?: () => void; // toggles the operation
   onKeys?: (keys: HostKey[]) => void;
 }) {
   const { h, now, fit, may, op, onSwitch, onKeys } = props;
