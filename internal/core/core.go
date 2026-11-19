@@ -45,6 +45,9 @@ type Scope struct {
 	Owner   string // the name of the client that gives the scope its threads
 	Model   string // default model
 	Effort  string // default effort
+	// ShowIn lists the "<client>:<channel>" besides the scope's own where
+	// its threads may be linked (design, section 5.2).
+	ShowIn []string
 }
 
 // Workspaces makes the working directory of a new thread.

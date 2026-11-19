@@ -80,6 +80,9 @@ type Scope struct {
 	Model   string   // default model; empty for the agent's own default
 	Effort  string   // default effort; empty for the agent's own default
 	People  []string // names of the people who may act here besides the owner
+	// ShowIn lists the channels, besides the scope's own, where its threads
+	// may be shown, each as "<client>:<channel>" (design, section 5.2).
+	ShowIn []string
 	// Supervisor is the scope's supervisor (design, section 7.1); nil when
 	// the scope names none.
 	Supervisor *Supervisor
@@ -214,6 +217,7 @@ type fileScope struct {
 	People     []string        `json:"people"`
 	Posters    []string        `json:"posters"`
 	Supervisor *fileSupervisor `json:"supervisor"`
+	ShowIn     []string        `json:"show_in"`
 }
 
 type filePerson struct {
@@ -331,6 +335,24 @@ func ParseConfig(data []byte) (*Config, error) {
 					return nil, fmt.Errorf("config: key %q: %v", key+".supervisor.agent", err)
 				}
 			}
+		}
+		for j, e := range s.ShowIn {
+			k := fmt.Sprintf("%s.show_in[%d]", key, j)
+			client, channel, ok := strings.Cut(strings.TrimSpace(e), ":")
+			if !ok || channel == "" || strings.TrimSpace(channel) != channel {
+				return nil, fmt.Errorf("config: key %q: %q is not <client>:<channel>", k, e)
+			}
+			if err := registry.ValidName(client); err != nil {
+				return nil, fmt.Errorf("config: key %q: %v", k, err)
+			}
+			entry := client + ":" + channel
+			if client == sc.Client && channel == sc.Key {
+				return nil, fmt.Errorf("config: key %q: %q is the scope's own channel", k, entry)
+			}
+			if slices.Contains(sc.ShowIn, entry) {
+				return nil, fmt.Errorf("config: key %q: %q is listed twice", k, entry)
+			}
+			sc.ShowIn = append(sc.ShowIn, entry)
 		}
 		c.Scopes = append(c.Scopes, sc)
 	}

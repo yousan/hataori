@@ -39,6 +39,9 @@ type FrontEnd struct {
 	// input against it.
 	People *people.Directory
 	Scopes map[string]Scope // by channel
+	// ShowIn lists, by channel of this client, the scopes of other channels
+	// whose show_in names it: their threads may be attached there.
+	ShowIn map[string][]string
 	Log    *slog.Logger
 
 	// The progress line: posted after QuietAfter (90s) of a turn without
@@ -193,6 +196,10 @@ func (f *FrontEnd) handle(in surface.Inbound) error {
 	o, ok := parseTrigger(f.Trigger, text)
 	if !ok {
 		return nil
+	}
+	if arg, ok := attachArg(o); ok {
+		// On a surface without commands; a refusal shows nothing.
+		return f.attach(ctx, in.Ref.Conv, in.Author, arg, in.Ref.ID, nil)
 	}
 	refuse := func(reason string) {
 		f.Log.Warn("trigger ignored", "reason", reason, "scope", channel,
@@ -387,11 +394,11 @@ func (f *FrontEnd) followUp(in surface.Inbound) error {
 	}
 	ctx := f.context()
 	conv := in.Ref.Conv
-	if _, known := f.Scopes[conv.Channel]; !known {
+	scopes := f.scopesIn(conv.Channel)
+	if len(scopes) == 0 {
 		return nil
 	}
-	api := f.API(control.Caller{From: f.from(in.Author), Scopes: []string{conv.Channel},
-		May: control.OpRead | control.OpSend})
+	api := f.API(control.Caller{From: f.from(in.Author), Scopes: scopes, May: control.OpRead | control.OpSend})
 	t, ok, err := f.threadIn(ctx, api, conv)
 	if err != nil {
 		return err // not known yet whether it is one of ours: try again
@@ -456,6 +463,3 @@ func (f *FrontEnd) closedNotice(ctx context.Context, in surface.Inbound) error {
 	f.Outbox.Wake()
 	return nil
 }
-
-// Command handles a command; there are none yet.
-func (f *FrontEnd) Command(surface.Command) {}

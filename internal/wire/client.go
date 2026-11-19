@@ -221,6 +221,12 @@ func (c *Client) Stop(ctx context.Context, id control.ThreadID) error {
 	return c.call(ctx, "Stop", stopArgs{ID: id}, nil)
 }
 
+func (c *Client) Link(ctx context.Context, id control.ThreadID, l control.LinkRef) (control.LinkRef, error) {
+	var out control.LinkRef
+	err := c.call(ctx, "Link", linkArgs{ID: id, Link: l}, &out)
+	return out, err
+}
+
 // CloseThread is the operation Close.
 func (c *Client) CloseThread(ctx context.Context, id control.ThreadID) error {
 	return c.call(ctx, "Close", closeArgs{ID: id}, nil)
