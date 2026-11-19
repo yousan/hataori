@@ -1518,6 +1518,22 @@ type API interface {
 	// stream both ways (below). Since protocol 3.11.
 	OperateHost(ctx context.Context, pane string) (HostOperation, error)
 
+	// TakeIn makes a thread of a window that a person started (section
+	// 4.8): the window's last report must be of an interactive session,
+	// the window must not be taken in already, and its holder's check must
+	// pass; else nothing changes, and the refusal is logged. The thread is
+	// made in req.Scope as Start makes one, with its first link; its
+	// session is the window's, and its workspace is the session's
+	// directory, recorded as not hataori's, which no removal touches. It
+	// needs OpTakeIn, which only the owner's connection on the control
+	// socket has. Since protocol 3.17 (#400).
+	TakeIn(ctx context.Context, req TakeInRequest) (ThreadID, error)
+
+	// Release ends a take-in: the thread goes asleep, its window's hooks
+	// only report again, and the window is left as it is. A thread that is
+	// not idle is refused. It needs OpTakeIn. Since protocol 3.17.
+	Release(ctx context.Context, id ThreadID) error
+
 	// Limits returns each agent's remaining usage as its sessions last
 	// reported it; an agent that reports none has no entry. It needs
 	// OpRead and no scope: the usage is the account's. Since protocol 1.13.
@@ -1664,7 +1680,7 @@ type Caller struct {
 	From      string
 	Principal Principal // a person's name (section 5.5)
 	Scopes    []string  // the scopes it may see and act in
-	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName, OpAsk, OpHostInput
+	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName, OpAsk, OpHostInput, OpTakeIn
 	// NoText leaves text written by a person or an agent out of what the
 	// caller reads: ThreadInfo.Title and ThreadInfo.Last,
 	// ThreadDetail.Recent, the text of its requests, and the text fields of
@@ -1753,7 +1769,7 @@ type HookCall struct {
 
 // HookResult: Text as the handlers left it, and Before and After the text
 // they added around it where the point allows (before_prompt_build, since
-// protocol 3.17): each handler's around what the ones before it left.
+// protocol 3.18): each handler's around what the ones before it left.
 // Stopped when a handler stopped it or failed where its policy blocks; By
 // names that plugin, and Reason is the plugin's reason (text) or, when
 // Failed, hataori's account of the failure.
@@ -1777,7 +1793,7 @@ type HookResult struct {
 // by the core only and never on the wire: the agent gets Before, Text and
 // After on lines of their own (Input.ForAgent), and the input event keeps
 // Text, with Before and After beside it. Nil Hooks, as without plugins,
-// calls nothing. Since protocol 3.17.
+// calls nothing. Since protocol 3.18.
 
 // Not operations of the control API, for a client inside the daemon (#270):
 // core.Core.StartConfined(ctx, caller, r) is Start for a thread whose
@@ -1819,6 +1835,12 @@ type ThreadDetail struct {
 
 // Start, Send, Answer and Stop are refused unless Principal is the owner or
 // one of the people of the thread's scope.
+
+type TakeInRequest struct {
+	Window string // as HostTerminal.Reported.Window names it
+	Scope  string
+	Key    string // makes the call safe to repeat
+}
 
 type StartRequest struct {
 	Agent  string // empty for the scope's agent
@@ -1931,6 +1953,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `OperateHost`, with `Ops` gaining `OpHostInput`, `HostKeys` and `End` on its stream, and the `ended` error code (section 7.2, #362) | minor: new operation, whose connection becomes a stream both ways; 3.11 |
 | `HostView`, a pane's screen with its cursor, for the dashboard's screen of a pane being operated (section 7.2, #363) | minor: new operation; 3.13 |
 | `HostTerminal.Reported` and `ReportedSession`, from the hooks of the Claude Code plugin (section 4.8, #397) | minor: new optional field; 3.15 |
+| `TakeIn` and `Release`, with `Ops` gaining `OpTakeIn`, and the removal reason `the workspace is not hataori's` (section 4.8, #400) | minor: new operations; 3.17 |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 
 Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event. In protocol 1.9: `Terminal`, which turns its connection into a stream as `Events` does. In protocol 1.12: `ThreadInfo.terminal`, the terminal device its session host opened, for the tree's filter, the status bar and the details panel (#285); `HostTerminals` still leaves these terminals out.
@@ -2227,6 +2250,11 @@ type Spec struct {
 	// (a project settings file) that an ordinary session is let past the
 	// dialog for; its scope's trust_files at each launch (section 3.5, #423).
 	TrustFiles []string
+	// TakenIn: a session a person started in their own window, taken in
+	// (section 4.8, #400). It is past its start and runs as ResumeID with
+	// Model; its codec starts ready, Open reports SessionReady and watches
+	// no screen, and nothing launches it. A resume clears it.
+	TakenIn bool
 }
 
 // Confinement is what a confined session may use besides its file tools.
@@ -2373,32 +2401,9 @@ hataori's own host writes a paste as `ESC [200~`, the text, `ESC [201~`, and the
 
 The holder for a tmux window a person started is `internal/holder/tmux` (#399). Its `Window` is built from a hook's `TMUX` and `TMUX_PANE`, with the Claude Code process that reported as `Process`; its `Ref` holds the server's socket path and process id and the pane id. `Caps` is empty, `Start` returns `ErrCannotStart` and `Stop` `ErrNotOwned`. `Alive` is Gone for a pane `list-panes` no longer lists, for a server whose process id is not the reference's, and when no server answers on the socket and the reference's server process is gone (a socket file removed under a running server is Unknown), Running while that Claude Code process leads the foreground process group of the pane's terminal, Exited (with no status) once the process is gone and the pane stays, and Unknown otherwise. Beyond `Holder` it has `CheckTakeIn`, the check before a take-in (section 4.8). `Screen` sends a snapshot from `capture-pane` each time it changes.
 
-### Control API: taking in a window (proposal)
+### Control API: taking in a window
 
-Section 4.8. Minor protocol changes: new operations and optional fields.
-
-```go
-	// TakeIn makes a thread of a window that a person started: the
-	// window's last report must be an interactive session, and the
-	// holder's check (section 4.8) must pass. The thread is made in
-	// req.Scope as Start makes one, and its workspace is recorded as
-	// not hataori's. It needs OpTakeIn, which only the owner's
-	// connection on the control socket has.
-	TakeIn(ctx context.Context, req TakeInRequest) (ThreadID, error)
-
-	// Release ends a take-in: the thread goes asleep and the window is
-	// left as it is. It needs OpTakeIn.
-	Release(ctx context.Context, id ThreadID) error
-
-type TakeInRequest struct {
-	Window string // as HostTerminal.Reported.Window names it
-	Scope  string
-	Key    string // makes the call safe to repeat
-}
-
-// HostTerminal.Reported and ReportedSession: declared above, since
-// protocol 3.15 (#397).
-```
+Section 4.8. `HostTerminal.Reported` and `ReportedSession` are declared above, since protocol 3.15 (#397). So are `TakeIn`, `Release` and `TakeInRequest`, since protocol 3.17 (#400).
 
 ## Appendix E: acceptance criteria after phase 1
 

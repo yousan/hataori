@@ -18,7 +18,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.17**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.18**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -96,7 +96,7 @@ Events are stored, and a reader reads them from a position, possibly long after 
 | `linked_elsewhere` | error code | - | the conversation shows another thread; since 3.4 |
 | `ended` | error code | - | the operation of a host pane has ended: nothing was sent; since 3.11 |
 | `refused` | error code | - | the session's state does not allow the call |
-| `stopped` | error code | - | a plugin's handler on an input hook point stopped the input, or failed where its policy blocks: nothing was accepted; the message names the plugin, the point and why; since 3.17 |
+| `stopped` | error code | - | a plugin's handler on an input hook point stopped the input, or failed where its policy blocks: nothing was accepted; the message names the plugin, the point and why; since 3.18 |
 | `not_supported` | error code | - | the receiver does not know the operation |
 | `error` | error code | - | any other failure |
 
@@ -159,7 +159,7 @@ Result: none
 
 Starts a thread in a scope. The same `key` starts nothing twice and returns the thread the first call started.
 
-Since 3.17, when plugins handle the input hook points in the scope, the daemon runs them in the call, before it accepts the input (design, section 7.3): `before_agent_run`, then `before_prompt_build`. One that stops the input makes the call `stopped`: no thread, no chat thread and no workspace is made, and nothing is recorded; the daemon logs the stop, without the text or the reason. The text `before_prompt_build` adds reaches the agent around the input, on lines of their own; the `input` event has the input as given in `text`, and the added text in `before` and `after`. A key accepted before runs no hook again.
+Since 3.18, when plugins handle the input hook points in the scope, the daemon runs them in the call, before it accepts the input (design, section 7.3): `before_agent_run`, then `before_prompt_build`. One that stops the input makes the call `stopped`: no thread, no chat thread and no workspace is made, and nothing is recorded; the daemon logs the stop, without the text or the reason. The text `before_prompt_build` adds reaches the agent around the input, on lines of their own; the `input` event has the input as given in `text`, and the added text in `before` and `after`. A key accepted before runs no hook again.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -180,7 +180,7 @@ The new thread's number; since 3.0, before it a `{scope, key}` object.
 
 Gives input to a thread. A thread with an open question takes it as the answer; an asleep thread is woken with it. A closed or removed thread takes nothing and is not woken: `closed`, since 2.3.
 
-Since 3.17 the input hook points run in the call, before the input is accepted, as for `Start`: a stopped input is `stopped`, takes nothing, and writes no event. An answer to an open question runs `before_agent_run` only, and reaches the agent as given, as the supervisor's mark does not go before it. A key accepted before, and a closed or removed thread, run no hook. The reason an approved `AskInterrupt` gives the thread is a `Send` too: a stopped one makes the approving `Answer` `stopped`, and the approval stays open.
+Since 3.18 the input hook points run in the call, before the input is accepted, as for `Start`: a stopped input is `stopped`, takes nothing, and writes no event. An answer to an open question runs `before_agent_run` only, and reaches the agent as given, as the supervisor's mark does not go before it. A key accepted before, and a closed or removed thread, run no hook. The reason an approved `AskInterrupt` gives the thread is a `Send` too: a stopped one makes the approving `Answer` `stopped`, and the approval stays open.
 
 On a supervisor's connection (a token, since 2.2) `busy` is always taken as 0: a `Send` with 1 or 2 to a running thread is refused with `busy` and logged, nothing is queued and the turn goes on. There, and in `Start`, the daemon puts the line `From the supervisor of this channel:` before the input's text; the `input` event has the text with that line, and the thread's title is made without it. A `Send` that answers an open question is not marked: the agent gets the answer, and the `answer` event its text, as given.
 
@@ -247,6 +247,39 @@ Since 2.3. Ends the agent process of an idle, asleep or failed thread and closes
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `id` | integer | required | the thread's number; since 3.0, before it a `{scope, key}` object |
+
+Result: none
+
+### Operation `TakeIn`
+
+Since 3.17. Makes a thread of a window that a person started ([design, section 4.8](design/overview.md#48-taking-in-a-session-a-person-started)): a tmux pane in which a session reported through hataori's Claude Code plugin, as `HostTerminals` gives it in `reported`. Only the owner's connection on the control socket may call it; every other caller is answered `forbidden`, and the refusal is logged.
+
+Before anything changes it checks:
+- the caller may act in the scope, else `forbidden` (so for a scope that is not configured), and the scope is enabled, else `disabled`;
+- a session reported from the window and its process still runs, else `not_found`;
+- that session is interactive, else `refused`;
+- the window is not taken in already, else `refused`;
+- the window's holder confirms that the window exists, and that the process that reported runs on the window's terminal as its foreground process, else `refused`. An environment is inherited, so a process that the session's own shell started names the same window.
+
+Each refusal changes nothing and is logged. The daemon keeps no report of a session that is not interactive, so such a window is answered `not_found`. Then the thread is made in the scope as `Start` makes one, with its first link opened by the scope's owner. Its session is the window's session id, its title is the name of the session's directory, and its workspace is that directory, recorded as not hataori's: `Remove` refuses it with reason `the workspace is not hataori's`, and nothing else removes it. No agent is started. From the window's next hook on, the hooks of the process that was taken in report to the thread, also while the daemon is down, and the scope's rules answer its permission requests; today they are allowed automatically. The hooks of any other process in the window are only listed. Input from chat or `Send` is pasted into the window, and only while the process that was taken in is the window's foreground process; `Stop` interrupts the running turn with Escape, and nothing ends the window's process. The same `key` takes in nothing twice and returns the thread the first call made.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `window` | string | required | the window, as `ReportedSession.window` names it; not text |
+| `scope` | string | required | the scope the thread is made in |
+| `key` | string | required | makes the call safe to repeat |
+
+Result: integer
+
+The new thread's number.
+
+### Operation `Release`
+
+Since 3.17. Ends a take-in: the thread goes asleep, as an idle thread does after its idle period, the window's hooks only report again, and the window is left as it is. A thread that was not taken in, that is not idle, or that has a message or an answer accepted and not reported by a turn yet, is answered `refused`, and nothing changes. It is checked as `TakeIn` is.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `id` | integer | required | the thread's number |
 
 Result: none
 
@@ -421,7 +454,7 @@ Calls the plugin's handler on one hook point (design, section 7.3). The handlers
 | before_prompt_build | no | no | yes | skip |
 | message_sending | yes | yes | no | skip |
 
-At `before_prompt_build` each handler's `text` is the input with the text the handlers before it added, around it; what a handler adds goes around that. Before 3.17 `before_prompt_build` allowed `text` and not `before` and `after`; no version before 3.17 called it.
+At `before_prompt_build` each handler's `text` is the input with the text the handlers before it added, around it; what a handler adds goes around that. Before 3.18 `before_prompt_build` allowed `text` and not `before` and `after`; no version before 3.18 called it.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -708,8 +741,8 @@ Since 3.16. A plugin's answer to `hook`.
 | `action` | string | required | `continue`: it passes; `stop`: it does not, at a point that allows it |
 | `text` | string | optional | with `continue`, what passes the point instead, at a point that allows it; absent, it passes unchanged |
 | `reason` | string | optional | with `stop`, why, which the thread shows; text |
-| `before` | string | optional | with `continue`, text to add before what passes the point, on lines of its own, at a point that allows it; text; since 3.17 |
-| `after` | string | optional | with `continue`, text to add after it, likewise; text; since 3.17 |
+| `before` | string | optional | with `continue`, text to add before what passes the point, on lines of its own, at a point that allows it; text; since 3.18 |
+| `after` | string | optional | with `continue`, text to add after it, likewise; text; since 3.18 |
 
 ### Type `GrantedHook`
 
@@ -823,8 +856,8 @@ Exactly one per turn.
 | `principal` | string | optional | the person who gave it; since 2.2 |
 | `from` | string | optional | the `<client>:<id>` it came from, as in `thread_created`; since 2.2 |
 | `link` | object | optional | the link it came through, a `LinkRef`: `client`, `channel` and `thread`; absent for input from outside chat, such as the supervisor's; since 3.6 |
-| `before` | string | optional | text the plugins' `before_prompt_build` handlers added before the input, which the agent got on lines of their own before `text`; absent when none did; since 3.17 |
-| `after` | string | optional | the same, after it; since 3.17 |
+| `before` | string | optional | text the plugins' `before_prompt_build` handlers added before the input, which the agent got on lines of their own before `text`; absent when none did; since 3.18 |
+| `after` | string | optional | the same, after it; since 3.18 |
 
 ### Event `answer`
 
@@ -989,7 +1022,7 @@ Since 2.3. A removal of the thread's workspace was refused, and nothing changed.
 | `session` | integer | required | the thread's current session |
 | `trigger` | string | required | what asked for it: `command` or `closed age`, as the `state` event's `reason` |
 | `principal` | string | optional | the person who asked, for `command` |
-| `reason` | string | required | why, such as `modified file`, `untracked file`, `ignored file not listed as disposable`, `unpushed commit on a branch`, `stash`, `commit only in a reflog`, `remote is another workspace`, `remote under a hataori root`, `process using the directory`, `git error`, `timeout`; or, from the daemon itself, `thread not closed`, `agent not stopped`, `no workspace recorded`, `the instance removes no workspaces` |
+| `reason` | string | required | why, such as `modified file`, `untracked file`, `ignored file not listed as disposable`, `unpushed commit on a branch`, `stash`, `commit only in a reflog`, `remote is another workspace`, `remote under a hataori root`, `process using the directory`, `git error`, `timeout`; or, from the daemon itself, `thread not closed`, `agent not stopped`, `no workspace recorded`, `the instance removes no workspaces`, `the workspace is not hataori's` (since 3.17) |
 | `repo` | string | optional | where it was found, relative to the workspace, when not in the workspace's own repository |
 | `kind` | string | optional | what `repo` is: `submodule`, `nested repository`, `nested bare repository` or `submodule without checkout` |
 | `detail` | string | optional | text for a person, such as the file or the commit; for `thread not closed`, the thread's state |

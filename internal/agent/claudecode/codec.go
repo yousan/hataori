@@ -15,8 +15,19 @@ import (
 
 // NewCodec returns the translator for one running session.
 func (a *Adapter) NewCodec(spec agent.Spec) agent.Codec {
+	// A session taken in is past its start: input goes to it at once.
 	return &codec{spec: spec, seen: map[string]bool{}, turns: map[string]*turnText{}, lines: map[string]bool{},
-		timeout: a.inputTimeout, hookTimeout: a.hookTimeout, requests: map[string]*request{}}
+		timeout: a.inputTimeout, hookTimeout: a.hookTimeout, requests: map[string]*request{}, ready: spec.TakenIn,
+		started: spec.TakenIn, session: takenSession(spec)}
+}
+
+// takenSession is the session a codec of a session taken in runs: known
+// from the take-in, so that its end is never read as a resume that failed.
+func takenSession(spec agent.Spec) string {
+	if spec.TakenIn {
+		return spec.ResumeID
+	}
+	return ""
 }
 
 // Actions is agent.Actions.
@@ -149,6 +160,11 @@ const askTool = "AskUserQuestion"
 func (c *codec) Open() Actions {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.spec.TakenIn {
+		// A person started it, so it is past any start-up dialog: no
+		// screen, and the session's start is the take-in.
+		return c.number(Actions{Events: []agent.Event{{Kind: agent.SessionReady, SessionID: c.spec.ResumeID, Model: c.spec.Model}}})
+	}
 	c.watch = true
 	return Actions{WatchScreen: true}
 }

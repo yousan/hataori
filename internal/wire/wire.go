@@ -27,7 +27,7 @@ import (
 
 // Version is the protocol version this build speaks: major.minor. Two
 // sides work together when their major numbers are equal (docs/protocol.md).
-const Version = "3.17"
+const Version = "3.18"
 
 type hello struct {
 	Version string `json:"version"`
@@ -107,6 +107,9 @@ type (
 		ID control.ThreadID `json:"id"`
 	}
 	removeArgs struct { // since 2.3
+		ID control.ThreadID `json:"id"`
+	}
+	releaseArgs struct { // since 3.17
 		ID control.ThreadID `json:"id"`
 	}
 	workspaceArgs struct {
@@ -196,6 +199,20 @@ var operations = map[string]operation{
 			return nil, err
 		}
 		return api.Start(ctx, a)
+	}},
+	"TakeIn": {control.TakeInRequest{}, control.ThreadID(0), func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a control.TakeInRequest
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return api.TakeIn(ctx, a)
+	}},
+	"Release": {releaseArgs{}, nil, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a releaseArgs
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return nil, api.Release(ctx, a.ID)
 	}},
 	"Send": {sendArgs{}, nil, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
 		var a sendArgs
@@ -310,7 +327,7 @@ var codes = []struct {
 	{"removal_refused", core.ErrRemovalRefused},      // since 2.3
 	{"linked_elsewhere", control.ErrLinkedElsewhere}, // since 3.4
 	{"ended", control.ErrEnded},                      // since 3.11
-	{"stopped", control.ErrStopped},                  // since 3.17
+	{"stopped", control.ErrStopped},                  // since 3.18
 	{"not_supported", ErrNotSupported},
 }
 

@@ -46,7 +46,7 @@ The manifest is `hataori-plugin.json`, in the same directory as the plugin's exe
 | `id` | string | required | The plugin's name: a lowercase letter, then lowercase letters, digits and `-`. The config entry's `id` must be the same. |
 | `version` | string | required | The plugin's version, as its author writes it. hataori does not interpret it. |
 | `protocol` | string | required | The control protocol it speaks, `"<major>.<minor>"`: the major version, and the lowest minor version it needs, such as `"3.0"` ([protocol.md, Versions](protocol.md#versions)). |
-| `operations` | array of strings | empty | The control operations it calls, by their names in [protocol.md](protocol.md#operations), such as `Threads` and `Events`. `SignInLink`, `HostTerminals`, `HostScreen`, `OperateHost` (with `HostKeys` and `End`), `AttachTerminal`, `Close` and `Remove` are refused: no plugin gets them. |
+| `operations` | array of strings | empty | The control operations it calls, by their names in [protocol.md](protocol.md#operations), such as `Threads` and `Events`. `SignInLink`, `HostTerminals`, `HostScreen`, `OperateHost` (with `HostKeys` and `End`), `AttachTerminal`, `Close`, `Remove`, `TakeIn` and `Release` are refused: no plugin gets them. |
 | `events` | array of strings | empty | The event kinds it reads, by their names in [protocol.md](protocol.md#events), such as `turn_started` and `turn_ended`. These are the observe hooks. |
 | `hooks` | array | empty | The hook points it handles, one object each (below), each point once. |
 | `conversation` | boolean | `false` | Whether it needs message text: inputs to the agent, the agent's text, outgoing posts and thread titles. Without it, and without the operator's grant, what the plugin gets has the text left out. |
@@ -72,7 +72,7 @@ The operator can change the failure policy per plugin and point (`on_failure` in
 
 ### How a hook is called
 
-Since protocol 3.16. At a point, the daemon sends a `hook` request to each plugin whose grant has the point and the thread's scope, one after another: by priority, higher first, then in the config's order. Each gets the text as the one before left it, and answers `continue`, `continue` with a new `text` where the point may change it (`message_sending`), `continue` with text to add in `before` and `after` where the point may add it (`before_prompt_build`, since protocol 3.17), or `stop` with a `reason` where the point may stop it. Without the `conversation` grant the request has no text.
+Since protocol 3.16. At a point, the daemon sends a `hook` request to each plugin whose grant has the point and the thread's scope, one after another: by priority, higher first, then in the config's order. Each gets the text as the one before left it, and answers `continue`, `continue` with a new `text` where the point may change it (`message_sending`), `continue` with text to add in `before` and `after` where the point may add it (`before_prompt_build`, since protocol 3.18), or `stop` with a `reason` where the point may stop it. Without the `conversation` grant the request has no text.
 
 A handler fails, and its policy (`block` or `skip`) applies, when:
 
@@ -84,7 +84,7 @@ A handler fails, and its policy (`block` or `skip`) applies, when:
 
 ### The input points
 
-Since protocol 3.17 the core runs `before_agent_run`, then `before_prompt_build`, inside each `Start` and `Send`, before it accepts the input ([protocol.md, `Start`](protocol.md#operation-start)):
+Since protocol 3.18 the core runs `before_agent_run`, then `before_prompt_build`, inside each `Start` and `Send`, before it accepts the input ([protocol.md, `Start`](protocol.md#operation-start)):
 
 - **A stopped input is refused** with the error code `stopped`, which names the plugin and the reason, and nothing of it is kept: no thread, chat thread or workspace for a `Start`, no `input` event for a `Send`. In chat, the trigger of a stopped `Start` gets one reply naming the plugin and the reason, and a stopped message in a thread gets one line, as a reply to it. The core logs the stop once, besides the dispatcher's line for each call; neither has the text or the reason.
 - **Text `before_prompt_build` adds** reaches the agent around the input, each part on lines of its own. Each handler sees the input with what the handlers before it added, and adds around that. The `input` event keeps the input as it was given in `text`, which is what the other links of the thread show, and the added text in `before` and `after`, which `hataori events` shows; a session that replaces one that cannot resume gets the earlier inputs with their added text. An answer to an open question runs `before_agent_run` only: it gets no added text, but can be stopped.

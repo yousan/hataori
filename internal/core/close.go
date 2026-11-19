@@ -82,6 +82,16 @@ func (c *Core) remove(ctx context.Context, id control.ThreadID, principal contro
 		c.refuseRemoval(ctx, id, sid, principal, trigger, NotClosed, "", "", string(state))
 		return fmt.Errorf("core: remove %v: the thread is %s, not closed: %w", id, state, session.ErrRefused)
 	}
+	// The directory of a session a person started may hold the only copy of
+	// their work, and hataori did not make it: it is never removed.
+	if foreign, err := c.foreignWorkspace(ctx, id); err != nil || foreign {
+		detail := ""
+		if err != nil {
+			detail = err.Error()
+		}
+		c.refuseRemoval(ctx, id, sid, principal, trigger, NotHataoris, "", "", detail)
+		return fmt.Errorf("core: remove %v: %w: %s", id, ErrRemovalRefused, NotHataoris)
+	}
 	if c.Remover == nil {
 		c.refuseRemoval(ctx, id, sid, principal, trigger, NoRemover, "", "", "")
 		return fmt.Errorf("core: remove %v: %w: %s", id, ErrRemovalRefused, NoRemover)
@@ -170,8 +180,8 @@ func (c *Core) RemoveClosed(ctx context.Context, age time.Duration) (int, error)
 	}
 	since := c.now().Add(-age).UnixMilli()
 	// A thread started confined has a directory of its own, which nothing
-	// removes: the pass does not try.
-	rows, err := c.Store.DB.QueryContext(ctx, `SELECT t.id FROM threads t WHERE t.state = ? AND t.updated_at <= ? AND t.confined = 0
+	// removes, and one taken in a person's directory: the pass does not try.
+	rows, err := c.Store.DB.QueryContext(ctx, `SELECT t.id FROM threads t WHERE t.state = ? AND t.updated_at <= ? AND t.confined = 0 AND t.foreign_workspace = 0
 		AND NOT EXISTS (SELECT 1 FROM events e WHERE e.thread_id = t.id AND e.kind = ? AND e.time > ?
 			AND json_extract(CAST(e.data AS TEXT), '$.trigger') = ?)
 		ORDER BY t.id`, string(control.Closed), since, string(KindRemovalRefused), since, ByClosedAge)

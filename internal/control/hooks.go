@@ -84,7 +84,7 @@ type HookAnswer struct {
 	Reason string `json:"reason,omitempty"`
 	// Before and After, with HookContinue, are text to add before and
 	// after what passes the point, at a point that allows that. Since
-	// 3.17.
+	// 3.18.
 	Before string `json:"before,omitempty"`
 	After  string `json:"after,omitempty"`
 }
@@ -118,7 +118,7 @@ type PluginStopping struct {
 
 // ErrStopped is returned by Start and Send when a plugin's handler on an
 // input hook point stopped the input, or failed where its policy blocks:
-// nothing was accepted. The error is a *Stopped. Since 3.17.
+// nothing was accepted. The error is a *Stopped. Since 3.18.
 var ErrStopped = errors.New("stopped by a plugin")
 
 // Stopped says which plugin stopped an input, at which point, and why.

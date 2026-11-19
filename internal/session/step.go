@@ -70,7 +70,7 @@ func given(in Input) map[string]any {
 		d["link"] = map[string]any{"client": l.Client, "channel": l.Channel, "thread": l.Thread}
 	}
 	if in.Before != "" {
-		d["before"] = in.Before // since protocol 3.17
+		d["before"] = in.Before // since protocol 3.18
 	}
 	if in.After != "" {
 		d["after"] = in.After
