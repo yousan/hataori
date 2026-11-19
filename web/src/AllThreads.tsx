@@ -1,6 +1,7 @@
 import type { ThreadInfo } from "./api";
 import { type Key, lang, t } from "./catalog";
 import { age, stateName } from "./format";
+import { type Show, shows } from "./show";
 import type { Workspace } from "./workspaces";
 
 const numbers = new Intl.NumberFormat(lang);
@@ -14,6 +15,7 @@ interface Props {
   now: number;
   selected: number | null;
   onOpen: (n: number) => void;
+  show: Show; // the active threads or all of them
 }
 
 const columns: Key[] = [
@@ -95,12 +97,12 @@ function Row(props: { x: ThreadInfo; w: Workspace | undefined; now: number; sele
   );
 }
 
-// AllThreads is the "All threads" tab: one row per thread, grouped by
-// scope. Every cell is a value from the control API, or a dash where it
+// AllThreads is the "All threads" tab: one row per thread shown, grouped
+// by scope. Every cell is a value from the control API, or a dash where it
 // leaves the value out; nothing is guessed. A row opens its thread's tab.
-export function AllThreads({ threads, workspaces, now, selected, onOpen }: Props) {
+export function AllThreads({ threads, workspaces, now, selected, onOpen, show }: Props) {
   const scopes = new Map<string, ThreadInfo[]>();
-  for (const x of threads ?? []) {
+  for (const x of (threads ?? []).filter((x) => shows(show, x))) {
     const list = scopes.get(x.id.scope) ?? [];
     list.push(x);
     scopes.set(x.id.scope, list);

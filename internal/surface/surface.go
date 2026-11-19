@@ -65,6 +65,30 @@ type Sink interface {
 	Command(Command)
 }
 
+// Commander is implemented by a Sink that handles commands. Run asks it for
+// the commands once, when it starts, and makes them the service's commands
+// for the bot; a service where they are already these is left unchanged.
+type Commander interface {
+	Commands() []CommandSpec
+}
+
+// CommandSpec is a command the front end handles.
+type CommandSpec struct {
+	Name        string
+	Description string
+	Args        []ArgSpec // in the order the service shows them; required ones first
+	// Private says that the answer is shown only to the person who used
+	// the command.
+	Private bool
+}
+
+// ArgSpec is one argument of a command. Every argument is text.
+type ArgSpec struct {
+	Name        string
+	Description string
+	Required    bool
+}
+
 // Reconnected is implemented by a Sink that wants to know when the driver
 // has connected: Run calls Connected after it connects and after each
 // reconnect, so that the sink can catch up on what it missed with Since.
@@ -129,7 +153,18 @@ type Command struct {
 	Author Author
 	ID     string // safe-to-repeat key of the command
 	Name   string
-	Args   string
+	Args   []Arg // the arguments given, in the order of the command's spec
+	// Reply, when set, is where the answer goes: a Post into Conv with
+	// ReplyTo set to Reply answers the command in place, privately when the
+	// command's spec says Private. A driver sets it when the service waits
+	// for an answer to the command.
+	Reply *MessageRef
+}
+
+// Arg is one argument given with a command.
+type Arg struct {
+	Name  string
+	Value string
 }
 
 // Message says what to show, not how.
@@ -185,6 +220,7 @@ type Limits struct {
 	Delete       bool
 	SetStatus    bool
 	SetThread    bool
+	Commands     bool // Run registers a Commander's commands and delivers their use
 }
 
 // Factory makes a Driver from its section of the instance's config, which

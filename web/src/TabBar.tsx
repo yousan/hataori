@@ -4,6 +4,7 @@ import { hostLabel } from "./hostTerminals";
 import { t } from "./catalog";
 import { age, mark, stateName } from "./format";
 import type { Layout } from "./layout";
+import { type Show, ShowChoice } from "./show";
 import { allTab, hostOf, nextSplit, type Split, type TabKey, threadOf } from "./tabs";
 import type { Theme } from "./theme";
 
@@ -21,6 +22,11 @@ interface Props {
   onLayout: (l: Layout) => void;
   theme: Theme;
   onTheme: (t: Theme) => void;
+  // The choice between the active threads and all of them, for the tree and
+  // the All threads table, and how many threads it hides.
+  show: Show;
+  onShow: (s: Show) => void;
+  hidden: number;
 }
 
 // badge is what a thread's tab flags: an open question or a failure.
@@ -88,7 +94,7 @@ function Tab(props: {
 }
 
 export function TabBar(props: Props) {
-  const { open, active, thread, host, now, onView, onClose, split, onSplit, layout, onLayout, theme, onTheme } = props;
+  const { open, active, thread, host, now, onView, onClose, split, onSplit, layout, onLayout, theme, onTheme, show, onShow, hidden } = props;
   const next: Theme = theme === "dark" ? "light" : "dark";
   const bar = useRef<HTMLDivElement>(null);
   const focusing = useRef(false); // the active tab is to take the focus once it shows
@@ -159,6 +165,7 @@ export function TabBar(props: Props) {
         })}
       </div>
       <div className="tools">
+        <ShowChoice show={show} onShow={onShow} hidden={hidden} />
         <button
           type="button"
           data-tool="tree"

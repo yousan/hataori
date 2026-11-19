@@ -561,6 +561,54 @@ body {
   background: var(--bg);
 }
 
+/* The choice between the active threads and all, with the number hidden. */
+.show {
+  display: flex;
+  align-items: center;
+  margin-right: 6px;
+}
+
+.show button {
+  font: inherit;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.tools .show button:first-child,
+.show button:first-child {
+  border-radius: 4px 0 0 4px;
+}
+
+.tools .show button:last-of-type,
+.show button:last-of-type {
+  border-radius: 0 4px 4px 0;
+  border-left: none;
+}
+
+.show button[aria-pressed="true"] {
+  color: var(--fg);
+  background: var(--bg);
+}
+
+.show button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.hidden-count {
+  margin-left: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.narrow-show {
+  padding: 8px 10px 0;
+}
+
 .tab-main:focus-visible,
 .tab-close:focus-visible,
 .tools button:focus-visible {

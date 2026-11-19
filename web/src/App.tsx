@@ -13,6 +13,7 @@ import { hostID, hostLabel, useHostTerminals } from "./hostTerminals";
 import { HostDetails, HostPane } from "./HostViews";
 import { active, allTab, close, hostOf, hostTab, initialTabs, panes, type Split, type TabKey, type Tabs, threadOf, threadTab, view } from "./tabs";
 import { useTheme } from "./theme";
+import { hiddenCount, useShow } from "./show";
 import { type Density, Tree } from "./Tree";
 
 const densityKey = "hataori.density";
@@ -37,6 +38,8 @@ export function App() {
   const [tabs, setTabs] = useState<Tabs>(initialTabs);
   const [split, setSplit] = useState<Split>(1);
   const [layout, setLayout] = useLayout();
+  const [showing, setShowing] = useShow();
+  const hidden = hiddenCount(showing, d.threads);
 
   const pickDensity = (x: Density) => {
     setDensity(x);
@@ -153,7 +156,17 @@ export function App() {
               onBack={backNarrow}
             />
           ) : (
-            <NarrowList threads={d.threads} attention={d.attention} now={now} onOpen={openNarrow} hosts={hosts} onOpenHost={openNarrowHost} />
+            <NarrowList
+              threads={d.threads}
+              attention={d.attention}
+              now={now}
+              onOpen={openNarrow}
+              hosts={hosts}
+              onOpenHost={openNarrowHost}
+              show={showing}
+              onShow={setShowing}
+              hidden={hidden}
+            />
           )}
         </div>
         <StatusBar selected={openedHost !== null ? undefined : x} live={d.live} limits={d.limits} now={now} />
@@ -180,6 +193,8 @@ export function App() {
             onDensity={pickDensity}
             selected={current}
             onSelect={(n) => setTabs((s) => view(s, threadTab(n)))}
+            show={showing}
+            hidden={hidden}
             hosts={hosts}
             selectedHost={currentHost}
             onOpenHost={openHost}
@@ -200,6 +215,9 @@ export function App() {
             onLayout={setLayout}
             theme={theme}
             onTheme={setTheme}
+            show={showing}
+            onShow={setShowing}
+            hidden={hidden}
           />
           <main className="panes" data-split={split}>
             {panes(tabs, split).map((k, i) => (
@@ -221,6 +239,7 @@ export function App() {
                         now={now}
                         selected={current}
                         onOpen={(n) => setTabs((s) => view(s, threadTab(n)))}
+                        show={showing}
                       />
                     ) : hostOf(k) !== null ? (
                       <HostPane h={host(hostOf(k)!)} now={now} />

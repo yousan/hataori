@@ -179,6 +179,7 @@ func TestDashboardAllThreadsTable(t *testing.T) {
 		t.Fatal(err)
 	}
 	b.call("Page.navigate", map[string]any{"url": link})
+	b.showAll() // one thread is asleep
 	b.until("the table with both threads", `document.querySelectorAll('.all-threads tr[data-thread]').length === 2`)
 	nFull, nSparse := info(full).Number, info(sparse).Number
 	shown := func(n int64) map[string]string {

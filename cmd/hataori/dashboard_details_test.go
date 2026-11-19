@@ -108,6 +108,7 @@ func TestDashboardDetailsPanel(t *testing.T) {
 		t.Fatal(err)
 	}
 	b.call("Page.navigate", map[string]any{"url": link})
+	b.showAll() // one thread is asleep
 	b.until("the four threads", `document.querySelectorAll('[data-section=threads] .row').length === 4`)
 	open := func(n int64) {
 		t.Helper()
