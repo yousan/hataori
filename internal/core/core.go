@@ -1536,14 +1536,6 @@ func (c *Core) current(ctx context.Context, q querier, id control.ThreadID) (int
 }
 
 func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in control.Input, busy control.Busy) error {
-	return a.send(ctx, id, key, in, busy, nil)
-}
-
-type sendGuard struct{ session, turn int64 }
-
-var errGuardEnded = errors.New("the requested turn ended")
-
-func (a *api) send(ctx context.Context, id control.ThreadID, key string, in control.Input, busy control.Busy, guard *sendGuard) error {
 	scope, err := a.actThread(ctx, control.OpSend, "Send", id)
 	if err != nil {
 		return err
@@ -1573,7 +1565,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		if err != nil {
 			return err
 		}
-		if guard == nil && (state == control.Closed || state == control.Removed) {
+		if state == control.Closed || state == control.Removed {
 			// Nothing is accepted: a message does not wake a closed thread.
 			return fmt.Errorf("core: send to %v: %w", id, ErrClosed)
 		}
@@ -1585,16 +1577,6 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 			ok, err := tx.Accept(ctx, "send:"+scope+"\x00"+key, data)
 			if err != nil || !ok {
 				return err // a repeated key is ignored, whatever Busy says
-			}
-		}
-		if guard != nil {
-			var turn int64
-			err := tx.QueryRowContext(ctx, `SELECT id FROM turns WHERE session_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1`, sid).Scan(&turn)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return err
-			}
-			if errors.Is(err, sql.ErrNoRows) || sid != guard.session || state != control.Running || turn != guard.turn {
-				return errGuardEnded
 			}
 		}
 		if state == control.Running {
