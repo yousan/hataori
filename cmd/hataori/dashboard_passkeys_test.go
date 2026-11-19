@@ -358,6 +358,11 @@ func TestPasskeyRegisteredRightAfterAFreshLinkSignsIn(t *testing.T) {
 	if len(keys) != 1 || keys[0].SignCount != c.count || keys[0].Used == nil || !keys[0].Used.Equal(clock.now()) {
 		t.Fatalf("after the sign-in: %+v", keys)
 	}
+	// Without user verification the same passkey opens nothing.
+	k.noUV = true
+	if code, body, in := d.signInWith(k, c); code != http.StatusUnauthorized || in.Session != "" {
+		t.Fatalf("a sign-in without user verification: %d %s", code, body)
+	}
 }
 
 // A passkey is registered only with a proof made for it: the session
@@ -496,6 +501,20 @@ func TestPasskeyCounterGoingBackIsRefusedAndLogged(t *testing.T) {
 			t.Fatalf("a passkey without a counter: %d %s", code, body)
 		}
 	}
+	// Its answer to one sign-in, sent again, opens nothing: a ceremony is
+	// used once.
+	code, b := d.post(dashboard.PasskeySignInBeginPath, "", nil)
+	var a ceremonyAnswer
+	if code != http.StatusOK || json.Unmarshal(b, &a) != nil {
+		t.Fatalf("begin: %d %s", code, b)
+	}
+	answer := map[string]any{"ceremony": a.Ceremony, "credential": still.get(t, a.Options, c)}
+	if code, b := d.post(dashboard.PasskeySignInFinishPath, "", answer); code != http.StatusOK {
+		t.Fatalf("finish: %d %s", code, b)
+	}
+	if code, b := d.post(dashboard.PasskeySignInFinishPath, "", answer); code != http.StatusUnauthorized {
+		t.Fatalf("the same answer again: %d %s, want 401", code, b)
+	}
 }
 
 // setOwner makes ada and grace the people of root's config, and owner its
@@ -544,6 +563,17 @@ func TestPasskeyOfAPersonWhoMayNoLongerSignIn(t *testing.T) {
 	}
 	if l := logged(); !strings.Contains(l, "may no longer sign in") || !strings.Contains(l, "person=ada") {
 		t.Fatalf("the refusal is not logged:\n%s", l)
+	}
+	// The new owner sees none of ada's passkeys, and cannot remove one.
+	gs, _ := d.webLink()
+	if code, b := d.do(http.MethodGet, "", dashboard.PasskeysPath, gs, "", nil); code != http.StatusOK || strings.TrimSpace(string(b)) != "[]" {
+		t.Fatalf("grace's passkeys: %d %s", code, b)
+	}
+	if code, b := d.do(http.MethodDelete, "", dashboard.PasskeysPath+"/"+b64(c.id), gs, d.web, nil); code != http.StatusNotFound {
+		t.Fatalf("grace removing ada's passkey: %d %s, want 404", code, b)
+	}
+	if keys := d.stored(); len(keys) != 1 {
+		t.Fatalf("ada's passkey is gone: %+v", keys)
 	}
 }
 

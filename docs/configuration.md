@@ -12,7 +12,8 @@ One instance is one directory, its root. hataori reads and writes only under it.
   config/
     hataori.json      the config file (you write it)
     <token file>      the Discord bot token (you write it)
-  state/              created by hataori: database, lock, sessions, control socket
+  state/              created by hataori: database, lock, sessions, control socket,
+                      the dashboard's session key and passkeys
   workspaces/         created by hataori: one clone per thread
   confined/           created by hataori: one empty directory per supervisor thread
   mirrors/            created by hataori: one bare mirror per repository
@@ -250,9 +251,18 @@ One of `tls_cert` and `proxy` is required.
 
 **Signing in.** `hataori signin` on the host prints a link for the loopback listener, and `hataori signin --web` one for the web listener. A link works once, within five minutes, and only on its own listener; the session it opens works only there too, and belongs to the person the link was made for: it shows only the scopes that person may act in, every scope for the owner. Only the owner may get a link, on the host or, once the chat command exists, in chat; a session ends early when its person may no longer get one. A session lasts seven days on the loopback listener and twelve hours on the web listener, across restarts of the daemon. Sessions are signed with a key the daemon keeps in `state/dashboard-session.key`; removing that file ends every session at the next start.
 
-There is no session cookie: a browser sends a cookie to every port of its host, so another service on the same machine could receive it. The page keeps its session in its own origin's storage and sends it in a header with every request. Sessions made by a version that used a cookie are not recognised: sign in again. The page's own files are served without a session; every other route needs one. Only `GET` and `HEAD` are served.
+There is no session cookie: a browser sends a cookie to every port of its host, so another service on the same machine could receive it. The page keeps its session in its own origin's storage and sends it in a header with every request. Sessions made by an earlier version, one that used a cookie or one from before passkeys, are not recognised: sign in again. The page's own files and the sign-in routes (trading a link, and signing in with a passkey) are served without a session; every other route needs one. Only `GET` and `HEAD` are served, except on the passkey routes below, whose other requests must carry an `Origin` that is exactly the listener's address.
 
 A link's token is in the part after `#`, which a browser does not send: the page trades it for the session with a request of its own. So a chat app or a link checker that fetches the link, for a preview, uses nothing up.
+
+**Passkeys on the web listener.** On the web listener, after the first sign-in with a link, the page offers to add a passkey on that device, and from then on its sign-in page offers "Sign in with a passkey", which asks for no name. A passkey is for the web listener's name (`web.url`): a web listener named by an IP address has no passkeys, since browsers take them only for a domain name, and the daemon logs one line saying so. The browser verifies the person (a fingerprint, a face, a PIN) every time.
+
+- A passkey is added only right after a proof made for it: within five minutes of opening a fresh sign-in link on that device, or after checking a passkey you already have (the page does that when you add one later). A session alone, however new, adds none, so whoever takes a session cannot keep a way back in. On the loopback listener SSH or the host is already the proof, so passkeys are neither added nor used there.
+- Signing in with a passkey opens a session like a link does, twelve hours, and the session records when the passkey was checked. A passkey of a person who may no longer sign in opens nothing, and the daemon logs that.
+- A passkey whose signature counter does not go up, a sign that it was copied, is refused and the refusal is logged. Synced passkeys keep no counter and are not affected.
+- "Passkeys" in the status bar lists yours, when each was made and last used, and removes one, on either listener. A removed passkey no longer signs in; to add it back, open a new sign-in link.
+
+The passkeys are kept in `state/dashboard-passkeys.json`, next to the session key, mode 0600, rewritten whole for each change: for each, its credential id, public key, signature counter, person, user handle, and when it was made and last used. It holds no secret, but whoever may write it may add a passkey: a file that other users may open stops the daemon, as the session key does. Removing the file removes every passkey, at the latest at the next start.
 
 The loopback listener refuses a request that came through a reverse proxy (one that carries `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Real-IP` or `Via`): put a proxy in front of the web listener instead.
 
