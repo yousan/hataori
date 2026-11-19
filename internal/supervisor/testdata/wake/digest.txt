@@ -1,0 +1,32 @@
+hataori: turns ended in 7 threads of this channel.
+
+Thread 2: reply first
+Ended: failed (api_error). Background tasks: 0.
+Last output:
+> firstdone
+
+Thread 3: reply ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ü
+Ended: completed. Background tasks: 0.
+Last output, cut to its last 1024 bytes:
+> nïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text, ünïcödé text,
+
+Thread 4: reply one
+Ended: completed. Background tasks: 0.
+Last output:
+> onetwo
+
+Thread 5: ask Which way? -- left | right
+Ended: blocked on a question. Background tasks: 0.
+Last output: none.
+
+Thread 6: fail limit
+Ended: failed (limit). Background tasks: 0.
+Last output:
+> done
+
+Thread 7: background 1h
+Ended: completed. Background tasks: 1.
+Last output:
+> started a long task
+
+And 1 more thread; list_threads and read_thread show it.
