@@ -177,6 +177,12 @@ func (f *FrontEnd) press(s surface.Selection, rest string) {
 		chosen = append(chosen, open.Choices[idx].Token)
 	}
 	conv := s.Ref.Conv
+	// The turn the answer starts lamps the question's turn's message, and
+	// pings the presser (lamps.go); the core's key of an answer is this.
+	if err := f.rememberSender(ctx, "answer:"+string(request), sender{lamp: "none", ping: pingOf(s.Author)}); err != nil {
+		ignored("the press could not be recorded", err)
+		return
+	}
 	api := f.API(control.Caller{From: f.from(s.Author), Scopes: f.scopesIn(conv.Channel), May: control.OpRead | control.OpAnswer})
 	err = api.Answer(ctx, request, control.Answer{Text: strings.Join(chosen, ", "), Choices: chosen,
 		Link: &control.LinkRef{Client: f.Name, Channel: conv.Channel, Thread: conv.Thread}})

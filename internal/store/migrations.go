@@ -412,6 +412,23 @@ var migrations = []Migration{
 			PRIMARY KEY (client, channel, thread)
 		)`,
 	)},
+	// Who sent the input a chat front end gave the core under each key, as
+	// the front end saw it: the message that gets the turn's lamp, and the
+	// id to ping when the turn ends ('' for a webhook, which cannot be
+	// pinged). The service tells kinds of authors only when a message
+	// arrives, so they are kept here.
+	{Name: "chat: senders", Up: execAll(
+		`CREATE TABLE chat_senders (
+			client  TEXT NOT NULL, -- the chat front end's name
+			key     TEXT NOT NULL, -- the Start, Send or Answer key
+			lamp    TEXT NOT NULL, -- 'message': the message below; 'prompt': the thread's prompt; 'none'
+			channel TEXT NOT NULL DEFAULT '',
+			thread  TEXT NOT NULL DEFAULT '',
+			message TEXT NOT NULL DEFAULT '',
+			ping    TEXT NOT NULL DEFAULT '', -- the service's id of the sender, '' for none
+			PRIMARY KEY (client, key)
+		)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {
