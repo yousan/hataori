@@ -212,7 +212,8 @@ var trashName = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}-[A-Za-z0-9._
 
 // Purge deletes the entries of trash/ that were moved there longer than
 // Retention ago, by the time in their names, and returns them. An entry
-// whose name the removal did not make is left alone.
+// whose name the removal did not make is left alone. An entry that cannot
+// be deleted is named in the error, and the others are still deleted.
 func (r Remover) Purge() ([]string, error) {
 	if r.Retention <= 0 {
 		return nil, errors.New("workspace: purge: no retention set")
@@ -252,7 +253,10 @@ func (r Remover) Purge() ([]string, error) {
 		return nil, fmt.Errorf("workspace: purge: %w", err)
 	}
 	now := r.now()
-	var purged []string
+	var (
+		purged []string
+		failed []error
+	)
 	for _, e := range entries {
 		name := e.Name()
 		if !trashName.MatchString(name) {
@@ -263,12 +267,14 @@ func (r Remover) Purge() ([]string, error) {
 			continue
 		}
 		p := filepath.Join(trash, name)
+		// One that cannot be deleted does not keep the others from it.
 		if err := tr.RemoveAll(name); err != nil {
-			return purged, fmt.Errorf("workspace: purge: %w", err)
+			failed = append(failed, fmt.Errorf("workspace: purge: %s: %w", p, err))
+			continue
 		}
 		purged = append(purged, p)
 	}
-	return purged, nil
+	return purged, errors.Join(failed...)
 }
 
 // Check answers whether the workspace at dir may be removed: nil when

@@ -1151,6 +1151,46 @@ func TestPurgeDeletesOnlyOldTrash(t *testing.T) {
 	}
 }
 
+// An entry the purge cannot delete is named in the error, and the old
+// entries listed after it are still deleted. Two cannot be deleted, so
+// that the error names both whatever order the directory lists them in.
+func TestPurgeGoesOnPastAnEntryItCannotDelete(t *testing.T) {
+	tmp := t.TempDir()
+	trash := filepath.Join(tmp, TrashDir)
+	for _, name := range []string{"a", "b", "c", "d"} {
+		p := filepath.Join(trash, "20000101T000000Z-00000000-"+name, "d")
+		os.MkdirAll(p, 0o700)
+		os.WriteFile(filepath.Join(p, "f"), []byte("x"), 0o600)
+	}
+	var stuck []string
+	for _, name := range []string{"b", "d"} {
+		p := filepath.Join(trash, "20000101T000000Z-00000000-"+name, "d")
+		if err := os.Chmod(p, 0o500); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(p, 0o700) })
+		stuck = append(stuck, p)
+	}
+	r := Remover{Maker: Maker{Root: tmp}, Retention: time.Hour}
+	purged, err := r.Purge()
+	if err == nil || !strings.Contains(err.Error(), "20000101T000000Z-00000000-b") || !strings.Contains(err.Error(), "20000101T000000Z-00000000-d") {
+		t.Fatalf("purge with two entries it cannot delete: %v", err)
+	}
+	var names []string
+	for _, p := range purged {
+		names = append(names, filepath.Base(p))
+	}
+	sort.Strings(names)
+	if fmt.Sprint(names) != "[20000101T000000Z-00000000-a 20000101T000000Z-00000000-c]" {
+		t.Fatalf("purged %v", names)
+	}
+	for _, p := range stuck {
+		if _, err := os.Lstat(filepath.Join(p, "f")); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // A trash/ that is a link leads out of the root: nothing is moved there,
 // and nothing there is purged.
 func TestTrashThatIsALinkIsRefused(t *testing.T) {
