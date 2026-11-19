@@ -173,6 +173,7 @@ func TestSlowFollowerIsCutOff(t *testing.T) {
 	// Far more than followLimit and the socket's buffers.
 	dir := startHost(t, Spec{Argv: self("flood", "800000"), Env: []string{}, Terminal: true, LogLimit: 64 << 10})
 	s, _ := follow(t, dir, "", 0)
+	followed := time.Now()
 	c, err := Dial(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -192,6 +193,10 @@ func TestSlowFollowerIsCutOff(t *testing.T) {
 		t.Fatal("the command ended; it should still be answering input")
 	}
 	// The follower was cut off: its stream ends with an error, not the end.
+	// The host says it fell behind, unless its write to the follower timed
+	// out first, which only a test this slow can see: the connection then
+	// just closes, cut off or not.
+	timedOut := time.Since(followed) >= followWriteTimeout
 	s.conn.SetReadDeadline(time.Now().Add(20 * time.Second))
 	var n int
 	for {
@@ -206,6 +211,9 @@ func TestSlowFollowerIsCutOff(t *testing.T) {
 		}
 		if he != nil && !strings.Contains(he.msg, "fell behind") {
 			t.Fatalf("cut off with %q", he.msg)
+		}
+		if he == nil && !timedOut {
+			t.Fatalf("after %d bytes the stream closed without saying the follower fell behind", n)
 		}
 		break
 	}
