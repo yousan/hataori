@@ -1455,15 +1455,17 @@ type API interface {
 	// its Caller has the scopes that person may act in (every scope for the
 	// owner) and OpRead. It needs OpSignIn, which the owner's connection on
 	// the control socket has, and which a chat front end gives the caller it
-	// makes for a person who asks in chat (the command comes with #259);
+	// makes for a person who asks in chat with /dashboard (#259), and sends
+	// the link to in a direct message, never through its outbox;
 	// the dashboard's caller never has it. Who may get a link is one rule in the core, today the
 	// owner only (section 10); a guest and anyone else are refused and
 	// logged with the client and the id. The token is never logged or
 	// stored as an event. way names the dashboard's listener the link is
 	// for, and the session it opens works only there: WayLocal, WayWeb, or
 	// empty for the loopback listener when the instance has one and the web
-	// listener otherwise (section 7.2). Since protocol 1.7; for a chat
-	// caller since 1.11; way since 3.2.
+	// listener otherwise (section 7.2). On an instance without a dashboard
+	// it is ErrNoDashboard. Since protocol 1.7; for a chat caller since
+	// 1.11; way since 3.2.
 	SignInLink(ctx context.Context, way Way) (string, error)
 
 	// Workspace reads the state of a thread's workspace and changes nothing.
@@ -1728,13 +1730,14 @@ type API interface {
 
 	// SignInLink: declared above, since protocol 1.7 (#200); for a chat
 	// caller with From since 1.11 (#252). The control socket's connections
-	// have OpSignIn, and so will the chat front end's caller for a person's
-	// request (#259); a dashboard session's Caller has
+	// have OpSignIn, and so has the chat front end's caller for a person's
+	// /dashboard (#259); a dashboard session's Caller has
 	// OpRead only, OpHost for the owner when host terminals are on, and
 	// OpHostInput for the owner when host input is on.
 
 	// SignInLink's way: declared above, since protocol 3.2 (#359). A chat
-	// front end asks for WayWeb when there is a web listener (#259).
+	// front end asks for WayWeb when there is a web listener (#259,
+	// FrontEnd.SignInWay).
 
 	// OperateHost lets the caller type into one tmux pane on the host that
 	// no session host owns, by HostTerminals' TmuxPane.Pane (section 7.2).

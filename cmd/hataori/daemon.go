@@ -577,6 +577,9 @@ func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.St
 		if cfg.LoginRelay {
 			fe.Relay = lr
 		}
+		if cfg.Dashboard != nil && cfg.Dashboard.Web != nil {
+			fe.SignInWay = control.WayWeb // a link asked for in chat (#259)
+		}
 		if frontEndHook != nil {
 			frontEndHook(fe)
 		}

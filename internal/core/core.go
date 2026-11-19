@@ -294,8 +294,8 @@ func (c *Core) MaySignIn(person string) bool {
 }
 
 // ErrNoDashboard is returned by SignInLink when the instance has no
-// dashboard.
-var ErrNoDashboard = errors.New("the instance has no dashboard: add a \"dashboard\" section to its config")
+// dashboard (control.ErrNoDashboard).
+var ErrNoDashboard = control.ErrNoDashboard
 
 // As returns the API as seen by caller. It is the only way to reach an
 // operation. A caller's From is resolved to its person here.

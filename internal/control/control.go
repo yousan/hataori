@@ -31,6 +31,9 @@ var (
 	// ErrLinkedElsewhere: a Link of a conversation that is linked to
 	// another thread. Since 3.4.
 	ErrLinkedElsewhere = errors.New("the conversation shows another thread")
+	// ErrNoDashboard: a SignInLink on an instance that has no dashboard.
+	// On the socket it has no code of its own, as before.
+	ErrNoDashboard = errors.New("the instance has no dashboard: add a \"dashboard\" section to its config")
 )
 
 // Efforts are the effort values hataori knows. An agent adapter maps each

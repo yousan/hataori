@@ -15,7 +15,8 @@ import (
 // running turn of the thread it is used in, /status shows a thread or the
 // threads of a channel's scope. On a surface without commands the same
 // words follow the trigger: `<trigger> new repo:<url> <prompt>`,
-// `<trigger> stop`, `<trigger> status`. Whether the person may do any of
+// `<trigger> stop`, `<trigger> status`, and `/dashboard` (dashboard.go)
+// with `<trigger> dashboard`. Whether the person may do any of
 // it is the core's to decide: each call is made with From set to the
 // author's id, and a refused call shows nothing.
 const (
@@ -55,6 +56,10 @@ func (f *FrontEnd) Commands() []surface.CommandSpec {
 		Description: "Show this hataori thread, or the threads of this channel",
 		Private:     true,
 	}, {
+		Name:        dashboardCommand,
+		Description: "Get a dashboard sign-in link in a direct message",
+		Private:     true,
+	}, {
 		Name:        attachCommand,
 		Description: "Show a hataori thread here too",
 		Args:        []surface.ArgSpec{{Name: "number", Description: "The thread's number", Required: true}},
@@ -86,6 +91,8 @@ func (f *FrontEnd) command(ctx context.Context, c surface.Command) error {
 		return f.status(ctx, c)
 	case attachCommand:
 		return f.attach(ctx, c.Conv, c.Author, argOf(c, "number"), c.ID, c.Reply)
+	case dashboardCommand:
+		return f.dashboardLink(ctx, c)
 	}
 	return nil
 }
@@ -99,18 +106,46 @@ func argOf(c surface.Command, name string) string {
 	return ""
 }
 
-// textCommand returns the stop or status command a message gives in words
-// after the trigger, on a surface without commands.
+// textCommand returns the stop, status or dashboard command a message gives
+// in words after the trigger, on a surface without commands.
 func (f *FrontEnd) textCommand(in surface.Inbound) (surface.Command, bool) {
 	if f.Driver.Limits().Commands {
 		return surface.Command{}, false
 	}
 	o, ok := parseTrigger(f.Trigger, in.Text)
-	if !ok || o.Agent != "" || o.Repo != "" || o.Model != "" || o.Effort != "" || (o.Prompt != stopCommand && o.Prompt != statusCommand) {
+	if !ok || o.Agent != "" || o.Repo != "" || o.Model != "" || o.Effort != "" || (o.Prompt != stopCommand && o.Prompt != statusCommand && o.Prompt != dashboardCommand) {
 		return surface.Command{}, false
 	}
 	ref := in.Ref
 	return surface.Command{Conv: in.Ref.Conv, Author: in.Author, ID: in.Ref.ID, Name: o.Prompt, Reply: &ref}, true
+}
+
+// textCommandOnce handles a message that gives a command in words after the
+// trigger, and reports whether the message was one. A message keeps what it
+// was the first time, also when it is delivered again after an edit: one
+// handled as a command is nothing more after it, and one already given to
+// the core as input is never read as a command.
+func (f *FrontEnd) textCommandOnce(ctx context.Context, in surface.Inbound) (bool, error) {
+	key := "text:" + in.Ref.ID
+	var was int
+	if err := f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM chat_notices WHERE client = ? AND channel = ? AND message = ?`,
+		f.Name, in.Ref.Conv.Channel, key).Scan(&was); err != nil {
+		return false, err
+	}
+	if was > 0 {
+		return true, nil
+	}
+	c, ok := f.textCommand(in)
+	if !ok {
+		return false, nil
+	}
+	if _, input, err := f.senderOf(ctx, in.Ref.ID); err != nil || input {
+		return false, err
+	}
+	if _, err := f.once(ctx, in.Ref.Conv.Channel, key, true); err != nil {
+		return false, err
+	}
+	return true, f.command(ctx, c)
 }
 
 // newWords reads `<trigger> new ...` on a surface without commands as the
