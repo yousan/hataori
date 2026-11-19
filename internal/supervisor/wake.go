@@ -20,10 +20,52 @@ import (
 )
 
 // WakeKeyPrefix starts the key of every Send that wakes a supervisor; the
-// rest is the position of the last event the wake covers. A reader of the
-// supervisor's events tells a wake from a person's input by it, in
-// turn_started's key.
+// rest is the position of the last event the wake covers, a "-", and the
+// supervisor's thread it is sent to (WakeKey). A reader of the supervisor's
+// events tells a wake from a person's input by it, in turn_started's key.
 const WakeKeyPrefix = "hataori-wake-"
+
+// WakeKey is the key of the wake that covers the events up to to, sent to
+// the supervisor's thread sv. The core takes a send's key once per scope,
+// so the thread is part of it: a wake that a supervisor's thread took
+// without reading it, as when its resume failed, goes to the thread that
+// replaces it under a key of its own (#443).
+func WakeKey(sv control.ThreadID, to uint64) string {
+	return WakeKeyPrefix + strconv.FormatUint(to, 10) + "-" + strconv.FormatInt(int64(sv), 10)
+}
+
+// ParseWakeKey returns the position a wake's key covers and the thread it
+// names; a key from before WakeKey named no thread, and has 0.
+func ParseWakeKey(key string) (to uint64, sv control.ThreadID, ok bool) {
+	rest, found := strings.CutPrefix(key, WakeKeyPrefix)
+	if !found {
+		return 0, 0, false
+	}
+	pos, thread, two := strings.Cut(rest, "-")
+	to, err := strconv.ParseUint(pos, 10, 64)
+	if err != nil {
+		return 0, 0, false
+	}
+	if two {
+		n, err := strconv.ParseInt(thread, 10, 64)
+		if err != nil || n <= 0 {
+			return 0, 0, false
+		}
+		sv = control.ThreadID(n)
+	}
+	return to, sv, true
+}
+
+// keyFor is the key a stored wake is sent with to sv: its own, unless it
+// names another thread, which a replacement then takes under its own key.
+// A key from before WakeKey is kept as it is.
+func keyFor(stored string, sv control.ThreadID) string {
+	to, thread, ok := ParseWakeKey(stored)
+	if !ok || thread == 0 || thread == sv {
+		return stored
+	}
+	return WakeKey(sv, to)
+}
 
 // TurnEnded is the event kind that wakes a supervisor.
 const TurnEnded control.EventKind = "turn_ended"
@@ -320,6 +362,13 @@ func (r *waking) attempt(ctx context.Context) error {
 			return err
 		}
 	}
+	if key := keyFor(r.sending.key, sv); key != r.sending.key {
+		// Stored for a thread that is no longer the supervisor's.
+		r.sending.key = key
+		if err := r.store(ctx); err != nil {
+			return err
+		}
+	}
 	err = r.api.Send(ctx, sv, r.sending.key, control.Input{Text: r.sending.text}, control.Refuse)
 	switch {
 	case err == nil:
@@ -420,7 +469,7 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	return &wake{to: r.read, key: WakeKeyPrefix + strconv.FormatUint(r.read, 10), text: text, threads: threads}, true, nil
+	return &wake{to: r.read, key: WakeKey(r.sv, r.read), text: text, threads: threads}, true, nil
 }
 
 // holdStep is the longest a gate's hold waits on one timer: a timer does
