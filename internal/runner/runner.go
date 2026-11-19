@@ -1710,19 +1710,25 @@ func (r *Runner) Answer(ctx context.Context, id, pending int64, req string, ans 
 
 // Interrupt stops a session's running turn: the agent's own interrupt
 // first. When that turn has not ended after the grace period, every process
-// of the session is stopped; a turn started after it is not watched.
-func (r *Runner) Interrupt(ctx context.Context, id int64) error {
+// of the session is stopped; a turn started after it is not watched. A
+// named turn (not 0) that is not the running one is refused, and nothing is
+// interrupted.
+func (r *Runner) Interrupt(ctx context.Context, id, named int64) error {
 	lv, err := r.get(id)
 	if err != nil {
 		return err
 	}
 	// The turn the interrupt is for, read under lv.mu, as the runner's steps
-	// that end and start turns are: none comes between this and the
-	// interrupt. Once it has ended the watch is over, even when the next
-	// turn has started.
+	// that end turns are: none ends between this and the interrupt, and so
+	// none starts (a Send starts one only when none is open). Once it has
+	// ended the watch is over, even when the next turn has started.
 	lv.mu.Lock()
 	var turn int64
 	r.Store.DB.QueryRow(`SELECT coalesce(max(id), 0) FROM turns WHERE session_id = ? AND ended_at IS NULL`, id).Scan(&turn)
+	if named != 0 && named != turn {
+		lv.mu.Unlock()
+		return fmt.Errorf("runner: session %d: turn %d is not the running turn: %w", id, named, session.ErrRefused)
+	}
 	r.do(lv, lv.codec.Interrupt())
 	lv.mu.Unlock()
 	if turn == 0 {

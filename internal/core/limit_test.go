@@ -55,7 +55,7 @@ func TestLimitedCallerGetsOnlyItsOperations(t *testing.T) {
 			return a.Answer(ctx, session.RequestHandle(sid, "r1"), control.Answer{Text: "x"})
 		}},
 		{"Send", func(a control.API) error { return a.Send(ctx, id, "m9", control.Input{Text: "x"}, control.Deliver) }},
-		{"Stop", func(a control.API) error { return a.Stop(ctx, id) }},
+		{"Stop", func(a control.API) error { return a.Stop(ctx, id, 0) }},
 	}
 	events, threads, calls := count(t, f.core.Store, "events"), count(t, f.core.Store, "threads"), f.runner.Calls()
 	for _, r := range refused {
@@ -330,7 +330,7 @@ func TestLimitedCallerLearnsNothingOfThreads(t *testing.T) {
 			"ThreadEvents":   func() error { _, err := a.ThreadEvents(ctx, th, 0, 1); return err },
 			"Workspace":      func() error { _, err := a.Workspace(ctx, th); return err },
 			"Send":           func() error { return a.Send(ctx, th, "k", control.Input{Text: "x"}, control.Refuse) },
-			"Stop":           func() error { return a.Stop(ctx, th) },
+			"Stop":           func() error { return a.Stop(ctx, th, 0) },
 			"Remove":         func() error { return a.RemoveThread(ctx, th) },
 			"AttachTerminal": func() error { _, err := a.AttachTerminal(ctx, th); return err },
 			"Link": func() error {

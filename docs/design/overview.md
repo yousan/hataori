@@ -1423,7 +1423,11 @@ type API interface {
 	// same running turn is returned instead of a second one. The caller's
 	// AsksIn thread cannot be the target (ErrForbidden). Since protocol 3.10.
 	AskInterrupt(ctx context.Context, id ThreadID, key string, reason string) (RequestID, error)
-	Stop(ctx context.Context, id ThreadID) error
+	// Stop interrupts the thread's running turn. A turn other than 0 names
+	// it by turn_started's number, checked in the step that interrupts: when
+	// it is not the running turn, nothing is interrupted and the call is
+	// refused. Since protocol 3.14.
+	Stop(ctx context.Context, id ThreadID, turn int64) error
 
 	// CloseThread ends the agent process of an idle, asleep or failed thread
 	// and closes it (section 4.5): the workspace stays, and Send is

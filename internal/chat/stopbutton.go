@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -15,7 +16,9 @@ import (
 // line, the one message a quiet turn shows. Its token names the thread and
 // the turn it was shown for, by the position of that turn's turn_started
 // event, so it still works after a restart and never stops a later turn.
-// A press calls Stop as the person who pressed; the core decides who may.
+// A press calls Stop as the person who pressed, naming the turn by the
+// number its turn_started gives it; the core decides who may, and
+// interrupts only while that turn runs, checked with the interrupt (#457).
 // Once the core has taken a press, the line shows that the turn is being
 // stopped, without the button, until the turn ends and the line goes.
 
@@ -69,8 +72,8 @@ func (f *FrontEnd) pressStop(s surface.Selection, rest string) {
 		ignored("not a button of this thread", err)
 		return
 	}
-	open, err := f.turnOpen(ctx, t, turn)
-	if err != nil || !open {
+	number, err := f.turnOpen(ctx, t, turn)
+	if err != nil || number == 0 {
 		ignored("its turn is not running", err)
 		return
 	}
@@ -86,7 +89,9 @@ func (f *FrontEnd) pressStop(s surface.Selection, rest string) {
 		return
 	}
 	api := f.API(control.Caller{From: f.from(s.Author), Scopes: f.scopesIn(s.Ref.Conv.Channel), May: control.OpRead | control.OpStop})
-	if err := api.Stop(ctx, thread); err != nil {
+	// The turn may end, and the next start, between the lookup and this
+	// call: Stop names the turn, and the core then stops nothing.
+	if err := api.Stop(ctx, thread, number); err != nil {
 		f.once(ctx, "", pressed, false)
 		if !errors.Is(err, control.ErrForbidden) { // the core logged a refusal
 			ignored("not stopped", err)
@@ -99,31 +104,37 @@ func (f *FrontEnd) pressStop(s surface.Selection, rest string) {
 	f.Log.Info("stop button pressed", "thread", int64(thread), "client", f.Name, "id", s.Author.ID)
 }
 
-// turnOpen reports whether the turn whose turn_started is at position turn
-// is the thread's running turn: the thread runs, and no turn ended or
-// started after it.
-func (f *FrontEnd) turnOpen(ctx context.Context, t control.ThreadInfo, turn uint64) (bool, error) {
+// turnOpen returns the number of the turn whose turn_started is at position
+// pos, as that event gives it, while it is the thread's running turn: the
+// thread runs, and no turn ended or started after it. It is 0 otherwise.
+func (f *FrontEnd) turnOpen(ctx context.Context, t control.ThreadInfo, pos uint64) (int64, error) {
 	if t.State != control.Running {
-		return false, nil
+		return 0, nil
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	api := f.API(control.Caller{Principal: f.ownerPrincipal(), Scopes: []string{t.Scope}, May: control.OpRead})
-	evs, err := api.Events(ctx, control.Filter{Thread: t.ID}, turn-1)
+	evs, err := api.Events(ctx, control.Filter{Thread: t.ID}, pos-1)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	defer stopEvents(cancel, evs)
-	seen := false
+	var number int64
 	for e := range evs {
 		switch {
 		case e.Kind == control.CaughtUp:
-			return seen, nil
-		case e.Pos == turn:
-			seen = e.Kind == "turn_started"
+			return number, nil
+		case e.Pos == pos:
+			if e.Kind == "turn_started" {
+				var d struct {
+					Turn int64 `json:"turn"`
+				}
+				json.Unmarshal(e.Data, &d) // no number: not a turn the button can name
+				number = d.Turn
+			}
 		case e.Kind == "turn_started" || e.Kind == "turn_ended":
-			return false, nil
+			return 0, nil
 		}
 	}
-	return false, ctx.Err()
+	return 0, ctx.Err()
 }

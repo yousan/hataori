@@ -18,7 +18,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.13**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.14**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -215,9 +215,12 @@ Result: string
 
 Interrupts the thread's running turn. Nothing happens when no turn runs.
 
+Since 3.14 a call may name the turn to stop, by the number its `turn_started` event gives it. The daemon then interrupts nothing unless that turn is the thread's running turn, and it checks this in the same step as the interrupt. So a call made for a turn that the daemon has seen end never stops the turn after it. A call that names a turn which is not running is answered `refused`, and nothing changes. A daemon before 3.14 ignores the field and interrupts whatever turn runs, so a client that names a turn checks that the daemon speaks 3.14 or later; the project's client refuses to send it otherwise.
+
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `id` | integer | required | the thread's number; since 3.0, before it a `{scope, key}` object |
+| `turn` | integer | optional | only this turn, by `turn_started`'s `turn`; absent or 0 for whatever turn runs; since 3.14 |
 
 Result: none
 

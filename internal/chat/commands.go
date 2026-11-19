@@ -249,7 +249,7 @@ func (f *FrontEnd) stopTurn(ctx context.Context, c surface.Command) error {
 		return err
 	}
 	api := f.API(control.Caller{From: f.from(c.Author), Scopes: f.scopesIn(c.Conv.Channel), May: control.OpRead | control.OpStop})
-	err = api.Stop(ctx, t.ID)
+	err = api.Stop(ctx, t.ID, 0)
 	switch {
 	case errors.Is(err, control.ErrForbidden):
 		return nil // the core logged it; nothing is shown

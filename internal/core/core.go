@@ -91,8 +91,11 @@ type Runner interface {
 	// Answer gives the answer of an open request to a session's agent.
 	// req is the agent's own id of the request; pending is as for Deliver.
 	Answer(ctx context.Context, sessionID, pending int64, req string, a control.Answer) error
-	// Interrupt stops a session's running turn.
-	Interrupt(ctx context.Context, sessionID int64) error
+	// Interrupt stops a session's running turn. A turn other than 0 names
+	// it: nothing is interrupted unless it is the session's running turn,
+	// checked in the step that sends the interrupt, and the error then
+	// wraps session.ErrRefused.
+	Interrupt(ctx context.Context, sessionID, turn int64) error
 	// Resume starts the agent of an asleep session again with its
 	// conversation, and sends it in as a Send of principal and key once it
 	// reports that it is ready.
@@ -1626,7 +1629,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		return nil
 	}
 	if interrupt {
-		if err := a.c.Runner.Interrupt(ctx, sid); err != nil {
+		if err := a.c.Runner.Interrupt(ctx, sid, 0); err != nil {
 			return fmt.Errorf("core: send to %v: interrupt: %w", id, err)
 		}
 	}
@@ -1689,15 +1692,25 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 	return a.c.Runner.Answer(ctx, sid, pending, agentReq, ans)
 }
 
-func (a *api) Stop(ctx context.Context, id control.ThreadID) error {
+// Stop interrupts the thread's running turn; with turn not 0, only while
+// that turn is the running one. The runner checks the turn in the step that
+// sends the interrupt, so a turn that ended after the caller looked, and
+// the turn after it, are never stopped by the call.
+func (a *api) Stop(ctx context.Context, id control.ThreadID, turn int64) error {
 	if _, err := a.actThread(ctx, control.OpStop, "Stop", id); err != nil {
 		return err
 	}
 	sid, state, err := a.c.current(ctx, a.c.Store.DB, id)
-	if err != nil || state != control.Running {
+	if err != nil {
 		return err
 	}
-	return a.c.Runner.Interrupt(ctx, sid)
+	if state != control.Running {
+		if turn != 0 {
+			return fmt.Errorf("core: stop turn %d of thread %d: it is not running: %w", turn, id, session.ErrRefused)
+		}
+		return nil
+	}
+	return a.c.Runner.Interrupt(ctx, sid, turn)
 }
 
 // mayRead reports whether the caller may see e: its kind, when the caller

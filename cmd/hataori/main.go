@@ -241,7 +241,7 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 			return exitNoThread
 		}
 		running := t.State == control.Running
-		if err := c.Stop(ctx, t.ID); err != nil {
+		if err := c.Stop(ctx, t.ID, 0); err != nil {
 			return fail(err)
 		}
 		if err := enc.Encode(map[string]any{"thread": t.ID, "scope": t.Scope, "running": running}); err != nil {
