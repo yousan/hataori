@@ -18,7 +18,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.14**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.15**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -312,6 +312,8 @@ Since 1.10. The terminals on the host that hataori does not own, for display onl
 
 Only the instance's owner may call it, and only when the config's `host_terminals` is `true`; every other call is answered `forbidden`. It takes no arguments. The result is an array, empty when there is no terminal.
 
+Since 3.15, a tmux pane in which a session a person started runs has `reported`: what the hooks of hataori's Claude Code plugin (`hataori plugin`) reported from that pane. Only an interactive session is listed, and only while the pane is listed and its terminal is the one of the session's process; the session's end removes it. The daemon keeps these reports in memory only, and they hold no text of the session.
+
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 
@@ -580,6 +582,7 @@ Since 1.10.
 | `process` | string | optional | the command of its foreground process |
 | `activity` | time | optional | its last output, when known; for tmux, the window's last activity |
 | `tmux` | `TmuxPane` | optional | where it is in tmux; absent for a terminal outside tmux |
+| `reported` | `ReportedSession` | optional | what the hooks of the session in this tmux pane reported; absent without them; since 3.15 |
 
 ### Type `TmuxPane`
 
@@ -604,6 +607,20 @@ Since 3.13.
 | `screen` | string | optional | the visible screen, one line per row, as `HostScreen` gives it; text, so optional |
 | `cursor_x` | integer | required | the cursor's column, from 0 |
 | `cursor_y` | integer | required | the cursor's row, from 0 at the top of the screen |
+
+### Type `ReportedSession`
+
+Since 3.15. What the hooks of a session that a person started in their own window last reported, through hataori's Claude Code plugin. It holds no prompt, message or tool input.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `window` | string | required | the window: its holder, a colon, and the holder's reference to it; for tmux `tmux:<socket path>,<server pid>,<pane id>`; not text |
+| `agent` | string | required | the adapter's name, such as `claude-code` |
+| `session` | string | required | the agent's session id |
+| `dir` | string | required | the session's working directory; not text |
+| `event` | string | required | the name of the last hook event reported |
+| `at` | time | required | when the daemon took that report |
+| `thread` | integer | optional | the number of the thread whose session this is, when it is one: a thread's session opened again in a person's window |
 
 ### Type `HostOperation`
 

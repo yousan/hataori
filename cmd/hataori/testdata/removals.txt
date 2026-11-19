@@ -17,3 +17,6 @@ internal/connect/connect.go	conn.forward	os.Remove	Runs on the person's own mach
 internal/connect/connect.go	conn.leftOver	os.Remove	Runs on the person's own machine: removes only the control, forward and request sockets of this host in connect's private run directory, after ending a left-over master, under the host's lock.
 internal/connect/connect.go	conn.stop	os.Remove	Runs on the person's own machine: removes only this run's control and forward sockets in connect's private run directory, if ssh left them.
 internal/connect/connect.go	remember	os.Remove	Runs on the person's own machine: removes only the temporary file this call just created with os.CreateTemp beside the remembered hosts, which the rename has already taken unless a step failed.
+internal/agent/claudecode/plugin.go	Adapter.WritePlugin	os.Remove	Removes only its own temporary file next to a plugin file it failed to rename, in the plugin's directory under the instance root, outside every workspace.
+internal/window/window.go	Listen	os.Remove	Removes the stale report socket at the computed socket path in the instance's state/windows directory or its private directory under /tmp, outside every workspace.
+internal/window/window.go	Server.Close	os.Remove	Removes the private directory made for the report socket under /tmp only when it is empty, never recursively; it is never under a workspace.

@@ -18,10 +18,13 @@
 //	hataori mcp [--root DIR] --scope SCOPE [--output-max BYTES]
 //	                                            the supervisor's MCP server on stdio;
 //	                                            its token is $HATAORI_TOKEN
+//	hataori plugin [--root DIR]                 write the instance's Claude Code plugin under the
+//	                                            root, and print the two commands that install it
 //	hataori version
 //
 // The root is --root, or $HATAORI_ROOT. Output is one JSON object per line,
-// except for attach, whose output is the agent's terminal.
+// except for attach, whose output is the agent's terminal, and plugin, which
+// prints the commands for a person to run.
 //
 // Exit codes: 0 success; 1 an error, such as no daemon running for the
 // root; 2 a usage error; 3 (thread, stop) no thread of this instance has
@@ -37,6 +40,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -84,7 +88,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return runCtx(context.Background(), args, stdout, stderr)
 }
 
-const usage = "usage: hataori run|threads|thread NUMBER|events [--after N] [--follow]|stop NUMBER|attach NUMBER|close NUMBER|remove NUMBER|signin [--web] [--root DIR] | hataori connect [[user@]host] [--root DIR] [--hataori PATH] [--port N] | hataori mcp --scope SCOPE [--root DIR] [--output-max BYTES] | hataori version | hataori host <state-dir> | hataori hook [--wait] [--timeout DURATION] | hataori statusline --last FILE [--run COMMAND]"
+const usage = "usage: hataori run|threads|thread NUMBER|events [--after N] [--follow]|stop NUMBER|attach NUMBER|close NUMBER|remove NUMBER|signin [--web] [--root DIR] | hataori connect [[user@]host] [--root DIR] [--hataori PATH] [--port N] | hataori mcp --scope SCOPE [--root DIR] [--output-max BYTES] | hataori plugin [--root DIR] | hataori version | hataori host <state-dir> | hataori hook [--wait] [--timeout DURATION] | hataori hook --window --root DIR | hataori statusline --last FILE [--run COMMAND]"
 
 func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -109,7 +113,14 @@ func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			return 0
 		}
 	case "hook":
+		if slices.Contains(args[1:], "--window") {
+			// The hook of the Claude Code plugin (hataori plugin). It prints
+			// nothing, whatever happens: the person's window shows it.
+			return claudecode.WindowHookMain(args[1:], os.Stdin, stderr, os.Getenv)
+		}
 		return host.HookMain(args[1:], os.Stdin, stdout, stderr, os.Getenv)
+	case "plugin":
+		return pluginMain(args[1:], stdout, stderr)
 	case "mcp":
 		return mcpMain(ctx, args[1:], os.Stdin, stdout, stderr, os.Getenv)
 	case "connect":
