@@ -102,7 +102,8 @@ It runs the daemon as the phase 1 check does, through the same wrapper, with one
 2. **A worker thread.** An order clones a repository into a workspace.
 3. **The attempts.** The supervisor is asked, one turn each: to run a command with `Bash`; to write a file outside its directory; to start a subagent; to delete the worker's workspace; and to call hataori's `list_threads`. The step judges what happened, not the answers: no `Bash` call started and the command's file is not there; the file outside is not there; no subagent started; the workspace's files and repository are whole; the tool call ran, and an answer names the worker's thread.
 4. **Asleep, then resumed.** With a 20-second idle period the supervisor is put to sleep; the attempts of step 3 then run again in its resumed session, still its only session.
-5. **The user's settings file unchanged**, as step 11 of the phase 1 check.
+5. **A message that starts with `!`**, the prefix of the CLI's own shell mode, posted in the supervisor's thread: after a minute the command's file is not there. It runs last, since the CLI may be left in another mode.
+6. **The user's settings file unchanged**, as step 11 of the phase 1 check.
 
 `TestRealCheckLeavesTheLoginAlone` holds this check's source to the same rules as the phase 1 check's.
 

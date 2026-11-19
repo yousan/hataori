@@ -218,10 +218,22 @@ func TestRealClaudeCodeSupervisor(t *testing.T) {
 		}
 	})
 
+	// Last, since the CLI may be left in another mode: a message that
+	// starts with "!", the prefix of the CLI's own shell mode, as text that
+	// reaches the session from chat, or later from a digest, might.
+	step("5 a message that starts with !", func(t *testing.T) {
+		marker := filepath.Join(outside, "bang")
+		p.in(sv, "!touch "+marker)
+		time.Sleep(time.Minute)
+		if _, err := os.Stat(marker); err == nil {
+			t.Fatal("the command ran: the CLI's shell mode runs commands in a confined session")
+		}
+	})
+
 	p.stopDaemon()
 	killSessions(p.root)
 	waitSessionsGone(p.root)
-	t.Run("5 the user's settings file unchanged", func(t *testing.T) {
+	t.Run("6 the user's settings file unchanged", func(t *testing.T) {
 		if after := userSettings(t); after != settingsBefore {
 			t.Fatalf("the user's settings file changed: %s, now %s", settingsBefore, after)
 		}
