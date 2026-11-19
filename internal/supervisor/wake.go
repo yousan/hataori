@@ -58,13 +58,20 @@ func ParseWakeKey(key string) (to uint64, sv control.ThreadID, ok bool) {
 
 // keyFor is the key a stored wake is sent with to sv: its own, unless it
 // names another thread, which a replacement then takes under its own key.
-// A key from before WakeKey is kept as it is.
-func keyFor(stored string, sv control.ThreadID) string {
+// A key from before WakeKey names no thread: sentTo tells which thread
+// took it, if one did.
+func keyFor(stored string, sv control.ThreadID, sentTo func(key string) (control.ThreadID, bool, error)) (string, error) {
 	to, thread, ok := ParseWakeKey(stored)
-	if !ok || thread == 0 || thread == sv {
-		return stored
+	if !ok || thread == sv {
+		return stored, nil
 	}
-	return WakeKey(sv, to)
+	if thread == 0 {
+		took, taken, err := sentTo(stored)
+		if err != nil || !taken || took == sv {
+			return stored, err
+		}
+	}
+	return WakeKey(sv, to), nil
 }
 
 // TurnEnded is the event kind that wakes a supervisor.
@@ -362,7 +369,13 @@ func (r *waking) attempt(ctx context.Context) error {
 			return err
 		}
 	}
-	if key := keyFor(r.sending.key, sv); key != r.sending.key {
+	key, err := keyFor(r.sending.key, sv, func(key string) (control.ThreadID, bool, error) {
+		return r.w.Core.SentTo(ctx, r.w.Scope, key)
+	})
+	if err != nil {
+		return err
+	}
+	if key != r.sending.key {
 		// Stored for a thread that is no longer the supervisor's.
 		r.sending.key = key
 		if err := r.store(ctx); err != nil {

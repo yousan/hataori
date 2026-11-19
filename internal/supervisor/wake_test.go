@@ -88,13 +88,24 @@ func TestWakeKey(t *testing.T) {
 			t.Errorf("ParseWakeKey(%q) = %d, %d, %v; want %d, %d, %v", key, to, sv, ok, want.to, want.sv, want.ok)
 		}
 	}
-	if k := keyFor("hataori-wake-1234-7", 7); k != "hataori-wake-1234-7" {
-		t.Errorf("a stored wake to the same thread is sent with %q", k)
+	took := map[string]control.ThreadID{"hataori-wake-1234": 7}
+	sentTo := func(key string) (control.ThreadID, bool, error) {
+		id, ok := took[key]
+		return id, ok, nil
 	}
-	if k := keyFor("hataori-wake-1234-7", 9); k != "hataori-wake-1234-9" {
-		t.Errorf("a stored wake to a replacing thread is sent with %q", k)
-	}
-	if k := keyFor("hataori-wake-1234", 9); k != "hataori-wake-1234" {
-		t.Errorf("a stored wake from before the thread was in its key is sent with %q", k)
+	for _, c := range []struct {
+		stored string
+		sv     control.ThreadID
+		want   string
+	}{
+		{"hataori-wake-1234-7", 7, "hataori-wake-1234-7"}, // the same thread: a repeat
+		{"hataori-wake-1234-7", 9, "hataori-wake-1234-9"}, // a replacing thread
+		{"hataori-wake-1234", 7, "hataori-wake-1234"},     // an old key, taken by the same thread
+		{"hataori-wake-1234", 9, "hataori-wake-1234-9"},   // an old key, taken by the thread replaced
+		{"hataori-wake-99", 9, "hataori-wake-99"},         // an old key no thread took
+	} {
+		if k, err := keyFor(c.stored, c.sv, sentTo); err != nil || k != c.want {
+			t.Errorf("keyFor(%q, %d) = %q, %v; want %q", c.stored, c.sv, k, err, c.want)
+		}
 	}
 }
