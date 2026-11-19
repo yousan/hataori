@@ -254,3 +254,38 @@ func TestAsleepWithARunningAgentIsStopped(t *testing.T) {
 	}
 	waitFor(t, "the agent's end", 15*time.Second, func() bool { return !agentAlive(t, root, 1) })
 }
+
+// A session that failed while its agent still ran, as when the daemon died
+// right after it stored a failure at a start-up dialog and before it
+// stopped the host, has its agent stopped when a daemon reconnects (#423).
+func TestReconnectStopsAFailedSessionsAgent(t *testing.T) {
+	root := t.TempDir()
+	t.Cleanup(func() { killSessions(root) })
+	st, c, r, err := build(root, options{}, &syncBuffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner(c).Start(context.Background(), control.StartRequest{Key: "k1", Scope: "s", Thread: "t1",
+		Repo: "file:///unused", Input: control.Input{Text: "reply hi"}}); err != nil {
+		t.Fatal(err)
+	}
+	until(t, "the turn's end", st, "turn_ended", 1)
+	r.Close()
+	if _, err := st.DB.Exec(`UPDATE sessions SET state = 'failed' WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	if !agentAlive(t, root, 1) {
+		t.Fatal("the agent ended with the runner")
+	}
+
+	st, _, r, err = build(root, options{}, &syncBuffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { r.Close(); st.Close() }()
+	if err := r.Reconnect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the failed session's agent to end", 15*time.Second, func() bool { return !agentAlive(t, root, 1) })
+}

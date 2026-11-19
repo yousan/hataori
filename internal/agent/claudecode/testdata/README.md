@@ -230,15 +230,17 @@ Each prompt is followed by `StopFailure` (`authentication_failed`, `Not logged i
 HATAORI_REAL_CLAUDE=1 HATAORI_CAPTURE_DIR=<raw dir> go test -run TestLiveTrustFiles -v ./internal/agent/claudecode
 ```
 
-It runs with `TMPDIR` set to a short directory, so that the workspace's path fits on one line of the 80 columns and `scrub.py` finds it whole. Each case gets a new, empty `CLAUDE_CONFIG_DIR`, so there is no login and nothing of the user's is read or written; the test writes only a `.claude.json` there with `hasCompletedOnboarding` and a theme, and removes the directory afterwards. The workspace is a new `git init` directory holding one settings file. The command line and environment are the adapter's own `Launch` for the spec, on the session host's 24×80 terminal, except that `--settings` names a recorder of `SessionStart` and `SessionEnd` in place of hataori's hooks. The codec itself handled the dialog.
+It runs with `TMPDIR` set to a short directory, so that the workspace's path fits on one line of the 80 columns and `scrub.py` finds it whole. Each case gets a new, empty `CLAUDE_CONFIG_DIR`, so there is no login and nothing of the user's is read or written; the test writes only a `.claude.json` there with `hasCompletedOnboarding` and a theme, and removes the directory afterwards. The workspace is a new `git init` directory holding the files below. The command line and environment are the adapter's own `Launch` for the spec, on the session host's 24×80 terminal, except that `--settings` names a recorder of `SessionStart` and `SessionEnd` in place of hataori's hooks. The codec itself handled the dialog.
 
 | Scenario | Workspace | Spec | Dialog's extra line | What the codec did |
 |---|---|---|---|---|
 | `trust_files_refused` | `.claude/settings.json` | ordinary, no `TrustFiles` | `Trusting this folder loads .claude/settings.json.` | no key; one `SessionEnded`, `blocked at start`, naming the file (`events.txt`). No hook ran. |
 | `trust_files_allowed` | `.claude/settings.json` | ordinary, `TrustFiles: [".claude/settings.json"]` | the same | Down, then Enter (`keys.txt`); `SessionStart` followed |
 | `trust_files_confined` | `.claude/settings.local.json` with a status line, a `SessionStart` hook and `env` | confined | `Trusting this folder loads .claude/settings.local.json (runs commands and sets environment variables).` | Down, then Enter; `SessionStart` from `--settings` followed |
+| `trust_files_both` | both files above | ordinary, `TrustFiles` naming both | `Trusting this folder loads .claude/settings.json and .claude/settings.local.json (runs commands and sets environment variables).` | Down, then Enter; `SessionStart` followed |
+| `trust_files_mcp` | `.mcp.json` naming one stdio server | ordinary, no `TrustFiles` | `Trusting this folder loads .mcp.json here or above (MCP servers).` | no key; one `SessionEnded`, `blocked at start`, naming `.mcp.json`. No hook ran. |
 
 Each holds `screen-NN.raw`, the terminal output chunk by chunk as the codec was given it up to its key or its event, `keys.txt`, `events.txt` and `hooks/`. The screen after the Enter is not kept.
 
-Seen by hand on the same version, not kept: the line lists several files as `A and B` (`.claude/settings.json and .claude/settings.local.json (runs commands and sets environment variables).`); a settings file with only hooks gives `(runs commands)`, one with only `env` gives `(sets environment variables)`; `.mcp.json` gives `Trusting this folder loads .mcp.json here or above (MCP servers).`
+Seen by hand on the same version, not kept: a settings file with only hooks gives `(runs commands)`, one with only `env` gives `(sets environment variables)`. The parenthesis is not read: only the files are.
 

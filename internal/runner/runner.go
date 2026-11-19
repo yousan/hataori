@@ -487,11 +487,13 @@ const (
 	wake                  // a new agent of a session read before: read on from the stored offsets
 )
 
-// stopSleepers stops the agents of asleep and closed sessions that are
+// stopSleepers stops the agents of asleep, closed and failed sessions that are
 // still running, as after a daemon that stopped while it put one to sleep
 // or closed it.
 func (r *Runner) stopSleepers(ctx context.Context) error {
-	rows, err := r.Store.DB.QueryContext(ctx, `SELECT id FROM sessions WHERE state IN ('asleep', 'closed') AND spec != ''`)
+	// A failed session's agent may still run too: one failed at a start-up
+	// dialog is stopped just after its failure is stored (#423).
+	rows, err := r.Store.DB.QueryContext(ctx, `SELECT id FROM sessions WHERE state IN ('asleep', 'closed', 'failed') AND spec != ''`)
 	if err != nil {
 		return fmt.Errorf("runner: %w", err)
 	}
@@ -510,7 +512,7 @@ func (r *Runner) stopSleepers(ctx context.Context) error {
 		if r.alive(dir).State != holder.Running {
 			continue
 		}
-		r.Log.Warn("stopping the agent of an asleep or closed session", "session", id)
+		r.Log.Warn("stopping the agent of an asleep, closed or failed session", "session", id)
 		go r.stop(dir, time.Second, 2*time.Second)
 	}
 	return nil
@@ -1060,7 +1062,7 @@ func (r *Runner) stepLocked(lv *live) bool {
 		if e.Kind == agent.SessionEnded && e.Reason == agent.BlockedAtStart {
 			// The session failed at a start-up dialog it may not answer;
 			// its agent still shows it.
-			go host.Stop(lv.dir, time.Second, 2*time.Second)
+			go r.stop(lv.dir, time.Second, 2*time.Second)
 		}
 	}
 	for _, a := range b.actions {

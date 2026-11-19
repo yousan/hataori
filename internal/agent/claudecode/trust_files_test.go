@@ -64,6 +64,13 @@ func TestTrustDialogThatNamesFiles(t *testing.T) {
 		{"trust_files_confined", agent.Spec{}, "", ".claude/settings.local.json"},
 		{"trust_files_confined", trust(".claude/settings.json"), "", ".claude/settings.local.json"},
 		{"trust_files_confined", trust(".claude/settings.json", ".claude/settings.local.json"), "down enter", ""},
+		// Two files: both must be trusted. An MCP config named "here or above".
+		{"trust_files_both", trust(".claude/settings.json", ".claude/settings.local.json"), "down enter", ""},
+		{"trust_files_both", trust(".claude/settings.json"), "", ".claude/settings.local.json"},
+		{"trust_files_both", confined, "down enter", ""},
+		{"trust_files_mcp", agent.Spec{}, "", ".mcp.json"},
+		{"trust_files_mcp", trust(".mcp.json"), "down", ""},
+		{"trust_files_mcp", confined, "down", ""},
 	} {
 		t.Run(fmt.Sprintf("%d %s", i, tc.capture), func(t *testing.T) {
 			keys, events := replayTrust(t, tc.capture, tc.spec)
@@ -93,6 +100,8 @@ func TestTrustDialogFiles(t *testing.T) {
 	}{
 		{"testdata/2.1.328/trust_files_refused", "/tmp/capture-work/sessions/trust_files_refused", []string{".claude/settings.json"}},
 		{"testdata/2.1.328/trust_files_confined", "/tmp/capture-work/sessions/trust_files_confined", []string{".claude/settings.local.json"}},
+		{"testdata/2.1.328/trust_files_both", "/tmp/capture-work/sessions/trust_files_both", []string{".claude/settings.json", ".claude/settings.local.json"}},
+		{"testdata/2.1.328/trust_files_mcp", "/tmp/capture-work/sessions/trust_files_mcp", []string{".mcp.json"}},
 		{"testdata/2.1.322/trust", trustDir, nil},
 	} {
 		var b []byte

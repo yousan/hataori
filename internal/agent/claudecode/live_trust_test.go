@@ -54,6 +54,11 @@ func TestLiveTrustFiles(t *testing.T) {
 			agent.Spec{TrustFiles: []string{".claude/settings.json"}}, true},
 		{"trust_files_confined", map[string]string{".claude/settings.local.json": local},
 			agent.Spec{Confine: &agent.Confinement{}}, true},
+		// The other wordings: two files, and an MCP config.
+		{"trust_files_both", map[string]string{".claude/settings.json": settings, ".claude/settings.local.json": local},
+			agent.Spec{TrustFiles: []string{".claude/settings.json", ".claude/settings.local.json"}}, true},
+		{"trust_files_mcp", map[string]string{".mcp.json": `{"mcpServers": {"x": {"type": "stdio", "command": "true"}}}` + "\n"},
+			agent.Spec{}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) { liveTrust(t, raw, tc.name, tc.files, tc.spec, tc.answered) })
 	}
