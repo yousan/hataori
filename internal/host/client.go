@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -126,15 +125,30 @@ func Gone(stateDir string) bool {
 	return errors.Is(err, os.ErrNotExist)
 }
 
-// Screen returns what the command wrote to its terminal after the first
-// from bytes, and the offset to ask from next time. It is for a codec
-// waiting for a start-up dialog only; on pipes there is none.
-func Screen(stateDir string, from int64) ([]byte, int64) {
-	b, err := os.ReadFile(filepath.Join(stateDir, TerminalLog))
-	if err != nil || int64(len(b)) <= from {
+// screenTimeout bounds one Screen call.
+const screenTimeout = 2 * time.Second
+
+// Screen returns what the command of the host's current run wrote to its
+// terminal after position from, counted from the run's first byte, and the
+// position to ask from next time. It is for a codec watching an agent's
+// start only. The host is asked, as it alone knows where its run's bytes
+// are in the log it keeps: the log also holds earlier runs' output, and a
+// trim moves what it keeps (#520). When the host cannot be asked (on
+// pipes, or once it has gone), there is nothing.
+func Screen(stateDir string, from uint64) ([]byte, uint64) {
+	ctx, cancel := context.WithTimeout(context.Background(), screenTimeout)
+	defer cancel()
+	c, err := DialContext(ctx, stateDir)
+	if err != nil {
 		return nil, from
 	}
-	return b[from:], int64(len(b))
+	defer c.Close()
+	c.conn.SetDeadline(time.Now().Add(screenTimeout))
+	resp, err := c.call(request{Op: "screen", After: from})
+	if err != nil {
+		return nil, from
+	}
+	return resp.Data, resp.Pos
 }
 
 // StopResult says what Stop did.

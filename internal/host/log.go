@@ -102,6 +102,38 @@ func (l *boundedLog) trim(keep int64) error {
 	return nil
 }
 
+// since returns what was written to the log after position after, as far
+// as the file still keeps it, and the position at its end. The file always
+// ends with this run's bytes, at position pos, so a trim does not change
+// where a position is. cut is set when some of the bytes after after were
+// dropped by a trim; data then starts at the oldest one kept. A position
+// past the end, as from another run, gets nothing, and the end.
+func (l *boundedLog) since(after uint64) (data []byte, pos uint64, cut bool, err error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	pos = l.pos
+	if after >= pos {
+		return nil, pos, false, nil
+	}
+	n := pos - after
+	// The last min(size, pos) bytes of the file are this run's; any before
+	// them were left by an earlier run.
+	kept := min(uint64(l.size), pos)
+	if n > kept {
+		n, cut = kept, true
+	}
+	f, err := os.Open(l.path)
+	if err != nil {
+		return nil, after, false, err
+	}
+	defer f.Close()
+	data = make([]byte, n)
+	if _, err := f.ReadAt(data, l.size-int64(n)); err != nil {
+		return nil, after, false, err
+	}
+	return data, pos, cut, nil
+}
+
 func (l *boundedLog) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
