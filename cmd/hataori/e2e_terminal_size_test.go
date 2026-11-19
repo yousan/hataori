@@ -79,6 +79,9 @@ func TestSessionTerminalSize(t *testing.T) {
 		b.showAll() // the thread may be asleep
 		b.until("the thread in the tree", fmt.Sprintf(`!!document.querySelector('[data-section=threads] .row[data-thread="%d"]')`, n))
 		b.click(fmt.Sprintf(`[data-section=threads] .row[data-thread="%d"]`, n))
+		// An asleep thread opens on its conversation (#336): show its terminal.
+		b.until("the switch to the terminal", `!!document.querySelector('.pane[data-pane="0"] .view-switch [data-view=terminal]')`)
+		b.click(`.pane[data-pane="0"] .view-switch [data-view=terminal]`)
 		b.until(fmt.Sprintf("the thread's terminal at %d columns", cols), fmt.Sprintf(`document.querySelector('%s .xterm')?.dataset.cols === '%d'`, view, cols))
 	}
 	open(80)

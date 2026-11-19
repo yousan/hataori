@@ -4,7 +4,7 @@ import { useLayout } from "./layout";
 import { useDashboard, useNow } from "./live";
 import { StatusBar } from "./StatusBar";
 import { TabBar, tabID } from "./TabBar";
-import { ThreadPane } from "./ThreadPane";
+import { defaultView, ThreadPane, type View } from "./ThreadPane";
 import { AllThreads } from "./AllThreads";
 import { Details } from "./Details";
 import { NarrowHost, NarrowList, NarrowThread, useNarrow } from "./Narrow";
@@ -36,6 +36,9 @@ export function App() {
   const [filter, setFilter] = useState("");
   const [density, setDensity] = useState<Density>(savedDensity);
   const [tabs, setTabs] = useState<Tabs>(initialTabs);
+  // views is what each open thread's tab shows: the view it opened on, then
+  // the person's choice, kept while the tab is open.
+  const [views, setViews] = useState<ReadonlyMap<TabKey, View>>(new Map());
   const [split, setSplit] = useState<Split>(1);
   const [layout, setLayout] = useLayout();
   const [showing, setShowing] = useShow();
@@ -50,6 +53,22 @@ export function App() {
     }
   };
   const thread = (n: number) => d.threads?.find((x) => x.id === n);
+  // A thread's tab opens on the view its state gives at that moment; a
+  // closed tab forgets its view.
+  useEffect(() => {
+    setViews((have) => {
+      const next = new Map(have);
+      for (const k of tabs.open) {
+        const n = threadOf(k);
+        const x = n === null ? undefined : thread(n);
+        if (x && !next.has(k)) next.set(k, defaultView(x));
+      }
+      for (const k of have.keys()) if (!tabs.open.includes(k)) next.delete(k);
+      return next.size === have.size && [...next].every(([k, v]) => have.get(k) === v) ? have : next;
+    });
+  }, [tabs.open, d.threads]);
+  const viewOf = (k: TabKey) => views.get(k);
+  const chooseView = (k: TabKey) => (v: View) => setViews((have) => new Map(have).set(k, v));
   const current = threadOf(active(tabs));
   const hosts = useHostTerminals();
   const host = (id: string) => hosts?.find((h) => hostID(h) === id);
@@ -154,6 +173,8 @@ export function App() {
               subscribe={d.subscribe}
               opens={d.opens}
               onBack={backNarrow}
+              view={viewOf(threadTab(x.id))}
+              onView={chooseView(threadTab(x.id))}
             />
           ) : (
             <NarrowList
@@ -244,7 +265,15 @@ export function App() {
                     ) : hostOf(k) !== null ? (
                       <HostPane h={host(hostOf(k)!)} now={now} fit />
                     ) : paneThread(k) ? (
-                      <ThreadPane key={k} x={paneThread(k)!} subscribe={d.subscribe} opens={d.opens} fit />
+                      <ThreadPane
+                        key={k}
+                        x={paneThread(k)!}
+                        subscribe={d.subscribe}
+                        opens={d.opens}
+                        fit
+                        view={viewOf(k)}
+                        onView={chooseView(k)}
+                      />
                     ) : (
                       <p className="empty">{t("pane.later")}</p>
                     )}

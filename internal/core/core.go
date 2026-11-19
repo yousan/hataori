@@ -680,6 +680,17 @@ func (a *api) Thread(ctx context.Context, id control.ThreadID, recent, events in
 	return d, err
 }
 
+func (a *api) ThreadEvents(ctx context.Context, id control.ThreadID, before uint64, n int) ([]control.Event, error) {
+	if _, err := a.checkThread(ctx, control.OpRead, "ThreadEvents", id); err != nil {
+		return nil, err
+	}
+	evs, err := a.c.Store.LastBefore(ctx, id, before, min(n, control.MaxEvents), a.mayRead)
+	for i := range evs {
+		evs[i] = a.readable(evs[i])
+	}
+	return evs, err
+}
+
 // querier is the store's database or one of its transactions.
 type querier interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
