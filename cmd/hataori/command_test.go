@@ -31,11 +31,11 @@ import (
 	"github.com/yousan/hataori/internal/wire"
 )
 
-// The test binary is also `hataori host`, `hataori hook`, the login guard and the fake agent.
+// The test binary is also `hataori host`, `hataori hook`, `hataori mcp`, the login guard and the fake agent.
 func TestMain(m *testing.M) {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
-		case "host", "hook", "login-guard":
+		case "host", "hook", "login-guard", "mcp":
 			os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 		case "app-server":
 			os.Exit(codexReplay(os.Args[2:]))

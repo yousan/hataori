@@ -543,6 +543,8 @@ A supervisor is one ordinary session, Claude Code or Codex, that looks after the
 
 **Who its tools are** (#269; decisions 1 and 2 of #267). `hataori mcp --scope <scope>` connects to the control socket with a token in its hello (`$HATAORI_TOKEN`), which the daemon issues for each supervisor session and puts in that session's MCP config, in its state directory, outside the workspace. The daemon binds the connection to the Caller it issued the token for: that scope only, `OpRead | OpStart | OpSend`, every `Send` treated as `Refuse` (`Caller.RefuseBusy`), and every input marked (`Caller.Mark`) except an answer to an open question. Nothing `hataori mcp` sends widens it. An unknown or revoked token is refused and logged without the token; a connection with no token is still the owner. The caller's id is `supervisor:<scope>`, and the operator makes it a person by listing that id under a person of its own and that person in the scope's `people`: then the core's one check (section 5.1) allows its `Start` and `Send`, and its events name that person. Without the entry it can read its scope but gives no input, and removing the entry turns the supervisor off for that scope. Each input it gives, other than an answer to an open question, starts with the line `From the supervisor of this channel:`, added by the core from the caller, never by `hataori mcp`; a thread's title is made from the text without it. A send that answers a worker's open question is not marked, since the question tool takes the answer line by line or as a choice's label; the `answer` event names the supervisor's person. `read_thread` returns at most `--output-max` bytes of output (4096 when not given), with a line saying it was cut. A tool's refusal is a tool error that starts with the reason: `busy`, `not in this scope` or `not allowed`.
 
+**Its thread and its session** (#270; decision 3 of #267). A scope names its supervisor in the config (`scopes[].supervisor`: the agent, the model, the effort and instructions). The daemon starts its thread once, as the owner, in the scope's own channel, opened by the scope's front end like any thread, under the key `hataori-supervisor`. After a restart the daemon takes the scope's newest confined thread as the supervisor's, so nothing starts twice; a failed one is kept, and one the owner closed is replaced by a new one, under the key `hataori-supervisor-after-<number>` (closing a failed supervisor is how a person asks for a new one). A Start key is kept per scope, so a daemon that died during that Start gets the same thread back. The thread is started confined: `core.Core.StartConfined`, which is no operation of the control API, records it on the thread, and its directory is `<root>/confined/<number>`, made empty by the workspace maker instead of a clone and outside `workspaces/`, which is all the remover removes. Its model is the adapter's cheapest (`agent.CheapModel`; Claude Code's `haiku`) when the config names none. Every launch of its sessions, new, resumed after sleep, recovered after a daemon died or begun again for a lost conversation, reads the thread's confinement in the runner, so none is ever unconfined: the spec gets `Confine` with the MCP servers the daemon gives that launch, and an adapter whose launch does not say `Confined` is refused before any process starts, which fails the thread with that reason. Claude Code's launch adds `--restricted --strict-mcp-config --mcp-config <state>/claude-mcp.json --tools "Read,Write,Edit,Glob,Grep"`, the flags checked above; that check ran them with `--setting-sources project,local`, which the launch does not pass, and it also found that the user's own settings, skills and plugins add no tool. The check tried only Read and Write outside the directory. The session may write its own directory, so the launch also keeps out what it could plant there for its next start: it adds `--setting-sources user`, so that the project's and the local settings files, which lie in that directory, stay out by the flag and not only by `--restricted`; it shows hataori's own status line alone, since hataori would otherwise copy a project's status line command into its `--settings`, and even the user's own runs in that directory, often running git; and it sets `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, `ENABLE_CLAUDEAI_MCP_SERVERS=false` and `GIT_DIR=/dev/null`, so that a CLAUDE.md there with imports of files outside is not loaded, no memory is kept outside the directory, no claude.ai connector joins the listed MCP server, and a `.git` there, whose config could name a command (such as `core.fsmonitor`) that the CLI's own look at the directory would make git run, is no repository. These additions were not part of #268's check; the real supervisor check (`docs/testing.md`) plants each of them. The MCP config names one server, `hataori mcp --scope <scope> --root <root>`, with the session's token in `HATAORI_TOKEN`. A session keeps one token for its life (decision 1): the daemon issues it at the session's first launch and keeps it in the session's state directory, gives it to each launch, and binds it again at a restart, before the socket serves, so an agent that kept running keeps its tools; the token of an older session of the thread is revoked when a newer one starts. The stored spec keeps the confinement without the MCP servers, so no token is in the store. An ordinary thread's launch is unchanged, byte for byte. Codex cannot start a confined session yet, so a Codex supervisor fails until the Codex adapter confines.
+
 One limit is not enforced by this: the supervisor can *ask* a worker thread to merge or delete. What a worker may do is decided by that worker's own rules. Messages from a supervisor are marked as such, so a worker's instructions can treat them differently from a person's; an answer to a worker's question is not marked, and its `answer` event names the supervisor.
 
 **When it runs.** It never polls. hataori wakes it by sending it one message when something happens in its scope: a turn ended, a question was asked, a turn failed, a usage limit was hit. Its own thread is excluded. Events that arrive while it is busy, or within a short quiet period after the first, are folded into one message.
@@ -1561,7 +1563,17 @@ type Caller struct {
 // issued for. wire.Server.Revoke forgets a token and closes its
 // connections. supervisor.Caller(scope) is a supervisor's Caller: From
 // "supervisor:<scope>", Scopes [scope], OpRead|OpStart|OpSend, RefuseBusy,
-// and the Mark of section 7.1.
+// and the Mark of section 7.1. wire.Server.Restore binds a token issued by
+// an earlier run of the daemon again, for a client that still runs with it
+// (#270).
+
+// Not operations of the control API, for a client inside the daemon (#270):
+// core.Core.StartConfined(ctx, caller, r) is Start for a thread whose
+// sessions all run confined (agent.Spec.Confine), in an empty directory
+// that core.Workspaces.Empty makes instead of a clone; r.Repo must be
+// empty. A Start key that started a thread of the other kind is refused
+// (core.ErrConfinedKey). core.Core.LiveConfined lists the sessions of such
+// threads whose agent may run.
 
 // Fields of ThreadInfo, and so of ThreadDetail, besides its id, number,
 // repository, state, who started it and when (section 7.2).
@@ -1882,12 +1894,22 @@ type LoginStep struct {
 	Refused   string
 }
 
+// CheapModel is implemented by an adapter that can name its cheapest
+// model: a supervisor's when the config names none (section 7.1).
+type CheapModel interface {
+	CheapModel() string
+}
+
 // Launch is everything the session host needs to start an agent.
 type Launch struct {
 	Argv     []string
 	Env      []string
 	Terminal bool              // run on a pseudo-terminal instead of pipes
 	Files    map[string][]byte // written into the session's state directory first
+	// Confined: the launch confines the session as Spec.Confine asks. The
+	// runner never starts a confined spec's launch without it, so an
+	// adapter that knows nothing of confinement refuses.
+	Confined bool
 }
 
 // Source says where a line came from: Output (the agent's output on pipes),
@@ -1960,6 +1982,22 @@ type Spec struct {
 	Effort       string
 	Instructions string // appended to the agent's own
 	Approvals    Policy // allow everything, or ask in chat
+	// Confine, when set (section 7.1): no shell, no subagent and no other
+	// tool that runs a command, reaches the network or wakes the agent
+	// later; file tools only in Dir; no MCP servers but Confine.MCP. nil for
+	// an ordinary session, whose launch is unchanged.
+	Confine *Confinement
+}
+
+// Confinement is what a confined session may use besides its file tools.
+// MCP may carry credentials for one launch; the runner never stores them.
+type Confinement struct{ MCP []MCPServer }
+
+// MCPServer is an MCP server the agent starts on stdio.
+type MCPServer struct {
+	Name string   // the name its tools are listed under
+	Argv []string // the command and its arguments
+	Env  []string // NAME=value, added for it
 }
 
 // Event is one thing the agent did. Kind is one of SessionReady, TurnStarted,

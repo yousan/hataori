@@ -236,6 +236,20 @@ func (s *Server) Issue(api control.API) (string, error) {
 	return token, nil
 }
 
+// Restore binds token, which Issue made in an earlier run of the daemon, to
+// api again, so that a client still running with it connects again after
+// a restart. The caller read the token from where it kept it for that
+// client, and bound api to the Caller it was issued for.
+func (s *Server) Restore(token string, api control.API) error {
+	if token == "" {
+		return errors.New("wire: no token")
+	}
+	s.mu.Lock()
+	s.tokens[sha256.Sum256([]byte(token))] = api
+	s.mu.Unlock()
+	return nil
+}
+
 // Revoke forgets token and closes the connections made with it. A token
 // the server does not know changes nothing.
 func (s *Server) Revoke(token string) {

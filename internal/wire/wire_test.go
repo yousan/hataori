@@ -53,6 +53,10 @@ func (dirs) Adopt(context.Context, control.ThreadID, core.Placement) (string, bo
 	return "", false, nil
 }
 
+func (dirs) Empty(context.Context, control.ThreadID) (string, error) {
+	return "", errors.New("no confined threads here")
+}
+
 func (dirs) State(context.Context, string) (control.WorkspaceState, error) {
 	return control.WorkspaceState{Branch: "main"}, nil
 }

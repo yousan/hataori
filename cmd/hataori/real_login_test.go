@@ -13,29 +13,34 @@ import (
 // variable on to the CLI, and switches the login relay off, so that no
 // login command can start. This runs in CI; the check itself does not.
 func TestRealCheckLeavesTheLoginAlone(t *testing.T) {
-	b, err := os.ReadFile("real_test.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := strings.ToLower(string(b))
-	for _, word := range []string{"credential", "api_key", "apikey", "api key", "oauth", "token", "auth",
-		".claude.json", "subscription", "pass_env", "passenv", "loginlaunch", "probe", "keychain",
-		"anthropic_"} {
-		if strings.Contains(src, word) {
-			t.Errorf("real_test.go names %q", word)
+	// The supervisor's check uses the phase 1 check's helpers, so it names
+	// the config directory nowhere itself.
+	for file, configDir := range map[string]int{"real_test.go": 1, "real_supervisor_test.go": 0} {
+		b, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	// The config directory is named once: to find the settings file the
-	// last step compares. The check passes it nowhere.
-	if n := strings.Count(string(b), "CLAUDE_CONFIG_DIR"); n != 1 || !strings.Contains(string(b), `dir := os.Getenv("CLAUDE_CONFIG_DIR")`) {
-		t.Errorf("real_test.go names the config directory %d times; want once, read for the settings file", n)
-	}
-	if !strings.Contains(string(b), `cfg["login_relay"] = false`) {
-		t.Error("real_test.go does not switch the login relay off")
-	}
-	// The adapter's section holds only the command: no variable is passed.
-	if !strings.Contains(string(b), `map[string]any{"command": wrapper}`) {
-		t.Error("the adapter's section in real_test.go holds more than the command")
+		src := strings.ToLower(string(b))
+		for _, word := range []string{"credential", "api_key", "apikey", "api key", "oauth", "token", "auth",
+			".claude.json", "subscription", "pass_env", "passenv", "loginlaunch", "probe", "keychain",
+			"anthropic_"} {
+			if strings.Contains(src, word) {
+				t.Errorf("%s names %q", file, word)
+			}
+		}
+		// The config directory is named once: to find the settings file the
+		// last step compares. The check passes it nowhere.
+		if n := strings.Count(string(b), "CLAUDE_CONFIG_DIR"); n != configDir ||
+			configDir > 0 && !strings.Contains(string(b), `dir := os.Getenv("CLAUDE_CONFIG_DIR")`) {
+			t.Errorf("%s names the config directory %d times; want %d, read for the settings file", file, n, configDir)
+		}
+		if !strings.Contains(string(b), `cfg["login_relay"] = false`) {
+			t.Errorf("%s does not switch the login relay off", file)
+		}
+		// The adapter's section holds only the command: no variable is passed.
+		if !strings.Contains(string(b), `map[string]any{"command": wrapper}`) {
+			t.Errorf("the adapter's section in %s holds more than the command", file)
+		}
 	}
 }
 
