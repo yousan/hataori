@@ -36,6 +36,11 @@ func (l *listedTerms) Screen(_ context.Context, pane string, _ []int) (string, b
 	return "", false, nil
 }
 
+func (l *listedTerms) View(ctx context.Context, pane string, owned []int) (control.HostView, bool, error) {
+	screen, ok, err := l.Screen(ctx, pane, owned)
+	return control.HostView{Screen: screen}, ok, err
+}
+
 // change changes the terminal on device.
 func (l *listedTerms) change(device string, f func(h *control.HostTerminal)) {
 	l.mu.Lock()

@@ -167,6 +167,10 @@ type API interface {
 	// OpHost.
 	HostTerminals(ctx context.Context) ([]HostTerminal, error)
 	HostScreen(ctx context.Context, pane string) (string, error)
+	// HostView returns one tmux pane's screen, as HostScreen does, with the
+	// cursor's position: for the dashboard's screen of a pane being
+	// operated. Allowed as HostScreen is. Since 3.13.
+	HostView(ctx context.Context, pane string) (HostView, error)
 
 	// OperateHost lets the caller type into one tmux pane on the host that
 	// no session host owns, by TmuxPane.Pane (design, section 7.2). It
@@ -281,7 +285,7 @@ const (
 	OpStop                   // Stop
 	OpSignIn                 // SignInLink: the control socket's connections, and a chat front end's caller for a person who asked; never the dashboard
 	// OpHost may list and read the terminals hataori does not own
-	// (HostTerminals, HostScreen). Only the owner is given it, and only when
+	// (HostTerminals, HostScreen, HostView). Only the owner is given it, and only when
 	// the config turns them on.
 	OpHost
 	// OpAttach may attach a terminal on the host to a thread's agent
@@ -577,6 +581,13 @@ type TmuxPane struct {
 	Index      string `json:"index"`                 // the pane's index in its window
 	Dir        string `json:"dir,omitempty"`         // the pane's current directory
 	Attached   bool   `json:"attached"`              // a client shows the session now
+}
+
+// HostView is a tmux pane's screen with its cursor (HostView). Since 3.13.
+type HostView struct {
+	Screen  string `json:"screen,omitempty"` // as HostScreen gives it; text, so optional
+	CursorX int    `json:"cursor_x"`         // the cursor's column, from 0
+	CursorY int    `json:"cursor_y"`         // the cursor's row, from 0 at the top of the screen
 }
 
 // HostOperation is one tmux pane being operated (OperateHost). It ends
