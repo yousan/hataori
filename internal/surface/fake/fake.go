@@ -101,6 +101,7 @@ type Driver struct {
 	calls     map[surface.Conversation][]Call
 	inbound   map[surface.Conversation][]surface.Inbound
 	live      map[MessageRef]bool
+	received  map[MessageRef]bool            // injected messages, which take a status as a posted one does
 	shown     map[MessageRef]surface.Message // what each live message shows now
 	blocked   map[string]bool                // people whose direct messages fail
 	fail      map[Op]*failure
@@ -128,14 +129,15 @@ var DefaultLimits = surface.Limits{
 // New returns an empty, disconnected driver.
 func New() *Driver {
 	return &Driver{
-		limits:  DefaultLimits,
-		calls:   map[surface.Conversation][]Call{},
-		inbound: map[surface.Conversation][]surface.Inbound{},
-		live:    map[MessageRef]bool{},
-		shown:   map[MessageRef]surface.Message{},
-		blocked: map[string]bool{},
-		fail:    map[Op]*failure{},
-		direct:  map[string]surface.Conversation{},
+		limits:   DefaultLimits,
+		calls:    map[surface.Conversation][]Call{},
+		inbound:  map[surface.Conversation][]surface.Inbound{},
+		live:     map[MessageRef]bool{},
+		received: map[MessageRef]bool{},
+		shown:    map[MessageRef]surface.Message{},
+		blocked:  map[string]bool{},
+		fail:     map[Op]*failure{},
+		direct:   map[string]surface.Conversation{},
 
 		fromMessage: map[MessageRef]surface.Conversation{},
 		names:       map[surface.Conversation]string{},
@@ -259,6 +261,7 @@ func (d *Driver) Inject(conv surface.Conversation, author surface.Author, text s
 		}
 	}
 	d.inbound[conv] = append(d.inbound[conv], in)
+	d.received[in.Ref] = true
 	var sink surface.Sink
 	if d.connected {
 		sink = d.sink
@@ -478,7 +481,8 @@ func (d *Driver) Delete(_ context.Context, ref MessageRef) error {
 	return d.change(OpDelete, ref, Call{Op: OpDelete, Ref: ref})
 }
 
-// SetStatus records a status on ref.
+// SetStatus records a status on ref, a message the driver posted or one
+// it received: a service shows a lamp on anyone's message.
 func (d *Driver) SetStatus(_ context.Context, ref MessageRef, s surface.Status) error {
 	return d.change(OpSetStatus, ref, Call{Op: OpSetStatus, Ref: ref, Status: s})
 }
@@ -490,7 +494,7 @@ func (d *Driver) change(op Op, ref MessageRef, c Call) error {
 	if before != nil {
 		return before
 	}
-	if !d.live[ref] {
+	if !d.live[ref] && !(op == OpSetStatus && d.received[ref]) {
 		return ErrNoMessage
 	}
 	switch op {
