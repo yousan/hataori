@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -295,39 +294,12 @@ func TestInputHookTimeouts(t *testing.T) {
 	}
 }
 
-// stoppableDaemon runs the daemon of root until the returned function
-// stops it.
-func stoppableDaemon(t *testing.T, root string) func() {
-	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan int, 1)
-	go func() { done <- runCtx(ctx, []string{"run", "--root", root}, io.Discard, io.Discard) }()
-	stopped := false
-	stop := func() {
-		if !stopped {
-			stopped = true
-			cancel()
-			<-done
-		}
-	}
-	t.Cleanup(func() { stop(); killSessions(root) })
-	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
-		if c, err := wire.Dial(root); err == nil {
-			c.Close()
-			return stop
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the daemon did not come up")
-		}
-	}
-}
-
 // A daemon restart does not call a hook twice for one accepted input: a
 // Start and a Send given again with their keys after the restart run no
 // hook, and the agent gets each once.
 func TestRestartRunsNoHookTwice(t *testing.T) {
 	r, issue := hookRoot(t, [2]string{"before_agent_run", ""}, [2]string{"before_prompt_build", ""})
-	stop := stoppableDaemon(t, r.root)
+	stop := runDaemon(t, r.root)
 	r.connected(t)
 	p := &fakePlugin{}
 	p.connect(t, r.root, *issue, goOn)
@@ -352,7 +324,7 @@ func TestRestartRunsNoHookTwice(t *testing.T) {
 	owner.Close()
 	stop()
 
-	stoppableDaemon(t, r.root)
+	runDaemon(t, r.root)
 	p.connect(t, r.root, *issue, goOn)
 	owner, err = wire.Dial(r.root)
 	if err != nil {
@@ -384,5 +356,28 @@ func TestRestartRunsNoHookTwice(t *testing.T) {
 	}
 	if !slices.Equal(said, []string{"ONCE-START", "ONCE-SEND", "NEW"}) {
 		t.Fatalf("the agent said %q", said)
+	}
+}
+
+// An answer to an open question gets only the gate: before_agent_run is
+// called for it, before_prompt_build is not, and the agent gets it as
+// given.
+func TestAnAnswerGetsOnlyTheGate(t *testing.T) {
+	r, issue := hookRoot(t, [2]string{"before_agent_run", ""}, [2]string{"before_prompt_build", ""})
+	startDaemon(t, r.root)
+	r.connected(t)
+	p := &fakePlugin{}
+	p.connect(t, r.root, *issue, func(q control.HookRequest) control.HookAnswer {
+		if q.Point == "before_prompt_build" {
+			return control.HookAnswer{Action: control.HookContinue, Before: "reply ADDED"}
+		}
+		return goOn(q)
+	})
+	th := r.order(t, 0, "!go repo:"+bareRepo(t)+" ask Which colour?")
+	r.posted(t, th, "Which colour?")
+	r.driver.Inject(th, fakesurface.Webhook(e2eHook), "green")
+	r.posted(t, th, "answer: green")
+	if p.count("before_agent_run", "green") != 1 || p.count("before_prompt_build", "green") != 0 {
+		t.Fatalf("the plugin's calls: %v", p.got())
 	}
 }

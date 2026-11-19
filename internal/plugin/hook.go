@@ -274,16 +274,18 @@ func (d *Dispatcher) call(ctx context.Context, x handler, c control.HookCall, te
 func allowed(point string, a control.HookAnswer) string {
 	k := kinds[point]
 	switch {
+	case a.Action != control.HookStop && a.Action != control.HookContinue:
+		return fmt.Sprintf("its answer's action is neither %s nor %s", control.HookContinue, control.HookStop)
 	case a.Action == control.HookStop && !k.stop:
 		return fmt.Sprintf("it answered stop, which %s does not allow", point)
 	case a.Action == control.HookStop && a.Text != nil:
 		return "it answered stop with a text"
 	case a.Action == control.HookContinue && a.Text != nil && !k.change:
 		return fmt.Sprintf("it answered a changed text, which %s does not allow", point)
-	case (a.Before != "" || a.After != "") && (a.Action != control.HookContinue || !k.add):
-		return fmt.Sprintf("it answered text to add, which %s does not allow with %s", point, a.Action)
-	case a.Action != control.HookStop && a.Action != control.HookContinue:
-		return fmt.Sprintf("its answer's action is neither %s nor %s", control.HookContinue, control.HookStop)
+	case (a.Before != "" || a.After != "") && a.Action == control.HookStop:
+		return "it answered stop with text to add"
+	case (a.Before != "" || a.After != "") && !k.add:
+		return fmt.Sprintf("it answered text to add, which %s does not allow", point)
 	}
 	return ""
 }

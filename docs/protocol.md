@@ -159,7 +159,7 @@ Result: none
 
 Starts a thread in a scope. The same `key` starts nothing twice and returns the thread the first call started.
 
-Since 3.17, when plugins handle the input hook points in the scope, the daemon runs them in the call, before it accepts the input (design, section 7.3): `before_agent_run`, then `before_prompt_build`. One that stops the input makes the call `stopped`: no thread, no chat thread and no workspace is made, and nothing is recorded but one log line. The text `before_prompt_build` adds reaches the agent around the input, on lines of their own; the `input` event has the input as given in `text`, and the added text in `before` and `after`. A key accepted before runs no hook again.
+Since 3.17, when plugins handle the input hook points in the scope, the daemon runs them in the call, before it accepts the input (design, section 7.3): `before_agent_run`, then `before_prompt_build`. One that stops the input makes the call `stopped`: no thread, no chat thread and no workspace is made, and nothing is recorded; the daemon logs the stop, without the text or the reason. The text `before_prompt_build` adds reaches the agent around the input, on lines of their own; the `input` event has the input as given in `text`, and the added text in `before` and `after`. A key accepted before runs no hook again.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -180,7 +180,7 @@ The new thread's number; since 3.0, before it a `{scope, key}` object.
 
 Gives input to a thread. A thread with an open question takes it as the answer; an asleep thread is woken with it. A closed or removed thread takes nothing and is not woken: `closed`, since 2.3.
 
-Since 3.17 the input hook points run in the call, before the input is accepted, as for `Start`: a stopped input is `stopped`, takes nothing, and writes no event. Text `before_prompt_build` adds goes around an input, not around an answer to an open question, which reaches the agent as given, as the supervisor's mark does not. A key accepted before, and a closed or removed thread, run no hook.
+Since 3.17 the input hook points run in the call, before the input is accepted, as for `Start`: a stopped input is `stopped`, takes nothing, and writes no event. An answer to an open question runs `before_agent_run` only, and reaches the agent as given, as the supervisor's mark does not go before it. A key accepted before, and a closed or removed thread, run no hook. The reason an approved `AskInterrupt` gives the thread is a `Send` too: a stopped one makes the approving `Answer` `stopped`, and the approval stays open.
 
 On a supervisor's connection (a token, since 2.2) `busy` is always taken as 0: a `Send` with 1 or 2 to a running thread is refused with `busy` and logged, nothing is queued and the turn goes on. There, and in `Start`, the daemon puts the line `From the supervisor of this channel:` before the input's text; the `input` event has the text with that line, and the thread's title is made without it. A `Send` that answers an open question is not marked: the agent gets the answer, and the `answer` event its text, as given.
 

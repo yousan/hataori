@@ -461,12 +461,20 @@ const (
 // stopped input is refused with a *control.Stopped and one log line, and
 // nothing of it is kept. Without Hooks it calls nothing.
 func (a *api) inputHooks(ctx context.Context, op string, thread control.ThreadID, scope string, in control.Input) (control.Input, error) {
+	return a.runInputHooks(ctx, op, thread, scope, in, PointBeforeAgentRun, PointBeforePromptBuild)
+}
+
+// runInputHooks is inputHooks at points.
+func (a *api) runInputHooks(ctx context.Context, op string, thread control.ThreadID, scope string, in control.Input, points ...string) (control.Input, error) {
 	in.Before, in.After = "", ""
 	if a.c.Hooks == nil {
 		return in, nil
 	}
-	for _, point := range []string{PointBeforeAgentRun, PointBeforePromptBuild} {
+	for _, point := range points {
 		r := a.c.Hooks.Run(ctx, control.HookCall{Point: point, Thread: thread, Scope: scope, Text: in.Text})
+		if err := ctx.Err(); err != nil {
+			return in, err // the caller gave up: no plugin stopped it
+		}
 		if r.Stopped {
 			attrs := []any{"op", op, "scope", scope, "point", point, "plugin", r.By, "failed", r.Failed,
 				"principal", string(a.caller.Principal)}
@@ -1733,8 +1741,21 @@ func (a *api) sendHooks(ctx context.Context, id control.ThreadID, scope, key str
 			return in, nil
 		}
 	}
-	if _, state, err := a.c.current(ctx, a.c.Store.DB, id); err == nil && (state == control.Closed || state == control.Removed) {
+	sid, state, err := a.c.current(ctx, a.c.Store.DB, id)
+	if err == nil && (state == control.Closed || state == control.Removed) {
 		return in, nil
+	}
+	if err == nil && state == control.Waiting && !a.caller.NoAnswer {
+		var open int
+		if err := a.c.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM requests WHERE session_id = ? AND state = 'open'`, sid).Scan(&open); err != nil {
+			return in, fmt.Errorf("core: request: %w", err)
+		}
+		if open > 0 {
+			// It is the answer to the open question, which reaches the agent as
+			// given: only the gate runs. Should the question close before the
+			// input is taken, it goes as input without added text.
+			return a.runInputHooks(ctx, "Send", id, scope, in, PointBeforeAgentRun)
+		}
 	}
 	return a.inputHooks(ctx, "Send", id, scope, in)
 }
