@@ -229,10 +229,10 @@ When the daemon starts, it reads each plugin's manifest, `hataori-plugin.json` i
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `id` | string | required | The plugin's name, the same as its manifest's `id`. It follows the rule of driver names. Each id may be listed once. |
-| `path` | string | required | The absolute path of the plugin's executable; its manifest is in the same directory. For an `external` plugin, the path of its program, next to which its manifest is. |
+| `path` | string | required | The absolute path of the plugin's executable; its manifest is in the same directory. For an `external` plugin, which hataori does not start, only the directory is used, for the manifest: the file itself need not exist. |
 | `sha256` | string | required unless `external` | The SHA-256 of the executable: 64 hexadecimal digits. Refused with `external`, since hataori does not start that program. |
 | `external` | boolean | `false` | The plugin is a program that hataori does not start, which connects to the control socket by itself with the token in `token_file`. |
-| `token_file` | string | required with `external` | The file in `<root>/config/` that holds an external plugin's token, relative to `config/`: an absolute path or a path out of `config/` is refused. Refused without `external`: a plugin that hataori starts gets a token at each start. |
+| `token_file` | string | required with `external` | The file in `<root>/config/` that holds an external plugin's token, relative to `config/`: an absolute path, a path out of `config/` and `config/` itself are refused. Refused without `external`: a plugin that hataori starts gets a token at each start. |
 | `scopes` | array of strings | required | The scopes the plugin may see and act in, by their keys under `scopes`; at least one. |
 | `operations` | array of strings | the manifest's | The control operations it may call: some or all of its manifest's `operations`. |
 | `events` | array of strings | the manifest's | The event kinds it may read: some or all of its manifest's `events`. An empty list grants none. |

@@ -55,7 +55,8 @@ type Grant struct {
 	Version  string   // the manifest's
 	Protocol Protocol // the manifest's
 	// Path is the plugin's executable, absolute and clean. Its manifest is
-	// next to it. Nothing here reads, hashes or runs it.
+	// next to it. Nothing here reads, hashes or runs it. For an External
+	// plugin only its directory, the manifest's, is used.
 	Path string
 	// SHA256 is the executable's hash as the config gives it, 64 lowercase
 	// hexadecimal digits; empty for an External plugin.
@@ -212,7 +213,7 @@ func (g *Grant) start(o object) error {
 		if !hasToken || token == "" {
 			return o.missing("token_file")
 		}
-		if filepath.IsAbs(token) || !filepath.IsLocal(token) {
+		if filepath.IsAbs(token) || !filepath.IsLocal(token) || filepath.Clean(token) == "." {
 			return o.fail("token_file", "%q is not a file name inside the config directory", token)
 		}
 		g.TokenFile = filepath.Clean(token)

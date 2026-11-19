@@ -64,7 +64,11 @@ func ReadManifest(path string) (*Manifest, error) {
 	prefix := fmt.Sprintf("manifest %q: ", path)
 	data, err := readFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("no manifest %q next to the executable", path)
+		return nil, fmt.Errorf("no manifest %q", path)
+	}
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		err = pe.Err // without the path, which the prefix quotes
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s%v", prefix, err)

@@ -157,11 +157,11 @@ func TestRefused(t *testing.T) {
 		{"unknown field in the config", manifest, `[` + entry + `, "colour": "red"}]`, []string{`unknown key "plugins[0].colour"`}},
 		{"unknown field in a config hook", manifest, `[` + entry + `, "hooks": [{"point": "message_sending", "when": "now"}]}]`, []string{`unknown key "plugins[0].hooks[0].when"`}},
 		{"unknown operation in the manifest", with(`"Events"]`, `"Events", "Fly"]`), `[` + entry + `}]`, []string{`"plugins[0].path"`, `"operations[2]"`, `"Fly"`}},
-		{"unknown operation in the config", manifest, `[` + entry + `, "operations": ["Fly"]}]`, []string{`"plugins[0].operations[0]"`, `"Fly"`}},
+		{"unknown operation in the config", manifest, `[` + entry + `, "operations": ["Fly"]}]`, []string{`"plugins[0].operations[0]"`, `"Fly" is not an operation`}},
 		{"unknown event kind in the manifest", with(`"turn_ended"]`, `"turn_ended", "post_sent"]`), `[` + entry + `}]`, []string{`"plugins[0].path"`, `"events[2]"`, `"post_sent"`}},
-		{"unknown event kind in the config", manifest, `[` + entry + `, "events": ["thread_deleted"]}]`, []string{`"plugins[0].events[0]"`}},
+		{"unknown event kind in the config", manifest, `[` + entry + `, "events": ["thread_deleted"]}]`, []string{`"plugins[0].events[0]"`, "not an event kind"}},
 		{"unknown hook point in the manifest", with(`"message_sending"`, `"inbound_claim"`), `[` + entry + `}]`, []string{`"plugins[0].path"`, `"hooks[0].point"`}},
-		{"unknown hook point in the config", manifest, `[` + entry + `, "hooks": [{"point": "agent_end"}]}]`, []string{`"plugins[0].hooks[0].point"`}},
+		{"unknown hook point in the config", manifest, `[` + entry + `, "hooks": [{"point": "agent_end"}]}]`, []string{`"plugins[0].hooks[0].point"`, "not a hook point"}},
 		{"operation wider than the manifest", manifest, `[` + entry + `, "operations": ["Threads", "Send"]}]`, []string{`"plugins[0].operations[1]"`, `"Send"`}},
 		{"event kind wider than the manifest", manifest, `[` + entry + `, "events": ["text"]}]`, []string{`"plugins[0].events[0]"`, `"text"`}},
 		{"hook point wider than the manifest", manifest, `[` + entry + `, "hooks": [{"point": "before_agent_run"}]}]`, []string{`"plugins[0].hooks[0].point"`}},
@@ -177,6 +177,8 @@ func TestRefused(t *testing.T) {
 		{"scope not listed", manifest, `[{"id": "scan", "path": "PATH", "sha256": "` + sum + `", "scopes": ["c1", "c9"]}]`, []string{`"plugins[0].scopes[1]"`}},
 		{"token file outside config/", manifest, `[{"id": "scan", "path": "PATH", "external": true, "token_file": "../token", "scopes": ["c1"]}]`, []string{`"plugins[0].token_file"`}},
 		{"token file an absolute path", manifest, `[{"id": "scan", "path": "PATH", "external": true, "token_file": "/etc/token", "scopes": ["c1"]}]`, []string{`"plugins[0].token_file"`}},
+		{"token file the config directory", manifest, `[{"id": "scan", "path": "PATH", "external": true, "token_file": "a/..", "scopes": ["c1"]}]`, []string{`"plugins[0].token_file"`}},
+		{"settings not an object", manifest, `[` + entry + `, "settings": ["a"]}]`, []string{`"plugins[0].settings"`}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := newPlugin(t, tc.manifest)
