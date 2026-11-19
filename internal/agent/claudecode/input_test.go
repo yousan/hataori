@@ -188,3 +188,35 @@ func TestHeldInputNamedWhenWritten(t *testing.T) {
 		t.Fatalf("written when the turn ended: %q, inputs %q", a.Write, a.Inputs)
 	}
 }
+
+// In a confined session, an input the CLI would read as its shell mode
+// ("!") or as one of its commands ("/") is pasted after commandPrefix, so
+// the CLI takes it as a prompt (#426). Any other input, and every input of
+// an ordinary session, is pasted as it is.
+func TestConfinedInputIsNeverACommand(t *testing.T) {
+	paste := func(c *codec, text string) string {
+		a, err := c.Input(agent.Input{Text: text})
+		if err != nil || len(a.Write) != 1 {
+			t.Fatalf("%q: writes %q, %v", text, a.Write, err)
+		}
+		return strings.TrimSuffix(strings.TrimPrefix(string(a.Write[0]), pasteStart), pasteEnd)
+	}
+	confined := func() *codec {
+		c := (&Adapter{}).NewCodec(agent.Spec{Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
+		decodeFile(t, c, "start", "plain/hooks/01-SessionStart.json")
+		return c
+	}
+	for _, text := range []string{"!touch /tmp/x", "/add-dir /", "  \n!ls", "​/model opus", "　!id"} {
+		if got := paste(confined(), text); got != commandPrefix+text {
+			t.Errorf("confined: %q is pasted as %q, want it after %q", text, got, commandPrefix)
+		}
+		if got := paste(started(t), text); got != text {
+			t.Errorf("ordinary: %q is pasted as %q", text, got)
+		}
+	}
+	for _, text := range []string{"list the threads", "a / b", "say !"} {
+		if got := paste(confined(), text); got != text {
+			t.Errorf("confined: %q is pasted as %q", text, got)
+		}
+	}
+}
