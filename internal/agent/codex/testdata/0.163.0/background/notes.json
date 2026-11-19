@@ -1,0 +1,74 @@
+{
+  "procs_at_0s": [
+    {
+      "pid_rel": 0,
+      "ppid_rel": null,
+      "pgid_is_ours": true,
+      "argv": [
+        "codex",
+        "app-server",
+        "-c",
+        "projects./tmp/capture-work.trust_level=\"trusted\""
+      ],
+      "descendant": false
+    },
+    {
+      "pid_rel": 1,
+      "ppid_rel": 0,
+      "pgid_is_ours": false,
+      "argv": [
+        "codex-code-mode-host"
+      ],
+      "descendant": true
+    }
+  ],
+  "procs_at_45s": [
+    {
+      "pid_rel": 0,
+      "ppid_rel": null,
+      "pgid_is_ours": true,
+      "argv": [
+        "codex",
+        "app-server",
+        "-c",
+        "projects./tmp/capture-work.trust_level=\"trusted\""
+      ],
+      "descendant": false
+    },
+    {
+      "pid_rel": 1,
+      "ppid_rel": 0,
+      "pgid_is_ours": false,
+      "argv": [
+        "codex-code-mode-host"
+      ],
+      "descendant": true
+    }
+  ],
+  "unrequested_turns": 0,
+  "messages_after_turn": [],
+  "procs_at_60s": [
+    {
+      "pid_rel": 0,
+      "ppid_rel": null,
+      "pgid_is_ours": true,
+      "argv": [
+        "codex",
+        "app-server",
+        "-c",
+        "projects./tmp/capture-work.trust_level=\"trusted\""
+      ],
+      "descendant": false
+    },
+    {
+      "pid_rel": 1,
+      "ppid_rel": 0,
+      "pgid_is_ours": false,
+      "argv": [
+        "codex-code-mode-host"
+      ],
+      "descendant": true
+    }
+  ],
+  "left_after_end": []
+}

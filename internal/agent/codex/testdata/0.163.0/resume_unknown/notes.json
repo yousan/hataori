@@ -1,0 +1,4 @@
+{
+  "resume_error": "thread/resume: {'code': -32600, 'message': 'no rollout found for thread id 00000000-0000-4000-8000-000000000072'}",
+  "left_after_end": []
+}
