@@ -746,10 +746,12 @@ body {
   padding: 0;
 }
 
-.conv-start,
-.conv-loading,
+/* The line above the entries says when older ones are read and where the
+   thread starts; it keeps its height, so entries do not move with it. */
+.conv-top,
 .conv-empty {
   margin: 4px 0 8px;
+  min-height: 1.5em;
   color: var(--muted);
   font-size: 12px;
 }

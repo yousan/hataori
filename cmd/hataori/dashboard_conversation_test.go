@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -365,6 +366,38 @@ func TestDashboardConversationLongThread(t *testing.T) {
 	if shownFirst {
 		t.Fatal("the conversation starts at the thread's first input, not at its end")
 	}
+
+	// Older entries keep the entry at the top in place, even when a new
+	// turn's entries come while they are read. The read of older entries
+	// is held until the new turn's are shown.
+	b.call("Fetch.enable", map[string]any{"patterns": []map[string]any{{"urlPattern": "*/api/threadevents*before=*", "requestStage": "Request"}}})
+	b.eval(fmt.Sprintf(`(() => { const c = document.querySelector('%s'); c.scrollTop = 0; c.dispatchEvent(new Event('scroll')); return true; })()`, conv), nil)
+	held := b.paused("the read of older entries")
+	type top struct {
+		Pos    string
+		Offset float64
+		N      int
+	}
+	topOf := func() top {
+		var x top
+		b.eval(fmt.Sprintf(`(() => { const c = document.querySelector('%s'); const l = c.querySelector('.conv-list > li');
+			return {pos: l.dataset.pos, offset: l.getBoundingClientRect().top - c.getBoundingClientRect().top, n: c.querySelectorAll('.conv-list > li').length}; })()`, conv), &x)
+		return x
+	}
+	before := topOf()
+	if err := c.Send(ctx, id, "k-live", control.Input{Text: "reply live-while-reading"}, control.Refuse); err != nil {
+		t.Fatal(err)
+	}
+	b.until("the new turn while older entries are read", fmt.Sprintf(`[...document.querySelectorAll('%s .conv-text')].some(e => e.textContent === 'live-while-reading')`, conv))
+	b.call("Fetch.continueRequest", map[string]any{"requestId": held})
+	b.until("the older entries", fmt.Sprintf(`document.querySelectorAll('%s .conv-list > li').length > %d && document.querySelector('%s .conv-list > li').dataset.pos !== %q`, conv, before.N+2, conv, before.Pos))
+	var kept float64
+	b.eval(fmt.Sprintf(`(() => { const c = document.querySelector('%s'); const l = c.querySelector('.conv-list > li[data-pos="%s"]');
+		return l.getBoundingClientRect().top - c.getBoundingClientRect().top; })()`, conv, before.Pos), &kept)
+	if kept < before.Offset-2 || kept > before.Offset+2 {
+		t.Fatalf("the entry at the top moved from %v to %v px when older entries came", before.Offset, kept)
+	}
+	b.call("Fetch.disable", map[string]any{})
 	// Scrolled to the top, again and again, as a person would.
 	b.until("the first input after scrolling up", fmt.Sprintf(`(() => {
 		const c = document.querySelector('%s');
@@ -380,6 +413,65 @@ func TestDashboardConversationLongThread(t *testing.T) {
 	if startText != "The start of the thread." {
 		t.Fatalf("the start: %q", startText)
 	}
+}
+
+// paused waits for a request the browser holds (Fetch.enable) and returns
+// its id.
+func (b *browser) paused(what string) string {
+	b.t.Helper()
+	for deadline := time.Now().Add(20 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		b.eval(`1`, nil) // reads the browser's events
+		for _, e := range b.events {
+			if e.Method == "Fetch.requestPaused" {
+				var p struct{ RequestID string }
+				json.Unmarshal(e.Params, &p)
+				return p.RequestID
+			}
+		}
+		if time.Now().After(deadline) {
+			b.t.Fatalf("the browser never held %s", what)
+		}
+	}
+}
+
+// A thread whose newest events are of kinds the conversation does not show
+// (here, 240 of a subagent with no tool, before its last entries) is read
+// back to its first input all the same, without scrolling.
+func TestDashboardConversationSkipsWhatItDoesNotShow(t *testing.T) {
+	root := newRoot(t)
+	withDashboard(t, root, map[string]any{"listen": "127.0.0.1:0"})
+	runDaemon(t, root)
+	c, err := wire.Dial(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	ctx := context.Background()
+	var script strings.Builder
+	script.WriteString("reply first-line\n")
+	for i := 0; i < 120; i++ {
+		fmt.Fprintf(&script, "subagent s%d\n", i)
+	}
+	script.WriteString("reply last-line")
+	id, err := c.Start(ctx, control.StartRequest{Key: "k1", Scope: "s", Thread: "t1", Repo: bareRepo(t), Input: control.Input{Text: script.String()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the turn", 30*time.Second, func() bool { d, err := c.Thread(ctx, id, 0, 0); return err == nil && d.State == control.Idle })
+	if n := len(allEvents(t, c, id)); n < 2*control.MaxEvents+20 {
+		t.Fatalf("only %d events", n)
+	}
+	b := newBrowser(t)
+	link, err := c.SignInLink(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.call("Page.navigate", map[string]any{"url": link})
+	b.until("the thread in the tree", fmt.Sprintf(`!!document.querySelector('[data-section=threads] .row[data-thread="%d"]')`, id))
+	b.click(fmt.Sprintf(`[data-section=threads] .row[data-thread="%d"]`, id))
+	conv := fmt.Sprintf(`.pane[data-pane="0"] [data-conversation="%d"]`, id)
+	b.until("the thread's start, without scrolling", fmt.Sprintf(`document.querySelector('%s')?.dataset.start === 'yes' && !!document.querySelector('%s .conv-list > li[data-kind=input]')`, conv, conv))
+	b.untilConversation("the whole thread", conv, c, id)
 }
 
 // A caller that may not read text sees "text withheld" in place of every

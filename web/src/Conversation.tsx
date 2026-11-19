@@ -11,6 +11,11 @@ const retryDelay = 2000;
 // nearTop is how close to the top, in pixels, a scroll loads older entries.
 const nearTop = 48;
 
+// offsetIn is how far below the top of box's view el is.
+function offsetIn(box: HTMLElement, el: HTMLElement): number {
+  return el.getBoundingClientRect().top - box.getBoundingClientRect().top;
+}
+
 function clock(iso: string): string {
   return new Date(iso).toLocaleTimeString();
 }
@@ -117,12 +122,18 @@ export function Conversation(props: { x: ThreadInfo; subscribe: (f: (e: Event) =
   const [events, setEvents] = useState<Event[]>([]);
   const [start, setStart] = useState(false); // the thread's first event is read
   const [loading, setLoading] = useState(false);
+  // reads counts the reads of history: a page of events this view does not
+  // show changes no entry, and must still lead to the next page.
+  const [reads, setReads] = useState(0);
   const box = useRef<HTMLDivElement>(null);
   const held = useRef<Event[]>([]); // events, for the reads to see without waiting for a render
   const oldest = useRef(0); // the oldest position a read returned; 0 before any
   const reading = useRef(false);
   const atEnd = useRef(true); // the view shows the newest entry: it follows new ones
-  const anchor = useRef<{ height: number; top: number } | null>(null);
+  // anchor is the entry at the top of the view when older entries were
+  // asked for, and where it was: it stays there until they come, whatever
+  // else comes meanwhile.
+  const anchor = useRef<{ pos: number; offset: number; done: boolean } | null>(null);
 
   const add = (more: readonly Event[]) => {
     const next = merge(held.current, more);
@@ -135,6 +146,7 @@ export function Conversation(props: { x: ThreadInfo; subscribe: (f: (e: Event) =
     if (evs.length > 0) oldest.current = oldest.current === 0 ? evs[0].pos : Math.min(oldest.current, evs[0].pos);
     add(evs);
     if (evs.length < page) setStart(true);
+    setReads((n) => n + 1);
   };
 
   // The stream, from now on, for this thread.
@@ -186,9 +198,19 @@ export function Conversation(props: { x: ThreadInfo; subscribe: (f: (e: Event) =
     if (!el || start || reading.current || oldest.current === 0) return;
     reading.current = true;
     setLoading(true);
-    anchor.current = { height: el.scrollHeight, top: el.scrollTop };
+    const top = el.querySelector<HTMLElement>(".conv-list > li");
+    anchor.current = top ? { pos: Number(top.dataset.pos), offset: offsetIn(el, top), done: false } : null;
     threadEvents(id, oldest.current, page)
-      .then((evs) => read(evs))
+      .then((evs) => {
+        // Where the entry is now, as the person sees it, is where it stays.
+        const a = anchor.current;
+        const li = a && el.querySelector<HTMLElement>(`.conv-list > li[data-pos="${a.pos}"]`);
+        if (a) {
+          if (li) a.offset = offsetIn(el, li);
+          a.done = true;
+        }
+        read(evs);
+      })
       .catch(() => {
         anchor.current = null; // the next scroll to the top tries again
       })
@@ -204,14 +226,16 @@ export function Conversation(props: { x: ThreadInfo; subscribe: (f: (e: Event) =
   useLayoutEffect(() => {
     const el = box.current;
     if (!el) return;
-    if (anchor.current) {
-      el.scrollTop = anchor.current.top + (el.scrollHeight - anchor.current.height);
-      anchor.current = null;
+    const a = anchor.current;
+    if (a) {
+      const li = el.querySelector<HTMLElement>(`.conv-list > li[data-pos="${a.pos}"]`);
+      if (li) el.scrollTop += offsetIn(el, li) - a.offset;
+      if (a.done) anchor.current = null;
     } else if (atEnd.current) {
       el.scrollTop = el.scrollHeight;
     }
     if (el.scrollTop < nearTop && !start && !reading.current) older();
-  }, [events, start]);
+  }, [events, start, reads]);
 
   const onScroll = () => {
     const el = box.current;
@@ -223,11 +247,9 @@ export function Conversation(props: { x: ThreadInfo; subscribe: (f: (e: Event) =
   const list = useMemo(() => entries(events), [events]);
   return (
     <div className="conversation" data-conversation={id} data-start={start ? "yes" : "no"} ref={box} onScroll={onScroll}>
-      {start ? (
-        <p className="conv-start">{t("conv.start")}</p>
-      ) : (
-        loading && <p className="conv-loading">{t("conv.loading")}</p>
-      )}
+      <p className={start ? "conv-top conv-start" : loading ? "conv-top conv-loading" : "conv-top"}>
+        {start ? t("conv.start") : loading ? t("conv.loading") : null}
+      </p>
       {start && list.length === 0 && <p className="conv-empty">{t("conv.empty")}</p>}
       <ol className="conv-list">
         {list.map((e) => (
