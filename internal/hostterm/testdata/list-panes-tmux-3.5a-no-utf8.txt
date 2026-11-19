@@ -1,0 +1,4 @@
+%0_build_0_sleep_0_/dev/ttys003_sleep_0_1795119335_/work dir
+%1_build_1_my editor_0_/dev/ttys004_bash_0_1795119335_/work dir
+%2_build_1_my editor_1_/dev/ttys005_bash_0_1795119335_/work dir
+%3_tab\there_0_win_0_/dev/ttys006_sleep_0_1795119335_/

@@ -46,6 +46,44 @@ func TestParsePanes(t *testing.T) {
 	}
 }
 
+// Real list-panes output of tmux 3.5a on macOS, with -u, from the same
+// layout as list-panes-tmux-3.4.txt, and a session whose name holds a tab,
+// which tmux prints as "\t" (3.4 did too). It reads into the same panes as tmux
+// 3.4's; only the devices, the times and the shell's name, which is the
+// system's, differ. The directory was changed as in the 3.4 capture.
+func TestParsePanesTmux35(t *testing.T) {
+	old := parsePanes(readTestdata(t, "list-panes-tmux-3.4.txt"))
+	got := parsePanes(readTestdata(t, "list-panes-tmux-3.5a.txt"))
+	if len(got) != 4 {
+		t.Fatalf("%d panes: %+v", len(got), got)
+	}
+	for i, o := range old {
+		g := got[i]
+		if g.Tmux == nil || *g.Tmux != *o.Tmux || !strings.HasPrefix(g.Device, "/dev/tty") || g.Activity == nil {
+			t.Errorf("pane %d: %+v %+v, want %+v", i, g, g.Tmux, o.Tmux)
+		}
+	}
+	if got[0].Process != "sleep" || got[1].Process != "bash" {
+		t.Errorf("processes %q %q", got[0].Process, got[1].Process)
+	}
+	if s := got[3].Tmux.Session; s != `tab\there` {
+		t.Errorf("a session name with a tab: %q", s)
+	}
+}
+
+// The same panes listed by a tmux 3.5a client without -u, under a locale
+// that is not UTF-8: every tab of the format, the separator, is "_", so no
+// line is a pane (#483). Listing runs tmux with -u for this.
+func TestTmux35WithoutUTF8LosesTheSeparator(t *testing.T) {
+	b := readTestdata(t, "list-panes-tmux-3.5a-no-utf8.txt")
+	if strings.Contains(string(b), "\t") || !strings.Contains(string(b), "%0_build_0_sleep_0_") {
+		t.Fatal("the capture is not the one without -u")
+	}
+	if got := parsePanes(b); len(got) != 0 {
+		t.Fatalf("read %d panes", len(got))
+	}
+}
+
 // Real ps output of procps-ng 4.0.4: a process without a terminal, the
 // tmux server (a command with a space), and a pipeline in one pane.
 func TestParsePS(t *testing.T) {
@@ -93,6 +131,30 @@ func TestTabInAWindowName(t *testing.T) {
 	if got := parsePanes([]byte(line)); len(got) == 1 && got[0].Device == "/dev/pts/61" {
 		t.Errorf("parsed a line with a stray tab: %+v", got[0])
 	}
+}
+
+// Under a locale that is not UTF-8 the panes are listed as under any other:
+// the tmux client is run with -u (#483). TMUX is unset, as for a daemon
+// that does not run inside tmux: a tmux client with TMUX set in its
+// environment, even empty, takes its output for UTF-8 by itself.
+func TestListPanesUnderCLocale(t *testing.T) {
+	sock := startTmux(t, "exec sleep 600")
+	os.Unsetenv("TMUX") // startTmux's t.Setenv puts it back
+	t.Setenv("LC_ALL", "C")
+	t.Setenv("LC_CTYPE", "C")
+	t.Setenv("LANG", "C")
+	list, err := (&Lister{Tmux: sock}).List(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ht := range list {
+		// Not the process: right after the start it can still be the one
+		// tmux forked, before it runs the command.
+		if ht.Tmux != nil && ht.Tmux.Session == "hataori-test" && ht.Tmux.Window == "0" && strings.HasPrefix(ht.Device, "/dev/") {
+			return
+		}
+	}
+	t.Fatalf("the pane is not listed as a tmux pane: %+v", list)
 }
 
 // recorder runs the commands for real and records every argv, and what
