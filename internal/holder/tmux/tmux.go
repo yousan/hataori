@@ -157,7 +157,7 @@ func noServer(err error) bool {
 // on and cannot be reached: that is not known to be gone.
 func serverGone(r ref) error {
 	if errors.Is(syscall.Kill(r.Server, 0), syscall.ESRCH) {
-		return errGone
+		return fmt.Errorf("%w: no server answers on the socket, and process %d has ended", errGone, r.Server)
 	}
 	return errors.New("tmux: the server's socket does not answer, and its process runs")
 }
@@ -179,39 +179,46 @@ type pane struct {
 var errGone = errors.New("tmux: the window is gone")
 
 // find returns the window's pane, errGone when the server is another or
-// does not list the pane, and another error when tmux cannot tell.
+// does not list the pane, and another error when tmux cannot tell. It asks
+// one list-panes with the server's process id on every line: no target is
+// looked up, so there is no "current" pane for tmux to find or miss, and
+// output that names no pane says nothing about this one.
 func (h *Holder) find(ctx context.Context, r ref) (pane, error) {
-	out, err := h.tmux(ctx, r, nil, "display-message", "-p", "#{pid}")
-	if noServer(err) {
-		return pane{}, serverGone(r)
-	}
-	if err != nil {
-		return pane{}, err
-	}
-	if pid, err := strconv.Atoi(strings.TrimSpace(string(out))); err != nil || pid != r.Server {
-		return pane{}, errGone // another server on the same socket: its %N is another pane
-	}
-	// display-message on a pane that has gone exits 0 with empty fields, so
-	// whether it exists is read from list-panes.
-	// Spaces between the fields, none of which holds one: tmux 3.5 prints
-	// a tab in a format as "_".
-	out, err = h.tmux(ctx, r, nil, "list-panes", "-a", "-F", "#{pane_id} #{pane_tty} #{pane_width} #{pane_height}")
+	// Spaces between the fields, none of which holds one: under a locale
+	// that is not UTF-8, tmux 3.5 prints a tab in a format as "_" (#483).
+	out, err := h.tmux(ctx, r, nil, "list-panes", "-a", "-F", "#{pid} #{pane_id} #{pane_tty} #{pane_width} #{pane_height}")
 	if noServer(err) {
 		return pane{}, serverGone(r)
 	}
 	if noPanes(err) {
-		return pane{}, errGone
+		return pane{}, fmt.Errorf("%w: the server has no pane: %v", errGone, err)
 	}
 	if err != nil {
 		return pane{}, err
 	}
+	lines := 0
 	for _, l := range strings.Split(string(out), "\n") {
 		f := strings.Fields(l)
-		if len(f) == 4 && f[0] == r.Pane {
-			return pane{tty: f[1], width: f[2], height: f[3]}, nil
+		if len(f) != 5 || !paneID.MatchString(f[1]) {
+			continue
+		}
+		pid, err := strconv.Atoi(f[0])
+		if err != nil {
+			continue
+		}
+		if pid != r.Server {
+			// another server on the same socket: its %N is another pane
+			return pane{}, fmt.Errorf("%w: the server on the socket is process %d, not %d", errGone, pid, r.Server)
+		}
+		lines++
+		if f[1] == r.Pane {
+			return pane{tty: f[2], width: f[3], height: f[4]}, nil
 		}
 	}
-	return pane{}, errGone
+	if lines == 0 {
+		return pane{}, fmt.Errorf("tmux: list-panes listed no pane: %.200q", out)
+	}
+	return pane{}, fmt.Errorf("%w: the server does not list the pane %s among its %d", errGone, r.Pane, lines)
 }
 
 // Encodings of the named keys: tmux's name for each, which send-keys
