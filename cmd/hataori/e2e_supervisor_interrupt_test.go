@@ -136,7 +136,15 @@ func TestInterruptAsksAPerson(t *testing.T) {
 	if len(requests) != 1 || requests[0].Kind != control.Approval || len(threadEvents(t, f.owner, f.sv.ID, "approval_asked")) != 1 {
 		t.Fatalf("requests: %+v", requests)
 	}
-	out := mcpCall(t, f.m, supervisor.ToolInterrupt, map[string]any{"number": int64(f.sv.ID), "reason": "idle"})
+	idle, err := f.owner.Start(context.Background(), control.StartRequest{Key: "idle", Scope: "c1", Thread: "idle", Repo: bareRepo(t), Input: control.Input{Text: "reply idle"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "idle worker", 15*time.Second, func() bool {
+		d, err := f.owner.Thread(context.Background(), idle, 0, 0)
+		return err == nil && d.State == control.Idle
+	})
+	out := mcpCall(t, f.m, supervisor.ToolInterrupt, map[string]any{"number": int64(idle), "reason": "idle"})
 	if !out.IsError || !strings.HasPrefix(out.Text, "not busy") {
 		t.Fatalf("idle: %+v", out)
 	}

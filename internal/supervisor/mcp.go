@@ -273,6 +273,9 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 			return "", errors.New("bad arguments: reason is required")
 		}
 		if _, err := api.AskInterrupt(ctx, id, newKey(), a.Reason); err != nil {
+			if errors.Is(err, session.ErrRefused) {
+				return "", fmt.Errorf("not busy: %v", err)
+			}
 			return "", reason(err)
 		}
 		return "asked a person: nothing is interrupted until a person in this channel approves it. An approved interrupt ends the worker's turn, and that turn end wakes the supervisor as any other; a refusal or an approval after the turn ended is said in the supervisor's chat thread.", nil
@@ -312,8 +315,6 @@ func (m *MCP) find(ctx context.Context, api control.API, n int64) (control.Threa
 // allowed", then the details.
 func reason(err error) error {
 	switch {
-	case errors.Is(err, session.ErrRefused):
-		return fmt.Errorf("not busy: %v", err)
 	case errors.Is(err, core.ErrBusy):
 		return fmt.Errorf("busy: the thread is running a turn; nothing was sent. You are told when the turn ends")
 	case errors.Is(err, core.ErrNotFound):

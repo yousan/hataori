@@ -80,7 +80,10 @@ type API interface {
 	// a person approves it with Answer. It needs OpAsk, the caller's person
 	// allowed in id's scope, and AsksIn a thread of that scope. A thread
 	// without a running turn is refused (send instead). A repeated key
-	// returns the original request. Since protocol 3.10.
+	// returns the original request; an empty key makes no repeat check. An
+	// open request for the same running turn is returned instead of a second
+	// one. The caller's AsksIn thread cannot be the target (ErrForbidden).
+	// Since protocol 3.10.
 	AskInterrupt(ctx context.Context, id ThreadID, key string, reason string) (RequestID, error)
 	// Stop interrupts the thread's running turn.
 	Stop(ctx context.Context, id ThreadID) error

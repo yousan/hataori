@@ -21,6 +21,9 @@ func (a *api) AskInterrupt(ctx context.Context, id control.ThreadID, key, reason
 	if a.caller.AsksIn == 0 {
 		return "", a.refused("AskInterrupt", scope, "no approval thread")
 	}
+	if id == a.caller.AsksIn {
+		return "", a.refused("AskInterrupt", scope, "cannot interrupt the approval thread")
+	}
 	var askScope string
 	if err := a.c.Store.DB.QueryRowContext(ctx, `SELECT scope FROM threads WHERE id = ?`, a.caller.AsksIn).Scan(&askScope); err != nil || askScope != scope {
 		return "", a.refused("AskInterrupt", scope, "approval thread is not in the scope")
@@ -49,6 +52,13 @@ func (a *api) AskInterrupt(ctx context.Context, id control.ThreadID, key, reason
 			return fmt.Errorf("thread is not running; send instead: %w", session.ErrRefused)
 		}
 		if err != nil {
+			return err
+		}
+		err = tx.QueryRowContext(ctx, `SELECT handle FROM approvals WHERE target = ? AND session_id = ? AND turn_id = ? AND state = 'open' ORDER BY id LIMIT 1`, id, sid, turn).Scan(&handle)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		var askKey any
@@ -90,24 +100,35 @@ func (a *api) answerApproval(ctx context.Context, req control.RequestID, ans con
 	if state != "open" {
 		return ErrNotOpen
 	}
+	link, err := a.c.ownLink(ctx, a.c.Store.DB, thread, ans.Link, a.caller.From)
+	if err != nil {
+		return err
+	}
 	allow := ans.Allow || (len(ans.Choices) == 1 && ans.Choices[0] == "approve")
 	outcome := "refused"
 	if allow {
-		sender := a.c.As(control.Caller{From: from, Principal: control.Principal(principal), Scopes: []string{scope}, May: control.OpSend}).(*api)
-		err := sender.send(ctx, target, "approval:"+string(req), control.Input{Text: marked}, control.Interrupt, &guard)
-		if errors.Is(err, errGuardEnded) {
-			outcome = "ended"
-		} else if err != nil {
-			return err
-		} else {
-			outcome = "interrupted"
-		}
-	}
-	return a.c.Store.Update(ctx, func(tx *store.Tx) error {
-		link, err := a.c.ownLink(ctx, tx, thread, ans.Link, a.caller.From)
+		unlockTurn := a.c.locks.lock(fmt.Sprintf("approval-turn:%d:%d:%d", target, guard.session, guard.turn))
+		defer unlockTurn()
+		var interrupted bool
+		err := a.c.Store.DB.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM approvals WHERE target = ? AND session_id = ? AND turn_id = ? AND state = 'interrupted')`, target, guard.session, guard.turn).Scan(&interrupted)
 		if err != nil {
 			return err
 		}
+		if interrupted {
+			outcome = "ended"
+		} else {
+			sender := a.c.As(control.Caller{From: from, Principal: control.Principal(principal), Scopes: []string{scope}, May: control.OpSend}).(*api)
+			err := sender.send(ctx, target, "approval:"+string(req), control.Input{Text: marked}, control.Interrupt, &guard)
+			if errors.Is(err, errGuardEnded) {
+				outcome = "ended"
+			} else if err != nil {
+				return err
+			} else {
+				outcome = "interrupted"
+			}
+		}
+	}
+	return a.c.Store.Update(ctx, func(tx *store.Tx) error {
 		res, err := tx.ExecContext(ctx, `UPDATE approvals SET state = ?, closed_at = ? WHERE handle = ? AND state = 'open'`, outcome, time.Now().UnixMilli(), req)
 		if err != nil {
 			return err

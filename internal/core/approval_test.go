@@ -20,11 +20,14 @@ func TestApprovalInterruptOnce(t *testing.T) {
 	askerThread, _ := f.running(t, "asker")
 	target, _ := f.running(t, "target")
 	asker := f.core.As(control.Caller{From: "supervisor:s", Scopes: []string{"s"}, May: control.OpAsk, AsksIn: askerThread, Mark: "supervisor"})
+	if _, err := asker.AskInterrupt(ctx, askerThread, "self", "urgent"); !errors.Is(err, control.ErrForbidden) {
+		t.Fatalf("ask to interrupt own thread: %v", err)
+	}
 	req, err := asker.AskInterrupt(ctx, target, "key", "urgent")
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := asker.AskInterrupt(ctx, target, "key", "different")
+	again, err := asker.AskInterrupt(ctx, target, "different-key", "different")
 	if err != nil || again != req {
 		t.Fatalf("repeated ask: %q %v", again, err)
 	}
@@ -86,5 +89,35 @@ func TestApprovalCannotInterruptLaterTurn(t *testing.T) {
 	var state string
 	if err := f.core.Store.DB.QueryRow(`SELECT state FROM approvals WHERE handle = ?`, req).Scan(&state); err != nil || state != "ended" {
 		t.Fatalf("state %q: %v", state, err)
+	}
+}
+
+func TestApprovalAlreadyInterruptedTurn(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{key: "chat"})
+	f.core.People = people.New([]people.Person{{Name: "sv", IDs: []string{"supervisor:s"}}}, "owner", map[string][]string{"s": {"sv"}})
+	askerThread, _ := f.running(t, "asker")
+	target, _ := f.running(t, "target")
+	asker := f.core.As(control.Caller{From: "supervisor:s", Scopes: []string{"s"}, May: control.OpAsk, AsksIn: askerThread})
+	first, err := asker.AskInterrupt(ctx, target, "first", "urgent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.owner.Answer(ctx, first, control.Answer{Allow: true}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := asker.AskInterrupt(ctx, target, "second", "urgent")
+	if err != nil || second == first {
+		t.Fatalf("second request %q: %v", second, err)
+	}
+	if err := f.owner.Answer(ctx, second, control.Answer{Allow: true}); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	if err := f.core.Store.DB.QueryRow(`SELECT state FROM approvals WHERE handle = ?`, second).Scan(&state); err != nil || state != "ended" {
+		t.Fatalf("state %q: %v", state, err)
+	}
+	if calls := f.runner.Calls(); strings.Count(calls, "interrupt") != 1 {
+		t.Fatalf("runner calls: %s", calls)
 	}
 }

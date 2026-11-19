@@ -1399,11 +1399,11 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		if guard != nil {
 			var turn int64
 			err := tx.QueryRowContext(ctx, `SELECT id FROM turns WHERE session_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1`, sid).Scan(&turn)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
 			if errors.Is(err, sql.ErrNoRows) || sid != guard.session || state != control.Running || turn != guard.turn {
 				return errGuardEnded
-			}
-			if err != nil {
-				return err
 			}
 		}
 		if state == control.Running {

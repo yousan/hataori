@@ -1411,7 +1411,10 @@ type API interface {
 	// AskInterrupt asks a person to approve interrupting the running turn of
 	// thread id, with reason. It stores an approval request in the caller's
 	// AsksIn thread and returns its id at once; nothing is interrupted until
-	// a person approves it with Answer. Since protocol 3.10.
+	// a person approves it with Answer. A repeated key returns the original
+	// request; an empty key makes no repeat check. An open request for the
+	// same running turn is returned instead of a second one. The caller's
+	// AsksIn thread cannot be the target (ErrForbidden). Since protocol 3.10.
 	AskInterrupt(ctx context.Context, id ThreadID, key string, reason string) (RequestID, error)
 	Stop(ctx context.Context, id ThreadID) error
 

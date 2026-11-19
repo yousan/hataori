@@ -198,12 +198,12 @@ Result: none
 
 ### Operation `AskInterrupt`
 
-Since 3.10. Asks a person in the scope to approve interrupting the running turn. The request is shown in the thread the daemon bound the caller to, a supervisor's own thread. The caller must have been given asking: a supervisor's connection has it; the owner's connection without such a thread is `forbidden`. Nothing is interrupted until approval. Once approved, the daemon gives the target the reason as `Send` with busy 2 would, as the asker, only if the turn that ran when asked still runs. A repeated key returns the same request. A thread without a running turn is `refused`; send instead.
+Since 3.10. Asks a person in the scope to approve interrupting the running turn. The request is shown in the thread the daemon bound the caller to, a supervisor's own thread. The caller must have been given asking: a supervisor's connection has it; the owner's connection without such a thread is `forbidden`. Nothing is interrupted until approval. Once approved, the daemon gives the target the reason as `Send` with busy 2 would, as the asker, only if the turn that ran when asked still runs. A repeated key returns the same request; an empty key makes no repeat check. An open request for the same running turn is returned instead of a second one. The caller's own approval thread cannot be the target (`forbidden`). A thread without a running turn is `refused`; send instead.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `id` | integer | required | the target thread's number |
-| `key` | string | required | makes the request safe to repeat |
+| `key` | string | required | makes the request safe to repeat; empty for no repeat check |
 | `reason` | string | required | the reason given to the thread |
 
 Result: string
