@@ -1811,6 +1811,22 @@ type HookResult struct {
 // Text, with Before and After beside it. Nil Hooks, as without plugins,
 // calls nothing. Since protocol 3.18.
 
+// chat.Outbox.Hooks is the Hooks the chat front end's outbox runs
+// message_sending with (#352): before it posts a row, and before an edit
+// that changes the text a post shows; lamps, deletes and edits that keep
+// the text are not hooked. The result is stored in the row before the
+// post (chat_outbox.hook), so a row posted again is not hooked again; the
+// copies of one part in several links take the first's result. A
+// cancelled row stays in the outbox as 'cancelled' with the plugin and the
+// reason, posts nothing, and writes a post_cancelled event, from which
+// ThreadDetail.Cancelled ([]CancelledPost, at most CancelledMax) is read.
+// The outbox reaches the event log as the core does, through the store: it
+// appends post_sent (link, event, part, message, text) in the transaction
+// that marks a row of a link sent, and post_cancelled in the one that
+// cancels it; post_sent only while Outbox.PostSent, which the daemon sets
+// when a plugin is granted that kind. Nil Hooks, as without plugins,
+// posts as before. Since protocol 3.19.
+
 // Not operations of the control API, for a client inside the daemon (#270):
 // core.Core.StartConfined(ctx, caller, r) is Start for a thread whose
 // sessions all run confined (agent.Spec.Confine), in an empty directory

@@ -158,7 +158,7 @@ func TestRefused(t *testing.T) {
 		{"unknown field in a config hook", manifest, `[` + entry + `, "hooks": [{"point": "message_sending", "when": "now"}]}]`, []string{`unknown key "plugins[0].hooks[0].when"`}},
 		{"unknown operation in the manifest", with(`"Events"]`, `"Events", "Fly"]`), `[` + entry + `}]`, []string{`"plugins[0].path"`, `"operations[2]"`, `"Fly"`}},
 		{"unknown operation in the config", manifest, `[` + entry + `, "operations": ["Fly"]}]`, []string{`"plugins[0].operations[0]"`, `"Fly" is not an operation`}},
-		{"unknown event kind in the manifest", with(`"turn_ended"]`, `"turn_ended", "post_sent"]`), `[` + entry + `}]`, []string{`"plugins[0].path"`, `"events[2]"`, `"post_sent"`}},
+		{"unknown event kind in the manifest", with(`"turn_ended"]`, `"turn_ended", "post_unheard"]`), `[` + entry + `}]`, []string{`"plugins[0].path"`, `"events[2]"`, `"post_unheard"`}},
 		{"unknown event kind in the config", manifest, `[` + entry + `, "events": ["thread_deleted"]}]`, []string{`"plugins[0].events[0]"`, "not an event kind"}},
 		{"unknown hook point in the manifest", with(`"message_sending"`, `"inbound_claim"`), `[` + entry + `}]`, []string{`"plugins[0].path"`, `"hooks[0].point"`}},
 		{"unknown hook point in the config", manifest, `[` + entry + `, "hooks": [{"point": "agent_end"}]}]`, []string{`"plugins[0].hooks[0].point"`, "not a hook point"}},
