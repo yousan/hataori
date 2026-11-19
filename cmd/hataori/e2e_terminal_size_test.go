@@ -56,7 +56,7 @@ func TestSessionTerminalSize(t *testing.T) {
 	if got := settle("the first thread", first, 1); got != "80x24" {
 		t.Fatalf("without terminal_size the terminal is %s, not 80x24", got)
 	}
-	n := info(first).Number
+	n := int64(first)
 
 	// The thread's tab on the dashboard, fitted at 80×24.
 	b := newBrowser(t)
