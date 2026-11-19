@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import pwd
 import queue
 import re
 import signal
@@ -20,21 +21,38 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "claudeco
 from scrub import Scrubber
 
 ANSI = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-_])")
+CODE = re.compile(r"[A-Z0-9]{4,}-[A-Z0-9]{4,}")
 END = ("not reached: stopped once the link and the code had printed. From Codex's source "
        "(cli/src/login.rs, finish_login): success prints 'Successfully logged in' on standard error "
        "and exits 0; a failure prints 'Error logging in: <error>' on standard error and exits 1, "
        "for example 'device auth timed out after 15 minutes' (login/src/device_code_auth.rs).")
 
 
+def user_config_dirs():
+    return {os.path.realpath(os.path.join(home, ".codex")) for home in
+            (os.path.expanduser("~"), pwd.getpwuid(os.getuid()).pw_dir)}
+
+
+def overlaps(home, user):
+    common = os.path.commonpath((home, user))
+    return common == home or common == user
+
+
 def hashes():
-    result = []
-    for name in ("config.toml", "auth.json"):
-        try:
-            with open(os.path.expanduser("~/.codex/" + name), "rb") as f:
-                result.append(hashlib.sha256(f.read()).digest())
-        except FileNotFoundError:
-            result.append(None)
+    result = {}
+    for directory in sorted(user_config_dirs()):
+        for name in ("config.toml", "auth.json"):
+            path = os.path.join(directory, name)
+            try:
+                with open(path, "rb") as f:
+                    result[path] = hashlib.sha256(f.read()).digest()
+            except FileNotFoundError:
+                result[path] = None
     return result
+
+
+def code_placeholder(value):
+    return "".join("X" if c.isalpha() else "0" if c.isdigit() else c for c in value)
 
 
 def replace_visible(line, replacement):
@@ -75,7 +93,7 @@ def main():
     if len(sys.argv) != 2:
         sys.exit("usage: login_capture.py OUT_DIR")
     home = own_config_dir()
-    if home is None:
+    if home is None or any(overlaps(home, user) for user in user_config_dirs()):
         print("login_capture.py: CODEX_HOME must be a separate directory", file=sys.stderr)
         return 2
     if os.path.lexists(os.path.join(home, "auth.json")):
@@ -165,9 +183,12 @@ def main():
             link_next = True
         if plain.startswith("2. Enter this one-time code"):
             code_next = True
+    if not link or not code:
+        print("login_capture.py: link and code were not both found; no capture written", file=sys.stderr)
+        return 2
     parts = urlsplit(link) if link else None
     link_shape = urlunsplit((parts.scheme, parts.netloc, parts.path, "REDACTED", "")) if parts and (parts.query or parts.fragment) else link
-    code_shape = "".join("X" if c.isalpha() else "0" if c.isdigit() else c for c in code) if code else None
+    code_shape = code_placeholder(code)
     scrubber = Scrubber()
     def scrub(value):
         return scrubber.bytes(value.encode()).decode("utf-8", errors="replace")
@@ -179,6 +200,8 @@ def main():
         if code and code in ANSI.sub("", line):
             visible = ANSI.sub("", line)
             line = replace_visible(line, visible.replace(code, code_shape))
+        visible = ANSI.sub("", line)
+        line = replace_visible(line, CODE.sub(lambda m: code_placeholder(m.group()), visible))
         clean.append({"t": t, "stream": stream, "line": scrub(line)})
     notes = {"argv": argv, "version": scrub(version), "stopped_after": stopped_after,
              "stopped_by": stopped_by, "exit_code": p.returncode, "left_after_end": left,

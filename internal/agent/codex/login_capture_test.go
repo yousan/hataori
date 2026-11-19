@@ -17,7 +17,7 @@ func TestLoginCaptureRefuses(t *testing.T) {
 	home := filepath.Join(root, "home")
 	own := filepath.Join(home, ".codex")
 	bin := filepath.Join(root, "bin")
-	for _, dir := range []string{own, bin} {
+	for _, dir := range []string{filepath.Join(own, "sub"), bin} {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -51,6 +51,8 @@ func TestLoginCaptureRefuses(t *testing.T) {
 		{"empty", "", true, false},
 		{"own", own, true, false},
 		{"symlink", link, true, false},
+		{"inside own", filepath.Join(own, "sub"), true, false},
+		{"parent of own", home, true, false},
 		{"auth", auth, true, false},
 		{"output exists", fresh, true, true},
 	}
