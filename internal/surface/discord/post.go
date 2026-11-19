@@ -165,7 +165,8 @@ func (d *Driver) OpenThread(ctx context.Context, parent surface.Conversation, ti
 // Post posts m, split into several messages in order when its text is longer
 // than one message may be; its files go on the last one. A code block cut by
 // the split is closed in one message and opened again in the next. It
-// returns the first message.
+// returns the first message; with choices, the last one, which carries
+// them, so that an Edit of what it returns can remove them.
 //
 // key is sent as each message's nonce, with enforce_nonce: Discord then
 // returns the earlier message instead of posting again when the same nonce
@@ -276,6 +277,9 @@ func (d *Driver) Post(ctx context.Context, conv surface.Conversation, key string
 			return first, wrap("post", err)
 		}
 		if i == 0 {
+			first = surface.MessageRef{Conv: conv, ID: out.ID.String()}
+		}
+		if i == len(parts)-1 && len(m.Choices) > 0 {
 			first = surface.MessageRef{Conv: conv, ID: out.ID.String()}
 		}
 	}

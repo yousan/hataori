@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/yousan/hataori/internal/surface"
@@ -203,5 +204,51 @@ func TestEditRemovesChoices(t *testing.T) {
 		if after := payload(t, "choices/rest-edit-remove-"+name+".json")["components"].([]any); len(after) != 0 {
 			t.Fatalf("%s: the service kept %v", name, after)
 		}
+	}
+}
+
+// Choices that cannot be told apart, or that have no label, are refused
+// before anything is posted.
+func TestChoicesRefused(t *testing.T) {
+	r := newFakeREST(t)
+	conv, key := postKey(t)
+	r.serve(t, key, "choices/rest-post-buttons.json")
+	d := testDriver(t, botID(t), r, nil)
+	for _, cs := range [][]surface.Choice{
+		{{Label: "a", Token: "t"}, {Label: "b", Token: "t"}},
+		{{Label: " ", Token: "t"}},
+	} {
+		for _, multi := range []bool{false, true} {
+			if _, err := d.Post(context.Background(), conv, "", surface.Message{Text: "pick", Choices: cs, Multi: multi}); err == nil {
+				t.Errorf("%+v posted", cs)
+			}
+		}
+	}
+	if r.called("") != 0 {
+		t.Fatal("something was posted")
+	}
+}
+
+// A long question is split; Post returns the part that carries the choices,
+// so editing it removes them.
+func TestSplitPostReturnsChoicesMessage(t *testing.T) {
+	r := newFakeREST(t)
+	conv, key := postKey(t)
+	r.serve(t, key, "bot/rest-post-channel.json")
+	r.serve(t, key, "choices/rest-post-buttons.json")
+	d := testDriver(t, botID(t), r, nil)
+	ref, err := d.Post(context.Background(), conv, "", surface.Message{Text: strings.Repeat("a", maxText+1), Choices: choicesN(2)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reqs := r.requests(key)
+	if len(reqs) != 2 {
+		t.Fatalf("%d posts", len(reqs))
+	}
+	if b, _ := content(t, reqs[1]); len(buttonTokens(t, b)) != 2 {
+		t.Fatalf("the last part has no buttons: %v", b)
+	}
+	if ref.ID != id(payload(t, "choices/rest-post-buttons.json")["id"]) {
+		t.Fatalf("returned %s, not the message with the buttons", ref.ID)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -56,9 +57,17 @@ func components(choices []surface.Choice, multi bool) ([]map[string]any, error) 
 	if len(choices) == 0 {
 		return []map[string]any{}, nil
 	}
+	seen := map[string]bool{}
 	for _, c := range choices {
 		if c.Token == "" || len(c.Token) > maxCustomID {
 			return nil, fmt.Errorf("discord: a choice's token must have 1 to %d bytes", maxCustomID)
+		}
+		if seen[c.Token] {
+			return nil, fmt.Errorf("discord: two choices have the token %q", c.Token)
+		}
+		seen[c.Token] = true
+		if strings.TrimSpace(c.Label) == "" {
+			return nil, fmt.Errorf("discord: the choice %q has no label", c.Token)
 		}
 	}
 	if multi {
