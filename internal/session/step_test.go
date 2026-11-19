@@ -148,3 +148,18 @@ func TestInputTakenHasNoOutput(t *testing.T) {
 		t.Fatalf("result %+v, error %v", r, err)
 	}
 }
+
+// A session that ends before it is ready at a start-up dialog it may not
+// answer fails as blocked at start, with the agent's words for a person
+// (#423).
+func TestBlockedAtStartByTheAgentKeepsItsDetail(t *testing.T) {
+	const why = "the folder-trust dialog says trusting the folder loads .claude/settings.json"
+	r, err := Step(Snapshot{State: control.Creating}, Input{Kind: AgentEvent,
+		Agent: agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart, Text: why}})
+	if err != nil || r.State != control.Failed || len(r.Out) != 1 {
+		t.Fatalf("result %+v, error %v", r, err)
+	}
+	if d := r.Out[0].Data; d["reason"] != string(agent.BlockedAtStart) || d["detail"] != why {
+		t.Fatalf("state event %v", d)
+	}
+}

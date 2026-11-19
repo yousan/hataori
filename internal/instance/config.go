@@ -102,6 +102,11 @@ type Scope struct {
 	// ShowIn lists the channels, besides the scope's own, where its threads
 	// may be shown, each as "<client>:<channel>" (design, section 5.2).
 	ShowIn []string
+	// TrustFiles are the files, such as a project settings file, that a
+	// start-up dialog of a new workspace may name and that hataori may let
+	// this scope's threads past it for (agent.Spec.TrustFiles); empty for
+	// none.
+	TrustFiles []string
 	// Supervisor is the scope's supervisor (design, section 7.1); nil when
 	// the scope names none.
 	Supervisor *Supervisor
@@ -284,6 +289,7 @@ type fileScope struct {
 	Posters    []string        `json:"posters"`
 	Supervisor *fileSupervisor `json:"supervisor"`
 	ShowIn     []string        `json:"show_in"`
+	TrustFiles []string        `json:"trust_files"`
 }
 
 type filePerson struct {
@@ -524,6 +530,17 @@ func ParseConfig(data []byte) (*Config, error) {
 				return nil, fmt.Errorf("config: key %q: %q is listed twice", k, entry)
 			}
 			sc.ShowIn = append(sc.ShowIn, entry)
+		}
+		for j, f := range s.TrustFiles {
+			k := fmt.Sprintf("%s.trust_files[%d]", key, j)
+			f = strings.TrimSpace(f)
+			if f == "" || strings.ContainsAny(f, " ()") {
+				return nil, fmt.Errorf("config: key %q: %q is not a file name as the agent's start-up dialog writes it, a path with no space or parenthesis", k, f)
+			}
+			if slices.Contains(sc.TrustFiles, f) {
+				return nil, fmt.Errorf("config: key %q: %q is listed twice", k, f)
+			}
+			sc.TrustFiles = append(sc.TrustFiles, f)
 		}
 		c.Scopes = append(c.Scopes, sc)
 	}

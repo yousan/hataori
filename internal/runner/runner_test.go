@@ -145,6 +145,7 @@ type options struct {
 	dieWhenPlaced bool                              // the workspace maker kills its process right after it placed a workspace
 	wrap          func(agent.Adapter) agent.Adapter // wraps the fake adapter, if set
 	dialog        string                            // the fake's start-up dialog, in the terminal form
+	confines      bool                              // the fake takes confined specs, and the runner gives them no MCP server
 }
 
 // build makes an instance's store, core and runner with the fake agent.
@@ -156,7 +157,7 @@ func build(root string, o options, log io.Writer) (*store.Store, *core.Core, *Ru
 	}
 	cfg, _ := json.Marshal(fake.Config{Command: []string{os.Args[0], "role", "fake"}, Hataori: os.Args[0],
 		Terminal: o.terminal, Env: []string{"PATH=" + os.Getenv("PATH")}, Conversations: o.conversations,
-		InputTimeout: cmp.Or(o.inputTimeout, "5s"), Dialog: o.dialog})
+		InputTimeout: cmp.Or(o.inputTimeout, "5s"), Dialog: o.dialog, Confines: o.confines})
 	ad, err := fake.New(cfg)
 	if err != nil {
 		return nil, nil, nil, err
@@ -171,6 +172,9 @@ func build(root string, o options, log io.Writer) (*store.Store, *core.Core, *Ru
 		Host: host.Command{Path: os.Args[0], Args: []string{"role", "host"}}, Root: root, Log: lg,
 		Instructions: o.instructions, StartTimeout: o.startTimeout, InterruptGrace: 5 * time.Second, Poll: cmp.Or(o.poll, 20*time.Millisecond),
 		IdlePeriod: o.idlePeriod, ContextBytes: o.contextBytes}
+	if o.confines {
+		r.Confine = func(context.Context, ConfinedLaunch) (Confined, error) { return Confined{}, nil }
+	}
 	c := &core.Core{Store: st, Machine: m, People: people.New([]people.Person{{Name: "owner", IDs: []string{ownerFrom}}}, "owner", nil), Scopes: map[string]core.Scope{"s": {Enabled: true, Owner: "chat"}},
 		Workspaces: workDir{root: filepath.Join(root, "work"), die: o.dieWhenPlaced}, Runner: r, Agent: "fake", Log: lg}
 	return st, c, r, nil

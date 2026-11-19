@@ -327,8 +327,12 @@ func stepAgent(s Snapshot, e agent.Event, r *Result,
 	case agent.SessionEnded:
 		if s.State == control.Creating && e.Reason != "" {
 			// It ended before it was ready, for a reason it gave, such as
-			// a conversation it cannot resume.
+			// a conversation it cannot resume, or a start-up dialog it may
+			// not answer; its text, if any, is for a person.
 			to(control.Failed, string(e.Reason))
+			if e.Text != "" {
+				r.Out[len(r.Out)-1].Data["detail"] = e.Text
+			}
 			return true
 		}
 		if !live {
