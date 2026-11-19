@@ -244,6 +244,7 @@ func (d *Driver) dispatch(ctx context.Context, t string, payload io.Reader, sink
 			return err
 		}
 		d.setParent(c)
+		renamed(sink, c)
 	case "GUILD_CREATE":
 		var g struct {
 			Threads []wireChannel `json:"threads"`
@@ -253,6 +254,7 @@ func (d *Driver) dispatch(ctx context.Context, t string, payload io.Reader, sink
 		}
 		for _, c := range g.Threads {
 			d.setParent(c)
+			renamed(sink, c)
 		}
 	case "INTERACTION_CREATE":
 		return d.interaction(ctx, payload, sink)
@@ -274,6 +276,17 @@ func (d *Driver) dispatch(ctx context.Context, t string, payload io.Reader, sink
 		sink.Message(m.inbound(conv, m.GuildID == 0))
 	}
 	return nil
+}
+
+// renamed tells sink the name of thread c, when sink wants names: on its
+// creation, on any change of it (Discord sends the whole thread), and for
+// each active thread when the driver connects.
+func renamed(sink surface.Sink, c wireChannel) {
+	r, ok := sink.(surface.Renamer)
+	if !ok || !isThread(c.Type) || c.ParentID == 0 || c.Name == "" {
+		return
+	}
+	r.Renamed(surface.Conversation{Channel: c.ParentID.String(), Thread: c.ID.String()}, c.Name)
 }
 
 func (d *Driver) setParent(c wireChannel) {

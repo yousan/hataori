@@ -152,6 +152,21 @@ func (d *Driver) SetName(conv surface.Conversation, name string) {
 	d.mu.Unlock()
 }
 
+// Rename gives conv the name name, as a person renaming it on the service
+// would: Name answers it from now on, and a sink that wants names
+// (surface.Renamer) is told.
+func (d *Driver) Rename(conv surface.Conversation, name string) {
+	d.deliver.Lock()
+	defer d.deliver.Unlock()
+	d.mu.Lock()
+	d.names[conv] = name
+	sink := d.sink
+	d.mu.Unlock()
+	if r, ok := sink.(surface.Renamer); ok {
+		r.Renamed(conv, name)
+	}
+}
+
 // Name answers what SetName set for conv, "" until then.
 func (d *Driver) Name(_ context.Context, conv surface.Conversation) (string, error) {
 	d.mu.Lock()

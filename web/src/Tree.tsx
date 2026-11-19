@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { type HostTerminal, type ScopeInfo, type State, states, type ThreadInfo } from "./api";
 import { hostID, hostMatches } from "./hostTerminals";
 import { t } from "./catalog";
-import { age, contextUse, mark, matches, stateName } from "./format";
+import { age, contextUse, displayTitle, fullTitle, mark, matches, stateName } from "./format";
 import type { Attention } from "./live";
 import { type Show, shows } from "./show";
 import { hostNode, scopeNode, useFolds } from "./folds";
@@ -81,7 +81,9 @@ export function Row(props: {
           {mark(x)}
         </span>
         <span className="num">{t("thread.number", { n: x.id })}</span>
-        <span className="title">{x.title}</span>
+        <span className="title" title={fullTitle(x) || undefined}>
+          {displayTitle(x)}
+        </span>
         <span className="age">{age(x.updated, now)}</span>
       </div>
       {why && attention && <div className="why">{attentionText(attention)}</div>}

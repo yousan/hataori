@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import type { HostTerminal, ThreadInfo } from "./api";
 import { hostLabel } from "./hostTerminals";
 import { t } from "./catalog";
-import { age, mark, stateName } from "./format";
+import { age, displayTitle, fullTitle, mark, stateName } from "./format";
 import type { Layout } from "./layout";
 import { type Show, ShowChoice } from "./show";
 import { allTab, hostOf, nextSplit, type Split, type TabKey, threadOf } from "./tabs";
@@ -57,7 +57,7 @@ function Tab(props: {
   const n = threadOf(k);
   const device = hostOf(k);
   const name =
-    n !== null ? (x?.title || t("thread.number", { n })) : device !== null ? (h ? hostLabel(h) : device) : t("tabs.all");
+    n !== null ? ((x && displayTitle(x)) || t("thread.number", { n })) : device !== null ? (h ? hostLabel(h) : device) : t("tabs.all");
   const b = badge(x);
   return (
     <div className={active ? "tab active" : "tab"} data-tab={k} role="presentation">
@@ -76,7 +76,9 @@ function Tab(props: {
             {mark(x)}
           </span>
         )}
-        <span className="tab-title">{name}</span>
+        <span className="tab-title" title={(x && fullTitle(x)) || undefined}>
+          {name}
+        </span>
         {x?.state === "running" && <span className="elapsed">{age(x.updated, now)}</span>}
         {b && (
           <span className={`badge badge-${b}`} data-badge={b}>

@@ -62,6 +62,13 @@ type Namer interface {
 	Name(ctx context.Context, conv Conversation) (string, error)
 }
 
+// Renamer is implemented by a Sink that wants the names of conversations
+// as the service shows them: Run calls Renamed when it learns a thread's
+// name, and when the name changes.
+type Renamer interface {
+	Renamed(conv Conversation, name string)
+}
+
 // Sink is implemented by the chat front end, not by the core.
 type Sink interface {
 	// Message delivers an inbound message: text, files, author, ids.

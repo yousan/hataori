@@ -3,6 +3,7 @@ import type { Event, HostTerminal, ThreadInfo } from "./api";
 import { hostLabel } from "./hostTerminals";
 import { HostDetails, HostPane } from "./HostViews";
 import { t } from "./catalog";
+import { displayTitle, fullTitle } from "./format";
 import { Details, Waiting } from "./Details";
 import type { Attention } from "./live";
 import { type Show, ShowChoice, shows } from "./show";
@@ -126,7 +127,9 @@ export function NarrowThread({ x, attention, workspace, subscribe, opens, onBack
         <button type="button" className="narrow-back" onClick={onBack}>
           {t("narrow.back")}
         </button>
-        <h2 className="narrow-title">{t("narrow.thread", { n: x.id, title: x.title ?? "" })}</h2>
+        <h2 className="narrow-title" title={fullTitle(x) || undefined}>
+          {t("narrow.thread", { n: x.id, title: displayTitle(x) })}
+        </h2>
       </div>
       {attention && <Waiting a={attention} />}
       <div className="narrow-pane">
