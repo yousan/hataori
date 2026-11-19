@@ -35,6 +35,18 @@ Every acceptance criterion of phase 1 ([design, section 8](design/overview.md#ph
 
 `go test ./...` never runs a real agent CLI. It uses captures of real output under each adapter's `testdata/`, and fake binaries. The checks below run the installed CLI on purpose, and only when asked for.
 
+## Codex
+
+### The live check
+
+```sh
+HATAORI_REAL_CODEX=1 go test -count=1 -run TestRealCodex -v -timeout 20m ./cmd/hataori
+```
+
+It checks an answer in a new clone; a turn running `sleep 600` stopped with `hataori stop`, after which the turn ends `interrupted` and no `sleep 600` started by the session runs within 10 seconds; a follow-up answered in the same agent session; and, once the daemon and the session hosts are stopped, no process of the session left. It skips when `codex` is not installed or `codex login status` fails. It uses the installed Codex as it is signed in, passes it nothing about that, and fails when `config.toml` in the Codex home changed: the adapter gives its trust override on the command line.
+
+Last run: 2026-11-19, codex-cli 0.163.0, Linux: passed in 10 s. With `thread/backgroundTerminals/clean` removed from the codec it failed at the 10-second check.
+
 ## Claude Code
 
 ### Rules for every run

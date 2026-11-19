@@ -151,7 +151,7 @@ Each hook is the command `hataori hook`. It hands its payload to the session hos
 - **A tab in a paste arrives as four spaces.** Claude Code 2.1.328's input box turned each tab of a bracketed paste into four spaces, on its own pseudo-terminal and through tmux alike (Appendix B). The codec compares the pasted text with the prompt the hook reports after trimming and line-ending changes only, so an input with a tab is never matched: the agent runs it, the turn is reported as typed at the terminal, and the input later fails as `not delivered` (#393).
 - **Whether the usage-limit menu still needs an answer** on screen when a limit is hit is **unverified**; c-lord answers it by keys.
 - **Codex `app-server` is marked experimental** in its own help text. Captures per version, unknown messages skipped.
-- **Codex interrupt leaves the command running** (observed). The session host runs the agent in its own process group so hataori can end what the agent left behind.
+- **Codex interrupt leaves the command running** (observed). hataori ends it with `thread/backgroundTerminals/clean` (#317 `interrupt`). This ends every background terminal of the thread, including commands moved to the background in earlier turns.
 
 For every version of an agent CLI: decode against captures of that version's real output, skip what is unknown, and run the capture suite before the version is used for real work.
 
@@ -2016,12 +2016,17 @@ type Codec interface {
 	// item/permissions/requestApproval, execCommandApproval and
 	// applyPatchApproval have no captures yet and get the same error.
 	Decode(src Source, line []byte) Actions
-	// A user message; TurnStarted returns its ID. Input given while a turn
-	// runs is held until the turn ends (both adapters, for now). The Codex
-	// codec ties a turn to its input by the turn/start it wrote, or, for an
-	// input written before a restart, by the text of the turn's user message.
+	// A user message; TurnStarted returns its ID. Codex steers input into a
+	// running turn and reports InputTaken; Claude Code holds it until the turn
+	// ends. The Codex codec ties a turn to its input by the turn/start it
+	// wrote, or, for an input written before a restart, by the text of the
+	// turn's user message; a steer refused because the turn ended becomes a
+	// turn/start.
 	Input(in Input) (Actions, error)
 	Answer(a Answer) (Actions, error)       // to an approval or a question
+	// Codex interrupts with turn/interrupt, then cleans background terminals
+	// at turn end. This ends every background terminal in the thread, including
+	// commands moved to the background in earlier turns.
 	Interrupt() Actions
 	// Tick gives the codec the time for its deadlines (input not reported
 	// as delivered); the codec has no clock of its own.
@@ -2083,7 +2088,7 @@ type MCPServer struct {
 
 // Event is one thing the agent did. Kind is one of SessionReady, TurnStarted,
 // Text, ToolStarted, ToolEnded, SubagentStarted, SubagentEnded, Request,
-// RequestWithdrawn, FileOut, Usage, TurnEnded, SessionEnded, Limits, Unknown.
+// RequestWithdrawn, FileOut, Usage, TurnEnded, SessionEnded, Limits, InputTaken, Unknown.
 type Event struct {
 	Seq  uint64
 	Kind Kind
