@@ -517,7 +517,7 @@ Appendix D lists the new operations and fields as a proposal. Each is a minor pr
 **Sign-in and network.**
 
 - No route answers without a signed-in session, including the event stream and the terminal streams.
-- Sign-in is a short-lived, single-use link. In the first version the operator prints one on the host with a `hataori` command (through `SignInLink`, Appendix D), and the session belongs to the owner. A link that a person asks for in chat and gets privately comes with the "people in chat" phase; that session belongs to the chat identity, so there are no extra passwords and no surface-specific login. Other ways (the chat service's own sign-in) can be added.
+- Sign-in is a short-lived, single-use link. In the first version the operator prints one on the host with a `hataori` command (through `SignInLink`, Appendix D), and the session belongs to the owner. A link asked for in chat and sent privately comes with the "people in chat" phase, for the owner only in that phase (section 10); that session belongs to the chat identity, so there are no extra passwords and no surface-specific login. Other ways (the chat service's own sign-in) can be added.
 - A person sees a thread only if their `Caller` includes its scope. The channel decides who can read a thread in chat, and the dashboard must not widen that. The first version is owner-only.
 - The server listens on loopback by default. Any other address needs TLS, either hataori's own or a reverse proxy in front that the config names; without one of them the dashboard does not start. The server checks `Host` and `Origin` on every request against the configured address, so a web page elsewhere cannot reach it through the user's browser. Cookies are not readable by scripts.
 
@@ -704,11 +704,11 @@ None.
 - **People in chat, and cleanup: the seven points of #248** (the maintainer, 2026-11-19, all as recommended). Section 8 and Appendix E.
   1. *Commands* are separate: `/new` (repository, prompt, model, effort), `/stop`, `/status`, `/dashboard`, and the same words after the trigger on a surface without commands.
   2. *Order:* the chat commands and buttons (#256 to #259) wait for thread numbers and links (#226, #227), so they are written once against thread numbers; the `discord`, `signin`, `attach` and `cleanup` groups start at once. The thread-number issues (#225 to #229) start without waiting for the people-settings trial.
-  3. *Lamp and ping* for a turn the agent started by itself, and for held messages: the lamp goes on the message of the last turn a caller started, and its sender is pinged only when such a turn ends `blocked` or `failure`. A held message gets its own lamp when its turn starts.
+  3. *Lamp and ping* for a turn the agent started by itself, and for held messages: the agent's turn shows its lamp on the message of the last turn a caller started, and that message's sender is pinged for the agent's turn only when it ends `blocked` or `failure`. A turn a caller started still pings its sender once when it ends. A held message gets its own lamp when its turn starts.
   4. *`hataori attach`:* chat input while someone is attached is delivered as usual (held until the running turn ends, as today). The final answer of a turn typed at the terminal is posted in the chat thread with a "typed at the terminal" line, so the chat thread stays the full record.
   5. *Closing and removal* are host commands (`hataori close`, `hataori remove`), plus an automatic pass that removes threads closed longer than a configured age, off by default. Closing by idle age is off by default. No removal from chat in this phase.
-  6. *A dashboard link from chat* is for the owner only in this phase; other people later, after the dashboard's terminal view has been checked against what a scope's people may see.
-  7. *Left out of phase 1:* the Stop button is one more issue in group `chat` after #257. The turn footer, attachments into the agent, thread naming beyond the prompt and "ask in chat" for permission requests are not in this phase.
+  6. *A dashboard link from chat* is for the owner only in this phase; other people later, after the dashboard's terminal view has been checked against what a scope's people may see. This narrows section 7.2 and Appendix E.
+  7. *Items phase 1 left out:* the Stop button is in this phase, as one more issue in group `chat` after #257. The turn footer, attachments into the agent, thread naming beyond the prompt and "ask in chat" for permission requests are not in this phase; each gets its own issue when wanted.
 - **Supervisor: the five points of #267** (the maintainer, 2026-11-19, all as recommended). Section 7.1 and Appendix E.
   1. *`hataori mcp` proves its caller* with a token per supervisor session, in the MCP config in the supervisor's state directory. Plugins use the same mechanism (section 7.3).
   2. *The supervisor is a person of its own*, `supervisor:<scope>`, listed in the scope's `people`. A worker sees its messages with a fixed first line added by the daemon.
@@ -1581,7 +1581,7 @@ Every phase here also has this criterion: the change touches no core package, ex
 - [ ] The sender's message carries a lamp for working, done and error, and the sender is pinged once when the turn ends.
 - [ ] `hataori attach` opens the conversation in the agent's terminal UI, and a turn typed there is known to the next turn from chat.
 - [ ] Removal refuses, with the reason, for each of: modified file, untracked file, ignored file not listed as disposable, unpushed commit, stash, commit only in the reflog, submodule with an unpushed commit, submodule with no checkout whose commit is only under `.git/modules`, nested repository, remote that is another workspace or lies under a hataori root, process using the directory, git error, timeout. It removes a clean, pushed workspace. Each test fails when its check is removed.
-- [ ] A person asks for a dashboard sign-in link in chat and gets it in a direct message only; the session belongs to that person and sees only their scopes. The link is found in no channel, database or log file.
+- [ ] The owner asks for a dashboard sign-in link in chat and gets it in a direct message only; the session belongs to the owner's chat identity. Anyone else who asks gets no link (section 10). The link is found in no channel, database or log file.
 
 ### Dashboard, read-only
 
