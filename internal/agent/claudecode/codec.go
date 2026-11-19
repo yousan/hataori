@@ -18,7 +18,16 @@ func (a *Adapter) NewCodec(spec agent.Spec) agent.Codec {
 	// A session taken in is past its start: input goes to it at once.
 	return &codec{spec: spec, seen: map[string]bool{}, turns: map[string]*turnText{}, lines: map[string]bool{},
 		timeout: a.inputTimeout, hookTimeout: a.hookTimeout, requests: map[string]*request{}, ready: spec.TakenIn,
-		started: spec.TakenIn}
+		started: spec.TakenIn, session: takenSession(spec)}
+}
+
+// takenSession is the session a codec of a session taken in runs: known
+// from the take-in, so that its end is never read as a resume that failed.
+func takenSession(spec agent.Spec) string {
+	if spec.TakenIn {
+		return spec.ResumeID
+	}
+	return ""
 }
 
 // Actions is agent.Actions.

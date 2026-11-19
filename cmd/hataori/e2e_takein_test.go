@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -65,7 +66,9 @@ func (g *takeRig) tmux(t *testing.T, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func newTakeRig(t *testing.T, root string) *takeRig {
+func newTakeRig(t *testing.T, root string) *takeRig { return newTakeRigIn(t, root, false) }
+
+func newTakeRigIn(t *testing.T, root string, inShell bool) *takeRig {
 	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
 		if os.Getenv("CI") != "" {
@@ -93,16 +96,43 @@ func newTakeRig(t *testing.T, root string) *takeRig {
 	g.dir = dir
 	transcript := filepath.Join(t.TempDir(), "transcript.jsonl")
 	q := func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
-	g.tmux(t, "new-session", "-d", "-s", "work", "-x", "100", "-y", "30", "-c", dir,
-		fmt.Sprintf("exec %s fake --terminal --window %s --session sess-person --model m-person --transcript %s --hook %s",
-			q(os.Args[0]), q(root), q(transcript), q(os.Args[0])))
+	agent := fmt.Sprintf("%s fake --terminal --window %s --session sess-person --model m-person --transcript %s --hook %s",
+		q(os.Args[0]), q(root), q(transcript), q(os.Args[0]))
+	if !inShell {
+		g.tmux(t, "new-session", "-d", "-s", "work", "-x", "100", "-y", "30", "-c", dir, "exec "+agent)
+	} else {
+		// A shell of the person's, which starts the agent as a job of its
+		// own, as a person types it.
+		g.tmux(t, "new-session", "-d", "-s", "work", "-x", "100", "-y", "30", "-c", dir, "env -u ENV PS1='$ ' sh -i")
+	}
 	f := strings.Fields(g.tmux(t, "list-panes", "-a", "-F", "#{pane_id} #{pane_tty} #{pane_pid} #{socket_path},#{pid}"))
 	if len(f) != 4 {
 		t.Fatalf("panes: %q", f)
 	}
 	g.pane, g.device, g.window = f[0], f[1], "tmux:"+f[3]+","+f[0]
 	g.pid, _ = strconv.Atoi(f[2])
+	if inShell {
+		g.tmux(t, "send-keys", "-t", g.pane, "-l", agent)
+		g.tmux(t, "send-keys", "-t", g.pane, "Enter")
+		g.pid = 0
+		eventually(t, "the agent's process", 10*time.Second, func() bool {
+			out, _ := exec.Command("ps", "-A", "-o", "pid=,ppid=").Output()
+			for _, l := range strings.Split(string(out), "\n") {
+				if f := strings.Fields(l); len(f) == 2 && f[1] == strconv.Itoa(g.shellPID()) {
+					g.pid, _ = strconv.Atoi(f[0])
+				}
+			}
+			return g.pid > 0
+		})
+	}
 	return g
+}
+
+// shellPID is the pane's command: the person's shell, for a rig in one.
+func (g *takeRig) shellPID() int {
+	out, _ := exec.Command("tmux", append(append([]string{}, g.sock...), "display-message", "-p", "-t", g.pane, "#{pane_pid}")...).Output()
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+	return pid
 }
 
 // state is what a take-in and a release must leave as it is: the pane's
@@ -286,5 +316,50 @@ func TestTakeInAWindowAndReleaseIt(t *testing.T) {
 	})
 	if n := len(r.events(t, "turn_started", th)); n != turns {
 		t.Fatalf("a turn typed after the release reached the thread: %d turns, were %d", n, turns)
+	}
+}
+
+// While the agent taken in is not the window's foreground process, as when
+// it is suspended and its person's shell has the terminal back, input from
+// chat goes nowhere: the shell would run it as a command.
+func TestTakeInSendsNothingToTheShell(t *testing.T) {
+	r := newChatRoot(t, func(cfg map[string]any) {
+		cfg["host_terminals"] = true
+		cfg["adapters"] = map[string]any{fake.Name: fake.Config{Command: []string{os.Args[0], "fake"},
+			Env: []string{"PATH=" + os.Getenv("PATH")}, Terminal: true, Hataori: os.Args[0]}}
+	})
+	g := &takeRig{}
+	hostTermsHook = func(l *hostterm.Lister) { l.Tmux = g.sock }
+	t.Cleanup(func() { hostTermsHook = nil })
+	startDaemon(t, r.root)
+	r.connected(t)
+	*g = *newTakeRigIn(t, r.root, true)
+	t.Cleanup(func() { syscall.Kill(g.pid, syscall.SIGCONT) })
+	for deadline := time.Now().Add(20 * time.Second); ; time.Sleep(100 * time.Millisecond) {
+		code, _, errOut := cli(t, "take", g.window, "--scope", "c1", "--key", "take-1", "--root", r.root)
+		if code == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("not taken in: %s", errOut)
+		}
+	}
+	th := r.thread(t, 0)
+	eventually(t, "the session idle", 15*time.Second, func() bool {
+		var state string
+		r.db(t).QueryRow(`SELECT state FROM sessions ORDER BY id DESC LIMIT 1`).Scan(&state)
+		return state == "idle"
+	})
+
+	// Suspended: the shell takes the terminal back.
+	syscall.Kill(g.pid, syscall.SIGSTOP)
+	eventually(t, "the shell in the foreground", 10*time.Second, func() bool {
+		out, _ := exec.Command("ps", "-o", "tpgid=", "-p", strconv.Itoa(g.shellPID())).Output()
+		return strings.TrimSpace(string(out)) == strconv.Itoa(g.shellPID())
+	})
+	r.driver.Inject(th, fakesurface.Person(e2eOwner), "reply sent-to-the-shell")
+	time.Sleep(3 * time.Second)
+	if screen := g.tmux(t, "capture-pane", "-p", "-t", g.pane); strings.Contains(screen, "sent-to-the-shell") {
+		t.Fatalf("chat input reached the person's shell:\n%s", screen)
 	}
 }

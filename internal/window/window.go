@@ -252,7 +252,7 @@ func (r Report) valid() bool {
 		}
 	}
 	return r.Holder == Tmux && r.Server != "" && paneID.MatchString(r.Pane) && strings.HasPrefix(r.Device, "/dev/") &&
-		r.PID > 1 && r.Agent != "" && r.Session != "" && r.Event != ""
+		r.PID > 1 && r.Agent != "" && r.Session != "" && r.Event != "" && filepath.IsAbs(r.Dir)
 }
 
 // Starts is the event with which a session starts or resumes.

@@ -99,7 +99,10 @@ func (h windowHook) main(args []string, stdin io.Reader, stderr io.Writer) int {
 	}
 	// A window taken in: the process that was taken in reports to its
 	// thread's session host, as hataori's own sessions do.
-	if rec, taken, err := window.ReadRecord(*root, server, pane); err == nil && taken && rec.PID == pid {
+	// Not one under -p, which an environment inherited could place up the
+	// same chain.
+	if rec, taken, err := window.ReadRecord(*root, server, pane); err == nil && taken && rec.PID == pid &&
+		h.getenv("CLAUDE_CODE_ENTRYPOINT") == "cli" {
 		cancel() // the call has its own time: --timeout
 		return relay(rec.Socket, payload, *wait, *timeout, h.stdout)
 	}

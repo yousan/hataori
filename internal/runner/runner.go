@@ -393,6 +393,13 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 			return fmt.Errorf("runner: %w", err)
 		}
 	}
+	if t, ok := takenOf(s.Spec.StateDir); ok {
+		// Left by a take-in that ended another way: the new agent's input
+		// must not go to the window.
+		if err := r.letGo(ctx, id, s.Spec.StateDir, t, nil); err != nil {
+			return fmt.Errorf("runner: session %d: %w", id, err)
+		}
+	}
 	spec := s.Spec
 	spec.ResumeID = resumeID
 	spec.TakenIn = false // resumed, it is launched by hataori's own host
@@ -594,7 +601,10 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) err
 			}
 		}
 		r.act(lv, again)
-	} else if !resumed {
+	}
+	if !resumed || lv.taken != nil && r.creating(id) {
+		// A take-in is ready once its codec is opened: one the daemon died
+		// before that opens now, and watches no screen.
 		lv.mu.Lock()
 		a := lv.codec.Open()
 		// Only a new start: a codec rebuilt after a restart does not watch
@@ -1387,7 +1397,15 @@ func (r *Runner) act(lv *live, a agent.Actions) error {
 	if len(a.Keys) > 0 {
 		in := func() error { return r.hold().Input(ctx, w, a.Keys) }
 		if lv.taken != nil {
-			in = func() error { return r.tmuxHolder().Input(ctx, lv.taken.Window, a.Keys) }
+			in = func() error {
+				// Only to the agent that was taken in: suspended or ended, the
+				// window's foreground is someone's shell, which would run the
+				// text as a command.
+				if err := r.tmuxHolder().CheckTakeIn(ctx, lv.taken.Window); err != nil {
+					return fmt.Errorf("runner: the agent taken in is not the window's foreground process; nothing was sent: %w", err)
+				}
+				return r.tmuxHolder().Input(ctx, lv.taken.Window, a.Keys)
+			}
 		}
 		if err := in(); err != nil {
 			r.Log.Error("input", "session", lv.id, "err", err)
@@ -1412,6 +1430,12 @@ func (r *Runner) act(lv *live, a agent.Actions) error {
 
 // exit records that the agent's process ended.
 func (r *Runner) exit(lv *live) {
+	if lv.taken != nil {
+		// The relay host ended: nothing points at the window any more.
+		if err := r.letGo(context.Background(), lv.id, lv.dir, *lv.taken, nil); err != nil {
+			r.Log.Error("letting a window taken in go", "session", lv.id, "err", err)
+		}
+	}
 	st := r.alive(lv.dir).Status
 	in := session.Input{Kind: session.Exit}
 	switch {

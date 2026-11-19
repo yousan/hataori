@@ -250,13 +250,13 @@ Result: none
 Since 3.17. Makes a thread of a window that a person started ([design, section 4.8](design/overview.md#48-taking-in-a-session-a-person-started)): a tmux pane in which a session reported through hataori's Claude Code plugin, as `HostTerminals` gives it in `reported`. Only the owner's connection on the control socket may call it; every other caller is answered `forbidden`, and the refusal is logged.
 
 Before anything changes it checks:
-- the scope is configured and enabled, else `disabled`;
+- the caller may act in the scope, else `forbidden` (so for a scope that is not configured), and the scope is enabled, else `disabled`;
 - a session reported from the window and its process still runs, else `not_found`;
 - that session is interactive, else `refused`;
 - the window is not taken in already, else `refused`;
 - the window's holder confirms that the window exists, and that the process that reported runs on the window's terminal as its foreground process, else `refused`. An environment is inherited, so a process that the session's own shell started names the same window.
 
-Each refusal changes nothing and is logged. Then the thread is made in the scope as `Start` makes one, with its first link opened by the scope's owner. Its session is the window's session id, its title is the name of the session's directory, and its workspace is that directory, recorded as not hataori's: `Remove` refuses it with reason `the workspace is not hataori's`, and nothing else removes it. No agent is started. From the window's next hook on, the hooks of the process that was taken in report to the thread, also while the daemon is down, and the scope's rules answer its permission requests; today they are allowed automatically. The hooks of any other process in the window are only listed. Input from chat or `Send` is pasted into the window; `Stop` interrupts the running turn with Escape, and nothing ends the window's process. The same `key` takes in nothing twice and returns the thread the first call made.
+Each refusal changes nothing and is logged. The daemon keeps no report of a session that is not interactive, so such a window is answered `not_found`. Then the thread is made in the scope as `Start` makes one, with its first link opened by the scope's owner. Its session is the window's session id, its title is the name of the session's directory, and its workspace is that directory, recorded as not hataori's: `Remove` refuses it with reason `the workspace is not hataori's`, and nothing else removes it. No agent is started. From the window's next hook on, the hooks of the process that was taken in report to the thread, also while the daemon is down, and the scope's rules answer its permission requests; today they are allowed automatically. The hooks of any other process in the window are only listed. Input from chat or `Send` is pasted into the window, and only while the process that was taken in is the window's foreground process; `Stop` interrupts the running turn with Escape, and nothing ends the window's process. The same `key` takes in nothing twice and returns the thread the first call made.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -270,7 +270,7 @@ The new thread's number.
 
 ### Operation `Release`
 
-Since 3.17. Ends a take-in: the thread goes asleep, as an idle thread does after its idle period, the window's hooks only report again, and the window is left as it is. A thread that was not taken in, or is not idle, is answered `refused`, and nothing changes. It is checked as `TakeIn` is.
+Since 3.17. Ends a take-in: the thread goes asleep, as an idle thread does after its idle period, the window's hooks only report again, and the window is left as it is. A thread that was not taken in, that is not idle, or that has a message or an answer accepted and not reported by a turn yet, is answered `refused`, and nothing changes. It is checked as `TakeIn` is.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|

@@ -98,10 +98,6 @@ func (r *Runner) TakeIn(ctx context.Context, l core.Launch, rep window.Report) e
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("runner: %w", err)
 	}
-	tb, _ := json.Marshal(takenIn{Window: w, Server: rep.Server, Pane: rep.Pane})
-	if err := writeAtomic(filepath.Join(dir, TakenFile), tb); err != nil {
-		return err
-	}
 	spec := agent.Spec{Dir: rep.Dir, StateDir: dir, ResumeID: rep.Session, Model: rep.Model,
 		Approvals: agent.AllowAll, TakenIn: true}
 	sb, _ := json.Marshal(storedSpec{Agent: l.Agent, Spec: spec})
@@ -114,15 +110,30 @@ func (r *Runner) TakeIn(ctx context.Context, l core.Launch, rep window.Report) e
 	if err != nil {
 		return err
 	}
+	// Each step undone on a failure, so that nothing points at the window
+	// for a session that failed.
+	t := takenIn{Window: w, Server: rep.Server, Pane: rep.Pane}
+	fail := func(err error) error {
+		if lerr := r.letGo(ctx, l.Session, dir, t, nil); lerr != nil {
+			r.Log.Error("undoing a failed take-in", "session", l.Session, "err", lerr)
+		}
+		return err
+	}
 	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET host_pid = ?, launch = 0 WHERE id = ?`, pid, l.Session); err != nil {
-		return fmt.Errorf("runner: %w", err)
+		return fail(fmt.Errorf("runner: %w", err))
+	}
+	tb, _ := json.Marshal(t)
+	if err := writeAtomic(filepath.Join(dir, TakenFile), tb); err != nil {
+		return fail(err)
 	}
 	if err := window.WriteRecord(r.Root, window.Record{Server: rep.Server, Pane: rep.Pane, PID: rep.PID,
 		Socket: host.SocketPath(dir), Thread: int64(l.Thread), Session: l.Session}); err != nil {
-		host.Stop(dir, time.Second, time.Second)
-		return err
+		return fail(err)
 	}
-	return r.follow(l.Session, ad, spec, fresh)
+	if err := r.follow(l.Session, ad, spec, fresh); err != nil {
+		return fail(err)
+	}
+	return nil
 }
 
 // ErrNotTakenIn is returned by Release for a session that was not taken in.
@@ -143,6 +154,15 @@ func (r *Runner) Release(ctx context.Context, id int64) error {
 	r.mu.Unlock()
 	apply := func() error {
 		return r.Store.Update(ctx, func(tx *store.Tx) error {
+			// As Shut: input or an answer accepted and not reported by a turn
+			// yet would be lost without a trace.
+			var pending int
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pending_inputs WHERE session_id = ?`, id).Scan(&pending); err != nil {
+				return fmt.Errorf("runner: session %d: %w", id, err)
+			}
+			if pending > 0 {
+				return fmt.Errorf("runner: session %d: %d pending inputs not reported by a turn: %w", id, pending, session.ErrRefused)
+			}
 			return r.Machine.ApplyTx(ctx, tx, id, session.Input{Kind: session.IdleTimeout})
 		})
 	}
@@ -165,8 +185,14 @@ func (r *Runner) Release(ctx context.Context, id int64) error {
 // letGo removes the window's record, then the session's own note of it,
 // and stops the relay host: the window's hooks only report from then on.
 func (r *Runner) letGo(ctx context.Context, id int64, dir string, t takenIn, lv *live) error {
-	if err := window.RemoveRecord(r.Root, t.Server, t.Pane); err != nil {
+	// Only this session's record: the window may have been taken in again
+	// by another, after this one failed.
+	if rec, ok, err := window.ReadRecord(r.Root, t.Server, t.Pane); err != nil {
 		return err
+	} else if ok && rec.Session == id {
+		if err := window.RemoveRecord(r.Root, t.Server, t.Pane); err != nil {
+			return err
+		}
 	}
 	if err := os.Remove(filepath.Join(dir, TakenFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("runner: %w", err)
@@ -202,3 +228,10 @@ func writeAtomic(p string, b []byte) error {
 }
 
 var _ core.TakeInRunner = (*Runner)(nil)
+
+// creating reports whether session id is still being created.
+func (r *Runner) creating(id int64) bool {
+	var state string
+	r.Store.DB.QueryRow(`SELECT state FROM sessions WHERE id = ?`, id).Scan(&state)
+	return state == "creating"
+}

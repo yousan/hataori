@@ -202,8 +202,10 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	// The socket's connections are the owner's, and only they may make a
 	// dashboard sign-in link, attach a terminal on the host, and close and
 	// remove threads.
+	// TakeIn and Release too: a release must work whatever the config says
+	// now; a take-in without window reports finds no window.
 	owner := control.OpRead | control.OpStart | control.OpSend | control.OpAnswer | control.OpStop | control.OpSignIn | control.OpAttach |
-		control.OpClose | control.OpRemove | control.OpName
+		control.OpClose | control.OpRemove | control.OpName | control.OpTakeIn
 	if cfg.HostTerminals { // off unless the config turns it on; only the owner gets it
 		lister := &hostterm.Lister{Own: filepath.Base(exe)}
 		if hostTermsHook != nil {
@@ -225,10 +227,9 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		} else {
 			defer reports.Close()
 			c.HostTerms = reports.Terms(terms)
-			// A window that reported can be taken in as a thread, by the
-			// owner on the control socket only (design, section 4.8).
+			// A window that reported can be taken in as a thread (design,
+			// section 4.8).
 			c.Windows = reports
-			owner |= control.OpTakeIn
 		}
 		owner |= control.OpHost
 		if cfg.HostInput { // off unless the config turns it on; only the owner gets it
