@@ -5,7 +5,8 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 ## Connection
 
 - The socket is `<root>/state/control.sock`. When that path is too long for a Unix socket, the daemon listens on a short path in the user's runtime or temporary directory and writes that path into `<root>/state/control.sock.path`.
-- Only the OS user that runs the daemon may connect. Every connection acts as the instance's owner.
+- Only the OS user that runs the daemon may connect. A connection whose client hello has no `token` acts as the instance's owner.
+- A connection whose client hello has a `token` acts as the caller the daemon issued that token for, with the scopes and operations the daemon chose; nothing the client sends widens them. The daemon issues a token for each supervisor session, limited to that supervisor's scope (design, section 7.1). A token the daemon does not know, or no longer knows, is refused: the daemon's hello carries `error`, it logs the refusal without the token, and it closes the connection. A client that streams events or terminal output presents the token on that connection too. Since 2.2; an older daemon ignores the field and makes the connection the owner's, so a client with a token checks that the daemon speaks 2.2 or later.
 - Each message is one JSON object on one line.
 - Each side sends a `hello` first. The daemon reads the client's hello before it answers with its own. When the daemon refuses the client, its hello carries `error` and the daemon closes the connection.
 - After the hellos, **either side may send requests**. A request has `op` set; a response has no `op`. Each side numbers its own requests, and a response carries the `id` of the request it answers. Several requests may be outstanding at once, and the answers may come in any order.
@@ -16,7 +17,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **2.1**. Both hellos carry it.
+The protocol version is `major.minor`, now **2.2**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 1.0`.
 - With the same major number and different minor numbers they work together.
@@ -51,6 +52,7 @@ Events are stored, and a reader reads them from a position, possibly long after 
 |---|---|---|---|
 | `version` | string | required | the protocol version the sender speaks |
 | `error` | string | optional | the daemon refuses the connection, and why |
+| `token` | string | optional | the client's: a credential the daemon issued, which makes the connection that caller's instead of the owner's; never logged and never in an event; since 2.2 |
 
 ### Message `request`
 
@@ -134,6 +136,8 @@ Result: `ThreadID`
 ### Operation `Send`
 
 Gives input to a thread. A thread with an open question takes it as the answer; an asleep thread is woken with it.
+
+On a supervisor's connection (a token, since 2.2) `busy` is always taken as 0: a `Send` with 1 or 2 to a running thread is refused with `busy` and logged, nothing is queued and the turn goes on. There, and in `Start`, the daemon puts the line `From the supervisor of this channel:` before the input's text; the `input` event has the text with that line, and the thread's title is made without it.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -528,6 +532,8 @@ Exactly one per turn.
 | `session` | integer | required | the session |
 | `turn` | integer | required | the turn it went to |
 | `text` | string | optional | the input |
+| `principal` | string | optional | the person who gave it; since 2.2 |
+| `from` | string | optional | the `<client>:<id>` it came from, as in `thread_created`; since 2.2 |
 
 ### Event `answer`
 
@@ -536,6 +542,8 @@ Exactly one per turn.
 | `session` | integer | required | the session |
 | `turn` | integer | required | the turn the answer starts |
 | `text` | string | optional | the answer |
+| `principal` | string | optional | the person who gave it; since 2.2 |
+| `from` | string | optional | the `<client>:<id>` it came from, as in `thread_created`; since 2.2 |
 
 ### Event `text`
 

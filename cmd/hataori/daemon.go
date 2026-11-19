@@ -27,6 +27,7 @@ import (
 	"github.com/yousan/hataori/internal/runner"
 	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
+	"github.com/yousan/hataori/internal/supervisor"
 	"github.com/yousan/hataori/internal/surface"
 	"github.com/yousan/hataori/internal/wire"
 	"github.com/yousan/hataori/internal/workspace"
@@ -159,6 +160,12 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		return err
 	}
 	defer srv.Close()
+	// A supervisor's connection is bound to its scope by a token (design,
+	// section 7.1). The supervisor's session, which gets one, comes with #270.
+	issueSupervisor := func(scope string) (string, error) { return srv.Issue(c.As(supervisor.Caller(scope))) }
+	if supervisorHook != nil {
+		supervisorHook(issueSupervisor, srv.Revoke)
+	}
 	if err := r.Reconnect(ctx); err != nil {
 		return err
 	}
@@ -239,6 +246,10 @@ var dashboardHook func(*control.Caller)
 // hostTermsHook, when a test sets it, changes how the daemon lists the
 // host's terminals, such as to read a tmux server of the test's own.
 var hostTermsHook func(*hostterm.Lister)
+
+// supervisorHook, when a test sets it, is given what issues a supervisor's
+// token for a scope, and what revokes one.
+var supervisorHook func(issue func(scope string) (string, error), revoke func(token string))
 
 // coreHook, when a test sets it, is given the daemon's core, so that the
 // test can call it as an in-process client such as a chat front end.

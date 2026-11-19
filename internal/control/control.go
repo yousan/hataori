@@ -121,6 +121,16 @@ type Caller struct {
 	// ThreadDetail.Recent, the text of its requests, and the text fields of
 	// events (Field.Text).
 	NoText bool
+	// RefuseBusy makes every Send of the caller one with Refuse, whatever
+	// Busy it gives: input never goes into a running turn and never
+	// interrupts it. A Send with Deliver or Interrupt to a running thread is
+	// refused with ErrBusy and logged.
+	RefuseBusy bool
+	// Mark, when set, is a line the core puts before the text of every
+	// input of the caller's Start and Send, so that the agent sees who it
+	// came from. The client cannot leave it out: the daemon sets it when it
+	// binds the caller. A thread's title is made from the text without it.
+	Mark string
 }
 
 // Principal is the name of a person of the instance's config. The core
