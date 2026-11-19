@@ -154,6 +154,10 @@ type Server struct {
 	mux        *http.ServeMux
 
 	key []byte // signs sessions
+	// ceremonyKey signs passkey sign-in ceremonies. It is made at each
+	// start, so that a ceremony answered before a restart, whose answer
+	// was recorded only in memory, cannot be answered again after it.
+	ceremonyKey []byte
 
 	// Stream timings; tests shorten them.
 	keepAlive, writeTimeout, hostScreenInterval time.Duration
@@ -224,6 +228,10 @@ func Listen(cfg Config, api func(person string) (control.API, bool), log *slog.L
 	}
 	if s.linkTTL <= 0 {
 		s.linkTTL = DefaultLinkTTL
+	}
+	s.ceremonyKey = make([]byte, 32)
+	if _, err := rand.Read(s.ceremonyKey); err != nil {
+		return nil, fmt.Errorf("dashboard: %w", err)
 	}
 	if s.now == nil {
 		s.now = time.Now

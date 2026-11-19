@@ -850,13 +850,37 @@ func TestPasskeysInTheBrowser(t *testing.T) {
 // session is not finished by another; a sign-in finished five minutes
 // after it began opens nothing; a passkey registered already is refused;
 // so is a body larger than 64 KiB. Sign-ins begun without a session keep
-// nothing, so a flood of them leaves room for everyone else's.
+// nothing, so a flood of them leaves room for everyone else's, and one
+// answered before a restart is not answered again after it. A person's
+// passkeys share one user handle.
 func TestPasskeyCeremoniesAreUsedOnceInTimeAndByTheirSession(t *testing.T) {
 	clock := useClock(t)
 	d := newPasskeyDash(t)
-	startDaemon(t, d.root)
+	stop := runDaemon(t, d.root)
 	fresh := func() *softKey { return &softKey{rpID: webName, origin: d.web} }
 
+	// Two first registrations at once: the one that finishes second
+	// started with another user handle, and starts again.
+	sX, regX := d.webLink()
+	sY, regY := d.webLink()
+	codeX, aX, bX := d.beginRegister(sX, regX)
+	codeY, aY, bY := d.beginRegister(sY, regY)
+	if codeX != http.StatusOK || codeY != http.StatusOK {
+		t.Fatalf("begin: %d %s; %d %s", codeX, bX, codeY, bY)
+	}
+	_, credX := fresh().create(t, aX.Options)
+	_, credY := fresh().create(t, aY.Options)
+	if code, b := d.post(dashboard.PasskeyRegisterFinishPath, sX, map[string]any{"ceremony": aX.Ceremony, "credential": credX}); code != http.StatusOK {
+		t.Fatalf("finish: %d %s", code, b)
+	}
+	if code, b := d.post(dashboard.PasskeyRegisterFinishPath, sY, map[string]any{"ceremony": aY.Ceremony, "credential": credY}); code != http.StatusConflict {
+		t.Fatalf("a registration begun with another user handle: %d %s, want 409", code, b)
+	}
+	if keys := d.stored(); len(keys) != 1 {
+		t.Fatalf("stored: %+v", keys)
+	}
+
+	had := len(d.stored())
 	s, reg := d.webLink()
 	var begun []ceremonyAnswer
 	for range 2 {
@@ -873,8 +897,8 @@ func TestPasskeyCeremoniesAreUsedOnceInTimeAndByTheirSession(t *testing.T) {
 			t.Fatalf("finish %d of one proof: %d %s, want %d", i+1, code, b, want)
 		}
 	}
-	if keys := d.stored(); len(keys) != 1 {
-		t.Fatalf("one proof registered %d passkeys", len(keys))
+	if keys := d.stored(); len(keys) != had+1 {
+		t.Fatalf("one proof registered %d passkeys", len(keys)-had)
 	}
 
 	sA, regA := d.webLink()
@@ -942,6 +966,23 @@ func TestPasskeyCeremoniesAreUsedOnceInTimeAndByTheirSession(t *testing.T) {
 	// A body larger than 64 KiB.
 	if code, b := d.post(dashboard.PasskeySignInFinishPath, "", map[string]any{"ceremony": si.Ceremony, "credential": strings.Repeat("x", 64<<10)}); code != http.StatusBadRequest {
 		t.Fatalf("a body over 64 KiB: %d %s, want 400", code, b)
+	}
+
+	// An answer to a ceremony finished before a restart, sent again after
+	// it, within the five minutes.
+	code, b = d.post(dashboard.PasskeySignInBeginPath, "", nil)
+	var before ceremonyAnswer
+	if code != http.StatusOK || json.Unmarshal(b, &before) != nil {
+		t.Fatalf("begin: %d %s", code, b)
+	}
+	again := map[string]any{"ceremony": before.Ceremony, "credential": nc.get(t, before.Options, ncc)}
+	if code, b := d.post(dashboard.PasskeySignInFinishPath, "", again); code != http.StatusOK {
+		t.Fatalf("finish: %d %s", code, b)
+	}
+	stop()
+	runDaemon(t, d.root)
+	if code, b := d.post(dashboard.PasskeySignInFinishPath, "", again); code != http.StatusUnauthorized {
+		t.Fatalf("an answer sent again after a restart: %d %s, want 401", code, b)
 	}
 
 	// A flood of sign-ins begun without a session.

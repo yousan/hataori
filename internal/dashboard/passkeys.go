@@ -317,11 +317,11 @@ func (s *Server) takeCeremony(id string, register bool) (ceremony, bool) {
 const signInLabel = "hataori dashboard passkey sign-in 1\x00"
 
 // signChallenge is the ceremony id of a sign-in: the challenge and its
-// expiry, signed with the session key.
+// expiry, signed with this start's ceremony key.
 func (s *Server) signChallenge(challenge string, exp time.Time) string {
 	payload := binary.BigEndian.AppendUint64(nil, uint64(exp.Unix()))
 	payload = append(payload, challenge...)
-	m := hmac.New(sha256.New, s.key)
+	m := hmac.New(sha256.New, s.ceremonyKey)
 	m.Write([]byte(signInLabel))
 	m.Write(payload)
 	return "s." + base64.RawURLEncoding.EncodeToString(payload) + "." + base64.RawURLEncoding.EncodeToString(m.Sum(nil))
@@ -339,7 +339,7 @@ func (s *Server) signedChallenge(id string) (string, time.Time, bool) {
 	if err1 != nil || err2 != nil || len(payload) <= 8 {
 		return "", time.Time{}, false
 	}
-	m := hmac.New(sha256.New, s.key)
+	m := hmac.New(sha256.New, s.ceremonyKey)
 	m.Write([]byte(signInLabel))
 	m.Write(payload)
 	exp := time.Unix(int64(binary.BigEndian.Uint64(payload[:8])), 0)
@@ -564,6 +564,7 @@ var (
 	errNoProof = errors.New("registering a passkey needs a proof made for it: open a new sign-in link, or check a passkey you have, and register within five minutes")
 	errTooMany = fmt.Errorf("you have %d passkeys, the most one person may have: remove one first", MaxPasskeys)
 	errTaken   = errors.New("this passkey is registered already")
+	errHandle  = errors.New("another registration of yours finished first: start again")
 )
 
 // passkeyRegisterBegin starts registering a passkey for the session's
@@ -678,6 +679,11 @@ func (s *Server) passkeyRegisterFinish(w http.ResponseWriter, r *http.Request) {
 			return nil, false, errNoProof
 		case slices.ContainsFunc(keys, func(x passkey) bool { return bytes.Equal(x.ID, k.ID) }):
 			return nil, false, errTaken
+		// One user handle per person: one that began with none, while
+		// another registration of theirs finished, starts again with that
+		// one's.
+		case slices.ContainsFunc(keys, func(x passkey) bool { return x.Person == k.Person && !bytes.Equal(x.Handle, k.Handle) }):
+			return nil, false, errHandle
 		case len(userOf(c.person, keys).creds) >= MaxPasskeys:
 			return nil, false, errTooMany
 		}
@@ -687,7 +693,7 @@ func (s *Server) passkeyRegisterFinish(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, errNoProof), errors.Is(err, errTooMany), errors.Is(err, errFileFull):
 		http.Error(w, err.Error(), http.StatusForbidden)
 		return
-	case errors.Is(err, errTaken):
+	case errors.Is(err, errTaken), errors.Is(err, errHandle):
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	case err != nil:
