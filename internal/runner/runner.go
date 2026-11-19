@@ -1267,7 +1267,7 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 // the codec names it by the Input.ID it was given, the row's id.
 func clearReported(ctx context.Context, tx *store.Tx, id int64, evs []agent.Event) error {
 	for _, e := range evs {
-		gone := e.Kind == agent.TurnStarted || e.Kind == agent.TurnEnded && e.Reason == agent.NotDelivered
+		gone := e.Kind == agent.TurnStarted || e.Kind == agent.InputTaken || e.Kind == agent.TurnEnded && e.Reason == agent.NotDelivered
 		if !gone || e.Input == "" {
 			continue
 		}
@@ -1300,7 +1300,7 @@ func notDelivered(evs []agent.Event, id string) bool {
 // reported reports whether a turn among evs reports the input id.
 func reported(evs []agent.Event, id string) bool {
 	for _, e := range evs {
-		if e.Kind == agent.TurnStarted && e.Input == id {
+		if (e.Kind == agent.TurnStarted || e.Kind == agent.InputTaken) && e.Input == id {
 			return true
 		}
 	}

@@ -141,3 +141,10 @@ func TestFileOutCarriesMoreAndCaption(t *testing.T) {
 		t.Fatalf("file_out %v", o.Data)
 	}
 }
+
+func TestInputTakenHasNoOutput(t *testing.T) {
+	r, err := Step(Snapshot{State: control.Running, Turn: &OpenTurn{By: ByCaller}}, Input{Kind: AgentEvent, Agent: agent.Event{Kind: agent.InputTaken, Input: "1"}})
+	if err != nil || r.State != control.Running || len(r.Out) != 0 {
+		t.Fatalf("result %+v, error %v", r, err)
+	}
+}

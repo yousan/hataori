@@ -330,6 +330,8 @@ func stepAgent(s Snapshot, e agent.Event, r *Result,
 		if !live {
 			return false
 		}
+	case agent.InputTaken:
+		return live
 	case agent.Unknown:
 		if !live {
 			return false
