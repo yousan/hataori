@@ -1998,7 +1998,21 @@ type Codec interface {
 	// JSON-RPC message per line) writes initialize, initialized and
 	// thread/start or thread/resume from Open; a codec rebuilt after a
 	// restart was never opened, so it tells responses apart by their shape
-	// and numbers its own requests above every id it has read.
+	// and numbers its own requests above every response id it has read. A
+	// rebuilt codec knows the open requests and running turn from those lines.
+	// Under AllowAll, command and file-change approvals are accepted at once
+	// without opening a request. Under AskInChat each becomes a Request;
+	// Answer writes the JSON-RPC response, accepting or declining it.
+	// item/tool/requestUserInput becomes a Request answered with its response.
+	// An agent message with questions and delivery: "async" becomes a Request
+	// answered by a user message: turn/steer while its turn runs, turn/start
+	// afterward. RequestWithdrawn reports an unanswered server request resolved
+	// by serverRequest/resolved, or a server request still open at its thread's
+	// turn end. An async question is withdrawn by a newer request, a user
+	// message in its thread, or a turn its answer did not start. Any other
+	// server request gets a JSON-RPC error and an Unknown event. The schema's
+	// item/permissions/requestApproval, execCommandApproval and
+	// applyPatchApproval have no captures yet and get the same error.
 	Decode(src Source, line []byte) Actions
 	// A user message; TurnStarted returns its ID. Input given while a turn
 	// runs is held until the turn ends (both adapters, for now). The Codex
@@ -2213,7 +2227,7 @@ Every phase here also has this criterion: the change touches no core package, ex
 Choosing the agent per scope (`agent`) or order (`agent:`), with `model` and `effort` per adapter section, counts as registering an adapter under the phase criterion (#318).
 
 - [ ] A channel or thread can be set to Codex; start, continue, sleep and wake work as in phase 1.
-- [ ] Approvals and questions from Codex appear in the thread and can be answered.
+- [ ] Approvals and questions from Codex appear in the thread and can be answered. Until the buttons of #248, chat allows approvals automatically, so for approvals this is read as: answered in the codec and the end-to-end test (#321).
 - [ ] After an interrupt, no command started by that turn is still running.
 - [ ] A turn of 30 minutes completes.
 - [ ] Captures of real `app-server` output are in `testdata/`, and the codec passes on them.
