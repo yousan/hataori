@@ -28,10 +28,16 @@ func (h *fakeHostTerms) Screen(_ context.Context, pane string, owned []int) (str
 	return "screen", pane == "%1", nil
 }
 
+func (h *fakeHostTerms) View(ctx context.Context, pane string, owned []int) (control.HostView, bool, error) {
+	screen, ok, err := h.Screen(ctx, pane, owned)
+	return control.HostView{Screen: screen, CursorX: 2, CursorY: 1}, ok, err
+}
+
 func hostOps(ctx context.Context) map[string]func(control.API) error {
 	return map[string]func(control.API) error{
 		"HostTerminals": func(a control.API) error { _, err := a.HostTerminals(ctx); return err },
 		"HostScreen":    func(a control.API) error { _, err := a.HostScreen(ctx, "%1"); return err },
+		"HostView":      func(a control.API) error { _, err := a.HostView(ctx, "%1"); return err },
 	}
 }
 

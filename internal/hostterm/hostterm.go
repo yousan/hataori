@@ -3,7 +3,7 @@
 // owner operates (design, section 7.2).
 //
 // It runs a fixed list of commands. Listing and reading change nothing:
-// tmux's list-panes and capture-pane, and ps. Typing goes only through
+// tmux's list-panes, capture-pane and display-message -p, and ps. Typing goes only through
 // tmux: send-keys with a key name from a fixed list, and load-buffer with
 // the text on standard input into a buffer of the operation's own, then
 // paste-buffer, which deletes it; delete-buffer and list-buffers remove
@@ -47,8 +47,9 @@ const paneFormat = "#{pane_id}\t#{s/\t/ /:session_name}\t#{window_index}\t#{s/\t
 var (
 	psCmd          = command{"ps", []string{"-A", "-o", "pid=,ppid=,pgid=,tpgid=,tty=,comm="}}
 	listPanesCmd   = command{"tmux", []string{"list-panes", "-a", "-F", paneFormat}}
-	capturePaneCmd = command{"tmux", []string{"capture-pane", "-p", "-t"}} // then the pane id
-	Commands       = []command{psCmd, listPanesCmd, capturePaneCmd, sendKeysCmd, loadBufferCmd, pasteBufferCmd, deleteBufferCmd, listBuffersCmd}
+	capturePaneCmd = command{"tmux", []string{"capture-pane", "-p", "-t"}}    // then the pane id
+	cursorCmd      = command{"tmux", []string{"display-message", "-p", "-t"}} // then the pane id and cursorFormat
+	Commands       = []command{psCmd, listPanesCmd, capturePaneCmd, cursorCmd, sendKeysCmd, loadBufferCmd, pasteBufferCmd, deleteBufferCmd, listBuffersCmd}
 )
 
 // Lister lists and reads host terminals. The zero value uses the default
@@ -180,6 +181,33 @@ func (l *Lister) Screen(ctx context.Context, pane string, owned []int) (screen s
 		return "", false, err
 	}
 	return string(out), true, nil
+}
+
+// cursorFormat is what cursorCmd prints: the pane's id, so that a pane
+// that has gone, for which tmux prints empty fields, is told apart, then
+// the cursor's column and row.
+const cursorFormat = "#{pane_id}\t#{cursor_x}\t#{cursor_y}"
+
+// View is Screen with the cursor's position, read right after the screen.
+func (l *Lister) View(ctx context.Context, pane string, owned []int) (control.HostView, bool, error) {
+	screen, ok, err := l.Screen(ctx, pane, owned)
+	if !ok || err != nil {
+		return control.HostView{}, false, err
+	}
+	out, err := l.exec(ctx, cursorCmd, pane, cursorFormat)
+	if err != nil {
+		return control.HostView{}, false, err
+	}
+	f := strings.Split(strings.TrimSpace(string(out)), "\t")
+	if len(f) != 3 || f[0] != pane {
+		return control.HostView{}, false, nil // gone between the two reads
+	}
+	x, err1 := strconv.Atoi(f[1])
+	y, err2 := strconv.Atoi(f[2])
+	if err1 != nil || err2 != nil {
+		return control.HostView{}, false, fmt.Errorf("hostterm: the cursor of %s: %q", pane, out)
+	}
+	return control.HostView{Screen: screen, CursorX: x, CursorY: y}, true, nil
 }
 
 // parsePanes reads list-panes output in paneFormat.

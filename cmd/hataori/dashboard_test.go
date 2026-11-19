@@ -724,19 +724,27 @@ func TestDashboardTerminalStream(t *testing.T) {
 
 // A dashboard session's caller reads only: every scope for the owner, the
 // scopes listing them for anyone else, and the host's terminals only for
-// the owner and only when the config turns them on.
+// the owner and only when the config turns them on. It types into a host
+// pane (OpHostInput) only for the owner and only with host_input on, which
+// the config allows only with host_terminals.
 func TestDashboardCallerOfAPerson(t *testing.T) {
 	dir := people.New([]people.Person{{Name: "ada"}, {Name: "grace"}}, "ada", map[string][]string{"x": {"grace"}})
 	scopes := []string{"s", "x"}
-	for _, on := range []bool{false, true} {
-		owner := dashboardCaller(dir, scopes, on, "ada")
-		if owner.Principal != "ada" || !slices.Equal(owner.Scopes, scopes) || owner.May.Has(control.OpHost) != on ||
-			!owner.May.Has(control.OpRead) || owner.May.Has(control.OpSend) || owner.May.Has(control.OpSignIn) {
-			t.Fatalf("host_terminals %v: the owner's dashboard caller %+v", on, owner)
-		}
-		other := dashboardCaller(dir, scopes, on, "grace")
-		if other.Principal != "grace" || !slices.Equal(other.Scopes, []string{"x"}) || other.May != control.OpRead {
-			t.Fatalf("host_terminals %v: grace's dashboard caller %+v", on, other)
+	for _, terms := range []bool{false, true} {
+		for _, input := range []bool{false, true} {
+			if input && !terms {
+				continue // refused at start (instance.TestHostInputConfig)
+			}
+			owner := dashboardCaller(dir, scopes, terms, input, "ada")
+			if owner.Principal != "ada" || !slices.Equal(owner.Scopes, scopes) || owner.May.Has(control.OpHost) != terms ||
+				owner.May.Has(control.OpHostInput) != input ||
+				!owner.May.Has(control.OpRead) || owner.May.Has(control.OpSend) || owner.May.Has(control.OpSignIn) {
+				t.Fatalf("host_terminals %v, host_input %v: the owner's dashboard caller %+v", terms, input, owner)
+			}
+			other := dashboardCaller(dir, scopes, terms, input, "grace")
+			if other.Principal != "grace" || !slices.Equal(other.Scopes, []string{"x"}) || other.May != control.OpRead {
+				t.Fatalf("host_terminals %v, host_input %v: grace's dashboard caller %+v", terms, input, other)
+			}
 		}
 	}
 }
