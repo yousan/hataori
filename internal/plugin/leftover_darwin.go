@@ -2,10 +2,12 @@ package plugin
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -19,9 +21,9 @@ func bootID() (string, error) {
 	return fmt.Sprintf("%d.%06d", tv.Sec, tv.Usec), nil
 }
 
-// groupMembers lists the processes whose process group is pgid.
-func groupMembers(pgid int) ([]int, error) {
-	procs, err := unix.SysctlKinfoProcSlice("kern.proc.pgrp", pgid)
+// ownProcesses lists the processes that run as this OS user.
+func ownProcesses() ([]int, error) {
+	procs, err := unix.SysctlKinfoProcSlice("kern.proc.uid", os.Getuid())
 	if err != nil {
 		return nil, err
 	}
@@ -30,6 +32,39 @@ func groupMembers(pgid int) ([]int, error) {
 		pids = append(pids, int(p.Proc.P_pid))
 	}
 	return pids, nil
+}
+
+// environ returns the environment in kern.procargs2's layout: argc, a
+// 32-bit integer in the host's order; the executable's path and NULs up to
+// the arguments; argc arguments, each ending with a NUL; then the
+// environment, each entry ending with a NUL, up to an empty string. Only
+// the environment is returned, so that an argument is never taken for an
+// entry of it.
+func environ(args []byte) ([]byte, bool) {
+	if len(args) < 4 {
+		return nil, false
+	}
+	argc := int(int32(binary.NativeEndian.Uint32(args)))
+	b := args[4:]
+	i := bytes.IndexByte(b, 0) // the executable's path
+	if i < 0 || argc < 0 {
+		return nil, false
+	}
+	b = b[i:]
+	for len(b) > 0 && b[0] == 0 {
+		b = b[1:]
+	}
+	for range argc {
+		i := bytes.IndexByte(b, 0)
+		if i < 0 {
+			return nil, false
+		}
+		b = b[i+1:]
+	}
+	if end := bytes.Index(b, []byte{0, 0}); end >= 0 {
+		b = b[:end+1]
+	}
+	return b, true
 }
 
 // procOf returns process pid's start time and real user, or ok false when
@@ -54,12 +89,10 @@ func killIfOfRun(pid int, marker string) (bool, error) {
 		return false, nil
 	}
 	args, err := unix.SysctlRaw("kern.procargs2", pid)
-	if err != nil || len(args) < 4 {
+	if err != nil {
 		return false, nil // gone, or not readable
 	}
-	// argc, the executable's path, then argv and the environment, each
-	// ending with a NUL.
-	if !hasEnv(bytes.TrimLeft(args[4:], "\x00"), marker) {
+	if env, ok := environ(args); !ok || !hasEnv(env, marker) {
 		return false, nil
 	}
 	if again, _, ok := procOf(pid); !ok || again != start {
@@ -70,6 +103,13 @@ func killIfOfRun(pid int, marker string) (bool, error) {
 			return false, nil
 		}
 		return false, err
+	}
+	// Waited for up to a second, so that the plugin does not start while it
+	// still holds files.
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if again, _, ok := procOf(pid); !ok || again != start {
+			break
+		}
 	}
 	return true, nil
 }

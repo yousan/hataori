@@ -114,6 +114,9 @@ type Runner struct {
 	// afterStart, when a test sets it, runs between the start of the
 	// plugin's process and the record of its group.
 	afterStart func(pid int)
+	// processes, when a test sets it, lists this user's processes instead
+	// of ownProcesses.
+	processes func() ([]int, error)
 
 	wg       sync.WaitGroup
 	mu       sync.Mutex
@@ -149,6 +152,22 @@ func (r *Runner) Start(ctx context.Context) error {
 			return fmt.Errorf("plugin %q: %w", g.ID, err)
 		}
 		r.Log.Info("plugin: an external plugin may connect", "plugin", g.ID)
+	}
+	// What a plugin that is no longer in the config left, when the daemon
+	// that ran it died.
+	configured := map[string]bool{}
+	for _, g := range r.Grants {
+		configured[g.ID] = true
+	}
+	dirs, _ := filepath.Glob(filepath.Join(r.State, "plugin-run", "*"))
+	for _, d := range dirs {
+		if id := filepath.Base(d); !configured[id] {
+			r.wg.Add(1)
+			go func() {
+				defer r.wg.Done()
+				r.leftovers(Grant{ID: id})
+			}()
+		}
 	}
 	for _, g := range r.Grants {
 		if g.External {
@@ -321,9 +340,8 @@ func (r *Runner) once(ctx context.Context, g Grant) (string, error) {
 		return "", err
 	}
 	rec := runRecord{Run: hex.EncodeToString(runID[:])}
-	if rec.Boot, err = bootID(); err != nil {
-		return "", fmt.Errorf("this boot's id: %w", err)
-	}
+	var boot error
+	rec.Boot, boot = bootID()
 	env := []string{EnvSocket + "=" + r.Socket, EnvToken + "=" + token, EnvID + "=" + g.ID,
 		EnvState + "=" + state, EnvSettings + "=" + settings, EnvProtocol + "=" + r.Speaks, EnvRun + "=" + rec.Run}
 	allowed := map[string]bool{}
@@ -347,10 +365,32 @@ func (r *Runner) once(ctx context.Context, g Grant) (string, error) {
 		return "", err
 	}
 	cmd.Stdout, cmd.Stderr = outW, errW
+	// What the next start kills if the daemon dies without stopping this
+	// run (leftovers), written before anything of it runs; removed once
+	// its group is killed. Without it, nothing starts.
+	recPath := r.recordPath(g, rec.Run)
+	if boot != nil {
+		// Without the boot's id a record could not be told from one of an
+		// earlier boot: the plugin runs, unrecorded, rather than not at all.
+		r.Log.Warn("plugin: this boot's id cannot be read; if the daemon dies, what this run leaves is not killed", "plugin", g.ID, "err", boot)
+		recPath = ""
+	} else if b, err := json.Marshal(rec); err != nil {
+		return "", err
+	} else if err := writeNew(recPath, b, 0o600); err != nil {
+		outR.Close()
+		outW.Close()
+		errR.Close()
+		errW.Close()
+		r.Log.Error("plugin not started: its run cannot be recorded", "plugin", g.ID, "err", err)
+		return "", err
+	}
 	r.starts(1, 0, "")
 	err = startRetrying(cmd)
 	if err != nil {
 		r.starts(-1, 0, "")
+		if recPath != "" {
+			os.Remove(recPath) // nothing of the run started
+		}
 	} else {
 		if r.afterStart != nil {
 			r.afterStart(cmd.Process.Pid)
@@ -384,14 +424,6 @@ func (r *Runner) once(ctx context.Context, g Grant) (string, error) {
 	}
 	pgid := cmd.Process.Pid
 	r.Log.Info("plugin started", "plugin", g.ID, "pid", pgid)
-	// What the next start kills if the daemon dies without stopping this
-	// one (leftovers); removed once the group is killed.
-	rec.Group = pgid
-	if b, err := json.Marshal(rec); err == nil {
-		if err := writeNew(r.recordPath(g), b, 0o600); err != nil {
-			r.Log.Warn("plugin: its run is not recorded; a daemon that dies leaves it", "plugin", g.ID, "err", err)
-		}
-	}
 	// A run that lasts the window ends the plugin's outage, while it runs.
 	stable := time.AfterFunc(or(r.Window, DefaultWindow), func() { r.closeOutage(context.WithoutCancel(ctx), g) })
 	defer stable.Stop()
@@ -406,7 +438,9 @@ func (r *Runner) once(ctx context.Context, g Grant) (string, error) {
 	// Whatever the plugin started and left in its group goes with it.
 	syscall.Kill(-pgid, syscall.SIGKILL)
 	r.group(pgid, "")
-	os.Remove(r.recordPath(g))
+	if recPath != "" {
+		os.Remove(recPath)
+	}
 	return "", err
 }
 

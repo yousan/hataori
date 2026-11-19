@@ -17,8 +17,8 @@ func bootID() (string, error) {
 	return strings.TrimSpace(string(b)), err
 }
 
-// groupMembers lists the processes whose process group is pgid.
-func groupMembers(pgid int) ([]int, error) {
+// ownProcesses lists the processes that run as this OS user.
+func ownProcesses() ([]int, error) {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil, err
@@ -29,19 +29,11 @@ func groupMembers(pgid int) ([]int, error) {
 		if err != nil {
 			continue
 		}
-		b, err := os.ReadFile("/proc/" + e.Name() + "/stat")
+		st, err := os.Stat("/proc/" + e.Name())
 		if err != nil {
 			continue // gone
 		}
-		// After the command, which is in parentheses and may hold any byte:
-		// state, ppid, pgrp.
-		s := string(b)
-		i := strings.LastIndexByte(s, ')')
-		if i < 0 {
-			continue
-		}
-		f := strings.Fields(s[i+1:])
-		if len(f) > 2 && f[2] == strconv.Itoa(pgid) {
+		if sys, ok := st.Sys().(*syscall.Stat_t); ok && int(sys.Uid) == os.Getuid() {
 			pids = append(pids, pid)
 		}
 	}
@@ -79,5 +71,8 @@ func killIfOfRun(pid int, marker string) (bool, error) {
 		}
 		return false, err
 	}
+	// It is gone when the pidfd is readable: waited for up to a second, so
+	// that the plugin does not start while it still holds files.
+	unix.Poll([]unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}, 1000)
 	return true, nil
 }

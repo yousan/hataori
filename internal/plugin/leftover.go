@@ -2,9 +2,9 @@ package plugin
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // EnvRun is the variable that marks every process of one start of a
@@ -13,69 +13,87 @@ import (
 const EnvRun = "HATAORI_PLUGIN_RUN"
 
 // runRecord is what a start of a plugin leaves in
-// state/plugin-run/<id>/run.json while it runs: its process group, the
-// value of EnvRun, and the boot it runs in. A stop that kills the group
-// removes it, so one that is found at the next start is of a daemon that
-// died without stopping.
+// state/plugin-run/<id>/run-<run>.json, written before the plugin starts
+// and removed once its process group is killed: the value of EnvRun and
+// the boot it runs in. A record found at the next start is of a daemon
+// that died without stopping the plugin.
 type runRecord struct {
-	Group int    `json:"group"`
-	Run   string `json:"run"`
-	Boot  string `json:"boot"`
+	Run  string `json:"run"`
+	Boot string `json:"boot"`
 }
 
-func (r *Runner) recordPath(g Grant) string {
-	return filepath.Join(r.State, "plugin-run", g.ID, "run.json")
+func (r *Runner) recordPath(g Grant, run string) string {
+	return filepath.Join(r.State, "plugin-run", g.ID, "run-"+run+".json")
 }
 
-// leftovers kills what an earlier run of g left, when the daemon died
-// without stopping it, before g starts again: each process in the
-// recorded process group that is of this OS user and was started in the
-// recorded run, as its environment shows (EnvRun), and only on the
-// recorded boot. A process the group id was given to again, after the
-// earlier run's were gone or after a reboot, has no such value and is not
-// signalled. On Linux the process is checked and signalled through a
-// pidfd, so that a pid given again between the two is not signalled; on
-// macOS its start time is read again just before the signal.
+// leftovers kills what earlier runs of g left, when the daemon died
+// without stopping it, before g starts again. A process is of an earlier
+// run when it runs as this OS user, on the boot the run recorded, and its
+// environment holds that run's EnvRun: a random value no other process
+// has, unless it inherited it from that run. Nothing else is signalled,
+// whatever its process group or pid. On Linux the process is held by a
+// pidfd from before the check until the signal; on macOS its start time is
+// read again just before the signal. A record is removed once every
+// process of it was checked; one that could not be is kept, and tried
+// again at the next start.
 func (r *Runner) leftovers(g Grant) {
-	path := r.recordPath(g)
-	b, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return
-	}
-	defer os.Remove(path)
-	var rec runRecord
-	if err != nil || json.Unmarshal(b, &rec) != nil || rec.Group <= 1 || len(rec.Run) < 16 {
-		r.Log.Warn("plugin: an earlier run's record cannot be read; nothing of it is signalled", "plugin", g.ID, "err", err)
+	paths, _ := filepath.Glob(filepath.Join(r.State, "plugin-run", g.ID, "run-*.json"))
+	if len(paths) == 0 {
 		return
 	}
 	boot, err := bootID()
-	if err != nil || boot != rec.Boot {
-		return // another boot: nothing of that run is left
-	}
-	pids, err := groupMembers(rec.Group)
 	if err != nil {
-		r.Log.Warn("plugin: the processes of an earlier run cannot be listed", "plugin", g.ID, "err", err)
+		r.Log.Warn("plugin: this boot's id cannot be read; what earlier runs left is not looked for", "plugin", g.ID, "err", err)
 		return
 	}
-	marker := EnvRun + "=" + rec.Run
-	killed := 0
-	for _, pid := range pids {
-		if pid == os.Getpid() {
+	var pids []int // this user's processes, listed once
+	for _, path := range paths {
+		var rec runRecord
+		b, err := os.ReadFile(path)
+		if err != nil || json.Unmarshal(b, &rec) != nil || len(rec.Run) != 32 || strings.Trim(rec.Run, "0123456789abcdef") != "" ||
+			filepath.Base(path) != "run-"+rec.Run+".json" {
+			r.Log.Warn("plugin: an earlier run's record cannot be read; nothing of it is signalled", "plugin", g.ID, "record", filepath.Base(path))
+			os.Remove(path)
 			continue
 		}
-		if ok, err := killIfOfRun(pid, marker); err != nil {
-			r.Log.Warn("plugin: a process of an earlier run could not be checked or killed", "plugin", g.ID, "pid", pid, "err", err)
-		} else if ok {
-			killed++
+		if rec.Boot != boot {
+			os.Remove(path) // another boot: nothing of that run runs
+			continue
 		}
-	}
-	if killed > 0 {
-		r.Log.Warn("plugin: killed what an earlier run left", "plugin", g.ID, "processes", killed)
+		if pids == nil {
+			list := ownProcesses
+			if r.processes != nil {
+				list = r.processes
+			}
+			if pids, err = list(); err != nil {
+				r.Log.Warn("plugin: processes cannot be listed; what earlier runs left is looked for at the next start", "plugin", g.ID, "err", err)
+				return
+			}
+		}
+		marker := EnvRun + "=" + rec.Run
+		killed, failed := 0, 0
+		for _, pid := range pids {
+			if pid == os.Getpid() {
+				continue
+			}
+			ok, err := killIfOfRun(pid, marker)
+			if err != nil {
+				failed++
+				r.Log.Warn("plugin: a process could not be checked or killed", "plugin", g.ID, "pid", pid, "err", err)
+			} else if ok {
+				killed++
+			}
+		}
+		if killed > 0 {
+			r.Log.Warn("plugin: killed what an earlier run left", "plugin", g.ID, "processes", killed)
+		}
+		if failed == 0 {
+			os.Remove(path)
+		}
 	}
 }
 
-// hasEnv reports whether the NUL-separated environment env holds the
-// entry kv.
+// hasEnv reports whether the NUL-separated list env holds the entry kv.
 func hasEnv(env []byte, kv string) bool {
 	for len(env) > 0 {
 		i := 0

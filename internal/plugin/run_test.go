@@ -657,16 +657,21 @@ func TestPluginOfWhileStarting(t *testing.T) {
 }
 
 // group starts a process group as a plugin's start would leave it: a
-// leader and a child, each running until killed, with run as EnvRun when
-// it is not empty. It returns the leader's and the child's pids, and a
-// channel closed when the leader is gone. The test ends both.
-func group(t *testing.T, run string) (int, int, <-chan struct{}) {
+// leader and a child, each running until killed. env is put in their
+// environment and arg among the leader's arguments, each when not empty.
+// It returns the leader's and the child's pids, and a channel closed when
+// the leader is gone. The test ends both.
+func group(t *testing.T, env, arg string) (int, int, <-chan struct{}) {
 	t.Helper()
 	dir := t.TempDir()
-	cmd := exec.Command("/bin/sh", "-c", `sh -c 'echo $$ > "$1/child.tmp"; mv "$1/child.tmp" "$1/child"; exec sleep 600' sh "$0" & exec sleep 600`, dir)
+	args := []string{"-c", `sh -c 'echo $$ > "$1/child.tmp"; mv "$1/child.tmp" "$1/child"; exec sleep 600' sh "$0"; while :; do sleep 1; done`, dir}
+	if arg != "" {
+		args = append(args, arg)
+	}
+	cmd := exec.Command("/bin/sh", args...)
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
-	if run != "" {
-		cmd.Env = append(cmd.Env, EnvRun+"="+run)
+	if env != "" {
+		cmd.Env = append(cmd.Env, env)
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
@@ -685,8 +690,9 @@ func group(t *testing.T, run string) (int, int, <-chan struct{}) {
 }
 
 // What an earlier run left is killed before the plugin starts again, and
-// only that: a group whose id is recorded but whose processes are of
-// another run, or of none, and a run of another boot, are not signalled.
+// only that: processes of another run, of none, with the run's value in an
+// argument instead of the environment, and of a run recorded in another
+// boot, are not signalled.
 func TestLeftovers(t *testing.T) {
 	const run = "0123456789abcdef0123456789abcdef"
 	boot, err := bootID()
@@ -694,27 +700,28 @@ func TestLeftovers(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
-		name     string
-		marked   string // the group's EnvRun
-		boot     string // the record's
-		signaled bool
+		name      string
+		env, arg  string
+		boot      string // the record's
+		signalled bool
 	}{
-		{"the earlier run", run, boot, true},
-		{"a group id given again, of another run", "fedcba9876543210fedcba9876543210", boot, false},
-		{"a group id given again, of no run", "", boot, false},
-		{"another boot", run, "an earlier boot", false},
+		{"the earlier run", EnvRun + "=" + run, "", boot, true},
+		{"another run", EnvRun + "=fedcba9876543210fedcba9876543210", "", boot, false},
+		{"no run", "", "", boot, false},
+		{"the run's value in an argument", "", EnvRun + "=" + run, boot, false},
+		{"another boot", EnvRun + "=" + run, "", "an earlier boot", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			leader, child, ended := group(t, tc.marked)
+			_, child, ended := group(t, tc.env, tc.arg)
 			r := &Runner{State: t.TempDir(), Log: slog.New(slog.DiscardHandler)}
 			g := Grant{ID: "scan"}
-			os.MkdirAll(filepath.Dir(r.recordPath(g)), 0o700)
-			b, _ := json.Marshal(runRecord{Group: leader, Run: run, Boot: tc.boot})
-			if err := os.WriteFile(r.recordPath(g), b, 0o600); err != nil {
+			os.MkdirAll(filepath.Dir(r.recordPath(g, run)), 0o700)
+			b, _ := json.Marshal(runRecord{Run: run, Boot: tc.boot})
+			if err := os.WriteFile(r.recordPath(g, run), b, 0o600); err != nil {
 				t.Fatal(err)
 			}
 			r.leftovers(g)
-			if tc.signaled {
+			if tc.signalled {
 				select {
 				case <-ended:
 				case <-time.After(5 * time.Second):
@@ -730,13 +737,80 @@ func TestLeftovers(t *testing.T) {
 					t.Fatal("a process of no earlier run was signalled")
 				default:
 				}
-				if syscall.Kill(child, 0) != nil {
+				if !running(child) {
 					t.Fatal("a child of no earlier run was signalled")
 				}
 			}
-			if _, err := os.Stat(r.recordPath(g)); err == nil {
+			if _, err := os.Stat(r.recordPath(g, run)); err == nil {
 				t.Fatal("the record is kept")
 			}
 		})
 	}
+}
+
+// A run is recorded before anything of it runs.
+func TestRunIsRecordedBeforeItStarts(t *testing.T) {
+	path, sum := script(t, `exec sleep 600`)
+	recorded := make(chan int, 1)
+	newRunner(t, Grant{Path: path, SHA256: sum}, func(r *Runner) {
+		r.afterStart = func(int) {
+			m, _ := filepath.Glob(filepath.Join(r.State, "plugin-run", "scan", "run-*.json"))
+			recorded <- len(m)
+		}
+	})
+	if n := <-recorded; n != 1 {
+		t.Fatalf("%d records when the plugin started", n)
+	}
+}
+
+// A record whose processes could not be looked for is kept, and done at
+// the next start.
+func TestLeftoversTriedAgain(t *testing.T) {
+	const run = "0123456789abcdef0123456789abcdef"
+	boot, _ := bootID()
+	_, _, ended := group(t, EnvRun+"="+run, "")
+	r := &Runner{State: t.TempDir(), Log: slog.New(slog.DiscardHandler),
+		processes: func() ([]int, error) { return nil, errors.New("cannot list") }}
+	g := Grant{ID: "scan"}
+	os.MkdirAll(filepath.Dir(r.recordPath(g, run)), 0o700)
+	b, _ := json.Marshal(runRecord{Run: run, Boot: boot})
+	os.WriteFile(r.recordPath(g, run), b, 0o600)
+	r.leftovers(g)
+	if _, err := os.Stat(r.recordPath(g, run)); err != nil {
+		t.Fatal("a record that could not be done is dropped")
+	}
+	r.processes = nil
+	r.leftovers(g)
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the earlier run is left after the second try")
+	}
+	if _, err := os.Stat(r.recordPath(g, run)); err == nil {
+		t.Fatal("the record is kept once done")
+	}
+}
+
+// What a plugin that is no longer in the config left is killed too.
+func TestLeftoversOfAPluginNoLongerConfigured(t *testing.T) {
+	const run = "0123456789abcdef0123456789abcdef"
+	boot, _ := bootID()
+	_, _, ended := group(t, EnvRun+"="+run, "")
+	r := &Runner{State: t.TempDir(), Log: slog.New(slog.DiscardHandler)}
+	old := Grant{ID: "removed"}
+	os.MkdirAll(filepath.Dir(r.recordPath(old, run)), 0o700)
+	b, _ := json.Marshal(runRecord{Run: run, Boot: boot})
+	os.WriteFile(r.recordPath(old, run), b, 0o600)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := r.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("what a plugin no longer configured left is left")
+	}
+	cancel()
+	r.Wait()
 }
