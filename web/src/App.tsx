@@ -242,9 +242,9 @@ export function App() {
                         show={showing}
                       />
                     ) : hostOf(k) !== null ? (
-                      <HostPane h={host(hostOf(k)!)} now={now} />
+                      <HostPane h={host(hostOf(k)!)} now={now} fit />
                     ) : paneThread(k) ? (
-                      <ThreadPane key={k} x={paneThread(k)!} subscribe={d.subscribe} opens={d.opens} />
+                      <ThreadPane key={k} x={paneThread(k)!} subscribe={d.subscribe} opens={d.opens} fit />
                     ) : (
                       <p className="empty">{t("pane.later")}</p>
                     )}

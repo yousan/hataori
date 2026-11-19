@@ -9,9 +9,9 @@ import { TerminalView } from "./TerminalView";
 const probeRetry = 2000;
 
 // ThreadPane is a thread's pane: its live terminal, or its events when the
-// session has no terminal.
-export function ThreadPane(props: { x: ThreadInfo; subscribe: (f: (e: Event) => void) => () => void; opens: number }) {
-  const { x, subscribe, opens } = props;
+// session has no terminal. With fit, the terminal fills the pane.
+export function ThreadPane(props: { x: ThreadInfo; subscribe: (f: (e: Event) => void) => () => void; opens: number; fit?: boolean }) {
+  const { x, subscribe, opens, fit } = props;
   const [terminal, setTerminal] = useState<boolean | null>(null);
   const { scope, key } = x.id;
 
@@ -42,7 +42,7 @@ export function ThreadPane(props: { x: ThreadInfo; subscribe: (f: (e: Event) => 
           {t("pane.noProcess")}
         </p>
       )}
-      {terminal ? <TerminalView x={x} /> : <EventsView x={x} subscribe={subscribe} opens={opens} />}
+      {terminal ? <TerminalView x={x} fit={fit} /> : <EventsView x={x} subscribe={subscribe} opens={opens} />}
     </div>
   );
 }

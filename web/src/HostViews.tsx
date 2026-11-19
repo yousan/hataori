@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { type HostTerminal, hostScreenPath } from "./api";
 import { t } from "./catalog";
 import { age } from "./format";
+import { fitted, sized } from "./fit";
 import { openReadOnly } from "./TerminalView";
 
 const dash = () => t("table.none");
@@ -28,12 +29,15 @@ function cells(line: string): number {
 
 // HostScreen draws a tmux pane's screen, as the server reads it, in the
 // same read-only terminal as a session's: nothing goes back to the pane.
-function HostScreen({ h }: { h: HostTerminal }) {
+// With fit, it fills the view as a session's does.
+function HostScreen({ h, fit }: { h: HostTerminal; fit?: boolean }) {
   const el = useRef<HTMLDivElement>(null);
+  const box = useRef<HTMLDivElement>(null);
   const pane = h.tmux?.pane ?? "";
   useEffect(() => {
     if (!el.current || !pane) return;
     const term = openReadOnly(el.current);
+    const fitting = fit && box.current ? fitted(term, box.current) : null;
     const source = new EventSource(hostScreenPath(pane));
     // Each message is the whole screen. It is drawn after the one before
     // has been, as a session's chunks are, so two never mix.
@@ -45,7 +49,11 @@ function HostScreen({ h }: { h: HostTerminal }) {
         const lines = screen.split("\n");
         const cols = Math.max(20, ...lines.map(cells));
         term.reset();
-        if (cols !== term.cols || lines.length !== term.rows) term.resize(cols, Math.max(1, lines.length));
+        if (cols !== term.cols || lines.length !== term.rows) {
+          term.resize(cols, Math.max(1, lines.length));
+          fitting?.refit();
+        }
+        sized(term);
         term.write(lines.join("\r\n"), done);
       });
     source.onmessage = (m) => {
@@ -59,13 +67,16 @@ function HostScreen({ h }: { h: HostTerminal }) {
     };
     return () => {
       gone = true;
+      fitting?.stop();
       source.close();
       term.dispose();
     };
-  }, [pane]);
+  }, [pane, fit]);
   return (
-    <div className="terminal-view" data-host-screen={pane}>
-      <div className="xterm-host" ref={el} />
+    <div className={fit ? "terminal-view fit" : "terminal-view"} data-host-screen={pane}>
+      <div className="xterm-box" ref={box}>
+        <div className="xterm-host" ref={el} />
+      </div>
     </div>
   );
 }
@@ -105,10 +116,10 @@ export function HostDetails({ h, now }: { h: HostTerminal; now: number }) {
 
 // HostPane is a host terminal's pane: a tmux pane's screen, or, for a
 // terminal outside tmux, whose screen cannot be read, what the host says
-// of it.
-export function HostPane({ h, now }: { h: HostTerminal | undefined; now: number }) {
+// of it. With fit, the screen fills the pane.
+export function HostPane({ h, now, fit }: { h: HostTerminal | undefined; now: number; fit?: boolean }) {
   if (!h) return <p className="empty">{t("host.gone")}</p>;
-  if (h.tmux) return <HostScreen h={h} />;
+  if (h.tmux) return <HostScreen h={h} fit={fit} />;
   return (
     <div className="host-meta" data-host-meta={h.device}>
       <p className="empty">{t("host.noScreen")}</p>
