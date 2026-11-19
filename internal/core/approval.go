@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
@@ -77,6 +78,12 @@ func (a *api) AskInterrupt(ctx context.Context, id control.ThreadID, key, reason
 	return handle, err
 }
 
+// noRequestErr is Answer's error for request req when there is no such
+// question or approval, and for one of a scope the caller may not see.
+func noRequestErr(req control.RequestID) error {
+	return fmt.Errorf("core: answer %q: %w", req, ErrNotFound)
+}
+
 func (a *api) answerApproval(ctx context.Context, req control.RequestID, ans control.Answer) error {
 	unlock := a.c.locks.lock("approval:" + string(req))
 	defer unlock()
@@ -86,10 +93,14 @@ func (a *api) answerApproval(ctx context.Context, req control.RequestID, ans con
 	err := a.c.Store.DB.QueryRowContext(ctx, `SELECT t.scope, a.asks_in, a.target, a.session_id, a.turn_id, a.principal, a.from_id, a.marked, a.state FROM approvals a JOIN threads t ON t.id = a.asks_in WHERE a.handle = ?`, req).Scan(&scope, &thread, &target, &guard.session, &guard.turn, &principal, &from, &marked, &state)
 	if errors.Is(err, sql.ErrNoRows) {
 		a.c.Log.Warn("control call refused", "op", "Answer", "principal", string(a.caller.Principal), "request", string(req), "reason", ErrNotFound)
-		return fmt.Errorf("core: answer %q: %w", req, ErrNotFound)
+		return noRequestErr(req)
 	}
 	if err != nil {
 		return err
+	}
+	if !slices.Contains(a.caller.Scopes, scope) {
+		a.hidden("Answer", "request", string(req), scope)
+		return noRequestErr(req)
 	}
 	if err := a.act(control.OpAnswer, "Answer", scope); err != nil {
 		return err

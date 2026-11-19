@@ -487,8 +487,12 @@ func TestDashboardSendsOnlyWhatTheCallerMayRead(t *testing.T) {
 		t.Fatalf("thread t1: %d %s", code, one)
 	}
 	bodies = append(bodies, one)
-	if code, body := dashGet(t, base, cookie, "/api/thread?thread=2"); code != http.StatusForbidden {
-		t.Fatalf("thread t2 in another scope: %d %s", code, body)
+	// A thread of another scope is answered as one that does not exist
+	// (#479): the same code, and the same body with its number.
+	code, other := dashGet(t, base, cookie, "/api/thread?thread=2")
+	codeNone, none := dashGet(t, base, cookie, "/api/thread?thread=999")
+	if code != http.StatusNotFound || code != codeNone || strings.ReplaceAll(other, "thread 2", "thread N") != strings.ReplaceAll(none, "thread 999", "thread N") {
+		t.Fatalf("thread t2 in another scope: %d %s; no thread: %d %s", code, other, codeNone, none)
 	}
 
 	ch, _ := dashStream(t, base, cookie, 0)

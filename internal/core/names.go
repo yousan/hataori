@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -30,6 +31,12 @@ func (a *api) SetName(ctx context.Context, l control.LinkRef, name string) error
 		name = name[:len(name)-size]
 	}
 	scope, thread, err := a.c.nameScope(ctx, l)
+	if err == nil && thread != 0 && !slices.Contains(a.caller.Scopes, scope) {
+		// A conversation linked to a thread of a scope the caller may not
+		// see is answered as one linked to none (#479).
+		a.hidden("SetName", "thread", strconv.FormatInt(int64(thread), 10), scope)
+		scope, thread, err = "", 0, noLinkErr(l)
+	}
 	if errors.Is(err, ErrNotFound) {
 		if gerr := a.granted("SetName", ""); gerr != nil {
 			return gerr // whether the conversation is known or not
@@ -74,6 +81,11 @@ func (a *api) SetName(ctx context.Context, l control.LinkRef, name string) error
 	})
 }
 
+// noLinkErr is SetName's error for a conversation linked to no thread.
+func noLinkErr(l control.LinkRef) error {
+	return fmt.Errorf("core: set name: %s %s/%s is linked to no thread: %w", l.Client, l.Channel, l.Thread, ErrNotFound)
+}
+
 // nameScope is the scope of a conversation SetName names: the scope whose
 // own channel it is, or the scope of the thread linked to it, with that
 // thread. A conversation of no scope is ErrNotFound.
@@ -91,7 +103,7 @@ func (c *Core) nameScope(ctx context.Context, l control.LinkRef) (string, contro
 	err := c.Store.DB.QueryRowContext(ctx, `SELECT thread_id FROM links WHERE client = ? AND channel = ? AND thread = ?`,
 		l.Client, l.Channel, l.Thread).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", 0, fmt.Errorf("core: set name: %s %s/%s is linked to no thread: %w", l.Client, l.Channel, l.Thread, ErrNotFound)
+		return "", 0, noLinkErr(l)
 	}
 	if err != nil {
 		return "", 0, fmt.Errorf("core: set name: %w", err)
