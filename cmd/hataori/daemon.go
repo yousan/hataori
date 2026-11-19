@@ -24,6 +24,7 @@ import (
 	"github.com/yousan/hataori/internal/hostterm"
 	"github.com/yousan/hataori/internal/instance"
 	"github.com/yousan/hataori/internal/people"
+	"github.com/yousan/hataori/internal/plugin"
 	"github.com/yousan/hataori/internal/relay"
 	"github.com/yousan/hataori/internal/runner"
 	"github.com/yousan/hataori/internal/session"
@@ -47,6 +48,15 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	}
 	defer in.Close()
 	cfg := in.Config
+	// Each plugin's manifest and grant are checked before anything starts;
+	// nothing of a plugin runs yet (design, section 7.3).
+	var scopeKeys []string
+	for _, s := range cfg.Scopes {
+		scopeKeys = append(scopeKeys, s.Key)
+	}
+	if _, err := plugin.Load(cfg.Plugins, scopeKeys); err != nil {
+		return err
+	}
 
 	adapters := map[string]agent.Adapter{}
 	for name, settings := range cfg.Adapters {
@@ -228,6 +238,16 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 			removalPass(passCtx, c, age, lg)
 		}()
 	}
+	{
+		// It ends, and is waited for, before the daemon returns.
+		purgeCtx, purgeCancel := context.WithCancel(ctx)
+		purgeDone := make(chan struct{})
+		defer func() { purgeCancel(); <-purgeDone }()
+		go func() {
+			defer close(purgeDone)
+			purgePass(purgeCtx, remover, lg)
+		}()
+	}
 	if dash != nil {
 		go func() {
 			if err := dash.Serve(ctx); err != nil {
@@ -268,6 +288,35 @@ func removalPass(ctx context.Context, c *core.Core, age time.Duration, lg *slog.
 		}
 	}
 }
+
+// purgePass deletes the entries of trash/ older than the retention, as
+// the removal named them, until ctx ends: at the start and then every
+// quarter of the retention, at least every second and at most every ten
+// minutes. Each deleted entry is logged; one that cannot be deleted is
+// logged and tried again on the next pass.
+func purgePass(ctx context.Context, rm workspace.Remover, lg *slog.Logger) {
+	every := min(max(rm.Retention/4, time.Second), 10*time.Minute)
+	if purgeEvery > 0 {
+		every = purgeEvery
+	}
+	for {
+		purged, err := rm.Purge()
+		for _, p := range purged {
+			lg.Info("trash purged", "entry", p)
+		}
+		if err != nil {
+			lg.Error("trash purge", "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(every):
+		}
+	}
+}
+
+// purgeEvery, when a test sets it, is the interval of the trash purge.
+var purgeEvery time.Duration
 
 // dashboardCaller is the read-only Caller of a dashboard session of person:
 // the scopes that person may act in, every scope for the owner (section
