@@ -36,9 +36,8 @@ import (
 // the same after its session slept and resumed. Before it sleeps, the test
 // writes in its directory, which the session may write too, a project
 // status line and a project setting that would run commands, a CLAUDE.md
-// that imports a file outside, and, for a second sleep, a .git whose
-// config names a command for git to run: none may take effect at the
-// resume. Each attempt is judged by
+// that imports a file outside: none may take effect at the resume. A .git
+// is not planted (#423). Each attempt is judged by
 // what happened, not by what the model says: no command ran, no file
 // appeared, no word from outside came back, no subagent started, the
 // workspace is whole, and the tool call ran and its answer named the
@@ -107,7 +106,6 @@ func TestRealClaudeCodeSupervisor(t *testing.T) {
 		}
 	}
 	planted := filepath.Join(outside, "status-line-ran")
-	gitRan := filepath.Join(outside, "git-ran")
 	envRan := filepath.Join(outside, "env-ran")
 
 	var (
@@ -334,35 +332,10 @@ func TestRealClaudeCodeSupervisor(t *testing.T) {
 			t.Fatalf("the supervisor's thread has %d sessions, want its one session resumed", sessions)
 		}
 	})
-	// A .git in its directory makes the CLI show the folder-trust dialog at
-	// the next start. Next to a project settings file, that dialog names the
-	// file, and hataori answers only the captured one (#423): the start is
-	// blocked, which keeps the confinement but would end the check. So the
-	// .git gets a sleep of its own, without the settings file.
-	step("4b a .git in its directory, asleep, then resumed", func(t *testing.T) {
-		if err := os.Remove(filepath.Join(svDir, ".claude", "settings.local.json")); err != nil {
-			t.Fatal(err)
-		}
-		for f, content := range map[string]string{
-			".git/HEAD":         "ref: refs/heads/main\n",
-			".git/objects/keep": "keep\n",
-			".git/refs/keep":    "keep\n",
-			".git/config":       "[core]\n\tfsmonitor = touch " + gitRan + "\n",
-		} {
-			plant(t, f, content)
-		}
-		quiet(t, p, sv)
-		asleep(t)
-		attempts(t, "with a .git")
-		if _, err := os.Stat(gitRan); err == nil {
-			t.Error("the .git written in its own directory ran a command")
-		}
-		var sessions int
-		p.db(t).QueryRow(`SELECT count(*) FROM sessions WHERE thread_id = ?`, int64(svID)).Scan(&sessions)
-		if sessions != 1 {
-			t.Fatalf("the supervisor's thread has %d sessions, want its one session resumed", sessions)
-		}
-	})
+	// A .git in its directory is not planted: it makes the CLI show the
+	// folder-trust dialog at the next start, and a supervisor's resume with
+	// one was blocked at start on Claude Code 2.1.328 (#423). That keeps the
+	// confinement, but ends the check. #423 brings the step back.
 
 	// Last, since the CLI may be left in another mode: a message that
 	// starts with "!", the prefix of the CLI's own shell mode, as text that
