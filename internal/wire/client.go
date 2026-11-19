@@ -202,6 +202,16 @@ func (c *Client) Stop(ctx context.Context, id control.ThreadID) error {
 	return c.call(ctx, "Stop", stopArgs{ID: id}, nil)
 }
 
+// CloseThread is the operation Close.
+func (c *Client) CloseThread(ctx context.Context, id control.ThreadID) error {
+	return c.call(ctx, "Close", closeArgs{ID: id}, nil)
+}
+
+// RemoveThread is the operation Remove.
+func (c *Client) RemoveThread(ctx context.Context, id control.ThreadID) error {
+	return c.call(ctx, "Remove", removeArgs{ID: id}, nil)
+}
+
 func (c *Client) Workspace(ctx context.Context, id control.ThreadID) (control.WorkspaceState, error) {
 	var out control.WorkspaceState
 	err := c.call(ctx, "Workspace", workspaceArgs{ID: id}, &out)

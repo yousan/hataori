@@ -106,6 +106,7 @@ func TestConfigErrorsNameTheKey(t *testing.T) {
 		{"null", `{"owner": "o", "trigger": "!go", "idle": "30m", "scopes": [{"key": "c1", "client": "chat", "enabled": null}]}`, `"scopes[0].enabled"`},
 		{"bad pattern", `{"owner": "o", "trigger": "!go", "idle": "30m", "cleanup": {"disposable": ["[x"]}}`, `"cleanup.disposable[0]"`},
 		{"bad retention", `{"owner": "o", "trigger": "!go", "idle": "30m", "cleanup": {"trash_retention": "0s"}}`, `"cleanup.trash_retention"`},
+		{"bad removal age", `{"owner": "o", "trigger": "!go", "idle": "30m", "cleanup": {"remove_closed_after": "a month"}}`, `"cleanup.remove_closed_after"`},
 		{"relative root", `{"owner": "o", "trigger": "!go", "idle": "30m", "cleanup": {"other_roots": ["srv/other"]}}`, `"cleanup.other_roots[0]"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -126,15 +127,17 @@ func TestCleanupConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Cleanup.TrashRetention != DefaultTrashRetention || c.Cleanup.Disposable != nil {
+	// The removal pass is off unless the config turns it on.
+	if c.Cleanup.TrashRetention != DefaultTrashRetention || c.Cleanup.Disposable != nil || c.Cleanup.RemoveClosedAfter != 0 {
 		t.Fatalf("defaults: %+v", c.Cleanup)
 	}
 	c, err = ParseConfig([]byte(`{"owner": "o", "trigger": "!go", "idle": "30m",
-		"cleanup": {"disposable": [" node_modules ", "*.pyc"], "trash_retention": "48h", "other_roots": ["/srv/other/"]}}`))
+		"cleanup": {"disposable": [" node_modules ", "*.pyc"], "trash_retention": "48h", "other_roots": ["/srv/other/"],
+			"remove_closed_after": "720h"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := fmt.Sprintf("%q %v %q", c.Cleanup.Disposable, c.Cleanup.TrashRetention, c.Cleanup.OtherRoots); got != `["node_modules" "*.pyc"] 48h0m0s ["/srv/other"]` {
+	if got := fmt.Sprintf("%q %v %q %v", c.Cleanup.Disposable, c.Cleanup.TrashRetention, c.Cleanup.OtherRoots, c.Cleanup.RemoveClosedAfter); got != `["node_modules" "*.pyc"] 48h0m0s ["/srv/other"] 720h0m0s` {
 		t.Fatal(got)
 	}
 }

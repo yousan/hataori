@@ -402,9 +402,11 @@ const (
 	wake                  // a new agent of a session read before: read on from the stored offsets
 )
 
-// stopSleepers stops the agents of asleep sessions that are still running.
+// stopSleepers stops the agents of asleep and closed sessions that are
+// still running, as after a daemon that stopped while it put one to sleep
+// or closed it.
 func (r *Runner) stopSleepers(ctx context.Context) error {
-	rows, err := r.Store.DB.QueryContext(ctx, `SELECT id FROM sessions WHERE state = 'asleep' AND spec != ''`)
+	rows, err := r.Store.DB.QueryContext(ctx, `SELECT id FROM sessions WHERE state IN ('asleep', 'closed') AND spec != ''`)
 	if err != nil {
 		return fmt.Errorf("runner: %w", err)
 	}
@@ -423,7 +425,7 @@ func (r *Runner) stopSleepers(ctx context.Context) error {
 		if _, err := os.Stat(filepath.Join(dir, host.HostPIDFile)); err != nil || host.Gone(dir) || hostLost(dir) {
 			continue
 		}
-		r.Log.Warn("stopping the agent of an asleep session", "session", id)
+		r.Log.Warn("stopping the agent of an asleep or closed session", "session", id)
 		go host.Stop(dir, time.Second, 2*time.Second)
 	}
 	return nil
@@ -1393,6 +1395,99 @@ func (r *Runner) attached(lv *live) bool {
 		return false
 	}
 	return n > 0 || !detached.IsZero() && time.Since(detached) < r.idlePeriod()
+}
+
+// shutWait bounds how long Shut waits for a closed session's agent to end.
+const shutWait = 15 * time.Second
+
+// Shut closes a session and makes sure its agent has ended. Unless the
+// session is closed already, it applies session.Close with reason, while it
+// holds the session's lock, so no step reads what the agent reports after
+// it, and in a transaction that refuses a session that is no longer its
+// thread's newest (one replaced meanwhile; replace makes the new session in
+// a transaction too, so one of the two sees the other), and an idle one
+// whose last turn left background tasks running. Then it stops the
+// session's host, when one runs, and waits until the host and the runner's
+// following of it have ended. A closed session is only stopped and waited
+// for: a Close repeated after a stop that failed tries again, and a removal
+// knows that the agent has ended.
+func (r *Runner) Shut(ctx context.Context, id int64, reason string) error {
+	r.mu.Lock()
+	lv := r.live[id]
+	r.mu.Unlock()
+	apply := func() error {
+		return r.Store.Update(ctx, func(tx *store.Tx) error {
+			var (
+				state string
+				newer int
+			)
+			if err := tx.QueryRowContext(ctx, `SELECT s.state,
+				(SELECT count(*) FROM sessions n WHERE n.thread_id = s.thread_id AND n.id > s.id)
+				FROM sessions s WHERE s.id = ?`, id).Scan(&state, &newer); err != nil {
+				return fmt.Errorf("runner: session %d: %w", id, err)
+			}
+			if control.State(state) == control.Closed {
+				return nil
+			}
+			if newer > 0 {
+				return fmt.Errorf("runner: session %d: its thread has a newer session: %w", id, session.ErrRefused)
+			}
+			// As the sleep does: a session whose last turn left background
+			// tasks running is still working, though it is idle.
+			var background int
+			err := tx.QueryRowContext(ctx, `SELECT background FROM turns WHERE session_id = ? ORDER BY id DESC LIMIT 1`, id).Scan(&background)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("runner: session %d: %w", id, err)
+			}
+			if background > 0 && control.State(state) == control.Idle {
+				return fmt.Errorf("runner: session %d: %d background tasks still run: %w", id, background, session.ErrRefused)
+			}
+			return r.Machine.ApplyTx(ctx, tx, id, session.Input{Kind: session.Close, Reason: reason})
+		})
+	}
+	if lv != nil {
+		lv.mu.Lock()
+		err := apply()
+		if err == nil {
+			lv.asleep = true // nothing more is read: its agent is being stopped
+		}
+		lv.mu.Unlock()
+		if err != nil {
+			return err
+		}
+	} else if err := apply(); err != nil {
+		return err
+	}
+	dir := StateDir(r.Root, id)
+	running := func() bool {
+		_, err := os.Stat(filepath.Join(dir, host.HostPIDFile))
+		return err == nil && !host.Gone(dir) && !hostLost(dir)
+	}
+	if running() {
+		if _, err := host.Stop(dir, time.Second, 2*time.Second); err != nil {
+			return fmt.Errorf("runner: session %d is closed, but stopping its agent: %w", id, err)
+		}
+	}
+	deadline := time.After(shutWait)
+	for running() {
+		select {
+		case <-deadline:
+			return fmt.Errorf("runner: session %d is closed, but its host has not ended", id)
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(r.poll()):
+		}
+	}
+	if lv != nil {
+		select {
+		case <-lv.done:
+		case <-deadline:
+			return fmt.Errorf("runner: session %d is closed, but its agent has not ended", id)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
 }
 
 // replace starts a new session in the same workspace for a session whose

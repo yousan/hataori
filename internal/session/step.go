@@ -21,8 +21,8 @@ type InputKind int
 const (
 	Send         InputKind = iota // API: input from a caller
 	Answer                        // API: the answer to an open request
-	Close                         // command: close an asleep session
-	Remove                        // command: mark a closed session removed
+	Close                         // command: close an idle, asleep or failed session; its process is stopped after
+	Remove                        // command: mark a closed session removed, once its workspace is in trash
 	AgentEvent                    // an event the agent reported
 	Exit                          // the agent's process ended
 	StartTimeout                  // timer: no SessionReady within the start timeout
@@ -48,7 +48,7 @@ type Input struct {
 	Text      string            // Send, Answer
 	Request   string            // Answer: the agent's id of the request answered
 	Agent     agent.Event       // AgentEvent
-	Reason    string            // Exit: why; empty for "crashed"
+	Reason    string            // Exit: why; empty for "crashed". Close, Remove: what asked for it, such as "command"
 	Detail    string            // StartTimeout, Exit: what a person may want to read, such as the end of the terminal log
 }
 
@@ -195,15 +195,19 @@ func Step(s Snapshot, in Input) (Result, error) {
 		start(OpenTurn{By: ByCaller, Principal: in.Principal, From: in.From}, in.Key)
 		r.Out = append(r.Out, Out{Kind: KindAnswer, Data: given(in)})
 	case Close:
-		if s.State != control.Asleep {
+		// No turn runs, no question is open and no session is starting:
+		// closing loses nothing the agent was doing.
+		switch s.State {
+		case control.Idle, control.Asleep, control.Failed:
+		default:
 			return refuse()
 		}
-		to(control.Closed, "")
+		to(control.Closed, in.Reason)
 	case Remove:
 		if s.State != control.Closed {
 			return refuse()
 		}
-		to(control.Removed, "")
+		to(control.Removed, in.Reason)
 	case StartTimeout:
 		if s.State != control.Creating {
 			return refuse()

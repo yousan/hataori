@@ -20,6 +20,8 @@ import (
 	"syscall"
 	"time"
 	"unicode"
+
+	"github.com/yousan/hataori/internal/core"
 )
 
 // TrashDir is where removed workspaces go, relative to the instance root.
@@ -87,6 +89,15 @@ func (r *Refusal) Error() string {
 	}
 	return s
 }
+
+// RemovalRefused returns the parts of r, for the core's removal_refused
+// event (core.RemovalRefusal).
+func (r *Refusal) RemovalRefused() (reason, repo, kind, detail string) {
+	return string(r.Reason), r.Repo, r.Kind, r.Detail
+}
+
+var _ core.RemovalRefusal = (*Refusal)(nil)
+var _ core.Remover = Remover{}
 
 // Remover removes workspaces of one instance: it proves that a workspace
 // holds nothing that exists nowhere else (design, section 4.6), moves a

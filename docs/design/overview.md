@@ -283,7 +283,7 @@ Every call is made as a `Caller`: who it is, which scopes it may see, and which 
 
 Every record of input keeps both the person and the id it came from (section 6.2).
 
-Sleep, close and remove join the interface with the phase that needs them. There is no operation to reset or merge anything, for any caller.
+Sleep joins the interface with the phase that needs it. Close and remove joined it in the cleanup phase (#255): `Close` and `Remove`, checked like `Stop`, and given only to the owner's connection on the control socket, so they are reached through `hataori close` and `hataori remove` on the host; besides them, only the removal pass that the config's `cleanup.remove_closed_after` turns on (off by default) removes, and only threads closed longer than that. Nothing in chat closes or removes in that phase, and no thread is closed by its idle age. There is no operation to reset or merge anything, for any caller.
 
 ### 5.2 Chat front end and surface driver
 
@@ -702,7 +702,7 @@ Acceptance:
 - [ ] When turns fail because the agent is logged out, the owner gets one direct message for the outage, also across a daemon restart, and threads that stop later are added to it.
 - [ ] The owner's reply with the code, and nothing else, reaches the login command; on success the message says so and each stopped thread gets one line; no message is resent.
 - [ ] After a login through the relay, the sign-in link and the code are found nowhere in the database, the event log or the log files.
-- [ ] No code path in the binary removes or resets a working directory.
+- [ ] No code path in the binary removes or resets a working directory, except the removal of section 4.6 (`internal/workspace/remove.go`), and that only through `Remove` (#255).
 - [ ] Two instances with different roots on one host each ignore the other's channels.
 - [ ] No core package imports a driver, an agent adapter or a client, or contains the name of a surface or an agent (checked in CI).
 - [ ] For one week, every order the deployment's manager sends runs on hataori and none on c-lord.
@@ -1205,6 +1205,19 @@ type API interface {
 	Answer(ctx context.Context, req RequestID, a Answer) error
 	Stop(ctx context.Context, id ThreadID) error
 
+	// CloseThread ends the agent process of an idle, asleep or failed thread
+	// and closes it (section 4.5): the workspace stays, and Send is
+	// ErrClosed. RemoveThread removes the workspace of a closed thread only
+	// through the proof of section 4.6, by a rename into trash; a proof that
+	// does not hold is ErrRemovalRefused with the reason, and the thread
+	// stays closed. Each removal and refusal writes one event. Both are
+	// checked like Stop and need OpClose and OpRemove, which only the
+	// owner's connection on the control socket has. On the wire they are the operations
+	// Close and Remove (the client's Close closes its connection). Since
+	// protocol 2.3.
+	CloseThread(ctx context.Context, id ThreadID) error
+	RemoveThread(ctx context.Context, id ThreadID) error
+
 	// Link shows the thread in one more conversation. It is checked like
 	// Send, and refused when l.Channel is neither the scope's own channel
 	// nor in its show_in. Linking a conversation twice to the same thread
@@ -1335,7 +1348,7 @@ type Caller struct {
 	From      string
 	Principal Principal // a person's name (section 5.5)
 	Scopes    []string  // the scopes it may see and act in
-	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach
+	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove
 	// NoText leaves text written by a person or an agent out of what the
 	// caller reads: ThreadInfo.Title and ThreadInfo.Last,
 	// ThreadDetail.Recent, the text of its requests, and the text fields of

@@ -53,6 +53,7 @@ var eventData = map[control.EventKind]string{
 	"login_lost":        `{"agent":"claude-code","outage":1,"thread":7}`,
 	"login_restored":    `{"agent":"claude-code","outage":1,"scopes":["C0123"],"threads":[{"scope":"C0123","key":"T0456"}]}`,
 	"session_replaced":  `{"new_session":4,"reason":"cannot resume","session":3}`,
+	"removal_refused":   `{"detail":"commit 9fceb02 on refs/heads/fix-build","kind":"submodule","principal":"dispatch","reason":"unpushed commit on a branch","repo":"vendor/lib","session":3,"trigger":"command"}`,
 	control.CaughtUp:    ``,
 }
 
@@ -85,6 +86,8 @@ func examples(t *testing.T) map[string]any {
 		"Send":           sendArgs{ID: exampleID, Key: "M0790", Input: control.Input{Text: "And the docs."}, Busy: control.Deliver},
 		"Answer":         answerArgs{Request: "3:toolu_2", Answer: control.Answer{Text: "blue", Choices: []string{"blue"}}},
 		"Stop":           stopArgs{ID: exampleID},
+		"Close":          closeArgs{ID: exampleID},
+		"Remove":         removeArgs{ID: exampleID},
 		"Events":         eventsArgs{Filter: control.Filter{}, After: 41},
 		"Workspace":      workspaceArgs{ID: exampleID},
 		"SignInLink":     signInLinkArgs{},

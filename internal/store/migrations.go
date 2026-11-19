@@ -332,6 +332,18 @@ var migrations = []Migration{
 			done_at INTEGER NOT NULL -- unix milliseconds
 		)`,
 	)},
+	{Name: "chat: notices", Up: execAll(
+		// A message the front end answered with a notice of its own, such
+		// as one in a closed thread. Its rowid keys the notice's outbox
+		// row, so that the message delivered again writes it once.
+		`CREATE TABLE chat_notices (
+			client      TEXT NOT NULL, -- the chat front end's name
+			channel     TEXT NOT NULL,
+			message     TEXT NOT NULL, -- the surface's message id
+			received_at INTEGER NOT NULL,
+			PRIMARY KEY (client, channel, message)
+		)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

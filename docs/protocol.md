@@ -17,7 +17,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **2.2**. Both hellos carry it.
+The protocol version is `major.minor`, now **2.3**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 1.0`.
 - With the same major number and different minor numbers they work together.
@@ -87,6 +87,8 @@ Events are stored, and a reader reads them from a position, possibly long after 
 | `disabled` | error code | - | the scope is not enabled |
 | `busy` | error code | - | a turn is running and the call said to refuse |
 | `not_found` | error code | - | no such thread or request |
+| `closed` | error code | - | the thread is closed or removed: nothing was sent, and a message does not wake it; since 2.3 |
+| `removal_refused` | error code | - | the workspace may hold work that exists nowhere else, so it was not removed; the message says why; since 2.3 |
 | `refused` | error code | - | the session's state does not allow the call |
 | `not_supported` | error code | - | the receiver does not know the operation |
 | `error` | error code | - | any other failure |
@@ -135,7 +137,7 @@ Result: `ThreadID`
 
 ### Operation `Send`
 
-Gives input to a thread. A thread with an open question takes it as the answer; an asleep thread is woken with it.
+Gives input to a thread. A thread with an open question takes it as the answer; an asleep thread is woken with it. A closed or removed thread takes nothing and is not woken: `closed`, since 2.3.
 
 On a supervisor's connection (a token, since 2.2) `busy` is always taken as 0: a `Send` with 1 or 2 to a running thread is refused with `busy` and logged, nothing is queued and the turn goes on. There, and in `Start`, the daemon puts the line `From the supervisor of this channel:` before the input's text; the `input` event has the text with that line, and the thread's title is made without it.
 
@@ -162,6 +164,26 @@ Result: none
 ### Operation `Stop`
 
 Interrupts the thread's running turn. Nothing happens when no turn runs.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `id` | `ThreadID` | required | the thread |
+
+Result: none
+
+### Operation `Close`
+
+Since 2.3. Ends the agent process of an idle, asleep or failed thread and closes the thread: its state becomes `closed`, its workspace stays as it is, and a message does not wake it (`Send` answers `closed`). It answers once the agent process has ended. A thread with a turn running, a question open or a session starting is answered `refused`; stop the turn first. So is an idle thread whose last turn left background tasks running, as the idle period does not put one to sleep. Closing a closed thread does not close it again, but stops its agent if that still runs, as after a stop that failed. A failed session that its thread has already replaced is answered `refused`. Whether the caller may close the thread is checked as for `Stop`: the owner or a person of the thread's scope; anyone else is answered `forbidden`, nothing changes and one log line is written.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `id` | `ThreadID` | required | the thread |
+
+Result: none
+
+### Operation `Remove`
+
+Since 2.3. Removes the workspace of a closed thread, and only when every step of the proof of [design section 4.6](design/overview.md#46-cleanup-without-losing-work) holds at that moment: no modified, staged, untracked or non-disposable ignored file, every commit on a remote asked at that moment, the same in every submodule and nested repository, and no process using the directory. The workspace is renamed into `trash/` inside the root, and the thread's state becomes `removed`, with a `state` event whose `reason` says what asked for it. When any step does not hold or cannot be answered, nothing changes: the answer is `removal_refused` with the reason, the thread stays `closed`, and one `removal_refused` event is written. In one case something has changed: when the rename into `trash/` started and could not finish, the workspace is no longer at its place, the reason starts with `workspace moved into trash, removal not finished`, and `detail` says where it is; the thread stays `closed`. Before the proof, the closed thread's own agent must have ended: one that cannot be stopped refuses with reason `agent not stopped`. A thread that is not closed is answered `refused`, with one `removal_refused` event of reason `thread not closed`. It is checked as `Close` is.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -496,7 +518,7 @@ The session's state changed.
 | `session` | integer | required | the session |
 | `from` | string | required | the state before |
 | `to` | string | required | the state now |
-| `reason` | string | optional | why, such as `idle`, `interrupted`, `crashed`, `blocked at start`, `cannot resume`, `wake` |
+| `reason` | string | optional | why, such as `idle`, `interrupted`, `crashed`, `blocked at start`, `cannot resume`, `wake`; for `to: closed` or `to: removed`, what asked for it: `command` (the `Close` or `Remove` operation) or `closed age` (the removal pass of the config's `cleanup.remove_closed_after`), since 2.3 |
 | `detail` | string | optional | text for a person, such as the end of the terminal output of a session blocked at start |
 
 ### Event `turn_started`
@@ -657,6 +679,20 @@ The agent no longer had the conversation; a new session started in the same work
 | `session` | integer | required | the session that could not be resumed |
 | `new_session` | integer | required | the new session |
 | `reason` | string | required | `cannot resume` |
+
+### Event `removal_refused`
+
+Since 2.3. A removal of the thread's workspace was refused, and nothing changed. A removal that is done is the `state` event to `removed`.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `session` | integer | required | the thread's current session |
+| `trigger` | string | required | what asked for it: `command` or `closed age`, as the `state` event's `reason` |
+| `principal` | string | optional | the person who asked, for `command` |
+| `reason` | string | required | why, such as `modified file`, `untracked file`, `ignored file not listed as disposable`, `unpushed commit on a branch`, `stash`, `commit only in a reflog`, `remote is another workspace`, `remote under a hataori root`, `process using the directory`, `git error`, `timeout`; or, from the daemon itself, `thread not closed`, `agent not stopped`, `no workspace recorded`, `the instance removes no workspaces` |
+| `repo` | string | optional | where it was found, relative to the workspace, when not in the workspace's own repository |
+| `kind` | string | optional | what `repo` is: `submodule`, `nested repository`, `nested bare repository` or `submodule without checkout` |
+| `detail` | string | optional | text for a person, such as the file or the commit; for `thread not closed`, the thread's state |
 
 ### Event `caught_up`
 

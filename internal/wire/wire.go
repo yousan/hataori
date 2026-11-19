@@ -27,7 +27,7 @@ import (
 
 // Version is the protocol version this build speaks: major.minor. Two
 // sides work together when their major numbers are equal (docs/protocol.md).
-const Version = "2.2"
+const Version = "2.3"
 
 type hello struct {
 	Version string `json:"version"`
@@ -78,6 +78,12 @@ type (
 		Answer  control.Answer    `json:"answer"`
 	}
 	stopArgs struct {
+		ID control.ThreadID `json:"id"`
+	}
+	closeArgs struct { // since 2.3
+		ID control.ThreadID `json:"id"`
+	}
+	removeArgs struct { // since 2.3
 		ID control.ThreadID `json:"id"`
 	}
 	workspaceArgs struct {
@@ -156,6 +162,20 @@ var operations = map[string]operation{
 		}
 		return nil, api.Stop(ctx, a.ID)
 	}},
+	"Close": {closeArgs{}, nil, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a closeArgs
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return nil, api.CloseThread(ctx, a.ID)
+	}},
+	"Remove": {removeArgs{}, nil, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a removeArgs
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return nil, api.RemoveThread(ctx, a.ID)
+	}},
 	"Workspace": {workspaceArgs{}, control.WorkspaceState{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
 		var a workspaceArgs
 		if err := args(&a); err != nil {
@@ -203,6 +223,10 @@ var codes = []struct {
 	{"busy", core.ErrBusy},
 	{"not_found", core.ErrNotFound},
 	{"refused", session.ErrRefused},
+	// After refused: an error that wraps both, as AttachTerminal's to a
+	// closed thread, stays refused, as 2.1 and 2.2 answered it.
+	{"closed", core.ErrClosed},                  // since 2.3
+	{"removal_refused", core.ErrRemovalRefused}, // since 2.3
 	{"not_supported", ErrNotSupported},
 }
 

@@ -387,8 +387,7 @@ func (f *FrontEnd) followUp(in surface.Inbound) error {
 	if len(ts) == 0 {
 		return nil // not a hataori thread
 	}
-	switch ts[0].State {
-	case control.Failed, control.Closed, control.Removed:
+	if ts[0].State == control.Failed {
 		// Its session cannot take input; the message is not for later.
 		f.Log.Warn("follow-up ignored", "reason", "the thread is "+string(ts[0].State), "scope", conv.Channel,
 			"thread", conv.Thread, "message", in.Ref.ID)
@@ -396,15 +395,52 @@ func (f *FrontEnd) followUp(in surface.Inbound) error {
 	}
 	// The key makes a second delivery one input; a running turn gets it
 	// delivered, an open question gets it as the answer. Whether the author
-	// may give input at all, the core decides too.
+	// may give input at all, the core decides too, and it refuses input to a
+	// closed thread, which a message does not wake.
 	err = api.Send(ctx, id, in.Ref.ID, control.Input{Text: in.Text}, control.Deliver)
 	if errors.Is(err, control.ErrForbidden) {
 		return nil // the core logged it
+	}
+	if errors.Is(err, control.ErrClosed) {
+		f.Log.Warn("follow-up ignored", "reason", "the thread is closed", "scope", conv.Channel,
+			"thread", conv.Thread, "message", in.Ref.ID)
+		return f.closedNotice(ctx, in)
 	}
 	if err != nil {
 		f.Log.Error("follow-up: send failed", "scope", conv.Channel, "thread", conv.Thread, "message", in.Ref.ID, "err", err)
 		return err
 	}
+	return nil
+}
+
+// ClosedLine is what a message in a closed thread gets.
+const ClosedLine = "This thread is closed: nothing was sent to the agent."
+
+// closedNotice answers a message in a closed thread with ClosedLine. The
+// row is keyed by the message's place in chat_notices, so the message
+// delivered again writes it once. Its event is 0 and its part negative,
+// which no other row uses.
+func (f *FrontEnd) closedNotice(ctx context.Context, in surface.Inbound) error {
+	err := f.Outbox.Store.Update(ctx, func(tx *store.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO chat_notices (client, channel, message, received_at)
+			VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`, f.Name, in.Ref.Conv.Channel, in.Ref.ID, time.Now().UnixMilli()); err != nil {
+			return err
+		}
+		var n int64
+		if err := tx.QueryRowContext(ctx, `SELECT rowid FROM chat_notices WHERE client = ? AND channel = ? AND message = ?`,
+			f.Name, in.Ref.Conv.Channel, in.Ref.ID).Scan(&n); err != nil {
+			return err
+		}
+		ref := in.Ref
+		return f.Outbox.WriteTx(ctx, tx, Row{Event: 0, Part: -int(n), Conv: in.Ref.Conv,
+			Message: surface.Message{Text: ClosedLine, ReplyTo: &ref}})
+	})
+	if err != nil {
+		f.Log.Error("follow-up: writing the closed notice", "scope", in.Ref.Conv.Channel, "thread", in.Ref.Conv.Thread,
+			"message", in.Ref.ID, "err", err)
+		return err
+	}
+	f.Outbox.Wake()
 	return nil
 }
 
