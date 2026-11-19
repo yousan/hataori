@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/agent"
+	"github.com/yousan/hataori/internal/holder"
 	"github.com/yousan/hataori/internal/host"
 )
 
@@ -101,6 +102,15 @@ func start(t *testing.T, a *Adapter, spec agent.Spec) *session {
 func (s *session) do(a agent.Actions) {
 	s.events = append(s.events, a.Events...)
 	s.follow = append(s.follow, a.Follow...)
+	for _, k := range a.Keys {
+		w, err := holder.Encode(k)
+		if err != nil {
+			s.t.Fatal(err)
+		}
+		if err := s.client.Input(w); err != nil {
+			s.t.Fatal(err)
+		}
+	}
 	for _, w := range a.Write {
 		if err := s.client.Input(w); err != nil {
 			s.t.Fatal(err)

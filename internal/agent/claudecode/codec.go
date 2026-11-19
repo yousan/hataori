@@ -175,12 +175,17 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 // queued is an input and its Input.ID.
 type queued struct{ id, text string }
 
-// Bracketed paste: what the terminal sends around pasted text.
+// Bracketed paste: what the terminal sends around pasted text. The holder
+// adds them; pasted text must not hold them.
 const (
 	pasteStart = "\x1b[200~"
 	pasteEnd   = "\x1b[201~"
-	confirm    = "\r"   // Enter
-	stopKey    = "\x1b" // Escape
+)
+
+// The keys the codec presses: Enter after a paste, Escape to interrupt.
+var (
+	confirm = agent.Part{Key: agent.Enter}
+	stopKey = agent.Part{Key: agent.Escape}
 )
 
 // commandPrefix goes before an input of a confined session that the CLI
@@ -230,7 +235,7 @@ func (c *codec) flush() Actions {
 	c.sent = &sentInput{text: normalize(q.text), typed: q.text, id: q.id}
 	c.pasted = append(c.pasted, queued{id: q.id, text: normalize(q.text)})
 	c.wrote = true
-	a := Actions{Write: [][]byte{[]byte(pasteStart + q.text + pasteEnd)}}
+	a := Actions{Keys: []agent.Part{{Paste: q.text}}}
 	if q.id != "" {
 		a.Inputs = []string{q.id}
 	}
@@ -270,7 +275,7 @@ func (c *codec) tickInput(now time.Time) Actions {
 		return c.holdPaste(now)
 	}
 	if c.sent.at.IsZero() {
-		c.sent.at = now // not before the paste: Write happens before the next Tick
+		c.sent.at = now // not before the paste: it is handed over before the next Tick
 		return Actions{}
 	}
 	if now.Sub(c.sent.at) < c.inputTimeout() {
@@ -279,10 +284,10 @@ func (c *codec) tickInput(now time.Time) Actions {
 			// Not during a turn, such as one typed at the terminal.
 		case !c.sent.pressed:
 			c.sent.pressed, c.sent.entered = true, now
-			return Actions{Write: [][]byte{[]byte(confirm)}}
+			return Actions{Keys: []agent.Part{confirm}}
 		case c.stillInBox(now):
 			c.sent.entered, c.sent.again = now, c.sent.again+1
-			return Actions{Write: [][]byte{[]byte(confirm)}}
+			return Actions{Keys: []agent.Part{confirm}}
 		}
 		return Actions{}
 	}
@@ -311,7 +316,7 @@ const DefaultInputTimeout = 30 * time.Second
 // Interrupt returns the key that stops a turn. The turn counts as
 // interrupted only when the transcript says so.
 func (c *codec) Interrupt() Actions {
-	return Actions{Write: [][]byte{[]byte(stopKey)}}
+	return Actions{Keys: []agent.Part{stopKey}}
 }
 
 // Decode reads one recorded line. Lines it cannot read become one Unknown
@@ -429,6 +434,7 @@ func (c *codec) track(prompt string, a Actions) Actions {
 func merge(a, b Actions) Actions {
 	a.StopScreen = a.StopScreen || b.StopScreen
 	a.Events = append(a.Events, b.Events...)
+	a.Keys = append(a.Keys, b.Keys...)
 	a.Write = append(a.Write, b.Write...)
 	a.Reply = append(a.Reply, b.Reply...)
 	a.Follow = append(a.Follow, b.Follow...)

@@ -1,7 +1,6 @@
 package claudecode
 
 import (
-	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -28,18 +27,18 @@ func TestInputIsOnePasteThenEnter(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(a.Write) != 1 || !bytes.Equal(a.Write[0], []byte(pasteStart+text+pasteEnd)) {
-			t.Fatalf("%d bytes of text: writes %.40q...", len(text), a.Write)
+		if len(a.Keys) != 1 || a.Keys[0] != (agent.Part{Paste: text}) {
+			t.Fatalf("%d bytes of text: writes %.40q...", len(text), a.Keys)
 		}
 		now := time.Now()
-		if a := merge(c.Tick(now), c.Tick(now.Add(pasteSettle-time.Millisecond))); len(a.Write) != 0 {
-			t.Fatalf("Enter %q within %v of the paste", a.Write, pasteSettle)
+		if a := merge(c.Tick(now), c.Tick(now.Add(pasteSettle-time.Millisecond))); len(a.Keys) != 0 {
+			t.Fatalf("Enter %q within %v of the paste", a.Keys, pasteSettle)
 		}
-		if a := c.Tick(now.Add(pasteSettle)); len(a.Write) != 1 || string(a.Write[0]) != confirm {
-			t.Fatalf("after %v: writes %q, want Enter", pasteSettle, a.Write)
+		if a := c.Tick(now.Add(pasteSettle)); len(a.Keys) != 1 || a.Keys[0] != confirm {
+			t.Fatalf("after %v: writes %q, want Enter", pasteSettle, a.Keys)
 		}
-		if a := c.Tick(now.Add(time.Minute / 4)); len(a.Write) != 0 {
-			t.Fatalf("Enter again %q without the screen", a.Write)
+		if a := c.Tick(now.Add(time.Minute / 4)); len(a.Keys) != 0 {
+			t.Fatalf("Enter again %q without the screen", a.Keys)
 		}
 	}
 }
@@ -47,14 +46,12 @@ func TestInputIsOnePasteThenEnter(t *testing.T) {
 func TestPasteCannotEndEarly(t *testing.T) {
 	text := "before" + pasteEnd + "/exit\r" + "\x1b[20" + pasteEnd + "1~ after" + pasteStart
 	a, _ := started(t).Input(agent.Input{Text: text})
-	p := a.Write[0]
-	if bytes.Count(p, []byte(pasteEnd)) != 1 || !bytes.HasSuffix(p, []byte(pasteEnd)) ||
-		bytes.Count(p, []byte(pasteStart)) != 1 || !bytes.HasPrefix(p, []byte(pasteStart)) {
-		t.Fatalf("paste %q has a marker inside", p)
+	inner := a.Keys[0].Paste
+	if strings.Contains(inner, pasteEnd) || strings.Contains(inner, pasteStart) {
+		t.Fatalf("paste %q has a marker inside", inner)
 	}
 	// Everything of the text, "/exit" included, is inside the one paste.
-	inner := bytes.TrimSuffix(bytes.TrimPrefix(p, []byte(pasteStart)), []byte(pasteEnd))
-	if !bytes.Contains(inner, []byte("/exit\r")) || !bytes.HasSuffix(inner, []byte(" after")) {
+	if !strings.Contains(inner, "/exit\r") || !strings.HasSuffix(inner, " after") {
 		t.Fatalf("inside the paste: %q", inner)
 	}
 }
@@ -102,30 +99,30 @@ func TestNotDeliveredAfterTheTimeout(t *testing.T) {
 
 func TestNoInputBeforeStart(t *testing.T) {
 	c := newTestCodec()
-	if a, _ := c.Input(agent.Input{Text: "early"}); len(a.Write) != 0 {
-		t.Fatalf("written before the start: %q", a.Write)
+	if a, _ := c.Input(agent.Input{Text: "early"}); len(a.Keys) != 0 {
+		t.Fatalf("written before the start: %q", a.Keys)
 	}
 	a := decodeFile(t, c, "start", "plain/hooks/01-SessionStart.json")
-	if len(a.Write) != 1 || !bytes.Contains(a.Write[0], []byte("early")) {
-		t.Fatalf("not written at the start: %q", a.Write)
+	if len(a.Keys) != 1 || !strings.Contains(a.Keys[0].Paste, "early") {
+		t.Fatalf("not written at the start: %q", a.Keys)
 	}
 }
 
 func TestInputHeldDuringATurn(t *testing.T) {
 	c := started(t)
 	decodeFile(t, c, "u", "plain/hooks/02-UserPromptSubmit.json") // a turn typed at the terminal
-	if a, _ := c.Input(agent.Input{Text: "later"}); len(a.Write) != 0 {
-		t.Fatalf("written during a turn: %q", a.Write)
+	if a, _ := c.Input(agent.Input{Text: "later"}); len(a.Keys) != 0 {
+		t.Fatalf("written during a turn: %q", a.Keys)
 	}
 	a := decodeFile(t, c, "s", "plain/hooks/03-Stop.json")
-	if len(a.Write) != 1 || !bytes.Contains(a.Write[0], []byte("later")) {
-		t.Fatalf("not written when the turn ended: %q", a.Write)
+	if len(a.Keys) != 1 || !strings.Contains(a.Keys[0].Paste, "later") {
+		t.Fatalf("not written when the turn ended: %q", a.Keys)
 	}
 }
 
 func TestInterruptIsEscapeOnly(t *testing.T) {
 	a := started(t).Interrupt()
-	if len(a.Write) != 1 || string(a.Write[0]) != stopKey || len(a.Events) != 0 {
+	if len(a.Keys) != 1 || a.Keys[0] != stopKey || len(a.Events) != 0 {
 		t.Fatalf("interrupt: %+v", a)
 	}
 }
@@ -147,8 +144,8 @@ func TestLateEndOfAnotherTurn(t *testing.T) {
 	c.Decode(agent.Hook, []byte(`{"hook":"u1","wait":false,"payload":{"hook_event_name":"UserPromptSubmit","prompt_id":"old","prompt":"one"}}`))
 	c.Decode(agent.Hook, []byte(`{"hook":"u2","wait":false,"payload":{"hook_event_name":"UserPromptSubmit","prompt_id":"new","prompt":"two"}}`))
 	c.Input(agent.Input{Text: "held"})
-	if a := c.Decode(agent.File, late); len(a.Write) != 0 {
-		t.Fatalf("held input written during the running turn: %q", a.Write)
+	if a := c.Decode(agent.File, late); len(a.Keys) != 0 {
+		t.Fatalf("held input written during the running turn: %q", a.Keys)
 	}
 }
 
@@ -159,7 +156,7 @@ func TestWrittenInputIsRecordedOnly(t *testing.T) {
 	file := "plain/hooks/02-UserPromptSubmit.json"
 	c := started(t)
 	a, err := c.Input(agent.Input{ID: "in-3", Text: unwrapPaste(prompt(t, file)), Written: true})
-	if err != nil || len(a.Write) != 0 || len(a.Inputs) != 0 {
+	if err != nil || len(a.Keys) != 0 || len(a.Inputs) != 0 {
 		t.Fatalf("written input: %+v, %v", a, err)
 	}
 	evs := decodeFile(t, c, "u", file)
@@ -184,8 +181,8 @@ func TestHeldInputNamedWhenWritten(t *testing.T) {
 	decodeFile(t, c, "u", "plain/hooks/02-UserPromptSubmit.json")
 	c.Input(agent.Input{ID: "in-5", Text: "later"})
 	a := decodeFile(t, c, "s", "plain/hooks/03-Stop.json")
-	if len(a.Write) != 1 || len(a.Inputs) != 1 || a.Inputs[0] != "in-5" {
-		t.Fatalf("written when the turn ended: %q, inputs %q", a.Write, a.Inputs)
+	if len(a.Keys) != 1 || len(a.Inputs) != 1 || a.Inputs[0] != "in-5" {
+		t.Fatalf("written when the turn ended: %q, inputs %q", a.Keys, a.Inputs)
 	}
 }
 
@@ -196,10 +193,10 @@ func TestHeldInputNamedWhenWritten(t *testing.T) {
 func TestConfinedInputIsNeverACommand(t *testing.T) {
 	paste := func(c *codec, text string) string {
 		a, err := c.Input(agent.Input{Text: text})
-		if err != nil || len(a.Write) != 1 {
-			t.Fatalf("%q: writes %q, %v", text, a.Write, err)
+		if err != nil || len(a.Keys) != 1 {
+			t.Fatalf("%q: writes %q, %v", text, a.Keys, err)
 		}
-		return strings.TrimSuffix(strings.TrimPrefix(string(a.Write[0]), pasteStart), pasteEnd)
+		return a.Keys[0].Paste
 	}
 	confined := func() *codec {
 		c := (&Adapter{}).NewCodec(agent.Spec{Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)

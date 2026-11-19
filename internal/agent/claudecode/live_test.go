@@ -1,7 +1,6 @@
 package claudecode
 
 import (
-	"bytes"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -16,6 +15,7 @@ import (
 	"github.com/creack/pty"
 
 	"github.com/yousan/hataori/internal/agent"
+	"github.com/yousan/hataori/internal/holder"
 )
 
 // TestLiveFolderTrust starts the real CLI in a clone never opened before
@@ -144,9 +144,13 @@ func TestLiveFolderTrust(t *testing.T) {
 	var keys []string
 	n, confirmed := 0, false
 	send := func(a Actions, after string) {
-		for _, w := range a.Write {
+		for _, k := range a.Keys {
+			w, err := holder.Encode(k)
+			if err != nil {
+				t.Fatal(err)
+			}
 			keys = append(keys, fmt.Sprintf("after %s: %q", after, w))
-			if bytes.Equal(w, keyEnter) {
+			if k == keyEnter {
 				confirmed = true
 			}
 			if _, err := tty.Write(w); err != nil {
@@ -188,7 +192,7 @@ func TestLiveFolderTrust(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	time.Sleep(300 * time.Millisecond)
-	tty.Write(keyEnter)
+	tty.Write([]byte("\r"))
 	done := make(chan struct{})
 	go func() {
 		for range chunks {

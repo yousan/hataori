@@ -109,7 +109,7 @@ func TestInputAfterClearOrCompaction(t *testing.T) {
 			decodeFile(t, c, "h"+string(rune('a'+i)), f)
 		}
 		a, err := c.Input(agent.Input{Text: "next"})
-		if err != nil || len(a.Write) == 0 {
+		if err != nil || len(a.Keys) == 0 {
 			t.Errorf("%s: input held or refused: %+v, %v", scenario, a, err)
 		}
 	}

@@ -38,8 +38,8 @@ func TestPastedTabsAreDelivered(t *testing.T) {
 		{"pasted-2.txt", "hooks/04-UserPromptSubmit.json"},
 	} {
 		c := startedPasteTabs(t)
-		if a, _ := c.Input(agent.Input{ID: "in-9", Text: string(readPasteTabs(t, pair.pasted))}); len(a.Write) != 1 {
-			t.Fatalf("%s: not pasted: %q", pair.pasted, a.Write)
+		if a, _ := c.Input(agent.Input{ID: "in-9", Text: string(readPasteTabs(t, pair.pasted))}); len(a.Keys) != 1 {
+			t.Fatalf("%s: not pasted: %q", pair.pasted, a.Keys)
 		}
 		now := time.Now()
 		c.Tick(now)

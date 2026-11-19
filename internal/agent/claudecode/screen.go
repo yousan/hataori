@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/yousan/hataori/internal/agent"
 )
 
 // The codec reads the screen from Open until the first input is reported,
@@ -45,9 +47,9 @@ const (
 // The keys the codec sends: one move toward the line that says yes at a
 // time, then Enter once the cursor is on it.
 var (
-	keyUp    = []byte("\x1b[A")
-	keyDown  = []byte("\x1b[B")
-	keyEnter = []byte("\r")
+	keyUp    = agent.Part{Key: agent.Up}
+	keyDown  = agent.Part{Key: agent.Down}
+	keyEnter = agent.Part{Key: agent.Enter}
 )
 
 // maxScreen bounds what the codec keeps of the screen; past it, it stops
@@ -591,15 +593,15 @@ func (c *codec) tickScreen(now time.Time) Actions {
 	switch {
 	case cursor == yes:
 		s.done, s.mark = true, len(s.seen)
-		return Actions{Write: [][]byte{keyEnter}}
+		return Actions{Keys: []agent.Part{keyEnter}}
 	case s.moved >= 2: // two choices: never more than one move is needed
 		s.done = true
 		return Actions{}
 	case cursor < yes:
 		s.moved, s.from = s.moved+1, cursor
-		return Actions{Write: [][]byte{keyDown}}
+		return Actions{Keys: []agent.Part{keyDown}}
 	default:
 		s.moved, s.from = s.moved+1, cursor
-		return Actions{Write: [][]byte{keyUp}}
+		return Actions{Keys: []agent.Part{keyUp}}
 	}
 }
