@@ -148,7 +148,9 @@ func TestListPanesUnderCLocale(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, ht := range list {
-		if ht.Tmux != nil && ht.Tmux.Session == "hataori-test" && ht.Tmux.Window == "0" && ht.Process == "sleep" {
+		// Not the process: right after the start it can still be the one
+		// tmux forked, before it runs the command.
+		if ht.Tmux != nil && ht.Tmux.Session == "hataori-test" && ht.Tmux.Window == "0" && strings.HasPrefix(ht.Device, "/dev/") {
 			return
 		}
 	}
