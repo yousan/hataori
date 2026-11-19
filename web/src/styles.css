@@ -344,11 +344,23 @@ body {
   display: none;
 }
 
-/* What a session's hooks reported: its id and directory may be long. */
+/* What a session's hooks reported: its id and directory may be long. The
+   id gives way first, so the directory keeps the more room; each has its
+   whole value in its title. */
 .line2.reported .reported-session,
 .line2.reported .reported-dir {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.line2.reported .reported-session {
+  flex: 0 1 auto;
+  max-width: 10ch;
+}
+
+.line2.reported .reported-dir {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .agent-mark {

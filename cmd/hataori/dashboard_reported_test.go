@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -55,13 +56,18 @@ func TestDashboardReportedSession(t *testing.T) {
 
 	// The tree: the reported row's own line, as the hooks reported it.
 	var line struct {
-		Session, Event, Dir, Time, Text string
+		Session, Event, Dir, Age, Text string
+		Time                           int64
 	}
 	b.eval(fmt.Sprintf(`(() => { const l = document.querySelector('%s [data-reported]');
 		return l && {session: l.dataset.reported, event: l.querySelector('.reported-event').textContent,
-			dir: l.querySelector('.reported-dir').textContent, time: l.querySelector('time').getAttribute('datetime'), text: l.textContent}; })()`, row(reported)), &line)
-	if line.Session != session || line.Event != "UserPromptSubmit" || line.Dir != dir || line.Time != at.Format("2006-01-02T15:04:05.000Z") ||
-		!strings.Contains(line.Text, session) || !strings.Contains(line.Text, "1m") {
+			dir: l.querySelector('.reported-dir').textContent, time: Date.parse(l.querySelector('time').getAttribute('datetime')),
+			age: l.querySelector('time').textContent, text: l.textContent}; })()`, row(reported)), &line)
+	// The age is a minute and a half when the page reads it, or a little
+	// more on a slow machine.
+	minutes := regexp.MustCompile(`^[12]m$`)
+	if line.Session != session || line.Event != "UserPromptSubmit" || line.Dir != dir || line.Time != at.UnixMilli() ||
+		!minutes.MatchString(line.Age) || !strings.Contains(line.Text, session) {
 		t.Fatalf("the reported row's line: %+v", line)
 	}
 	// A row without a report has its two lines only, as before.
@@ -80,7 +86,7 @@ func TestDashboardReportedSession(t *testing.T) {
 	var details map[string]string
 	b.eval(fmt.Sprintf(`Object.fromEntries([...document.querySelectorAll('.details [data-host-details=%q] [data-field]')].map(f => [f.dataset.field, (f.querySelector('dd') ?? f).textContent]))`, reported), &details)
 	if details["reportedSession"] != session || details["reportedDir"] != dir || details["reportedEvent"] != "UserPromptSubmit" ||
-		details["reportedAt"] != "1m" || !strings.Contains(details["note"], "does not judge its state") {
+		!minutes.MatchString(details["reportedAt"]) || !strings.Contains(details["note"], "does not judge its state") {
 		t.Fatalf("the reported pane's details: %q", details)
 	}
 	b.noStateFor(reported, "the reported pane opened")

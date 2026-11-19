@@ -456,13 +456,13 @@ function HostRow(props: {
         // What the session's own hooks reported, as they said it: no state.
         <div className="line2 reported" data-reported={r.session}>
           <span className="reported-event">{r.event}</span>
-          <time className="age" dateTime={r.at}>
+          <time className="age" dateTime={r.at} title={t("host.reportedAt")}>
             {age(r.at, now)}
           </time>
-          <span className="reported-session" title={t("host.reportedSession")}>
+          <span className="reported-session" title={t("host.reportedSessionTitle", { session: r.session })}>
             {r.session}
           </span>
-          <span className="reported-dir" title={t("host.reportedDir")}>
+          <span className="reported-dir" title={t("host.reportedDirTitle", { dir: r.dir })}>
             {r.dir}
           </span>
         </div>
