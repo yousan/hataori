@@ -148,10 +148,11 @@ func TestDashboardTerminalFillsPane(t *testing.T) {
 	b.call("Network.enable", map[string]any{})
 	b.call("Page.addScriptToEvaluateOnNewDocument", map[string]any{"source": `window.__csp = [];
 		document.addEventListener('securitypolicyviolation', e => window.__csp.push(e.violatedDirective + ' ' + e.blockedURI));`})
-	window := func(w, h int) {
+	dense := func(w, h int, dpr float64) {
 		t.Helper()
-		b.call("Emulation.setDeviceMetricsOverride", map[string]any{"width": w, "height": h, "deviceScaleFactor": 1, "mobile": false})
+		b.call("Emulation.setDeviceMetricsOverride", map[string]any{"width": w, "height": h, "deviceScaleFactor": dpr, "mobile": false})
 	}
+	window := func(w, h int) { t.Helper(); dense(w, h, 1) }
 	window(1400, 900)
 	link, err := c.SignInLink(ctx)
 	if err != nil {
@@ -196,6 +197,17 @@ func TestDashboardTerminalFillsPane(t *testing.T) {
 	window(1400, 600)
 	if f := check("a short, wide pane"); f.widthBound() {
 		t.Fatalf("the short, wide pane is filled across: %+v", f)
+	}
+	// Screens of other pixel densities, where rows are drawn in other
+	// steps; the window keeps its CSS size. A fit made for one density
+	// can go past the pane on the other.
+	for _, d := range []struct {
+		w   int
+		dpr float64
+	}{{1400, 2}, {1401, 2}, {1401, 1}, {1401, 1.25}, {1400, 1.25}, {1400, 1}} {
+		dense(d.w, 600, d.dpr)
+		b.until("the screen's density", fmt.Sprintf(`devicePixelRatio === %v`, d.dpr))
+		check(fmt.Sprintf("%d px wide at density %v", d.w, d.dpr))
 	}
 	window(1400, 900)
 	b.click(`[data-tool=details]`)

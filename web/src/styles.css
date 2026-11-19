@@ -674,7 +674,8 @@ body {
 
 /* A fitted terminal: the box takes what the pane leaves, and the font is
    sized so that the grid fills its width or its height (fit.ts). The
-   terminal scrolls its own scrollback. */
+   terminal scrolls its own scrollback; a grid too big even at the smallest
+   font scrolls in the box. */
 .terminal-view.fit {
   display: flex;
   flex-direction: column;
@@ -685,7 +686,7 @@ body {
   flex: 1;
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .no-process {
