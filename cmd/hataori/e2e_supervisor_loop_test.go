@@ -85,15 +85,20 @@ func TestLoopGuard(t *testing.T) {
 	}
 	ctx := context.Background()
 	a, _ := wt.worker(t, owner, "c1", "a", "reply ping")
-	b, _ := wt.worker(t, owner, "c1", "b", "reply pong")
+	b, first := wt.worker(t, owner, "c1", "b", "reply pong")
 	if a != 2 || b != 3 {
 		t.Fatalf("the workers are %d and %d; the relay is set up for 2 and 3", a, b)
 	}
+	// Both first turn ends are read before the quiet period is moved on, so
+	// the first wake names both. Otherwise one of them can fold into the
+	// wake of its first relayed turn, which is then its first appearance and
+	// its first cycle at once, and it is named in 3 wakes, not 4 (#450).
+	wt.read(t, first)
 
-	// Each thread is named in the wake of its first turn and in three more,
-	// one per cycle, the last of which tells a person; after that, the turn
-	// ends the supervisor's relays make wake nothing. (Whether the two
-	// threads share a wake depends on when their turns end.)
+	// Each thread is named in the first wake and in three more, one per
+	// cycle, the last of which tells a person; after that, the turn ends the
+	// supervisor's relays make wake nothing. (Whether the two threads share
+	// a later wake depends on when their relayed turns end.)
 	wt.settle(t, "the guard to stop both threads", func() bool { return len(wt.loopNotices(sv)) >= 2 })
 	all := wt.wakes(t, sv.ID)
 	named := func(ds []string, id control.ThreadID) int {
@@ -153,7 +158,7 @@ func TestLoopGuard(t *testing.T) {
 
 	// A person's input in b: b wakes the supervisor again. (Its relay to a
 	// ends a turn of a, which still wakes nothing.)
-	n = endsOf(b)
+	n, na := endsOf(b), endsOf(a)
 	if err := owner.Send(ctx, b, "person-b", control.Input{Text: "reply a person was here"}, control.Refuse); err != nil {
 		t.Fatal(err)
 	}
@@ -165,6 +170,14 @@ func TestLoopGuard(t *testing.T) {
 	}
 	if n := len(wt.loopNotices(sv)); n != 2 {
 		t.Fatalf("%d loop notices, want still 2", n)
+	}
+	// That wake makes the supervisor relay to a. The relayed turn of a ends,
+	// and the waker reads it, while a is still stopped: after the reset below
+	// it would wake the supervisor itself (#450).
+	wt.read(t, wt.ended(t, a, na+1))
+	wt.settle(t, "the relay to a", func() bool { return true })
+	if got := wt.wakes(t, sv.ID); len(got) != before+2 {
+		t.Fatalf("%d wakes after the relay to %d, which is stopped; want still %d", len(got), a, before+2)
 	}
 
 	// A person's message in the supervisor's thread: a wakes it again too.
