@@ -1,10 +1,12 @@
 // Which threads the tree, the All threads table and the narrow list show:
-// the active ones, or all of them. The choice is kept in this browser
-// across reloads. It hides rows only: the state counts, the tabs, the
-// details panel and the status bar still see every thread.
+// the active ones, or all of them; and, with the same choice, whether the
+// tree and the narrow list show tmux panes that are idle shells. The
+// choice is kept in this browser across reloads. It hides rows only: the
+// state counts, the tabs, the details panel and the status bar still see
+// every thread and every terminal.
 
 import { useState } from "react";
-import type { State, ThreadInfo } from "./api";
+import type { HostTerminal, State, ThreadInfo } from "./api";
 import { t } from "./catalog";
 
 export type Show = "active" | "all";
@@ -23,6 +25,29 @@ export function shows(show: Show, x: ThreadInfo): boolean {
 // hiddenCount is how many of ts the choice show hides.
 export function hiddenCount(show: Show, ts: readonly ThreadInfo[] | null): number {
   return (ts ?? []).filter((x) => !shows(show, x)).length;
+}
+
+// shells are the commands of a pane that is only a shell, as the host
+// reports them; a login shell's leading "-" is left out first.
+const shells: ReadonlySet<string> = new Set(["sh", "bash", "zsh", "fish", "dash", "ksh", "mksh", "tcsh", "csh", "nu"]);
+
+// idleFor is how long a window must have shown no activity for its shell
+// pane to be idle: a day.
+const idleFor = 24 * 60 * 60 * 1000;
+
+// idleShell reports whether h is a tmux pane whose command is a shell and
+// whose window's last activity is more than a day before now. A terminal
+// outside tmux, and a pane whose activity is not known, never is.
+export function idleShell(h: HostTerminal, now: number): boolean {
+  if (!h.tmux || !h.activity) return false;
+  const at = Date.parse(h.activity);
+  return shells.has((h.process ?? "").replace(/^-/, "")) && Number.isFinite(at) && now - at > idleFor;
+}
+
+// showsHost reports whether a host terminal's row is shown under the
+// choice show.
+export function showsHost(show: Show, h: HostTerminal, now: number): boolean {
+  return show === "all" || !idleShell(h, now);
 }
 
 function saved(): Show {

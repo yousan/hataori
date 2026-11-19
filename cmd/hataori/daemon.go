@@ -195,6 +195,9 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 			hostTermsHook(lister)
 		}
 		c.HostTerms = lister
+		if hostTermsSource != nil {
+			c.HostTerms = hostTermsSource
+		}
 		owner |= control.OpHost
 	}
 	srv, err := wire.Listen(abs, c.As(control.Caller{Principal: control.Principal(cfg.Owner), Scopes: keys, May: owner}), lg)
@@ -431,6 +434,11 @@ var dashboardHook func(*control.Caller)
 // hostTermsHook, when a test sets it, changes how the daemon lists the
 // host's terminals, such as to read a tmux server of the test's own.
 var hostTermsHook func(*hostterm.Lister)
+
+// hostTermsSource, when a test sets it, is what the daemon lists the
+// host's terminals from instead of tmux and the process table, such as a
+// list the test changes as it goes.
+var hostTermsSource core.HostTerms
 
 // supervisorHook, when a test sets it, is given what issues a supervisor's
 // token for a scope, and what revokes one.

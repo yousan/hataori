@@ -15,7 +15,7 @@ import { HostDetails, HostPane } from "./HostViews";
 import { active, allTab, close, hostOf, hostTab, initialTabs, panes, type Split, type TabKey, type Tabs, threadOf, threadTab, view } from "./tabs";
 import { useTheme } from "./theme";
 import { displayTitle } from "./format";
-import { hiddenCount, useShow } from "./show";
+import { hiddenCount, showsHost, useShow } from "./show";
 import { type Density, Tree } from "./Tree";
 
 const densityKey = "hataori.density";
@@ -44,7 +44,7 @@ export function App() {
   const [split, setSplit] = useState<Split>(1);
   const [layout, setLayout] = useLayout();
   const [showing, setShowing] = useShow();
-  const hidden = hiddenCount(showing, d.threads);
+  const hiddenThreads = hiddenCount(showing, d.threads);
 
   const pickDensity = (x: Density) => {
     setDensity(x);
@@ -73,6 +73,11 @@ export function App() {
   const chooseView = (k: TabKey) => (v: View) => setViews((have) => new Map(have).set(k, v));
   const current = threadOf(active(tabs));
   const hosts = useHostTerminals();
+  // The rows of host terminals the tree and the narrow list show: idle
+  // shell panes are hidden with asleep threads, and counted with them. A
+  // pane's tab and details still find it in hosts.
+  const shownHosts = hosts === null ? null : hosts.filter((h) => showsHost(showing, h, now));
+  const hidden = hiddenThreads + (hosts?.length ?? 0) - (shownHosts?.length ?? 0);
   const host = (id: string) => hosts?.find((h) => hostID(h) === id);
   const currentHost = hostOf(active(tabs));
   const openHost = (device: string) => setTabs((s) => view(s, hostTab(device)));
@@ -184,11 +189,12 @@ export function App() {
               attention={d.attention}
               now={now}
               onOpen={openNarrow}
-              hosts={hosts}
+              hosts={shownHosts}
               onOpenHost={openNarrowHost}
               show={showing}
               onShow={setShowing}
               hidden={hidden}
+              hiddenThreads={hiddenThreads}
             />
           )}
         </div>
@@ -218,8 +224,8 @@ export function App() {
             selected={current}
             onSelect={(n) => setTabs((s) => view(s, threadTab(n)))}
             show={showing}
-            hidden={hidden}
-            hosts={hosts}
+            hidden={hiddenThreads}
+            hosts={shownHosts}
             selectedHost={currentHost}
             onOpenHost={openHost}
           />
