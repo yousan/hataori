@@ -1544,9 +1544,17 @@ type Codec interface {
 	// codec rebuilt after a restart or a failed commit gets the committed
 	// lines step by step in the same order (the store keeps each step's
 	// ranges). The Claude Code codec opens nothing for a call of a turn
-	// already interrupted.
+	// already interrupted. The Codex codec (codex app-server on pipes, one
+	// JSON-RPC message per line) writes initialize, initialized and
+	// thread/start or thread/resume from Open; a codec rebuilt after a
+	// restart was never opened, so it tells responses apart by their shape
+	// and numbers its own requests above every id it has read.
 	Decode(src Source, line []byte) Actions
-	Input(in Input) (Actions, error)        // a user message; TurnStarted returns its ID
+	// A user message; TurnStarted returns its ID. Input given while a turn
+	// runs is held until the turn ends (both adapters, for now). The Codex
+	// codec ties a turn to its input by the turn/start it wrote, or, for an
+	// input written before a restart, by the text of the turn's user message.
+	Input(in Input) (Actions, error)
 	Answer(a Answer) (Actions, error)       // to an approval or a question
 	Interrupt() Actions
 	// Tick gives the codec the time for its deadlines (input not reported
