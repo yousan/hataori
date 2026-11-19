@@ -35,6 +35,14 @@ type Server struct {
 	// and its Peer, whose Done is closed when it breaks or becomes a
 	// stream. It must not block.
 	Peered func(api control.API, p *Peer)
+	// NotOwner, when set before Serve, is asked about the process at the
+	// other end of a connection whose hello has no token, by its pid: a
+	// name, such as a plugin's, when that process may not have the
+	// owner's connection, else "". Such a connection is refused and
+	// logged with the name. It guards against a client that forgot its
+	// token; it is no boundary against a process of the same OS user,
+	// which can leave what makes it known (design, section 7.3).
+	NotOwner func(pid int) string
 
 	uid    int // the OS user allowed to connect
 	ln     *net.UnixListener
@@ -169,6 +177,17 @@ func (s *Server) serveConn(ctx context.Context, c *net.UnixConn) {
 		return
 	}
 	api := s.API
+	if h.Token == "" && s.NotOwner != nil {
+		// A pid that cannot be read refuses nothing: this is a guard
+		// against a mistake, and an owner's command must keep working.
+		if pid, perr := peerPID(c); perr == nil && pid > 0 {
+			if who := s.NotOwner(pid); who != "" {
+				s.Log.Warn("control connection refused", "reason", "no token, from a process of a plugin", "plugin", who, "pid", pid)
+				enc.Encode(hello{Version: Version, Error: "connection refused: a plugin connects with its token (HATAORI_TOKEN), not as the owner"})
+				return
+			}
+		}
+	}
 	if h.Token != "" {
 		sum := sha256.Sum256([]byte(h.Token))
 		s.mu.Lock()

@@ -1,6 +1,7 @@
 package wire
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -332,4 +334,78 @@ func TestAtLeast(t *testing.T) {
 			t.Errorf("atLeast(%q, 2.2) = %v", x.v, got)
 		}
 	}
+}
+
+// A connection without a token from a process NotOwner names is refused,
+// and the log line names it; NotOwner is asked the connecting process's
+// pid. Without a name, and with a token, the connection is served as
+// before.
+func TestNotOwner(t *testing.T) {
+	root := t.TempDir()
+	c, owner := newCore(t, root)
+	var log bytes.Buffer
+	var mu sync.Mutex
+	srv, err := Listen(root, owner, slog.New(slog.NewTextHandler(lockedBuffer{&mu, &log}, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var asked []int
+	refuse := true
+	srv.NotOwner = func(pid int) string {
+		mu.Lock()
+		defer mu.Unlock()
+		asked = append(asked, pid)
+		if refuse {
+			return "forgetful"
+		}
+		return ""
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go srv.Serve(ctx)
+
+	if _, err := Dial(root); err == nil || !strings.Contains(err.Error(), "a plugin connects with its token") {
+		t.Fatalf("a process NotOwner names: %v, want refused", err)
+	}
+	mu.Lock()
+	if len(asked) != 1 || asked[0] != os.Getpid() || !strings.Contains(log.String(), "plugin=forgetful") {
+		t.Fatalf("asked %v, own pid %d; log %s", asked, os.Getpid(), log.String())
+	}
+	mu.Unlock()
+
+	token, err := srv.Issue(c.As(control.Caller{Principal: "p", Scopes: []string{"s"}, May: control.OpRead}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	limited, err := DialToken(root, token)
+	if err != nil {
+		t.Fatalf("with a token: %v", err)
+	}
+	limited.Close()
+	mu.Lock()
+	n := len(asked)
+	refuse = false
+	mu.Unlock()
+	if n != 1 {
+		t.Fatalf("NotOwner was asked about a connection with a token")
+	}
+	cl, err := Dial(root)
+	if err != nil {
+		t.Fatalf("a process NotOwner does not name: %v", err)
+	}
+	defer cl.Close()
+	if _, err := cl.Threads(ctx, control.Filter{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type lockedBuffer struct {
+	mu *sync.Mutex
+	b  *bytes.Buffer
+}
+
+func (l lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
 }
