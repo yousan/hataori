@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/yousan/hataori/internal/agent"
 )
@@ -159,14 +160,15 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 		// Pasted before a restart: its prompt is still to come.
 		// Nothing is written for it, Enter neither: if the restart came
 		// between the paste and its Enter, it ends "not delivered".
-		text := normalize(cleanPaste(in.Text))
+		typed := c.pasteText(in.Text)
+		text := normalize(typed)
 		c.pasted = append(c.pasted, queued{id: in.ID, text: text})
 		if c.sent == nil {
-			c.sent = &sentInput{text: text, typed: cleanPaste(in.Text), id: in.ID, pressed: true}
+			c.sent = &sentInput{text: text, typed: typed, id: in.ID, pressed: true}
 		}
 		return Actions{}, nil
 	}
-	c.queue = append(c.queue, queued{id: in.ID, text: cleanPaste(in.Text)})
+	c.queue = append(c.queue, queued{id: in.ID, text: c.pasteText(in.Text)})
 	return c.number(c.flush()), nil
 }
 
@@ -180,6 +182,30 @@ const (
 	confirm    = "\r"   // Enter
 	stopKey    = "\x1b" // Escape
 )
+
+// commandPrefix goes before an input of a confined session that the CLI
+// would read as one of its commands: one that starts with "!" (its shell
+// mode runs the rest, also under --restricted) or "/" (its own commands,
+// such as /add-dir, which widens the directories the file tools may use).
+// The CLI takes the input as a prompt then. A space would not do: the CLI
+// trims it when it puts an interrupted prompt back in the box.
+const commandPrefix = "(message) "
+
+// pasteText is what is pasted for text: without the paste markers, and in
+// a confined session, with commandPrefix before a command.
+func (c *codec) pasteText(text string) string {
+	text = cleanPaste(text)
+	if c.spec.Confine == nil {
+		return text
+	}
+	// Spaces, and characters such as a zero-width space, which the CLI
+	// dropped before "/add-dir", do not count as the start.
+	first := strings.TrimLeftFunc(text, func(r rune) bool { return unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) })
+	if strings.HasPrefix(first, "!") || strings.HasPrefix(first, "/") {
+		return commandPrefix + text
+	}
+	return text
+}
 
 // cleanPaste removes the bracketed-paste markers from text, so that text
 // cannot end the paste early and have the rest read as keys.
