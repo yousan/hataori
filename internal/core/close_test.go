@@ -390,6 +390,10 @@ func (w dirWorkspaces) Make(context.Context, control.ThreadID, string, func(Plac
 func (dirWorkspaces) Adopt(context.Context, control.ThreadID, Placement) (string, bool, error) {
 	return "", false, nil
 }
+
+func (dirWorkspaces) Empty(context.Context, control.ThreadID) (string, error) {
+	return "", errors.New("no confined threads here")
+}
 func (dirWorkspaces) State(context.Context, string) (control.WorkspaceState, error) {
 	return control.WorkspaceState{}, nil
 }

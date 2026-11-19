@@ -169,7 +169,9 @@ func (c *Core) RemoveClosed(ctx context.Context, age time.Duration) (int, error)
 		return 0, errors.New("core: removal pass: no age set")
 	}
 	since := c.now().Add(-age).UnixMilli()
-	rows, err := c.Store.DB.QueryContext(ctx, `SELECT t.id FROM threads t WHERE t.state = ? AND t.updated_at <= ?
+	// A thread started confined has a directory of its own, which nothing
+	// removes: the pass does not try.
+	rows, err := c.Store.DB.QueryContext(ctx, `SELECT t.id FROM threads t WHERE t.state = ? AND t.updated_at <= ? AND t.confined = 0
 		AND NOT EXISTS (SELECT 1 FROM events e WHERE e.thread_id = t.id AND e.kind = ? AND e.time > ?
 			AND json_extract(CAST(e.data AS TEXT), '$.trigger') = ?)
 		ORDER BY t.id`, string(control.Closed), since, string(KindRemovalRefused), since, ByClosedAge)

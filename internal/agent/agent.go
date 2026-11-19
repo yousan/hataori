@@ -57,12 +57,22 @@ type Health struct {
 	Detail    string // why not, when either is false
 }
 
+// CheapModel is implemented by an adapter that can name its cheapest model:
+// the model of a supervisor whose config names none (design, section 7.1).
+type CheapModel interface {
+	CheapModel() string
+}
+
 // Launch is everything the session host needs to start an agent.
 type Launch struct {
 	Argv     []string
 	Env      []string
 	Terminal bool              // run on a pseudo-terminal instead of pipes
 	Files    map[string][]byte // written into the session's state directory first
+	// Confined says the launch confines the session as Spec.Confine asks.
+	// A confined spec whose launch does not say so is never started, so an
+	// adapter that knows nothing of confinement refuses it.
+	Confined bool
 }
 
 // Source says where a line came from: Output (the agent's output on pipes),
@@ -137,6 +147,27 @@ type Spec struct {
 	Effort       string
 	Instructions string // appended to the agent's own
 	Approvals    Policy // allow everything, or ask in chat
+	// Confine, when set, starts the session confined (design, section
+	// 7.1): no shell, no subagent and no other tool that runs a command,
+	// reaches the network or wakes the agent later; file tools only in Dir;
+	// and no MCP servers but Confine.MCP, none of the user's, the project's
+	// or a plugin's. An adapter that cannot do all of it refuses the launch,
+	// and an ordinary spec leaves it nil.
+	Confine *Confinement `json:",omitempty"`
+}
+
+// Confinement is what a confined session may use besides its file tools.
+type Confinement struct {
+	// MCP are the session's only MCP servers, each started on stdio. They
+	// may carry credentials for one launch, so the runner never stores them.
+	MCP []MCPServer
+}
+
+// MCPServer is an MCP server the agent starts on stdio.
+type MCPServer struct {
+	Name string   // the name its tools are listed under
+	Argv []string // the command and its arguments
+	Env  []string // NAME=value, added to the agent's environment for it
 }
 
 // Policy says what happens to the agent's permission requests.

@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -67,6 +68,10 @@ type workspaceDirs string
 
 func (workspaceDirs) Adopt(context.Context, control.ThreadID, core.Placement) (string, bool, error) {
 	return "", false, nil
+}
+
+func (workspaceDirs) Empty(context.Context, control.ThreadID) (string, error) {
+	return "", errors.New("no confined threads here")
 }
 
 func (workspaceDirs) State(context.Context, string) (control.WorkspaceState, error) {

@@ -110,6 +110,10 @@ func (fakeWorkspaces) Adopt(context.Context, control.ThreadID, Placement) (strin
 	return "", false, nil
 }
 
+func (fakeWorkspaces) Empty(context.Context, control.ThreadID) (string, error) {
+	return "", errors.New("no confined threads here")
+}
+
 // State reports one more uncommitted file than the length of dir, so a test
 // sees which directory was asked about.
 func (fakeWorkspaces) State(_ context.Context, dir string) (control.WorkspaceState, error) {

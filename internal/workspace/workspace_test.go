@@ -259,3 +259,56 @@ func TestAdoptAPlacementOfTheReleaseBefore(t *testing.T) {
 		}
 	}
 }
+
+// Empty makes a confined thread's directory empty, outside the workspaces
+// directory, and takes again only an empty directory of its own at its
+// place: a directory with something in it, or a link at its place or at
+// confined/, is refused and left exactly as it is.
+func TestEmptyNeverTakesWhatHoldsSomething(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	m := Maker{Root: root}
+	dir, err := m.Empty(ctx, 1)
+	if err != nil || dir != filepath.Join(root, ConfinedDir, "1") {
+		t.Fatalf("Empty: %q, %v", dir, err)
+	}
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+		t.Fatalf("the directory: %v, %v", entries, err)
+	}
+	if rel, _ := filepath.Rel(filepath.Join(root, Dir), dir); !strings.HasPrefix(rel, "..") {
+		t.Fatalf("%s is inside the workspaces directory", dir)
+	}
+	// Made before a daemon died, and still empty: taken again.
+	if again, err := m.Empty(ctx, 1); err != nil || again != dir {
+		t.Fatalf("Empty again: %q, %v", again, err)
+	}
+	// Someone's file in it: refused, and the file stays.
+	notes := filepath.Join(dir, "notes.txt")
+	os.WriteFile(notes, []byte("work\n"), 0o600)
+	if _, err := m.Empty(ctx, 1); !errors.Is(err, ErrExists) {
+		t.Fatalf("a directory with a file: %v, want refused", err)
+	}
+	if b, err := os.ReadFile(notes); err != nil || string(b) != "work\n" {
+		t.Fatalf("the file after the refusal: %q, %v", b, err)
+	}
+	// A link at its place, to an empty directory elsewhere: refused.
+	elsewhere := t.TempDir()
+	if err := os.Symlink(elsewhere, filepath.Join(root, ConfinedDir, "2")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Empty(ctx, 2); err == nil {
+		t.Fatal("a link at the directory's place was taken")
+	}
+	// confined/ itself a link: refused, and nothing is made where it points.
+	other := Maker{Root: t.TempDir()}
+	target := t.TempDir()
+	if err := os.Symlink(target, filepath.Join(other.Root, ConfinedDir)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.Empty(ctx, 1); err == nil {
+		t.Fatal("a link in place of confined/ was followed")
+	}
+	if entries, _ := os.ReadDir(target); len(entries) != 0 {
+		t.Fatalf("Empty made %v where the link points", entries)
+	}
+}

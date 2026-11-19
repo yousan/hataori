@@ -109,11 +109,11 @@ func (a *Adapter) configDir() string {
 }
 
 // statusLineSetting is hataori's statusLine for a session in dir whose
-// state directory is stateDir.
-func (a *Adapter) statusLineSetting(dir, stateDir string) statusLine {
+// state directory is stateDir; with user, it shows the user's own too.
+func (a *Adapter) statusLineSetting(dir, stateDir string, user bool) statusLine {
 	cmd := shellQuote(a.hataori) + " statusline --last " + shellQuote(filepath.Join(stateDir, statusLineLast))
 	s := statusLine{Type: "command", RefreshInterval: statusLineRefresh}
-	if u, ok := a.userStatusLine(dir); ok {
+	if u, ok := a.userStatusLine(dir); ok && user {
 		cmd += " --run " + shellQuote(u.Command)
 		s.Padding = u.Padding
 		if u.RefreshInterval > 0 && u.RefreshInterval < s.RefreshInterval {
