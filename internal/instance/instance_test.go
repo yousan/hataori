@@ -341,6 +341,32 @@ func TestSecondProcessIsRefused(t *testing.T) {
 	in.Close()
 }
 
+// A process started by the one holding the instance has a copy of the
+// lock's descriptor until it execs. Close releases the lock all the same,
+// so the instance can be opened again at once.
+func TestCloseReleasesTheLockAChildHasACopyOf(t *testing.T) {
+	root := newRoot(t, validConfig)
+	in, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// This child keeps its copy for as long as it runs, as a child does for
+	// the moment between its fork and its exec.
+	child := exec.Command("sleep", "60")
+	child.ExtraFiles = []*os.File{in.lock}
+	if err := child.Start(); err != nil {
+		in.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { child.Process.Kill(); child.Wait() })
+	in.Close()
+	again, err := Open(root)
+	if err != nil {
+		t.Fatalf("Open after Close, while a child has a copy of the lock's descriptor: %v", err)
+	}
+	again.Close()
+}
+
 // The host's terminals stay off unless the config turns them on.
 // The terminal size is 0×0, for the host's 80×24, without the key, and
 // the edges of the range are taken.
