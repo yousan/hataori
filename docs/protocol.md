@@ -221,7 +221,7 @@ Result: string
 
 Interrupts the thread's running turn. Nothing happens when no turn runs.
 
-Since 3.14 a call may name the turn to stop, by the number its `turn_started` event gives it. The daemon then interrupts nothing unless that turn is the thread's running turn, and it checks this in the same step as the interrupt. So a call made for a turn that the daemon has seen end never stops the turn after it. A call that names a turn which is not running is answered `refused`, and nothing changes. A daemon before 3.14 ignores the field and interrupts whatever turn runs, so a client that names a turn checks that the daemon speaks 3.14 or later; the project's client refuses to send it otherwise.
+Since 3.14 a call may name the turn to stop, by the number its `turn_started` event gives it. The daemon then interrupts nothing unless that turn is the thread's running turn, and it checks this in the same step as the interrupt. So a call made for a turn that the daemon has seen end never stops the turn after it. The daemon sees a turn end when it reads the agent's output, every 50 milliseconds: a turn that hataori did not start (one typed at the agent's terminal, or one the agent starts by itself after a background task) and that begins within that time after the named turn ended can still get the interrupt. A call that names a turn which is not running is answered `refused`, and nothing changes. A daemon before 3.14 ignores the field and interrupts whatever turn runs, so a client that names a turn checks that the daemon speaks 3.14 or later; the project's client refuses to send it otherwise.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|

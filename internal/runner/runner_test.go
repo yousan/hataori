@@ -595,3 +595,20 @@ func TestWatchdogLeavesATurnThatStartedInItsLastPoll(t *testing.T) {
 		}
 	})
 }
+
+// The watchdog still stops a session whose turn does not end after the
+// interrupt, now under the runner's lock (#494).
+func TestWatchdogStopsATurnThatIgnoresTheInterrupt(t *testing.T) {
+	forms(t, func(t *testing.T, terminal bool) {
+		f := newFixture(t, options{terminal: terminal, interrupt: time.Second})
+		f.start("deaf 60s\nreply late")
+		waitFor(t, "the turn", 15*time.Second, f.has("turn_started", 1))
+		if err := owner(f.core).Stop(context.Background(), thread, 0); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "the end of the turn", 15*time.Second, f.has("turn_ended", 1))
+		if !strings.Contains(f.log.String(), "stopping the session") {
+			t.Fatalf("the session was not stopped by the watchdog: %s", f.log.String())
+		}
+	})
+}

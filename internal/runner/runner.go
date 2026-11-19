@@ -1822,6 +1822,20 @@ func (r *Runner) Interrupt(ctx context.Context, id, named int64) error {
 			time.Sleep(r.poll())
 		}
 		r.at("interrupt watch: stop")
+		// Once more, under the lock the runner's steps hold when they end a
+		// turn, and held until the session is stopped: a turn that ended
+		// in the last poll, and the turn after it, are left running (#494).
+		lv.mu.Lock()
+		defer lv.mu.Unlock()
+		var state string
+		if r.Store.DB.QueryRow(`SELECT state FROM sessions WHERE id = ?`, id).Scan(&state) == nil &&
+			control.State(state) != control.Running {
+			return
+		}
+		var ended sql.NullInt64
+		if r.Store.DB.QueryRow(`SELECT ended_at FROM turns WHERE id = ?`, turn).Scan(&ended) == nil && ended.Valid {
+			return
+		}
 		if lv.taken != nil {
 			// A window a person started: nothing hataori does ends its
 			// process. The turn ends when the agent reports it.
