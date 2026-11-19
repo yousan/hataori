@@ -39,6 +39,19 @@ func TestRealCodex(t *testing.T) {
 	if exec.Command(wrapper, "login", "status").Run() != nil {
 		t.Skip("codex is not signed in")
 	}
+	const cleanupMargin = 2 * time.Minute
+	deadline, ok := t.Deadline()
+	if !ok {
+		t.Fatal("the live check requires a go test timeout to reserve time for cleanup")
+	}
+	workDeadline := deadline.Add(-cleanupMargin)
+	minimum := 20 * time.Minute
+	if os.Getenv("HATAORI_REAL_CODEX_LONG") == "1" {
+		minimum += 35 * time.Minute
+	}
+	if time.Until(workDeadline) < minimum {
+		t.Fatalf("insufficient time for live steps and cleanup: need at least %s plus %s cleanup; use the timeout in docs/testing.md", minimum, cleanupMargin)
+	}
 	before := codexSettings(t)
 	t.Cleanup(func() {
 		if after := codexSettings(t); after != before {
@@ -52,7 +65,7 @@ func TestRealCodex(t *testing.T) {
 		cfg["login_relay"] = false
 		cfg["adapters"] = map[string]any{"codex": map[string]any{"command": wrapper}}
 	})
-	p.deadline = time.Now().Add(55 * time.Minute)
+	p.deadline = workDeadline
 	var daemonStart uint64
 	defer func() {
 		if daemonStart == 0 && p.daemon != nil {
@@ -128,10 +141,14 @@ func TestRealCodex(t *testing.T) {
 	if daemonStart == 0 {
 		t.Fatal("cannot read daemon start time")
 	}
+	var th surface.Conversation
 	step := func(name string, f func(*testing.T)) bool {
 		start := time.Now()
 		return t.Run(name, func(t *testing.T) {
 			defer func() {
+				if t.Failed() && th.Thread != "" {
+					p.dump(t, th)
+				}
 				status := "ok"
 				if t.Failed() {
 					status = "FAIL"
@@ -140,19 +157,22 @@ func TestRealCodex(t *testing.T) {
 				}
 				t.Logf("%s: %s (%s)", name, status, time.Since(start).Round(time.Millisecond))
 			}()
+			if name != "30-minute turn" || os.Getenv("HATAORI_REAL_CODEX_LONG") == "1" {
+				needed := 3 * time.Minute
+				if name == "30-minute turn" {
+					needed = 35 * time.Minute
+				}
+				if time.Until(p.deadline) < needed {
+					t.Fatalf("insufficient time for %s: need %s before the cleanup margin", name, needed)
+				}
+			}
 			f(t)
 		})
 	}
-	var th surface.Conversation
 	var session, workspace string
 	if !step("start", func(t *testing.T) {
 		p.in(c1, "!go repo:"+bareRepo(t)+" Run the shell command `true`, then reply with just the word: ok")
 		th = p.thread(t, 0)
-		t.Cleanup(func() {
-			if t.Failed() {
-				p.dump(t, th)
-			}
-		})
 		eventually(t, "first answer", p.within(3*time.Minute), func() bool {
 			return len(p.turnsEnded(t, th)) == 1 && p.replies(th, "ok") > 0 && len(p.list(t, "tool_started", th)) > 0
 		})
@@ -178,7 +198,7 @@ func TestRealCodex(t *testing.T) {
 	}
 	if !step("question", func(t *testing.T) {
 		before := len(p.list(t, "request", th))
-		p.in(th, "Use your question tool to ask me which colour I like, and wait for my answer. Then reply with just that colour.")
+		p.in(th, "Use request_user_input_async to ask the user which colour they like, then wait for the answer and reply with it. Do not do anything else.")
 		eventually(t, "question posted", p.within(3*time.Minute), func() bool {
 			requests := p.list(t, "request", th)
 			if len(requests) <= before {
@@ -275,7 +295,13 @@ func TestRealCodex(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		driveCodexApproval(t, adapter, agent.Spec{Dir: dir, Model: "gpt-6-luna", Effort: "low", Approvals: agent.AskInChat}, true, 1, 1, 3*time.Minute)
+		driveCodexApproval(t, adapter, agent.Spec{Dir: dir, Model: "gpt-6-luna", Effort: "low", Approvals: agent.AskInChat}, codexApprovalOptions{
+			inputs: []agent.Input{{ID: "first", Text: "Run exactly the shell command `touch approved.txt` in the working directory, wait for it to finish, then reply done."}},
+			allow:  true, requests: 1, timeout: p.within(3 * time.Minute),
+		})
+		if _, err := os.Stat(filepath.Join(dir, "approved.txt")); err != nil {
+			t.Fatalf("approved command did not create approved.txt: %v", err)
+		}
 	}) {
 		return
 	}
@@ -285,7 +311,7 @@ func TestRealCodex(t *testing.T) {
 		}
 		ends := len(p.turnsEnded(t, th))
 		start := time.Now()
-		p.in(th, "Run these three commands sequentially in the foreground, wait for each to finish before starting the next, and wait for all of them before replying: sleep 610; sleep 610; sleep 610. Then reply with just the word: longdone")
+		p.in(th, "Run these four commands sequentially in the foreground, wait for each to finish before starting the next, and wait for all of them before replying: sleep 480; sleep 480; sleep 480; sleep 480. Then reply with just the word: longdone")
 		eventually(t, "long turn", p.within(40*time.Minute), func() bool { return len(p.turnsEnded(t, th)) > ends })
 		if time.Since(start) < 30*time.Minute || len(p.turnsEnded(t, th)) != ends+1 || p.turnsEnded(t, th)[ends].Data["outcome"] != "completion" || p.replies(th, "longdone") != 1 {
 			t.Fatalf("duration %s, end events %d, answers %d", time.Since(start), len(p.turnsEnded(t, th))-ends, p.replies(th, "longdone"))

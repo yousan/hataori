@@ -40,8 +40,8 @@ Every acceptance criterion of phase 1 ([design, section 8](design/overview.md#ph
 ### The live check
 
 ```sh
-HATAORI_REAL_CODEX=1 go test -count=1 -run TestRealCodex -v -timeout 20m ./cmd/hataori
-HATAORI_REAL_CODEX=1 HATAORI_REAL_CODEX_LONG=1 go test -count=1 -run TestRealCodex -v -timeout 60m ./cmd/hataori
+HATAORI_REAL_CODEX=1 go test -count=1 -run TestRealCodex -v -timeout 40m ./cmd/hataori
+HATAORI_REAL_CODEX=1 HATAORI_REAL_CODEX_LONG=1 go test -count=1 -run TestRealCodex -v -timeout 75m ./cmd/hataori
 ```
 
 The check skips when Codex is not installed or is not signed in. It uses the installed CLI's existing login, model `gpt-6-luna` and effort `low`. Its named steps report their result and duration:
@@ -53,7 +53,7 @@ The check skips when Codex is not installed or is not signed in. It uses the ins
 5. Kill the test's daemon during a command, restart it, and check the answer and end event each appear once.
 6. Let the app-server sleep, then resume the same session and recall a word.
 7. Drive an approval through the adapter's `Answer` with `AskInChat`.
-8. With `HATAORI_REAL_CODEX_LONG=1`, wait for three foreground sleeps and check that the turn takes at least 30 minutes and ends once. Without the flag this step is skipped.
+8. With `HATAORI_REAL_CODEX_LONG=1`, wait for four foreground sleeps and check that the turn takes at least 30 minutes and ends once. Without the flag this step is skipped.
 
 The check cleans up processes it starts and never writes the user's Codex configuration. It compares the checksum of `config.toml` in the Codex home before and after the check; the adapter passes its trust override on the command line.
 
@@ -69,7 +69,7 @@ The check cleans up processes it starts and never writes the user's Codex config
 | Captures are in `testdata/` and the codec passes on them | `TestCapturedTools`, `TestApprovalsAskInChat`, `TestAsyncQuestions`, `TestInterruptCapture` (in `internal/agent/codex`) | — |
 
 
-Last run: 2026-11-19, codex-cli 0.163.0, Linux: passed in 10 s. With `thread/backgroundTerminals/clean` removed from the codec it failed at the 10-second check.
+Last run: not yet run with these steps.
 
 ## Claude Code
 

@@ -259,14 +259,25 @@ func TestCodexApprovalAnsweredThroughAnswerInChat(t *testing.T) {
 				t.Fatal(err)
 			}
 			spec := agent.Spec{Dir: temp, Approvals: agent.AskInChat}
-			driveCodexApproval(t, adapter, spec, scenario == "approval_accept", 2, 2, 30*time.Second)
+			driveCodexApproval(t, adapter, spec, codexApprovalOptions{
+				inputs: []agent.Input{{ID: "first", Text: "Run touch approved.txt"}, {ID: "second", Text: "create patch.txt"}},
+				allow:  scenario == "approval_accept", requests: 2, exact: true, timeout: 30 * time.Second,
+			})
 		})
 	}
 }
 
+type codexApprovalOptions struct {
+	inputs   []agent.Input
+	allow    bool
+	requests int
+	exact    bool
+	timeout  time.Duration
+}
+
 // driveCodexApproval runs the adapter's actual launch and exchanges codec bytes
 // over process pipes. Closing stdin lets the replay report response mismatches.
-func driveCodexApproval(t *testing.T, adapter agent.Adapter, spec agent.Spec, allow bool, wantRequests, wantTurns int, timeout time.Duration) {
+func driveCodexApproval(t *testing.T, adapter agent.Adapter, spec agent.Spec, opts codexApprovalOptions) {
 	t.Helper()
 	launch, err := adapter.Launch(spec)
 	if err != nil {
@@ -329,15 +340,15 @@ func driveCodexApproval(t *testing.T, adapter agent.Adapter, spec agent.Spec, al
 		}
 	}
 	write(codec.Open())
-	a, err := codec.Input(agent.Input{ID: "first", Text: "Run touch approved.txt"})
+	a, err := codec.Input(opts.inputs[0])
 	if err != nil {
 		t.Fatal(err)
 	}
 	write(a)
 	requests, turns := 0, 0
-	timer := time.NewTimer(timeout)
+	timer := time.NewTimer(opts.timeout)
 	defer timer.Stop()
-	for turns < wantTurns {
+	for turns < len(opts.inputs) {
 		select {
 		case line, ok := <-lines:
 			if !ok {
@@ -351,7 +362,7 @@ func driveCodexApproval(t *testing.T, adapter agent.Adapter, spec agent.Spec, al
 						t.Fatalf("unexpected request: %+v", e.Request)
 					}
 					requests++
-					reply, err := codec.Answer(agent.Answer{Request: e.Request.ID, Allow: allow})
+					reply, err := codec.Answer(agent.Answer{Request: e.Request.ID, Allow: opts.allow})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -362,8 +373,8 @@ func driveCodexApproval(t *testing.T, adapter agent.Adapter, spec agent.Spec, al
 						t.Fatalf("turn status %v", e.Status)
 					}
 					turns++
-					if turns < wantTurns {
-						next, err := codec.Input(agent.Input{ID: "second", Text: "create patch.txt"})
+					if turns < len(opts.inputs) {
+						next, err := codec.Input(opts.inputs[turns])
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -375,8 +386,11 @@ func driveCodexApproval(t *testing.T, adapter agent.Adapter, spec agent.Spec, al
 			t.Fatal("timed out waiting for approval turn")
 		}
 	}
-	if requests != wantRequests {
-		t.Fatalf("got %d approval requests, want %d", requests, wantRequests)
+	if (opts.exact && requests != opts.requests) || (!opts.exact && requests < opts.requests) {
+		if opts.exact {
+			t.Fatalf("got %d approval requests, want %d", requests, opts.requests)
+		}
+		t.Fatalf("got %d approval requests, want at least %d", requests, opts.requests)
 	}
 	if err := stdin.Close(); err != nil {
 		t.Fatal(err)
