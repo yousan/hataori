@@ -94,7 +94,7 @@ type State int
 const (
 	Unknown State = iota // the holder cannot tell, as before the agent was started
 	Running              // the agent runs, or the holder is finishing it
-	Exited               // the agent ended, and the holder recorded how
+	Exited               // the agent ended; Liveness.Status says how when the holder recorded it
 	Gone                 // the holder went away without recording an end
 )
 
@@ -107,6 +107,10 @@ type Liveness struct {
 // Ended reports whether the agent is definitely not running: it exited, or
 // its holder is gone.
 func (l Liveness) Ended() bool { return l.State == Exited || l.State == Gone }
+
+// ErrCannotStart is returned by Start of a holder whose Caps has no
+// CanStart.
+var ErrCannotStart = errors.New("holder: this holder does not start agents")
 
 // ErrNotOwned is returned by Stop for a window hataori did not start.
 var ErrNotOwned = errors.New("holder: hataori did not start this window")
