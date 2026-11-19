@@ -574,6 +574,23 @@ type HostTerminal struct {
 	Process  string     `json:"process,omitempty"`  // the command of its foreground process
 	Activity *time.Time `json:"activity,omitempty"` // its last output, when known
 	Tmux     *TmuxPane  `json:"tmux,omitempty"`     // absent for a terminal outside tmux
+	// Reported is what the hooks of an agent's session in this terminal
+	// reported, through the plugin a person installed (design, section
+	// 4.8); absent without them. Since 3.15.
+	Reported *ReportedSession `json:"reported,omitempty"`
+}
+
+// ReportedSession is what the hooks of a session that a person started in
+// their own window last reported. It holds no text of the session: no
+// prompt, message or tool input. Since 3.15.
+type ReportedSession struct {
+	Window  string    `json:"window"`           // the holder and its reference to the window, such as "tmux:<socket>,<server pid>,%3"
+	Agent   string    `json:"agent"`            // the adapter's name
+	Session string    `json:"session"`          // the agent's session id
+	Dir     string    `json:"dir"`              // the session's working directory
+	Event   string    `json:"event"`            // the last hook event's name
+	At      time.Time `json:"at"`               // when it was reported
+	Thread  *ThreadID `json:"thread,omitempty"` // the thread whose session this is, if any
 }
 
 // TmuxPane is where a HostTerminal is in tmux.

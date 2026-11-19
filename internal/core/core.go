@@ -1844,7 +1844,38 @@ func (a *api) HostTerminals(ctx context.Context) ([]control.HostTerminal, error)
 	if err != nil {
 		return nil, err
 	}
-	return a.c.HostTerms.List(ctx, owned)
+	list, err := a.c.HostTerms.List(ctx, owned)
+	if err != nil {
+		return nil, err
+	}
+	// A session a person started may be one of a thread's, opened again in
+	// their own window (design, section 4.8): the row names that thread.
+	for _, t := range list {
+		r := t.Reported
+		if r == nil {
+			continue
+		}
+		var id int64
+		err := a.c.Store.DB.QueryRowContext(ctx, `SELECT thread_id FROM sessions WHERE agent = ? AND agent_session_id = ?
+			ORDER BY id DESC LIMIT 1`, r.Agent, r.Session).Scan(&id)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("core: HostTerminals: %w", err)
+		}
+		// Named only to a caller that may read the thread, as Threads
+		// would list it; another caller sees the window without it.
+		tid := control.ThreadID(id)
+		scope, err := a.c.scopeOf(ctx, a.c.Store.DB, tid)
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return nil, err
+		}
+		if err == nil && a.caller.May.Has(control.OpRead) && slices.Contains(a.caller.Scopes, scope) && a.personSees(scope) {
+			r.Thread = &tid
+		}
+	}
+	return list, nil
 }
 
 // HostScreen reads one tmux pane's screen. A caller that may not read
