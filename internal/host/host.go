@@ -106,8 +106,8 @@ func Run(stateDir string) (err error) {
 	go func() {
 		select {
 		case <-term:
+			close(h.terminated) // first: the log's write must not take from the grace
 			hl.printf("got SIGTERM: everything is being stopped; the command's end is recorded as a shutdown")
-			close(h.terminated)
 		case <-quit:
 		}
 	}()
