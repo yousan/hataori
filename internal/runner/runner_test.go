@@ -615,11 +615,17 @@ func TestWatchdogStopsATurnThatIgnoresTheInterrupt(t *testing.T) {
 				locked <- false
 				return
 			}
-			free := lv.mu.TryLock()
-			if free {
-				lv.mu.Unlock()
+			// Held all along, not only for a moment as by a step: no try
+			// gets it.
+			for range 10 {
+				if lv.mu.TryLock() {
+					lv.mu.Unlock()
+					locked <- false
+					return
+				}
+				time.Sleep(10 * time.Millisecond)
 			}
-			locked <- !free
+			locked <- true
 		}
 		if err := owner(f.core).Stop(context.Background(), thread, 0); err != nil {
 			t.Fatal(err)
