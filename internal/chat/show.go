@@ -20,14 +20,16 @@ import (
 // events. It is rebuilt from the threads' events when it is missing.
 type reader struct {
 	api   control.API
-	first map[control.ThreadID]uint64               // position of each thread's first event
-	turn  map[control.ThreadID]string               // key of the call that started the open turn
-	by    map[control.ThreadID]string               // who started the open turn: caller, agent or terminal
-	via   map[control.ThreadID]*control.LinkRef     // the link the open turn's first input came through; nil for none
-	quiet map[control.ThreadID]*quiet               // open turns, for the progress line
-	gone  map[control.ThreadID]*RowKey              // the last delete of a progress line
-	known map[control.ThreadID]bool                 // threads whose earlier events were read
-	subs  map[control.ThreadID]map[string]*subagent // running subagents, by id
+	first map[control.ThreadID]uint64 // position of each thread's first event
+	// session is each thread's first session, with first.
+	session map[control.ThreadID]int64
+	turn    map[control.ThreadID]string               // key of the call that started the open turn
+	by      map[control.ThreadID]string               // who started the open turn: caller, agent or terminal
+	via     map[control.ThreadID]*control.LinkRef     // the link the open turn's first input came through; nil for none
+	quiet   map[control.ThreadID]*quiet               // open turns, for the progress line
+	gone    map[control.ThreadID]*RowKey              // the last delete of a progress line
+	known   map[control.ThreadID]bool                 // threads whose earlier events were read
+	subs    map[control.ThreadID]map[string]*subagent // running subagents, by id
 	// lamp is each thread's lamps (lamps.go); lampKnown, the threads whose
 	// earlier turn events were read for it.
 	lamp      map[control.ThreadID]*lampState
@@ -49,15 +51,16 @@ func (f *FrontEnd) show(ctx context.Context) error {
 	defer cancel() // ends the subscription when reading stops on an error
 	scopes := f.scopeList()
 	r := &reader{
-		api:   f.API(control.Caller{Principal: f.ownerPrincipal(), Scopes: scopes, May: control.OpRead}),
-		first: map[control.ThreadID]uint64{},
-		turn:  map[control.ThreadID]string{},
-		by:    map[control.ThreadID]string{},
-		via:   map[control.ThreadID]*control.LinkRef{},
-		quiet: map[control.ThreadID]*quiet{},
-		gone:  map[control.ThreadID]*RowKey{},
-		known: map[control.ThreadID]bool{},
-		subs:  map[control.ThreadID]map[string]*subagent{},
+		api:     f.API(control.Caller{Principal: f.ownerPrincipal(), Scopes: scopes, May: control.OpRead}),
+		first:   map[control.ThreadID]uint64{},
+		session: map[control.ThreadID]int64{},
+		turn:    map[control.ThreadID]string{},
+		by:      map[control.ThreadID]string{},
+		via:     map[control.ThreadID]*control.LinkRef{},
+		quiet:   map[control.ThreadID]*quiet{},
+		gone:    map[control.ThreadID]*RowKey{},
+		known:   map[control.ThreadID]bool{},
+		subs:    map[control.ThreadID]map[string]*subagent{},
 
 		lamp:      map[control.ThreadID]*lampState{},
 		lampKnown: map[control.ThreadID]bool{},
@@ -230,6 +233,23 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		var d eventData
 		json.Unmarshal(e.Data, &d)
 		return f.questionDone(ctx, r, e, conv, d.Request)
+	case "state":
+		// A session that ended before it started, whenever that was: also
+		// after the Start that made it returned (#589).
+		sf, ok := startFailure(e)
+		if !ok {
+			return nil, nil
+		}
+		first, err := r.firstPos(ctx, e.Thread)
+		if err != nil {
+			return nil, err
+		}
+		if sf.session != r.session[e.Thread] {
+			first = 0 // a later session's: the prompt is long posted
+		} else if err := f.awaitPrompt(ctx, conv, first, e.Time); err != nil {
+			return nil, err
+		}
+		return []Row{sf.row(conv, first)}, nil
 	case "thread_created", "turn_started", "text", "request", "turn_ended", "file_out", "approval_asked", "approval_answered":
 	default:
 		return nil, nil // a kind the front end does not show, or does not know
@@ -263,6 +283,7 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		return row(surface.Message{Text: text}), nil
 	case "thread_created":
 		r.first[e.Thread] = e.Pos
+		r.session[e.Thread] = sessionOf(e)
 	case "turn_started":
 		r.turn[e.Thread] = d.Key
 		r.by[e.Thread] = d.By
@@ -336,6 +357,36 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		}
 	}
 	return nil, nil
+}
+
+// promptWait bounds how long after a start failure the event reader
+// waits for the trigger's start to write the prompt row.
+var promptWait = 30 * time.Second
+
+// awaitPrompt waits, while conv is the chat thread of a trigger or a
+// command of this front end whose start has not yet written the prompt row
+// at first, for that row: a failure read before it is posted after it. The
+// cursor stays before the event meanwhile, so a restart reads it again.
+// Past promptWait after the event at, the prompt is taken as lost, as after
+// a daemon that died before writing it, and nothing is waited for.
+func (f *FrontEnd) awaitPrompt(ctx context.Context, conv surface.Conversation, first uint64, at time.Time) error {
+	var n int
+	err := f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM chat_triggers WHERE client = ? AND channel = ? AND thread = ?`,
+		f.Name, conv.Channel, conv.Thread).Scan(&n)
+	if err != nil || n == 0 {
+		return err
+	}
+	for {
+		state, _, err := f.Outbox.state(ctx, conv, RowKey{Event: first, Part: 0})
+		if err != nil || state != "" || time.Since(at) > promptWait {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
 }
 
 // question shows a question with its options numbered; the next message
@@ -424,11 +475,12 @@ func (r *reader) firstPos(ctx context.Context, id control.ThreadID) (uint64, err
 	if p, ok := r.first[id]; ok {
 		return p, nil
 	}
-	p, _, err := startOutcome(ctx, r.api, id)
+	out, err := startOutcome(ctx, r.api, id)
 	if err == nil {
-		r.first[id] = p
+		r.first[id] = out.first
+		r.session[id] = out.session
 	}
-	return p, err
+	return out.first, err
 }
 
 // catchUp follows the thread's events before position before for the

@@ -361,7 +361,7 @@ func (f *FrontEnd) start(ctx context.Context, r request, o order, n int64) (cont
 	// The thread's rows are keyed by its first event, and what they show
 	// is read from the thread's events, so a trigger delivered again
 	// writes the same rows, which the outbox keeps once.
-	pos, failure, err := startOutcome(ctx, api, id)
+	out, err := startOutcome(ctx, api, id)
 	if err != nil {
 		f.Log.Error("trigger: reading the new thread", "thread", id, "err", err)
 		return 0, err
@@ -374,13 +374,15 @@ func (f *FrontEnd) start(ctx context.Context, r request, o order, n int64) (cont
 		f.Log.Error("trigger: reading the new thread", "thread", id, "err", err)
 		return 0, err
 	}
-	if failure == "" && startErr != nil {
-		failure = startErr.Error() // not recorded as the session's end
-	}
-	rows := []Row{{Event: pos, Part: 0, Conv: conv, Message: surface.Message{Text: o.Prompt, Quiet: true}}}
-	if failure != "" {
-		rows = append(rows, Row{Event: pos, Part: 1, Conv: conv,
-			Message: surface.Message{Text: "This thread could not start: " + failure}})
+	rows := []Row{{Event: out.first, Part: 0, Conv: conv, Message: surface.Message{Text: o.Prompt, Quiet: true}}}
+	switch {
+	case out.failed != nil:
+		// The event reader writes the same row when it reads the event.
+		rows = append(rows, out.failed.row(conv, out.first))
+	case startErr != nil:
+		// Not recorded as the session's end: no event shows it.
+		rows = append(rows, Row{Event: out.first, Part: 1, Conv: conv,
+			Message: surface.Message{Text: couldNotStart + startErr.Error()}})
 	}
 	if err := f.Outbox.Write(ctx, rows...); err != nil {
 		f.Log.Error("trigger: writing the prompt", "thread", id, "err", err)
@@ -425,35 +427,120 @@ func (f *FrontEnd) threadOf(ctx context.Context, ref surface.MessageRef, prompt 
 
 var errNoEvent = errors.New("the thread has no events")
 
+// startResult is what startOutcome reads of a thread's stored events.
+type startResult struct {
+	first   uint64       // the position of its first event
+	session int64        // its first session
+	failed  *startFailed // its first session's start failure, if it failed before it started
+}
+
 // startOutcome reads a new thread's stored events: the position of its
-// first, and why its first session failed before it started, if it did.
-func startOutcome(ctx context.Context, api control.API, id control.ThreadID) (first uint64, failure string, err error) {
+// first, and how its first session failed before it started, if it did.
+func startOutcome(ctx context.Context, api control.API, id control.ThreadID) (startResult, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	var out startResult
 	evs, err := api.Events(ctx, control.Filter{Thread: id}, 0)
 	if err != nil {
-		return 0, "", err
+		return out, err
 	}
 	defer stopEvents(cancel, evs)
 	for e := range evs {
 		if e.Kind == control.CaughtUp {
 			break
 		}
-		if first == 0 {
-			first = e.Pos
+		if out.first == 0 {
+			out.first = e.Pos
+			out.session = sessionOf(e)
 		}
-		if e.Kind != "state" || failure != "" {
-			continue
-		}
-		var d struct{ From, To, Reason string }
-		if json.Unmarshal(e.Data, &d) == nil && d.From == string(control.Creating) && d.To == string(control.Failed) {
-			failure = strings.TrimPrefix(d.Reason, "start: ")
+		if out.failed == nil {
+			if sf, ok := startFailure(e); ok && sf.session == out.session {
+				out.failed = &sf
+			}
 		}
 	}
-	if first == 0 {
-		return 0, "", fmt.Errorf("chat: thread %d: %w", id, errNoEvent)
+	if out.first == 0 {
+		return out, fmt.Errorf("chat: thread %d: %w", id, errNoEvent)
 	}
-	return first, failure, nil
+	return out, nil
+}
+
+// sessionOf is the session an event names, 0 for none.
+func sessionOf(e control.Event) int64 {
+	var d struct{ Session int64 }
+	json.Unmarshal(e.Data, &d)
+	return d.Session
+}
+
+// couldNotStart begins the message of a thread whose session could not
+// start.
+const couldNotStart = "This thread could not start: "
+
+// startFailed is a session's change from creating to failed: it ended
+// before it started.
+type startFailed struct {
+	pos     uint64 // the state event's position
+	session int64
+	reason  string // as recorded, without the "start: " the core puts before its own
+	detail  string // the event's detail, for a person
+}
+
+// startFailure reads e as a session's change from creating to failed.
+func startFailure(e control.Event) (startFailed, bool) {
+	if e.Kind != "state" {
+		return startFailed{}, false
+	}
+	var d struct {
+		Session                  int64
+		From, To, Reason, Detail string
+	}
+	if json.Unmarshal(e.Data, &d) != nil || d.From != string(control.Creating) || d.To != string(control.Failed) {
+		return startFailed{}, false
+	}
+	return startFailed{pos: e.Pos, session: d.Session, reason: strings.TrimPrefix(d.Reason, "start: "), detail: d.Detail}, true
+}
+
+// row is the one message the failure gets, keyed by its event, so that the
+// trigger's start and the event reader write it once between them, and
+// again after a restart write nothing. The failure of the thread's first
+// session replies to the thread's prompt, at first, and so is posted after
+// it.
+func (sf startFailed) row(conv surface.Conversation, first uint64) Row {
+	r := Row{Event: sf.pos, Part: 0, Conv: conv, Message: surface.Message{Text: sf.text()}}
+	if first != 0 {
+		r.ReplyToRow = &RowKey{Event: first, Part: 0}
+	}
+	return r
+}
+
+// text says why the session could not start: its reason, and the event's
+// detail when that is a line for a person. A detail with control
+// characters or line breaks is terminal output, such as the screen of a
+// start that timed out: the dashboard shows it, not the chat.
+func (sf startFailed) text() string {
+	t := couldNotStart + sf.reason
+	if d := ReadableDetail(sf.detail); d != "" {
+		t += ": " + d
+	}
+	return t
+}
+
+// maxDetail bounds the detail a failure message carries.
+const maxDetail = 1000
+
+// ReadableDetail returns a state event's detail when it is one line of text
+// for a person, and "" otherwise.
+func ReadableDetail(detail string) string {
+	d := strings.TrimSpace(detail)
+	if d == "" || len(d) > maxDetail {
+		return ""
+	}
+	for _, r := range d {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+			return ""
+		}
+	}
+	return d
 }
 
 // followUp sends a message in a thread to the thread's session. A thread

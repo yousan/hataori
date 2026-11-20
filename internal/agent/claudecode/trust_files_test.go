@@ -84,7 +84,7 @@ func TestTrustDialogThatNamesFiles(t *testing.T) {
 				t.Fatalf("keys %q for a dialog it may not answer", keys)
 			}
 			if len(events) != 1 || events[0].Kind != agent.SessionEnded || events[0].Reason != agent.BlockedAtStart ||
-				!strings.HasSuffix(events[0].Text, "does not trust "+tc.refused) {
+				!strings.HasSuffix(events[0].Text, "does not trust "+tc.refused+trustHint) || !strings.Contains(trustHint, "trust_files") {
 				t.Fatalf("events %+v; want one SessionEnded, blocked at start, naming %s", events, tc.refused)
 			}
 		})

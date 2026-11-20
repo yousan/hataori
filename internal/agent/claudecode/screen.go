@@ -653,7 +653,7 @@ func (c *codec) tickScreen(now time.Time) Actions {
 		s.done = true
 		return c.events(agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart,
 			Text: "the folder-trust dialog says trusting the folder loads " + strings.Join(files, ", ") +
-				"; this scope does not trust " + strings.Join(refused, ", ")})
+				"; this scope does not trust " + strings.Join(refused, ", ") + trustHint})
 	}
 	s.quiet = time.Time{} // the next key waits for the screen to change and settle again
 	switch {
@@ -671,6 +671,10 @@ func (c *codec) tickScreen(now time.Time) Actions {
 		return Actions{Keys: []agent.Part{keyUp}}
 	}
 }
+
+// trustHint ends the text of a start blocked at the trust dialog: how a
+// person lets the files it names through (docs/configuration.md).
+const trustHint = "; to trust them, add them to the scope's trust_files"
 
 // untrusted returns the files of the trust dialog's list that the codec may
 // not answer yes for: none in a confined session, whose launch ignores the

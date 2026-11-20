@@ -17,6 +17,7 @@ import {
   thread,
   threads,
 } from "./api";
+import { failureReason } from "./failure";
 import { Stream } from "./stream";
 
 // Attention is why a thread needs attention.
@@ -95,8 +96,7 @@ export function attentionOf(d: ThreadDetail): Attention | undefined {
 }
 
 function reasonOf(e: Event): string | undefined {
-  const r = e.data?.reason;
-  return typeof r === "string" && r !== "" ? r : undefined;
+  return failureReason(e.data);
 }
 
 // lastPosition is the position of the newest event of any of ts: the
