@@ -7,10 +7,11 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // A shutdown sends SIGTERM to every process, here the command's first and
-// the host's a moment later: the host records the end as a shutdown's. A
+// the host's 100 ms later: the host records the end as a shutdown's. A
 // command killed on its own while its host runs is recorded as it ended,
 // with no shutdown.
 func TestShutdownIsRecordedAndACrashIsNot(t *testing.T) {
@@ -33,6 +34,7 @@ func TestShutdownIsRecordedAndACrashIsNot(t *testing.T) {
 			command, host := pid(PIDFile), pid(HostPIDFile)
 			if c.shutdown {
 				syscall.Kill(-command, syscall.SIGTERM)
+				time.Sleep(100 * time.Millisecond) // within shutdownGrace
 				syscall.Kill(host, syscall.SIGTERM)
 			} else {
 				syscall.Kill(-command, syscall.SIGKILL)
