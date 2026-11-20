@@ -371,7 +371,7 @@ func TestBlockedAtStart(t *testing.T) {
 // turn ends, and panics if given the screen after that. The first turn
 // writes to the screen, which it does only after the codec decoded the
 // start (the input is pasted then), and waits on a question until the
-// codec was given screen after the start. The hook calls and the terminal
+// codec was given that line. The hook calls and the terminal
 // are separate streams: a turn that ended at once could have its end read
 // before its screen reached the log, and what the fake writes right after
 // its ready report could be read before the report (#516).
@@ -383,10 +383,10 @@ func TestScreenUntilTheCodecStops(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "the screen after the start", 15*time.Second, func() bool {
+	waitFor(t, "the turn's screen", 15*time.Second, func() bool {
 		lv.mu.Lock()
 		defer lv.mu.Unlock()
-		return fake.SawScreenAfterStart(lv.codec)
+		return bytes.Contains(fake.ScreenAfterStart(lv.codec), []byte("the turn's screen"))
 	})
 	var req string
 	f.st.DB.QueryRow(`SELECT json_extract(data, '$.request') FROM events WHERE kind = 'request'`).Scan(&req)
