@@ -27,13 +27,24 @@ func (f *front) secondLink(t *testing.T, id control.ThreadID, thread string) sur
 
 // busy is what the front end has done so far: the events stored, the
 // messages handed over, its reader's cursor, and its outbox's rows by
-// state. It changes while the front end works.
+// state. It changes while the front end works. Each read waits at most a
+// second for the store, so that a front end stuck holding it still lets
+// the wait fail.
 func (f *front) busy() string {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 	var events, cursor, pending, sent int64
 	db := f.fe.Outbox.Store.DB
-	db.QueryRow(`SELECT coalesce(max(pos), 0) FROM events`).Scan(&events)
-	db.QueryRow(`SELECT coalesce(max(pos), 0) FROM chat_cursors`).Scan(&cursor)
-	db.QueryRow(`SELECT count(CASE WHEN state = 'pending' THEN 1 END), count(CASE WHEN state = 'sent' THEN 1 END) FROM chat_outbox`).Scan(&pending, &sent)
+	err := db.QueryRowContext(ctx, `SELECT coalesce(max(pos), 0) FROM events`).Scan(&events)
+	if err == nil {
+		err = db.QueryRowContext(ctx, `SELECT coalesce(max(pos), 0) FROM chat_cursors`).Scan(&cursor)
+	}
+	if err == nil {
+		err = db.QueryRowContext(ctx, `SELECT count(CASE WHEN state = 'pending' THEN 1 END), count(CASE WHEN state = 'sent' THEN 1 END) FROM chat_outbox`).Scan(&pending, &sent)
+	}
+	if err != nil {
+		return fmt.Sprintf("the store cannot be read: %v", err)
+	}
 	return fmt.Sprintf("events up to %d, %d handed over, cursor %d, %d rows pending, %d sent", events, len(f.runner.handed()), cursor, pending, sent)
 }
 
