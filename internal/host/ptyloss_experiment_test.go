@@ -81,4 +81,3 @@ func TestExperimentConcurrentReader(t *testing.T) {
 	}
 	t.Logf("RESULT concurrent reader: %d of 1000 lost output, %d hung", lost, hung)
 }
-
