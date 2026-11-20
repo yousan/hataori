@@ -14,6 +14,7 @@ import (
 
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/host"
+	"github.com/yousan/hataori/internal/proctest"
 	"github.com/yousan/hataori/internal/store"
 )
 
@@ -297,6 +298,91 @@ func TestAsleepWithARunningAgentIsStopped(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, "the agent's end", 15*time.Second, func() bool { return !agentAlive(t, root, 1) })
+}
+
+// wokenWithItsHostRunning leaves session 1 as a daemon that died leaves a
+// session it woke with "reply anew" while its old host had not recorded its
+// end yet: the wake committed, nothing launched, and the old host running.
+func wokenWithItsHostRunning(t *testing.T, root string) *store.Store {
+	t.Helper()
+	d := runDaemon(t, root, false, "start", "reply hi")
+	st := openStore(t, root)
+	until(t, "the turn's end", st, "turn_ended", 1)
+	d.kill()
+	if hostEnded(root, 1) {
+		t.Fatal("the host has ended")
+	}
+	fi, _ := json.Marshal(firstInput{Principal: "owner", From: ownerFrom, Key: "m2", Text: "reply anew", Wake: true})
+	if _, err := st.DB.Exec(`UPDATE sessions SET state = 'creating', first_input = ?, launch = 1 WHERE id = 1`, string(fi)); err != nil {
+		t.Fatal(err)
+	}
+	return st
+}
+
+// A wake that a daemon started again recovers waits for the old host to
+// record its end, as a wake in one daemon waits for the old run, and the
+// agent gets the input (#549).
+func TestRecoveredWakeWaitsForTheOldHost(t *testing.T) {
+	root := t.TempDir()
+	t.Cleanup(func() { killSessions(root) })
+	st := wokenWithItsHostRunning(t, root)
+	log := &syncBuffer{}
+	st2, c, r, err := build(root, options{}, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { r.Close(); st2.Close() }()
+	if err := r.Reconnect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// The old agent goes a moment after the restart; its host then ends.
+	go func() {
+		time.Sleep(time.Second)
+		proctest.Kill(filepath.Join(StateDir(root, 1), host.PIDFile))
+	}()
+	if err := c.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	until(t, "the woken turn's end", st, "turn_ended", 2)
+	var texts []string
+	rows, _ := st.DB.Query(`SELECT json_extract(data, '$.text') FROM events WHERE kind = 'text' ORDER BY pos`)
+	for rows.Next() {
+		var s string
+		rows.Scan(&s)
+		texts = append(texts, s)
+	}
+	rows.Close()
+	if len(texts) != 2 || texts[1] != "anew" {
+		t.Fatalf("texts %q; session %s\n%s", texts, sessionState(t, st, 1), log.String())
+	}
+}
+
+// A wake recovered after a restart whose old host does not end within the
+// bound fails, and says so (#549).
+func TestRecoveredWakeFailsWhenTheOldHostRunsOn(t *testing.T) {
+	root := t.TempDir()
+	t.Cleanup(func() { killSessions(root) })
+	st := wokenWithItsHostRunning(t, root)
+	st2, c, r, err := build(root, options{}, &syncBuffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { r.Close(); st2.Close() }()
+	r.endWait = 500 * time.Millisecond
+	if err := r.Reconnect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var reason string
+	st.DB.QueryRow(`SELECT json_extract(data, '$.reason') FROM events WHERE kind = 'state' AND json_extract(data, '$.to') = 'failed'`).Scan(&reason)
+	if s := sessionState(t, st, 1); s != "failed" || !strings.Contains(reason, "its host is still running after 500ms") {
+		t.Fatalf("session %s, reason %q", s, reason)
+	}
+	if !agentAlive(t, root, 1) {
+		t.Error("the old agent was stopped") // left as it was: nothing here stops it
+	}
 }
 
 // A session that failed while its agent still ran, as when the daemon died
