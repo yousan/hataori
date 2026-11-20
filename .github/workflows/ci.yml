@@ -58,17 +58,16 @@ jobs:
         run: CGO_ENABLED=0 go build ./...
       - name: go test
         run: |
-          # Temporary (#485): this user's processes and the memory pressure, sampled while the suite runs.
-          ( while true; do echo "SAMPLE $(date +%s) procs=$(ps -U "$(id -u)" -o pid= | wc -l | tr -d ' ') chrome=$(pgrep -f -i 'chrome' | wc -l | tr -d ' ') free=$(memory_pressure -Q 2>/dev/null | awk '/percentage/{print $NF}')"; sleep 2; done ) > samples.txt 2>&1 &
-          sampler=$!
+          # Temporary (#485): is Chrome's updater on the runner, and does anything kill a process for its code signature?
+          "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --version || true
+          launchctl list | grep -i -E 'google|keystone' || echo "no Google launchd jobs"
+          ls -d ~/Library/Google/GoogleUpdater /Library/Google/GoogleUpdater ~/Library/Google/GoogleSoftwareUpdate /Library/Google/GoogleSoftwareUpdate 2>/dev/null || echo "no updater directories"
+          pgrep -l -f -i 'updater|keystone' || echo "no updater running"
           start=$(date +%s)
           status=0
           go test ./... || status=$?
-          kill $sampler
-          sort -t= -k2 -n samples.txt | awk '{print}' > /dev/null
-          echo "most processes of this user: $(sed -n 's/.*procs=\([0-9]*\).*/\1/p' samples.txt | sort -n | tail -1) (kern.maxprocperuid $(sysctl -n kern.maxprocperuid)); most Chrome processes: $(sed -n 's/.*chrome=\([0-9]*\).*/\1/p' samples.txt | sort -n | tail -1); least free memory: $(sed -n 's/.*free=\([0-9]*%\).*/\1/p' samples.txt | sort -n | head -1)"
-          grep SAMPLE samples.txt | awk 'NR%15==1'
-          log show --start "$(date -r $start '+%Y-%m-%d %H:%M:%S')" --style compact --predicate 'eventMessage CONTAINS[c] "jetsam" OR eventMessage CONTAINS[c] "memorystatus" OR eventMessage CONTAINS[c] "maxproc" OR (eventMessage CONTAINS[c] "chrom" AND (eventMessage CONTAINS[c] "kill" OR eventMessage CONTAINS[c] "terminat"))' 2>&1 | tail -60
+          "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --version || true
+          log show --start "$(date -r $start '+%Y-%m-%d %H:%M:%S')" --style compact --predicate 'process CONTAINS[c] "updater" OR process CONTAINS[c] "keystone" OR eventMessage CONTAINS[c] "CODE SIGNING" OR eventMessage CONTAINS[c] "cs_invalid" OR eventMessage CONTAINS[c] "Code Signature Invalid" OR (process == "kernel" AND eventMessage CONTAINS[c] "chrome")' 2>&1 | tail -80
           exit $status
 
   # hataori for macOS, where `hataori connect` runs on the person's
