@@ -42,3 +42,18 @@ func processStart(pid int) (time.Time, bool) {
 	since := time.Duration(ts.Nano()) - time.Duration(ticks)*(time.Second/100)
 	return now.Add(-since), true
 }
+
+// processEnded reports whether process pid has ended: it is gone, or a
+// zombie its parent has not reaped yet.
+func processEnded(pid int) bool {
+	stat, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return true
+	}
+	end := bytes.LastIndexByte(stat, ')')
+	if end < 0 || end+2 >= len(stat) {
+		return false
+	}
+	state := stat[end+2] // the field after the name: R, S, D, Z, X, ...
+	return state == 'Z' || state == 'X'
+}
