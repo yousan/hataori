@@ -101,7 +101,8 @@ func (f *FrontEnd) lamps(ctx context.Context, r *reader, e control.Event, convs 
 		return nil, nil
 	}
 	var d struct {
-		By, Key, Outcome, From string
+		By, Key, Outcome, From, Reason string
+		Turn                           int64
 	}
 	json.Unmarshal(e.Data, &d)
 	st := r.lamp[e.Thread]
@@ -172,11 +173,19 @@ func (f *FrontEnd) lamps(ctx context.Context, r *reader, e control.Event, convs 
 	l, ping, byself := st.turn, st.ping, st.byself
 	st.turn, st.ping, st.byself = nil, "", false
 	var rows []Row
+	stopped, err := f.stoppedBy(ctx, d.Outcome, d.Reason, d.Turn)
+	if err != nil {
+		return nil, err
+	}
 	s := surface.Done
-	switch d.Outcome {
-	case "failure":
+	switch {
+	case stopped != "":
+		// A person asked for it: no lamp, which takes the working one
+		// away, and no ping; the thread says who stopped it.
+		s, ping = surface.NoStatus, ""
+	case d.Outcome == "failure":
 		s = surface.Failed
-	case "blocked":
+	case d.Outcome == "blocked":
 		s = surface.Waiting
 	}
 	if l != nil {

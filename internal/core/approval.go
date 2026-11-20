@@ -98,7 +98,7 @@ func (a *api) recheck(ctx context.Context, target control.ThreadID, sid, turn in
 	if cur != sid || state != control.Running || open != turn {
 		return "ended", nil
 	}
-	err = a.c.Runner.Interrupt(ctx, sid, turn)
+	err = a.c.Runner.Interrupt(ctx, sid, turn, "")
 	if errors.Is(err, session.ErrRefused) {
 		return "ended", nil
 	}

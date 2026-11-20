@@ -99,8 +99,10 @@ type Runner interface {
 	// has recorded, read from the agent every poll: a turn the agent began
 	// by itself, or that a person typed at its terminal, before the runner
 	// read the named one's end can still get the interrupt of an agent
-	// whose interrupt names no turn (#494).
-	Interrupt(ctx context.Context, sessionID, turn int64) error
+	// whose interrupt names no turn (#494). by, when not empty, is the
+	// person whose Stop it is: it is recorded on the turn interrupted, in
+	// the same step, unless that turn names someone already.
+	Interrupt(ctx context.Context, sessionID, turn int64, by control.Principal) error
 	// Resume starts the agent of an asleep session again with its
 	// conversation, and sends it in as a Send of principal and key once it
 	// reports that it is ready.
@@ -1806,7 +1808,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		if guard != nil {
 			turn = guard.turn
 		}
-		err := a.c.Runner.Interrupt(ctx, sid, turn)
+		err := a.c.Runner.Interrupt(ctx, sid, turn, "")
 		switch {
 		case guard != nil && errors.Is(err, session.ErrRefused):
 			guard.ended = true
@@ -1942,7 +1944,9 @@ func (a *api) Stop(ctx context.Context, id control.ThreadID, turn int64) error {
 		}
 		return nil
 	}
-	return a.c.Runner.Interrupt(ctx, sid, turn)
+	// Who asked goes on the turn the runner interrupts, chosen in the same
+	// step, so that the reader of that turn's end can tell it was stopped.
+	return a.c.Runner.Interrupt(ctx, sid, turn, a.caller.Principal)
 }
 
 // mayRead reports whether the caller may see e: its kind, when the caller

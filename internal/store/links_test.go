@@ -154,7 +154,7 @@ func TestLinkThreadsOnTheReleasedDatabase(t *testing.T) {
 		"chat_triggers": `SELECT * FROM chat_triggers ORDER BY client, channel, message`,
 		"inbox":         `SELECT * FROM inbox ORDER BY key`,
 		"sessions":      `SELECT * FROM sessions ORDER BY id`,
-		"turns":         `SELECT * FROM turns ORDER BY id`,
+		"turns":         `SELECT id, session_id, started_by, trigger, started_at, ended_at, status, reason, background FROM turns ORDER BY id`,
 	}
 	want := map[string][]string{}
 	for table, q := range unchanged {

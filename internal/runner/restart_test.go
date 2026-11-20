@@ -374,6 +374,11 @@ func TestHostRebootEndsTheTurnAsInterrupted(t *testing.T) {
 	d := runDaemon(t, root, false, "start", "tool wait 60s")
 	st := openStore(t, root)
 	until(t, "the tool", st, "tool_started", 1)
+	// A person asked to stop the turn just before; the reboot, not the
+	// stop, ends it (#542).
+	if _, err := st.DB.Exec(`UPDATE turns SET stopped_by = 'owner'`); err != nil {
+		t.Fatal(err)
+	}
 	d.kill()
 	killSessions(root) // every process gone, no status written: a reboot
 	dirs, _ := filepath.Glob(filepath.Join(root, "state", "sessions", "*"))
@@ -389,10 +394,10 @@ func TestHostRebootEndsTheTurnAsInterrupted(t *testing.T) {
 		st.DB.QueryRow(`SELECT state FROM sessions`).Scan(&state)
 		return state == "asleep"
 	})
-	var reason string
-	st.DB.QueryRow(`SELECT reason FROM turns`).Scan(&reason)
-	if reason != "interrupted" {
-		t.Fatalf("turn reason %q", reason)
+	var reason, by string
+	st.DB.QueryRow(`SELECT reason, stopped_by FROM turns`).Scan(&reason, &by)
+	if reason != "interrupted" || by != "" {
+		t.Fatalf("turn reason %q, stopped by %q; want interrupted, by nobody", reason, by)
 	}
 	d.kill()
 }

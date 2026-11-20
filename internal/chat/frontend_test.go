@@ -52,7 +52,7 @@ func (r *starts) Answer(_ context.Context, _, _ int64, req string, a control.Ans
 	r.record("answer " + req + " " + a.Text)
 	return nil
 }
-func (r *starts) Interrupt(context.Context, int64, int64) error {
+func (r *starts) Interrupt(context.Context, int64, int64, control.Principal) error {
 	r.mu.Lock()
 	r.stops++
 	r.mu.Unlock()

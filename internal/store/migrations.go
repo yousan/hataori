@@ -462,6 +462,12 @@ var migrations = []Migration{
 		// ThreadDetail.cancelled reads a thread's post_cancelled events.
 		`CREATE INDEX events_thread_kind ON events (thread_id, kind, pos)`,
 	)},
+	// The person whose Stop interrupted the turn, recorded before the
+	// interrupt is sent, so that a reader of the turn's end can tell a
+	// stop someone asked for from a failure; '' for none.
+	{Name: "turns.stopped_by", Up: execAll(
+		`ALTER TABLE turns ADD COLUMN stopped_by TEXT NOT NULL DEFAULT ''`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {
