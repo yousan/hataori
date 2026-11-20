@@ -21,6 +21,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/proctest"
 	"github.com/yousan/hataori/internal/wire"
 )
 
@@ -139,7 +140,7 @@ func newBrowser(t *testing.T, flags ...string) *browser {
 				break
 			}
 		}
-		if processEnded(cmd.Process.Pid) {
+		if proctest.Ended(cmd.Process.Pid) {
 			syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) // its helpers, if any
 			err := cmd.Wait()
 			reaped = true

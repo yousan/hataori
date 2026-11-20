@@ -1,4 +1,4 @@
-package main
+package proctest
 
 import (
 	"bytes"
@@ -11,10 +11,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// processStart returns when process pid started, by the wall clock, to
-// within a clock tick. It returns false when there is no such process or
-// its start cannot be read.
-func processStart(pid int) (time.Time, bool) {
+// Start returns when process pid started, by the wall clock, to within a
+// clock tick. It returns false when there is no such process or its start
+// cannot be read.
+func Start(pid int) (time.Time, bool) {
 	stat, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
 	if err != nil {
 		return time.Time{}, false
@@ -43,9 +43,9 @@ func processStart(pid int) (time.Time, bool) {
 	return now.Add(-since), true
 }
 
-// processEnded reports whether process pid has ended: it is gone, or a
-// zombie its parent has not reaped yet.
-func processEnded(pid int) bool {
+// Ended reports whether process pid has ended: it is gone, or a zombie
+// its parent has not reaped yet.
+func Ended(pid int) bool {
 	stat, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
 	if err != nil {
 		return true
