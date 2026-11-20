@@ -37,8 +37,8 @@ jobs:
           fi
       - name: loop (temporary, #552)
         run: |
-          go test -v -count=1 -run '^TestExperiment' ./internal/host | grep -E 'RESULT|read |FAIL|ok'
-          go test -count=200 -run '^TestDirectoryAndEnvironment$' ./internal/host
+          go test -v -count=1 -timeout 30m -run '^TestExperiment' ./internal/host 2>&1 | grep -E 'RESULT|read |run |FAIL|ok' || true
+          go test -count=1000 -timeout 60m -run '^TestDirectoryAndEnvironment$/^terminal=true$' ./internal/host
       - run: go vet ./...
       - name: build without cgo
         run: CGO_ENABLED=0 go build ./...
@@ -59,8 +59,8 @@ jobs:
         run: command -v tmux >/dev/null || brew install tmux
       - name: loop (temporary, #552)
         run: |
-          go test -v -count=1 -run '^TestExperiment' ./internal/host | grep -E 'RESULT|read |FAIL|ok'
-          go test -count=200 -run '^TestDirectoryAndEnvironment$' ./internal/host
+          go test -v -count=1 -timeout 30m -run '^TestExperiment' ./internal/host 2>&1 | grep -E 'RESULT|read |run |FAIL|ok' || true
+          go test -count=1000 -timeout 60m -run '^TestDirectoryAndEnvironment$/^terminal=true$' ./internal/host
       - run: go vet ./...
       - name: build without cgo
         run: CGO_ENABLED=0 go build ./...

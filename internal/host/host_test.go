@@ -188,7 +188,8 @@ func TestDirectoryAndEnvironment(t *testing.T) {
 				want += "env=" + kv + "\n"
 			}
 			if string(out) != want {
-				t.Fatalf("command saw:\n%s\nwant:\n%s", out, want)
+				t.Fatalf("command saw:\n%s\nwant:\n%s\n%s:\n%s\n%s:\n%s", out, want,
+					StatusFile, read(t, dir, StatusFile), HostLog, read(t, dir, HostLog))
 			}
 		})
 	}

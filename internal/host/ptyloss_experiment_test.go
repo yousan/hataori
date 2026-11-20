@@ -5,11 +5,9 @@ package host
 // command's side closes?
 
 import (
-	"errors"
 	"io"
 	"os"
 	"os/exec"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -46,77 +44,41 @@ func readAll(m *os.File) (string, error) {
 }
 
 // As the host does now: its copy of the command's side is closed at once,
-// and the command has ended before the controlling side is read.
-func TestExperimentClosedAtOnceReadAfterExit(t *testing.T) {
-	lost := 0
-	for i := 0; i < 50; i++ {
+// and a reader of the controlling side runs while the command prints and
+// exits. (Reading only after the command has ended hangs on macOS: its
+// exit waits until its output has been read.)
+func TestExperimentConcurrentReader(t *testing.T) {
+	lost, hung := 0, 0
+	for i := 0; i < 1000; i++ {
 		cmd, m, s := startPrinter(t)
 		s.Close()
-		cmd.Wait()
-		time.Sleep(50 * time.Millisecond)
-		got, err := readAll(m)
-		m.Close()
-		if got != experimentOut {
-			lost++
-			if lost == 1 {
-				t.Logf("read %q, %v", got, err)
-			}
-		}
-	}
-	t.Logf("RESULT closed-at-once: %d of 50 lost output", lost)
-}
-
-// The host keeps its copy of the command's side open until the command has
-// ended and nothing is left to read, then closes it.
-func TestExperimentKeptOpenReadAfterExit(t *testing.T) {
-	lost := 0
-	for i := 0; i < 50; i++ {
-		cmd, m, s := startPrinter(t)
-		cmd.Wait()
-		time.Sleep(50 * time.Millisecond)
-		outq, errOutq := unix.IoctlGetInt(int(s.Fd()), unix.TIOCOUTQ)
-		inq, errInq := unix.IoctlGetInt(int(m.Fd()), fionread())
-		if i == 0 {
-			t.Logf("RESULT after exit, unread: TIOCOUTQ on the command's side %d (%v), FIONREAD on the controlling side %d (%v)", outq, errOutq, inq, errInq)
-		}
-		done := make(chan string)
+		done := make(chan string, 1)
+		var rerr error
 		go func() {
 			got, err := readAll(m)
-			if err != nil && !errors.Is(err, unix.EIO) && i == 0 {
-				t.Logf("read ended with %v", err)
-			}
+			rerr = err
 			done <- got
 		}()
-		for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
-			if n, err := unix.IoctlGetInt(int(s.Fd()), unix.TIOCOUTQ); err != nil || n == 0 {
-				break
-			}
-		}
-		if i == 0 {
-			outq, errOutq = unix.IoctlGetInt(int(s.Fd()), unix.TIOCOUTQ)
-			t.Logf("RESULT once read: TIOCOUTQ %d (%v)", outq, errOutq)
-		}
-		s.Close()
-		var got string
+		waited := make(chan struct{})
+		go func() { cmd.Wait(); close(waited) }()
 		select {
-		case got = <-done:
+		case got := <-done:
+			if got != experimentOut {
+				lost++
+				if lost <= 3 {
+					t.Logf("run %d: read %q, %v", i, got, rerr)
+				}
+			}
 		case <-time.After(5 * time.Second):
-			t.Fatal("the read did not end once the command's side was closed")
+			hung++
+		}
+		select {
+		case <-waited:
+		case <-time.After(5 * time.Second):
+			t.Logf("run %d: the command did not end", i)
 		}
 		m.Close()
-		if got != experimentOut {
-			lost++
-			if lost == 1 {
-				t.Logf("read %q", got)
-			}
-		}
 	}
-	t.Logf("RESULT kept-open: %d of 50 lost output", lost)
+	t.Logf("RESULT concurrent reader: %d of 1000 lost output, %d hung", lost, hung)
 }
 
-func fionread() uint {
-	if runtime.GOOS == "darwin" {
-		return 0x4004667f
-	}
-	return 0x541b
-}
