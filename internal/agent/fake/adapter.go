@@ -2,6 +2,7 @@ package fake
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -36,6 +37,9 @@ type Config struct {
 	// agent's config directory: until its login command has accepted a
 	// code, every turn fails with the reason login.
 	ConfigDir string `json:"config_dir"`
+	// Record, when set, is a directory where the program writes, at each
+	// start, its arguments, environment and directory: one file per start.
+	Record string `json:"record"`
 	// Login is what its login command does.
 	Login Login `json:"login"`
 	// InputTimeout is how long written input may go unreported before its
@@ -143,8 +147,11 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 	if a.c.Conversations != "" {
 		argv = append(argv, "--conversations", a.c.Conversations)
 	}
-	if a.c.ConfigDir != "" {
-		argv = append(argv, "--config", a.c.ConfigDir)
+	if dir := cmp.Or(spec.ConfigDir, a.c.ConfigDir); dir != "" {
+		argv = append(argv, "--config", dir)
+	}
+	if a.c.Record != "" {
+		argv = append(argv, "--record", a.c.Record)
 	}
 	if a.c.ReportModel != "" {
 		argv = append(argv, "--report-model", a.c.ReportModel)

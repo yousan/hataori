@@ -1988,6 +1988,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `HostView`, a pane's screen with its cursor, for the dashboard's screen of a pane being operated (section 7.2, #363) | minor: new operation; 3.13 |
 | `HostTerminal.Reported` and `ReportedSession`, from the hooks of the Claude Code plugin (section 4.8, #397) | minor: new optional field; 3.15 |
 | `TakeIn` and `Release`, with `Ops` gaining `OpTakeIn`, and the removal reason `the workspace is not hataori's` (section 4.8, #400) | minor: new operations; 3.17 |
+| A thread taken in: the `state` reason `window closed`, and `Remove` without its workspace (section 4.8, #401) | minor: a new value of a reason, and the removal of a kind of thread that was refused; 3.20 |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 
 Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event. In protocol 1.9: `Terminal`, which turns its connection into a stream as `Events` does. In protocol 1.12: `ThreadInfo.terminal`, the terminal device its session host opened, for the tree's filter, the status bar and the details panel (#285); `HostTerminals` still leaves these terminals out.
@@ -2289,6 +2290,10 @@ type Spec struct {
 	// Model; its codec starts ready, Open reports SessionReady and watches
 	// no screen, and nothing launches it. A resume clears it.
 	TakenIn bool
+	// ConfigDir: the agent's configuration directory, when not the
+	// daemon's: the one the window of a session taken in used, which its
+	// resume under hataori's own host keeps (section 4.8, #401).
+	ConfigDir string
 }
 
 // Confinement is what a confined session may use besides its file tools.
