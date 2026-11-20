@@ -116,10 +116,11 @@ func startSSHD(t *testing.T, extra ...string) *sshHost {
 	bin := filepath.Join(d, "bin")
 	os.Mkdir(bin, 0o700)
 	h := &sshHost{dir: d, ssh: filepath.Join(bin, "ssh"), log: filepath.Join(d, "calls"), port: port}
-	// Each call's record reaches the log in one write: printf writes each
-	// of its arguments on its own, so two calls at once, as two connects
-	// started together make, would interleave their lines (#478). The
-	// record is put together in a file of its own, and cat appends it.
+	// Each call's record reaches the log in one write. A connect starts
+	// its master and asks it -O check at once, so two calls run together;
+	// printf in a /bin/sh that is bash writes a line at a time, and their
+	// lines would interleave (#478). The record is put together in a file of
+	// its own, and cat appends it.
 	wrapper := fmt.Sprintf("#!/bin/sh\nr=$(mktemp %s) && printf '%%s\\n' \"$@\" '---' > \"$r\" && cat \"$r\" >> %s\nrm -f \"$r\"\nexec env -u SSH_AUTH_SOCK %s -F %s \"$@\"\n",
 		quoteSh(filepath.Join(d, "call.XXXXXX")), quoteSh(h.log), quoteSh(realSSH), quoteSh(filepath.Join(d, "ssh_config")))
 	os.WriteFile(h.ssh, []byte(wrapper), 0o700)
@@ -648,7 +649,9 @@ func noSockets(t *testing.T, runDir string) {
 }
 
 // The test's ssh records every call whole, also calls made at the same
-// moment, which TestConnectTwoAtOnce counts (#478).
+// moment, as a master and its first -O check are, which the connect tests
+// count (#478). With the old printf it failed under a /bin/sh that is bash
+// (macOS); a shell that writes printf's output at once would pass anyway.
 func TestSSHWrapperRecordsCallsWhole(t *testing.T) {
 	h := startSSHD(t)
 	args := []string{"-V", "-M", "-S", "/run/x.cm", "-o", "ControlPersist=no", "-o", "ServerAliveInterval=15", "-N", "--", "test"}
