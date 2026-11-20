@@ -90,6 +90,17 @@ func TestCommandsOutsideTheScopesAnswerThatTheInstanceDoesNotServeThem(t *testin
 	f := newFront(t, workspaces{})
 	elsewhere := surface.Conversation{Channel: "c-elsewhere"}
 	inThread := surface.Conversation{Channel: "c-elsewhere", Thread: "t-elsewhere"}
+	// settled waits once per marker key; each wait here needs its own.
+	marks := 0
+	settle := func(conv surface.Conversation) {
+		t.Helper()
+		marks++
+		ev := uint64(1<<41 + marks)
+		if err := f.fe.Outbox.Write(context.Background(), row(ev, 0, conv, "marker")); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "the marker", func() bool { _, ok, _ := f.fe.Outbox.Sent(context.Background(), ev, 0); return ok })
+	}
 	n := 0
 	for _, conv := range []surface.Conversation{elsewhere, inThread} {
 		for _, cmd := range []struct {
@@ -110,9 +121,9 @@ func TestCommandsOutsideTheScopesAnswerThatTheInstanceDoesNotServeThem(t *testin
 			if len(lines) != 1 || !strings.Contains(lines[0], "does not serve") || !strings.Contains(lines[0], "id="+id) {
 				t.Errorf("/%s in %+v: log %q, want one line", cmd.name, conv, lines)
 			}
-			f.settled(t, conv)
+			settle(conv)
 			f.fe.Command(c) // delivered again
-			f.settled(t, conv)
+			settle(conv)
 			if again := f.log.lines()[before+1:]; len(again) != 0 {
 				t.Errorf("/%s in %+v delivered again: log %q, want nothing more", cmd.name, conv, again)
 			}
@@ -127,6 +138,14 @@ func TestCommandsOutsideTheScopesAnswerThatTheInstanceDoesNotServeThem(t *testin
 			}
 		}
 	}
+	// A command that waits for no answer (its acknowledgement failed) is
+	// only logged, with one line.
+	before := len(f.log.lines())
+	f.fe.Command(surface.Command{Conv: elsewhere, Author: fake.Person(owner), ID: "x-none", Name: stopCommand})
+	if lines := f.log.lines()[before:]; len(lines) != 1 || !strings.Contains(lines[0], "does not serve") {
+		t.Errorf("a command without a reply: log %q, want one line", lines)
+	}
+	settle(elsewhere)
 	for _, conv := range []surface.Conversation{elsewhere, inThread} {
 		for _, p := range postsIn(f.driver, conv) {
 			if p != notServed && p != "marker" {

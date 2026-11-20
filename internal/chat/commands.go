@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/store"
 	"github.com/yousan/hataori/internal/surface"
 )
 
@@ -79,15 +80,7 @@ var _ surface.Commander = (*FrontEnd)(nil)
 func (f *FrontEnd) Command(c surface.Command) {
 	ctx := f.context()
 	if c.Author.Kind != surface.Bot && len(f.scopesIn(c.Conv.Channel)) == 0 {
-		// Once however often it is delivered: the answer, and its log line.
-		first, err := f.once(ctx, c.Conv.Channel, "unserved:"+c.ID, true)
-		if err == nil && first {
-			f.ignored(c, "this instance does not serve the channel")
-			if err = f.answer(ctx, c, notServed); err != nil {
-				f.once(ctx, c.Conv.Channel, "unserved:"+c.ID, false) // to be tried again
-			}
-		}
-		if err != nil {
+		if err := f.unserved(ctx, c); err != nil {
 			f.Log.Error("command failed", "command", c.Name, "channel", c.Conv.Channel, "id", c.ID, "err", err)
 		}
 		return
@@ -115,6 +108,45 @@ func (f *FrontEnd) command(ctx context.Context, c surface.Command) error {
 	case dashboardCommand:
 		return f.dashboardLink(ctx, c)
 	}
+	return nil
+}
+
+// unserved answers command c, from a conversation outside the scopes,
+// with notServed and writes one log line, once however often c is
+// delivered: c is recorded in the same transaction that queues the answer.
+// A command that waits for no answer is only logged.
+func (f *FrontEnd) unserved(ctx context.Context, c surface.Command) error {
+	const reason = "this instance does not serve the channel"
+	if c.Reply == nil {
+		f.ignored(c, reason)
+		return nil
+	}
+	first := false
+	err := f.Outbox.Store.Update(ctx, func(tx *store.Tx) error {
+		key := "unserved:" + c.ID
+		res, err := tx.ExecContext(ctx, `INSERT INTO chat_notices (client, channel, message, received_at)
+			VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`, f.Name, c.Conv.Channel, key, time.Now().UnixMilli())
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return nil // answered before
+		}
+		first = true
+		var n int64
+		if err := tx.QueryRowContext(ctx, `SELECT rowid FROM chat_notices WHERE client = ? AND channel = ? AND message = ?`,
+			f.Name, c.Conv.Channel, key).Scan(&n); err != nil {
+			return err
+		}
+		// The part of notice's rows, with the record's own row id.
+		return f.Outbox.WriteTx(ctx, tx, Row{Event: 0, Part: -(1 << 30) - int(2*n), Conv: c.Conv,
+			Message: surface.Message{Text: notServed, ReplyTo: c.Reply}})
+	})
+	if err != nil || !first {
+		return err
+	}
+	f.ignored(c, reason)
+	f.Outbox.Wake()
 	return nil
 }
 
