@@ -3,12 +3,14 @@ package runner
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
+	"github.com/yousan/hataori/internal/holder"
 	"github.com/yousan/hataori/internal/store"
 )
 
@@ -51,6 +53,13 @@ func dieBeforeHandOver(st *store.Store, c *core.Core, call, text string) error {
 		return owner(c).Answer(ctx, control.RequestID(h), control.Answer{Text: text})
 	}
 	return nil
+}
+
+// hostEnded reports whether the host of session id has recorded its end.
+func hostEnded(root string, id int64) bool {
+	own := &holder.Host{}
+	l, _ := own.Alive(context.Background(), own.Window(StateDir(root, id)))
+	return l.Ended()
 }
 
 // waitKilled waits for a die daemon to kill itself.
@@ -111,8 +120,12 @@ func TestInputPendingAtADaemonKill(t *testing.T) {
 			checks: []check{{"answer", "blue", 1}, {"input", "blue", 0}, {"text", "answer: blue", 1}}},
 		{name: "send to an asleep thread", setup: "reply hi", call: "send", text: "reply again", turns: 2, idle: true,
 			ready: func(t *testing.T, root string, st *store.Store) {
+				// Asleep, and its host ended, not only its agent, as the other
+				// cases' daemons wait for: a host still finishing when the next
+				// daemon wakes the session makes that wake fail (#549), and this
+				// case is about the input, not that race (#480).
 				waitFor(t, "asleep", 20*time.Second, func() bool {
-					return sessionState(t, st, 1) == "asleep" && !agentAlive(t, root, 1)
+					return sessionState(t, st, 1) == "asleep" && !agentAlive(t, root, 1) && hostEnded(root, 1)
 				})
 			},
 			checks: []check{{"input", "reply again", 1}, {"text", "hi", 1}, {"text", "again", 1}}},
@@ -122,6 +135,12 @@ func TestInputPendingAtADaemonKill(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				root := t.TempDir()
 				t.Cleanup(func() { killSessions(root) })
+				t.Cleanup(func() {
+					if t.Failed() { // what the daemons said, for a failure seen only in CI (#480)
+						b, _ := os.ReadFile(filepath.Join(root, "daemon.log"))
+						t.Logf("daemon.log:\n%s", b)
+					}
+				})
 				if tc.setup != "" {
 					mode := "start"
 					if tc.idle {
