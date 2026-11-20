@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/store"
 	"github.com/yousan/hataori/internal/surface"
 )
 
@@ -29,6 +30,9 @@ const (
 // chat_triggers row is kept under: the command's id is no message, so its
 // thread is opened in the channel alone.
 const commandKey = "cmd:"
+
+// notServed answers a command from a conversation outside the scopes.
+const notServed = "This hataori instance does not serve this channel: nothing was done. Use the command of the bot that serves it."
 
 // statusMax is how many threads a channel's status lists at most, the
 // newest ones.
@@ -69,9 +73,19 @@ func (f *FrontEnd) Commands() []surface.CommandSpec {
 
 var _ surface.Commander = (*FrontEnd)(nil)
 
-// Command handles a command.
+// Command handles a command. One from a conversation outside the front
+// end's scopes is answered with one line saying so, whatever the command:
+// several instances can share one server, each with its own bot, and the
+// person picked the bot of an instance that does not serve this channel.
 func (f *FrontEnd) Command(c surface.Command) {
-	if err := f.command(f.context(), c); err != nil {
+	ctx := f.context()
+	if c.Author.Kind != surface.Bot && len(f.scopesIn(c.Conv.Channel)) == 0 {
+		if err := f.unserved(ctx, c); err != nil {
+			f.Log.Error("command failed", "command", c.Name, "channel", c.Conv.Channel, "id", c.ID, "err", err)
+		}
+		return
+	}
+	if err := f.command(ctx, c); err != nil {
 		f.Log.Error("command failed", "command", c.Name, "channel", c.Conv.Channel, "id", c.ID, "err", err)
 	}
 }
@@ -94,6 +108,45 @@ func (f *FrontEnd) command(ctx context.Context, c surface.Command) error {
 	case dashboardCommand:
 		return f.dashboardLink(ctx, c)
 	}
+	return nil
+}
+
+// unserved answers command c, from a conversation outside the scopes,
+// with notServed and writes one log line, once however often c is
+// delivered: c is recorded in the same transaction that queues the answer.
+// A command that waits for no answer is only logged.
+func (f *FrontEnd) unserved(ctx context.Context, c surface.Command) error {
+	const reason = "this instance does not serve the channel"
+	if c.Reply == nil {
+		f.ignored(c, reason)
+		return nil
+	}
+	first := false
+	err := f.Outbox.Store.Update(ctx, func(tx *store.Tx) error {
+		key := "unserved:" + c.ID
+		res, err := tx.ExecContext(ctx, `INSERT INTO chat_notices (client, channel, message, received_at)
+			VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`, f.Name, c.Conv.Channel, key, time.Now().UnixMilli())
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return nil // answered before
+		}
+		first = true
+		var n int64
+		if err := tx.QueryRowContext(ctx, `SELECT rowid FROM chat_notices WHERE client = ? AND channel = ? AND message = ?`,
+			f.Name, c.Conv.Channel, key).Scan(&n); err != nil {
+			return err
+		}
+		// The part of notice's rows, with the record's own row id.
+		return f.Outbox.WriteTx(ctx, tx, Row{Event: 0, Part: -(1 << 30) - int(2*n), Conv: c.Conv,
+			Message: surface.Message{Text: notServed, ReplyTo: c.Reply}})
+	})
+	if err != nil || !first {
+		return err
+	}
+	f.ignored(c, reason)
+	f.Outbox.Wake()
 	return nil
 }
 

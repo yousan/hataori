@@ -306,6 +306,18 @@ func TestTokenOnlyFromConfigDir(t *testing.T) {
 	if _, err := New(root, []byte(`{"bot_id": "x", "token_file": "discord-token"}`)); err == nil {
 		t.Error("a bad bot_id was accepted")
 	}
+	if drv.(*Driver).prefix != "" {
+		t.Errorf("prefix %q without command_prefix", drv.(*Driver).prefix)
+	}
+	drv, err = New(root, []byte(`{"bot_id": "1000000000000000001", "token_file": "discord-token", "command_prefix": " stg-\n"}`))
+	if err != nil || drv.(*Driver).prefix != "stg-" {
+		t.Fatalf("command_prefix: %v", err)
+	}
+	for _, p := range []string{"Stg-", "s g", "stg/", strings.Repeat("a", 32)} {
+		if _, err := New(root, []byte(`{"bot_id": "1000000000000000001", "token_file": "discord-token", "command_prefix": "`+p+`"}`)); err == nil {
+			t.Errorf("command_prefix %q accepted", p)
+		}
+	}
 }
 
 // A connection that drops just before Run ends is not reopened afterwards.

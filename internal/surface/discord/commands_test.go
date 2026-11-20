@@ -112,6 +112,52 @@ func TestChangedCommandsRegistered(t *testing.T) {
 	}
 }
 
+// With a command prefix, every command is registered under the prefix and
+// its name: the front end's "test" with "hataori-" is the capture's
+// "hataori-test", and the use of the captured command reaches the sink as
+// "test". A prefix that makes a name too long is refused.
+func TestCommandPrefix(t *testing.T) {
+	r := newFakeREST(t)
+	r.serve(t, "GET /applications/@me", "commands/rest-application.json")
+	r.serveJSON(t, "GET "+commandsKey(t), 200, []any{})
+	r.serve(t, "PUT "+commandsKey(t), "commands/rest-commands-set.json")
+	d := testDriver(t, botID(t), r, nil)
+	d.prefix = "hataori-"
+	specs := []surface.CommandSpec{testSpecs[0]}
+	specs[0].Name = "test"
+	if err := d.register(context.Background(), specs); err != nil {
+		t.Fatal(err)
+	}
+	puts := r.requests("PUT " + commandsKey(t))
+	if len(puts) != 1 {
+		t.Fatalf("%d registrations, want 1", len(puts))
+	}
+	var got, want []wireCommand
+	if err := json.Unmarshal(puts[0].body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw(t, capture(t, "commands/rest-commands-set.json")["request"].(map[string]any)["body"]), &want); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("registered %+v, the capture %+v", got, want)
+	}
+	for _, name := range []string{"commands/gw-01-INTERACTION_CREATE.json", "commands/gw-02-INTERACTION_CREATE.json"} {
+		ack := "commands/rest-command-ack-channel.json"
+		if strings.Contains(name, "gw-02") {
+			ack = "commands/rest-command-ack-thread.json"
+		}
+		if _, c := command(t, d, r, name, ack); c.Name != "test" {
+			t.Fatalf("%s delivered as %q, want \"test\"", name, c.Name)
+		}
+	}
+
+	d.prefix = strings.Repeat("a", 28)
+	if err := d.register(context.Background(), []surface.CommandSpec{{Name: "dashboard", Description: "d"}}); err == nil || !strings.Contains(err.Error(), "command_prefix") {
+		t.Fatalf("a name of 37 characters: %v", err)
+	}
+}
+
 func TestCommandSpecsRefused(t *testing.T) {
 	for _, specs := range [][]surface.CommandSpec{
 		{{Name: "New", Description: "upper case"}},
