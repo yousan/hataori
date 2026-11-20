@@ -290,7 +290,10 @@ func (s *server) state(pane string) string {
 			tty = strings.TrimPrefix(f[2], "/dev/")
 		}
 	}
-	ps, _ := exec.Command("ps", "-A", "-o", "pid=,pgid=,tty=,comm=").Output()
+	ps, err := exec.Command("ps", "-A", "-o", "pid=,pgid=,tty=,comm=").Output()
+	if err != nil {
+		s.t.Fatalf("ps: %v", err)
+	}
 	var procs []string
 	for _, l := range strings.Split(string(ps), "\n") {
 		if f := strings.Fields(l); len(f) >= 3 && f[2] == tty {
@@ -306,13 +309,15 @@ func (s *server) state(pane string) string {
 func (s *server) runs(pid int, name string) {
 	s.t.Helper()
 	var comm string
+	var err error
 	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
-		out, _ := exec.Command("ps", "-o", "comm=", "-p", strconv.Itoa(pid)).Output()
+		var out []byte
+		out, err = exec.Command("ps", "-o", "comm=", "-p", strconv.Itoa(pid)).Output()
 		if comm = strings.TrimSpace(string(out)); filepath.Base(comm) == name {
 			return
 		}
 	}
-	s.t.Fatalf("process %d runs %q, not %s", pid, comm, name)
+	s.t.Fatalf("process %d runs %q, not %s (ps: %v)", pid, comm, name, err)
 }
 
 func TestCapsStopAndNothingChanges(t *testing.T) {
