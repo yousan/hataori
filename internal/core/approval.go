@@ -78,6 +78,36 @@ func (a *api) AskInterrupt(ctx context.Context, id control.ThreadID, key, reason
 	return handle, err
 }
 
+// recheck decides an approval answered again after an answer that took
+// its reason and recorded no outcome. The reason is neither taken nor
+// handed over again: the first answer handed it over, or left it pending
+// for the runner, which hands pending input over when it reaches the
+// session again. The asked turn is interrupted only while it is the
+// thread's running turn, named to the runner, which checks it in the step
+// that interrupts; otherwise the outcome is ended. So the approval is never
+// recorded as interrupted without an interrupt.
+func (a *api) recheck(ctx context.Context, target control.ThreadID, sid, turn int64) (string, error) {
+	cur, state, err := a.c.current(ctx, a.c.Store.DB, target)
+	if err != nil {
+		return "", err
+	}
+	var open int64
+	if err := a.c.Store.DB.QueryRowContext(ctx, `SELECT coalesce(max(id), 0) FROM turns WHERE session_id = ? AND ended_at IS NULL`, sid).Scan(&open); err != nil {
+		return "", err
+	}
+	if cur != sid || state != control.Running || open != turn {
+		return "ended", nil
+	}
+	err = a.c.Runner.Interrupt(ctx, sid, turn)
+	if errors.Is(err, session.ErrRefused) {
+		return "ended", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("core: approved interrupt of thread %d: %w", target, err)
+	}
+	return "interrupted", nil
+}
+
 // noRequestErr is Answer's error for request req when there is no such
 // question or approval, and for one of a scope the caller may not see.
 func noRequestErr(req control.RequestID) error {
@@ -131,6 +161,14 @@ func (a *api) answerApproval(ctx context.Context, req control.RequestID, ans con
 			sender := a.c.As(control.Caller{From: from, Principal: control.Principal(principal), Scopes: []string{scope}, May: control.OpSend}).(*api)
 			err := sender.send(ctx, target, "approval:"+string(req), control.Input{Text: marked}, control.Interrupt, &guard)
 			switch {
+			case err == nil && guard.repeated:
+				// An earlier answer took the reason and recorded no outcome:
+				// its interrupt failed, or writing the outcome did. The key
+				// does not decide it: the asked turn is interrupted now if it
+				// still runs, else the outcome is ended (#523).
+				if outcome, err = a.recheck(ctx, target, guard.session, guard.turn); err != nil {
+					return err
+				}
 			case errors.Is(err, errGuardEnded):
 				outcome = "ended"
 			case guard.ended || guard.interrupted:
@@ -151,6 +189,10 @@ func (a *api) answerApproval(ctx context.Context, req control.RequestID, ans con
 			}
 		}
 	}
+	// The outcome is written whatever the caller's context says by now: an
+	// interrupt that was sent or refused is recorded as such, and not left
+	// to an answer given again, which can only look at the turn (#523).
+	ctx = context.WithoutCancel(ctx)
 	return a.c.Store.Update(ctx, func(tx *store.Tx) error {
 		res, err := tx.ExecContext(ctx, `UPDATE approvals SET state = ?, closed_at = ? WHERE handle = ? AND state = 'open'`, outcome, time.Now().UnixMilli(), req)
 		if err != nil {

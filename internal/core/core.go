@@ -1651,10 +1651,12 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 // runs. What the interrupt did is set before the input is handed over:
 // interrupted when it was sent, ended when that turn ended after the input
 // was taken and before the interrupt, so that nothing was interrupted
-// (#493).
+// (#493). repeated is set when the send's key was taken already, by an
+// earlier answer that took the input and recorded no outcome: nothing is
+// taken or interrupted then, and the caller decides again (#523).
 type sendGuard struct {
-	session, turn      int64
-	interrupted, ended bool
+	session, turn                int64
+	interrupted, ended, repeated bool
 }
 
 var errGuardEnded = errors.New("the requested turn ended")
@@ -1707,6 +1709,9 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		if key != "" {
 			data, _ := json.Marshal(map[string]any{"thread": id, "session": sid, "text": in.Text})
 			ok, err := tx.Accept(ctx, "send:"+scope+"\x00"+key, data)
+			if err == nil && !ok && guard != nil {
+				guard.repeated = true
+			}
 			if err != nil || !ok {
 				return err // a repeated key is ignored, whatever Busy says
 			}
