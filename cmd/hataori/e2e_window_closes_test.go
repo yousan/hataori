@@ -223,6 +223,9 @@ func TestTakenInWindowClosesAndTheThreadGoesOn(t *testing.T) {
 	}
 
 	// Removed: hataori's own of it goes, the person's directory stays.
+	// The reply is posted while its turn still runs, and close refuses a
+	// running session: close it once the turn has ended.
+	eventually(t, "the resumed turn to end", r.within(15*time.Second), func() bool { return r.state(t, th) == "idle" })
 	n := strconv.FormatInt(int64(id), 10)
 	if code, _, e := cli(t, "close", n, "--root", r.root); code != 0 {
 		t.Fatalf("hataori close: %s", e)
