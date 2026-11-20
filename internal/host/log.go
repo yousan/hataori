@@ -22,6 +22,9 @@ type boundedLog struct {
 	pos       uint64 // bytes written since the log was opened
 	followers map[*follower]struct{}
 	closed    bool
+	// trimmed, when set, is told the position of the file's first byte
+	// after each trim.
+	trimmed func(start uint64)
 }
 
 func openBounded(path string, limit int64) (*boundedLog, error) {
@@ -99,6 +102,9 @@ func (l *boundedLog) trim(keep int64) error {
 	}
 	l.f.Close()
 	l.f, l.size = f, keep
+	if l.trimmed != nil {
+		l.trimmed(l.pos - uint64(keep))
+	}
 	return nil
 }
 
