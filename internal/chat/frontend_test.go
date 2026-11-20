@@ -24,6 +24,7 @@ type starts struct {
 	l     []core.Launch
 	calls []string // deliver TEXT, answer REQUEST TEXT
 	stops int      // Interrupt calls
+	die   func()   // called by Interrupt, before it counts, when set: a daemon that dies there never returns
 }
 
 func (r *starts) record(s string) {
@@ -53,6 +54,12 @@ func (r *starts) Answer(_ context.Context, _, _ int64, req string, a control.Ans
 	return nil
 }
 func (r *starts) Interrupt(context.Context, int64, int64, control.Principal) error {
+	r.mu.Lock()
+	die := r.die
+	r.mu.Unlock()
+	if die != nil {
+		die()
+	}
 	r.mu.Lock()
 	r.stops++
 	r.mu.Unlock()

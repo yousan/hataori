@@ -77,14 +77,20 @@ func (f *FrontEnd) pressStop(s surface.Selection, rest string) {
 		ignored("its turn is not running", err)
 		return
 	}
-	// Each button stops once: a second press, also one delivered again
-	// after a restart, does nothing more. The press is recorded before the
-	// core is asked, and forgotten when the core refuses it; the line
-	// changes only by the second record, written once the core took it, so
+	// Each button stops once: a press after one the core took, also one
+	// delivered again after a restart, does nothing more, by the record
+	// written once the core took it. While the core is asked, the press is
+	// held in this process only, so a second press meanwhile does nothing,
+	// and a daemon that dies before the core took it leaves nothing that
+	// refuses the next press (#534). The line changes only by the record, so
 	// it shows nothing of a press the core refused.
-	pressed := "stoppress:" + strings.TrimPrefix(stopKey(thread, turn), "stopbtn:")
-	first, err := f.once(ctx, "", pressed, true)
-	if err != nil || !first {
+	key := stopKey(thread, turn)
+	if _, busy := f.pressing.LoadOrStore(key, struct{}{}); busy {
+		ignored("the turn is being stopped", nil)
+		return
+	}
+	defer f.pressing.Delete(key) // after the record is written: a press that comes next finds it
+	if done, err := f.stopped(ctx, thread, turn); err != nil || done {
 		ignored("the turn is being stopped", err)
 		return
 	}
@@ -92,13 +98,12 @@ func (f *FrontEnd) pressStop(s surface.Selection, rest string) {
 	// The turn may end, and the next start, between the lookup and this
 	// call: Stop names the turn, and the core then stops nothing.
 	if err := api.Stop(ctx, thread, number); err != nil {
-		f.once(ctx, "", pressed, false)
 		if !errors.Is(err, control.ErrForbidden) { // the core logged a refusal
 			ignored("not stopped", err)
 		}
 		return
 	}
-	if _, err := f.once(ctx, "", stopKey(thread, turn), true); err != nil {
+	if _, err := f.once(ctx, "", key, true); err != nil {
 		f.Log.Warn("stop button: the press could not be recorded", "thread", int64(thread), "err", err)
 	}
 	f.Log.Info("stop button pressed", "thread", int64(thread), "client", f.Name, "id", s.Author.ID)
