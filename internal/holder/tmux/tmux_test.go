@@ -301,9 +301,24 @@ func (s *server) state(pane string) string {
 		s.run("show-options", "-p", "-t", pane), s.run("show-options", "-w", "-t", pane), s.run("show-options", "-s")}, "\n--\n")
 }
 
+// runs waits until the process pid runs the program name: a pane's process
+// is the tmux server's fork until it has run the pane's command.
+func (s *server) runs(pid int, name string) {
+	s.t.Helper()
+	var comm string
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		out, _ := exec.Command("ps", "-o", "comm=", "-p", strconv.Itoa(pid)).Output()
+		if comm = strings.TrimSpace(string(out)); filepath.Base(comm) == name {
+			return
+		}
+	}
+	s.t.Fatalf("process %d runs %q, not %s", pid, comm, name)
+}
+
 func TestCapsStopAndNothingChanges(t *testing.T) {
 	s := newServer(t)
 	pane, pid := s.pane("exec cat > /dev/null")
+	s.runs(pid, "cat")
 	w := s.window(pane, pid)
 	h := &Holder{Poll: 20 * time.Millisecond}
 	if c := h.Caps(); c.CanStart || c.RawScreen {
