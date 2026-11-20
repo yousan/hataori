@@ -369,13 +369,15 @@ func TestBlockedAtStart(t *testing.T) {
 // The screen goes to a codec that asked for it until the codec ends the
 // watch, past the session's start: the fake watches on until its first
 // turn ends, and panics if given the screen after that. The first turn
-// waits on a question until the codec was given the screen the fake shows
-// after its start: the hook calls and the terminal are separate streams,
-// so a turn that ended at once could have its end read before that screen
-// reached the log (#516).
+// writes to the screen, which it does only after the codec decoded the
+// start (the input is pasted then), and waits on a question until the
+// codec was given screen after the start. The hook calls and the terminal
+// are separate streams: a turn that ended at once could have its end read
+// before its screen reached the log, and what the fake writes right after
+// its ready report could be read before the report (#516).
 func TestScreenUntilTheCodecStops(t *testing.T) {
 	f := newFixture(t, options{terminal: true, dialog: "fake: trust this folder? Enter"})
-	f.start("ask go on?\nreply hello")
+	f.start("screen the turn's screen\nask go on?\nreply hello")
 	waitFor(t, "the question", 15*time.Second, f.has("request", 1))
 	lv, err := f.run.get(1)
 	if err != nil {
@@ -388,7 +390,9 @@ func TestScreenUntilTheCodecStops(t *testing.T) {
 	})
 	var req string
 	f.st.DB.QueryRow(`SELECT json_extract(data, '$.request') FROM events WHERE kind = 'request'`).Scan(&req)
-	if err := owner(f.core).Answer(context.Background(), control.RequestID(req), control.Answer{Text: "yes"}); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := owner(f.core).Answer(ctx, control.RequestID(req), control.Answer{Text: "yes"}); err != nil {
 		t.Fatal(err)
 	}
 	// The question ends the first turn as blocked; the answer's turn is

@@ -31,7 +31,7 @@ type codec struct {
 	started  bool   // a hook was called: the dialog is past
 	opened   bool   // Open was called: a codec rebuilt after a restart is not
 	stopped  bool   // the watch ended: the screen must not come any more
-	seenOnce bool   // the screen showed the dialog again after the start
+	seenOnce bool   // the codec was given the screen after it decoded the start
 
 	// A session a person started and hataori took in (agent.Spec.TakenIn).
 	takenIn bool
@@ -127,7 +127,7 @@ func (c *codec) onScreen(b []byte) agent.Actions {
 		panic("fake: the codec was given the screen after it stopped watching")
 	}
 	c.screen = append(c.screen, b...)
-	if c.started && bytes.Contains(c.screen, []byte(c.dialog+" (shown again after the start)")) {
+	if c.started && len(b) > 0 {
 		c.seenOnce = true
 	}
 	if c.answered || c.started || !bytes.Contains(c.screen, []byte(c.dialog)) {
@@ -137,8 +137,9 @@ func (c *codec) onScreen(b []byte) agent.Actions {
 	return agent.Actions{Keys: []agent.Part{{Key: agent.Enter}}}
 }
 
-// SawScreenAfterStart reports whether the codec was given the screen the
-// fake program shows after its start.
+// SawScreenAfterStart reports whether the codec was given the screen
+// after it decoded the session's start: the runner kept giving it past
+// SessionReady.
 func SawScreenAfterStart(c agent.Codec) bool {
 	f := c.(*codec)
 	f.mu.Lock()
