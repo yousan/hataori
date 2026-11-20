@@ -141,6 +141,9 @@ func TestHooksWarningShapes(t *testing.T) {
 		{hooksWarning + ".claude/settings.local.json Trusting this folder loads .claude/settings.json (runs commands).", nil, false},
 		{"⚠ This folder configures something else in .claude/settings.json Trusting this folder loads .claude/settings.json.", nil, false},
 		{hooksWarning + ".claude/settings.json", nil, false},
+		{hooksWarning + ".claude/settings.json,, Trusting this folder loads .claude/settings.json (runs commands).", nil, false},
+		{hooksWarning + ".claude/settings.json and .claude/settings.local.json Trusting this folder loads .claude/settings.json and .claude/settings.local.json (runs commands).",
+			[]string{".claude/settings.json", ".claude/settings.local.json"}, true},
 	} {
 		files, ok := headerMatches(head+tc.middle+tail, dir)
 		if ok != tc.ok || !slices.Equal(files, tc.files) {

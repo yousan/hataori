@@ -227,10 +227,10 @@ func loadedFiles(line string) []string {
 }
 
 // fileList reads "a, b and c" as its files, or nil when it is not of that
-// shape.
+// shape: an empty entry, as in "a,, b", is not.
 func fileList(list string) []string {
 	var files []string
-	for _, f := range strings.FieldsFunc(strings.ReplaceAll(list, " and ", ","), func(r rune) bool { return r == ',' }) {
+	for _, f := range strings.Split(strings.ReplaceAll(list, " and ", ","), ",") {
 		f = strings.TrimSpace(f)
 		if f == "" || strings.ContainsAny(f, " ()") {
 			return nil
