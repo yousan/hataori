@@ -77,11 +77,29 @@ func heldRoot(t *testing.T, holderName string, server []string) (*chatRoot, stri
 	})
 	tmuxServerHook = func() []string { return server }
 	hostTermsHook = func(l *hostterm.Lister) { l.Tmux = server }
-	t.Cleanup(func() { tmuxServerHook, hostTermsHook = nil, nil })
+	// Every tmux command the holder runs, short-lived ones included, goes
+	// through a program that writes its arguments down first.
+	real, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapper, args := filepath.Join(t.TempDir(), "tmux"), filepath.Join(t.TempDir(), "tmux-args")
+	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> "+strconvQuote(args)+"\nexec "+strconvQuote(real)+" \"$@\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	tmuxProgramHook = func() string { return wrapper }
+	tmuxArgs = args
+	t.Cleanup(func() { tmuxServerHook, hostTermsHook, tmuxProgramHook = nil, nil, nil })
 	startDaemon(t, r.root)
 	r.connected(t)
 	return r, record
 }
+
+// tmuxArgs is the file the holder's tmux program writes its arguments to.
+var tmuxArgs string
+
+// strconvQuote quotes s for sh.
+func strconvQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 // startedHeld runs one thread to its first answer and returns its number and
 // session.
@@ -196,6 +214,15 @@ func TestTmuxHolderStartsTheSession(t *testing.T) {
 	if !strings.Contains(string(out), " fake ") {
 		t.Fatal("no process of the fake agent on the host: the search would find nothing anyway")
 	}
+	// Nor on the command line of any tmux command the holder ran, as
+	// new-session, respawn-pane and pipe-pane, which end at once.
+	ran, err := os.ReadFile(tmuxArgs)
+	if err != nil || !strings.Contains(string(ran), "respawn-pane") {
+		t.Fatalf("the tmux commands were not written down: %v", err)
+	}
+	if strings.Contains(string(ran), heldMarker) {
+		t.Fatalf("a tmux command line holds a value of the environment:\n%s", ran)
+	}
 
 	// Listed once: as its thread, not as a terminal on the host.
 	c, err := wire.Dial(r.root)
@@ -263,10 +290,12 @@ func TestTmuxHolderEnds(t *testing.T) {
 	dir3 := runner.StateDir(r.root, sid3)
 	w3 := heldWindow(t, dir3)
 	tmuxOn(server, "kill-server").Run()
-	if out, err := tmuxOn(server, "new-session", "-d", "-P", "-F", "#{pane_id}", "sleep 600").Output(); err != nil || strings.TrimSpace(string(out)) == "" {
-		t.Fatalf("a new server: %q %v", out, err)
+	// The old server gone first, so that the new one is another.
+	eventually(t, "the server gone", 10*time.Second, func() bool { return tmuxOn(server, "has-session").Run() != nil })
+	if out, err := tmuxOn(server, "new-session", "-d", "-P", "-F", "#{pane_id}", "sleep 600").Output(); err != nil || strings.TrimSpace(string(out)) != w3pane(t, w3) {
+		t.Fatalf("a new server's pane %q, want the old id %s: %v", out, w3pane(t, w3), err)
 	}
-	if l, err := (&tmux.Holder{}).Alive(context.Background(), w3); err != nil || l.State == holder.Running {
+	if l, err := (&tmux.Holder{}).Alive(context.Background(), w3); err != nil || l.State != holder.Gone {
 		t.Fatalf("the old window on the new server: %+v, %v", l, err)
 	}
 	eventually(t, "asleep, interrupted", 20*time.Second, func() bool {
@@ -278,6 +307,16 @@ func TestTmuxHolderEnds(t *testing.T) {
 }
 
 func errorsIsESRCH(err error) bool { return err == syscall.ESRCH }
+
+// w3pane is the pane id the window's reference names.
+func w3pane(t *testing.T, w holder.Window) string {
+	t.Helper()
+	var r struct{ Pane string }
+	if err := json.Unmarshal([]byte(w.Ref), &r); err != nil {
+		t.Fatal(err)
+	}
+	return r.Pane
+}
 
 // recordedStatus is how the agent of the window in dir ended, as recorded.
 func recordedStatus(t *testing.T, dir string) host.Status {

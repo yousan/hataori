@@ -49,7 +49,15 @@ func (r *Runner) startHeld(ctx context.Context, dir string, hs holder.Spec) (hol
 		if hs.Again != nil && r.alive(dir).State == holder.Running {
 			return w, nil
 		}
-		r.endHeld(ctx, dir) // a window of an earlier run
+		if r.alive(dir).State == holder.Running {
+			if _, err := r.tmuxHolder().Stop(ctx, w, time.Second, time.Second); err != nil {
+				return holder.Window{}, fmt.Errorf("runner: a window of an earlier run still runs: %w", err)
+			}
+		}
+		r.endHeld(ctx, dir, w) // a window of an earlier run
+		if _, still := heldOf(dir); still {
+			return holder.Window{}, fmt.Errorf("runner: the window of an earlier run could not be let go")
+		}
 	}
 	if _, err := host.Start(r.Host, dir, host.Spec{Relay: true}); err != nil {
 		return holder.Window{}, err
@@ -68,17 +76,23 @@ func (r *Runner) startHeld(ctx context.Context, dir string, hs holder.Spec) (hol
 	return w, nil
 }
 
-// endHeld lets the window of a held session go once its agent has ended:
+// endHeld lets the window w of a held session go once its agent has ended:
 // how the agent ended is recorded from the dead pane, the window and the
 // relay host go, and so does HeldFile. Afterwards the session is as any
-// whose host ended: its next launch chooses a holder again.
-func (r *Runner) endHeld(ctx context.Context, dir string) {
-	w, ok := heldOf(dir)
-	if !ok {
+// whose host ended: its next launch chooses a holder again. It does
+// nothing when HeldFile names another window by now, as one a later launch
+// made; and when the window cannot be removed, HeldFile stays, so that the
+// next start or restart tries again.
+func (r *Runner) endHeld(ctx context.Context, dir string, w holder.Window) {
+	if now, ok := heldOf(dir); !ok || now.Ref != w.Ref {
 		return
 	}
 	if err := r.tmuxHolder().Record(ctx, w); err != nil {
 		r.Log.Error("recording a held window's end", "dir", dir, "err", err)
+		return
+	}
+	if now, ok := heldOf(dir); !ok || now.Ref != w.Ref {
+		return
 	}
 	if _, err := host.Stop(dir, time.Second, time.Second); err != nil {
 		r.Log.Error("stopping a held window's relay host", "dir", dir, "err", err)

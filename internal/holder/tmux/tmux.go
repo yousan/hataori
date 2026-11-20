@@ -1,8 +1,10 @@
-// Package tmux is the terminal holder for a tmux window that a person
-// started (design, sections 4.3 and 4.8): it hands the window's agent
+// Package tmux is the terminal holder for tmux windows (design, sections
+// 4.3 and 4.8). For a window a person started, it hands the window's agent
 // pastes and named keys, shows snapshots of the pane, tells whether that
-// agent still runs, and makes the check that comes before a take-in.
-// It never starts, stops, respawns or resizes a window, and sets no option.
+// agent still runs, and makes the check that comes before a take-in; it
+// never starts, stops, respawns or resizes such a window, and sets no
+// option on it. A window hataori starts (Start) is a tmux session of
+// hataori's own, which it makes, sets up, stops and removes itself.
 //
 // Text goes only on load-buffer's standard input, into a buffer of the
 // holder's own, which paste-buffer deletes; it is never in an argument.
@@ -103,8 +105,14 @@ func parseRef(w holder.Window) (ref, error) {
 	return r, nil
 }
 
-// Caps: no start, and snapshots only.
-func (h *Holder) Caps() holder.Caps { return holder.Caps{} }
+// Caps: snapshots of the windows people started; with Hataori set, it
+// starts windows too, whose raw output it keeps from the first byte.
+func (h *Holder) Caps() holder.Caps {
+	if h.Hataori != "" {
+		return holder.Caps{CanStart: true, RawScreen: true}
+	}
+	return holder.Caps{}
+}
 
 // Stop ends the agent of a window hataori started (startedStop). For a
 // window a person started it refuses and does nothing: hataori never ends a
@@ -214,7 +222,7 @@ func (h *Holder) find(ctx context.Context, r ref) (pane, error) {
 	// Every field prints something, "-" for nothing, so a line always has
 	// as many.
 	out, err := h.tmux(ctx, r, nil, "list-panes", "-a", "-F", "#{pid} #{pane_id} #{pane_tty} #{pane_width} #{pane_height} #{pane_pid} #{pane_dead} "+
-		"#{?pane_dead,#{?pane_dead_status,#{pane_dead_status},-},-} #{?pane_dead_signal,#{pane_dead_signal},-}")
+		"#{?pane_dead,x#{pane_dead_status},-} #{?pane_dead_signal,#{pane_dead_signal},-}")
 	if noServer(err) {
 		return pane{}, serverGone(r)
 	}

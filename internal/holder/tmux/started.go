@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/yousan/hataori/internal/holder"
 	"github.com/yousan/hataori/internal/host"
 )
@@ -61,6 +63,15 @@ func (h *Holder) Start(ctx context.Context, stateDir string, spec holder.Spec) (
 		return holder.Window{}, err
 	}
 	os.Remove(filepath.Join(stateDir, StatusFile)) // an earlier run's
+	// The log of this run starts empty, at position 0, before the pipe
+	// writes to it: a reader never takes an earlier run's for this one's.
+	if err := host.ResetPipe(stateDir); err != nil {
+		return holder.Window{}, err
+	}
+	// A session of this name is one an earlier run left, as when a daemon
+	// died between making it and recording it: its agent is ended, and it
+	// goes.
+	h.clearLeftover(ctx, h.Prefix+filepath.Base(stateDir))
 	cols, rows := spec.Cols, spec.Rows
 	if cols == 0 {
 		cols = 80
@@ -74,18 +85,24 @@ func (h *Holder) Start(ctx context.Context, stateDir string, spec holder.Spec) (
 		return holder.Window{}, err
 	}
 	f := strings.Fields(string(out))
-	if len(f) != 3 || !paneID.MatchString(f[0]) {
-		return holder.Window{}, fmt.Errorf("tmux: new-session printed %q", out)
+	server := 0
+	if len(f) == 3 {
+		server, _ = strconv.Atoi(f[1])
 	}
-	server, err := strconv.Atoi(f[1])
-	if err != nil || server <= 0 {
+	if len(f) != 3 || !paneID.MatchString(f[0]) || server <= 0 {
+		h.clearLeftover(ctx, h.Prefix+filepath.Base(stateDir))
 		return holder.Window{}, fmt.Errorf("tmux: new-session printed %q", out)
 	}
 	r := ref{Socket: f[2], Server: server, Pane: f[0], Dir: stateDir}
+	// remain-on-exit is a pane option since tmux 3.3, and a window option
+	// before; it is set as both, and again after the respawn, which can
+	// set a pane's options back.
 	steps := [][]string{
+		{"set-option", "-w", "-t", r.Pane, "remain-on-exit", "on"},
 		{"set-option", "-p", "-t", r.Pane, "remain-on-exit", "on"},
 		{"pipe-pane", "-O", "-t", r.Pane, "exec " + quote(h.Hataori) + " pipe " + quote(stateDir)},
 		{"respawn-pane", "-k", "-t", r.Pane, "exec " + quote(h.Hataori) + " exec " + quote(stateDir)},
+		{"set-option", "-p", "-t", r.Pane, "remain-on-exit", "on"},
 	}
 	for _, s := range steps {
 		if _, err := h.tmux(ctx, r, nil, s...); err != nil {
@@ -95,6 +112,7 @@ func (h *Holder) Start(ctx context.Context, stateDir string, spec holder.Spec) (
 	}
 	p, err := h.find(ctx, r)
 	if err != nil {
+		h.startedStop(context.WithoutCancel(ctx), r, time.Second, time.Second)
 		return holder.Window{}, err
 	}
 	rb, _ := json.Marshal(r)
@@ -131,15 +149,13 @@ func writePrivate(path string, b []byte) error {
 // statusOf is how the agent of a dead pane ended.
 func statusOf(p pane) host.Status {
 	st := host.Status{Exited: true, Code: -1}
-	if n, err := strconv.Atoi(p.status); err == nil {
+	// "x" and the status, so that a status of 0, which a tmux condition
+	// reads as false, is printed; only "x" when a signal ended it.
+	if n, err := strconv.Atoi(strings.TrimPrefix(p.status, "x")); err == nil {
 		st.Code = n
 	}
 	if p.signal != "-" && p.signal != "" {
-		if n, err := strconv.Atoi(p.signal); err == nil {
-			st.Signal = syscall.Signal(n).String()
-		} else {
-			st.Signal = p.signal
-		}
+		st.Signal = signalName(p.signal)
 	}
 	return st
 }
@@ -204,9 +220,10 @@ func (h *Holder) Record(ctx context.Context, w holder.Window) error {
 	return h.removeWindow(ctx, r)
 }
 
-// removeWindow kills the window's session, which is hataori's own.
+// removeWindow kills the window's session, which is hataori's own, with
+// any pane or window added to it.
 func (h *Holder) removeWindow(ctx context.Context, r ref) error {
-	_, err := h.tmux(context.WithoutCancel(ctx), r, nil, "kill-pane", "-t", r.Pane)
+	_, err := h.tmux(context.WithoutCancel(ctx), r, nil, "kill-session", "-t", r.Pane)
 	if err != nil && (noServer(err) || errors.Is(err, errGone) || strings.Contains(err.Error(), "can't find")) {
 		return nil
 	}
@@ -236,7 +253,9 @@ func (h *Holder) startedStop(ctx context.Context, r ref, interrupt, terminate ti
 	}
 	pgid := p.pid
 	var sent []string
-	if !p.dead && pgid > 1 && !groupGone(pgid) {
+	// The group, whenever a process of it is left: also after the pane's
+	// own process ended, leaving children.
+	if pgid > 1 && !groupGone(pgid) {
 		for _, s := range []struct {
 			sig   syscall.Signal
 			name  string
@@ -336,4 +355,48 @@ func ExecMain(stateDir string) error {
 		env = []string{} // never the pane's own
 	}
 	return syscall.Exec(argv0, s.Argv, env)
+}
+
+// signalName is the name hataori's own host records for the signal tmux
+// names, as a number or as a name such as "term".
+func signalName(s string) string {
+	if n, err := strconv.Atoi(s); err == nil {
+		return syscall.Signal(n).String()
+	}
+	if n := unix.SignalNum("SIG" + strings.ToUpper(strings.TrimPrefix(strings.ToUpper(s), "SIG"))); n != 0 {
+		return n.String()
+	}
+	return s
+}
+
+// clearLeftover ends the agent of a session of hataori's own name that an
+// earlier run left, and removes the session. A session of that name is
+// only ever hataori's.
+func (h *Holder) clearLeftover(ctx context.Context, name string) {
+	out, err := h.serverCmd(ctx, "list-panes", "-s", "-t", "="+name, "-F", "#{pane_pid}")
+	if err != nil {
+		return // none
+	}
+	for _, f := range strings.Fields(string(out)) {
+		if pid, err := strconv.Atoi(f); err == nil && pid > 1 {
+			syscall.Kill(-pid, syscall.SIGKILL)
+			waitGone(pid, killWait)
+		}
+	}
+	h.serverCmd(context.WithoutCancel(ctx), "kill-session", "-t", "="+name)
+}
+
+// Attached reports whether a tmux client shows the window's session now, as
+// when a person looks at it or types in it.
+func (h *Holder) Attached(ctx context.Context, w holder.Window) (bool, error) {
+	r, err := parseRef(w)
+	if err != nil {
+		return false, err
+	}
+	out, err := h.tmux(ctx, r, nil, "display-message", "-p", "-t", r.Pane, "#{session_attached}")
+	if err != nil {
+		return false, err
+	}
+	n, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+	return n > 0, nil
 }

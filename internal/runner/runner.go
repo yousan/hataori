@@ -334,6 +334,12 @@ func (r *Runner) window(dir string) holder.Window { return r.own().Window(dir) }
 func (r *Runner) alive(dir string) holder.Liveness {
 	if w, ok := heldOf(dir); ok {
 		l, _ := r.tmuxHolder().Alive(context.Background(), w)
+		if l.State == holder.Unknown {
+			// tmux cannot tell, as when its socket file was removed under
+			// a server that runs: the agent may run, and is never taken
+			// for ended or for not there.
+			l.State = holder.Running
+		}
 		return l
 	}
 	l, _ := r.hold().Alive(context.Background(), r.window(dir))
@@ -349,7 +355,7 @@ func (r *Runner) stop(dir string, interrupt, terminate time.Duration) (holder.St
 		if err != nil {
 			return res, err
 		}
-		r.endHeld(ctx, dir)
+		r.endHeld(ctx, dir, w)
 		return res, nil
 	}
 	return r.hold().Stop(context.Background(), r.window(dir), interrupt, terminate)
@@ -415,7 +421,9 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 		}
 		// A held window whose end a daemon that died did not see through:
 		// its relay host and window go before another start.
-		r.endHeld(ctx, s.Spec.StateDir)
+		if w, ok := heldOf(s.Spec.StateDir); ok {
+			r.endHeld(ctx, s.Spec.StateDir, w)
+		}
 		// An ended host records its end before it lets go of the state
 		// directory.
 		w := r.window(s.Spec.StateDir)
@@ -571,6 +579,12 @@ func (r *Runner) stopSleepers(ctx context.Context) error {
 			if err := r.letGo(ctx, id, dir, t, nil); err != nil {
 				r.Log.Error("letting a window taken in go", "session", id, "err", err)
 			}
+			continue
+		}
+		if w, ok := heldOf(dir); ok && r.alive(dir).State != holder.Running {
+			// A held window whose end the daemon that died did not see
+			// through: its relay host and the window's note go.
+			r.endHeld(ctx, dir, w)
 			continue
 		}
 		if r.alive(dir).State != holder.Running {
@@ -1497,9 +1511,9 @@ func (r *Runner) exit(lv *live) {
 		}
 	}
 	st := r.alive(lv.dir).Status
-	if _, ok := heldOf(lv.dir); ok {
+	if w, ok := heldOf(lv.dir); ok {
 		// How it ended is read; its window and relay host go now.
-		defer r.endHeld(context.Background(), lv.dir)
+		defer r.endHeld(context.Background(), lv.dir, w)
 	}
 	in := session.Input{Kind: session.Exit}
 	switch {
@@ -1582,6 +1596,11 @@ func (r *Runner) checkIdle(lv *live) {
 func (r *Runner) attached(lv *live) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
+	if w, ok := heldOf(lv.dir); ok {
+		// A person who looks at the tmux window, or types in it.
+		a, err := r.tmuxHolder().Attached(ctx, w)
+		return a || err != nil // cannot tell: not put to sleep under them
+	}
 	c, err := host.DialContext(ctx, lv.dir)
 	if err != nil {
 		return false

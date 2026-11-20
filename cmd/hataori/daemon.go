@@ -137,6 +137,9 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	if tmuxServerHook != nil {
 		r.Tmux.Server = tmuxServerHook()
 	}
+	if tmuxProgramHook != nil {
+		r.Tmux.Tmux = tmuxProgramHook()
+	}
 	trust := map[string][]string{}
 	for _, s := range cfg.Scopes {
 		trust[s.Key] = s.TrustFiles
@@ -604,6 +607,11 @@ func instanceTag(root string) string {
 // tmux server the windows hataori starts are made on, such as a server of
 // the test's own, instead of the default one.
 var tmuxServerHook func() []string
+
+// tmuxProgramHook, when a test sets it, is the tmux program the windows
+// hataori starts are made and run with, such as one that records its
+// arguments.
+var tmuxProgramHook func() string
 
 // hostInputSource, when a test sets it, is what the daemon types into
 // host panes with instead of tmux.
