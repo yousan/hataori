@@ -368,24 +368,38 @@ func TestBlockedAtStart(t *testing.T) {
 // after it stopped watching or after the start.
 // The screen goes to a codec that asked for it until the codec ends the
 // watch, past the session's start: the fake watches on until its first
-// turn ends, and panics if given the screen after that.
+// turn ends, and panics if given the screen after that. The first turn
+// waits on a question until the codec was given the screen the fake shows
+// after its start: the hook calls and the terminal are separate streams,
+// so a turn that ended at once could have its end read before that screen
+// reached the log (#516).
 func TestScreenUntilTheCodecStops(t *testing.T) {
 	f := newFixture(t, options{terminal: true, dialog: "fake: trust this folder? Enter"})
-	f.start("reply hello")
-	waitFor(t, "the end of the turn", 15*time.Second, f.has("turn_ended", 1))
-	if texts := f.eventData("text"); len(texts) != 1 || texts[0]["text"] != "hello" {
-		t.Fatalf("texts %v", texts)
-	}
+	f.start("ask go on?\nreply hello")
+	waitFor(t, "the question", 15*time.Second, f.has("request", 1))
 	lv, err := f.run.get(1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lv.mu.Lock()
-	watching, codec := lv.screen, lv.codec
-	lv.mu.Unlock()
-	if !fake.SawScreenAfterStart(codec) {
-		t.Fatal("the codec was not given the screen after the start")
+	waitFor(t, "the screen after the start", 15*time.Second, func() bool {
+		lv.mu.Lock()
+		defer lv.mu.Unlock()
+		return fake.SawScreenAfterStart(lv.codec)
+	})
+	var req string
+	f.st.DB.QueryRow(`SELECT json_extract(data, '$.request') FROM events WHERE kind = 'request'`).Scan(&req)
+	if err := owner(f.core).Answer(context.Background(), control.RequestID(req), control.Answer{Text: "yes"}); err != nil {
+		t.Fatal(err)
 	}
+	// The question ends the first turn as blocked; the answer's turn is
+	// the agent's first turn going on.
+	waitFor(t, "the end of the answered turn", 15*time.Second, f.has("turn_ended", 2))
+	if texts := f.eventData("text"); len(texts) == 0 || texts[len(texts)-1]["text"] != "hello" {
+		t.Fatalf("texts %v", texts)
+	}
+	lv.mu.Lock()
+	watching := lv.screen
+	lv.mu.Unlock()
 	if watching {
 		t.Fatal("the runner still watches the screen after the codec ended the watch")
 	}
