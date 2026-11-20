@@ -72,6 +72,7 @@ type FrontEnd struct {
 	inboundOnce sync.Once
 	in          *inbound
 	opening     sync.Mutex       // held while a trigger's thread is looked up or opened
+	pressing    sync.Map         // the Stop buttons (stopKey) whose press is being handled
 	renames     renames          // the names of conversations still to record
 	Now         func() time.Time // the clock; time.Now when nil
 
