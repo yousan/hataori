@@ -2,10 +2,12 @@ package host
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -16,10 +18,32 @@ import (
 // start of one moment.
 const StartFile = "terminal.start"
 
+// pipeLock, beside TerminalLog, is held by a Pipe for as long as it runs.
+const pipeLock = "terminal.pipe.lock"
+
+// pipeWait bounds how long ResetPipe waits for an earlier Pipe to end.
+const pipeWait = 10 * time.Second
+
 // ResetPipe starts the log of a terminal another holder holds afresh, at
 // position 0, before anything writes to it: a reader never takes an
-// earlier run's log for this one's.
+// earlier run's log for this one's. It waits for the Pipe of an earlier
+// run to end first, which may still be writing what its terminal left,
+// and fails when it does not end in time.
 func ResetPipe(stateDir string) error {
+	f, err := os.OpenFile(filepath.Join(stateDir, pipeLock), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	for deadline := time.Now().Add(pipeWait); ; time.Sleep(20 * time.Millisecond) {
+		if unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB) == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			return errors.New("host: the pipe of an earlier run of this terminal still runs")
+		}
+	}
+	defer unix.Flock(int(f.Fd()), unix.LOCK_UN)
 	if err := os.WriteFile(filepath.Join(stateDir, TerminalLog), nil, 0o600); err != nil {
 		return err
 	}
@@ -28,7 +52,13 @@ func ResetPipe(stateDir string) error {
 
 // lockStart takes the lock of stateDir's StartFile, shared or not.
 func lockStart(stateDir string, how int) func() {
-	f, err := os.OpenFile(filepath.Join(stateDir, StartFile+".lock"), os.O_RDWR|os.O_CREATE, 0o600)
+	return lockFile(filepath.Join(stateDir, StartFile+".lock"), how)
+}
+
+// lockFile takes the lock of the file path, made when missing, and returns
+// its unlock; it does nothing when the file cannot be opened.
+func lockFile(path string, how int) func() {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
 		return func() {}
 	}
@@ -46,6 +76,7 @@ func lockStart(stateDir string, how int) func() {
 // the agent's first byte; StartFile says where the kept bytes begin. It
 // returns when r ends.
 func Pipe(stateDir string, r io.Reader) error {
+	defer lockFile(filepath.Join(stateDir, pipeLock), unix.LOCK_EX)()
 	start := filepath.Join(stateDir, StartFile)
 	l, err := openBounded(filepath.Join(stateDir, TerminalLog), DefaultLogLimit)
 	if err != nil {

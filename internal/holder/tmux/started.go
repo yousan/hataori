@@ -400,11 +400,13 @@ func (h *Holder) clearLeftover(ctx context.Context, stateDir string) {
 	if err != nil {
 		return // none
 	}
+	// The pane Start made runs the placeholder until the respawn, and
+	// `hataori exec <stateDir>` after it.
 	ours := " exec " + quote(stateDir)
 	mine, theirs := []string{}, 0
 	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		f := strings.SplitN(l, " ", 4)
-		if len(f) != 4 || !strings.Contains(f[3], ours) {
+		if len(f) != 4 || !(strings.Contains(f[3], ours) || strings.Trim(f[3], `"`) == placeholder) {
 			theirs++
 			continue
 		}

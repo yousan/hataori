@@ -339,9 +339,6 @@ func (r *Runner) window(dir string) holder.Window { return r.own().Window(dir) }
 // alive is what the holder says of the session whose state directory is dir.
 func (r *Runner) alive(dir string) holder.Liveness {
 	if w, ok := heldOf(dir); ok {
-		if s, ok := r.heldSeen.Load(dir); ok && s.(seen).ref == w.Ref && time.Since(s.(seen).at) < heldPoll {
-			return holder.Liveness{State: holder.Running}
-		}
 		l, _ := r.tmuxHolder().Alive(context.Background(), w)
 		if l.State == holder.Unknown {
 			// tmux cannot tell, as when its socket file was removed under
@@ -358,6 +355,18 @@ func (r *Runner) alive(dir string) holder.Liveness {
 	}
 	l, _ := r.hold().Alive(context.Background(), r.window(dir))
 	return l
+}
+
+// polled is alive for the poll of a running session (step): a held window
+// seen running less than heldPoll ago is taken to run still, without
+// asking tmux. Whatever acts on an end asks alive itself.
+func (r *Runner) polled(dir string) holder.Liveness {
+	if w, ok := heldOf(dir); ok {
+		if s, ok := r.heldSeen.Load(dir); ok && s.(seen).ref == w.Ref && time.Since(s.(seen).at) < heldPoll {
+			return holder.Liveness{State: holder.Running}
+		}
+	}
+	return r.alive(dir)
 }
 
 // stop stops the agent of the session whose state directory is dir. A held
@@ -1138,9 +1147,9 @@ func (r *Runner) step(lv *live) bool {
 // stepLocked is step with lv.mu held.
 func (r *Runner) stepLocked(lv *live) bool {
 	if lv.asleep {
-		return !r.alive(lv.dir).Ended()
+		return !r.polled(lv.dir).Ended()
 	}
-	exited := r.alive(lv.dir).Ended() // looked at before reading, so nothing written before the exit is missed
+	exited := r.polled(lv.dir).Ended() // looked at before reading, so nothing written before the exit is missed
 	b := r.read(lv)
 	r.watchScreen(lv, &b)
 	first, err := r.commit(lv, b)

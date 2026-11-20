@@ -314,6 +314,10 @@ func TestTmuxHolderEnds(t *testing.T) {
 	})
 	// The window let go of on the old server's end, nothing on the new one
 	// was touched: its pane of the same id is another's.
+	eventually(t, "the window let go of", 10*time.Second, func() bool {
+		_, err := os.Stat(filepath.Join(dir3, runner.HeldFile))
+		return os.IsNotExist(err)
+	})
 	if out, err := tmuxOn(server, "list-panes", "-a", "-F", "#{pane_id}").Output(); err != nil || strings.TrimSpace(string(out)) != w3pane(t, w3) {
 		t.Fatalf("the new server's pane after the old window was let go: %q %v", out, err)
 	}

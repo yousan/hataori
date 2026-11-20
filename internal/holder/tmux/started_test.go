@@ -60,11 +60,13 @@ func TestPanesOfAWindowHataoriStarted(t *testing.T) {
 	}
 }
 
-// A signal by its number, as an older tmux prints it, is named as the own
-// host names it.
-func TestSignalByNumber(t *testing.T) {
-	if s := signalName("15"); s != "terminated" {
-		t.Fatalf("%q", s)
+// A signal by its number, as an older tmux prints it, or by a name with
+// "SIG", is named as the own host names it.
+func TestSignalNames(t *testing.T) {
+	for in, want := range map[string]string{"15": "terminated", "SIGKILL": "killed", "kill": "killed"} {
+		if s := signalName(in); s != want {
+			t.Errorf("%q: %q, want %q", in, s, want)
+		}
 	}
 }
 
@@ -97,5 +99,34 @@ func TestRecordLeavesANewServerAlone(t *testing.T) {
 	}
 	if out, err := on("list-panes", "-a", "-F", "#{pane_id}").Output(); err != nil || strings.TrimSpace(string(out)) != pane {
 		t.Fatalf("the new server's pane after Record: %q %v", out, err)
+	}
+}
+
+// A session a start left before its respawn, whose pane still runs the
+// placeholder, is cleared by the next start; a person's session beside it
+// stays.
+func TestALeftoverBeforeTheRespawnIsCleared(t *testing.T) {
+	prog, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("no tmux")
+	}
+	sock := filepath.Join(t.TempDir(), "s")
+	server := []string{"-S", sock, "-f", "/dev/null"}
+	on := func(args ...string) *exec.Cmd {
+		return exec.Command(prog, append(append([]string{}, server...), args...)...)
+	}
+	t.Cleanup(func() { on("kill-server").Run() })
+	dir := filepath.Join(t.TempDir(), "7")
+	h := &Holder{Tmux: prog, Prefix: "hataori-t-", Server: server}
+	if err := on("new-session", "-d", "-s", "hataori-t-7", placeholder).Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := on("new-session", "-d", "-s", "theirs", placeholder).Run(); err != nil {
+		t.Fatal(err)
+	}
+	h.clearLeftover(context.Background(), dir)
+	out, err := on("list-sessions", "-F", "#{session_name}").Output()
+	if err != nil || strings.TrimSpace(string(out)) != "theirs" {
+		t.Fatalf("sessions after clearing: %q %v", out, err)
 	}
 }
