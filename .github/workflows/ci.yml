@@ -35,6 +35,8 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
+      - name: loop (temporary, #551)
+        run: git --version && go test -count=50 -run '^TestTakenInWindowClosesAndTheThreadGoesOn$' ./cmd/hataori
       - run: go vet ./...
       - name: build without cgo
         run: CGO_ENABLED=0 go build ./...
@@ -53,6 +55,8 @@ jobs:
           python-version: "3.x"
       - name: install tmux
         run: command -v tmux >/dev/null || brew install tmux
+      - name: loop (temporary, #551)
+        run: git --version && go test -count=50 -run '^TestTakenInWindowClosesAndTheThreadGoesOn$' ./cmd/hataori
       - run: go vet ./...
       - name: build without cgo
         run: CGO_ENABLED=0 go build ./...
