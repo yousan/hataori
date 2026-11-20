@@ -372,6 +372,13 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 			p.mu.Lock()
 			p.interruptDelay = d
 			p.mu.Unlock()
+		case "session-end":
+			// In a person's window: the end of the session reported before
+			// its process ends, as a SessionEnd hook runs while the agent
+			// finishes. The program goes on.
+			if p.window != "" {
+				p.report(map[string]any{"t": "session-end", "reason": "prompt_input_exit"})
+			}
 		case "unknown":
 			p.report(map[string]any{"t": "mystery"})
 		case "screen":

@@ -63,6 +63,8 @@
 //	exit                exit at once, without ending the turn
 //	interrupt-delay D   from now on, an interrupt takes effect D after it
 //	                    comes, as an agent that is slow to stop
+//	session-end         in a person's window (--window): report the session's
+//	                    end and go on, as a hook can before its process ends
 //	unknown             report a line of a kind no codec knows
 //	screen TEXT         write TEXT and a line end to the terminal; nothing on pipes
 //	subagent ID [NAME [TOOL...]]
