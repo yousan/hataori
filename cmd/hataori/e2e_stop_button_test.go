@@ -65,7 +65,11 @@ func TestStopButtonStopsAQuietTurn(t *testing.T) {
 	r := newChatRoot(t, nil)
 	startDaemon(t, r.root)
 	r.connected(t)
-	r.driver.Inject(c1, fakesurface.Webhook(e2eHook), "!go repo:"+bareRepo(t)+" tool wait 60s\nreply never")
+	// The agent stops a second after the interrupt, so the turn still runs
+	// when the front end next looks at the line: an agent that stops at
+	// once can end the turn first, and the line then goes with no edit
+	// (#492).
+	r.driver.Inject(c1, fakesurface.Webhook(e2eHook), "!go repo:"+bareRepo(t)+" interrupt-delay 1s\ntool wait 60s\nreply never")
 	th := r.thread(t, 0)
 	line, token := stopLine(t, r.driver, th)
 	start := time.Now()
