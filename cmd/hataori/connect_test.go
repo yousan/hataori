@@ -31,7 +31,7 @@ import (
 type sshHost struct {
 	dir  string
 	ssh  string // a wrapper on PATH as "ssh": it records each call, then runs the real ssh
-	log  string // the wrapper's record: a directory per call, whose file "call" holds its arguments one per line
+	log  string // the wrapper's record: a directory per call, whose file "call" holds its arguments, each ended by a NUL
 	port int
 }
 
@@ -120,9 +120,10 @@ func startSSHD(t *testing.T, extra ...string) *sshHost {
 	// Each call is written into a new directory of its own, then renamed
 	// to "call": calls made at the same moment never mix their lines
 	// (#498), no name is used twice, and a call is read only once it is
-	// complete. A record that cannot be written stops the call.
+	// complete. A record that cannot be written stops the call. Each
+	// argument ends with a NUL, so one with a line feed stays one.
 	wrapper := fmt.Sprintf("#!/bin/sh\nd=$(mktemp -d %s/c.XXXXXXXX) || exit 255\n"+
-		"printf '%%s\\n' \"$@\" > \"$d/args\" && mv \"$d/args\" \"$d/call\" || exit 255\n"+
+		"printf '%%s\\000' \"$@\" > \"$d/args\" && mv \"$d/args\" \"$d/call\" || exit 255\n"+
 		"exec env -u SSH_AUTH_SOCK %s -F %s \"$@\"\n",
 		quoteSh(h.log), quoteSh(realSSH), quoteSh(filepath.Join(d, "ssh_config")))
 	os.WriteFile(h.ssh, []byte(wrapper), 0o700)
@@ -139,21 +140,28 @@ func startSSHD(t *testing.T, extra ...string) *sshHost {
 
 func quoteSh(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
-// calls is every ssh call recorded so far, each its arguments, in no
-// particular order.
+// calls is every ssh call made so far, each its arguments, in no
+// particular order. A call whose record is still being written is waited
+// for, a few seconds at most.
 func (h *sshHost) calls(t *testing.T) [][]string {
 	t.Helper()
-	files, err := filepath.Glob(filepath.Join(h.log, "*", "call"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	var dirs []string
+	eventually(t, "every ssh call's record to be written", 5*time.Second, func() bool {
+		dirs, _ = filepath.Glob(filepath.Join(h.log, "c.*"))
+		for _, d := range dirs {
+			if _, err := os.Stat(filepath.Join(d, "call")); err != nil {
+				return false
+			}
+		}
+		return true
+	})
 	var out [][]string
-	for _, p := range files {
-		b, err := os.ReadFile(p)
+	for _, d := range dirs {
+		b, err := os.ReadFile(filepath.Join(d, "call"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		out = append(out, strings.Split(strings.TrimSuffix(string(b), "\n"), "\n"))
+		out = append(out, strings.Split(strings.TrimSuffix(string(b), "\x00"), "\x00"))
 	}
 	return out
 }
