@@ -26,11 +26,11 @@ import (
 
 type nopRunner struct{}
 
-func (nopRunner) Start(context.Context, core.Launch) error                   { return nil }
-func (nopRunner) Deliver(context.Context, int64, int64, control.Input) error { return nil }
-func (nopRunner) Interrupt(context.Context, int64, int64) error              { return nil }
-func (nopRunner) Shut(context.Context, int64, string) error                  { return nil }
-func (nopRunner) Device(context.Context, int64) string                       { return "" }
+func (nopRunner) Start(context.Context, core.Launch) error                         { return nil }
+func (nopRunner) Deliver(context.Context, int64, int64, control.Input) error       { return nil }
+func (nopRunner) Interrupt(context.Context, int64, int64, control.Principal) error { return nil }
+func (nopRunner) Shut(context.Context, int64, string) error                        { return nil }
+func (nopRunner) Device(context.Context, int64) string                             { return "" }
 func (nopRunner) Answer(context.Context, int64, int64, string, control.Answer) error {
 	return nil
 }

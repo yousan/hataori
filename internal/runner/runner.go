@@ -1930,7 +1930,7 @@ func (r *Runner) Answer(ctx context.Context, id, pending int64, req string, ans 
 // of the session is stopped; a turn started after it is not watched. A
 // named turn (not 0) that is not the running one is refused, and nothing is
 // interrupted.
-func (r *Runner) Interrupt(ctx context.Context, id, named int64) error {
+func (r *Runner) Interrupt(ctx context.Context, id, named int64, by control.Principal) error {
 	lv, err := r.get(id)
 	if err != nil {
 		return err
@@ -1945,6 +1945,14 @@ func (r *Runner) Interrupt(ctx context.Context, id, named int64) error {
 	if named != 0 && named != turn {
 		lv.mu.Unlock()
 		return fmt.Errorf("runner: session %d: turn %d is not the running turn: %w", id, named, session.ErrRefused)
+	}
+	if by != "" && turn != 0 {
+		// Before the interrupt, which can end the turn at once: a reader
+		// of its end finds who stopped it. The first stop names it.
+		if _, err := r.Store.DB.Exec(`UPDATE turns SET stopped_by = ? WHERE id = ? AND stopped_by = ''`, string(by), turn); err != nil {
+			lv.mu.Unlock()
+			return fmt.Errorf("runner: session %d: record who stops turn %d: %w", id, turn, err)
+		}
 	}
 	r.do(lv, lv.codec.Interrupt())
 	lv.mu.Unlock()

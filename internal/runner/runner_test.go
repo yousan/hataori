@@ -5,12 +5,14 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -514,6 +516,57 @@ func TestStopEndsARunningTool(t *testing.T) {
 			t.Fatalf("turn end %v", d)
 		}
 	})
+}
+
+// A Stop names its person on the turn it interrupts, in the step that
+// sends the interrupt (#542); a stop of a turn that is not running, and an
+// interrupt nobody asked for as a stop, name nobody.
+func TestStopNamesWhoStoppedTheTurn(t *testing.T) {
+	f := newFixture(t, options{})
+	ctx := context.Background()
+	f.start("tool wait 60s\nreply late")
+	waitFor(t, "the tool", 15*time.Second, f.has("tool_started", 1))
+	stoppedBy := func() []string {
+		var out []string
+		rows, err := f.st.DB.Query(`SELECT stopped_by FROM turns ORDER BY id`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var s string
+			rows.Scan(&s)
+			out = append(out, s)
+		}
+		return out
+	}
+	var turn int64
+	f.st.DB.QueryRow(`SELECT id FROM turns`).Scan(&turn)
+	if err := owner(f.core).Stop(ctx, thread, turn+1); !errors.Is(err, session.ErrRefused) {
+		t.Fatalf("a stop of a turn that is not running: %v", err)
+	}
+	if got := stoppedBy(); !slices.Equal(got, []string{""}) {
+		t.Fatalf("after the refused stop, stopped_by %q", got)
+	}
+	if err := owner(f.core).Stop(ctx, thread, turn); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the end of the turn", 10*time.Second, f.has("turn_ended", 1))
+	if got := stoppedBy(); !slices.Equal(got, []string{"owner"}) {
+		t.Fatalf("stopped_by %q, want the owner", got)
+	}
+	// A message that interrupts the next turn is no one's stop.
+	if err := owner(f.core).Send(ctx, thread, "k2", control.Input{Text: "tool wait 60s\nreply late"}, control.Deliver); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the next tool", 15*time.Second, f.has("tool_started", 2))
+	if err := owner(f.core).Send(ctx, thread, "k3", control.Input{Text: "reply third"}, control.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the end of the next turn", 10*time.Second, f.has("turn_ended", 2))
+	if got := stoppedBy(); len(got) < 2 || got[1] != "" {
+		t.Fatalf("stopped_by %q, want nobody on the interrupted second turn", got)
+	}
 }
 
 // A message sent right after a stop starts the next turn as soon as the

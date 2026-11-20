@@ -99,8 +99,10 @@ type Runner interface {
 	// has recorded, read from the agent every poll: a turn the agent began
 	// by itself, or that a person typed at its terminal, before the runner
 	// read the named one's end can still get the interrupt of an agent
-	// whose interrupt names no turn (#494).
-	Interrupt(ctx context.Context, sessionID, turn int64) error
+	// whose interrupt names no turn (#494). by, when not empty, is the
+	// person whose Stop it is: it is recorded on the turn interrupted, in
+	// the same step, unless that turn names someone already.
+	Interrupt(ctx context.Context, sessionID, turn int64, by control.Principal) error
 	// Resume starts the agent of an asleep session again with its
 	// conversation, and sends it in as a Send of principal and key once it
 	// reports that it is ready.
@@ -1806,7 +1808,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		if guard != nil {
 			turn = guard.turn
 		}
-		err := a.c.Runner.Interrupt(ctx, sid, turn)
+		err := a.c.Runner.Interrupt(ctx, sid, turn, "")
 		switch {
 		case guard != nil && errors.Is(err, session.ErrRefused):
 			guard.ended = true
@@ -1942,26 +1944,9 @@ func (a *api) Stop(ctx context.Context, id control.ThreadID, turn int64) error {
 		}
 		return nil
 	}
-	// Who asked, on the turn the stop is for, before the interrupt: the
-	// turn can end at once, and the reader of its end looks for this then.
-	// The first stop of a turn names it.
-	q, args := `UPDATE turns SET stopped_by = ? WHERE session_id = ? AND ended_at IS NULL AND stopped_by = ''`,
-		[]any{string(a.caller.Principal), sid}
-	if turn != 0 {
-		q, args = q+` AND id = ?`, append(args, turn)
-	}
-	res, err := a.c.Store.DB.ExecContext(ctx, q, args...)
-	if err != nil {
-		return fmt.Errorf("core: stop thread %d: %w", id, err)
-	}
-	marked, _ := res.RowsAffected()
-	err = a.c.Runner.Interrupt(ctx, sid, turn)
-	if err != nil && marked > 0 {
-		// Nothing was interrupted: the turn was not stopped by anyone.
-		a.c.Store.DB.ExecContext(context.WithoutCancel(ctx), `UPDATE turns SET stopped_by = '' WHERE session_id = ? AND ended_at IS NULL AND stopped_by = ?`,
-			sid, string(a.caller.Principal))
-	}
-	return err
+	// Who asked goes on the turn the runner interrupts, chosen in the same
+	// step, so that the reader of that turn's end can tell it was stopped.
+	return a.c.Runner.Interrupt(ctx, sid, turn, a.caller.Principal)
 }
 
 // mayRead reports whether the caller may see e: its kind, when the caller
