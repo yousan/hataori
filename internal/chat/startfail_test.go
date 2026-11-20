@@ -112,17 +112,31 @@ func TestAFailureReadBeforeThePromptIsPostedAfterIt(t *testing.T) {
 	id, trigger := f.started(t)
 	st.DB.Exec(`DROP TRIGGER lost`)
 	f.showing(t)
-	pos := f.event(t, id, "state", map[string]any{"from": "creating", "to": "failed", "reason": "blocked at start"})
-	waitFor(t, "the reader to pass the event", func() bool {
-		var p uint64
-		st.DB.QueryRow(`SELECT pos FROM chat_cursors WHERE client = ?`, f.fe.Name).Scan(&p)
-		return p >= pos
-	})
+	f.event(t, id, "state", map[string]any{"from": "creating", "to": "failed", "reason": "blocked at start"})
 	time.Sleep(50 * time.Millisecond) // the outbox's retries, had it a row
 	f.fe.Message(trigger)
 	want := couldNotStart + "blocked at start"
 	calls := f.postedUntil(t, id, want)
 	if texts(calls) != "the prompt|"+want || calls[1].Message.ReplyTo == nil || *calls[1].Message.ReplyTo != calls[0].Ref {
 		t.Fatalf("posts %+v, want the prompt, then the failure replying to it", calls)
+	}
+}
+
+// A prompt that is never written, as after a daemon that died before
+// writing it and a trigger never delivered again: the failure is posted
+// after promptWait all the same.
+func TestAFailureWhosePromptIsLostIsPostedAfterTheWait(t *testing.T) {
+	defer func(w time.Duration) { promptWait = w }(promptWait)
+	promptWait = 200 * time.Millisecond
+	f := newFront(t, workspaces{}, func(fe *FrontEnd) { fe.Outbox.MaxFailures = 2 })
+	st := f.fe.Outbox.Store
+	st.DB.Exec(`CREATE TRIGGER lost AFTER INSERT ON chat_outbox BEGIN DELETE FROM chat_outbox WHERE id = NEW.id; END`)
+	id, _ := f.started(t)
+	st.DB.Exec(`DROP TRIGGER lost`)
+	f.showing(t)
+	f.event(t, id, "state", map[string]any{"from": "creating", "to": "failed", "reason": "blocked at start"})
+	want := couldNotStart + "blocked at start"
+	if got := texts(f.postedUntil(t, id, want)); got != want {
+		t.Fatalf("thread shows %q", got)
 	}
 }

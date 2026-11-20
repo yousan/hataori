@@ -246,9 +246,7 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		}
 		if sf.session != r.session[e.Thread] {
 			first = 0 // a later session's: the prompt is long posted
-		} else if wait, err := f.promptPending(ctx, conv, first); err != nil || wait {
-			// The trigger's start writes the prompt and then this row,
-			// once it has read the event again, so the prompt comes first.
+		} else if err := f.awaitPrompt(ctx, conv, first, e.Time); err != nil {
 			return nil, err
 		}
 		return []Row{sf.row(conv, first)}, nil
@@ -361,18 +359,34 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 	return nil, nil
 }
 
-// promptPending reports whether conv is the chat thread of a trigger or a
-// command of this front end whose start has not written the prompt row,
-// at first, yet.
-func (f *FrontEnd) promptPending(ctx context.Context, conv surface.Conversation, first uint64) (bool, error) {
+// promptWait bounds how long after a start failure the event reader
+// waits for the trigger's start to write the prompt row.
+var promptWait = 30 * time.Second
+
+// awaitPrompt waits, while conv is the chat thread of a trigger or a
+// command of this front end whose start has not yet written the prompt row
+// at first, for that row: a failure read before it is posted after it. The
+// cursor stays before the event meanwhile, so a restart reads it again.
+// Past promptWait after the event at, the prompt is taken as lost, as after
+// a daemon that died before writing it, and nothing is waited for.
+func (f *FrontEnd) awaitPrompt(ctx context.Context, conv surface.Conversation, first uint64, at time.Time) error {
 	var n int
 	err := f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM chat_triggers WHERE client = ? AND channel = ? AND thread = ?`,
 		f.Name, conv.Channel, conv.Thread).Scan(&n)
 	if err != nil || n == 0 {
-		return false, err
+		return err
 	}
-	state, _, err := f.Outbox.state(ctx, conv, RowKey{Event: first, Part: 0})
-	return state == "", err
+	for {
+		state, _, err := f.Outbox.state(ctx, conv, RowKey{Event: first, Part: 0})
+		if err != nil || state != "" || time.Since(at) > promptWait {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
 }
 
 // question shows a question with its options numbered; the next message
