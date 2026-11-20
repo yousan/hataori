@@ -6,6 +6,7 @@ Real output of the interactive `claude` CLI, for testing the adapter's codec. Th
 - `2.1.326/`: Claude Code 2.1.326, captured on 2026-11-17 (also in `2.1.326/VERSION`), on Linux, with the model `haiku`: `subagent_tools`, taken for #142, and `trust_answered`, taken for #56 (see below).
 - `2.1.327/`: Claude Code 2.1.327, on 2026-11-18 (also in `2.1.327/VERSION`), on Linux: `first_enter_lost`, a real start of a session that hataori ran, taken for #178, `usage`, taken by `capture.py` for #195, and the `confine_*` scenarios, taken by `confine.py` for #268 (see below).
 - `2.1.328/`: Claude Code 2.1.328, on 2026-11-20 (also in `2.1.328/VERSION`), on Linux: `paste_tabs`, taken for #393, and the `trust_files_*` scenarios, taken for #423 (see below).
+- `2.1.329/`: Claude Code 2.1.329, on 2026-11-21 (also in `2.1.329/VERSION`), on Linux: `trust_hooks_*` and `trust_permissions`, taken for #592 (see below).
 - `capture.py` took them (`confine.py`, the `confine_*` ones); `scrub.py` made them committable. `captures_test.go` in the package fails when a capture holds a home directory path, an e-mail address, an unscrubbed UUID or something shaped like a token.
 
 ## How they were taken
@@ -244,3 +245,22 @@ Each holds `screen-NN.raw`, the terminal output chunk by chunk as the codec was 
 
 Seen by hand on the same version, not kept: a settings file with only hooks gives `(runs commands)`, one with only `env` gives `(sets environment variables)`. The parenthesis is not read: only the files are.
 
+
+## The folder-trust dialog with a warning (2.1.329, taken for #592)
+
+`2.1.329/trust_hooks_*/` and `2.1.329/trust_permissions/`, taken by `TestLiveTrustFiles` as above, one prefix at a time, then `scrub.py`:
+
+```sh
+HATAORI_REAL_CLAUDE=1 HATAORI_CAPTURE_DIR=<raw dir> HATAORI_CAPTURE_ONLY=trust_hooks go test -run TestLiveTrustFiles -v ./internal/agent/claudecode
+HATAORI_REAL_CLAUDE=1 HATAORI_CAPTURE_DIR=<raw dir> HATAORI_CAPTURE_ONLY=trust_permissions go test -run TestLiveTrustFiles -v ./internal/agent/claudecode
+```
+
+2.1.329 draws a warning between "... execute files here." and the line naming the files when the project settings declare hooks or allow tools. On the 80 columns it wraps.
+
+| Scenario | Workspace | Spec | Dialog's extra lines | What the codec did |
+|---|---|---|---|---|
+| `trust_hooks_refused` | `.claude/settings.json` with a `SessionStart` hook | ordinary, no `TrustFiles` | `⚠ This folder configures hooks that can run commands without asking, declared in .claude/settings.json`, then `Trusting this folder loads .claude/settings.json (runs commands).` | no key; one `SessionEnded`, `blocked at start`, naming the file, with the warning quoted. No hook ran. |
+| `trust_hooks_allowed` | the same | ordinary, `TrustFiles: [".claude/settings.json"]` | the same | Down, then Enter; `SessionStart` followed |
+| `trust_permissions` | `.claude/settings.json` allowing `Bash(ls:*)` | ordinary, `TrustFiles: [".claude/settings.json"]` | `⚠ This folder pre-approves 1 tool permission in .claude/settings.json:`, `Bash(ls:*)`, `These will apply without asking. Only proceed if you trust this configuration.`, then `Trusting this folder loads .claude/settings.json.` | nothing: a screen the codec does not know, so no key and no event within 15 s; such a start fails at the start timeout |
+
+Each holds the screens, `keys.txt`, `events.txt` and, when the CLI started, `hooks/`.

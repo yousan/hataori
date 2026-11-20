@@ -23,7 +23,8 @@ import (
 // key, and the start fails on its timeout.
 //
 // When the folder holds files that trusting it loads, such as a project
-// settings file, the dialog names them on one more line (2.1.328, #423).
+// settings file, the dialog names them on one more line (2.1.328, #423),
+// and 2.1.329 draws a warning above it when they declare hooks (#592).
 // A confined session gets the dialog answered whatever it names: its
 // launch ignores those files. An ordinary session gets it answered only
 // when Spec.TrustFiles lists every file it names; otherwise no key is
@@ -55,6 +56,14 @@ const (
 	loadsPrefix = "Trusting this folder loads "
 	loadsAbove  = " here or above"
 )
+
+// hooksWarning starts the line 2.1.329 draws above the one naming the
+// files when the project settings declare hooks, followed by the files
+// that declare them: "⚠ This folder configures hooks that can run commands
+// without asking, declared in .claude/settings.json" (#592,
+// testdata/2.1.329/trust_hooks_*). Only this warning is known; any other
+// line there leaves the dialog unanswered.
+const hooksWarning = "⚠ This folder configures hooks that can run commands without asking, declared in "
 
 const (
 	trustYes    = "Yes, I trust this folder"
@@ -179,7 +188,24 @@ func headerMatches(text, dir string) ([]string, bool) {
 	if loads == "" {
 		return nil, true
 	}
-	files := loadedFiles(strings.TrimPrefix(loads, " "))
+	loads = strings.TrimPrefix(loads, " ")
+	var declared []string
+	if rest, ok := strings.CutPrefix(loads, hooksWarning); ok {
+		list, line, ok := strings.Cut(rest, " "+loadsPrefix)
+		if !ok {
+			return nil, false
+		}
+		if declared = fileList(list); declared == nil {
+			return nil, false
+		}
+		loads = loadsPrefix + line
+	}
+	files := loadedFiles(loads)
+	for _, f := range declared {
+		if !slices.Contains(files, f) {
+			return nil, false // a warning about a file the dialog does not load
+		}
+	}
 	return files, files != nil
 }
 
@@ -197,9 +223,14 @@ func loadedFiles(line string) []string {
 	if i := strings.LastIndex(list, " ("); i >= 0 && strings.HasSuffix(list, ")") {
 		list = list[:i] // what the files do, such as "(runs commands)"
 	}
-	list = strings.TrimSuffix(list, loadsAbove)
+	return fileList(strings.TrimSuffix(list, loadsAbove))
+}
+
+// fileList reads "a, b and c" as its files, or nil when it is not of that
+// shape: an empty entry, as in "a,, b", is not.
+func fileList(list string) []string {
 	var files []string
-	for _, f := range strings.FieldsFunc(strings.ReplaceAll(list, " and ", ","), func(r rune) bool { return r == ',' }) {
+	for _, f := range strings.Split(strings.ReplaceAll(list, " and ", ","), ",") {
 		f = strings.TrimSpace(f)
 		if f == "" || strings.ContainsAny(f, " ()") {
 			return nil
