@@ -16,6 +16,11 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # The example plugin is Python 3 (examples/plugins/marker): its tests
+      # fail, not skip, without it.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
       # The host terminal tests start a tmux server of their own.
       - name: install tmux
         run: command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
@@ -43,6 +48,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
       - name: install tmux
         run: command -v tmux >/dev/null || brew install tmux
       - run: go vet ./...
