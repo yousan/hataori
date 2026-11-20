@@ -83,9 +83,15 @@ func init() {
 }
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signalContext()
 	defer stop()
 	os.Exit(runCtx(ctx, os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// signalContext is the context every hataori command runs in: SIGINT and
+// SIGTERM end it, and do not end the process.
+func signalContext() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
 
 func run(args []string, stdout, stderr io.Writer) int {

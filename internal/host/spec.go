@@ -110,6 +110,11 @@ type Status struct {
 	// then false and Stopped true. A relay refused at start records Error
 	// only.
 	Relay bool `json:"relay,omitempty"`
+	// Shutdown says the host got SIGTERM before it recorded the end, as
+	// every process does when the machine shuts down or a service manager
+	// stops hataori's service: the command ended in a shutdown, not in a
+	// crash, whatever its exit status says.
+	Shutdown bool `json:"shutdown,omitempty"`
 }
 
 // Command is how to run the host program itself: the hataori binary with

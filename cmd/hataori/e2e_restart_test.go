@@ -466,3 +466,46 @@ func TestAThreadKeepsItsAgentAcrossSleepRestartAndAConfigChange(t *testing.T) {
 		t.Fatal("replacement reused the removed conversation file")
 	}
 }
+
+// A shutdown during a turn: the daemon goes, then every process gets
+// SIGTERM, the agent's first. The host stays to record its agent's end and
+// that it got SIGTERM, so the turn ends as interrupted, as in a reboot
+// (design 4.5). An agent killed on its own while its host runs is a crash.
+func TestShutdownDuringATurnEndsItAsInterruptedAndACrashAsCrashed(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		reason string
+	}{{"shutdown", "interrupted"}, {"crash", "crashed"}} {
+		t.Run(c.name, func(t *testing.T) {
+			p := newProcRoot(t, nil)
+			p.start(t)
+			p.in(c1, "!go repo:"+bareRepo(t)+" tool wait 60s\nreply never")
+			th := p.thread(t, 0)
+			eventually(t, "the tool", 10*time.Second, func() bool { return len(p.events(t, "tool_started", th)) == 1 })
+			dir := runner.StateDir(p.root, 1)
+			b, err := os.ReadFile(filepath.Join(dir, host.HostPIDFile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			hostPID, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+			agent := p.agentPID(t)
+			p.kill(t)
+			if c.name == "shutdown" {
+				syscall.Kill(-agent, syscall.SIGTERM)
+				syscall.Kill(-hostPID, syscall.SIGTERM)
+			} else {
+				syscall.Kill(-agent, syscall.SIGKILL)
+			}
+			eventually(t, "the host to record the end and go", 10*time.Second, func() bool {
+				_, ok, _ := host.ReadStatus(dir)
+				return ok && !alive(hostPID) && !alive(agent)
+			})
+			p.start(t)
+			eventually(t, "the turn's end", 10*time.Second, func() bool { return len(p.events(t, "turn_ended", th)) > 0 })
+			if e := p.events(t, "turn_ended", th)[0]; e["outcome"] != "failure" || e["reason"] != c.reason {
+				st, _, _ := host.ReadStatus(dir)
+				t.Fatalf("the turn ended %v; want a failure, %s (the host's status: %+v)", e, c.reason, st)
+			}
+		})
+	}
+}

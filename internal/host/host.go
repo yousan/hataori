@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -59,7 +60,15 @@ type host struct {
 	closing  bool           // the host is shutting down; no new stop starts
 	stops    sync.WaitGroup // stops in progress
 	stopNote string         // the signals the last stop sent
+
+	terminated chan struct{} // closed when the host got SIGTERM: a shutdown
 }
+
+// shutdownGrace is how long the host, whose command ended without being
+// told to stop, waits for a SIGTERM of its own before it records the end:
+// a shutdown sends SIGTERM to every process, the command's may come first,
+// and the host's a moment later.
+const shutdownGrace = 200 * time.Millisecond
 
 // Run is `hataori host <state-dir>`: it runs the Spec in stateDir until the
 // command exits, and returns after recording how it ended.
@@ -85,7 +94,23 @@ func Run(stateDir string) (err error) {
 	if err != nil {
 		return fmt.Errorf("host: %w", err)
 	}
-	h := &host{dir: stateDir, done: make(chan struct{}), log: hl, run: newRun()}
+	h := &host{dir: stateDir, done: make(chan struct{}), log: hl, run: newRun(), terminated: make(chan struct{})}
+	// SIGTERM is what a machine's shutdown, or a service manager stopping
+	// hataori's service, sends every process. The host does not end on it:
+	// it stays to record how its command ended, and records that it got
+	// SIGTERM, so the end is a shutdown's and not a crash (design 4.5).
+	term := make(chan os.Signal, 1)
+	signal.Notify(term, syscall.SIGTERM)
+	quit := make(chan struct{})
+	defer func() { signal.Stop(term); close(quit) }()
+	go func() {
+		select {
+		case <-term:
+			hl.printf("got SIGTERM: everything is being stopped; the command's end is recorded as a shutdown")
+			close(h.terminated)
+		case <-quit:
+		}
+	}()
 	if err := json.Unmarshal(b, &h.spec); err != nil {
 		return fmt.Errorf("host: %s: %w", SpecFile, err)
 	}
@@ -153,14 +178,24 @@ func Run(stateDir string) (err error) {
 		h.tty.Close()
 	}
 
+	st := exitStatus(h.cmd, waitErr)
+	if h.stopNote != "" {
+		st.Stopped, st.StopNote = true, h.stopNote
+	} else {
+		select { // ended without a stop: a crash, or a shutdown that reached the command first
+		case <-h.terminated:
+		case <-time.After(shutdownGrace):
+		}
+	}
+	select {
+	case <-h.terminated:
+		st.Shutdown = true
+	default:
+	}
 	// The socket goes first, so that a reader that sees the status also
 	// finds the socket gone.
 	h.ln.Close()
 	h.removeSocket()
-	st := exitStatus(h.cmd, waitErr)
-	if h.stopNote != "" {
-		st.Stopped, st.StopNote = true, h.stopNote
-	}
 	return writeStatus(stateDir, st)
 }
 
