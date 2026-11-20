@@ -122,10 +122,14 @@ func newTakeRigWith(t *testing.T, root string, inShell bool, extra string) *take
 	if inShell {
 		g.tmux(t, "send-keys", "-t", g.pane, "-l", agent)
 		g.tmux(t, "send-keys", "-t", g.pane, "Enter")
+		// The pane's process is the shell, read once from the listing above:
+		// asking tmux for it for every process listed made one look take
+		// seconds, longer than the wait on a slow runner.
+		if g.pid <= 0 {
+			t.Fatalf("the shell's pid: %q", f[2])
+		}
+		shell := strconv.Itoa(g.pid)
 		g.pid = 0
-		// The shell's pid once: asking tmux for it for every process listed
-		// made one look take seconds, longer than the wait on a slow runner.
-		shell := strconv.Itoa(g.shellPID())
 		typed := time.Now()
 		defer func() { t.Logf("TIMING the agent's process after %v", time.Since(typed)) }()
 		for deadline := time.Now().Add(10 * time.Second); g.pid == 0; time.Sleep(10 * time.Millisecond) {
@@ -137,8 +141,8 @@ func newTakeRigWith(t *testing.T, root string, inShell bool, extra string) *take
 			}
 			if g.pid == 0 && time.Now().After(deadline) {
 				procs, _ := exec.Command("ps", "-t", strings.TrimPrefix(g.device, "/dev/"), "-o", "pid=,ppid=,stat=,command=").Output()
-				t.Fatalf("timed out waiting for the agent's process, a child of the shell %s:\n%s\nscreen:\n%s",
-					shell, procs, g.tmux(t, "capture-pane", "-p", "-t", g.pane))
+				screen, _ := exec.Command("tmux", append(append([]string{}, g.sock...), "capture-pane", "-p", "-t", g.pane)...).CombinedOutput()
+				t.Fatalf("timed out waiting for the agent's process, a child of the shell %s:\n%s\nscreen:\n%s", shell, procs, screen)
 			}
 		}
 	}
