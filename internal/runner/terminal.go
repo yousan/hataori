@@ -17,6 +17,9 @@ import (
 // reads; nothing goes to the terminal.
 func (r *Runner) Terminal(ctx context.Context, id int64, run string, after uint64) (<-chan control.TerminalChunk, error) {
 	dir := StateDir(r.Root, id)
+	if w, ok := heldOf(dir); ok {
+		return r.tmuxHolder().Screen(ctx, w, run, after)
+	}
 	spec, ok, err := host.ReadSpec(dir)
 	if err != nil {
 		return nil, fmt.Errorf("runner: session %d: %w", id, err)
@@ -34,6 +37,12 @@ func (r *Runner) Terminal(ctx context.Context, id int64, run string, after uint6
 // does not report it.
 func (r *Runner) Device(ctx context.Context, id int64) string {
 	dir := StateDir(r.Root, id)
+	if w, ok := heldOf(dir); ok {
+		ctx, cancel := context.WithTimeout(ctx, deviceTimeout)
+		defer cancel()
+		d, _ := r.tmuxHolder().Device(ctx, w)
+		return d
+	}
 	spec, ok, err := host.ReadSpec(dir)
 	if err != nil || !ok || !spec.Terminal || r.alive(dir).Ended() {
 		return ""
@@ -59,6 +68,9 @@ const deviceTimeout = time.Second
 // OnPipes reports whether session id's agent is known to run on pipes: the
 // spec its last host was given says so.
 func (r *Runner) OnPipes(id int64) bool {
+	if _, ok := heldOf(StateDir(r.Root, id)); ok {
+		return false // a window of tmux's
+	}
 	spec, ok, err := host.ReadSpec(StateDir(r.Root, id))
 	return err == nil && ok && !spec.Terminal
 }
@@ -69,6 +81,9 @@ func (r *Runner) OnPipes(id int64) bool {
 func (r *Runner) AttachSocket(ctx context.Context, id int64) (string, error) {
 	dir := StateDir(r.Root, id)
 	for {
+		if _, ok := heldOf(dir); ok {
+			return "", fmt.Errorf("runner: session %d: %w", id, errHeldAttach)
+		}
 		spec, ok, err := host.ReadSpec(dir)
 		if err != nil {
 			return "", fmt.Errorf("runner: session %d: %w", id, err)

@@ -43,6 +43,12 @@ import (
 
 // Runner runs the sessions of one instance. It implements core.Runner.
 type Runner struct {
+	// heldMu, by state directory, serialises the start, the stop and the
+	// letting go of a held window (startHeld, endHeld); heldSeen is the
+	// last time a held window was seen running, so that tmux is not asked
+	// at every poll.
+	heldMu, heldSeen sync.Map
+
 	Store    *store.Store
 	Machine  *session.Machine
 	Adapters map[string]agent.Adapter // by registered name
@@ -74,6 +80,10 @@ type Runner struct {
 	// Tmux holds the tmux windows people started that were taken in
 	// (TakeIn); a tmux.Holder running "tmux" from PATH when nil.
 	Tmux *tmux.Holder
+	// Holder is what holds the terminal of the agents it starts in one:
+	// hataori's own host when empty, or HolderTmux. An agent on pipes is
+	// always the own host's.
+	Holder string
 
 	mu   sync.Mutex
 	live map[int64]*live
@@ -298,7 +308,11 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 		// followed, not started again.
 		hs.Again = &holder.Window{Holder: holder.HostName, Process: recorded}
 	}
-	w, err := r.hold().Start(ctx, dir, hs)
+	start := r.hold().Start
+	if r.Holder == HolderTmux && launch.Terminal {
+		start = r.startHeld
+	}
+	w, err := start(ctx, dir, hs)
 	if errors.Is(err, holder.ErrHeld) {
 		return agent.Spec{}, fmt.Errorf("runner: session %d: another host still holds its state directory", id)
 	}
@@ -324,12 +338,56 @@ func (r *Runner) window(dir string) holder.Window { return r.own().Window(dir) }
 
 // alive is what the holder says of the session whose state directory is dir.
 func (r *Runner) alive(dir string) holder.Liveness {
+	if w, ok := heldOf(dir); ok {
+		l, _ := r.tmuxHolder().Alive(context.Background(), w)
+		if l.State == holder.Unknown {
+			// tmux cannot tell, as when its socket file was removed under
+			// a server that runs: the agent may run, and is never taken
+			// for ended or for not there.
+			l.State = holder.Running
+		}
+		if l.State == holder.Running {
+			r.heldSeen.Store(dir, seen{ref: w.Ref, at: time.Now()})
+		} else {
+			r.heldSeen.Delete(dir)
+		}
+		return l
+	}
 	l, _ := r.hold().Alive(context.Background(), r.window(dir))
 	return l
 }
 
-// stop stops the agent of the session whose state directory is dir.
+// polled is alive for the poll of a running session (step): a held window
+// seen running less than heldPoll ago is taken to run still, without
+// asking tmux. Whatever acts on an end asks alive itself.
+func (r *Runner) polled(dir string) holder.Liveness {
+	if w, ok := heldOf(dir); ok {
+		if s, ok := r.heldSeen.Load(dir); ok && s.(seen).ref == w.Ref && time.Since(s.(seen).at) < heldPoll {
+			return holder.Liveness{State: holder.Running}
+		}
+	}
+	return r.alive(dir)
+}
+
+// stop stops the agent of the session whose state directory is dir. A held
+// window is let go as well (endHeld).
 func (r *Runner) stop(dir string, interrupt, terminate time.Duration) (holder.StopResult, error) {
+	if w, ok := heldOf(dir); ok {
+		ctx := context.Background()
+		unlock := r.heldLock(dir)
+		if now, ok := heldOf(dir); !ok || now.Ref != w.Ref {
+			unlock()
+			return r.stop(dir, interrupt, terminate) // let go meanwhile, or another started
+		}
+		defer unlock()
+		res, err := r.tmuxHolder().Stop(ctx, w, interrupt, terminate)
+		r.heldSeen.Delete(dir)
+		if err != nil {
+			return res, err
+		}
+		r.endHeldLocked(ctx, dir, w)
+		return res, nil
+	}
 	return r.hold().Stop(context.Background(), r.window(dir), interrupt, terminate)
 }
 
@@ -390,6 +448,11 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 	if launching != 2 {
 		if !r.alive(s.Spec.StateDir).Ended() {
 			return fmt.Errorf("runner: session %d: its host is still running", id)
+		}
+		// A held window whose end a daemon that died did not see through:
+		// its relay host and window go before another start.
+		if w, ok := heldOf(s.Spec.StateDir); ok {
+			r.endHeld(ctx, s.Spec.StateDir, w)
 		}
 		// An ended host records its end before it lets go of the state
 		// directory.
@@ -546,6 +609,12 @@ func (r *Runner) stopSleepers(ctx context.Context) error {
 			if err := r.letGo(ctx, id, dir, t, nil); err != nil {
 				r.Log.Error("letting a window taken in go", "session", id, "err", err)
 			}
+			continue
+		}
+		if w, ok := heldOf(dir); ok && r.alive(dir).State != holder.Running {
+			// A held window whose end the daemon that died did not see
+			// through: its relay host and the window's note go.
+			r.endHeld(ctx, dir, w)
 			continue
 		}
 		if r.alive(dir).State != holder.Running {
@@ -1078,9 +1147,9 @@ func (r *Runner) step(lv *live) bool {
 // stepLocked is step with lv.mu held.
 func (r *Runner) stepLocked(lv *live) bool {
 	if lv.asleep {
-		return !r.alive(lv.dir).Ended()
+		return !r.polled(lv.dir).Ended()
 	}
-	exited := r.alive(lv.dir).Ended() // looked at before reading, so nothing written before the exit is missed
+	exited := r.polled(lv.dir).Ended() // looked at before reading, so nothing written before the exit is missed
 	b := r.read(lv)
 	r.watchScreen(lv, &b)
 	first, err := r.commit(lv, b)
@@ -1200,7 +1269,11 @@ func (r *Runner) watchScreen(lv *live, b *batch) {
 	if !lv.screen {
 		return
 	}
-	data, next := r.own().Since(r.window(lv.dir), lv.seenTo)
+	since := func(from uint64) ([]byte, uint64) { return r.own().Since(r.window(lv.dir), from) }
+	if _, ok := heldOf(lv.dir); ok {
+		since = func(from uint64) ([]byte, uint64) { return heldScreen(lv.dir, from) }
+	}
+	data, next := since(lv.seenTo)
 	lv.seenTo = next
 	if len(data) > 0 {
 		r.decode(lv, b, agent.Screen, data)
@@ -1424,6 +1497,9 @@ func (r *Runner) act(lv *live, a agent.Actions) error {
 	ctx, w := context.Background(), r.window(lv.dir)
 	if len(a.Keys) > 0 {
 		in := func() error { return r.hold().Input(ctx, w, a.Keys) }
+		if hw, ok := heldOf(lv.dir); ok {
+			in = func() error { return r.tmuxHolder().Input(ctx, hw, a.Keys) }
+		}
 		if lv.taken != nil {
 			in = func() error {
 				// Only to the agent that was taken in: suspended or ended, the
@@ -1465,6 +1541,10 @@ func (r *Runner) exit(lv *live) {
 		}
 	}
 	st := r.alive(lv.dir).Status
+	if w, ok := heldOf(lv.dir); ok {
+		// How it ended is read; its window and relay host go now.
+		defer r.endHeld(context.Background(), lv.dir, w)
+	}
 	in := session.Input{Kind: session.Exit}
 	switch {
 	case st == nil:
@@ -1546,6 +1626,11 @@ func (r *Runner) checkIdle(lv *live) {
 func (r *Runner) attached(lv *live) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
+	if w, ok := heldOf(lv.dir); ok {
+		// A person who looks at the tmux window, or types in it.
+		a, err := r.tmuxHolder().Attached(ctx, w)
+		return a || err != nil // cannot tell: not put to sleep under them
+	}
 	c, err := host.DialContext(ctx, lv.dir)
 	if err != nil {
 		return false
@@ -1768,7 +1853,9 @@ func (r *Runner) checkStart(lv *live) {
 		return
 	}
 	var tail []byte
-	if lv.client != nil {
+	if _, ok := heldOf(lv.dir); ok {
+		tail = heldTail(lv.dir, 4000)
+	} else if lv.client != nil {
 		tail, _ = r.own().Tail(context.Background(), r.window(lv.dir), 4000)
 	}
 	if err := r.Machine.Apply(context.Background(), lv.id, session.Input{Kind: session.StartTimeout, Detail: string(tail)}); err != nil {

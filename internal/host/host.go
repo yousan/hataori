@@ -347,6 +347,13 @@ func trailingNewline(line []byte) int {
 // lookPath finds argv0 on the PATH of the command's own environment.
 // Relative entries are taken from dir, where the command runs.
 func lookPath(argv0 string, env []string, dir string) (string, error) {
+	return LookPath(argv0, env, dir)
+}
+
+// LookPath finds argv0 on the PATH of the command's own environment, as the
+// host does before it starts a command: for another holder that executes
+// the same spec (`hataori exec`). Relative entries are taken from dir.
+func LookPath(argv0 string, env []string, dir string) (string, error) {
 	if strings.Contains(argv0, "/") {
 		return argv0, nil
 	}

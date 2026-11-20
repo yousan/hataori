@@ -93,9 +93,10 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprint(stdout, "fake: answered, starting\r\n")
 		time.Sleep(200 * time.Millisecond)
 	}
-	if *terminal && *windowRoot != "" {
-		// As an agent a person runs asks of its terminal: a paste comes
-		// bracketed, so it is told from keys typed.
+	if *terminal {
+		// As an agent in a terminal asks of it, once past any dialog: a
+		// paste comes bracketed, so it is told from keys typed, whatever
+		// holds the terminal.
 		fmt.Fprint(stdout, "\x1b[?2004h")
 	}
 	inputs := make(chan string, 16)

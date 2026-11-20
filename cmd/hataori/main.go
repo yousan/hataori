@@ -54,6 +54,7 @@ import (
 	"github.com/yousan/hataori/internal/agent/claudecode"
 	"github.com/yousan/hataori/internal/agent/codex"
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/holder/tmux"
 	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/relay"
 	"github.com/yousan/hataori/internal/surface"
@@ -117,6 +118,24 @@ func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		if len(args) == 2 {
 			// Started by the daemon through host.Start; its output goes nowhere.
 			if err := host.Run(args[1]); err != nil {
+				fmt.Fprintln(stderr, err)
+				return exitError
+			}
+			return 0
+		}
+	case "exec":
+		if len(args) == 2 {
+			// Run by respawn-pane in a tmux window hataori started: it becomes
+			// the agent, or says why it cannot.
+			err := tmux.ExecMain(args[1])
+			fmt.Fprintln(stderr, err)
+			return exitError
+		}
+	case "pipe":
+		if len(args) == 2 {
+			// Run by pipe-pane -O in a tmux window hataori started, with the
+			// pane's output on its standard input.
+			if err := host.Pipe(args[1], os.Stdin); err != nil {
 				fmt.Fprintln(stderr, err)
 				return exitError
 			}

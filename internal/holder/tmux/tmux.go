@@ -1,8 +1,10 @@
-// Package tmux is the terminal holder for a tmux window that a person
-// started (design, sections 4.3 and 4.8): it hands the window's agent
+// Package tmux is the terminal holder for tmux windows (design, sections
+// 4.3 and 4.8). For a window a person started, it hands the window's agent
 // pastes and named keys, shows snapshots of the pane, tells whether that
-// agent still runs, and makes the check that comes before a take-in.
-// It never starts, stops, respawns or resizes a window, and sets no option.
+// agent still runs, and makes the check that comes before a take-in; it
+// never starts, stops, respawns or resizes such a window, and sets no
+// option on it. A window hataori starts (Start) is a tmux session of
+// hataori's own, which it makes, sets up, stops and removes itself.
 //
 // Text goes only on load-buffer's standard input, into a buffer of the
 // holder's own, which paste-buffer deletes; it is never in an argument.
@@ -17,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -38,6 +41,15 @@ type Holder struct {
 	Tmux string        // the tmux program; "tmux" when empty
 	Poll time.Duration // how often Screen takes a snapshot; 500ms when zero
 
+	// For the windows hataori starts (Start): the hataori binary, whose
+	// `exec` and `pipe` the window runs; the start of the name of each of
+	// their tmux sessions; and the server they are made on, as the
+	// arguments before each tmux command, such as "-L", "name"; empty for
+	// the default server. Without Hataori, Start refuses.
+	Hataori string
+	Prefix  string
+	Server  []string
+
 	// noRawPaste holds, by socket, the servers that said they do not know
 	// paste-buffer's -S: before 3.7, which paste a buffer as it is.
 	noRawPaste sync.Map
@@ -51,6 +63,9 @@ type ref struct {
 	Socket string `json:"socket"`
 	Server int    `json:"server"`
 	Pane   string `json:"pane"`
+	// Dir is the session's state directory, for a window hataori started
+	// (Start): how it ended is recorded there once the pane is gone.
+	Dir string `json:"dir,omitempty"`
 }
 
 var paneID = regexp.MustCompile(`^%[0-9]+$`)
@@ -91,18 +106,27 @@ func parseRef(w holder.Window) (ref, error) {
 	return r, nil
 }
 
-// Caps: no start, and snapshots only.
-func (h *Holder) Caps() holder.Caps { return holder.Caps{} }
-
-// Start refuses: this holder holds only windows a person started.
-func (h *Holder) Start(ctx context.Context, stateDir string, spec holder.Spec) (holder.Window, error) {
-	return holder.Window{}, holder.ErrCannotStart
+// Caps: snapshots of the windows people started; with Hataori set, it
+// starts windows too, whose raw output it keeps from the first byte.
+func (h *Holder) Caps() holder.Caps {
+	if h.Hataori != "" {
+		return holder.Caps{CanStart: true, RawScreen: true}
+	}
+	return holder.Caps{}
 }
 
-// Stop refuses and does nothing: hataori never ends a window it did not
-// start.
+// Stop ends the agent of a window hataori started (startedStop). For a
+// window a person started it refuses and does nothing: hataori never ends a
+// window it did not start.
 func (h *Holder) Stop(ctx context.Context, w holder.Window, interrupt, terminate time.Duration) (holder.StopResult, error) {
-	return holder.StopResult{}, holder.ErrNotOwned
+	if !w.Owned {
+		return holder.StopResult{}, holder.ErrNotOwned
+	}
+	r, err := parseRef(w)
+	if err != nil {
+		return holder.StopResult{}, err
+	}
+	return h.startedStop(ctx, r, interrupt, terminate)
 }
 
 // cmdTimeout bounds each tmux and ps command.
@@ -117,7 +141,13 @@ func (h *Holder) tmux(ctx context.Context, r ref, stdin []byte, args ...string) 
 	}
 	ctx, cancel := context.WithTimeout(ctx, cmdTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, prog, append([]string{"-S", r.Socket}, args...)...)
+	return runTmux(ctx, prog, []string{"-S", r.Socket}, args, stdin)
+}
+
+// runTmux runs prog with the server's arguments, then a command's args, and
+// stdin on its standard input.
+func runTmux(ctx context.Context, prog string, server, args []string, stdin []byte) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, prog, append(append([]string{}, server...), args...)...)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
@@ -159,6 +189,12 @@ func serverGone(r ref) error {
 	if errors.Is(syscall.Kill(r.Server, 0), syscall.ESRCH) {
 		return fmt.Errorf("%w: no server answers on the socket, and process %d has ended", errGone, r.Server)
 	}
+	// A process of that id that is not tmux, as after a reboot that gave the
+	// id to another, is not the server.
+	if out, err := exec.Command("ps", "-o", "comm=", "-p", strconv.Itoa(r.Server)).Output(); err == nil &&
+		!strings.Contains(filepath.Base(strings.TrimSpace(string(out))), "tmux") {
+		return fmt.Errorf("%w: no server answers on the socket, and process %d is %q", errGone, r.Server, strings.TrimSpace(string(out)))
+	}
 	return errors.New("tmux: the server's socket does not answer, and its process runs")
 }
 
@@ -173,6 +209,38 @@ func noPanes(err error) bool {
 type pane struct {
 	tty           string
 	width, height string
+	pid           int    // the pane's process, which leads its process group
+	dead          bool   // remain-on-exit kept the pane after its process ended
+	status        string // how it ended, when dead: "x" and its exit status, or "-"
+	signal        string // the signal that ended it, when dead and known, or "-"
+	session       string // the name of the session it is in, each space as "_"
+}
+
+// paneFormat is what find asks list-panes for. Spaces between the fields,
+// none of which holds one: under a locale that is not UTF-8, tmux 3.5
+// prints a tab in a format as "_" (#483). Every field prints something,
+// "-" for nothing, so that a line always has as many: a dead pane may have
+// no terminal any more.
+const paneFormat = "#{pid} #{pane_id} #{?pane_tty,#{pane_tty},-} #{pane_width} #{pane_height} #{?pane_pid,#{pane_pid},-} #{pane_dead} " +
+	"#{?pane_dead,x#{pane_dead_status},-} #{?pane_dead_signal,#{pane_dead_signal},-} #{s/ /_/:session_name}"
+
+// parsePane reads one line of list-panes in paneFormat: the server's
+// process id, the pane's id and the pane.
+func parsePane(l string) (server int, id string, p pane, ok bool) {
+	f := strings.Fields(l)
+	if len(f) != 10 || !paneID.MatchString(f[1]) {
+		return 0, "", pane{}, false
+	}
+	server, err := strconv.Atoi(f[0])
+	if err != nil {
+		return 0, "", pane{}, false
+	}
+	p = pane{tty: f[2], width: f[3], height: f[4], dead: f[6] == "1", status: f[7], signal: f[8], session: f[9]}
+	if p.tty == "-" {
+		p.tty = ""
+	}
+	p.pid, _ = strconv.Atoi(f[5])
+	return server, f[1], p, true
 }
 
 // errGone is the reason behind holder.Gone: the window is not there.
@@ -184,9 +252,7 @@ var errGone = errors.New("tmux: the window is gone")
 // one, and a pane that one listing leaves out is looked up by its id before
 // it counts as gone (#497).
 func (h *Holder) find(ctx context.Context, r ref) (pane, error) {
-	// Spaces between the fields, none of which holds one: under a locale
-	// that is not UTF-8, tmux 3.5 prints a tab in a format as "_" (#483).
-	out, err := h.tmux(ctx, r, nil, "list-panes", "-a", "-F", "#{pid} #{pane_id} #{pane_tty} #{pane_width} #{pane_height}")
+	out, err := h.tmux(ctx, r, nil, "list-panes", "-a", "-F", paneFormat)
 	if noServer(err) {
 		return pane{}, serverGone(r)
 	}
@@ -198,12 +264,8 @@ func (h *Holder) find(ctx context.Context, r ref) (pane, error) {
 	}
 	lines := 0
 	for _, l := range strings.Split(string(out), "\n") {
-		f := strings.Fields(l)
-		if len(f) != 5 || !paneID.MatchString(f[1]) {
-			continue
-		}
-		pid, err := strconv.Atoi(f[0])
-		if err != nil {
+		pid, id, p, ok := parsePane(l)
+		if !ok {
 			continue
 		}
 		if pid != r.Server {
@@ -211,8 +273,8 @@ func (h *Holder) find(ctx context.Context, r ref) (pane, error) {
 			return pane{}, fmt.Errorf("%w: the server on the socket is process %d, not %d", errGone, pid, r.Server)
 		}
 		lines++
-		if f[1] == r.Pane {
-			return pane{tty: f[2], width: f[3], height: f[4]}, nil
+		if id == r.Pane {
+			return p, nil
 		}
 	}
 	if lines == 0 {
@@ -430,6 +492,9 @@ func (h *Holder) Alive(ctx context.Context, w holder.Window) (holder.Liveness, e
 	r, err := parseRef(w)
 	if err != nil {
 		return holder.Liveness{}, err
+	}
+	if w.Owned {
+		return h.startedAlive(ctx, r), nil
 	}
 	if _, err := h.find(ctx, r); errors.Is(err, errGone) {
 		return holder.Liveness{State: holder.Gone}, nil

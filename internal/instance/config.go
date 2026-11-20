@@ -56,6 +56,11 @@ type Config struct {
 	// that hataori does not own (section 7.2); "host_input", off when
 	// absent. It needs HostTerminals.
 	HostInput bool
+	// Holder is what holds the terminal of the agents hataori starts in
+	// one (design, section 4.3): "holder", HolderHost (hataori's own
+	// session host) when absent, or HolderTmux. An agent on pipes is always
+	// hataori's own host's.
+	Holder string
 	// HostInputIdle ends an operation of a pane after this long without a
 	// key: "host_input_idle", 5 minutes when absent, at least one second.
 	HostInputIdle time.Duration
@@ -85,6 +90,12 @@ type Config struct {
 	// reads and checks it. Nil when the config has none.
 	Plugins []json.RawMessage
 }
+
+// The holders of the "holder" key.
+const (
+	HolderHost = "host" // hataori's own session host
+	HolderTmux = "tmux" // a window of hataori's own on the default tmux server
+)
 
 // AgentDefaults are the model and effort keys read from an adapter section.
 type AgentDefaults struct{ Model, Effort string }
@@ -256,6 +267,7 @@ type fileConfig struct {
 	HostTerms  bool                       `json:"host_terminals"`
 	HostInput  bool                       `json:"host_input"`
 	InputIdle  string                     `json:"host_input_idle"`
+	Holder     string                     `json:"holder"`
 	TermSize   *fileTerminalSize          `json:"terminal_size"`
 	Scopes     []fileScope                `json:"scopes"`
 	Dashboard  *fileDashboard             `json:"dashboard"`
@@ -385,6 +397,14 @@ func ParseConfig(data []byte) (*Config, error) {
 	c.Idle = d
 	if c.HostInput && !c.HostTerminals {
 		return nil, fmt.Errorf("config: key %q is true, which needs key %q to be true as well", "host_input", "host_terminals")
+	}
+	switch h := strings.TrimSpace(f.Holder); h {
+	case "", HolderHost:
+		c.Holder = HolderHost
+	case HolderTmux:
+		c.Holder = HolderTmux
+	default:
+		return nil, fmt.Errorf("config: key %q: %q is not a holder: say %q or %q", "holder", f.Holder, HolderHost, HolderTmux)
 	}
 	if f.InputIdle != "" {
 		v := strings.TrimSpace(f.InputIdle)
