@@ -1178,9 +1178,6 @@ func (r *Runner) stepLocked(lv *live) bool {
 			go r.windowClosed(lv)
 			continue
 		}
-		if e.Kind == agent.SessionEnded && e.Reason == agent.CannotResume {
-			go r.replace(lv)
-		}
 		if e.Kind == agent.SessionEnded && e.Reason == agent.WrongSession {
 			// The session failed; its agent runs another conversation.
 			go r.stop(lv.dir, time.Second, 2*time.Second)
@@ -1314,12 +1311,15 @@ func truncate(s string, n int) string {
 // commit writes the events and the offsets they were read up to in one
 // transaction, and the first input once the agent is ready.
 func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
-	var first *firstInput
+	var (
+		first *firstInput
+		rep   *replacement
+	)
 	seq := lv.seq
 	err := r.Store.Update(context.Background(), func(tx *store.Tx) error {
 		ctx := context.Background()
 		seq = lv.seq
-		first = nil
+		first, rep = nil, nil
 		for _, e := range b.events {
 			seq++
 			e.Seq = seq
@@ -1331,6 +1331,16 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 				if _, err := tx.ExecContext(ctx, `UPDATE sessions SET last_seq = ? WHERE id = ?`, seq, lv.id); err != nil {
 					return err
 				}
+			}
+		}
+		// A session whose agent no longer has the conversation is replaced
+		// in the transaction that stores its failure, so a daemon that stops
+		// after it still replaces it once (#527). A window taken in is not:
+		// its agent ending means the window closed.
+		if lv.taken == nil && cannotResume(b.events) {
+			var err error
+			if rep, err = r.replaceTx(ctx, tx, lv); err != nil {
+				return fmt.Errorf("replacing a session that cannot resume: %w", err)
 			}
 		}
 		if err := saveRead(ctx, tx, lv.id, b); err != nil {
@@ -1390,8 +1400,23 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 	if err == nil {
 		lv.seq = seq
 		lv.resend = false
+		if rep != nil {
+			r.at("after cannot resume")
+			go r.launchReplacement(*rep)
+		}
 	}
 	return first, err
+}
+
+// cannotResume reports whether evs end the session because its agent no
+// longer has the conversation.
+func cannotResume(evs []agent.Event) bool {
+	for _, e := range evs {
+		if e.Kind == agent.SessionEnded && e.Reason == agent.CannotResume {
+			return true
+		}
+	}
+	return false
 }
 
 // clearReported removes the pending input whose turn the agent reported, or
@@ -1650,9 +1675,10 @@ const shutWait = 15 * time.Second
 // session is closed already, it applies session.Close with reason, while it
 // holds the session's lock, so no step reads what the agent reports after
 // it, and in a transaction that refuses a session that is no longer its
-// thread's newest (one replaced meanwhile; replace makes the new session in
-// a transaction too, so one of the two sees the other), and an idle one
-// whose last turn left background tasks running. Then it stops the
+// thread's newest (one replaced meanwhile; the new session is made in the
+// transaction that stores the old one's failure, so one of the two sees the
+// other), and an idle one whose last turn left background tasks running.
+// Then it stops the
 // session's host, when one runs, and waits until the host and the runner's
 // following of it have ended. A closed session is only stopped and waited
 // for: a Close repeated after a stop that failed tries again, and a removal
@@ -1751,75 +1777,78 @@ func (r *Runner) Shut(ctx context.Context, id int64, reason string) error {
 	return nil
 }
 
-// replace starts a new session in the same workspace for a session whose
-// conversation the agent no longer has, with the input the old one was
-// woken for. It does nothing when the thread already has a newer session.
-// The new session is inserted with its first input and launch 1, in one
-// transaction: a daemon that stops before the launch launches it when it
-// comes back (core.Core.Recover), and the input, whose key was accepted,
-// reaches the agent once.
-func (r *Runner) replace(lv *live) {
-	ctx := context.Background()
+// replacement is a session replaceTx inserted, to be launched once its
+// transaction is committed.
+type replacement struct {
+	l     core.Launch
+	first firstInput
+}
+
+// replaceTx inserts, in tx, a new session in the same workspace for a
+// session whose conversation the agent no longer has, with the input the
+// old one was woken for. It does nothing and returns nil when the session
+// has not failed or its thread already has a newer session. The new session
+// is inserted with its first input and launch 1: a daemon that stops before
+// the launch launches it when it comes back (core.Core.Recover), and the
+// input, whose key was accepted, reaches the agent once.
+func (r *Runner) replaceTx(ctx context.Context, tx *store.Tx, lv *live) (*replacement, error) {
 	var (
-		l     core.Launch
-		first firstInput
+		l         core.Launch
+		state, fi string
+		tid       int64
 	)
-	err := r.Store.Update(ctx, func(tx *store.Tx) error {
-		l = core.Launch{}
-		var state, fi string
-		var tid int64
-		if err := tx.QueryRowContext(ctx, `SELECT s.state, s.thread_id, s.agent, s.model, s.effort, s.first_input
-			FROM sessions s WHERE s.id = ?`, lv.id).
-			Scan(&state, &tid, &l.Agent, &l.Model, &l.Effort, &fi); err != nil {
-			return err
-		}
-		l.Thread = control.ThreadID(tid)
-		var newer int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM sessions WHERE thread_id = ? AND id > ?`, tid, lv.id).Scan(&newer); err != nil {
-			return err
-		}
-		if control.State(state) != control.Failed || newer > 0 {
-			return nil
-		}
-		var old firstInput
-		if fi != "" {
-			json.Unmarshal([]byte(fi), &old)
-		}
-		// What the new session's agent gets before the input: the thread's
-		// earlier conversation, as this transaction sees it.
-		earlier, err := r.earlier(ctx, tx, l.Thread)
-		if err != nil {
-			r.Log.Error("the thread's earlier context", "session", lv.id, "err", err) // the new session starts without it
-		}
-		// The input the old session was woken for, as a new session's first
-		// input: not sent, not written, and in the old session's workspace.
-		first = firstInput{Principal: old.Principal, From: old.From, Key: old.Key, Text: old.Text, Link: old.Link,
-			Before: old.Before, After: old.After, Context: earlier, Dir: lv.spec.Dir}
-		fb, _ := json.Marshal(first)
-		now := time.Now().UnixMilli()
-		res, err := tx.ExecContext(ctx, `INSERT INTO sessions (thread_id, agent, state, model, effort, first_input, launch, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`, tid, l.Agent, string(control.Creating), l.Model, l.Effort, string(fb), now, now)
-		if err != nil {
-			return err
-		}
-		if l.Session, err = res.LastInsertId(); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE threads SET state = ?, updated_at = ? WHERE id = ?`,
-			string(control.Creating), now, tid); err != nil {
-			return err
-		}
-		data, _ := json.Marshal(map[string]any{"session": lv.id, "new_session": l.Session, "reason": string(agent.CannotResume)})
-		_, err = tx.Append(ctx, control.Event{Thread: l.Thread, Kind: KindSessionReplaced, Data: data})
-		return err
-	})
+	if err := tx.QueryRowContext(ctx, `SELECT s.state, s.thread_id, s.agent, s.model, s.effort, s.first_input
+		FROM sessions s WHERE s.id = ?`, lv.id).
+		Scan(&state, &tid, &l.Agent, &l.Model, &l.Effort, &fi); err != nil {
+		return nil, err
+	}
+	l.Thread = control.ThreadID(tid)
+	var newer int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM sessions WHERE thread_id = ? AND id > ?`, tid, lv.id).Scan(&newer); err != nil {
+		return nil, err
+	}
+	if control.State(state) != control.Failed || newer > 0 {
+		return nil, nil
+	}
+	var old firstInput
+	if fi != "" {
+		json.Unmarshal([]byte(fi), &old)
+	}
+	// What the new session's agent gets before the input: the thread's
+	// earlier conversation, as this transaction sees it.
+	earlier, err := r.earlier(ctx, tx, l.Thread)
 	if err != nil {
-		r.Log.Error("replacing a session that cannot resume", "session", lv.id, "err", err)
-		return
+		r.Log.Error("the thread's earlier context", "session", lv.id, "err", err) // the new session starts without it
 	}
-	if l.Session == 0 {
-		return
+	// The input the old session was woken for, as a new session's first
+	// input: not sent, not written, and in the old session's workspace.
+	first := firstInput{Principal: old.Principal, From: old.From, Key: old.Key, Text: old.Text, Link: old.Link,
+		Before: old.Before, After: old.After, Context: earlier, Dir: lv.spec.Dir}
+	fb, _ := json.Marshal(first)
+	now := time.Now().UnixMilli()
+	res, err := tx.ExecContext(ctx, `INSERT INTO sessions (thread_id, agent, state, model, effort, first_input, launch, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`, tid, l.Agent, string(control.Creating), l.Model, l.Effort, string(fb), now, now)
+	if err != nil {
+		return nil, err
 	}
+	if l.Session, err = res.LastInsertId(); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE threads SET state = ?, updated_at = ? WHERE id = ?`,
+		string(control.Creating), now, tid); err != nil {
+		return nil, err
+	}
+	data, _ := json.Marshal(map[string]any{"session": lv.id, "new_session": l.Session, "reason": string(agent.CannotResume)})
+	if _, err := tx.Append(ctx, control.Event{Thread: l.Thread, Kind: KindSessionReplaced, Data: data}); err != nil {
+		return nil, err
+	}
+	return &replacement{l: l, first: first}, nil
+}
+
+// launchReplacement starts a session replaceTx inserted.
+func (r *Runner) launchReplacement(rep replacement) {
+	ctx := context.Background()
+	l, first := rep.l, rep.first
 	r.at("after replace")
 	l.Dir, l.Principal, l.From, l.Key, l.Context = first.Dir, first.Principal, first.From, first.Key, first.Context
 	l.Input = first.Input()
