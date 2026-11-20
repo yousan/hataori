@@ -319,3 +319,30 @@ func TestApprovalAnsweredAgainAfterItsOutcomeWasNotWritten(t *testing.T) {
 		t.Fatalf("runner calls: %q", calls)
 	}
 }
+
+// #523: the interrupt was sent, but writing the outcome failed. Answered
+// again while the asked turn still runs, the approval interrupts it again,
+// naming it, and records interrupted; the reason is given once.
+func TestApprovalAnsweredAgainAfterItsSentInterruptWasNotRecorded(t *testing.T) {
+	ctx := context.Background()
+	f, _, _, turn, req := approvalFixture(t)
+	first, cancel := context.WithCancel(ctx)
+	defer cancel()
+	f.runner.beforeInterrupt = cancel
+	if err := f.owner.Answer(first, req, control.Answer{Allow: true}); err == nil {
+		t.Fatal("the first answer: no error")
+	}
+	if s := approvalState(t, f, req); s != "open" {
+		t.Fatalf("after the first answer: %q", s)
+	}
+	if err := f.owner.Answer(ctx, req, control.Answer{Allow: true}); err != nil {
+		t.Fatal(err)
+	}
+	if s := approvalState(t, f, req); s != "interrupted" {
+		t.Fatalf("after the second answer: %q", s)
+	}
+	calls := f.runner.Calls()
+	if n := strings.Count(calls, fmt.Sprintf("interrupt turn %d", turn)); n != 2 || strings.Count(calls, "deliver supervisor\nurgent") != 1 {
+		t.Fatalf("runner calls: %q", calls)
+	}
+}
