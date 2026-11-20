@@ -40,7 +40,8 @@ export function attentionText(a: Attention): string {
     case "approval":
       return a.text ? t("thread.approvalText", { text: a.text }) : t("thread.approval");
     case "failure":
-      return a.reason ? t("thread.failure", { reason: a.reason }) : t("thread.failureUnknown");
+      // The first line: the details panel shows the rest.
+      return a.reason ? t("thread.failure", { reason: a.reason.split("\n")[0] }) : t("thread.failureUnknown");
   }
 }
 

@@ -59,6 +59,24 @@ func TestAStartThatFailsLaterIsShownOnce(t *testing.T) {
 	}
 }
 
+// A detail of several lines for a person, as the agent adapter writes for
+// a start blocked at a start-up dialog that names files (#589): the
+// message holds it whole, below the reason: why hataori stopped, the
+// dialog as the agent drew it with the files it names, and the next step.
+func TestAStartFailureWithTheDialogPostsItBelowTheReason(t *testing.T) {
+	f := newFront(t, workspaces{})
+	id, _ := f.started(t)
+	f.showing(t)
+	detail := "hataori did not answer the dialog for you, because it names files of the repository; it has not judged this repository dangerous.\n" +
+		"The agent showed:\n> Trusting this folder loads .agent/settings.json.\n> ❯ No, exit\n> Yes, I trust this folder\n" +
+		`What to do next: list it under "trust_files" of the scope "c1" in hataori's config, and start again.`
+	f.event(t, id, "state", map[string]any{"from": "creating", "to": "failed", "reason": "blocked at start", "detail": detail})
+	want := couldNotStart + "blocked at start.\n" + detail
+	if got := texts(f.postedUntil(t, id, want)); got != "the prompt|"+want {
+		t.Fatalf("thread shows %q", got)
+	}
+}
+
 // A detail that is terminal output, such as the screen of a start that
 // timed out, stays out of the chat; the reason is posted alone.
 func TestAStartFailureWithTheScreenPostsTheReasonOnly(t *testing.T) {
@@ -92,9 +110,10 @@ func TestReadableDetail(t *testing.T) {
 	for in, want := range map[string]string{
 		"":                        "",
 		" one line ":              "one line",
-		"two\nlines":              "",
+		"two\nlines":              "two\nlines",
+		"two\r\nlines":            "",
 		"\x1b[1mbold":             "",
-		strings.Repeat("x", 2000): "",
+		strings.Repeat("x", 2001): "",
 	} {
 		if got := ReadableDetail(in); got != want {
 			t.Errorf("ReadableDetail(%q) = %q, want %q", in, got, want)

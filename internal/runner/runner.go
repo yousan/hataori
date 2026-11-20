@@ -247,7 +247,7 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 	}
 	// The scope's config as it is at this launch, not as it was at the
 	// session's first.
-	spec.TrustFiles = nil
+	spec.TrustFiles, spec.Scope = nil, scope
 	if r.TrustFiles != nil {
 		spec.TrustFiles = r.TrustFiles(scope)
 	}
