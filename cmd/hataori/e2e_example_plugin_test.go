@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -77,17 +78,29 @@ func TestExamplePluginRuns(t *testing.T) {
 		}
 		return end > 0
 	})
+	// It keeps the position of the last event it logged, the turn end's or
+	// a later one's: what it logs comes to the daemon's log through a pipe
+	// of its own, so both are waited for.
 	position := filepath.Join(r.root, "state", "plugins", "marker", "position")
 	eventually(t, "the plugin to keep the turn end's position", 20*time.Second, func() bool {
 		b, err := os.ReadFile(position)
-		n, _ := strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
-		return err == nil && n >= end
+		if err != nil {
+			return false
+		}
+		kept, _ := strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
+		var last uint64
+		for _, m := range eventLine.FindAllStringSubmatch(logged(), -1) {
+			last, _ = strconv.ParseUint(m[1], 10, 64)
+		}
+		return kept >= end && kept == last && strings.Contains(logged(), "marker: event turn_ended "+strconv.FormatUint(end, 10))
 	})
-	if l := logged(); !strings.Contains(l, "marker: connected; the daemon speaks "+wire.Version) ||
-		!strings.Contains(l, "marker: event turn_ended "+strconv.FormatUint(end, 10)) {
+	if l := logged(); !strings.Contains(l, "marker: connected; the daemon speaks "+wire.Version) {
 		t.Fatalf("the plugin's log lines:\n%s", l)
 	}
 }
+
+// eventLine is the line the example logs for each event it handled.
+var eventLine = regexp.MustCompile(`marker: event [a-z_]+ ([0-9]+)`)
 
 // The example plugin imports nothing outside Python's standard library:
 // python3 parses it and checks each module it imports against the list of
@@ -96,6 +109,8 @@ func TestExamplePluginNeedsOnlyTheStandardLibrary(t *testing.T) {
 	path, _ := examplePlugin(t)
 	const check = `
 import ast, sys
+if not hasattr(sys, "stdlib_module_names"):
+    sys.exit("this check needs Python 3.10 or later, for sys.stdlib_module_names; the example itself runs on older ones")
 tree = ast.parse(open(sys.argv[1], encoding="utf-8").read())
 mods = set()
 for node in ast.walk(tree):

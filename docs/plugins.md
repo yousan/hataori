@@ -12,7 +12,7 @@ The daemon checks each plugin's manifest and config entry when it starts, then r
 2. **Connect** to the Unix socket in `HATAORI_SOCKET` (How a plugin runs, below) and send the hello with the protocol version the plugin speaks and the token in `HATAORI_TOKEN`: `{"version":"3.19","token":"…"}`. The daemon answers with its own hello. One with `error` refuses the connection, and a daemon of another major version refuses too ([protocol.md, Connection](protocol.md#connection)).
 3. **Call operations** on that connection: one JSON object per line, numbered by the plugin, answered in any order. For example `{"id":1,"op":"Threads","args":{"filter":{}}}` is answered `{"id":1,"result":[…]}`, and a call the grant lacks is answered with the error code `forbidden`.
 4. **Answer the daemon's requests** on the same connection: a line with `op` is a request, numbered by the daemon. Answer each with its `id`: `hook` with a `HookAnswer`, `plugin_started` and `plugin_stopping` with an empty result. Answer a request the plugin does not know with the error code `not_supported`, as the protocol requires; for a hook that is a failure of the handler ([protocol.md, `hook`](protocol.md#request-hook)). Answer each request without waiting for the others: a slow one must not hold up the rest.
-5. **Read events on a connection of its own**: a hello, then `{"id":1,"op":"Events","args":{"filter":{},"after":<position>}}`. The daemon answers `{"id":1}`, then sends one line per event, `{"id":1,"event":{…}}`, the stored ones first, then one of kind `caught_up`, then new ones as they are written. Keep the `pos` of each event handled in `HATAORI_PLUGIN_STATE` and read after it at the next start, so a restart misses no event and repeats none. A line with `op` that comes before the stream's first answer is a request the daemon sent before it read `Events`: skip it, unanswered.
+5. **Read events on a connection of its own**: a hello, then `{"id":1,"op":"Events","args":{"filter":{},"after":<position>}}`. The daemon answers `{"id":1}`, then sends one line per event, `{"id":1,"event":{…}}`, the stored ones first, then one of kind `caught_up`, then new ones as they are written. Keep the `pos` of each event once it is handled, in `HATAORI_PLUGIN_STATE`, and read after it at the next start, so a restart misses no event. A plugin that stops between handling an event and keeping its position handles it again after a restart; to handle each event exactly once, keep the position with what the plugin did in one write, or let what it did say how far it got, as the example's `record` does. A line with `op` that comes before the stream's first answer is a request the daemon sent before it read `Events`: skip it, unanswered.
 6. **Exit when a connection breaks**, or connect again. hataori starts a plugin that exits again after a backoff, with a new token.
 
 What the plugin writes to its standard output and error goes to the daemon's log. Its settings, the config entry's `settings`, are in the file `HATAORI_PLUGIN_SETTINGS`.
@@ -21,12 +21,12 @@ What the plugin writes to its standard output and error goes to the daemon's log
 
 A plugin without the `conversation` grant gets no text written by a person or an agent:
 
-- events come without their text fields: the `text` of `input`, `answer` and `text` events, the questions of `request`, the `before` and `after` of `input`, the `text` of `post_sent` and the `reason` of `post_cancelled`;
-- `Threads` and `Thread` leave out thread titles and names, the last output and the text of open requests, and `Thread` the reasons of cancelled posts;
+- events come without each field that [protocol.md](protocol.md#events) marks as text, such as the `text` of `input`, `answer` and `text` events, the question and choices of `request`, the `before` and `after` of `input`, a `state`'s `detail`, a `file_out`'s `caption`, the `text` of `post_sent` and the `reason` of `post_cancelled`;
+- `Threads` and `Thread` leave out thread titles and names, the last line and `recent` output, and the text and choices of open requests, and `Thread` the reasons of cancelled posts;
 - `hook` requests come without `text`, so a handler can stop an input or a post, or add text at `before_prompt_build`, but not read it;
 - `Terminal` and `HostScreen` are refused.
 
-It still gets the thread numbers, scopes, links, states, turns, usage and every event's other fields, so it can count, time and gate.
+It still gets the thread numbers, scopes, links, states, turns, usage and the events' fields that are not text, so it can count, time and gate.
 
 ### From OpenClaw
 

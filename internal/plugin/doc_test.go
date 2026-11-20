@@ -19,7 +19,14 @@ func rowsUnder(t *testing.T, path, heading string) [][]string {
 	}
 	var rows [][]string
 	in, found := false, false
+	fenced := false
 	for _, l := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(l, "```") {
+			fenced = !fenced
+		}
+		if fenced {
+			continue
+		}
 		if strings.HasPrefix(l, "#") {
 			if in {
 				break
@@ -73,11 +80,22 @@ func TestDocsNameEveryFieldAndPoint(t *testing.T) {
 			t.Errorf("%s, %s: the document has %q, the code %q", tc.path, tc.heading, got, want)
 		}
 	}
-	// Each point's kind, as the dispatcher has it, is in the table too.
+	// Each point's kind, as the dispatcher has it, and its policy are in the
+	// table too, and the dispatcher knows no other point.
+	for p := range kinds {
+		if _, ok := points[p]; !ok {
+			t.Errorf("the dispatcher has a kind for %s, which is no hook point", p)
+		}
+	}
+	policy := map[Failure]string{Block: "the input is blocked", Skip: "the handler is skipped"}
 	for _, r := range rowsUnder(t, plugins, "### Hook points") {
 		k, ok := kinds[r[0]]
-		if !ok || len(r) < 2 {
-			continue // named above
+		if !ok || len(r) < 4 {
+			t.Errorf("hook point %s: no kind, or a short row %q", r[0], r)
+			continue
+		}
+		if r[3] != policy[points[r[0]]] {
+			t.Errorf("point %s: the document's policy is %q, the code's %q", r[0], r[3], policy[points[r[0]]])
 		}
 		var want, got []string
 		if k.stop {

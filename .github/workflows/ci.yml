@@ -59,29 +59,6 @@ jobs:
       - name: go test
         run: go test ./...
 
-  # TEMPORARY (#353), removed before merge: the example plugin's test
-  # without python3 on PATH fails, and does not skip.
-  example-without-python:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - name: the test fails without python3
-        run: |
-          go test -c -o "$RUNNER_TEMP/hataori.test" ./cmd/hataori
-          cd cmd/hataori
-          set +e
-          env PATH=/nonexistent "$RUNNER_TEMP/hataori.test" -test.run '^TestExamplePluginRuns$' -test.v > "$RUNNER_TEMP/out" 2>&1
-          code=$?
-          set -e
-          cat "$RUNNER_TEMP/out"
-          echo "exit code: $code"
-          test "$code" -ne 0
-          grep -q -- '--- FAIL: TestExamplePluginRuns' "$RUNNER_TEMP/out"
-          ! grep -q -- '--- SKIP' "$RUNNER_TEMP/out"
-
   # hataori for macOS, where `hataori connect` runs on the person's
   # machine: both architectures, kept as artifacts of the run.
   build-macos:

@@ -7,7 +7,10 @@ It shows what a plugin does (docs/plugins.md):
   the protocol version it speaks;
 - calls Threads, and logs how many threads it may see;
 - reads events from the position it keeps in its state directory, so that a
-  restart misses none, and logs each kind;
+  restart misses none, and logs each kind; with "record" set it also keeps
+  each event's position and kind in events.jsonl, written before the
+  position, and starts after the later of the two, so that it handles each
+  event exactly once across restarts;
 - answers the hook requests: at message_sending it rewrites a post that holds
   one marker and cancels a post that holds another, and at before_agent_run it
   stops an input that holds a third; every other text goes on as it is;
@@ -33,8 +36,10 @@ DEFAULTS = {
     "stop": "STOP-ME",  # before_agent_run: an input that holds it is stopped
     "slow": "",  # when set, a hook call whose text holds it waits slow_seconds first
     "slow_seconds": 0,
-    "record": False,  # when set, keeps every line hataori sent it in received.jsonl
+    "record": False,  # when set, keeps every line hataori sent it in received.jsonl, and the events it handled in events.jsonl
 }
+# A marker set to "" is off: "" is in every text.
+
 
 
 def log(*parts):
@@ -81,6 +86,8 @@ class Plugin:
         with open(os.environ["HATAORI_PLUGIN_SETTINGS"], encoding="utf-8") as f:
             self.settings.update(json.load(f))
         self.next_id = 0
+        self.stopping = False
+        self.closed = False
         self.waiting = {}  # our requests' ids: [event, response]
         self.lock = threading.Lock()
         self.done = threading.Event()
@@ -92,6 +99,8 @@ class Plugin:
         with self.lock:
             self.next_id += 1
             n = self.next_id
+            if self.closed:
+                raise ConnectionError(op + ": the connection closed")
             slot = [threading.Event(), None]
             self.waiting[n] = slot
         self.conn.send({"id": n, "op": op, "args": args})
@@ -108,6 +117,13 @@ class Plugin:
             message = self.conn.read()
             if message is None:
                 log("the request connection closed")
+                with self.lock:
+                    # The calls waiting for an answer get none: they fail now.
+                    self.closed = True
+                    for slot in self.waiting.values():
+                        slot[1] = {"error": {"code": "error", "message": "the connection closed"}}
+                        slot[0].set()
+                    self.waiting.clear()
                 self.done.set()
                 return
             if self.settings["record"]:
@@ -125,8 +141,16 @@ class Plugin:
     def answer(self, request):
         op, args = request["op"], request.get("args") or {}
         response = {"id": request["id"]}
+        try:
+            result = self.hook(args) if op == "hook" else None
+        except Exception as e:
+            # Answered, so the daemon applies the point's policy now, not
+            # after the handler's timeout.
+            log("hook failed:", type(e).__name__)
+            self.conn.send({"id": request["id"], "error": {"code": "error", "message": "marker: " + type(e).__name__}})
+            return
         if op == "hook":
-            response["result"] = self.hook(args)
+            response["result"] = result
         elif op == "plugin_started":
             log("started with the hooks", ",".join(h["point"] for h in args.get("hooks", [])))
         elif op == "plugin_stopping":
@@ -135,6 +159,7 @@ class Plugin:
             response["error"] = {"code": "not_supported", "message": "marker: operation " + json.dumps(op) + ": not supported"}
         self.conn.send(response)
         if op == "plugin_stopping":
+            self.stopping = True
             self.done.set()  # once answered: hataori stops it next
 
     def hook(self, args):
@@ -143,13 +168,13 @@ class Plugin:
         s = self.settings
         if s["slow"] and s["slow"] in text:
             time.sleep(float(s["slow_seconds"]))
-        if point == "before_agent_run" and s["stop"] in text:
+        if point == "before_agent_run" and s["stop"] and s["stop"] in text:
             log("stopped an input at", point)
             return {"action": "stop", "reason": "the input holds " + s["stop"]}
-        if point == "message_sending" and s["cancel"] in text:
+        if point == "message_sending" and s["cancel"] and s["cancel"] in text:
             log("cancelled a post")
             return {"action": "stop", "reason": "the post holds " + s["cancel"]}
-        if point == "message_sending" and s["rewrite"] in text:
+        if point == "message_sending" and s["rewrite"] and s["rewrite"] in text:
             log("rewrote a post")
             return {"action": "continue", "text": text.replace(s["rewrite"], s["with"])}
         return {"action": "continue"}
@@ -161,14 +186,35 @@ class Plugin:
     # Events, on a connection of their own, from the position kept in the state directory.
 
     def position(self):
+        """The position to read after: the one kept, or the last event recorded after it."""
+        pos = 0
         try:
             with open(os.path.join(self.state, "position"), encoding="utf-8") as f:
-                return int(f.read().strip() or 0)
+                pos = int(f.read().strip() or 0)
         except FileNotFoundError:
-            return 0
+            pass
+        try:
+            with open(os.path.join(self.state, "events.jsonl"), encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        pos = max(pos, json.loads(line)["pos"])
+        except FileNotFoundError:
+            pass
+        return pos
+
+    def handle(self, event):
+        """What the plugin does with an event: logs it, and with "record" keeps it in events.jsonl."""
+        log("event", event["kind"], event["pos"])
+        if self.settings["record"]:
+            with open(os.path.join(self.state, "events.jsonl"), "a", encoding="utf-8") as f:
+                f.write(json.dumps({"pos": event["pos"], "kind": event["kind"]}) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
 
     def keep(self, pos):
-        """Keeps pos as the position to read after, so that a restart neither misses nor repeats an event."""
+        """Keeps pos as the position to read after. It comes after the event was handled, so that a restart
+        misses none; one that died in between handles the event again, unless, as with "record", what it did
+        says how far it got."""
         path = os.path.join(self.state, "position")
         with open(path + ".new", "w", encoding="utf-8") as f:
             f.write(str(pos))
@@ -201,19 +247,31 @@ class Plugin:
             if event["kind"] == "caught_up":
                 log("caught up")
                 continue
-            log("event", event["kind"], event["pos"])
+            self.handle(event)
             self.keep(event["pos"])
+
+    def thread(self, target):
+        """Runs target in a thread whose failure ends the plugin, which hataori then starts again."""
+
+        def run():
+            try:
+                target()
+            except Exception as e:
+                log(target.__name__, "failed:", type(e).__name__, e)
+                self.done.set()
+
+        threading.Thread(target=run, daemon=True).start()
 
     def run(self):
         self.conn = Connection(self.socket, self.token)
         log("connected; the daemon speaks", self.conn.daemon)
-        threading.Thread(target=self.serve, daemon=True).start()
+        self.thread(self.serve)
         threads = self.call("Threads", {"filter": {}})
         log("threads", len(threads or []))
-        threading.Thread(target=self.follow, daemon=True).start()
+        self.thread(self.follow)
         self.done.wait()
-        # A broken connection ends the plugin; hataori starts it again.
-        return 0
+        # A broken connection or a failure ends the plugin; hataori starts it again.
+        return 0 if self.stopping else 1
 
 
 if __name__ == "__main__":
