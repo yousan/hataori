@@ -328,6 +328,20 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 				return 0, false
 			}
 			final, replied = "answer: "+answer, true
+		case "deaf":
+			// Wait without heeding an interrupt, as an agent that takes
+			// long to stop; one that came is heeded at the end. It is
+			// reported as a tool, so that a test can wait until it runs.
+			d, _ := time.ParseDuration(arg)
+			p.report(map[string]any{"t": "tool", "id": "t-deaf", "name": "deaf"})
+			time.Sleep(d)
+			p.report(map[string]any{"t": "tool", "id": "t-deaf", "name": "deaf", "end": true})
+			select {
+			case <-p.interrupts:
+				p.interrupted(end)
+				return 0, false
+			default:
+			}
 		case "background":
 			d, _ := time.ParseDuration(arg)
 			end["background"] = 1
