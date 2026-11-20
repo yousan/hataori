@@ -411,7 +411,7 @@ func TestOperateHostStoresNothingTyped(t *testing.T) {
 	// ready: keys typed before stty would be read in cooked mode, where
 	// Enter's \r arrives as \n (#514).
 	if _, err := tmux("new-session", "-d", "-s", "typing", "sh", "-c",
-		"stty raw -echo; : > "+ready+"; head -c "+fmt.Sprint(len(typedMarker)+1)+" > "+got+"; exec sleep 600"); err != nil {
+		"stty raw -echo && : > "+ready+"; head -c "+fmt.Sprint(len(typedMarker)+1)+" > "+got+"; exec sleep 600"); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { tmux("kill-server") })

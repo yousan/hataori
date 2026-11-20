@@ -50,7 +50,7 @@ func TestDaemonHostInput(t *testing.T) {
 	got, ready := filepath.Join(dir, "got"), filepath.Join(dir, "ready")
 	// Typed only once the pane's terminal is in raw mode: before stty,
 	// Enter's \r would be read as \n (#514).
-	tmux("new-session", "-d", "-s", "work", "sh", "-c", fmt.Sprintf("stty raw -echo; : > %s; head -c %d > %s; exec sleep 600", ready, len(marker)+1, got))
+	tmux("new-session", "-d", "-s", "work", "sh", "-c", fmt.Sprintf("stty raw -echo && : > %s; head -c %d > %s; exec sleep 600", ready, len(marker)+1, got))
 	t.Cleanup(func() { exec.Command("tmux", slices.Concat(sock, []string{"kill-server"})...).Run() })
 	eventually(t, "the pane's terminal in raw mode", 10*time.Second, func() bool { _, err := os.Stat(ready); return err == nil })
 	pane := tmux("display-message", "-p", "-t", "work:0", "#{pane_id}")
