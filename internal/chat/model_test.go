@@ -8,10 +8,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -20,6 +18,7 @@ import (
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
 	"github.com/yousan/hataori/internal/host"
+	"github.com/yousan/hataori/internal/proctest"
 	"github.com/yousan/hataori/internal/runner"
 	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
@@ -84,22 +83,14 @@ func (w workspaceDirs) Make(_ context.Context, id control.ThreadID, _ string, _ 
 }
 
 // killSessions kills the hosts and agents started under root, by the PIDs
-// they wrote, and removes the socket directories they left. Each runs in a
-// process group of its own (with the tools it started), and the group is
-// killed only when the PID leads it.
+// they wrote, while each pid is still theirs, and removes the socket
+// directories they left. Each runs in a process group of its own (with the
+// tools it started), and the group is killed only when the PID leads it.
 func killSessions(root string) {
 	dirs, _ := filepath.Glob(filepath.Join(root, "state", "sessions", "*"))
 	for _, d := range dirs {
 		for _, f := range []string{host.PIDFile, host.HostPIDFile} {
-			if b, err := os.ReadFile(filepath.Join(d, f)); err == nil {
-				if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid > 1 {
-					if pg, err := syscall.Getpgid(pid); err == nil && pg == pid {
-						syscall.Kill(-pid, syscall.SIGKILL)
-					} else {
-						syscall.Kill(pid, syscall.SIGKILL)
-					}
-				}
-			}
+			proctest.Kill(filepath.Join(d, f))
 		}
 		if sock := filepath.Dir(host.SocketPath(d)); strings.HasPrefix(filepath.Base(sock), "hataori-host-") {
 			os.RemoveAll(sock)

@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"golang.org/x/term"
+
+	"github.com/yousan/hataori/internal/proctest"
 )
 
 // The test binary is also the host and every command the tests run:
@@ -131,14 +133,11 @@ func waitForWithin(t *testing.T, what string, d time.Duration, cond func() bool)
 	}
 }
 
-// killGroups kills the host and the command of stateDir, and only those.
+// killGroups kills the host and the command of stateDir, and only those:
+// a pid file left by one that ended may name another process by now.
 func killGroups(stateDir string) {
 	for _, f := range []string{PIDFile, HostPIDFile} {
-		if b, err := os.ReadFile(filepath.Join(stateDir, f)); err == nil {
-			if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid > 1 {
-				syscall.Kill(-pid, syscall.SIGKILL) // both lead their own group
-			}
-		}
+		proctest.Kill(filepath.Join(stateDir, f)) // both lead their own group
 	}
 }
 

@@ -9,15 +9,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/holder"
 	"github.com/yousan/hataori/internal/host"
+	"github.com/yousan/hataori/internal/proctest"
 )
 
 // The test binary is also the session host, `hataori hook` and the fake's
@@ -41,13 +40,11 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// killGroups kills the host and the command started in dir, and only
+// those: a pid file left by one that ended may name another process by now.
 func killGroups(dir string) {
 	for _, f := range []string{host.PIDFile, host.HostPIDFile} {
-		if b, err := os.ReadFile(filepath.Join(dir, f)); err == nil {
-			if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid > 1 {
-				syscall.Kill(-pid, syscall.SIGKILL)
-			}
-		}
+		proctest.Kill(filepath.Join(dir, f))
 	}
 }
 
