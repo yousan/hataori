@@ -50,8 +50,6 @@ jobs:
         run: CGO_ENABLED=0 go build ./...
       - name: go test
         run: go test ./...
-      - name: "temporary (#516): 50 runs of TestScreenUntilTheCodecStops"
-        run: go test -run '^TestScreenUntilTheCodecStops$' -count=50 ./internal/runner/
 
   # hataori for macOS, where `hataori connect` runs on the person's
   # machine: both architectures, kept as artifacts of the run.
