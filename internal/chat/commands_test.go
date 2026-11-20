@@ -82,6 +82,65 @@ func TestCommandsMessagesAndButtonsOfOthersDoNothingAndLogOneLine(t *testing.T) 
 	}
 }
 
+// Each command from a channel, or a thread of one, that the instance does
+// not serve gets one answer, to the command, saying so, and writes one log
+// line; the same command delivered again answers nothing more. Nothing is
+// started, stopped, linked or sent.
+func TestCommandsOutsideTheScopesAnswerThatTheInstanceDoesNotServeThem(t *testing.T) {
+	f := newFront(t, workspaces{})
+	elsewhere := surface.Conversation{Channel: "c-elsewhere"}
+	inThread := surface.Conversation{Channel: "c-elsewhere", Thread: "t-elsewhere"}
+	n := 0
+	for _, conv := range []surface.Conversation{elsewhere, inThread} {
+		for _, cmd := range []struct {
+			name string
+			args []surface.Arg
+		}{
+			{newCommand, newArgs("reply hi")},
+			{stopCommand, nil},
+			{statusCommand, nil},
+			{dashboardCommand, nil},
+			{attachCommand, []surface.Arg{{Name: "number", Value: "1"}}},
+		} {
+			n++
+			id := "x" + strconv.Itoa(n)
+			before := len(f.log.lines())
+			c := f.command(conv, fake.Person(owner), id, cmd.name, cmd.args...)
+			lines := f.log.lines()[before:]
+			if len(lines) != 1 || !strings.Contains(lines[0], "does not serve") || !strings.Contains(lines[0], "id="+id) {
+				t.Errorf("/%s in %+v: log %q, want one line", cmd.name, conv, lines)
+			}
+			f.settled(t, conv)
+			f.fe.Command(c) // delivered again
+			f.settled(t, conv)
+			var answers []fake.Call
+			for _, p := range f.driver.Calls(conv) {
+				if p.Op == fake.OpPost && p.Message.ReplyTo != nil && *p.Message.ReplyTo == *c.Reply {
+					answers = append(answers, p)
+				}
+			}
+			if len(answers) != 1 || answers[0].Message.Text != notServed {
+				t.Errorf("/%s in %+v: answered %+v, want one answer %q", cmd.name, conv, answers, notServed)
+			}
+		}
+	}
+	for _, conv := range []surface.Conversation{elsewhere, inThread} {
+		for _, p := range postsIn(f.driver, conv) {
+			if p != notServed && p != "marker" {
+				t.Errorf("%+v shows %q", conv, p)
+			}
+		}
+	}
+	if o, l := len(f.threads()), len(f.runner.all()); o != 0 || l != 0 {
+		t.Errorf("%d threads opened, %d started; want none", o, l)
+	}
+	var links int
+	f.fe.Outbox.Store.DB.QueryRow(`SELECT count(*) FROM links`).Scan(&links)
+	if links != 0 {
+		t.Errorf("%d links made", links)
+	}
+}
+
 // A thread of another scope shown in the channel is not in the channel's
 // status.
 func TestStatusInAChannelShowsNoThreadOfAnotherScope(t *testing.T) {

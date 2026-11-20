@@ -30,6 +30,9 @@ const (
 // thread is opened in the channel alone.
 const commandKey = "cmd:"
 
+// notServed answers a command from a conversation outside the scopes.
+const notServed = "This hataori instance does not serve this channel: nothing was done. Use the command of the bot that serves it."
+
 // statusMax is how many threads a channel's status lists at most, the
 // newest ones.
 const statusMax = 20
@@ -69,9 +72,20 @@ func (f *FrontEnd) Commands() []surface.CommandSpec {
 
 var _ surface.Commander = (*FrontEnd)(nil)
 
-// Command handles a command.
+// Command handles a command. One from a conversation outside the front
+// end's scopes is answered with one line saying so, whatever the command:
+// several instances can share one server, each with its own bot, and the
+// person picked the bot of an instance that does not serve this channel.
 func (f *FrontEnd) Command(c surface.Command) {
-	if err := f.command(f.context(), c); err != nil {
+	ctx := f.context()
+	if c.Author.Kind != surface.Bot && len(f.scopesIn(c.Conv.Channel)) == 0 {
+		f.ignored(c, "this instance does not serve the channel")
+		if err := f.answer(ctx, c, notServed); err != nil {
+			f.Log.Error("command failed", "command", c.Name, "channel", c.Conv.Channel, "id", c.ID, "err", err)
+		}
+		return
+	}
+	if err := f.command(ctx, c); err != nil {
 		f.Log.Error("command failed", "command", c.Name, "channel", c.Conv.Channel, "id", c.ID, "err", err)
 	}
 }

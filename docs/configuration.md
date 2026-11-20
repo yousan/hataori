@@ -175,8 +175,11 @@ becomes
 |---|---|---|---|
 | `bot_id` | string | required | The bot's user id. At start hataori checks that the token belongs to this bot and refuses to run as any other. |
 | `token_file` | string | required | The name of a file in `<root>/config/` that holds the bot token. A plain file name: an absolute path or a path out of `config/` is refused. Spaces and line breaks around the token are ignored; an empty file is refused. |
+| `command_prefix` | string | empty | Put before the name of every command the bot registers: with `"stg-"`, the commands are `/stg-new`, `/stg-stop`, `/stg-status`, `/stg-attach` and `/stg-dashboard`. Up to 31 of `a-z`, `0-9`, `-` and `_`; each name with it must still fit Discord's 32 characters. Empty registers `/new` and the others. Changing it replaces the bot's commands at the next start. |
 
 Unknown keys are refused. The token is read from this file only, never from the environment. Keep the file readable by its owner only (`chmod 600`); hataori checks the mode of `hataori.json` but not of the token file.
+
+**Several instances in one server.** Each instance runs its own bot, and Discord shows every bot's commands in every channel, with the bot's name in small print only, so `/stop` of one instance is easily picked in a channel another one serves. Give each instance but one a `command_prefix`, such as `"stg-"` for a staging instance, so that their commands have different names. A command that does reach an instance outside its scopes (see "Commands") is answered with one line saying so.
 
 To run one channel on Codex, add `agent` and the `codex` section, and name the agent in that scope:
 
@@ -456,12 +459,13 @@ hataori opens a thread on the message, clones the repository into the thread's w
 /dashboard
 ```
 
-On a service without commands, the same words follow the trigger: `<trigger> new repo:<url> [agent:<name>] [model:<model>] [effort:<effort>] <prompt>`, `<trigger> stop`, `<trigger> status` and `<trigger> dashboard`.
+The names are these unless the driver registers them with a prefix (`command_prefix` under `drivers.discord`). On a service without commands, the same words follow the trigger: `<trigger> new repo:<url> [agent:<name>] [model:<model>] [effort:<effort>] <prompt>`, `<trigger> stop`, `<trigger> status` and `<trigger> dashboard`.
 
 - `/new` in an enabled channel starts a thread as an order does: the thread is opened in the channel, and the full prompt is its first message. The same command delivered again starts nothing more. `<trigger> new` is the order itself, opened on the message. `/new` has no agent option: its thread runs the scope's agent; use the order or `<trigger> new` with `agent:` for another.
 - `/stop` in a hataori thread stops its running turn.
 - `/status` in a hataori thread shows its state, model and last output; in a channel, the open threads of the channel's own scope with their states. Threads of other scopes attached in the channel are not listed.
 - The answers are shown only to the person who used the command; the words after the trigger get a reply.
+- A command used in a channel that is no scope's key and in no scope's `show_in`, or in a thread of such a channel, does nothing and is answered, to the person who used it only, with one line saying that this instance does not serve the channel; it writes one log line. This is `/dashboard` and `/attach` too. It happens when several instances share one server and the person picked another instance's command (see `command_prefix` under `drivers.discord`).
 - The person must be the owner or one of the scope's `people`, for `/status` too. From anyone else, a command shows nothing and writes one log line.
 - `/dashboard` sends a dashboard sign-in link in a direct message to the person who used it, for the web listener when the instance has one. Only the owner gets one; from anyone else it sends nothing anywhere and writes one log line. The link is posted at once: it is in no conversation, no database row and no log, and the log says only that a link was sent and to whom. The conversation the command was used in gets nothing. An instance without a dashboard answers with one line saying so.
 
