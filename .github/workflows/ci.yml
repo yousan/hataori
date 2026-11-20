@@ -53,22 +53,27 @@ jobs:
           python-version: "3.x"
       - name: install tmux
         run: command -v tmux >/dev/null || brew install tmux
+      # The runner's Google Chrome updates itself while the suite runs, and a
+      # browser test that starts it meanwhile is killed before it listens
+      # (#485). The tests run a read-only copy of it, which no update
+      # changes.
+      - name: a copy of Chrome of the tests' own
+        run: |
+          app="/Applications/Google Chrome.app"
+          copy="$RUNNER_TEMP/chrome/Google Chrome.app"
+          mkdir -p "$(dirname "$copy")"
+          cp -Rc "$app" "$copy"
+          chmod -R a-w "$copy"
+          "$copy/Contents/MacOS/Google Chrome" --version
+          echo "HATAORI_TEST_CHROME=$copy/Contents/MacOS/Google Chrome" >> "$GITHUB_ENV"
       - run: go vet ./...
       - name: build without cgo
         run: CGO_ENABLED=0 go build ./...
       - name: go test
         run: |
-          # Temporary (#485): is Chrome's updater on the runner, and does anything kill a process for its code signature?
-          "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --version || true
-          launchctl list | grep -i -E 'google|keystone' || echo "no Google launchd jobs"
-          ls -d ~/Library/Google/GoogleUpdater /Library/Google/GoogleUpdater ~/Library/Google/GoogleSoftwareUpdate /Library/Google/GoogleSoftwareUpdate 2>/dev/null || echo "no updater directories"
-          pgrep -l -f -i 'updater|keystone' || echo "no updater running"
-          start=$(date +%s)
-          status=0
           go test ./... || status=$?
-          "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --version || true
-          log show --start "$(date -r $start '+%Y-%m-%d %H:%M:%S')" --style compact --predicate 'process CONTAINS[c] "updater" OR process CONTAINS[c] "keystone" OR eventMessage CONTAINS[c] "CODE SIGNING" OR eventMessage CONTAINS[c] "cs_invalid" OR eventMessage CONTAINS[c] "Code Signature Invalid" OR (process == "kernel" AND eventMessage CONTAINS[c] "chrome")' 2>&1 | tail -80
-          exit $status
+          echo "TEMPORARY (#485): /Applications: $("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --version), the copy: $("$HATAORI_TEST_CHROME" --version)"
+          exit ${status:-0}
 
   # hataori for macOS, where `hataori connect` runs on the person's
   # machine: both architectures, kept as artifacts of the run.
