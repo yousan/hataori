@@ -136,6 +136,10 @@ func daemon(args []string) int {
 				select {}
 			}
 		}
+		if len(args) < 6 { // no input: woken by an attach, which waits for a terminal that never comes
+			c.As(control.Caller{From: ownerFrom, Scopes: []string{"s"}, May: all | control.OpAttach}).AttachTerminal(context.Background(), control.ThreadID(1))
+			select {}
+		}
 		// A plugin adds text around the input; it comes through the thread's link.
 		c.Hooks = aroundHooks{}
 		owner(c).Send(context.Background(), control.ThreadID(1), "m2", control.Input{Text: args[5],

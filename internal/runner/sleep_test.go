@@ -199,6 +199,50 @@ func TestCannotResumeStartsANewSession(t *testing.T) {
 	})
 }
 
+// A session woken with no input, as an attach wakes it, whose agent no
+// longer has the conversation is replaced by a session whose agent is
+// started with no input: no turn starts for it (#528).
+func TestCannotResumeAfterAnAttachStartsNoTurn(t *testing.T) {
+	conv := t.TempDir()
+	f := newFixture(t, options{terminal: true, idlePeriod: 300 * time.Millisecond, conversations: conv})
+	f.start("reply hello")
+	waitFor(t, "asleep", 15*time.Second, func() bool { return sessionState(t, f.st, 1) == "asleep" })
+	waitFor(t, "the agent's end", 15*time.Second, func() bool { return !agentAlive(t, f.root, 1) })
+	files, _ := filepath.Glob(filepath.Join(conv, "*"))
+	for _, p := range files {
+		os.Remove(p) // the agent's own retention removed it
+	}
+
+	// The attach wakes the session and waits for a terminal that never
+	// comes, as its agent cannot resume; it gives up when ctx ends.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	attached := make(chan struct{})
+	t.Cleanup(func() { cancel(); <-attached })
+	go func() {
+		defer close(attached)
+		f.core.As(control.Caller{From: ownerFrom, Scopes: []string{"s"}, May: all | control.OpAttach}).AttachTerminal(ctx, thread)
+	}()
+	waitFor(t, "the new session", 15*time.Second, f.has("session_replaced", 1))
+	waitFor(t, "the new session's agent", 15*time.Second, func() bool {
+		var id string
+		f.st.DB.QueryRow(`SELECT coalesce(agent_session_id, '') FROM sessions WHERE id = 2`).Scan(&id)
+		return id != ""
+	})
+	time.Sleep(time.Second) // a turn for it would start now
+	if s := sessionState(t, f.st, 2); s != "idle" && s != "asleep" {
+		t.Fatalf("the new session is %s\n%s", s, f.log.String())
+	}
+	got := counts(t, f.st)
+	if got["turn_started"] != 1 || got["input"] != 1 {
+		t.Errorf("events %v", got)
+	}
+	var fi string
+	f.st.DB.QueryRow(`SELECT coalesce(first_input, '') FROM sessions WHERE id = 2`).Scan(&fi)
+	if fi != "" {
+		t.Errorf("the new session's first input is still %s", fi)
+	}
+}
+
 // A daemon restart by itself puts no session to sleep.
 func TestRestartAloneSleepsNothing(t *testing.T) {
 	root := t.TempDir()

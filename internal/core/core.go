@@ -163,6 +163,9 @@ type Launch struct {
 	// Context is what the thread said before, for a session that replaces
 	// one whose conversation the agent no longer has; empty otherwise.
 	Context string
+	// NoInput: the agent is only started, with no first input, as for a
+	// session that replaces one woken with none.
+	NoInput bool
 	// Confined: the thread was started confined (StartConfined). Its
 	// directory is made by Workspaces.Empty, not cloned; the runner reads
 	// the thread's confinement for every launch itself.
@@ -1458,7 +1461,7 @@ func (c *Core) Recover(ctx context.Context) error {
 			err = c.resume(ctx, x.l.Session, x.f.Principal, x.f.From, x.f.Key, in)
 		} else {
 			x.l.Dir, x.l.Principal, x.l.From, x.l.Key, x.l.Input, x.l.Context = x.f.Dir, x.f.Principal, x.f.From, x.f.Key, in, x.f.Context
-			x.l.placed = x.f.Placed
+			x.l.placed, x.l.NoInput = x.f.Placed, x.f.NoInput
 			err = c.launch(ctx, x.l, x.repo)
 		}
 		if err != nil {

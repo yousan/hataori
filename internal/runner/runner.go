@@ -219,7 +219,7 @@ func (r *Runner) Start(ctx context.Context, l core.Launch) error {
 	spec := agent.Spec{Dir: l.Dir, StateDir: StateDir(r.Root, l.Session), Model: l.Model, Effort: l.Effort,
 		Instructions: r.Instructions, Approvals: agent.AllowAll}
 	first := firstInput{Principal: l.Principal, From: l.From, Key: l.Key, Text: l.Input.Text, Context: l.Context, Link: l.Input.Link,
-		Before: l.Input.Before, After: l.Input.After}
+		Before: l.Input.Before, After: l.Input.After, NoInput: l.NoInput}
 	spec, err := r.launch(ctx, l.Session, l.Agent, ad, spec, first)
 	if err != nil {
 		return err
@@ -1821,9 +1821,11 @@ func (r *Runner) replaceTx(ctx context.Context, tx *store.Tx, lv *live) (*replac
 		r.Log.Error("the thread's earlier context", "session", lv.id, "err", err) // the new session starts without it
 	}
 	// The input the old session was woken for, as a new session's first
-	// input: not sent, not written, and in the old session's workspace.
+	// input: not sent, not written, and in the old session's workspace. One
+	// woken with no input, as for an attach, is replaced by one started with
+	// none (#528).
 	first := firstInput{Principal: old.Principal, From: old.From, Key: old.Key, Text: old.Text, Link: old.Link,
-		Before: old.Before, After: old.After, Context: earlier, Dir: lv.spec.Dir}
+		Before: old.Before, After: old.After, Context: earlier, Dir: lv.spec.Dir, NoInput: old.NoInput}
 	fb, _ := json.Marshal(first)
 	now := time.Now().UnixMilli()
 	res, err := tx.ExecContext(ctx, `INSERT INTO sessions (thread_id, agent, state, model, effort, first_input, launch, created_at, updated_at)
@@ -1851,7 +1853,7 @@ func (r *Runner) launchReplacement(rep replacement) {
 	l, first := rep.l, rep.first
 	r.at("after replace")
 	l.Dir, l.Principal, l.From, l.Key, l.Context = first.Dir, first.Principal, first.From, first.Key, first.Context
-	l.Input = first.Input()
+	l.Input, l.NoInput = first.Input(), first.NoInput
 	if err := r.Start(ctx, l); err != nil {
 		r.Log.Error("starting the new session", "session", l.Session, "err", err)
 		if err := r.Machine.Apply(ctx, l.Session, session.Input{Kind: session.Exit, Reason: "start: " + err.Error()}); err != nil {
