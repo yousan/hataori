@@ -20,14 +20,16 @@ import (
 // events. It is rebuilt from the threads' events when it is missing.
 type reader struct {
 	api   control.API
-	first map[control.ThreadID]uint64               // position of each thread's first event
-	turn  map[control.ThreadID]string               // key of the call that started the open turn
-	by    map[control.ThreadID]string               // who started the open turn: caller, agent or terminal
-	via   map[control.ThreadID]*control.LinkRef     // the link the open turn's first input came through; nil for none
-	quiet map[control.ThreadID]*quiet               // open turns, for the progress line
-	gone  map[control.ThreadID]*RowKey              // the last delete of a progress line
-	known map[control.ThreadID]bool                 // threads whose earlier events were read
-	subs  map[control.ThreadID]map[string]*subagent // running subagents, by id
+	first map[control.ThreadID]uint64 // position of each thread's first event
+	// session is each thread's first session, with first.
+	session map[control.ThreadID]int64
+	turn    map[control.ThreadID]string               // key of the call that started the open turn
+	by      map[control.ThreadID]string               // who started the open turn: caller, agent or terminal
+	via     map[control.ThreadID]*control.LinkRef     // the link the open turn's first input came through; nil for none
+	quiet   map[control.ThreadID]*quiet               // open turns, for the progress line
+	gone    map[control.ThreadID]*RowKey              // the last delete of a progress line
+	known   map[control.ThreadID]bool                 // threads whose earlier events were read
+	subs    map[control.ThreadID]map[string]*subagent // running subagents, by id
 	// lamp is each thread's lamps (lamps.go); lampKnown, the threads whose
 	// earlier turn events were read for it.
 	lamp      map[control.ThreadID]*lampState
@@ -49,15 +51,16 @@ func (f *FrontEnd) show(ctx context.Context) error {
 	defer cancel() // ends the subscription when reading stops on an error
 	scopes := f.scopeList()
 	r := &reader{
-		api:   f.API(control.Caller{Principal: f.ownerPrincipal(), Scopes: scopes, May: control.OpRead}),
-		first: map[control.ThreadID]uint64{},
-		turn:  map[control.ThreadID]string{},
-		by:    map[control.ThreadID]string{},
-		via:   map[control.ThreadID]*control.LinkRef{},
-		quiet: map[control.ThreadID]*quiet{},
-		gone:  map[control.ThreadID]*RowKey{},
-		known: map[control.ThreadID]bool{},
-		subs:  map[control.ThreadID]map[string]*subagent{},
+		api:     f.API(control.Caller{Principal: f.ownerPrincipal(), Scopes: scopes, May: control.OpRead}),
+		first:   map[control.ThreadID]uint64{},
+		session: map[control.ThreadID]int64{},
+		turn:    map[control.ThreadID]string{},
+		by:      map[control.ThreadID]string{},
+		via:     map[control.ThreadID]*control.LinkRef{},
+		quiet:   map[control.ThreadID]*quiet{},
+		gone:    map[control.ThreadID]*RowKey{},
+		known:   map[control.ThreadID]bool{},
+		subs:    map[control.ThreadID]map[string]*subagent{},
 
 		lamp:      map[control.ThreadID]*lampState{},
 		lampKnown: map[control.ThreadID]bool{},
@@ -230,6 +233,21 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		var d eventData
 		json.Unmarshal(e.Data, &d)
 		return f.questionDone(ctx, r, e, conv, d.Request)
+	case "state":
+		// A session that ended before it started, whenever that was: also
+		// after the Start that made it returned (#589).
+		sf, ok := startFailure(e)
+		if !ok {
+			return nil, nil
+		}
+		first, err := r.firstPos(ctx, e.Thread)
+		if err != nil {
+			return nil, err
+		}
+		if sf.session != r.session[e.Thread] {
+			first = 0 // a later session's: the prompt is long posted
+		}
+		return []Row{sf.row(conv, first)}, nil
 	case "thread_created", "turn_started", "text", "request", "turn_ended", "file_out", "approval_asked", "approval_answered":
 	default:
 		return nil, nil // a kind the front end does not show, or does not know
@@ -263,6 +281,7 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		return row(surface.Message{Text: text}), nil
 	case "thread_created":
 		r.first[e.Thread] = e.Pos
+		r.session[e.Thread] = sessionOf(e)
 	case "turn_started":
 		r.turn[e.Thread] = d.Key
 		r.by[e.Thread] = d.By
@@ -424,11 +443,12 @@ func (r *reader) firstPos(ctx context.Context, id control.ThreadID) (uint64, err
 	if p, ok := r.first[id]; ok {
 		return p, nil
 	}
-	p, _, err := startOutcome(ctx, r.api, id)
+	out, err := startOutcome(ctx, r.api, id)
 	if err == nil {
-		r.first[id] = p
+		r.first[id] = out.first
+		r.session[id] = out.session
 	}
-	return p, err
+	return out.first, err
 }
 
 // catchUp follows the thread's events before position before for the
