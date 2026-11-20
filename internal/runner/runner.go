@@ -95,15 +95,15 @@ type live struct {
 	codec   agent.Codec
 	client  *host.Client // to the session host: the relay of hook calls, and the first sign that it answers
 	started time.Time
-	ready   bool  // the session left creating; no start check any more
-	resend  bool  // after a reconnect: send a first input that was not confirmed
-	pending bool  // after a reconnect: hand over pending input once the logs are read
-	held    bool  // lv.mu is held from follow until the loop's first step has handed over the pending input
-	upTo    int64 // the last pending input there was at the reconnect; later ones are handed over by their call
-	failed  bool  // the start timed out; the session is being stopped
-	asleep  bool  // put to sleep: its agent is being stopped, and nothing more is read
-	screen  bool  // the codec watches the terminal; until it says StopScreen
-	seenTo  int64 // how much of the terminal the codec was given
+	ready   bool   // the session left creating; no start check any more
+	resend  bool   // after a reconnect: send a first input that was not confirmed
+	pending bool   // after a reconnect: hand over pending input once the logs are read
+	held    bool   // lv.mu is held from follow until the loop's first step has handed over the pending input
+	upTo    int64  // the last pending input there was at the reconnect; later ones are handed over by their call
+	failed  bool   // the start timed out; the session is being stopped
+	asleep  bool   // put to sleep: its agent is being stopped, and nothing more is read
+	screen  bool   // the codec watches the terminal; until it says StopScreen
+	seenTo  uint64 // the position in the host's run up to which the codec was given its terminal
 	// taken is the window a person started that the session was taken in
 	// from; nil for a session hataori's own host holds. Its input goes to
 	// that window, and nothing ends the window's process.
@@ -159,9 +159,6 @@ type firstInput = core.FirstInput
 type storedSpec struct {
 	Agent string     `json:"agent"`
 	Spec  agent.Spec `json:"spec"`
-	// ScreenFrom is where in the terminal log the launched agent's output
-	// begins: after the output of the runs before it (#505).
-	ScreenFrom int64 `json:"screen_from,omitempty"`
 }
 
 // ConfinedLaunch is one launch of a session whose thread was started
@@ -213,20 +210,19 @@ func (r *Runner) Start(ctx context.Context, l core.Launch) error {
 		Instructions: r.Instructions, Approvals: agent.AllowAll}
 	first := firstInput{Principal: l.Principal, From: l.From, Key: l.Key, Text: l.Input.Text, Context: l.Context, Link: l.Input.Link,
 		Before: l.Input.Before, After: l.Input.After}
-	spec, err := r.launch(ctx, l.Session, l.Agent, ad, spec, first, 0)
+	spec, err := r.launch(ctx, l.Session, l.Agent, ad, spec, first)
 	if err != nil {
 		return err
 	}
-	return r.follow(l.Session, ad, spec, fresh, 0)
+	return r.follow(l.Session, ad, spec, fresh)
 }
 
 // launch writes what the agent asks for into the session's state directory,
-// stores the spec, the first input and where in the terminal log the new
-// agent's output will begin (screenFrom), and starts the session host. A
+// stores the spec and the first input, and starts the session host. A
 // session whose thread was started confined is launched confined, whatever
 // spec says, or not at all. It returns the spec as stored, which the
 // session's codec is made from.
-func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agent.Adapter, spec agent.Spec, first firstInput, screenFrom int64) (agent.Spec, error) {
+func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agent.Adapter, spec agent.Spec, first firstInput) (agent.Spec, error) {
 	dir := spec.StateDir
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return agent.Spec{}, fmt.Errorf("runner: %w", err)
@@ -282,7 +278,7 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 		}
 	}
 	first.Dir = spec.Dir // so that a launch begun here can be begun again
-	sb, _ := json.Marshal(storedSpec{Agent: agentName, Spec: spec, ScreenFrom: screenFrom})
+	sb, _ := json.Marshal(storedSpec{Agent: agentName, Spec: spec})
 	fb, _ := json.Marshal(first)
 	var before, recorded int
 	if err := r.Store.DB.QueryRowContext(ctx, `SELECT launch, host_pid FROM sessions WHERE id = ?`, id).Scan(&before, &recorded); err != nil {
@@ -390,9 +386,7 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 		return fmt.Errorf("runner: session %d never reported its id; it cannot be resumed", id)
 	}
 	// launch = 2: a daemon that died had begun this launch, after the old
-	// host was gone; a host running now is the new one, and where its
-	// output begins was stored with the launch.
-	screenFrom := s.ScreenFrom
+	// host was gone; a host running now is the new one.
 	if launching != 2 {
 		if !r.alive(s.Spec.StateDir).Ended() {
 			return fmt.Errorf("runner: session %d: its host is still running", id)
@@ -410,10 +404,6 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 		if err := r.own().Reset(w); err != nil {
 			return fmt.Errorf("runner: %w", err)
 		}
-		// The new host appends to the terminal log the last one kept: the
-		// new codec watches from its end, so that it reads only the new
-		// agent's screen (#505).
-		_, screenFrom = r.own().Since(w, 0)
 	}
 	if t, ok := takenOf(s.Spec.StateDir); ok {
 		// Left by a take-in that ended another way: the new agent's input
@@ -425,11 +415,11 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 	spec := s.Spec
 	spec.ResumeID = resumeID
 	spec.TakenIn = false // resumed, it is launched by hataori's own host
-	spec, err := r.launch(ctx, id, s.Agent, ad, spec, first, screenFrom)
+	spec, err := r.launch(ctx, id, s.Agent, ad, spec, first)
 	if err != nil {
 		return err
 	}
-	return r.follow(id, ad, spec, wake, screenFrom)
+	return r.follow(id, ad, spec, wake)
 }
 
 // skipRest moves the session's offsets to the end of what its last agent
@@ -509,7 +499,7 @@ func (r *Runner) Reconnect(ctx context.Context) error {
 			r.Log.Error("session of an agent not registered", "session", x.id, "agent", s.Agent)
 			continue
 		}
-		if err := r.follow(x.id, ad, s.Spec, reconnect, 0); err != nil {
+		if err := r.follow(x.id, ad, s.Spec, reconnect); err != nil {
 			r.Log.Error("reconnect", "session", x.id, "err", err)
 		}
 	}
@@ -566,13 +556,13 @@ func (r *Runner) stopSleepers(ctx context.Context) error {
 
 // follow starts following a session. On reconnect, the codec first reads
 // what was read before, with its results discarded, to rebuild its state.
-// A codec that watches the screen is given the terminal log from byte
-// screenFrom on: where the agent it follows began writing.
-func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode, screenFrom int64) error {
+// A codec that watches the screen is given its terminal from the first
+// byte of the host's current run: what the agent it follows wrote, and
+// nothing an earlier run left in the log (#505, #520).
+func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) error {
 	resumed := m == reconnect
 	lv := &live{id: id, dir: spec.StateDir, adapter: ad, codec: ad.NewCodec(spec), spec: spec,
-		files: map[string]int64{}, stop: make(chan struct{}), done: make(chan struct{}), started: time.Now(),
-		seenTo: screenFrom}
+		files: map[string]int64{}, stop: make(chan struct{}), done: make(chan struct{}), started: time.Now()}
 	if t, ok := takenOf(spec.StateDir); ok {
 		lv.taken = &t
 	}
