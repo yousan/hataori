@@ -682,7 +682,7 @@ func (c *codec) tickScreen(now time.Time) Actions {
 	if refused := c.untrusted(files); len(refused) > 0 {
 		// Not answered: the start fails now, naming what the dialog loads.
 		s.done = true
-		return c.events(agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart,
+		return c.events(agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart, Trust: files,
 			Text: blockedText(screen, refused, c.spec.Scope)})
 	}
 	s.quiet = time.Time{} // the next key waits for the screen to change and settle again

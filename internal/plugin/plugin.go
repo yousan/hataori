@@ -43,23 +43,24 @@ var points = map[string]Failure{
 // operations are the operations of the control protocol, as
 // docs/protocol.md lists them; a test keeps the two equal.
 var operations = []string{"Answer", "AskInterrupt", "AttachTerminal", "Close", "End", "Events", "HostKeys", "HostScreen", "HostTerminals", "HostView", "Limits", "Link",
-	"OperateHost", "Release", "Remove", "Scopes", "Send", "SetName", "SignInLink", "Start", "Stop", "TakeIn", "Terminal", "Thread", "ThreadEvents", "Threads", "Workspace"}
+	"OperateHost", "Release", "Remove", "Scopes", "Send", "SetName", "SignInLink", "Start", "Stop", "TakeIn", "Terminal", "Thread", "ThreadEvents", "Threads", "Trust", "Trusts", "Untrust", "Workspace"}
 
 // never are the operations no plugin is given, whatever its manifest and
 // its config say: the dashboard's sign-in; the terminals on the host, read
 // or typed into; a terminal attached to an agent, which reaches the agent
 // past the core's checks; closing or removing a thread, which ends or
-// deletes a person's work; and taking in a window a person started, or
-// letting it go.
+// deletes a person's work; taking in a window a person started, or
+// letting it go; and trusting the files a start-up dialog named, which
+// lets a repository run commands, or withdrawing that.
 var never = []string{"SignInLink", "HostTerminals", "HostScreen", "HostView", "OperateHost", "HostKeys", "End",
-	"AttachTerminal", "Close", "Remove", "TakeIn", "Release"}
+	"AttachTerminal", "Close", "Remove", "TakeIn", "Release", "Trust", "Untrust"}
 
 // classes are the classes of Caller.May that the operations a plugin may
 // be given need; the core checks the operation's name besides
 // (control.Limit). Every operation is here or in never.
 var classes = map[string]control.Ops{
 	"Threads": control.OpRead, "Thread": control.OpRead, "ThreadEvents": control.OpRead, "Events": control.OpRead,
-	"Workspace": control.OpRead, "Terminal": control.OpRead, "Limits": control.OpRead, "Scopes": control.OpRead,
+	"Workspace": control.OpRead, "Terminal": control.OpRead, "Limits": control.OpRead, "Scopes": control.OpRead, "Trusts": control.OpRead,
 	"Start": control.OpStart, "Send": control.OpSend, "Link": control.OpSend, "Answer": control.OpAnswer,
 	"Stop": control.OpStop, "AskInterrupt": control.OpAsk, "SetName": control.OpName,
 }

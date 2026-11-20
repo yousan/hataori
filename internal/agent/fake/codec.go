@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -25,13 +26,14 @@ type codec struct {
 	waiting  []*written        // inputs written and not yet reported, with an Input.ID
 	timeout  time.Duration     // for waiting; DefaultInputTimeout when zero
 
-	dialog   string // the start-up dialog to answer, if any
-	screen   []byte // the screen so far
-	answered bool   // Enter was sent for the dialog
-	started  bool   // a hook was called: the dialog is past
-	opened   bool   // Open was called: a codec rebuilt after a restart is not
-	stopped  bool   // the watch ended: the screen must not come any more
-	after    []byte // the screen the codec was given after it decoded the start
+	dialog   string   // the start-up dialog to answer, if any
+	trust    []string // the files the dialog names, when the session may not trust them all: not answered
+	screen   []byte   // the screen so far
+	answered bool     // Enter was sent for the dialog
+	started  bool     // a hook was called: the dialog is past
+	opened   bool     // Open was called: a codec rebuilt after a restart is not
+	stopped  bool     // the watch ended: the screen must not come any more
+	after    []byte   // the screen the codec was given after it decoded the start
 
 	// A session a person started and hataori took in (agent.Spec.TakenIn).
 	takenIn bool
@@ -134,6 +136,10 @@ func (c *codec) onScreen(b []byte) agent.Actions {
 		return agent.Actions{}
 	}
 	c.answered = true
+	if len(c.trust) > 0 {
+		return c.events(agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart, Trust: slices.Clone(c.trust),
+			Text: "the dialog names " + strings.Join(c.trust, ", ") + "; this session may not trust them"})
+	}
 	return agent.Actions{Keys: []agent.Part{{Key: agent.Enter}}}
 }
 

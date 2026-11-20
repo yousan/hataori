@@ -1,0 +1,267 @@
+package core
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+	"time"
+
+	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/session"
+	"github.com/yousan/hataori/internal/store"
+)
+
+// Trust from chat (#590): a start blocked at a start-up dialog that named
+// files the scope does not trust records them in its state event (trust).
+// The owner may let exactly those through for the thread's scope and
+// repository; the thread then starts again in a new session in the same
+// workspace, and later launches there take them with the config's
+// trust_files (TrustedFiles).
+
+// ReasonTrusted is the reason of the session_replaced event of a thread
+// started again by Trust.
+const ReasonTrusted = "trusted"
+
+// blockedAtStart is the reason of a session that a start-up dialog
+// blocked, as its state event records it (agent.BlockedAtStart).
+const blockedAtStart = "blocked at start"
+
+func (a *api) Trust(ctx context.Context, id control.ThreadID, blocked int64, files []string) error {
+	const name = "Trust"
+	scope, err := a.checkThread(ctx, control.OpTrust, name, id)
+	if err != nil {
+		return err
+	}
+	if err := a.owner(name, scope); err != nil {
+		return err
+	}
+	files = slices.Clone(files)
+	slices.Sort(files)
+	if len(files) == 0 || slices.Contains(files, "") {
+		return fmt.Errorf("core: trust in thread %d: no files: %w", id, session.ErrRefused)
+	}
+	defer a.c.locks.lock(threadLock(id))()
+	var l Launch
+	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
+		sid, state, err := a.c.current(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		named, err := blockedFiles(ctx, tx, id, sid)
+		if err != nil {
+			return err
+		}
+		if sid != blocked || state != control.Failed || named == nil || !slices.Equal(named, files) {
+			return fmt.Errorf("core: trust in thread %d: its session was not blocked at start by these files: %w", id, session.ErrRefused)
+		}
+		var repo string
+		if err := tx.QueryRowContext(ctx, `SELECT repo FROM threads WHERE id = ?`, int64(id)).Scan(&repo); err != nil {
+			return err
+		}
+		now := a.c.now()
+		for _, f := range files {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO trusted_files (scope, repo, file, trusted_by, created_at)
+				VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`, scope, repo, f, string(a.caller.Principal), now.UnixMilli()); err != nil {
+				return err
+			}
+		}
+		l, err = a.c.again(ctx, tx, id, scope, sid, now)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	a.c.Log.Info("files trusted", "thread", int64(id), "scope", scope, "files", files, "principal", string(a.caller.Principal))
+	if err := a.c.Runner.Start(ctx, l); err != nil {
+		if ferr := a.c.Machine.Apply(ctx, l.Session, session.Input{Kind: session.Exit, Reason: "start: " + err.Error()}); ferr != nil {
+			a.c.Log.Error("recording a failed start", "session", l.Session, "err", ferr)
+		}
+		return fmt.Errorf("core: trust: start: %w", err)
+	}
+	return nil
+}
+
+// EarlierRunner is a Runner that tells a thread's earlier conversation, as
+// a new session that replaces a woken one gets it before its input.
+type EarlierRunner interface {
+	Earlier(ctx context.Context, q interface {
+		QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	}, thread control.ThreadID) (string, error)
+}
+
+// owner refuses a caller whose person is not the owner, with one log line.
+func (a *api) owner(name, scope string) error {
+	if p := a.caller.Principal; p != "" && string(p) == a.c.People.Owner() {
+		return nil
+	}
+	return a.refused(name, scope, "only the owner may trust files")
+}
+
+// blockedFiles returns, sorted, the files that blocked session sid of
+// thread id at its start, by the session's last state event; nil when its
+// last state change was not that.
+func blockedFiles(ctx context.Context, tx *store.Tx, id control.ThreadID, sid int64) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT data FROM events WHERE thread_id = ? AND kind = 'state' ORDER BY pos DESC`, int64(id))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var data string
+		if err := rows.Scan(&data); err != nil {
+			return nil, err
+		}
+		var d struct {
+			Session          int64
+			From, To, Reason string
+			Trust            []string
+		}
+		if json.Unmarshal([]byte(data), &d) != nil || d.Session != sid {
+			continue
+		}
+		if d.From != string(control.Creating) || d.To != string(control.Failed) || d.Reason != blockedAtStart || len(d.Trust) == 0 {
+			return nil, rows.Err()
+		}
+		slices.Sort(d.Trust)
+		return slices.Compact(d.Trust), rows.Err()
+	}
+	return nil, rows.Err()
+}
+
+// again inserts a new session for thread id, whose session sid failed at
+// its start, with sid's agent, model, effort and first input, in the same
+// workspace, and returns its launch. Like any started session it is marked
+// for launch, so that a daemon that dies before the runner has it starts
+// it at its next start (Recover).
+func (c *Core) again(ctx context.Context, tx *store.Tx, id control.ThreadID, scope string, sid int64, at time.Time) (Launch, error) {
+	l := Launch{Thread: id}
+	var fi string
+	if err := tx.QueryRowContext(ctx, `SELECT agent, model, effort, first_input FROM sessions WHERE id = ?`, sid).
+		Scan(&l.Agent, &l.Model, &l.Effort, &fi); err != nil {
+		return l, err
+	}
+	var old FirstInput
+	if fi != "" {
+		json.Unmarshal([]byte(fi), &old)
+	}
+	var workspace sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT workspace, confined FROM threads WHERE id = ?`, int64(id)).Scan(&workspace, &l.Confined); err != nil {
+		return l, err
+	}
+	dir := old.Dir
+	if dir == "" {
+		dir = workspace.String
+	}
+	first := FirstInput{Principal: old.Principal, From: old.From, Key: old.Key, Text: old.Text, Link: old.Link,
+		Before: old.Before, After: old.After, Context: old.Context, Dir: dir, NoInput: old.NoInput}
+	if old.Wake {
+		// A woken session's agent would have resumed the conversation; the
+		// new one gets it before the input, as a session that replaces one
+		// that cannot resume does.
+		if e, ok := c.Runner.(EarlierRunner); ok {
+			earlier, err := e.Earlier(ctx, tx, id)
+			if err != nil {
+				c.Log.Error("the thread's earlier context", "thread", int64(id), "err", err) // the new session starts without it
+			}
+			first.Context = earlier
+		}
+	}
+	fb, _ := json.Marshal(first)
+	now := at.UnixMilli()
+	res, err := tx.ExecContext(ctx, `INSERT INTO sessions (thread_id, agent, state, model, effort, first_input, launch, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`, int64(id), l.Agent, string(control.Creating), l.Model, l.Effort, string(fb), now, now)
+	if err != nil {
+		return l, err
+	}
+	if l.Session, err = res.LastInsertId(); err != nil {
+		return l, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE threads SET state = ?, updated_at = ? WHERE id = ?`,
+		string(control.Creating), now, int64(id)); err != nil {
+		return l, err
+	}
+	data, _ := json.Marshal(map[string]any{"session": sid, "new_session": l.Session, "reason": ReasonTrusted})
+	if _, err := tx.Append(ctx, control.Event{Thread: id, Scope: scope, Time: at, Kind: "session_replaced", Data: data}); err != nil {
+		return l, err
+	}
+	l.Dir, l.Principal, l.From, l.Key, l.Context, l.NoInput = first.Dir, first.Principal, first.From, first.Key, first.Context, first.NoInput
+	l.Input = control.Input{Text: first.Text, Link: first.Link, Before: first.Before, After: first.After}
+	return l, nil
+}
+
+func (a *api) Trusts(ctx context.Context) ([]control.TrustedFile, error) {
+	if err := a.check(control.OpRead, "Trusts", ""); err != nil {
+		return nil, err
+	}
+	rows, err := a.c.Store.DB.QueryContext(ctx, `SELECT id, scope, repo, file, trusted_by, created_at FROM trusted_files ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("core: trusts: %w", err)
+	}
+	defer rows.Close()
+	out := []control.TrustedFile{}
+	for rows.Next() {
+		var (
+			t  control.TrustedFile
+			by string
+			at int64
+		)
+		if err := rows.Scan(&t.ID, &t.Scope, &t.Repo, &t.File, &by, &at); err != nil {
+			return nil, err
+		}
+		if !a.sees(t.Scope) {
+			continue
+		}
+		t.By, t.At = control.Principal(by), time.UnixMilli(at).UTC()
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (a *api) Untrust(ctx context.Context, id int64) error {
+	const name = "Untrust"
+	if err := a.check(control.OpTrust, name, ""); err != nil {
+		return err
+	}
+	if err := a.owner(name, ""); err != nil {
+		return err
+	}
+	var t control.TrustedFile
+	err := a.c.Store.DB.QueryRowContext(ctx, `SELECT scope, repo, file FROM trusted_files WHERE id = ?`, id).Scan(&t.Scope, &t.Repo, &t.File)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("core: trusted file %d: %w", id, ErrNotFound)
+	}
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(a.caller.Scopes, t.Scope) {
+		a.hidden(name, "trusted_file", fmt.Sprint(id), t.Scope)
+		return fmt.Errorf("core: trusted file %d: %w", id, ErrNotFound)
+	}
+	if _, err := a.c.Store.DB.ExecContext(ctx, `DELETE FROM trusted_files WHERE id = ?`, id); err != nil {
+		return err
+	}
+	a.c.Log.Info("trust withdrawn", "scope", t.Scope, "repo", t.Repo, "file", t.File, "principal", string(a.caller.Principal))
+	return nil
+}
+
+// TrustedFiles returns the files Trust recorded for scope's threads on
+// repo, for each launch beside the config's trust_files.
+func (c *Core) TrustedFiles(ctx context.Context, scope, repo string) ([]string, error) {
+	rows, err := c.Store.DB.QueryContext(ctx, `SELECT file FROM trusted_files WHERE scope = ? AND repo = ? ORDER BY file`, scope, repo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var f string
+		if err := rows.Scan(&f); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}

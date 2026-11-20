@@ -144,7 +144,22 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	for _, s := range cfg.Scopes {
 		trust[s.Key] = s.TrustFiles
 	}
-	r.TrustFiles = func(scope string) []string { return trust[scope] }
+	// The config's, and those the owner trusted from a blocked start; c is
+	// made below, before any launch.
+	var c *core.Core
+	r.TrustFiles = func(ctx context.Context, scope, repo string) []string {
+		files := slices.Clone(trust[scope])
+		stored, err := c.TrustedFiles(ctx, scope, repo)
+		if err != nil {
+			lg.Error("reading the trusted files", "scope", scope, "err", err) // the config's alone
+		}
+		for _, f := range stored {
+			if !slices.Contains(files, f) {
+				files = append(files, f)
+			}
+		}
+		return files
+	}
 
 	scopes := map[string]core.Scope{}
 	var keys []string
@@ -162,7 +177,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		d := cfg.AgentDefaults[name]
 		agents[name] = core.AgentDefaults{Model: d.Model, Effort: d.Effort}
 	}
-	c := &core.Core{Agents: agents, Store: st, Machine: m, Scopes: scopes, Owners: map[string]control.ScopeOwner{}, People: cfg.People,
+	c = &core.Core{Agents: agents, Store: st, Machine: m, Scopes: scopes, Owners: map[string]control.ScopeOwner{}, People: cfg.People,
 		Workspaces: maker, Remover: remover,
 		Runner: r, Agent: agentName, Model: cfg.Model, Effort: cfg.Effort, Log: lg}
 	if coreHook != nil {
@@ -217,10 +232,11 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	// The socket's connections are the owner's, and only they may make a
 	// dashboard sign-in link, attach a terminal on the host, and close and
 	// remove threads.
+	// Trust and Untrust too, which the core honours for the owner only.
 	// TakeIn and Release too: a release must work whatever the config says
 	// now; a take-in without window reports finds no window.
 	owner := control.OpRead | control.OpStart | control.OpSend | control.OpAnswer | control.OpStop | control.OpSignIn | control.OpAttach |
-		control.OpClose | control.OpRemove | control.OpName | control.OpTakeIn
+		control.OpClose | control.OpRemove | control.OpName | control.OpTakeIn | control.OpTrust
 	if cfg.HostTerminals { // off unless the config turns it on; only the owner gets it
 		lister := &hostterm.Lister{Own: filepath.Base(exe)}
 		if hostTermsHook != nil {

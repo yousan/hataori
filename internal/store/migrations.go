@@ -468,6 +468,20 @@ var migrations = []Migration{
 	{Name: "turns.stopped_by", Up: execAll(
 		`ALTER TABLE turns ADD COLUMN stopped_by TEXT NOT NULL DEFAULT ''`,
 	)},
+	// The files the owner trusted for a scope's threads on one repository,
+	// from a start blocked at a start-up dialog (#590), beside the config's
+	// trust_files.
+	{Name: "trusted_files", Up: execAll(
+		`CREATE TABLE trusted_files (
+			id         INTEGER PRIMARY KEY,
+			scope      TEXT NOT NULL,
+			repo       TEXT NOT NULL,
+			file       TEXT NOT NULL,
+			trusted_by TEXT NOT NULL,
+			created_at INTEGER NOT NULL, -- unix milliseconds
+			UNIQUE (scope, repo, file)
+		)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

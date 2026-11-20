@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -51,6 +52,11 @@ type Config struct {
 	// the start. The codec watches the screen for it, answers it with
 	// Enter, and watches on until its first turn ends.
 	Dialog string `json:"dialog"`
+	// DialogTrust are files the dialog names, as a folder-trust dialog
+	// names the project files trusting the folder loads: the codec answers
+	// it only when the session's Spec.TrustFiles lists all of them, and
+	// otherwise ends the start as blocked at start, naming them.
+	DialogTrust []string `json:"dialog_trust"`
 	// ReportModel and ReportEffort, when set, are what the program reports
 	// when it is ready, instead of the model and effort it was asked for.
 	ReportModel  string `json:"report_model"`
@@ -187,6 +193,11 @@ func (a *Adapter) NewCodec(spec agent.Spec) agent.Codec {
 	c := &codec{terminal: a.c.Terminal, followed: map[string]bool{}, timeout: d}
 	if a.c.Terminal && !spec.TakenIn { // a session taken in is past any dialog
 		c.dialog = a.c.Dialog
+		for _, f := range a.c.DialogTrust {
+			if !slices.Contains(spec.TrustFiles, f) {
+				c.trust = a.c.DialogTrust
+			}
+		}
 	}
 	if spec.TakenIn {
 		c.takenIn, c.session, c.model, c.started = true, spec.ResumeID, spec.Model, true

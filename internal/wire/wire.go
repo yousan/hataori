@@ -27,7 +27,7 @@ import (
 
 // Version is the protocol version this build speaks: major.minor. Two
 // sides work together when their major numbers are equal (docs/protocol.md).
-const Version = "3.20"
+const Version = "3.21"
 
 type hello struct {
 	Version string `json:"version"`
@@ -111,6 +111,15 @@ type (
 	}
 	releaseArgs struct { // since 3.17
 		ID control.ThreadID `json:"id"`
+	}
+	trustArgs struct { // since 3.21
+		ID      control.ThreadID `json:"id"`
+		Session int64            `json:"session"`
+		Files   []string         `json:"files"`
+	}
+	trustsArgs  struct{} // since 3.21
+	untrustArgs struct { // since 3.21
+		ID int64 `json:"id"`
 	}
 	workspaceArgs struct {
 		ID control.ThreadID `json:"id"`
@@ -213,6 +222,23 @@ var operations = map[string]operation{
 			return nil, err
 		}
 		return nil, api.Release(ctx, a.ID)
+	}},
+	"Trust": {trustArgs{}, nil, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a trustArgs
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return nil, api.Trust(ctx, a.ID, a.Session, a.Files)
+	}},
+	"Trusts": {trustsArgs{}, []control.TrustedFile{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		return api.Trusts(ctx)
+	}},
+	"Untrust": {untrustArgs{}, nil, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a untrustArgs
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return nil, api.Untrust(ctx, a.ID)
 	}},
 	"Send": {sendArgs{}, nil, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
 		var a sendArgs

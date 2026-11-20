@@ -11,6 +11,15 @@ const en = {
   "app.signedOut": "Not signed in, or the session has ended. Open a new sign-in link.",
   "app.linkUsed": "This sign-in link was already used, or it has expired. If you did not use it, someone else may have: ask for a new one.",
 
+  "trusts.list": "Trusted files",
+  "trusts.title": "Files trusted from a blocked start",
+  "trusts.loading": "Loading…",
+  "trusts.none": "No files were trusted from chat.",
+  "trusts.failed": "The list could not be read.",
+  "trusts.file": "{file} on {repo}",
+  "trusts.by": "#{n} · {scope} · by {by}, {time}",
+  "trusts.withdraw": "To withdraw one, run `hataori untrust NUMBER` on the host. The config's trust_files are not listed here.",
+
   "passkey.signIn": "Sign in with a passkey",
   "passkey.offer": "Signed in with a link. Add a passkey to sign in on this device next time without one.",
   "passkey.register": "Add a passkey",
@@ -275,6 +284,15 @@ const ja: Catalog = {
   "app.readOnly": "読み取り専用",
   "app.signedOut": "サインインしていないか、セッションが終了しました。新しいサインインリンクを開いてください。",
   "app.linkUsed": "このサインインリンクはすでに使われたか、期限が切れています。使った覚えがなければ、ほかの誰かが使った可能性があります。新しいリンクを取得してください。",
+
+  "trusts.list": "信頼したファイル",
+  "trusts.title": "起動を止めたファイルのうち信頼したもの",
+  "trusts.loading": "読み込み中…",
+  "trusts.none": "チャットから信頼したファイルはありません。",
+  "trusts.failed": "一覧を読み込めませんでした。",
+  "trusts.file": "{repo} の {file}",
+  "trusts.by": "#{n} · {scope} · {by} が {time} に信頼",
+  "trusts.withdraw": "取り消すには、ホストで `hataori untrust 番号` を実行します。設定の trust_files はここに出ません。",
 
   "passkey.signIn": "パスキーでサインイン",
   "passkey.offer": "リンクでサインインしました。パスキーを追加すると、次回からこの端末ではリンクなしでサインインできます。",

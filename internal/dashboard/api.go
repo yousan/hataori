@@ -44,6 +44,9 @@ const (
 	ThreadEventsPath = "/api/threadevents"
 	EventsPath       = "/api/events"
 	LimitsPath       = "/api/limits"
+	// TrustsPath answers with the files the owner trusted from a blocked
+	// start (control.API.Trusts), in the caller's scopes. Since 3.21.
+	TrustsPath = "/api/trusts"
 	// WorkspacePath answers with the thread's WorkspaceState. A thread
 	// outside the caller's scopes answers as one that does not exist, and a
 	// workspace that cannot be read is an error, never zeros.
@@ -94,6 +97,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET "+TerminalPath, s.terminal)
 	s.mux.HandleFunc("GET "+HostScreenPath, s.hostScreen)
 	s.mux.HandleFunc("GET "+LimitsPath, s.limits)
+	s.mux.HandleFunc("GET "+TrustsPath, s.trusts)
 	s.mux.HandleFunc("GET "+WorkspacePath, s.workspace)
 	s.mux.HandleFunc("GET "+HostTerminalsPath, s.hostTerminals)
 }
@@ -108,6 +112,18 @@ func (s *Server) limits(w http.ResponseWriter, r *http.Request) {
 		ls = []control.AgentLimits{}
 	}
 	writeJSON(w, ls)
+}
+
+func (s *Server) trusts(w http.ResponseWriter, r *http.Request) {
+	ts, err := api(r).Trusts(r.Context())
+	if err != nil {
+		s.apiError(w, err)
+		return
+	}
+	if ts == nil {
+		ts = []control.TrustedFile{}
+	}
+	writeJSON(w, ts)
 }
 
 // workspaceTimeout bounds how long the route waits for git in a workspace:

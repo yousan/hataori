@@ -93,6 +93,9 @@ func TestTrustDialogThatNamesFiles(t *testing.T) {
 				!strings.Contains(events[0].Text, "to let "+tc.refused+" through") {
 				t.Fatalf("events %+v; want one SessionEnded, blocked at start, naming %s", events, tc.refused)
 			}
+			if !slices.Contains(events[0].Trust, tc.refused) {
+				t.Fatalf("trust %q; want every file the dialog names", events[0].Trust)
+			}
 		})
 	}
 }
