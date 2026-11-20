@@ -93,11 +93,17 @@ func tree(t *testing.T, dir string) string {
 		if err != nil {
 			t.Fatal(err)
 		}
-		st, _ := d.Info()
+		st, err := d.Info()
+		if err != nil {
+			t.Fatal(err)
+		}
 		rel, _ := filepath.Rel(dir, p)
 		fmt.Fprintf(&b, "%s %v %d\n", rel, st.Mode(), st.ModTime().UnixNano())
 		if st.Mode().IsRegular() {
-			c, _ := os.ReadFile(p)
+			c, err := os.ReadFile(p)
+			if err != nil {
+				t.Fatal(err)
+			}
 			b.Write(c)
 			b.WriteByte('\n')
 		}
@@ -124,9 +130,12 @@ func TestTakenInWindowClosesAndTheThreadGoesOn(t *testing.T) {
 	}
 	g := newTakeRigWith(t, r.root, false, "--config "+config)
 	// The person's directory holds work of theirs that is nowhere else.
+	// git's automatic maintenance is off: a commit can start it in the
+	// background, and it would change .git while the test compares it.
 	git := func(args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", append([]string{"-c", "user.name=person", "-c", "user.email=person@example.com"}, args...)...)
+		cmd := exec.Command("git", append([]string{"-c", "user.name=person", "-c", "user.email=person@example.com",
+			"-c", "maintenance.auto=false", "-c", "gc.auto=0"}, args...)...)
 		cmd.Dir = g.dir
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
