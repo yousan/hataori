@@ -160,6 +160,44 @@ func TestDaemonKilledAfterAReplace(t *testing.T) {
 	}
 }
 
+// A daemon killed after it stored that a session woken by an attach could
+// not resume: after a restart the session that replaces it is started with
+// no input, and no turn starts for it (#528).
+func TestDaemonKilledReplacingAnAttachedSession(t *testing.T) {
+	root := t.TempDir()
+	t.Cleanup(func() { killSessions(root) })
+	t.Cleanup(func() {
+		if t.Failed() {
+			b, _ := os.ReadFile(filepath.Join(root, "daemon.log"))
+			t.Logf("daemon log:\n%s", b)
+		}
+	})
+	runDaemon(t, root, true, "die-replace+idle+forget", "after cannot resume", "reply hello").waitKilled(t)
+	st := openStore(t, root)
+	var fi string
+	st.DB.QueryRow(`SELECT coalesce(first_input, '') FROM sessions WHERE id = 2`).Scan(&fi)
+	var now core.FirstInput
+	if json.Unmarshal([]byte(fi), &now); !now.NoInput || now.Wake || now.Text != "" {
+		t.Fatalf("the new session's first input %q", fi)
+	}
+	d := runDaemon(t, root, true, "resume")
+	waitFor(t, "the new session's agent", 15*time.Second, func() bool {
+		var id string
+		st.DB.QueryRow(`SELECT coalesce(agent_session_id, '') FROM sessions WHERE id = 2`).Scan(&id)
+		return id != ""
+	})
+	time.Sleep(time.Second) // a turn for it would start now
+	d.kill()
+	var state string
+	st.DB.QueryRow(`SELECT state FROM sessions WHERE id = 2`).Scan(&state)
+	if state != "idle" && state != "asleep" {
+		t.Errorf("the new session is %s", state)
+	}
+	if got := counts(t, st); got["turn_started"] != 1 || got["input"] != 1 || got["session_replaced"] != 1 {
+		t.Errorf("events %v", got)
+	}
+}
+
 // A session is started once in a process: a second Start of it, as from
 // Recover while a replace started it, starts no second host and changes
 // nothing (#508).
