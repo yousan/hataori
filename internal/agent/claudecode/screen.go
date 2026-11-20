@@ -697,24 +697,39 @@ func blockedText(screen []string, refused []string, scope string) string {
 	return b.String()
 }
 
-// dialogBody is the trust dialog's text below its header ("... execute
-// files here."): the lines naming the files, the guide's link and the
-// choices, as the screen shows them, without the blank lines.
+// dialogBody is the trust dialog's text from its warning on, as the screen
+// shows it, without the blank lines: "Claude Code'll be able to read,
+// edit, and execute files here.", the lines naming the files, the guide's
+// link and the choices. The warning is found by the start of its first
+// line, so a sentence the terminal wrapped is kept whole; without it, the
+// text from the line naming the files on.
 func dialogBody(screen []string) []string {
 	lines := trimLines(screen)
+	from := -1
 	for i, l := range lines {
-		if !strings.HasSuffix(l, "execute files here.") {
-			continue
+		if strings.HasPrefix(l, "Claude Code") {
+			from = i
+			break
 		}
-		var out []string
-		for _, l := range lines[i+1:] {
-			if l != "" {
-				out = append(out, l)
+	}
+	if from < 0 {
+		for i, l := range lines {
+			if strings.HasPrefix(l, loadsPrefix) {
+				from = i
+				break
 			}
 		}
-		return out
 	}
-	return nil
+	if from < 0 {
+		return nil
+	}
+	var out []string
+	for _, l := range lines[from:] {
+		if l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // untrusted returns the files of the trust dialog's list that the codec may

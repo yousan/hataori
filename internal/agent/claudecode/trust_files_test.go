@@ -103,7 +103,7 @@ func TestBlockedStartText(t *testing.T) {
 	for _, want := range []string{
 		"because the dialog names files of the repository: trusting the folder lets the repository's own settings run commands without asking",
 		"hataori stops for any such file, whatever it holds; it has not judged this repository dangerous.",
-		"Claude Code showed:\n> Trusting this folder loads .claude/settings.json.\n",
+		"Claude Code showed:\n> Claude Code'll be able to read, edit, and execute files here.\n> Trusting this folder loads .claude/settings.json.\n",
 		"\n> ❯ No, exit\n> Yes, I trust this folder\n",
 		`What to do next: to let .claude/settings.json through for this scope's threads, list it under "trust_files" of the scope "C0123" in hataori's config, and start again.`,
 	} {
@@ -113,6 +113,18 @@ func TestBlockedStartText(t *testing.T) {
 	}
 	if strings.ContainsAny(text, "\x1b\r") || strings.Contains(text, "Accessing workspace") {
 		t.Errorf("the text holds escape codes or the header:\n%s", text)
+	}
+}
+
+// A narrow terminal wraps the dialog's sentences: the quote keeps them.
+func TestDialogBodyOfAWrappedDialog(t *testing.T) {
+	screen := []string{"Accessing workspace:", "/w", "Quick safety check: ...", "", "Claude Code'll be able to read, edit, and execute", "files here.", "",
+		"Trusting this folder loads", ".claude/settings.json.", "", "Security guide", "", "❯ No, exit", "  Yes, I trust this folder", "",
+		"Enter to confirm · Esc to cancel"}
+	got := strings.Join(dialogBody(screen), "|")
+	want := "Claude Code'll be able to read, edit, and execute|files here.|Trusting this folder loads|.claude/settings.json.|Security guide|❯ No, exit|Yes, I trust this folder|Enter to confirm · Esc to cancel"
+	if got != want {
+		t.Fatalf("dialogBody = %q\nwant %q", got, want)
 	}
 }
 
