@@ -61,8 +61,8 @@ type host struct {
 	stops    sync.WaitGroup // stops in progress
 	stopNote string         // the signals the last stop sent
 
-	terminated   chan struct{} // closed when the host got SIGTERM: a shutdown
-	terminatedAt time.Time     // when; written before terminated is closed
+	terminated   chan struct{} // closed when the host first got SIGTERM: a shutdown
+	terminatedAt atomic.Int64  // when it last got one, in Unix nanoseconds
 }
 
 // shutdownGrace is how long the host, whose command ended without being
@@ -111,12 +111,19 @@ func Run(stateDir string) (err error) {
 	quit := make(chan struct{})
 	defer func() { signal.Stop(term); close(quit) }()
 	go func() {
-		select {
-		case <-term:
-			h.terminatedAt = time.Now()
-			close(h.terminated) // first: the log's write must not take from the grace
-			hl.printf("got SIGTERM: everything is being stopped; the command's end is recorded as a shutdown")
-		case <-quit:
+		for first := true; ; first = false {
+			select {
+			case <-term:
+				// Each one, the last counts: a stop of the service that left
+				// the host running can come long before the shutdown.
+				h.terminatedAt.Store(time.Now().UnixNano())
+				if first {
+					close(h.terminated) // first: the log's write must not take from the grace
+				}
+				hl.printf("got SIGTERM: everything is being stopped; the command's end is recorded as a shutdown")
+			case <-quit:
+				return
+			}
 		}
 	}()
 	if err := json.Unmarshal(b, &h.spec); err != nil {
@@ -197,7 +204,7 @@ func Run(stateDir string) (err error) {
 	}
 	select {
 	case <-h.terminated:
-		st.Shutdown = time.Since(h.terminatedAt) <= shutdownWindow
+		st.Shutdown = time.Since(time.Unix(0, h.terminatedAt.Load())) <= shutdownWindow
 	default:
 	}
 	// The socket goes first, so that a reader that sees the status also
