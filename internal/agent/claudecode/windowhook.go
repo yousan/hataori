@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -113,13 +114,27 @@ func (h windowHook) main(args []string, stdin io.Reader, stderr io.Writer) int {
 	model, _ := p.Model.(string)
 	h.send(ctx, *root, window.Report{
 		Holder: window.Tmux, Server: server, Pane: pane, Device: device, PID: pid,
-		Agent: Name, Session: p.Session, Dir: p.Dir, ConfigDir: h.getenv("CLAUDE_CONFIG_DIR"),
+		Agent: Name, Session: p.Session, Dir: p.Dir, ConfigDir: windowConfigDir(h.getenv),
 		Event: p.Event, Model: model,
 		// Observed, not documented: "cli" in an interactive session,
 		// "sdk-cli" under -p (design, Appendix B).
 		Interactive: h.getenv("CLAUDE_CODE_ENTRYPOINT") == "cli",
 	})
 	return host.HookOK // whatever happened: any other status shows the person an error
+}
+
+// windowConfigDir is the configuration directory the session in the window
+// uses: CLAUDE_CONFIG_DIR, or the CLI's default under HOME when it is not
+// set. Its resume after the window closes runs with the same one, not the
+// daemon's.
+func windowConfigDir(getenv func(string) string) string {
+	if d := getenv("CLAUDE_CONFIG_DIR"); d != "" {
+		return d
+	}
+	if home := getenv("HOME"); filepath.IsAbs(home) {
+		return filepath.Join(home, ".claude")
+	}
+	return ""
 }
 
 // relay hands payload to the session host on socket, as `hataori hook`

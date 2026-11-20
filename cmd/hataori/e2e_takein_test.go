@@ -40,6 +40,7 @@ type takeRig struct {
 	pid    int      // the fake agent's process: the pane's command
 	dir    string   // the person's directory
 	window string   // the window, as ReportedSession.Window names it
+	agent  string   // the command that started the agent in the pane
 }
 
 // personEnv is the environment of a person's own shell: the test's, without
@@ -70,6 +71,12 @@ func newTakeRig(t *testing.T, root string) *takeRig { return newTakeRigIn(t, roo
 
 func newTakeRigIn(t *testing.T, root string, inShell bool) *takeRig {
 	t.Helper()
+	return newTakeRigWith(t, root, inShell, "")
+}
+
+// newTakeRigWith is newTakeRigIn, with extra arguments for the agent.
+func newTakeRigWith(t *testing.T, root string, inShell bool, extra string) *takeRig {
+	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
 		if os.Getenv("CI") != "" {
 			t.Fatal("no tmux")
@@ -96,8 +103,9 @@ func newTakeRigIn(t *testing.T, root string, inShell bool) *takeRig {
 	g.dir = dir
 	transcript := filepath.Join(t.TempDir(), "transcript.jsonl")
 	q := func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
-	agent := fmt.Sprintf("%s fake --terminal --window %s --session sess-person --model m-person --transcript %s --hook %s",
-		q(os.Args[0]), q(root), q(transcript), q(os.Args[0]))
+	agent := fmt.Sprintf("%s fake --terminal --window %s --session sess-person --model m-person --transcript %s --hook %s %s",
+		q(os.Args[0]), q(root), q(transcript), q(os.Args[0]), extra)
+	g.agent = "exec " + agent
 	if !inShell {
 		g.tmux(t, "new-session", "-d", "-s", "work", "-x", "100", "-y", "30", "-c", dir, "exec "+agent)
 	} else {

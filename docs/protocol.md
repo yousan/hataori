@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.19**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.20**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -262,7 +262,9 @@ Before anything changes it checks:
 - the window is not taken in already, else `refused`;
 - the window's holder confirms that the window exists, and that the process that reported runs on the window's terminal as its foreground process, else `refused`. An environment is inherited, so a process that the session's own shell started names the same window.
 
-Each refusal changes nothing and is logged. The daemon keeps no report of a session that is not interactive, so such a window is answered `not_found`. Then the thread is made in the scope as `Start` makes one, with its first link opened by the scope's owner. Its session is the window's session id, its title is the name of the session's directory, and its workspace is that directory, recorded as not hataori's: `Remove` refuses it with reason `the workspace is not hataori's`, and nothing else removes it. No agent is started. From the window's next hook on, the hooks of the process that was taken in report to the thread, also while the daemon is down, and the scope's rules answer its permission requests; today they are allowed automatically. The hooks of any other process in the window are only listed. Input from chat or `Send` is pasted into the window, and only while the process that was taken in is the window's foreground process; `Stop` interrupts the running turn with Escape, and nothing ends the window's process. The same `key` takes in nothing twice and returns the thread the first call made.
+Each refusal changes nothing and is logged. The daemon keeps no report of a session that is not interactive, so such a window is answered `not_found`. Then the thread is made in the scope as `Start` makes one, with its first link opened by the scope's owner. Its session is the window's session id, its title is the name of the session's directory, and its workspace is that directory, recorded as not hataori's: no removal touches it (`Remove`). No agent is started. From the window's next hook on, the hooks of the process that was taken in report to the thread, also while the daemon is down, and the scope's rules answer its permission requests; today they are allowed automatically. The hooks of any other process in the window are only listed. Input from chat or `Send` is pasted into the window, and only while the process that was taken in is the window's foreground process; `Stop` interrupts the running turn with Escape, and nothing ends the window's process. The same `key` takes in nothing twice and returns the thread the first call made.
+
+Since 3.20, when the window closes, the thread goes asleep with the reason `window closed` and its window is let go, as by `Release`: when the agent that was taken in reports its end (its `SessionEnd`, but for a `/clear`, after which it goes on), or when the window's holder finds it gone or its agent ended with no hook. The next message resumes the session under hataori's own host, in the same directory, with `--resume`, the model the session last reported and the configuration directory the window used; the options the person started it with are not reused. A session that starts in another window with the same session id is listed with the thread's number (`ReportedSession.thread`) and is not taken in.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -285,6 +287,8 @@ Since 3.17. Ends a take-in: the thread goes asleep, as an idle thread does after
 Result: none
 
 ### Operation `Remove`
+
+Since 3.20, a closed thread taken in from a window (`TakeIn`) is removed without its workspace, which is the directory of the session a person started: its sessions' state directories go and the thread's state becomes `removed`, and the directory is left as it is, whatever it holds. Before 3.20 such a thread was refused with reason `the workspace is not hataori's`. Every other thread is removed as follows.
 
 Since 2.3. Removes the workspace of a closed thread, and only when every step of the proof of [design section 4.6](design/overview.md#46-cleanup-without-losing-work) holds at that moment: no modified, staged, untracked or non-disposable ignored file, every commit on a remote asked at that moment, the same in every submodule and nested repository, and no process using the directory. The workspace is renamed into `trash/` inside the root, and the thread's state becomes `removed`, with a `state` event whose `reason` says what asked for it. When any step does not hold or cannot be answered, nothing changes: the answer is `removal_refused` with the reason, the thread stays `closed`, and one `removal_refused` event is written. In one case something has changed: when the rename into `trash/` started and could not finish, the workspace is no longer at its place, the reason starts with `workspace moved into trash, removal not finished`, and `detail` says where it is; the thread stays `closed`. Before the proof, the closed thread's own agent must have ended: one that cannot be stopped refuses with reason `agent not stopped`. A thread that is not closed is answered `refused`, with one `removal_refused` event of reason `thread not closed`. It is checked as `Close` is.
 
@@ -836,7 +840,7 @@ The session's state changed.
 | `session` | integer | required | the session |
 | `from` | string | required | the state before |
 | `to` | string | required | the state now |
-| `reason` | string | optional | why, such as `idle`, `interrupted`, `crashed`, `blocked at start`, `cannot resume`, `wake`; for `to: closed` or `to: removed`, what asked for it: `command` (the `Close` or `Remove` operation) or `closed age` (the removal pass of the config's `cleanup.remove_closed_after`), since 2.3 |
+| `reason` | string | optional | why, such as `idle`, `interrupted`, `crashed`, `window closed` (a thread taken in whose window closed, since 3.20), `blocked at start`, `cannot resume`, `wake`; for `to: closed` or `to: removed`, what asked for it: `command` (the `Close` or `Remove` operation) or `closed age` (the removal pass of the config's `cleanup.remove_closed_after`), since 2.3 |
 | `detail` | string | optional | text for a person, such as the end of the terminal output of a session blocked at start |
 
 ### Event `turn_started`
@@ -1067,7 +1071,7 @@ Since 2.3. A removal of the thread's workspace was refused, and nothing changed.
 | `session` | integer | required | the thread's current session |
 | `trigger` | string | required | what asked for it: `command` or `closed age`, as the `state` event's `reason` |
 | `principal` | string | optional | the person who asked, for `command` |
-| `reason` | string | required | why, such as `modified file`, `untracked file`, `ignored file not listed as disposable`, `unpushed commit on a branch`, `stash`, `commit only in a reflog`, `remote is another workspace`, `remote under a hataori root`, `process using the directory`, `git error`, `timeout`; or, from the daemon itself, `thread not closed`, `agent not stopped`, `no workspace recorded`, `the instance removes no workspaces`, `the workspace is not hataori's` (since 3.17) |
+| `reason` | string | required | why, such as `modified file`, `untracked file`, `ignored file not listed as disposable`, `unpushed commit on a branch`, `stash`, `commit only in a reflog`, `remote is another workspace`, `remote under a hataori root`, `process using the directory`, `git error`, `timeout`; or, from the daemon itself, `thread not closed`, `agent not stopped`, `no workspace recorded`, `the instance removes no workspaces`, `the workspace is not hataori's` (since 3.17, for a thread taken in; since 3.20 only when the daemon cannot remove a session's state, and such a thread is otherwise removed without its workspace) |
 | `repo` | string | optional | where it was found, relative to the workspace, when not in the workspace's own repository |
 | `kind` | string | optional | what `repo` is: `submodule`, `nested repository`, `nested bare repository` or `submodule without checkout` |
 | `detail` | string | optional | text for a person, such as the file or the commit; for `thread not closed`, the thread's state |

@@ -29,6 +29,7 @@
 //	{"t":"end","status":"completed"|"failed"|"interrupted","reason":R,"background":N}
 //	{"t":"interrupted"}                          (transcript only)
 //	{"t":"cannot-resume","session":S}            (then it exits)
+//	{"t":"session-end","reason":R}               (in a person's window, --window: as it exits)
 //	{"t":"mystery"}                              (a kind no codec knows)
 //
 // On pipes the program reads {"input":T}, {"answer":{"id":I,"text":A}} and
@@ -62,6 +63,10 @@
 //	exit                exit at once, without ending the turn
 //	interrupt-delay D   from now on, an interrupt takes effect D after it
 //	                    comes, as an agent that is slow to stop
+//	session-end [REASON] in a person's window (--window): report the session's
+//	                    end, for REASON (prompt_input_exit by default), and go
+//	                    on, as a hook can before its process ends; "clear" is
+//	                    a /clear, after which an agent goes on
 //	unknown             report a line of a kind no codec knows
 //	screen TEXT         write TEXT and a line end to the terminal; nothing on pipes
 //	subagent ID [NAME [TOOL...]]

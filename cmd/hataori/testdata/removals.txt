@@ -28,3 +28,4 @@ internal/runner/takein.go	Runner.letGo	os.Remove	Removes only the taken-in.json 
 internal/runner/takein.go	writeAtomic	os.Remove	Removes only its own temporary file in the session's state directory after a rename that failed, outside every workspace.
 internal/window/window.go	WriteRecord	os.Remove	Removes only its own temporary file in the private directory of take-in records next to the report socket, outside every workspace.
 internal/window/window.go	RemoveRecord	os.Remove	Removes only one take-in record file in the private directory next to the report socket; the window and its directory are not touched.
+internal/runner/takein.go	Runner.RemoveState	os.RemoveAll	Removes only a session's state directory under the instance's state/sessions, after checking that no host runs in it and that it is a directory, not a link: never a workspace, which for a thread taken in is the person's own.

@@ -199,6 +199,10 @@ type Spec struct {
 	// restart does; Open reports SessionReady at once and watches no
 	// screen. Nothing launches it.
 	TakenIn bool `json:",omitempty"`
+	// ConfigDir is the agent's configuration directory, when the session
+	// must run with one other than the daemon's: the one the window of a
+	// session taken in used, for its resume under hataori's own host.
+	ConfigDir string `json:",omitempty"`
 }
 
 // Confinement is what a confined session may use besides its file tools.
