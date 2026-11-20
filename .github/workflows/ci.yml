@@ -35,9 +35,6 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
-      - name: loop (temporary, #552)
-        run: |
-          go test -count=30 -timeout 60m ./internal/host
       - run: go vet ./...
       - name: build without cgo
         run: CGO_ENABLED=0 go build ./...
@@ -56,9 +53,6 @@ jobs:
           python-version: "3.x"
       - name: install tmux
         run: command -v tmux >/dev/null || brew install tmux
-      - name: loop (temporary, #552)
-        run: |
-          go test -count=30 -timeout 60m ./internal/host
       - run: go vet ./...
       - name: build without cgo
         run: CGO_ENABLED=0 go build ./...
