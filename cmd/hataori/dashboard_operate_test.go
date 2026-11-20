@@ -70,8 +70,12 @@ func newOperateRigWith(t *testing.T, idle string, input bool) *operateRig {
 		}
 		return strings.TrimSpace(string(out))
 	}
-	r.tmux("new-session", "-d", "-s", "work", "-x", "100", "-y", "30", "sh", "-c", "printf 'ready> '; stty raw -echo; exec cat > "+r.got)
+	// Typed only once the pane's terminal is in raw mode: before stty,
+	// Enter's \r would be read as \n (#514).
+	ready := filepath.Join(t.TempDir(), "ready")
+	r.tmux("new-session", "-d", "-s", "work", "-x", "100", "-y", "30", "sh", "-c", "printf 'ready> '; stty raw -echo && : > "+ready+"; exec cat > "+r.got)
 	t.Cleanup(func() { exec.Command("tmux", slices.Concat(sock, []string{"kill-server"})...).Run() })
+	eventually(t, "the pane's terminal in raw mode", 10*time.Second, func() bool { _, err := os.Stat(ready); return err == nil })
 	r.pane = r.tmux("display-message", "-p", "-t", "work:0", "#{pane_id}")
 	r.device = r.tmux("display-message", "-p", "-t", "work:0", "#{pane_tty}")
 	hostTermsHook = func(l *hostterm.Lister) { l.Tmux = sock }
