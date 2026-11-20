@@ -1,0 +1,25 @@
+{
+  "id": "marker",
+  "version": "1.0.0",
+  "protocol": "3.19",
+  "operations": ["Threads", "Events"],
+  "events": ["thread_created", "turn_started", "input", "text", "turn_ended", "post_sent"],
+  "hooks": [
+    {"point": "message_sending"},
+    {"point": "before_agent_run"}
+  ],
+  "conversation": true,
+  "config": {
+    "type": "object",
+    "properties": {
+      "rewrite": {"type": "string", "description": "message_sending: a post that holds it is posted with it replaced"},
+      "with": {"type": "string", "description": "what replaces it"},
+      "cancel": {"type": "string", "description": "message_sending: a post that holds it is cancelled"},
+      "stop": {"type": "string", "description": "before_agent_run: an input that holds it is stopped"},
+      "slow": {"type": "string", "description": "a hook call whose text holds it waits slow_seconds first"},
+      "slow_seconds": {"type": "number"},
+      "record": {"type": "boolean", "description": "keep every line hataori sends in received.jsonl in the state directory"}
+    },
+    "additionalProperties": false
+  }
+}
