@@ -79,8 +79,15 @@ var _ surface.Commander = (*FrontEnd)(nil)
 func (f *FrontEnd) Command(c surface.Command) {
 	ctx := f.context()
 	if c.Author.Kind != surface.Bot && len(f.scopesIn(c.Conv.Channel)) == 0 {
-		f.ignored(c, "this instance does not serve the channel")
-		if err := f.answer(ctx, c, notServed); err != nil {
+		// Once however often it is delivered: the answer, and its log line.
+		first, err := f.once(ctx, c.Conv.Channel, "unserved:"+c.ID, true)
+		if err == nil && first {
+			f.ignored(c, "this instance does not serve the channel")
+			if err = f.answer(ctx, c, notServed); err != nil {
+				f.once(ctx, c.Conv.Channel, "unserved:"+c.ID, false) // to be tried again
+			}
+		}
+		if err != nil {
 			f.Log.Error("command failed", "command", c.Name, "channel", c.Conv.Channel, "id", c.ID, "err", err)
 		}
 		return

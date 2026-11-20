@@ -113,6 +113,9 @@ func TestCommandsOutsideTheScopesAnswerThatTheInstanceDoesNotServeThem(t *testin
 			f.settled(t, conv)
 			f.fe.Command(c) // delivered again
 			f.settled(t, conv)
+			if again := f.log.lines()[before+1:]; len(again) != 0 {
+				t.Errorf("/%s in %+v delivered again: log %q, want nothing more", cmd.name, conv, again)
+			}
 			var answers []fake.Call
 			for _, p := range f.driver.Calls(conv) {
 				if p.Op == fake.OpPost && p.Message.ReplyTo != nil && *p.Message.ReplyTo == *c.Reply {

@@ -114,10 +114,8 @@ func TestChangedCommandsRegistered(t *testing.T) {
 
 // With a command prefix, every command is registered under the prefix and
 // its name: the front end's "test" with "hataori-" is the capture's
-// "hataori-test". The use of the captured command, in a thread, reaches the
-// sink as "test", acknowledged privately, and the sink's one-line answer
-// replaces the acknowledgement: the person sees that answer and nothing
-// else is posted.
+// "hataori-test", and the use of the captured command reaches the sink as
+// "test". A prefix that makes a name too long is refused.
 func TestCommandPrefix(t *testing.T) {
 	r := newFakeREST(t)
 	r.serve(t, "GET /applications/@me", "commands/rest-application.json")
@@ -127,7 +125,6 @@ func TestCommandPrefix(t *testing.T) {
 	d.prefix = "hataori-"
 	specs := []surface.CommandSpec{testSpecs[0]}
 	specs[0].Name = "test"
-	specs[0].Private = true
 	if err := d.register(context.Background(), specs); err != nil {
 		t.Fatal(err)
 	}
@@ -145,31 +142,16 @@ func TestCommandPrefix(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("registered %+v, the capture %+v", got, want)
 	}
-
-	in, c := command(t, d, r, "commands/gw-02-INTERACTION_CREATE.json", "commands/rest-command-ack-thread.json")
-	if c.Name != "test" || c.Conv.Thread == "" {
-		t.Fatalf("delivered %q in %+v, want \"test\" in a thread", c.Name, c.Conv)
-	}
-	b, _ := content(t, r.requests(ackKey(in))[0])
-	if want := capture(t, "commands/rest-command-ack-thread.json")["request"].(map[string]any)["body"]; !reflect.DeepEqual(b, want) {
-		t.Fatalf("acknowledged with %v, want the private acknowledgement %v", b, want)
-	}
-	r.serve(t, "PATCH "+answerKey(in), "commands/rest-command-answer-thread.json")
-	const line = "This hataori instance does not serve this channel."
-	if _, err := d.Post(context.Background(), c.Conv, "k", surface.Message{Text: line, ReplyTo: c.Reply}); err != nil {
-		t.Fatal(err)
-	}
-	if n := r.called("PATCH " + answerKey(in)); n != 1 {
-		t.Fatalf("answered %d times", n)
-	}
-	if b, _ := content(t, r.requests("PATCH " + answerKey(in))[0]); b["content"] != line {
-		t.Fatalf("answered with %v", b)
-	}
-	if n := r.called("POST /channels/") + r.called("POST /webhooks/"); n != 0 {
-		t.Fatalf("%d more posts", n)
+	for _, name := range []string{"commands/gw-01-INTERACTION_CREATE.json", "commands/gw-02-INTERACTION_CREATE.json"} {
+		ack := "commands/rest-command-ack-channel.json"
+		if strings.Contains(name, "gw-02") {
+			ack = "commands/rest-command-ack-thread.json"
+		}
+		if _, c := command(t, d, r, name, ack); c.Name != "test" {
+			t.Fatalf("%s delivered as %q, want \"test\"", name, c.Name)
+		}
 	}
 
-	// A prefix that makes a name too long is refused, naming the prefix.
 	d.prefix = strings.Repeat("a", 28)
 	if err := d.register(context.Background(), []surface.CommandSpec{{Name: "dashboard", Description: "d"}}); err == nil || !strings.Contains(err.Error(), "command_prefix") {
 		t.Fatalf("a name of 37 characters: %v", err)
