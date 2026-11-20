@@ -126,6 +126,8 @@ func newTakeRigWith(t *testing.T, root string, inShell bool, extra string) *take
 		// The shell's pid once: asking tmux for it for every process listed
 		// made one look take seconds, longer than the wait on a slow runner.
 		shell := strconv.Itoa(g.shellPID())
+		typed := time.Now()
+		defer func() { t.Logf("TIMING the agent's process after %v", time.Since(typed)) }()
 		for deadline := time.Now().Add(10 * time.Second); g.pid == 0; time.Sleep(10 * time.Millisecond) {
 			out, _ := exec.Command("ps", "-A", "-o", "pid=,ppid=").Output()
 			for _, l := range strings.Split(string(out), "\n") {
