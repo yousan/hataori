@@ -2,7 +2,9 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -370,6 +372,13 @@ func TestHostRebootEndsTheTurnAsInterrupted(t *testing.T) {
 	until(t, "the tool", st, "tool_started", 1)
 	d.kill()
 	killSessions(root) // every process gone, no status written: a reboot
+	dirs, _ := filepath.Glob(filepath.Join(root, "state", "sessions", "*"))
+	if len(dirs) != 1 {
+		t.Fatalf("session directories: %v", dirs)
+	}
+	if _, err := os.Stat(filepath.Join(dirs[0], host.StatusFile)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the host recorded an end before the reboot, which no reboot does: %v", err)
+	}
 	d = runDaemon(t, root, false, "resume")
 	waitFor(t, "asleep", 20*time.Second, func() bool {
 		var state string
