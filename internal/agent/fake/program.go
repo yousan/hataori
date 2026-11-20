@@ -165,6 +165,7 @@ type program struct {
 	asked          int
 	answers        map[string]chan string
 	interrupts     chan struct{}
+	interruptDelay time.Duration // script command interrupt-delay: an interrupt takes effect this long after it came
 	configDir      string
 	model          string // as started, for whoami
 	effort         string
@@ -350,6 +351,11 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 			end["status"], end["reason"] = "failed", arg
 		case "exit":
 			return 3, true
+		case "interrupt-delay":
+			d, _ := time.ParseDuration(arg)
+			p.mu.Lock()
+			p.interruptDelay = d
+			p.mu.Unlock()
 		case "unknown":
 			p.report(map[string]any{"t": "mystery"})
 		case "screen":
@@ -556,6 +562,17 @@ func (p *program) readPipes(r io.Reader, inputs chan<- string) {
 }
 
 func (p *program) interrupt() {
+	p.mu.Lock()
+	d := p.interruptDelay
+	p.mu.Unlock()
+	if d > 0 {
+		time.AfterFunc(d, p.interruptNow)
+		return
+	}
+	p.interruptNow()
+}
+
+func (p *program) interruptNow() {
 	select {
 	case p.interrupts <- struct{}{}:
 	default:
