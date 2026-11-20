@@ -95,13 +95,19 @@ func TestDaemonKilledAfterTheWorkspaceIsPlaced(t *testing.T) {
 	}
 }
 
-// A daemon killed after it replaced a session that could not resume, and
-// before it launched the new one: after a restart the new session starts,
-// and its agent gets the input the old one was woken for, once, with its
-// link, its key and the text a plugin added (#508).
+// A daemon killed after it stored that a session could not resume, and
+// before it launched the session that replaces it: after a restart the new
+// session starts, and its agent gets the input the old one was woken for,
+// once, with its link, its key and the text a plugin added. Killed right
+// after the old session's failure is committed (#527) or after the new
+// session is inserted (#508).
 func TestDaemonKilledAfterAReplace(t *testing.T) {
-	for _, terminal := range []bool{false, true} {
-		t.Run(fmt.Sprint("terminal ", terminal), func(t *testing.T) {
+	for _, c := range []struct {
+		point    string
+		terminal bool
+	}{{"after cannot resume", false}, {"after cannot resume", true}, {"after replace", false}, {"after replace", true}} {
+		terminal := c.terminal
+		t.Run(fmt.Sprintf("%s terminal %v", c.point, terminal), func(t *testing.T) {
 			root := t.TempDir()
 			t.Cleanup(func() { killSessions(root) })
 			t.Cleanup(func() {
@@ -110,7 +116,7 @@ func TestDaemonKilledAfterAReplace(t *testing.T) {
 					t.Logf("daemon log:\n%s", b)
 				}
 			})
-			runDaemon(t, root, terminal, "die-replace+idle+forget", "after replace", "reply hello", "reply anew").waitKilled(t)
+			runDaemon(t, root, terminal, "die-replace+idle+forget", c.point, "reply hello", "reply anew").waitKilled(t)
 			st := openStore(t, root)
 			var sessions, launch int
 			var old, now core.FirstInput
