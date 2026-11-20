@@ -266,8 +266,12 @@ class Plugin:
         self.conn = Connection(self.socket, self.token)
         log("connected; the daemon speaks", self.conn.daemon)
         self.thread(self.serve)
-        threads = self.call("Threads", {"filter": {}})
-        log("threads", len(threads or []))
+        try:
+            threads = self.call("Threads", {"filter": {}})
+            log("threads", len(threads or []))
+        except RuntimeError as e:
+            # A grant without Threads: the call is refused, and the rest goes on.
+            log("threads refused:", str(e).split(":")[1].strip())
         self.thread(self.follow)
         self.done.wait()
         # A broken connection or a failure ends the plugin; hataori starts it again.
