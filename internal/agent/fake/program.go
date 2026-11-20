@@ -165,6 +165,7 @@ type program struct {
 	asked          int
 	answers        map[string]chan string
 	interrupts     chan struct{}
+	interruptDelay time.Duration // script command interrupt-delay: an interrupt takes effect this long after it came
 	configDir      string
 	model          string // as started, for whoami
 	effort         string
@@ -328,6 +329,20 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 				return 0, false
 			}
 			final, replied = "answer: "+answer, true
+		case "deaf":
+			// Wait without heeding an interrupt, as an agent that takes
+			// long to stop; one that came is heeded at the end. It is
+			// reported as a tool, so that a test can wait until it runs.
+			d, _ := time.ParseDuration(arg)
+			p.report(map[string]any{"t": "tool", "id": "t-deaf", "name": "deaf"})
+			time.Sleep(d)
+			p.report(map[string]any{"t": "tool", "id": "t-deaf", "name": "deaf", "end": true})
+			select {
+			case <-p.interrupts:
+				p.interrupted(end)
+				return 0, false
+			default:
+			}
 		case "background":
 			d, _ := time.ParseDuration(arg)
 			end["background"] = 1
@@ -336,6 +351,11 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 			end["status"], end["reason"] = "failed", arg
 		case "exit":
 			return 3, true
+		case "interrupt-delay":
+			d, _ := time.ParseDuration(arg)
+			p.mu.Lock()
+			p.interruptDelay = d
+			p.mu.Unlock()
 		case "unknown":
 			p.report(map[string]any{"t": "mystery"})
 		case "screen":
@@ -542,6 +562,17 @@ func (p *program) readPipes(r io.Reader, inputs chan<- string) {
 }
 
 func (p *program) interrupt() {
+	p.mu.Lock()
+	d := p.interruptDelay
+	p.mu.Unlock()
+	if d > 0 {
+		time.AfterFunc(d, p.interruptNow)
+		return
+	}
+	p.interruptNow()
+}
+
+func (p *program) interruptNow() {
 	select {
 	case p.interrupts <- struct{}{}:
 	default:

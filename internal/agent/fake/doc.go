@@ -54,10 +54,14 @@
 //	askmany QUESTION -- CHOICE | CHOICE...
 //	                    ask, as ask does, a question whose choices may be
 //	                    chosen several at once
+//	deaf DURATION       run a tool named deaf for DURATION without heeding an
+//	                    interrupt; one that came is heeded at its end
 //	background DURATION end the turn with one background task, then start a
 //	                    turn by itself after DURATION
 //	fail REASON         end the turn as failed with REASON
 //	exit                exit at once, without ending the turn
+//	interrupt-delay D   from now on, an interrupt takes effect D after it
+//	                    comes, as an agent that is slow to stop
 //	unknown             report a line of a kind no codec knows
 //	screen TEXT         write TEXT and a line end to the terminal; nothing on pipes
 //	subagent ID [NAME [TOOL...]]

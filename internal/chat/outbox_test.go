@@ -94,6 +94,29 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 	}
 }
 
+// waitWhileBusy waits for ok as long as what busy returns keeps changing:
+// it fails after five seconds in which ok stayed false and busy stayed the
+// same. A slow machine takes longer to do the same work, which busy shows;
+// a front end that is stuck shows nothing new. One that keeps changing
+// without ever getting there fails after two minutes.
+func waitWhileBusy(t *testing.T, what string, busy func() string, ok func() bool) {
+	t.Helper()
+	last := busy()
+	limit := time.Now().Add(2 * time.Minute)
+	for deadline := time.Now().Add(5 * time.Second); !ok(); {
+		if now := busy(); now != last {
+			last, deadline = now, time.Now().Add(5*time.Second)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s, nothing done for 5s: %s", what, last)
+		}
+		if time.Now().After(limit) {
+			t.Fatalf("timed out waiting for %s, still busy after 2 minutes: %s", what, last)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
 var (
 	ctx = context.Background()
 	ta  = surface.Conversation{Channel: "c", Thread: "a"}
