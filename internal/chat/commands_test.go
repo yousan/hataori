@@ -82,6 +82,87 @@ func TestCommandsMessagesAndButtonsOfOthersDoNothingAndLogOneLine(t *testing.T) 
 	}
 }
 
+// Each command from a channel, or a thread of one, that the instance does
+// not serve gets one answer, to the command, saying so, and writes one log
+// line; the same command delivered again answers nothing more. Nothing is
+// started, stopped, linked or sent.
+func TestCommandsOutsideTheScopesAnswerThatTheInstanceDoesNotServeThem(t *testing.T) {
+	f := newFront(t, workspaces{})
+	elsewhere := surface.Conversation{Channel: "c-elsewhere"}
+	inThread := surface.Conversation{Channel: "c-elsewhere", Thread: "t-elsewhere"}
+	// settled waits once per marker key; each wait here needs its own.
+	marks := 0
+	settle := func(conv surface.Conversation) {
+		t.Helper()
+		marks++
+		ev := uint64(1<<41 + marks)
+		if err := f.fe.Outbox.Write(context.Background(), row(ev, 0, conv, "marker")); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "the marker", func() bool { _, ok, _ := f.fe.Outbox.Sent(context.Background(), ev, 0); return ok })
+	}
+	n := 0
+	for _, conv := range []surface.Conversation{elsewhere, inThread} {
+		for _, cmd := range []struct {
+			name string
+			args []surface.Arg
+		}{
+			{newCommand, newArgs("reply hi")},
+			{stopCommand, nil},
+			{statusCommand, nil},
+			{dashboardCommand, nil},
+			{attachCommand, []surface.Arg{{Name: "number", Value: "1"}}},
+		} {
+			n++
+			id := "x" + strconv.Itoa(n)
+			before := len(f.log.lines())
+			c := f.command(conv, fake.Person(owner), id, cmd.name, cmd.args...)
+			lines := f.log.lines()[before:]
+			if len(lines) != 1 || !strings.Contains(lines[0], "does not serve") || !strings.Contains(lines[0], "id="+id) {
+				t.Errorf("/%s in %+v: log %q, want one line", cmd.name, conv, lines)
+			}
+			settle(conv)
+			f.fe.Command(c) // delivered again
+			settle(conv)
+			if again := f.log.lines()[before+1:]; len(again) != 0 {
+				t.Errorf("/%s in %+v delivered again: log %q, want nothing more", cmd.name, conv, again)
+			}
+			var answers []fake.Call
+			for _, p := range f.driver.Calls(conv) {
+				if p.Op == fake.OpPost && p.Message.ReplyTo != nil && *p.Message.ReplyTo == *c.Reply {
+					answers = append(answers, p)
+				}
+			}
+			if len(answers) != 1 || answers[0].Message.Text != notServed {
+				t.Errorf("/%s in %+v: answered %+v, want one answer %q", cmd.name, conv, answers, notServed)
+			}
+		}
+	}
+	// A command that waits for no answer (its acknowledgement failed) is
+	// only logged, with one line.
+	before := len(f.log.lines())
+	f.fe.Command(surface.Command{Conv: elsewhere, Author: fake.Person(owner), ID: "x-none", Name: stopCommand})
+	if lines := f.log.lines()[before:]; len(lines) != 1 || !strings.Contains(lines[0], "does not serve") {
+		t.Errorf("a command without a reply: log %q, want one line", lines)
+	}
+	settle(elsewhere)
+	for _, conv := range []surface.Conversation{elsewhere, inThread} {
+		for _, p := range postsIn(f.driver, conv) {
+			if p != notServed && p != "marker" {
+				t.Errorf("%+v shows %q", conv, p)
+			}
+		}
+	}
+	if o, l := len(f.threads()), len(f.runner.all()); o != 0 || l != 0 {
+		t.Errorf("%d threads opened, %d started; want none", o, l)
+	}
+	var links int
+	f.fe.Outbox.Store.DB.QueryRow(`SELECT count(*) FROM links`).Scan(&links)
+	if links != 0 {
+		t.Errorf("%d links made", links)
+	}
+}
+
 // A thread of another scope shown in the channel is not in the channel's
 // status.
 func TestStatusInAChannelShowsNoThreadOfAnotherScope(t *testing.T) {

@@ -52,6 +52,12 @@ type Settings struct {
 	// TokenFile names the file in the instance's config directory that
 	// holds the bot token.
 	TokenFile string `json:"token_file"`
+	// CommandPrefix is put before the name of every command the driver
+	// registers, so that several instances in one server, each with its
+	// own bot, register different names: with "stg-", the front end's
+	// "new" is registered as "/stg-new". The front end still gets "new".
+	// Empty registers the front end's names.
+	CommandPrefix string `json:"command_prefix,omitempty"`
 }
 
 // Driver is the Discord surface driver.
@@ -62,13 +68,14 @@ type Driver struct {
 	gatewayURL string
 	log        *slog.Logger
 
-	pageSize int // messages per history request
+	pageSize int    // messages per history request
+	prefix   string // before every registered command's name
 
 	mu      sync.Mutex
 	parents map[snowflake.ID]snowflake.ID // thread -> the channel it is in
 	direct  map[snowflake.ID]bool         // channel -> whether it is a direct conversation
 
-	commands map[string]surface.CommandSpec // by name, as registered by Run
+	commands map[string]surface.CommandSpec // by the name registered by Run, with the front end's name
 	answers  map[snowflake.ID]*answer       // command interactions that can still be answered
 
 	lampLocks [64]sync.Mutex // SetStatus, by message id
@@ -104,7 +111,13 @@ func New(config *os.Root, settings []byte) (surface.Driver, error) {
 	if token == "" {
 		return nil, fmt.Errorf("discord: the token file %q is empty", name)
 	}
-	return newDriver(id, token, fmt.Sprintf("%sv%d", rest.API, rest.Version), gateway.URL, nil), nil
+	prefix := strings.TrimSpace(s.CommandPrefix)
+	if prefix != "" && !commandPrefix.MatchString(prefix) {
+		return nil, fmt.Errorf("discord: settings: %q: %q: use up to 31 of a-z, 0-9, - and _", "command_prefix", s.CommandPrefix)
+	}
+	d := newDriver(id, token, fmt.Sprintf("%sv%d", rest.API, rest.Version), gateway.URL, nil)
+	d.prefix = prefix
+	return d, nil
 }
 
 func newDriver(botID snowflake.ID, token, restURL, gatewayURL string, log *slog.Logger) *Driver {
@@ -138,7 +151,8 @@ func newDriver(botID snowflake.ID, token, restURL, gatewayURL string, log *slog.
 //
 // When sink implements surface.Commander, Run first makes its commands the
 // bot's commands (they can be used in server channels and their threads),
-// and fails when the service refuses them.
+// each under its name with the configured prefix before it, and fails when
+// the service refuses them.
 func (d *Driver) Run(ctx context.Context, sink surface.Sink) error {
 	var me struct {
 		ID  snowflake.ID `json:"id"`

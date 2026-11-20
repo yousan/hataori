@@ -29,7 +29,10 @@ const (
 	answerWithin = 15 * time.Minute
 )
 
-var commandName = regexp.MustCompile(`^[-_a-z0-9]{1,32}$`)
+var (
+	commandName   = regexp.MustCompile(`^[-_a-z0-9]{1,32}$`)
+	commandPrefix = regexp.MustCompile(`^[-_a-z0-9]{1,31}$`)
+)
 
 // Discord's values the driver uses for commands.
 const (
@@ -117,12 +120,21 @@ func description(s string) error {
 	return nil
 }
 
-// register makes specs the bot's commands. It reads the commands the
-// service has and writes them only when they differ, so a restart with the
-// same specs registers nothing.
+// register makes specs the bot's commands, each named with the driver's
+// prefix before its name. It reads the commands the service has and writes
+// them only when they differ, so a restart with the same specs registers
+// nothing.
 func (d *Driver) register(ctx context.Context, specs []surface.CommandSpec) error {
-	want, err := wireCommands(specs)
+	named := make([]surface.CommandSpec, len(specs))
+	for i, s := range specs {
+		named[i] = s
+		named[i].Name = d.prefix + s.Name
+	}
+	want, err := wireCommands(named)
 	if err != nil {
+		if d.prefix != "" {
+			err = fmt.Errorf("%w (with command_prefix %q)", err, d.prefix)
+		}
 		return err
 	}
 	var app struct {
@@ -137,8 +149,8 @@ func (d *Driver) register(ctx context.Context, specs []surface.CommandSpec) erro
 	}
 	d.mu.Lock()
 	d.commands = map[string]surface.CommandSpec{}
-	for _, s := range specs {
-		d.commands[s.Name] = s
+	for i, s := range specs {
+		d.commands[named[i].Name] = s
 	}
 	d.mu.Unlock()
 	if sameCommands(have, want) {
@@ -187,11 +199,16 @@ type progress struct {
 // command handles the use of a command. It is acknowledged first, as a
 // deferred answer ("thinking"), so that the service's 3-second deadline is
 // met however long the sink takes; the front end's Post with ReplyTo set to
-// the command's Reply replaces it.
+// the command's Reply replaces it. The command reaches the sink under the
+// front end's name, without the prefix it was registered with.
 func (d *Driver) command(ctx context.Context, in wireInteraction, sink surface.Sink) error {
 	d.mu.Lock()
 	spec, known := d.commands[in.Data.Name]
 	d.mu.Unlock()
+	name := strings.TrimPrefix(in.Data.Name, d.prefix)
+	if known {
+		name = spec.Name
+	}
 	private := known && spec.Private
 	body := map[string]any{"type": callbackDeferMessage}
 	if private {
@@ -216,7 +233,7 @@ func (d *Driver) command(ctx context.Context, in wireInteraction, sink surface.S
 		Conv:   conv,
 		Author: surface.Author{Kind: surface.Person, ID: u.ID.String(), Name: u.name()},
 		ID:     in.ID.String(),
-		Name:   in.Data.Name,
+		Name:   name,
 	}
 	for _, o := range in.Data.Options {
 		var v string

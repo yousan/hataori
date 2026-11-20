@@ -55,7 +55,8 @@ func opened(d *fakesurface.Driver, conv surface.Conversation) []surface.Conversa
 // A thread of c1 is attached on a second surface, in the channel c1's
 // show_in names, by a person allowed in c1: a chat thread is opened there
 // and shows the thread's answers. A guest's attach and one in a channel
-// not in show_in make no link and open nothing; attaching again changes
+// not in show_in make no link and open nothing (the second is answered
+// that the instance does not serve the channel); attaching again changes
 // nothing; a conversation that shows a thread is not linked to another.
 // The text form works on the second surface too.
 func TestAttachAThreadOnASecondSurface(t *testing.T) {
@@ -100,8 +101,10 @@ func TestAttachAThreadOnASecondSurface(t *testing.T) {
 	if l, o1, o2 := linksOf(t, r.root, n), opened(two, d1), opened(two, d2); len(l) != 1 || len(o1) != 0 || len(o2) != 0 {
 		t.Fatalf("refused attaches: links %v, opened %v and %v", l, o1, o2)
 	}
+	// d2 is in no scope and no show_in of the second surface: the front end
+	// answers that it does not serve the channel, and asks the core nothing.
 	if got := logged(); !strings.Contains(got, `op=Link scope=c1 reason="a guest" client=`+secondSurface+" id=x-9") ||
-		!strings.Contains(got, `link refused" thread=`+n+" client="+secondSurface+" channel=d2") {
+		!strings.Contains(got, `command=attach reason="this instance does not serve the channel" channel=d2`) {
 		t.Fatalf("the refusals were not logged:\n%s", got)
 	}
 
