@@ -274,6 +274,8 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 		a = merge(c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted}), c.ended())
 	case "cannot-resume":
 		a = c.events(agent.Event{Kind: agent.SessionEnded, SessionID: r.Session, Reason: agent.CannotResume})
+	case "session-end":
+		a = c.events(agent.Event{Kind: agent.SessionEnded, SessionID: r.Session, Reason: agent.Reason(r.Reason)})
 	default:
 		a = c.events(agent.Event{Kind: agent.Unknown, Text: string(line)})
 	}

@@ -67,12 +67,13 @@ func WindowHookMain(args []string, stdin io.Reader, stdout, stderr io.Writer, ge
 		Session     string `json:"session"`
 		Cwd         string `json:"cwd"`
 		Model       string `json:"model"`
+		ConfigDir   string `json:"config_dir"`
 		Interactive bool   `json:"interactive"`
 	}
 	if json.Unmarshal(payload, &r) != nil || r.Session == "" || r.T == "" {
 		return host.HookOK
 	}
 	window.Send(ctx, *root, window.Report{Holder: window.Tmux, Server: server, Pane: pane, Device: device, PID: pid,
-		Agent: Name, Session: r.Session, Dir: r.Cwd, Event: r.T, Model: r.Model, Interactive: r.Interactive})
+		Agent: Name, Session: r.Session, Dir: r.Cwd, ConfigDir: r.ConfigDir, Event: r.T, Model: r.Model, Interactive: r.Interactive})
 	return host.HookOK
 }
