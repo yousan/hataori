@@ -58,6 +58,8 @@ jobs:
         run: CGO_ENABLED=0 go build ./...
       - name: go test
         run: go test ./...
+      - name: "temporary (#498): 50 runs of TestConnect on main's wrapper (#538)"
+        run: go test -run '^TestConnect$' -count=50 ./cmd/hataori/
 
   # hataori for macOS, where `hataori connect` runs on the person's
   # machine: both architectures, kept as artifacts of the run.
