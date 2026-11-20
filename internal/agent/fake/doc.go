@@ -29,6 +29,7 @@
 //	{"t":"end","status":"completed"|"failed"|"interrupted","reason":R,"background":N}
 //	{"t":"interrupted"}                          (transcript only)
 //	{"t":"cannot-resume","session":S}            (then it exits)
+//	{"t":"session-end","reason":R}               (in a person's window, --window: as it exits)
 //	{"t":"mystery"}                              (a kind no codec knows)
 //
 // On pipes the program reads {"input":T}, {"answer":{"id":I,"text":A}} and

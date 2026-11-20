@@ -38,6 +38,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	transcript := fs.String("transcript", "", "")
 	hook := fs.String("hook", "", "the hataori binary, for `hataori hook`")
 	windowRoot := fs.String("window", "", "started by a person in their own window: report with `hataori hook --window` to the instance at this root")
+	record := fs.String("record", "", "a directory to write, at the start, the arguments, environment and directory into")
 	neverStart := fs.Bool("never-start", false, "")
 	inputDelay := fs.Duration("input-delay", 0, "wait this long before taking each input")
 	conversations := fs.String("conversations", "", "a directory with one file per session started")
@@ -47,6 +48,14 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	relay := fs.String("relay", "", "A,B: relay between threads A and B, as a supervisor that passes each one's answer to the other")
 	if err := fs.Parse(args); err != nil {
 		return 64
+	}
+	if *record != "" {
+		wd, _ := os.Getwd()
+		b, _ := json.Marshal(map[string]any{"args": args, "env": os.Environ(), "dir": wd})
+		if err := os.WriteFile(filepath.Join(*record, fmt.Sprintf("start-%d.json", os.Getpid())), b, 0o600); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 	}
 	p := &program{out: stdout, hook: *hook, terminal: *terminal, window: *windowRoot, answers: map[string]chan string{}, configDir: *configDir,
 		model: *model, effort: *effort, mcp: &mcpClient{config: *mcpConfig}}
@@ -140,6 +149,10 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				id, text, _ = strings.Cut(rest, "\n")
 			}
 			if code, exit := p.turn(by, id, text, agentTurns); exit {
+				if p.window != "" {
+					// As an agent a person ends does: its hooks report the end.
+					p.report(map[string]any{"t": "session-end", "reason": "prompt_input_exit"})
+				}
 				return code
 			}
 		case d := <-agentTurns:
@@ -225,6 +238,9 @@ func (p *program) report(v map[string]any) string {
 		args = append(args, "--window", "--agent", Name, "--root", p.window)
 		wd, _ := os.Getwd()
 		v["session"], v["cwd"], v["transcript"], v["interactive"] = p.session, wd, p.transcriptPath, true
+		if p.configDir != "" {
+			v["config_dir"] = p.configDir
+		}
 		b, _ = json.Marshal(v)
 	}
 	if v["t"] == "ask" {
