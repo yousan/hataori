@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -27,8 +28,10 @@ func (r *Runner) contextBytes() int {
 // earlier returns the thread's inputs and final answers, oldest first, cut
 // to the context cap and marked as earlier context; "" when there are none.
 // They are read newest first, and no more than the cap needs.
-func (r *Runner) earlier(ctx context.Context, thread control.ThreadID) (string, error) {
-	rows, err := r.Store.DB.QueryContext(ctx, `SELECT kind, data FROM events WHERE thread_id = ?
+func (r *Runner) earlier(ctx context.Context, q interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, thread control.ThreadID) (string, error) {
+	rows, err := q.QueryContext(ctx, `SELECT kind, data FROM events WHERE thread_id = ?
 		AND (kind IN ('input', 'answer') OR (kind = 'text' AND json_extract(data, '$.final'))) ORDER BY pos DESC`, int64(thread))
 	if err != nil {
 		return "", fmt.Errorf("runner: %w", err)

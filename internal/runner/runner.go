@@ -78,6 +78,9 @@ type Runner struct {
 	mu   sync.Mutex
 	live map[int64]*live
 
+	startedMu sync.Mutex
+	started   map[int64]bool // the sessions Start started in this process (claim)
+
 	point func(name string) // for tests: called at the named points of a launch
 }
 
@@ -192,6 +195,13 @@ func (r *Runner) confinement(ctx context.Context, id int64) (control.ThreadID, s
 // Start starts the agent of a new session through a session host. The
 // first input is sent once the agent reports that it is ready.
 func (r *Runner) Start(ctx context.Context, l core.Launch) error {
+	// Once per session in this process: replace may start a session that
+	// Recover finds to launch as well, when a follower of Reconnect
+	// replaces one while Recover runs (#508).
+	if !r.claim(l.Session) {
+		r.Log.Info("the session is being started already", "session", l.Session)
+		return nil
+	}
 	ad, ok := r.Adapters[l.Agent]
 	if !ok {
 		return fmt.Errorf("runner: no agent %q", l.Agent)
@@ -1645,33 +1655,51 @@ func (r *Runner) Shut(ctx context.Context, id int64, reason string) error {
 // replace starts a new session in the same workspace for a session whose
 // conversation the agent no longer has, with the input the old one was
 // woken for. It does nothing when the thread already has a newer session.
+// The new session is inserted with its first input and launch 1, in one
+// transaction: a daemon that stops before the launch launches it when it
+// comes back (core.Core.Recover), and the input, whose key was accepted,
+// reaches the agent once.
 func (r *Runner) replace(lv *live) {
 	ctx := context.Background()
 	var (
 		l     core.Launch
 		first firstInput
-		fi    string
-		state string
 	)
 	err := r.Store.Update(ctx, func(tx *store.Tx) error {
 		l = core.Launch{}
-		var thread int64
+		var state, fi string
+		var tid int64
 		if err := tx.QueryRowContext(ctx, `SELECT s.state, s.thread_id, s.agent, s.model, s.effort, s.first_input
 			FROM sessions s WHERE s.id = ?`, lv.id).
-			Scan(&state, &thread, &l.Agent, &l.Model, &l.Effort, &fi); err != nil {
+			Scan(&state, &tid, &l.Agent, &l.Model, &l.Effort, &fi); err != nil {
 			return err
 		}
-		l.Thread = control.ThreadID(thread)
+		l.Thread = control.ThreadID(tid)
 		var newer int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM sessions WHERE thread_id = ? AND id > ?`, thread, lv.id).Scan(&newer); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM sessions WHERE thread_id = ? AND id > ?`, tid, lv.id).Scan(&newer); err != nil {
 			return err
 		}
 		if control.State(state) != control.Failed || newer > 0 {
 			return nil
 		}
+		var old firstInput
+		if fi != "" {
+			json.Unmarshal([]byte(fi), &old)
+		}
+		// What the new session's agent gets before the input: the thread's
+		// earlier conversation, as this transaction sees it.
+		earlier, err := r.earlier(ctx, tx, l.Thread)
+		if err != nil {
+			r.Log.Error("the thread's earlier context", "session", lv.id, "err", err) // the new session starts without it
+		}
+		// The input the old session was woken for, as a new session's first
+		// input: not sent, not written, and in the old session's workspace.
+		first = firstInput{Principal: old.Principal, From: old.From, Key: old.Key, Text: old.Text, Link: old.Link,
+			Before: old.Before, After: old.After, Context: earlier, Dir: lv.spec.Dir}
+		fb, _ := json.Marshal(first)
 		now := time.Now().UnixMilli()
-		res, err := tx.ExecContext(ctx, `INSERT INTO sessions (thread_id, agent, state, model, effort, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`, thread, l.Agent, string(control.Creating), l.Model, l.Effort, now, now)
+		res, err := tx.ExecContext(ctx, `INSERT INTO sessions (thread_id, agent, state, model, effort, first_input, launch, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`, tid, l.Agent, string(control.Creating), l.Model, l.Effort, string(fb), now, now)
 		if err != nil {
 			return err
 		}
@@ -1679,7 +1707,7 @@ func (r *Runner) replace(lv *live) {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE threads SET state = ?, updated_at = ? WHERE id = ?`,
-			string(control.Creating), now, thread); err != nil {
+			string(control.Creating), now, tid); err != nil {
 			return err
 		}
 		data, _ := json.Marshal(map[string]any{"session": lv.id, "new_session": l.Session, "reason": string(agent.CannotResume)})
@@ -1693,14 +1721,9 @@ func (r *Runner) replace(lv *live) {
 	if l.Session == 0 {
 		return
 	}
-	if fi != "" {
-		json.Unmarshal([]byte(fi), &first)
-	}
-	l.Dir, l.Principal, l.From, l.Key, l.Input = lv.spec.Dir, first.Principal, first.From, first.Key,
-		control.Input{Text: first.Text, Before: first.Before, After: first.After}
-	if l.Context, err = r.earlier(ctx, l.Thread); err != nil {
-		r.Log.Error("the thread's earlier context", "session", l.Session, "err", err) // the new session starts without it
-	}
+	r.at("after replace")
+	l.Dir, l.Principal, l.From, l.Key, l.Context = first.Dir, first.Principal, first.From, first.Key, first.Context
+	l.Input = first.Input()
 	if err := r.Start(ctx, l); err != nil {
 		r.Log.Error("starting the new session", "session", l.Session, "err", err)
 		if err := r.Machine.Apply(ctx, l.Session, session.Input{Kind: session.Exit, Reason: "start: " + err.Error()}); err != nil {
@@ -1821,4 +1844,19 @@ func (r *Runner) Interrupt(ctx context.Context, id, named int64) error {
 		r.stop(lv.dir, time.Second, 2*time.Second)
 	}()
 	return nil
+}
+
+// claim reports whether session id was not started in this process before,
+// and marks it started.
+func (r *Runner) claim(id int64) bool {
+	r.startedMu.Lock()
+	defer r.startedMu.Unlock()
+	if r.started == nil {
+		r.started = map[int64]bool{}
+	}
+	if r.started[id] {
+		return false
+	}
+	r.started[id] = true
+	return true
 }
