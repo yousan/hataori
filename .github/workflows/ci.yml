@@ -55,16 +55,20 @@ jobs:
         run: command -v tmux >/dev/null || brew install tmux
       # The runner's Google Chrome can update itself while the suite runs,
       # and a browser test that starts it while its files are replaced can
-      # be killed before it listens. The tests run a read-only copy of it,
-      # which no update changes (HATAORI_TEST_CHROME).
+      # be killed before it listens. The tests run a read-only copy of it
+      # instead (HATAORI_TEST_CHROME), made before any Chrome of the job
+      # runs and checked whole by its signature.
       - name: a copy of Chrome of the tests' own
         run: |
           app="/Applications/Google Chrome.app"
           if [ ! -d "$app" ]; then exit 0; fi
-          copy="$RUNNER_TEMP/chrome/Google Chrome.app"
-          mkdir -p "$(dirname "$copy")"
+          dir="$RUNNER_TEMP/chrome"
+          copy="$dir/Google Chrome.app"
+          mkdir -p "$dir"
           cp -Rc "$app" "$copy"
+          codesign --verify --deep --strict "$copy"
           chmod -R a-w "$copy"
+          chmod a-w "$dir"
           "$copy/Contents/MacOS/Google Chrome" --version
           echo "HATAORI_TEST_CHROME=$copy/Contents/MacOS/Google Chrome" >> "$GITHUB_ENV"
       - run: go vet ./...
@@ -72,6 +76,9 @@ jobs:
         run: CGO_ENABLED=0 go build ./...
       - name: go test
         run: go test ./...
+      - name: let the copy of Chrome be removed
+        if: always()
+        run: chmod -R u+w "$RUNNER_TEMP/chrome" 2>/dev/null || true
 
   # hataori for macOS, where `hataori connect` runs on the person's
   # machine: both architectures, kept as artifacts of the run.
