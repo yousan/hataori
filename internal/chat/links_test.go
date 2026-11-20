@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -22,6 +23,29 @@ func (f *front) secondLink(t *testing.T, id control.ThreadID, thread string) sur
 		t.Fatal(err)
 	}
 	return surface.Conversation{Channel: channel, Thread: thread}
+}
+
+// busy is what the front end has done so far: the events stored, the
+// messages handed over, its reader's cursor, and its outbox's rows by
+// state. It changes while the front end works. Each read waits at most a
+// second for the store, so that a front end stuck holding it still lets
+// the wait fail.
+func (f *front) busy() string {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	var events, cursor, pending, sent int64
+	db := f.fe.Outbox.Store.DB
+	err := db.QueryRowContext(ctx, `SELECT coalesce(max(pos), 0) FROM events`).Scan(&events)
+	if err == nil {
+		err = db.QueryRowContext(ctx, `SELECT coalesce(max(pos), 0) FROM chat_cursors`).Scan(&cursor)
+	}
+	if err == nil {
+		err = db.QueryRowContext(ctx, `SELECT count(CASE WHEN state = 'pending' THEN 1 END), count(CASE WHEN state = 'sent' THEN 1 END) FROM chat_outbox`).Scan(&pending, &sent)
+	}
+	if err != nil {
+		return fmt.Sprintf("the store cannot be read: %v", err)
+	}
+	return fmt.Sprintf("events up to %d, %d handed over, cursor %d, %d rows pending, %d sent", events, len(f.runner.handed()), cursor, pending, sent)
 }
 
 func posts(d *fake.Driver, conv surface.Conversation, text string) int {
@@ -68,13 +92,13 @@ func TestEachLinkIsCaughtUpFromItsCursorAndPostedOnce(t *testing.T) {
 	stop := f.connect(t)
 	f.driver.Inject(first, fake.Webhook(hook), "one")
 	f.driver.Inject(second, fake.Webhook(hook), "uno")
-	waitFor(t, "both live messages", func() bool { return len(f.runner.handed()) == 3 })
+	waitWhileBusy(t, "both live messages", f.busy, func() bool { return len(f.runner.handed()) == 3 })
 	stop() // the daemon goes
 
 	two := f.driver.Inject(first, fake.Webhook(hook), "two")
 	dos := f.driver.Inject(second, fake.Webhook(hook), "dos")
 	f.connect(t) // and comes back
-	waitFor(t, "the messages while down", func() bool { return len(f.runner.handed()) == 5 })
+	waitWhileBusy(t, "the messages while down", f.busy, func() bool { return len(f.runner.handed()) == 5 })
 	f.fe.catchUp(context.Background(), first) // again: nothing new
 	f.fe.catchUp(context.Background(), second)
 	time.Sleep(100 * time.Millisecond)
@@ -97,7 +121,10 @@ func TestEachLinkIsCaughtUpFromItsCursorAndPostedOnce(t *testing.T) {
 
 	stopShow := f.showing(t)
 	f.event(t, id, "text", map[string]any{"text": "the answer", "final": true})
-	waitFor(t, "the answer in both", func() bool {
+	// The reader, new, reads every event from the start before it reaches
+	// the answer, and each makes rows to post: on a slow machine that takes
+	// more than five seconds, but not five seconds with nothing done.
+	waitWhileBusy(t, "the answer in both", f.busy, func() bool {
 		return posts(f.driver, first, "the answer") == 1 && posts(f.driver, second, "the answer") == 1
 	})
 	// Each copy has a key of its own; the first link's is the key it
