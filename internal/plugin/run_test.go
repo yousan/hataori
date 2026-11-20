@@ -558,16 +558,19 @@ while :; do sleep 1; done`)
 func TestPluginOutputIsLogged(t *testing.T) {
 	path, sum := script(t, `echo hello; echo oops >&2; printf '%0300d\n' 0; echo after; exec sleep 600`)
 	f := newRunner(t, Grant{Path: path, SHA256: sum}, func(r *Runner) { r.LineMax = 100 })
-	eventually(t, "the output", 10*time.Second, func() bool { return strings.Contains(f.log.String(), "line=after") })
-	l := f.log.String()
-	for _, w := range []string{"plugin=scan stream=stdout line=hello", "plugin=scan stream=stderr line=oops",
-		"line=" + strings.Repeat("0", 100) + " cut=true"} {
-		if !strings.Contains(l, w) {
-			t.Errorf("the log has no %q:\n%s", w, l)
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("the log:\n%s", f.log.String())
 		}
+	})
+	// Each line is waited for: the two streams are read apart, so a line of
+	// one may be logged after a later line of the other.
+	for _, w := range []string{"plugin=scan stream=stdout line=hello", "plugin=scan stream=stderr line=oops",
+		"plugin=scan stream=stdout line=" + strings.Repeat("0", 100) + " cut=true", "plugin=scan stream=stdout line=after"} {
+		eventually(t, w, 10*time.Second, func() bool { return strings.Contains(f.log.String(), w) })
 	}
-	if strings.Contains(l, strings.Repeat("0", 101)) {
-		t.Error("a line longer than the set size was logged whole")
+	if l := f.log.String(); strings.Contains(l, strings.Repeat("0", 101)) {
+		t.Errorf("a line longer than the set size was logged whole:\n%s", l)
 	}
 }
 
