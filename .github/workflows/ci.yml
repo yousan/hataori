@@ -66,12 +66,21 @@ jobs:
           chmod -R a-w "$copy"
           "$copy/Contents/MacOS/Google Chrome" --version
           echo "HATAORI_TEST_CHROME=$copy/Contents/MacOS/Google Chrome" >> "$GITHUB_ENV"
+          # TEMPORARY (#485): how long a headless start takes, from each.
+          for bin in "$app/Contents/MacOS/Google Chrome" "$copy/Contents/MacOS/Google Chrome"; do
+            for i in 1 2 3 4 5; do
+              d=$(mktemp -d); s=$(python3 -c 'import time; print(time.time())')
+              "$bin" --headless=new --no-sandbox --disable-gpu --no-first-run --use-mock-keychain --password-store=basic --user-data-dir="$d" --dump-dom about:blank >/dev/null 2>&1
+              echo "TIMING $(basename "$(dirname "$(dirname "$(dirname "$bin")")")") in $(dirname "$(dirname "$(dirname "$(dirname "$bin")")")"): $(python3 -c "import time; print(round(time.time()-$s, 2))") s"
+              rm -rf "$d"
+            done
+          done
       - run: go vet ./...
       - name: build without cgo
         run: CGO_ENABLED=0 go build ./...
       - name: go test
         run: |
-          go test ./... || status=$?
+          go test -timeout 20m ./... || status=$?
           echo "TEMPORARY (#485): /Applications: $("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --version), the copy: $("$HATAORI_TEST_CHROME" --version)"
           exit ${status:-0}
 
