@@ -31,7 +31,7 @@ import (
 type sshHost struct {
 	dir  string
 	ssh  string // a wrapper on PATH as "ssh": it records each call, then runs the real ssh
-	log  string // the wrapper's record: a directory per call, whose file "call" holds its arguments, each ended by a NUL
+	log  string // the wrapper's record: each call's arguments, one per line, then "---"
 	port int
 }
 
@@ -116,52 +116,38 @@ func startSSHD(t *testing.T, extra ...string) *sshHost {
 	bin := filepath.Join(d, "bin")
 	os.Mkdir(bin, 0o700)
 	h := &sshHost{dir: d, ssh: filepath.Join(bin, "ssh"), log: filepath.Join(d, "calls"), port: port}
-	os.Mkdir(h.log, 0o700)
-	// Each call is written into a new directory of its own, then renamed
-	// to "call": calls made at the same moment never mix their lines
-	// (#498), no name is used twice, and a call is read only once it is
-	// complete. A record that cannot be written stops the call. Each
-	// argument ends with a NUL, so one with a line feed stays one.
-	wrapper := fmt.Sprintf("#!/bin/sh\nd=$(mktemp -d %s/c.XXXXXXXX) || exit 255\n"+
-		"printf '%%s\\000' \"$@\" > \"$d/args\" && mv \"$d/args\" \"$d/call\" || exit 255\n"+
-		"exec env -u SSH_AUTH_SOCK %s -F %s \"$@\"\n",
-		quoteSh(h.log), quoteSh(realSSH), quoteSh(filepath.Join(d, "ssh_config")))
+	// Each call's record reaches the log in one write. A connect starts
+	// its master and asks it -O check at once, so two calls run together;
+	// printf in a /bin/sh that is bash writes a line at a time, and their
+	// lines would interleave (#478). The record is put together in a file of
+	// its own, and cat appends it.
+	wrapper := fmt.Sprintf("#!/bin/sh\nr=$(mktemp %s) && printf '%%s\\n' \"$@\" '---' > \"$r\" && cat \"$r\" >> %s\nrm -f \"$r\"\nexec env -u SSH_AUTH_SOCK %s -F %s \"$@\"\n",
+		quoteSh(filepath.Join(d, "call.XXXXXX")), quoteSh(h.log), quoteSh(realSSH), quoteSh(filepath.Join(d, "ssh_config")))
 	os.WriteFile(h.ssh, []byte(wrapper), 0o700)
 	eventually(t, "the test's sshd to accept a login", 10*time.Second, func() bool {
 		return exec.Command(h.ssh, "test", "true").Run() == nil
 	})
-	// The check above is not hataori's.
-	old, _ := filepath.Glob(filepath.Join(h.log, "*"))
-	for _, p := range old {
-		os.RemoveAll(p)
-	}
+	os.WriteFile(h.log, nil, 0o600) // the check above is not hataori's
 	return h
 }
 
 func quoteSh(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
-// calls is every ssh call made so far, each its arguments, in no
-// particular order. A call whose record is still being written is waited
-// for, a few seconds at most.
+// calls is every ssh call recorded so far, each its arguments.
 func (h *sshHost) calls(t *testing.T) [][]string {
 	t.Helper()
-	var dirs []string
-	eventually(t, "every ssh call's record to be written", 5*time.Second, func() bool {
-		dirs, _ = filepath.Glob(filepath.Join(h.log, "c.*"))
-		for _, d := range dirs {
-			if _, err := os.Stat(filepath.Join(d, "call")); err != nil {
-				return false
-			}
-		}
-		return true
-	})
+	b, _ := os.ReadFile(h.log)
 	var out [][]string
-	for _, d := range dirs {
-		b, err := os.ReadFile(filepath.Join(d, "call"))
-		if err != nil {
-			t.Fatal(err)
+	var cur []string
+	for _, l := range strings.Split(string(b), "\n") {
+		if l == "---" {
+			out = append(out, cur)
+			cur = nil
+			continue
 		}
-		out = append(out, strings.Split(strings.TrimSuffix(string(b), "\x00"), "\x00"))
+		if l != "" || cur != nil {
+			cur = append(cur, l)
+		}
 	}
 	return out
 }
@@ -658,6 +644,35 @@ func noSockets(t *testing.T, runDir string) {
 	for _, e := range entries {
 		if e.Type()&os.ModeSocket != 0 {
 			t.Fatalf("left in the run directory: %s", e.Name())
+		}
+	}
+}
+
+// The test's ssh records every call whole, also calls made at the same
+// moment, as a master and its first -O check are, which the connect tests
+// count (#478). With the old printf it failed under a /bin/sh that is bash
+// (macOS); a shell that writes printf's output at once would pass anyway.
+func TestSSHWrapperRecordsCallsWhole(t *testing.T) {
+	h := startSSHD(t)
+	args := []string{"-V", "-M", "-S", "/run/x.cm", "-o", "ControlPersist=no", "-o", "ServerAliveInterval=15", "-N", "--", "test"}
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 25 {
+				exec.Command(h.ssh, args...).Run() // -V: ssh prints its version and ends
+			}
+		}()
+	}
+	wg.Wait()
+	calls := h.calls(t)
+	if len(calls) != 200 {
+		t.Fatalf("%d calls recorded, want 200", len(calls))
+	}
+	for _, c := range calls {
+		if !slices.Equal(c, args) {
+			t.Fatalf("a call recorded as %q", c)
 		}
 	}
 }
