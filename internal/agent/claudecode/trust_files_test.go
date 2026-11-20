@@ -84,10 +84,47 @@ func TestTrustDialogThatNamesFiles(t *testing.T) {
 				t.Fatalf("keys %q for a dialog it may not answer", keys)
 			}
 			if len(events) != 1 || events[0].Kind != agent.SessionEnded || events[0].Reason != agent.BlockedAtStart ||
-				!strings.HasSuffix(events[0].Text, "does not trust "+tc.refused+trustHint) || !strings.Contains(trustHint, "trust_files") {
+				!strings.Contains(events[0].Text, "to let "+tc.refused+" through") {
 				t.Fatalf("events %+v; want one SessionEnded, blocked at start, naming %s", events, tc.refused)
 			}
 		})
+	}
+}
+
+// The text of a blocked start, for a person (#589): why hataori stopped,
+// the dialog as the CLI drew it with the files it names, and the next
+// step, naming the scope.
+func TestBlockedStartText(t *testing.T) {
+	_, events := replayTrust(t, "trust_files_refused", agent.Spec{Scope: "C0123"})
+	if len(events) != 1 {
+		t.Fatalf("events %+v", events)
+	}
+	text := events[0].Text
+	for _, want := range []string{
+		"because the dialog names files of the repository: trusting the folder lets the repository's own settings run commands without asking",
+		"hataori stops for any such file, whatever it holds; it has not judged this repository dangerous.",
+		"Claude Code showed:\n> Claude Code'll be able to read, edit, and execute files here.\n> Trusting this folder loads .claude/settings.json.\n",
+		"\n> ❯ No, exit\n> Yes, I trust this folder\n",
+		`What to do next: to let .claude/settings.json through for this scope's threads, list it under "trust_files" of the scope "C0123" in hataori's config, and start again.`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the text has no %q:\n%s", want, text)
+		}
+	}
+	if strings.ContainsAny(text, "\x1b\r") || strings.Contains(text, "Accessing workspace") {
+		t.Errorf("the text holds escape codes or the header:\n%s", text)
+	}
+}
+
+// A narrow terminal wraps the dialog's sentences: the quote keeps them.
+func TestDialogBodyOfAWrappedDialog(t *testing.T) {
+	screen := []string{"Accessing workspace:", "/w", "Quick safety check: ...", "", "Claude Code'll be able to read, edit, and execute", "files here.", "",
+		"Trusting this folder loads", ".claude/settings.json.", "", "Security guide", "", "❯ No, exit", "  Yes, I trust this folder", "",
+		"Enter to confirm · Esc to cancel"}
+	got := strings.Join(dialogBody(screen), "|")
+	want := "Claude Code'll be able to read, edit, and execute|files here.|Trusting this folder loads|.claude/settings.json.|Security guide|❯ No, exit|Yes, I trust this folder|Enter to confirm · Esc to cancel"
+	if got != want {
+		t.Fatalf("dialogBody = %q\nwant %q", got, want)
 	}
 }
 

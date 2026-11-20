@@ -15,8 +15,13 @@ test("a readable detail follows the reason", () => {
 
 test("a screen stays out", () => {
   assert.equal(failureReason({ reason: "blocked at start", detail: "\x1b[2JAccessing workspace:\r\n/w" }), "blocked at start");
-  assert.equal(failureReason({ reason: "blocked at start", detail: "two\nlines" }), "blocked at start");
-  assert.equal(failureReason({ reason: "blocked at start", detail: "x".repeat(1001) }), "blocked at start");
+  assert.equal(failureReason({ reason: "blocked at start", detail: "two\r\nlines" }), "blocked at start");
+  assert.equal(failureReason({ reason: "blocked at start", detail: "x".repeat(2001) }), "blocked at start");
+});
+
+test("a detail of several lines goes below the reason", () => {
+  const d = "hataori did not answer the dialog for you.\nClaude Code showed:\n> Trusting this folder loads .claude/settings.json.\n> ❯ No, exit";
+  assert.equal(failureReason({ reason: "blocked at start", detail: d }), "blocked at start.\n" + d);
 });
 
 test("no reason, no text", () => {

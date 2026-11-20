@@ -514,29 +514,35 @@ func (sf startFailed) row(conv surface.Conversation, first uint64) Row {
 }
 
 // text says why the session could not start: its reason, and the event's
-// detail when that is a line for a person. A detail with control
-// characters or line breaks is terminal output, such as the screen of a
-// start that timed out: the dashboard shows it, not the chat.
+// detail when that is text for a person, after the reason on its line, or
+// below it when it has several lines. A detail with control characters
+// other than line breaks is terminal output, such as the screen of a start
+// that timed out: the dashboard shows it, not the chat.
 func (sf startFailed) text() string {
 	t := couldNotStart + sf.reason
-	if d := ReadableDetail(sf.detail); d != "" {
+	d := ReadableDetail(sf.detail)
+	switch {
+	case strings.Contains(d, "\n"):
+		t += ".\n" + d
+	case d != "":
 		t += ": " + d
 	}
 	return t
 }
 
 // maxDetail bounds the detail a failure message carries.
-const maxDetail = 1000
+const maxDetail = 2000
 
-// ReadableDetail returns a state event's detail when it is one line of text
-// for a person, and "" otherwise.
+// ReadableDetail returns a state event's detail when it is text for a
+// person: lines with no control character, such as an escape code or a
+// carriage return; "" otherwise.
 func ReadableDetail(detail string) string {
 	d := strings.TrimSpace(detail)
 	if d == "" || len(d) > maxDetail {
 		return ""
 	}
 	for _, r := range d {
-		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+		if r != '\n' && (r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0)) {
 			return ""
 		}
 	}

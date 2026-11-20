@@ -652,8 +652,7 @@ func (c *codec) tickScreen(now time.Time) Actions {
 		// Not answered: the start fails now, naming what the dialog loads.
 		s.done = true
 		return c.events(agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart,
-			Text: "the folder-trust dialog says trusting the folder loads " + strings.Join(files, ", ") +
-				"; this scope does not trust " + strings.Join(refused, ", ") + trustHint})
+			Text: blockedText(screen, refused, c.spec.Scope)})
 	}
 	s.quiet = time.Time{} // the next key waits for the screen to change and settle again
 	switch {
@@ -672,9 +671,66 @@ func (c *codec) tickScreen(now time.Time) Actions {
 	}
 }
 
-// trustHint ends the text of a start blocked at the trust dialog: how a
-// person lets the files it names through (docs/configuration.md).
-const trustHint = "; to trust them, add them to the scope's trust_files"
+// blockedText is what a person reads of a start blocked at the trust
+// dialog (#589): why hataori stopped, in plain words; the dialog as the
+// CLI drew it, below its header, one quoted line each; and what to do
+// next: list the files refused under the scope's trust_files
+// (docs/configuration.md).
+func blockedText(screen []string, refused []string, scope string) string {
+	var b strings.Builder
+	b.WriteString("hataori did not answer Claude Code's folder-trust dialog for you, because the dialog names files of the repository: " +
+		"trusting the folder lets the repository's own settings run commands without asking. " +
+		"hataori stops for any such file, whatever it holds; it has not judged this repository dangerous.\n")
+	if lines := dialogBody(screen); len(lines) > 0 {
+		b.WriteString("Claude Code showed:\n")
+		for _, l := range lines {
+			b.WriteString("> " + l + "\n")
+		}
+	}
+	b.WriteString("What to do next: to let " + strings.Join(refused, ", ") + " through for this scope's threads, list ")
+	if len(refused) == 1 {
+		b.WriteString("it")
+	} else {
+		b.WriteString("them")
+	}
+	b.WriteString(" under \"trust_files\" of the scope \"" + scope + "\" in hataori's config, and start again.")
+	return b.String()
+}
+
+// dialogBody is the trust dialog's text from its warning on, as the screen
+// shows it, without the blank lines: "Claude Code'll be able to read,
+// edit, and execute files here.", the lines naming the files, the guide's
+// link and the choices. The warning is found by the start of its first
+// line, so a sentence the terminal wrapped is kept whole; without it, the
+// text from the line naming the files on.
+func dialogBody(screen []string) []string {
+	lines := trimLines(screen)
+	from := -1
+	for i, l := range lines {
+		if strings.HasPrefix(l, "Claude Code") {
+			from = i
+			break
+		}
+	}
+	if from < 0 {
+		for i, l := range lines {
+			if strings.HasPrefix(l, loadsPrefix) {
+				from = i
+				break
+			}
+		}
+	}
+	if from < 0 {
+		return nil
+	}
+	var out []string
+	for _, l := range lines[from:] {
+		if l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
 
 // untrusted returns the files of the trust dialog's list that the codec may
 // not answer yes for: none in a confined session, whose launch ignores the
