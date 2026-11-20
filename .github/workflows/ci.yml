@@ -48,10 +48,6 @@ jobs:
       - run: go vet ./...
       - name: build without cgo
         run: CGO_ENABLED=0 go build ./...
-      - name: TEMPORARY (#515), removed before merge - TestPluginOutputIsLogged 50 times
-        run: |
-          set -o pipefail
-          go test ./internal/plugin/ -run 'TestPluginOutputIsLogged$' -count=50 -v 2>&1 | tee /tmp/count50.log | grep -E '^(--- |ok|FAIL)' | sort | uniq -c
       - name: go test
         run: go test ./...
 
