@@ -56,17 +56,20 @@ jobs:
       - run: go vet ./...
       - name: build without cgo
         run: CGO_ENABLED=0 go build ./...
-      - name: loop (temporary, #485)
-        run: |
-          sysctl kern.maxproc kern.maxprocperuid kern.pid_max 2>/dev/null || true
-          echo "pid before the loop: $(sh -c 'echo $$')"
-          go test -count=40 -run '^TestDashboardTableScopeNames$' ./cmd/hataori || { log show --last 15m --style compact --predicate 'eventMessage CONTAINS[c] "jetsam" OR eventMessage CONTAINS[c] "memorystatus" OR (eventMessage CONTAINS[c] "killed" AND eventMessage CONTAINS[c] "chrome")' 2>&1 | tail -100; exit 1; }
-          echo "pid after the loop: $(sh -c 'echo $$')"
       - name: go test
         run: |
-          echo "pid before go test: $(sh -c 'echo $$') at $(date +%s)"
-          go test ./... || { echo "pid after go test: $(sh -c 'echo $$') at $(date +%s)"; exit 1; }
-          echo "pid after go test: $(sh -c 'echo $$') at $(date +%s)"
+          # Temporary (#485): this user's processes and the memory pressure, sampled while the suite runs.
+          ( while true; do echo "SAMPLE $(date +%s) procs=$(ps -U "$(id -u)" -o pid= | wc -l | tr -d ' ') chrome=$(pgrep -f -i 'chrome' | wc -l | tr -d ' ') free=$(memory_pressure -Q 2>/dev/null | awk '/percentage/{print $NF}')"; sleep 2; done ) > samples.txt 2>&1 &
+          sampler=$!
+          start=$(date +%s)
+          status=0
+          go test ./... || status=$?
+          kill $sampler
+          sort -t= -k2 -n samples.txt | awk '{print}' > /dev/null
+          echo "most processes of this user: $(sed -n 's/.*procs=\([0-9]*\).*/\1/p' samples.txt | sort -n | tail -1) (kern.maxprocperuid $(sysctl -n kern.maxprocperuid)); most Chrome processes: $(sed -n 's/.*chrome=\([0-9]*\).*/\1/p' samples.txt | sort -n | tail -1); least free memory: $(sed -n 's/.*free=\([0-9]*%\).*/\1/p' samples.txt | sort -n | head -1)"
+          grep SAMPLE samples.txt | awk 'NR%15==1'
+          log show --start "$(date -r $start '+%Y-%m-%d %H:%M:%S')" --style compact --predicate 'eventMessage CONTAINS[c] "jetsam" OR eventMessage CONTAINS[c] "memorystatus" OR eventMessage CONTAINS[c] "maxproc" OR (eventMessage CONTAINS[c] "chrom" AND (eventMessage CONTAINS[c] "kill" OR eventMessage CONTAINS[c] "terminat"))' 2>&1 | tail -60
+          exit $status
 
   # hataori for macOS, where `hataori connect` runs on the person's
   # machine: both architectures, kept as artifacts of the run.
