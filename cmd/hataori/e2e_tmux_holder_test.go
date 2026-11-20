@@ -278,11 +278,19 @@ func TestTmuxHolderEnds(t *testing.T) {
 	// The agent exits by itself with status 3: recorded from the dead pane.
 	th2, _, sid2 := startedHeld(t, r, 1, "reply two", "two")
 	dir2 := runner.StateDir(r.root, sid2)
+	w2 := heldWindow(t, dir2)
 	r.driver.Inject(th2, fakesurface.Person(e2eOwner), "exit")
-	eventually(t, "the exit recorded", 15*time.Second, func() bool {
+	for deadline := time.Now().Add(15 * time.Second); ; time.Sleep(50 * time.Millisecond) {
 		b, err := os.ReadFile(filepath.Join(dir2, tmux.StatusFile))
-		return err == nil && strings.Contains(string(b), `"code":3`)
-	})
+		if err == nil && strings.Contains(string(b), `"code":3`) {
+			break
+		}
+		if time.Now().After(deadline) {
+			panes, _ := tmuxOn(server, "list-panes", "-a", "-F", "#{pane_id} #{pane_dead} #{pane_dead_status} #{pane_dead_signal} #{remain-on-exit} #{session_name}").CombinedOutput()
+			_, held := os.Stat(filepath.Join(dir2, runner.HeldFile))
+			t.Fatalf("the exit not recorded: %s %q %v; window %s, held.json %v; panes:\n%s", tmux.StatusFile, b, err, w2.Ref, held, panes)
+		}
+	}
 
 	// The server killed: asleep, interrupted; a new server's pane with the
 	// same id is not the old window.
@@ -304,6 +312,13 @@ func TestTmuxHolderEnds(t *testing.T) {
 			AND json_extract(CAST(data AS TEXT), '$.to') = 'asleep' AND json_extract(CAST(data AS TEXT), '$.reason') = 'interrupted'`, int64(id3)).Scan(&n)
 		return n == 1
 	})
+	// The window let go of on the old server's end, nothing on the new one
+	// was touched: its pane of the same id is another's.
+	if out, err := tmuxOn(server, "list-panes", "-a", "-F", "#{pane_id}").Output(); err != nil || strings.TrimSpace(string(out)) != w3pane(t, w3) {
+		t.Fatalf("the new server's pane after the old window was let go: %q %v", out, err)
+	}
+	// The killed server's agent did not outlive it.
+	eventually(t, "the agent of the killed server gone", 10*time.Second, func() bool { return errorsIsESRCH(syscall.Kill(-w3.Process, 0)) })
 }
 
 func errorsIsESRCH(err error) bool { return err == syscall.ESRCH }

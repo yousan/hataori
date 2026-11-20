@@ -24,7 +24,7 @@ func (r *Runner) Terminal(ctx context.Context, id int64, run string, after uint6
 	if err != nil {
 		return nil, fmt.Errorf("runner: session %d: %w", id, err)
 	}
-	if ok && !spec.Terminal {
+	if ok && !spec.Terminal && !spec.Relay {
 		return nil, fmt.Errorf("runner: session %d runs on pipes and has no terminal: %w", id, core.ErrNotFound)
 	}
 	return r.hold().Screen(ctx, r.window(dir), run, after)
@@ -72,7 +72,8 @@ func (r *Runner) OnPipes(id int64) bool {
 		return false // a window of tmux's
 	}
 	spec, ok, err := host.ReadSpec(StateDir(r.Root, id))
-	return err == nil && ok && !spec.Terminal
+	// A relay's spec is of a terminal another holder held.
+	return err == nil && ok && !spec.Terminal && !spec.Relay
 }
 
 // AttachSocket returns the socket of session id's host once it answers,
@@ -88,7 +89,7 @@ func (r *Runner) AttachSocket(ctx context.Context, id int64) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("runner: session %d: %w", id, err)
 		}
-		if ok && !spec.Terminal {
+		if ok && !spec.Terminal && !spec.Relay {
 			return "", fmt.Errorf("runner: session %d runs on pipes: %w", id, core.ErrNoTerminal)
 		}
 		if ok && r.alive(dir).State != holder.Exited {

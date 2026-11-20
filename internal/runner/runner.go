@@ -43,6 +43,12 @@ import (
 
 // Runner runs the sessions of one instance. It implements core.Runner.
 type Runner struct {
+	// heldMu, by state directory, serialises the start, the stop and the
+	// letting go of a held window (startHeld, endHeld); heldSeen is the
+	// last time a held window was seen running, so that tmux is not asked
+	// at every poll.
+	heldMu, heldSeen sync.Map
+
 	Store    *store.Store
 	Machine  *session.Machine
 	Adapters map[string]agent.Adapter // by registered name
@@ -333,12 +339,20 @@ func (r *Runner) window(dir string) holder.Window { return r.own().Window(dir) }
 // alive is what the holder says of the session whose state directory is dir.
 func (r *Runner) alive(dir string) holder.Liveness {
 	if w, ok := heldOf(dir); ok {
+		if s, ok := r.heldSeen.Load(dir); ok && s.(seen).ref == w.Ref && time.Since(s.(seen).at) < heldPoll {
+			return holder.Liveness{State: holder.Running}
+		}
 		l, _ := r.tmuxHolder().Alive(context.Background(), w)
 		if l.State == holder.Unknown {
 			// tmux cannot tell, as when its socket file was removed under
 			// a server that runs: the agent may run, and is never taken
 			// for ended or for not there.
 			l.State = holder.Running
+		}
+		if l.State == holder.Running {
+			r.heldSeen.Store(dir, seen{ref: w.Ref, at: time.Now()})
+		} else {
+			r.heldSeen.Delete(dir)
 		}
 		return l
 	}
@@ -351,11 +365,18 @@ func (r *Runner) alive(dir string) holder.Liveness {
 func (r *Runner) stop(dir string, interrupt, terminate time.Duration) (holder.StopResult, error) {
 	if w, ok := heldOf(dir); ok {
 		ctx := context.Background()
+		unlock := r.heldLock(dir)
+		if now, ok := heldOf(dir); !ok || now.Ref != w.Ref {
+			unlock()
+			return r.stop(dir, interrupt, terminate) // let go meanwhile, or another started
+		}
+		defer unlock()
 		res, err := r.tmuxHolder().Stop(ctx, w, interrupt, terminate)
+		r.heldSeen.Delete(dir)
 		if err != nil {
 			return res, err
 		}
-		r.endHeld(ctx, dir, w)
+		r.endHeldLocked(ctx, dir, w)
 		return res, nil
 	}
 	return r.hold().Stop(context.Background(), r.window(dir), interrupt, terminate)

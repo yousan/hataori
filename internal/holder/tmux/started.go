@@ -62,16 +62,16 @@ func (h *Holder) Start(ctx context.Context, stateDir string, spec holder.Spec) (
 	if err := writePrivate(filepath.Join(stateDir, ExecFile), b); err != nil {
 		return holder.Window{}, err
 	}
+	// A session of this name is one an earlier run left, as when a daemon
+	// died between making it and recording it: its agent is ended, and it
+	// goes, before anything of this run is written.
+	h.clearLeftover(ctx, stateDir)
 	os.Remove(filepath.Join(stateDir, StatusFile)) // an earlier run's
 	// The log of this run starts empty, at position 0, before the pipe
 	// writes to it: a reader never takes an earlier run's for this one's.
 	if err := host.ResetPipe(stateDir); err != nil {
 		return holder.Window{}, err
 	}
-	// A session of this name is one an earlier run left, as when a daemon
-	// died between making it and recording it: its agent is ended, and it
-	// goes.
-	h.clearLeftover(ctx, h.Prefix+filepath.Base(stateDir))
 	cols, rows := spec.Cols, spec.Rows
 	if cols == 0 {
 		cols = 80
@@ -90,7 +90,7 @@ func (h *Holder) Start(ctx context.Context, stateDir string, spec holder.Spec) (
 		server, _ = strconv.Atoi(f[1])
 	}
 	if len(f) != 3 || !paneID.MatchString(f[0]) || server <= 0 {
-		h.clearLeftover(ctx, h.Prefix+filepath.Base(stateDir))
+		h.clearLeftover(ctx, stateDir)
 		return holder.Window{}, fmt.Errorf("tmux: new-session printed %q", out)
 	}
 	r := ref{Socket: f[2], Server: server, Pane: f[0], Dir: stateDir}
@@ -212,19 +212,34 @@ func (h *Holder) Record(ctx context.Context, w holder.Window) error {
 	if err != nil || !w.Owned {
 		return holder.ErrNotOwned
 	}
-	if p, err := h.find(ctx, r); err == nil && p.dead {
+	p, err := h.find(ctx, r)
+	if errors.Is(err, errGone) {
+		return nil // nothing of it to read or remove: on another server, the same id is another pane
+	}
+	if err != nil {
+		return err
+	}
+	if p.dead {
 		if err := record(r, statusOf(p)); err != nil {
 			return err
 		}
 	}
-	return h.removeWindow(ctx, r)
+	return h.removeWindow(ctx, r, p)
 }
 
-// removeWindow kills the window's session, which is hataori's own, with
-// any pane or window added to it.
-func (h *Holder) removeWindow(ctx context.Context, r ref) error {
-	_, err := h.tmux(context.WithoutCancel(ctx), r, nil, "kill-session", "-t", r.Pane)
-	if err != nil && (noServer(err) || errors.Is(err, errGone) || strings.Contains(err.Error(), "can't find")) {
+// removeWindow removes the window's pane p, which find just found on the
+// window's own server: with its whole tmux session when that is still
+// hataori's, by its name, else only the pane, as when a person moved it
+// into a session of theirs.
+func (h *Holder) removeWindow(ctx context.Context, r ref, p pane) error {
+	ctx = context.WithoutCancel(ctx)
+	var err error
+	if name := h.Prefix + filepath.Base(r.Dir); h.Prefix != "" && r.Dir != "" && p.session == name {
+		_, err = h.tmux(ctx, r, nil, "kill-session", "-t", "="+name)
+	} else {
+		_, err = h.tmux(ctx, r, nil, "kill-pane", "-t", r.Pane)
+	}
+	if err != nil && (noServer(err) || strings.Contains(err.Error(), "can't find")) {
 		return nil
 	}
 	return err
@@ -296,7 +311,14 @@ func (h *Holder) startedStop(ctx context.Context, r ref, interrupt, terminate ti
 	if err := record(r, st); err != nil {
 		return res, err
 	}
-	return res, h.removeWindow(ctx, r)
+	q, err := h.find(ctx, r)
+	if errors.Is(err, errGone) {
+		return res, nil
+	}
+	if err != nil {
+		return res, err
+	}
+	return res, h.removeWindow(ctx, r, q)
 }
 
 func groupGone(pgid int) bool { return errors.Is(syscall.Kill(-pgid, 0), syscall.ESRCH) }
@@ -369,21 +391,37 @@ func signalName(s string) string {
 	return s
 }
 
-// clearLeftover ends the agent of a session of hataori's own name that an
-// earlier run left, and removes the session. A session of that name is
-// only ever hataori's.
-func (h *Holder) clearLeftover(ctx context.Context, name string) {
-	out, err := h.serverCmd(ctx, "list-panes", "-s", "-t", "="+name, "-F", "#{pane_pid}")
+// clearLeftover ends the agent of the session of stateDir's name that an
+// earlier run left, and removes it: only its panes hataori started for
+// that state directory, and the session only when nothing else is in it.
+func (h *Holder) clearLeftover(ctx context.Context, stateDir string) {
+	name := h.Prefix + filepath.Base(stateDir)
+	out, err := h.serverCmd(ctx, "list-panes", "-s", "-t", "="+name, "-F", "#{pane_id} #{pane_pid} #{pane_dead} #{pane_start_command}")
 	if err != nil {
 		return // none
 	}
-	for _, f := range strings.Fields(string(out)) {
-		if pid, err := strconv.Atoi(f); err == nil && pid > 1 {
+	ours := " exec " + quote(stateDir)
+	mine, theirs := []string{}, 0
+	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		f := strings.SplitN(l, " ", 4)
+		if len(f) != 4 || !strings.Contains(f[3], ours) {
+			theirs++
+			continue
+		}
+		mine = append(mine, f[0])
+		if pid, err := strconv.Atoi(f[1]); err == nil && pid > 1 && f[2] != "1" {
 			syscall.Kill(-pid, syscall.SIGKILL)
 			waitGone(pid, killWait)
 		}
 	}
-	h.serverCmd(context.WithoutCancel(ctx), "kill-session", "-t", "="+name)
+	ctx = context.WithoutCancel(ctx)
+	if theirs == 0 {
+		h.serverCmd(ctx, "kill-session", "-t", "="+name)
+		return
+	}
+	for _, id := range mine {
+		h.serverCmd(ctx, "kill-pane", "-t", id)
+	}
 }
 
 // Attached reports whether a tmux client shows the window's session now, as

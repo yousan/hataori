@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/yousan/hataori/internal/holder"
@@ -45,6 +46,7 @@ func heldOf(dir string) (holder.Window, bool) {
 // the spec. A daemon that died during this start had begun it (again): a
 // window it made that still runs is followed, not made again.
 func (r *Runner) startHeld(ctx context.Context, dir string, hs holder.Spec) (holder.Window, error) {
+	defer r.heldLock(dir)()
 	if w, ok := heldOf(dir); ok {
 		if hs.Again != nil && r.alive(dir).State == holder.Running {
 			return w, nil
@@ -54,10 +56,15 @@ func (r *Runner) startHeld(ctx context.Context, dir string, hs holder.Spec) (hol
 				return holder.Window{}, fmt.Errorf("runner: a window of an earlier run still runs: %w", err)
 			}
 		}
-		r.endHeld(ctx, dir, w) // a window of an earlier run
+		r.endHeldLocked(ctx, dir, w) // a window of an earlier run
 		if _, still := heldOf(dir); still {
 			return holder.Window{}, fmt.Errorf("runner: the window of an earlier run could not be let go")
 		}
+	}
+	// How an earlier host or relay ended is not this relay's: with it
+	// there, the start would not wait for the relay to listen.
+	if err := os.Remove(filepath.Join(dir, host.StatusFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return holder.Window{}, err
 	}
 	if _, err := host.Start(r.Host, dir, host.Spec{Relay: true}); err != nil {
 		return holder.Window{}, err
@@ -84,6 +91,13 @@ func (r *Runner) startHeld(ctx context.Context, dir string, hs holder.Spec) (hol
 // made; and when the window cannot be removed, HeldFile stays, so that the
 // next start or restart tries again.
 func (r *Runner) endHeld(ctx context.Context, dir string, w holder.Window) {
+	defer r.heldLock(dir)()
+	r.endHeldLocked(ctx, dir, w)
+}
+
+// endHeldLocked is endHeld with dir's heldLock held.
+func (r *Runner) endHeldLocked(ctx context.Context, dir string, w holder.Window) {
+	r.heldSeen.Delete(dir)
 	if now, ok := heldOf(dir); !ok || now.Ref != w.Ref {
 		return
 	}
@@ -100,6 +114,22 @@ func (r *Runner) endHeld(ctx context.Context, dir string, w holder.Window) {
 	if err := os.Remove(filepath.Join(dir, HeldFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		r.Log.Error("removing a held window's note", "dir", dir, "err", err)
 	}
+}
+
+// heldLock takes the lock of dir's held window and returns its unlock.
+func (r *Runner) heldLock(dir string) func() {
+	m, _ := r.heldMu.LoadOrStore(dir, new(sync.Mutex))
+	m.(*sync.Mutex).Lock()
+	return m.(*sync.Mutex).Unlock
+}
+
+// heldPoll is how long a held window seen running is taken to run still.
+const heldPoll = time.Second
+
+// seen is when a held window was last seen running.
+type seen struct {
+	ref string
+	at  time.Time
 }
 
 // heldTail is the end of a held window's raw log, for a person.
