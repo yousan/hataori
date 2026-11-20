@@ -1,0 +1,278 @@
+#!/usr/bin/env python3
+"""marker: an example hataori plugin, in Python 3 with its standard library only.
+
+It shows what a plugin does (docs/plugins.md):
+
+- connects to the control socket with the token hataori gave it, and states
+  the protocol version it speaks;
+- calls Threads, and logs how many threads it may see;
+- reads events from the position it keeps in its state directory, so that a
+  restart misses none, and logs each kind; with "record" set it also keeps
+  each event's position and kind in events.jsonl, written before the
+  position, and starts after the later of the two, so that it handles each
+  event exactly once across restarts;
+- answers the hook requests: at message_sending it rewrites a post that holds
+  one marker and cancels a post that holds another, and at before_agent_run it
+  stops an input that holds a third; every other text goes on as it is;
+- answers not_supported to any request it does not know.
+
+The markers come from its settings, the config entry's "settings", with the
+defaults below. What it writes to standard output goes to the daemon's log.
+"""
+
+import json
+import os
+import socket
+import sys
+import threading
+import time
+
+PROTOCOL = "3.19"  # the version it speaks: hook requests (3.16) and the outbox point (3.19)
+
+DEFAULTS = {
+    "rewrite": "REWRITE-ME",  # message_sending: a post that holds it is posted with it replaced
+    "with": "[rewritten]",  # by this
+    "cancel": "CANCEL-ME",  # message_sending: a post that holds it is cancelled
+    "stop": "STOP-ME",  # before_agent_run: an input that holds it is stopped
+    "slow": "",  # when set, a hook call whose text holds it waits slow_seconds first
+    "slow_seconds": 0,
+    "record": False,  # when set, keeps every line hataori sent it in received.jsonl, and the events it handled in events.jsonl
+}
+# A marker set to "" is off: "" is in every text.
+
+
+
+def log(*parts):
+    print("marker:", *parts, flush=True)
+
+
+class Connection:
+    """One connection to the control socket: one JSON object per line."""
+
+    def __init__(self, path, token):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.connect(path)
+        self.reader = self.sock.makefile("r", encoding="utf-8", newline="\n")
+        self.wlock = threading.Lock()
+        self.send({"version": PROTOCOL, "token": token})
+        hello = self.read()
+        if hello is None:
+            raise ConnectionError("the daemon closed the connection before its hello")
+        if hello.get("error"):
+            raise ConnectionError("the daemon refused the connection: " + hello["error"])
+        if hello.get("version", "").split(".")[0] != PROTOCOL.split(".")[0]:
+            raise ConnectionError("the daemon speaks " + hello.get("version", "?") + ", this plugin " + PROTOCOL)
+        self.daemon = hello["version"]
+
+    def send(self, message):
+        line = json.dumps(message, separators=(",", ":")) + "\n"
+        with self.wlock:
+            self.sock.sendall(line.encode("utf-8"))
+
+    def read(self):
+        """The next message, or None when the connection closed."""
+        line = self.reader.readline()
+        if not line:
+            return None
+        return json.loads(line)
+
+
+class Plugin:
+    def __init__(self):
+        self.socket = os.environ["HATAORI_SOCKET"]
+        self.token = os.environ["HATAORI_TOKEN"]
+        self.state = os.environ["HATAORI_PLUGIN_STATE"]
+        self.settings = dict(DEFAULTS)
+        with open(os.environ["HATAORI_PLUGIN_SETTINGS"], encoding="utf-8") as f:
+            self.settings.update(json.load(f))
+        self.next_id = 0
+        self.stopping = False
+        self.closed = False
+        self.waiting = {}  # our requests' ids: [event, response]
+        self.lock = threading.Lock()
+        self.done = threading.Event()
+
+    # The connection for requests, both ways.
+
+    def call(self, op, args):
+        """Sends op on the request connection and waits for its answer."""
+        with self.lock:
+            self.next_id += 1
+            n = self.next_id
+            if self.closed:
+                raise ConnectionError(op + ": the connection closed")
+            slot = [threading.Event(), None]
+            self.waiting[n] = slot
+        self.conn.send({"id": n, "op": op, "args": args})
+        if not slot[0].wait(30):
+            raise TimeoutError(op + " got no answer")
+        response = slot[1]
+        if response.get("error"):
+            raise RuntimeError(op + ": " + response["error"]["code"] + ": " + response["error"]["message"])
+        return response.get("result")
+
+    def serve(self):
+        """Reads the request connection: the daemon's requests, and the answers to ours."""
+        while True:
+            message = self.conn.read()
+            if message is None:
+                log("the request connection closed")
+                with self.lock:
+                    # The calls waiting for an answer get none: they fail now.
+                    self.closed = True
+                    for slot in self.waiting.values():
+                        slot[1] = {"error": {"code": "error", "message": "the connection closed"}}
+                        slot[0].set()
+                    self.waiting.clear()
+                self.done.set()
+                return
+            if self.settings["record"]:
+                self.record(message)
+            if message.get("op"):
+                # Each in a thread of its own: a slow hook holds up no other request.
+                threading.Thread(target=self.answer, args=(message,), daemon=True).start()
+                continue
+            with self.lock:
+                slot = self.waiting.pop(message.get("id"), None)
+            if slot is not None:
+                slot[1] = message
+                slot[0].set()
+
+    def answer(self, request):
+        op, args = request["op"], request.get("args") or {}
+        response = {"id": request["id"]}
+        try:
+            result = self.hook(args) if op == "hook" else None
+        except Exception as e:
+            # Answered, so the daemon applies the point's policy now, not
+            # after the handler's timeout.
+            log("hook failed:", type(e).__name__)
+            self.conn.send({"id": request["id"], "error": {"code": "error", "message": "marker: " + type(e).__name__}})
+            return
+        if op == "hook":
+            response["result"] = result
+        elif op == "plugin_started":
+            log("started with the hooks", ",".join(h["point"] for h in args.get("hooks", [])))
+        elif op == "plugin_stopping":
+            log("stopping")
+        else:
+            response["error"] = {"code": "not_supported", "message": "marker: operation " + json.dumps(op) + ": not supported"}
+        self.conn.send(response)
+        if op == "plugin_stopping":
+            self.stopping = True
+            self.done.set()  # once answered: hataori stops it next
+
+    def hook(self, args):
+        """The answer to one hook call. Without the conversation grant args has no text, and every input and post goes on."""
+        point, text = args.get("point"), args.get("text", "")
+        s = self.settings
+        if s["slow"] and s["slow"] in text:
+            time.sleep(float(s["slow_seconds"]))
+        if point == "before_agent_run" and s["stop"] and s["stop"] in text:
+            log("stopped an input at", point)
+            return {"action": "stop", "reason": "the input holds " + s["stop"]}
+        if point == "message_sending" and s["cancel"] and s["cancel"] in text:
+            log("cancelled a post")
+            return {"action": "stop", "reason": "the post holds " + s["cancel"]}
+        if point == "message_sending" and s["rewrite"] and s["rewrite"] in text:
+            log("rewrote a post")
+            return {"action": "continue", "text": text.replace(s["rewrite"], s["with"])}
+        return {"action": "continue"}
+
+    def record(self, message):
+        with self.lock, open(os.path.join(self.state, "received.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps(message) + "\n")
+
+    # Events, on a connection of their own, from the position kept in the state directory.
+
+    def position(self):
+        """The position to read after: the one kept, or the last event recorded after it."""
+        pos = 0
+        try:
+            with open(os.path.join(self.state, "position"), encoding="utf-8") as f:
+                pos = int(f.read().strip() or 0)
+        except FileNotFoundError:
+            pass
+        try:
+            with open(os.path.join(self.state, "events.jsonl"), encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        pos = max(pos, json.loads(line)["pos"])
+        except FileNotFoundError:
+            pass
+        return pos
+
+    def handle(self, event):
+        """What the plugin does with an event: logs it, and with "record" keeps it in events.jsonl."""
+        log("event", event["kind"], event["pos"])
+        if self.settings["record"]:
+            with open(os.path.join(self.state, "events.jsonl"), "a", encoding="utf-8") as f:
+                f.write(json.dumps({"pos": event["pos"], "kind": event["kind"]}) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+
+    def keep(self, pos):
+        """Keeps pos as the position to read after. It comes after the event was handled, so that a restart
+        misses none; one that died in between handles the event again, unless, as with "record", what it did
+        says how far it got."""
+        path = os.path.join(self.state, "position")
+        with open(path + ".new", "w", encoding="utf-8") as f:
+            f.write(str(pos))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(path + ".new", path)
+
+    def follow(self):
+        after = self.position()
+        events = Connection(self.socket, self.token)
+        events.send({"id": 1, "op": "Events", "args": {"filter": {}, "after": after}})
+        log("reading events after", after)
+        while True:
+            message = events.read()
+            if message is None:
+                log("the event stream closed")
+                self.done.set()
+                return
+            if message.get("op"):
+                continue  # a request sent before the daemon read ours: skipped, unanswered (docs/protocol.md)
+            if message.get("error"):
+                log("events refused:", message["error"]["code"])
+                self.done.set()
+                return
+            event = message.get("event")
+            if event is None:
+                continue  # the stream's first answer
+            if self.settings["record"]:
+                self.record(message)
+            if event["kind"] == "caught_up":
+                log("caught up")
+                continue
+            self.handle(event)
+            self.keep(event["pos"])
+
+    def thread(self, target):
+        """Runs target in a thread whose failure ends the plugin, which hataori then starts again."""
+
+        def run():
+            try:
+                target()
+            except Exception as e:
+                log(target.__name__, "failed:", type(e).__name__, e)
+                self.done.set()
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def run(self):
+        self.conn = Connection(self.socket, self.token)
+        log("connected; the daemon speaks", self.conn.daemon)
+        self.thread(self.serve)
+        threads = self.call("Threads", {"filter": {}})
+        log("threads", len(threads or []))
+        self.thread(self.follow)
+        self.done.wait()
+        # A broken connection or a failure ends the plugin; hataori starts it again.
+        return 0 if self.stopping else 1
+
+
+if __name__ == "__main__":
+    sys.exit(Plugin().run())

@@ -37,6 +37,10 @@ type fakeRunner struct {
 	// next Deliver returns, once.
 	beforeInterrupt func()
 	deliverErr      error
+	// interruptErr, when set, is what the next Interrupt returns, once,
+	// after beforeInterrupt: an error other than a refusal, as when the
+	// session is not reconnected yet.
+	interruptErr error
 }
 
 func (r *fakeRunner) record(s string) error {
@@ -71,6 +75,13 @@ func (r *fakeRunner) Interrupt(_ context.Context, sid, turn int64) error {
 	r.mu.Unlock()
 	if before != nil {
 		before()
+	}
+	r.mu.Lock()
+	ierr := r.interruptErr
+	r.interruptErr = nil
+	r.mu.Unlock()
+	if ierr != nil {
+		return ierr
 	}
 	if turn != 0 && r.machine != nil {
 		var open int64
