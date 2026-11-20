@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -198,5 +199,198 @@ func TestApprovalOfATurnThatEndsBeforeTheInterruptAndADeliveryThatFails(t *testi
 	}
 	if calls := f.runner.Calls(); strings.Contains(calls, "interrupt") {
 		t.Fatalf("runner calls: %s", calls)
+	}
+}
+
+// approvalFixture is a supervisor's approval asked for the running turn of
+// a thread: the fixture, the target, its session, the asked turn and the
+// request.
+func approvalFixture(t *testing.T) (*fixture, control.ThreadID, int64, int64, control.RequestID) {
+	t.Helper()
+	f := newFixture(t, fakeOwner{key: "chat"})
+	f.core.People = people.New([]people.Person{{Name: "sv", IDs: []string{"supervisor:s"}}}, "owner", map[string][]string{"s": {"sv"}})
+	askerThread, _ := f.running(t, "asker")
+	target, sid := f.running(t, "target")
+	asker := f.core.As(control.Caller{From: "supervisor:s", Scopes: []string{"s"}, May: control.OpAsk, AsksIn: askerThread, Mark: "supervisor"})
+	req, err := asker.AskInterrupt(context.Background(), target, "key", "urgent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var turn int64
+	if err := f.core.Store.DB.QueryRow(`SELECT turn_id FROM approvals WHERE handle = ?`, req).Scan(&turn); err != nil {
+		t.Fatal(err)
+	}
+	return f, target, sid, turn, req
+}
+
+// failOutcomeOnce makes the next write of an approval's outcome fail, as a
+// database error would: its event is refused, and its transaction with it.
+func failOutcomeOnce(f *fixture) {
+	check := f.core.Store.CheckEvent
+	var once sync.Once
+	f.core.Store.CheckEvent = func(e control.Event) error {
+		if e.Kind == "approval_answered" {
+			var err error
+			once.Do(func() { err = errors.New("the disk is full") })
+			if err != nil {
+				return err
+			}
+		}
+		if check != nil {
+			return check(e)
+		}
+		return nil
+	}
+}
+
+func approvalState(t *testing.T, f *fixture, req control.RequestID) string {
+	t.Helper()
+	var state string
+	if err := f.core.Store.DB.QueryRow(`SELECT state FROM approvals WHERE handle = ?`, req).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	return state
+}
+
+// #523: the first answer's interrupt fails (the session is not reconnected
+// yet), so the approval stays open with its reason taken. Answered again,
+// it interrupts the asked turn, which still runs, naming it to the runner,
+// and does not give the reason again.
+func TestApprovalAnsweredAgainAfterItsInterruptFailed(t *testing.T) {
+	ctx := context.Background()
+	f, _, _, turn, req := approvalFixture(t)
+	f.runner.mu.Lock()
+	f.runner.interruptErr = errors.New("the session is not running")
+	f.runner.mu.Unlock()
+	if err := f.owner.Answer(ctx, req, control.Answer{Allow: true}); err == nil {
+		t.Fatal("the first answer: no error")
+	}
+	if s := approvalState(t, f, req); s != "open" {
+		t.Fatalf("after the first answer: %q", s)
+	}
+	before := f.runner.Calls()
+	if err := f.owner.Answer(ctx, req, control.Answer{Allow: true}); err != nil {
+		t.Fatal(err)
+	}
+	if calls, want := strings.TrimPrefix(f.runner.Calls(), before+"; "), fmt.Sprintf("interrupt turn %d", turn); calls != want {
+		t.Fatalf("runner calls of the second answer: %q, want %q", calls, want)
+	}
+	if s := approvalState(t, f, req); s != "interrupted" {
+		t.Fatalf("after the second answer: %q", s)
+	}
+	if n := strings.Count(f.runner.Calls(), "deliver supervisor\nurgent"); n > 1 {
+		t.Fatalf("the reason was given %d times", n)
+	}
+}
+
+// #523: as above, but the asked turn ended before the approval is answered
+// again: nothing is interrupted, and the outcome is ended.
+func TestApprovalAnsweredAgainAfterItsInterruptFailedAndTheTurnEnded(t *testing.T) {
+	ctx := context.Background()
+	f, _, sid, _, req := approvalFixture(t)
+	f.runner.mu.Lock()
+	f.runner.interruptErr = errors.New("the session is not running")
+	f.runner.mu.Unlock()
+	if err := f.owner.Answer(ctx, req, control.Answer{Allow: true}); err == nil {
+		t.Fatal("the first answer: no error")
+	}
+	f.agentEvent(t, sid, 2, agent.Event{Kind: agent.TurnEnded, Status: agent.Completed})
+	before := f.runner.Calls()
+	if err := f.owner.Answer(ctx, req, control.Answer{Allow: true}); err != nil {
+		t.Fatal(err)
+	}
+	if calls := strings.TrimPrefix(f.runner.Calls(), before); strings.Contains(calls, "interrupt") {
+		t.Fatalf("runner calls of the second answer: %q", calls)
+	}
+	if s := approvalState(t, f, req); s != "ended" {
+		t.Fatalf("after the second answer: %q", s)
+	}
+}
+
+// #523: the interrupt is refused (the asked turn ended and the next began),
+// but writing the outcome fails. Answered again, the approval records
+// ended, not interrupted: the reason's key, taken by the first answer, does
+// not decide the outcome.
+func TestApprovalAnsweredAgainAfterItsOutcomeWasNotWritten(t *testing.T) {
+	ctx := context.Background()
+	f, target, sid, _, req := approvalFixture(t)
+	f.runner.beforeInterrupt = func() {
+		f.agentEvent(t, sid, 2, agent.Event{Kind: agent.TurnEnded, Status: agent.Completed})
+		if err := f.owner.Send(ctx, target, "next", control.Input{Text: "the next turn"}, control.Deliver); err != nil {
+			t.Errorf("the next turn: %v", err)
+		}
+	}
+	failOutcomeOnce(f)
+	if err := f.owner.Answer(ctx, req, control.Answer{Allow: true}); err == nil {
+		t.Fatal("the first answer: no error")
+	}
+	if s := approvalState(t, f, req); s != "open" {
+		t.Fatalf("after the first answer: %q", s)
+	}
+	if err := f.owner.Answer(ctx, req, control.Answer{Allow: true}); err != nil {
+		t.Fatal(err)
+	}
+	if s := approvalState(t, f, req); s != "ended" {
+		t.Fatalf("after the second answer: %q", s)
+	}
+	if calls := f.runner.Calls(); strings.Contains(calls, "interrupt") || strings.Count(calls, "deliver supervisor\nurgent") != 1 {
+		t.Fatalf("runner calls: %q", calls)
+	}
+}
+
+// #523: the interrupt was sent, but writing the outcome failed. Answered
+// again while the asked turn still runs, the approval interrupts it again,
+// naming it, and records interrupted; the reason is given once.
+func TestApprovalAnsweredAgainAfterItsSentInterruptWasNotRecorded(t *testing.T) {
+	ctx := context.Background()
+	f, _, _, turn, req := approvalFixture(t)
+	failOutcomeOnce(f)
+	if err := f.owner.Answer(ctx, req, control.Answer{Allow: true}); err == nil {
+		t.Fatal("the first answer: no error")
+	}
+	if s := approvalState(t, f, req); s != "open" {
+		t.Fatalf("after the first answer: %q", s)
+	}
+	if err := f.owner.Answer(ctx, req, control.Answer{Allow: true}); err != nil {
+		t.Fatal(err)
+	}
+	if s := approvalState(t, f, req); s != "interrupted" {
+		t.Fatalf("after the second answer: %q", s)
+	}
+	calls := f.runner.Calls()
+	if n := strings.Count(calls, fmt.Sprintf("interrupt turn %d", turn)); n != 2 || strings.Count(calls, "deliver supervisor\nurgent") != 1 {
+		t.Fatalf("runner calls: %q", calls)
+	}
+}
+
+// #523: the call's context ends once the interrupt has a result. The
+// outcome is written all the same, as the interrupt did it: sent, and the
+// turn ended by it, is interrupted; refused is ended. Nothing is left open
+// for an answer given again, which could only look at the turn.
+func TestApprovalRecordsItsOutcomeWhenTheCallEnds(t *testing.T) {
+	for _, refused := range []bool{false, true} {
+		ctx := context.Background()
+		f, target, sid, _, req := approvalFixture(t)
+		first, cancel := context.WithCancel(ctx)
+		f.runner.beforeInterrupt = func() {
+			if refused {
+				f.agentEvent(t, sid, 2, agent.Event{Kind: agent.TurnEnded, Status: agent.Completed})
+				if err := f.owner.Send(ctx, target, "next", control.Input{Text: "the next turn"}, control.Deliver); err != nil {
+					t.Errorf("the next turn: %v", err)
+				}
+			}
+			cancel()
+		}
+		if err := f.owner.Answer(first, req, control.Answer{Allow: true}); err != nil {
+			t.Fatalf("refused %v: the answer: %v", refused, err)
+		}
+		if !refused {
+			// The interrupt ends the asked turn.
+			f.agentEvent(t, sid, 2, agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted})
+		}
+		want := map[bool]string{false: "interrupted", true: "ended"}[refused]
+		if s := approvalState(t, f, req); s != want {
+			t.Fatalf("refused %v: %q, want %q", refused, s, want)
+		}
 	}
 }
