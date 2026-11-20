@@ -484,7 +484,7 @@ One database file. A schema version table and forward-only migrations (c-lord ha
 | `links` | thread number, client, channel, conversation thread, who made it, when; unique per conversation |
 | `workspaces` | path, remote, state |
 | `sessions` | agent name, agent session id, state, model, host pid, log offset, last sequence |
-| `turns` | who started it, the message that triggered it, start, end, status, reason |
+| `turns` | who started it, the message that triggered it, start, end, status, reason, and the person whose stop interrupted it (#542) |
 | `inbox` | accepted calls by their key; for chat, the catch-up cursor per conversation |
 | `events` | the numbered event log that clients read from a position |
 | `outbox` | the chat front end's pending and sent posts by `(event, link, part)`, with the surface message id |

@@ -1942,7 +1942,26 @@ func (a *api) Stop(ctx context.Context, id control.ThreadID, turn int64) error {
 		}
 		return nil
 	}
-	return a.c.Runner.Interrupt(ctx, sid, turn)
+	// Who asked, on the turn the stop is for, before the interrupt: the
+	// turn can end at once, and the reader of its end looks for this then.
+	// The first stop of a turn names it.
+	q, args := `UPDATE turns SET stopped_by = ? WHERE session_id = ? AND ended_at IS NULL AND stopped_by = ''`,
+		[]any{string(a.caller.Principal), sid}
+	if turn != 0 {
+		q, args = q+` AND id = ?`, append(args, turn)
+	}
+	res, err := a.c.Store.DB.ExecContext(ctx, q, args...)
+	if err != nil {
+		return fmt.Errorf("core: stop thread %d: %w", id, err)
+	}
+	marked, _ := res.RowsAffected()
+	err = a.c.Runner.Interrupt(ctx, sid, turn)
+	if err != nil && marked > 0 {
+		// Nothing was interrupted: the turn was not stopped by anyone.
+		a.c.Store.DB.ExecContext(context.WithoutCancel(ctx), `UPDATE turns SET stopped_by = '' WHERE session_id = ? AND ended_at IS NULL AND stopped_by = ?`,
+			sid, string(a.caller.Principal))
+	}
+	return err
 }
 
 // mayRead reports whether the caller may see e: its kind, when the caller

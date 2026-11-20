@@ -191,6 +191,7 @@ type eventData struct {
 	Reason    string   `json:"reason"`
 	Key       string   `json:"key"`
 	Session   int64    `json:"session"`
+	Turn      int64    `json:"turn"` // turn_started, turn_ended
 	File      string   `json:"file"`
 	More      []string `json:"more"`
 	Caption   string   `json:"caption"`
@@ -324,6 +325,13 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		delete(r.by, e.Thread)
 		delete(r.via, e.Thread)
 		if d.Outcome == "failure" {
+			who, err := f.stoppedBy(ctx, d.Outcome, d.Reason, d.Turn)
+			if err != nil {
+				return nil, err
+			}
+			if who != "" {
+				return row(surface.Message{Text: "Stopped by " + who + "."}), nil
+			}
 			return row(surface.Message{Text: failureLine(d.Reason)}), nil
 		}
 	}
@@ -342,6 +350,22 @@ func question(text string, choices []string) string {
 		b.WriteString("\n" + strconv.Itoa(i+1) + ". " + c)
 	}
 	return b.String()
+}
+
+// stoppedBy returns the person whose Stop ended a turn that ended with
+// outcome and reason: the stop interrupted it, or stopped its session when
+// the interrupt did not end it in time. It is "" for every other end, a
+// failure of the agent's own too, and for a turn no Stop was made for.
+func (f *FrontEnd) stoppedBy(ctx context.Context, outcome, reason string, turn int64) (string, error) {
+	if outcome != "failure" || (reason != "interrupted" && reason != "stopped") || turn == 0 {
+		return "", nil
+	}
+	var who string
+	err := f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT stopped_by FROM turns WHERE id = ?`, turn).Scan(&who)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return who, err
 }
 
 // failureLine is the one line a failed turn gets.
