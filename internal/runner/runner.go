@@ -1471,6 +1471,8 @@ func (r *Runner) exit(lv *live) {
 		in.Reason = session.ReasonInterrupted // the host died with it, as in a reboot (section 4.5)
 	case st.Stopped:
 		in.Reason = "stopped"
+	case st.Shutdown:
+		in.Reason = session.ReasonInterrupted // the host got SIGTERM: a shutdown, as in a reboot (section 4.5)
 	}
 	if err := r.Machine.Apply(context.Background(), lv.id, in); err != nil && !errors.Is(err, session.ErrRefused) {
 		r.Log.Error("exit", "session", lv.id, "err", err)
