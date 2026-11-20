@@ -405,11 +405,24 @@ func TestOperateHostStoresNothingTyped(t *testing.T) {
 		}
 		return string(out), nil
 	}
-	got := filepath.Join(t.TempDir(), "got")
-	if _, err := tmux("new-session", "-d", "-s", "typing", "sh", "-c", "stty raw -echo; head -c "+fmt.Sprint(len(typedMarker)+1)+" > "+got+"; exec sleep 600"); err != nil {
+	dir := t.TempDir()
+	got, ready := filepath.Join(dir, "got"), filepath.Join(dir, "ready")
+	// The pane's terminal is put in raw mode, and only then says it is
+	// ready: keys typed before stty would be read in cooked mode, where
+	// Enter's \r arrives as \n (#514).
+	if _, err := tmux("new-session", "-d", "-s", "typing", "sh", "-c",
+		"stty raw -echo; : > "+ready+"; head -c "+fmt.Sprint(len(typedMarker)+1)+" > "+got+"; exec sleep 600"); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { tmux("kill-server") })
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the pane's terminal is not in raw mode after 10 seconds")
+		}
+	}
 	out, err := tmux("display-message", "-p", "-t", "typing:0", "#{pane_id}")
 	if err != nil {
 		t.Fatal(err)
