@@ -116,8 +116,12 @@ func startSSHD(t *testing.T, extra ...string) *sshHost {
 	bin := filepath.Join(d, "bin")
 	os.Mkdir(bin, 0o700)
 	h := &sshHost{dir: d, ssh: filepath.Join(bin, "ssh"), log: filepath.Join(d, "calls"), port: port}
-	wrapper := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" '---' >> %s\nexec env -u SSH_AUTH_SOCK %s -F %s \"$@\"\n",
-		quoteSh(h.log), quoteSh(realSSH), quoteSh(filepath.Join(d, "ssh_config")))
+	// Each call's record reaches the log in one write: printf writes each
+	// of its arguments on its own, so two calls at once, as two connects
+	// started together make, would interleave their lines (#478). The
+	// record is put together in a file of its own, and cat appends it.
+	wrapper := fmt.Sprintf("#!/bin/sh\nr=$(mktemp %s) && printf '%%s\\n' \"$@\" '---' > \"$r\" && cat \"$r\" >> %s\nrm -f \"$r\"\nexec env -u SSH_AUTH_SOCK %s -F %s \"$@\"\n",
+		quoteSh(filepath.Join(d, "call.XXXXXX")), quoteSh(h.log), quoteSh(realSSH), quoteSh(filepath.Join(d, "ssh_config")))
 	os.WriteFile(h.ssh, []byte(wrapper), 0o700)
 	eventually(t, "the test's sshd to accept a login", 10*time.Second, func() bool {
 		return exec.Command(h.ssh, "test", "true").Run() == nil
@@ -639,6 +643,33 @@ func noSockets(t *testing.T, runDir string) {
 	for _, e := range entries {
 		if e.Type()&os.ModeSocket != 0 {
 			t.Fatalf("left in the run directory: %s", e.Name())
+		}
+	}
+}
+
+// The test's ssh records every call whole, also calls made at the same
+// moment, which TestConnectTwoAtOnce counts (#478).
+func TestSSHWrapperRecordsCallsWhole(t *testing.T) {
+	h := startSSHD(t)
+	args := []string{"-V", "-M", "-S", "/run/x.cm", "-o", "ControlPersist=no", "-o", "ServerAliveInterval=15", "-N", "--", "test"}
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 25 {
+				exec.Command(h.ssh, args...).Run() // -V: ssh prints its version and ends
+			}
+		}()
+	}
+	wg.Wait()
+	calls := h.calls(t)
+	if len(calls) != 200 {
+		t.Fatalf("%d calls recorded, want 200", len(calls))
+	}
+	for _, c := range calls {
+		if !slices.Equal(c, args) {
+			t.Fatalf("a call recorded as %q", c)
 		}
 	}
 }
