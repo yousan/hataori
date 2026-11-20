@@ -31,7 +31,7 @@ import (
 type sshHost struct {
 	dir  string
 	ssh  string // a wrapper on PATH as "ssh": it records each call, then runs the real ssh
-	log  string // the wrapper's record: each call's arguments, one per line, then "---"
+	log  string // the wrapper's record: a directory with one file per call, its arguments one per line
 	port int
 }
 
@@ -116,33 +116,42 @@ func startSSHD(t *testing.T, extra ...string) *sshHost {
 	bin := filepath.Join(d, "bin")
 	os.Mkdir(bin, 0o700)
 	h := &sshHost{dir: d, ssh: filepath.Join(bin, "ssh"), log: filepath.Join(d, "calls"), port: port}
-	wrapper := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" '---' >> %s\nexec env -u SSH_AUTH_SOCK %s -F %s \"$@\"\n",
+	os.Mkdir(h.log, 0o700)
+	// Each call is written to a file of its own, then renamed to end in
+	// .call: calls made at the same moment never mix their lines (#498),
+	// and a call is read only once it is complete.
+	wrapper := fmt.Sprintf("#!/bin/sh\nf=$(mktemp %s/c.XXXXXXXX) || exit 1\nprintf '%%s\\n' \"$@\" > \"$f\"\nmv \"$f\" \"$f.call\"\n"+
+		"exec env -u SSH_AUTH_SOCK %s -F %s \"$@\"\n",
 		quoteSh(h.log), quoteSh(realSSH), quoteSh(filepath.Join(d, "ssh_config")))
 	os.WriteFile(h.ssh, []byte(wrapper), 0o700)
 	eventually(t, "the test's sshd to accept a login", 10*time.Second, func() bool {
 		return exec.Command(h.ssh, "test", "true").Run() == nil
 	})
-	os.WriteFile(h.log, nil, 0o600) // the check above is not hataori's
+	// The check above is not hataori's.
+	old, _ := filepath.Glob(filepath.Join(h.log, "*"))
+	for _, p := range old {
+		os.Remove(p)
+	}
 	return h
 }
 
 func quoteSh(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
-// calls is every ssh call recorded so far, each its arguments.
+// calls is every ssh call recorded so far, each its arguments, in no
+// particular order.
 func (h *sshHost) calls(t *testing.T) [][]string {
 	t.Helper()
-	b, _ := os.ReadFile(h.log)
+	files, err := filepath.Glob(filepath.Join(h.log, "*.call"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	var out [][]string
-	var cur []string
-	for _, l := range strings.Split(string(b), "\n") {
-		if l == "---" {
-			out = append(out, cur)
-			cur = nil
-			continue
+	for _, p := range files {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if l != "" || cur != nil {
-			cur = append(cur, l)
-		}
+		out = append(out, strings.Split(strings.TrimSuffix(string(b), "\n"), "\n"))
 	}
 	return out
 }
