@@ -92,7 +92,7 @@ type Runner struct {
 	started   map[int64]bool // the sessions Start started in this process (claim)
 
 	point   func(name string) // for tests: called at the named points of a launch
-	endWait time.Duration     // for tests: oldRunWait, when set
+	endWait time.Duration     // for tests: hostEndWait, when set
 }
 
 var _ core.Runner = (*Runner)(nil)
@@ -412,13 +412,17 @@ func (r *Runner) Wake(ctx context.Context, id int64, principal control.Principal
 	return r.resume(ctx, id, firstInput{Principal: principal, Wake: true, NoInput: true})
 }
 
-// oldRunWait bounds how long a wake waits for the agent and the host of the
-// session's earlier run to end.
-func (r *Runner) oldRunWait() time.Duration {
+// hostEndWait bounds how long a wake waits for the host of the session's
+// earlier run to record its end. Once its agent is gone a host drains the
+// output and lets its followers finish, each for 2 s at most unless a
+// descriptor of the agent's lives on elsewhere (internal/host). It is short
+// because a daemon started again recovers its wakes one at a time before it
+// serves.
+func (r *Runner) hostEndWait() time.Duration {
 	if r.endWait > 0 {
 		return r.endWait
 	}
-	return time.Minute
+	return 10 * time.Second
 }
 
 // waitEnded waits, for d at most, until the holder says the agent of the
@@ -448,7 +452,7 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 	if old != nil {
 		select {
 		case <-old.done:
-		case <-time.After(r.oldRunWait()):
+		case <-time.After(time.Minute):
 			return fmt.Errorf("runner: session %d: the agent put to sleep has not ended", id)
 		case <-ctx.Done():
 			return ctx.Err()
@@ -477,13 +481,13 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 		// A host records its end a little after its agent is gone (it drains
 		// the output and lets its followers finish), and a daemon started
 		// again has no old run to wait for (Recover): it waits for the end
-		// here, as long as a wake in the daemon that put the session to
-		// sleep waits for the old run (#549).
-		if !r.waitEnded(ctx, s.Spec.StateDir, r.oldRunWait()) {
+		// here, as a wake in the daemon that put the session to sleep waits
+		// for the old run (#549).
+		if !r.waitEnded(ctx, s.Spec.StateDir, r.hostEndWait()) {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			return fmt.Errorf("runner: session %d: its host is still running after %v", id, r.oldRunWait())
+			return fmt.Errorf("runner: session %d: its host is still running after %v", id, r.hostEndWait())
 		}
 		// A held window whose end a daemon that died did not see through:
 		// its relay host and window go before another start.
