@@ -61,7 +61,8 @@ type host struct {
 	stops    sync.WaitGroup // stops in progress
 	stopNote string         // the signals the last stop sent
 
-	terminated chan struct{} // closed when the host got SIGTERM: a shutdown
+	terminated   chan struct{} // closed when the host got SIGTERM: a shutdown
+	terminatedAt time.Time     // when; written before terminated is closed
 }
 
 // shutdownGrace is how long the host, whose command ended without being
@@ -69,6 +70,12 @@ type host struct {
 // a shutdown sends SIGTERM to every process, the command's may come first,
 // and the host's a moment later.
 const shutdownGrace = 200 * time.Millisecond
+
+// shutdownWindow is how long after the host's SIGTERM its command's end
+// counts as the shutdown's: a service manager sends SIGKILL after its stop
+// timeout (systemd's default is 90 seconds), which ends the host too, so a
+// host that still runs after that was not in a shutdown.
+const shutdownWindow = 90 * time.Second
 
 // Run is `hataori host <state-dir>`: it runs the Spec in stateDir until the
 // command exits, and returns after recording how it ended.
@@ -106,6 +113,7 @@ func Run(stateDir string) (err error) {
 	go func() {
 		select {
 		case <-term:
+			h.terminatedAt = time.Now()
 			close(h.terminated) // first: the log's write must not take from the grace
 			hl.printf("got SIGTERM: everything is being stopped; the command's end is recorded as a shutdown")
 		case <-quit:
@@ -189,7 +197,7 @@ func Run(stateDir string) (err error) {
 	}
 	select {
 	case <-h.terminated:
-		st.Shutdown = true
+		st.Shutdown = time.Since(h.terminatedAt) <= shutdownWindow
 	default:
 	}
 	// The socket goes first, so that a reader that sees the status also
