@@ -369,24 +369,42 @@ func TestBlockedAtStart(t *testing.T) {
 // after it stopped watching or after the start.
 // The screen goes to a codec that asked for it until the codec ends the
 // watch, past the session's start: the fake watches on until its first
-// turn ends, and panics if given the screen after that.
+// turn ends, and panics if given the screen after that. The first turn
+// writes to the screen, which it does only after the codec decoded the
+// start (the input is pasted then), and waits on a question until the
+// codec was given that line. The hook calls and the terminal
+// are separate streams: a turn that ended at once could have its end read
+// before its screen reached the log, and what the fake writes right after
+// its ready report could be read before the report (#516).
 func TestScreenUntilTheCodecStops(t *testing.T) {
 	f := newFixture(t, options{terminal: true, dialog: "fake: trust this folder? Enter"})
-	f.start("reply hello")
-	waitFor(t, "the end of the turn", 15*time.Second, f.has("turn_ended", 1))
-	if texts := f.eventData("text"); len(texts) != 1 || texts[0]["text"] != "hello" {
-		t.Fatalf("texts %v", texts)
-	}
+	f.start("screen the turn's screen\nask go on?\nreply hello")
+	waitFor(t, "the question", 15*time.Second, f.has("request", 1))
 	lv, err := f.run.get(1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lv.mu.Lock()
-	watching, codec := lv.screen, lv.codec
-	lv.mu.Unlock()
-	if !fake.SawScreenAfterStart(codec) {
-		t.Fatal("the codec was not given the screen after the start")
+	waitFor(t, "the turn's screen", 15*time.Second, func() bool {
+		lv.mu.Lock()
+		defer lv.mu.Unlock()
+		return bytes.Contains(fake.ScreenAfterStart(lv.codec), []byte("the turn's screen"))
+	})
+	var req string
+	f.st.DB.QueryRow(`SELECT json_extract(data, '$.request') FROM events WHERE kind = 'request'`).Scan(&req)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := owner(f.core).Answer(ctx, control.RequestID(req), control.Answer{Text: "yes"}); err != nil {
+		t.Fatal(err)
 	}
+	// The question ends the first turn as blocked; the answer's turn is
+	// the agent's first turn going on.
+	waitFor(t, "the end of the answered turn", 15*time.Second, f.has("turn_ended", 2))
+	if texts := f.eventData("text"); len(texts) == 0 || texts[len(texts)-1]["text"] != "hello" {
+		t.Fatalf("texts %v", texts)
+	}
+	lv.mu.Lock()
+	watching := lv.screen
+	lv.mu.Unlock()
 	if watching {
 		t.Fatal("the runner still watches the screen after the codec ended the watch")
 	}
