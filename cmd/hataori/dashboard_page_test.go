@@ -94,14 +94,29 @@ func newBrowser(t *testing.T, flags ...string) *browser {
 		"--window-size=1400,900", "--user-data-dir="+dir, "--remote-debugging-port=0")
 	cmd.Args = append(append(cmd.Args, flags...), "about:blank")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // the browser and its helpers, in one group
-	if err := cmd.Start(); err != nil {
+	// Its output goes to a file, not a pipe: Wait would also wait for the
+	// helpers that keep a pipe open, and could not tell that it exited.
+	out, err := os.CreateTemp("", "hataori-chrome-*.log")
+	if err != nil {
 		os.RemoveAll(dir)
 		t.Fatal(err)
 	}
+	cmd.Stdout, cmd.Stderr = out, out
+	if err := cmd.Start(); err != nil {
+		out.Close()
+		os.Remove(out.Name())
+		os.RemoveAll(dir)
+		t.Fatal(err)
+	}
+	exited := make(chan struct{})
+	var waitErr error
+	go func() { waitErr = cmd.Wait(); close(exited) }()
 	t.Cleanup(func() {
 		pgid := cmd.Process.Pid
 		syscall.Kill(-pgid, syscall.SIGKILL)
-		cmd.Wait()
+		<-exited
+		out.Close()
+		os.Remove(out.Name())
 		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
 			if errors.Is(syscall.Kill(-pgid, 0), syscall.ESRCH) {
 				break
@@ -116,14 +131,21 @@ func newBrowser(t *testing.T, flags ...string) *browser {
 		t.Logf("the browser's profile %s was not removed", dir)
 	})
 	var port string
-	eventually(t, "the browser to listen", 30*time.Second, func() bool {
-		b, err := os.ReadFile(filepath.Join(dir, "DevToolsActivePort"))
-		if err != nil {
-			return false
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if b, err := os.ReadFile(filepath.Join(dir, "DevToolsActivePort")); err == nil {
+			if port, _, _ = strings.Cut(string(b), "\n"); port != "" {
+				break
+			}
 		}
-		port, _, _ = strings.Cut(string(b), "\n")
-		return port != ""
-	})
+		select {
+		case <-exited:
+			t.Fatalf("the browser exited before it listened: %v; its output ends:\n%s", waitErr, tail(out.Name()))
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the browser did not listen within 30s; it is still running (pid %d); its output ends:\n%s", cmd.Process.Pid, tail(out.Name()))
+		}
+	}
 	var targets []struct{ Type, WebSocketDebuggerURL string }
 	eventually(t, "the browser's page", 10*time.Second, func() bool {
 		resp, err := http.Get("http://127.0.0.1:" + port + "/json/list")
@@ -141,6 +163,21 @@ func newBrowser(t *testing.T, flags ...string) *browser {
 	}
 	t.Cleanup(func() { conn.Close() })
 	return &browser{t: t, conn: conn, timeout: 20 * time.Second, poll: 50 * time.Millisecond}
+}
+
+// tail is the end of the file at path: its last 4 KiB.
+func tail(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err.Error()
+	}
+	if len(b) > 4<<10 {
+		b = b[len(b)-4<<10:]
+	}
+	if len(b) == 0 {
+		return "(nothing)"
+	}
+	return string(b)
 }
 
 // call sends one DevTools command and returns its result.
