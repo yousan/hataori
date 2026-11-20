@@ -1425,7 +1425,9 @@ type API interface {
 	// the interrupt names that turn, checked in the step that interrupts: a
 	// turn that ended in between is not interrupted, nor the one after it
 	// (outcome "ended"), and the reason is handed over as any input of a turn
-	// that ended first. A repeated key returns the original request; an
+	// that ended first. An approval approved again after an answer that failed
+	// is decided again the same way, without taking the reason again. A
+	// repeated key returns the original request; an
 	// empty key makes no repeat check. An open request for the
 	// same running turn is returned instead of a second one. The caller's
 	// AsksIn thread cannot be the target (ErrForbidden). Since protocol 3.10.
