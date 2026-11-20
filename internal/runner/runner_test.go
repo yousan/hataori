@@ -199,7 +199,9 @@ var thread = control.ThreadID(1)
 func killSessions(root string) {
 	dirs, _ := filepath.Glob(filepath.Join(root, "state", "sessions", "*"))
 	for _, d := range dirs {
-		for _, f := range []string{host.PIDFile, host.HostPIDFile} {
+		// The host first: killed after its command, it could see the
+		// command end and record it in its status, which no reboot does.
+		for _, f := range []string{host.HostPIDFile, host.PIDFile} {
 			if b, err := os.ReadFile(filepath.Join(d, f)); err == nil {
 				if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid > 1 {
 					syscall.Kill(-pid, syscall.SIGKILL)
