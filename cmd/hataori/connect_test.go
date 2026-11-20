@@ -31,7 +31,7 @@ import (
 type sshHost struct {
 	dir  string
 	ssh  string // a wrapper on PATH as "ssh": it records each call, then runs the real ssh
-	log  string // the wrapper's record: a directory with one file per call, its arguments one per line
+	log  string // the wrapper's record: a directory per call, whose file "call" holds its arguments one per line
 	port int
 }
 
@@ -117,10 +117,12 @@ func startSSHD(t *testing.T, extra ...string) *sshHost {
 	os.Mkdir(bin, 0o700)
 	h := &sshHost{dir: d, ssh: filepath.Join(bin, "ssh"), log: filepath.Join(d, "calls"), port: port}
 	os.Mkdir(h.log, 0o700)
-	// Each call is written to a file of its own, then renamed to end in
-	// .call: calls made at the same moment never mix their lines (#498),
-	// and a call is read only once it is complete.
-	wrapper := fmt.Sprintf("#!/bin/sh\nf=$(mktemp %s/c.XXXXXXXX) || exit 1\nprintf '%%s\\n' \"$@\" > \"$f\"\nmv \"$f\" \"$f.call\"\n"+
+	// Each call is written into a new directory of its own, then renamed
+	// to "call": calls made at the same moment never mix their lines
+	// (#498), no name is used twice, and a call is read only once it is
+	// complete. A record that cannot be written stops the call.
+	wrapper := fmt.Sprintf("#!/bin/sh\nd=$(mktemp -d %s/c.XXXXXXXX) || exit 255\n"+
+		"printf '%%s\\n' \"$@\" > \"$d/args\" && mv \"$d/args\" \"$d/call\" || exit 255\n"+
 		"exec env -u SSH_AUTH_SOCK %s -F %s \"$@\"\n",
 		quoteSh(h.log), quoteSh(realSSH), quoteSh(filepath.Join(d, "ssh_config")))
 	os.WriteFile(h.ssh, []byte(wrapper), 0o700)
@@ -130,7 +132,7 @@ func startSSHD(t *testing.T, extra ...string) *sshHost {
 	// The check above is not hataori's.
 	old, _ := filepath.Glob(filepath.Join(h.log, "*"))
 	for _, p := range old {
-		os.Remove(p)
+		os.RemoveAll(p)
 	}
 	return h
 }
@@ -141,7 +143,7 @@ func quoteSh(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) 
 // particular order.
 func (h *sshHost) calls(t *testing.T) [][]string {
 	t.Helper()
-	files, err := filepath.Glob(filepath.Join(h.log, "*.call"))
+	files, err := filepath.Glob(filepath.Join(h.log, "*", "call"))
 	if err != nil {
 		t.Fatal(err)
 	}
