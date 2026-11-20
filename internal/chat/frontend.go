@@ -388,6 +388,18 @@ func (f *FrontEnd) start(ctx context.Context, r request, o order, n int64) (cont
 		f.Log.Error("trigger: writing the prompt", "thread", id, "err", err)
 		return 0, err
 	}
+	if out.failed == nil && startErr == nil {
+		// A failure the event reader read before the prompt row was
+		// written is left to this start (promptPending): read it again.
+		again, err := startOutcome(ctx, api, id)
+		if err == nil && again.failed != nil {
+			err = f.Outbox.Write(ctx, again.failed.row(conv, again.first))
+		}
+		if err != nil {
+			f.Log.Error("trigger: reading the new thread again", "thread", id, "err", err)
+			return 0, err
+		}
+	}
 	return id, nil
 }
 

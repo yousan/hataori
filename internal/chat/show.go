@@ -246,6 +246,10 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		}
 		if sf.session != r.session[e.Thread] {
 			first = 0 // a later session's: the prompt is long posted
+		} else if wait, err := f.promptPending(ctx, conv, first); err != nil || wait {
+			// The trigger's start writes the prompt and then this row,
+			// once it has read the event again, so the prompt comes first.
+			return nil, err
 		}
 		return []Row{sf.row(conv, first)}, nil
 	case "thread_created", "turn_started", "text", "request", "turn_ended", "file_out", "approval_asked", "approval_answered":
@@ -355,6 +359,20 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		}
 	}
 	return nil, nil
+}
+
+// promptPending reports whether conv is the chat thread of a trigger or a
+// command of this front end whose start has not written the prompt row,
+// at first, yet.
+func (f *FrontEnd) promptPending(ctx context.Context, conv surface.Conversation, first uint64) (bool, error) {
+	var n int
+	err := f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM chat_triggers WHERE client = ? AND channel = ? AND thread = ?`,
+		f.Name, conv.Channel, conv.Thread).Scan(&n)
+	if err != nil || n == 0 {
+		return false, err
+	}
+	state, _, err := f.Outbox.state(ctx, conv, RowKey{Event: first, Part: 0})
+	return state == "", err
 }
 
 // question shows a question with its options numbered; the next message

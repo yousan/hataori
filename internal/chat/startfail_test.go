@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/session"
@@ -98,5 +99,30 @@ func TestReadableDetail(t *testing.T) {
 		if got := ReadableDetail(in); got != want {
 			t.Errorf("ReadableDetail(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// The event reader reads the failure before the trigger's start wrote the
+// prompt (here: the daemon died between the two, and the trigger comes
+// again later). The failure is not posted before the prompt.
+func TestAFailureReadBeforeThePromptIsPostedAfterIt(t *testing.T) {
+	f := newFront(t, workspaces{}, func(fe *FrontEnd) { fe.Outbox.MaxFailures = 2 })
+	st := f.fe.Outbox.Store
+	st.DB.Exec(`CREATE TRIGGER lost AFTER INSERT ON chat_outbox BEGIN DELETE FROM chat_outbox WHERE id = NEW.id; END`)
+	id, trigger := f.started(t)
+	st.DB.Exec(`DROP TRIGGER lost`)
+	f.showing(t)
+	pos := f.event(t, id, "state", map[string]any{"from": "creating", "to": "failed", "reason": "blocked at start"})
+	waitFor(t, "the reader to pass the event", func() bool {
+		var p uint64
+		st.DB.QueryRow(`SELECT pos FROM chat_cursors WHERE client = ?`, f.fe.Name).Scan(&p)
+		return p >= pos
+	})
+	time.Sleep(50 * time.Millisecond) // the outbox's retries, had it a row
+	f.fe.Message(trigger)
+	want := couldNotStart + "blocked at start"
+	calls := f.postedUntil(t, id, want)
+	if texts(calls) != "the prompt|"+want || calls[1].Message.ReplyTo == nil || *calls[1].Message.ReplyTo != calls[0].Ref {
+		t.Fatalf("posts %+v, want the prompt, then the failure replying to it", calls)
 	}
 }
