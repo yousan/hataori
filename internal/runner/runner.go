@@ -414,6 +414,9 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 	}
 	spec := s.Spec
 	spec.ResumeID = resumeID
+	// A session taken in keeps the model its window last reported, as the
+	// take-in stored it; the options the person started it with are not
+	// known, and are not reused.
 	spec.TakenIn = false // resumed, it is launched by hataori's own host
 	spec, err := r.launch(ctx, id, s.Agent, ad, spec, first)
 	if err != nil {
@@ -1018,7 +1021,7 @@ func (r *Runner) loop(lv *live) {
 	}
 	tick := time.NewTicker(r.poll())
 	defer tick.Stop()
-	lastTick := time.Now()
+	lastTick, lastWindow := time.Now(), time.Now()
 	for {
 		select {
 		case <-lv.stop:
@@ -1037,6 +1040,10 @@ func (r *Runner) loop(lv *live) {
 			r.do(lv, lv.codec.Tick(time.Now()))
 			lv.mu.Unlock()
 			r.checkIdle(lv)
+		}
+		if lv.taken != nil && time.Since(lastWindow) >= windowCheck {
+			lastWindow = time.Now()
+			r.checkWindow(lv)
 		}
 	}
 }
@@ -1097,6 +1104,11 @@ func (r *Runner) stepLocked(lv *live) bool {
 		lv.files[p] = o
 	}
 	for _, e := range b.events {
+		if e.Kind == agent.SessionEnded && lv.taken != nil && e.Reason != agent.WrongSession && e.Reason != clearReason {
+			// The agent in the window ended: the window closed.
+			go r.windowClosed(lv)
+			continue
+		}
 		if e.Kind == agent.SessionEnded && e.Reason == agent.CannotResume {
 			go r.replace(lv)
 		}

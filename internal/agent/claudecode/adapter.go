@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -209,7 +210,14 @@ func stateFile(spec agent.Spec, name string) string {
 // env builds the CLI's environment from the fixed list, the config's
 // pass_env, a terminal type and where the hooks find the host.
 func (a *Adapter) env(spec agent.Spec) []string {
-	return append(a.baseEnv(), host.HookEnv(spec.StateDir))
+	env := a.baseEnv()
+	if spec.ConfigDir != "" {
+		// The configuration directory the session ran with, such as the one
+		// of a window it was taken in from: instead of the daemon's.
+		env = slices.DeleteFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "CLAUDE_CONFIG_DIR=") })
+		env = append(env, "CLAUDE_CONFIG_DIR="+spec.ConfigDir)
+	}
+	return append(env, host.HookEnv(spec.StateDir))
 }
 
 // baseEnv is the environment without the hooks' variable: the fixed list,

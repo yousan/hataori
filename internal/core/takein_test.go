@@ -3,8 +3,10 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/control"
@@ -28,6 +30,9 @@ func (r *takeInRunner) TakeIn(_ context.Context, l Launch, rep window.Report) er
 	return r.record("take in " + rep.Session)
 }
 func (r *takeInRunner) Release(_ context.Context, sid int64) error { return r.record("release") }
+func (r *takeInRunner) RemoveState(_ context.Context, sid int64) error {
+	return r.record(fmt.Sprint("remove state ", sid))
+}
 
 // windows is a fixed set of reports, by window name.
 type windows map[string]window.Report
@@ -122,16 +127,52 @@ func TestTakeInMakesTheThread(t *testing.T) {
 		t.Fatalf("%d take-ins", len(tr.took))
 	}
 
-	// Closed, its workspace is not removed: hataori did not make it.
+	// Closed, it is removed without its workspace, which never reaches the
+	// remover: hataori did not make it. Its session's state goes.
 	sidN, _, _ := f.core.current(ctx, f.core.Store.DB, id)
 	f.agentEvent(t, sidN, 1, agent.Event{Kind: agent.SessionReady})
 	if err := f.core.Machine.Apply(ctx, sidN, session.Input{Kind: session.Close, Reason: "test"}); err != nil {
 		t.Fatal(err)
 	}
 	f.core.Remover = refuseAll{}
-	err = f.core.remove(ctx, id, "owner", ByCommand)
-	if !errors.Is(err, ErrRemovalRefused) || !strings.Contains(err.Error(), NotHataoris) {
+	if err := f.core.remove(ctx, id, "owner", ByCommand); err != nil {
 		t.Fatalf("removing a thread taken in: %v", err)
+	}
+	var state string
+	f.core.Store.DB.QueryRow(`SELECT state FROM threads WHERE id = ?`, int64(id)).Scan(&state)
+	if state != "removed" || !strings.Contains(f.runner.Calls(), fmt.Sprint("remove state ", sidN)) {
+		t.Fatalf("thread %s; runner: %s", state, f.runner.Calls())
+	}
+}
+
+// The removal pass of closed threads skips one taken in: its directory is
+// the person's.
+func TestRemovalPassSkipsATakenInThread(t *testing.T) {
+	ctx := context.Background()
+	f, _, owner := takeInFixture(t)
+	id, err := owner.TakeIn(ctx, control.TakeInRequest{Window: takeWindow, Scope: "s", Key: "k1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid, _, _ := f.core.current(ctx, f.core.Store.DB, id)
+	f.agentEvent(t, sid, 1, agent.Event{Kind: agent.SessionReady})
+	if err := f.core.Machine.Apply(ctx, sid, session.Input{Kind: session.Close, Reason: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	f.core.Store.DB.Exec(`UPDATE threads SET updated_at = 0 WHERE id = ?`, int64(id)) // closed long ago
+	f.core.Remover = refuseAll{}
+	if _, err := f.core.RemoveClosed(ctx, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	f.core.Store.DB.QueryRow(`SELECT state FROM threads WHERE id = ?`, int64(id)).Scan(&state)
+	if state != "closed" || strings.Contains(f.runner.Calls(), "remove state") || count(t, f.core.Store, "events") == 0 {
+		t.Fatalf("the pass touched a thread taken in: %s; runner: %s", state, f.runner.Calls())
+	}
+	var refused int
+	f.core.Store.DB.QueryRow(`SELECT count(*) FROM events WHERE kind = 'removal_refused'`).Scan(&refused)
+	if refused != 0 {
+		t.Fatalf("%d removal_refused events", refused)
 	}
 }
 

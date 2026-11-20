@@ -36,11 +36,58 @@ type TakeInRunner interface {
 	TakeIn(ctx context.Context, l Launch, rep window.Report) error
 	// Release puts a session taken in asleep and lets its window go.
 	Release(ctx context.Context, sessionID int64) error
+	// RemoveState removes a session's state directory, which no host runs
+	// in: what hataori keeps of it, never its workspace.
+	RemoveState(ctx context.Context, sessionID int64) error
 }
 
-// NotHataoris is the reason a removal is refused for a thread taken in: its
-// workspace is the directory of a session a person started.
+// NotHataoris is the reason a removal of a thread taken in is refused when
+// it cannot be told whether the thread was taken in; one that was is
+// removed without its workspace (removeTakenIn).
 const NotHataoris = "the workspace is not hataori's"
+
+// removeTakenIn removes a closed thread taken in from a person's window:
+// its sessions' state directories, and the thread is marked removed. Its
+// workspace, the directory of the session the person started, is left as
+// it is: hataori did not make it (design, section 4.8).
+func (c *Core) removeTakenIn(ctx context.Context, id control.ThreadID, sid int64, principal control.Principal, trigger string) error {
+	tr, ok := c.Runner.(TakeInRunner)
+	if !ok {
+		c.refuseRemoval(ctx, id, sid, principal, trigger, NotHataoris, "", "", "nothing removes a session's state")
+		return fmt.Errorf("core: remove %v: %w: %s", id, ErrRemovalRefused, NotHataoris)
+	}
+	// Its relay host, if one still runs, goes first.
+	if err := c.Runner.Shut(ctx, sid, trigger); err != nil {
+		c.refuseRemoval(ctx, id, sid, principal, trigger, AgentRunning, "", "", err.Error())
+		return fmt.Errorf("core: remove %v: %w: %w", id, ErrRemovalRefused, err)
+	}
+	rows, err := c.Store.DB.QueryContext(ctx, `SELECT id FROM sessions WHERE thread_id = ? ORDER BY id`, int64(id))
+	if err != nil {
+		return fmt.Errorf("core: remove %v: %w", id, err)
+	}
+	var sessions []int64
+	for rows.Next() {
+		var s int64
+		if err := rows.Scan(&s); err != nil {
+			rows.Close()
+			return fmt.Errorf("core: remove %v: %w", id, err)
+		}
+		sessions = append(sessions, s)
+	}
+	rows.Close()
+	for _, s := range sessions {
+		if err := tr.RemoveState(ctx, s); err != nil {
+			c.refuseRemoval(ctx, id, sid, principal, trigger, "error", "", "", err.Error())
+			return fmt.Errorf("core: remove %v: %w: %w", id, ErrRemovalRefused, err)
+		}
+	}
+	if err := c.Machine.Apply(context.WithoutCancel(ctx), sid, session.Input{Kind: session.Remove, Reason: trigger}); err != nil {
+		return fmt.Errorf("core: remove %v: %w", id, err)
+	}
+	c.Log.Info("thread taken in removed; its directory is the person's and stays", "thread", int64(id),
+		"trigger", trigger, "principal", string(principal))
+	return nil
+}
 
 // takeInLog logs a refused take-in and returns err.
 func (a *api) takeInRefused(name, scope, window, reason string, err error) error {

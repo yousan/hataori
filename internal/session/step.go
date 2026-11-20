@@ -86,6 +86,10 @@ const (
 
 	ReasonCrashed     = string(agent.Crashed)
 	ReasonInterrupted = "interrupted"
+	// ReasonWindowClosed is why a session taken in from a person's window
+	// went asleep: its agent in the window ended, or the window went
+	// (design, section 4.8).
+	ReasonWindowClosed = "window closed"
 )
 
 // Who started a turn.
