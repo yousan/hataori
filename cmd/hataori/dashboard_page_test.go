@@ -94,8 +94,8 @@ func newBrowser(t *testing.T, flags ...string) *browser {
 		"--window-size=1400,900", "--user-data-dir="+dir, "--remote-debugging-port=0")
 	cmd.Args = append(append(cmd.Args, flags...), "about:blank")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // the browser and its helpers, in one group
-	// Its output goes to a file, not a pipe: Wait would also wait for the
-	// helpers that keep a pipe open, and could not tell that it exited.
+	// Its output goes to a file, not a pipe: with a pipe, Wait would also
+	// wait for the helpers that keep it open.
 	out, err := os.CreateTemp("", "hataori-chrome-*.log")
 	if err != nil {
 		os.RemoveAll(dir)
@@ -108,13 +108,15 @@ func newBrowser(t *testing.T, flags ...string) *browser {
 		os.RemoveAll(dir)
 		t.Fatal(err)
 	}
-	exited := make(chan struct{})
-	var waitErr error
-	go func() { waitErr = cmd.Wait(); close(exited) }()
+	// The browser is reaped only after its group is killed: until then its
+	// pid, which is the group's id, is not given to another process.
+	reaped := false
 	t.Cleanup(func() {
 		pgid := cmd.Process.Pid
-		syscall.Kill(-pgid, syscall.SIGKILL)
-		<-exited
+		if !reaped {
+			syscall.Kill(-pgid, syscall.SIGKILL)
+			cmd.Wait()
+		}
 		out.Close()
 		os.Remove(out.Name())
 		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
@@ -137,10 +139,11 @@ func newBrowser(t *testing.T, flags ...string) *browser {
 				break
 			}
 		}
-		select {
-		case <-exited:
-			t.Fatalf("the browser exited before it listened: %v; its output ends:\n%s", waitErr, tail(out.Name()))
-		default:
+		if processEnded(cmd.Process.Pid) {
+			syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) // its helpers, if any
+			err := cmd.Wait()
+			reaped = true
+			t.Fatalf("the browser exited before it listened: %v; its output ends:\n%s", err, tail(out.Name()))
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("the browser did not listen within 30s; it is still running (pid %d); its output ends:\n%s", cmd.Process.Pid, tail(out.Name()))
