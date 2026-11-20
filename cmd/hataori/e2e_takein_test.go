@@ -123,7 +123,10 @@ func newTakeRigWith(t *testing.T, root string, inShell bool, extra string) *take
 		g.tmux(t, "send-keys", "-t", g.pane, "-l", agent)
 		g.tmux(t, "send-keys", "-t", g.pane, "Enter")
 		g.pid = 0
+		typed := time.Now()
 		eventually(t, "the agent's process", 10*time.Second, func() bool {
+			start := time.Now()
+			defer func() { t.Logf("TIMING check at %v took %v", start.Sub(typed), time.Since(start)) }()
 			out, _ := exec.Command("ps", "-A", "-o", "pid=,ppid=").Output()
 			for _, l := range strings.Split(string(out), "\n") {
 				if f := strings.Fields(l); len(f) == 2 && f[1] == strconv.Itoa(g.shellPID()) {

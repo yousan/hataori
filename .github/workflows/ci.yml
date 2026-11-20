@@ -35,6 +35,11 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
+      - name: loop (temporary, #518)
+        run: |
+          ps -A | wc -l
+          go test -v -count=50 -run '^TestTakeInSendsNothingToTheShell$' ./cmd/hataori 2>&1 | grep -E 'TIMING|--- FAIL|e2e_takein_test|^(ok|FAIL)' | tee loop.txt
+          ! grep -q -- '--- FAIL' loop.txt
       - run: go vet ./...
       - name: build without cgo
         run: CGO_ENABLED=0 go build ./...
@@ -53,6 +58,11 @@ jobs:
           python-version: "3.x"
       - name: install tmux
         run: command -v tmux >/dev/null || brew install tmux
+      - name: loop (temporary, #518)
+        run: |
+          ps -A | wc -l
+          go test -v -count=50 -run '^TestTakeInSendsNothingToTheShell$' ./cmd/hataori 2>&1 | grep -E 'TIMING|--- FAIL|e2e_takein_test|^(ok|FAIL)' | tee loop.txt
+          ! grep -q -- '--- FAIL' loop.txt
       - run: go vet ./...
       - name: build without cgo
         run: CGO_ENABLED=0 go build ./...
