@@ -496,8 +496,12 @@ func TestStopEndsARunningTool(t *testing.T) {
 		f.start("tool long 60s\nreply late")
 		waitFor(t, "the tool", 15*time.Second, f.has("tool_started", 1))
 		pid, _ := strconv.Atoi(strings.TrimSpace(string(readFile(t, filepath.Join(StateDir(f.root, 1), host.PIDFile)))))
-		if len(groupMembers(t, pid)) < 2 {
-			t.Fatal("the tool's process is not in the session's group")
+		// The fake reports the tool's start before it starts the tool's
+		// process, so the process may not be there yet.
+		for deadline := time.Now().Add(10 * time.Second); len(groupMembers(t, pid)) < 2; time.Sleep(10 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatal("the tool's process is not in the session's group")
+			}
 		}
 		start := time.Now()
 		if err := owner(f.core).Stop(context.Background(), thread, 0); err != nil {
