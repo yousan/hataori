@@ -1,8 +1,53 @@
 # Plugins
 
-A plugin is a separate program, in any language, that adds to what hataori does without changing it ([design, section 7.3](design/overview.md#73-plugins)). It talks to the daemon over the control socket ([protocol.md](protocol.md)). The operator lists it in the instance's config ([configuration.md, `plugins[]`](configuration.md#plugins)); this file describes what the plugin's author writes, its manifest.
+A plugin is a separate program, in any language, that adds to what hataori does without changing it ([design, section 7.3](design/overview.md#73-plugins)). It talks to the daemon over the control socket ([protocol.md](protocol.md)). The operator lists it in the instance's config ([configuration.md, `plugins[]`](configuration.md#plugins)); this file is for the plugin's author: how to write one, its manifest, how it runs, and what it is sent.
 
-The daemon checks each plugin's manifest and config entry when it starts, then runs the plugins (below). It has the hook calls and the dispatcher that runs them (below, [protocol.md, Requests the daemon sends](protocol.md#requests-the-daemon-sends)); the core and the chat front end do not call a hook point yet.
+The daemon checks each plugin's manifest and config entry when it starts, then runs the plugins (below). The core calls the input hook points and the chat front end the outbox point (below, [protocol.md, Requests the daemon sends](protocol.md#requests-the-daemon-sends)).
+
+## Writing a plugin
+
+[`examples/plugins/marker/`](../examples/plugins/marker/) is a complete plugin in Python 3 with its standard library only: one executable and its manifest. It does each step below, and its tests run it against the daemon. The steps, in any language:
+
+1. **The manifest**, `hataori-plugin.json` next to the executable (below): its id, its version, the protocol it speaks, and what it asks for.
+2. **Connect** to the Unix socket in `HATAORI_SOCKET` (How a plugin runs, below) and send the hello with the protocol version the plugin speaks and the token in `HATAORI_TOKEN`: `{"version":"3.19","token":"…"}`. The daemon answers with its own hello. One with `error` refuses the connection, and a daemon of another major version refuses too ([protocol.md, Connection](protocol.md#connection)).
+3. **Call operations** on that connection: one JSON object per line, numbered by the plugin, answered in any order. For example `{"id":1,"op":"Threads","args":{"filter":{}}}` is answered `{"id":1,"result":[…]}`, and a call the grant lacks is answered with the error code `forbidden`.
+4. **Answer the daemon's requests** on the same connection: a line with `op` is a request, numbered by the daemon. Answer each with its `id`: `hook` with a `HookAnswer`, `plugin_started` and `plugin_stopping` with an empty result. Answer a request the plugin does not know with the error code `not_supported`, as the protocol requires; for a hook that is a failure of the handler ([protocol.md, `hook`](protocol.md#request-hook)). Answer each request without waiting for the others: a slow one must not hold up the rest.
+5. **Read events on a connection of its own**: a hello, then `{"id":1,"op":"Events","args":{"filter":{},"after":<position>}}`. The daemon answers `{"id":1}`, then sends one line per event, `{"id":1,"event":{…}}`, the stored ones first, then one of kind `caught_up`, then new ones as they are written. Keep the `pos` of each event handled in `HATAORI_PLUGIN_STATE` and read after it at the next start, so a restart misses no event and repeats none. A line with `op` that comes before the stream's first answer is a request the daemon sent before it read `Events`: skip it, unanswered.
+6. **Exit when a connection breaks**, or connect again. hataori starts a plugin that exits again after a backoff, with a new token.
+
+What the plugin writes to its standard output and error goes to the daemon's log. Its settings, the config entry's `settings`, are in the file `HATAORI_PLUGIN_SETTINGS`.
+
+### Without `conversation`
+
+A plugin without the `conversation` grant gets no text written by a person or an agent:
+
+- events come without their text fields: the `text` of `input`, `answer` and `text` events, the questions of `request`, the `before` and `after` of `input`, the `text` of `post_sent` and the `reason` of `post_cancelled`;
+- `Threads` and `Thread` leave out thread titles and names, the last output and the text of open requests, and `Thread` the reasons of cancelled posts;
+- `hook` requests come without `text`, so a handler can stop an input or a post, or add text at `before_prompt_build`, but not read it;
+- `Terminal` and `HostScreen` are refused.
+
+It still gets the thread numbers, scopes, links, states, turns, usage and every event's other fields, so it can count, time and gate.
+
+### From OpenClaw
+
+A hataori plugin has OpenClaw's shape: a manifest, then hooks. OpenClaw's hook names keep their meaning where hataori has the same point. An OpenClaw plugin's code runs in the Gateway's process; a hataori plugin is a separate program that talks over the socket, and is checked like any client.
+
+| OpenClaw | hataori | Kind |
+|---|---|---|
+| `before_agent_run` | the hook point `before_agent_run` | gate |
+| `before_prompt_build` | the hook point `before_prompt_build`: text before and after the input | modify |
+| `message_sending` | the hook point `message_sending` | modify, gate |
+| `message_sent` | the event `post_sent` | observe |
+| `session_start` | the event `thread_created` | observe |
+| `agent_end` | the event `turn_ended` | observe |
+| `after_tool_call` | the event `tool_ended`, the closest | observe |
+| `gateway_start` | the request `plugin_started`, told to the plugin itself | observe |
+| `gateway_stop` | the request `plugin_stopping` | observe |
+| `inbound_claim`, `before_dispatch` | none yet: claim hooks come later | |
+| `allowConversationAccess` | the manifest's and the config's `conversation` | |
+| `registerChannel`, adapters, chat commands | not in this version | |
+
+Observe hooks are events read from a position, with no separate mechanism: name their kinds in the manifest's `events`. hataori also has events OpenClaw has no hook for, such as `turn_started`, `tool_started` and `request`.
 
 ## What a plugin's connection may do
 
@@ -49,7 +94,7 @@ The manifest is `hataori-plugin.json`, in the same directory as the plugin's exe
 | `id` | string | required | The plugin's name: a lowercase letter, then lowercase letters, digits and `-`. The config entry's `id` must be the same. |
 | `version` | string | required | The plugin's version, as its author writes it. hataori does not interpret it. |
 | `protocol` | string | required | The control protocol it speaks, `"<major>.<minor>"`: the major version, and the lowest minor version it needs, such as `"3.0"` ([protocol.md, Versions](protocol.md#versions)). |
-| `operations` | array of strings | empty | The control operations it calls, by their names in [protocol.md](protocol.md#operations), such as `Threads` and `Events`. `SignInLink`, `HostTerminals`, `HostScreen`, `OperateHost` (with `HostKeys` and `End`), `AttachTerminal`, `Close`, `Remove`, `TakeIn` and `Release` are refused: no plugin gets them. |
+| `operations` | array of strings | empty | The control operations it calls, by their names in [protocol.md](protocol.md#operations), such as `Threads` and `Events`. `SignInLink`, `HostTerminals`, `HostScreen`, `HostView`, `OperateHost` (with `HostKeys` and `End`), `AttachTerminal`, `Close`, `Remove`, `TakeIn` and `Release` are refused: no plugin gets them. |
 | `events` | array of strings | empty | The event kinds it reads, by their names in [protocol.md](protocol.md#events), such as `turn_started` and `turn_ended`. These are the observe hooks. |
 | `hooks` | array | empty | The hook points it handles, one object each (below), each point once. |
 | `conversation` | boolean | `false` | Whether it needs message text: inputs to the agent, the agent's text, outgoing posts and thread titles. Without it, and without the operator's grant, what the plugin gets has the text left out. |
@@ -109,6 +154,8 @@ Since protocol 3.19 the chat front end calls `message_sending` before it posts a
 - **`post_sent`** is the event of a message posted in a link of a thread, written once per message in the transaction that marks it posted. It carries the link, the event and part it shows, the chat service's message id, and the text for a plugin with the `conversation` grant. The daemon writes it only while a plugin of the config is granted the event kind `post_sent`.
 
 ## An example
+
+The example plugin's manifest is [`examples/plugins/marker/hataori-plugin.json`](../examples/plugins/marker/hataori-plugin.json). Another, for a plugin that reads posts before they are sent:
 
 ```json
 {
