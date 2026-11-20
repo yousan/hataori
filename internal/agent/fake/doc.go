@@ -60,6 +60,8 @@
 //	                    turn by itself after DURATION
 //	fail REASON         end the turn as failed with REASON
 //	exit                exit at once, without ending the turn
+//	interrupt-delay D   from now on, an interrupt takes effect D after it
+//	                    comes, as an agent that is slow to stop
 //	unknown             report a line of a kind no codec knows
 //	screen TEXT         write TEXT and a line end to the terminal; nothing on pipes
 //	subagent ID [NAME [TOOL...]]
