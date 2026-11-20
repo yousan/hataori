@@ -179,6 +179,7 @@ func Run(stateDir string) (err error) {
 	select {
 	case <-drained:
 	case <-time.After(limit):
+		hl.printf("the output did not end within %v", limit)
 	}
 	// The terminal log is closed now; let its followers send what is left
 	// and the end, for a bounded time.
@@ -279,7 +280,8 @@ func (h *host) start() (*sync.WaitGroup, error) {
 		go func() {
 			defer readers.Done()
 			defer tty.Close()
-			io.Copy(tty, m) // ends with an error once the terminal is closed
+			n, err := io.Copy(tty, m) // ends with an error once the terminal is closed
+			h.log.printf("the terminal's output ended after %d bytes: %v", n, err)
 		}()
 	} else {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
