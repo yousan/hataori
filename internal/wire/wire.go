@@ -117,6 +117,10 @@ type (
 		Session int64            `json:"session"`
 		Files   []string         `json:"files"`
 	}
+	startWithoutSettingsArgs struct { // since 3.21
+		ID      control.ThreadID `json:"id"`
+		Session int64            `json:"session"`
+	}
 	trustsArgs  struct{} // since 3.21
 	untrustArgs struct { // since 3.21
 		ID int64 `json:"id"`
@@ -229,6 +233,13 @@ var operations = map[string]operation{
 			return nil, err
 		}
 		return nil, api.Trust(ctx, a.ID, a.Session, a.Files)
+	}},
+	"StartWithoutSettings": {startWithoutSettingsArgs{}, nil, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a startWithoutSettingsArgs
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return nil, api.StartWithoutSettings(ctx, a.ID, a.Session)
 	}},
 	"Trusts": {trustsArgs{}, []control.TrustedFile{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
 		return api.Trusts(ctx)

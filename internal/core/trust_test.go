@@ -11,6 +11,7 @@ import (
 
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/people"
 	"github.com/yousan/hataori/internal/session"
 )
 
@@ -192,5 +193,46 @@ func TestTrustAWokenSessionKeepsTheConversation(t *testing.T) {
 		if got := l.Context != ""; got != wake || l.Input.Text != "go" {
 			t.Fatalf("wake %v: launch context %q, input %q", wake, l.Context, l.Input.Text)
 		}
+	}
+}
+
+// A person allowed in the scope starts a blocked thread without its
+// repository's settings: the thread is marked for every later launch, and
+// a new session starts with the same first input. A guest is refused and
+// nothing changes; so is a session that is not the blocked one (#590).
+func TestStartWithoutSettings(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{key: "new"})
+	f.core.People = people.New([]people.Person{{Name: "owner", IDs: []string{"chat:o"}}, {Name: "ada", IDs: []string{"chat:ada"}}},
+		"owner", map[string][]string{"s": {"ada"}})
+	id, sid := f.blocked(t, "t1", ".claude/settings.json")
+	marked := func() bool {
+		var n bool
+		f.core.Store.DB.QueryRow(`SELECT no_project_settings FROM threads WHERE id = ?`, int64(id)).Scan(&n)
+		return n
+	}
+	guest := f.core.As(control.Caller{From: "chat:nobody", Scopes: []string{"s"}, May: all})
+	if err := guest.StartWithoutSettings(ctx, id, sid); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("a guest: %v", err)
+	}
+	ada := f.core.As(control.Caller{From: "chat:ada", Scopes: []string{"s"}, May: all})
+	if err := ada.StartWithoutSettings(ctx, id, sid+1); !errors.Is(err, session.ErrRefused) {
+		t.Fatalf("another session: %v", err)
+	}
+	if marked() || f.runner.Calls() != "start go" {
+		t.Fatal("a refused call changed something")
+	}
+	if err := ada.StartWithoutSettings(ctx, id, sid); err != nil {
+		t.Fatal(err)
+	}
+	if !marked() || f.runner.Calls() != "start go; start go" {
+		t.Fatalf("marked %v, runner %q", marked(), f.runner.Calls())
+	}
+	evs, _ := f.owner.ThreadEvents(ctx, id, 0, 100)
+	if e := evs[len(evs)-1]; e.Kind != "session_replaced" || !strings.Contains(string(e.Data), `"reason":"without project settings"`) {
+		t.Fatalf("last event %s %s", e.Kind, e.Data)
+	}
+	if n := count(t, f.core.Store, "trusted_files"); n != 0 {
+		t.Fatalf("%d files trusted", n)
 	}
 }

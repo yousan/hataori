@@ -21,9 +21,12 @@ import (
 // workspace, and later launches there take them with the config's
 // trust_files (TrustedFiles).
 
-// ReasonTrusted is the reason of the session_replaced event of a thread
-// started again by Trust.
-const ReasonTrusted = "trusted"
+// The reasons of the session_replaced event of a thread started again:
+// by Trust, and by StartWithoutSettings.
+const (
+	ReasonTrusted         = "trusted"
+	ReasonWithoutSettings = "without project settings"
+)
 
 // blockedAtStart is the reason of a session that a start-up dialog
 // blocked, as its state event records it (agent.BlockedAtStart).
@@ -68,20 +71,58 @@ func (a *api) Trust(ctx context.Context, id control.ThreadID, blocked int64, fil
 				return err
 			}
 		}
-		l, err = a.c.again(ctx, tx, id, scope, sid, now)
+		l, err = a.c.again(ctx, tx, id, scope, sid, now, ReasonTrusted)
 		return err
 	})
 	if err != nil {
 		return err
 	}
 	a.c.Log.Info("files trusted", "thread", int64(id), "scope", scope, "files", files, "principal", string(a.caller.Principal))
-	if err := a.c.Runner.Start(ctx, l); err != nil {
-		if ferr := a.c.Machine.Apply(ctx, l.Session, session.Input{Kind: session.Exit, Reason: "start: " + err.Error()}); ferr != nil {
-			a.c.Log.Error("recording a failed start", "session", l.Session, "err", ferr)
+	return a.c.startAgain(ctx, l)
+}
+
+// startAgain hands the runner the session again inserted.
+func (c *Core) startAgain(ctx context.Context, l Launch) error {
+	if err := c.Runner.Start(ctx, l); err != nil {
+		if ferr := c.Machine.Apply(ctx, l.Session, session.Input{Kind: session.Exit, Reason: "start: " + err.Error()}); ferr != nil {
+			c.Log.Error("recording a failed start", "session", l.Session, "err", ferr)
 		}
-		return fmt.Errorf("core: trust: start: %w", err)
+		return fmt.Errorf("core: start again: %w", err)
 	}
 	return nil
+}
+
+func (a *api) StartWithoutSettings(ctx context.Context, id control.ThreadID, blocked int64) error {
+	const name = "StartWithoutSettings"
+	scope, err := a.actThread(ctx, control.OpStart, name, id)
+	if err != nil {
+		return err
+	}
+	defer a.c.locks.lock(threadLock(id))()
+	var l Launch
+	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
+		sid, state, err := a.c.current(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		named, err := blockedFiles(ctx, tx, id, sid)
+		if err != nil {
+			return err
+		}
+		if sid != blocked || state != control.Failed || named == nil {
+			return fmt.Errorf("core: start thread %d without settings: its session was not blocked at start by files: %w", id, session.ErrRefused)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE threads SET no_project_settings = 1 WHERE id = ?`, int64(id)); err != nil {
+			return err
+		}
+		l, err = a.c.again(ctx, tx, id, scope, sid, a.c.now(), ReasonWithoutSettings)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	a.c.Log.Info("thread started without its repository's settings", "thread", int64(id), "scope", scope, "principal", string(a.caller.Principal))
+	return a.c.startAgain(ctx, l)
 }
 
 // EarlierRunner is a Runner that tells a thread's earlier conversation, as
@@ -136,7 +177,7 @@ func blockedFiles(ctx context.Context, tx *store.Tx, id control.ThreadID, sid in
 // workspace, and returns its launch. Like any started session it is marked
 // for launch, so that a daemon that dies before the runner has it starts
 // it at its next start (Recover).
-func (c *Core) again(ctx context.Context, tx *store.Tx, id control.ThreadID, scope string, sid int64, at time.Time) (Launch, error) {
+func (c *Core) again(ctx context.Context, tx *store.Tx, id control.ThreadID, scope string, sid int64, at time.Time, reason string) (Launch, error) {
 	l := Launch{Thread: id}
 	var fi string
 	if err := tx.QueryRowContext(ctx, `SELECT agent, model, effort, first_input FROM sessions WHERE id = ?`, sid).
@@ -183,7 +224,7 @@ func (c *Core) again(ctx context.Context, tx *store.Tx, id control.ThreadID, sco
 		string(control.Creating), now, int64(id)); err != nil {
 		return l, err
 	}
-	data, _ := json.Marshal(map[string]any{"session": sid, "new_session": l.Session, "reason": ReasonTrusted})
+	data, _ := json.Marshal(map[string]any{"session": sid, "new_session": l.Session, "reason": reason})
 	if _, err := tx.Append(ctx, control.Event{Thread: id, Scope: scope, Time: at, Kind: "session_replaced", Data: data}); err != nil {
 		return l, err
 	}

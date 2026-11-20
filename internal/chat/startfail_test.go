@@ -8,6 +8,7 @@ import (
 
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/session"
+	"github.com/yousan/hataori/internal/surface/fake"
 )
 
 // trustBlocked is the detail an agent adapter gives a start blocked
@@ -157,5 +158,57 @@ func TestAFailureWhosePromptIsLostIsPostedAfterTheWait(t *testing.T) {
 	want := couldNotStart + "blocked at start"
 	if got := texts(f.postedUntil(t, id, want)); got != want {
 		t.Fatalf("thread shows %q", got)
+	}
+}
+
+// A start blocked by files says what to do next (#589, #590): on a surface
+// with buttons, the three choices, each explained, and the config entry
+// named with its scope; without buttons, the config entry alone.
+func TestABlockedStartsMessageSaysWhatToDoNext(t *testing.T) {
+	for _, buttons := range []bool{true, false} {
+		f := newFront(t, workspaces{})
+		if !buttons {
+			l := f.driver.Limits()
+			l.MaxChoices = 0
+			f.driver.SetLimits(l)
+		}
+		id, _ := f.started(t)
+		f.showing(t)
+		f.event(t, id, "state", map[string]any{"from": "creating", "to": "failed", "reason": "blocked at start",
+			"detail": "hataori did not answer the dialog.\nThe agent showed:\n> Trusting this folder loads .agent/settings.json.",
+			"trust":  []string{".agent/settings.json"}})
+		var msg string
+		var choices []string
+		waitFor(t, "the message", func() bool {
+			for _, c := range f.driver.Calls(f.conv(id)) {
+				if c.Op == fake.OpPost && strings.HasPrefix(c.Message.Text, couldNotStart) {
+					msg = c.Message.Text
+					choices = nil
+					for _, ch := range c.Message.Choices {
+						choices = append(choices, ch.Label)
+					}
+					return true
+				}
+			}
+			return false
+		})
+		config := `list .agent/settings.json under "trust_files" of the scope "c1" in hataori's config, and start again.`
+		if !buttons {
+			if !strings.HasSuffix(msg, "\nWhat to do next: "+config) || len(choices) != 0 {
+				t.Fatalf("without buttons: %q %q", msg, choices)
+			}
+			continue
+		}
+		for _, want := range []string{"\nWhat to do next: choose below.",
+			"\n- Start without this repository's settings: the thread runs without the repository's own settings files, so their hooks and commands never run",
+			"\n- Trust and start (the owner only): trust .agent/settings.json for this channel's threads on https://example.com/r.git, and start.",
+			"\n- Do not start: close this thread.", "\nOr " + config} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("the message has no %q:\n%s", want, msg)
+			}
+		}
+		if strings.Join(choices, "|") != "Start without this repository's settings|Trust and start|Do not start" {
+			t.Fatalf("choices %q", choices)
+		}
 	}
 }

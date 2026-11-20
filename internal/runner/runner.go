@@ -249,12 +249,13 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 	}
 	// The scope's config as it is at this launch, not as it was at the
 	// session's first.
-	spec.TrustFiles, spec.Scope = nil, scope
+	spec.TrustFiles = nil
+	var repo string
+	if err := r.Store.DB.QueryRowContext(ctx, `SELECT repo, no_project_settings FROM threads WHERE id = ?`, int64(thread)).
+		Scan(&repo, &spec.NoProjectSettings); err != nil {
+		return agent.Spec{}, fmt.Errorf("runner: session %d: the thread's repository: %w", id, err)
+	}
 	if r.TrustFiles != nil {
-		var repo string
-		if err := r.Store.DB.QueryRowContext(ctx, `SELECT repo FROM threads WHERE id = ?`, int64(thread)).Scan(&repo); err != nil {
-			return agent.Spec{}, fmt.Errorf("runner: session %d: the thread's repository: %w", id, err)
-		}
 		spec.TrustFiles = r.TrustFiles(ctx, scope, repo)
 	}
 	// What the adapter gets: the spec, with what this launch alone is given.

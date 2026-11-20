@@ -298,6 +298,17 @@ Since 3.21. Lets through the files a start-up dialog named, which blocked the st
 
 Result: none
 
+### Operation `StartWithoutSettings`
+
+Since 3.21. Starts the thread again without its repository's settings, when a start-up dialog that named files blocked the start of its current session, which `session` must name (its last `state` event, from `creating` to `failed` with reason `blocked at start`, has `trust`). The thread is marked so that every later launch of it, after a sleep, a restart or a recovery too, leaves the project's and the local settings files out: their hooks and commands never run, and a dialog that names only those files is answered. The repository's code and instructions are still read. A new session starts in the same workspace with the same first input, with one `session_replaced` event of reason `without project settings`, as for `Trust`. It is checked as `Start` is: the caller's person must be allowed in the thread's scope; anyone else is answered `forbidden`, with one log line, and nothing changes. A thread whose current session is not `session` or did not fail that way is answered `refused`.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `id` | integer | required | the thread's number |
+| `session` | integer | required | the session the `state` event names |
+
+Result: none
+
 ### Operation `Trusts`
 
 Since 3.21. Lists the files `Trust` recorded, in the scopes the caller may see, oldest first. It takes no arguments.
@@ -1096,13 +1107,13 @@ A turn failed with reason `login`, and a login outage of the agent opened.
 
 ### Event `session_replaced`
 
-The agent no longer had the conversation, or, since 3.21, the owner let through the files that blocked the start (`Trust`); a new session started in the same workspace.
+The agent no longer had the conversation, or, since 3.21, a start that files blocked goes on: the owner let them through (`Trust`), or a person chose to start without the repository's settings (`StartWithoutSettings`); a new session started in the same workspace.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `session` | integer | required | the session that could not be resumed, or that a start-up dialog blocked |
 | `new_session` | integer | required | the new session |
-| `reason` | string | required | `cannot resume`, or `trusted` (since 3.21) |
+| `reason` | string | required | `cannot resume`, `trusted` or `without project settings` (both since 3.21) |
 
 ### Event `removal_refused`
 

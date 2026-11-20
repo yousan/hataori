@@ -683,7 +683,7 @@ func (c *codec) tickScreen(now time.Time) Actions {
 		// Not answered: the start fails now, naming what the dialog loads.
 		s.done = true
 		return c.events(agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart, Trust: files,
-			Text: blockedText(screen, refused, c.spec.Scope)})
+			Text: blockedText(screen)})
 	}
 	s.quiet = time.Time{} // the next key waits for the screen to change and settle again
 	switch {
@@ -703,28 +703,21 @@ func (c *codec) tickScreen(now time.Time) Actions {
 }
 
 // blockedText is what a person reads of a start blocked at the trust
-// dialog (#589): why hataori stopped, in plain words; the dialog as the
-// CLI drew it, below its header, one quoted line each; and what to do
-// next: list the files refused under the scope's trust_files
-// (docs/configuration.md).
-func blockedText(screen []string, refused []string, scope string) string {
+// dialog (#589): why hataori stopped, in plain words, and the dialog as the
+// CLI drew it, from its warning on, one quoted line each. What to do next
+// is the front end's to say: it knows its choices (the state event's
+// trust names the files, #590).
+func blockedText(screen []string) string {
 	var b strings.Builder
 	b.WriteString("hataori did not answer Claude Code's folder-trust dialog for you, because the dialog names files of the repository: " +
 		"trusting the folder lets the repository's own settings run commands without asking. " +
-		"hataori stops for any such file, whatever it holds; it has not judged this repository dangerous.\n")
+		"hataori stops for any such file, whatever it holds; it has not judged this repository dangerous.")
 	if lines := dialogBody(screen); len(lines) > 0 {
-		b.WriteString("Claude Code showed:\n")
+		b.WriteString("\nClaude Code showed:")
 		for _, l := range lines {
-			b.WriteString("> " + l + "\n")
+			b.WriteString("\n> " + l)
 		}
 	}
-	b.WriteString("What to do next: to let " + strings.Join(refused, ", ") + " through for this scope's threads, list ")
-	if len(refused) == 1 {
-		b.WriteString("it")
-	} else {
-		b.WriteString("them")
-	}
-	b.WriteString(" under \"trust_files\" of the scope \"" + scope + "\" in hataori's config, and start again.")
 	return b.String()
 }
 
@@ -763,16 +756,25 @@ func dialogBody(screen []string) []string {
 	return out
 }
 
+// settingsFiles are the files --setting-sources user leaves out: a launch
+// without the project's settings (Spec.NoProjectSettings) may answer a
+// dialog that names them.
+var settingsFiles = []string{".claude/settings.json", ".claude/settings.local.json"}
+
 // untrusted returns the files of the trust dialog's list that the codec may
 // not answer yes for: none in a confined session, whose launch ignores the
 // project's files (design, section 7.1), and those Spec.TrustFiles does not
-// list in an ordinary one.
+// list in an ordinary one, but for the settings files when the launch
+// leaves them out (Spec.NoProjectSettings).
 func (c *codec) untrusted(files []string) []string {
 	if c.spec.Confine != nil {
 		return nil
 	}
 	var out []string
 	for _, f := range files {
+		if c.spec.NoProjectSettings && slices.Contains(settingsFiles, f) {
+			continue
+		}
 		if !slices.Contains(c.spec.TrustFiles, f) {
 			out = append(out, f)
 		}

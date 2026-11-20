@@ -12,56 +12,85 @@ import (
 	"github.com/yousan/hataori/internal/surface"
 )
 
-// The trust button (#590): a start blocked because a start-up dialog named
-// files the scope does not trust gets, on its "could not start" message, a
-// button that trusts exactly those files for the scope's threads on the
-// thread's repository and starts the thread again. Its token names the
-// thread and the state event, so it works after a restart. A press calls
-// Trust as the person who pressed; the core decides who may (the owner
-// only) and refuses everyone else, who sees nothing, as with any button.
-// Once the core has taken a press, the message loses its button and says
-// who trusted the files.
+// The choices of a start blocked at a start-up dialog that named files
+// (#590): its "could not start" message says what to do next and, on a
+// surface with buttons, offers the choices as buttons:
+//
+//  1. Start without this repository's settings: every launch of the thread
+//     leaves the repository's own settings files out, so their hooks and
+//     commands never run (StartWithoutSettings). Whoever may start a
+//     thread in the scope may press it.
+//  2. Trust and start: the files are trusted for the scope's threads on the
+//     thread's repository, and the thread starts (Trust). The owner only.
+//  3. Do not start: the thread is closed (CloseThread).
+//
+// A token names the thread, the state event and the choice, so it works
+// after a restart. A press calls the core as the person who pressed; the
+// core decides who may, and refuses everyone else, who sees nothing, as
+// with any button. Once the core has taken a press, the message loses its
+// buttons, in every link, and says who chose what.
 
-// trustToken starts a trust button's token: trust:<thread>#<state event>.
-const trustToken = "trust:"
+// blockedToken starts a choice's token: trust:<thread>#<state event>:<choice>.
+const blockedToken = "trust:"
 
-// trustLabel is the button's label.
-const trustLabel = "Trust these files for this repository"
+// The choices, as their tokens end and as their buttons read.
+const (
+	choiceWithout = "without"
+	choiceTrust   = "trust"
+	choiceClose   = "close"
 
-// trustedPart is the part of the message's edit once a press was taken.
-const trustedPart = 1
+	labelWithout = "Start without this repository's settings"
+	labelTrust   = "Trust and start"
+	labelClose   = "Do not start"
+)
 
-func trustChoice(thread control.ThreadID, pos uint64) surface.Choice {
-	return surface.Choice{Label: trustLabel, Token: fmt.Sprintf("%s%d#%d", trustToken, thread, pos)}
+// chosenPart is the part of the message's edit once a press was taken.
+const chosenPart = 1
+
+func blockedChoice(sf startFailed, choice, label string) surface.Choice {
+	return surface.Choice{Label: label, Token: fmt.Sprintf("%s%d#%d:%s", blockedToken, sf.thread, sf.pos, choice)}
 }
 
-// failedMessage is the "could not start" message of sf, with the trust
-// button when the start was blocked by files and button is set, and the
-// surface shows buttons.
-func (f *FrontEnd) failedMessage(sf startFailed, repo string, button bool) surface.Message {
+// failedMessage is the "could not start" message of sf. A start blocked by
+// files gets what to do next and, when buttons is set and the surface
+// shows buttons, the choices.
+func (f *FrontEnd) failedMessage(sf startFailed, repo string, buttons bool) surface.Message {
 	m := surface.Message{Text: sf.text()}
-	if len(sf.trust) == 0 || !button || !f.withButtons([]string{trustLabel}, false) {
+	if len(sf.trust) == 0 {
 		return m
 	}
-	m.Text += "\nThe owner may trust " + strings.Join(sf.trust, ", ") + " for this channel's threads on " + repo +
-		", and start this thread again:"
-	m.Choices = []surface.Choice{trustChoice(sf.thread, sf.pos)}
+	files := strings.Join(sf.trust, ", ")
+	config := `list ` + files + ` under "trust_files" of the scope "` + sf.scope + `" in hataori's config, and start again.`
+	labels := []string{labelWithout, labelTrust, labelClose}
+	if !buttons || !f.withButtons(labels, false) {
+		m.Text += "\nWhat to do next: " + config
+		return m
+	}
+	m.Text += "\nWhat to do next: choose below." +
+		"\n- " + labelWithout + ": the thread runs without the repository's own settings files, so their hooks and commands never run; " +
+		"it still reads the code and its instructions. Every later start of this thread does the same." +
+		"\n- " + labelTrust + " (the owner only): trust " + files + " for this channel's threads on " + repo + ", and start." +
+		"\n- " + labelClose + ": close this thread." +
+		"\nOr " + config
+	m.Choices = []surface.Choice{blockedChoice(sf, choiceWithout, labelWithout), blockedChoice(sf, choiceTrust, labelTrust),
+		blockedChoice(sf, choiceClose, labelClose)}
 	return m
 }
 
-// pressTrust trusts the files that blocked the start the button was shown
-// for, as the presser, and the thread starts again. A press that trusts
-// nothing writes one log line and shows nothing.
-func (f *FrontEnd) pressTrust(s surface.Selection, rest string) {
+// pressBlocked carries out the choice pressed on a blocked start's message,
+// as the presser. A press that changes nothing writes one log line and
+// shows nothing.
+func (f *FrontEnd) pressBlocked(s surface.Selection, rest string) {
 	ctx := f.context()
 	ignored := func(reason string, err error) {
 		f.Log.Warn("button ignored", "reason", reason, "client", f.Name, "id", s.Author.ID,
 			"channel", s.Ref.Conv.Channel, "message", s.Ref.ID, "err", err)
 	}
-	th, p, ok := strings.Cut(rest, "#")
+	at, choice, ok1 := strings.Cut(rest, ":")
+	th, p, ok2 := strings.Cut(at, "#")
 	n, err1 := strconv.ParseInt(th, 10, 64)
 	pos, err2 := strconv.ParseUint(p, 10, 64)
-	if !ok || err1 != nil || err2 != nil || pos == 0 {
+	if !ok1 || !ok2 || err1 != nil || err2 != nil || pos == 0 {
 		ignored("no button of the front end's", nil)
 		return
 	}
@@ -76,39 +105,62 @@ func (f *FrontEnd) pressTrust(s surface.Selection, rest string) {
 		ignored("no start blocked by files there", err)
 		return
 	}
-	key := fmt.Sprintf("trustbtn:%d#%d", thread, pos)
+	if t.State != control.Failed {
+		ignored("the thread is not failed any more", nil)
+		return
+	}
+	key := fmt.Sprintf("blockedbtn:%d#%d", thread, pos)
 	if _, busy := f.pressing.LoadOrStore(key, struct{}{}); busy {
-		ignored("the files are being trusted", nil)
+		ignored("a choice is being carried out", nil)
 		return
 	}
 	defer f.pressing.Delete(key)
-	api := f.API(control.Caller{From: f.from(s.Author), Scopes: f.scopesIn(s.Ref.Conv.Channel), May: control.OpRead | control.OpTrust})
-	if err := api.Trust(ctx, thread, sf.session, sf.trust); err != nil {
+	caller := control.Caller{From: f.from(s.Author), Scopes: f.scopesIn(s.Ref.Conv.Channel), May: control.OpRead}
+	who, _ := f.People.Resolve(f.from(s.Author))
+	var done string
+	switch choice {
+	case choiceWithout:
+		caller.May |= control.OpStart
+		err = f.API(caller).StartWithoutSettings(ctx, thread, sf.session)
+		done = "Started without this repository's settings by " + who + "."
+	case choiceTrust:
+		caller.May |= control.OpTrust
+		err = f.API(caller).Trust(ctx, thread, sf.session, sf.trust)
+		done = "Trusted by " + who + " for this channel's threads on " + t.Repo + ": starting again."
+	case choiceClose:
+		caller.May |= control.OpClose
+		err = f.API(caller).CloseThread(ctx, thread)
+		done = "Not started: closed by " + who + "."
+	default:
+		ignored("no button of the front end's", nil)
+		return
+	}
+	if err != nil {
 		switch {
 		case errors.Is(err, control.ErrForbidden): // the core logged it
 		case errors.Is(err, session.ErrRefused):
 			ignored("the session is not blocked by these files any more", err)
 		default:
-			ignored("not trusted", err)
+			ignored("not done", err)
 		}
 		return
 	}
-	who, _ := f.People.Resolve(f.from(s.Author))
-	f.Log.Info("trust button pressed", "thread", int64(thread), "client", f.Name, "id", s.Author.ID)
-	// The message loses its button, in every link of the thread.
+	f.Log.Info("blocked start: choice pressed", "thread", int64(thread), "choice", choice, "client", f.Name, "id", s.Author.ID)
+	// The message loses its buttons, in every link of the thread.
 	convs, err := f.convsOf(ctx, thread)
 	if err != nil {
-		f.Log.Warn("trust button: the message could not be changed", "thread", int64(thread), "err", err)
+		f.Log.Warn("blocked start: the message could not be changed", "thread", int64(thread), "err", err)
 		return
 	}
 	m := f.failedMessage(sf, t.Repo, false)
-	m.Text += "\nTrusted by " + who + " for this channel's threads on " + t.Repo + ": starting again."
+	m.Text += "\n" + done
 	var rows []Row
 	for _, c := range convs {
-		rows = append(rows, Row{Event: pos, Part: trustedPart, Conv: c, Op: Edit, Target: &RowKey{Event: pos, Part: 0}, Message: m})
+		rows = append(rows, Row{Event: pos, Part: chosenPart, Conv: c, Op: Edit, Target: &RowKey{Event: pos, Part: 0}, Message: m,
+			Decoration: true})
 	}
 	if err := f.Outbox.Write(ctx, rows...); err != nil {
-		f.Log.Warn("trust button: the message could not be changed", "thread", int64(thread), "err", err)
+		f.Log.Warn("blocked start: the message could not be changed", "thread", int64(thread), "err", err)
 		return
 	}
 	f.Outbox.Wake()

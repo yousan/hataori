@@ -284,6 +284,11 @@ func (c *Client) Trust(ctx context.Context, id control.ThreadID, sid int64, file
 	return c.call(ctx, "Trust", trustArgs{ID: id, Session: sid, Files: files}, nil)
 }
 
+// StartWithoutSettings is the operation StartWithoutSettings. Since 3.21.
+func (c *Client) StartWithoutSettings(ctx context.Context, id control.ThreadID, sid int64) error {
+	return c.call(ctx, "StartWithoutSettings", startWithoutSettingsArgs{ID: id, Session: sid}, nil)
+}
+
 // Trusts is the operation Trusts. Since 3.21.
 func (c *Client) Trusts(ctx context.Context) ([]control.TrustedFile, error) {
 	var out []control.TrustedFile

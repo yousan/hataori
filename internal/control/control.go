@@ -225,6 +225,17 @@ type API interface {
 	// current session did not fail that way is refused (the wire's
 	// refused). Since 3.21.
 	Trust(ctx context.Context, id ThreadID, sid int64, files []string) error
+	// StartWithoutSettings starts thread id again without its repository's
+	// settings, when a start-up dialog that named files blocked the start of
+	// its current session sid (its state event's trust): the thread is
+	// marked so that every later launch of it leaves the project's and the
+	// local settings files out, with their hooks, and a new session starts
+	// in the same workspace with the same first input (a session_replaced
+	// event, reason "without project settings"), as Trust starts one. It is
+	// checked as Start is: the caller's person must be allowed in the
+	// thread's scope, and needs OpStart. A thread whose current session did
+	// not fail that way is refused. Since 3.21.
+	StartWithoutSettings(ctx context.Context, id ThreadID, sid int64) error
 	// Trusts lists the files trusted by Trust, in the scopes the caller may
 	// see, oldest first. It needs OpRead. Since 3.21.
 	Trusts(ctx context.Context) ([]TrustedFile, error)

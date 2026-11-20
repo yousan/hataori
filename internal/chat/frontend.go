@@ -481,6 +481,7 @@ const couldNotStart = "This thread could not start: "
 type startFailed struct {
 	pos     uint64 // the state event's position
 	thread  control.ThreadID
+	scope   string // the thread's
 	session int64
 	reason  string // as recorded, without the "start: " the core puts before its own
 	detail  string // the event's detail, for a person
@@ -502,7 +503,7 @@ func startFailure(e control.Event) (startFailed, bool) {
 	if json.Unmarshal(e.Data, &d) != nil || d.From != string(control.Creating) || d.To != string(control.Failed) {
 		return startFailed{}, false
 	}
-	return startFailed{pos: e.Pos, thread: e.Thread, session: d.Session, reason: strings.TrimPrefix(d.Reason, "start: "),
+	return startFailed{pos: e.Pos, thread: e.Thread, scope: e.Scope, session: d.Session, reason: strings.TrimPrefix(d.Reason, "start: "),
 		detail: d.Detail, trust: d.Trust}, true
 }
 

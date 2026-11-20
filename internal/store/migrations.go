@@ -482,6 +482,12 @@ var migrations = []Migration{
 			UNIQUE (scope, repo, file)
 		)`,
 	)},
+	// A thread a person chose to run without its repository's settings,
+	// from a start the folder-trust dialog blocked (#590): every launch of
+	// it leaves the project's and the local settings files out.
+	{Name: "threads.no_project_settings", Up: execAll(
+		`ALTER TABLE threads ADD COLUMN no_project_settings INTEGER NOT NULL DEFAULT 0`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

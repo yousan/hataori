@@ -43,17 +43,18 @@ var points = map[string]Failure{
 // operations are the operations of the control protocol, as
 // docs/protocol.md lists them; a test keeps the two equal.
 var operations = []string{"Answer", "AskInterrupt", "AttachTerminal", "Close", "End", "Events", "HostKeys", "HostScreen", "HostTerminals", "HostView", "Limits", "Link",
-	"OperateHost", "Release", "Remove", "Scopes", "Send", "SetName", "SignInLink", "Start", "Stop", "TakeIn", "Terminal", "Thread", "ThreadEvents", "Threads", "Trust", "Trusts", "Untrust", "Workspace"}
+	"OperateHost", "Release", "Remove", "Scopes", "Send", "SetName", "SignInLink", "Start", "StartWithoutSettings", "Stop", "TakeIn", "Terminal", "Thread", "ThreadEvents", "Threads", "Trust", "Trusts", "Untrust", "Workspace"}
 
 // never are the operations no plugin is given, whatever its manifest and
 // its config say: the dashboard's sign-in; the terminals on the host, read
 // or typed into; a terminal attached to an agent, which reaches the agent
 // past the core's checks; closing or removing a thread, which ends or
 // deletes a person's work; taking in a window a person started, or
-// letting it go; and trusting the files a start-up dialog named, which
-// lets a repository run commands, or withdrawing that.
+// letting it go; trusting the files a start-up dialog named, which lets a
+// repository run commands, or withdrawing that; and answering such a
+// dialog otherwise, which a person does from chat.
 var never = []string{"SignInLink", "HostTerminals", "HostScreen", "HostView", "OperateHost", "HostKeys", "End",
-	"AttachTerminal", "Close", "Remove", "TakeIn", "Release", "Trust", "Untrust"}
+	"AttachTerminal", "Close", "Remove", "TakeIn", "Release", "Trust", "Untrust", "StartWithoutSettings"}
 
 // classes are the classes of Caller.May that the operations a plugin may
 // be given need; the core checks the operation's name besides
