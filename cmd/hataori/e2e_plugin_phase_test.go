@@ -87,7 +87,7 @@ func withPlugins(t *testing.T, entries ...map[string]any) *chatRoot {
 }
 
 // started waits until each of the plugins has connected and called
-// Threads (or had it refused), and returns how many times each started.
+// Threads (or had it refused).
 func started(t *testing.T, logged func() string, ids ...string) {
 	t.Helper()
 	for _, id := range ids {
@@ -144,8 +144,7 @@ func eventsOf(t *testing.T, c control.API, id control.ThreadID, kinds []string) 
 
 var exampleKinds = []string{"thread_created", "turn_started", "input", "text", "turn_ended", "post_sent"}
 
-// ownerStart starts a thread in c1 as the owner, with script, and waits
-// for n of its turns to end.
+// ownerStart starts a thread in c1 as the owner, with script.
 func ownerStart(t *testing.T, owner *wire.Client, key, script string) control.ThreadID {
 	t.Helper()
 	id, err := owner.Start(context.Background(), control.StartRequest{Key: key, Scope: "c1", Thread: "t-" + key, Repo: bareRepo(t),
@@ -167,9 +166,9 @@ func turnsEnded(t *testing.T, owner control.API, id control.ThreadID, n int) {
 // example's kinds exactly once, in order.
 func handledOnce(t *testing.T, root, id string, owner control.API, th control.ThreadID) {
 	t.Helper()
-	want := eventsOf(t, owner, th, exampleKinds)
-	var got [][2]string
+	var want, got [][2]string
 	eventually(t, "plugin "+id+" to handle the thread's events", 20*time.Second, func() bool {
+		want = eventsOf(t, owner, th, exampleKinds)
 		got = nil
 		for _, e := range recordedEvents(t, root, id) {
 			if slices.Contains(want, e) {
@@ -212,16 +211,25 @@ func TestPluginReadsFromItsPositionAndIsRefusedWhatItsGrantLacks(t *testing.T) {
 	if !strings.Contains(logged(), "marker: threads 0") {
 		t.Fatalf("the first run's Threads:\n%s", logged())
 	}
-	if !strings.Contains(logged(), "plugin=narrow stream=stdout line=\"marker: threads refused: forbidden\"") ||
-		!refusedLine(logged(), "Threads", "") || !strings.Contains(logged(), "from=plugin:narrow") {
+	// One line names the operation, the scope and the plugin.
+	refused := slices.ContainsFunc(strings.Split(logged(), "\n"), func(l string) bool {
+		return strings.Contains(l, `msg="control call refused" op=Threads scope=""`) && strings.Contains(l, "from=plugin:narrow")
+	})
+	if !refused || !strings.Contains(logged(), "plugin=narrow stream=stdout line=\"marker: threads refused: forbidden\"") {
 		t.Fatalf("the refused Threads:\n%s", logged())
 	}
 	owner.Close()
 	stop()
 	// Where the next run starts: after the position kept, or the last event
 	// recorded, the later of the two, read once the plugin has stopped.
-	kept, _ := os.ReadFile(stateFile(r.root, "marker", "position"))
-	after, _ := strconv.ParseUint(strings.TrimSpace(string(kept)), 10, 64)
+	kept, err := os.ReadFile(stateFile(r.root, "marker", "position"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := strconv.ParseUint(strings.TrimSpace(string(kept)), 10, 64)
+	if err != nil || after == 0 {
+		t.Fatalf("the kept position %q: %v", kept, err)
+	}
 	for _, e := range recordedEvents(t, r.root, "marker") {
 		n, _ := strconv.ParseUint(e[0], 10, 64)
 		after = max(after, n)
@@ -232,8 +240,11 @@ func TestPluginReadsFromItsPositionAndIsRefusedWhatItsGrantLacks(t *testing.T) {
 	r.connected(t)
 	// Both: input waits for every before_agent_run handler to be connected.
 	started(t, logged, "marker", "narrow")
-	if !strings.Contains(logged(), "marker: reading events after "+strconv.FormatUint(after, 10)) || !strings.Contains(logged(), "marker: threads 1") {
-		t.Fatalf("the second run did not start after %d, or did not see the thread:\n%s", after, logged())
+	eventually(t, "the second run to read after the kept position", 20*time.Second, func() bool {
+		return strings.Contains(logged(), "plugin=marker stream=stdout line=\"marker: reading events after "+strconv.FormatUint(after, 10)+"\"")
+	})
+	if !strings.Contains(logged(), "plugin=marker stream=stdout line=\"marker: threads 1\"") {
+		t.Fatalf("the second run did not see the thread:\n%s", logged())
 	}
 	owner, err = wire.Dial(r.root)
 	if err != nil {
@@ -244,6 +255,11 @@ func TestPluginReadsFromItsPositionAndIsRefusedWhatItsGrantLacks(t *testing.T) {
 		t.Fatal(err)
 	}
 	turnsEnded(t, owner, a, 2)
+	// Once it has read every stored event, its whole record has each event
+	// once: nothing before the position was read again.
+	eventually(t, "the second run to catch up", 20*time.Second, func() bool {
+		return strings.Contains(logged(), "plugin=marker stream=stdout line=\"marker: caught up\"")
+	})
 	handledOnce(t, r.root, "marker", owner, a)
 }
 
@@ -273,7 +289,7 @@ func TestPluginNotStartedForItsHashOrItsProtocol(t *testing.T) {
 	if l := line("badhash"); !strings.Contains(l, "expected="+wrong) || !strings.Contains(l, "actual="+sum) {
 		t.Fatalf("the hash's line: %s", l)
 	}
-	if l := line("oldproto"); !strings.Contains(l, "2.0") || !strings.Contains(l, wire.Version) {
+	if l := line("oldproto"); !strings.Contains(l, "needs protocol 2.0, the daemon speaks "+wire.Version) {
 		t.Fatalf("the protocol's line: %s", l)
 	}
 	time.Sleep(300 * time.Millisecond)
@@ -289,7 +305,9 @@ var startedPID = regexp.MustCompile(`msg="plugin started" plugin=marker pid=([0-
 func TestPluginKilledDuringATurn(t *testing.T) {
 	exe, sum := exampleAs(t, "marker", nil)
 	r := withPlugins(t, entry("marker", exe, sum, map[string]any{"record": true}, nil))
-	runnerHook = func(pr *plugin.Runner) { pr.Backoff = 100 * time.Millisecond }
+	// Down longer than the turn takes: the turn ends while the plugin is
+	// not running.
+	runnerHook = func(pr *plugin.Runner) { pr.Backoff = 4 * time.Second }
 	t.Cleanup(func() { runnerHook = nil })
 	logged := startDaemonLog(t, r.root)
 	r.connected(t)
@@ -299,7 +317,7 @@ func TestPluginKilledDuringATurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer owner.Close()
-	id := ownerStart(t, owner, "k", "tool sleep 3s\nreply after the kill")
+	id := ownerStart(t, owner, "k", "tool sleep 1s\nreply after the kill")
 	eventually(t, "the plugin to read the turn's start", 20*time.Second, func() bool {
 		return slices.ContainsFunc(recordedEvents(t, r.root, "marker"), func(e [2]string) bool { return e[1] == "turn_started" })
 	})
@@ -308,10 +326,17 @@ func TestPluginKilledDuringATurn(t *testing.T) {
 	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
 		t.Fatal(err)
 	}
+	turnsEnded(t, owner, id, 1)
+	if n := len(startedPID.FindAllStringSubmatch(logged(), -1)); n != len(pids) {
+		t.Fatalf("the plugin started again before the turn ended: %d starts", n)
+	}
+	ended := eventsOf(t, owner, id, []string{"turn_ended"})[0]
+	if slices.Contains(recordedEvents(t, r.root, "marker"), ended) {
+		t.Fatal("the plugin read the turn's end while it was killed")
+	}
 	eventually(t, "the plugin to start again", 20*time.Second, func() bool {
 		return len(startedPID.FindAllStringSubmatch(logged(), -1)) == len(pids)+1
 	})
-	turnsEnded(t, owner, id, 1)
 	if s := threadEvents(t, owner, id, "turn_ended"); s[0]["outcome"] != "completion" {
 		t.Fatalf("the turn's end: %v", s[0])
 	}
@@ -361,8 +386,9 @@ func TestPluginHandlersRunByPriorityThenConfigOrder(t *testing.T) {
 		firstPri, otherPri float64
 		want               string
 	}{
-		{"config order", 0, 0, "ORDER-second-first"},
-		{"priority", 0, 10, "ORDER-first-second"},
+		// The config lists second before first, against their ids' order.
+		{"config order", 0, 0, "ORDER-first-second"},
+		{"priority", 10, 0, "ORDER-second-first"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			hooks := func(pri float64) func(m map[string]any) {
@@ -372,8 +398,8 @@ func TestPluginHandlersRunByPriorityThenConfigOrder(t *testing.T) {
 			}
 			fexe, fsum := exampleAs(t, "first", hooks(tc.firstPri))
 			sexe, ssum := exampleAs(t, "second", hooks(tc.otherPri))
-			r := withPlugins(t, entry("first", fexe, fsum, map[string]any{"rewrite": "ORDER", "with": "ORDER-first"}, nil),
-				entry("second", sexe, ssum, map[string]any{"rewrite": "ORDER", "with": "ORDER-second"}, nil))
+			r := withPlugins(t, entry("second", sexe, ssum, map[string]any{"rewrite": "ORDER", "with": "ORDER-second"}, nil),
+				entry("first", fexe, fsum, map[string]any{"rewrite": "ORDER", "with": "ORDER-first"}, nil))
 			logged := startDaemonLog(t, r.root)
 			r.connected(t)
 			started(t, logged, "first", "second")
@@ -393,18 +419,18 @@ func TestPluginTimeoutPolicies(t *testing.T) {
 	for _, override := range []bool{false, true} {
 		t.Run(map[bool]string{false: "default", true: "override"}[override], func(t *testing.T) {
 			gexe, gsum := exampleAs(t, "gate", func(m map[string]any) {
-				m["hooks"] = []map[string]any{{"point": "before_agent_run", "timeout": "300ms"}}
+				m["hooks"] = []map[string]any{{"point": "before_agent_run", "timeout": "1s"}}
 			})
 			oexe, osum := exampleAs(t, "outbox", func(m map[string]any) {
-				m["hooks"] = []map[string]any{{"point": "message_sending", "timeout": "300ms"}}
+				m["hooks"] = []map[string]any{{"point": "message_sending", "timeout": "1s"}}
 			})
 			var gmore, omore map[string]any
 			if override {
 				gmore = map[string]any{"hooks": []map[string]any{{"point": "before_agent_run", "on_failure": "skip"}}}
 				omore = map[string]any{"hooks": []map[string]any{{"point": "message_sending", "on_failure": "block"}}}
 			}
-			r := withPlugins(t, entry("gate", gexe, gsum, map[string]any{"slow": "SLOWIN", "slow_seconds": 2}, gmore),
-				entry("outbox", oexe, osum, map[string]any{"slow": "SLOWOUT", "slow_seconds": 2}, omore))
+			r := withPlugins(t, entry("gate", gexe, gsum, map[string]any{"slow": "SLOWIN", "slow_seconds": 4}, gmore),
+				entry("outbox", oexe, osum, map[string]any{"slow": "SLOWOUT", "slow_seconds": 4}, omore))
 			logged := startDaemonLog(t, r.root)
 			r.connected(t)
 			started(t, logged, "gate", "outbox")
@@ -415,7 +441,7 @@ func TestPluginTimeoutPolicies(t *testing.T) {
 			if override {
 				r.posted(t, th, "SLOWIN") // skipped: the input went on
 			} else if n := r.repliesTo(t, th, in.Ref, "Not sent to the agent: "+
-				"the plugin gate failed (it did not answer within 300ms), and its policy blocks the input."); n != 1 {
+				"the plugin gate failed (it did not answer within 1s), and its policy blocks the input."); n != 1 {
 				t.Fatalf("%d lines for the blocked input", n)
 			}
 
@@ -430,7 +456,7 @@ func TestPluginTimeoutPolicies(t *testing.T) {
 				return
 			}
 			if r.count(th, "SLOWOUT") != 0 || len(c) != 1 || c[0].Plugin != "outbox" || !c[0].Failed ||
-				!strings.Contains(c[0].Reason, "did not answer within 300ms") {
+				!strings.Contains(c[0].Reason, "did not answer within 1s") {
 				t.Fatalf("blocked: %d posts of SLOWOUT, cancelled %+v", r.count(th, "SLOWOUT"), c)
 			}
 		})
@@ -444,15 +470,38 @@ func TestPluginWithoutConversationGetsNoText(t *testing.T) {
 	const marker = "MARKER-9f31"
 	exe, sum := exampleAs(t, "marker", nil)
 	r := withPlugins(t, entry("marker", exe, sum, map[string]any{"record": true}, map[string]any{"conversation": false}))
+	runnerHook = func(pr *plugin.Runner) { pr.Backoff = 100 * time.Millisecond }
+	t.Cleanup(func() { runnerHook = nil })
 	logged := startDaemonLog(t, r.root)
 	r.connected(t)
 	started(t, logged, "marker")
+	// The thread's title, the first line of its first prompt, holds the
+	// marker too.
 	th := r.order(t, 0, "!go repo:"+bareRepo(t)+" reply "+marker)
 	r.posted(t, th, marker) // the agent's text, and a post
 	r.driver.Inject(th, fakesurface.Webhook(e2eHook), "reply also "+marker)
 	r.posted(t, th, "also "+marker)
+	// Started again, it calls Threads, which lists the thread.
+	pids := startedPID.FindAllStringSubmatch(logged(), -1)
+	pid, _ := strconv.Atoi(pids[len(pids)-1][1])
+	syscall.Kill(pid, syscall.SIGKILL)
+	eventually(t, "Threads to list the thread", 20*time.Second, func() bool {
+		return strings.Contains(logged(), "plugin=marker stream=stdout line=\"marker: threads 1\"")
+	})
+	// Up to the thread's last event, as the owner reads it.
+	n, _ := strconv.Atoi(numberOf(t, r.root, th))
+	owner, err := wire.Dial(r.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Close()
+	all := eventsOf(t, owner, control.ThreadID(n), exampleKinds)
+	last := all[len(all)-1]
 	var got string
-	eventually(t, "the plugin to be sent the hooks and the events", 20*time.Second, func() bool {
+	eventually(t, "the plugin to be sent the hooks and every event", 20*time.Second, func() bool {
+		if !slices.Contains(recordedEvents(t, r.root, "marker"), last) {
+			return false
+		}
 		b, _ := os.ReadFile(stateFile(r.root, "marker", "received.jsonl"))
 		got = string(b)
 		for _, s := range []string{`"op": "hook"`, `"point": "before_agent_run"`, `"point": "message_sending"`,

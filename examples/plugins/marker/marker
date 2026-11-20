@@ -5,7 +5,8 @@ It shows what a plugin does (docs/plugins.md):
 
 - connects to the control socket with the token hataori gave it, and states
   the protocol version it speaks;
-- calls Threads, and logs how many threads it may see;
+- calls Threads, and logs how many threads it may see, or that its grant
+  lacks Threads, which is refused;
 - reads events from the position it keeps in its state directory, so that a
   restart misses none, and logs each kind; with "record" set it also keeps
   each event's position and kind in events.jsonl, written before the
@@ -270,8 +271,11 @@ class Plugin:
             threads = self.call("Threads", {"filter": {}})
             log("threads", len(threads or []))
         except RuntimeError as e:
+            code = str(e).split(":")[1].strip()
+            if code != "forbidden":
+                raise
             # A grant without Threads: the call is refused, and the rest goes on.
-            log("threads refused:", str(e).split(":")[1].strip())
+            log("threads refused:", code)
         self.thread(self.follow)
         self.done.wait()
         # A broken connection or a failure ends the plugin; hataori starts it again.
