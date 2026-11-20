@@ -221,7 +221,7 @@ The holders, in the order they come:
 |---|---|---|---|---|---|---|
 | hataori's own host | yes | bytes to its pseudo-terminal | raw | yes | socket and status file | yes |
 | tmux, a window a person started (section 4.8) | no | `load-buffer -b <own> -`, then `paste-buffer -p -r -d -b <own>`, with `-S` from tmux 3.7 on; `send-keys` with tmux's key names | snapshots (`capture-pane`) | no | `list-panes`, and the process the hooks named | yes, Appendix B; built (#399) |
-| tmux, a window hataori starts | yes | as above | raw, through `pipe-pane -O` | yes | `remain-on-exit` and `#{pane_dead_status}` | the parts, Appendix B; the whole is not built |
+| tmux, a window hataori starts | yes | as above | raw, through `pipe-pane -O` | yes | `remain-on-exit` and `#{pane_dead_status}` | the parts, Appendix B; the whole on test tmux servers (#402), not yet against the real CLI |
 | cmux (macOS) | **(unverified)** | `cmux paste`, `cmux send-key` | `cmux read-screen`, text | `cmux close-surface` | `cmux surface-health` | documentation only |
 | iTerm2 (macOS) | **(unverified)** | Python API `Session.async_send_text` | `Session.async_get_screen_contents` | **(unverified)** | **(unverified)** | documentation only |
 
@@ -232,7 +232,7 @@ The holders, in the order they come:
 3. `remain-on-exit` is set on the pane, so that its exit status can be read after the agent ends, and `pipe-pane -O` sends the pane's output to a `hataori` process that writes the bounded raw log the host writes today.
 4. `respawn-pane -k` replaces the placeholder with the real command. The pipe stays on the pane and gets the first byte (Appendix B). The command is a small `hataori` command that reads the spec from the session's state directory and executes the agent with exactly that environment. Without it the pane would inherit the tmux server's environment, and passing values with `-e` would put them on a command line.
 
-Choosing tmux for the sessions hataori starts is a config option, later (section 10).
+Choosing tmux for the sessions hataori starts is the config key `holder` (`"host"` by default, or `"tmux"`; #402, docs/configuration.md). The tmux session of each is `hataori-<instance>-<session>`; `hataori exec` and `hataori pipe` are the two commands the window runs. An agent on pipes stays with hataori's own host.
 
 *cmux*, from its documentation (Appendix B; nothing run). Each terminal, a "surface", has `CMUX_SURFACE_ID` in its environment, which stays the same for the terminal's whole life, across a restore of the app, and `CMUX_SOCKET_PATH`. `cmux paste` sends text unchanged through the app's paste path; the terminal brackets it when the program has asked for bracketed paste, and "replaces unsafe control bytes with spaces". `cmux send-key` sends one key. Both refuse to write over a prompt that a person is typing, or into an open dialog, unless forced. `cmux read-screen` returns text. cmux also starts `claude` through a wrapper of its own, which registers hooks with `--settings` and shows permission requests in cmux's own feed. So in a cmux window two programs could answer one permission request, and the cmux issue decides which one does before anything ships. It is not known whether cmux can give raw output from the first byte, so cmux starts as a holder for windows people started only.
 

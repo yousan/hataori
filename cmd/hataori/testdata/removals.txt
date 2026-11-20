@@ -29,3 +29,6 @@ internal/runner/takein.go	writeAtomic	os.Remove	Removes only its own temporary f
 internal/window/window.go	WriteRecord	os.Remove	Removes only its own temporary file in the private directory of take-in records next to the report socket, outside every workspace.
 internal/window/window.go	RemoveRecord	os.Remove	Removes only one take-in record file in the private directory next to the report socket; the window and its directory are not touched.
 internal/runner/takein.go	Runner.RemoveState	os.RemoveAll	Removes only a session's state directory under the instance's state/sessions, after checking that no host runs in it and that it is a directory, not a link: never a workspace, which for a thread taken in is the person's own.
+internal/holder/tmux/started.go	Holder.Start	os.Remove	Removes only the status file an earlier run of the session's tmux window recorded, in the session's state directory, before the next run; never a workspace.
+internal/holder/tmux/started.go	writePrivate	os.Remove	Removes only its own temporary file in the session's state directory after a rename that failed, outside every workspace.
+internal/runner/held.go	Runner.endHeld	os.Remove	Removes only the held.json note in the session's state directory once its tmux window has been let go; never a workspace.
