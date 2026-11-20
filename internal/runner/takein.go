@@ -318,7 +318,9 @@ func (r *Runner) RemoveState(ctx context.Context, id int64) error {
 	if !st.IsDir() {
 		return fmt.Errorf("runner: session %d: %s is not a directory", id, dir)
 	}
-	if host.Running(dir) || r.alive(dir).State == holder.Running {
+	// A host that ended records its end before it lets go of the
+	// directory: one that has just ended is waited for, briefly.
+	if r.alive(dir).State == holder.Running || !r.own().WaitReleased(r.window(dir), 5*time.Second) {
 		return fmt.Errorf("runner: session %d: a host still runs in its state directory: %w", id, session.ErrRefused)
 	}
 	// Never the session's workspace, nor a directory that holds it or lies
