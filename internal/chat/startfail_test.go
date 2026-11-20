@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/agent"
+	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/session"
+	"github.com/yousan/hataori/internal/surface"
 	"github.com/yousan/hataori/internal/surface/fake"
 )
 
@@ -210,5 +212,40 @@ func TestABlockedStartsMessageSaysWhatToDoNext(t *testing.T) {
 		if strings.Join(choices, "|") != "Start without this repository's settings|Trust and start|Do not start" {
 			t.Fatalf("choices %q", choices)
 		}
+	}
+}
+
+// An old message's buttons act on its own session only: once the thread
+// has a later session, "Do not start" on the old message closes nothing,
+// whoever presses it (#590).
+func TestAnOldBlockedMessagesButtonsDoNothing(t *testing.T) {
+	f := newFront(t, workspaces{})
+	id, _ := f.started(t)
+	f.showing(t)
+	l := f.runner.all()
+	err := f.core.Machine.Apply(context.Background(), l[0].Session, session.Input{Kind: session.AgentEvent,
+		Agent: agent.Event{Seq: 1, Kind: agent.SessionEnded, Reason: agent.BlockedAtStart, Text: "blocked", Trust: []string{".agent/settings.json"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var msg fake.Call
+	waitFor(t, "the choices", func() bool {
+		for _, c := range f.driver.Calls(f.conv(id)) {
+			if c.Op == fake.OpPost && len(c.Message.Choices) == 3 {
+				msg = c
+				return true
+			}
+		}
+		return false
+	})
+	// A later session, as after a start again that failed once more.
+	f.event(t, id, "session_replaced", map[string]any{"new_session": 2, "reason": "trusted"})
+	f.fe.Choice(surface.Selection{Ref: msg.Ref, Author: fake.Webhook(hook), Token: msg.Message.Choices[2].Token})
+	if !strings.Contains(strings.Join(f.log.lines(), "\n"), "the thread has a later session") {
+		t.Fatalf("log: %q", f.log.lines())
+	}
+	api := f.fe.API(control.Caller{Principal: "owner", Scopes: []string{channel}, May: control.OpRead})
+	if d, err := api.Thread(context.Background(), id, 0, 0); err != nil || d.State != control.Failed {
+		t.Fatalf("the thread is %s, %v; want failed", d.State, err)
 	}
 }

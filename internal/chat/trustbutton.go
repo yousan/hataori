@@ -100,9 +100,15 @@ func (f *FrontEnd) pressBlocked(s surface.Selection, rest string) {
 		ignored("not a button of this thread", err)
 		return
 	}
-	sf, ok, err := f.failureAt(ctx, t, pos)
+	sf, ok, later, err := f.failureAt(ctx, t, pos)
 	if err != nil || !ok || len(sf.trust) == 0 {
 		ignored("no start blocked by files there", err)
+		return
+	}
+	if later {
+		// An old message's buttons act on its session only: "Do not
+		// start" names no session to the core.
+		ignored("the thread has a later session", nil)
 		return
 	}
 	if t.State != control.Failed {
@@ -167,24 +173,31 @@ func (f *FrontEnd) pressBlocked(s surface.Selection, rest string) {
 }
 
 // failureAt reads the event at pos of thread t as its session's start
-// failure.
-func (f *FrontEnd) failureAt(ctx context.Context, t control.ThreadInfo, pos uint64) (startFailed, bool, error) {
+// failure, and reports whether a later event names another session: one
+// started again, or replaced.
+func (f *FrontEnd) failureAt(ctx context.Context, t control.ThreadInfo, pos uint64) (sf startFailed, ok, later bool, err error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	api := f.API(control.Caller{Principal: f.ownerPrincipal(), Scopes: []string{t.Scope}, May: control.OpRead})
 	evs, err := api.Events(ctx, control.Filter{Thread: t.ID}, pos-1)
 	if err != nil {
-		return startFailed{}, false, err
+		return startFailed{}, false, false, err
 	}
 	defer stopEvents(cancel, evs)
 	for e := range evs {
-		if e.Kind == control.CaughtUp || e.Pos > pos {
-			return startFailed{}, false, nil
-		}
-		if e.Pos == pos {
-			sf, ok := startFailure(e)
-			return sf, ok, nil
+		switch {
+		case e.Kind == control.CaughtUp:
+			return sf, ok, later, nil
+		case e.Pos == pos:
+			sf, ok = startFailure(e)
+			if !ok {
+				return sf, false, false, nil
+			}
+		case e.Pos < pos || !ok:
+			return startFailed{}, false, false, nil // no event at pos
+		case e.Kind == "session_replaced" || sessionOf(e) != 0 && sessionOf(e) != sf.session:
+			later = true
 		}
 	}
-	return startFailed{}, false, ctx.Err()
+	return startFailed{}, false, false, ctx.Err()
 }

@@ -1313,6 +1313,18 @@ Run on 2026-11-19 against tmux 3.4 on Linux, on tmux servers of their own, as ab
 | `display-message -p -t <pane>` for a pane that has gone | exit status 0, every field empty; `list-panes -a` no longer listed it |
 | Pane ids after the server was killed and started again | the first pane was `%0` again, and the server's process id in `TMUX` was another |
 
+### Claude Code: a launch without the project's settings (#590)
+
+Claude Code 2.1.329, Linux, 2026-11-21, on the staging instance. Each repository was a new clone holding one project file that leaves a marker when it acts. Each thread was blocked at the folder-trust dialog, then started again with `StartWithoutSettings`, so the launch added `--setting-sources user` and the adapter answered the dialog yes.
+
+| Repository holds | Dialog under `--setting-sources user` | After the answer |
+|---|---|---|
+| `.claude/settings.json` with a `SessionStart` hook that touches a marker | still drawn with the hooks warning and `Trusting this folder loads .claude/settings.json (runs commands).` | the first turn ran; no marker: the hook did not run |
+| `.claude/settings.local.json` with the same hook | the same, naming `.claude/settings.local.json` | the first turn ran; no marker |
+| `.mcp.json` with one stdio server that touches a marker | the dialog without a line naming files | the first turn ran; no marker: the server was not started |
+
+For comparison, `Trust` on the first repository answered the same dialog without the flag: the turn ran and the hook left its marker. A later thread on that repository started without the dialog blocking it, and once the file was withdrawn (`hataori untrust`) the next one was blocked again.
+
 ### Documentation read on 2026-11-12
 
 - Agent SDK overview: Python and TypeScript only; other languages run the CLI with `-p`; the note on third parties and claude.ai login.
