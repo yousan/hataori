@@ -24,6 +24,7 @@ import (
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
 	"github.com/yousan/hataori/internal/dashboard"
+	"github.com/yousan/hataori/internal/holder/tmux"
 	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/hostterm"
 	"github.com/yousan/hataori/internal/instance"
@@ -126,6 +127,16 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		Host: host.Command{Path: exe, Args: []string{"host"}}, Root: abs, Log: lg, IdlePeriod: cfg.Idle,
 		ContextBytes: cfg.ContextBytes, Cols: uint16(cfg.TerminalCols), Rows: uint16(cfg.TerminalRows)}
 	defer r.Close()
+	// The tmux windows hataori starts, with the "holder" key, are in tmux
+	// sessions named after the instance, so that two never meet; and those
+	// of windows people started are held with the same program.
+	r.Tmux = &tmux.Holder{Hataori: exe, Prefix: "hataori-" + instanceTag(abs) + "-"}
+	if cfg.Holder == instance.HolderTmux {
+		r.Holder = runner.HolderTmux
+	}
+	if tmuxServerHook != nil {
+		r.Tmux.Server = tmuxServerHook()
+	}
 	trust := map[string][]string{}
 	for _, s := range cfg.Scopes {
 		trust[s.Key] = s.TrustFiles
@@ -588,6 +599,11 @@ func instanceTag(root string) string {
 	sum := sha256.Sum256([]byte(root))
 	return hex.EncodeToString(sum[:6])
 }
+
+// tmuxServerHook, when a test sets it, gives the arguments that name the
+// tmux server the windows hataori starts are made on, such as a server of
+// the test's own, instead of the default one.
+var tmuxServerHook func() []string
 
 // hostInputSource, when a test sets it, is what the daemon types into
 // host panes with instead of tmux.

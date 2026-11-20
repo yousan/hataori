@@ -74,6 +74,10 @@ type Runner struct {
 	// Tmux holds the tmux windows people started that were taken in
 	// (TakeIn); a tmux.Holder running "tmux" from PATH when nil.
 	Tmux *tmux.Holder
+	// Holder is what holds the terminal of the agents it starts in one:
+	// hataori's own host when empty, or HolderTmux. An agent on pipes is
+	// always the own host's.
+	Holder string
 
 	mu   sync.Mutex
 	live map[int64]*live
@@ -298,7 +302,11 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 		// followed, not started again.
 		hs.Again = &holder.Window{Holder: holder.HostName, Process: recorded}
 	}
-	w, err := r.hold().Start(ctx, dir, hs)
+	start := r.hold().Start
+	if r.Holder == HolderTmux && launch.Terminal {
+		start = r.startHeld
+	}
+	w, err := start(ctx, dir, hs)
 	if errors.Is(err, holder.ErrHeld) {
 		return agent.Spec{}, fmt.Errorf("runner: session %d: another host still holds its state directory", id)
 	}
@@ -324,12 +332,26 @@ func (r *Runner) window(dir string) holder.Window { return r.own().Window(dir) }
 
 // alive is what the holder says of the session whose state directory is dir.
 func (r *Runner) alive(dir string) holder.Liveness {
+	if w, ok := heldOf(dir); ok {
+		l, _ := r.tmuxHolder().Alive(context.Background(), w)
+		return l
+	}
 	l, _ := r.hold().Alive(context.Background(), r.window(dir))
 	return l
 }
 
-// stop stops the agent of the session whose state directory is dir.
+// stop stops the agent of the session whose state directory is dir. A held
+// window is let go as well (endHeld).
 func (r *Runner) stop(dir string, interrupt, terminate time.Duration) (holder.StopResult, error) {
+	if w, ok := heldOf(dir); ok {
+		ctx := context.Background()
+		res, err := r.tmuxHolder().Stop(ctx, w, interrupt, terminate)
+		if err != nil {
+			return res, err
+		}
+		r.endHeld(ctx, dir)
+		return res, nil
+	}
 	return r.hold().Stop(context.Background(), r.window(dir), interrupt, terminate)
 }
 
@@ -391,6 +413,9 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 		if !r.alive(s.Spec.StateDir).Ended() {
 			return fmt.Errorf("runner: session %d: its host is still running", id)
 		}
+		// A held window whose end a daemon that died did not see through:
+		// its relay host and window go before another start.
+		r.endHeld(ctx, s.Spec.StateDir)
 		// An ended host records its end before it lets go of the state
 		// directory.
 		w := r.window(s.Spec.StateDir)
@@ -1200,7 +1225,11 @@ func (r *Runner) watchScreen(lv *live, b *batch) {
 	if !lv.screen {
 		return
 	}
-	data, next := r.own().Since(r.window(lv.dir), lv.seenTo)
+	since := func(from uint64) ([]byte, uint64) { return r.own().Since(r.window(lv.dir), from) }
+	if _, ok := heldOf(lv.dir); ok {
+		since = func(from uint64) ([]byte, uint64) { return heldScreen(lv.dir, from) }
+	}
+	data, next := since(lv.seenTo)
 	lv.seenTo = next
 	if len(data) > 0 {
 		r.decode(lv, b, agent.Screen, data)
@@ -1424,6 +1453,9 @@ func (r *Runner) act(lv *live, a agent.Actions) error {
 	ctx, w := context.Background(), r.window(lv.dir)
 	if len(a.Keys) > 0 {
 		in := func() error { return r.hold().Input(ctx, w, a.Keys) }
+		if hw, ok := heldOf(lv.dir); ok {
+			in = func() error { return r.tmuxHolder().Input(ctx, hw, a.Keys) }
+		}
 		if lv.taken != nil {
 			in = func() error {
 				// Only to the agent that was taken in: suspended or ended, the
@@ -1465,6 +1497,10 @@ func (r *Runner) exit(lv *live) {
 		}
 	}
 	st := r.alive(lv.dir).Status
+	if _, ok := heldOf(lv.dir); ok {
+		// How it ended is read; its window and relay host go now.
+		defer r.endHeld(context.Background(), lv.dir)
+	}
 	in := session.Input{Kind: session.Exit}
 	switch {
 	case st == nil:
@@ -1768,7 +1804,9 @@ func (r *Runner) checkStart(lv *live) {
 		return
 	}
 	var tail []byte
-	if lv.client != nil {
+	if _, ok := heldOf(lv.dir); ok {
+		tail = heldTail(lv.dir, 4000)
+	} else if lv.client != nil {
 		tail, _ = r.own().Tail(context.Background(), r.window(lv.dir), 4000)
 	}
 	if err := r.Machine.Apply(context.Background(), lv.id, session.Input{Kind: session.StartTimeout, Detail: string(tail)}); err != nil {
