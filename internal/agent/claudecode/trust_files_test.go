@@ -19,10 +19,16 @@ import (
 // events it produced.
 func replayTrust(t *testing.T, name string, spec agent.Spec) (keys string, events []agent.Event) {
 	t.Helper()
+	return replayTrustOf(t, "2.1.328", name, spec)
+}
+
+// replayTrustOf is replayTrust for a capture of version.
+func replayTrustOf(t *testing.T, version, name string, spec agent.Spec) (keys string, events []agent.Event) {
+	t.Helper()
 	spec.Dir = "/tmp/capture-work/sessions/" + name
 	c := (&Adapter{}).NewCodec(spec).(*codec)
 	c.Open()
-	chunks, _ := filepath.Glob(filepath.Join("testdata/2.1.328", name, "screen-*.raw"))
+	chunks, _ := filepath.Glob(filepath.Join("testdata", version, name, "screen-*.raw"))
 	if len(chunks) == 0 {
 		t.Fatalf("no screens in %s", name)
 	}
@@ -88,6 +94,58 @@ func TestTrustDialogThatNamesFiles(t *testing.T) {
 				t.Fatalf("events %+v; want one SessionEnded, blocked at start, naming %s", events, tc.refused)
 			}
 		})
+	}
+}
+
+// The dialog of Claude Code 2.1.329 whose project settings declare hooks
+// draws a warning line above the line naming the files (#592): it is read
+// like 2.1.328's, answered when the scope trusts the file and otherwise
+// refused at once, naming it, with the warning quoted. A tool permission's
+// warning is a screen the codec does not know: no key and no event.
+func TestTrustDialogWithTheHooksWarning(t *testing.T) {
+	trusted := agent.Spec{TrustFiles: []string{".claude/settings.json"}}
+	keys, events := replayTrustOf(t, "2.1.329", "trust_hooks_refused", agent.Spec{Scope: "C0123"})
+	if keys != "" || len(events) != 1 || events[0].Reason != agent.BlockedAtStart ||
+		!strings.Contains(events[0].Text, "to let .claude/settings.json through") ||
+		!strings.Contains(events[0].Text, "> ⚠ This folder configures hooks that can run commands without asking, declared\n> in .claude/settings.json\n") {
+		t.Fatalf("refused: keys %q events %+v", keys, events)
+	}
+	if keys, events := replayTrustOf(t, "2.1.329", "trust_hooks_allowed", trusted); keys != "down enter" || len(events) != 0 {
+		t.Fatalf("allowed: keys %q events %+v", keys, events)
+	}
+	// The refused capture ends with the dialog: only the first key goes.
+	if keys, events := replayTrustOf(t, "2.1.329", "trust_hooks_refused", trusted); keys != "down" || len(events) != 0 {
+		t.Fatalf("refused capture, trusted: keys %q events %+v", keys, events)
+	}
+	for _, spec := range []agent.Spec{trusted, {}} {
+		if keys, events := replayTrustOf(t, "2.1.329", "trust_permissions", spec); keys != "" || len(events) != 0 {
+			t.Fatalf("a tool permission's warning, %+v: keys %q events %+v", spec, keys, events)
+		}
+	}
+}
+
+// Only the warning's known shape is read: one that names a file the dialog
+// does not load, or says something else, leaves the dialog unanswered.
+func TestHooksWarningShapes(t *testing.T) {
+	dir := "/w"
+	head := "Accessing workspace: /w Quick safety check: Is this a project you created or one you trust? " +
+		"(Like your own code, a well-known open source project, or work from your team). If not, " +
+		"take a moment to review what's in this folder first. Claude Code'll be able to read, edit, and execute files here. "
+	tail := " Security guide"
+	for _, tc := range []struct {
+		middle string
+		files  []string
+		ok     bool
+	}{
+		{hooksWarning + ".claude/settings.json Trusting this folder loads .claude/settings.json (runs commands).", []string{".claude/settings.json"}, true},
+		{hooksWarning + ".claude/settings.local.json Trusting this folder loads .claude/settings.json (runs commands).", nil, false},
+		{"⚠ This folder configures something else in .claude/settings.json Trusting this folder loads .claude/settings.json.", nil, false},
+		{hooksWarning + ".claude/settings.json", nil, false},
+	} {
+		files, ok := headerMatches(head+tc.middle+tail, dir)
+		if ok != tc.ok || !slices.Equal(files, tc.files) {
+			t.Errorf("%q: %q %v, want %q %v", tc.middle, files, ok, tc.files, tc.ok)
+		}
 	}
 }
 

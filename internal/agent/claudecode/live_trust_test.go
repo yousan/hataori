@@ -43,28 +43,41 @@ func TestLiveTrustFiles(t *testing.T) {
 	// A status line, a hook and environment: what a supervisor could plant.
 	local := `{"statusLine": {"type": "command", "command": "true"}, "env": {"X": "1"},` +
 		` "hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "true"}]}]}}` + "\n"
+	// Hooks in the project settings, and a tool permission they allow: the
+	// warnings 2.1.329 draws above the line naming the files (#592).
+	hooks := `{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "true"}]}]}}` + "\n"
+	permissions := `{"permissions": {"allow": ["Bash(ls:*)"]}}` + "\n"
 	for _, tc := range []struct {
 		name     string
 		files    map[string]string
 		spec     agent.Spec
 		answered bool
+		ignored  bool // a screen the codec does not know: no key and no event
 	}{
-		{"trust_files_refused", map[string]string{".claude/settings.json": settings}, agent.Spec{}, false},
+		{"trust_hooks_refused", map[string]string{".claude/settings.json": hooks}, agent.Spec{}, false, false},
+		{"trust_hooks_allowed", map[string]string{".claude/settings.json": hooks},
+			agent.Spec{TrustFiles: []string{".claude/settings.json"}}, true, false},
+		{"trust_permissions", map[string]string{".claude/settings.json": permissions},
+			agent.Spec{TrustFiles: []string{".claude/settings.json"}}, false, true},
+		{"trust_files_refused", map[string]string{".claude/settings.json": settings}, agent.Spec{}, false, false},
 		{"trust_files_allowed", map[string]string{".claude/settings.json": settings},
-			agent.Spec{TrustFiles: []string{".claude/settings.json"}}, true},
+			agent.Spec{TrustFiles: []string{".claude/settings.json"}}, true, false},
 		{"trust_files_confined", map[string]string{".claude/settings.local.json": local},
-			agent.Spec{Confine: &agent.Confinement{}}, true},
+			agent.Spec{Confine: &agent.Confinement{}}, true, false},
 		// The other wordings: two files, and an MCP config.
 		{"trust_files_both", map[string]string{".claude/settings.json": settings, ".claude/settings.local.json": local},
-			agent.Spec{TrustFiles: []string{".claude/settings.json", ".claude/settings.local.json"}}, true},
+			agent.Spec{TrustFiles: []string{".claude/settings.json", ".claude/settings.local.json"}}, true, false},
 		{"trust_files_mcp", map[string]string{".mcp.json": `{"mcpServers": {"x": {"type": "stdio", "command": "true"}}}` + "\n"},
-			agent.Spec{}, false},
+			agent.Spec{}, false, false},
 	} {
-		t.Run(tc.name, func(t *testing.T) { liveTrust(t, raw, tc.name, tc.files, tc.spec, tc.answered) })
+		if only := os.Getenv("HATAORI_CAPTURE_ONLY"); only != "" && !strings.HasPrefix(tc.name, only) {
+			continue
+		}
+		t.Run(tc.name, func(t *testing.T) { liveTrust(t, raw, tc.name, tc.files, tc.spec, tc.answered, tc.ignored) })
 	}
 }
 
-func liveTrust(t *testing.T, raw, name string, files map[string]string, spec agent.Spec, answered bool) {
+func liveTrust(t *testing.T, raw, name string, files map[string]string, spec agent.Spec, answered, ignored bool) {
 	out := filepath.Join(raw, name)
 	hooks := filepath.Join(out, "hooks")
 	if _, err := os.Stat(out); err == nil {
@@ -189,6 +202,11 @@ func liveTrust(t *testing.T, raw, name string, files map[string]string, spec age
 		}
 	}
 	deadline := time.After(60 * time.Second)
+	if ignored {
+		// The screen settles, the codec looks at it for a while, and stays
+		// silent.
+		deadline = time.After(15 * time.Second)
+	}
 	last := time.Now()
 	for !done {
 		select {
@@ -201,6 +219,10 @@ func liveTrust(t *testing.T, raw, name string, files map[string]string, spec age
 			act(c.Decode(agent.Screen, b), fmt.Sprintf("screen-%02d", n))
 		case <-time.After(200 * time.Millisecond):
 		case <-deadline:
+			if ignored {
+				done = true
+				continue
+			}
 			t.Fatalf("neither a key nor an event within 60 s; keys %q events %q", keys, events)
 		}
 		if time.Since(last) >= time.Second {
@@ -210,6 +232,12 @@ func liveTrust(t *testing.T, raw, name string, files map[string]string, spec age
 	}
 	os.WriteFile(filepath.Join(out, "keys.txt"), []byte(strings.Join(keys, "\n")+"\n"), 0o600)
 	os.WriteFile(filepath.Join(out, "events.txt"), []byte(strings.Join(events, "\n")+"\n"), 0o600)
+	if ignored {
+		if len(keys) != 0 || len(events) != 0 {
+			t.Fatalf("keys %q events %q, want none for a screen the codec does not know", keys, events)
+		}
+		return
+	}
 	if !answered {
 		if len(keys) != 0 || len(events) != 1 {
 			t.Fatalf("keys %q events %q, want no key and one event", keys, events)
