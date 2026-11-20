@@ -1825,6 +1825,8 @@ func (r *Runner) Interrupt(ctx context.Context, id, named int64) error {
 		// Once more, under the lock the runner's steps hold when they end a
 		// turn, and held until the session is stopped: a turn that ended
 		// in the last poll, and the turn after it, are left running (#494).
+		// A host that does not answer the stop holds the lock no longer
+		// than stopHold; the stop goes on without it.
 		lv.mu.Lock()
 		defer lv.mu.Unlock()
 		var state string
@@ -1843,7 +1845,22 @@ func (r *Runner) Interrupt(ctx context.Context, id, named int64) error {
 			return
 		}
 		r.Log.Warn("the turn did not end after the interrupt; stopping the session", "session", id)
-		r.stop(lv.dir, time.Second, 2*time.Second)
+		r.at("interrupt watch: stopping")
+		stopped := make(chan struct{})
+		go func() {
+			defer close(stopped)
+			r.stop(lv.dir, time.Second, 2*time.Second)
+		}()
+		select {
+		case <-stopped:
+		case <-time.After(stopHold):
+			r.Log.Warn("the session's host has not answered the stop; the runner goes on", "session", id)
+		}
 	}()
 	return nil
 }
+
+// stopHold is how long the interrupt's watchdog holds the session's lock
+// while its host stops the session: its SIGINT and SIGTERM periods, and
+// time for the host to answer.
+const stopHold = 10 * time.Second

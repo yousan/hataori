@@ -569,7 +569,7 @@ func TestWatchdogLeavesATurnThatStartedInItsLastPoll(t *testing.T) {
 		f := newFixture(t, options{terminal: terminal, interrupt: time.Second})
 		// The agent heeds the interrupt only after the grace period.
 		f.start("deaf 1500ms\nreply late")
-		waitFor(t, "the turn", 15*time.Second, f.has("turn_started", 1))
+		waitFor(t, "the agent deaf", 15*time.Second, f.has("tool_started", 1))
 		var once sync.Once
 		f.run.point = func(p string) {
 			if p != "interrupt watch: stop" {
@@ -597,18 +597,44 @@ func TestWatchdogLeavesATurnThatStartedInItsLastPoll(t *testing.T) {
 }
 
 // The watchdog still stops a session whose turn does not end after the
-// interrupt, now under the runner's lock (#494).
+// interrupt, and holds the runner's lock for the session while it does, so
+// that no step records the turn's end in between (#494).
 func TestWatchdogStopsATurnThatIgnoresTheInterrupt(t *testing.T) {
 	forms(t, func(t *testing.T, terminal bool) {
 		f := newFixture(t, options{terminal: terminal, interrupt: time.Second})
 		f.start("deaf 60s\nreply late")
-		waitFor(t, "the turn", 15*time.Second, f.has("turn_started", 1))
+		waitFor(t, "the agent deaf", 15*time.Second, f.has("tool_started", 1))
+		locked := make(chan bool, 1)
+		f.run.point = func(p string) {
+			if p != "interrupt watch: stopping" {
+				return
+			}
+			lv, err := f.run.get(1)
+			if err != nil {
+				t.Errorf("the session: %v", err)
+				locked <- false
+				return
+			}
+			free := lv.mu.TryLock()
+			if free {
+				lv.mu.Unlock()
+			}
+			locked <- !free
+		}
 		if err := owner(f.core).Stop(context.Background(), thread, 0); err != nil {
 			t.Fatal(err)
 		}
 		waitFor(t, "the end of the turn", 15*time.Second, f.has("turn_ended", 1))
 		if !strings.Contains(f.log.String(), "stopping the session") {
 			t.Fatalf("the session was not stopped by the watchdog: %s", f.log.String())
+		}
+		select {
+		case l := <-locked:
+			if !l {
+				t.Fatal("the watchdog stopped the session without the runner's lock")
+			}
+		default:
+			t.Fatal("the watchdog did not reach its stop")
 		}
 	})
 }

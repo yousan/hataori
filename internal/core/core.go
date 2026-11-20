@@ -97,8 +97,9 @@ type Runner interface {
 	// checked in the step that sends the interrupt, and the error then
 	// wraps session.ErrRefused. The check is against the turns the runner
 	// has recorded, read from the agent every poll: a turn the agent began
-	// by itself, or that a person typed at its terminal, in the poll since
-	// the named one ended can still get the interrupt (#494).
+	// by itself, or that a person typed at its terminal, before the runner
+	// read the named one's end can still get an interrupt that names no
+	// turn, as Claude Code's (#494).
 	Interrupt(ctx context.Context, sessionID, turn int64) error
 	// Resume starts the agent of an asleep session again with its
 	// conversation, and sends it in as a Send of principal and key once it
