@@ -130,8 +130,6 @@ func newTakeRigWith(t *testing.T, root string, inShell bool, extra string) *take
 		}
 		shell := strconv.Itoa(g.pid)
 		g.pid = 0
-		typed := time.Now()
-		defer func() { t.Logf("TIMING the agent's process after %v", time.Since(typed)) }()
 		for deadline := time.Now().Add(10 * time.Second); g.pid == 0; time.Sleep(10 * time.Millisecond) {
 			out, _ := exec.Command("ps", "-A", "-o", "pid=,ppid=").Output()
 			for _, l := range strings.Split(string(out), "\n") {
