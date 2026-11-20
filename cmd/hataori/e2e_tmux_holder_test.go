@@ -63,6 +63,10 @@ func tmuxOn(server []string, args ...string) *exec.Cmd {
 // a record of each of its starts.
 func heldRoot(t *testing.T, holderName string, server []string) (*chatRoot, string) {
 	t.Helper()
+	// The daemon's environment, which the tmux server it starts inherits,
+	// is that of a person's shell: not one of hataori's own sessions, as
+	// when the test runs in one.
+	t.Setenv(host.HookEnvVar, "")
 	record := t.TempDir()
 	r := newChatRoot(t, func(cfg map[string]any) {
 		cfg["holder"] = holderName
