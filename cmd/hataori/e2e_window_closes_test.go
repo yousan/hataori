@@ -100,7 +100,10 @@ func tree(t *testing.T, dir string) string {
 		rel, _ := filepath.Rel(dir, p)
 		fmt.Fprintf(&b, "%s %v %d\n", rel, st.Mode(), st.ModTime().UnixNano())
 		if st.Mode().IsRegular() {
-			c, _ := os.ReadFile(p)
+			c, err := os.ReadFile(p)
+			if err != nil {
+				t.Fatal(err)
+			}
 			b.Write(c)
 			b.WriteByte('\n')
 		}
