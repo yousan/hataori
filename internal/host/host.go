@@ -420,7 +420,7 @@ type request struct {
 	Interrupt time.Duration `json:"interrupt,omitempty"` // stop: grace after SIGINT
 	Terminate time.Duration `json:"terminate,omitempty"` // stop: grace after SIGTERM
 	Run       string        `json:"run,omitempty"`       // follow: the run that After counts in
-	After     uint64        `json:"after,omitempty"`     // follow: the position to continue after
+	After     uint64        `json:"after,omitempty"`     // follow, screen: the position to continue after
 }
 
 type response struct {
@@ -432,9 +432,9 @@ type response struct {
 	Data    []byte        `json:"data,omitempty"`    // call: the answer
 	Calls   []WaitingCall `json:"calls,omitempty"`   // waiting: the calls that wait
 	Signals string        `json:"signals,omitempty"` // stop: the signals sent, in order
-	Run     string        `json:"run,omitempty"`     // follow: the host's run
-	Pos     uint64        `json:"pos,omitempty"`     // follow: the position after Data
-	Reset   bool          `json:"reset,omitempty"`   // follow: Data is the end of the log, not a continuation
+	Run     string        `json:"run,omitempty"`     // follow, screen: the host's run
+	Pos     uint64        `json:"pos,omitempty"`     // follow, screen: the position after Data
+	Reset   bool          `json:"reset,omitempty"`   // follow: Data is the end of the log, not a continuation; screen: part of what followed After was dropped
 	Cols    int           `json:"cols,omitempty"`    // follow: the terminal's size
 	Rows    int           `json:"rows,omitempty"`
 	End     bool          `json:"end,omitempty"`    // follow: the terminal is closed and everything was sent
@@ -527,6 +527,18 @@ func (h *host) handle(req request) response {
 			Attached: int(h.attached.Load()), Detached: h.detached.Load()}
 	case "tail":
 		return response{OK: true, Data: h.tail(int(req.Interrupt))}
+	case "screen":
+		if h.spec.Relay {
+			return response{Error: errNoTerminal}
+		}
+		if h.term == nil {
+			return response{Error: "the command runs on pipes: there is no screen"}
+		}
+		data, pos, cut, err := h.term.since(req.After)
+		if err != nil {
+			return response{Error: err.Error()}
+		}
+		return response{OK: true, Run: h.run, Pos: pos, Reset: cut, Data: data}
 	case "waiting":
 		return response{OK: true, Calls: h.calls.list()}
 	case "answer":

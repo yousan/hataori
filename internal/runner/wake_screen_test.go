@@ -3,11 +3,14 @@ package runner
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/yousan/hataori/internal/agent"
+	"github.com/yousan/hataori/internal/host"
 )
 
 // screens is the fake adapter with what each of its codecs was given of
@@ -124,4 +127,40 @@ func onlyItsOwnScreen(t *testing.T, rec *screens, first int) {
 	if bytes.Contains(woken, []byte("the first run's screen")) || bytes.Count(woken, []byte("fake: answered")) != 1 {
 		t.Fatalf("the woken codec was given the first run's screen: %q", woken)
 	}
+}
+
+// The same when the woken agent's first output makes the host trim the
+// terminal log, which the runs before filled close to its bound: the
+// codec is given the new run's screen from its start all the same, and
+// answers the dialog (#520).
+func TestWokenCodecReadsItsScreenAfterATrim(t *testing.T) {
+	rec := &screens{}
+	f := newFixture(t, options{terminal: true, dialog: wakeDialog, idlePeriod: 300 * time.Millisecond,
+		wrap: func(a agent.Adapter) agent.Adapter { rec.Adapter = a; return rec }})
+	f.start("screen the first run's screen\nreply hello")
+	waitFor(t, "asleep", 15*time.Second, func() bool { return sessionState(t, f.st, 1) == "asleep" })
+	waitFor(t, "the agent's end", 15*time.Second, func() bool { return !agentAlive(t, f.root, 1) })
+	// The log a few bytes short of its bound: the new run's dialog passes it.
+	p := filepath.Join(StateDir(f.root, 1), host.TerminalLog)
+	st, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fill := bytes.Repeat([]byte("earlier output\r\n"), int(host.DefaultLogLimit-st.Size()-10)/16)
+	fill = append(fill, bytes.Repeat([]byte("."), int(host.DefaultLogLimit-st.Size()-10)-len(fill))...)
+	lf, err := os.OpenFile(p, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lf.Write(fill); err != nil {
+		t.Fatal(err)
+	}
+	lf.Close()
+
+	send(t, owner(f.core), thread, "m2", "reply again")
+	waitFor(t, "the resumed turn", 20*time.Second, f.has("turn_ended", 2))
+	if st, err := os.Stat(p); err != nil || st.Size() > host.DefaultLogLimit/2+4096 {
+		t.Fatalf("the log was not trimmed: %v %v", st.Size(), err)
+	}
+	onlyItsOwnScreen(t, rec, 1)
 }
