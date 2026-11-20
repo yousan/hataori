@@ -1579,6 +1579,13 @@ func (r *Runner) exit(lv *live) {
 	case st.Shutdown:
 		in.Reason = session.ReasonInterrupted // the host got SIGTERM: a shutdown, as in a reboot (section 4.5)
 	}
+	if in.Reason == session.ReasonInterrupted {
+		// The host's end, not a Stop, ends the open turn, also one a person
+		// asked to stop that had not ended yet: it names nobody (#542).
+		if _, err := r.Store.DB.Exec(`UPDATE turns SET stopped_by = '' WHERE session_id = ? AND ended_at IS NULL`, lv.id); err != nil {
+			r.Log.Error("exit: forget who stopped the turn", "session", lv.id, "err", err)
+		}
+	}
 	if err := r.Machine.Apply(context.Background(), lv.id, in); err != nil && !errors.Is(err, session.ErrRefused) {
 		r.Log.Error("exit", "session", lv.id, "err", err)
 	}
