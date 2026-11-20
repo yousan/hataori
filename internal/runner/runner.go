@@ -368,10 +368,10 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 			return ctx.Err()
 		}
 	}
-	var specJSON, resumeID string
+	var specJSON, resumeID, model string
 	var launching int
-	if err := r.Store.DB.QueryRowContext(ctx, `SELECT spec, agent_session_id, launch FROM sessions WHERE id = ?`, id).
-		Scan(&specJSON, &resumeID, &launching); err != nil {
+	if err := r.Store.DB.QueryRowContext(ctx, `SELECT spec, agent_session_id, launch, model FROM sessions WHERE id = ?`, id).
+		Scan(&specJSON, &resumeID, &launching, &model); err != nil {
 		return fmt.Errorf("runner: session %d: %w", id, err)
 	}
 	var s storedSpec
@@ -414,6 +414,11 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 	}
 	spec := s.Spec
 	spec.ResumeID = resumeID
+	if spec.TakenIn && model != "" {
+		// The model the session last reported: the options the person
+		// started it with are not known, and are not reused.
+		spec.Model = model
+	}
 	spec.TakenIn = false // resumed, it is launched by hataori's own host
 	spec, err := r.launch(ctx, id, s.Agent, ad, spec, first)
 	if err != nil {
@@ -1018,7 +1023,7 @@ func (r *Runner) loop(lv *live) {
 	}
 	tick := time.NewTicker(r.poll())
 	defer tick.Stop()
-	lastTick := time.Now()
+	lastTick, lastWindow := time.Now(), time.Now()
 	for {
 		select {
 		case <-lv.stop:
@@ -1037,6 +1042,10 @@ func (r *Runner) loop(lv *live) {
 			r.do(lv, lv.codec.Tick(time.Now()))
 			lv.mu.Unlock()
 			r.checkIdle(lv)
+		}
+		if lv.taken != nil && time.Since(lastWindow) >= windowCheck {
+			lastWindow = time.Now()
+			r.checkWindow(lv)
 		}
 	}
 }
@@ -1097,6 +1106,11 @@ func (r *Runner) stepLocked(lv *live) bool {
 		lv.files[p] = o
 	}
 	for _, e := range b.events {
+		if e.Kind == agent.SessionEnded && lv.taken != nil && e.Reason != agent.WrongSession && e.Reason != clearReason {
+			// The agent in the window ended: the window closed.
+			go r.windowClosed(lv)
+			continue
+		}
 		if e.Kind == agent.SessionEnded && e.Reason == agent.CannotResume {
 			go r.replace(lv)
 		}
