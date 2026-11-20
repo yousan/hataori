@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -51,6 +52,16 @@ type Config struct {
 	// the start. The codec watches the screen for it, answers it with
 	// Enter, and watches on until its first turn ends.
 	Dialog string `json:"dialog"`
+	// DialogTrust are files the dialog names, as a folder-trust dialog
+	// names the project files trusting the folder loads: the codec answers
+	// it only when the session's Spec.TrustFiles lists all of them, and
+	// otherwise ends the start as blocked at start, naming them.
+	DialogTrust []string `json:"dialog_trust"`
+	// ProjectHook makes the program act as a repository's own hook would at
+	// its start: it appends a line to ProjectHookFile in its directory,
+	// unless the launch leaves the project's settings out
+	// (Spec.NoProjectSettings), which also lets the dialog be answered.
+	ProjectHook bool `json:"project_hook"`
 	// ReportModel and ReportEffort, when set, are what the program reports
 	// when it is ready, instead of the model and effort it was asked for.
 	ReportModel  string `json:"report_model"`
@@ -63,6 +74,10 @@ type Config struct {
 	// Cheap is the model the fake names as its cheapest; none when empty.
 	Cheap string `json:"cheap_model"`
 }
+
+// ProjectHookFile is the file the program's project hook writes
+// (Config.ProjectHook).
+const ProjectHookFile = ".project-hook-ran"
 
 // Adapter is the fake agent.
 type Adapter struct{ c Config }
@@ -162,6 +177,11 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 	if a.c.Terminal && a.c.Dialog != "" {
 		argv = append(argv, "--dialog", a.c.Dialog)
 	}
+	if spec.NoProjectSettings {
+		argv = append(argv, "--no-project-settings")
+	} else if a.c.ProjectHook {
+		argv = append(argv, "--project-hook")
+	}
 	env := append([]string{}, a.c.Env...)
 	if a.c.Terminal {
 		argv = append(argv, "--terminal", "--hook", a.c.Hataori,
@@ -187,6 +207,11 @@ func (a *Adapter) NewCodec(spec agent.Spec) agent.Codec {
 	c := &codec{terminal: a.c.Terminal, followed: map[string]bool{}, timeout: d}
 	if a.c.Terminal && !spec.TakenIn { // a session taken in is past any dialog
 		c.dialog = a.c.Dialog
+		for _, f := range a.c.DialogTrust {
+			if !spec.NoProjectSettings && !slices.Contains(spec.TrustFiles, f) {
+				c.trust = a.c.DialogTrust
+			}
+		}
 	}
 	if spec.TakenIn {
 		c.takenIn, c.session, c.model, c.started = true, spec.ResumeID, spec.Model, true

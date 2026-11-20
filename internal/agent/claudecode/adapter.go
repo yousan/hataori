@@ -152,6 +152,11 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 		argv = append(argv, "--append-system-prompt-file", stateFile(spec, InstructionsFile))
 	}
 	l := agent.Launch{Argv: argv, Env: a.env(spec), Terminal: true, Files: files}
+	if spec.NoProjectSettings && spec.Confine == nil {
+		// The project's and the local settings stay out, with their hooks:
+		// every launch of the spec, a --resume too (#590).
+		l.Argv = append(l.Argv, "--setting-sources", "user")
+	}
 	if spec.Confine != nil {
 		// The flags belong to each launch: a --resume without them has a
 		// shell again (Appendix B), so every launch of the spec has them.

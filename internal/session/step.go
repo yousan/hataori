@@ -9,6 +9,7 @@ package session
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/control"
@@ -345,6 +346,9 @@ func stepAgent(s Snapshot, e agent.Event, r *Result,
 			to(control.Failed, string(e.Reason))
 			if e.Text != "" {
 				r.Out[len(r.Out)-1].Data["detail"] = e.Text
+			}
+			if e.Reason == agent.BlockedAtStart && len(e.Trust) > 0 {
+				r.Out[len(r.Out)-1].Data["trust"] = slices.Clone(e.Trust)
 			}
 			return true
 		}

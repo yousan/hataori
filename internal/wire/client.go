@@ -279,6 +279,28 @@ func (c *Client) Release(ctx context.Context, id control.ThreadID) error {
 	return c.call(ctx, "Release", releaseArgs{ID: id}, nil)
 }
 
+// Trust is the operation Trust. Since 3.21.
+func (c *Client) Trust(ctx context.Context, id control.ThreadID, sid int64, files []string) error {
+	return c.call(ctx, "Trust", trustArgs{ID: id, Session: sid, Files: files}, nil)
+}
+
+// StartWithoutSettings is the operation StartWithoutSettings. Since 3.21.
+func (c *Client) StartWithoutSettings(ctx context.Context, id control.ThreadID, sid int64) error {
+	return c.call(ctx, "StartWithoutSettings", startWithoutSettingsArgs{ID: id, Session: sid}, nil)
+}
+
+// Trusts is the operation Trusts. Since 3.21.
+func (c *Client) Trusts(ctx context.Context) ([]control.TrustedFile, error) {
+	var out []control.TrustedFile
+	err := c.call(ctx, "Trusts", trustsArgs{}, &out)
+	return out, err
+}
+
+// Untrust is the operation Untrust. Since 3.21.
+func (c *Client) Untrust(ctx context.Context, id int64) error {
+	return c.call(ctx, "Untrust", untrustArgs{ID: id}, nil)
+}
+
 // RemoveThread is the operation Remove.
 func (c *Client) RemoveThread(ctx context.Context, id control.ThreadID) error {
 	return c.call(ctx, "Remove", removeArgs{ID: id}, nil)

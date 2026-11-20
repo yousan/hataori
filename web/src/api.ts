@@ -121,6 +121,21 @@ export function limits(): Promise<AgentLimits[]> {
   return get<AgentLimits[]>("/api/limits");
 }
 
+// TrustedFile is a file the owner trusted for a scope's threads on one
+// repository, from a blocked start (docs/protocol.md). Since 3.21.
+export interface TrustedFile {
+  id: number;
+  scope: string;
+  repo: string;
+  file: string;
+  by: string;
+  at: string;
+}
+
+export function trusts(): Promise<TrustedFile[]> {
+  return get<TrustedFile[]>("/api/trusts");
+}
+
 export const eventsPath = "/api/events";
 
 // HostTerminal is a terminal on the host that hataori does not own

@@ -1,0 +1,1 @@
+{"id":1,"event":{"pos":42,"thread":7,"scope":"C0123","time":"2026-01-02T03:04:05.678Z","kind":"approval_asked","data":{"request":"approval-1","action":"interrupt","target":8,"turn":12,"reason":"urgent","principal":"sv1","from":"supervisor:C0123"}}}

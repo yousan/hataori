@@ -42,7 +42,7 @@ func (s *specs) first(root string, id int64) (agent.Spec, bool) {
 func TestCodecGetsTheLaunchedSpec(t *testing.T) {
 	rec := &specs{of: map[string][]agent.Spec{}}
 	f := newFixture(t, options{confines: true, wrap: func(a agent.Adapter) agent.Adapter { rec.Adapter = a; return rec }})
-	f.run.TrustFiles = func(scope string) []string {
+	f.run.TrustFiles = func(_ context.Context, scope, _ string) []string {
 		if scope == "s" {
 			return []string{".claude/settings.json"}
 		}

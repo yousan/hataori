@@ -3,6 +3,7 @@ import { t } from "./catalog";
 import { contextUse, stateName, when, windowName } from "./format";
 import type { Live } from "./live";
 import { Passkeys } from "./Passkeys";
+import { Trusts } from "./Trusts";
 import { clock, left, type OpState } from "./operate";
 
 interface Props {
@@ -45,7 +46,8 @@ function Limits({ limits, now }: { limits: AgentLimits[]; now: number }) {
 // StatusBar shows the selected thread on the left; on the right, each
 // agent's remaining usage, the live mark with the position of the last
 // event read, "read-only" or the pane being operated with the time left
-// before its idle end, and, signed in, the person's passkeys.
+// before its idle end, and, signed in, the files trusted from chat and the
+// person's passkeys.
 export function StatusBar({ selected: x, live, limits, now, signedIn, operating }: Props) {
   let mark: string;
   if (live.connected) {
@@ -81,6 +83,7 @@ export function StatusBar({ selected: x, live, limits, now, signedIn, operating 
         ) : (
           <span className="mark">{t("app.readOnly")}</span>
         )}
+        {signedIn && <Trusts />}
         {signedIn && <Passkeys />}
       </div>
     </footer>

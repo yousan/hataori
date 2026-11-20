@@ -90,8 +90,11 @@ func TestTrustDialogThatNamesFiles(t *testing.T) {
 				t.Fatalf("keys %q for a dialog it may not answer", keys)
 			}
 			if len(events) != 1 || events[0].Kind != agent.SessionEnded || events[0].Reason != agent.BlockedAtStart ||
-				!strings.Contains(events[0].Text, "to let "+tc.refused+" through") {
+				!strings.Contains(events[0].Text, "Trusting this folder loads") {
 				t.Fatalf("events %+v; want one SessionEnded, blocked at start, naming %s", events, tc.refused)
+			}
+			if !slices.Contains(events[0].Trust, tc.refused) {
+				t.Fatalf("trust %q; want every file the dialog names", events[0].Trust)
 			}
 		})
 	}
@@ -104,9 +107,9 @@ func TestTrustDialogThatNamesFiles(t *testing.T) {
 // warning is a screen the codec does not know: no key and no event.
 func TestTrustDialogWithTheHooksWarning(t *testing.T) {
 	trusted := agent.Spec{TrustFiles: []string{".claude/settings.json"}}
-	keys, events := replayTrustOf(t, "2.1.329", "trust_hooks_refused", agent.Spec{Scope: "C0123"})
+	keys, events := replayTrustOf(t, "2.1.329", "trust_hooks_refused", agent.Spec{})
 	if keys != "" || len(events) != 1 || events[0].Reason != agent.BlockedAtStart ||
-		!strings.Contains(events[0].Text, "to let .claude/settings.json through") ||
+		!slices.Equal(events[0].Trust, []string{".claude/settings.json"}) ||
 		!strings.Contains(events[0].Text, "> ⚠ This folder configures hooks that can run commands without asking, declared\n> in .claude/settings.json\n") {
 		t.Fatalf("refused: keys %q events %+v", keys, events)
 	}
@@ -153,10 +156,10 @@ func TestHooksWarningShapes(t *testing.T) {
 }
 
 // The text of a blocked start, for a person (#589): why hataori stopped,
-// the dialog as the CLI drew it with the files it names, and the next
-// step, naming the scope.
+// and the dialog as the CLI drew it with the files it names. The next step
+// is the front end's (chat: TestABlockedStartsMessageSaysWhatToDoNext).
 func TestBlockedStartText(t *testing.T) {
-	_, events := replayTrust(t, "trust_files_refused", agent.Spec{Scope: "C0123"})
+	_, events := replayTrust(t, "trust_files_refused", agent.Spec{})
 	if len(events) != 1 {
 		t.Fatalf("events %+v", events)
 	}
@@ -165,8 +168,7 @@ func TestBlockedStartText(t *testing.T) {
 		"because the dialog names files of the repository: trusting the folder lets the repository's own settings run commands without asking",
 		"hataori stops for any such file, whatever it holds; it has not judged this repository dangerous.",
 		"Claude Code showed:\n> Claude Code'll be able to read, edit, and execute files here.\n> Trusting this folder loads .claude/settings.json.\n",
-		"\n> ❯ No, exit\n> Yes, I trust this folder\n",
-		`What to do next: to let .claude/settings.json through for this scope's threads, list it under "trust_files" of the scope "C0123" in hataori's config, and start again.`,
+		"\n> ❯ No, exit\n> Yes, I trust this folder\n> Enter to confirm · Esc to cancel",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the text has no %q:\n%s", want, text)
@@ -306,5 +308,37 @@ func TestConfinedWriteToProtectedFiles(t *testing.T) {
 	raw, _ := json.Marshal(q)
 	if a := c.Decode(agent.Hook, envelope("p3", "", raw)); len(a.Reply) != 1 || string(a.Reply[0].Body) != string(allow) {
 		t.Fatalf("an MCP tool: %q", a.Reply)
+	}
+}
+
+// A launch without the project's settings (#590) leaves them out with
+// --setting-sources user, a --resume too, and its codec answers a dialog
+// that names only the settings files; one that names .mcp.json is still
+// refused unless the scope trusts it.
+func TestNoProjectSettings(t *testing.T) {
+	spec := agent.Spec{Dir: "/w", StateDir: "/s", NoProjectSettings: true}
+	for _, resume := range []string{"", "00000000-0000-4000-8000-000000000001"} {
+		spec.ResumeID = resume
+		l, err := (&Adapter{command: "claude", hataori: "hataori", environ: func() []string { return nil }}).Launch(spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i := slices.Index(l.Argv, "--setting-sources"); i < 0 || l.Argv[i+1] != "user" {
+			t.Fatalf("resume %q: argv %q", resume, l.Argv)
+		}
+	}
+	l, _ := (&Adapter{command: "claude", hataori: "hataori", environ: func() []string { return nil }}).Launch(agent.Spec{Dir: "/w", StateDir: "/s"})
+	if slices.Contains(l.Argv, "--setting-sources") {
+		t.Fatalf("an ordinary launch: %q", l.Argv)
+	}
+	without := agent.Spec{NoProjectSettings: true}
+	if keys, events := replayTrustOf(t, "2.1.329", "trust_hooks_refused", without); keys != "down" || len(events) != 0 {
+		t.Fatalf("hooks, without settings: keys %q events %+v", keys, events)
+	}
+	if keys, events := replayTrust(t, "trust_files_both", without); keys != "down enter" || len(events) != 0 {
+		t.Fatalf("both settings files, without settings: keys %q events %+v", keys, events)
+	}
+	if keys, events := replayTrust(t, "trust_files_mcp", without); keys != "" || len(events) != 1 {
+		t.Fatalf(".mcp.json, without settings: keys %q events %+v", keys, events)
 	}
 }

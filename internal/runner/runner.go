@@ -75,8 +75,10 @@ type Runner struct {
 	Confine func(ctx context.Context, l ConfinedLaunch) (Confined, error)
 	// TrustFiles gives each launch the files of its scope that a start-up
 	// dialog may name and the session may be let past it for
-	// (agent.Spec.TrustFiles). It is called at every launch; nil gives none.
-	TrustFiles func(scope string) []string
+	// (agent.Spec.TrustFiles), for a thread of the scope on the repository
+	// repo: the config's, and those the owner trusted from a blocked start
+	// (core.Core.TrustedFiles). It is called at every launch; nil gives none.
+	TrustFiles func(ctx context.Context, scope, repo string) []string
 	// Tmux holds the tmux windows people started that were taken in
 	// (TakeIn); a tmux.Holder running "tmux" from PATH when nil.
 	Tmux *tmux.Holder
@@ -247,9 +249,14 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 	}
 	// The scope's config as it is at this launch, not as it was at the
 	// session's first.
-	spec.TrustFiles, spec.Scope = nil, scope
+	spec.TrustFiles = nil
+	var repo string
+	if err := r.Store.DB.QueryRowContext(ctx, `SELECT repo, no_project_settings FROM threads WHERE id = ?`, int64(thread)).
+		Scan(&repo, &spec.NoProjectSettings); err != nil {
+		return agent.Spec{}, fmt.Errorf("runner: session %d: the thread's repository: %w", id, err)
+	}
 	if r.TrustFiles != nil {
-		spec.TrustFiles = r.TrustFiles(scope)
+		spec.TrustFiles = r.TrustFiles(ctx, scope, repo)
 	}
 	// What the adapter gets: the spec, with what this launch alone is given.
 	// The stored spec keeps the confinement, not the MCP servers, whose
