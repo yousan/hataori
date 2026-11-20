@@ -223,6 +223,26 @@ func approvalFixture(t *testing.T) (*fixture, control.ThreadID, int64, int64, co
 	return f, target, sid, turn, req
 }
 
+// failOutcomeOnce makes the next write of an approval's outcome fail, as a
+// database error would: its event is refused, and its transaction with it.
+func failOutcomeOnce(f *fixture) {
+	check := f.core.Store.CheckEvent
+	var once sync.Once
+	f.core.Store.CheckEvent = func(e control.Event) error {
+		if e.Kind == "approval_answered" {
+			var err error
+			once.Do(func() { err = errors.New("the disk is full") })
+			if err != nil {
+				return err
+			}
+		}
+		if check != nil {
+			return check(e)
+		}
+		return nil
+	}
+}
+
 func approvalState(t *testing.T, f *fixture, req control.RequestID) string {
 	t.Helper()
 	var state string
@@ -288,22 +308,20 @@ func TestApprovalAnsweredAgainAfterItsInterruptFailedAndTheTurnEnded(t *testing.
 }
 
 // #523: the interrupt is refused (the asked turn ended and the next began),
-// but writing the outcome fails, as when the call's context ends. Answered
-// again, the approval records ended, not interrupted: the reason's key,
-// taken by the first answer, does not decide the outcome.
+// but writing the outcome fails. Answered again, the approval records
+// ended, not interrupted: the reason's key, taken by the first answer, does
+// not decide the outcome.
 func TestApprovalAnsweredAgainAfterItsOutcomeWasNotWritten(t *testing.T) {
 	ctx := context.Background()
 	f, target, sid, _, req := approvalFixture(t)
-	first, cancel := context.WithCancel(ctx)
-	defer cancel()
 	f.runner.beforeInterrupt = func() {
 		f.agentEvent(t, sid, 2, agent.Event{Kind: agent.TurnEnded, Status: agent.Completed})
 		if err := f.owner.Send(ctx, target, "next", control.Input{Text: "the next turn"}, control.Deliver); err != nil {
 			t.Errorf("the next turn: %v", err)
 		}
-		cancel()
 	}
-	if err := f.owner.Answer(first, req, control.Answer{Allow: true}); err == nil {
+	failOutcomeOnce(f)
+	if err := f.owner.Answer(ctx, req, control.Answer{Allow: true}); err == nil {
 		t.Fatal("the first answer: no error")
 	}
 	if s := approvalState(t, f, req); s != "open" {
@@ -326,10 +344,8 @@ func TestApprovalAnsweredAgainAfterItsOutcomeWasNotWritten(t *testing.T) {
 func TestApprovalAnsweredAgainAfterItsSentInterruptWasNotRecorded(t *testing.T) {
 	ctx := context.Background()
 	f, _, _, turn, req := approvalFixture(t)
-	first, cancel := context.WithCancel(ctx)
-	defer cancel()
-	f.runner.beforeInterrupt = cancel
-	if err := f.owner.Answer(first, req, control.Answer{Allow: true}); err == nil {
+	failOutcomeOnce(f)
+	if err := f.owner.Answer(ctx, req, control.Answer{Allow: true}); err == nil {
 		t.Fatal("the first answer: no error")
 	}
 	if s := approvalState(t, f, req); s != "open" {
@@ -344,5 +360,37 @@ func TestApprovalAnsweredAgainAfterItsSentInterruptWasNotRecorded(t *testing.T) 
 	calls := f.runner.Calls()
 	if n := strings.Count(calls, fmt.Sprintf("interrupt turn %d", turn)); n != 2 || strings.Count(calls, "deliver supervisor\nurgent") != 1 {
 		t.Fatalf("runner calls: %q", calls)
+	}
+}
+
+// #523: the call's context ends once the interrupt has a result. The
+// outcome is written all the same, as the interrupt did it: sent, and the
+// turn ended by it, is interrupted; refused is ended. Nothing is left open
+// for an answer given again, which could only look at the turn.
+func TestApprovalRecordsItsOutcomeWhenTheCallEnds(t *testing.T) {
+	for _, refused := range []bool{false, true} {
+		ctx := context.Background()
+		f, target, sid, _, req := approvalFixture(t)
+		first, cancel := context.WithCancel(ctx)
+		f.runner.beforeInterrupt = func() {
+			if refused {
+				f.agentEvent(t, sid, 2, agent.Event{Kind: agent.TurnEnded, Status: agent.Completed})
+				if err := f.owner.Send(ctx, target, "next", control.Input{Text: "the next turn"}, control.Deliver); err != nil {
+					t.Errorf("the next turn: %v", err)
+				}
+			}
+			cancel()
+		}
+		if err := f.owner.Answer(first, req, control.Answer{Allow: true}); err != nil {
+			t.Fatalf("refused %v: the answer: %v", refused, err)
+		}
+		if !refused {
+			// The interrupt ends the asked turn.
+			f.agentEvent(t, sid, 2, agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted})
+		}
+		want := map[bool]string{false: "interrupted", true: "ended"}[refused]
+		if s := approvalState(t, f, req); s != want {
+			t.Fatalf("refused %v: %q, want %q", refused, s, want)
+		}
 	}
 }

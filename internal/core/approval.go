@@ -189,6 +189,10 @@ func (a *api) answerApproval(ctx context.Context, req control.RequestID, ans con
 			}
 		}
 	}
+	// The outcome is written whatever the caller's context says by now: an
+	// interrupt that was sent or refused is recorded as such, and not left
+	// to an answer given again, which can only look at the turn (#523).
+	ctx = context.WithoutCancel(ctx)
 	return a.c.Store.Update(ctx, func(tx *store.Tx) error {
 		res, err := tx.ExecContext(ctx, `UPDATE approvals SET state = ?, closed_at = ? WHERE handle = ? AND state = 'open'`, outcome, time.Now().UnixMilli(), req)
 		if err != nil {
