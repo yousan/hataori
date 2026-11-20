@@ -162,10 +162,12 @@ func (h *Host) Write(ctx context.Context, w Window, bs [][]byte) error {
 // dialTimeout bounds how long a call waits to reach a host.
 const dialTimeout = 5 * time.Second
 
-// Since returns what the agent wrote to its terminal after the first from
-// bytes of the kept log, and the position to ask from next: for a codec
-// watching the start (agent.Actions.WatchScreen). On pipes there is none.
-func (h *Host) Since(w Window, from int64) ([]byte, int64) {
+// Since returns what the agent of the host's current run wrote to its
+// terminal after position from, counted from that run's first byte, and
+// the position to ask from next: for a codec watching the start
+// (agent.Actions.WatchScreen). Positions do not change when the host trims
+// its log. On pipes, and once the host has gone, there is nothing.
+func (h *Host) Since(w Window, from uint64) ([]byte, uint64) {
 	return host.Screen(w.Ref, from)
 }
 
