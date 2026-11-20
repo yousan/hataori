@@ -270,7 +270,15 @@ func (r *Runner) checkWindow(lv *live) {
 func (r *Runner) windowClosed(lv *live) {
 	ctx := context.Background()
 	lv.mu.Lock()
-	if lv.asleep {
+	r.mu.Lock()
+	current := r.live[lv.id] == lv
+	r.mu.Unlock()
+	select {
+	case <-lv.done:
+		current = false // its following ended: a later run is not this one's
+	default:
+	}
+	if lv.asleep || !current {
 		lv.mu.Unlock()
 		return
 	}
@@ -313,8 +321,39 @@ func (r *Runner) RemoveState(ctx context.Context, id int64) error {
 	if host.Running(dir) || r.alive(dir).State == holder.Running {
 		return fmt.Errorf("runner: session %d: a host still runs in its state directory: %w", id, session.ErrRefused)
 	}
+	// Never the session's workspace, nor a directory that holds it or lies
+	// in it, as when a person ran their agent in the instance's root.
+	var specJSON string
+	if err := r.Store.DB.QueryRowContext(ctx, `SELECT spec FROM sessions WHERE id = ?`, id).Scan(&specJSON); err != nil {
+		return fmt.Errorf("runner: session %d: %w", id, err)
+	}
+	var s storedSpec
+	if specJSON != "" {
+		if err := json.Unmarshal([]byte(specJSON), &s); err != nil {
+			return fmt.Errorf("runner: session %d: spec: %w", id, err)
+		}
+	}
+	if s.Spec.Dir != "" && nested(dir, s.Spec.Dir) {
+		return fmt.Errorf("runner: session %d: its state directory and its workspace %s hold one another; neither is removed: %w",
+			id, s.Spec.Dir, session.ErrRefused)
+	}
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("runner: session %d: %w", id, err)
 	}
 	return nil
+}
+
+// nested reports whether a and b are the same directory or one lies in the
+// other, with links resolved; true when that cannot be told.
+func nested(a, b string) bool {
+	ra, err1 := filepath.EvalSymlinks(a)
+	rb, err2 := filepath.EvalSymlinks(b)
+	if err1 != nil || err2 != nil {
+		return !errors.Is(err2, fs.ErrNotExist) || err1 != nil // a workspace that is gone is not in the way
+	}
+	in := func(x, y string) bool {
+		rel, err := filepath.Rel(y, x)
+		return err == nil && (rel == "." || filepath.IsLocal(rel))
+	}
+	return in(ra, rb) || in(rb, ra)
 }

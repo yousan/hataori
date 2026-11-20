@@ -377,7 +377,7 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 			// its process ends, as a SessionEnd hook runs while the agent
 			// finishes. The program goes on.
 			if p.window != "" {
-				p.report(map[string]any{"t": "session-end", "reason": "prompt_input_exit"})
+				p.report(map[string]any{"t": "session-end", "reason": cmp.Or(arg, "prompt_input_exit")})
 			}
 		case "unknown":
 			p.report(map[string]any{"t": "mystery"})

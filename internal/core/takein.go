@@ -77,7 +77,7 @@ func (c *Core) removeTakenIn(ctx context.Context, id control.ThreadID, sid int64
 	rows.Close()
 	for _, s := range sessions {
 		if err := tr.RemoveState(ctx, s); err != nil {
-			c.refuseRemoval(ctx, id, sid, principal, trigger, AgentRunning, "", "", err.Error())
+			c.refuseRemoval(ctx, id, sid, principal, trigger, "error", "", "", err.Error())
 			return fmt.Errorf("core: remove %v: %w: %w", id, ErrRemovalRefused, err)
 		}
 	}

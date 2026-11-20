@@ -359,8 +359,11 @@ func process(ctx context.Context, pid int) (proc, error) {
 	f := strings.Fields(string(out))
 	if err != nil && len(f) == 0 {
 		var ee *exec.ExitError
-		if errors.As(err, &ee) && stderr.Len() == 0 {
-			return proc{}, errNoProcess // ps lists nothing, and says nothing, for a pid that has none
+		// ps lists nothing, says nothing and exits 1 for a pid that has
+		// none. One killed at the deadline says nothing either: that is not
+		// known to be gone.
+		if errors.As(err, &ee) && ee.ExitCode() == 1 && stderr.Len() == 0 && ctx.Err() == nil {
+			return proc{}, errNoProcess
 		}
 		return proc{}, fmt.Errorf("tmux: ps: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}

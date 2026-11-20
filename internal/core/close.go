@@ -87,7 +87,7 @@ func (c *Core) remove(ctx context.Context, id control.ThreadID, principal contro
 	// hataori's own of the thread goes.
 	foreign, err := c.foreignWorkspace(ctx, id)
 	if err != nil {
-		c.refuseRemoval(ctx, id, sid, principal, trigger, NotHataoris, "", "", err.Error())
+		c.refuseRemoval(ctx, id, sid, principal, trigger, "error", "", "", err.Error())
 		return fmt.Errorf("core: remove %v: %w: %w", id, ErrRemovalRefused, err)
 	}
 	if foreign {

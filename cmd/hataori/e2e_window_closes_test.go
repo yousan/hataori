@@ -22,6 +22,9 @@ import (
 	"github.com/yousan/hataori/internal/wire"
 )
 
+// windowCheckWait is longer than the runner asks the window's holder.
+const windowCheckWait = 3 * time.Second
+
 // takeInRoot is an instance with host terminals on and the fake agent in a
 // terminal, whose launches by hataori record their arguments, environment
 // and directory in the directory it returns.
@@ -140,6 +143,18 @@ func TestTakenInWindowClosesAndTheThreadGoesOn(t *testing.T) {
 
 	id, sid := takeIn(t, r, g)
 	th := r.thread(t, 0)
+
+	// A /clear ends the session's SessionEnd too, and the agent goes on:
+	// the window stays taken in.
+	g.tmux(t, "send-keys", "-t", g.pane, "-l", "session-end clear")
+	g.tmux(t, "send-keys", "-t", g.pane, "Enter")
+	eventually(t, "the clear's turn to end", 15*time.Second, func() bool { return len(r.events(t, "turn_ended", th)) == 1 })
+	time.Sleep(windowCheckWait)
+	var still string
+	r.db(t).QueryRow(`SELECT state FROM sessions WHERE id = ?`, sid).Scan(&still)
+	if _, err := os.Stat(filepath.Join(runner.StateDir(r.root, sid), runner.TakenFile)); err != nil || still == "asleep" {
+		t.Fatalf("a /clear closed the window: the session is %s, %v", still, err)
+	}
 
 	// The person ends the session in the window. Its SessionEnd comes while
 	// its process still runs there, so the holder still finds it: only the
