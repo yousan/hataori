@@ -176,6 +176,41 @@ func (d *Driver) Name(_ context.Context, conv surface.Conversation) (string, err
 	return d.names[conv], nil
 }
 
+// LayoutDriver is a Driver that can also tell how the service lays out its
+// conversations (surface.Layouter), as a service with a channel list does.
+// A Driver alone cannot, as a service without one.
+type LayoutDriver struct {
+	*Driver
+	layout surface.Layout // guarded by Driver.mu
+}
+
+var _ surface.Layouter = (*LayoutDriver)(nil)
+
+// WithLayout returns d with a layout, empty until SetLayout.
+func (d *Driver) WithLayout() *LayoutDriver { return &LayoutDriver{Driver: d} }
+
+// SetLayout makes Layout answer l, as the service would after a person
+// changed its channels or threads, and tells a sink that wants to know
+// (surface.LayoutWatcher).
+func (d *LayoutDriver) SetLayout(l surface.Layout) {
+	d.deliver.Lock()
+	defer d.deliver.Unlock()
+	d.mu.Lock()
+	d.layout = l
+	sink := d.sink
+	d.mu.Unlock()
+	if w, ok := sink.(surface.LayoutWatcher); ok {
+		w.LayoutChanged()
+	}
+}
+
+// Layout answers what SetLayout set.
+func (d *LayoutDriver) Layout(context.Context) (surface.Layout, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.layout, nil
+}
+
 func (d *Driver) id(prefix string) string {
 	d.next++
 	return prefix + strconv.Itoa(d.next)

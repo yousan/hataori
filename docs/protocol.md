@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.20**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.21**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -155,6 +155,23 @@ Records the name the chat service shows people for a conversation: a scope's own
 | `name` | string | optional | the name as the service shows it, such as `#general` for a Discord channel, at most 256 bytes; absent or empty forgets it |
 
 Result: none
+
+### Operation `SetLayout`
+
+Records how a chat client's service lays out the conversations it can see, as a person sees them in the service's own client: its groups (Discord's categories), the channels of each in order, and each channel's open threads in order, none archived. It replaces what the client recorded before. A change writes one `layout` event; the same layout again changes nothing. The daemon keeps it in memory only: after a restart a client has none until it records it again, as a chat front end does after each connect. The core sets `scope` and `thread` itself and ignores what the call gives for them; names are cut to 256 bytes, and a client's layout to 2000 channels and 5000 threads. It needs the operation `SetLayout` in a scope of the caller's whose owner is `client`, which a chat front end's caller and the owner's connection have; otherwise it is `forbidden`. Since 3.21.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `client` | string | required | the chat client's name, as in `LinkRef` |
+| `groups` | [`LayoutGroup`] | required | in the service's order; the channels in no group are a group with no `id` |
+
+Result: none
+
+### Operation `Layout`
+
+The layout each chat client recorded (`SetLayout`), one entry per client, as the caller may see it. The owner sees every channel the client recorded. Any other caller sees only the channels that are the own channels of its scopes, and only the groups that hold one of them; the threads of such a channel are all its open threads. Names are text, absent for a caller that may not read text. A client that recorded none has no entry, and then a reader shows its scopes as before. It takes no arguments. Since 3.21.
+
+Result: [`ChatLayout`]
 
 ### Operation `Start`
 
@@ -536,6 +553,48 @@ A field left empty matches everything the caller may see. A `thread`, or the thr
 | `choices` | [string] | required | the tokens of the chosen options, for a question with choices; may be `null` |
 | `allow` | boolean | required | the decision, for an approval |
 | `link` | `LinkRef` | optional | the conversation it came through, as in `Input`; since 3.6 |
+
+### Type `ChatLayout`
+
+One chat client's layout (`Layout`); since 3.21.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `client` | string | required | the client's name, as in `LinkRef` |
+| `groups` | [`LayoutGroup`] | required | in the chat service's order |
+
+### Type `LayoutGroup`
+
+A group of channels, such as a Discord category; since 3.21.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `id` | string | optional | opaque; absent for the channels in no group |
+| `name` | string | optional | text |
+| `channels` | [`LayoutChannel`] | required | in the chat service's order |
+
+### Type `LayoutChannel`
+
+One channel of a `LayoutGroup`; since 3.21.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `id` | string | required | opaque, as `LinkRef.channel` |
+| `name` | string | optional | text, such as `#general` |
+| `url` | string | optional | opens the channel in the chat service's own client |
+| `scope` | string | optional | set by the daemon: the scope whose own channel this is, when the caller may see it; absent for a channel hataori does not serve |
+| `threads` | [`LayoutThread`] | required | the open threads, in the chat service's order |
+
+### Type `LayoutThread`
+
+One open thread of a `LayoutChannel`; since 3.21.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `id` | string | required | opaque, as `LinkRef.thread` |
+| `name` | string | optional | text |
+| `url` | string | optional | opens the thread in the chat service's own client |
+| `thread` | integer | optional | set by the daemon: the number of the thread linked to this conversation, when the caller may see that thread's scope; absent for a thread hataori does not hold |
 
 ### Type `ScopeInfo`
 
@@ -1086,6 +1145,14 @@ Since 3.5. The name the chat service shows for a conversation changed (`SetName`
 | `channel` | string | required | as in `LinkRef` |
 | `thread` | string | optional | as in `LinkRef`; absent for a scope's channel |
 | `name` | string | optional | the new name; text; absent when the name was forgotten, and for a reader that may not read text |
+
+### Event `layout`
+
+Since 3.21. A chat client's layout changed (`SetLayout`): read it again with `Layout`. The event belongs to no thread and no scope, holds only the client's name, and every caller that reads events gets it.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `client` | string | required | as in `LinkRef` |
 
 ### Event `caught_up`
 

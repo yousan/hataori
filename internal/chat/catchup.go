@@ -128,7 +128,7 @@ func (f *FrontEnd) receive(in surface.Inbound) {
 }
 
 // Connected catches up on every enabled channel and open thread, and
-// records the names of the scopes' channels. The driver calls it after it
+// records the names of the scopes' channels and the chat's layout. The driver calls it after it
 // connects and after each reconnect. Until a
 // conversation is caught up, its live messages wait for the catch-up.
 func (f *FrontEnd) Connected() {
@@ -144,6 +144,7 @@ func (f *FrontEnd) Connected() {
 		defer f.bg.Done()
 		f.nameScopes(ctx)
 	}()
+	f.LayoutChanged()
 	convs, err := f.toCatchUp(ctx)
 	// Marked behind, and sure of the threads, at once: no live message
 	// gets in between.

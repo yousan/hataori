@@ -394,7 +394,7 @@ Showing a thread in chat is one client, shared by all chat surfaces. It turns in
 
 The chat front end makes no allow check of its own and keeps no list of people, owners or posters: whether a message reaches the agent is decided by the core (section 5.1). The front end still drops what is not input from anyone: its own posts, posts by bot accounts and messages the service writes itself; that compares no id with a list. A trigger's chat thread is opened only once the core accepted the `Start`: the front end leaves `StartRequest.Thread` empty, and the core, after its check, asks the scope owner for the key with the call's key, so the front end opens the thread from the trigger message. A guest's trigger therefore opens nothing. Underneath it, a surface driver knows one chat service and nothing about agents or threads of work.
 
-The driver's calls are: run and deliver inbound messages, button presses and commands; fetch messages since a cursor; open a thread; post, edit and delete a message; set a status on a message; set a thread's title and archived flag; report its limits. A message to post says what to show (text, files, choices, reply target, who to notify), not how. A driver can also open a direct conversation with one person; in phase 1 that is used for the owner only (section 4.7), at the owner's id on that client. Whether a direct message is the owner's is decided by resolving its `<client>:<id>` with the people config, as the core does: the front end keeps no id of the owner of its own, and the relay resolves the id again before it passes a code on.
+The driver's calls are: run and deliver inbound messages, button presses and commands; fetch messages since a cursor; open a thread; post, edit and delete a message; set a status on a message; set a thread's title and archived flag; report its limits; and, optionally, report its layout: the groups, the channels in order and each channel's open threads in order, as a person sees them in the service's own client, kept from what the service sends by itself, with no request of its own (#599). A message to post says what to show (text, files, choices, reply target, who to notify), not how. A driver can also open a direct conversation with one person; in phase 1 that is used for the owner only (section 4.7), at the owner's id on that client. Whether a direct message is the owner's is decided by resolving its `<client>:<id>` with the people config, as the core does: the front end keeps no id of the owner of its own, and the relay resolves the id again before it passes a code on.
 
 The driver splits long text, picks buttons or a menu, and maps a status to whatever the surface has (a reaction, an edit). Its limits let the front end avoid asking for what a surface cannot do.
 
@@ -608,6 +608,7 @@ Not in the dashboard: diffs, boards of cards, a browser inside the page. Other t
 | Shown | Source |
 |---|---|
 | threads, state, number, title, scope, who started it, when | `Threads` (exists) |
+| the chat's groups, channels and open threads, in its order, with links into the chat | new operations `SetLayout`, from the chat front end, and `Layout`, with the `layout` event (#599) |
 | open question, failure reason, last output | `Thread` (exists), the `request` and `turn_ended` events |
 | live updates, the live mark | `Events` from a position (exists) |
 | recent events of one thread | new optional argument of `Thread` |
@@ -1411,6 +1412,19 @@ type API interface {
 	// chat service shows it (SetName), which is text and left out for a
 	// caller that may not read text. It needs OpRead. Since protocol 3.5.
 	Scopes(ctx context.Context) ([]ScopeInfo, error)
+	// SetLayout records how the chat service of client lays out the
+	// conversations it can see: groups, their channels and each channel's
+	// open threads, in the service's order (section 5.2). It replaces the
+	// client's last one, is kept in memory only, and a change writes one
+	// layout event, which every reader of events gets. The core sets
+	// LayoutChannel.Scope and LayoutThread.Thread itself. It needs OpName
+	// in a scope of the caller's whose owner is client. Since 3.21 (#599).
+	SetLayout(ctx context.Context, client string, groups []LayoutGroup) error
+	// Layout returns each client's layout as the caller may see it: the
+	// owner sees every channel; any other caller only the own channels of
+	// its scopes, and the groups that hold one. Names are text. It needs
+	// OpRead. Since 3.21 (#599).
+	Layout(ctx context.Context) ([]ChatLayout, error)
 
 	Start(ctx context.Context, r StartRequest) (ThreadID, error)
 	// key makes Send safe to repeat; for chat, the surface's message id.
@@ -1989,6 +2003,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `HostTerminal.Reported` and `ReportedSession`, from the hooks of the Claude Code plugin (section 4.8, #397) | minor: new optional field; 3.15 |
 | `TakeIn` and `Release`, with `Ops` gaining `OpTakeIn`, and the removal reason `the workspace is not hataori's` (section 4.8, #400) | minor: new operations; 3.17 |
 | A thread taken in: the `state` reason `window closed`, and `Remove` without its workspace (section 4.8, #401) | minor: a new value of a reason, and the removal of a kind of thread that was refused; 3.20 |
+| `SetLayout` and `Layout`, with `ChatLayout`, `LayoutGroup`, `LayoutChannel` and `LayoutThread`, and the `layout` event: the chat's channels and open threads for the tree (#599) | minor: new operations and event kind; 3.21 |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 
 Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event. In protocol 1.9: `Terminal`, which turns its connection into a stream as `Events` does. In protocol 1.12: `ThreadInfo.terminal`, the terminal device its session host opened, for the tree's filter, the status bar and the details panel (#285); `HostTerminals` still leaves these terminals out.
@@ -2045,6 +2060,29 @@ type Namer interface {
 type Renamer interface {
 	Renamed(conv Conversation, name string)
 }
+
+// Layouter is implemented by a Driver that can tell how the service lays
+// out the conversations it can see, as a person sees them in its own
+// client: groups (Discord's categories), the channels in order, and each
+// channel's open threads in order. It answers from what the driver keeps,
+// so it costs the service nothing; the Discord driver keeps it from the
+// gateway alone (#599). The chat front end records it with SetLayout after
+// each connect and after each change; a driver without it (Slack) records
+// none, and the dashboard keeps its tree of scopes.
+type Layouter interface {
+	Layout(ctx context.Context) (Layout, error)
+}
+
+// LayoutWatcher is implemented by a Sink that wants to know when the
+// layout changes: Run calls LayoutChanged when it learns the layout and
+// after each change it learns of. It must not block.
+type LayoutWatcher interface {
+	LayoutChanged()
+}
+
+// Layout, LayoutGroup, LayoutChannel and LayoutThread hold ids, names and
+// a URL that opens the conversation in the service's own client.
+type Layout struct{ Groups []LayoutGroup }
 
 // Sink is implemented by the chat front end, not by the core.
 type Sink interface {

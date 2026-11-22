@@ -69,6 +69,55 @@ type Renamer interface {
 	Renamed(conv Conversation, name string)
 }
 
+// Layouter is implemented by a Driver that can tell how the service lays
+// out the conversations it can see, as a person sees them in the service's
+// own client: groups of channels, the channels in order, and each channel's
+// open threads. Layout answers from what the driver keeps, so calling it
+// costs the service nothing. A driver that knows no layout yet, such as
+// before it has connected, answers an empty one.
+type Layouter interface {
+	Layout(ctx context.Context) (Layout, error)
+}
+
+// LayoutWatcher is implemented by a Sink that wants to know when the layout
+// changes (Layouter): Run calls LayoutChanged when it learns the layout,
+// and after any change it learns of, such as a channel or a thread
+// created, renamed, archived or deleted. Several changes may come as one
+// call. It must not block.
+type LayoutWatcher interface {
+	LayoutChanged()
+}
+
+// Layout is how a service lays out its conversations (Layouter).
+type Layout struct {
+	Groups []LayoutGroup // in the service's order
+}
+
+// LayoutGroup is a group of channels, such as a category. The channels in
+// no group are a group with no ID and no Name.
+type LayoutGroup struct {
+	ID       string
+	Name     string
+	Channels []LayoutChannel // in the service's order
+}
+
+// LayoutChannel is one channel. URL, when the service has one, opens the
+// channel in the service's own client.
+type LayoutChannel struct {
+	ID      string
+	Name    string
+	URL     string
+	Threads []LayoutThread // the open threads, in the service's order; none archived
+}
+
+// LayoutThread is one open thread of a channel. ID is the Thread of its
+// Conversation.
+type LayoutThread struct {
+	ID   string
+	Name string
+	URL  string
+}
+
 // Sink is implemented by the chat front end, not by the core.
 type Sink interface {
 	// Message delivers an inbound message: text, files, author, ids.

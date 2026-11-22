@@ -224,6 +224,16 @@ func (c *Client) SetName(ctx context.Context, l control.LinkRef, name string) er
 	return c.call(ctx, "SetName", setNameArgs{Link: l, Name: name}, nil)
 }
 
+func (c *Client) Layout(ctx context.Context) ([]control.ChatLayout, error) {
+	var out []control.ChatLayout
+	err := c.call(ctx, "Layout", layoutArgs{}, &out)
+	return out, err
+}
+
+func (c *Client) SetLayout(ctx context.Context, client string, groups []control.LayoutGroup) error {
+	return c.call(ctx, "SetLayout", setLayoutArgs{Client: client, Groups: groups}, nil)
+}
+
 func (c *Client) Start(ctx context.Context, r control.StartRequest) (control.ThreadID, error) {
 	var out control.ThreadID
 	err := c.call(ctx, "Start", r, &out)
