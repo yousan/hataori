@@ -28,9 +28,10 @@ const (
 // client's name. It lives only in memory: a front end records its layout
 // again after each connect.
 type layouts struct {
-	write sync.Mutex // one SetLayout at a time, so that events follow the order of the changes
-	mu    sync.Mutex
-	by    map[string][]control.LayoutGroup
+	// mu is held by SetLayout until its event is written or has failed, so
+	// that no reader sees a layout whose event is not written.
+	mu sync.Mutex
+	by map[string][]control.LayoutGroup
 }
 
 // SetLayout records how a chat client's service lays out its
@@ -56,40 +57,28 @@ func (a *api) SetLayout(ctx context.Context, client string, groups []control.Lay
 	}
 	groups = cleanLayout(groups)
 	l := &a.c.layouts
-	l.write.Lock()
-	defer l.write.Unlock()
+	// Held while the event is written: a reader the event sends to read
+	// again waits for the new layout, and no reader sees one whose event
+	// failed. A failed one is not kept, so the same layout again writes
+	// the event.
 	l.mu.Lock()
-	old, had := l.by[client]
-	same := had && sameLayout(old, groups)
-	if !same {
-		if l.by == nil {
-			l.by = map[string][]control.LayoutGroup{}
-		}
-		l.by[client] = groups
-	}
-	l.mu.Unlock()
-	if same {
+	defer l.mu.Unlock()
+	if old, had := l.by[client]; had && sameLayout(old, groups) {
 		return nil
 	}
-	// The layout is recorded before its event, so that a reader the event
-	// sends to read it again reads this one or a newer. When the event
-	// cannot be written, the old layout is put back: no reader would learn
-	// of the new one, and the same layout again must write the event.
 	b, _ := json.Marshal(map[string]any{"client": client})
 	err := a.c.Store.Update(ctx, func(tx *store.Tx) error {
 		_, err := tx.Append(ctx, control.Event{Kind: KindLayout, Data: b})
 		return err
 	})
 	if err != nil {
-		l.mu.Lock()
-		if had {
-			l.by[client] = old
-		} else {
-			delete(l.by, client)
-		}
-		l.mu.Unlock()
+		return err
 	}
-	return err
+	if l.by == nil {
+		l.by = map[string][]control.LayoutGroup{}
+	}
+	l.by[client] = groups
+	return nil
 }
 
 // cleanLayout is groups as SetLayout keeps them: names cut to MaxName,

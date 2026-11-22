@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -15,6 +16,10 @@ var _ surface.LayoutWatcher = (*FrontEnd)(nil)
 // that a burst of them, such as the channels and threads of each server
 // right after a connect, is recorded once. A variable for tests.
 var layoutDelay = 300 * time.Millisecond
+
+// layoutRetry is how long a layout that could not be read or recorded
+// waits before it is tried again. A variable for tests.
+var layoutRetry = 5 * time.Second
 
 // layoutState is whether a layout is being recorded, and whether a change
 // came since that one was read.
@@ -46,15 +51,18 @@ func (f *FrontEnd) LayoutChanged() {
 }
 
 // recordLayout reads the driver's layout and records it, until no change
-// is pending.
+// is pending. One that fails is tried again after layoutRetry, unless the
+// core refused it, which it would again.
 func (f *FrontEnd) recordLayout(ctx context.Context) {
 	defer f.bg.Done()
 	l := &f.layout
+	wait := layoutDelay
 	for {
 		select {
 		case <-ctx.Done():
-		case <-time.After(layoutDelay):
+		case <-time.After(wait):
 		}
+		wait = layoutDelay
 		l.mu.Lock()
 		if !l.pending || ctx.Err() != nil {
 			l.running, l.pending = false, false
@@ -64,13 +72,18 @@ func (f *FrontEnd) recordLayout(ctx context.Context) {
 		l.pending = false
 		l.mu.Unlock()
 		lay, err := f.Driver.(surface.Layouter).Layout(ctx)
-		if err != nil {
-			f.Log.Warn("chat: the chat's layout could not be read", "err", err)
-			continue
+		if err == nil {
+			api := f.API(control.Caller{Principal: f.ownerPrincipal(), Scopes: f.scopeList(), May: control.OpName})
+			err = api.SetLayout(ctx, f.Name, layoutGroups(lay))
 		}
-		api := f.API(control.Caller{Principal: f.ownerPrincipal(), Scopes: f.scopeList(), May: control.OpName})
-		if err := api.SetLayout(ctx, f.Name, layoutGroups(lay)); err != nil && ctx.Err() == nil {
+		if err != nil && ctx.Err() == nil {
 			f.Log.Warn("chat: the chat's layout could not be recorded", "err", err)
+			if !errors.Is(err, control.ErrForbidden) {
+				l.mu.Lock()
+				l.pending = true // try again
+				l.mu.Unlock()
+				wait = layoutRetry
+			}
 		}
 	}
 }
