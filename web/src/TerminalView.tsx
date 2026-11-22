@@ -2,6 +2,8 @@ import "@xterm/xterm/css/xterm.css";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "react";
 import { type TerminalChunk, type ThreadInfo, terminalPath } from "./api";
+import { muteQueries } from "./attach";
+import { personal } from "./reports";
 import { t } from "./catalog";
 import { fitted, sized } from "./fit";
 import { Stream } from "./stream";
@@ -25,24 +27,47 @@ export function openReadOnly(el: HTMLElement): Terminal {
   return term;
 }
 
-// TerminalView draws a session's live terminal, read-only. With fit, the
-// font is sized so that the session's grid fills the view's width or its
-// height (fit.ts); the session's own columns and rows are kept.
+// Typing is how a session's terminal takes the person's keys while its tab
+// allows it (attach.ts): onKeys gets what the terminal emulator made of
+// each key and paste, and onLeave is called when the terminal loses focus.
+export interface Typing {
+  allowed: boolean;
+  onKeys: (keys: string) => void;
+  onLeave: () => void;
+}
+
+// TerminalView draws a session's live terminal. With fit, the font is
+// sized so that the session's grid fills the view's width or its height
+// (fit.ts); the session's own columns and rows are kept, and nothing here
+// resizes the session's terminal.
 //
-// Read-only means nothing goes back: the terminal is made with stdin
-// disabled, so xterm.js turns neither keys, a paste nor its answers to
-// terminal queries into data, and nothing here listens for data it would
-// send (onData, onBinary). The only request this view makes is the stream
-// it reads, a GET; Server-Sent Events have no way back.
-export function TerminalView({ x, fit }: { x: ThreadInfo; fit?: boolean }) {
+// It is read-only unless typing allows keys: the terminal is made with
+// stdin disabled, so xterm.js turns neither keys, a paste nor its answers
+// to terminal queries into data. The stream it reads is a GET; Server-Sent
+// Events have no way back. While typing allows it, stdin is on and what
+// the person types goes to typing.onKeys, and nothing else: the terminal
+// answers no query (muteQueries), and mouse and focus reports are dropped.
+export function TerminalView({ x, fit, typing }: { x: ThreadInfo; fit?: boolean; typing?: Typing }) {
   const host = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLDivElement>(null);
+  const termRef = useRef<ReturnType<typeof openReadOnly> | null>(null);
+  const live = useRef(typing); // what the terminal's listeners read
+  live.current = typing;
   const [noProcess, setNoProcess] = useState(false);
   const id = x.id;
 
   useEffect(() => {
     if (!host.current) return;
     const term = openReadOnly(host.current);
+    termRef.current = term;
+    const unmute = muteQueries(term);
+    const data = term.onData((d) => {
+      if (live.current?.allowed && personal(d)) live.current.onKeys(d);
+    });
+    const leave = () => live.current?.allowed && live.current.onLeave();
+    const textarea = term.textarea;
+    textarea?.addEventListener("blur", leave);
+    term.options.disableStdin = !live.current?.allowed;
     const fitting = fit && box.current ? fitted(term, box.current) : null;
     const source = new Stream(terminalPath(id));
     // xterm.js parses what it is given later, while reset and resize act at
@@ -75,17 +100,31 @@ export function TerminalView({ x, fit }: { x: ThreadInfo; fit?: boolean }) {
     };
     return () => {
       gone = true;
+      termRef.current = null;
+      data.dispose();
+      textarea?.removeEventListener("blur", leave);
+      // A terminal taken away with the focus in it, as when another tab is
+      // shown, gets no blur: it is left all the same.
+      leave();
+      unmute();
       fitting?.stop();
       source.close();
       term.dispose();
     };
   }, [id, fit]);
+  // Declared after the effect that makes the terminal, so that it runs
+  // after it, also when that terminal is made again.
+  const allowed = !!typing?.allowed;
+  useEffect(() => {
+    const term = termRef.current;
+    if (term) term.options.disableStdin = !allowed;
+  }, [allowed, id, fit]);
 
   // An asleep session has no process. A stream that was open when its host
   // ended sends nothing more until the next run, so the thread's state says
   // so; a stream opened later starts with the last run's log and no run.
   return (
-    <div className={fit ? "terminal-view fit" : "terminal-view"} data-terminal={x.id}>
+    <div className={fit ? "terminal-view fit" : "terminal-view"} data-terminal={x.id} data-typing={allowed ? "on" : "off"}>
       {(noProcess || x.state === "asleep") && (
         <p className="no-process" data-no-process="">
           {t("pane.noProcess")}

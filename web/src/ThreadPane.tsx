@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { type Event, hasTerminal, type ThreadInfo } from "./api";
-import { t } from "./catalog";
+import type { AttachState } from "./attach";
+import { type Key, t } from "./catalog";
 import { Conversation } from "./Conversation";
-import { TerminalView } from "./TerminalView";
+import { TerminalView, type Typing } from "./TerminalView";
 
 // probeRetry is how long a pane waits before it asks again whether its
 // session has a terminal.
@@ -18,10 +19,61 @@ export function defaultView(x: ThreadInfo): View {
   return x.state === "asleep" || x.state === "closed" || x.state === "removed" || x.state === "failed" ? "conversation" : "terminal";
 }
 
+// AttachSwitch is the web listener's switch of a terminal thread's tab
+// (attach.ts): its attachment, if any, and what the switch does.
+export interface AttachSwitch {
+  state?: AttachState;
+  onSwitch: () => void;
+}
+
+// attachEndKey is the catalog's words for why an attachment ended.
+function attachEndKey(s: AttachState): Key {
+  switch (s.reason) {
+    case "idle":
+      return "attach.end.idle";
+    case "ended":
+      return "attach.end.ended";
+    case "agent ended":
+      return "attach.end.agent";
+    case "session ended":
+    case "signIn":
+      return "attach.end.signIn";
+    case "stopping":
+      return "attach.end.stopping";
+    case "passkeyCancelled":
+      return "attach.end.cancelled";
+    case "refused":
+      return "attach.end.refused";
+  }
+  return "attach.end.lost";
+}
+
+// Switch is the switch that attaches the terminal on the web listener.
+function Switch({ a }: { a: AttachSwitch }) {
+  const s = a.state;
+  const on = s?.phase === "on" || s?.phase === "starting";
+  return (
+    <div className="attach" data-attach={s ? s.phase : "off"}>
+      <button type="button" role="switch" aria-checked={on} onClick={a.onSwitch} title={t(on ? "attach.offTitle" : "attach.onTitle")}>
+        {t("attach.switch")}
+      </button>
+      {s?.phase === "starting" && <span className="attach-note">{t("attach.starting")}</span>}
+      {s?.phase === "on" && <span className="attach-note">{t("attach.on")}</span>}
+      {s?.phase === "ended" && (
+        <span className="attach-note" data-attach-end={s.reason ?? ""}>
+          {t(attachEndKey(s), { detail: s.detail ?? "" })}
+        </span>
+      )}
+    </div>
+  );
+}
+
 // ThreadPane is a thread's pane: its live terminal or its conversation,
 // switched in the pane; a session without a terminal has only the
 // conversation. view is the person's choice for this tab, or the view the
-// tab opened on. With fit, the terminal fills the pane.
+// tab opened on. With fit, the terminal fills the pane. typing lets the
+// terminal take keys (attach.ts); attach, on the web listener, is its
+// switch.
 export function ThreadPane(props: {
   x: ThreadInfo;
   subscribe: (f: (e: Event) => void) => () => void;
@@ -29,8 +81,10 @@ export function ThreadPane(props: {
   fit?: boolean;
   view?: View;
   onView?: (v: View) => void;
+  typing?: Typing;
+  attach?: AttachSwitch;
 }) {
-  const { x, subscribe, opens, fit, onView } = props;
+  const { x, subscribe, opens, fit, onView, typing, attach } = props;
   const [terminal, setTerminal] = useState<boolean | null>(null);
   const id = x.id;
 
@@ -71,7 +125,12 @@ export function ThreadPane(props: {
           {t("pane.noProcess")}
         </p>
       )}
-      {view === "terminal" ? <TerminalView x={x} fit={fit} /> : <Conversation x={x} subscribe={subscribe} opens={opens} />}
+      {terminal && view === "terminal" && attach && <Switch a={attach} />}
+      {view === "terminal" ? (
+        <TerminalView x={x} fit={fit} typing={terminal ? typing : undefined} />
+      ) : (
+        <Conversation x={x} subscribe={subscribe} opens={opens} />
+      )}
     </div>
   );
 }

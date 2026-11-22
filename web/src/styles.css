@@ -1337,7 +1337,8 @@ body {
   flex-direction: column;
 }
 
-.operate {
+.operate,
+.attach {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1345,7 +1346,8 @@ body {
   font-size: 13px;
 }
 
-.operate [role="switch"] {
+.operate [role="switch"],
+.attach [role="switch"] {
   font: inherit;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -1353,6 +1355,7 @@ body {
 }
 
 .operate [role="switch"][aria-checked="true"],
+.attach [role="switch"][aria-checked="true"],
 .mark.operating,
 .tab-operating {
   color: var(--bg);
@@ -1370,11 +1373,14 @@ body {
   border-radius: 8px;
 }
 
-.operate-end {
+.operate-end,
+.attach-note {
   color: var(--muted);
 }
 
-/* While operated, the screen takes keys: its frame says so. */
+/* While operated, or while a session's terminal takes keys and has the
+   focus, the screen takes keys: its frame says so. */
+.terminal-view[data-typing="on"] .xterm-box:focus-within,
 .terminal-view[data-operating="on"] .xterm-box {
   outline: 2px solid var(--st-running);
   outline-offset: -2px;
