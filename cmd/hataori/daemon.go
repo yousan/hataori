@@ -176,6 +176,8 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	if d := cfg.Dashboard; d != nil {
 		dc := dashboard.Config{HostInput: cfg.HostInput, MayOperate: func(person string) bool {
 			return c.MaySignIn(person) && dashboardCaller(cfg.People, keys, cfg.HostTerminals, cfg.HostInput, person).May.Has(control.OpHostInput)
+		}, MayAct: func(person string) bool {
+			return c.MaySignIn(person) && dashboardCaller(cfg.People, keys, cfg.HostTerminals, cfg.HostInput, person).May.Has(control.OpSend)
 		}}
 		if l := d.Local; l != nil {
 			dc.Local = &dashboard.Local{Listen: l.Listen, URL: l.URL, Key: "dashboard."}
@@ -561,9 +563,11 @@ func purgePass(ctx context.Context, rm workspace.Remover, lg *slog.Logger) {
 // purgeEvery, when a test sets it, is the interval of the trash purge.
 var purgeEvery time.Duration
 
-// dashboardCaller is the read-only Caller of a dashboard session of person:
-// the scopes that person may act in, every scope for the owner (section
-// 7.2). Only the owner reads the host's terminals, and only when the config
+// dashboardCaller is the Caller of a dashboard session of person: the
+// scopes that person may act in, every scope for the owner (section 7.2).
+// It reads; only the owner's also sends, answers and stops, as for
+// `hataori attach` (giving a thread input from its tab, decided
+// 2026-11-23). Only the owner reads the host's terminals, and only when the config
 // turns them on; only the owner types into a host tmux pane, and only when
 // the config turns host input on (the dashboard asks for a passkey check
 // first on the web listener).
@@ -575,6 +579,9 @@ func dashboardCaller(dir *people.Directory, scopes []string, hostTerminals, host
 		if dir.May(person, s) {
 			caller.Scopes = append(caller.Scopes, s)
 		}
+	}
+	if person != "" && person == dir.Owner() {
+		caller.May |= control.OpSend | control.OpAnswer | control.OpStop
 	}
 	if hostTerminals && person == dir.Owner() {
 		caller.May |= control.OpHost

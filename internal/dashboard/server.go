@@ -113,6 +113,11 @@ type Config struct {
 	// (OperateMayPath); the daemon answers from the same rule that gives
 	// their Caller OpHostInput. Nil: nobody.
 	MayOperate func(person string) bool
+	// MayAct reports whether person's sessions may give a thread input
+	// (act.go), so that the page shows the box, the buttons and the Stop
+	// button only to them (ActMayPath); the daemon answers from the same
+	// rule that gives their Caller OpSend. Nil: nobody.
+	MayAct func(person string) bool
 }
 
 // Local is the loopback listener: plain HTTP on a loopback address.
@@ -177,6 +182,7 @@ type Server struct {
 
 	hostInput  bool                     // the config's host_input
 	mayOperate func(person string) bool // Config.MayOperate
+	mayAct     func(person string) bool // Config.MayAct
 
 	// Passkeys: the web listener's relying party, nil when there is none
 	// (rpOff says why), and where they are kept, nil for nowhere.
@@ -198,6 +204,9 @@ type Server struct {
 	// (operate.go, notRecent).
 	started time.Time
 	removed map[string]time.Time
+	// acted is when each session of the web listener, by its hash, last
+	// made a passkey check to act (act.go).
+	acted map[[32]byte]time.Time
 }
 
 // listener is one way of reaching the dashboard.
@@ -243,7 +252,8 @@ func Listen(cfg Config, api func(person string) (control.API, bool), log *slog.L
 	s := &Server{For: api, Log: log, linkTTL: cfg.LinkTTL, now: cfg.Now,
 		links: map[[32]byte]link{}, grants: map[[32]byte]grant{}, ceremonies: map[[32]byte]ceremony{}, used: map[[32]byte]time.Time{}, key: cfg.SessionKey,
 		keepAlive: defaultKeepAlive, writeTimeout: defaultWriteTimeout, hostScreenInterval: defaultHostScreenInterval,
-		operatedScreenInterval: defaultOperatedScreenInterval, hostInput: cfg.HostInput, mayOperate: cfg.MayOperate}
+		operatedScreenInterval: defaultOperatedScreenInterval, hostInput: cfg.HostInput, mayOperate: cfg.MayOperate, mayAct: cfg.MayAct,
+		acted: map[[32]byte]time.Time{}}
 	if len(s.key) == 0 {
 		s.key = make([]byte, 32)
 		if _, err := rand.Read(s.key); err != nil {
@@ -294,6 +304,7 @@ func Listen(cfg Config, api func(person string) (control.API, bool), log *slog.L
 	s.mux.HandleFunc("GET "+SessionPath, s.signIn)
 	s.passkeyRoutes()
 	s.operateRoutes()
+	s.actRoutes()
 	s.pageRoutes()
 	s.routes()
 	for _, l := range s.listeners() {
