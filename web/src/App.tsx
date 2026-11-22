@@ -6,7 +6,9 @@ import { SignInNotice } from "./Passkeys";
 import { useDashboard, useNow } from "./live";
 import { StatusBar } from "./StatusBar";
 import { TabBar, tabID } from "./TabBar";
-import { defaultView, ThreadPane, type View } from "./ThreadPane";
+import { type AttachSwitch, defaultView, ThreadPane, type View } from "./ThreadPane";
+import type { Typing } from "./TerminalView";
+import { type AttachState, Attachment, useMayAct, web } from "./attach";
 import { AllThreads } from "./AllThreads";
 import { Details } from "./Details";
 import { NarrowHost, NarrowList, NarrowThread, useNarrow } from "./Narrow";
@@ -118,6 +120,14 @@ export function App() {
   const closeTab = (k: TabKey) => {
     operations.current.get(k)?.close();
     operations.current.delete(k);
+    attachments.current.get(k)?.close();
+    attachments.current.delete(k);
+    setAtts((m) => {
+      if (!m.has(k)) return m;
+      const next = new Map(m);
+      next.delete(k);
+      return next;
+    });
     setOps((m) => {
       if (!m.has(k)) return m;
       const next = new Map(m);
@@ -130,6 +140,53 @@ export function App() {
   // unmounting.
   useEffect(() => () => operations.current.forEach((o) => o.close()), []);
   const operating = (ops.get(active(tabs))?.phase === "on" ? ops.get(active(tabs)) : undefined) ?? [...ops.values()].find((s) => s.phase === "on");
+
+  // Typing into a session's terminal (attach.ts): the server says whether
+  // this person may act; each thread's tab has its own attachment. On the
+  // loopback listener the first key opens it and leaving the terminal ends
+  // it; on the web listener the tab's switch does both.
+  const mayAct = useMayAct();
+  const [atts, setAtts] = useState<ReadonlyMap<TabKey, AttachState>>(new Map());
+  const attachments = useRef(new Map<TabKey, Attachment>());
+  const attOf = (k: TabKey) => atts.get(k);
+  const attach = (k: TabKey, n: number): Attachment => {
+    const a: Attachment = new Attachment(n, (s) => {
+      if (attachments.current.get(k) === a) setAtts((m) => new Map(m).set(k, s));
+    });
+    attachments.current.set(k, a);
+    a.begin();
+    return a;
+  };
+  const typingFor = (k: TabKey, n: number): Typing => {
+    const phase = atts.get(k)?.phase;
+    return {
+      allowed: mayAct && (!web() || phase === "on" || phase === "starting"),
+      onKeys: (keys) => {
+        let a = attachments.current.get(k);
+        if (!a?.live) {
+          if (web()) return; // the switch is off
+          a = attach(k, n);
+        }
+        a.send(keys);
+      },
+      onLeave: () => {
+        if (!web()) attachments.current.get(k)?.stop();
+      },
+    };
+  };
+  const switchFor = (k: TabKey, n: number): AttachSwitch | undefined =>
+    mayAct && web()
+      ? {
+          state: atts.get(k),
+          onSwitch: () => {
+            const now = attachments.current.get(k);
+            if (now?.live) now.stop();
+            else attach(k, n);
+          },
+        }
+      : undefined;
+  useEffect(() => () => attachments.current.forEach((a) => a.close()), []);
+  const attached = [...atts.values()].find((s) => s.phase === "on")?.thread;
 
   const paneThread = (k: TabKey) => {
     const n = threadOf(k);
@@ -288,6 +345,7 @@ export function App() {
             thread={thread}
             host={host}
             op={opOf}
+            att={attOf}
             now={now}
             onView={(k) => setTabs((s) => view(s, k))}
             onClose={closeTab}
@@ -346,6 +404,8 @@ export function App() {
                         fit
                         view={viewOf(k)}
                         onView={chooseView(k)}
+                        typing={typingFor(k, paneThread(k)!.id)}
+                        attach={switchFor(k, paneThread(k)!.id)}
                       />
                     ) : (
                       <p className="empty">{t("pane.later")}</p>
@@ -382,6 +442,7 @@ export function App() {
         now={now}
         signedIn={!d.signedOut}
         operating={operating}
+        attached={attached}
       />
     </div>
   );

@@ -14,6 +14,8 @@ interface Props {
   signedIn: boolean;
   // operating is the operation of a host pane under way, if any.
   operating?: OpState;
+  // attached is the thread whose terminal is attached, if any (attach.ts).
+  attached?: number;
 }
 
 // Limits shows each agent's remaining usage with its reset time. An agent
@@ -63,7 +65,7 @@ function Clients({ clients }: { clients: ClientState[] }) {
 // chat client that is not connected, each agent's remaining usage, the live mark with the position of the last
 // event read, "read-only" or the pane being operated with the time left
 // before its idle end, and, signed in, the person's passkeys.
-export function StatusBar({ selected: x, live, limits, clients, now, signedIn, operating }: Props) {
+export function StatusBar({ selected: x, live, limits, clients, now, signedIn, operating, attached }: Props) {
   let mark: string;
   if (live.connected) {
     mark = live.pos === null ? t("status.liveStarting") : t("status.live", { pos: live.pos });
@@ -92,6 +94,11 @@ export function StatusBar({ selected: x, live, limits, clients, now, signedIn, o
           <span className="live-dot" />
           {mark}
         </span>
+        {attached !== undefined && (
+          <span className="mark operating" data-status-attached={attached}>
+            {t("status.attached", { n: attached })}
+          </span>
+        )}
         {operating?.phase === "on" ? (
           <span className="mark operating" data-status-operating={operating.pane}>
             {t("status.operating", { pane: operating.pane, left: clock(left(operating, now)) })}

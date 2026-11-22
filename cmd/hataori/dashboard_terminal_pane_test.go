@@ -120,12 +120,14 @@ func (r *paneRig) noViolations() {
 	}
 }
 
-// The terminal pane sends nothing back. Real keys, a paste, typed text and
-// the terminal's answers to queries are all dropped: no request the page
-// makes carries a byte of them, every request is a GET or HEAD of the
-// page's own routes, no WebSocket is opened, and the session gets no input.
+// For a person who may not act, the terminal pane sends nothing back (the
+// owner's takes keys, #608). Real keys, a paste, typed text and the
+// terminal's answers to queries are all dropped: no request the page makes
+// carries a byte of them, every request is a GET or HEAD of the page's own
+// routes, no WebSocket is opened, and the session gets no input.
 func TestDashboardTerminalPaneIsReadOnly(t *testing.T) {
 	root := terminalRoot(t)
+	dashboardHook = func(c *control.Caller) { c.Scopes, c.Principal, c.May = []string{"s"}, "grace", control.OpRead }
 	r := newPaneRig(t, root, "screen ready-marker\nscreen "+terminalQueries+"query-marker\nreply one",
 		func(x control.ThreadInfo) bool { return x.State == control.Idle && x.Turns == 1 })
 	b := r.b
@@ -177,7 +179,7 @@ func TestDashboardTerminalPaneIsReadOnly(t *testing.T) {
 	// Every request of the page: a GET or HEAD of its own routes, with no
 	// body, and nothing typed in its address.
 	page, _ := url.Parse(r.base)
-	routes := []string{"/", "/signin", "/api/session", "/favicon.ico", "/api/threads", "/api/scopes", "/api/layout", "/api/threadevents", "/api/thread", "/api/events", "/api/terminal", "/api/limits", "/api/clients", "/api/workspace", "/api/hostterminals", "/api/hostscreen", "/api/operate/may"}
+	routes := []string{"/", "/signin", "/api/session", "/favicon.ico", "/api/threads", "/api/scopes", "/api/layout", "/api/threadevents", "/api/thread", "/api/events", "/api/terminal", "/api/limits", "/api/clients", "/api/workspace", "/api/hostterminals", "/api/hostscreen", "/api/operate/may", "/api/act/may"}
 	requests := 0
 	for _, e := range b.events {
 		switch e.Method {
