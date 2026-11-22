@@ -327,20 +327,22 @@ func stepAgent(s Snapshot, e agent.Event, typist control.Principal, r *Result,
 			}
 			to(control.Running, "")
 			start(OpenTurn{By: by}, "")
-			if by == ByTerminal && strings.TrimSpace(e.Text) != "" {
-				// The prompt typed at the terminal, as input of the person
-				// at it (Machine.Typist): every chat link shows it (design,
-				// section 5.2). Since protocol 3.24.
-				d := map[string]any{"text": e.Text, "via": ViaTerminal}
-				if typist != "" {
-					d["principal"] = string(typist)
-				}
-				r.Out = append(r.Out, Out{Kind: KindInput, Data: d})
-			}
 		case control.Running:
-			// The agent confirms the turn a caller started.
+			// The agent confirms the turn a caller started; or a person's
+			// prompt typed at the terminal reached it before the caller's
+			// input did, which the turn the caller started then holds.
 		default:
 			return false
+		}
+		if e.StartedBy == agent.ByTerminal && strings.TrimSpace(e.Text) != "" {
+			// The prompt typed at the terminal, as input of the person at
+			// it (Machine.Typist): every chat link shows it (design,
+			// section 5.2). Since protocol 3.24.
+			d := map[string]any{"text": e.Text, "via": ViaTerminal}
+			if typist != "" {
+				d["principal"] = string(typist)
+			}
+			r.Out = append(r.Out, Out{Kind: KindInput, Data: d})
 		}
 	case agent.TurnEnded:
 		if s.State != control.Running || s.Turn == nil {

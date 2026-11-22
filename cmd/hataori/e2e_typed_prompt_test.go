@@ -51,6 +51,22 @@ func TestTypedPromptShowsInEveryLink(t *testing.T) {
 		if got := postsLike(r.driver, conv, "owner: reply typed here"); len(got) != 1 {
 			t.Fatalf("%v shows the typed prompt %d times, want once", conv, len(got))
 		}
+		// The prompt comes before the answer.
+		prompt, answer := -1, -1
+		for i, call := range r.driver.Calls(conv) {
+			if call.Op != fakesurface.OpPost {
+				continue
+			}
+			switch call.Message.Text {
+			case "owner: reply typed here":
+				prompt = i
+			case "(typed at the terminal)\ntyped here":
+				answer = i
+			}
+		}
+		if prompt < 0 || answer < 0 || prompt > answer {
+			t.Fatalf("in %v the prompt is post %d and the answer post %d, want the prompt first", conv, prompt, answer)
+		}
 	}
 	a.detach(t)
 
