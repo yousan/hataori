@@ -6,6 +6,8 @@
 import { useEffect, useRef, useState } from "react";
 import {
   type AgentLimits,
+  type ClientState,
+  clients,
   type ScopeInfo,
   scopes,
   type Event,
@@ -40,6 +42,7 @@ export interface Dashboard {
   live: Live;
   signedOut: boolean;
   limits: AgentLimits[]; // each agent's remaining usage; none until read
+  clients: ClientState[]; // whether each chat client is connected; none until read
   scopes: ScopeInfo[] | null; // the scopes the caller may see, with their names; null until read
   // subscribe calls f with each event the stream delivers from now on,
   // until the returned function is called. One stream serves the page.
@@ -61,6 +64,9 @@ const reopenDelay = 2000;
 // limitsInterval is how often the page reads the remaining usage again:
 // it changes without an event.
 const limitsInterval = 60000;
+// clientsInterval is how often the page reads again whether the chat
+// clients are connected: it changes without an event.
+const clientsInterval = 15000;
 // detailEvents is how many of a thread's last events are read for its
 // failure reason.
 const detailEvents = 20;
@@ -126,6 +132,7 @@ export function useDashboard(): Dashboard {
     live: { connected: false, pos: null },
     signedOut: false,
     limits: [],
+    clients: [],
     scopes: null,
     opens: 0,
   });
@@ -158,6 +165,7 @@ export function useDashboard(): Dashboard {
       const n = ++reads.current;
       try {
         readLimits();
+        readClients();
         const [ts, ss] = await Promise.all([threads(), scopes()]);
         // A thread that goes away between the list and its detail keeps
         // the list good: it shows without what it waits on until the next
@@ -190,6 +198,18 @@ export function useDashboard(): Dashboard {
       try {
         const ls = await limits();
         if (!closed && n === limitReads) setState((s) => ({ ...s, limits: ls }));
+      } catch (err) {
+        if (err instanceof SignedOut) signedOut();
+      }
+    };
+    // readClients reads whether the chat clients are connected, as
+    // readLimits reads the usage.
+    let clientReads = 0;
+    const readClients = async () => {
+      const n = ++clientReads;
+      try {
+        const cs = await clients();
+        if (!closed && n === clientReads) setState((s) => ({ ...s, clients: cs }));
       } catch (err) {
         if (err instanceof SignedOut) signedOut();
       }
@@ -259,10 +279,12 @@ export function useDashboard(): Dashboard {
     };
     begin();
     const poll = setInterval(readLimits, limitsInterval);
+    const pollClients = setInterval(readClients, clientsInterval);
 
     return () => {
       closed = true;
       clearInterval(poll);
+      clearInterval(pollClients);
       clearTimeout(timer);
       clearTimeout(retry);
       source?.close();

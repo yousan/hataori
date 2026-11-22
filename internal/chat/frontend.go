@@ -77,6 +77,14 @@ type FrontEnd struct {
 	layout      layoutState      // the chat's layout being recorded (layout.go)
 	Now         func() time.Time // the clock; time.Now when nil
 
+	// RetryFirst is how long the front end waits before it runs its
+	// driver again after the driver's Run failed, doubling at each failure
+	// in a row up to RetryMax; 1s and 1 min when zero. While it keeps
+	// failing, it logs at most one line per LogEvery (1 min when zero).
+	RetryFirst, RetryMax, LogEvery time.Duration
+
+	conn conn // whether the driver is connected (State)
+
 	ctx context.Context
 	// bg counts the goroutines the driver's calls start (Connected's
 	// catch-up and its retry); Run returns only once they have ended.
@@ -84,17 +92,22 @@ type FrontEnd struct {
 }
 
 var (
-	_ surface.Sink        = (*FrontEnd)(nil)
-	_ surface.Reconnected = (*FrontEnd)(nil)
-	_ control.ScopeOwner  = (*FrontEnd)(nil)
+	_ surface.Sink         = (*FrontEnd)(nil)
+	_ surface.Reconnected  = (*FrontEnd)(nil)
+	_ surface.Disconnected = (*FrontEnd)(nil)
+	_ control.ScopeOwner   = (*FrontEnd)(nil)
+	_ control.Connection   = (*FrontEnd)(nil)
 )
 
 // Run connects the driver, shows the events of its scopes and sends the
-// outbox until ctx ends.
+// outbox until ctx ends. A driver whose Run fails, at the start or later,
+// is run again after a delay (runDriver), for as long as ctx lasts.
 func (f *FrontEnd) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	f.ctx = ctx
+	f.conn.down(f.now()) // not connected until the driver says so
+	f.inboundState().started()
 	f.Outbox.init() // its defaults, before the goroutines below read them
 	var wg sync.WaitGroup
 	wg.Add(4)
@@ -113,11 +126,11 @@ func (f *FrontEnd) Run(ctx context.Context) error {
 			}
 		}
 	}()
-	err := f.Driver.Run(ctx, f)
-	cancel() // the driver stopped: stop the rest too
+	f.runDriver(ctx)
+	cancel() // ctx ended: stop the rest too
 	wg.Wait()
 	f.bg.Wait()
-	return err
+	return nil
 }
 
 func (f *FrontEnd) context() context.Context {

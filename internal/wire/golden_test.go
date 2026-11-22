@@ -116,6 +116,7 @@ func examples(t *testing.T) map[string]any {
 		"HostScreen":     hostScreenArgs{Pane: "%3"},
 		"HostView":       hostScreenArgs{Pane: "%3"},
 		"Limits":         limitsArgs{},
+		"Clients":        clientsArgs{},
 		"AttachTerminal": attachTerminalArgs{ID: exampleID},
 		"OperateHost":    operateHostArgs{Pane: "%3"},
 		"HostKeys": hostKeysArgs{Keys: []control.HostKey{{Key: "C-c"}, {Text: "make test"}, {Key: "Enter"},
@@ -161,6 +162,7 @@ func examples(t *testing.T) map[string]any {
 		"HostView":       control.HostView{Screen: "$ make\nok\n$ ", CursorX: 2, CursorY: 2},
 		"OperateHost":    hostOperation{Idle: 300},
 		"AttachTerminal": control.Attachment{Socket: "/srv/hataori/state/sessions/7/host.sock", Number: 7},
+		"Clients":        []control.ClientState{{Client: "discord", Connected: false, Since: exampleTime}},
 		"Limits": []control.AgentLimits{{Agent: "claude-code", At: exampleTime, Every: 300, Windows: []control.LimitWindow{
 			{Name: "five_hour", Minutes: 300, Used: 4, Resets: &exampleTime},
 			{Name: "seven_day", Minutes: 10080, Used: 21, Resets: &exampleTime}}}},

@@ -73,6 +73,17 @@ func (q *queue) connected() {
 	})
 }
 
+// disconnected tells the sink, in order with the messages, that the
+// connection was lost and is being made again, when the sink wants to know
+// (surface.Disconnected).
+func (q *queue) disconnected() {
+	q.push(func(s surface.Sink) {
+		if d, ok := s.(surface.Disconnected); ok {
+			d.Disconnected()
+		}
+	})
+}
+
 // LayoutChanged tells the sink, in order with the messages, that the
 // layout changed, when the sink wants to know (surface.LayoutWatcher).
 func (q *queue) LayoutChanged() {

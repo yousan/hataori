@@ -70,6 +70,14 @@ export interface AgentLimits {
   windows: LimitWindow[];
 }
 
+// ClientState is whether a chat client of the caller's scopes is connected
+// to its chat service, and since when it is or is not (protocol 3.21).
+export interface ClientState {
+  client: string;
+  connected: boolean;
+  since: string;
+}
+
 export interface LimitWindow {
   name: string;
   minutes?: number;
@@ -119,6 +127,10 @@ export function threadEvents(id: ThreadID, before: number, limit: number): Promi
 
 export function limits(): Promise<AgentLimits[]> {
   return get<AgentLimits[]>("/api/limits");
+}
+
+export function clients(): Promise<ClientState[]> {
+  return get<ClientState[]>("/api/clients");
 }
 
 export const eventsPath = "/api/events";

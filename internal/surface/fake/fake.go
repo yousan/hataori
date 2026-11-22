@@ -27,6 +27,7 @@ const (
 	OpOpenThread
 	OpOpenDirect
 	OpSince
+	OpRun // Run fails before it connects
 )
 
 func (o Op) String() string {
@@ -47,6 +48,8 @@ func (o Op) String() string {
 		return "open-direct"
 	case OpSince:
 		return "since"
+	case OpRun:
+		return "run"
 	}
 	return "op(" + strconv.Itoa(int(o)) + ")"
 }
@@ -95,6 +98,8 @@ type Driver struct {
 	mu        sync.Mutex
 	sink      surface.Sink
 	connected bool
+	runs      int
+	drop      chan error // ends the running Run (Drop)
 	commands  []surface.CommandSpec
 	next      int
 	limits    surface.Limits
@@ -217,21 +222,42 @@ func (d *Driver) id(prefix string) string {
 }
 
 // Run connects: injected messages go to sink until ctx ends or Disconnect.
+// It returns the planned failure of OpRun (Fail) at once, without
+// connecting, and returns Drop's error when Drop is called.
 func (d *Driver) Run(ctx context.Context, sink surface.Sink) error {
 	d.mu.Lock()
+	d.runs++
+	if before, after := d.failing(OpRun); before != nil || after != nil {
+		d.mu.Unlock()
+		return errors.Join(before, after)
+	}
 	d.sink = sink
 	d.connected = true
+	drop := make(chan error, 1)
+	d.drop = drop
 	if c, ok := sink.(surface.Commander); ok {
 		d.commands = c.Commands()
 	}
 	d.mu.Unlock()
 	connected(sink)
-	<-ctx.Done()
+	var err error
+	select {
+	case <-ctx.Done():
+	case err = <-drop:
+	}
 	d.mu.Lock()
 	d.sink = nil
 	d.connected = false
+	d.drop = nil
 	d.mu.Unlock()
-	return nil
+	return err
+}
+
+// Runs counts the calls of Run, also those that failed.
+func (d *Driver) Runs() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.runs
 }
 
 // Connected reports whether Run has connected the driver to a sink.
@@ -241,12 +267,35 @@ func (d *Driver) Connected() bool {
 	return d.connected
 }
 
-// Disconnect simulates an outage: injected messages are kept for Since but
-// not delivered, until Reconnect.
+// Disconnect simulates an outage that the driver itself ends: injected
+// messages are kept for Since but not delivered, until Reconnect. A sink
+// that wants to know is told (surface.Disconnected).
 func (d *Driver) Disconnect() {
 	d.mu.Lock()
 	d.connected = false
+	sink := d.sink
 	d.mu.Unlock()
+	if s, ok := sink.(surface.Disconnected); ok {
+		s.Disconnected()
+	}
+}
+
+// Drop ends a running Run with err (ErrInjected when nil), as a connection
+// that drops and that the driver cannot make again. The next Run connects
+// again.
+func (d *Driver) Drop(err error) {
+	if err == nil {
+		err = ErrInjected
+	}
+	d.mu.Lock()
+	ch := d.drop
+	d.mu.Unlock()
+	if ch != nil {
+		select {
+		case ch <- err:
+		default:
+		}
+	}
 }
 
 // Reconnect ends an outage started by Disconnect, if Run is still running.

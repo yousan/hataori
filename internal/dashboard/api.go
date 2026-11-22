@@ -25,6 +25,7 @@ import (
 //	GET /api/terminal?thread=N                a stream of TerminalChunk (Server-Sent Events)
 //	GET /api/hostscreen?pane=P                a stream of a tmux pane's screen (Server-Sent Events)
 //	GET /api/limits                           [AgentLimits]
+//	GET /api/clients                          [ClientState]
 //	GET /api/workspace?thread=N               WorkspaceState
 //	GET /api/hostterminals                    [HostTerminal]
 //
@@ -49,6 +50,9 @@ const (
 	ThreadEventsPath = "/api/threadevents"
 	EventsPath       = "/api/events"
 	LimitsPath       = "/api/limits"
+	// ClientsPath answers with whether each chat client of the caller's
+	// scopes is connected: the control API's Clients.
+	ClientsPath = "/api/clients"
 	// WorkspacePath answers with the thread's WorkspaceState. A thread
 	// outside the caller's scopes answers as one that does not exist, and a
 	// workspace that cannot be read is an error, never zeros.
@@ -100,6 +104,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET "+TerminalPath, s.terminal)
 	s.mux.HandleFunc("GET "+HostScreenPath, s.hostScreen)
 	s.mux.HandleFunc("GET "+LimitsPath, s.limits)
+	s.mux.HandleFunc("GET "+ClientsPath, s.clients)
 	s.mux.HandleFunc("GET "+WorkspacePath, s.workspace)
 	s.mux.HandleFunc("GET "+HostTerminalsPath, s.hostTerminals)
 }
@@ -114,6 +119,18 @@ func (s *Server) limits(w http.ResponseWriter, r *http.Request) {
 		ls = []control.AgentLimits{}
 	}
 	writeJSON(w, ls)
+}
+
+func (s *Server) clients(w http.ResponseWriter, r *http.Request) {
+	cs, err := api(r).Clients(r.Context())
+	if err != nil {
+		s.apiError(w, err)
+		return
+	}
+	if cs == nil {
+		cs = []control.ClientState{}
+	}
+	writeJSON(w, cs)
 }
 
 // workspaceTimeout bounds how long the route waits for git in a workspace:
