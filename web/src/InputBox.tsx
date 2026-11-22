@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { act, newKey, sendPath } from "./act";
 import type { ThreadInfo } from "./api";
 import { t } from "./catalog";
@@ -15,18 +15,28 @@ export function InputBox({ x }: { x: ThreadInfo }) {
   const [key, setKey] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
+  const gone = useRef(false);
+  useEffect(
+    () => () => {
+      gone.current = true;
+    },
+    [],
+  );
 
   const send = async () => {
     if (sending || text.trim() === "") return;
     const k = key ?? newKey();
+    const sent = text;
     setKey(k);
     setSending(true);
     setRefused(null);
-    const r = await act(sendPath, { thread: x.id, key: k, text });
+    const r = await act(sendPath, { thread: x.id, key: k, text: sent });
+    if (gone.current) return;
     setSending(false);
     if (r.ok) {
-      setText("");
-      setKey(null);
+      // What was typed while it went stays, for the next message.
+      setText((now) => (now === sent ? "" : now));
+      setKey((now) => (now === k ? null : now));
       return;
     }
     setRefused(r.check === "signIn" ? t("box.signIn") : r.check === "passkeyCancelled" ? t("box.cancelled") : r.reason || t("box.failed"));

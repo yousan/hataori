@@ -91,21 +91,34 @@ func TestDashboardInputBoxSends(t *testing.T) {
 		t.Fatalf("the box's input event %v", last)
 	}
 
-	// A send that fails: the text and the reason stay; sent again with the
-	// same key, the agent gets it once.
-	b.call("Fetch.enable", map[string]any{"patterns": []map[string]any{{"urlPattern": "*/api/send", "requestStage": "Request"}}})
+	// A send whose answer is lost after the server took it: the text and
+	// the reason stay; sent again with the same key, the agent gets it
+	// once.
+	b.call("Fetch.enable", map[string]any{"patterns": []map[string]any{{"urlPattern": "*/api/send", "requestStage": "Response"}}})
 	from := len(b.events)
 	typeInBox(b, "reply once only")
 	b.key("Enter", "Enter", 13, 0, "\r")
 	var paused struct {
-		RequestID string `json:"requestId"`
-		Request   struct{ PostData string }
+		RequestID          string `json:"requestId"`
+		Request            struct{ PostData string }
+		ResponseStatusCode int
 	}
 	eventually(t, "the send held", 10*time.Second, func() bool {
 		b.eval(`1`, nil)
 		for _, e := range b.events[from:] {
 			if e.Method == "Fetch.requestPaused" {
 				json.Unmarshal(e.Params, &paused)
+				return true
+			}
+		}
+		return false
+	})
+	if paused.ResponseStatusCode != 204 {
+		t.Fatalf("the server answered the held send %d, want 204: it took it", paused.ResponseStatusCode)
+	}
+	eventually(t, "the held send at the agent", 10*time.Second, func() bool {
+		for _, d := range inputsOf(t, c, x.ID) {
+			if d["text"] == "reply once only" {
 				return true
 			}
 		}
@@ -118,7 +131,6 @@ func TestDashboardInputBoxSends(t *testing.T) {
 		document.querySelector('.input-box textarea').value === 'reply once only'`)
 	from = len(b.events)
 	b.click(".input-box .box-send")
-	r.posted(t, th, "once only")
 	b.until("the box empty again", `document.querySelector('.input-box textarea').value === '' && !document.querySelector('[data-box-refused]')`)
 	var first, again struct{ Key string }
 	json.Unmarshal([]byte(paused.Request.PostData), &first)
@@ -219,6 +231,7 @@ func TestDashboardInputBoxOnTheWeb(t *testing.T) {
 	b := newBrowser(t, "--host-resolver-rules=MAP "+webName+" 127.0.0.1",
 		"--ignore-certificate-errors-spki-list="+base64.StdEncoding.EncodeToString(d.spki))
 	b.call("Page.enable", map[string]any{})
+	b.call("Network.enable", map[string]any{})
 	b.call("WebAuthn.enable", map[string]any{})
 	b.call("WebAuthn.addVirtualAuthenticator", map[string]any{"options": map[string]any{
 		"protocol": "ctap2", "transport": "internal", "hasResidentKey": true, "hasUserVerification": true,
@@ -229,6 +242,7 @@ func TestDashboardInputBoxOnTheWeb(t *testing.T) {
 	b.until("the passkey added", `document.querySelector('[data-passkey=offer]')?.textContent.includes('Passkey added')`)
 	openThread(t, b, x.ID)
 	b.until("the box", `!!document.querySelector('.pane.active .input-box')`)
+	from := len(b.events)
 	typeInBox(b, "reply from the web")
 	b.key("Enter", "Enter", 13, 0, "\r")
 	eventually(t, "the send", 20*time.Second, func() bool {
@@ -241,5 +255,42 @@ func TestDashboardInputBoxOnTheWeb(t *testing.T) {
 	})
 	if keys := d.stored(); len(keys) != 1 || keys[0].Used == nil {
 		t.Fatalf("no passkey check was made: %+v", keys)
+	}
+	// Two sends: the first answered 428, the second the same request again.
+	var bodies, ids []string
+	statuses := map[string]int{}
+	eventually(t, "both sends answered", 10*time.Second, func() bool {
+		b.eval(`1`, nil)
+		bodies, ids, statuses = nil, nil, map[string]int{}
+		for _, e := range b.events[from:] {
+			var p struct {
+				RequestID string
+				Request   struct{ URL, PostData string }
+				Response  struct {
+					URL    string
+					Status int
+				}
+			}
+			json.Unmarshal(e.Params, &p)
+			switch {
+			case e.Method == "Network.requestWillBeSent" && strings.HasSuffix(p.Request.URL, "/api/send"):
+				bodies, ids = append(bodies, p.Request.PostData), append(ids, p.RequestID)
+			case e.Method == "Network.responseReceived" && strings.HasSuffix(p.Response.URL, "/api/send"):
+				statuses[p.RequestID] = p.Response.Status
+			}
+		}
+		return len(ids) >= 2 && len(statuses) >= 2
+	})
+	if len(bodies) != 2 || bodies[0] != bodies[1] || statuses[ids[0]] != 428 || statuses[ids[1]] != 204 {
+		t.Fatalf("the sends: bodies %q, statuses %v of %v; want one refused with 428, then the same again", bodies, statuses, ids)
+	}
+	n := 0
+	for _, in := range inputsOf(t, c, x.ID) {
+		if in["text"] == "reply from the web" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("the agent got the message %d times", n)
 	}
 }

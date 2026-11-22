@@ -135,7 +135,7 @@ export function ThreadPane(props: {
       ) : (
         <Conversation x={x} subscribe={subscribe} opens={opens} />
       )}
-      {mayAct && (narrow || !terminal) && <InputBox x={x} />}
+      {mayAct && (narrow || !terminal) && <InputBox key={x.id} x={x} />}
     </div>
   );
 }
