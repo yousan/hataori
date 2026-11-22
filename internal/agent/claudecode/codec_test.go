@@ -357,3 +357,42 @@ func TestToolsNameTheirSubagent(t *testing.T) {
 		t.Fatalf("subagent %q, tools:\n%s\nwant:\n%s", sub, strings.Join(got, " "), want)
 	}
 }
+
+// A turn typed at the terminal carries its prompt, as UserPromptSubmit
+// reports it (unwrapped from the tag of a long paste); a turn hataori sent
+// and one the agent started carry none (#609).
+func TestTypedPromptIsReported(t *testing.T) {
+	prompt := func(file string) string {
+		b, _ := os.ReadFile(filepath.Join("testdata/2.1.322", file))
+		var m map[string]any
+		json.Unmarshal(b, &m)
+		return m["prompt"].(string)
+	}
+	started := func(a Actions) agent.Event {
+		t.Helper()
+		for _, e := range a.Events {
+			if e.Kind == agent.TurnStarted {
+				return e
+			}
+		}
+		t.Fatalf("no turn started: %s", summary(a))
+		return agent.Event{}
+	}
+	for _, file := range []string{"plain/hooks/02-UserPromptSubmit.json", "paste/hooks/02-UserPromptSubmit.json"} {
+		want := strings.TrimSpace(unwrapPaste(prompt(file)))
+		// Typed: a fresh codec sent nothing.
+		if e := started(decodeFile(t, newTestCodec(), "c1", file)); e.StartedBy != agent.ByTerminal || e.Text != want {
+			t.Errorf("%s typed: by %v, text %.40q; want the terminal and %.40q", file, e.StartedBy, e.Text, want)
+		}
+		// Sent by hataori: no text.
+		c := newTestCodec()
+		decodeFile(t, c, "c0", "plain/hooks/01-SessionStart.json")
+		c.Input(agent.Input{Text: unwrapPaste(prompt(file))})
+		if e := started(decodeFile(t, c, "c1", file)); e.StartedBy != agent.ByCaller || e.Text != "" {
+			t.Errorf("%s sent: by %v, text %.40q; want the caller and none", file, e.StartedBy, e.Text)
+		}
+	}
+	if e := started(decodeFile(t, newTestCodec(), "c1", "background/hooks/06-UserPromptSubmit.json")); e.StartedBy != agent.ByAgent || e.Text != "" {
+		t.Errorf("the agent's own turn: by %v, text %.40q", e.StartedBy, e.Text)
+	}
+}

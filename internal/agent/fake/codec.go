@@ -72,8 +72,9 @@ type report struct {
 	Reason     string   `json:"reason"`
 	Background int      `json:"background"`
 	Input      string   `json:"input"`
-	N          int      `json:"n"`    // turn: its number since the program started
-	Turn       int      `json:"turn"` // text in the transcript: the number of its turn
+	Prompt     string   `json:"prompt"` // turn by the terminal: the line typed
+	N          int      `json:"n"`      // turn: its number since the program started
+	Turn       int      `json:"turn"`   // text in the transcript: the number of its turn
 	// usage; "input" is the turn's input id above, so the counts are "in"
 	Tokens
 	// limits
@@ -199,7 +200,11 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 		case "terminal":
 			by = agent.ByTerminal
 		}
-		a = c.events(append([]agent.Event{{Kind: agent.TurnStarted, StartedBy: by, Input: r.Input}}, c.early...)...)
+		started := agent.Event{Kind: agent.TurnStarted, StartedBy: by, Input: r.Input}
+		if by == agent.ByTerminal {
+			started.Text = r.Prompt // the prompt typed, as Claude Code's hook gives it
+		}
+		a = c.events(append([]agent.Event{started}, c.early...)...)
 		c.early, c.turn = nil, r.N
 		c.running = true
 		for i, w := range c.waiting {

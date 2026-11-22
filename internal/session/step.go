@@ -9,6 +9,7 @@ package session
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/control"
@@ -117,6 +118,10 @@ const (
 	ByAgent    = "agent"
 	ByTerminal = "terminal"
 )
+
+// ViaTerminal is the via of the input event of a prompt typed at the
+// agent's terminal.
+const ViaTerminal = "terminal"
 
 // Event kinds written by the state machine.
 const (
@@ -287,7 +292,7 @@ func Step(s Snapshot, in Input) (Result, error) {
 			return refuse()
 		}
 	case AgentEvent:
-		if !stepAgent(s, in.Agent, &r, to, end, start) {
+		if !stepAgent(s, in.Agent, in.Principal, &r, to, end, start) {
 			return refuse()
 		}
 	default:
@@ -297,8 +302,9 @@ func Step(s Snapshot, in Input) (Result, error) {
 }
 
 // stepAgent applies an agent event to r, through the helpers of Step. It
-// reports false when the event is refused.
-func stepAgent(s Snapshot, e agent.Event, r *Result,
+// reports false when the event is refused. typist is the person of a turn
+// typed at the terminal (Machine.Typist).
+func stepAgent(s Snapshot, e agent.Event, typist control.Principal, r *Result,
 	to func(control.State, string), end func(Ended), start func(OpenTurn, string)) bool {
 	live := s.State == control.Idle || s.State == control.Running || s.State == control.Waiting
 	switch e.Kind {
@@ -322,9 +328,21 @@ func stepAgent(s Snapshot, e agent.Event, r *Result,
 			to(control.Running, "")
 			start(OpenTurn{By: by}, "")
 		case control.Running:
-			// The agent confirms the turn a caller started.
+			// The agent confirms the turn a caller started; or a person's
+			// prompt typed at the terminal reached it before the caller's
+			// input did, which the turn the caller started then holds.
 		default:
 			return false
+		}
+		if e.StartedBy == agent.ByTerminal && strings.TrimSpace(e.Text) != "" {
+			// The prompt typed at the terminal, as input of the person at
+			// it (Machine.Typist): every chat link shows it (design,
+			// section 5.2). Since protocol 3.24.
+			d := map[string]any{"text": e.Text, "via": ViaTerminal}
+			if typist != "" {
+				d["principal"] = string(typist)
+			}
+			r.Out = append(r.Out, Out{Kind: KindInput, Data: d})
 		}
 	case agent.TurnEnded:
 		if s.State != control.Running || s.Turn == nil {

@@ -163,3 +163,44 @@ func TestBlockedAtStartByTheAgentKeepsItsDetail(t *testing.T) {
 		t.Fatalf("state event %v", d)
 	}
 }
+
+// A turn typed at the terminal writes its prompt as an input event of the
+// person at the terminal, with via terminal: after its turn_started when it
+// starts the turn, and also while a turn a caller started runs, which the
+// typed prompt reached first. A caller's turn and the agent's own write
+// none (#609).
+func TestTypedPromptIsInput(t *testing.T) {
+	typed := func(s Snapshot, e agent.Event) []Out {
+		t.Helper()
+		r, err := Step(s, Input{Kind: AgentEvent, Principal: "ada", Agent: e})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r.Out
+	}
+	inputs := func(out []Out) []map[string]any {
+		var in []map[string]any
+		for _, o := range out {
+			if o.Kind == KindInput {
+				in = append(in, o.Data)
+			}
+		}
+		return in
+	}
+	out := typed(Snapshot{State: control.Idle}, agent.Event{Kind: agent.TurnStarted, StartedBy: agent.ByTerminal, Text: "fix it"})
+	if len(out) < 2 || out[len(out)-1].Kind != KindInput || out[len(out)-2].Kind != KindTurnStarted {
+		t.Fatalf("a typed turn from idle: %+v, want turn_started then input", out)
+	}
+	if d := inputs(out); len(d) != 1 || d[0]["text"] != "fix it" || d[0]["via"] != ViaTerminal || d[0]["principal"] != "ada" {
+		t.Fatalf("the typed prompt's input %v", d)
+	}
+	running := Snapshot{State: control.Running, Turn: &OpenTurn{By: ByCaller}}
+	if d := inputs(typed(running, agent.Event{Kind: agent.TurnStarted, StartedBy: agent.ByTerminal, Text: "first"})); len(d) != 1 || d[0]["text"] != "first" {
+		t.Fatalf("a typed prompt while a caller's turn runs: %v", d)
+	}
+	for _, by := range []agent.Starter{agent.ByCaller, agent.ByAgent} {
+		if d := inputs(typed(Snapshot{State: control.Idle}, agent.Event{Kind: agent.TurnStarted, StartedBy: by, Text: "not typed"})); len(d) != 0 {
+			t.Fatalf("a turn by %v writes input %v", by, d)
+		}
+	}
+}

@@ -18,7 +18,7 @@
 // Every report is a JSON object with a field "t":
 //
 //	{"t":"ready","session":S,"model":M,"effort":E,"resume":R,"transcript":P}
-//	{"t":"turn","by":"caller"|"agent"|"terminal","input":I,"n":N}   (N: its number since the program started)
+//	{"t":"turn","by":"caller"|"agent"|"terminal","input":I,"n":N,"prompt":P}   (N: its number since the program started; P, by terminal only: the line typed)
 //	{"t":"text","text":T,"final":true|false}   (on a terminal: in the transcript, with "turn":N)
 //	{"t":"tool","id":I,"name":N,"parent":P,"end":false|true}   (P: the subagent it runs in)
 //	{"t":"subagent","id":I,"name":N,"end":false|true}

@@ -703,7 +703,13 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 		return Actions{} // a compaction keeps the session id: no news to the core
 	case "UserPromptSubmit":
 		by, id := c.starter(p.Prompt)
-		return c.events(agent.Event{Kind: agent.TurnStarted, StartedBy: by, Input: id})
+		started := agent.Event{Kind: agent.TurnStarted, StartedBy: by, Input: id}
+		if by == agent.ByTerminal {
+			// The prompt a person typed at the terminal, which no caller
+			// gave: the chat shows it (design, section 5.2).
+			started.Text = strings.TrimSpace(unwrapPaste(p.Prompt))
+		}
+		return c.events(started)
 	case "Stop":
 		withdrawn := c.withdrawAll()
 		running := 0

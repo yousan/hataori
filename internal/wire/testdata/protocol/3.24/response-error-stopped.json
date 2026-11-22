@@ -1,0 +1,1 @@
+{"id":6,"error":{"code":"stopped","message":"core: Send in \"C0123\": the plugin secret-scan stopped the input at before_agent_run: The input holds a secret."}}

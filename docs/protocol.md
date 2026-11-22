@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.23**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.24**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -985,7 +985,7 @@ Since 3.19. A plugin's `message_sending` handler cancelled a row of the chat fro
 | `link` | object | optional | the link it came through, a `LinkRef`: `client`, `channel` and `thread`; absent for input from outside chat, such as the supervisor's; since 3.6 |
 | `before` | string | optional | text the plugins' `before_prompt_build` handlers added before the input, which the agent got on lines of their own before `text`; absent when none did; since 3.18 |
 | `after` | string | optional | the same, after it; since 3.18 |
-| `via` | string | optional | the way of the daemon's own it came through when it came through no link: `dashboard` for input given in the dashboard; absent for input through a link, from the control socket and from the supervisor; since 3.23 |
+| `via` | string | optional | the way of the daemon's own it came through when it came through no link: `dashboard` for input given in the dashboard; `terminal` for the prompt of a turn typed at the agent's terminal, when the agent reports it, written right after that turn's `turn_started` with the owner as `principal` and no `from` or `link` (since 3.24); absent for input through a link, from the control socket and from the supervisor; since 3.23 |
 
 ### Event `answer`
 

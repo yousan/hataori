@@ -324,7 +324,7 @@ type Event struct {
 	Model     string // SessionReady: the model the agent reports
 	Effort    string // SessionReady: the effort the agent reports
 
-	Text  string // Text: the text; Unknown: the line; SessionEnded before the session was ready: what a person may read about why
+	Text  string // Text: the text; Unknown: the line; SessionEnded before the session was ready: what a person may read about why; TurnStarted by ByTerminal: the prompt typed, when the agent reports it
 	Final bool   // Text: the turn's final answer
 
 	StartedBy Starter // TurnStarted
