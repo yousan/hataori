@@ -300,9 +300,13 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 			return nil, err
 		}
 		// The reply goes where the turn's input was written; a link of
-		// another client, or one this front end no longer has, gets none.
+		// another client, or one this front end no longer has, gets none,
+		// and so does input that came through no link, such as the
+		// dashboard's, whose key is no message of the chat (#605).
 		replies := true
-		if l := r.via[e.Thread]; l != nil {
+		if l, seen := r.via[e.Thread]; seen && l == nil {
+			replies = false
+		} else if l != nil {
 			c := surface.Conversation{Channel: l.Channel, Thread: l.Thread}
 			if l.Client == f.Name && slices.Contains(convs, c) {
 				conv = c

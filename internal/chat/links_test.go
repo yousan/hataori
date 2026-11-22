@@ -176,8 +176,9 @@ func TestTextAttachOnlyWithoutCommandsAndNotFromABot(t *testing.T) {
 	waitFor(t, "the text attach", func() bool { return count() == 2 })
 }
 
-// Only what came through a link is shown in the others: an input of no
-// link, such as the supervisor's, is not.
+// Only what came through a link is shown in the others, and what came
+// through no link but names its way (via) in every link; an input of
+// neither, such as the supervisor's, is not (#605).
 func TestMirrorOnlyWhatCameThroughALink(t *testing.T) {
 	f := newFront(t, workspaces{})
 	convs := []surface.Conversation{{Channel: channel, Thread: "a"}, {Channel: channel, Thread: "b"}}
@@ -188,5 +189,17 @@ func TestMirrorOnlyWhatCameThroughALink(t *testing.T) {
 	}
 	if rows := f.fe.mirrorRows(none, convs); len(rows) != 0 {
 		t.Fatalf("rows of an input through no link: %+v", rows)
+	}
+	for _, kind := range []control.EventKind{"input", "answer"} {
+		dash := control.Event{Pos: 11, Kind: kind, Data: []byte(`{"session":1,"turn":1,"text":"from the page","principal":"ada","via":"dashboard"}`)}
+		rows := f.fe.mirrorRows(dash, convs)
+		if len(rows) != 2 || rows[0].Conv != convs[0] || rows[1].Conv != convs[1] {
+			t.Fatalf("rows of an %s through the dashboard: %+v, want one in each link", kind, rows)
+		}
+		for _, r := range rows {
+			if r.Message.Text != "ada: from the page" || !r.Message.Quiet {
+				t.Fatalf("a row of an %s through the dashboard: %+v, want a quiet \"ada: from the page\"", kind, r)
+			}
+		}
 	}
 }
