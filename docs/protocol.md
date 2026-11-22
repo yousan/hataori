@@ -169,7 +169,7 @@ Result: none
 
 ### Operation `Layout`
 
-The layout each chat client recorded (`SetLayout`), one entry per client, as the caller may see it. The owner sees every channel the client recorded. Any other caller sees only the channels that are the own channels of its scopes, and only the groups that hold one of them; the threads of such a channel are all its open threads. Names are text, absent for a caller that may not read text. A client that recorded none has no entry, and then a reader shows its scopes as before. It takes no arguments. Since 3.21.
+The layout each chat client recorded (`SetLayout`), one entry per client, as the caller may see it. The owner sees every channel the client recorded. Any other caller sees only the channels that are the own channels of its scopes, and only the groups that hold one of them; the threads of such a channel are all its open threads. Names and URLs are text, absent for a caller that may not read text. A client that recorded none has no entry, and then a reader shows its scopes as before. It takes no arguments. Since 3.21.
 
 Result: [`ChatLayout`]
 
@@ -581,7 +581,7 @@ One channel of a `LayoutGroup`; since 3.21.
 |---|---|---|---|
 | `id` | string | required | opaque, as `LinkRef.channel` |
 | `name` | string | optional | text, such as `#general` |
-| `url` | string | optional | opens the channel in the chat service's own client |
+| `url` | string | optional | opens the channel in the chat service's own client; text, since a service may put a name in it |
 | `scope` | string | optional | set by the daemon: the scope whose own channel this is, when the caller may see it; absent for a channel hataori does not serve |
 | `threads` | [`LayoutThread`] | required | the open threads, in the chat service's order |
 
@@ -593,7 +593,7 @@ One open thread of a `LayoutChannel`; since 3.21.
 |---|---|---|---|
 | `id` | string | required | opaque, as `LinkRef.thread` |
 | `name` | string | optional | text |
-| `url` | string | optional | opens the thread in the chat service's own client |
+| `url` | string | optional | opens the thread in the chat service's own client; text, as in `LayoutChannel` |
 | `thread` | integer | optional | set by the daemon: the number of the thread linked to this conversation, when the caller may see that thread's scope; absent for a thread hataori does not hold |
 
 ### Type `ScopeInfo`

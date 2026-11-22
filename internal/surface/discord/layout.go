@@ -8,6 +8,7 @@ import (
 	"io"
 	"slices"
 
+	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/snowflake/v2"
 
 	"github.com/yousan/hataori/internal/surface"
@@ -169,6 +170,20 @@ func (d *Driver) layoutEvent(t string, payload []byte) (bool, error) {
 		return false, nil
 	}
 	return true, nil
+}
+
+// newSession forgets the layout of every server that a new session's READY
+// does not list: the bot may have left it while no session ran, and no
+// Guild Delete comes for it then. The servers it lists stay until their
+// Guild Create replaces them, so the layout does not empty in between.
+func (d *Driver) newSession(guilds []discord.UnavailableGuild) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for id := range d.guilds {
+		if !slices.ContainsFunc(guilds, func(g discord.UnavailableGuild) bool { return g.ID == id }) {
+			delete(d.guilds, id)
+		}
+	}
 }
 
 // layoutChanged tells sink that the layout changed, when it wants to know.

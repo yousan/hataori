@@ -3,8 +3,11 @@ package discord
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"reflect"
 	"testing"
+
+	"github.com/disgoorg/disgo/gateway"
 
 	"github.com/yousan/hataori/internal/surface"
 )
@@ -129,5 +132,33 @@ func TestLayoutFromTheGateway(t *testing.T) {
 
 	if len(r.calls) != 0 {
 		t.Errorf("keeping the layout made REST requests: %v", r.calls)
+	}
+}
+
+// A new session (not a resume) forgets the servers its READY does not
+// list, for which no Guild Delete comes, and keeps those it lists until
+// their Guild Create.
+func TestLayoutForgetsServersANewSessionDoesNotList(t *testing.T) {
+	d := testDriver(t, 1, newFakeREST(t), nil)
+	s := newSink()
+	channel := payload(t, "third/rest-get-channel.json")
+	guild := id(channel["guild_id"])
+	event(t, d, s, "GUILD_CREATE", map[string]any{"id": guild, "channels": []any{channel}, "threads": []any{}})
+	event(t, d, s, "GUILD_CREATE", map[string]any{"id": "1000000000000000990", "channels": []any{
+		map[string]any{"id": "1000000000000000991", "guild_id": "1000000000000000990", "type": 0, "position": 0, "name": "elsewhere", "flags": 0},
+	}, "threads": []any{}})
+	var ready gateway.EventReady // lists the captured server only
+	if err := json.Unmarshal(raw(t, payload(t, "bot/gw-01-READY.json")), &ready); err != nil {
+		t.Fatal(err)
+	}
+	d.newSession(ready.Guilds)
+	got, err := d.Layout(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []surface.LayoutGroup{{Channels: []surface.LayoutChannel{{ID: id(channel["id"]), Name: "#" + channel["name"].(string),
+		URL: "https://discord.com/channels/" + guild + "/" + id(channel["id"])}}}}
+	if !reflect.DeepEqual(got.Groups, want) {
+		t.Fatalf("after a new session the layout is\n%+v\nwant\n%+v", got.Groups, want)
 	}
 }

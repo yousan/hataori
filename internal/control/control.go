@@ -87,7 +87,7 @@ type API interface {
 	// of them. A channel that is the own channel of a scope the caller may
 	// see names it (LayoutChannel.Scope), and a thread linked to a thread
 	// of a scope the caller may see names it (LayoutThread.Thread). Names
-	// are text, left out for a caller that may not read text. A client that
+	// and URLs are text, left out for a caller that may not read text. A client that
 	// recorded none has no entry. It needs OpRead. Since protocol 3.21.
 	Layout(ctx context.Context) ([]ChatLayout, error)
 
@@ -504,7 +504,7 @@ type LayoutGroup struct {
 type LayoutChannel struct {
 	ID   string `json:"id"`             // opaque; LinkRef.Channel
 	Name string `json:"name,omitempty"` // text, such as "#general"
-	URL  string `json:"url,omitempty"`  // opens the channel in the chat service's own client
+	URL  string `json:"url,omitempty"`  // opens the channel in the chat service's own client; text, since it may hold a name
 	// Scope is the scope whose own channel this is, when the caller may
 	// see that scope; set by the core.
 	Scope   string         `json:"scope,omitempty"`
@@ -515,7 +515,7 @@ type LayoutChannel struct {
 type LayoutThread struct {
 	ID   string `json:"id"`             // opaque; LinkRef.Thread
 	Name string `json:"name,omitempty"` // text
-	URL  string `json:"url,omitempty"`  // opens the thread in the chat service's own client
+	URL  string `json:"url,omitempty"`  // opens the thread in the chat service's own client; text, as LayoutChannel.URL
 	// Thread is the number of the thread linked to this conversation, when
 	// the caller may see that thread's scope; set by the core.
 	Thread ThreadID `json:"thread,omitempty"`

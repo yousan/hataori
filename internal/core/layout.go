@@ -72,12 +72,24 @@ func (a *api) SetLayout(ctx context.Context, client string, groups []control.Lay
 		return nil
 	}
 	// The layout is recorded before its event, so that a reader the event
-	// sends to read it again reads this one or a newer.
+	// sends to read it again reads this one or a newer. When the event
+	// cannot be written, the old layout is put back: no reader would learn
+	// of the new one, and the same layout again must write the event.
 	b, _ := json.Marshal(map[string]any{"client": client})
-	return a.c.Store.Update(ctx, func(tx *store.Tx) error {
+	err := a.c.Store.Update(ctx, func(tx *store.Tx) error {
 		_, err := tx.Append(ctx, control.Event{Kind: KindLayout, Data: b})
 		return err
 	})
+	if err != nil {
+		l.mu.Lock()
+		if had {
+			l.by[client] = old
+		} else {
+			delete(l.by, client)
+		}
+		l.mu.Unlock()
+	}
+	return err
 }
 
 // cleanLayout is groups as SetLayout keeps them: names cut to MaxName,
@@ -160,9 +172,9 @@ func (a *api) Layout(ctx context.Context) ([]control.ChatLayout, error) {
 				if scope == "" && !isOwner {
 					continue // a channel of no scope the caller may see
 				}
-				nc := control.LayoutChannel{ID: ch.ID, Name: a.layoutText(ch.Name), URL: ch.URL, Scope: scope, Threads: []control.LayoutThread{}}
+				nc := control.LayoutChannel{ID: ch.ID, Name: a.layoutText(ch.Name), URL: a.layoutText(ch.URL), Scope: scope, Threads: []control.LayoutThread{}}
 				for _, th := range ch.Threads {
-					nt := control.LayoutThread{ID: th.ID, Name: a.layoutText(th.Name), URL: th.URL}
+					nt := control.LayoutThread{ID: th.ID, Name: a.layoutText(th.Name), URL: a.layoutText(th.URL)}
 					if t, ok := linked[[2]string{ch.ID, th.ID}]; ok && a.sees(t.scope) {
 						nt.Thread = t.id
 					}
@@ -180,7 +192,8 @@ func (a *api) Layout(ctx context.Context) ([]control.ChatLayout, error) {
 	return out, nil
 }
 
-// layoutText is a name of a layout as the caller may read it.
+// layoutText is a name or a URL of a layout as the caller may read it. A
+// URL is text too: a surface may put a conversation's name in it.
 func (a *api) layoutText(s string) string {
 	if a.caller.NoText {
 		return ""

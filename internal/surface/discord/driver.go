@@ -198,6 +198,7 @@ func (d *Driver) Run(ctx context.Context, sink surface.Sink) error {
 				report(fmt.Errorf("discord: logged in as bot %s, but the config names bot %s", e.User.ID, d.botID))
 				return
 			}
+			d.newSession(e.Guilds)
 			q.connected() // a new session
 		case gateway.EventResumed:
 			q.connected() // the session resumed after a drop

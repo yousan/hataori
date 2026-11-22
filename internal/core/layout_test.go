@@ -72,9 +72,10 @@ func TestLayoutWhoSeesWhat(t *testing.T) {
 			{ID: "g2", Name: "Old", Channels: []control.LayoutChannel{off}},
 		}},
 		{"a person of no scope", control.Caller{Principal: "ada", May: control.OpRead}, []control.LayoutGroup{}},
+		// A URL is text too: a surface may put a name in it.
 		{"a reader of no text", control.Caller{Principal: "ada", Scopes: []string{"s"}, May: control.OpRead, NoText: true}, []control.LayoutGroup{
-			{ID: "g1", Channels: []control.LayoutChannel{{ID: "s", URL: "https://chat.example/s", Scope: "s", Threads: []control.LayoutThread{
-				{ID: "t1", URL: "https://chat.example/t1", Thread: id}, {ID: "p1", URL: "https://chat.example/p1"}}}}},
+			{ID: "g1", Channels: []control.LayoutChannel{{ID: "s", Scope: "s", Threads: []control.LayoutThread{
+				{ID: "t1", Thread: id}, {ID: "p1"}}}}},
 		}},
 	} {
 		got, err := f.core.As(c.caller).Layout(ctx)
@@ -104,5 +105,28 @@ func TestLayoutWhoSeesWhat(t *testing.T) {
 	}
 	if !reflect.DeepEqual(kinds, []control.EventKind{KindLayout}) {
 		t.Errorf("a reader of another scope got %v, want one layout event", kinds)
+	}
+}
+
+// A layout whose event cannot be written is not kept: the same layout
+// again writes the event, so that readers learn of it.
+func TestLayoutWithoutItsEventIsNotKept(t *testing.T) {
+	f := newFixture(t, fakeOwner{key: "new"})
+	front := f.core.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: control.OpName | control.OpRead})
+	layout := []control.LayoutGroup{{Channels: []control.LayoutChannel{{ID: "s", Name: "#builds"}}}}
+	gone, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := front.SetLayout(gone, "chat", layout); err == nil {
+		t.Fatal("SetLayout wrote its event with a context that had ended")
+	}
+	if ls, err := front.Layout(context.Background()); err != nil || len(ls) != 0 {
+		t.Fatalf("after the failed SetLayout, Layout is %+v, %v; want none", ls, err)
+	}
+	before := count(t, f.core.Store, "events")
+	if err := front.SetLayout(context.Background(), "chat", layout); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, f.core.Store, "events") - before; n != 1 {
+		t.Fatalf("the same layout again wrote %d events, want 1", n)
 	}
 }
