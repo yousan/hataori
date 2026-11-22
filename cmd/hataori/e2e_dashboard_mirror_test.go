@@ -15,7 +15,8 @@ import (
 // A thread with two links: input that the owner gives through the
 // dashboard's way (a Caller with Via "dashboard", as the daemon binds a
 // dashboard session) reaches the agent once and appears once in each link
-// as "<owner>: <text>", and its answer in both; input from the control
+// as "<owner>: <text>", and its answer in both, replying to no message;
+// input from the control
 // socket, which came through no link and names no way, appears in none
 // (#605).
 func TestDashboardInputShowsInEveryLink(t *testing.T) {
@@ -64,6 +65,10 @@ func TestDashboardInputShowsInEveryLink(t *testing.T) {
 	for _, conv := range []surface.Conversation{one, here} {
 		if got := postsLike(r.driver, conv, "ada: reply from the page"); len(got) != 1 {
 			t.Fatalf("%v shows the dashboard's input %d times, want once", conv, len(got))
+		}
+		// The input is no message of the chat: the answer replies to none.
+		if a := postsLike(r.driver, conv, "from the page")[0]; a.Message.ReplyTo != nil {
+			t.Fatalf("the answer in %v replies to %+v, a message the chat does not have", conv, a.Message.ReplyTo)
 		}
 	}
 
