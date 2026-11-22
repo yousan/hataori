@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -12,6 +13,28 @@ import (
 	fakesurface "github.com/yousan/hataori/internal/surface/fake"
 	"github.com/yousan/hataori/internal/wire"
 )
+
+// holdThreadReads makes the page's reads of a thread (/api/thread) wait,
+// so that it does not learn meanwhile that a request closed, and returns
+// what lets them, and the ones held, go on.
+func holdThreadReads(b *browser) func() {
+	b.t.Helper()
+	from := len(b.events)
+	b.call("Fetch.enable", map[string]any{"patterns": []map[string]any{{"urlPattern": "*/api/thread?*", "requestStage": "Request"}}})
+	return func() {
+		b.t.Helper()
+		b.eval(`1`, nil)
+		b.call("Fetch.disable", map[string]any{})
+		for _, e := range b.events[from:] {
+			var p struct {
+				RequestID string `json:"requestId"`
+			}
+			if e.Method == "Fetch.requestPaused" && json.Unmarshal(e.Params, &p) == nil {
+				b.send("Fetch.continueRequest", map[string]any{"requestId": p.RequestID}) // gone already when the disable let it go
+			}
+		}
+	}
+}
 
 // answersOf are the data of the thread's answer events.
 func answersOf(t *testing.T, c *wire.Client, id control.ThreadID) []map[string]any {
@@ -84,10 +107,15 @@ func TestDashboardAnswersAQuestion(t *testing.T) {
 	if err != nil || len(d.Requests) != 1 {
 		t.Fatalf("the open question: %+v %v", d.Requests, err)
 	}
+	// The page does not learn of the answer before the press: its reads
+	// of the thread wait until the press is made.
+	release := holdThreadReads(b)
 	if err := c.Answer(context.Background(), d.Requests[0].ID, control.Answer{Choices: []string{"right"}}); err != nil {
 		t.Fatal(err)
 	}
 	b.click(`.pane.active .answers button[data-choice="left"]`)
+	b.until("the refusal", `(document.querySelector('.pane.active [data-answer-refused]')?.textContent ?? '').startsWith('Not answered: the question is no longer open')`)
+	release()
 	b.until("the refusal, the buttons gone", `(document.querySelector('.pane.active [data-answer-refused]')?.textContent ?? '').startsWith('Not answered: the question is no longer open') && !document.querySelector('.pane.active .answers')`)
 	r.posted(t, th, "answer: right")
 
@@ -100,11 +128,13 @@ func TestDashboardAnswersAQuestion(t *testing.T) {
 	if err != nil || len(d.Requests) != 1 {
 		t.Fatalf("the open question: %+v %v", d.Requests, err)
 	}
+	release = holdThreadReads(b)
 	if err := c.Answer(context.Background(), d.Requests[0].ID, control.Answer{Text: "paris"}); err != nil {
 		t.Fatal(err)
 	}
 	b.key("Enter", "Enter", 13, 0, "\r")
 	b.until("the box's refusal", `(document.querySelector('.pane.active [data-box-refused]')?.textContent ?? '').includes('no longer open') && document.querySelector('.input-box textarea').value === 'zed'`)
+	release()
 	r.posted(t, th, "answer: paris")
 	time.Sleep(300 * time.Millisecond)
 	for _, in := range inputsOf(t, c, x.ID) {

@@ -5,6 +5,7 @@ import { type Key, t } from "./catalog";
 import { Conversation } from "./Conversation";
 import { InputBox } from "./InputBox";
 import { Answers, useOpenRequests } from "./Answers";
+import { StopButton } from "./StopButton";
 import { TerminalView, type Typing } from "./TerminalView";
 
 // probeRetry is how long a pane waits before it asks again whether its
@@ -139,6 +140,7 @@ export function ThreadPane(props: {
           {t("pane.noProcess")}
         </p>
       )}
+      {mayAct && <StopButton x={x} subscribe={subscribe} opens={opens} />}
       {terminal && view === "terminal" && attach && <Switch a={attach} />}
       {view === "terminal" ? (
         <TerminalView x={x} fit={fit} typing={terminal ? typing : undefined} />
