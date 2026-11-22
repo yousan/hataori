@@ -411,7 +411,7 @@ hataori version
 | Command | Meaning |
 |---|---|
 | `run` | Runs the daemon in the foreground until SIGINT or SIGTERM. Logs go to standard error. Agent sessions keep running when the daemon stops, and the daemon picks them up when it starts again. |
-| `threads` | Prints every thread, one JSON object per line: its number (`thread`), its scope, its links (the chat conversations it is shown in), its state, title and repository. |
+| `threads` | Prints every thread, one JSON object per line: its number (`thread`), its scope, its links (the chat conversations it is shown in), its state, title and repository. For each chat client that is not connected to its chat service, it also prints one line on standard error, with the time since when: no message from that client reaches hataori meanwhile, and the daemon keeps trying to connect it. |
 | `thread NUMBER` | Prints one thread and its state, by its number, with or without `#` (`7` or `#7`). Exits with 3 when no thread has that number, and with 2 when the argument is not a number. |
 | `events` | Prints the event log, one JSON object per line. |
 | `stop NUMBER` | Interrupts the running turn of the thread with that number, as `thread` takes it. |

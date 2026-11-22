@@ -1548,6 +1548,12 @@ type API interface {
 	// OpRead and no scope: the usage is the account's. Since protocol 1.13.
 	Limits(ctx context.Context) ([]AgentLimits, error)
 
+	// Clients returns whether each client that owns a scope the caller
+	// may see is connected to its chat service, and since when; a client
+	// that is not a Connection has no entry. It needs OpRead and no scope.
+	// Since protocol 3.21 (#598).
+	Clients(ctx context.Context) ([]ClientState, error)
+
 	// AttachTerminal readies the thread's agent for a terminal on the host
 	// (`hataori attach`, section 4.3): it needs OpAttach, which only the
 	// owner's connection on the control socket has, and the owner's
@@ -1911,6 +1917,20 @@ type LinkRef struct {
 type ScopeOwner interface {
 	NewThread(ctx context.Context, scope, key, title string) (LinkRef, error)
 }
+
+// Connection is implemented by a ScopeOwner that connects to a chat
+// service. A chat front end is not connected from its start until its
+// driver says it is, while the driver reconnects by itself, and while it
+// runs a driver again whose Run returned (#598).
+type Connection interface {
+	State() (connected bool, since time.Time)
+}
+
+type ClientState struct {
+	Client    string
+	Connected bool
+	Since     time.Time // when it last connected, or since when it is not connected
+}
 ```
 
 Changing `ThreadID` from a scope and a key to a number changes how every thread and event is encoded, so it is a new major protocol version; the issue that implements it sets the version and the golden files. `Link`, `LinkRef` and the `link` field of `input` and `answer` events come with it.
@@ -2001,6 +2021,11 @@ Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `tur
 type Driver interface {
 	// Run connects and delivers inbound events to sink until ctx ends.
 	// It reconnects by itself and calls sink in order per conversation.
+	// When it returns before ctx ends, as when its first request fails
+	// because the network is not up yet, the chat front end runs it again
+	// after 1 s, doubling to at most 1 min, for as long as the daemon
+	// runs, and logs at most one line a minute while it keeps failing
+	// and one when it connects (#598).
 	Run(ctx context.Context, sink Sink) error
 
 	// Since returns the messages in a conversation after cursor,
@@ -2057,6 +2082,13 @@ type Sink interface {
 // Connected after it connects and after each reconnect.
 type Reconnected interface {
 	Connected()
+}
+
+// Disconnected is implemented by a Sink that wants to know when the
+// driver lost its connection and is connecting again by itself: Run calls
+// Disconnected then, and Connected once it is back (#598).
+type Disconnected interface {
+	Disconnected()
 }
 
 // Commander is implemented by a Sink that handles commands. Run makes the

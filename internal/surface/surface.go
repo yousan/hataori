@@ -110,6 +110,14 @@ type Reconnected interface {
 	Connected()
 }
 
+// Disconnected is implemented by a Sink that wants to know when the driver
+// has lost its connection and is connecting again by itself: Run calls
+// Disconnected then, and Connected once it is connected again. A Run that
+// returns is not connected either, and does not call it.
+type Disconnected interface {
+	Disconnected()
+}
+
 // Conversation is a place messages are posted in: a channel, or a thread
 // inside it. Both fields are opaque ids of the service.
 type Conversation struct {

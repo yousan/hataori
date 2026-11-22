@@ -1,4 +1,4 @@
-import type { AgentLimits, ThreadInfo } from "./api";
+import type { AgentLimits, ClientState, ThreadInfo } from "./api";
 import { t } from "./catalog";
 import { contextUse, stateName, when, windowName } from "./format";
 import type { Live } from "./live";
@@ -9,6 +9,7 @@ interface Props {
   selected: ThreadInfo | undefined;
   live: Live;
   limits: AgentLimits[];
+  clients: ClientState[];
   now: number;
   signedIn: boolean;
   // operating is the operation of a host pane under way, if any.
@@ -42,11 +43,27 @@ function Limits({ limits, now }: { limits: AgentLimits[]; now: number }) {
   );
 }
 
+// Clients names each chat client that is not connected to its chat
+// service, and since when: no message from it reaches hataori meanwhile.
+function Clients({ clients }: { clients: ClientState[] }) {
+  const down = clients.filter((c) => !c.connected);
+  if (down.length === 0) return null;
+  return (
+    <span className="clients" aria-label={t("clients.label")}>
+      {down.map((c) => (
+        <span key={c.client} className="client-down" data-client={c.client}>
+          {t("clients.down", { client: c.client, time: when(c.since) })}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 // StatusBar shows the selected thread on the left; on the right, each
-// agent's remaining usage, the live mark with the position of the last
+// chat client that is not connected, each agent's remaining usage, the live mark with the position of the last
 // event read, "read-only" or the pane being operated with the time left
 // before its idle end, and, signed in, the person's passkeys.
-export function StatusBar({ selected: x, live, limits, now, signedIn, operating }: Props) {
+export function StatusBar({ selected: x, live, limits, clients, now, signedIn, operating }: Props) {
   let mark: string;
   if (live.connected) {
     mark = live.pos === null ? t("status.liveStarting") : t("status.live", { pos: live.pos });
@@ -69,6 +86,7 @@ export function StatusBar({ selected: x, live, limits, now, signedIn, operating 
         )}
       </div>
       <div className="status-right">
+        <Clients clients={clients} />
         <Limits limits={limits} now={now} />
         <span className="live" data-live={live.connected ? "on" : "off"} data-pos={live.pos ?? ""}>
           <span className="live-dot" />

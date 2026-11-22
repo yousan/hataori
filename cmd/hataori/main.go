@@ -261,6 +261,16 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 				return fail(err)
 			}
 		}
+		// A chat client that is not connected hears no new order. A
+		// daemon before protocol 3.21 cannot tell, and says nothing.
+		if cs, err := c.Clients(ctx); err == nil {
+			for _, cl := range cs {
+				if !cl.Connected {
+					fmt.Fprintf(stderr, "hataori: chat client %s is not connected since %s: no message from it reaches hataori\n",
+						cl.Client, cl.Since.Local().Format(time.RFC3339))
+				}
+			}
+		}
 	case "thread":
 		t, ok, err := find(ctx, c, pos[0])
 		if err != nil {

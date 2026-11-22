@@ -260,6 +260,8 @@ const en = {
   "status.offlineNone": "offline",
 
   "limits.label": "Remaining usage per agent",
+  "clients.label": "Chat clients that are not connected",
+  "clients.down": "{client} not connected since {time}",
   "limits.window": "{window} {used}% used",
   "limits.resets": "· resets {time}",
   "limits.asOf": "as of {time}",
@@ -514,6 +516,8 @@ const ja: Catalog = {
   "status.offline": "オフライン · 最終イベント {pos}",
   "status.offlineNone": "オフライン",
   "limits.label": "エージェントごとの残り使用量",
+  "clients.label": "接続していないチャットクライアント",
+  "clients.down": "{client} は {time} から未接続",
   "limits.window": "{window} {used}% 使用",
   "limits.resets": "· {time} にリセット",
   "limits.asOf": "{time} 時点",

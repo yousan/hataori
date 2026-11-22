@@ -245,6 +245,7 @@ func (d *Driver) Run(ctx context.Context, sink surface.Sink) error {
 			return err
 		case err := <-lost:
 			d.log.Warn("discord: gateway connection lost; reconnecting", "err", err)
+			q.disconnected()
 		}
 	}
 }

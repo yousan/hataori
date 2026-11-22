@@ -241,6 +241,7 @@ export function App() {
           selected={openedHost !== null ? undefined : x}
           live={d.live}
           limits={d.limits}
+          clients={d.clients}
           now={now}
           signedIn={!d.signedOut}
           operating={operating}
@@ -366,6 +367,7 @@ export function App() {
         selected={current === null ? undefined : thread(current)}
         live={d.live}
         limits={d.limits}
+        clients={d.clients}
         now={now}
         signedIn={!d.signedOut}
         operating={operating}

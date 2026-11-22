@@ -295,6 +295,8 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 		// Limits needs OpRead and no scope, so "other scope" may call it
 		// (TestLimitsKeepTheNewestPerAgent).
 		"Limits": func(a control.API) error { _, err := a.Limits(ctx); return err },
+		// Clients needs OpRead and no scope, as Limits.
+		"Clients": func(a control.API) error { _, err := a.Clients(ctx); return err },
 		"Link": func(a control.API) error {
 			_, err := a.Link(ctx, id, control.LinkRef{Client: "chat", Channel: "s", Thread: "c2"})
 			return err
@@ -320,7 +322,7 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 	for cname, c := range callers {
 		a := f.core.As(c)
 		for name, op := range ops {
-			if (name == "Limits" || name == "Scopes") && cname == "other scope" {
+			if (name == "Limits" || name == "Scopes" || name == "Clients") && cname == "other scope" {
 				continue
 			}
 			want := ErrForbidden

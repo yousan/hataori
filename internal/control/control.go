@@ -217,6 +217,12 @@ type API interface {
 	// agent that reports none has no entry. It needs OpRead; the usage is
 	// the agent's account's, not a scope's.
 	Limits(ctx context.Context) ([]AgentLimits, error)
+
+	// Clients returns the connection to its chat service of each client
+	// that owns a scope the caller may see, one entry per client by name,
+	// sorted by it. A client that does not report one (Connection) has no
+	// entry. It needs OpRead. Since 3.21.
+	Clients(ctx context.Context) ([]ClientState, error)
 }
 
 // Caller is who is asking. An API value is bound to one Caller,
@@ -303,7 +309,7 @@ type Ops uint16
 
 // The operations of the API, as members of Ops.
 const (
-	OpRead   Ops = 1 << iota // Threads, Thread, ThreadEvents, Events, Workspace, Terminal, Limits, Scopes
+	OpRead   Ops = 1 << iota // Threads, Thread, ThreadEvents, Events, Workspace, Terminal, Limits, Scopes, Clients
 	OpStart                  // Start
 	OpSend                   // Send
 	OpAnswer                 // Answer
@@ -635,6 +641,21 @@ type Event struct {
 // link with the thread, in the same transaction.
 type ScopeOwner interface {
 	NewThread(ctx context.Context, scope, key, title string) (LinkRef, error)
+}
+
+// Connection is implemented by a ScopeOwner that connects to a chat
+// service, so that a reader can tell when it is not connected (Clients).
+type Connection interface {
+	// State reports whether the client is connected now, and since when it
+	// has been connected or not.
+	State() (connected bool, since time.Time)
+}
+
+// ClientState is a client's connection to its chat service. Since 3.21.
+type ClientState struct {
+	Client    string    `json:"client"`    // the client's name, as scopes name their owner
+	Connected bool      `json:"connected"` // connected now
+	Since     time.Time `json:"since"`     // when it last connected, or since when it is not connected
 }
 
 // HostTerminal is a terminal on the host that hataori does not own.

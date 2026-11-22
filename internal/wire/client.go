@@ -507,6 +507,14 @@ func (c *Client) Limits(ctx context.Context) ([]control.AgentLimits, error) {
 	return out, err
 }
 
+// Clients is control.API.Clients. A daemon before 3.21 answers
+// not_supported.
+func (c *Client) Clients(ctx context.Context) ([]control.ClientState, error) {
+	var out []control.ClientState
+	err := c.call(ctx, "Clients", clientsArgs{}, &out)
+	return out, err
+}
+
 // AttachTerminal is control.API.AttachTerminal. It waits as long as the
 // daemon does for a thread that is being woken.
 func (c *Client) AttachTerminal(ctx context.Context, id control.ThreadID) (control.Attachment, error) {

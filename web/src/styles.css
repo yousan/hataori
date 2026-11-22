@@ -486,6 +486,16 @@ body {
   color: var(--muted);
 }
 
+.clients {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.client-down {
+  color: var(--st-failed);
+}
+
 .limit-as-of {
   color: var(--st-waiting, var(--muted));
 }
@@ -1236,6 +1246,7 @@ body {
 
 .shell.narrow .status-item,
 .shell.narrow .status-right,
+.shell.narrow .clients,
 .shell.narrow .limits,
 .shell.narrow .limit {
   flex-wrap: wrap;

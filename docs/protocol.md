@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.20**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.21**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -445,6 +445,15 @@ Since 1.13. The remaining usage of each agent, as its sessions last reported it:
 
 Result: [`AgentLimits`]
 
+### Operation `Clients`
+
+Since 3.21. Whether each chat client is connected to its chat service: one entry per client that owns a scope the caller may see, by name, sorted by it. A chat front end is not connected from the daemon's start until its first connection succeeds, while its connection is down, and while it tries again after a failure; it keeps trying for as long as the daemon runs. A client that does not report its connection has no entry. It needs the `Threads` permission. It takes no arguments. A daemon before 3.21 answers `not_supported`.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+
+Result: [`ClientState`]
+
 ## Requests the daemon sends
 
 Since 3.16. The daemon sends these to a plugin, on a connection made with the plugin's token that is not a stream: the oldest such connection that is still open. A connection that becomes a stream takes none from then on, so a plugin keeps one connection for requests, as the project's client does, and follows events on others. Until the daemon has read a connection's first request, it does not know that the connection will be a stream, and may send a request on it: a client skips such a line, unanswered, on its stream, and the daemon counts the request as failed once the stream starts. A plugin that does not know one answers `not_supported`, as for any request.
@@ -788,6 +797,16 @@ Since 1.13. A report older than `every` seconds is not current: a reader shows i
 | `at` | time | required | when the report was made |
 | `every` | integer | required | seconds: how often the agent's sessions report while one runs |
 | `windows` | [`LimitWindow`] | required | as the agent reports them, in its order; may be empty |
+
+### Type `ClientState`
+
+Since 3.21.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `client` | string | required | the client's name, as a scope names its owner and a `LinkRef` its client |
+| `connected` | boolean | required | connected to its chat service now |
+| `since` | time | required | when it last connected; when not connected, since when: the moment its connection ended, or the daemon's start when it has not connected since |
 
 ### Type `LimitWindow`
 
