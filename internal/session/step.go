@@ -54,6 +54,9 @@ type Input struct {
 	// Before and After, Send: the text the plugins added around Text, which
 	// the agent gets with it; the input event keeps them beside it.
 	Before, After string
+	// Via, Send and Answer: the way of the daemon's own it came through
+	// (control.Caller.Via), since protocol 3.23.
+	Via string
 }
 
 // given is the data of the input or answer event of in: its text, and who
@@ -75,8 +78,24 @@ func given(in Input) map[string]any {
 	if in.After != "" {
 		d["after"] = in.After
 	}
+	if in.Via != "" {
+		d["via"] = in.Via // since protocol 3.23
+	}
 	return d
 }
+
+// Stopper is who asks for a turn to be stopped, for the runner's
+// Interrupt: the person, the "<client>:<id>" it came from if relayed, and
+// the way of the daemon's own it came through (control.Caller.Via). The
+// zero Stopper is an interrupt nobody asked for as a stop.
+type Stopper struct {
+	Principal control.Principal
+	From, Via string
+}
+
+// KindStop is the event of a Stop that interrupted a turn (since protocol
+// 3.23).
+const KindStop control.EventKind = "stop"
 
 // Turn-end outcomes and reasons that the state machine adds to the agent's.
 const (

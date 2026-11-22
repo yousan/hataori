@@ -568,7 +568,9 @@ var purgeEvery time.Duration
 // the config turns host input on (the dashboard asks for a passkey check
 // first on the web listener).
 func dashboardCaller(dir *people.Directory, scopes []string, hostTerminals, hostInput bool, person string) control.Caller {
-	caller := control.Caller{Principal: control.Principal(person), May: control.OpRead}
+	// Every call of a dashboard session says that it came through the
+	// dashboard (design, section 7.2).
+	caller := control.Caller{Principal: control.Principal(person), May: control.OpRead, Via: "dashboard"}
 	for _, s := range scopes {
 		if dir.May(person, s) {
 			caller.Scopes = append(caller.Scopes, s)
