@@ -2070,15 +2070,14 @@ type API interface {
 // from, via) instead of a person: a Stop's writes the stop event and
 // names its person on the turn in one transaction, before the interrupt.
 //
-// Proposed:
-//
-//   input with via "terminal": the prompt of a turn typed at the agent's
-//   terminal, when the agent reports it, written right after that turn's
-//   turn_started (by terminal), with the owner as principal and no from
-//   and no link (section 5.2). agent.Event of kind TurnStarted gains Text,
-//   the prompt as the agent reported it; the Claude Code adapter fills it
-//   from UserPromptSubmit's prompt for a turn by ByTerminal only, and the
-//   core keeps it nowhere else.
+//   input with via "terminal", since protocol 3.24 (#609): the prompt of
+//   a turn typed at the agent's terminal, when the agent reports it,
+//   written right after that turn's turn_started (by terminal), with
+//   session.Machine.Typist (the owner, set by the daemon) as principal and
+//   no from and no link (section 5.2). agent.Event of kind TurnStarted
+//   carries it in Text; the Claude Code adapter fills it from
+//   UserPromptSubmit's prompt, unwrapped from a long paste's tag, for a
+//   turn by ByTerminal only, and the core keeps it nowhere else.
 ```
 
 On the socket, `OperateHost` turns its connection into a stream in both directions, after its reply: the client sends batches of keys (`HostKeys`) and may send an end (`End`); the daemon answers each batch and sends one message with the reason (`ended`) when the operation ends. A connection that closes ends the operation. The daemon gives the core the tmux lister as `core.Core.HostInput` when host input is on, with the idle period and its own context's end as `Stopping`, and deletes the buffers an earlier run left before it listens; each instance's buffers have a name of their own.
@@ -2108,7 +2107,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `SetLayout` and `Layout`, with `ChatLayout`, `LayoutGroup`, `LayoutChannel` and `LayoutThread`, and the `layout` event: the chat's channels and open threads for the tree (#599) | minor: new operations and event kind; 3.21 |
 | `Clients` and `ClientState`, with `ScopeOwner`s that are a `Connection`: whether each chat client is connected (#598) | minor: new operation; 3.22 |
 | `via` in the `input`, `answer` and `approval_answered` events, and the `stop` event (section 7.2, giving a thread input from its tab, #604) | minor: a new optional field and a new event kind; 3.23 |
-| An `input` event with `via` `terminal` for the prompt of a turn typed at the terminal (section 5.2) | minor: a new value of a field, on an event kind that exists |
+| An `input` event with `via` `terminal` for the prompt of a turn typed at the terminal (section 5.2, #609) | minor: a new value of a field, on an event kind that exists; 3.24 |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 
 Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event. In protocol 1.9: `Terminal`, which turns its connection into a stream as `Events` does. In protocol 1.12: `ThreadInfo.terminal`, the terminal device its session host opened, for the tree's filter, the status bar and the details panel (#285); `HostTerminals` still leaves these terminals out.

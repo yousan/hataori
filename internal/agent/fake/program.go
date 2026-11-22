@@ -277,7 +277,11 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 	p.turns++
 	n := p.turns
 	p.mu.Unlock()
-	p.report(map[string]any{"t": "turn", "by": by, "input": input, "n": n})
+	turn := map[string]any{"t": "turn", "by": by, "input": input, "n": n}
+	if by == "terminal" {
+		turn["prompt"] = script // the line typed, as a hook gives a typed prompt
+	}
+	p.report(turn)
 	end := map[string]any{"t": "end", "status": "completed", "reason": "", "background": 0}
 	if !loggedIn(p.configDir) {
 		end["status"], end["reason"] = "failed", string(agent.Login)

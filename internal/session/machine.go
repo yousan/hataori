@@ -21,6 +21,11 @@ type Machine struct {
 	// nil.
 	Now  func() time.Time
 	Zone *time.Location
+	// Typist is the person a turn typed at the agent's terminal is
+	// recorded as: the owner, since only the owner can reach a session's
+	// terminal (`hataori attach`, the dashboard, a window taken in; design,
+	// section 5.2). Empty: the typed prompt's input event names nobody.
+	Typist control.Principal
 
 	// beforeCommit, when set, runs inside the transaction after everything
 	// is written; an error rolls it all back. For tests.
@@ -63,6 +68,9 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 		return fmt.Errorf("session: load %d: %w", sessionID, err)
 	}
 	id = control.ThreadID(thread)
+	if in.Kind == AgentEvent && in.Agent.Kind == agent.TurnStarted && in.Agent.StartedBy == agent.ByTerminal {
+		in.Principal = m.Typist // the person at the terminal
+	}
 	if in.Kind == AgentEvent && in.Agent.Seq <= lastSeq {
 		return nil // seen before
 	}
