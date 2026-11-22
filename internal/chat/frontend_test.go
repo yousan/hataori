@@ -53,7 +53,7 @@ func (r *starts) Answer(_ context.Context, _, _ int64, req string, a control.Ans
 	r.record("answer " + req + " " + a.Text)
 	return nil
 }
-func (r *starts) Interrupt(context.Context, int64, int64, control.Principal) error {
+func (r *starts) Interrupt(context.Context, int64, int64, session.Stopper) error {
 	r.mu.Lock()
 	die := r.die
 	r.mu.Unlock()

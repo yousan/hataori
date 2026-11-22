@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.22**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.23**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -985,6 +985,7 @@ Since 3.19. A plugin's `message_sending` handler cancelled a row of the chat fro
 | `link` | object | optional | the link it came through, a `LinkRef`: `client`, `channel` and `thread`; absent for input from outside chat, such as the supervisor's; since 3.6 |
 | `before` | string | optional | text the plugins' `before_prompt_build` handlers added before the input, which the agent got on lines of their own before `text`; absent when none did; since 3.18 |
 | `after` | string | optional | the same, after it; since 3.18 |
+| `via` | string | optional | the way of the daemon's own it came through when it came through no link: `dashboard` for input given in the dashboard; absent for input through a link, from the control socket and from the supervisor; since 3.23 |
 
 ### Event `answer`
 
@@ -997,6 +998,19 @@ Since 3.19. A plugin's `message_sending` handler cancelled a row of the chat fro
 | `from` | string | optional | the `<client>:<id>` it came from, as in `thread_created`; since 2.2 |
 | `link` | object | optional | the link it came through, as in `input`; since 3.6 |
 | `request` | string | optional | the request it answers, as in `request`; since 3.9 |
+| `via` | string | optional | as in `input`; since 3.23 |
+
+### Event `stop`
+
+Since 3.23. A `Stop` interrupted the thread's running turn. It is written in the step that sends the interrupt, before it, so it comes before that turn's `turn_ended`: once per `Stop` that interrupted a turn, and none for a `Stop` while no turn runs or one that names a turn which is not the running one (`refused`). An interrupt that no `Stop` asked for, such as a `Send` with busy 2 or an approved `AskInterrupt`, writes none. A `turn_ended` with the reason `interrupted` that follows names nobody; the person who stopped it is here.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `session` | integer | required | the session |
+| `turn` | integer | required | the turn interrupted, as in `turn_started` |
+| `principal` | string | optional | the person whose `Stop` it was |
+| `from` | string | optional | the `<client>:<id>` it came from, as in `thread_created` |
+| `via` | string | optional | as in `input` |
 
 ### Event `text`
 
@@ -1065,6 +1079,7 @@ The decision in the asker's thread, since 3.10.
 | `principal` | string | optional | the person who answered |
 | `from` | string | optional | the `<client>:<id>` it came from, as in `thread_created` |
 | `link` | object | optional | the conversation where answered |
+| `via` | string | optional | as in `input`; since 3.23 |
 
 ### Event `request`
 

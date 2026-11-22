@@ -68,7 +68,7 @@ func (r *fakeRunner) Answer(_ context.Context, _, _ int64, req string, _ control
 
 // Interrupt refuses a named turn that is not the session's open one, as
 // the runner does (#457), and records nothing then.
-func (r *fakeRunner) Interrupt(_ context.Context, sid, turn int64, _ control.Principal) error {
+func (r *fakeRunner) Interrupt(_ context.Context, sid, turn int64, _ session.Stopper) error {
 	r.mu.Lock()
 	before := r.beforeInterrupt
 	r.beforeInterrupt = nil
