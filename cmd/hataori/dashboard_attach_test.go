@@ -243,13 +243,19 @@ func TestDashboardAttachEndsWhenIdle(t *testing.T) {
 		endedAt <- time.Now()
 		ended <- m
 	}()
-	for range 6 {
-		c3.WriteJSON(map[string]any{"keys": "x"})
-		time.Sleep(400 * time.Millisecond)
+	var last time.Time
+	for i := range 6 {
+		if i > 0 {
+			time.Sleep(400 * time.Millisecond)
+		}
+		if err := c3.WriteJSON(map[string]any{"keys": "x"}); err != nil {
+			t.Fatal(err)
+		}
+		last = time.Now()
 	}
-	last := time.Now()
-	if at, m := <-endedAt, <-ended; m.Ended != "idle" || at.Before(last.Add(-400*time.Millisecond)) {
-		t.Fatalf("with keys every 400 ms: %+v at %v, the last key at %v", m, at, last)
+	// The idle period is one second, from the last key.
+	if at, m := <-endedAt, <-ended; m.Ended != "idle" || at.Sub(last) < 800*time.Millisecond || at.Sub(last) > 5*time.Second {
+		t.Fatalf("with keys every 400 ms: %+v %v after the last key, want idle about a second after it", m, at.Sub(last))
 	}
 	c2, m := startAttach(t, base, s, x.ID)
 	if m.Attached == nil {
@@ -328,7 +334,7 @@ func TestDashboardAttachOnTheWebNeedsTheCheck(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("registering a passkey: %d %s", code, body)
 	}
-	dial := func() (*websocket.Conn, attachMsg) {
+	open := func() *websocket.Conn {
 		t.Helper()
 		ws, resp, err := (&websocket.Dialer{HandshakeTimeout: 10 * time.Second, TLSClientConfig: d.hc.Transport.(*http.Transport).TLSClientConfig,
 			NetDialContext: d.hc.Transport.(*http.Transport).DialContext}).Dial("wss://"+strings.TrimPrefix(d.web, "https://")+dashboard.AttachPath, http.Header{"Origin": {d.web}})
@@ -336,6 +342,11 @@ func TestDashboardAttachOnTheWebNeedsTheCheck(t *testing.T) {
 			t.Fatalf("the attachment WebSocket on the web: %v %v", resp, err)
 		}
 		t.Cleanup(func() { ws.Close() })
+		return ws
+	}
+	dial := func() (*websocket.Conn, attachMsg) {
+		t.Helper()
+		ws := open()
 		ws.WriteJSON(map[string]any{"session": s, "thread": id})
 		return ws, readAttach(t, ws)
 	}
@@ -358,8 +369,14 @@ func TestDashboardAttachOnTheWebNeedsTheCheck(t *testing.T) {
 	if m.Attached == nil {
 		t.Fatalf("after the check: %+v", m)
 	}
+	// One that has not sent its first message is closed too, at once.
+	pending := open()
 	stop()
 	if m := readAttach(t, ws); m.Ended != "stopping" {
 		t.Fatalf("the daemon stopping: %+v", m)
+	}
+	pending.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, _, err := pending.ReadMessage(); err == nil || strings.Contains(err.Error(), "timeout") {
+		t.Fatalf("a connection waiting for its first message, when the daemon stops: %v", err)
 	}
 }

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -114,6 +116,19 @@ func (s *Server) attach(w http.ResponseWriter, r *http.Request) {
 	}
 	c := &wsConn{Conn: ws, timeout: s.writeTimeout}
 	defer c.Close()
+	// Until it is attached, a server that closes closes the connection,
+	// and ends a wake that AttachTerminal waits for: the connection is the
+	// handler's, not the http.Server's.
+	setup, cancelSetup := context.WithCancel(r.Context())
+	defer cancelSetup()
+	go func() {
+		select {
+		case <-s.closing:
+			cancelSetup()
+		case <-setup.Done():
+		}
+	}()
+	stopClosing := context.AfterFunc(setup, func() { c.Close() })
 	c.SetReadLimit(maxPasskeyBody)
 	c.SetReadDeadline(time.Now().Add(firstMessageTimeout))
 	var first attachFirst
@@ -157,7 +172,7 @@ func (s *Server) attach(w http.ResponseWriter, r *http.Request) {
 	// the WebSocket closes.
 	ctx, cancel := context.WithDeadline(r.Context(), claims.exp)
 	defer cancel()
-	at, err := a.AttachTerminal(ctx, first.Thread)
+	at, err := a.AttachTerminal(setup, first.Thread)
 	if err != nil {
 		c.refuseWith(attachRefusal(err))
 		return
@@ -168,7 +183,25 @@ func (s *Server) attach(w http.ResponseWriter, r *http.Request) {
 		c.refuseWith("the session's terminal cannot be reached now")
 		return
 	}
-	defer term.Close()
+	if !stopClosing() { // the server closed while it attached
+		term.Close()
+		return
+	}
+	// Once the end begins no key is written: the end closes the terminal
+	// under writing, before the page is told.
+	var (
+		writing sync.Mutex
+		over    bool
+	)
+	closeTerm := func() {
+		writing.Lock()
+		defer writing.Unlock()
+		if !over {
+			over = true
+			term.Close()
+		}
+	}
+	defer closeTerm()
 	idle := s.attachIdle
 	s.Log.Info("dashboard: terminal attached", "person", claims.person, "thread", int64(first.Thread), "listener", string(l.way))
 	reason := "closed"
@@ -188,8 +221,9 @@ func (s *Server) attach(w http.ResponseWriter, r *http.Request) {
 	hostEnded := make(chan error, 1)
 	go func() { hostEnded <- term.Wait() }()
 	// The reader writes each batch of keys to the terminal in order, and
-	// tells the loop below of each, so that the idle period starts again.
-	keyed := make(chan struct{}, 1)
+	// records when the last one was written: the idle period runs from it.
+	var lastKey atomic.Int64
+	lastKey.Store(time.Now().UnixNano())
 	pageEnded := make(chan string, 1) // why the page's side ended
 	go func() {
 		for {
@@ -211,13 +245,18 @@ func (s *Server) attach(w http.ResponseWriter, r *http.Request) {
 			if m.Keys == "" {
 				continue
 			}
-			if err := term.Input([]byte(m.Keys)); err != nil {
-				c.send(attachOut{Error: "the keys could not be written to the terminal"})
-				continue
+			writing.Lock()
+			if over {
+				writing.Unlock()
+				return // ended: nothing more is written
 			}
-			select {
-			case keyed <- struct{}{}:
-			default:
+			err = term.Input([]byte(m.Keys))
+			if err == nil {
+				lastKey.Store(time.Now().UnixNano())
+			}
+			writing.Unlock()
+			if err != nil {
+				c.send(attachOut{Error: "the keys could not be written to the terminal"})
 			}
 		}
 	}()
@@ -227,6 +266,7 @@ func (s *Server) attach(w http.ResponseWriter, r *http.Request) {
 	defer pings.Stop()
 	end := func(why string) {
 		reason = why
+		closeTerm()
 		if why != "closed" {
 			c.send(attachOut{Ended: why})
 			c.close(websocket.CloseNormalClosure, why)
@@ -234,15 +274,11 @@ func (s *Server) attach(w http.ResponseWriter, r *http.Request) {
 	}
 	for {
 		select {
-		case <-keyed:
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-			timer.Reset(idle)
 		case <-timer.C:
+			if left := idle - time.Since(time.Unix(0, lastKey.Load())); left > 0 {
+				timer.Reset(left) // a key came since the timer was set
+				continue
+			}
 			end("idle")
 			return
 		case why := <-pageEnded:
