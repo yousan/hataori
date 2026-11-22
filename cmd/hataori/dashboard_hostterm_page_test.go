@@ -172,7 +172,7 @@ func TestDashboardHostTerminalsInThePage(t *testing.T) {
 		if u.Host != page.Host || (p.Request.Method != "GET" && p.Request.Method != "HEAD") || p.Request.HasPostData {
 			t.Fatalf("the page sent %s %s (body %v)", p.Request.Method, p.Request.URL, p.Request.HasPostData)
 		}
-		allowed := map[string][]string{"/api/hostscreen": {"pane"}, "/api/hostterminals": nil, "/api/threads": nil, "/api/scopes": nil, "/api/layout": nil, "/api/limits": nil,
+		allowed := map[string][]string{"/api/hostscreen": {"pane"}, "/api/hostterminals": nil, "/api/threads": nil, "/api/scopes": nil, "/api/layout": nil, "/api/limits": nil, "/api/clients": nil,
 			"/api/thread": {"thread", "recent", "events"}, "/api/threadevents": {"thread", "before", "limit"},
 			"/api/workspace": {"thread"}, "/api/events": {"after"}, "/api/terminal": {"thread"}}
 		names, ok := allowed[u.Path]
