@@ -2033,12 +2033,13 @@ type API interface {
 	// have OpSignIn, and so has the chat front end's caller for a person's
 	// /dashboard (#259); a dashboard session's Caller has
 	// OpRead only, OpHost for the owner when host terminals are on, and
-	// OpHostInput for the owner when host input is on. Proposed (section
-	// 7.2, giving a thread input from its tab): the owner's also has
-	// OpSend, OpAnswer, OpStop and OpAttach, and every dashboard Caller
-	// Via "dashboard". No new operation: the server calls Send (with
-	// Deliver), Answer, Stop (naming the turn) and AttachTerminal, then
-	// host.Attach on the socket it names, as `hataori attach` does.
+	// OpHostInput for the owner when host input is on. For giving a
+	// thread input from its tab (section 7.2): the owner's also has
+	// OpSend, OpAnswer and OpStop (#606) and OpAttach (#607), and every
+	// dashboard Caller Via "dashboard" (#604). No new operation: the
+	// server calls Send (with Deliver), Answer, Stop (naming the turn) and
+	// AttachTerminal, then attaches to the host on the socket it names,
+	// as `hataori attach` does, through dashboard.Config.AttachHost.
 
 	// SignInLink's way: declared above, since protocol 3.2 (#359). A chat
 	// front end asks for WayWeb when there is a web listener (#259,

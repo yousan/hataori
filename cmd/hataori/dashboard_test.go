@@ -731,7 +731,7 @@ func TestDashboardTerminalStream(t *testing.T) {
 // the owner and only when the config turns them on. It types into a host
 // pane (OpHostInput) only for the owner and only with host_input on, which
 // the config allows only with host_terminals. Only the owner's sends,
-// answers and stops (#606); none signs in.
+// answers, stops (#606) and attaches a terminal (#607); none signs in.
 func TestDashboardCallerOfAPerson(t *testing.T) {
 	dir := people.New([]people.Person{{Name: "ada"}, {Name: "grace"}}, "ada", map[string][]string{"x": {"grace"}})
 	scopes := []string{"s", "x"}
@@ -743,7 +743,7 @@ func TestDashboardCallerOfAPerson(t *testing.T) {
 			owner := dashboardCaller(dir, scopes, terms, input, "ada")
 			if owner.Principal != "ada" || !slices.Equal(owner.Scopes, scopes) || owner.May.Has(control.OpHost) != terms ||
 				owner.May.Has(control.OpHostInput) != input ||
-				!owner.May.Has(control.OpRead) || !owner.May.Has(control.OpSend|control.OpAnswer|control.OpStop) || owner.May.Has(control.OpSignIn) ||
+				!owner.May.Has(control.OpRead) || !owner.May.Has(control.OpSend|control.OpAnswer|control.OpStop|control.OpAttach) || owner.May.Has(control.OpSignIn) ||
 				owner.May.Has(control.OpStart) || owner.Via != "dashboard" {
 				t.Fatalf("host_terminals %v, host_input %v: the owner's dashboard caller %+v", terms, input, owner)
 			}
