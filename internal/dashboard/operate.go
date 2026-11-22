@@ -236,7 +236,7 @@ type wsConn struct {
 	timeout time.Duration
 }
 
-func (c *wsConn) send(v operateOut) error {
+func (c *wsConn) send(v any) error { // an operateOut or an attachOut
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.SetWriteDeadline(time.Now().Add(c.timeout))

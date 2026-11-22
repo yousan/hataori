@@ -178,7 +178,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 			return c.MaySignIn(person) && dashboardCaller(cfg.People, keys, cfg.HostTerminals, cfg.HostInput, person).May.Has(control.OpHostInput)
 		}, MayAct: func(person string) bool {
 			return c.MaySignIn(person) && dashboardCaller(cfg.People, keys, cfg.HostTerminals, cfg.HostInput, person).May.Has(control.OpSend)
-		}}
+		}, AttachHost: attachHost, AttachIdle: cfg.HostInputIdle}
 		if l := d.Local; l != nil {
 			dc.Local = &dashboard.Local{Listen: l.Listen, URL: l.URL, Key: "dashboard."}
 		}
@@ -581,7 +581,7 @@ func dashboardCaller(dir *people.Directory, scopes []string, hostTerminals, host
 		}
 	}
 	if person != "" && person == dir.Owner() {
-		caller.May |= control.OpSend | control.OpAnswer | control.OpStop
+		caller.May |= control.OpSend | control.OpAnswer | control.OpStop | control.OpAttach
 	}
 	if hostTerminals && person == dir.Owner() {
 		caller.May |= control.OpHost
@@ -593,6 +593,29 @@ func dashboardCaller(dir *people.Directory, scopes []string, hostTerminals, host
 		dashboardHook(&caller)
 	}
 	return caller
+}
+
+// attachHost attaches the dashboard's page to a session's terminal, as
+// `hataori attach` attaches a terminal on the host.
+func attachHost(socket string) (dashboard.TerminalInput, error) {
+	a, err := host.Attach(socket)
+	if err != nil {
+		return nil, err
+	}
+	return hostAttachment{a}, nil
+}
+
+// hostAttachment is a host.Attachment as the dashboard uses it: keys in,
+// and what the host sends read and dropped, since the page draws the
+// terminal from its own stream.
+type hostAttachment struct{ *host.Attachment }
+
+func (h hostAttachment) Wait() error {
+	for {
+		if _, err := h.Next(); err != nil {
+			return err
+		}
+	}
 }
 
 // dashboardHook, when a test sets it, changes the dashboard's Caller.

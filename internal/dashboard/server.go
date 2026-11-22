@@ -118,6 +118,13 @@ type Config struct {
 	// button only to them (ActMayPath); the daemon answers from the same
 	// rule that gives their Caller OpSend. Nil: nobody.
 	MayAct func(person string) bool
+	// AttachHost attaches to the terminal of the session host listening on
+	// the socket that AttachTerminal names, as `hataori attach` does
+	// (attach.go). Nil: no terminal is attached from the page.
+	AttachHost func(socket string) (TerminalInput, error)
+	// AttachIdle ends an attachment after this long without a key; the
+	// config's host_input_idle. DefaultAttachIdle when zero.
+	AttachIdle time.Duration
 }
 
 // Local is the loopback listener: plain HTTP on a loopback address.
@@ -183,6 +190,12 @@ type Server struct {
 	hostInput  bool                     // the config's host_input
 	mayOperate func(person string) bool // Config.MayOperate
 	mayAct     func(person string) bool // Config.MayAct
+	attachHost func(socket string) (TerminalInput, error)
+	attachIdle time.Duration
+	// closing is closed when the server closes: the connections the
+	// WebSocket routes took over are not the http.Server's to close.
+	closing   chan struct{}
+	closeOnce sync.Once
 
 	// Passkeys: the web listener's relying party, nil when there is none
 	// (rpOff says why), and where they are kept, nil for nowhere.
@@ -253,7 +266,7 @@ func Listen(cfg Config, api func(person string) (control.API, bool), log *slog.L
 		links: map[[32]byte]link{}, grants: map[[32]byte]grant{}, ceremonies: map[[32]byte]ceremony{}, used: map[[32]byte]time.Time{}, key: cfg.SessionKey,
 		keepAlive: defaultKeepAlive, writeTimeout: defaultWriteTimeout, hostScreenInterval: defaultHostScreenInterval,
 		operatedScreenInterval: defaultOperatedScreenInterval, hostInput: cfg.HostInput, mayOperate: cfg.MayOperate, mayAct: cfg.MayAct,
-		acted: map[[32]byte]time.Time{}}
+		acted: map[[32]byte]time.Time{}, attachHost: cfg.AttachHost, attachIdle: orDefault(cfg.AttachIdle, DefaultAttachIdle), closing: make(chan struct{})}
 	if len(s.key) == 0 {
 		s.key = make([]byte, 32)
 		if _, err := rand.Read(s.key); err != nil {
@@ -305,6 +318,7 @@ func Listen(cfg Config, api func(person string) (control.API, bool), log *slog.L
 	s.passkeyRoutes()
 	s.operateRoutes()
 	s.actRoutes()
+	s.attachRoutes()
 	s.pageRoutes()
 	s.routes()
 	for _, l := range s.listeners() {
@@ -544,6 +558,7 @@ func (s *Server) Serve(ctx context.Context) error {
 // Close stops the server and closes its connections and its listeners,
 // also when it never served.
 func (s *Server) Close() error {
+	s.closeOnce.Do(func() { close(s.closing) })
 	var first error
 	for _, l := range s.listeners() {
 		var err error
@@ -803,15 +818,15 @@ func (s *Server) handler(l *listener) http.Handler {
 		}
 		// Only the operate route accepts an Upgrade; the terminal routes
 		// refuse one themselves, and log it (dropInput).
-		if up := r.Header.Get("Upgrade"); up != "" && r.URL.Path != OperatePath && r.URL.Path != TerminalPath && r.URL.Path != HostScreenPath {
-			s.refuse(w, r, l, http.StatusBadRequest, "only the operate route takes an upgrade")
+		if up := r.Header.Get("Upgrade"); up != "" && r.URL.Path != OperatePath && r.URL.Path != AttachPath && r.URL.Path != TerminalPath && r.URL.Path != HostScreenPath {
+			s.refuse(w, r, l, http.StatusBadRequest, "only the operate and attach routes take an upgrade")
 			return
 		}
-		if r.URL.Path == OperatePath {
+		if r.URL.Path == OperatePath || r.URL.Path == AttachPath {
 			// A WebSocket's handshake is a GET, sent by the browser with the
 			// page's Origin; one without is not from the page.
 			if o := r.Header.Get("Origin"); o == "" || o == "null" || !l.originOK(o, r.Host) {
-				s.refuse(w, r, l, http.StatusForbidden, "the operate connection must carry this listener's origin")
+				s.refuse(w, r, l, http.StatusForbidden, "a WebSocket of the page must carry this listener's origin")
 				return
 			}
 		}
@@ -831,7 +846,7 @@ func (s *Server) handler(l *listener) http.Handler {
 		ctx := context.WithValue(r.Context(), listenerKey{}, l)
 		// The operate WebSocket carries its session in its first message:
 		// a browser sends no header with a WebSocket (operate.go).
-		if !signInRoute(r.URL.Path) && !isPageFile(r.URL.Path) && r.URL.Path != OperatePath {
+		if !signInRoute(r.URL.Path) && !isPageFile(r.URL.Path) && r.URL.Path != OperatePath && r.URL.Path != AttachPath {
 			ss, ok := s.sessionFrom(r, l)
 			if !ok {
 				http.Error(w, "not signed in", http.StatusUnauthorized)

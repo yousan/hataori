@@ -211,7 +211,7 @@ func TestOperateHandshake(t *testing.T) {
 			t.Errorf("Origin %q: %v %v", o, resp, err)
 		}
 	}
-	if !strings.Contains(logged(), "the operate connection must carry this listener's origin") {
+	if !strings.Contains(logged(), "a WebSocket of the page must carry this listener's origin") {
 		t.Errorf("the refusals are not logged:\n%s", logged())
 	}
 	if c, _, err := dialOperate(t, l, origin(l)); err != nil {
