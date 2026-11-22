@@ -275,7 +275,14 @@ type sink struct {
 	messages []surface.Inbound
 	choices  []surface.Selection
 	commands []surface.Command
+	layouts  int // calls of LayoutChanged
 	got      chan struct{}
+}
+
+func (s *sink) LayoutChanged() {
+	s.mu.Lock()
+	s.layouts++
+	s.mu.Unlock()
 }
 
 func newSink() *sink { return &sink{got: make(chan struct{}, 64)} }

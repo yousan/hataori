@@ -27,7 +27,7 @@ const fakeSurface = "fake-surface"
 const secondSurface = "fake-two"
 
 var (
-	drivers sync.Map // id → *fakesurface.Driver
+	drivers sync.Map // id → *fakesurface.Driver, or *fakesurface.LayoutDriver
 )
 
 func fakeDriver(_ *os.Root, settings []byte) (surface.Driver, error) {
@@ -37,7 +37,7 @@ func fakeDriver(_ *os.Root, settings []byte) (surface.Driver, error) {
 	if !ok {
 		return nil, errors.New("no fake surface driver " + s.ID)
 	}
-	return d.(*fakesurface.Driver), nil
+	return d.(surface.Driver), nil
 }
 
 // chatRoot is an instance root whose config has the fake agent and the fake

@@ -27,7 +27,7 @@ import (
 
 // Version is the protocol version this build speaks: major.minor. Two
 // sides work together when their major numbers are equal (docs/protocol.md).
-const Version = "3.20"
+const Version = "3.21"
 
 type hello struct {
 	Version string `json:"version"`
@@ -79,6 +79,11 @@ type (
 	setNameArgs struct { // since 3.5
 		Link control.LinkRef `json:"link"`
 		Name string          `json:"name,omitempty"`
+	}
+	layoutArgs    struct{} // since 3.21
+	setLayoutArgs struct { // since 3.21
+		Client string                `json:"client"`
+		Groups []control.LayoutGroup `json:"groups"`
 	}
 	sendArgs struct {
 		ID    control.ThreadID `json:"id"`
@@ -192,6 +197,16 @@ var operations = map[string]operation{
 			return nil, err
 		}
 		return nil, api.SetName(ctx, a.Link, a.Name)
+	}},
+	"Layout": {layoutArgs{}, []control.ChatLayout{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		return api.Layout(ctx)
+	}},
+	"SetLayout": {setLayoutArgs{}, nil, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a setLayoutArgs
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return nil, api.SetLayout(ctx, a.Client, a.Groups)
 	}},
 	"Start": {control.StartRequest{}, control.ThreadID(0), func(ctx context.Context, api control.API, args func(any) error) (any, error) {
 		var a control.StartRequest

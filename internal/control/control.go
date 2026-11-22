@@ -71,6 +71,25 @@ type API interface {
 	// chat service shows it (SetName), which is text and left out for a
 	// caller that may not read text. It needs OpRead. Since protocol 3.5.
 	Scopes(ctx context.Context) ([]ScopeInfo, error)
+	// SetLayout records how the chat service of client lays out the
+	// conversations it can see: its groups, their channels and each
+	// channel's open threads, in the service's order (design, section
+	// 5.2). It replaces what client recorded before; nothing of it is kept
+	// across a daemon restart. A change writes one layout event; the same
+	// layout again changes nothing. The core sets Scope and Thread itself
+	// and ignores what the call gives for them. It needs OpName in a scope
+	// of the caller's whose owner is client. Since protocol 3.21.
+	SetLayout(ctx context.Context, client string, groups []LayoutGroup) error
+	// Layout returns the layout each chat client recorded (SetLayout), one
+	// entry per client, as the caller may see it: the owner sees every
+	// channel the client recorded; any other caller sees only the channels
+	// that are its scopes' own channels, and only the groups that hold one
+	// of them. A channel that is the own channel of a scope the caller may
+	// see names it (LayoutChannel.Scope), and a thread linked to a thread
+	// of a scope the caller may see names it (LayoutThread.Thread). Names
+	// and URLs are text, left out for a caller that may not read text. A client that
+	// recorded none has no entry. It needs OpRead. Since protocol 3.21.
+	Layout(ctx context.Context) ([]ChatLayout, error)
 
 	// Start starts a thread in a scope. A repeated r.Key starts nothing and
 	// returns the thread the first call started.
@@ -241,7 +260,7 @@ type Caller struct {
 	// caller reads: ThreadInfo.Title, ThreadInfo.Last and ThreadInfo.Name,
 	// ThreadDetail.Recent, the text of its requests and a question's
 	// choices, a scope's name read from chat (ScopeInfo.Name, when the
-	// config gives none), and the text fields of events (Field.Text). It
+	// config gives none), the names of a chat's layout (Layout), and the text fields of events (Field.Text). It
 	// also refuses the reads that show a terminal, whose screen holds such
 	// text: Terminal, and HostScreen and HostView of every pane, before any
 	// pane is read.
@@ -303,7 +322,7 @@ type Ops uint16
 
 // The operations of the API, as members of Ops.
 const (
-	OpRead   Ops = 1 << iota // Threads, Thread, ThreadEvents, Events, Workspace, Terminal, Limits, Scopes
+	OpRead   Ops = 1 << iota // Threads, Thread, ThreadEvents, Events, Workspace, Terminal, Limits, Scopes, Layout
 	OpStart                  // Start
 	OpSend                   // Send
 	OpAnswer                 // Answer
@@ -319,8 +338,9 @@ const (
 	OpAttach
 	OpClose  // CloseThread: the owner's connection on the control socket only
 	OpRemove // RemoveThread: the owner's connection on the control socket only
-	// OpName may record the names the chat service shows (SetName): a chat
-	// front end's caller, and the owner's connection on the control socket.
+	// OpName may record the names the chat service shows and how it lays
+	// out its conversations (SetName, SetLayout): a chat front end's
+	// caller, and the owner's connection on the control socket.
 	OpName
 	OpAsk // AskInterrupt
 	// OpHostInput may type into a tmux pane on the host that hataori does
@@ -464,6 +484,41 @@ const (
 type ScopeInfo struct {
 	Key  string `json:"key"`
 	Name string `json:"name,omitempty"`
+}
+
+// ChatLayout is one chat client's layout (Layout). Since 3.21.
+type ChatLayout struct {
+	Client string        `json:"client"` // the client's name, as in LinkRef
+	Groups []LayoutGroup `json:"groups"` // in the chat service's order
+}
+
+// LayoutGroup is a group of channels in a chat service, such as a
+// category; the channels in no group are a group with no id. Since 3.21.
+type LayoutGroup struct {
+	ID       string          `json:"id,omitempty"`   // opaque
+	Name     string          `json:"name,omitempty"` // text
+	Channels []LayoutChannel `json:"channels"`       // in the chat service's order
+}
+
+// LayoutChannel is one channel of a LayoutGroup. Since 3.21.
+type LayoutChannel struct {
+	ID   string `json:"id"`             // opaque; LinkRef.Channel
+	Name string `json:"name,omitempty"` // text, such as "#general"
+	URL  string `json:"url,omitempty"`  // opens the channel in the chat service's own client; text, since it may hold a name
+	// Scope is the scope whose own channel this is, when the caller may
+	// see that scope; set by the core.
+	Scope   string         `json:"scope,omitempty"`
+	Threads []LayoutThread `json:"threads"` // the open threads, in the chat service's order
+}
+
+// LayoutThread is one open thread of a LayoutChannel. Since 3.21.
+type LayoutThread struct {
+	ID   string `json:"id"`             // opaque; LinkRef.Thread
+	Name string `json:"name,omitempty"` // text
+	URL  string `json:"url,omitempty"`  // opens the thread in the chat service's own client; text, as LayoutChannel.URL
+	// Thread is the number of the thread linked to this conversation, when
+	// the caller may see that thread's scope; set by the core.
+	Thread ThreadID `json:"thread,omitempty"`
 }
 
 // ThreadInfo is one line of Threads.

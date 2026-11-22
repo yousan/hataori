@@ -71,7 +71,12 @@ var EventKinds = map[EventKind][]Field{
 		opt("repo", String), opt("kind", String), text("detail", String)},
 	// named: the name the chat service shows for a conversation, a scope's
 	// channel or a linked thread, changed (SetName). Since 3.5.
-	"named":  {req("client", String), req("channel", String), opt("thread", String), text("name", String)},
+	"named": {req("client", String), req("channel", String), opt("thread", String), text("name", String)},
+	// layout: a chat client's layout changed (SetLayout). It belongs to no
+	// thread and no scope, holds nothing but the client's name, and every
+	// caller that reads events gets it, so that a reader knows to read the
+	// layout again. Since 3.21.
+	"layout": {req("client", String)},
 	CaughtUp: {},
 }
 
