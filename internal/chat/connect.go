@@ -8,13 +8,20 @@ import (
 )
 
 // conn is whether the driver is connected, and since when it is or is not.
-// failures counts the driver's Runs that failed since it last connected.
 type conn struct {
-	mu       sync.Mutex
-	up       bool
-	since    time.Time
+	mu    sync.Mutex
+	up    bool
+	since time.Time
+	// connectedAt is when the driver last said it connected.
+	connectedAt time.Time
+	// failures counts the driver's Runs that failed since the last line
+	// that said it connected; logged is when the last line about a failure
+	// was logged, and told whether that line has been followed by one
+	// that says it connected. A connection that keeps dropping logs no
+	// more than one that never connects.
 	failures int
-	logged   time.Time // when the last line about a failure was logged
+	logged   time.Time
+	told     bool
 }
 
 func (c *conn) down(now time.Time) {
@@ -37,18 +44,22 @@ func (f *FrontEnd) State() (bool, time.Time) {
 // connecting again by itself (surface.Disconnected).
 func (f *FrontEnd) Disconnected() { f.conn.down(f.now()) }
 
-// connected records that the driver connected, and logs one line when it
-// did after its Run failed.
+// connected records that the driver connected, and logs one line when a
+// line about a failure was logged since the last such line.
 func (f *FrontEnd) connected() {
 	c := &f.conn
+	now := f.now()
 	c.mu.Lock()
-	failures := c.failures
 	if !c.up {
-		c.up, c.since = true, f.now()
+		c.up, c.since = true, now
 	}
-	c.failures, c.logged = 0, time.Time{}
+	c.connectedAt = now
+	failures, tell := c.failures, c.told
+	if tell {
+		c.failures, c.told = 0, false
+	}
 	c.mu.Unlock()
-	if failures > 0 {
+	if tell {
 		f.Log.Info("chat front end connected", "client", f.Name, "failures", failures)
 	}
 }
@@ -56,9 +67,10 @@ func (f *FrontEnd) connected() {
 // runDriver runs the driver until ctx ends. When its Run returns before,
 // as when its first request fails because the network is not up yet, or
 // when a dropped connection cannot be made again, it is run again after a
-// delay that starts at RetryFirst and doubles at each failure in a row up
-// to RetryMax. While it keeps failing, it logs the first failure and then
-// at most one line per LogEvery.
+// delay that starts at RetryFirst and doubles at each failure up to
+// RetryMax; it starts at RetryFirst again after a Run that stayed
+// connected for RetryMax. While it keeps failing, it logs at most one line
+// per LogEvery.
 func (f *FrontEnd) runDriver(ctx context.Context) {
 	first, most, every := f.RetryFirst, f.RetryMax, f.LogEvery
 	if first <= 0 {
@@ -72,6 +84,7 @@ func (f *FrontEnd) runDriver(ctx context.Context) {
 	}
 	delay := first
 	for {
+		start := f.now()
 		err := f.Driver.Run(ctx, f)
 		if ctx.Err() != nil {
 			return
@@ -82,14 +95,14 @@ func (f *FrontEnd) runDriver(ctx context.Context) {
 		now := f.now()
 		c := &f.conn
 		c.mu.Lock()
-		if c.failures == 0 {
-			delay = first // it connected since the last failure
+		if at := c.connectedAt; !at.Before(start) && now.Sub(at) >= most {
+			delay = first // it stayed connected a while
 		}
 		c.failures++
 		failures := c.failures
 		log := c.logged.IsZero() || now.Sub(c.logged) >= every
 		if log {
-			c.logged = now
+			c.logged, c.told = now, true
 		}
 		c.mu.Unlock()
 		c.down(now)

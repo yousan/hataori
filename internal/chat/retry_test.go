@@ -58,15 +58,40 @@ func TestRunTriesAgainUntilTheDriverConnects(t *testing.T) {
 	}
 
 	// A connection that drops later, and that the driver cannot make
-	// again, is made again the same way.
-	f.driver.Drop(errors.New("the gateway closed and may not reconnect"))
-	waitFor(t, "the driver to run again", func() bool { return f.driver.Runs() == 5 && f.driver.Connected() })
-	waitFor(t, "the second connection line", func() bool { return f.count("chat front end connected") == 2 })
-	if n := f.count("the driver stopped; trying again"); n != 2 {
-		t.Fatalf("logged %d failure lines, want 2", n)
+	// again, is made again the same way. Within the minute of the last
+	// failure line, a connection that keeps dropping logs nothing more.
+	for runs := 5; runs <= 7; runs++ {
+		f.driver.Drop(errors.New("the gateway closed and may not reconnect"))
+		waitFor(t, "the driver to run again", func() bool { return f.driver.Runs() == runs && f.driver.Connected() })
+		waitFor(t, "Clients to say connected again", func() bool { cs := clients(); return len(cs) == 1 && cs[0].Connected })
 	}
-	if cs := clients(); len(cs) != 1 || !cs[0].Connected {
-		t.Fatalf("connected again, Clients says %+v", cs)
+	if failed, connected := f.count("the driver stopped; trying again"), f.count("chat front end connected"); failed != 1 || connected != 1 {
+		t.Fatalf("after three drops, logged %d failure lines and %d connection lines, want 1 and 1:\n%s",
+			failed, connected, strings.Join(f.log.lines(), "\n"))
+	}
+}
+
+// A drop that the driver makes good by itself shows in Clients until it
+// is connected again; the catch-up's own retry does not count as a
+// connection (#598).
+func TestClientsWhileTheDriverReconnects(t *testing.T) {
+	f := newFront(t, workspaces{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { f.fe.Run(ctx); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+	waitFor(t, "the connection", func() bool { up, _ := f.fe.State(); return up })
+	f.driver.Disconnect()
+	if up, since := f.fe.State(); up || since.IsZero() {
+		t.Fatalf("while the driver reconnects, State says %v since %v", up, since)
+	}
+	f.fe.catchUpAll() // as the catch-up's retry does
+	if up, _ := f.fe.State(); up {
+		t.Fatal("the catch-up's retry counted as a connection")
+	}
+	f.driver.Reconnect()
+	if up, _ := f.fe.State(); !up {
+		t.Fatal("connected again, State says not connected")
 	}
 }
 

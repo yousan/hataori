@@ -129,12 +129,19 @@ func (f *FrontEnd) receive(in surface.Inbound) {
 	}
 }
 
-// Connected catches up on every enabled channel and open thread, and
-// records the names of the scopes' channels. The driver calls it after it
-// connects and after each reconnect. Until a
-// conversation is caught up, its live messages wait for the catch-up.
+// Connected records that the driver is connected, catches up on every
+// enabled channel and open thread, and records the names of the scopes'
+// channels. The driver calls it after it connects and after each
+// reconnect. Until a conversation is caught up, its live messages wait for
+// the catch-up.
 func (f *FrontEnd) Connected() {
 	f.connected()
+	f.catchUpAll()
+}
+
+// catchUpAll is Connected's catch-up. When the open threads cannot be
+// listed, it tries again later by itself, which is no new connection.
+func (f *FrontEnd) catchUpAll() {
 	ctx := f.context()
 	s := f.inboundState()
 	s.mu.Lock()
@@ -169,7 +176,7 @@ func (f *FrontEnd) Connected() {
 			case <-ctx.Done():
 			case <-time.After(retry):
 				if ctx.Err() == nil {
-					f.Connected()
+					f.catchUpAll()
 				}
 			}
 		}()
