@@ -283,6 +283,7 @@ export function App() {
               onBack={backNarrow}
               view={viewOf(threadTab(x.id))}
               onView={chooseView(threadTab(x.id))}
+              mayAct={mayAct}
             />
           ) : (
             <NarrowList
@@ -406,6 +407,7 @@ export function App() {
                         onView={chooseView(k)}
                         typing={typingFor(k, paneThread(k)!.id)}
                         attach={switchFor(k, paneThread(k)!.id)}
+                        mayAct={mayAct}
                       />
                     ) : (
                       <p className="empty">{t("pane.later")}</p>

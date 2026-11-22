@@ -3,6 +3,7 @@ import { type Event, hasTerminal, type ThreadInfo } from "./api";
 import type { AttachState } from "./attach";
 import { type Key, t } from "./catalog";
 import { Conversation } from "./Conversation";
+import { InputBox } from "./InputBox";
 import { TerminalView, type Typing } from "./TerminalView";
 
 // probeRetry is how long a pane waits before it asks again whether its
@@ -73,7 +74,8 @@ function Switch({ a }: { a: AttachSwitch }) {
 // conversation. view is the person's choice for this tab, or the view the
 // tab opened on. With fit, the terminal fills the pane. typing lets the
 // terminal take keys (attach.ts); attach, on the web listener, is its
-// switch.
+// switch. A session without a terminal, and every thread in the narrow
+// layout, has the input box, for a person who may act.
 export function ThreadPane(props: {
   x: ThreadInfo;
   subscribe: (f: (e: Event) => void) => () => void;
@@ -83,8 +85,10 @@ export function ThreadPane(props: {
   onView?: (v: View) => void;
   typing?: Typing;
   attach?: AttachSwitch;
+  mayAct?: boolean; // the server lets this person give the thread input
+  narrow?: boolean; // the narrow layout, where every thread has the input box
 }) {
-  const { x, subscribe, opens, fit, onView, typing, attach } = props;
+  const { x, subscribe, opens, fit, onView, typing, attach, mayAct, narrow } = props;
   const [terminal, setTerminal] = useState<boolean | null>(null);
   const id = x.id;
 
@@ -131,6 +135,7 @@ export function ThreadPane(props: {
       ) : (
         <Conversation x={x} subscribe={subscribe} opens={opens} />
       )}
+      {mayAct && (narrow || !terminal) && <InputBox x={x} />}
     </div>
   );
 }
