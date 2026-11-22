@@ -1,0 +1,1 @@
+{"id":1,"op":"SetLayout","args":{"client":"discord","groups":[{"channels":[{"id":"C0100","name":"#welcome","url":"https://chat.example.com/C0100","threads":[]}]},{"id":"G0200","name":"Work","channels":[{"id":"C0123","name":"#builds","url":"https://chat.example.com/C0123","threads":[{"id":"T0456","name":"Fix the build","url":"https://chat.example.com/T0456"}]}]}]}}

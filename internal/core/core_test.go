@@ -269,6 +269,11 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 		"SetName": func(a control.API) error {
 			return a.SetName(ctx, control.LinkRef{Client: f.core.Scopes["s"].Owner, Channel: "s"}, "#s")
 		},
+		// Layout, as Scopes, needs OpRead and no scope.
+		"Layout": func(a control.API) error { _, err := a.Layout(ctx); return err },
+		"SetLayout": func(a control.API) error {
+			return a.SetLayout(ctx, f.core.Scopes["s"].Owner, []control.LayoutGroup{{Channels: []control.LayoutChannel{{ID: "s"}}}})
+		},
 		"Start": func(a control.API) error {
 			_, err := a.Start(ctx, control.StartRequest{Key: "k2", Scope: "s", Thread: "t2"})
 			return err
@@ -322,7 +327,7 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 	for cname, c := range callers {
 		a := f.core.As(c)
 		for name, op := range ops {
-			if (name == "Limits" || name == "Scopes" || name == "Clients") && cname == "other scope" {
+			if (name == "Limits" || name == "Scopes" || name == "Layout" || name == "Clients") && cname == "other scope" {
 				continue
 			}
 			want := ErrForbidden

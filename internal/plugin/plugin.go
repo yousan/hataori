@@ -42,8 +42,8 @@ var points = map[string]Failure{
 
 // operations are the operations of the control protocol, as
 // docs/protocol.md lists them; a test keeps the two equal.
-var operations = []string{"Answer", "AskInterrupt", "AttachTerminal", "Clients", "Close", "End", "Events", "HostKeys", "HostScreen", "HostTerminals", "HostView", "Limits", "Link",
-	"OperateHost", "Release", "Remove", "Scopes", "Send", "SetName", "SignInLink", "Start", "Stop", "TakeIn", "Terminal", "Thread", "ThreadEvents", "Threads", "Workspace"}
+var operations = []string{"Answer", "AskInterrupt", "AttachTerminal", "Clients", "Close", "End", "Events", "HostKeys", "HostScreen", "HostTerminals", "HostView", "Layout", "Limits", "Link",
+	"OperateHost", "Release", "Remove", "Scopes", "Send", "SetLayout", "SetName", "SignInLink", "Start", "Stop", "TakeIn", "Terminal", "Thread", "ThreadEvents", "Threads", "Workspace"}
 
 // never are the operations no plugin is given, whatever its manifest and
 // its config say: the dashboard's sign-in; the terminals on the host, read
@@ -60,9 +60,9 @@ var never = []string{"SignInLink", "HostTerminals", "HostScreen", "HostView", "O
 var classes = map[string]control.Ops{
 	"Threads": control.OpRead, "Thread": control.OpRead, "ThreadEvents": control.OpRead, "Events": control.OpRead,
 	"Workspace": control.OpRead, "Terminal": control.OpRead, "Limits": control.OpRead, "Scopes": control.OpRead,
-	"Clients": control.OpRead,
-	"Start":   control.OpStart, "Send": control.OpSend, "Link": control.OpSend, "Answer": control.OpAnswer,
-	"Stop": control.OpStop, "AskInterrupt": control.OpAsk, "SetName": control.OpName,
+	"Layout": control.OpRead, "Clients": control.OpRead,
+	"Start": control.OpStart, "Send": control.OpSend, "Link": control.OpSend, "Answer": control.OpAnswer,
+	"Stop": control.OpStop, "AskInterrupt": control.OpAsk, "SetName": control.OpName, "SetLayout": control.OpName,
 }
 
 // Client is the client name of plugins' ids: plugin P calls as the id

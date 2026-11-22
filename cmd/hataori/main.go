@@ -262,7 +262,7 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 			}
 		}
 		// A chat client that is not connected hears no new order. A
-		// daemon before protocol 3.21 cannot tell, and says nothing.
+		// daemon before protocol 3.22 cannot tell, and says nothing.
 		if cs, err := c.Clients(ctx); err == nil {
 			for _, cl := range cs {
 				if !cl.Connected {

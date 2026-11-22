@@ -84,6 +84,16 @@ func (q *queue) disconnected() {
 	})
 }
 
+// LayoutChanged tells the sink, in order with the messages, that the
+// layout changed, when the sink wants to know (surface.LayoutWatcher).
+func (q *queue) LayoutChanged() {
+	q.push(func(s surface.Sink) {
+		if w, ok := s.(surface.LayoutWatcher); ok {
+			w.LayoutChanged()
+		}
+	})
+}
+
 func (q *queue) Message(in surface.Inbound) { q.push(func(s surface.Sink) { s.Message(in) }) }
 func (q *queue) Choice(c surface.Selection) { q.push(func(s surface.Sink) { s.Choice(c) }) }
 func (q *queue) Command(c surface.Command)  { q.push(func(s surface.Sink) { s.Command(c) }) }

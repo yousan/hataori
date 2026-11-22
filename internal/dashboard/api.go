@@ -19,6 +19,7 @@ import (
 // caller may see.
 //
 //	GET /api/threads                          [ThreadInfo]
+//	GET /api/layout                           [ChatLayout]
 //	GET /api/thread?thread=N[&recent=N][&events=N]   ThreadDetail
 //	GET /api/events[?after=N]                 a stream of Event (Server-Sent Events)
 //	GET /api/terminal?thread=N                a stream of TerminalChunk (Server-Sent Events)
@@ -38,6 +39,10 @@ const (
 	// ScopesPath answers with the scopes the caller may see and their
 	// names: the control API's Scopes.
 	ScopesPath = "/api/scopes"
+	// LayoutPath answers with each chat client's layout as the caller may
+	// see it: the control API's Layout. The page reads it again after each
+	// layout event.
+	LayoutPath = "/api/layout"
 	ThreadPath = "/api/thread"
 	// ThreadEventsPath answers with a thread's events before ?before=P (its
 	// last ones without it), at most ?limit=N, newest last: the control
@@ -92,6 +97,7 @@ var errNotFound = core.ErrNotFound
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET "+ThreadsPath, s.threads)
 	s.mux.HandleFunc("GET "+ScopesPath, s.scopes)
+	s.mux.HandleFunc("GET "+LayoutPath, s.layout)
 	s.mux.HandleFunc("GET "+ThreadPath, s.thread)
 	s.mux.HandleFunc("GET "+ThreadEventsPath, s.threadEvents)
 	s.mux.HandleFunc("GET "+EventsPath, s.events)
@@ -265,6 +271,18 @@ func (s *Server) scopes(w http.ResponseWriter, r *http.Request) {
 		ss = []control.ScopeInfo{}
 	}
 	writeJSON(w, ss)
+}
+
+func (s *Server) layout(w http.ResponseWriter, r *http.Request) {
+	ls, err := api(r).Layout(r.Context())
+	if err != nil {
+		s.apiError(w, err)
+		return
+	}
+	if ls == nil {
+		ls = []control.ChatLayout{}
+	}
+	writeJSON(w, ls)
 }
 
 func (s *Server) threadEvents(w http.ResponseWriter, r *http.Request) {

@@ -271,6 +271,7 @@ type Core struct {
 
 	locks   keyedMutex
 	hostOps hostOpSet
+	layouts layouts
 }
 
 // keyedMutex serializes work per key.
@@ -1952,10 +1953,14 @@ func (a *api) Stop(ctx context.Context, id control.ThreadID, turn int64) error {
 // mayRead reports whether the caller may see e: its kind, when the caller
 // is limited to some kinds, its scope, and every scope its data lists
 // under "scopes" (an event about threads in several scopes, such as the
-// end of a login outage).
+// end of a login outage). A layout event belongs to no scope, and every
+// reader gets it.
 func (a *api) mayRead(e control.Event) bool {
 	if l := a.caller.Limit; l != nil && !slices.Contains(l.Events, e.Kind) {
 		return false
+	}
+	if e.Kind == KindLayout && e.Thread == 0 && e.Scope == "" {
+		return true // of no scope, and it names only a client (SetLayout)
 	}
 	if !slices.Contains(a.caller.Scopes, e.Scope) || !a.personSees(e.Scope) {
 		return false

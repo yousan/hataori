@@ -1,6 +1,7 @@
 package discord
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -27,7 +28,8 @@ const Name = "discord"
 // Intents are the gateway intents the driver asks for. MESSAGE_CONTENT is
 // privileged and must be switched on for the application.
 //
-//   - GUILDS: threads being created and changed, to know a thread's channel.
+//   - GUILDS: threads being created and changed, to know a thread's channel;
+//     the servers' channels and categories, for the layout (layout.go).
 //   - GUILD_MESSAGES: messages in channels and threads.
 //   - MESSAGE_CONTENT: the text of those messages, which a webhook post does
 //     not get without it because it does not mention the bot.
@@ -74,6 +76,7 @@ type Driver struct {
 	mu      sync.Mutex
 	parents map[snowflake.ID]snowflake.ID // thread -> the channel it is in
 	direct  map[snowflake.ID]bool         // channel -> whether it is a direct conversation
+	guilds  map[snowflake.ID]*guildLayout // the layout of each server, from the gateway (layout.go)
 
 	commands map[string]surface.CommandSpec // by the name registered by Run, with the front end's name
 	answers  map[snowflake.ID]*answer       // command interactions that can still be answered
@@ -133,6 +136,7 @@ func newDriver(botID snowflake.ID, token, restURL, gatewayURL string, log *slog.
 		pageSize:   100,
 		parents:    map[snowflake.ID]snowflake.ID{},
 		direct:     map[snowflake.ID]bool{},
+		guilds:     map[snowflake.ID]*guildLayout{},
 		commands:   map[string]surface.CommandSpec{},
 		answers:    map[snowflake.ID]*answer{},
 	}
@@ -194,6 +198,7 @@ func (d *Driver) Run(ctx context.Context, sink surface.Sink) error {
 				report(fmt.Errorf("discord: logged in as bot %s, but the config names bot %s", e.User.ID, d.botID))
 				return
 			}
+			d.newSession(e.Guilds)
 			q.connected() // a new session
 		case gateway.EventResumed:
 			q.connected() // the session resumed after a drop
@@ -252,6 +257,22 @@ func (d *Driver) Run(ctx context.Context, sink surface.Sink) error {
 
 // dispatch handles one gateway event.
 func (d *Driver) dispatch(ctx context.Context, t string, payload io.Reader, sink surface.Sink) error {
+	switch t {
+	case "GUILD_CREATE", "GUILD_DELETE", "CHANNEL_CREATE", "CHANNEL_UPDATE", "CHANNEL_DELETE",
+		"THREAD_CREATE", "THREAD_UPDATE", "THREAD_DELETE", "THREAD_LIST_SYNC":
+		b, err := readAll(payload)
+		if err != nil {
+			return err
+		}
+		changed, err := d.layoutEvent(t, b)
+		if err != nil {
+			return err
+		}
+		if changed {
+			defer layoutChanged(sink)
+		}
+		payload = bytes.NewReader(b)
+	}
 	switch t {
 	case "THREAD_CREATE", "THREAD_UPDATE":
 		var c wireChannel

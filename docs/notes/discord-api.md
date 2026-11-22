@@ -156,6 +156,32 @@ For later phases (not phase 1):
 - Renaming or archiving a thread. The [threads page](https://discord.com/developers/docs/topics/threads#editing--deleting-threads) says it "requires `MANAGE_THREADS` or that the current user is the thread creator". The [Modify Channel](https://discord.com/developers/docs/resources/channel#modify-channel-json-params-thread) page names only `MANAGE_THREADS` (and `SEND_MESSAGES` to unarchive). The two pages disagree, so this is **unverified** until a run.
 - Lamps as reactions need `ADD_REACTIONS` (`1 << 6`). The `GUILD_MESSAGE_REACTIONS` intent is needed only to read reactions.
 
+## 7. The layout: channels, categories and active threads (#599)
+
+Checked on 2026-11-23, in [discord/discord-api-docs](https://github.com/discord/discord-api-docs) at commit [`9b737ec`](https://github.com/discord/discord-api-docs/tree/9b737ec51ee8d5076af0565d209a9adf8f590a27). Marked as in the sections above.
+
+**The gateway sends the whole layout; no REST request is needed** (**docs**):
+
+- [Guild Create](https://discord.com/developers/docs/events/gateway-events#guild-create) carries `channels`, "Channels in the guild", and `threads`, "All active threads in the guild that current user has permission to view". It is sent for each server after `READY`, when a server becomes available again, and when the bot joins one. An unavailable server comes as an unavailable guild object, and [Guild Delete](https://discord.com/developers/docs/events/gateway-events#guild-delete) with `unavailable` says a server became unavailable.
+- [Channel Create, Update and Delete](https://discord.com/developers/docs/events/gateway-events#channel-create) carry a channel object. Channel Update "is not sent when the field `last_message_id` is altered".
+- [Thread Create, Update and Delete](https://discord.com/developers/docs/events/gateway-events#thread-create): Create and Update carry the whole thread; Delete carries only `id`, `guild_id`, `parent_id` and `type`. Unarchiving sends a Thread Update with the full channel object ([threads, unarchiving](https://discord.com/developers/docs/topics/threads#unarchiving-a-thread)).
+- [Thread List Sync](https://discord.com/developers/docs/events/gateway-events#thread-list-sync) is "sent when the current user gains access to a channel", with all active threads of `channel_ids`; "If omitted, then threads were synced for the entire guild. This array may contain channel_ids that have no active threads as well, so you know to clear that data."
+- All of these come with the `GUILDS` intent, which the driver already asks for (section 6).
+- The [threads page](https://discord.com/developers/docs/topics/threads#gateway-events): "the gateway protocol is designed to ensure that bots are able to have an accurate view of the full set of active threads, but archived threads are not synced up-front via the gateway"; "Clients will not be informed of a thread through the gateway if they do not have permission to view that thread". On losing access to a channel, no Thread Delete is sent; the event that changed the permission is.
+
+**Channels the bot may not view** ([obfuscated channels](https://discord.com/developers/docs/resources/channel#channel-object-obfuscated-channels), [change log of 2026-11-16](https://discord.com/developers/docs/change-log), **docs**): since 2026-11-16, for every bot, such a channel still comes over the gateway, in Guild Create and in the channel events, but obfuscated: "check whether its `flags` field has the `CHANNEL_OBFUSCATED` channel flag (`1 << 17`) set. Do not rely on inspecting `name`". "`id`, `type`, `position`, and `parent_id` will not be obfuscated". "Channel categories are viewable if any of their child channels are viewable." Regaining access sends a Channel Update with the full channel, for its category too. Over HTTP, [Get Guild Channels](https://discord.com/developers/docs/resources/guild#get-guild-channels) omits such channels.
+
+**Order** (**docs**, except where marked):
+
+- A channel's `position` is its "sorting position" and "channels with the same position are sorted by id"; a channel's `parent_id` is its category, and a category holds at most 50 channels ([channel object](https://discord.com/developers/docs/resources/channel#channel-object)).
+- [List Active Guild Threads](https://discord.com/developers/docs/resources/guild#list-active-guild-threads): "Threads are ordered by their `id`, in descending order." The driver orders a channel's active threads that way, the newest first.
+- **unverified**: that Discord's client shows the channels in no category first, and in a category the text channels before the voice and stage channels, each by position. The documentation does not say how the client lays them out; the driver does so until a capture of a server checks it (#613).
+- **unverified** as a format: a link that opens a channel or a thread in the client, `https://discord.com/channels/<guild>/<channel>`. The documentation shows it only in examples (a tutorial: "if my URL was `https://discord.com/channels/123456/789101112`, the Guild ID is the first number"; the change log links its own channels so). A thread is a channel, so its id goes in the same place.
+
+**Rate limits** ([rate limits](https://discord.com/developers/docs/topics/rate-limits), **docs**): REST limits are per route and per top-level resource (`/guilds/{guild.id}/channels` counts against its `guild_id`), plus the global 50 requests per second; Discord says limits "should not be hard coded" and are read from the response headers (section 5). Keeping the layout from the gateway makes no request at all, so it adds nothing to either limit, however often channels and threads change. The only gateway limit is on what a client sends (120 per 60 seconds), and the layout sends nothing. Polling [Get Guild Channels](https://discord.com/developers/docs/resources/guild#get-guild-channels) and [List Active Guild Threads](https://discord.com/developers/docs/resources/guild#list-active-guild-threads) was the alternative, and is not needed.
+
+**Captures**: `testdata/v10` has a channel object, threads, a thread renamed and a thread archived, all used by the layout's test. Guild Create, the channel events, Thread Delete, Thread List Sync and an obfuscated channel have no capture yet (#613).
+
 ## Where the answers came from
 
 Argon (Antigravity CLI, `agy -p`) was asked one question per section. Every claim kept here was checked against the documentation at the commit above, or against the libraries' tags. Corrections to Argon's answers:
