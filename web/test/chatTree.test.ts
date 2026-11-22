@@ -55,8 +55,8 @@ test("group, channel, thread in the chat's order; a thread open in the chat what
 });
 
 test("what is open in the chat, for the choice of threads", () => {
-  assert.equal(openInChat(null), null);
-  const open = openInChat(layout)!;
+  assert.equal(openInChat(null, all), null);
+  const open = openInChat(layout, all)!;
   assert.deepEqual([...open.scopes], ["c1"]);
   assert.deepEqual([...open.threads], [1]);
 });
@@ -74,4 +74,27 @@ test("the filter keeps what it finds, and the channels and groups that hold it",
   assert.deepEqual(tr.groups.map((g) => g.channels.map((c) => [c.key, c.items.length])), [[["chan:discord/u1", 0]]]);
   tr = chatTree(layout, all, activeOnly, "open", title("open"))!;
   assert.deepEqual(tr.groups.map((g) => g.channels.map((c) => c.items.map((i) => (i.kind === "thread" ? i.x.id : i.key)))), [[[1]]]);
+});
+
+test("a thread linked into another channel is a row only in its own scope", () => {
+  const linked = thread(5, "c1", "running", "2026-11-23T04:00:00Z", "linked elsewhere");
+  const ts = [...all, linked];
+  const l: ChatLayout[] = [{
+    client: "discord",
+    groups: [{ channels: [
+      { id: "c1", name: "#builds", scope: "c1", threads: [{ id: "t1", name: "open in the chat", thread: 1 }] },
+      { id: "c2", name: "#deploys", scope: "c2", threads: [{ id: "t5", name: "linked elsewhere", thread: 5 }] },
+      { id: "u1", name: "#lobby", threads: [{ id: "t6", name: "linked elsewhere", thread: 5 }] },
+    ] }],
+  }];
+  const open = openInChat(l, ts)!;
+  assert.deepEqual([...open.threads], [1]);
+  const shown = (x: ThreadInfo) => open.threads.has(x.id) || ["creating", "running", "waiting", "failed"].includes(x.state);
+  const tr = chatTree(l, ts, shown, "", () => true)!;
+  const items = tr.groups[0].channels.map((c) => [c.key, c.items.map((i) => (i.kind === "thread" ? i.x.id : i.key))]);
+  assert.deepEqual(items, [
+    ["scope:c1", [1, 5, 3]], // its own scope's row, as a thread not open there that works
+    ["scope:c2", ["chat:discord/t5"]],
+    ["chan:discord/u1", ["chat:discord/t6"]],
+  ]);
 });

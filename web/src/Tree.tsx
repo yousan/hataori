@@ -186,7 +186,7 @@ function Node(props: {
 // name alone.
 function chatLink(name: string, url: string | undefined) {
   return url ? (
-    <a className="chat-link" href={url} target="_blank" rel="noopener noreferrer" title={t("tree.inChat", { name })}>
+    <a className="chat-link" href={url} target="_blank" rel="noopener noreferrer" tabIndex={-1} title={t("tree.inChat", { name })}>
       {name}
     </a>
   ) : (
@@ -216,25 +216,36 @@ function ChatRow(props: { item: Extract<ChatItem, { kind: "chat" }>; parent: str
 }
 
 // ChatChannelItem is a channel hataori does not serve: dimmed, a link into
-// the chat, with its open threads under it.
-function ChatChannelItem(props: { c: ChatChannel; parent?: string; level: number }) {
-  const { c, parent, level } = props;
+// the chat, with its open threads under it; with threads, it folds as a
+// node does (its mark, or left and right).
+function ChatChannelItem(props: { c: ChatChannel; parent?: string; level: number; open: boolean; onFold: (node: string, folded: boolean) => void }) {
+  const { c, parent, level, open, onFold } = props;
+  const folds = c.items.length > 0;
   return (
     <li
       className="chan chat-only"
       role="treeitem"
       aria-level={level}
-      aria-expanded={c.items.length > 0 ? true : undefined}
+      aria-expanded={folds ? open : undefined}
       aria-label={c.name}
       tabIndex={-1}
       data-tree-item={c.key}
+      data-node={folds ? c.key : undefined}
+      data-open={folds ? (open ? "yes" : "no") : undefined}
       data-parent={parent}
       onKeyDown={(e) => {
-        if (e.target === e.currentTarget && e.key === "Enter") e.currentTarget.querySelector<HTMLAnchorElement>(":scope > a.chat-link")?.click();
+        if (e.target === e.currentTarget && e.key === "Enter") e.currentTarget.querySelector<HTMLAnchorElement>(":scope > .chan-head a.chat-link")?.click();
       }}
     >
-      {chatLink(c.name, c.url)}
-      {c.items.length > 0 && (
+      <div className="chan-head">
+        {folds && (
+          <span className="fold-mark" title={t(open ? "tree.fold" : "tree.unfold", { name: c.name })} onClick={() => onFold(c.key, open)}>
+            {t(open ? "tree.openMark" : "tree.foldedMark")}
+          </span>
+        )}
+        {chatLink(c.name, c.url)}
+      </div>
+      {folds && open && (
         <ul role="group">
           {c.items.map((i) => i.kind === "chat" && <ChatRow key={i.key} item={i} parent={c.key} level={level + 1} />)}
         </ul>
@@ -313,6 +324,9 @@ export function Tree(props: Props) {
   // the chat's order; the scopes whose channel it does not lay out after
   // them, as before.
   const chat = chatTree(layout, all, (x) => shows(show, x, openInChat), filter, (x) => matches(x, filter));
+  // The tree shows something of the chat's layout: the messages about no
+  // thread, or none found, would say otherwise.
+  const laidOut = (chat?.groups.length ?? 0) > 0;
   const nodes = [...lists]
     .filter(([scope]) => !chat?.scopes.has(scope))
     .filter(([, list]) => !filtering || list.length > 0)
@@ -361,7 +375,7 @@ export function Tree(props: Props) {
         )}
       </Node>
     ) : (
-      <ChatChannelItem key={c.key} c={c} parent={parent} level={level} />
+      <ChatChannelItem key={c.key} c={c} parent={parent} level={level} open={open(c.key, c.items.length > 0)} onFold={fold} />
     );
 
   return (
@@ -407,9 +421,9 @@ export function Tree(props: Props) {
           }}
         >
           <div data-section="threads" role="none">
-            {all.length === 0 && threads !== null && <p className="none">{t("tree.none")}</p>}
-            {all.length > 0 && visible.length === 0 && <p className="none">{t("tree.noActive", { n: hidden })}</p>}
-            {visible.length > 0 && shown.length === 0 && (
+            {!laidOut && all.length === 0 && threads !== null && <p className="none">{t("tree.none")}</p>}
+            {!laidOut && all.length > 0 && visible.length === 0 && <p className="none">{t("tree.noActive", { n: hidden })}</p>}
+            {!laidOut && visible.length > 0 && shown.length === 0 && (
               <p className="none">{hidden > 0 ? t("tree.noMatchHidden", { n: hidden }) : t("tree.noMatch")}</p>
             )}
             <ul role="none">

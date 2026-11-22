@@ -67,7 +67,7 @@ export function chatTree(
     for (const g of l.groups)
       for (const c of g.channels) {
         if (c.scope) scopes.add(c.scope);
-        for (const th of c.threads) if (th.thread !== undefined && byID.has(th.thread)) inChat.add(th.thread);
+        for (const th of c.threads) if (ownThread(th.thread, c.scope, byID)) inChat.add(th.thread!);
       }
   const groups: ChatGroup[] = [];
   for (const l of ls) {
@@ -76,8 +76,11 @@ export function chatTree(
       for (const c of g.channels) {
         const items: ChatItem[] = [];
         for (const th of c.threads) {
-          const x = th.thread !== undefined ? byID.get(th.thread) : undefined;
-          if (x && c.scope) {
+          // A hataori thread shows as its row only in its own scope's
+          // channel; linked into another (show_in), it is that channel's
+          // other open thread there.
+          const x = ownThread(th.thread, c.scope, byID) ? byID.get(th.thread!) : undefined;
+          if (x) {
             if (shown(x) && matches(x)) items.push({ kind: "thread", x });
           } else if (named(th.name)) {
             items.push({ kind: "chat", key: `chat:${l.client}/${th.id}`, name: th.name ?? "", url: th.url });
@@ -108,19 +111,26 @@ export function chatTree(
   return { groups, scopes };
 }
 
+// ownThread reports whether thread n is one of all, of scope.
+function ownThread(n: number | undefined, scope: string | undefined, byID: ReadonlyMap<number, ThreadInfo>): boolean {
+  return n !== undefined && scope !== undefined && byID.get(n)?.scope === scope;
+}
+
 // openInChat is what layouts say is open in the chat, for the choice of
 // threads (show.tsx): the scopes whose channel they lay out and the
-// threads open in the chat; null without a layout.
-export function openInChat(layouts: readonly ChatLayout[] | null): OpenInChat | null {
+// threads of all open in a channel of their own scope; null without a
+// layout.
+export function openInChat(layouts: readonly ChatLayout[] | null, all: readonly ThreadInfo[]): OpenInChat | null {
   const ls = (layouts ?? []).filter((l) => l.groups.length > 0);
   if (ls.length === 0) return null;
+  const byID = new Map(all.map((x) => [x.id, x]));
   const scopes = new Set<string>();
   const threads = new Set<number>();
   for (const l of ls)
     for (const g of l.groups)
       for (const c of g.channels) {
         if (c.scope) scopes.add(c.scope);
-        for (const th of c.threads) if (th.thread !== undefined) threads.add(th.thread);
+        for (const th of c.threads) if (ownThread(th.thread, c.scope, byID)) threads.add(th.thread!);
       }
   return { scopes, threads };
 }

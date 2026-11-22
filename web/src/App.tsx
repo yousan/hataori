@@ -50,7 +50,7 @@ export function App() {
   const [showing, setShowing] = useShow();
   // What the chats' layout says is open in the chat: with it, the active
   // threads of a scope it covers are those the chat shows (show.tsx).
-  const open = useMemo(() => openInChat(d.layout), [d.layout]);
+  const open = useMemo(() => openInChat(d.layout, d.threads ?? []), [d.layout, d.threads]);
   const hiddenThreads = hiddenCount(showing, d.threads, open);
 
   const pickDensity = (x: Density) => {

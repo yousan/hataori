@@ -28,7 +28,7 @@ func (b *browser) treeItems() []treeItem {
 	b.eval(`[...document.querySelectorAll('.tree [role=tree] [data-tree-item]')].map(i => ({
 		item: i.dataset.treeItem,
 		dim: i.classList.contains('chat-only'),
-		href: i.querySelector(':scope > a.chat-link, :scope > .node-head a.chat-link')?.getAttribute('href') ?? '',
+		href: i.querySelector(':scope > a.chat-link, :scope > .chan-head a.chat-link')?.getAttribute('href') ?? '',
 	}))`, &items)
 	return items
 }
@@ -181,6 +181,42 @@ func TestDashboardTreeMirrorsTheChat(t *testing.T) {
 	if n := tabs(); n != before {
 		t.Fatalf("a chat link opened a tab: %d tabs, were %d", n, before)
 	}
+
+	// The tree is still one Tab stop: its links are none of their own. An
+	// unserved channel with threads folds from the keyboard, as a node.
+	var tabbable int
+	b.eval(`document.querySelectorAll('.tree [role=tree] a.chat-link:not([tabindex="-1"])').length`, &tabbable)
+	if tabbable != 0 {
+		t.Fatalf("%d links in the tree are Tab stops of their own", tabbable)
+	}
+	key := func(k string, code int) {
+		t.Helper()
+		b.call("Input.dispatchKeyEvent", map[string]any{"type": "keyDown", "key": k, "code": k, "windowsVirtualKeyCode": code})
+		b.call("Input.dispatchKeyEvent", map[string]any{"type": "keyUp", "key": k, "code": k, "windowsVirtualKeyCode": code})
+	}
+	b.eval(`document.querySelector('.tree [data-tree-item="chan:`+client+`u1"]').focus(), true`, nil)
+	key("ArrowLeft", 37)
+	folded := slices.Delete(slices.Clone(want), 1, 2)
+	b.untilTree("the unserved channel folded from the keyboard", folded)
+	var expanded string
+	b.eval(`document.querySelector('.tree [data-tree-item="chan:`+client+`u1"]').getAttribute('aria-expanded')`, &expanded)
+	if expanded != "false" {
+		t.Fatalf("the folded channel says aria-expanded=%q", expanded)
+	}
+	key("ArrowRight", 39)
+	b.untilTree("the unserved channel unfolded from the keyboard", want)
+
+	// The filter finds a thread the chat shows and hataori does not hold:
+	// no message says that nothing was found.
+	b.filter("lunch")
+	b.untilTree("filtered for a chat thread", []treeItem{want[0], want[1], {Item: "host"}}) // the host terminals' node stays, as before
+	var none int
+	b.eval(`document.querySelectorAll('.tree p.none').length`, &none)
+	if none != 0 {
+		t.Fatal("a message says nothing was found, beside what the filter found")
+	}
+	b.filter("")
+	b.untilTree("the filter cleared", want)
 
 	// "All": the hataori thread whose chat thread is archived, under its
 	// channel, after the threads open in the chat.

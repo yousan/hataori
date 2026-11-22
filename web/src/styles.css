@@ -1403,6 +1403,16 @@ body {
   font-weight: 600;
 }
 
+.chan-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chan-head .fold-mark {
+  cursor: pointer;
+}
+
 .chan > ul > .row {
   padding-left: 22px;
   font-weight: 400;
