@@ -38,7 +38,10 @@ jobs:
       - run: go vet ./...
       - name: build without cgo
         run: CGO_ENABLED=0 go build ./...
-      - run: go test ./...
+      # cmd/hataori runs the daemon, session hosts and a browser for each
+      # end-to-end test, and takes close to go test's default of ten minutes
+      # per package on macOS (#625).
+      - run: go test -timeout 30m ./...
 
   # The same code runs on macOS (design, section 6.4).
   test-macos:
@@ -75,7 +78,7 @@ jobs:
       - name: build without cgo
         run: CGO_ENABLED=0 go build ./...
       - name: go test
-        run: go test ./...
+        run: go test -timeout 30m ./... # as in the test job (#625)
       - name: let the copy of Chrome be removed
         if: always()
         run: chmod -R u+w "$RUNNER_TEMP/chrome" 2>/dev/null || true
