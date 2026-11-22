@@ -260,7 +260,9 @@ function ChatChannelItem(props: { c: ChatChannel; parent?: string; level: number
 // each item does by itself.
 function treeKeys(e: React.KeyboardEvent<HTMLElement>, fold: (node: string, folded: boolean) => void) {
   const items = [...e.currentTarget.querySelectorAll<HTMLElement>("[data-tree-item]")];
-  const i = items.indexOf(document.activeElement as HTMLElement);
+  // The item focused, or the one holding what is focused, such as a chat
+  // link a click focused.
+  const i = items.indexOf((document.activeElement as HTMLElement | null)?.closest<HTMLElement>("[data-tree-item]") as HTMLElement);
   if (i < 0) return;
   const el = items[i];
   const node = el.dataset.node; // a node that folds
@@ -324,8 +326,9 @@ export function Tree(props: Props) {
   // the chat's order; the scopes whose channel it does not lay out after
   // them, as before.
   const chat = chatTree(layout, all, (x) => shows(show, x, openInChat), filter, (x) => matches(x, filter));
-  // The tree shows something of the chat's layout: the messages about no
-  // thread, or none found, would say otherwise.
+  // With the chat's layout, the tree shows its channels, threads or not:
+  // the messages say only that the filter found nothing in it.
+  const hasLayout = (layout ?? []).some((l) => l.groups.length > 0);
   const laidOut = (chat?.groups.length ?? 0) > 0;
   const nodes = [...lists]
     .filter(([scope]) => !chat?.scopes.has(scope))
@@ -421,9 +424,9 @@ export function Tree(props: Props) {
           }}
         >
           <div data-section="threads" role="none">
-            {!laidOut && all.length === 0 && threads !== null && <p className="none">{t("tree.none")}</p>}
-            {!laidOut && all.length > 0 && visible.length === 0 && <p className="none">{t("tree.noActive", { n: hidden })}</p>}
-            {!laidOut && visible.length > 0 && shown.length === 0 && (
+            {!hasLayout && all.length === 0 && threads !== null && <p className="none">{t("tree.none")}</p>}
+            {!hasLayout && all.length > 0 && visible.length === 0 && <p className="none">{t("tree.noActive", { n: hidden })}</p>}
+            {(hasLayout ? filtering && !laidOut && shown.length === 0 : visible.length > 0 && shown.length === 0) && (
               <p className="none">{hidden > 0 ? t("tree.noMatchHidden", { n: hidden }) : t("tree.noMatch")}</p>
             )}
             <ul role="none">

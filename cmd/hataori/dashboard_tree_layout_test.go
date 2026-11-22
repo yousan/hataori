@@ -215,8 +215,27 @@ func TestDashboardTreeMirrorsTheChat(t *testing.T) {
 	if none != 0 {
 		t.Fatal("a message says nothing was found, beside what the filter found")
 	}
+	// A filter that finds nothing says so.
+	b.filter("nothing at all")
+	b.untilTree("filtered for nothing", []treeItem{{Item: "host"}})
+	b.until("the message that nothing was found", `document.querySelectorAll('.tree p.none').length === 1`)
 	b.filter("")
 	b.untilTree("the filter cleared", want)
+
+	// After a click on a chat link, which focuses it, the arrow keys still
+	// move in the tree.
+	b.eval(`document.querySelector('.tree [data-tree-item="chat:`+client+`p1"] a.chat-link').focus(), true`, nil)
+	key("ArrowUp", 38)
+	var focusedItem string
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		b.eval(`document.activeElement?.dataset.treeItem ?? ''`, &focusedItem)
+		if focusedItem == fmt.Sprintf("thread:%d", rig.open) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("up from a focused chat link: the focus is on %q", focusedItem)
+		}
+	}
 
 	// "All": the hataori thread whose chat thread is archived, under its
 	// channel, after the threads open in the chat.
