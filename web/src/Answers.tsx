@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { act, answerPath } from "./act";
-import { type Event, thread, type ThreadInfo } from "./api";
+import { type Event, thread, threadEvents, type ThreadInfo } from "./api";
 import { t } from "./catalog";
 
 // OpenRequest is a thread's open question or approval, as the page answers
@@ -13,12 +13,21 @@ export interface OpenRequest {
   multi: boolean; // several choices may be chosen at once
 }
 
-// detailEvents is how many of a thread's last events are read to find
-// whether its question takes several choices: the request event says so.
+// detailEvents is how many of a thread's last events are read with its
+// open requests, to find whether a question takes several choices: the
+// request event says so. One further back is looked for in the thread's
+// log, maxEvents at a time (the server's MaxEvents), at most maxPages
+// times.
 const detailEvents = 40;
+const maxEvents = 100;
+const maxPages = 50;
 
-// requestKinds are the events of a thread after which its open request is
-// read again.
+// retryDelay is how long the page waits to read the open requests again
+// after a read failed.
+const retryDelay = 2000;
+
+// requestKinds are the events of a thread after which its open requests
+// are read again.
 const requestKinds: ReadonlySet<string> = new Set([
   "request",
   "request_withdrawn",
@@ -29,12 +38,27 @@ const requestKinds: ReadonlySet<string> = new Set([
   "turn_ended",
 ]);
 
-// useOpenRequest is the thread's open request, if any, read again when an
-// event of the thread may have opened or closed one. A question waits in a
-// waiting thread; an approval a supervisor asks for waits in the
+// multiOf reports whether the request event of request among evs, or
+// before them in the thread's log, said that several choices may be
+// chosen.
+async function multiOf(id: number, request: string, evs: Event[]): Promise<boolean> {
+  let page = evs;
+  for (let i = 0; i <= maxPages; i++) {
+    const asked = page.find((e) => e.kind === "request" && e.data?.request === request);
+    if (asked) return asked.data?.multi === true;
+    if (page.length === 0) break;
+    page = await threadEvents(id, page[0].pos, maxEvents);
+  }
+  return false;
+}
+
+// useOpenRequests is the thread's open requests, oldest first, read again
+// when an event of the thread may have opened or closed one, when the
+// event stream opens again, and after a read that failed. A question waits
+// in a waiting thread; the approvals a supervisor asks for wait in the
 // supervisor's own thread, whatever its state.
-export function useOpenRequest(x: ThreadInfo, subscribe: (f: (e: Event) => void) => () => void): OpenRequest | null {
-  const [req, setReq] = useState<OpenRequest | null>(null);
+export function useOpenRequests(x: ThreadInfo, subscribe: (f: (e: Event) => void) => () => void, opens: number): OpenRequest[] {
+  const [reqs, setReqs] = useState<OpenRequest[]>([]);
   const id = x.id;
   const seq = useRef(0);
   useEffect(() => {
@@ -42,15 +66,19 @@ export function useOpenRequest(x: ThreadInfo, subscribe: (f: (e: Event) => void)
     let timer: ReturnType<typeof setTimeout> | undefined;
     const read = () => {
       const n = ++seq.current;
+      const current = () => !gone && n === seq.current;
       thread(id, detailEvents)
-        .then((d) => {
-          if (gone || n !== seq.current) return;
-          const r = d.requests?.[0];
-          if (!r) return setReq(null);
-          const asked = (d.events ?? []).find((e) => e.kind === "request" && e.data?.request === r.id);
-          setReq({ id: r.id, approval: r.kind === 1, text: r.text, choices: r.choices ?? [], multi: asked?.data?.multi === true });
+        .then(async (d) => {
+          const out: OpenRequest[] = [];
+          for (const r of d.requests ?? []) {
+            const multi = r.kind === 1 ? false : await multiOf(id, r.id, d.events ?? []);
+            out.push({ id: r.id, approval: r.kind === 1, text: r.text, choices: r.choices ?? [], multi });
+          }
+          if (current()) setReqs(out);
         })
-        .catch(() => {});
+        .catch(() => {
+          if (current()) timer = setTimeout(read, retryDelay);
+        });
     };
     read();
     const off = subscribe((e) => {
@@ -63,8 +91,8 @@ export function useOpenRequest(x: ThreadInfo, subscribe: (f: (e: Event) => void)
       clearTimeout(timer);
       off();
     };
-  }, [id, subscribe, x.state]);
-  return req;
+  }, [id, subscribe, opens, x.state]);
+  return reqs;
 }
 
 // Answers is an open request's way to answer from the tab: a question's

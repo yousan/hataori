@@ -74,7 +74,7 @@ export function InputBox({ x, question }: { x: ThreadInfo; question?: OpenReques
           }}
         />
         <button type="button" className="box-send" disabled={sending || text.trim() === ""} onClick={() => void send()}>
-          {t("box.send")}
+          {t(question && !question.approval ? "answers.answer" : "box.send")}
         </button>
       </div>
       {refused !== null && (

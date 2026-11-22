@@ -4,7 +4,7 @@ import type { AttachState } from "./attach";
 import { type Key, t } from "./catalog";
 import { Conversation } from "./Conversation";
 import { InputBox } from "./InputBox";
-import { Answers, useOpenRequest } from "./Answers";
+import { Answers, useOpenRequests } from "./Answers";
 import { TerminalView, type Typing } from "./TerminalView";
 
 // probeRetry is how long a pane waits before it asks again whether its
@@ -92,13 +92,15 @@ export function ThreadPane(props: {
   const { x, subscribe, opens, fit, onView, typing, attach, mayAct, narrow } = props;
   const [terminal, setTerminal] = useState<boolean | null>(null);
   const id = x.id;
-  // An open question's or approval's buttons, for a person who may act; a
-  // refused answer's reason stays after them, until another request.
-  const request = useOpenRequest(x, subscribe);
+  // Each open question's and approval's buttons, for a person who may act;
+  // a refused answer's reason stays after them, until another request
+  // opens. The box answers the open question, if any.
+  const requests = useOpenRequests(x, subscribe, opens);
+  const question = requests.find((r) => !r.approval) ?? null;
   const [refused, setRefused] = useState<{ request: string; reason: string } | null>(null);
   useEffect(() => {
-    if (request && refused && request.id !== refused.request) setRefused(null);
-  }, [request, refused]);
+    if (refused && requests.some((r) => r.id !== refused.request)) setRefused(null);
+  }, [requests, refused]);
 
   // Only an answer of the server decides the view; a failed probe, such as
   // while the daemon restarts, is tried again.
@@ -143,15 +145,16 @@ export function ThreadPane(props: {
       ) : (
         <Conversation x={x} subscribe={subscribe} opens={opens} />
       )}
-      {mayAct && request && (
-        <Answers key={request.id} r={request} field={!(narrow || !terminal)} onRefused={(reason) => setRefused({ request: request.id, reason })} />
-      )}
+      {mayAct &&
+        requests.map((r) => (
+          <Answers key={r.id} r={r} field={r === question && !(narrow || !terminal)} onRefused={(reason) => setRefused({ request: r.id, reason })} />
+        ))}
       {mayAct && refused && (
         <p className="box-refused" role="status" data-answer-refused="">
           {t("answers.refused", { reason: refused.reason })}
         </p>
       )}
-      {mayAct && (narrow || !terminal) && <InputBox key={x.id} x={x} question={request} />}
+      {mayAct && (narrow || !terminal) && <InputBox key={x.id} x={x} question={question} />}
     </div>
   );
 }

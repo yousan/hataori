@@ -149,8 +149,9 @@ func TestDashboardAnswersInATerminalThread(t *testing.T) {
 	}
 }
 
-// An approval a supervisor asks for, in its own thread, has Allow and
-// Deny; Allow answers it with via dashboard.
+// The approvals a supervisor asks for, in its own thread, each have Allow
+// and Deny, all of them shown at once; each answers its own, with via
+// dashboard.
 func TestDashboardAnswersAnApproval(t *testing.T) {
 	r := newChatRoot(t, func(cfg map[string]any) {
 		cfg["dashboard"] = map[string]any{"listen": "127.0.0.1:0"}
@@ -170,38 +171,50 @@ func TestDashboardAnswersAnApproval(t *testing.T) {
 	repo := bareRepo(t)
 	asker := r.order(t, 0, "!go repo:"+repo+" reply the asker")
 	r.posted(t, asker, "the asker")
-	target := r.order(t, 1, "!go repo:"+repo+" tool wait 60s\nreply late")
+	r.order(t, 1, "!go repo:"+repo+" tool wait 60s\nreply late")
+	r.order(t, 2, "!go repo:"+repo+" tool wait 60s\nreply later")
 	ctx := context.Background()
 	owner := c.As(control.Caller{Principal: "ada", Scopes: []string{"c1"}, May: control.OpRead})
-	var askerID, targetID control.ThreadID
-	eventually(t, "the target running", 20*time.Second, func() bool {
+	var askerID control.ThreadID
+	var targets []control.ThreadID
+	eventually(t, "the targets running", 20*time.Second, func() bool {
 		ts, _ := owner.Threads(ctx, control.Filter{})
+		askerID, targets = 0, nil
 		for _, x := range ts {
 			if strings.Contains(x.Title, "asker") {
 				askerID = x.ID
 			} else if x.State == control.Running {
-				targetID = x.ID
+				targets = append(targets, x.ID)
 			}
 		}
-		return askerID != 0 && targetID != 0
+		return askerID != 0 && len(targets) == 2
 	})
+	// Two approvals at once, in the supervisor's thread: both shown.
 	sv := c.As(control.Caller{From: "supervisor:c1", Scopes: []string{"c1"}, May: control.OpRead | control.OpAsk, AsksIn: askerID})
-	if _, err := sv.AskInterrupt(ctx, targetID, "k1", "stop it"); err != nil {
-		t.Fatal(err)
+	for i, target := range targets {
+		if _, err := sv.AskInterrupt(ctx, target, fmt.Sprintf("k%d", i), "stop it"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	b := newBrowser(t)
 	b.call("Page.enable", map[string]any{})
 	b.call("Page.navigate", map[string]any{"url": signinLink(t, r.root)})
 	openThread(t, b, askerID)
-	b.until("Allow and Deny", `!!document.querySelector('.pane.active .answers[data-approval=yes] [data-allow=yes]') && !!document.querySelector('.pane.active .answers [data-allow=no]')`)
+	b.until("two approvals, each with Allow and Deny", `document.querySelectorAll('.pane.active .answers[data-approval=yes] [data-allow=yes]').length === 2 && document.querySelectorAll('.pane.active .answers [data-allow=no]').length === 2`)
+	b.click(`.pane.active .answers [data-allow=no]`)
+	b.until("one approval left", `document.querySelectorAll('.pane.active .answers').length === 1`)
 	b.click(`.pane.active .answers [data-allow=yes]`)
-	b.until("the approval gone", `!document.querySelector('.pane.active .answers')`)
-	evs, err := owner.ThreadEvents(ctx, askerID, 0, control.MaxEvents)
-	if err != nil {
-		t.Fatal(err)
+	b.until("the approvals gone", `!document.querySelector('.pane.active .answers')`)
+	var a []map[string]any
+	eventually(t, "both decisions", 10*time.Second, func() bool {
+		evs, err := owner.ThreadEvents(ctx, askerID, 0, control.MaxEvents)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a = dataOf(evs, "approval_answered")
+		return len(a) == 2
+	})
+	if a[0]["allow"] != false || a[1]["allow"] != true || a[0]["via"] != "dashboard" || a[1]["via"] != "dashboard" {
+		t.Fatalf("approval_answered %v, want one refused and one allowed, via dashboard", a)
 	}
-	if a := dataOf(evs, "approval_answered"); len(a) != 1 || a[0]["allow"] != true || a[0]["via"] != "dashboard" {
-		t.Fatalf("approval_answered %v, want one allowed via dashboard", a)
-	}
-	_ = target
 }
