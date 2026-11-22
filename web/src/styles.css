@@ -1530,3 +1530,32 @@ a.chat-link:hover {
   border-radius: 4px;
   padding: 4px 6px;
 }
+
+/* A running thread's Stop button and its confirmation (StopButton.tsx). */
+.stop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.stop button {
+  font: inherit;
+}
+
+.stop-confirm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.stop-button,
+.stop [data-stop-yes] {
+  color: var(--bg);
+  background: var(--st-failed);
+  border: 1px solid var(--st-failed);
+  border-radius: 4px;
+}
