@@ -26,10 +26,12 @@ interface Props {
   theme: Theme;
   onTheme: (t: Theme) => void;
   // The choice between the active threads and all of them, for the tree and
-  // the All threads table, and how many threads it hides.
+  // the All threads table, how many threads it hides, and how many idle
+  // shell panes, counted apart.
   show: Show;
   onShow: (s: Show) => void;
   hidden: number;
+  hiddenHosts: number;
 }
 
 // badge is what a thread's tab flags: an open question or a failure.
@@ -105,7 +107,7 @@ function Tab(props: {
 }
 
 export function TabBar(props: Props) {
-  const { open, active, thread, host, op, now, onView, onClose, split, onSplit, layout, onLayout, theme, onTheme, show, onShow, hidden } = props;
+  const { open, active, thread, host, op, now, onView, onClose, split, onSplit, layout, onLayout, theme, onTheme, show, onShow, hidden, hiddenHosts } = props;
   const next: Theme = theme === "dark" ? "light" : "dark";
   const bar = useRef<HTMLDivElement>(null);
   const focusing = useRef(false); // the active tab is to take the focus once it shows
@@ -177,7 +179,7 @@ export function TabBar(props: Props) {
         })}
       </div>
       <div className="tools">
-        <ShowChoice show={show} onShow={onShow} hidden={hidden} />
+        <ShowChoice show={show} onShow={onShow} hidden={hidden} terminals={hiddenHosts} />
         <button
           type="button"
           data-tool="tree"

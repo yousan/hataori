@@ -106,6 +106,11 @@ function newestFirst(a: ThreadInfo, b: ThreadInfo): number {
   return Date.parse(b.updated) - Date.parse(a.updated) || b.id - a.id;
 }
 
+// maxDots is how many state dots a scope's header shows, the newest
+// threads' first; the others are counted after them, "+N". The dots give
+// way before the scope's name does (styles.css).
+const maxDots = 12;
+
 // Node is a node of the tree that folds: a tree item that holds its head
 // and, open, the items under it.
 function Node(props: {
@@ -146,11 +151,16 @@ function Node(props: {
         <span className="node-count" data-count={count}>
           {t("tree.count", { n: count })}
         </span>
-        {dots && (
-          <span className="dots">
-            {dots.map((x) => (
+        {dots && dots.length > 0 && (
+          <span className="dots" data-dots={dots.length}>
+            {dots.slice(0, maxDots).map((x) => (
               <span key={x.id} className={`dot state-${x.state}`} title={stateName(x.state)} />
             ))}
+          </span>
+        )}
+        {dots && dots.length > maxDots && (
+          <span className="dots-more" data-more={dots.length - maxDots}>
+            {t("tree.moreDots", { n: dots.length - maxDots })}
           </span>
         )}
       </div>

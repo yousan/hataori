@@ -55,7 +55,7 @@ func (l *listedTerms) change(device string, f func(h *control.HostTerminal)) {
 func ago(d time.Duration) *time.Time { at := time.Now().Add(-d); return &at }
 
 // Idle shell panes on the host are hidden with asleep threads, behind the
-// same switch, and counted with them; a pane that becomes active again
+// same switch, and counted apart from them; a pane that becomes active again
 // shows at the next refresh, without a reload, and a pane with an open tab
 // keeps it; a terminal outside tmux is never hidden. Driven by the real
 // server with the fake surface, the fake agent and a fake host terminal
@@ -133,7 +133,8 @@ func TestDashboardIdleShellPanes(t *testing.T) {
 	b.unfoldHosts()
 	b.eval(`window.__samePage = true`, nil)
 	// shown is what the tree and the switch show: the host rows' devices,
-	// sorted, and the number hidden ("" when none is shown).
+	// sorted, and the numbers hidden, threads then idle shells apart, as
+	// "threads+shells" ("" when none is shown, "+" for no shells).
 	type shown struct {
 		Rows   []string
 		Hidden string
@@ -145,7 +146,9 @@ func TestDashboardIdleShellPanes(t *testing.T) {
 		for deadline := time.Now().Add(25 * time.Second); ; time.Sleep(100 * time.Millisecond) {
 			b.eval(fmt.Sprintf(`(() => {
 				const h = document.querySelector('%[1]s .show .hidden-count');
-				return {rows: [...document.querySelectorAll('%[2]s [data-host]')].map(r => r.dataset.host).sort(), hidden: h ? h.dataset.hidden : ''};
+				const sh = document.querySelector('%[1]s .show .hidden-terminals');
+				return {rows: [...document.querySelectorAll('%[2]s [data-host]')].map(r => r.dataset.host).sort(),
+					hidden: h ? h.dataset.hidden + '+' + (sh ? sh.dataset.hiddenTerminals : '') : ''};
 			})()`, map[bool]string{true: ".narrow-list", false: ".tools"}[scope == ".narrow-list"], scope), &s)
 			if slices.Equal(s.Rows, want) && s.Hidden == hidden {
 				return
@@ -157,17 +160,17 @@ func TestDashboardIdleShellPanes(t *testing.T) {
 	}
 	tree := ".tree [data-node=host]"
 
-	// 1. By default: the idle shell panes are hidden, and counted with the
-	// asleep thread; the terminal outside tmux and the pane of unknown
-	// activity are shown.
+	// 1. By default: the idle shell panes are hidden, and counted apart from
+	// the asleep thread (#603); the terminal outside tmux and the pane of
+	// unknown activity are shown.
 	b.until("the browser's clock ahead", `Date.now() - performance.timeOrigin - performance.now() > 47 * 3600 * 1000`)
-	untilShown("the idle shell panes hidden", tree, []string{bash, editor, outside, unknown}, "10")
+	untilShown("the idle shell panes hidden", tree, []string{bash, editor, outside, unknown}, "1+9")
 
 	// 2. The switch shows them, and hides them again.
 	b.click(`.tools .show [data-choice=all]`)
 	untilShown("all", tree, all(loginZsh, bash, editor, fish, outside, unknown), "")
 	b.click(`.tools .show [data-choice=active]`)
-	untilShown("active again", tree, []string{bash, editor, outside, unknown}, "10")
+	untilShown("active again", tree, []string{bash, editor, outside, unknown}, "1+9")
 
 	// 3. Without a reload: a pane with an open tab becomes idle and leaves
 	// the tree, keeping its tab and its screen; an idle pane becomes active
@@ -177,11 +180,11 @@ func TestDashboardIdleShellPanes(t *testing.T) {
 	tab := fmt.Sprintf(`.tabbar .tab[data-tab="host:%s#%%2"]`, bash)
 	b.until("the pane's tab with its screen", fmt.Sprintf(`!!document.querySelector('%s') && [...document.querySelectorAll('.pane.active [data-host-screen="%%2"] .xterm-rows > div')].some(d => d.textContent.includes('screen of %%2'))`, tab))
 	terms.change(bash, func(h *control.HostTerminal) { h.Activity = ago(48 * time.Hour) })
-	untilShown("the pane that became idle", tree, []string{editor, outside, unknown}, "11")
+	untilShown("the pane that became idle", tree, []string{editor, outside, unknown}, "1+10")
 	b.until("its tab and its screen kept", fmt.Sprintf(`!!document.querySelector('%s') && [...document.querySelectorAll('.pane.active [data-host-screen="%%2"] .xterm-rows > div')].some(d => d.textContent.includes('screen of %%2'))`, tab))
 	terms.change(loginZsh, func(h *control.HostTerminal) { h.Activity = ago(time.Minute) })
 	terms.change(fish, func(h *control.HostTerminal) { h.Process = "make" })
-	untilShown("the panes active again", tree, []string{loginZsh, editor, fish, outside, unknown}, "9")
+	untilShown("the panes active again", tree, []string{loginZsh, editor, fish, outside, unknown}, "1+8")
 	var same bool
 	b.eval(`window.__samePage === true`, &same)
 	if !same {
@@ -191,7 +194,7 @@ func TestDashboardIdleShellPanes(t *testing.T) {
 	// 4. The narrow list hides and counts the same.
 	b.phone()
 	b.until("the narrow list", `document.querySelector('.shell')?.dataset.layout === 'narrow'`)
-	untilShown("the narrow list", ".narrow-list", []string{loginZsh, editor, fish, outside, unknown}, "9")
+	untilShown("the narrow list", ".narrow-list", []string{loginZsh, editor, fish, outside, unknown}, "1+8")
 	b.click(`.narrow-list .show [data-choice=all]`)
 	untilShown("the narrow list, all", ".narrow-list", all(loginZsh, bash, editor, fish, outside, unknown), "")
 }
