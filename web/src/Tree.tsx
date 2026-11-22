@@ -1,10 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { type HostTerminal, type ScopeInfo, type State, states, type ThreadInfo } from "./api";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type ChatLayout, type HostTerminal, type ScopeInfo, type State, states, type ThreadInfo } from "./api";
+import { type ChatChannel, type ChatItem, chatTree } from "./chatTree";
 import { hostID, hostMatches } from "./hostTerminals";
 import { t } from "./catalog";
 import { age, contextUse, displayTitle, fullTitle, mark, matches, scopeLabel, stateName } from "./format";
 import type { Attention } from "./live";
-import { type Show, shows } from "./show";
+import { type OpenInChat, type Show, shows } from "./show";
 import { hostNode, scopeNode, useFolds } from "./folds";
 
 export type Density = "dense" | "normal";
@@ -12,6 +13,11 @@ export type Density = "dense" | "normal";
 interface Props {
   threads: ThreadInfo[] | null;
   scopes: ScopeInfo[] | null; // the scopes the caller may see, with their names; null until read
+  // layout is the chats' channels and open threads (#599): with one, the
+  // tree is group, channel, thread, as the chat shows them. open is what
+  // it says is open in the chat, for the choice of threads.
+  layout: ChatLayout[] | null;
+  open: OpenInChat | null;
   attention: ReadonlyMap<number, Attention>;
   now: number;
   filter: string;
@@ -55,8 +61,9 @@ export function Row(props: {
   selected: boolean;
   onSelect: (n: number) => void;
   parent?: string; // in the tree: the node it is under
+  level?: number; // in the tree: its depth, 2 when not given
 }) {
-  const { x, attention, why, now, selected, onSelect, parent } = props;
+  const { x, attention, why, now, selected, onSelect, parent, level } = props;
   const ctx = contextUse(x);
   return (
     <li
@@ -64,7 +71,7 @@ export function Row(props: {
       data-thread={x.id}
       data-state={x.state}
       role={parent ? "treeitem" : "option"}
-      aria-level={parent ? 2 : undefined}
+      aria-level={parent ? (level ?? 2) : undefined}
       data-tree-item={parent ? `thread:${x.id}` : undefined}
       data-parent={parent}
       tabIndex={parent ? -1 : 0}
@@ -122,13 +129,14 @@ function Node(props: {
   dots?: ThreadInfo[];
   children: React.ReactNode;
   attrs?: Record<string, string>;
+  level?: number; // its depth, 1 when not given
 }) {
-  const { node, label, count, open, onFold, dots, children, attrs } = props;
+  const { node, label, count, open, onFold, dots, children, attrs, level } = props;
   return (
     <li
       className="node"
       role="treeitem"
-      aria-level={1}
+      aria-level={level ?? 1}
       aria-expanded={open}
       aria-label={label}
       tabIndex={-1}
@@ -173,13 +181,88 @@ function Node(props: {
   );
 }
 
+// chatLink is a link into the chat, in a window of its own, so that the
+// dashboard stays; without a URL (a reader that may not read text) the
+// name alone.
+function chatLink(name: string, url: string | undefined) {
+  return url ? (
+    <a className="chat-link" href={url} target="_blank" rel="noopener noreferrer" tabIndex={-1} title={t("tree.inChat", { name })}>
+      {name}
+    </a>
+  ) : (
+    <span className="chat-link">{name}</span>
+  );
+}
+
+// ChatRow is an open thread of the chat that hataori does not hold: dimmed,
+// and a link into the chat rather than a tab. Enter follows the link.
+function ChatRow(props: { item: Extract<ChatItem, { kind: "chat" }>; parent: string; level: number }) {
+  const { item, parent, level } = props;
+  return (
+    <li
+      className="row chat-only"
+      role="treeitem"
+      aria-level={level}
+      tabIndex={-1}
+      data-tree-item={item.key}
+      data-parent={parent}
+      onKeyDown={(e) => {
+        if (e.target === e.currentTarget && e.key === "Enter") e.currentTarget.querySelector<HTMLAnchorElement>("a.chat-link")?.click();
+      }}
+    >
+      {chatLink(item.name, item.url)}
+    </li>
+  );
+}
+
+// ChatChannelItem is a channel hataori does not serve: dimmed, a link into
+// the chat, with its open threads under it; with threads, it folds as a
+// node does (its mark, or left and right).
+function ChatChannelItem(props: { c: ChatChannel; parent?: string; level: number; open: boolean; onFold: (node: string, folded: boolean) => void }) {
+  const { c, parent, level, open, onFold } = props;
+  const folds = c.items.length > 0;
+  return (
+    <li
+      className="chan chat-only"
+      role="treeitem"
+      aria-level={level}
+      aria-expanded={folds ? open : undefined}
+      aria-label={c.name}
+      tabIndex={-1}
+      data-tree-item={c.key}
+      data-node={folds ? c.key : undefined}
+      data-open={folds ? (open ? "yes" : "no") : undefined}
+      data-parent={parent}
+      onKeyDown={(e) => {
+        if (e.target === e.currentTarget && e.key === "Enter") e.currentTarget.querySelector<HTMLAnchorElement>(":scope > .chan-head a.chat-link")?.click();
+      }}
+    >
+      <div className="chan-head">
+        {folds && (
+          <span className="fold-mark" title={t(open ? "tree.fold" : "tree.unfold", { name: c.name })} onClick={() => onFold(c.key, open)}>
+            {t(open ? "tree.openMark" : "tree.foldedMark")}
+          </span>
+        )}
+        {chatLink(c.name, c.url)}
+      </div>
+      {folds && open && (
+        <ul role="group">
+          {c.items.map((i) => i.kind === "chat" && <ChatRow key={i.key} item={i} parent={c.key} level={level + 1} />)}
+        </ul>
+      )}
+    </li>
+  );
+}
+
 // treeKeys moves along the tree's items as a tree view does: up and down
 // to the item before or after, left folds a node or goes to the item it is
 // under, right unfolds a node or goes to its first item. Enter opens, as
 // each item does by itself.
 function treeKeys(e: React.KeyboardEvent<HTMLElement>, fold: (node: string, folded: boolean) => void) {
   const items = [...e.currentTarget.querySelectorAll<HTMLElement>("[data-tree-item]")];
-  const i = items.indexOf(document.activeElement as HTMLElement);
+  // The item focused, or the one holding what is focused, such as a chat
+  // link a click focused.
+  const i = items.indexOf((document.activeElement as HTMLElement | null)?.closest<HTMLElement>("[data-tree-item]") as HTMLElement);
   if (i < 0) return;
   const el = items[i];
   const node = el.dataset.node; // a node that folds
@@ -206,8 +289,9 @@ function treeKeys(e: React.KeyboardEvent<HTMLElement>, fold: (node: string, fold
 }
 
 export function Tree(props: Props) {
-  const { threads, scopes, attention, now, filter, onFilter, density, onDensity, selected, onSelect, show, hidden, hosts, selectedHost, onOpenHost } =
-    props;
+  const {
+    threads, scopes, layout, open: openInChat, attention, now, filter, onFilter, density, onDensity, selected, onSelect, show, hidden, hosts, selectedHost, onOpenHost,
+  } = props;
   const [folded, setFolded] = useFolds();
   // The tree is one Tab stop: the item last focused in it, else its first;
   // the arrow keys move in it.
@@ -227,7 +311,7 @@ export function Tree(props: Props) {
     if (!filtering) setFilterFolds({});
   }, [filtering]);
   const all = threads ?? [];
-  const visible = all.filter((x) => shows(show, x));
+  const visible = all.filter((x) => shows(show, x, openInChat));
   const shown = visible.filter((x) => matches(x, filter));
   const waiting = shown.filter((x) => attention.has(x.id));
 
@@ -238,7 +322,16 @@ export function Tree(props: Props) {
   for (const x of all) if (!lists.has(x.scope)) lists.set(x.scope, []);
   for (const x of shown) lists.get(x.scope)!.push(x);
   const label = (key: string) => scopeLabel(key, scopes);
+  // With the chats' layout, its groups, channels and threads first, in
+  // the chat's order; the scopes whose channel it does not lay out after
+  // them, as before.
+  const chat = chatTree(layout, all, (x) => shows(show, x, openInChat), filter, (x) => matches(x, filter));
+  // With the chat's layout, the tree shows its channels, threads or not:
+  // the messages say only that the filter found nothing in it.
+  const hasLayout = (layout ?? []).some((l) => l.groups.length > 0);
+  const laidOut = (chat?.groups.length ?? 0) > 0;
   const nodes = [...lists]
+    .filter(([scope]) => !chat?.scopes.has(scope))
     .filter(([, list]) => !filtering || list.length > 0)
     .map(([scope, list]) => ({ scope, label: label(scope), list: [...list].sort(newestFirst) }))
     .sort((a, b) => a.label.localeCompare(b.label) || a.scope.localeCompare(b.scope));
@@ -251,7 +344,7 @@ export function Tree(props: Props) {
     else setFolded(node, f);
   };
 
-  const row = (why: boolean, parent?: string) => (x: ThreadInfo) => (
+  const row = (why: boolean, parent?: string, level?: number) => (x: ThreadInfo) => (
     <Row
       key={x.id}
       x={x}
@@ -261,8 +354,32 @@ export function Tree(props: Props) {
       selected={selected === x.id}
       onSelect={onSelect}
       parent={parent}
+      level={level}
     />
   );
+  // channel is a channel of the chat's layout at depth level: a served one
+  // is its scope's node, with today's rows and the chat's other open
+  // threads in the chat's order; another is a dimmed link.
+  const channel = (c: ChatChannel, parent: string | undefined, level: number) =>
+    c.scope ? (
+      <Node
+        key={c.key}
+        node={c.key}
+        label={scopes?.find((s) => s.key === c.scope)?.name || c.name || c.scope}
+        count={c.threads.length}
+        open={open(c.key, c.items.length > 0)}
+        onFold={fold}
+        dots={c.threads}
+        level={level}
+        attrs={parent ? { "data-scope": c.scope, "data-parent": parent } : { "data-scope": c.scope }}
+      >
+        {c.items.map((i) =>
+          i.kind === "thread" ? row(false, c.key, level + 1)(i.x) : <ChatRow key={i.key} item={i} parent={c.key} level={level + 1} />,
+        )}
+      </Node>
+    ) : (
+      <ChatChannelItem key={c.key} c={c} parent={parent} level={level} open={open(c.key, c.items.length > 0)} onFold={fold} />
+    );
 
   return (
     <nav className={`tree density-${density}`} aria-label={t("tree.label")}>
@@ -307,12 +424,30 @@ export function Tree(props: Props) {
           }}
         >
           <div data-section="threads" role="none">
-            {all.length === 0 && threads !== null && <p className="none">{t("tree.none")}</p>}
-            {all.length > 0 && visible.length === 0 && <p className="none">{t("tree.noActive", { n: hidden })}</p>}
-            {visible.length > 0 && shown.length === 0 && (
+            {!hasLayout && all.length === 0 && threads !== null && <p className="none">{t("tree.none")}</p>}
+            {!hasLayout && all.length > 0 && visible.length === 0 && <p className="none">{t("tree.noActive", { n: hidden })}</p>}
+            {(hasLayout ? filtering && !laidOut && shown.length === 0 : visible.length > 0 && shown.length === 0) && (
               <p className="none">{hidden > 0 ? t("tree.noMatchHidden", { n: hidden }) : t("tree.noMatch")}</p>
             )}
             <ul role="none">
+              {chat?.groups.map((g, i) => {
+                if (!g.key) return <Fragment key={`group-${i}`}>{g.channels.map((c) => channel(c, undefined, 1))}</Fragment>;
+                const held = g.channels.flatMap((c) => c.threads);
+                return (
+                  <Node
+                    key={g.key}
+                    node={g.key}
+                    label={g.name || t("tree.group")}
+                    count={held.length}
+                    open={open(g.key, true)}
+                    onFold={fold}
+                    dots={held}
+                    attrs={{ "data-group": g.key }}
+                  >
+                    {g.channels.map((c) => channel(c, g.key, 2))}
+                  </Node>
+                );
+              })}
               {nodes.map(({ scope, label, list }) => (
                 <Node
                   key={scope}

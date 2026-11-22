@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { t } from "./catalog";
 import { useLayout } from "./layout";
 import { linkRefused } from "./session";
@@ -19,6 +19,7 @@ import type { HostKey } from "./keys";
 import { Operation, type OpState, useMayOperate } from "./operate";
 import { displayTitle } from "./format";
 import { hiddenCount, showsHost, useShow } from "./show";
+import { openInChat } from "./chatTree";
 import { type Density, Tree } from "./Tree";
 
 const densityKey = "hataori.density";
@@ -47,7 +48,10 @@ export function App() {
   const [split, setSplit] = useState<Split>(1);
   const [layout, setLayout] = useLayout();
   const [showing, setShowing] = useShow();
-  const hiddenThreads = hiddenCount(showing, d.threads);
+  // What the chats' layout says is open in the chat: with it, the active
+  // threads of a scope it covers are those the chat shows (show.tsx).
+  const open = useMemo(() => openInChat(d.layout, d.threads ?? []), [d.layout, d.threads]);
+  const hiddenThreads = hiddenCount(showing, d.threads, open);
 
   const pickDensity = (x: Density) => {
     setDensity(x);
@@ -232,6 +236,7 @@ export function App() {
               hosts={shownHosts}
               onOpenHost={openNarrowHost}
               show={showing}
+              open={open}
               onShow={setShowing}
               hidden={hiddenThreads}
               hiddenHosts={hiddenHosts}
@@ -259,6 +264,8 @@ export function App() {
           <Tree
             threads={d.threads}
             scopes={d.scopes}
+            layout={d.layout}
+            open={open}
             attention={d.attention}
             now={now}
             filter={filter}
@@ -316,6 +323,7 @@ export function App() {
                         selected={current}
                         onOpen={(n) => setTabs((s) => view(s, threadTab(n)))}
                         show={showing}
+                        open={open}
                         onShow={setShowing}
                         scopes={d.scopes}
                       />

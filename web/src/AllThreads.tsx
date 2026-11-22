@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type { ScopeInfo, ThreadInfo } from "./api";
 import { type Key, lang, t } from "./catalog";
 import { age, displayTitle, fullTitle, scopeLabel, stateName } from "./format";
-import { type Show, shows } from "./show";
+import { type OpenInChat, type Show, shows } from "./show";
 import type { Workspace } from "./workspaces";
 
 const numbers = new Intl.NumberFormat(lang);
@@ -17,6 +17,7 @@ interface Props {
   selected: number | null;
   onOpen: (n: number) => void;
   show: Show; // the active threads or all of them
+  open: OpenInChat | null; // what the chats' layout says is open in the chat
   onShow: (s: Show) => void;
   scopes: ScopeInfo[] | null; // their names, for the groups' headers; null until read
 }
@@ -160,9 +161,9 @@ function Row(props: { x: ThreadInfo; w: Workspace | undefined; now: number; sele
 // AllThreads is the "All threads" tab: one row per thread shown, grouped
 // by scope. Every cell is a value from the control API, or a dash where it
 // leaves the value out; nothing is guessed. A row opens its thread's tab.
-export function AllThreads({ threads, workspaces, now, selected, onOpen, show, onShow, scopes }: Props) {
+export function AllThreads({ threads, workspaces, now, selected, onOpen, show, open, onShow, scopes }: Props) {
   const every = threads ?? [];
-  const list = every.filter((x) => shows(show, x));
+  const list = every.filter((x) => shows(show, x, open));
   // Every thread hidden by the choice: say so, with the way to show them,
   // instead of an empty table.
   if (threads !== null && list.length === 0) {

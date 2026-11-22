@@ -1379,3 +1379,60 @@ body {
   outline: 2px solid var(--st-running);
   outline-offset: -2px;
 }
+
+/* The chat's layout (#599): a group's channels and a channel's threads
+   are indented by their depth. What hataori does not hold (a channel it
+   does not serve, another open thread of the chat) is dimmed, and a link
+   into the chat. */
+.node .node .node-head {
+  padding-left: 18px;
+}
+
+.node .node .row,
+.node > .node-body > .chan {
+  padding-left: 22px;
+}
+
+.chat-only {
+  opacity: 0.55;
+}
+
+.chan {
+  padding: 3px 10px 1px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chan-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chan-head .fold-mark {
+  cursor: pointer;
+}
+
+.chan > ul > .row {
+  padding-left: 22px;
+  font-weight: 400;
+}
+
+.chat-link {
+  display: block;
+  overflow: hidden;
+  color: inherit;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+a.chat-link:hover {
+  text-decoration: underline;
+}
+
+.chan:focus-visible,
+.tree .row.chat-only:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}

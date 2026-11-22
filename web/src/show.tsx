@@ -17,14 +17,30 @@ const storageKey = "hataori.show";
 // waits on a person. Asleep, closed and removed threads are hidden.
 const activeStates: ReadonlySet<State> = new Set<State>(["creating", "idle", "running", "waiting", "failed"]);
 
-// shows reports whether a thread's row is shown under the choice show.
-export function shows(show: Show, x: ThreadInfo): boolean {
-  return show === "all" || activeStates.has(x.state);
+// OpenInChat is what the chats' layout says (chatTree.ts, #599): the
+// scopes whose channel it lays out, and the threads open in the chat.
+export interface OpenInChat {
+  scopes: ReadonlySet<string>;
+  threads: ReadonlySet<number>;
+}
+
+// urgentStates are the states of a thread that is shown, as active, also
+// when its chat thread is not open: it works or waits on a person.
+const urgentStates: ReadonlySet<State> = new Set<State>(["creating", "running", "waiting", "failed"]);
+
+// shows reports whether a thread's row is shown under the choice show. In
+// a scope the chat's layout covers (open), the active threads are those
+// open in the chat, as the chat shows them, and those that work or wait
+// on a person; elsewhere, those in an active state.
+export function shows(show: Show, x: ThreadInfo, open?: OpenInChat | null): boolean {
+  if (show === "all") return true;
+  if (open?.scopes.has(x.scope)) return open.threads.has(x.id) || urgentStates.has(x.state);
+  return activeStates.has(x.state);
 }
 
 // hiddenCount is how many of ts the choice show hides.
-export function hiddenCount(show: Show, ts: readonly ThreadInfo[] | null): number {
-  return (ts ?? []).filter((x) => !shows(show, x)).length;
+export function hiddenCount(show: Show, ts: readonly ThreadInfo[] | null, open?: OpenInChat | null): number {
+  return (ts ?? []).filter((x) => !shows(show, x, open)).length;
 }
 
 // shells are the commands of a pane that is only a shell, as the host

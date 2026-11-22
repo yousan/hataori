@@ -107,6 +107,40 @@ export function scopes(): Promise<ScopeInfo[]> {
   return get<ScopeInfo[]>("/api/scopes");
 }
 
+// ChatLayout is how one chat client's service lays out the conversations
+// it can see, as a person sees them in its own client: groups (Discord's
+// categories), the channels in order, and each channel's open threads in
+// order (protocol 3.21). A client that reports none has no entry.
+export interface ChatLayout {
+  client: string;
+  groups: LayoutGroup[];
+}
+
+export interface LayoutGroup {
+  id?: string; // absent for the channels in no group
+  name?: string;
+  channels: LayoutChannel[];
+}
+
+export interface LayoutChannel {
+  id: string;
+  name?: string; // text: absent for a caller that may not read text
+  url?: string; // opens the channel in the chat; text, as name
+  scope?: string; // the scope whose own channel this is; absent for a channel hataori does not serve
+  threads: LayoutThread[];
+}
+
+export interface LayoutThread {
+  id: string;
+  name?: string;
+  url?: string;
+  thread?: ThreadID; // the thread hataori holds in this conversation; absent for one it does not
+}
+
+export function layout(): Promise<ChatLayout[]> {
+  return get<ChatLayout[]>("/api/layout");
+}
+
 export function threads(): Promise<ThreadInfo[]> {
   return get<ThreadInfo[]>("/api/threads");
 }

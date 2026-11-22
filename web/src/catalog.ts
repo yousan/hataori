@@ -57,6 +57,8 @@ const en = {
   "tree.openMark": "▾",
   "tree.foldedMark": "▸",
   "tree.tmuxSession": "tmux {session}",
+  "tree.inChat": "Open {name} in the chat",
+  "tree.group": "(a group)",
 
   "show.label": "Threads shown",
   "show.active": "Active",
@@ -326,6 +328,8 @@ const ja: Catalog = {
   "tree.openMark": "▾",
   "tree.foldedMark": "▸",
   "tree.tmuxSession": "tmux {session}",
+  "tree.inChat": "{name} をチャットで開く",
+  "tree.group": "（グループ）",
   "show.label": "表示するスレッド",
   "show.active": "アクティブ",
   "show.all": "すべて",
