@@ -108,12 +108,12 @@ export function Answers({ r, field, onRefused }: { r: OpenRequest; field: boolea
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const gone = useRef(false);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    gone.current = false; // also when React mounts it again, as Strict Mode does
+    return () => {
       gone.current = true;
-    },
-    [],
-  );
+    };
+  }, []);
   const answer = async (body: Record<string, unknown>) => {
     if (busy) return;
     setBusy(true);

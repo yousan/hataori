@@ -20,12 +20,12 @@ export function InputBox({ x, question }: { x: ThreadInfo; question?: OpenReques
   const [sending, setSending] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
   const gone = useRef(false);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    gone.current = false; // also when React mounts it again, as Strict Mode does
+    return () => {
       gone.current = true;
-    },
-    [],
-  );
+    };
+  }, []);
 
   const send = async () => {
     if (sending || text.trim() === "") return;
