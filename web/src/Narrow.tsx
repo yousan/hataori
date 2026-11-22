@@ -6,7 +6,7 @@ import { t } from "./catalog";
 import { displayTitle, fullTitle } from "./format";
 import { Details, Waiting } from "./Details";
 import type { Attention } from "./live";
-import { type Show, ShowChoice, shows } from "./show";
+import { type OpenInChat, type Show, ShowChoice, shows } from "./show";
 import { ThreadPane, type View } from "./ThreadPane";
 import { HostSections, Row } from "./Tree";
 import type { Workspace } from "./workspaces";
@@ -35,6 +35,7 @@ interface ListProps {
   hosts: HostTerminal[] | null; // null when the server does not list them
   onOpenHost: (device: string) => void;
   show: Show; // the active threads or all of them
+  open: OpenInChat | null; // what the chats' layout says is open in the chat
   onShow: (s: Show) => void;
   hidden: number; // how many threads the choice hides
   hiddenHosts: number; // how many host terminals it hides, counted apart
@@ -45,9 +46,9 @@ interface ListProps {
 // on is read), then those running, then the rest folded. The rows are the
 // tree's. The choice between the active threads and all of them is the
 // wide page's, kept in the same place.
-export function NarrowList({ threads, attention, now, onOpen, hosts, onOpenHost, show, onShow, hidden, hiddenHosts }: ListProps) {
+export function NarrowList({ threads, attention, now, onOpen, hosts, onOpenHost, show, open, onShow, hidden, hiddenHosts }: ListProps) {
   const every = threads ?? [];
-  const all = every.filter((x) => shows(show, x));
+  const all = every.filter((x) => shows(show, x, open));
   const needs = (x: ThreadInfo) => x.state === "waiting" || x.state === "failed";
   const waiting = all.filter(needs);
   const running = all.filter((x) => x.state === "running");

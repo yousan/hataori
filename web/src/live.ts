@@ -6,8 +6,10 @@
 import { useEffect, useRef, useState } from "react";
 import {
   type AgentLimits,
+  type ChatLayout,
   type ClientState,
   clients,
+  layout,
   type ScopeInfo,
   scopes,
   type Event,
@@ -44,6 +46,7 @@ export interface Dashboard {
   limits: AgentLimits[]; // each agent's remaining usage; none until read
   clients: ClientState[]; // whether each chat client is connected; none until read
   scopes: ScopeInfo[] | null; // the scopes the caller may see, with their names; null until read
+  layout: ChatLayout[] | null; // the chats' channels and open threads; null until read
   // subscribe calls f with each event the stream delivers from now on,
   // until the returned function is called. One stream serves the page.
   subscribe: (f: (e: Event) => void) => () => void;
@@ -134,6 +137,7 @@ export function useDashboard(): Dashboard {
     limits: [],
     clients: [],
     scopes: null,
+    layout: null,
     opens: 0,
   });
   const reads = useRef(0);
@@ -166,7 +170,9 @@ export function useDashboard(): Dashboard {
       try {
         readLimits();
         readClients();
-        const [ts, ss] = await Promise.all([threads(), scopes()]);
+        // The layout is read with the list: a layout event, like any other,
+        // brings a read.
+        const [ts, ss, ls] = await Promise.all([threads(), scopes(), layout()]);
         // A thread that goes away between the list and its detail keeps
         // the list good: it shows without what it waits on until the next
         // read.
@@ -184,7 +190,7 @@ export function useDashboard(): Dashboard {
           const a = d && attentionOf(d);
           if (d && a) attention.set(d.id, a);
         }
-        setState((s) => ({ ...s, threads: ts, scopes: ss, attention }));
+        setState((s) => ({ ...s, threads: ts, scopes: ss, layout: ls, attention }));
       } catch (err) {
         if (err instanceof SignedOut) signedOut();
       }
