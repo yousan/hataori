@@ -77,10 +77,11 @@ export function App() {
   const current = threadOf(active(tabs));
   const [hosts, hostSkew] = useHostTerminals();
   // The rows of host terminals the tree and the narrow list show: idle
-  // shell panes are hidden with asleep threads, and counted with them. A
+  // shell panes are hidden with asleep threads, and counted apart. A
   // pane's tab and details still find it in hosts.
   const shownHosts = hosts === null ? null : hosts.filter((h) => showsHost(showing, h, now + hostSkew));
-  const hidden = hiddenThreads + (hosts?.length ?? 0) - (shownHosts?.length ?? 0);
+  // Counted apart: the threads the choice hides, and the idle shell panes.
+  const hiddenHosts = (hosts?.length ?? 0) - (shownHosts?.length ?? 0);
   const host = (id: string) => hosts?.find((h) => hostID(h) === id);
   const currentHost = hostOf(active(tabs));
   const openHost = (device: string) => setTabs((s) => view(s, hostTab(device)));
@@ -232,8 +233,8 @@ export function App() {
               onOpenHost={openNarrowHost}
               show={showing}
               onShow={setShowing}
-              hidden={hidden}
-              hiddenThreads={hiddenThreads}
+              hidden={hiddenThreads}
+              hiddenHosts={hiddenHosts}
             />
           )}
         </div>
@@ -291,7 +292,8 @@ export function App() {
             onTheme={setTheme}
             show={showing}
             onShow={setShowing}
-            hidden={hidden}
+            hidden={hiddenThreads}
+            hiddenHosts={hiddenHosts}
           />
           <main className="panes" data-split={split}>
             {panes(tabs, split).map((k, i) => (
@@ -314,6 +316,7 @@ export function App() {
                         selected={current}
                         onOpen={(n) => setTabs((s) => view(s, threadTab(n)))}
                         show={showing}
+                        onShow={setShowing}
                         scopes={d.scopes}
                       />
                     ) : hostOf(k) !== null ? (

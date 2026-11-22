@@ -73,8 +73,11 @@ export function useShow(): [Show, (s: Show) => void] {
 }
 
 // ShowChoice is the one control that switches between the active threads
-// and all of them, with the number of threads it hides beside it.
-export function ShowChoice({ show, onShow, hidden }: { show: Show; onShow: (s: Show) => void; hidden: number }) {
+// and all of them, with the number of threads it hides beside it, the
+// same number the tree and the narrow list give. The idle shell panes the
+// same choice hides (terminals) are counted on their own, never added to
+// the threads.
+export function ShowChoice({ show, onShow, hidden, terminals = 0 }: { show: Show; onShow: (s: Show) => void; hidden: number; terminals?: number }) {
   return (
     <div className="show" role="group" aria-label={t("show.label")} data-show={show}>
       {(["active", "all"] as const).map((s) => (
@@ -92,6 +95,11 @@ export function ShowChoice({ show, onShow, hidden }: { show: Show; onShow: (s: S
       {show === "active" && (
         <span className="hidden-count" data-hidden={hidden}>
           {t("show.hidden", { n: hidden })}
+        </span>
+      )}
+      {show === "active" && terminals > 0 && (
+        <span className="hidden-terminals" data-hidden-terminals={terminals}>
+          {t("show.hiddenTerminals", { n: terminals })}
         </span>
       )}
     </div>

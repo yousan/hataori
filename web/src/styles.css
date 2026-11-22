@@ -281,16 +281,38 @@ body {
   padding-left: 22px;
 }
 
+/* The name is cut only when it alone does not fit: the dots give way
+   first, and are cut at the edge rather than wrapped. */
 .scope-name {
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* The dots that do not fit wrap onto a line that is not shown, so only
+   whole dots show; "+N" stands beside them, never cut. */
 .dots {
   display: flex;
-  gap: 3px;
   flex-wrap: wrap;
+  align-items: center;
+  gap: 0 3px;
+  height: 7px;
+  flex: 0 1000 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.dot {
+  flex: none;
+}
+
+.dots-more {
+  flex: none;
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 11px;
 }
 
 .dot {
@@ -1014,9 +1036,12 @@ body {
   font-weight: 600;
 }
 
+/* A long scope name wraps, rather than widening the table. */
 .all-threads .scope-row th {
   background: var(--bar);
   font-weight: 600;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .all-threads tbody tr[data-thread] {
@@ -1033,11 +1058,40 @@ body {
   outline-offset: -2px;
 }
 
+/* The title and the last output take what the other columns leave, and
+   are cut with an ellipsis, so the table fits its pane whenever the other
+   columns do (max-width: 0 lets a cell of a table 100% wide shrink below
+   its text); the tooltip has the whole value. */
 .cell-title,
 .cell-last {
-  max-width: 280px;
+  max-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.cell-title {
+  width: 45%;
+}
+
+.cell-last {
+  width: 35%;
+}
+
+.cell-branch,
+.cell-agent {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The All threads tab when the choice hides every thread. */
+.table-empty {
+  padding: 24px 8px;
+  color: var(--muted);
+}
+
+.table-empty p {
+  margin: 0 0 10px;
 }
 
 .ctx-bar {

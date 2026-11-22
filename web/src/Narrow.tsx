@@ -36,8 +36,8 @@ interface ListProps {
   onOpenHost: (device: string) => void;
   show: Show; // the active threads or all of them
   onShow: (s: Show) => void;
-  hidden: number; // how many threads and host terminals the choice hides
-  hiddenThreads: number; // how many of them are threads
+  hidden: number; // how many threads the choice hides
+  hiddenHosts: number; // how many host terminals it hides, counted apart
 }
 
 // NarrowList is the page on a narrow screen: the threads that need
@@ -45,7 +45,7 @@ interface ListProps {
 // on is read), then those running, then the rest folded. The rows are the
 // tree's. The choice between the active threads and all of them is the
 // wide page's, kept in the same place.
-export function NarrowList({ threads, attention, now, onOpen, hosts, onOpenHost, show, onShow, hidden, hiddenThreads }: ListProps) {
+export function NarrowList({ threads, attention, now, onOpen, hosts, onOpenHost, show, onShow, hidden, hiddenHosts }: ListProps) {
   const every = threads ?? [];
   const all = every.filter((x) => shows(show, x));
   const needs = (x: ThreadInfo) => x.state === "waiting" || x.state === "failed";
@@ -62,10 +62,10 @@ export function NarrowList({ threads, attention, now, onOpen, hosts, onOpenHost,
   return (
     <nav className="narrow-list tree density-dense" aria-label={t("narrow.label")}>
       <div className="narrow-show">
-        <ShowChoice show={show} onShow={onShow} hidden={hidden} />
+        <ShowChoice show={show} onShow={onShow} hidden={hidden} terminals={hiddenHosts} />
       </div>
       {threads !== null && every.length === 0 && <p className="none">{t("narrow.none")}</p>}
-      {every.length > 0 && all.length === 0 && <p className="none">{t("tree.noActive", { n: hiddenThreads })}</p>}
+      {every.length > 0 && all.length === 0 && <p className="none">{t("tree.noActive", { n: hidden })}</p>}
       {waiting.length > 0 && (
         <section data-section="attention">
           <h2>{t("narrow.attention")}</h2>
