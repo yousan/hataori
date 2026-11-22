@@ -33,7 +33,8 @@ import (
 // On the loopback listener a signed-in session acts at once. On the web
 // listener each send, answer and stop needs a passkey check with user
 // verification that the session made through act/check and act/verify
-// less than ActCheckWithin ago; a person with no passkey needs instead a
+// less than ActCheckWithin ago, and before which the person removed no
+// passkey; a person with no passkey needs instead a
 // session of a sign-in link less than OperateSignInWithin old, made after
 // the server started and after they last removed a passkey, as for
 // operating a pane. Without it a call answers 428 with the reason, and the
@@ -95,10 +96,14 @@ func (s *Server) actRefusal(ss session, l *listener) (reason string, passkey boo
 	if l.way != control.WayWeb {
 		return "", false, nil
 	}
+	// A check counts for ActCheckWithin after it began, and not once the
+	// person has removed a passkey since: a session cannot keep acting on
+	// the strength of a passkey that is gone.
 	s.mu.Lock()
 	at, ok := s.acted[ss.sum]
+	removed, gone := s.removed[ss.person]
 	s.mu.Unlock()
-	if ok && s.now().Sub(at) < ActCheckWithin {
+	if ok && s.now().Sub(at) < ActCheckWithin && (!gone || at.After(removed)) {
 		return "", true, nil
 	}
 	u, err := s.passkeysOf(ss.person)
@@ -178,6 +183,9 @@ func (s *Server) actVerify(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "this passkey check has expired, was used, or was made for another session: check your passkey again", http.StatusForbidden)
 		return
 	}
+	// The check is recorded as made when it began: a passkey removed while
+	// it was being checked leaves it counting for nothing.
+	began := s.now()
 	if err := s.checkPasskey(cer, req.Credential); err != nil {
 		s.Log.Warn("dashboard: a passkey check to act refused", "person", ss.person, "err", err)
 		http.Error(w, err.Error(), http.StatusForbidden)
@@ -190,7 +198,7 @@ func (s *Server) actVerify(w http.ResponseWriter, r *http.Request) {
 			delete(s.acted, k)
 		}
 	}
-	s.acted[ss.sum] = now
+	s.acted[ss.sum] = began
 	s.mu.Unlock()
 	writeJSON(w, struct {
 		Until int64 `json:"until"`

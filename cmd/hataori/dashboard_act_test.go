@@ -263,7 +263,7 @@ func TestDashboardActOnTheWebNeedsAPasskeyCheck(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("registering a passkey: %d %s", code, body)
 	}
-	needs := func(what string) {
+	needs := func(what string, s dashSession) {
 		t.Helper()
 		for _, call := range []struct {
 			path string
@@ -273,12 +273,12 @@ func TestDashboardActOnTheWebNeedsAPasskeyCheck(t *testing.T) {
 			{dashboard.AnswerPath, map[string]any{"request": "any", "text": "x"}},
 			{dashboard.StopPath, map[string]any{"thread": r.id}},
 		} {
-			if code, b := r.act("", call.path, s, call.body); code != http.StatusPreconditionRequired || !strings.Contains(b, "passkey check") {
+			if code, b := r.act("", call.path, s, call.body); code != http.StatusPreconditionRequired {
 				t.Fatalf("%s: %s: %d %s, want 428", what, call.path, code, b)
 			}
 		}
 	}
-	needs("right after the sign-in")
+	needs("right after the sign-in", s)
 	check := func() ceremonyAnswer {
 		t.Helper()
 		code, b := r.act("", dashboard.ActCheckPath, s, map[string]any{})
@@ -298,7 +298,8 @@ func TestDashboardActOnTheWebNeedsAPasskeyCheck(t *testing.T) {
 	if code, b := r.act("", dashboard.ActVerifyPath, other, map[string]any{"ceremony": a.Ceremony, "credential": k.get(t, a.Options, c)}); code != http.StatusForbidden {
 		t.Fatalf("another session's check: %d %s", code, b)
 	}
-	needs("after another session's check")
+	needs("after another session's check", s)
+	needs("the other session, after its refused verify", other)
 	// This session's.
 	a = check()
 	answer := k.get(t, a.Options, c)
@@ -312,8 +313,23 @@ func TestDashboardActOnTheWebNeedsAPasskeyCheck(t *testing.T) {
 		t.Fatalf("a send after the check: %d %s", code, b)
 	}
 	r.until(t, "the checked send's turn", func(evs []control.Event) bool { return count(evs, "turn_ended") == 2 })
+	needs("another session, while this one's check counts", other)
 	clock.add(dashboard.ActCheckWithin + time.Second)
-	needs("five minutes after the check")
+	needs("five minutes after the check", s)
+
+	// A fresh check, then the passkey removed: the check no longer counts.
+	a = check()
+	if code, b := r.act("", dashboard.ActVerifyPath, s, map[string]any{"ceremony": a.Ceremony, "credential": k.get(t, a.Options, c)}); code != http.StatusOK {
+		t.Fatalf("act/verify: %d %s", code, b)
+	}
+	if code, b := r.act("", dashboard.StopPath, s, map[string]any{"thread": r.id}); code != http.StatusNoContent {
+		t.Fatalf("a stop after the fresh check: %d %s", code, b)
+	}
+	clock.add(time.Second)
+	if code, b := r.do(http.MethodDelete, "", dashboard.PasskeysPath+"/"+b64(c.id), s, r.web, nil); code != http.StatusNoContent {
+		t.Fatalf("removing the passkey: %d %s", code, b)
+	}
+	needs("after the passkey was removed", s)
 }
 
 // On the web listener a person with no passkey acts within five minutes of
