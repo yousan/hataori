@@ -1442,3 +1442,42 @@ a.chat-link:hover {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
+
+/* The input box under a thread's pane (InputBox.tsx). */
+.input-box {
+  flex: none;
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.box-row {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.box-row textarea {
+  flex: 1;
+  min-width: 0;
+  resize: vertical;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+
+.box-send {
+  font: inherit;
+}
+
+.box-note,
+.box-refused {
+  margin: 0 0 4px;
+  color: var(--muted);
+}
+
+.box-refused {
+  color: var(--st-failed);
+}

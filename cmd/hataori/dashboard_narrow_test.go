@@ -168,8 +168,8 @@ func TestDashboardNarrowList(t *testing.T) {
 	b.noSideScroll("the list with the rest unfolded")
 
 	listShown := `!!document.querySelector('.narrow-list') && !document.querySelector('.narrow-thread')`
-	// 2. A thread opened: its question and its terminal, nothing that
-	// answers, and back with the page's button.
+	// 2. A thread opened: its question and its terminal, the input box and
+	// nothing else that answers, and back with the page's button.
 	b.click(fmt.Sprintf(`.narrow-list .row[data-thread="%d"]`, num[2]))
 	b.until("the question and its terminal", fmt.Sprintf(`document.querySelector('[data-narrow-thread="%d"] [data-block=question] [data-field=question]')?.textContent === 'Which colour?'`+
 		` && JSON.stringify([...document.querySelectorAll('[data-narrow-thread="%d"] [data-block=question] [data-field=choices] li')].map(li => li.textContent)) === '["red","green","blue"]'`+
@@ -180,14 +180,16 @@ func TestDashboardNarrowList(t *testing.T) {
 	if openPath != "/" {
 		t.Fatalf("an opened thread is at %q, want the same address, /", openPath)
 	}
-	var controls int
+	var controls, box int
 	// The switch between the terminal and the conversation (#336) only
-	// changes what the page shows, so it is not counted.
-	b.eval(`document.querySelectorAll('.narrow-thread button:not(.narrow-back):not(.view-switch button), .narrow-thread a[href], .narrow-thread input, .narrow-thread select, .narrow-thread textarea:not(.xterm-helper-textarea), .narrow-thread [role=button], .narrow-thread summary, .narrow-thread [contenteditable]').length`, &controls)
+	// changes what the page shows, so it is not counted; nor is the input
+	// box, which the owner gets in the narrow layout (#610).
+	b.eval(`document.querySelectorAll('.narrow-thread button:not(.narrow-back):not(.view-switch button):not(.input-box button), .narrow-thread a[href], .narrow-thread input, .narrow-thread select, .narrow-thread textarea:not(.xterm-helper-textarea):not(.input-box textarea), .narrow-thread [role=button], .narrow-thread summary, .narrow-thread [contenteditable]').length`, &controls)
+	b.eval(`document.querySelectorAll('.narrow-thread .input-box textarea, .narrow-thread .input-box .box-send').length`, &box)
 	// The terminal's own hidden textarea is how xterm.js takes the focus;
 	// with stdin disabled it sends nothing (TestDashboardTerminalPaneIsReadOnly).
-	if controls != 0 {
-		t.Fatalf("the opened thread has %d controls besides the way back", controls)
+	if controls != 0 || box != 2 {
+		t.Fatalf("the opened thread has %d controls besides the way back and the input box, and the box %d", controls, box)
 	}
 	b.click(`.narrow-back`)
 	b.until("the list again", listShown)
