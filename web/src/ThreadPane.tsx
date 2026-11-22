@@ -4,6 +4,7 @@ import type { AttachState } from "./attach";
 import { type Key, t } from "./catalog";
 import { Conversation } from "./Conversation";
 import { InputBox } from "./InputBox";
+import { Answers, useOpenRequest } from "./Answers";
 import { TerminalView, type Typing } from "./TerminalView";
 
 // probeRetry is how long a pane waits before it asks again whether its
@@ -91,6 +92,13 @@ export function ThreadPane(props: {
   const { x, subscribe, opens, fit, onView, typing, attach, mayAct, narrow } = props;
   const [terminal, setTerminal] = useState<boolean | null>(null);
   const id = x.id;
+  // An open question's or approval's buttons, for a person who may act; a
+  // refused answer's reason stays after them, until another request.
+  const request = useOpenRequest(x, subscribe);
+  const [refused, setRefused] = useState<{ request: string; reason: string } | null>(null);
+  useEffect(() => {
+    if (request && refused && request.id !== refused.request) setRefused(null);
+  }, [request, refused]);
 
   // Only an answer of the server decides the view; a failed probe, such as
   // while the daemon restarts, is tried again.
@@ -135,7 +143,15 @@ export function ThreadPane(props: {
       ) : (
         <Conversation x={x} subscribe={subscribe} opens={opens} />
       )}
-      {mayAct && (narrow || !terminal) && <InputBox key={x.id} x={x} />}
+      {mayAct && request && (
+        <Answers key={request.id} r={request} field={!(narrow || !terminal)} onRefused={(reason) => setRefused({ request: request.id, reason })} />
+      )}
+      {mayAct && refused && (
+        <p className="box-refused" role="status" data-answer-refused="">
+          {t("answers.refused", { reason: refused.reason })}
+        </p>
+      )}
+      {mayAct && (narrow || !terminal) && <InputBox key={x.id} x={x} question={request} />}
     </div>
   );
 }

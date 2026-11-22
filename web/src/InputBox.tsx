@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { act, newKey, sendPath } from "./act";
+import { act, answerPath, newKey, sendPath } from "./act";
+import type { OpenRequest } from "./Answers";
 import type { ThreadInfo } from "./api";
 import { t } from "./catalog";
 
@@ -9,8 +10,11 @@ import { t } from "./catalog";
 // starts a new line; its button sends too, as a phone needs. A message
 // goes with Send, delivered into a running turn as a chat message is, with
 // a key of the page's own: a send that failed keeps its text and its key,
-// so that sending it again gives the agent the message once.
-export function InputBox({ x }: { x: ThreadInfo }) {
+// so that sending it again gives the agent the message once. While a
+// question is open (question), the box says that it answers it, and its
+// text goes with Answer naming the question, not Send: a question that
+// closed first refuses it, instead of taking it as a new message.
+export function InputBox({ x, question }: { x: ThreadInfo; question?: OpenRequest | null }) {
   const [text, setText] = useState("");
   const [key, setKey] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -30,7 +34,8 @@ export function InputBox({ x }: { x: ThreadInfo }) {
     setKey(k);
     setSending(true);
     setRefused(null);
-    const r = await act(sendPath, { thread: x.id, key: k, text: sent });
+    const q = question && !question.approval ? question : null;
+    const r = q ? await act(answerPath, { request: q.id, text: sent }) : await act(sendPath, { thread: x.id, key: k, text: sent });
     if (gone.current) return;
     setSending(false);
     if (r.ok) {
@@ -44,7 +49,13 @@ export function InputBox({ x }: { x: ThreadInfo }) {
 
   return (
     <div className="input-box" data-input-box={x.id} data-box-running={x.state === "running" ? "yes" : "no"}>
-      {x.state === "running" && <p className="box-note">{t("box.running")}</p>}
+      {question && !question.approval ? (
+        <p className="box-note" data-box-answers="">
+          {t("box.answers")}
+        </p>
+      ) : (
+        x.state === "running" && <p className="box-note">{t("box.running")}</p>
+      )}
       <div className="box-row">
         <textarea
           aria-label={t("box.label")}

@@ -1481,3 +1481,52 @@ a.chat-link:hover {
 .box-refused {
   color: var(--st-failed);
 }
+
+/* An open question's or approval's answers under a thread's pane
+   (Answers.tsx). */
+.answers {
+  flex: none;
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.answers-text {
+  margin: 0 0 4px;
+  white-space: pre-wrap;
+}
+
+.answers-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.answers-row button,
+.answers-field button {
+  font: inherit;
+}
+
+.answers-check {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.answers-field {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.answers-field textarea {
+  flex: 1;
+  min-width: 0;
+  resize: vertical;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 4px 6px;
+}
