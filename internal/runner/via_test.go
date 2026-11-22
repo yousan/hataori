@@ -3,6 +3,8 @@ package runner
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -198,5 +200,30 @@ func TestRefusalNamesTheWay(t *testing.T) {
 		if !found {
 			t.Errorf("no refusal of %s logged:\n%s", op, f.log.String())
 		}
+	}
+}
+
+// The input that woke a session whose agent no longer has the
+// conversation reaches the new session with its Via.
+func TestCannotResumeKeepsTheWay(t *testing.T) {
+	conv := t.TempDir()
+	f := newFixture(t, options{idlePeriod: 300 * time.Millisecond, conversations: conv})
+	f.start("reply hello")
+	waitFor(t, "asleep", 15*time.Second, func() bool { return sessionState(t, f.st, 1) == "asleep" })
+	waitFor(t, "the agent's end", 15*time.Second, func() bool { return !agentAlive(t, f.root, 1) })
+	files, _ := filepath.Glob(filepath.Join(conv, "*"))
+	for _, p := range files {
+		os.Remove(p) // the agent's own retention removed it
+	}
+	if err := dashboard(f).Send(context.Background(), thread, "m2", control.Input{Text: "reply anew"}, control.Deliver); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the new session's turn", 15*time.Second, f.has("turn_ended", 2))
+	if got := f.eventData("session_replaced"); len(got) != 1 {
+		t.Fatalf("session_replaced events: %v", got)
+	}
+	in := f.eventData("input")
+	if last := in[len(in)-1]; last["text"] != "reply anew" || last["via"] != "dashboard" || last["session"] != 2.0 {
+		t.Fatalf("the new session's input %v, want via dashboard", last)
 	}
 }

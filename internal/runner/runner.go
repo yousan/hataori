@@ -220,7 +220,7 @@ func (r *Runner) Start(ctx context.Context, l core.Launch) error {
 	spec := agent.Spec{Dir: l.Dir, StateDir: StateDir(r.Root, l.Session), Model: l.Model, Effort: l.Effort,
 		Instructions: r.Instructions, Approvals: agent.AllowAll}
 	first := firstInput{Principal: l.Principal, From: l.From, Key: l.Key, Text: l.Input.Text, Context: l.Context, Link: l.Input.Link,
-		Before: l.Input.Before, After: l.Input.After, NoInput: l.NoInput}
+		Before: l.Input.Before, After: l.Input.After, Via: l.Input.Via, NoInput: l.NoInput}
 	spec, err := r.launch(ctx, l.Session, l.Agent, ad, spec, first)
 	if err != nil {
 		return err
@@ -1872,7 +1872,7 @@ func (r *Runner) replaceTx(ctx context.Context, tx *store.Tx, lv *live) (*replac
 	// woken with no input, as for an attach, is replaced by one started with
 	// none (#528).
 	first := firstInput{Principal: old.Principal, From: old.From, Key: old.Key, Text: old.Text, Link: old.Link,
-		Before: old.Before, After: old.After, Context: earlier, Dir: lv.spec.Dir, NoInput: old.NoInput}
+		Before: old.Before, After: old.After, Via: old.Via, Context: earlier, Dir: lv.spec.Dir, NoInput: old.NoInput}
 	fb, _ := json.Marshal(first)
 	now := time.Now().UnixMilli()
 	res, err := tx.ExecContext(ctx, `INSERT INTO sessions (thread_id, agent, state, model, effort, first_input, launch, created_at, updated_at)

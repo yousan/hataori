@@ -1239,8 +1239,9 @@ func (a *api) start(ctx context.Context, r control.StartRequest, confined bool) 
 			first := link
 			r.Input.Link = &first
 		}
+		r.Input.Via = a.caller.Via
 		fi, _ := json.Marshal(FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: r.Key, Text: r.Input.Text, Link: r.Input.Link,
-			Before: r.Input.Before, After: r.Input.After})
+			Before: r.Input.Before, After: r.Input.After, Via: r.Input.Via})
 		res, err = tx.ExecContext(ctx,
 			`INSERT INTO sessions (thread_id, agent, state, model, effort, first_input, launch, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
@@ -1375,7 +1376,7 @@ func (c *Core) launch(ctx context.Context, l Launch, repo string) error {
 	var err error
 	record := func(f FirstInput) error {
 		f.Principal, f.From, f.Key, f.Text, f.Context, f.Link = l.Principal, l.From, l.Key, l.Input.Text, l.Context, l.Input.Link
-		f.Before, f.After = l.Input.Before, l.Input.After
+		f.Before, f.After, f.Via = l.Input.Before, l.Input.After, l.Input.Via
 		fi, _ := json.Marshal(f)
 		return c.Store.Update(ctx, func(tx *store.Tx) error {
 			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, string(fi), l.Session); err != nil {
