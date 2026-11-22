@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +11,25 @@ import (
 	fakesurface "github.com/yousan/hataori/internal/surface/fake"
 	"github.com/yousan/hataori/internal/wire"
 )
+
+// lastStarted is the turn number of the thread's last turn_started.
+func lastStarted(t *testing.T, c *wire.Client, id control.ThreadID) int64 {
+	t.Helper()
+	var all []control.Event
+	for before := uint64(0); ; {
+		evs, err := c.ThreadEvents(t.Context(), id, before, control.MaxEvents)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(evs) == 0 {
+			break
+		}
+		all = append(evs, all...)
+		before = evs[0].Pos
+	}
+	s := dataOf(all, "turn_started")
+	return int64(s[len(s)-1]["turn"].(float64))
+}
 
 // stopsOf are the data of the thread's stop events.
 func stopsOf(t *testing.T, c *wire.Client, id control.ThreadID) []map[string]any {
@@ -55,12 +75,18 @@ func TestDashboardStopButton(t *testing.T) {
 		r.driver.Inject(th, fakesurface.Webhook(e2eHook), "tool wait 60s\nreply late "+what)
 		b.until("the Stop button of a running turn", `!!document.querySelector('.pane.active [data-stop-button]')`)
 	}
-	// Cancelled: nothing sent.
+	// Cancelled: nothing sent. The confirmation takes the focus, which
+	// goes back to Stop, and names the running turn.
 	running("one")
 	b.click(".pane.active [data-stop-button]")
-	b.until("the confirmation", `!!document.querySelector('.pane.active [data-stop-confirm]')`)
+	b.until("the confirmation, with the focus", `!!document.querySelector('.pane.active [data-stop-confirm]') && document.activeElement?.dataset.stopNo === ''`)
+	var named int64
+	b.eval(`+document.querySelector('.pane.active [data-stop-confirm]').dataset.stopConfirm`, &named)
+	if started := lastStarted(t, c, x.ID); named != started {
+		t.Fatalf("the confirmation names turn %d, the running turn is %d", named, started)
+	}
 	b.click(".pane.active [data-stop-no]")
-	b.until("the Stop button again", `!!document.querySelector('.pane.active [data-stop-button]') && !document.querySelector('.pane.active [data-stop-confirm]')`)
+	b.until("the Stop button again, with the focus", `!!document.querySelector('.pane.active [data-stop-button]') && !document.querySelector('.pane.active [data-stop-confirm]') && document.activeElement?.dataset.stopButton === ''`)
 	time.Sleep(300 * time.Millisecond)
 	if s := stopsOf(t, c, x.ID); len(s) != 0 {
 		t.Fatalf("a cancelled stop sent %v", s)
@@ -114,6 +140,51 @@ func TestDashboardStopButton(t *testing.T) {
 	if s := stopsOf(t, c, x.ID); len(s) != 2 {
 		t.Fatalf("%d stop events, want the page's and the socket's only", len(s))
 	}
+	b.until("the refusal kept while that turn runs", `!!document.querySelector('.pane.active [data-stop-refused]')`)
+	// A running turn whose start is more than 40 events back: stopped
+	// all the same.
+	if err := c.Stop(context.Background(), x.ID, 0); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the third stopped turn's end", 15*time.Second, func() bool {
+		evs, _ := c.ThreadEvents(t.Context(), x.ID, 0, control.MaxEvents)
+		return len(dataOf(evs, "turn_ended")) == 4
+	})
+	b.until("no Stop button, and the refusal gone, once that turn ended", `!document.querySelector('.pane.active [data-stop-button]') && !document.querySelector('.pane.active [data-stop-refused]')`)
+	var script strings.Builder
+	for i := range 30 {
+		fmt.Fprintf(&script, "subagent s%d\n", i)
+	}
+	script.WriteString("tool wait 60s\nreply late four")
+	r.driver.Inject(th, fakesurface.Webhook(e2eHook), script.String())
+	// Read afresh once the turn's start is more than 40 events back, as
+	// after opening the page.
+	eventually(t, "the long turn's tool", 20*time.Second, func() bool {
+		evs, _ := c.ThreadEvents(t.Context(), x.ID, 0, control.MaxEvents)
+		n := 0
+		for i := len(evs) - 1; i >= 0 && evs[i].Kind != "turn_started"; i-- {
+			n++
+		}
+		return n > 50 && len(dataOf(evs, "tool_started")) > 0 && dataOf(evs, "tool_started")[len(dataOf(evs, "tool_started"))-1]["tool"] == "wait"
+	})
+	b.call("Page.reload", map[string]any{})
+	openThread(t, b, x.ID)
+	b.eval(`(() => { const v = document.querySelector('.pane.active .view-switch [data-view=conversation]'); if (v) v.click(); return true; })()`, nil)
+	b.until("the Stop button of a long turn", `!!document.querySelector('.pane.active [data-stop-button]')`)
+	b.click(".pane.active [data-stop-button]")
+	b.until("the confirmation", `!!document.querySelector('.pane.active [data-stop-confirm]')`)
+	b.eval(`+document.querySelector('.pane.active [data-stop-confirm]').dataset.stopConfirm`, &named)
+	if started := lastStarted(t, c, x.ID); named != started {
+		t.Fatalf("the confirmation of a long turn names turn %d, the running turn is %d", named, started)
+	}
+	b.click(".pane.active [data-stop-yes]")
+	eventually(t, "the long turn stopped", 15*time.Second, func() bool {
+		evs, _ := c.ThreadEvents(t.Context(), x.ID, 0, control.MaxEvents)
+		e := dataOf(evs, "turn_ended")
+		return len(e) == 5 && e[4]["reason"] == "interrupted"
+	})
+	running("five")
+
 	b.phone()
 	b.until("the narrow layout", `document.querySelector('.shell')?.dataset.layout === 'narrow'`)
 	b.eval(fmt.Sprintf(`(() => { const r = document.querySelector('.narrow-list .row[data-thread="%d"]'); if (r) r.click(); return true; })()`, x.ID), nil)
