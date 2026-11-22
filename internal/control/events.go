@@ -37,8 +37,9 @@ func text(name string, t FieldType) Field {
 // of its data. docs/protocol.md describes the same, field by field, and a
 // test keeps the two equal. The store refuses an event that does not match.
 var EventKinds = map[EventKind][]Field{
-	"approval_asked":    {req("request", String), req("action", String), req("target", Integer), req("turn", Integer), text("reason", String), opt("principal", String), opt("from", String)},
-	"approval_answered": {req("request", String), req("allow", Boolean), req("outcome", String), req("target", Integer), opt("principal", String), opt("from", String), opt("link", Object)},
+	"approval_asked": {req("request", String), req("action", String), req("target", Integer), req("turn", Integer), text("reason", String), opt("principal", String), opt("from", String)},
+	"approval_answered": {req("request", String), req("allow", Boolean), req("outcome", String), req("target", Integer), opt("principal", String), opt("from", String), opt("link", Object),
+		opt("via", String)},
 	"thread_created": {req("thread", Integer), req("session", Integer), req("repo", String),
 		req("principal", String), opt("from", String), req("model", String), req("effort", String)},
 	"state":        {req("session", Integer), req("from", String), req("to", String), opt("reason", String), text("detail", String)},
@@ -51,9 +52,13 @@ var EventKinds = map[EventKind][]Field{
 	"post_cancelled": {req("link", Object), req("event", Integer), req("part", Integer), req("plugin", String),
 		opt("failed", Boolean), opt("edit", Boolean), text("reason", String)},
 	"input": {req("session", Integer), req("turn", Integer), text("text", String), opt("principal", String), opt("from", String),
-		opt("link", Object), text("before", String), text("after", String)},
+		opt("link", Object), text("before", String), text("after", String), opt("via", String)},
 	"answer": {req("session", Integer), req("turn", Integer), text("text", String), opt("principal", String), opt("from", String),
-		opt("link", Object), opt("request", String)},
+		opt("link", Object), opt("request", String), opt("via", String)},
+	// stop: a Stop interrupted the running turn, written in the step that
+	// interrupts it, once per such Stop: who asked, and the way of the
+	// daemon's own it came through (Caller.Via). Since 3.23.
+	"stop":              {req("session", Integer), req("turn", Integer), opt("principal", String), opt("from", String), opt("via", String)},
 	"text":              {req("session", Integer), text("text", String), req("final", Boolean)},
 	"tool_started":      {req("session", Integer), req("id", String), req("tool", String), opt("parent", String)},
 	"tool_ended":        {req("session", Integer), req("id", String), req("tool", String)},

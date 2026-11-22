@@ -1753,6 +1753,16 @@ type Caller struct {
 	// caller the daemon authenticated itself.
 	From      string
 	Principal Principal // a person's name (section 5.5)
+	// Via is the way of the daemon's own that the caller's input comes
+	// through when it comes through no link: "dashboard" for every
+	// dashboard session's Caller (section 7.2). Set by the daemon when it
+	// binds the caller, never by a client, and not on the wire. The core
+	// writes it into the input, answer and approval_answered events of the
+	// caller's Send and Answer and into the stop event of its Stop (a new
+	// kind: session, turn, principal, from, via, written in the step that
+	// interrupts the turn, once per Stop that interrupted one), and names
+	// it in the log line of a refusal. Since protocol 3.23.
+	Via       string
 	Scopes    []string  // the scopes it may see and act in; a thread of another is answered as none (ErrNotFound)
 	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName, OpAsk, OpHostInput, OpTakeIn
 	// NoText leaves text written by a person or an agent out of what the
@@ -2048,30 +2058,17 @@ type API interface {
 
 // HostTerminal, TmuxPane: declared above, with HostTerminals.
 
-// Proposed, for giving a thread input from its tab (section 7.2).
+// For giving a thread input from its tab (section 7.2).
 
-// Caller gains Via: the way of the daemon's own that the caller's input
-// comes through when it comes through no link, "dashboard" for every
-// dashboard session's Caller. Set by the daemon when it binds the caller,
-// never by a client, and not on the wire. The core writes it into the
-// input and answer events of the caller's Send and Answer and into the
-// stop event of its Stop, and names it in the log line of a refusal.
-type Caller struct {
-	// ...the fields above, and:
-	Via string
-}
-
-// The events gain (each optional on the wire):
+// Caller.Via, the input, answer and approval_answered events' via, and the
+// stop event: declared above, since protocol 3.23 (#604). The dashboard's
+// Caller has Via "dashboard". A chat front end shows an input or answer
+// with via and no link in every link of the thread as "<person>: <text>"
+// (section 5.2, #605). Runner.Interrupt takes a session.Stopper (person,
+// from, via) instead of a person: a Stop's writes the stop event and
+// names its person on the turn in one transaction, before the interrupt.
 //
-//   input, answer: via, the Caller's Via; absent for input through a link
-//   and for the supervisor's. A chat front end shows an input or answer
-//   with via and no link in every link of the thread as "<person>: <text>"
-//   (section 5.2).
-//
-//   stop, a new kind: session, turn, principal, from, via. Written in the
-//   step that interrupts the turn, once per Stop that interrupted one;
-//   none for a Stop when no turn runs or when the named turn is not the
-//   running one (refused).
+// Proposed:
 //
 //   input with via "terminal": the prompt of a turn typed at the agent's
 //   terminal, when the agent reports it, written right after that turn's
@@ -2108,7 +2105,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | A thread taken in: the `state` reason `window closed`, and `Remove` without its workspace (section 4.8, #401) | minor: a new value of a reason, and the removal of a kind of thread that was refused; 3.20 |
 | `SetLayout` and `Layout`, with `ChatLayout`, `LayoutGroup`, `LayoutChannel` and `LayoutThread`, and the `layout` event: the chat's channels and open threads for the tree (#599) | minor: new operations and event kind; 3.21 |
 | `Clients` and `ClientState`, with `ScopeOwner`s that are a `Connection`: whether each chat client is connected (#598) | minor: new operation; 3.22 |
-| `via` in the `input` and `answer` events, and the `stop` event (section 7.2, giving a thread input from its tab) | minor: a new optional field and a new event kind |
+| `via` in the `input`, `answer` and `approval_answered` events, and the `stop` event (section 7.2, giving a thread input from its tab, #604) | minor: a new optional field and a new event kind; 3.23 |
 | An `input` event with `via` `terminal` for the prompt of a turn typed at the terminal (section 5.2) | minor: a new value of a field, on an event kind that exists |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 

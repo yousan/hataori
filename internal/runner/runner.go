@@ -403,7 +403,7 @@ func (r *Runner) at(point string) {
 // conversation, and sends in once the agent reports that it is ready.
 func (r *Runner) Resume(ctx context.Context, id int64, principal control.Principal, from, key string, in control.Input) error {
 	return r.resume(ctx, id, firstInput{Principal: principal, From: from, Key: key, Text: in.Text, Wake: true, Link: in.Link,
-		Before: in.Before, After: in.After})
+		Before: in.Before, After: in.After, Via: in.Via})
 }
 
 // Wake starts the agent of an asleep session again, resuming its
@@ -1409,7 +1409,7 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 			return nil
 		case !f.Sent && control.State(state) == control.Idle:
 			if err := r.Machine.ApplyTx(ctx, tx, lv.id, session.Input{Kind: session.Send, Principal: f.Principal, From: f.From, Key: f.Key, Text: f.Text, Link: f.Link,
-				Before: f.Before, After: f.After}); err != nil {
+				Before: f.Before, After: f.After, Via: f.Via}); err != nil {
 				return err
 			}
 			f.Sent = true
@@ -1972,12 +1972,42 @@ func (r *Runner) Answer(ctx context.Context, id, pending int64, req string, ans 
 	})
 }
 
+// recordStop records that by stopped turn of session id: the person on the
+// turn, unless it names someone already, and a stop event of the thread,
+// in one transaction.
+func (r *Runner) recordStop(ctx context.Context, id, turn int64, by session.Stopper) error {
+	return r.Store.Update(ctx, func(tx *store.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE turns SET stopped_by = ? WHERE id = ? AND stopped_by = ''`, string(by.Principal), turn); err != nil {
+			return err
+		}
+		var thread int64
+		if err := tx.QueryRowContext(ctx, `SELECT thread_id FROM sessions WHERE id = ?`, id).Scan(&thread); err != nil {
+			return err
+		}
+		d := map[string]any{"session": id, "turn": turn, "principal": string(by.Principal)}
+		if by.From != "" {
+			d["from"] = by.From
+		}
+		if by.Via != "" {
+			d["via"] = by.Via
+		}
+		data, err := json.Marshal(d)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Append(ctx, control.Event{Thread: control.ThreadID(thread), Kind: session.KindStop, Data: data})
+		return err
+	})
+}
+
 // Interrupt stops a session's running turn: the agent's own interrupt
 // first. When that turn has not ended after the grace period, every process
 // of the session is stopped; a turn started after it is not watched. A
 // named turn (not 0) that is not the running one is refused, and nothing is
-// interrupted.
-func (r *Runner) Interrupt(ctx context.Context, id, named int64, by control.Principal) error {
+// interrupted. A Stop's (by with a Principal) names its person on the turn,
+// unless the turn names someone already, and writes one stop event, both
+// in one transaction before the interrupt is sent.
+func (r *Runner) Interrupt(ctx context.Context, id, named int64, by session.Stopper) error {
 	lv, err := r.get(id)
 	if err != nil {
 		return err
@@ -1993,10 +2023,11 @@ func (r *Runner) Interrupt(ctx context.Context, id, named int64, by control.Prin
 		lv.mu.Unlock()
 		return fmt.Errorf("runner: session %d: turn %d is not the running turn: %w", id, named, session.ErrRefused)
 	}
-	if by != "" && turn != 0 {
+	if by.Principal != "" && turn != 0 {
 		// Before the interrupt, which can end the turn at once: a reader
-		// of its end finds who stopped it. The first stop names it.
-		if _, err := r.Store.DB.Exec(`UPDATE turns SET stopped_by = ? WHERE id = ? AND stopped_by = ''`, string(by), turn); err != nil {
+		// of its end finds who stopped it, after the stop event. The first
+		// stop names it.
+		if err := r.recordStop(ctx, id, turn, by); err != nil {
 			lv.mu.Unlock()
 			return fmt.Errorf("runner: session %d: record who stops turn %d: %w", id, turn, err)
 		}

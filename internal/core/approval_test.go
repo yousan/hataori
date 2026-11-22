@@ -394,3 +394,29 @@ func TestApprovalRecordsItsOutcomeWhenTheCallEnds(t *testing.T) {
 		}
 	}
 }
+
+// An approval answered by a caller with Via says so in its
+// approval_answered event, as an answer does (#604).
+func TestApprovalAnsweredNamesTheWay(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{key: "chat"})
+	f.core.People = people.New([]people.Person{{Name: "sv", IDs: []string{"supervisor:s"}}}, "owner", map[string][]string{"s": {"sv"}})
+	askerThread, _ := f.running(t, "asker")
+	target, _ := f.running(t, "target")
+	asker := f.core.As(control.Caller{From: "supervisor:s", Scopes: []string{"s"}, May: control.OpAsk, AsksIn: askerThread})
+	req, err := asker.AskInterrupt(ctx, target, "key", "urgent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dash := f.core.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: control.OpAnswer, Via: "dashboard"})
+	if err := dash.Answer(ctx, req, control.Answer{Allow: true}); err != nil {
+		t.Fatal(err)
+	}
+	var data string
+	if err := f.core.Store.DB.QueryRow(`SELECT data FROM events WHERE kind = 'approval_answered'`).Scan(&data); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(data, `"via":"dashboard"`) || !strings.Contains(data, `"principal":"owner"`) {
+		t.Fatalf("approval_answered %s, want the owner and via dashboard", data)
+	}
+}

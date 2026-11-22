@@ -98,7 +98,7 @@ func (a *api) recheck(ctx context.Context, target control.ThreadID, sid, turn in
 	if cur != sid || state != control.Running || open != turn {
 		return "ended", nil
 	}
-	err = a.c.Runner.Interrupt(ctx, sid, turn, "")
+	err = a.c.Runner.Interrupt(ctx, sid, turn, session.Stopper{})
 	if errors.Is(err, session.ErrRefused) {
 		return "ended", nil
 	}
@@ -202,7 +202,11 @@ func (a *api) answerApproval(ctx context.Context, req control.RequestID, ans con
 		if err != nil || n == 0 {
 			return err
 		}
-		data, _ := json.Marshal(map[string]any{"request": req, "allow": allow, "outcome": outcome, "target": target, "principal": a.caller.Principal, "from": a.caller.From, "link": link})
+		d := map[string]any{"request": req, "allow": allow, "outcome": outcome, "target": target, "principal": a.caller.Principal, "from": a.caller.From, "link": link}
+		if a.caller.Via != "" {
+			d["via"] = a.caller.Via // since protocol 3.23
+		}
+		data, _ := json.Marshal(d)
 		_, err = tx.Append(ctx, control.Event{Thread: thread, Kind: "approval_answered", Data: data})
 		return err
 	})

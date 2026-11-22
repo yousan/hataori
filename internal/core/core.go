@@ -99,10 +99,12 @@ type Runner interface {
 	// has recorded, read from the agent every poll: a turn the agent began
 	// by itself, or that a person typed at its terminal, before the runner
 	// read the named one's end can still get the interrupt of an agent
-	// whose interrupt names no turn (#494). by, when not empty, is the
-	// person whose Stop it is: it is recorded on the turn interrupted, in
-	// the same step, unless that turn names someone already.
-	Interrupt(ctx context.Context, sessionID, turn int64, by control.Principal) error
+	// whose interrupt names no turn (#494). by, when it has a Principal, is
+	// whose Stop it is: in the same step, the person is recorded on the
+	// turn interrupted, unless that turn names someone already, and a stop
+	// event is written with by and the turn; the zero Stopper is an
+	// interrupt nobody asked for as a stop, which records nothing.
+	Interrupt(ctx context.Context, sessionID, turn int64, by session.Stopper) error
 	// Resume starts the agent of an asleep session again with its
 	// conversation, and sends it in as a Send of principal and key once it
 	// reports that it is ready.
@@ -192,6 +194,9 @@ type FirstInput struct {
 	Dir       string            `json:"dir,omitempty"`      // the workspace, once it is made
 	// Link is the link the input came through, if any (design, section 5.2).
 	Link *control.LinkRef `json:"link,omitempty"`
+	// Via is the way of the daemon's own the input came through
+	// (control.Caller.Via), if any.
+	Via string `json:"via,omitempty"`
 	// Context goes before Text when the input is handed to the agent; the
 	// input event records Text alone. See Launch.Context.
 	Context string `json:"context,omitempty"`
@@ -367,8 +372,17 @@ func (a *api) check(op control.Ops, name, scope string) error {
 		}
 		return nil
 	}
-	a.c.Log.Warn("control call refused", "op", name, "principal", string(a.caller.Principal), "scope", scope)
+	a.c.Log.Warn("control call refused", a.via("op", name, "principal", string(a.caller.Principal), "scope", scope)...)
 	return fmt.Errorf("core: %s in scope %q: %w", name, scope, ErrForbidden)
+}
+
+// via adds the caller's Via, when it has one, to the attributes of a log
+// line about one of its calls.
+func (a *api) via(attrs ...any) []any {
+	if a.caller.Via != "" {
+		attrs = append(attrs, "via", a.caller.Via)
+	}
+	return attrs
 }
 
 // protocolNames are the names in docs/protocol.md of the operations whose
@@ -394,7 +408,7 @@ func (a *api) granted(name, scope string) error {
 	if a.caller.From != "" {
 		attrs = append(attrs, "from", a.caller.From)
 	}
-	a.c.Log.Warn("control call refused", attrs...)
+	a.c.Log.Warn("control call refused", a.via(attrs...)...)
 	// The answer names the scope only when it is one of the caller's: a
 	// thread's or a request's scope the caller may not see is in the log
 	// line alone (#479).
@@ -444,7 +458,7 @@ func (a *api) refused(name, scope, reason string) error {
 	if a.caller.Principal != "" {
 		attrs = append(attrs, "person", string(a.caller.Principal))
 	}
-	a.c.Log.Warn("control call refused", attrs...)
+	a.c.Log.Warn("control call refused", a.via(attrs...)...)
 	if scope == "" {
 		return fmt.Errorf("core: %s: %w", name, ErrForbidden)
 	}
@@ -460,10 +474,10 @@ func (a *api) marked(in control.Input) control.Input {
 	return in
 }
 
-// Input is the first input as Start or Send gave it: its text, link and
-// the text the plugins added.
+// Input is the first input as Start or Send gave it: its text, link, the
+// text the plugins added, and the caller's Via.
 func (f FirstInput) Input() control.Input {
-	return control.Input{Text: f.Text, Link: f.Link, Before: f.Before, After: f.After}
+	return control.Input{Text: f.Text, Link: f.Link, Before: f.Before, After: f.After, Via: f.Via}
 }
 
 // The input hook points, in the order they run (design, section 7.3).
@@ -633,7 +647,7 @@ func (a *api) hidden(name, what, which, scope string) {
 	if client, cid, ok := people.Split(a.caller.From); ok {
 		attrs = append(attrs, "client", client, "id", cid)
 	}
-	a.c.Log.Warn("control call refused", attrs...)
+	a.c.Log.Warn("control call refused", a.via(attrs...)...)
 }
 
 // actThread is checkThread for a call that gives the agent input, or stops
@@ -1751,7 +1765,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 				return err
 			}
 			fi, _ := json.Marshal(FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: key, Text: in.Text, Wake: true, Link: in.Link,
-				Before: in.Before, After: in.After})
+				Before: in.Before, After: in.After, Via: a.caller.Via})
 			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ?, launch = 1 WHERE id = ?`, string(fi), sid); err != nil {
 				return fmt.Errorf("core: wake: %w", err)
 			}
@@ -1772,7 +1786,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 			if err == nil {
 				answer = req
 				if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal, From: a.caller.From,
-					Key: key, Text: given.Text, Request: req, Link: in.Link}); err != nil {
+					Key: key, Text: given.Text, Request: req, Link: in.Link, Via: a.caller.Via}); err != nil {
 					return err
 				}
 				pending, err = pend(ctx, tx, sid, req, control.Answer{Text: given.Text})
@@ -1780,7 +1794,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 			}
 		}
 		if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Send, Principal: a.caller.Principal, From: a.caller.From, Key: key,
-			Text: in.Text, Link: in.Link, Before: in.Before, After: in.After}); err != nil {
+			Text: in.Text, Link: in.Link, Before: in.Before, After: in.After, Via: a.caller.Via}); err != nil {
 			return err
 		}
 		pending, err = pend(ctx, tx, sid, "", forAgent(in))
@@ -1793,6 +1807,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		return a.c.Runner.Answer(ctx, sid, pending, answer, control.Answer{Text: given.Text})
 	}
 	if wake {
+		in.Via = a.caller.Via
 		if err := a.c.resume(ctx, sid, a.caller.Principal, a.caller.From, key, in); err != nil {
 			return fmt.Errorf("core: send to %v: %w", id, err)
 		}
@@ -1809,7 +1824,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		if guard != nil {
 			turn = guard.turn
 		}
-		err := a.c.Runner.Interrupt(ctx, sid, turn, "")
+		err := a.c.Runner.Interrupt(ctx, sid, turn, session.Stopper{})
 		switch {
 		case guard != nil && errors.Is(err, session.ErrRefused):
 			guard.ended = true
@@ -1912,7 +1927,7 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 			return err
 		}
 		if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal, From: a.caller.From,
-			Key: "answer:" + string(req), Text: ans.Text, Request: agentReq, Link: ans.Link}); err != nil {
+			Key: "answer:" + string(req), Text: ans.Text, Request: agentReq, Link: ans.Link, Via: a.caller.Via}); err != nil {
 			return err
 		}
 		pending, err = pend(ctx, tx, sid, agentReq, ans)
@@ -1947,7 +1962,7 @@ func (a *api) Stop(ctx context.Context, id control.ThreadID, turn int64) error {
 	}
 	// Who asked goes on the turn the runner interrupts, chosen in the same
 	// step, so that the reader of that turn's end can tell it was stopped.
-	return a.c.Runner.Interrupt(ctx, sid, turn, a.caller.Principal)
+	return a.c.Runner.Interrupt(ctx, sid, turn, session.Stopper{Principal: a.caller.Principal, From: a.caller.From, Via: a.caller.Via})
 }
 
 // mayRead reports whether the caller may see e: its kind, when the caller

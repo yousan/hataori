@@ -260,8 +260,16 @@ type Caller struct {
 	// authenticated itself.
 	From      string
 	Principal Principal // a person's name
-	Scopes    []string  // the scopes it may see and act in; a thread of another is answered as none (ErrNotFound)
-	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName, OpAsk, OpHostInput, OpTakeIn
+	// Via names the way of the daemon's own that the caller's input comes
+	// through when it comes through no link, such as "dashboard" for every
+	// dashboard session's Caller. The daemon sets it when it binds the
+	// caller; no client sets it, and it is not on the wire. The core writes
+	// it into the input, answer and approval_answered events of the
+	// caller's Send and Answer and into the stop event of its Stop, and
+	// names it in the log line of a refusal. Since protocol 3.23.
+	Via    string
+	Scopes []string // the scopes it may see and act in; a thread of another is answered as none (ErrNotFound)
+	May    Ops      // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName, OpAsk, OpHostInput, OpTakeIn
 	// NoText leaves text written by a person or an agent out of what the
 	// caller reads: ThreadInfo.Title, ThreadInfo.Last and ThreadInfo.Name,
 	// ThreadDetail.Recent, the text of its requests and a question's
@@ -424,6 +432,10 @@ type Input struct {
 	// socket as part of an input.
 	Before string `json:"-"`
 	After  string `json:"-"`
+	// Via is the caller's Via (Caller.Via), which the core sets on the
+	// input it hands the runner; never read from a client, nor sent on the
+	// socket.
+	Via string `json:"-"`
 }
 
 // ForAgent is what the agent gets of in: Before, Text and After, each
