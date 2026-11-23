@@ -47,6 +47,8 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	configDir := fs.String("config", "", "where its login is kept; turns fail until it is logged in")
 	dialog := fs.String("dialog", "", "a start-up dialog to show on the terminal, answered by Enter")
 	mcpConfig := fs.String("mcp-config", "", "a confined spec's MCP servers, for the script command mcp")
+	projectHook := fs.Bool("project-hook", false, "act as the repository's own hook at the start: append a line to "+ProjectHookFile)
+	fs.Bool("no-project-settings", false, "the project's settings are left out: no project hook runs")
 	relay := fs.String("relay", "", "A,B: relay between threads A and B, as a supervisor that passes each one's answer to the other")
 	wakeScript := fs.Bool("wake-script", false, "run the quoted output lines of a wake message as the turn's script")
 	if err := fs.Parse(args); err != nil {
@@ -95,6 +97,14 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		// Between the answer and the start, as an agent draws its screen.
 		fmt.Fprint(stdout, "fake: answered, starting\r\n")
 		time.Sleep(200 * time.Millisecond)
+	}
+	if *projectHook {
+		// Past any dialog, as an agent runs the repository's own hooks.
+		f, err := os.OpenFile(ProjectHookFile, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+		if err == nil {
+			fmt.Fprintln(f, "the project's hook ran")
+			f.Close()
+		}
 	}
 	if *terminal {
 		// As an agent in a terminal asks of it, once past any dialog: a

@@ -552,6 +552,26 @@ var migrations = []Migration{
 		`ALTER TABLE supervisor_wakes ADD COLUMN files_pos INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE supervisor_wakes ADD COLUMN files_pending TEXT`, // JSON: what a turn end found, until its line is posted
 	)},
+	// The files the owner trusted for a scope's threads on one repository,
+	// from a start blocked at a start-up dialog (#590), beside the config's
+	// trust_files.
+	{Name: "trusted_files", Up: execAll(
+		`CREATE TABLE trusted_files (
+			id         INTEGER PRIMARY KEY,
+			scope      TEXT NOT NULL,
+			repo       TEXT NOT NULL,
+			file       TEXT NOT NULL,
+			trusted_by TEXT NOT NULL,
+			created_at INTEGER NOT NULL, -- unix milliseconds
+			UNIQUE (scope, repo, file)
+		)`,
+	)},
+	// A thread a person chose to run without its repository's settings,
+	// from a start the folder-trust dialog blocked (#590): every launch of
+	// it leaves the project's and the local settings files out.
+	{Name: "threads.no_project_settings", Up: execAll(
+		`ALTER TABLE threads ADD COLUMN no_project_settings INTEGER NOT NULL DEFAULT 0`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

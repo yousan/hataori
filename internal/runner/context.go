@@ -28,6 +28,14 @@ func (r *Runner) contextBytes() int {
 // earlier returns the thread's inputs and final answers, oldest first, cut
 // to the context cap and marked as earlier context; "" when there are none.
 // They are read newest first, and no more than the cap needs.
+// Earlier is earlier, for the core's session that starts a woken thread
+// again (core.EarlierRunner).
+func (r *Runner) Earlier(ctx context.Context, q interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, thread control.ThreadID) (string, error) {
+	return r.earlier(ctx, q, thread)
+}
+
 func (r *Runner) earlier(ctx context.Context, q interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }, thread control.ThreadID) (string, error) {

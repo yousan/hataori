@@ -104,7 +104,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return runCtx(context.Background(), args, stdout, stderr)
 }
 
-const usage = "usage: hataori run|threads|thread NUMBER|events [--after N] [--follow]|stop NUMBER|attach NUMBER|close NUMBER|remove NUMBER|signin [--web]|take WINDOW --scope SCOPE [--key KEY]|release NUMBER [--root DIR] | hataori connect [[user@]host] [--root DIR] [--hataori PATH] [--port N] | hataori mcp --scope SCOPE [--root DIR] [--output-max BYTES] | hataori plugin [--root DIR] | hataori version | hataori host <state-dir> | hataori hook [--wait] [--timeout DURATION] | hataori hook --window --root DIR | hataori statusline --last FILE [--run COMMAND]"
+const usage = "usage: hataori run|threads|thread NUMBER|events [--after N] [--follow]|stop NUMBER|attach NUMBER|close NUMBER|remove NUMBER|signin [--web]|take WINDOW --scope SCOPE [--key KEY]|release NUMBER|trusts|untrust ID [--root DIR] | hataori connect [[user@]host] [--root DIR] [--hataori PATH] [--port N] | hataori mcp --scope SCOPE [--root DIR] [--output-max BYTES] | hataori plugin [--root DIR] | hataori version | hataori host <state-dir> | hataori hook [--wait] [--timeout DURATION] | hataori hook --window --root DIR | hataori statusline --last FILE [--run COMMAND]"
 
 func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -172,7 +172,7 @@ func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return connectMain(ctx, args[1:], stderr, env)
 	case "statusline":
 		return claudecode.StatusLineMain(args[1:], os.Stdin, stdout, stderr, os.Getenv)
-	case "run", "threads", "thread", "events", "stop", "attach", "close", "remove", "signin", "take", "release":
+	case "run", "threads", "thread", "events", "stop", "attach", "close", "remove", "signin", "take", "release", "trusts", "untrust":
 		return command(ctx, args[0], args[1:], stdout, stderr)
 	}
 	fmt.Fprintln(stderr, usage)
@@ -222,7 +222,7 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 		args = fs.Args()[1:]
 	}
 	want := 0
-	if name == "thread" || name == "stop" || name == "attach" || name == "close" || name == "remove" || name == "take" || name == "release" {
+	if name == "thread" || name == "stop" || name == "attach" || name == "close" || name == "remove" || name == "take" || name == "release" || name == "untrust" {
 		want = 1
 	}
 	if (name == "take") != (*scope != "") || name != "take" && *key != "" {
@@ -230,7 +230,11 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 		return exitUsage
 	}
 	if want == 1 && len(pos) == 1 && name != "take" && !isNumber(pos[0]) {
-		fmt.Fprintf(stderr, "hataori: %q is not a thread number\n", pos[0])
+		what := "a thread number"
+		if name == "untrust" {
+			what = "the id of a trusted file"
+		}
+		fmt.Fprintf(stderr, "hataori: %q is not %s\n", pos[0], what)
 		fmt.Fprintln(stderr, usage)
 		return exitUsage
 	}
@@ -366,6 +370,24 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 			return fail(err)
 		}
 		if err := enc.Encode(map[string]any{"thread": t.ID, "scope": t.Scope, "state": control.Asleep}); err != nil {
+			return fail(err)
+		}
+	case "trusts":
+		ts, err := c.Trusts(ctx)
+		if err != nil {
+			return fail(err)
+		}
+		for _, t := range ts {
+			if err := enc.Encode(t); err != nil {
+				return fail(err)
+			}
+		}
+	case "untrust":
+		id, _ := strconv.ParseInt(strings.TrimPrefix(pos[0], "#"), 10, 64)
+		if err := c.Untrust(ctx, id); err != nil {
+			return fail(err)
+		}
+		if err := enc.Encode(map[string]any{"id": id, "trusted": false}); err != nil {
 			return fail(err)
 		}
 	case "close", "remove":
