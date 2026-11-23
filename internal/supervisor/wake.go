@@ -874,6 +874,8 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 	}
 	var only []control.ThreadID
 	if past {
+		// Each is shown: what is over ThreadsMax waits for the next one.
+		threads = threads[:min(len(threads), r.w.ThreadsMax)]
 		stale = nil
 		for _, t := range threads {
 			only = append(only, t.Thread)
@@ -925,18 +927,11 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 }
 
 // delivered stores the wake that was sent as given, and clears the marks
-// of the threads it gave. A wake past a hold handled its own threads' turn
+// of the threads its digest shows. A wake past a hold handled its own threads' turn
 // ends only: the position stays before what a gate holds.
 func (r *waking) delivered(ctx context.Context) error {
 	w := r.sending
-	ids := Named(w.text) // a wake stored by an earlier run
-	if w.threads != nil {
-		ids = nil
-		for _, t := range w.threads {
-			ids = append(ids, t.Thread)
-		}
-	}
-	clear, err := r.woke(ctx, ids, w.to)
+	clear, err := r.woke(ctx, Named(w.text), w.to)
 	if err != nil {
 		return err
 	}

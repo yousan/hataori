@@ -114,6 +114,7 @@ type Sessions struct {
 
 	mu     sync.Mutex
 	issued map[control.ThreadID]issued // by thread: the token of its newest session
+	starts map[string]*sync.Mutex      // by scope (starting)
 }
 
 type issued struct {
@@ -233,12 +234,26 @@ func (s *Sessions) APIOf(scope string, thread control.ThreadID, autonomy string)
 		api = b.API(api)
 	}
 	api = Repos(api, scope, s.Scopes[scope].Repos, s.Log)
-	api = &asking{API: api, core: s.Core, scope: scope, thread: thread, log: s.Log}
+	api = &asking{API: api, core: s.Core, scope: scope, thread: thread, lock: s.starting(scope), log: s.Log}
 	api = Reads(api, scope, s.Scopes[scope].Repos, s.Forges, s.Scopes[scope].Trusted, s.Build, s.Log)
 	if autonomy == Watch {
 		api = &watching{API: api, scope: scope, log: s.Log}
 	}
 	return api
+}
+
+// starting is the lock that a start of scope's supervisor holds, whatever
+// connection it comes on.
+func (s *Sessions) starting(scope string) *sync.Mutex {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.starts == nil {
+		s.starts = map[string]*sync.Mutex{}
+	}
+	if s.starts[scope] == nil {
+		s.starts[scope] = &sync.Mutex{}
+	}
+	return s.starts[scope]
 }
 
 // writeToken writes token to file, readable by this user only, and syncs it.

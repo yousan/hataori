@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
@@ -30,6 +31,7 @@ type asking struct {
 	core   *core.Core
 	scope  string
 	thread control.ThreadID // the supervisor's
+	lock   *sync.Mutex      // the scope's: one start at a time, so that a mark is one call's
 	log    *slog.Logger
 }
 
@@ -37,6 +39,8 @@ func (a *asking) Start(ctx context.Context, r control.StartRequest) (control.Thr
 	if r.Scope != a.scope || r.Key == "" {
 		return a.API.Start(ctx, r)
 	}
+	a.lock.Lock()
+	defer a.lock.Unlock()
 	marked, err := a.mark(ctx, r.Key)
 	if err != nil {
 		// The start goes on: without its mark, the thread wakes as any.
@@ -48,10 +52,7 @@ func (a *asking) Start(ctx context.Context, r control.StartRequest) (control.Thr
 		// whose launch failed, there is nothing to mark.
 		made, proposed, err := a.core.StartMade(ctx, a.scope, r.Key, a.thread)
 		if err == nil && made == 0 && proposed == "" {
-			err = a.core.Store.Update(ctx, func(tx *store.Tx) error {
-				_, err := tx.ExecContext(ctx, `DELETE FROM supervisor_asked WHERE scope = ? AND key = ?`, a.scope, r.Key)
-				return err
-			})
+			err = unmark(ctx, a.core, a.scope, r.Key)
 		}
 		if err != nil {
 			a.log.Error("supervisor: the mark of a start that failed", "scope", a.scope, "err", err)
@@ -61,16 +62,20 @@ func (a *asking) Start(ctx context.Context, r control.StartRequest) (control.Thr
 }
 
 // mark records the start under key as asked for, when a person's message
-// started the turn the supervisor runs; a key that started a thread, or
-// made a proposal, before is left as it was.
+// started the turn the supervisor runs. A key that started a thread, or
+// made a proposal, before is left as it was. Outside a person's turn, a
+// mark left by a call that a daemon died in before it made anything goes.
 func (a *asking) mark(ctx context.Context, key string) (bool, error) {
-	person, ok, err := personsTurn(ctx, a.core, a.scope, a.thread)
-	if err != nil || !ok {
-		return false, err
-	}
 	made, proposed, err := a.core.StartMade(ctx, a.scope, key, a.thread)
 	if err != nil || made != 0 || proposed != "" {
 		return false, err
+	}
+	person, ok, err := personsTurn(ctx, a.core, a.scope, a.thread)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, unmark(ctx, a.core, a.scope, key)
 	}
 	err = a.core.Store.Update(ctx, func(tx *store.Tx) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO supervisor_asked (scope, key, asks_in, person) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
@@ -78,6 +83,14 @@ func (a *asking) mark(ctx context.Context, key string) (bool, error) {
 		return err
 	})
 	return err == nil, err
+}
+
+// unmark removes the mark of the start under key.
+func unmark(ctx context.Context, c *core.Core, scope, key string) error {
+	return c.Store.Update(ctx, func(tx *store.Tx) error {
+		_, err := tx.ExecContext(ctx, `DELETE FROM supervisor_asked WHERE scope = ? AND key = ?`, scope, key)
+		return err
+	})
 }
 
 // personsTurn reports whether thread, a supervisor's of scope, runs a turn
@@ -154,10 +167,7 @@ func askedRows(ctx context.Context, c *core.Core, scope string) ([]askedRow, err
 			out = append(out, askedRow{r.key, id})
 		default:
 			// Decided, and it made no thread: it never will.
-			if err := c.Store.Update(ctx, func(tx *store.Tx) error {
-				_, err := tx.ExecContext(ctx, `DELETE FROM supervisor_asked WHERE scope = ? AND key = ?`, scope, r.key)
-				return err
-			}); err != nil {
+			if err := unmark(ctx, c, scope, r.key); err != nil {
 				return nil, err
 			}
 		}

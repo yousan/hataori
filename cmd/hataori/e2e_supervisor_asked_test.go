@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/store"
 	"github.com/yousan/hataori/internal/supervisor"
 	"github.com/yousan/hataori/internal/wire"
 )
@@ -261,4 +263,55 @@ func TestAskedWakeIsNoCycleOfAHeldThread(t *testing.T) {
 	if n, _, err := g.Count(context.Background(), w); err != nil || n != 1 {
 		t.Fatalf("%d cycles of the thread that woke it, %v; want 1", n, err)
 	}
+}
+
+// More marked threads than a digest shows come in more wakes, each shown.
+func TestAskedThreadsOverThreadsMax(t *testing.T) {
+	wt := newWakeTest(t, budget(1, 0, 0), autonomy("act"), func(cfg map[string]any) {
+		cfg["scopes"].([]map[string]any)[0]["supervisor"].(map[string]any)["threads_max"] = 1
+	})
+	stop, owner, sv := wt.start(t)
+	defer stop()
+	sendAndRead(t, owner, sv.ID, "q1", wt.startsThread("reply one answer")+"\n"+wt.startsThread("reply another answer"))
+	b := wt.newest(t, 2)
+	a := b - 1
+	wt.ended(t, a, 1)
+	wt.read(t, max(wt.ended(t, a, 1), wt.ended(t, b, 1)))
+	wt.settle(t, "two wakes", func() bool { return len(wt.wakes(t, sv.ID)) >= 2 })
+	got := wt.woken(t, owner, sv.ID, 2)
+	if !names(got[0], a) || names(got[0], b) || !names(got[1], b) || names(got[1], a) {
+		t.Fatalf("the wakes:\n%s\n%s", got[0], got[1])
+	}
+}
+
+// A mark left by a daemon that died before its start made anything does
+// not pass to a start under the same key in a wake's turn, or in none.
+func TestAskedMarkOfALostStartGoes(t *testing.T) {
+	var (
+		mu    sync.Mutex
+		issue func(string) (string, error)
+	)
+	supervisorHook = func(i func(string) (string, error), _ func(string)) { mu.Lock(); issue = i; mu.Unlock() }
+	t.Cleanup(func() { supervisorHook = nil })
+	wt := newWakeTest(t, budget(1, 0, 0), autonomy("act"))
+	stop, _, sv := wt.start(t)
+	defer stop()
+	wt.mu.Lock()
+	st := wt.waker.Core.Store
+	wt.mu.Unlock()
+	if err := st.Update(context.Background(), func(tx *store.Tx) error {
+		_, err := tx.ExecContext(context.Background(), `INSERT INTO supervisor_asked (scope, key, asks_in, person) VALUES ('c1', 'lost', 0, 'boss')`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	svc := svConn(t, wt.r.root, issue)
+	mu.Unlock()
+	w, err := svc.Start(context.Background(), control.StartRequest{Key: "lost", Scope: "c1", Repo: wt.repo, Input: control.Input{Text: "reply nobody asked"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt.held(t, wt.ended(t, w, 1))
+	wt.stays(t, sv.ID, 0, 5*time.Minute, "after a start in no person's turn")
 }
