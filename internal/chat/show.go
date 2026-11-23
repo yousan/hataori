@@ -154,6 +154,7 @@ func (f *FrontEnd) show(ctx context.Context) error {
 			}
 			rows = everyLink(append(append(r.track(e), rows...), r.subagents(e)...), convs)
 			rows = append(rows, f.mirrorRows(e, convs)...)
+			rows = append(rows, f.archiveRows(e, convs)...)
 			lr, err := f.lampRows(ctx, r, e, convs)
 			if err != nil {
 				return err

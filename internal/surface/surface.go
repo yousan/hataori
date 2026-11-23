@@ -47,7 +47,11 @@ type Driver interface {
 	Delete(ctx context.Context, ref MessageRef) error
 	// SetStatus shows a lamp on a message.
 	SetStatus(ctx context.Context, ref MessageRef, s Status) error
-	// SetThread sets a thread's title and archived flag.
+	// SetThread sets a thread's title and archived flag; an empty Title
+	// leaves the title as it is. It is optional (Limits.SetThread).
+	// Archiving never locks the thread and deletes nothing: a message
+	// posted into an archived thread un-archives it, where the service
+	// does that by itself.
 	SetThread(ctx context.Context, conv Conversation, t ThreadMeta) error
 
 	// Limits reports message length, choices per message, and which
@@ -278,7 +282,7 @@ const (
 
 // ThreadMeta is what SetThread changes.
 type ThreadMeta struct {
-	Title    string
+	Title    string // "" for the title it has
 	Archived bool
 }
 

@@ -2146,8 +2146,15 @@ type Driver interface {
 	Post(ctx context.Context, conv Conversation, key string, m Message) (MessageRef, error)
 	Edit(ctx context.Context, ref MessageRef, m Message) error
 	Delete(ctx context.Context, ref MessageRef) error
-	SetStatus(ctx context.Context, ref MessageRef, s Status) error        // lamp on a message
-	SetThread(ctx context.Context, conv Conversation, t ThreadMeta) error // title, archived
+	SetStatus(ctx context.Context, ref MessageRef, s Status) error // lamp on a message
+	// SetThread sets a thread's title ("" leaves it) and archived flag. It
+	// is optional (Limits.SetThread). Archiving never locks the thread and
+	// deletes nothing. The chat front end archives the chat threads of a
+	// scope with archive_when_asleep when a thread goes asleep or is
+	// closed, after what it posted there, and un-archives them when the
+	// thread is woken, before what it posts; a driver without the call
+	// keeps them open (#636).
+	SetThread(ctx context.Context, conv Conversation, t ThreadMeta) error
 
 	Limits() Limits // message length, choices and files per message, file size, which optional calls work, whether commands work
 }

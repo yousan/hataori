@@ -114,6 +114,7 @@ type Driver struct {
 	// fromMessage is the thread opened from each message.
 	fromMessage map[MessageRef]surface.Conversation
 	names       map[surface.Conversation]string // what Name answers
+	archived    map[surface.Conversation]bool   // threads archived by SetThread
 }
 
 var _ surface.Driver = (*Driver)(nil)
@@ -146,6 +147,7 @@ func New() *Driver {
 
 		fromMessage: map[MessageRef]surface.Conversation{},
 		names:       map[surface.Conversation]string{},
+		archived:    map[surface.Conversation]bool{},
 	}
 }
 
@@ -327,10 +329,13 @@ func Bot(id string) surface.Author { return surface.Author{Kind: surface.Bot, ID
 // Inject receives a message in conv (a channel when conv.Thread is empty,
 // else a thread) from author. While connected it is delivered to the sink
 // before Inject returns; either way Since finds it. It returns the message.
+// A message in an archived thread un-archives it first, as a person
+// writing in it does on a service that archives threads.
 func (d *Driver) Inject(conv surface.Conversation, author surface.Author, text string) surface.Inbound {
 	d.deliver.Lock()
 	defer d.deliver.Unlock()
 	d.mu.Lock()
+	delete(d.archived, conv)
 	id := d.id("in")
 	in := surface.Inbound{
 		Ref:    MessageRef{Conv: conv, ID: id},
@@ -592,7 +597,9 @@ func (d *Driver) change(op Op, ref MessageRef, c Call) error {
 	return after
 }
 
-// SetThread records a thread's title and archived flag.
+// SetThread records a thread's title and archived flag, and sets the
+// flag Archived reports. A post into an archived thread leaves it archived,
+// so that a test sees whether the code under test un-archived it.
 func (d *Driver) SetThread(_ context.Context, conv surface.Conversation, t surface.ThreadMeta) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -600,8 +607,21 @@ func (d *Driver) SetThread(_ context.Context, conv surface.Conversation, t surfa
 	if before != nil {
 		return before
 	}
+	if t.Archived {
+		d.archived[conv] = true
+	} else {
+		delete(d.archived, conv)
+	}
 	d.record(conv, Call{Op: OpSetThread, Thread: t})
 	return after
+}
+
+// Archived reports whether the thread conv is archived: SetThread archived
+// it, and no message was injected into it since.
+func (d *Driver) Archived(conv surface.Conversation) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.archived[conv]
 }
 
 // InjectDirect receives a direct message from the person who, in the

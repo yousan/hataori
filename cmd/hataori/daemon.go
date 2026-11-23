@@ -784,6 +784,14 @@ func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.St
 			}
 			scopes[s.Key] = chat.Scope{Enabled: s.Enabled}
 		}
+		// The scopes, of every client, whose chat threads are archived
+		// while asleep: a link here may show another client's scope.
+		archive := map[string]bool{}
+		for _, s := range cfg.Scopes {
+			if s.ArchiveWhenAsleep {
+				archive[s.Key] = true
+			}
+		}
 		// The channels of this client that may show other scopes' threads.
 		showIn := map[string][]string{}
 		for _, s := range cfg.Scopes {
@@ -794,7 +802,7 @@ func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.St
 			}
 		}
 		fe := &chat.FrontEnd{Name: name, Driver: d, API: c.As, Trigger: cfg.Trigger, People: cfg.People,
-			Scopes: scopes, ShowIn: showIn, Log: lg.With("client", name), Instance: filepath.Base(root),
+			Scopes: scopes, ShowIn: showIn, ArchiveWhenAsleep: archive, Log: lg.With("client", name), Instance: filepath.Base(root),
 			Outbox:  &chat.Outbox{Store: st, Client: name, Driver: d, Log: lg.With("client", name)},
 			FileDir: filepath.Join(root, "state", "chat", name, "files"),
 			FileRoots: func(ctx context.Context, id control.ThreadID, session int64) ([]string, error) {
