@@ -190,7 +190,11 @@ func TestDashboardTabsAndPanes(t *testing.T) {
 	}
 
 	// 4. Hiding the tree and the details gives the main area their width,
-	// and the choice is kept across a reload.
+	// and the choice is kept across a reload. The details panel is there
+	// beside a thread; beside All threads alone it takes no width (#631).
+	b.until("no details panel beside All threads alone", `document.querySelector('[data-tool=details]').getAttribute('aria-pressed') === 'true' && !document.querySelector('.details')`)
+	openThread(t, b, control.ThreadID(nI))
+	b.until("the details panel beside the thread", `!!document.querySelector('.details')`)
 	type widths struct{ Center, Tree, Details, Page float64 }
 	measure := func() widths {
 		var w widths

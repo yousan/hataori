@@ -438,7 +438,10 @@ export function App() {
             ))}
           </main>
         </div>
-        {layout.details && (
+        {/* With no thread or host terminal in front, the panel would only
+            say to open one: it takes no width, and the table gets it. The
+            choice to show it stays. */}
+        {layout.details && (current !== null || currentHost !== null) && (
           <aside className="details" aria-label={t("details.label")}>
             {currentHost !== null ? (
               host(currentHost) ? <HostDetails h={host(currentHost)!} now={now} /> : <p className="empty">{t("host.gone")}</p>
