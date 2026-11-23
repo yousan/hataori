@@ -220,7 +220,10 @@ func ScopePath(root, scope string) string {
 // that is there is used as it is, never emptied, moved or written to: it
 // may be the directory of the scope's earlier supervisor threads, with
 // their notes. A link at its place, or in place of confined/, is refused and
-// left as it is. It implements the core's Workspaces.
+// left as it is. Any directory directly in confined/ is taken: that each
+// scope's supervisor threads get their own is the supervisor client's
+// choice of dir (supervisor.Sessions.Dir). It implements the core's
+// Workspaces.
 func (m Maker) Confined(ctx context.Context, thread control.ThreadID, dir string) (string, error) {
 	if dir == "" {
 		if thread <= 0 {
@@ -246,14 +249,24 @@ func (m Maker) Confined(ctx context.Context, thread control.ThreadID, dir string
 	if st, err := os.Lstat(filepath.Dir(dir)); err != nil || !os.SameFile(st, pst) {
 		return "", fmt.Errorf("workspace: %s is not a directory in %s", dir, parent)
 	}
-	err = os.Mkdir(dir, 0o700)
+	// From here on in the directory checked, held open, so that one put in
+	// place of confined/ meanwhile is not followed.
+	r, err := os.OpenRoot(parent)
+	if err != nil {
+		return "", fmt.Errorf("workspace: %w", err)
+	}
+	defer r.Close()
+	if st, err := r.Stat("."); err != nil || !os.SameFile(st, pst) {
+		return "", fmt.Errorf("workspace: %s was replaced", parent)
+	}
+	err = r.Mkdir(base, 0o700)
 	if err == nil {
 		return dir, nil
 	}
 	if !errors.Is(err, os.ErrExist) {
 		return "", fmt.Errorf("workspace: %w", err)
 	}
-	st, err := os.Lstat(dir)
+	st, err := r.Lstat(base)
 	if err != nil {
 		return "", fmt.Errorf("workspace: %w", err)
 	}

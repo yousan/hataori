@@ -345,6 +345,11 @@ func (s *Sessions) Dir(ctx context.Context, scope string) (string, error) {
 		dir = workspace.ScopePath(s.Root, scope)
 	case err != nil:
 		return "", fmt.Errorf("supervisor: the directory of %q: %w", scope, err)
+	case filepath.Dir(filepath.Clean(dir)) != filepath.Join(s.Root, workspace.ConfinedDir):
+		// The workspace maker would refuse it for every thread from now on.
+		s.Log.Warn("the supervisor's last thread has its directory elsewhere; the scope gets a new one",
+			"scope", scope, "was", dir)
+		dir = workspace.ScopePath(s.Root, scope)
 	}
 	res, err := db.ExecContext(ctx, `INSERT INTO supervisor_dirs (scope, dir) VALUES (?, ?) ON CONFLICT (scope) DO NOTHING`, scope, dir)
 	if err != nil {

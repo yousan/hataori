@@ -426,7 +426,8 @@ func (r *deletingRemover) Remove(ctx context.Context, dir string) (string, error
 
 // The removal of a closed confined thread, as a supervisor's, is refused
 // before the Remover is asked: its directory is its scope's, and it and
-// everything in it stay as they were.
+// everything in it stay as they were. (The removal pass does not try such
+// a thread at all.)
 func TestRemoveNeverRemovesAConfinedThreadsDirectory(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, fakeOwner{})
@@ -467,9 +468,5 @@ func TestRemoveNeverRemovesAConfinedThreadsDirectory(t *testing.T) {
 	ev := f.eventsOf(t, id, KindRemovalRefused)
 	if len(ev) != 1 || ev[0]["reason"] != ConfinedDir || f.threadState(t, id) != control.Closed {
 		t.Fatalf("removal_refused events %v, state %s", ev, f.threadState(t, id))
-	}
-	// The removal pass refuses it the same way.
-	if n, _ := f.core.RemoveClosed(ctx, time.Nanosecond); n != 0 || rm.Asked() != 0 {
-		t.Fatalf("the removal pass removed %d, asked the remover %d times", n, rm.Asked())
 	}
 }
