@@ -85,6 +85,13 @@
 //	                    call TOOL of the session's MCP server, ARGUMENTS a JSON
 //	                    object, and reply "mcp: TEXT", "mcp error: TEXT" for a
 //	                    tool error, or "mcp failed: ..." when it was not reached
+//	write NAME TEXT     write TEXT and a line end to the file NAME, relative to
+//	                    its working directory, making the directories it is
+//	                    in, as an agent's file tool writes; reply "wrote NAME"
+//	                    or "write error: ..."
+//	read NAME           reply "read: TEXT", TEXT the content of the file NAME,
+//	                    relative to its working directory, without its last
+//	                    line end, or "read error: ..."
 //
 // With --mcp-config FILE (a confined spec, Config.Confines) the program has
 // the MCP servers in FILE. It starts the first one on the first "mcp" and

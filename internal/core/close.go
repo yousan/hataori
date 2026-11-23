@@ -29,6 +29,10 @@ const (
 	NotClosed    = "thread not closed"                  // the thread is not closed
 	NoRemover    = "the instance removes no workspaces" // the core has no Remover
 	AgentRunning = "agent not stopped"                  // the closed thread's agent could not be stopped
+	// ConfinedDir: the thread was started confined, as a supervisor's is.
+	// Its directory is its scope's, shared with the scope's other
+	// supervisor threads, and is never removed (design, section 7.1).
+	ConfinedDir = "the directory of a confined thread is never removed"
 	// MovedNotRemoved starts the reason of a refusal after which the
 	// workspace is no longer at its place: the remover moved it into trash
 	// and could not finish. The detail says where it is.
@@ -92,6 +96,18 @@ func (c *Core) remove(ctx context.Context, id control.ThreadID, principal contro
 	}
 	if foreign {
 		return c.removeTakenIn(ctx, id, sid, principal, trigger)
+	}
+	// A confined thread's directory outlives the thread: it holds the
+	// notes of its scope's supervisor threads, the next one's included. It
+	// is never given to the Remover.
+	confined, err := c.Confined(ctx, id)
+	if err != nil {
+		c.refuseRemoval(ctx, id, sid, principal, trigger, "error", "", "", err.Error())
+		return fmt.Errorf("core: remove %v: %w: %w", id, ErrRemovalRefused, err)
+	}
+	if confined {
+		c.refuseRemoval(ctx, id, sid, principal, trigger, ConfinedDir, "", "", "")
+		return fmt.Errorf("core: remove %v: %w: %s", id, ErrRemovalRefused, ConfinedDir)
 	}
 	if c.Remover == nil {
 		c.refuseRemoval(ctx, id, sid, principal, trigger, NoRemover, "", "", "")

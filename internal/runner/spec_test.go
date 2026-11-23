@@ -51,7 +51,7 @@ func TestCodecGetsTheLaunchedSpec(t *testing.T) {
 	f.start("reply hello")
 	waitFor(t, "the first turn", 15*time.Second, f.has("turn_ended", 1))
 	if _, err := f.core.StartConfined(context.Background(), control.Caller{From: ownerFrom, Scopes: []string{"s"}, May: all},
-		control.StartRequest{Key: "k2", Scope: "s", Thread: "t2", Input: control.Input{Text: "reply confined"}}); err != nil {
+		control.StartRequest{Key: "k2", Scope: "s", Thread: "t2", Input: control.Input{Text: "reply confined"}}, t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, "the confined turn", 15*time.Second, f.has("turn_ended", 2))

@@ -468,6 +468,15 @@ var migrations = []Migration{
 	{Name: "turns.stopped_by", Up: execAll(
 		`ALTER TABLE turns ADD COLUMN stopped_by TEXT NOT NULL DEFAULT ''`,
 	)},
+	// The directory of each scope's supervisor threads (design, section
+	// 7.1, "Its directory and its notes"), which outlives each of them:
+	// every new supervisor thread of the scope starts in it.
+	{Name: "supervisor_dirs", Up: execAll(
+		`CREATE TABLE supervisor_dirs (
+			scope TEXT PRIMARY KEY,
+			dir   TEXT NOT NULL
+		)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

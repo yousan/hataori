@@ -176,49 +176,102 @@ func (m Maker) Adopt(ctx context.Context, thread control.ThreadID, p core.Placem
 // and the Remover, which removes only below Dir, never removes one.
 const ConfinedDir = "confined"
 
-// ConfinedPath returns where Empty makes the directory of thread:
-// <root>/confined/<number>.
+// ConfinedPath returns the directory of a thread started confined that was
+// given none: <root>/confined/<number>. Supervisor threads started before
+// each scope had a directory of its own have theirs there.
 func ConfinedPath(root string, thread control.ThreadID) string {
 	return filepath.Join(root, ConfinedDir, strconv.FormatInt(int64(thread), 10))
 }
 
-// Empty makes the directory of a thread started confined: empty, not a
-// clone. A directory already at its place is taken only when it is a
-// directory itself, not a link, and empty, as one an Empty made before the
-// daemon died; anything else is refused and left as it is. It implements
-// the core's Workspaces.
-func (m Maker) Empty(ctx context.Context, thread control.ThreadID) (string, error) {
-	if thread <= 0 {
-		return "", fmt.Errorf("workspace: no thread %d", thread)
+// scopeNameMax is the longest key ScopePath names a directory by in
+// hex; a longer one is named by its hash, so the name fits in a path
+// segment.
+const scopeNameMax = 100
+
+// ScopePath returns the directory of scope's supervisor threads (design,
+// section 7.1, "Its directory and its notes") in <root>/confined/: one per
+// scope key, so that no two scopes share one. A key of lowercase letters,
+// digits, '-' and '_' only is the name after "scope-"; any other is
+// hex-encoded after "scopex-", and one too long for that is the hex of its
+// SHA-256 after "scopeh-". Keys that differ in case only, as some file
+// systems do not tell apart, thus get two names. No name is a thread's
+// number, as ConfinedPath's are.
+func ScopePath(root, scope string) string {
+	plain := scope != "" && len(scope) <= scopeNameMax
+	for i := 0; i < len(scope) && plain; i++ {
+		c := scope[i]
+		plain = c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_'
+	}
+	name := "scope-" + scope
+	switch {
+	case plain:
+	case len(scope) <= scopeNameMax:
+		name = "scopex-" + hex.EncodeToString([]byte(scope))
+	default:
+		sum := sha256.Sum256([]byte(scope))
+		name = "scopeh-" + hex.EncodeToString(sum[:])
+	}
+	return filepath.Join(root, ConfinedDir, name)
+}
+
+// Confined returns the directory of a thread started confined: dir, or
+// ConfinedPath when dir is empty, which must be directly in
+// <root>/confined/. The directory is made, empty, when it is not there. One
+// that is there is used as it is, never emptied, moved or written to: it
+// may be the directory of the scope's earlier supervisor threads, with
+// their notes. A link at its place, or in place of confined/, is refused and
+// left as it is. Any directory directly in confined/ is taken: that each
+// scope's supervisor threads get their own is the supervisor client's
+// choice of dir (supervisor.Sessions.Dir). It implements the core's
+// Workspaces.
+func (m Maker) Confined(ctx context.Context, thread control.ThreadID, dir string) (string, error) {
+	if dir == "" {
+		if thread <= 0 {
+			return "", fmt.Errorf("workspace: no thread %d", thread)
+		}
+		dir = ConfinedPath(m.Root, thread)
 	}
 	parent := filepath.Join(m.Root, ConfinedDir)
 	if err := os.MkdirAll(parent, 0o700); err != nil {
 		return "", fmt.Errorf("workspace: %w", err)
 	}
-	if st, err := os.Lstat(parent); err != nil || !st.IsDir() {
+	pst, err := os.Lstat(parent)
+	if err != nil || !pst.IsDir() {
 		return "", fmt.Errorf("workspace: %s is not a directory", parent)
 	}
-	dir := ConfinedPath(m.Root, thread)
-	err := os.Mkdir(dir, 0o700)
+	dir = filepath.Clean(dir)
+	base := filepath.Base(dir)
+	if base == "." || base == ".." || base == string(filepath.Separator) {
+		return "", fmt.Errorf("workspace: %s is not a directory in %s", dir, parent)
+	}
+	// The directory it is in is confined/ itself, however the two are
+	// spelled.
+	if st, err := os.Lstat(filepath.Dir(dir)); err != nil || !os.SameFile(st, pst) {
+		return "", fmt.Errorf("workspace: %s is not a directory in %s", dir, parent)
+	}
+	// From here on in the directory checked, held open, so that one put in
+	// place of confined/ meanwhile is not followed.
+	r, err := os.OpenRoot(parent)
+	if err != nil {
+		return "", fmt.Errorf("workspace: %w", err)
+	}
+	defer r.Close()
+	if st, err := r.Stat("."); err != nil || !os.SameFile(st, pst) {
+		return "", fmt.Errorf("workspace: %s was replaced", parent)
+	}
+	err = r.Mkdir(base, 0o700)
 	if err == nil {
 		return dir, nil
 	}
 	if !errors.Is(err, os.ErrExist) {
 		return "", fmt.Errorf("workspace: %w", err)
 	}
-	st, err := os.Lstat(dir)
+	st, err := r.Lstat(base)
 	if err != nil {
 		return "", fmt.Errorf("workspace: %w", err)
 	}
 	if !st.IsDir() {
 		return "", fmt.Errorf("%w: %s is not a directory", ErrExists, dir)
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return "", fmt.Errorf("workspace: %w", err)
-	}
-	if len(entries) > 0 {
-		return "", fmt.Errorf("%w: %s is not empty", ErrExists, dir)
 	}
 	return dir, nil
 }

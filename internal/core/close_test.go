@@ -391,7 +391,7 @@ func (dirWorkspaces) Adopt(context.Context, control.ThreadID, Placement) (string
 	return "", false, nil
 }
 
-func (dirWorkspaces) Empty(context.Context, control.ThreadID) (string, error) {
+func (dirWorkspaces) Confined(context.Context, control.ThreadID, string) (string, error) {
 	return "", errors.New("no confined threads here")
 }
 func (dirWorkspaces) State(context.Context, string) (control.WorkspaceState, error) {
@@ -406,4 +406,67 @@ func (movingRemover) Remove(_ context.Context, dir string) (string, error) {
 		return "", err
 	}
 	return "", &fakeRefusal{reason: "not a workspace", detail: "the workspace is at " + dir + ".pending"}
+}
+
+// confinedWorkspaces gives a confined thread the directory it is started
+// in, made when missing, as the workspace maker does.
+type confinedWorkspaces struct{ fakeWorkspaces }
+
+func (confinedWorkspaces) Confined(_ context.Context, _ control.ThreadID, dir string) (string, error) {
+	return dir, os.MkdirAll(dir, 0o700)
+}
+
+// deletingRemover removes whatever it is asked to, with no proof.
+type deletingRemover struct{ fakeRemover }
+
+func (r *deletingRemover) Remove(ctx context.Context, dir string) (string, error) {
+	r.fakeRemover.Remove(ctx, dir)
+	return "trash", os.RemoveAll(dir)
+}
+
+// The removal of a closed confined thread, as a supervisor's, is refused
+// before the Remover is asked: its directory is its scope's, and it and
+// everything in it stay as they were. (The removal pass does not try such
+// a thread at all.)
+func TestRemoveNeverRemovesAConfinedThreadsDirectory(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{})
+	f.core.Workspaces = confinedWorkspaces{}
+	rm := &deletingRemover{}
+	f.core.Remover = rm
+	dir := filepath.Join(t.TempDir(), "scope")
+	id, err := f.core.StartConfined(ctx, control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all},
+		control.StartRequest{Key: "sv", Scope: "s", Thread: "sv", Input: control.Input{Text: "go"}}, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := f.core.WorkspaceDir(ctx, id); err != nil || got != dir {
+		t.Fatalf("the confined thread's directory: %q, %v; want %s", got, err, dir)
+	}
+	sid, _, err := f.core.current(ctx, f.core.Store.DB, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.agentEvent(t, sid, 1, agent.Event{Kind: agent.SessionReady})
+	notes := filepath.Join(dir, "notes", "plan.md")
+	os.MkdirAll(filepath.Dir(notes), 0o700)
+	os.WriteFile(notes, []byte("the plan\n"), 0o600)
+	owner := f.core.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: closer})
+	if err := owner.CloseThread(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	err = owner.RemoveThread(ctx, id)
+	if !errors.Is(err, ErrRemovalRefused) || !strings.Contains(err.Error(), ConfinedDir) {
+		t.Fatalf("remove: %v; want refused, the directory being a confined thread's", err)
+	}
+	if rm.Asked() != 0 {
+		t.Fatalf("the remover was asked about %v", rm.asked)
+	}
+	if b, err := os.ReadFile(notes); err != nil || string(b) != "the plan\n" {
+		t.Fatalf("the notes after the removal: %q, %v", b, err)
+	}
+	ev := f.eventsOf(t, id, KindRemovalRefused)
+	if len(ev) != 1 || ev[0]["reason"] != ConfinedDir || f.threadState(t, id) != control.Closed {
+		t.Fatalf("removal_refused events %v, state %s", ev, f.threadState(t, id))
+	}
 }

@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -16,6 +17,7 @@ import (
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
 	"github.com/yousan/hataori/internal/runner"
+	"github.com/yousan/hataori/internal/workspace"
 )
 
 // TokenEnv is the environment variable that holds the token of `hataori
@@ -286,6 +288,12 @@ func (s *Sessions) StartOne(ctx context.Context, scope string) (control.ThreadID
 	if !ok {
 		return 0, fmt.Errorf("supervisor: scope %q names no supervisor", scope)
 	}
+	// The scope's directory is decided before anything else, so that a
+	// thread that exists now, from before scopes had one, gives its own.
+	dir, err := s.Dir(ctx, scope)
+	if err != nil {
+		return 0, err
+	}
 	last, state, err := s.Core.LastConfined(ctx, scope)
 	if err != nil {
 		return 0, err
@@ -310,5 +318,49 @@ func (s *Sessions) StartOne(ctx context.Context, scope string) (control.ThreadID
 	}
 	caller := control.Caller{Principal: s.Owner, Scopes: []string{scope}, May: control.OpRead | control.OpStart}
 	return s.Core.StartConfined(ctx, caller, control.StartRequest{Key: key, Scope: scope,
-		Input: control.Input{Text: FirstInput}, Model: model, Effort: sv.Effort})
+		Input: control.Input{Text: FirstInput}, Model: model, Effort: sv.Effort}, dir)
+}
+
+// Dir returns the directory of scope's supervisor threads (design, section
+// 7.1, "Its directory and its notes"), recorded in the store the first time
+// it is asked for: the directory of the scope's newest supervisor thread
+// that has one, so that what it holds carries on, else a new one in
+// <root>/confined/ named from the scope's key (workspace.ScopePath). Every
+// supervisor thread of the scope started from then on starts in it; nothing
+// here makes, empties or removes it.
+func (s *Sessions) Dir(ctx context.Context, scope string) (string, error) {
+	db := s.Core.Store.DB
+	var dir string
+	err := db.QueryRowContext(ctx, `SELECT dir FROM supervisor_dirs WHERE scope = ?`, scope).Scan(&dir)
+	if err == nil {
+		return dir, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("supervisor: the directory of %q: %w", scope, err)
+	}
+	err = db.QueryRowContext(ctx, `SELECT workspace FROM threads WHERE scope = ? AND confined = 1 AND workspace != ''
+		ORDER BY id DESC LIMIT 1`, scope).Scan(&dir)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		dir = workspace.ScopePath(s.Root, scope)
+	case err != nil:
+		return "", fmt.Errorf("supervisor: the directory of %q: %w", scope, err)
+	case filepath.Dir(filepath.Clean(dir)) != filepath.Join(s.Root, workspace.ConfinedDir):
+		// The workspace maker would refuse it for every thread from now on.
+		s.Log.Warn("the supervisor's last thread has its directory elsewhere; the scope gets a new one",
+			"scope", scope, "was", dir)
+		dir = workspace.ScopePath(s.Root, scope)
+	}
+	res, err := db.ExecContext(ctx, `INSERT INTO supervisor_dirs (scope, dir) VALUES (?, ?) ON CONFLICT (scope) DO NOTHING`, scope, dir)
+	if err != nil {
+		return "", fmt.Errorf("supervisor: the directory of %q: %w", scope, err)
+	}
+	if n, _ := res.RowsAffected(); n == 1 {
+		s.Log.Info("the scope's supervisor directory", "scope", scope, "dir", dir)
+		return dir, nil
+	}
+	if err := db.QueryRowContext(ctx, `SELECT dir FROM supervisor_dirs WHERE scope = ?`, scope).Scan(&dir); err != nil {
+		return "", fmt.Errorf("supervisor: the directory of %q: %w", scope, err)
+	}
+	return dir, nil
 }
