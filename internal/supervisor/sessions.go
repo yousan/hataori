@@ -78,6 +78,9 @@ type Scope struct {
 	ReportEvery time.Duration
 	Mention     string
 	QuietHours  *instance.QuietHours
+	// Files are host paths copied into docs/ of its directory before each
+	// launch of its session and before each wake (Docs).
+	Files []string
 }
 
 // Sessions is the supervisors' part of the daemon (design, section 7.1): it
@@ -100,7 +103,10 @@ type Sessions struct {
 	// Forges are the forges the daemon reads for its supervisors, by name
 	// (Reads). Their tokens stay in them.
 	Forges map[string]forge.Forge
-	Log    *slog.Logger
+	// Docs copies each scope's files into docs/ of its directory; nil for
+	// none.
+	Docs *Docs
+	Log  *slog.Logger
 
 	mu     sync.Mutex
 	issued map[control.ThreadID]issued // by thread: the token of its newest session
@@ -139,11 +145,27 @@ func (s *Sessions) Confine(ctx context.Context, l runner.ConfinedLaunch) (runner
 	if err := s.given(ctx, l.Scope, files); err != nil {
 		return runner.Confined{}, err
 	}
+	s.CopyDocs(ctx, l.Scope, l.Thread)
 	return runner.Confined{
 		MCP: []agent.MCPServer{{Name: MCPName, Argv: []string{s.Hataori, "mcp", "--scope", l.Scope, "--root", s.Root},
 			Env: []string{TokenEnv + "=" + token}}},
 		Instructions: Compose(sv, files),
 	}, nil
+}
+
+// CopyDocs copies the files scope's supervisor lists into docs/ of the
+// directory of its thread, before a launch of the thread's session or a
+// wake (Docs.Copy). Nothing here stops the launch or the wake.
+func (s *Sessions) CopyDocs(ctx context.Context, scope string, thread control.ThreadID) {
+	if s.Docs == nil {
+		return
+	}
+	dir, err := s.Core.WorkspaceDir(ctx, thread)
+	if err != nil {
+		s.Log.Error("supervisor docs: the thread's directory", "scope", scope, "thread", int64(thread), "err", err)
+		return
+	}
+	s.Docs.Copy(ctx, dir, s.Scopes[scope].Files)
 }
 
 // bind binds the token of session, kept in its state directory, to the

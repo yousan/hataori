@@ -18,7 +18,7 @@ func (a *Adapter) NewCodec(spec agent.Spec) agent.Codec {
 	// A session taken in is past its start: input goes to it at once.
 	return &codec{spec: spec, seen: map[string]bool{}, turns: map[string]*turnText{}, lines: map[string]bool{},
 		timeout: a.inputTimeout, hookTimeout: a.hookTimeout, requests: map[string]*request{}, ready: spec.TakenIn,
-		started: spec.TakenIn, session: takenSession(spec)}
+		started: spec.TakenIn, session: takenSession(spec), resolve: resolveLinks}
 }
 
 // takenSession is the session a codec of a session taken in runs: known
@@ -34,8 +34,12 @@ func takenSession(spec agent.Spec) string {
 type Actions = agent.Actions
 
 // codec turns hook calls into events. It does no I/O: it reads the lines
-// the session host recorded and keeps a little state between them.
+// the session host recorded and keeps a little state between them. Only
+// resolve, given to it, looks at the file system: the links in the path of
+// a confined session's write.
 type codec struct {
+	resolve func(string) (string, bool)
+
 	mu      sync.Mutex
 	spec    agent.Spec
 	seq     uint64
@@ -742,7 +746,7 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 		return c.events(agent.Event{Kind: agent.ToolEnded, ID: p.ToolUseID, Tool: p.ToolName, Parent: p.AgentID})
 	case "PermissionRequest":
 		if c.spec.Confine != nil && k.Wait {
-			if path, ok := protectedWrite(c.spec.Dir, p); ok {
+			if path, ok := protectedWrite(c.spec.Dir, p, c.resolve); ok {
 				return Actions{Reply: []agent.HookReply{{Call: k.Hook, Body: denyWrite(path)}}}
 			}
 		}
@@ -808,12 +812,15 @@ var writeTools = map[string]string{"Write": "file_path", "Edit": "file_path", "M
 // git and tool configuration file a project gives the CLI (.claude/,
 // .mcp.json, .git/, .gitconfig, .vscode/, ...), the files --restricted
 // leaves to a person or the permission handler, and a supervisor needs
-// none of them (#423). A path outside the directory, or one that cannot be
+// none of them (#423); and one in docs/ at the top of the directory,
+// ProtectedDocs, which holds the daemon's copies of the files the operator
+// lists (#640). A path outside the directory, or one that cannot be
 // read, counts too; the CLI refuses the first itself. The directory is the
 // session's, or the request's cwd when that ends with the session's: the
 // CLI may name the same directory with a link above it resolved, such as
-// /private/var/... for /var/.... path is the path as the request gives it.
-func protectedWrite(dir string, p payload) (path string, ok bool) {
+// /private/var/... for /var/.... A path counts both as it is spelled and
+// with its links resolved by resolve. path is the path as the request gives it.
+func protectedWrite(dir string, p payload, resolve func(string) (string, bool)) (path string, ok bool) {
 	field, ok := writeTools[p.ToolName]
 	if !ok {
 		return "", false
@@ -836,24 +843,58 @@ func protectedWrite(dir string, p payload) (path string, ok bool) {
 		if !filepath.IsAbs(full) {
 			full = filepath.Join(base, full)
 		}
-		rel, err := filepath.Rel(filepath.Clean(base), filepath.Clean(full))
-		if err != nil || !filepath.IsLocal(rel) {
+		protected, inside := protectedIn(filepath.Clean(base), filepath.Clean(full))
+		if !inside {
 			continue
 		}
-		for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
-			if strings.HasPrefix(part, ".") {
-				return path, true
-			}
+		if protected {
+			return path, true
+		}
+		// A link in the directory may lead the path where it does not say,
+		// as notes/x to ../docs: it counts as where it leads.
+		rbase, ok := resolve(filepath.Clean(base))
+		rfull, rok := resolve(filepath.Clean(full))
+		if !ok || !rok {
+			return path, true
+		}
+		if protected, inside := protectedIn(rbase, rfull); protected || !inside {
+			return path, true
 		}
 		return "", false
 	}
 	return path, true
 }
 
+// protectedIn says whether full, inside base, is a path a confined session
+// may not write (see protectedWrite), and whether it is inside base.
+func protectedIn(base, full string) (protected, inside bool) {
+	rel, err := filepath.Rel(base, full)
+	if err != nil || !filepath.IsLocal(rel) {
+		return false, false
+	}
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	// docs/ at its top is hataori's: the daemon's copies of the files
+	// the operator lists (#640). Told apart from case on a file system
+	// that does not.
+	if strings.EqualFold(parts[0], ProtectedDocs) {
+		return true, true
+	}
+	for _, part := range parts {
+		if strings.HasPrefix(part, ".") {
+			return true, true
+		}
+	}
+	return false, true
+}
+
+// ProtectedDocs is the directory at the top of a confined session's own
+// that the session may not write: hataori's copies of the operator's files.
+const ProtectedDocs = "docs"
+
 // denyWrite is the reply that refuses a confined session's write to path.
 func denyWrite(path string) []byte {
 	msg := "hataori: a confined session may not write " + strconv.Quote(path) +
-		": no settings, git or tool configuration file, nor any other file or directory whose name starts with a dot, nor a file outside its directory"
+		": no settings, git or tool configuration file, nor any other file or directory whose name starts with a dot, nor a file in docs/, where hataori keeps its copies of the operator's files, nor a file outside its directory"
 	b, _ := json.Marshal(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": "PermissionRequest",
 		"decision": map[string]any{"behavior": "deny", "message": msg}}})
 	return b

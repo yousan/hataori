@@ -581,6 +581,28 @@ var migrations = []Migration{
 		`ALTER TABLE supervisor_wakes ADD COLUMN since INTEGER NOT NULL DEFAULT 0`,
 		`UPDATE supervisor_wakes SET since = pos`,
 	)},
+	// The copies the daemon wrote into docs/ of a supervisor's directory
+	// (design, section 7.1, "Its directory and its notes"), each with its
+	// size, SHA-256, inode and the daemon's own second link to it, which
+	// holds the inode while the row names it: it writes over or removes
+	// only a file there that is still one of these. pending_* is a copy
+	// being put in place: a daemon that died before it recorded the copy
+	// finds either.
+	{Name: "supervisor_docs", Up: execAll(
+		`CREATE TABLE supervisor_docs (
+			dir          TEXT NOT NULL, -- the supervisor's directory
+			name         TEXT NOT NULL, -- the file's name in docs/
+			size         INTEGER NOT NULL,
+			hash         TEXT NOT NULL, -- hex
+			ino          INTEGER NOT NULL, -- the copy's inode
+			keep         TEXT NOT NULL,    -- the daemon's own link to it in docs/
+			pending_size INTEGER,          -- the copy being put in place, if any
+			pending_hash TEXT,
+			pending_ino  INTEGER,
+			pending_keep TEXT,
+			PRIMARY KEY (dir, name)
+		)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

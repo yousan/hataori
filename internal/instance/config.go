@@ -181,6 +181,12 @@ type Supervisor struct {
 	// is given though they have no write access to the repository,
 	// "trusted_authors"; empty for none.
 	TrustedAuthors []string
+	// Files are host paths, "files": before each launch of the
+	// supervisor's session and before each wake, the daemon copies each
+	// into docs/ of the scope's directory under its base name (design,
+	// section 7.1, "Its directory and its notes"). Each is absolute, and no
+	// two have the same base name, also when told apart by case only.
+	Files []string
 }
 
 // Repo is one entry of a supervisor's repos.
@@ -295,6 +301,7 @@ type fileSupervisor struct {
 	ReportEvery    string   `json:"report_every"`
 	Mention        string   `json:"mention"`
 	TrustedAuthors []string `json:"trusted_authors"`
+	Files          []string `json:"files"`
 	QuietHours     *struct {
 		From string `json:"from"`
 		To   string `json:"to"`
@@ -699,6 +706,20 @@ func ParseConfig(data []byte) (*Config, error) {
 			}
 			if err := sc.Supervisor.posts(sv, key+".supervisor"); err != nil {
 				return nil, err
+			}
+			bases := map[string]int{}
+			for j, f := range sv.Files {
+				k := fmt.Sprintf("%s.supervisor.files[%d]", key, j)
+				if f == "" || strings.TrimSpace(f) != f || !filepath.IsAbs(f) {
+					return nil, fmt.Errorf("config: key %q: %q is not an absolute path", k, f)
+				}
+				base := strings.ToLower(filepath.Base(f))
+				if i, ok := bases[base]; ok {
+					return nil, fmt.Errorf("config: key %q: %q has the base name of %s.supervisor.files[%d], %q: both would be docs/%s",
+						k, f, key, i, sv.Files[i], filepath.Base(f))
+				}
+				bases[base] = j
+				sc.Supervisor.Files = append(sc.Supervisor.Files, filepath.Clean(f))
 			}
 		}
 		for j, e := range s.ShowIn {

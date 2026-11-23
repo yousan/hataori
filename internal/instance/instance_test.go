@@ -558,3 +558,33 @@ func TestSupervisorAutonomyConfig(t *testing.T) {
 		}
 	}
 }
+
+// A supervisor's files are absolute paths with base names of their own:
+// two with the same base name, also when told apart by case only, are
+// refused at start, naming both (#640). Without the key there are none.
+func TestSupervisorFilesConfig(t *testing.T) {
+	parse := func(sv string) (*Config, error) {
+		return ParseConfig([]byte(`{"owner": "o", "trigger": "!go", "idle": "30m", "scopes": [{"key": "c1", "client": "chat", "supervisor": ` + sv + `}]}`))
+	}
+	c, err := parse(`{}`)
+	if err != nil || c.Scopes[0].Supervisor.Files != nil {
+		t.Fatalf("without the key: %v, %q", err, c.Scopes[0].Supervisor.Files)
+	}
+	c, err = parse(`{"files": ["/srv/a/design.md", "/srv/b/rules.md"]}`)
+	if err != nil || !slices.Equal(c.Scopes[0].Supervisor.Files, []string{"/srv/a/design.md", "/srv/b/rules.md"}) {
+		t.Fatalf("files: %v, %q", err, c.Scopes[0].Supervisor.Files)
+	}
+	for _, dup := range []string{`["/srv/a/design.md", "/srv/b/design.md"]`, `["/srv/a/design.md", "/srv/b/Design.md"]`} {
+		_, err := parse(`{"files": ` + dup + `}`)
+		if err == nil || !strings.Contains(err.Error(), `"scopes[0].supervisor.files[1]"`) || !strings.Contains(err.Error(), "files[0]") ||
+			!strings.Contains(err.Error(), "/srv/a/design.md") || !strings.Contains(err.Error(), "/srv/b/") {
+			t.Fatalf("files %s: %v; want refused, naming both", dup, err)
+		}
+	}
+	for _, bad := range []string{`""`, `"design.md"`, `" /srv/a.md"`} {
+		_, err := parse(`{"files": [` + bad + `]}`)
+		if err == nil || !strings.Contains(err.Error(), `"scopes[0].supervisor.files[0]"`) {
+			t.Fatalf("files [%s]: %v", bad, err)
+		}
+	}
+}

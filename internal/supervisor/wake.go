@@ -201,6 +201,9 @@ type Waker struct {
 	// posted, before that is recorded. An error stops the waker there, as
 	// a daemon killed at that moment.
 	Hook func(step string) error
+	// Before, when set, is called right before each wake is sent to the
+	// supervisor's thread, as for the files copied into its docs/.
+	Before func(ctx context.Context, thread control.ThreadID)
 
 	read atomic.Uint64
 }
@@ -658,6 +661,9 @@ func (r *waking) attempt(ctx context.Context) error {
 		if err := r.store(ctx); err != nil {
 			return err
 		}
+	}
+	if r.w.Before != nil {
+		r.w.Before(ctx, sv)
 	}
 	err = r.api.Send(ctx, sv, r.sending.key, control.Input{Text: r.sending.text}, control.Refuse)
 	switch {
