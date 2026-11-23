@@ -1,0 +1,14 @@
+{
+ "request": "GET /repos/cli/cli/issues/14910/comments?page=1&per_page=100",
+ "status": 200,
+ "headers": {
+  "x-github-api-version-selected": "2022-11-28",
+  "content-type": "application/json; charset=utf-8",
+  "x-ratelimit-limit": "60",
+  "x-ratelimit-remaining": "26",
+  "x-ratelimit-used": "34",
+  "x-ratelimit-resource": "core",
+  "x-ratelimit-reset": "1795430204"
+ },
+ "body": []
+}

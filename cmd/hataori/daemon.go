@@ -24,6 +24,7 @@ import (
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
 	"github.com/yousan/hataori/internal/dashboard"
+	"github.com/yousan/hataori/internal/forge"
 	"github.com/yousan/hataori/internal/holder/tmux"
 	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/hostterm"
@@ -359,12 +360,30 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	// the owner takes its updates: the chat front end sets Notify.
 	lr := &relay.Relay{Store: st, Adapters: adapters, People: cfg.People, Off: !cfg.LoginRelay, Log: lg, Guard: []string{exe, "login-guard"}}
 	var fronts []*chat.FrontEnd
-	if len(cfg.Drivers) > 0 {
+	if len(cfg.Drivers) > 0 || len(cfg.Forges) > 0 {
 		confDir, err := in.Root.OpenRoot("config")
 		if err != nil {
 			return fmt.Errorf("config: %w", err)
 		}
 		defer confDir.Close()
+		// The supervisor's forge reads will use these adapters.
+		forges := make(map[string]forge.Forge, len(cfg.Forges))
+		names := make([]string, 0, len(cfg.Forges))
+		for name := range cfg.Forges {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			factory, ok := forge.Lookup(name)
+			if !ok {
+				return fmt.Errorf("config: key %q: no forge %q in this binary", "forges."+name, name)
+			}
+			f, err := factory(confDir, cfg.Forges[name])
+			if err != nil {
+				return err
+			}
+			forges[name] = f
+		}
 		if fronts, err = frontEnds(abs, confDir, cfg, st, c, lr, lg); err != nil {
 			return err
 		}

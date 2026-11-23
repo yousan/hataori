@@ -75,6 +75,7 @@ A complete example for one Discord channel and Claude Code, with the owner, one 
 | `login_relay` | boolean | `true` | When turns fail because the agent is logged out, the owner gets one direct message about it. With `true`, hataori also runs the agent's login command, sends the owner the sign-in link, and passes the code the owner replies with back to it, or, for a login that takes no code back (Codex), shows the code to enter on the page. `false` keeps the alert and switches the relay off. |
 | `scopes` | array | empty | The channels hataori serves, one object each (below). A channel that is not listed, or not enabled, starts nothing. |
 | `drivers` | object | empty | One section per chat surface, by name. This binary has one: `discord` (below). A name it does not have is refused at start. |
+| `forges` | object | empty | One section per forge, by name. This binary has one: `github` (below). A name this binary does not have is refused at start. |
 | `adapters` | object | empty | One section per coding agent, by name. This binary has two: `claude-code` and `codex` (below). One or more adapters must be named; with more than one, `agent` names the default. |
 | `terminal_size` | object | absent | The size of the terminal an agent session runs in, for an agent that runs in one (Claude Code): `{"cols": 160, "rows": 60}`, which suits a wide dashboard pane. Give both keys: `cols` from 40 to 500 and `rows` from 10 to 200; anything else is refused at start. Each session the daemon starts or resumes takes it, so a change applies to a thread's next session; a running session keeps its size, except that while its owner types into it from the dashboard it takes the pane's size, within these bounds, and keeps it afterwards (design, section 7.2). Without this key a session's terminal is 80 columns by 24 rows. |
 | `host_terminals` | boolean | `false` | With `true`, the owner may list the terminals on the host that hataori does not own (tmux panes and other terminals) and read the screens of the panes of the default tmux server, for display only, through the control API's `HostTerminals` and `HostScreen`. hataori never sends these terminals anything, unless `host_input` is on. With `true`, the daemon also takes the reports of hataori's Claude Code plugin, on a socket in `state/windows/` that only the instance's OS user can open (when that path is too long for a Unix socket, in a directory `/tmp/hataori-windows-<hash>` of the root's path, which must also be that user's alone; if it is not, the daemon logs a warning and lists the panes without these reports): a tmux pane in which a Claude Code session a person started runs then shows that session's id, directory and last hook event. `hataori plugin` writes the plugin into `claude-plugin/` under the root and prints the two `claude plugin` commands that install it; it writes nothing into Claude Code's configuration. The reports are kept in memory only and hold no text of the session. With `false`, both are refused for everyone, and the plugin's hooks find no daemon and do nothing. |
@@ -191,6 +192,20 @@ To run one channel on Codex, add `agent` and the `codex` section, and name the a
 "scopes": [{"key": "<channel id>", "client": "discord", "enabled": true, "agent": "codex"}],
 "adapters": {"claude-code": {}, "codex": {"effort": "high"}}
 ```
+
+### `forges.github`
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `token_file` | string | required | Name of a file under `config/` containing the token. Absolute names and names outside that directory are refused. |
+
+Example: `"forges": {"github": {"token_file": "github-token"}}`.
+
+Unknown keys are refused. A token file that cannot be read or is refused stops the daemon's start with an error that names the file. The token is read once at start from this file only, never from the environment. Like `hataori.json`, the file must be regular and is refused when group or others may read it; use `chmod 600`. The supervisor's forge reads use this token.
+
+The adapter reads issue lists and individual issues with comments; pull request lists and individual pull requests with reviews, conversation and review comments, changed files, merge state and head checks; and check runs and commit statuses for a ref. It sends GET requests only to `https://api.github.com`, follows no redirects, takes at most 100 issues or pull requests per list and 300 comments, reviews, review comments, files or check runs per read, and reads no CI log.
+
+Use a fine-grained personal access token with **Only select repositories** set to the scope's repositories (public repositories need no repository access to be readable). Grant these repository permissions **Read-only**: Metadata (present on every fine-grained token), Issues, Pull requests and Commit statuses. GitHub's documentation, [Permissions required for fine-grained personal access tokens](https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens), read on 2026-11-23, names no fine-grained permission for listing check runs (`GET /repos/{owner}/{repo}/commits/{ref}/check-runs`), so check runs on a private repository may not be readable with such a token. These permissions come from that documentation and have not been checked with a real fine-grained token.
 
 ### Keys of every adapter section
 
