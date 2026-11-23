@@ -41,8 +41,8 @@ func titlesRig(t *testing.T, r *chatRoot, inputs ...string) (*wire.Client, []con
 // A thread is shown by its chat thread's name once the surface reports one,
 // following a rename, and else by its first line; an issue's or a pull
 // request's address is shown short, as repo#N, in the tree, the tabs and
-// the All threads table, with the whole title in the tooltip and the
-// details panel.
+// the All threads table, with the whole title in the tooltip; the details
+// panel writes it short too, whole in its tooltip (#631).
 func TestDashboardThreadTitles(t *testing.T) {
 	r := newChatRoot(t, func(cfg map[string]any) { cfg["dashboard"] = map[string]any{"listen": "127.0.0.1:0"} })
 	const (
@@ -94,13 +94,17 @@ func TestDashboardThreadTitles(t *testing.T) {
 	untilShown("an address in brackets, with punctuation after it", ids[4], "See (widgets#12). Next", inside)
 	untilShown("an address whose number does not stand alone", ids[5], notOne, notOne)
 
-	// 2. The tab and the pane show it short too; the details panel whole.
+	// 2. The tab, the pane and the details panel show it short too, whole
+	// in the tooltip.
 	b.click(fmt.Sprintf(`[data-section=threads] .row[data-thread="%d"]`, ids[0]))
 	b.until("the tab, short, with the whole title as its tooltip", fmt.Sprintf(`(() => {
 		const tab = document.querySelector('.tabbar .tab[data-tab="thread:%[1]d"] .tab-title');
 		return tab?.textContent === %[2]q && tab.title === %[3]q;
 	})()`, ids[0], "Do widgets#12 (fix the login)", issue))
-	b.until("the details panel, whole", fmt.Sprintf(`document.querySelector('.details [data-field=title] dd')?.textContent === %q`, issue))
+	b.until("the details panel, short, with the whole title as its tooltip", fmt.Sprintf(`(() => {
+		const dd = document.querySelector('.details [data-field=title] dd');
+		return dd?.textContent === %[1]q && dd.title === %[2]q;
+	})()`, "Do widgets#12 (fix the login)", issue))
 
 	// 3. The chat thread's own name, from the surface, and its rename.
 	b.click(`.tabbar .tab[data-tab=all] .tab-main`)
