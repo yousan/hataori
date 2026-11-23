@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/people"
+	"github.com/yousan/hataori/internal/session"
 )
 
 // proposalFixture is a fixture whose scope s has the supervisor's person
@@ -83,11 +85,12 @@ func TestProposedSendRunsOnceUnderItsKey(t *testing.T) {
 	if err := self.Answer(ctx, req, control.Answer{Allow: true}); !errors.Is(err, control.ErrForbidden) {
 		t.Fatalf("the proposer's own approval: %v", err)
 	}
-	// An earlier approval made the call, and its daemon died before it
-	// recorded the outcome.
+	// An earlier approval was stored and made the call, and its daemon died
+	// before it recorded the outcome.
+	approvedBy(t, f, req, "owner")
 	earlier := f.core.As(control.Caller{From: "supervisor:s", Scopes: []string{"s"}, May: control.OpSend, RefuseBusy: true, NoAnswer: true,
 		Mark: "supervisor", Via: control.ViaProposal})
-	if err := earlier.Send(ctx, target, "proposal:"+string(req), control.Input{Text: "do it"}, control.Refuse); err != nil {
+	if err := earlier.Send(ctx, target, ProposalKeyPrefix+string(req), control.Input{Text: "do it"}, control.Refuse); err != nil {
 		t.Fatal(err)
 	}
 	approveTwice(t, f, req)
@@ -101,7 +104,9 @@ func TestProposedSendRunsOnceUnderItsKey(t *testing.T) {
 }
 
 // A proposed start makes no thread until a person approves it, and then
-// one thread, once, with the model and the effort it showed.
+// one thread, once, with the model and the effort it showed: also when an
+// earlier approval made it and the daemon died before it recorded the
+// outcome, and the scope was turned off since.
 func TestProposedStartRunsOnceUnderItsKey(t *testing.T) {
 	ctx := context.Background()
 	f, proposer, asksIn, _ := proposalFixture(t)
@@ -111,23 +116,31 @@ func TestProposedStartRunsOnceUnderItsKey(t *testing.T) {
 	if got := count(t, f.core.Store, "threads"); got != threads {
 		t.Fatalf("%d threads after the proposal, want %d", got, threads)
 	}
-	made := eventsOf(t, f, asksIn, "proposal_made")
-	if len(made) != 1 || !strings.Contains(made[0], `"effort":"low"`) || !strings.Contains(made[0], `"action":"start"`) {
-		t.Fatalf("proposal_made: %v", made)
+	if pm := eventsOf(t, f, asksIn, "proposal_made"); len(pm) != 1 || !strings.Contains(pm[0], `"effort":"low"`) || !strings.Contains(pm[0], `"action":"start"`) {
+		t.Fatalf("proposal_made: %v", pm)
 	}
 	d, err := f.owner.Thread(ctx, asksIn, 0, 0)
 	if err != nil || len(d.Requests) != 1 {
 		t.Fatalf("requests: %+v %v", d.Requests, err)
 	}
 	req := d.Requests[0].ID
-	// An earlier approval made the call, and its daemon died before it
-	// recorded the outcome.
+	// An earlier approval was stored and made the call, and its daemon died
+	// before it recorded the outcome.
+	approvedBy(t, f, req, "owner")
 	earlier := f.core.As(control.Caller{From: "supervisor:s", Scopes: []string{"s"}, May: control.OpStart, Mark: "supervisor", Via: control.ViaProposal})
-	if _, err := earlier.Start(ctx, control.StartRequest{Key: "proposal:" + string(req), Scope: "s", Repo: "repo",
-		Input: control.Input{Text: "build it"}, Effort: "low"}); err != nil {
+	made, err := earlier.Start(ctx, control.StartRequest{Key: ProposalKeyPrefix + string(req), Scope: "s", Repo: "repo",
+		Input: control.Input{Text: "build it"}, Effort: "low"})
+	if err != nil {
 		t.Fatal(err)
 	}
+	sc := f.core.Scopes["s"]
+	sc.Enabled = false
+	f.core.Scopes["s"] = sc
 	approveTwice(t, f, req)
+	if ev := eventsOf(t, f, asksIn, "proposal_answered"); len(ev) != 1 || !strings.Contains(ev[0], `"outcome":"run"`) ||
+		!strings.Contains(ev[0], fmt.Sprintf(`"target":%d`, made)) {
+		t.Fatalf("proposal_answered: %v", ev)
+	}
 	if got := count(t, f.core.Store, "threads"); got != threads+1 {
 		t.Fatalf("%d threads after the approvals, want %d", got, threads+1)
 	}
@@ -201,5 +214,113 @@ func TestProposalApprovedBeforeItsOutcome(t *testing.T) {
 	}
 	if err := other.Answer(ctx, req, control.Answer{Allow: true}); !errors.Is(err, ErrNotOpen) {
 		t.Fatalf("a third answer: %v", err)
+	}
+}
+
+// approvedBy stores req as approved by person, as an approval does before
+// its call is made.
+func approvedBy(t *testing.T, f *fixture, req control.RequestID, person string) {
+	t.Helper()
+	if _, err := f.core.Store.DB.Exec(`UPDATE proposals SET state = 'approved', approved_by = ? WHERE handle = ?`, person, string(req)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// An approval whose call took nothing, as when the chat service did not
+// open the new thread's chat thread, is decided again by the next answer:
+// a refusal then refuses it, and nothing is made (#650).
+func TestProposalRefusedAfterAnApprovalThatTookNothing(t *testing.T) {
+	ctx := context.Background()
+	f, proposer, asksIn, _ := proposalFixture(t)
+	_, err := proposer.Start(ctx, control.StartRequest{Key: "k", Scope: "s", Repo: "repo", Input: control.Input{Text: "build it"}})
+	proposalOf(t, err)
+	d, err := f.owner.Thread(ctx, asksIn, 0, 0)
+	if err != nil || len(d.Requests) != 1 {
+		t.Fatalf("requests: %+v %v", d.Requests, err)
+	}
+	req := d.Requests[0].ID
+	threads := count(t, f.core.Store, "threads")
+	f.core.Owners["chat"] = fakeOwner{key: "chat", err: errors.New("the chat service did not open a thread")}
+	if err := f.owner.Answer(ctx, req, control.Answer{Allow: true}); err == nil {
+		t.Fatalf("the approval whose chat thread was not opened succeeded: %v", eventsOf(t, f, asksIn, "proposal_answered"))
+	}
+	f.core.Owners["chat"] = fakeOwner{key: "chat"}
+	f.core.People = people.New([]people.Person{{Name: "sv", IDs: []string{"supervisor:s"}}, {Name: "other", IDs: []string{"chat:other"}}},
+		"owner", map[string][]string{"s": {"sv", "other"}})
+	other := f.core.As(control.Caller{From: "chat:other", Scopes: []string{"s"}, May: control.OpAnswer})
+	if err := other.Answer(ctx, req, control.Answer{Choices: []string{"refuse"}}); err != nil {
+		t.Fatal(err)
+	}
+	ev := eventsOf(t, f, asksIn, "proposal_answered")
+	if len(ev) != 1 || !strings.Contains(ev[0], `"outcome":"refused"`) || !strings.Contains(ev[0], `"principal":"other"`) {
+		t.Fatalf("proposal_answered: %v", ev)
+	}
+	if got := count(t, f.core.Store, "threads"); got != threads || strings.Contains(f.runner.Calls(), "build it") {
+		t.Fatalf("%d threads, want %d; runner calls: %s", got, threads, f.runner.Calls())
+	}
+}
+
+// A proposed send approved after its thread failed is not left approved:
+// its outcome is failed, said once (#650).
+func TestProposedSendToAThreadThatFailed(t *testing.T) {
+	ctx := context.Background()
+	f, proposer, asksIn, target := proposalFixture(t)
+	proposalOf(t, proposer.Send(ctx, target, "k", control.Input{Text: "do it"}, control.Refuse))
+	if _, err := f.core.Store.DB.Exec(`UPDATE sessions SET state = 'failed' WHERE thread_id = ?`, int64(target)); err != nil {
+		t.Fatal(err)
+	}
+	if err := proposer.Send(ctx, target, "k2", control.Input{Text: "again"}, control.Refuse); !errors.Is(err, session.ErrRefused) {
+		t.Fatalf("a proposal to a failed thread: %v", err)
+	}
+	d, err := f.owner.Thread(ctx, asksIn, 0, 0)
+	if err != nil || len(d.Requests) != 1 {
+		t.Fatalf("requests: %+v %v", d.Requests, err)
+	}
+	if err := f.owner.Answer(ctx, d.Requests[0].ID, control.Answer{Allow: true}); err != nil {
+		t.Fatal(err)
+	}
+	ev := eventsOf(t, f, asksIn, "proposal_answered")
+	if len(ev) != 1 || !strings.Contains(ev[0], `"outcome":"failed"`) {
+		t.Fatalf("proposal_answered: %v", ev)
+	}
+}
+
+// The keys of the calls approved proposals make are kept for them: no
+// other caller sends or starts under one (#650).
+func TestProposalKeysAreKept(t *testing.T) {
+	ctx := context.Background()
+	f, _, _, target := proposalFixture(t)
+	if err := f.owner.Send(ctx, target, ProposalKeyPrefix+"proposal-1", control.Input{Text: "x"}, control.Refuse); !errors.Is(err, control.ErrForbidden) {
+		t.Fatalf("a send under a proposal's key: %v", err)
+	}
+	if _, err := f.owner.Start(ctx, control.StartRequest{Key: ProposalKeyPrefix + "proposal-1", Scope: "s", Input: control.Input{Text: "x"}}); !errors.Is(err, control.ErrForbidden) {
+		t.Fatalf("a start under a proposal's key: %v", err)
+	}
+}
+
+// A proposed start that names no model or effort runs, once approved,
+// with the scope's, which the proposal showed (#650).
+func TestProposedStartWithTheScopesDefaults(t *testing.T) {
+	ctx := context.Background()
+	f, proposer, asksIn, _ := proposalFixture(t)
+	_, err := proposer.Start(ctx, control.StartRequest{Key: "k", Scope: "s", Repo: "repo", Input: control.Input{Text: "build it"}})
+	proposalOf(t, err)
+	if pm := eventsOf(t, f, asksIn, "proposal_made"); len(pm) != 1 || !strings.Contains(pm[0], `"model":"m-default"`) || !strings.Contains(pm[0], `"effort":"e-default"`) {
+		t.Fatalf("proposal_made: %v", pm)
+	}
+	d, err := f.owner.Thread(ctx, asksIn, 0, 0)
+	if err != nil || len(d.Requests) != 1 || !strings.Contains(d.Requests[0].Text, "(model m-default, effort e-default)") {
+		t.Fatalf("requests: %+v %v", d.Requests, err)
+	}
+	if err := f.owner.Answer(ctx, d.Requests[0].ID, control.Answer{Allow: true}); err != nil {
+		t.Fatal(err)
+	}
+	if ev := eventsOf(t, f, asksIn, "proposal_answered"); len(ev) != 1 || !strings.Contains(ev[0], `"outcome":"run"`) {
+		t.Fatalf("proposal_answered: %v", ev)
+	}
+	var model, effort string
+	f.core.Store.DB.QueryRow(`SELECT model, effort FROM sessions ORDER BY id DESC LIMIT 1`).Scan(&model, &effort)
+	if model != "m-default" || effort != "e-default" {
+		t.Fatalf("the started thread runs %q at %q", model, effort)
 	}
 }

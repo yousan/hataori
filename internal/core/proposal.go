@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
 )
 
@@ -81,6 +82,10 @@ func (a *api) proposeSend(ctx context.Context, scope string, id control.ThreadID
 		}
 		if state == control.Closed || state == control.Removed {
 			return 0, "", fmt.Errorf("core: send to %v: %w", id, ErrClosed)
+		}
+		if state == control.Failed {
+			// As a send to it is now: its session takes nothing more.
+			return 0, "", fmt.Errorf("core: send to %v: the thread failed: %w", id, session.ErrRefused)
 		}
 		var question string
 		if state == control.Waiting {
@@ -258,61 +263,66 @@ func (a *api) answerProposal(ctx context.Context, req control.RequestID, ans con
 			return err
 		})
 	}
-	switch state {
-	case "open":
-		link, err := a.c.ownLink(ctx, a.c.Store.DB, thread, ans.Link, a.caller.From)
-		if err != nil {
+	key := ProposalKeyPrefix + string(req)
+	if state != "open" && state != "approved" {
+		return ErrNotOpen
+	}
+	// What an earlier approval's call took under the key, if anything: then
+	// that call ran, and its outcome is that approval's, whatever this
+	// answer says. An approval whose call took nothing is decided again by
+	// this answer, as an open proposal is.
+	var ran bool
+	if state == "approved" {
+		var took control.ThreadID
+		if ran, took, err = a.c.proposalRan(ctx, action, scope, key, control.ThreadID(target.Int64)); err != nil {
 			return err
 		}
-		approved = decider{principal: string(a.caller.Principal), from: a.caller.From, via: a.caller.Via, link: link}
-		if !(ans.Allow || (len(ans.Choices) == 1 && ans.Choices[0] == "approve")) {
-			return record(proposalRefused, "", false, approved, "open")
+		if action == "start" && ran {
+			target = sql.NullInt64{Int64: int64(took), Valid: true}
 		}
-		// Stored before the call: what the call does is this approval's,
-		// whatever answer comes after a daemon that died before the outcome.
-		var linkJSON any
-		if link != nil {
-			b, _ := json.Marshal(link)
-			linkJSON = string(b)
-		}
-		err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
-			res, err := tx.ExecContext(ctx, `UPDATE proposals SET state = 'approved', approved_by = ?, approved_from = ?, approved_link = ?, approved_via = ?
-				WHERE handle = ? AND state = 'open'`, approved.principal, approved.from, linkJSON, approved.via, req)
-			if err != nil {
-				return err
-			}
-			if n, err := res.RowsAffected(); err != nil || n == 0 {
-				return cmp.Or(err, ErrNotOpen)
-			}
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-	case "approved":
-		// An approval whose outcome was not stored: its call is made again,
-		// under the same key. This answer decides nothing.
+	}
+	if ran {
 		if approvedLink.Valid {
 			json.Unmarshal([]byte(approvedLink.String), &approved.link)
 		}
-	default:
-		return ErrNotOpen
+		return record(proposalRun, "", true, approved, "approved")
+	}
+	link, err := a.c.ownLink(ctx, a.c.Store.DB, thread, ans.Link, a.caller.From)
+	if err != nil {
+		return err
+	}
+	approved = decider{principal: string(a.caller.Principal), from: a.caller.From, via: a.caller.Via, link: link}
+	if !(ans.Allow || (len(ans.Choices) == 1 && ans.Choices[0] == "approve")) {
+		return record(proposalRefused, "", false, approved, state)
+	}
+	// Stored before the call: what the call does is this approval's,
+	// whatever answer comes after a daemon that died before the outcome.
+	var linkJSON any
+	if link != nil {
+		b, _ := json.Marshal(link)
+		linkJSON = string(b)
+	}
+	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
+		res, err := tx.ExecContext(ctx, `UPDATE proposals SET state = 'approved', approved_by = ?, approved_from = ?, approved_link = ?, approved_via = ?
+			WHERE handle = ? AND state = ?`, approved.principal, approved.from, linkJSON, approved.via, req, state)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil || n == 0 {
+			return cmp.Or(err, ErrNotOpen)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 	// As the one who proposed it, whose person must still be allowed in the
 	// scope; marked as its input; never into a running turn.
 	sender := a.c.As(control.Caller{From: from, Principal: control.Principal(principal), Scopes: []string{scope},
 		May: control.OpStart | control.OpSend, RefuseBusy: true, NoAnswer: question == "", Mark: mark,
 		Via: control.ViaProposal}).(*api)
-	key := "proposal:" + string(req)
 	switch action {
 	case "send":
-		// A key taken before was taken by this proposal's call, which ran.
-		if ran, err := a.c.keyTaken(ctx, "send:"+scope+"\x00"+key); err != nil || ran {
-			if err != nil {
-				return err
-			}
-			break
-		}
 		err = sender.send(ctx, control.ThreadID(target.Int64), key, control.Input{Text: call.Text}, control.Refuse,
 			&sendGuard{proposal: true, question: question})
 	case "start":
@@ -320,9 +330,8 @@ func (a *api) answerProposal(ctx context.Context, req control.RequestID, ans con
 		id, err = sender.start(ctx, control.StartRequest{Key: key, Scope: scope, Repo: call.Repo, Agent: call.Agent,
 			Model: call.Model, Effort: call.Effort, Input: control.Input{Text: call.Text}}, "")
 		if id != 0 {
-			// The thread is made, now or by an earlier call under the key; a
-			// launch that failed is the thread's own failure, which its events
-			// show.
+			// The thread is made; a launch that failed is the thread's own
+			// failure, which its events show.
 			target, err = sql.NullInt64{Int64: int64(id), Valid: true}, nil
 		}
 	default:
@@ -338,14 +347,41 @@ func (a *api) answerProposal(ctx context.Context, req control.RequestID, ans con
 	return record(outcome, reason, true, approved, "approved")
 }
 
-// keyTaken reports whether the inbox holds key: a call made under it was
-// accepted.
-func (c *Core) keyTaken(ctx context.Context, key string) (bool, error) {
-	var n int
-	if err := c.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM inbox WHERE key = ?`, key).Scan(&n); err != nil {
-		return false, fmt.Errorf("core: inbox: %w", err)
+// ProposalKeyPrefix starts the key of the call an approved proposal makes:
+// the rest is the proposal's request. The core keeps the keys that start
+// with it for those calls, and refuses them from any other caller.
+const ProposalKeyPrefix = "proposal:"
+
+// proposalKey refuses key, a Start's or a Send's, when it is kept for the
+// calls of approved proposals and the caller is not making one.
+func (a *api) proposalKey(name, scope, key string) error {
+	if strings.HasPrefix(key, ProposalKeyPrefix) && a.caller.Via != control.ViaProposal {
+		return a.refused(name, scope, "the key is kept for approved proposals")
 	}
-	return n > 0, nil
+	return nil
+}
+
+// proposalRan reports whether the call of a proposal of action in scope,
+// under key, ran: a send's key was taken for target, or a start's made a
+// thread, which it returns.
+func (c *Core) proposalRan(ctx context.Context, action, scope, key string, target control.ThreadID) (bool, control.ThreadID, error) {
+	if action == "start" {
+		id, ok, err := c.started(ctx, "start:"+scope+"\x00"+key)
+		return ok, id, err
+	}
+	var data []byte
+	err := c.Store.DB.QueryRowContext(ctx, `SELECT data FROM inbox WHERE key = ?`, "send:"+scope+"\x00"+key).Scan(&data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, 0, nil
+	}
+	if err != nil {
+		return false, 0, fmt.Errorf("core: inbox: %w", err)
+	}
+	var took struct {
+		Thread control.ThreadID `json:"thread"`
+	}
+	json.Unmarshal(data, &took) // written by send
+	return took.Thread == target, target, nil
 }
 
 // proposalOutcome is the outcome of an approved proposal whose call
@@ -375,6 +411,10 @@ func proposalOutcome(err error) (outcome, reason string) {
 		return proposalFailed, "unknown agent"
 	case errors.Is(err, control.ErrUnknownEffort):
 		return proposalFailed, "unknown effort"
+	case errors.Is(err, session.ErrRefused):
+		// The thread's session takes no input in its state, as one that
+		// failed or is not started yet.
+		return proposalFailed, "the thread takes no input in its state"
 	}
 	return "", ""
 }

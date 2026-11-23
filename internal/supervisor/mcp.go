@@ -283,7 +283,7 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 			}
 			return "", reason(err)
 		}
-		return "asked a person: nothing is interrupted until a person in this channel approves it. An approved interrupt ends the worker's turn, and that turn end wakes the supervisor as any other; a refusal or an approval after the turn ended is said in the supervisor's chat thread.", nil
+		return "asked a person: nothing is interrupted until a person in this channel approves it. An approved interrupt ends the worker's turn, and that turn end wakes the supervisor as any other; a refusal or an approval after the turn ended is said in the supervisor's chat thread. Each decision is in your next wake.", nil
 	}
 	if strings.TrimSpace(a.Text) == "" {
 		return "", errors.New("bad arguments: text is required")

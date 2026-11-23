@@ -1184,6 +1184,9 @@ func (a *api) start(ctx context.Context, r control.StartRequest, dir string) (co
 	if err := a.act(control.OpStart, "Start", r.Scope); err != nil {
 		return 0, err
 	}
+	if err := a.proposalKey("Start", r.Scope, r.Key); err != nil {
+		return 0, err
+	}
 	// The title is the first line of what the caller wrote, not its mark.
 	name := title(r.Input.Text)
 	given := r.Input
@@ -1205,7 +1208,9 @@ func (a *api) start(ctx context.Context, r control.StartRequest, dir string) (co
 		a.c.Log.Warn("start refused", "scope", r.Scope, "agent", chosen, "reason", "unknown agent")
 		return 0, fmt.Errorf("core: start in %q: agent %q: %w", r.Scope, chosen, control.ErrUnknownAgent)
 	}
-	if r.Effort != "" && !slices.Contains(control.Efforts, r.Effort) {
+	// An approved proposal's call names the effort the proposal showed:
+	// one asked for, checked here when it was proposed, or the config's.
+	if r.Effort != "" && !slices.Contains(control.Efforts, r.Effort) && a.caller.Via != control.ViaProposal {
 		return 0, fmt.Errorf("core: start in %q: effort %q: %w", r.Scope, r.Effort, control.ErrUnknownEffort)
 	}
 	var scopeModel, scopeEffort, defaultModel, defaultEffort string
@@ -1753,6 +1758,9 @@ var errGuardEnded = errors.New("the requested turn ended")
 func (a *api) send(ctx context.Context, id control.ThreadID, key string, in control.Input, busy control.Busy, guard *sendGuard) error {
 	scope, err := a.actThread(ctx, control.OpSend, "Send", id)
 	if err != nil {
+		return err
+	}
+	if err := a.proposalKey("Send", scope, key); err != nil {
 		return err
 	}
 	if a.caller.Propose {
