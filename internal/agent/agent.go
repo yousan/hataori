@@ -359,9 +359,9 @@ type Event struct {
 	Usage *UsageCount // Usage: the counts the agent reports
 	// Late is, for Usage, that the counts are of the turn that ended last,
 	// read after its end: an agent may record a turn's last message only
-	// after it reported the end (Claude Code 2.1.330 writes it to its
-	// transcript after the Stop hook). The core counts them toward that
-	// turn, not toward one running now.
+	// after it reported the end (the adapter's package says which agent
+	// does). The core counts them toward that turn, not toward one running
+	// now.
 	Late bool
 
 	Limits *LimitReport // Limits: the windows the agent reports
