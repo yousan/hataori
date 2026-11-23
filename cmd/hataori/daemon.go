@@ -105,7 +105,8 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		supervisors[s.Key] = supervisor.Scope{Model: sv.Model, Effort: sv.Effort, Instructions: sv.Instructions, Repos: repos,
 			Autonomy: sv.Autonomy, Trusted: sv.TrustedAuthors,
 			Limits: supervisor.Limits{Turns: sv.TurnsPerHour, Sends: sv.SendsPerHour, Tokens: sv.TokensPerDay},
-			Report: sv.Report, ReportEvery: sv.ReportEvery, Mention: sv.Mention, QuietHours: sv.QuietHours}
+			Report: sv.Report, ReportEvery: sv.ReportEvery, Mention: sv.Mention, QuietHours: sv.QuietHours,
+			Files: sv.Files}
 	}
 	// The forges the supervisors read (design, section 7.1), each made from
 	// its section with its token, read from config/, which stays in it.
@@ -359,7 +360,8 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		}
 	}
 	sv := &supervisor.Sessions{Core: c, Tokens: srv, Root: abs, Hataori: exe, Scopes: supervisors,
-		Owner: control.Principal(cfg.Owner), Cheap: cheap, Budgets: budgets, Forges: forges, Log: lg}
+		Owner: control.Principal(cfg.Owner), Cheap: cheap, Budgets: budgets, Forges: forges, Log: lg,
+		Docs: &supervisor.Docs{DB: st.DB, Log: lg}}
 	// A start a person approved as a supervisor's proposal is checked
 	// against its scope's repos too, as they are now (#650).
 	c.ApprovedStart = sv.CheckStart
@@ -496,6 +498,10 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 			w := &supervisor.Waker{Core: c, Scope: s.Key, Owner: control.Principal(cfg.Owner), Quiet: s.Supervisor.Quiet,
 				OutputMax: s.Supervisor.OutputMax, ThreadsMax: s.Supervisor.ThreadsMax, Gates: []supervisor.Gate{guards[s.Key], b}, Log: lg,
 				Files: sv, Tell: tellIn[s.Key]}
+			// Each wake finds the current content of the scope's files in
+			// docs/ (#640).
+			scope := s.Key
+			w.Before = func(ctx context.Context, thread control.ThreadID) { sv.CopyDocs(ctx, scope, thread) }
 			if wakerHook != nil {
 				wakerHook(w)
 			}

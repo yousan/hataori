@@ -225,7 +225,7 @@ func TestTrustDialogFiles(t *testing.T) {
 
 // A confined session's permission request to write a settings, git or tool
 // configuration file, or anything else whose path in its directory has a
-// part that starts with a dot, is refused; other writes there are allowed
+// part that starts with a dot, or anything in docs/ at its top, is refused; other writes there are allowed
 // as before, and an ordinary session's are all allowed.
 func TestConfinedWriteToProtectedFiles(t *testing.T) {
 	b, err := os.ReadFile("testdata/2.1.327/confine_files_write_inside/hooks/04-PermissionRequest.json")
@@ -265,6 +265,17 @@ func TestConfinedWriteToProtectedFiles(t *testing.T) {
 		{"Write", "file_path", "/tmp/other/a.txt", dir, dir, true},
 		{"Write", "file_path", "../a.txt", dir, dir, true},
 		{"Write", "file_path", "", dir, dir, true},
+		// docs/ at its top is hataori's (#640); a docs/ further down is not.
+		{"Write", "file_path", "/tmp/capture-work/docs/design.md", dir, dir, true},
+		{"Write", "file_path", "docs/new.md", dir, dir, true},
+		{"Edit", "file_path", "/tmp/capture-work/docs/sub/rules.md", dir, dir, true},
+		{"Write", "file_path", "/tmp/capture-work/Docs/design.md", dir, dir, true},
+		{"Write", "file_path", "/tmp/capture-work/docs", dir, dir, true},
+		{"Write", "file_path", "/tmp/capture-work/notes/../docs/a.md", dir, dir, true},
+		{"Write", "file_path", "/private/var/w/docs/a.md", "/private/var/w", "/var/w", true},
+		{"Write", "file_path", "/tmp/capture-work/notes/docs/a.md", dir, dir, false},
+		{"Write", "file_path", "/tmp/capture-work/docs.md", dir, dir, false},
+		{"Write", "file_path", "/tmp/capture-work/mydocs/a.md", dir, dir, false},
 		// The CLI names the directory as it resolved it.
 		{"Write", "file_path", "/private/var/w/a.txt", "/private/var/w", "/var/w", false},
 		{"Write", "file_path", "/private/var/w/.git/config", "/private/var/w", "/var/w", true},
@@ -340,5 +351,62 @@ func TestNoProjectSettings(t *testing.T) {
 	}
 	if keys, events := replayTrust(t, "trust_files_mcp", without); keys != "" || len(events) != 1 {
 		t.Fatalf(".mcp.json, without settings: keys %q events %+v", keys, events)
+	}
+}
+
+// A link in a confined session's directory does not open docs/, a path
+// with a part that starts with a dot, or a place outside to its writes: a
+// path counts as where it leads (#640). A link that leads nowhere counts
+// too, since a write would follow it.
+func TestConfinedWriteThroughALink(t *testing.T) {
+	b, err := os.ReadFile("testdata/2.1.327/confine_files_write_inside/hooks/04-PermissionRequest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p map[string]any
+	if err := json.Unmarshal(b, &p); err != nil {
+		t.Fatal(err)
+	}
+	dir, elsewhere := t.TempDir(), t.TempDir()
+	for _, d := range []string{"docs", ".claude", "notes"} {
+		os.Mkdir(filepath.Join(dir, d), 0o700)
+	}
+	os.WriteFile(filepath.Join(dir, "docs", "design.md"), []byte("x"), 0o444)
+	for link, to := range map[string]string{
+		"notes/ref":       "../docs",
+		"notes/cfg":       "../.claude",
+		"notes/out":       elsewhere,
+		"notes/design.md": "../docs/design.md",
+		"notes/new.md":    "../docs/new.md",
+		"notes/mine":      ".",
+	} {
+		if err := os.Symlink(to, filepath.Join(dir, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, refused := range map[string]bool{
+		"notes/ref/design.md":     true,
+		"notes/cfg/settings.json": true,
+		"notes/out/a.md":          true,
+		"notes/design.md":         true,
+		"notes/new.md":            true,
+		"notes/mine/a.md":         false,
+		"notes/plain.md":          false,
+		"plain.md":                false,
+	} {
+		q := map[string]any{}
+		for k, v := range p {
+			q[k] = v
+		}
+		q["tool_name"], q["tool_input"], q["cwd"] = "Write", map[string]any{"file_path": filepath.Join(dir, path), "content": "x"}, dir
+		raw, _ := json.Marshal(q)
+		c := (&Adapter{}).NewCodec(agent.Spec{Dir: dir, Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
+		a := c.Decode(agent.Hook, envelope("p1", "", raw))
+		if len(a.Reply) != 1 {
+			t.Fatalf("%q: %d replies", path, len(a.Reply))
+		}
+		if got := strings.Contains(string(a.Reply[0].Body), `"deny"`); got != refused {
+			t.Errorf("%q: %s; want refused %v", path, a.Reply[0].Body, refused)
+		}
 	}
 }
