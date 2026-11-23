@@ -28,7 +28,7 @@ import { Stream } from "./stream";
 export type Attention =
   | { kind: "question"; text?: string; choices?: string[] }
   | { kind: "approval"; text?: string; choices?: string[] }
-  | { kind: "failure"; reason?: string };
+  | { kind: "failure"; reason?: string; supervisor?: number }; // supervisor: the supervisor thread that started it
 
 export interface Live {
   // connected: the event stream is open.
@@ -96,10 +96,10 @@ export function attentionOf(d: ThreadDetail): Attention | undefined {
     for (let i = evs.length - 1; i >= 0; i--) {
       const e = evs[i];
       if (e.kind === "state") {
-        return { kind: "failure", reason: e.data?.to === "failed" ? reasonOf(e) : undefined };
+        return { kind: "failure", reason: e.data?.to === "failed" ? reasonOf(e) : undefined, supervisor: d.failed_start?.supervisor };
       }
     }
-    return { kind: "failure" };
+    return { kind: "failure", supervisor: d.failed_start?.supervisor };
   }
   return undefined;
 }

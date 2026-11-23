@@ -22,13 +22,21 @@ function Field(props: { name: string; label: string; value: string; time?: strin
 }
 
 // Waiting is what the thread waits on: an open question with its choices,
-// shown as text only and with nothing that answers, or the failure reason.
+// shown as text only and with nothing that answers, or the failure's full
+// reason, folded: the pane says it in one sentence (FailedStart.tsx).
 export function Waiting({ a }: { a: Attention }) {
   if (a.kind === "failure") {
     return (
       <section className="details-top failure" data-block="failure">
         <h3>{t("details.failure")}</h3>
-        <p data-field="reason">{a.reason || t("details.failureUnknown")}</p>
+        {a.reason ? (
+          <details>
+            <summary>{t("details.failureFull")}</summary>
+            <p data-field="reason">{a.reason}</p>
+          </details>
+        ) : (
+          <p data-field="reason">{t("details.failureUnknown")}</p>
+        )}
       </section>
     );
   }
@@ -101,7 +109,11 @@ export function Details({ x, attention, workspace, subscribe, opens, scopes, lay
           <Field name="title" label={t("details.title")} value={displayTitle(x) || dash()} tip={fullTitle(x)} />
           <Field name="state" label={t("details.state")} value={stateName(x.state)} />
           <Field name="scope" label={t("details.scope")} value={x.scope ? scopeName(x.scope, scopes, layout) : dash()} tip={x.scope} />
-          <Field name="startedBy" label={t("details.startedBy")} value={x.started_by || dash()} />
+          <Field
+            name="startedBy"
+            label={t("details.startedBy")}
+            value={attention?.kind === "failure" && attention.supervisor !== undefined ? t("start.supervisor", { n: attention.supervisor }) : x.started_by || dash()}
+          />
           <Field name="created" label={t("details.created")} value={new Date(x.created).toLocaleString()} time={x.created} />
           {/* turns is left out for none: that is zero, not unknown */}
           <Field name="turns" label={t("details.turns")} value={numbers.format(x.turns ?? 0)} />

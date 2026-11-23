@@ -14,6 +14,7 @@ export const conversationKinds: ReadonlySet<string> = new Set([
   "tool_started",
   "tool_ended",
   "turn_ended",
+  "start_chosen",
 ]);
 
 // Entry is one line of a conversation. A text that is absent was withheld
@@ -25,14 +26,15 @@ export type Entry =
   | { kind: "answer"; pos: number; time: string; who?: string; text?: string }
   | { kind: "text"; pos: number; time: string; final: boolean; text?: string }
   | { kind: "tool"; pos: number; time: string; tool: string; parent?: string; ended?: string }
-  | { kind: "turn_ended"; pos: number; time: string; outcome: string; reason?: string };
+  | { kind: "turn_ended"; pos: number; time: string; outcome: string; reason?: string }
+  | { kind: "start_chosen"; pos: number; time: string; choice: string; who?: string };
 
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 const num = (v: unknown): number | undefined => (typeof v === "number" ? v : undefined);
 
-// who is the person an input, answer or turn came from: their name, else the
+// who is the person an input, answer, turn or choice came from: their name, else the
 // chat id it came through.
-function who(d: { [field: string]: unknown }): string | undefined {
+export function who(d: { [field: string]: unknown }): string | undefined {
   return str(d.principal) || str(d.from) || undefined;
 }
 
@@ -85,6 +87,9 @@ export function entries(events: readonly Event[]): Entry[] {
       }
       case "turn_ended":
         out.push({ kind: "turn_ended", ...base, outcome: str(d.outcome) ?? "", reason: str(d.reason) || undefined });
+        break;
+      case "start_chosen":
+        out.push({ kind: "start_chosen", ...base, choice: str(d.choice) ?? "", who: who(d) });
         break;
     }
   }

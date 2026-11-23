@@ -20,6 +20,22 @@ export function readableDetail(detail: unknown): string | undefined {
   return d;
 }
 
+// startFailure is the catalog's sentence for why a session failed as it
+// started: by the state event's reason, and by whether a start-up dialog
+// named files (trust).
+export type StartFailure = "trust" | "blocked" | "gone" | "start" | "resume" | "takeIn" | "ended" | "other";
+
+export function startFailure(reason: string | undefined, trust: readonly string[] | undefined): StartFailure {
+  const r = reason ?? "";
+  if (r === "blocked at start") return trust && trust.length > 0 ? "trust" : "blocked";
+  if (r === "cannot resume" || r === "resumed another session") return "gone";
+  if (r === "crashed") return "ended";
+  if (r.startsWith("start: ")) return "start";
+  if (r.startsWith("resume: ")) return "resume";
+  if (r.startsWith("take in: ")) return "takeIn";
+  return "other";
+}
+
 export function failureReason(data: Record<string, unknown> | undefined): string | undefined {
   const r = data?.reason;
   if (typeof r !== "string" || r === "") return undefined;
