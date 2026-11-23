@@ -155,7 +155,7 @@ func (fakeWorkspaces) Adopt(context.Context, control.ThreadID, Placement) (strin
 	return "", false, nil
 }
 
-func (fakeWorkspaces) Empty(context.Context, control.ThreadID) (string, error) {
+func (fakeWorkspaces) Confined(context.Context, control.ThreadID, string) (string, error) {
 	return "", errors.New("no confined threads here")
 }
 

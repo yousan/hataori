@@ -69,7 +69,7 @@ func (workspaceDirs) Adopt(context.Context, control.ThreadID, core.Placement) (s
 	return "", false, nil
 }
 
-func (workspaceDirs) Empty(context.Context, control.ThreadID) (string, error) {
+func (workspaceDirs) Confined(context.Context, control.ThreadID, string) (string, error) {
 	return "", errors.New("no confined threads here")
 }
 

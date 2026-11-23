@@ -2005,10 +2005,14 @@ type HookResult struct {
 // posts as before. Since protocol 3.19.
 
 // Not operations of the control API, for a client inside the daemon (#270):
-// core.Core.StartConfined(ctx, caller, r) is Start for a thread whose
-// sessions all run confined (agent.Spec.Confine), in an empty directory
-// that core.Workspaces.Empty makes instead of a clone; r.Repo must be
-// empty. A Start key that started a thread of the other kind is refused
+// core.Core.StartConfined(ctx, caller, r, dir) is Start for a thread whose
+// sessions all run confined (agent.Spec.Confine), in dir, which
+// core.Workspaces.Confined gives instead of a clone: made empty when it is
+// not there, used as it is when it is, never emptied, moved or written to
+// (#645). Several threads may be started in one dir, one after another, as
+// a scope's supervisor threads are; r.Repo must be empty. The core refuses
+// RemoveThread of such a thread before its Remover is asked
+// (core.ConfinedDir). A Start key that started a thread of the other kind is refused
 // (core.ErrConfinedKey). core.Core.LiveConfined lists the sessions of such
 // threads whose agent may run.
 

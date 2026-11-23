@@ -98,7 +98,9 @@ func (w workspaces) Make(context.Context, control.ThreadID, string, func(core.Pl
 	return "dir", w.err
 }
 
-func (w workspaces) Empty(context.Context, control.ThreadID) (string, error) { return "dir", w.err }
+func (w workspaces) Confined(context.Context, control.ThreadID, string) (string, error) {
+	return "dir", w.err
+}
 
 // logBuf is a log that tests read while the code under test writes it.
 type logBuf struct {

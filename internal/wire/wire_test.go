@@ -55,7 +55,7 @@ func (dirs) Adopt(context.Context, control.ThreadID, core.Placement) (string, bo
 	return "", false, nil
 }
 
-func (dirs) Empty(context.Context, control.ThreadID) (string, error) {
+func (dirs) Confined(context.Context, control.ThreadID, string) (string, error) {
 	return "", errors.New("no confined threads here")
 }
 

@@ -3,11 +3,14 @@ package workspace
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -260,17 +263,18 @@ func TestAdoptAPlacementOfTheReleaseBefore(t *testing.T) {
 	}
 }
 
-// Empty makes a confined thread's directory empty, outside the workspaces
-// directory, and takes again only an empty directory of its own at its
-// place: a directory with something in it, or a link at its place or at
-// confined/, is refused and left exactly as it is.
-func TestEmptyNeverTakesWhatHoldsSomething(t *testing.T) {
+// Confined makes a confined thread's directory empty when it is not there,
+// outside the workspaces directory, and uses one that is there as it is:
+// what is in it, a file and a nested directory, is left exactly as it was.
+// A link at its place or at confined/, and a directory elsewhere, are
+// refused and left as they are.
+func TestConfinedUsesWhatIsThereAsItIs(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	m := Maker{Root: root}
-	dir, err := m.Empty(ctx, 1)
+	dir, err := m.Confined(ctx, 1, "")
 	if err != nil || dir != filepath.Join(root, ConfinedDir, "1") {
-		t.Fatalf("Empty: %q, %v", dir, err)
+		t.Fatalf("Confined: %q, %v", dir, err)
 	}
 	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
 		t.Fatalf("the directory: %v, %v", entries, err)
@@ -278,26 +282,41 @@ func TestEmptyNeverTakesWhatHoldsSomething(t *testing.T) {
 	if rel, _ := filepath.Rel(filepath.Join(root, Dir), dir); !strings.HasPrefix(rel, "..") {
 		t.Fatalf("%s is inside the workspaces directory", dir)
 	}
-	// Made before a daemon died, and still empty: taken again.
-	if again, err := m.Empty(ctx, 1); err != nil || again != dir {
-		t.Fatalf("Empty again: %q, %v", again, err)
+	scope := ScopePath(root, "c1")
+	if got, err := m.Confined(ctx, 2, scope); err != nil || got != scope {
+		t.Fatalf("Confined in the scope's directory: %q, %v", got, err)
 	}
-	// Someone's file in it: refused, and the file stays.
-	notes := filepath.Join(dir, "notes.txt")
-	os.WriteFile(notes, []byte("work\n"), 0o600)
-	if _, err := m.Empty(ctx, 1); !errors.Is(err, ErrExists) {
-		t.Fatalf("a directory with a file: %v, want refused", err)
+	// A later thread in it, with notes and a nested directory there: used,
+	// and nothing in it changes.
+	notes := filepath.Join(scope, "notes", "plan.md")
+	if err := os.MkdirAll(filepath.Dir(notes), 0o700); err != nil {
+		t.Fatal(err)
 	}
-	if b, err := os.ReadFile(notes); err != nil || string(b) != "work\n" {
-		t.Fatalf("the file after the refusal: %q, %v", b, err)
+	os.WriteFile(notes, []byte("the plan\n"), 0o600)
+	before := tree(t, scope)
+	if got, err := m.Confined(ctx, 3, scope); err != nil || got != scope {
+		t.Fatalf("Confined again: %q, %v", got, err)
+	}
+	if after := tree(t, scope); after != before {
+		t.Fatalf("the directory changed:\n%s\nwas\n%s", after, before)
 	}
 	// A link at its place, to an empty directory elsewhere: refused.
 	elsewhere := t.TempDir()
-	if err := os.Symlink(elsewhere, filepath.Join(root, ConfinedDir, "2")); err != nil {
+	if err := os.Symlink(elsewhere, filepath.Join(root, ConfinedDir, "4")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Empty(ctx, 2); err == nil {
+	if _, err := m.Confined(ctx, 4, ""); err == nil {
 		t.Fatal("a link at the directory's place was taken")
+	}
+	// Not directly in confined/: refused, and nothing is made.
+	for _, d := range []string{elsewhere + "/x", filepath.Join(root, Dir, "x"), filepath.Join(root, ConfinedDir, "1", "x"),
+		filepath.Join(root, ConfinedDir), filepath.Join(root, ConfinedDir, "..")} {
+		if _, err := m.Confined(ctx, 5, d); err == nil {
+			t.Fatalf("%s was taken", d)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(root, ConfinedDir, "1", "x")); err == nil {
+		t.Fatal("a directory was made in a thread's directory")
 	}
 	// confined/ itself a link: refused, and nothing is made where it points.
 	other := Maker{Root: t.TempDir()}
@@ -305,10 +324,76 @@ func TestEmptyNeverTakesWhatHoldsSomething(t *testing.T) {
 	if err := os.Symlink(target, filepath.Join(other.Root, ConfinedDir)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := other.Empty(ctx, 1); err == nil {
+	if _, err := other.Confined(ctx, 1, ""); err == nil {
+		t.Fatal("a link in place of confined/ was followed")
+	}
+	if _, err := other.Confined(ctx, 1, ScopePath(other.Root, "c1")); err == nil {
 		t.Fatal("a link in place of confined/ was followed")
 	}
 	if entries, _ := os.ReadDir(target); len(entries) != 0 {
-		t.Fatalf("Empty made %v where the link points", entries)
+		t.Fatalf("Confined made %v where the link points", entries)
+	}
+}
+
+// tree lists what is under dir, each path with its mode, size, time and
+// content, so that a test sees any change.
+func tree(t *testing.T, dir string) string {
+	t.Helper()
+	var b strings.Builder
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, p)
+		fmt.Fprintf(&b, "%s %v %d %d", rel, info.Mode(), info.Size(), info.ModTime().UnixNano())
+		if info.Mode().IsRegular() {
+			c, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(&b, " %q", c)
+		}
+		b.WriteByte('\n')
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b.String()
+}
+
+// Two scopes get two directories whatever their keys hold: keys that
+// differ only in characters a path segment cannot hold, or in case only,
+// and keys too long for a segment. Each is one segment in confined/, and
+// none is a thread's number.
+func TestScopePathOnePerKey(t *testing.T) {
+	root := "/r"
+	keys := []string{"c1", "C1", "a/b", "a\\b", "a:b", "a?b", "a\x00b", "a b", "..", ".", "", "a.b", "a%2Fb", "x-612f62",
+		"612f62", "123", strings.Repeat("k", 300), strings.Repeat("k", 300) + "/", strings.Repeat("k", 100), strings.Repeat("k", 101)}
+	seen := map[string]string{}
+	for _, k := range keys {
+		p := ScopePath(root, k)
+		if filepath.Dir(p) != filepath.Join(root, ConfinedDir) {
+			t.Fatalf("ScopePath(%q) = %s, not one segment in confined/", k, p)
+		}
+		name := filepath.Base(p)
+		if len(name) > 255 || strings.ContainsAny(name, "/\\:?*\"<>| \x00") || strings.HasPrefix(name, ".") {
+			t.Fatalf("ScopePath(%q) = %q, not a portable segment", k, name)
+		}
+		if _, err := strconv.Atoi(name); err == nil {
+			t.Fatalf("ScopePath(%q) = %q, a thread's number", k, name)
+		}
+		folded := strings.ToLower(name)
+		if other, ok := seen[folded]; ok {
+			t.Fatalf("ScopePath(%q) and ScopePath(%q) are both %q", k, other, name)
+		}
+		seen[folded] = k
+	}
+	if got := filepath.Base(ScopePath(root, "1234567890")); got != "scope-1234567890" {
+		t.Fatalf("a channel id's directory is %q", got)
 	}
 }

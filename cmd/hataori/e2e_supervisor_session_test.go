@@ -152,9 +152,10 @@ func TestSupervisorThreadOnceAcrossRestarts(t *testing.T) {
 	stop()
 }
 
-// The supervisor's directory is empty when its agent starts, is no git
-// repository, and is outside the workspaces directory, with no workspace
-// in it; nothing removes it, not even the removal of its closed thread.
+// The supervisor's directory is its scope's, empty when its first agent
+// starts, is no git repository, and is outside the workspaces directory,
+// with no workspace in it, while an ordinary thread's workspace is where it
+// was; nothing removes it, not even the removal of its closed thread.
 func TestSupervisorDirectory(t *testing.T) {
 	r, _ := svRoot(t, true)
 	stop := runDaemon(t, r.root)
@@ -178,8 +179,8 @@ func TestSupervisorDirectory(t *testing.T) {
 		return d
 	}
 	svDir := dir(th.ID)
-	if svDir != workspace.ConfinedPath(r.root, th.ID) {
-		t.Fatalf("the supervisor's directory is %s, want %s", svDir, workspace.ConfinedPath(r.root, th.ID))
+	if svDir != workspace.ScopePath(r.root, "c1") {
+		t.Fatalf("the supervisor's directory is %s, want the scope's, %s", svDir, workspace.ScopePath(r.root, "c1"))
 	}
 	entries, err := os.ReadDir(svDir)
 	if err != nil || len(entries) != 0 {
@@ -196,6 +197,9 @@ func TestSupervisorDirectory(t *testing.T) {
 		return d != ""
 	})
 	workDir := dir(work)
+	if workDir != workspace.Path(r.root, work) {
+		t.Fatalf("the worker's workspace is %s, want %s", workDir, workspace.Path(r.root, work))
+	}
 	workspaces := filepath.Join(r.root, workspace.Dir)
 	inside := func(p, d string) bool {
 		rel, err := filepath.Rel(d, p)
