@@ -54,12 +54,6 @@ func remindIn(t *testing.T, c *wire.Client, d time.Duration, note string) contro
 	return a
 }
 
-// armed waits until the waker's timer for a reminder is set.
-func (wt *wakeTest) armed(t *testing.T, n int) {
-	t.Helper()
-	eventually(t, fmt.Sprintf("%d timers", n), 10*time.Second, func() bool { return wt.clock().waiting() == n })
-}
-
 // The supervisor sets a reminder with its tool. It wakes it once, at its
 // time and not before, with its note, under a key of its own, and lists it
 // as open in a wake before.
@@ -151,11 +145,16 @@ func TestReminderIsFoldedAndOutlivesTheThread(t *testing.T) {
 	stop, owner, first := wt.start(t)
 	remindIn(t, conn(), 10*time.Minute, "reply folded")
 	remindIn(t, conn(), 5*time.Hour, "reply for the next")
-	wt.armed(t, 2) // one for each time the waker was told
+	timers := func(n int) {
+		t.Helper()
+		eventually(t, fmt.Sprintf("%d timers", n), 10*time.Second, func() bool { return wt.clock().waiting() == n })
+	}
+	eventually(t, "the reminders' timer", 10*time.Second, func() bool { return wt.clock().waiting() > 0 })
 	wt.steps(9*time.Minute + 45*time.Second)
+	timers(1) // the reminder's
 	a, pos := wt.worker(t, owner, "c1", "a", "reply alpha")
 	wt.read(t, pos)
-	eventually(t, "the quiet period to start", 10*time.Second, func() bool { return wt.clock().waiting() >= 2 })
+	timers(2) // and the quiet period's
 	wt.clock().advance(20 * time.Second) // the reminder is due, the quiet period runs
 	time.Sleep(300 * time.Millisecond)
 	if n := wt.taken(t, first.ID); n != 0 {
