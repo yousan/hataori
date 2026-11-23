@@ -572,6 +572,15 @@ var migrations = []Migration{
 	{Name: "threads.no_project_settings", Up: execAll(
 		`ALTER TABLE threads ADD COLUMN no_project_settings INTEGER NOT NULL DEFAULT 0`,
 	)},
+	// Where each scope's supervisor waker began (Begin): a turn end at or
+	// before it, from before the scope named its supervisor, waits for no
+	// background task of its (#672). A scope's waker that began before
+	// this column takes its stored position, since the turn ends before it
+	// woke the supervisor already.
+	{Name: "supervisor_wakes.since", Up: execAll(
+		`ALTER TABLE supervisor_wakes ADD COLUMN since INTEGER NOT NULL DEFAULT 0`,
+		`UPDATE supervisor_wakes SET since = pos`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

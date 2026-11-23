@@ -249,7 +249,8 @@ func (g *LoopGuard) count(ctx context.Context, w control.ThreadID, svReset uint6
 // whose turns the caller from started, and started after reset too.
 func supervisorEnds(ctx context.Context, db *sql.DB, w control.ThreadID, reset uint64, from string) ([]uint64, error) {
 	rows, err := db.QueryContext(ctx, `SELECT pos, kind, json_extract(data, '$.session'), json_extract(data, '$.turn'),
-		coalesce(json_extract(data, '$.from'), '') FROM events
+		coalesce(json_extract(data, '$.from'), ''), coalesce(json_extract(data, '$.outcome'), ''),
+		coalesce(json_extract(data, '$.background'), 0) FROM events
 		WHERE thread_id = ? AND pos > ? AND kind IN ('turn_started', 'turn_ended') ORDER BY pos`, int64(w), int64(reset))
 	if err != nil {
 		return nil, fmt.Errorf("supervisor: loop guard: %w", err)
@@ -259,11 +260,12 @@ func supervisorEnds(ctx context.Context, db *sql.DB, w control.ThreadID, reset u
 	var out []uint64
 	for rows.Next() {
 		var (
-			pos           int64
-			kind, by      string
-			session, turn sql.NullInt64
+			pos               int64
+			kind, by, outcome string
+			session, turn     sql.NullInt64
+			background        int64
 		)
-		if err := rows.Scan(&pos, &kind, &session, &turn, &by); err != nil {
+		if err := rows.Scan(&pos, &kind, &session, &turn, &by, &outcome, &background); err != nil {
 			return nil, fmt.Errorf("supervisor: loop guard: %w", err)
 		}
 		if !session.Valid || !turn.Valid {
@@ -273,6 +275,9 @@ func supervisorEnds(ctx context.Context, db *sql.DB, w control.ThreadID, reset u
 		switch {
 		case kind == "turn_started":
 			started[ref] = true
+		case outcome == "completion" && background > 0:
+			// It waits for its background tasks and wakes nobody (#672),
+			// so it is no cycle.
 		case by == from && started[ref]:
 			out = append(out, uint64(pos))
 		}
