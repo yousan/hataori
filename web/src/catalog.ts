@@ -75,7 +75,7 @@ const en = {
   "tree.byLink": "sign-in link",
   "tree.byLocalLink": "sign-in link, this machine",
   "tree.usage": "Remaining usage",
-  "tree.usageWindow": "{agent} {window} {used}%",
+  "tree.usageWindow": "{agent} {window} {used}% used",
   "tree.usageResets": "↻ {time}",
 
   "box.label": "Message to the agent",
@@ -401,7 +401,7 @@ const ja: Catalog = {
   "tree.byLink": "サインインリンク",
   "tree.byLocalLink": "サインインリンク（このマシン）",
   "tree.usage": "残りの使用量",
-  "tree.usageWindow": "{agent} {window} {used}%",
+  "tree.usageWindow": "{agent} {window} {used}% 使用",
   "tree.usageResets": "↻ {time}",
   "box.label": "エージェントへのメッセージ",
   "box.placeholder": "エージェントへのメッセージ（Enter で送信、Shift+Enter で改行）",

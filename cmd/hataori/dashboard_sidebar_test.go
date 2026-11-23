@@ -310,8 +310,16 @@ func TestDashboardSidebar(t *testing.T) {
 			op('.tree [data-node="scope:c1"]') === 1 && op('.tree .row[data-thread="%d"]') === 1;
 	})()`, p1, p1, fakeSurface, rig.running))
 
+	// Anywhere on that row opens the chat thread, its mark too. The click
+	// is stopped before it navigates, so that the test's page stays.
+	b.eval(`window.opened = []; document.addEventListener('click', e => {
+		const a = e.target.closest('a.chat-link'); if (a) { e.preventDefault(); window.opened.push(a.getAttribute('href')); }
+	}, true), true`, nil)
+	b.click(`.tree [data-tree-item="` + p1 + `"] .opens-in-chat`)
+	b.until("the chat thread opened from its mark", `JSON.stringify(window.opened) === '["https://chat.example/p1"]'`)
+
 	// The group is an upper-case label; the channel has its "#" and the
-	// count of its threads that are not asleep.
+	// count of its threads that are not asleep, whatever the filter shows.
 	b.until("the group and the channel heads", `(() => {
 		const g = document.querySelector('.tree [data-group] > .node-head');
 		const c = document.querySelector('.tree [data-node="scope:c1"] > .node-head');
@@ -319,6 +327,11 @@ func TestDashboardSidebar(t *testing.T) {
 			c.querySelector('.hash')?.textContent === '#' && c.querySelector('.scope-name')?.textContent === 'builds' &&
 			c.querySelector('.awake')?.dataset.awake === '4';
 	})()`)
+	b.filter("tool long")
+	b.checkRail("filtered", []string{thread(rig.running)})
+	b.until("the count while filtered", `document.querySelector('.tree [data-node="scope:c1"] > .node-head .awake')?.dataset.awake === '4'`)
+	b.filter("")
+	b.checkRail("the filter cleared", open)
 
 	// Needs attention: the waiting and the failed thread, each with what it
 	// waits on, above the groups.
@@ -342,7 +355,7 @@ func TestDashboardSidebar(t *testing.T) {
 		const u = m?.querySelector('.usage[data-window="seven_day"]');
 		return !!m && m.querySelector('.me-name')?.textContent === 'owner' &&
 			m.querySelector('.me-how')?.textContent === 'sign-in link, this machine' &&
-			!!u && u.textContent.includes('21%') && !!u.querySelector('.usage-resets');
+			!!u && u.textContent.startsWith('fake 7d 21% used') && !!u.querySelector('.usage-resets');
 	})()`)
 
 	// Both themes: the rail, the dots and the bars are drawn in each, in

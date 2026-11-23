@@ -48,6 +48,12 @@ interface Props {
 // on it, or its last item, where it ends.
 type Rail = "on" | "end";
 
+// awake reports whether a thread is not asleep, closed or removed: one a
+// channel's count counts, whatever the filter and the choice of threads.
+function awake(x: ThreadInfo): boolean {
+  return x.state !== "asleep" && x.state !== "closed" && x.state !== "removed";
+}
+
 // railClass is the class of an item on the rail.
 function railClass(rail: Rail | undefined): string {
   return rail ? (rail === "end" ? " on-rail rail-end" : " on-rail") : "";
@@ -247,6 +253,10 @@ function ChatRow(props: { item: Extract<ChatItem, { kind: "chat" }>; parent: str
       onKeyDown={(e) => {
         if (e.target === e.currentTarget && e.key === "Enter") e.currentTarget.querySelector<HTMLAnchorElement>("a.chat-link")?.click();
       }}
+      // Anywhere on the row opens the chat thread, as its name does.
+      onClick={(e) => {
+        if (!(e.target as Element).closest("a")) e.currentTarget.querySelector<HTMLAnchorElement>("a.chat-link")?.click();
+      }}
     >
       <div className="box">
         {chatLink(item.name, item.url)}
@@ -425,7 +435,7 @@ export function Tree(props: Props) {
         onFold={fold}
         level={level}
         kind="channel"
-        awake={c.threads.filter((x) => x.state !== "closed" && x.state !== "removed").length}
+        awake={all.filter((x) => x.scope === c.scope && awake(x)).length}
         attrs={parent ? { "data-scope": c.scope, "data-parent": parent } : { "data-scope": c.scope }}
       >
         {onRail.map((i, n) => {
