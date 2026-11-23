@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/agent/fake"
 	"github.com/yousan/hataori/internal/chat"
 	"github.com/yousan/hataori/internal/control"
@@ -26,9 +28,8 @@ import (
 
 // svRoot is a chat root with two scopes: c1 names a supervisor, the person
 // sv1, and c2 names none. The fake agent takes confined specs when
-// confines is set, and names fake-cheap its cheapest model. Each session
-// the fake program starts leaves a file in the returned directory. Each of
-// more changes the config after that.
+// confines is set. Each session the fake program starts leaves a file in
+// the returned directory. Each of more changes the config after that.
 func svRoot(t *testing.T, confines bool, more ...func(cfg map[string]any)) (*chatRoot, string) {
 	t.Helper()
 	conversations := t.TempDir()
@@ -45,7 +46,7 @@ func svRoot(t *testing.T, confines bool, more ...func(cfg map[string]any)) (*cha
 			{"key": "c2", "client": fakeSurface, "enabled": true, "people": []string{"dispatch"}},
 		}
 		cfg["adapters"] = map[string]any{fake.Name: fake.Config{Command: []string{os.Args[0], "fake"},
-			Env: []string{"PATH=" + os.Getenv("PATH")}, Confines: confines, Cheap: "fake-cheap", Conversations: conversations}}
+			Env: []string{"PATH=" + os.Getenv("PATH")}, Confines: confines, Conversations: conversations}}
 		for _, change := range more {
 			change(cfg)
 		}
@@ -129,10 +130,79 @@ func dbOf(t *testing.T, root string) *sql.DB {
 	return (&chatRoot{root: root}).db(t)
 }
 
+// The supervisor's session is launched with the scope's model and effort
+// high when its section names neither, and with the section's when it names
+// them; threads beside it are launched with the scope's model and effort,
+// or the config's, as before (#652).
+func TestSupervisorModelAndEffort(t *testing.T) {
+	for name, tc := range map[string]struct{ section, wantModel, wantEffort string }{
+		"neither in the section": {`{}`, "m-scope", "high"},
+		"both in the section":    {`{"model": "m-sv", "effort": "max"}`, "m-sv", "max"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			r, _ := svRoot(t, true, recordIn(dir), func(cfg map[string]any) {
+				cfg["model"], cfg["effort"] = "m-top", "medium"
+				c1 := cfg["scopes"].([]map[string]any)[0]
+				c1["model"], c1["effort"] = "m-scope", "low"
+				c1["supervisor"] = json.RawMessage(tc.section)
+			})
+			runDaemon(t, r.root)
+			owner, err := wire.Dial(r.root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer owner.Close()
+			sv := supervisorThread(t, owner, "c1", control.Idle)
+			check := func(what string, thread control.ThreadID, model, effort string) {
+				t.Helper()
+				// The spec the runner stored for the session, and the launch
+				// the adapter made of it.
+				var raw string
+				if err := dbOf(t, r.root).QueryRow(`SELECT spec FROM sessions WHERE thread_id = ?`, int64(thread)).Scan(&raw); err != nil {
+					t.Fatal(err)
+				}
+				var stored struct{ Spec agent.Spec }
+				if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+					t.Fatal(err)
+				}
+				all := starts(t, dir)
+				last := all[len(all)-1]
+				m, _ := last.value("--model")
+				e, _ := last.value("--effort")
+				if stored.Spec.Model != model || stored.Spec.Effort != effort || m != model || e != effort {
+					t.Fatalf("%s: the spec has model %q and effort %q, the launch %q and %q; want %q and %q",
+						what, stored.Spec.Model, stored.Spec.Effort, m, e, model, effort)
+				}
+			}
+			check("the supervisor", sv.ID, tc.wantModel, tc.wantEffort)
+			for _, w := range []struct{ scope, model, effort string }{{"c1", "m-scope", "low"}, {"c2", "m-top", "medium"}} {
+				id, err := owner.Start(context.Background(), control.StartRequest{Key: "w-" + w.scope, Scope: w.scope, Thread: "t-" + w.scope,
+					Repo: bareRepo(t), Input: control.Input{Text: "reply done"}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				eventually(t, "the thread in "+w.scope+" ran its turn", 15*time.Second, func() bool {
+					ts, err := owner.Threads(context.Background(), control.Filter{Scope: w.scope})
+					if err != nil {
+						return false
+					}
+					for _, th := range ts {
+						if th.ID == id && th.Turns > 0 {
+							return true
+						}
+					}
+					return false
+				})
+				check("a thread of "+w.scope, id, w.model, w.effort)
+			}
+		})
+	}
+}
+
 // A scope that names a supervisor gets one thread for it, in its own
-// channel, started by the daemon with the adapter's cheapest model; after
-// two restarts it is found again, not started again. A scope that names
-// none gets none.
+// channel, started by the daemon; after two restarts it is found again,
+// not started again. A scope that names none gets none.
 func TestSupervisorThreadOnceAcrossRestarts(t *testing.T) {
 	r, _ := svRoot(t, true)
 	stop, logged := runDaemonLog(t, r.root)
@@ -141,8 +211,8 @@ func TestSupervisorThreadOnceAcrossRestarts(t *testing.T) {
 		t.Fatal(err)
 	}
 	th := supervisorThread(t, owner, "c1", control.Idle)
-	if th.Model != "fake-cheap" || th.StartedBy != "boss" || th.Repo != "" || len(th.Links) != 1 || th.Links[0].Channel != "c1" {
-		t.Fatalf("the supervisor's thread %+v; want the cheapest model, the owner's, no repository, a thread in c1", th)
+	if th.StartedBy != "boss" || th.Repo != "" || len(th.Links) != 1 || th.Links[0].Channel != "c1" {
+		t.Fatalf("the supervisor's thread %+v; want the owner's, no repository, a thread in c1", th)
 	}
 	if n := r.openedIn("c1"); n != 1 {
 		t.Fatalf("%d chat threads opened in c1, want 1", n)

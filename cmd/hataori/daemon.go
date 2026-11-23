@@ -83,7 +83,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	}
 	agentName := cfg.Agent
 	// The scopes that name a supervisor (design, section 7.1). It runs on the
-	// default adapter, with that adapter's cheapest model by default.
+	// default adapter.
 	supervisors := map[string]supervisor.Scope{}
 	for i, s := range cfg.Scopes {
 		sv := s.Supervisor
@@ -136,11 +136,6 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		}
 		confDir.Close()
 	}
-	var cheap string
-	if cm, ok := adapters[agentName].(agent.CheapModel); ok {
-		cheap = cm.CheapModel()
-	}
-
 	st, err := store.Open(ctx, abs)
 	if err != nil {
 		return err
@@ -371,7 +366,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		}
 	}
 	sv := &supervisor.Sessions{Core: c, Tokens: srv, Root: abs, Hataori: exe, Scopes: supervisors,
-		Owner: control.Principal(cfg.Owner), Cheap: cheap, Budgets: budgets, Reminders: reminders, Forges: forges, Log: lg,
+		Owner: control.Principal(cfg.Owner), Budgets: budgets, Reminders: reminders, Forges: forges, Log: lg,
 		Docs: &supervisor.Docs{DB: st.DB, Log: lg}}
 	// A start a person approved as a supervisor's proposal is checked
 	// against its scope's repos too, as they are now (#650).

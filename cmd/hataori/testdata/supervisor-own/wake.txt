@@ -1,8 +1,8 @@
 # arguments
 --model
-fake-cheap
---effort
 
+--effort
+high
 --session
 <new conversation>
 --conversations

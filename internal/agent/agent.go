@@ -64,12 +64,6 @@ type Health struct {
 	Detail    string // why not, when either is false
 }
 
-// CheapModel is implemented by an adapter that can name its cheapest model:
-// the model of a supervisor whose config names none (design, section 7.1).
-type CheapModel interface {
-	CheapModel() string
-}
-
 // Launch is everything the session host needs to start an agent.
 type Launch struct {
 	Argv     []string

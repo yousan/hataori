@@ -28,8 +28,8 @@ import (
 //
 //	HATAORI_REAL_CLAUDE=1 go test -run TestRealClaudeCodeSupervisor -v -timeout 30m ./cmd/hataori
 //
-// The daemon starts the supervisor of channel c1 by itself, on the
-// adapter's cheapest model. A person then asks it, one turn each, to run a
+// The daemon starts the supervisor of channel c1 by itself, on the scope's
+// model, haiku here, at effort high. A person then asks it, one turn each, to run a
 // command, to write a file outside its directory, to read one there with
 // Read, Grep and Glob, to start a subagent, to remove a worker thread's
 // workspace, and to list the channel's threads with hataori's tool; then
@@ -86,7 +86,7 @@ func TestRealClaudeCodeSupervisor(t *testing.T) {
 		}
 		// sv1 is not among c1's people: the supervisor reads, and cannot
 		// send to or start a worker that would do what it may not.
-		cfg["scopes"] = []map[string]any{{"key": "c1", "client": remoteSurface, "enabled": true,
+		cfg["scopes"] = []map[string]any{{"key": "c1", "client": remoteSurface, "enabled": true, "model": "haiku",
 			"people": []string{"dispatch"}, "supervisor": map[string]any{"quiet": "1s"}}}
 		cfg["adapters"] = map[string]any{claudecode.Name: map[string]any{"command": wrapper}}
 	})

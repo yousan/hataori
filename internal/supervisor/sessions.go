@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -43,6 +44,9 @@ const FirstInput = "Supervisor of this channel\n" +
 	"those that are there, and what is in docs/. " +
 	"Then reply with one line saying you are ready, in the language your files or your instructions ask for."
 
+// DefaultEffort is the effort of a supervisor whose config names none.
+const DefaultEffort = "high"
+
 // TokenFile holds the token of a supervisor session, in its state
 // directory, outside its own directory. A session keeps its token for its
 // whole life (decision 1 of #267: a token per supervisor session): each
@@ -60,8 +64,8 @@ type Tokens interface {
 
 // Scope is a scope's supervisor, as the config names it.
 type Scope struct {
-	Model        string // the model; the adapter's cheapest when empty
-	Effort       string // the effort; the scope's when empty
+	Model        string // the model; when empty, what the default agent's model order gives a thread of the scope
+	Effort       string // the effort; DefaultEffort when empty
 	Instructions string // the config's instructions, last in the config's layer (ConfigLayer)
 	Repos        []Repo // the only repositories its Start may clone; none: it starts nothing
 	// Autonomy is Watch, Propose or Act: what its token's connection may
@@ -101,7 +105,6 @@ type Sessions struct {
 	Hataori string            // the hataori binary that runs `hataori mcp`
 	Scopes  map[string]Scope  // the scopes that name a supervisor, by key
 	Owner   control.Principal // whose Start makes the threads: the instance's owner
-	Cheap   string            // the adapter's cheapest model; "" when it names none
 	// Budgets are the scopes' budgets, by key: a scope's sends and starts
 	// are counted, and refused over budget, on its token's connection.
 	Budgets map[string]*Budget
@@ -392,13 +395,9 @@ func (s *Sessions) StartOne(ctx context.Context, scope string) (control.ThreadID
 	if _, ok := s.Core.Owners[s.Core.Scopes[scope].Owner]; !ok {
 		return 0, fmt.Errorf("supervisor: scope %q: %w", scope, ErrNoChat)
 	}
-	model := sv.Model
-	if model == "" {
-		model = s.Cheap
-	}
 	caller := control.Caller{Principal: s.Owner, Scopes: []string{scope}, May: control.OpRead | control.OpStart}
 	return s.Core.StartConfined(ctx, caller, control.StartRequest{Key: key, Scope: scope,
-		Input: control.Input{Text: FirstInput}, Model: model, Effort: sv.Effort}, dir)
+		Input: control.Input{Text: FirstInput}, Model: sv.Model, Effort: cmp.Or(sv.Effort, DefaultEffort)}, dir)
 }
 
 // Dir returns the directory of scope's supervisor threads (design, section
