@@ -129,6 +129,16 @@ func (wt *wakeTest) filesNotices(sv control.ThreadInfo) []string {
 	return out
 }
 
+// looked waits until the waker looked at the user's files after the
+// supervisor's turn end at pos, and recorded them.
+func (wt *wakeTest) looked(t *testing.T, pos uint64) {
+	t.Helper()
+	eventually(t, fmt.Sprintf("the files seen after the turn end at %d", pos), 10*time.Second, func() bool {
+		var at int64
+		return wt.db.QueryRow(`SELECT files_pos FROM supervisor_wakes WHERE scope = 'c1'`).Scan(&at) == nil && uint64(at) >= pos
+	})
+}
+
 // A user's file changed on the host between two wakes is named in the
 // second wake and not in the third, nor in a line of the thread. A turn of
 // the supervisor that changes one gets one line in its thread naming it,
@@ -146,10 +156,7 @@ func TestSupervisorUserFileChanges(t *testing.T) {
 		wt.read(t, pos)
 		wt.quiet(t)
 		got := wt.woken(t, owner, sv.ID, n)
-		wt.read(t, wt.ended(t, sv.ID, n+1))
-		// The waker has read the supervisor's turn end; a moment for it to
-		// look at the files, so that a change made next is not that turn's.
-		time.Sleep(200 * time.Millisecond)
+		wt.looked(t, wt.ended(t, sv.ID, n+1))
 		return got[n-1]
 	}
 	if w := wake(1, "a"); strings.Contains(w, "USER.md") {
@@ -187,23 +194,25 @@ func TestSupervisorUserFileChanges(t *testing.T) {
 		}
 	}
 	turn("p", "reply nothing yet", "nothing yet")
-	wt.read(t, wt.ended(t, sv.ID, wt.turns(t, sv.ID)))
-	time.Sleep(200 * time.Millisecond)
+	wt.looked(t, wt.ended(t, sv.ID, wt.turns(t, sv.ID)))
 	turn("s", "write SOUL.md Light reports.", "wrote SOUL.md")
 	eventually(t, "the line naming SOUL.md", 10*time.Second, func() bool { return len(wt.filesNotices(sv)) == 1 })
 	stop()
+	// While the daemon is down, USER.md is edited on the host: the line
+	// posted for SOUL.md's turn does not name it, so the next turn's does.
+	os.WriteFile(filepath.Join(dir, "USER.md"), []byte("The people here read Spanish.\n"), 0o600)
 	stop, owner, sv = wt.start(t)
 	// Then a turn that changes nothing, one that changes USER.md, and one
 	// that puts it back as the last wake told it.
 	turn("q", "reply nothing changed", "nothing changed")
 	turn("u", "write USER.md The people here read French.", "wrote USER.md")
 	turn("v", "write USER.md The people here read English.", "wrote USER.md")
-	wt.read(t, wt.ended(t, sv.ID, wt.turns(t, sv.ID)))
-	time.Sleep(300 * time.Millisecond)
+	wt.looked(t, wt.ended(t, sv.ID, wt.turns(t, sv.ID)))
+	time.Sleep(300 * time.Millisecond) // for the outbox to post a line, were there one
 	line := func(name string) string {
 		return fmt.Sprintf("Changed by the end of this turn, in the supervisor's instructions: %s.", name)
 	}
-	want := []string{line("SOUL.md"), line("USER.md"), line("USER.md")}
+	want := []string{line("SOUL.md"), line("USER.md"), line("USER.md"), line("USER.md")}
 	if n := wt.filesNotices(sv); strings.Join(n, "|") != strings.Join(want, "|") {
 		t.Fatalf("the lines naming the files a turn changed: %q; want %q", n, want)
 	}

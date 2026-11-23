@@ -4,7 +4,9 @@ import (
 	"cmp"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -360,14 +362,32 @@ func (s *Sessions) Told(ctx context.Context, scope string, changes []Change) err
 // wake that started the turn told; and the hashes of all of them now, for
 // Seen once the line that names them was posted. A file it has never
 // looked at is not named, nor is anything for a turn end at or before the
-// last one Seen recorded, as one read again after a restart.
+// last one Seen recorded, as one read again after a restart. What it
+// returns is stored before it returns, and a turn end read again before
+// Seen gets the same, so that the line posted once names what was found
+// the first time.
 func (s *Sessions) Turned(ctx context.Context, scope string, thread control.ThreadID, pos uint64) ([]string, map[string]string, error) {
-	var last int64
-	if err := s.Core.Store.DB.QueryRowContext(ctx, `SELECT files_pos FROM supervisor_wakes WHERE scope = ?`, scope).Scan(&last); err != nil {
+	var (
+		last    int64
+		pending sql.NullString
+	)
+	if err := s.Core.Store.DB.QueryRowContext(ctx, `SELECT files_pos, files_pending FROM supervisor_wakes WHERE scope = ?`, scope).
+		Scan(&last, &pending); err != nil {
 		return nil, nil, fmt.Errorf("supervisor: the user's files: %w", err)
 	}
 	if pos <= uint64(last) {
 		return nil, nil, nil
+	}
+	type found struct {
+		Pos    uint64            `json:"pos"`
+		Names  []string          `json:"names"`
+		Hashes map[string]string `json:"hashes"`
+	}
+	if pending.Valid {
+		var f found
+		if err := json.Unmarshal([]byte(pending.String), &f); err == nil && f.Pos == pos {
+			return f.Names, f.Hashes, nil
+		}
 	}
 	now, err := s.now(ctx, thread)
 	if err != nil {
@@ -381,6 +401,12 @@ func (s *Sessions) Turned(ctx context.Context, scope string, thread control.Thre
 	for _, name := range differ(seen, now) {
 		if _, ok := seen[name]; ok {
 			names = append(names, name)
+		}
+	}
+	if len(names) > 0 {
+		b, _ := json.Marshal(found{Pos: pos, Names: names, Hashes: now})
+		if _, err := s.Core.Store.DB.ExecContext(ctx, `UPDATE supervisor_wakes SET files_pending = ? WHERE scope = ?`, string(b), scope); err != nil {
+			return nil, nil, fmt.Errorf("supervisor: the user's files: %w", err)
 		}
 	}
 	return names, now, nil
@@ -404,7 +430,7 @@ func (s *Sessions) Seen(ctx context.Context, scope string, pos uint64, hashed ma
 				return fmt.Errorf("supervisor: the user's files: %w", err)
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE supervisor_wakes SET files_pos = max(files_pos, ?) WHERE scope = ?`, int64(pos), scope); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE supervisor_wakes SET files_pos = max(files_pos, ?), files_pending = NULL WHERE scope = ?`, int64(pos), scope); err != nil {
 			return fmt.Errorf("supervisor: the user's files: %w", err)
 		}
 		return nil
