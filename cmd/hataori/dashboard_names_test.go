@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/people"
 	"github.com/yousan/hataori/internal/store"
 	"github.com/yousan/hataori/internal/surface"
 	"github.com/yousan/hataori/internal/wire"
@@ -21,13 +23,33 @@ import (
 // with every column of the All threads table, a title with an issue's
 // address, and a row from before callers were resolved to people, which
 // records the bare chat id of its author; one asleep in a scope named by
-// its channel only, started by an id no person lists. Two idle shells of a
-// fake list of host terminals are hidden, as the threads asleep are.
+// its channel only, started by an id no person lists; and more asleep there,
+// one for each other form an older hataori recorded who started a thread
+// in. Two idle shells of a fake list of host terminals are hidden, as the
+// threads asleep are.
 type namesRig struct {
 	r            *chatRoot
 	c            *wire.Client
 	full, asleep control.ThreadID
+	legacy       []legacyStarter
 	base, link   string
+}
+
+// legacyStarter is a thread whose row records who started it as recorded,
+// and the name the page should show for it.
+type legacyStarter struct {
+	id             control.ThreadID
+	recorded, want string
+}
+
+// legacyStarters are the other forms of started_by: an old-form config's
+// name of a poster ("<client>/<id>") and of its owner, a full id, and an
+// old-form poster no person lists. The ids are made up.
+var legacyStarters = []legacyStarter{
+	{recorded: people.OldPoster(fakeSurface, e2eHook), want: "bob"},
+	{recorded: people.OldOwner, want: "ada"},
+	{recorded: people.Join(fakeSurface, e2eHook), want: "bob"},
+	{recorded: people.OldPoster(fakeSurface, "nobody-3"), want: people.OldPoster(fakeSurface, "nobody-3")},
 }
 
 // namesTitle is the full thread's title: an issue's address, which the
@@ -85,9 +107,23 @@ func newNamesRig(t *testing.T) namesRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, "the second thread asleep", 30*time.Second, func() bool {
-		d, err := c.Thread(ctx, asleep, 0, 0)
-		return err == nil && d.State == control.Asleep
+	legacy := slices.Clone(legacyStarters)
+	for i := range legacy {
+		if legacy[i].id, err = c.Start(ctx, control.StartRequest{Key: fmt.Sprintf("k-legacy-%d", i), Scope: "c2", Repo: bareRepo(t), Input: control.Input{Text: "exit"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	eventually(t, "the threads of the second scope asleep", 30*time.Second, func() bool {
+		ids := []control.ThreadID{asleep}
+		for _, l := range legacy {
+			ids = append(ids, l.id)
+		}
+		for _, id := range ids {
+			if d, err := c.Thread(ctx, id, 0, 0); err != nil || d.State != control.Asleep {
+				return false
+			}
+		}
+		return true
 	})
 	eventually(t, "the second scope named by its channel", 10*time.Second, func() bool {
 		ss, err := c.Scopes(ctx)
@@ -107,7 +143,11 @@ func newNamesRig(t *testing.T) namesRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for id, by := range map[control.ThreadID]string{full: e2eHook, asleep: "stranger-9"} {
+	recorded := map[control.ThreadID]string{full: e2eHook, asleep: "stranger-9"}
+	for _, l := range legacy {
+		recorded[l.id] = l.recorded
+	}
+	for id, by := range recorded {
 		if _, err := db.Exec(`UPDATE threads SET started_by = ? WHERE id = ?`, by, int64(id)); err != nil {
 			t.Fatal(err)
 		}
@@ -131,7 +171,7 @@ func newNamesRig(t *testing.T) namesRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return namesRig{r: r, c: c, full: full, asleep: asleep, base: u.Scheme + "://" + u.Host, link: link}
+	return namesRig{r: r, c: c, full: full, asleep: asleep, legacy: legacy, base: u.Scheme + "://" + u.Host, link: link}
 }
 
 // The acceptance criteria of #631 in the browser, against the daemon with
@@ -199,14 +239,15 @@ func TestDashboardNamesAndWidths(t *testing.T) {
 
 	t.Run("hidden counts", func(t *testing.T) {
 		b.t = t
+		hidden := 1 + len(rig.legacy) // the threads asleep
 		for _, lang := range []struct{ code, sep, threads, shells string }{
-			{"en", "·", "1 hidden", "2 idle shells hidden"},
-			{"ja", "・", "1 件を非表示", "使われていないシェル 2 件を非表示"},
+			{"en", "·", fmt.Sprintf("%d hidden", hidden), "2 idle shells hidden"},
+			{"ja", "・", fmt.Sprintf("%d 件を非表示", hidden), "使われていないシェル 2 件を非表示"},
 		} {
 			b.eval(`window.__namesTestPrevious = true`, nil)
 			b.call("Page.navigate", map[string]any{"url": rig.base + "/?lang=" + lang.code})
 			b.until("the page in "+lang.code, `!window.__namesTestPrevious && document.documentElement.lang === `+js(lang.code))
-			b.until("both counts in "+lang.code, `document.querySelector('.tools .show .hidden-count')?.dataset.hidden === '1' && document.querySelector('.tools .show .hidden-terminals')?.dataset.hiddenTerminals === '2'`)
+			b.until("both counts in "+lang.code, `document.querySelector('.tools .show .hidden-count')?.dataset.hidden === '`+fmt.Sprint(hidden)+`' && document.querySelector('.tools .show .hidden-terminals')?.dataset.hiddenTerminals === '2'`)
 			var got struct {
 				Text, Threads, Shells string
 				Gap                   float64
@@ -270,6 +311,11 @@ func TestDashboardNamesAndWidths(t *testing.T) {
 		}
 		if f["startedBy"].Text != "stranger-9" {
 			t.Errorf("an id no person lists shows as %q, want the id", f["startedBy"].Text)
+		}
+		for _, l := range rig.legacy {
+			if got := fields(l.id)["startedBy"].Text; got != l.want {
+				t.Errorf("a thread whose row records %q shows started by %q, want %q", l.recorded, got, l.want)
+			}
 		}
 	})
 }

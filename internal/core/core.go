@@ -903,23 +903,12 @@ func scanThread(row interface{ Scan(...any) error }) (control.ThreadInfo, error)
 	return t, nil
 }
 
-// starter is who started a thread, as its row records them, named as a
-// person. A row written before callers were resolved to people holds the
-// chat service's id of its author, without the client: it names the
-// person who lists that id on the scope's client, or that id in full. A
-// value no person lists stays as it is.
+// starter is who started a thread, as its row records them, named as the
+// person (people.Directory.Recorded); a value that names no person stays
+// as it is.
 func (c *Core) starter(by control.Principal, scope string) control.Principal {
-	s := string(by)
-	if s == "" || c.People.Listed(s) {
-		return by
-	}
-	if name, ok := c.People.Resolve(s); ok {
+	if name, ok := c.People.Recorded(string(by), c.Scopes[scope].Owner); ok {
 		return control.Principal(name)
-	}
-	if sc, ok := c.Scopes[scope]; ok && sc.Owner != "" {
-		if name, ok := c.People.Resolve(people.Join(sc.Owner, s)); ok {
-			return control.Principal(name)
-		}
 	}
 	return by
 }
