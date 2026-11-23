@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yousan/hataori/internal/chat"
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/surface"
 	fakesurface "github.com/yousan/hataori/internal/surface/fake"
@@ -86,6 +87,11 @@ func TestSupervisorWakePostsItsFinalAnswerOnly(t *testing.T) {
 		scope["people"] = append(scope["people"].([]string), "dispatch.lead")
 		cfg["scopes"].([]map[string]any)[0]["supervisor"].(map[string]any)["instructions"] = "wake-script"
 	})
+	// The chat front end goes by the clock of the events too: on its own,
+	// once the test has run past the clock's start, a turn looks long
+	// quiet and gets a progress line.
+	frontEndHook = func(fe *chat.FrontEnd) { fe.Now = wt.clk.Now }
+	t.Cleanup(func() { frontEndHook = nil })
 	stop, owner, sv := wt.start(t)
 	defer stop()
 	conv := surface.Conversation{Channel: sv.Links[0].Channel, Thread: sv.Links[0].Thread}
