@@ -23,13 +23,20 @@ type terminalWatch struct {
 
 func watchTerminal(t *testing.T, root string, id control.ThreadID) *terminalWatch {
 	t.Helper()
+	return watchTerminalFrom(t, root, id, "", 0)
+}
+
+// watchTerminalFrom collects the stream from position after of run, as a
+// viewer that reconnects asks for it.
+func watchTerminalFrom(t *testing.T, root string, id control.ThreadID, run string, after uint64) *terminalWatch {
+	t.Helper()
 	c, err := wire.Dial(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(func() { cancel(); c.Close() })
-	ch, err := c.Terminal(ctx, id, "", 0)
+	ch, err := c.Terminal(ctx, id, run, after)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,6 +92,15 @@ func TestDashboardAttachResizesTheTerminal(t *testing.T) {
 		t.Fatalf("the session's terminal is %s, not 80x24", got)
 	}
 	view := watchTerminal(t, r.root, x.ID)
+	var before control.TerminalChunk // where a viewer was before the resizes
+	eventually(t, "the viewer's first chunk", 10*time.Second, func() bool {
+		view.mu.Lock()
+		defer view.mu.Unlock()
+		if len(view.chunks) > 0 {
+			before = view.chunks[0]
+		}
+		return before.Run != ""
+	})
 	base, s := dashSignIn(t, r.root)
 	c, m := startAttach(t, base, s, x.ID)
 	if m.Attached == nil {
@@ -136,6 +152,20 @@ func TestDashboardAttachResizesTheTerminal(t *testing.T) {
 		defer late.mu.Unlock()
 		return len(late.chunks) > 0 && late.chunks[0].Cols == 90 && late.chunks[0].Rows == 30
 	})
+
+	// A viewer that reconnects from before the resizes gets the log afresh
+	// at the new size, not the bytes since at it.
+	again := watchTerminalFrom(t, r.root, x.ID, before.Run, before.Pos)
+	eventually(t, "the reconnected viewer's first chunk", 10*time.Second, func() bool {
+		again.mu.Lock()
+		defer again.mu.Unlock()
+		return len(again.chunks) > 0
+	})
+	again.mu.Lock()
+	if f := again.chunks[0]; !f.Reset || f.Cols != 90 || f.Rows != 30 {
+		t.Fatalf("a viewer reconnecting from before the resizes got reset=%v at %dx%d", f.Reset, f.Cols, f.Rows)
+	}
+	again.mu.Unlock()
 
 	// An attachment that sends no size changes none, and logs none.
 	c, m = startAttach(t, base, s, x.ID)

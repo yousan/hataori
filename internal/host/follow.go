@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/creack/pty"
@@ -98,9 +99,11 @@ func (l *boundedLog) deliver(p []byte) {
 
 // follow returns the kept bytes after position after, the position at
 // their end and the terminal's size, and registers a follower for what is
-// written next. When after is not given (ok false), is in the future or is
-// no longer kept, it returns the whole kept log with reset set. The
-// follower is nil once the log is closed.
+// written next. When after is not given (ok false), is in the future, is
+// no longer kept, or comes before the terminal's last resize, it returns
+// the whole kept log with reset set: the size of the bytes between is not
+// kept, so the reader draws afresh. The follower is nil once the log is
+// closed.
 func (l *boundedLog) follow(after uint64, ok bool) (data []byte, pos uint64, reset bool, cols, rows int, f *follower, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -114,7 +117,7 @@ func (l *boundedLog) follow(after uint64, ok bool) (data []byte, pos uint64, res
 	pos = l.pos
 	// The file ends at pos; bytes before the start of this count, left by an
 	// earlier run, have no position.
-	if ok && after <= pos && pos-after <= uint64(len(b)) {
+	if ok && after <= pos && pos-after <= uint64(len(b)) && after >= l.resizedAt {
 		data = b[uint64(len(b))-(pos-after):]
 	} else {
 		data, reset = b, true
@@ -174,10 +177,11 @@ func (h *host) attach(c *net.UnixConn, dec *json.Decoder, enc *json.Encoder, req
 		h.attached.Add(-1)
 	}()
 	h.log.printf("a terminal attached")
-	resized := ""
+	// Written by the reader, which stream may leave running when it returns.
+	var resized atomic.Pointer[string]
 	defer func() {
-		if resized != "" {
-			h.log.printf("a terminal detached; it resized the terminal, last to %s", resized)
+		if z := resized.Load(); z != nil {
+			h.log.printf("a terminal detached; it resized the terminal, last to %s", *z)
 		} else {
 			h.log.printf("a terminal detached")
 		}
@@ -190,7 +194,8 @@ func (h *host) attach(c *net.UnixConn, dec *json.Decoder, enc *json.Encoder, req
 			}
 			if in.Op == "resize" {
 				if h.resize(in.Cols, in.Rows) == nil {
-					resized = fmt.Sprintf("%dx%d", in.Cols, in.Rows)
+					z := fmt.Sprintf("%dx%d", in.Cols, in.Rows)
+					resized.Store(&z)
 				}
 				continue
 			}
