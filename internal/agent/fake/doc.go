@@ -11,7 +11,9 @@
 // object as the payload (`--wait` for a question, whose answer the hook
 // prints), and writes its text to a transcript file that it names in its
 // first report. It never writes anything a reader needs to its terminal;
-// only the script command "screen" writes there, for a person to look at.
+// only the script command "screen" writes there, for a person to look at,
+// and, each time its terminal takes a new size, it writes the line
+// "fake: size COLSxROWS" there, as an agent redraws its screen.
 //
 // # Wire format
 //

@@ -161,6 +161,11 @@ export function App() {
     const phase = atts.get(k)?.phase;
     return {
       allowed: mayAct && (!web() || phase === "on" || phase === "starting"),
+      attached: mayAct && phase === "on",
+      onResize: (cols, rows) => {
+        const a = attachments.current.get(k);
+        if (a?.live) a.resize(cols, rows);
+      },
       onKeys: (keys) => {
         let a = attachments.current.get(k);
         if (!a?.live) {

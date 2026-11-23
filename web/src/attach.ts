@@ -113,6 +113,7 @@ export class Attachment {
   private state: AttachState;
   private done = false;
   private queued: string[] = []; // keys typed before it is on
+  private size: { cols: number; rows: number } | null = null; // given before it is on
   private stopWhenOn = false; // stopped while it started: the queued keys go first
 
   constructor(
@@ -168,7 +169,9 @@ export class Attachment {
       }
       if (a.attached) {
         this.set({ phase: "on", idle: a.attached.idle ?? 0 });
-        // What was typed while it opened, in order.
+        // The pane's size, then what was typed while it opened, in order.
+        if (this.size) ws.send(JSON.stringify({ resize: this.size }));
+        this.size = null;
         for (const keys of this.queued) ws.send(JSON.stringify({ keys }));
         this.queued = [];
         if (this.stopWhenOn) this.stop();
@@ -194,6 +197,18 @@ export class Attachment {
       return;
     }
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ keys }));
+  }
+
+  // resize gives the session's terminal the pane's size in cells: at once
+  // while it is on, after the start while it starts (the last size given),
+  // and never after its end.
+  resize(cols: number, rows: number): void {
+    if (this.done) return;
+    if (this.state.phase === "starting") {
+      this.size = { cols, rows };
+      return;
+    }
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ resize: { cols, rows } }));
   }
 
   // stop ends it, after the keys sent before, also those typed while it

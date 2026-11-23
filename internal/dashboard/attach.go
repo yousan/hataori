@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -25,17 +26,23 @@ import (
 // host's terminal at the socket it names, as the command does, and writes
 // the page's keys to the terminal as they come. The page keeps drawing the
 // terminal from TerminalPath; nothing of the terminal comes back on this
-// connection, and nothing resizes it.
+// connection. While it is attached the page may give the terminal its
+// pane's size, which the session host sets as a person's terminal emulator
+// would; the new size reaches every viewer in the terminal's stream. Viewing
+// never resizes it.
 //
 //	GET /api/attach   a WebSocket; its first message is {"session", "thread"}
 //
 // After the start the server sends {"attached": {"idle": <seconds>}}. The
 // page sends {"keys": "<text>"}, the bytes its terminal emulator made of the
-// person's keys and pastes, written in order, and {"end": true}. When the
-// attachment ends the server sends {"ended": "<reason>"} and closes: "ended"
-// (the page asked), "idle" (no key for the idle period), "session ended"
-// (the dashboard session expired), "agent ended" (the session's host ended
-// the attachment, as when the agent ends) or "stopping" (the daemon stops).
+// person's keys and pastes, written in order, {"resize": {"cols", "rows"}},
+// the size of the page's pane in cells, and {"end": true}. A size outside
+// MinCols×MinRows to MaxCols×MaxRows is answered with an error and changes
+// nothing. When the attachment ends the server sends {"ended": "<reason>"}
+// and closes: "ended" (the page asked), "idle" (no key for the idle
+// period), "session ended" (the dashboard session expired), "agent ended"
+// (the session's host ended the attachment, as when the agent ends) or
+// "stopping" (the daemon stops).
 // A refusal of the start sends {"refused": "<reason>"} and closes with it.
 // Closing the WebSocket ends the attachment at once.
 //
@@ -43,8 +50,9 @@ import (
 // connection's does, and carries no session: the session is the first
 // message. On the web listener the start needs the check that acting
 // needs (act.go). Each start and end is one log line with the person, the
-// thread and, for the end, the reason; what is typed is not logged, nor how
-// much.
+// thread and, for the end, the reason; an attachment that resized the
+// terminal logs one more line at its end, with the last size it gave. What
+// is typed is not logged, nor how much.
 const AttachPath = "/api/attach"
 
 // TerminalInput is a terminal attached to a session's terminal, as the
@@ -53,6 +61,8 @@ const AttachPath = "/api/attach"
 type TerminalInput interface {
 	// Input writes b to the agent's terminal, unchanged.
 	Input(b []byte) error
+	// Resize gives the agent's terminal cols columns and rows rows.
+	Resize(cols, rows int) error
 	// Wait reads, and drops, what the host sends on the attachment, until
 	// it ends: it returns when the host ends it or the attachment is
 	// closed.
@@ -72,9 +82,24 @@ type attachFirst struct {
 
 // attachIn is every later message of the page.
 type attachIn struct {
-	Keys string `json:"keys,omitempty"`
-	End  bool   `json:"end,omitempty"`
+	Keys   string      `json:"keys,omitempty"`
+	Resize *attachSize `json:"resize,omitempty"`
+	End    bool        `json:"end,omitempty"`
 }
+
+// attachSize is a size of the session's terminal, in cells.
+type attachSize struct {
+	Cols int `json:"cols"`
+	Rows int `json:"rows"`
+}
+
+// The sizes a page may give a session's terminal: those the config's
+// terminal_size may name (internal/instance). A pane smaller or larger is
+// drawn scaled, as when viewing.
+const (
+	MinCols, MaxCols = 40, 500
+	MinRows, MaxRows = 10, 200
+)
 
 // attachOut is a message to the page.
 type attachOut struct {
@@ -205,8 +230,12 @@ func (s *Server) attach(w http.ResponseWriter, r *http.Request) {
 	idle := s.attachIdle
 	s.Log.Info("dashboard: terminal attached", "person", claims.person, "thread", int64(first.Thread), "listener", string(l.way))
 	reason := "closed"
+	var resized atomic.Pointer[attachSize] // the last size given, if any
 	defer func() {
 		s.Log.Info("dashboard: terminal detached", "person", claims.person, "thread", int64(first.Thread), "reason", reason)
+		if z := resized.Load(); z != nil {
+			s.Log.Info("dashboard: terminal resized", "person", claims.person, "thread", int64(first.Thread), "cols", z.Cols, "rows", z.Rows)
+		}
 	}()
 	c.SetReadLimit(maxOperateMessage)
 	alive := func() { c.SetReadDeadline(time.Now().Add(2*s.keepAlive + s.writeTimeout)) }
@@ -241,6 +270,25 @@ func (s *Server) attach(w http.ResponseWriter, r *http.Request) {
 			if m.End {
 				pageEnded <- "ended"
 				return
+			}
+			if z := m.Resize; z != nil {
+				if z.Cols < MinCols || z.Cols > MaxCols || z.Rows < MinRows || z.Rows > MaxRows {
+					c.send(attachOut{Error: fmt.Sprintf("a terminal of %dx%d is not given: it must be from %dx%d to %dx%d", z.Cols, z.Rows, MinCols, MinRows, MaxCols, MaxRows)})
+					continue
+				}
+				writing.Lock()
+				if over {
+					writing.Unlock()
+					return
+				}
+				err = term.Resize(z.Cols, z.Rows)
+				writing.Unlock()
+				if err != nil {
+					c.send(attachOut{Error: "the terminal could not be resized"})
+					continue
+				}
+				resized.Store(&attachSize{z.Cols, z.Rows})
+				continue
 			}
 			if m.Keys == "" {
 				continue

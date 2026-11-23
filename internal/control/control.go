@@ -655,9 +655,12 @@ type TerminalChunk struct {
 	Run   string `json:"run"`   // the session host's run; a new run starts a new count; empty when no host runs
 	Pos   uint64 `json:"pos"`   // the position after Data; 0 when Run is empty
 	Reset bool   `json:"reset"` // Data is the end of the log, not a continuation: redraw
-	Cols  int    `json:"cols"`  // the terminal's size
-	Rows  int    `json:"rows"`
-	Data  []byte `json:"data,omitempty"` // the raw bytes; text, so optional
+	// Cols and Rows are the terminal's size, at which Data and what follows
+	// are drawn. A chunk whose size differs from the one before it, with or
+	// without Data, says the terminal was resized there.
+	Cols int    `json:"cols"`
+	Rows int    `json:"rows"`
+	Data []byte `json:"data,omitempty"` // the raw bytes; text, so optional
 }
 
 // RequestKind tells a question from an approval.

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -13,6 +14,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/creack/pty"
 )
 
 // followLimit bounds the output kept for one follower that has not taken
@@ -38,7 +41,15 @@ type follower struct {
 	pos   uint64 // the position after buf
 	cut   bool   // fell behind; buf is no longer continuous
 	ended bool   // the log was closed; nothing more comes
+	marks []sizeMark
 	wake  chan struct{}
+}
+
+// sizeMark is where in a follower's buf the terminal took a new size: the
+// bytes from at on are drawn at it.
+type sizeMark struct {
+	at         int
+	cols, rows int
 }
 
 func (f *follower) notify() {
@@ -55,12 +66,14 @@ func (f *follower) end() {
 	f.notify()
 }
 
-// take returns what was written since the last take.
-func (f *follower) take() (data []byte, pos uint64, cut, ended bool) {
+// take returns what was written since the last take, and where in it the
+// terminal took a new size.
+func (f *follower) take() (data []byte, pos uint64, marks []sizeMark, cut, ended bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	data, f.buf = f.buf, nil
-	return data, f.pos, f.cut, f.ended
+	marks, f.marks = f.marks, nil
+	return data, f.pos, marks, f.cut, f.ended
 }
 
 // deliver hands p, which ends at l.pos, to every follower. It never waits
@@ -83,19 +96,20 @@ func (l *boundedLog) deliver(p []byte) {
 	}
 }
 
-// follow returns the kept bytes after position after and the position at
-// their end, and registers a follower for what is written next. When after
-// is not given (ok false), is in the future or is no longer kept, it
-// returns the whole kept log with reset set. The follower is nil once the
-// log is closed.
-func (l *boundedLog) follow(after uint64, ok bool) (data []byte, pos uint64, reset bool, f *follower, err error) {
+// follow returns the kept bytes after position after, the position at
+// their end and the terminal's size, and registers a follower for what is
+// written next. When after is not given (ok false), is in the future or is
+// no longer kept, it returns the whole kept log with reset set. The
+// follower is nil once the log is closed.
+func (l *boundedLog) follow(after uint64, ok bool) (data []byte, pos uint64, reset bool, cols, rows int, f *follower, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	cols, rows = l.cols, l.rows
 	// Read under the lock, so that nothing is written between what is read
 	// and what the follower gets.
 	b, err := os.ReadFile(l.path)
 	if err != nil {
-		return nil, 0, false, nil, err
+		return nil, 0, false, 0, 0, nil, err
 	}
 	pos = l.pos
 	// The file ends at pos; bytes before the start of this count, left by an
@@ -106,14 +120,14 @@ func (l *boundedLog) follow(after uint64, ok bool) (data []byte, pos uint64, res
 		data, reset = b, true
 	}
 	if l.closed {
-		return data, pos, reset, nil, nil
+		return data, pos, reset, cols, rows, nil, nil
 	}
 	f = &follower{pos: pos, wake: make(chan struct{}, 1)}
 	if l.followers == nil {
 		l.followers = map[*follower]struct{}{}
 	}
 	l.followers[f] = struct{}{}
-	return data, pos, reset, f, nil
+	return data, pos, reset, cols, rows, f, nil
 }
 
 func (l *boundedLog) unfollow(f *follower) {
@@ -141,6 +155,9 @@ func (h *host) follow(c *net.UnixConn, enc *json.Encoder, req request) {
 // attach serves an "attach" request: the terminal's output as follow sends
 // it, and the keys of a person, which the connection then carries as
 // "input" requests, written to the terminal as they come and not answered.
+// It may also carry "resize" requests, also not answered: each gives the
+// terminal the size it names, and the agent gets SIGWINCH from the kernel,
+// as from a person's terminal emulator; a size out of bounds is dropped.
 // The host counts the connection as attached until it closes.
 func (h *host) attach(c *net.UnixConn, dec *json.Decoder, enc *json.Encoder, req request) {
 	if h.spec.Relay {
@@ -157,12 +174,25 @@ func (h *host) attach(c *net.UnixConn, dec *json.Decoder, enc *json.Encoder, req
 		h.attached.Add(-1)
 	}()
 	h.log.printf("a terminal attached")
-	defer h.log.printf("a terminal detached")
+	resized := ""
+	defer func() {
+		if resized != "" {
+			h.log.printf("a terminal detached; it resized the terminal, last to %s", resized)
+		} else {
+			h.log.printf("a terminal detached")
+		}
+	}()
 	h.stream(c, enc, req, func() {
 		for {
 			var in request
 			if err := dec.Decode(&in); err != nil {
 				return
+			}
+			if in.Op == "resize" {
+				if h.resize(in.Cols, in.Rows) == nil {
+					resized = fmt.Sprintf("%dx%d", in.Cols, in.Rows)
+				}
+				continue
 			}
 			if in.Op != "input" || len(in.Data) == 0 {
 				continue
@@ -178,6 +208,28 @@ func (h *host) attach(c *net.UnixConn, dec *json.Decoder, enc *json.Encoder, req
 	})
 }
 
+// maxSize bounds the size a "resize" request may give the terminal, in
+// either direction.
+const maxSize = 1000
+
+// resize gives the terminal cols columns and rows rows, unless the command
+// has exited. It does not take the input's lock: a write of keys can wait
+// on an agent that waits on its output, which waits on the log's lock that
+// resize holds.
+func (h *host) resize(cols, rows int) error {
+	if cols < 1 || rows < 1 || cols > maxSize || rows > maxSize {
+		return fmt.Errorf("host: no terminal is %dx%d", cols, rows)
+	}
+	return h.term.resize(cols, rows, func() error {
+		select {
+		case <-h.done:
+			return errors.New("host: the command has exited")
+		default:
+		}
+		return pty.Setsize(h.tty, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
+	})
+}
+
 // stream sends the terminal's output after req.After, as follow says,
 // while read takes what the other end sends; read returns when the other
 // end closes.
@@ -190,7 +242,7 @@ func (h *host) stream(c *net.UnixConn, enc *json.Encoder, req request, read func
 		enc.Encode(response{Error: "the command runs on pipes: there is no terminal to follow"})
 		return
 	}
-	data, pos, reset, f, err := h.term.follow(req.After, req.Run == h.run && req.After > 0)
+	data, pos, reset, cols, rows, f, err := h.term.follow(req.After, req.Run == h.run && req.After > 0)
 	if err != nil {
 		enc.Encode(response{Error: err.Error()})
 		return
@@ -206,7 +258,7 @@ func (h *host) stream(c *net.UnixConn, enc *json.Encoder, req request, read func
 		}
 		return true
 	}
-	if !send(response{OK: true, Run: h.run, Pos: pos, Reset: reset, Cols: h.cols, Rows: h.rows, Data: data}) {
+	if !send(response{OK: true, Run: h.run, Pos: pos, Reset: reset, Cols: cols, Rows: rows, Data: data}) {
 		return
 	}
 	if f == nil {
@@ -224,12 +276,24 @@ func (h *host) stream(c *net.UnixConn, enc *json.Encoder, req request, read func
 		case <-gone:
 			return
 		}
-		data, pos, cut, ended := f.take()
+		data, pos, marks, cut, ended := f.take()
 		if cut {
 			send(response{Error: "the reader fell behind; ask again from the last position"})
 			return
 		}
-		if len(data) > 0 && !send(response{OK: true, Run: h.run, Pos: pos, Data: data}) {
+		// The bytes before each new size, then the size, alone: the reader
+		// draws what follows it at that size.
+		start, from := pos-uint64(len(data)), 0
+		for _, m := range marks {
+			if m.at > from && !send(response{OK: true, Run: h.run, Pos: start + uint64(m.at), Data: data[from:m.at]}) {
+				return
+			}
+			if !send(response{OK: true, Run: h.run, Pos: start + uint64(m.at), Cols: m.cols, Rows: m.rows}) {
+				return
+			}
+			from = m.at
+		}
+		if len(data) > from && !send(response{OK: true, Run: h.run, Pos: pos, Data: data[from:]}) {
 			return
 		}
 		if ended {
@@ -294,10 +358,13 @@ func FollowTerminal(stateDir, run string, after uint64) (*TerminalStream, error)
 	return s, nil
 }
 
-// Next returns the next chunk. It returns io.EOF after the terminal was
-// closed and everything written to it was sent, and another error when the
-// stream ended early, for example because the reader fell behind; the
-// reader then follows again from the last position it has.
+// Next returns the next chunk. Each carries the terminal's size; a chunk
+// whose size differs from the one before it, which may have no data, says
+// the terminal was resized there, and the data after it is drawn at the
+// new size. It returns io.EOF after the terminal was closed and everything
+// written to it was sent, and another error when the stream ended early,
+// for example because the reader fell behind; the reader then follows
+// again from the last position it has.
 func (s *TerminalStream) Next() (TerminalChunk, error) {
 	if s.first != nil {
 		ch := *s.first
@@ -305,6 +372,9 @@ func (s *TerminalStream) Next() (TerminalChunk, error) {
 		return ch, nil
 	}
 	ch, err := s.read()
+	if err == nil && ch.Cols > 0 && ch.Rows > 0 {
+		s.cols, s.rows = ch.Cols, ch.Rows
+	}
 	ch.Cols, ch.Rows = s.cols, s.rows
 	return ch, err
 }
@@ -378,5 +448,15 @@ func (a *Attachment) Input(b []byte) error {
 	return a.enc.Encode(request{Op: "input", Data: b})
 }
 
-// Size is the size of the host's terminal.
+// Resize gives the host's terminal cols columns and rows rows, as a
+// person's terminal emulator does when its window changes size. The host
+// does not answer it; the stream's next chunks carry the new size.
+func (a *Attachment) Resize(cols, rows int) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.conn.SetWriteDeadline(time.Now().Add(followWriteTimeout))
+	return a.enc.Encode(request{Op: "resize", Cols: cols, Rows: rows})
+}
+
+// Size is the size of the host's terminal, as the stream last carried it.
 func (a *Attachment) Size() (cols, rows int) { return a.cols, a.rows }
