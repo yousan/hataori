@@ -117,8 +117,8 @@ A supervisor is one more thread of the scope, started by the daemon (design, sec
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `agent` | string | the default agent (`agent`) | The adapter that runs it. It must be the default agent (`agent`); the scope's `agent` does not apply. Only Claude Code can start a supervisor today: with another adapter its thread fails, with that reason, and no agent process starts. |
-| `model` | string | the adapter's cheapest | Its model. Claude Code's cheapest is `haiku`. If the adapter names no cheapest model, the default agent's model order above applies: the scope's model when it runs the default agent, then the adapter section, then the top-level key. |
-| `effort` | string | the default agent's effort | Its effort follows the default agent's effort order above: the scope's effort when it runs the default agent, then the adapter section, then the top-level key. |
+| `model` | string | the scope's model | Its model. Without the key it is the one the default agent's model order above gives a thread of the scope: the scope's `model` when the scope runs the default agent, then the adapter section's, then the top-level key, then the agent's own default. |
+| `effort` | string | `"high"` | Its effort. Without the key it is `high`, whatever effort the scope, the adapter section or the top-level key gives other threads. |
 | `instructions` | string | empty | The config's instructions: given at each start of its session, a resume included, at the end of the config's layer of its instructions (below, *Its instructions*). |
 | `quiet` | duration | `"30s"` | The quiet period: after the first turn end that wakes the supervisor, how long the waker waits, folding what comes until then into one message. |
 | `output_max` | integer | `1024` | The most bytes of each thread's output in a wake message, keeping the end. |

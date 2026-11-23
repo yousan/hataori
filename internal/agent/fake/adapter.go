@@ -73,8 +73,6 @@ type Config struct {
 	// agent would. Without it a confined spec's launch is not confined, and
 	// the runner refuses it.
 	Confines bool `json:"confines"`
-	// Cheap is the model the fake names as its cheapest; none when empty.
-	Cheap string `json:"cheap_model"`
 }
 
 // ProjectHookFile is the file the program's project hook writes
@@ -131,11 +129,6 @@ const InstructionsFile = "fake-instructions.md"
 // MCPConfigFile holds a confined spec's MCP servers, in the session's state
 // directory, as agent.MCPServer values in JSON.
 const MCPConfigFile = "fake-mcp.json"
-
-// CheapModel is the configured cheap_model.
-func (a *Adapter) CheapModel() string { return a.c.Cheap }
-
-var _ agent.CheapModel = (*Adapter)(nil)
 
 // Launch runs the program with the spec's model, effort and resume id.
 func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
