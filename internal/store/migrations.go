@@ -659,6 +659,22 @@ var migrations = []Migration{
 		// reports any more.
 		`ALTER TABLE pending_inputs ADD COLUMN stale INTEGER NOT NULL DEFAULT 0`,
 	)},
+	// A scope's reminders: a wake of its supervisor at a time it set, with a
+	// note (design, section 7.1, #649). AUTOINCREMENT: a number names one
+	// reminder for good. wake is the key of the stored wake that carries it,
+	// while it is open.
+	{Name: "supervisor_reminders", Up: execAll(
+		`CREATE TABLE supervisor_reminders (
+			id    INTEGER PRIMARY KEY AUTOINCREMENT,
+			scope TEXT NOT NULL,
+			due   INTEGER NOT NULL, -- Unix milliseconds
+			note  TEXT NOT NULL,
+			made  INTEGER NOT NULL, -- when it was set
+			state TEXT NOT NULL,    -- open, given or cancelled
+			wake  TEXT
+		)`,
+		`CREATE INDEX supervisor_reminders_scope ON supervisor_reminders (scope, state)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

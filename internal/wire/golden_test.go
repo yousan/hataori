@@ -127,6 +127,7 @@ func examples(t *testing.T) map[string]any {
 		"Limits":               limitsArgs{},
 		"Clients":              clientsArgs{},
 		"Forge":                control.ForgeRequest{Repo: "acme/widgets", Read: control.ForgeReadPull, Number: 42},
+		"Remind":               control.RemindRequest{At: &exampleTime, Note: "Has thread 7 ended?"},
 		"AttachTerminal":       attachTerminalArgs{ID: exampleID},
 		"OperateHost":          operateHostArgs{Pane: "%3"},
 		"HostKeys": hostKeysArgs{Keys: []control.HostKey{{Key: "C-c"}, {Text: "make test"}, {Key: "Enter"},
@@ -192,6 +193,7 @@ func examples(t *testing.T) map[string]any {
 			Checks: control.ForgeChecks{Commit: "9fceb02d0ae598e95dc970b74767f19372d61af8", State: "pending", Items: []control.ForgeCheck{
 				{Kind: "check_run", Name: "test", State: "completed", Conclusion: "success", URL: "https://forge.example.com/acme/widgets/runs/5"},
 				{Kind: "status", Name: "deploy/preview", State: "pending"}}}}},
+		"Remind": control.RemindAnswer{Number: 3, At: exampleTime},
 		"Limits": []control.AgentLimits{{Agent: "claude-code", At: exampleTime, Every: 300, Windows: []control.LimitWindow{
 			{Name: "five_hour", Minutes: 300, Used: 4, Resets: &exampleTime},
 			{Name: "seven_day", Minutes: 10080, Used: 21, Resets: &exampleTime}}}},
@@ -205,6 +207,9 @@ func examples(t *testing.T) map[string]any {
 	ex["request-Forge-deployed.json"] = request{ID: 1, Op: "Forge", Args: mustJSON(control.ForgeRequest{Repo: "acme/widgets", Read: control.ForgeReadDeployed, Number: 42})}
 	ex["response-Forge-deployed.json"] = response{ID: 1, Result: mustJSON(control.ForgeAnswer{Repo: "acme/widgets", Deployed: &control.ForgeDeployed{
 		Build: "1f2e3d4c5b6a79880706f5e4d3c2b1a098765432", Pull: 42, Merged: &merged, Commit: "9fceb02d0ae598e95dc970b74767f19372d61af8", In: &in}})}
+	// A reminder set with a delay, and one cancelled.
+	ex["request-Remind-delay.json"] = request{ID: 1, Op: "Remind", Args: mustJSON(control.RemindRequest{Delay: 7200, Note: "Has thread 7 ended?"})}
+	ex["request-Remind-cancel.json"] = request{ID: 1, Op: "Remind", Args: mustJSON(control.RemindRequest{Cancel: 3})}
 	for op := range operations {
 		a, ok := args[op]
 		if !ok {

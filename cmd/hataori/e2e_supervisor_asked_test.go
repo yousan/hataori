@@ -69,6 +69,9 @@ func (wt *wakeTest) stays(t *testing.T, sv control.ThreadID, n int, d time.Durat
 	if got := wt.wakes(t, sv); len(got) != n {
 		t.Fatalf("%s: %d wakes, want %d: %q", what, len(got), n, got)
 	}
+	if got := wt.taken(t, sv); got != n {
+		t.Fatalf("%s: the thread took %d wakes, want %d", what, got, n)
+	}
 }
 
 func names(digest string, id control.ThreadID) bool {

@@ -73,6 +73,9 @@ type Scope struct {
 	// Limits are its budget, as the config's layer of its instructions
 	// states them; the Budget enforces them.
 	Limits Limits
+	// RemindersMax is the most open reminders of the scope (#649), as the
+	// config's layer states it; its Reminders enforce it.
+	RemindersMax int
 	// Report, ReportEvery, Mention and QuietHours are how the chat front
 	// end posts its thread (#657), as the config's layer states them.
 	Report      string
@@ -101,6 +104,8 @@ type Sessions struct {
 	// Budgets are the scopes' budgets, by key: a scope's sends and starts
 	// are counted, and refused over budget, on its token's connection.
 	Budgets map[string]*Budget
+	// Reminders are the reminders of the scopes that name a supervisor.
+	Reminders map[string]*Reminders
 	// Forges are the forges the daemon reads for its supervisors, by name
 	// (Reads). Their tokens stay in them.
 	Forges map[string]forge.Forge
@@ -230,6 +235,9 @@ func (s *Sessions) API(scope string, thread control.ThreadID) control.API {
 // APIOf is API with autonomy instead of the scope's.
 func (s *Sessions) APIOf(scope string, thread control.ThreadID, autonomy string) control.API {
 	api := s.Core.As(Caller(scope, thread, autonomy))
+	if m := s.Reminders[scope]; m != nil {
+		api = m.API(api)
+	}
 	if b := s.Budgets[scope]; b != nil {
 		api = b.API(api)
 	}

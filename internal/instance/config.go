@@ -159,6 +159,9 @@ type Supervisor struct {
 	// through, with no person's message in between, before it no longer
 	// wakes it. "loop_cycles"; 3 when absent; 0 turns the guard off.
 	LoopCycles int
+	// RemindersMax is the most open reminders of the scope, "reminders_max";
+	// 10 when absent; with 0 the supervisor sets none.
+	RemindersMax int
 	// Repos are the repositories the supervisor works on, "repos": the
 	// only ones its Start may clone. Empty: it starts no thread.
 	Repos []Repo
@@ -281,6 +284,8 @@ const (
 	DefaultTokensPerDay = 2_000_000
 
 	DefaultLoopCycles = 3
+
+	DefaultRemindersMax = 10
 )
 
 type fileSupervisor struct {
@@ -295,6 +300,7 @@ type fileSupervisor struct {
 	SendsPerHour   *int     `json:"sends_per_hour"`
 	TokensPerDay   *int64   `json:"tokens_per_day"`
 	LoopCycles     *int     `json:"loop_cycles"`
+	RemindersMax   *int     `json:"reminders_max"`
 	Repos          []string `json:"repos"`
 	Autonomy       string   `json:"autonomy"`
 	Report         string   `json:"report"`
@@ -621,7 +627,7 @@ func ParseConfig(data []byte) (*Config, error) {
 				Effort: strings.TrimSpace(sv.Effort), Instructions: strings.TrimSpace(sv.Instructions),
 				Quiet: DefaultQuiet, OutputMax: DefaultOutputMax, ThreadsMax: DefaultThreadsMax,
 				TurnsPerHour: DefaultTurnsPerHour, SendsPerHour: DefaultSendsPerHour, TokensPerDay: DefaultTokensPerDay,
-				LoopCycles: DefaultLoopCycles, Autonomy: AutonomyPropose}
+				LoopCycles: DefaultLoopCycles, RemindersMax: DefaultRemindersMax, Autonomy: AutonomyPropose}
 			switch a := strings.TrimSpace(sv.Autonomy); a {
 			case "":
 			case AutonomyWatch, AutonomyPropose, AutonomyAct:
@@ -667,6 +673,12 @@ func ParseConfig(data []byte) (*Config, error) {
 					return nil, fmt.Errorf("config: key %q: %d is not a number of 0 or more (0 turns the limit off)", key+".supervisor."+n.name, *n.v)
 				}
 				*n.to = *n.v
+			}
+			if v := sv.RemindersMax; v != nil {
+				if *v < 0 {
+					return nil, fmt.Errorf("config: key %q: %d is not a number of 0 or more (0: no reminder)", key+".supervisor.reminders_max", *v)
+				}
+				sc.Supervisor.RemindersMax = *v
 			}
 			if v := sv.TokensPerDay; v != nil {
 				if *v < 0 {

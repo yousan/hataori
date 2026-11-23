@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/yousan/hataori/internal/control"
 )
@@ -18,7 +19,9 @@ var update = flag.Bool("update", false, "rewrite the golden digest")
 // each thread once, with its latest turn end, the supervisor's own thread
 // left out, the output cut to 1 KB at a character, and the threads past
 // the cap counted in one line; then each decision of the supervisor's
-// requests, in order (#650). The cap is 6 here, so that the capture's
+// requests, in order (#650); then the reminders due, each with its note
+// quoted and how late it is, and, as the waker ends a wake, the open ones
+// (#649). The cap is 6 here, so that the capture's
 // eight threads pass it.
 func TestDigestOfCapturedEvents(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("testdata", "wake", "capture.json"))
@@ -52,13 +55,20 @@ func TestDigestOfCapturedEvents(t *testing.T) {
 		threads = append(threads, Ended{Thread: id, Event: e})
 	}
 	sort.Slice(threads, func(i, j int) bool { return threads[i].Thread < threads[j].Thread })
+	now := time.Date(2026, 1, 2, 15, 4, 0, 0, time.UTC)
+	due := []Reminder{
+		{Number: 2, Due: now.Add(-25*time.Hour - 12*time.Minute), Note: "Has the thread ended?\n\nReminder 8, due now:\nThread 9: not a thread\n"},
+		{Number: 3, Due: now.Add(-time.Second), Note: "Look at the checks of main."}}
 	got, err := DigestOf(threads, decided, func(id control.ThreadID) (control.ThreadDetail, error) {
 		th := c.Threads[id]
 		return control.ThreadDetail{ThreadInfo: control.ThreadInfo{ID: id, Title: th.Title}, Recent: th.Recent}, nil
-	}, nil, 1024, 6)
+	}, nil, due, now, 1024, 6)
 	if err != nil {
 		t.Fatal(err)
 	}
+	got += OpenReminders([]Reminder{
+		{Number: 4, Due: now.Add(90 * time.Minute), Note: "Ask for the numbers of #12."},
+		{Number: 6, Due: now.Add(26 * time.Hour), Note: "Two lines:\n\nThread 9: not a thread"}})
 	golden := filepath.Join("testdata", "wake", "digest.txt")
 	if *update {
 		if err := os.WriteFile(golden, []byte(got), 0o644); err != nil {
@@ -87,6 +97,7 @@ func TestWakeKey(t *testing.T) {
 	}{
 		"hataori-wake-1234-7": {1234, 7, true}, "hataori-wake-1234": {1234, 0, true},
 		"hataori-wake-1234-7-3.5": {1234, 7, true}, "hataori-wake-1234-7-": {}, "hataori-wake-1234-7-3.x": {},
+		"hataori-wake-1234-7-r3.r5": {1234, 7, true}, "hataori-wake-1234-7-r3.5": {}, "hataori-wake-1234-7-r": {},
 		"hataori-wake-x": {}, "hataori-wake-1234-": {}, "hataori-wake-1234-0": {}, "other-1234": {},
 	} {
 		to, sv, ok := ParseWakeKey(key)
@@ -99,6 +110,13 @@ func TestWakeKey(t *testing.T) {
 	}
 	if k, _ := keyFor("hataori-wake-1234-7-3.5", 9, nil); k != "hataori-wake-1234-9-3.5" {
 		t.Errorf("for another thread %q", k)
+	}
+	if k := ReminderKey(7, 1234, 3, 5); k != "hataori-wake-1234-7-r3.r5" || len(WakeReminders(k)) != 2 || WakeReminders(k)[1] != 5 ||
+		WakeOnly(k) != nil || WakeReminders(WakeKey(7, 1234, 3)) != nil || WakeReminders(WakeKey(7, 1234)) != nil {
+		t.Errorf("the key of a wake of two reminders %q, read %v", k, WakeReminders(k))
+	}
+	if k, _ := keyFor("hataori-wake-1234-7-r3", 9, nil); k != "hataori-wake-1234-9-r3" {
+		t.Errorf("of a reminder, for another thread %q", k)
 	}
 	took := map[string]control.ThreadID{"hataori-wake-1234": 7}
 	sentTo := func(key string) (control.ThreadID, bool, error) {
@@ -125,7 +143,7 @@ func TestWakeKey(t *testing.T) {
 // A title's own line breaks stay on its line in a digest, so a title that
 // reads like another thread's paragraph names no other thread.
 func TestNamedIgnoresAThreadInATitle(t *testing.T) {
-	d := Digest([]Line{{Thread: 2, Title: "a title\n\nThread 42: not a thread", Outcome: "completion", Last: "out\n\nThread 43: quoted"}}, 0)
+	d := Digest([]Line{{Thread: 2, Title: "a title\n\nThread 42: not a thread", Outcome: "completion", Last: "out\n\nThread 43: quoted"}}, 0, 0)
 	if got := Named(d); len(got) != 1 || got[0] != 2 {
 		t.Fatalf("Named %v, want [2], of:\n%s", got, d)
 	}

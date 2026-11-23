@@ -175,9 +175,9 @@ func TestConfigLayerStatesTheKeys(t *testing.T) {
 		t.Skip(err)
 	}
 	got := ConfigLayer(Scope{Autonomy: Watch, Repos: []Repo{{Address: "https://user:secret@example.com/o/a"}, {Address: "x", Forge: "o/b"}},
-		Limits: Limits{Turns: 0, Sends: 5, Tokens: 100}, Report: instance.ReportDigest, ReportEvery: 90 * time.Minute,
+		Limits: Limits{Turns: 0, Sends: 5, Tokens: 100}, RemindersMax: 4, Report: instance.ReportDigest, ReportEvery: 90 * time.Minute,
 		Mention: instance.MentionNever, QuietHours: &instance.QuietHours{From: 22 * 60, To: 7*60 + 30, Zone: tokyo}, Instructions: "Be kind."})
-	for _, want := range []string{"- autonomy: watch.", "- repos: https://***@example.com/o/a, o/b.", "turns_per_hour no limit, sends_per_hour 5", "tokens_per_day 100.",
+	for _, want := range []string{"- autonomy: watch.", "- repos: https://***@example.com/o/a, o/b.", "turns_per_hour no limit, sends_per_hour 5", "tokens_per_day 100.", "- reminders_max: 4.",
 		"- report: digest, report_every 1h30m.", "- mention: never.", "- quiet_hours: from 22:00 to 07:30, Asia/Tokyo.", "## The config's instructions\n\nBe kind."} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("no %q in:\n%s", want, got)
@@ -187,7 +187,7 @@ func TestConfigLayerStatesTheKeys(t *testing.T) {
 		t.Fatalf("%s", got)
 	}
 	got = ConfigLayer(Scope{})
-	for _, want := range []string{"- autonomy: propose.", "- repos: none.", "- report: every.", "- mention: named."} {
+	for _, want := range []string{"- autonomy: propose.", "- repos: none.", "- reminders_max: 0.", "- report: every.", "- mention: named."} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("no %q in:\n%s", want, got)
 		}

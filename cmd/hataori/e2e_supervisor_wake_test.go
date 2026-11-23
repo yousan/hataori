@@ -242,6 +242,19 @@ func (wt *wakeTest) wakes(t *testing.T, sv control.ThreadID) []string {
 	return out
 }
 
+// taken counts the wakes thread sv took, by the keys the core recorded: at
+// once, while a wake's input is there only when its agent is ready, after
+// the one before was read to its end (#676).
+func (wt *wakeTest) taken(t *testing.T, sv control.ThreadID) int {
+	t.Helper()
+	var n int
+	if err := wt.db.QueryRow(`SELECT count(*) FROM inbox WHERE instr(CAST(key AS BLOB), CAST(? AS BLOB)) > 0 AND json_extract(CAST(data AS TEXT), '$.thread') = ?`,
+		supervisor.WakeKeyPrefix, int64(sv)).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
 // turns counts the turns started in thread sv.
 func (wt *wakeTest) turns(t *testing.T, sv control.ThreadID) int {
 	t.Helper()

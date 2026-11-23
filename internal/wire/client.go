@@ -554,6 +554,14 @@ func (c *Client) Clients(ctx context.Context) ([]control.ClientState, error) {
 	return out, err
 }
 
+// Remind is control.API.Remind. A daemon before 3.32 answers
+// not_supported, as the core does.
+func (c *Client) Remind(ctx context.Context, r control.RemindRequest) (control.RemindAnswer, error) {
+	var out control.RemindAnswer
+	err := c.call(ctx, "Remind", r, &out)
+	return out, err
+}
+
 // Forge is control.API.Forge. A daemon before 3.27 answers
 // not_supported, as the core does.
 func (c *Client) Forge(ctx context.Context, r control.ForgeRequest) (control.ForgeAnswer, error) {

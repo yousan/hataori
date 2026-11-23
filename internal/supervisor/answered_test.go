@@ -23,6 +23,8 @@ func TestWakeAnsweredLine(t *testing.T) {
 			head + ` on thread 2 was answered in a conversation of its own; its answer began: "Looked at it.".`},
 		{"three threads and decisions", WakeAnswered{Threads: []control.ThreadID{2, 3, 5}, Decided: true, Answer: "ok"},
 			head + ` on threads 2, 3 and 5 and decisions of your requests was answered in a conversation of its own; its answer began: "ok".`},
+		{"a thread and reminders", WakeAnswered{Threads: []control.ThreadID{2}, Reminders: []int64{3, 4}, Answer: "ok"},
+			head + ` on thread 2 and reminder 3 and reminder 4 was answered in a conversation of its own; its answer began: "ok".`},
 		{"quiet", WakeAnswered{Answer: "(quiet)\n"}, head + ` was answered in a conversation of its own; it answered (quiet), and nothing was posted.`},
 		{"no answer", WakeAnswered{}, head + ` was answered in a conversation of its own; it gave no answer.`},
 		{"a failure", WakeAnswered{Failed: true, Reason: "crashed", Answer: "partial"}, head + ` was answered in a conversation of its own; its turn failed (crashed).`},
