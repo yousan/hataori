@@ -179,6 +179,7 @@ type ConfinedLaunch struct {
 	Thread   control.ThreadID
 	Scope    string
 	StateDir string
+	Dir      string // the session's working directory
 }
 
 // Confined is what Runner.Confine gives one launch.
@@ -260,7 +261,7 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 		if r.Confine == nil {
 			return agent.Spec{}, fmt.Errorf("runner: session %d is confined, and nothing gives it its MCP servers; it was not started", id)
 		}
-		c, err := r.Confine(ctx, ConfinedLaunch{Session: id, Thread: thread, Scope: scope, StateDir: dir})
+		c, err := r.Confine(ctx, ConfinedLaunch{Session: id, Thread: thread, Scope: scope, StateDir: dir, Dir: spec.Dir})
 		if err != nil {
 			return agent.Spec{}, fmt.Errorf("runner: session %d: confinement: %w", id, err)
 		}

@@ -163,10 +163,21 @@ type Waker struct {
 	Gates []Gate
 	Clock Clock // nil for the real clock
 	Log   *slog.Logger
-	// Hook, when a test sets it, is called at two steps of a wake:
+	// Files, when set, are the user's files of the scope (design, section
+	// 7.1, "Two layers"): each wake names those that changed since the
+	// session was last given or told them, and after each turn of the
+	// supervisor's thread one line there, through Tell, names those that
+	// changed since the last.
+	Files Files
+	// Tell posts a line in the supervisor's chat thread id, once per key,
+	// also across restarts: the chat front end's notice.
+	Tell func(ctx context.Context, id control.ThreadID, key, text string) error
+	// Hook, when a test sets it, is called at the steps of a wake:
 	// "stored", once it is stored and before it is sent, and "sent", once
-	// it was accepted and before its position is stored. An error stops
-	// the waker there, as a daemon killed at that moment.
+	// it was accepted and before its position is stored; and "files told",
+	// once the line naming the files a supervisor's turn changed was
+	// posted, before that is recorded. An error stops the waker there, as
+	// a daemon killed at that moment.
 	Hook func(step string) error
 
 	read atomic.Uint64
@@ -202,7 +213,8 @@ func (w *Waker) Run(ctx context.Context) {
 type wake struct {
 	to        uint64
 	key, text string
-	threads   []Ended // what the gates admitted; nil for a wake stored by an earlier run
+	threads   []Ended  // what the gates admitted; nil for a wake stored by an earlier run
+	files     []Change // the user's files it names, told of once it is accepted
 }
 
 // waking is one run of the waker, from the stored position.
@@ -334,6 +346,11 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 		}
 		r.sv = sv
 	}
+	if e.Thread == r.sv && e.Kind == TurnEnded && r.w.Files != nil {
+		if err := r.turned(ctx, e); err != nil {
+			return err
+		}
+	}
 	if e.Thread == r.sv {
 		// Its own turns never wake it, but end what holds a wake.
 		if r.held && r.quiet == nil && r.later == nil && (e.Kind == TurnEnded || e.Kind == "state") {
@@ -390,6 +407,21 @@ func (r *waking) attempt(ctx context.Context) error {
 	if err != nil || !ready {
 		return err
 	}
+	if r.sending == nil && r.w.Files != nil {
+		// A wake's files are seen as of when it is made (Files.Told), so it
+		// is made only once the supervisor's last turn end was read, and
+		// what that turn changed was named first (turned).
+		var last uint64
+		err := r.w.Core.Store.DB.QueryRowContext(ctx, `SELECT coalesce(max(pos), 0) FROM events WHERE thread_id = ? AND kind = ?`,
+			int64(sv), string(TurnEnded)).Scan(&last)
+		if err != nil {
+			return fmt.Errorf("supervisor: the supervisor's last turn end: %w", err)
+		}
+		if last > r.read {
+			r.held = true
+			return nil
+		}
+	}
 	if r.sending == nil {
 		w, ok, err := r.prepare(ctx)
 		if err != nil || !ok {
@@ -429,6 +461,11 @@ func (r *waking) attempt(ctx context.Context) error {
 			return err
 		}
 		r.w.Log.Info("supervisor woken", "scope", r.w.Scope, "thread", int64(sv), "to", r.sending.to)
+		if len(r.sending.files) > 0 {
+			if err := r.w.Files.Told(ctx, r.w.Scope, r.sending.files); err != nil {
+				return err
+			}
+		}
 		for _, g := range r.w.Gates {
 			if t, ok := g.(Woken); ok && r.sending.threads != nil {
 				if err := t.Woken(ctx, r.w.Scope, r.sending.threads); err != nil {
@@ -534,7 +571,46 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	return &wake{to: r.read, key: WakeKey(r.sv, r.read), text: text, threads: threads}, true, nil
+	w := &wake{to: r.read, key: WakeKey(r.sv, r.read), text: text, threads: threads}
+	if r.w.Files != nil {
+		changes, err := r.w.Files.Changed(ctx, r.w.Scope, r.sv)
+		if err != nil {
+			return nil, false, err
+		}
+		if len(changes) > 0 {
+			var names []string
+			for _, c := range changes {
+				names = append(names, c.Name)
+			}
+			w.text += "\n" + FilesChanged(names) + "\n"
+			w.files = changes
+		}
+	}
+	return w, true, nil
+}
+
+// turned posts the line that names the user's files that changed by the
+// end of the supervisor's turn e, once: its key is e's position, so a
+// daemon that died before it recorded them as seen posts nothing more. It
+// looks at the files as they are when it reads e, which is at once unless
+// the daemon was down or behind. A line not posted is an error, and the
+// waker reads e again.
+func (r *waking) turned(ctx context.Context, e control.Event) error {
+	names, now, err := r.w.Files.Turned(ctx, r.w.Scope, e.Thread, e.Pos)
+	if err != nil {
+		return err
+	}
+	if len(names) > 0 {
+		if r.w.Tell == nil {
+			r.w.Log.Info(FilesNotice(names), "scope", r.w.Scope, "thread", int64(e.Thread))
+		} else if err := r.w.Tell(ctx, e.Thread, FilesKeyPrefix+strconv.FormatUint(e.Pos, 10), FilesNotice(names)); err != nil {
+			return fmt.Errorf("supervisor: the line naming the files a turn changed: %w", err)
+		}
+		if err := r.hook("files told"); err != nil {
+			return err
+		}
+	}
+	return r.w.Files.Seen(ctx, r.w.Scope, e.Pos, now)
 }
 
 // holdStep is the longest a gate's hold waits on one timer: a timer does
@@ -614,14 +690,15 @@ func (r *waking) load(ctx context.Context) error {
 	var (
 		to         sql.NullInt64
 		key, text  sql.NullString
+		files      sql.NullString
 		pos        int64
 		scope      = r.w.Scope
-		selectWake = `SELECT pos, send_to, send_key, send_text FROM supervisor_wakes WHERE scope = ?`
+		selectWake = `SELECT pos, send_to, send_key, send_text, send_files FROM supervisor_wakes WHERE scope = ?`
 	)
-	err := db.QueryRowContext(ctx, selectWake, scope).Scan(&pos, &to, &key, &text)
+	err := db.QueryRowContext(ctx, selectWake, scope).Scan(&pos, &to, &key, &text, &files)
 	if errors.Is(err, sql.ErrNoRows) {
 		if err = Begin(ctx, r.w.Core, scope); err == nil {
-			err = db.QueryRowContext(ctx, selectWake, scope).Scan(&pos, &to, &key, &text)
+			err = db.QueryRowContext(ctx, selectWake, scope).Scan(&pos, &to, &key, &text, &files)
 		}
 	}
 	if err != nil {
@@ -630,6 +707,11 @@ func (r *waking) load(ctx context.Context) error {
 	r.pos = uint64(pos)
 	if to.Valid {
 		r.sending = &wake{to: uint64(to.Int64), key: key.String, text: text.String}
+		if files.Valid && r.w.Files != nil {
+			if err := json.Unmarshal([]byte(files.String), &r.sending.files); err != nil {
+				return fmt.Errorf("supervisor: the wake being sent: %w", err)
+			}
+		}
 	}
 	return nil
 }
@@ -654,13 +736,17 @@ func Begin(ctx context.Context, c *core.Core, scope string) error {
 
 // store writes the position and the wake being sent.
 func (r *waking) store(ctx context.Context) error {
-	var to, key, text any
+	var to, key, text, files any
 	if s := r.sending; s != nil {
 		to, key, text = int64(s.to), s.key, s.text
+		if s.files != nil {
+			b, _ := json.Marshal(s.files)
+			files = string(b)
+		}
 	}
 	err := r.w.Core.Store.Update(ctx, func(tx *store.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE supervisor_wakes SET pos = ?, send_to = ?, send_key = ?, send_text = ? WHERE scope = ?`,
-			int64(r.pos), to, key, text, r.w.Scope)
+		_, err := tx.ExecContext(ctx, `UPDATE supervisor_wakes SET pos = ?, send_to = ?, send_key = ?, send_text = ?, send_files = ? WHERE scope = ?`,
+			int64(r.pos), to, key, text, files, r.w.Scope)
 		return err
 	})
 	if err != nil {

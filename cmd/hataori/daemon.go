@@ -103,7 +103,9 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 			repos = append(repos, supervisor.Repo{Address: r.Address, Forge: r.Forge})
 		}
 		supervisors[s.Key] = supervisor.Scope{Model: sv.Model, Effort: sv.Effort, Instructions: sv.Instructions, Repos: repos,
-			Autonomy: sv.Autonomy, Trusted: sv.TrustedAuthors}
+			Autonomy: sv.Autonomy, Trusted: sv.TrustedAuthors,
+			Limits: supervisor.Limits{Turns: sv.TurnsPerHour, Sends: sv.SendsPerHour, Tokens: sv.TokensPerDay},
+			Report: sv.Report, ReportEvery: sv.ReportEvery, Mention: sv.Mention, QuietHours: sv.QuietHours}
 	}
 	// The forges the supervisors read (design, section 7.1), each made from
 	// its section with its token, read from config/, which stays in it.
@@ -323,6 +325,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	budgets := map[string]*supervisor.Budget{}
 	guards := map[string]*supervisor.LoopGuard{}
 	tells := map[string]func(ctx context.Context, id control.ThreadID, key, text string) error{}
+	tellIn := map[string]func(ctx context.Context, id control.ThreadID, key, text string) error{} // by scope
 	for _, s := range cfg.Scopes {
 		if sv := s.Supervisor; sv != nil {
 			client := s.Client
@@ -333,6 +336,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 				lg.Warn("supervisor: no chat front end to tell a person", "client", client, "text", text)
 				return nil
 			}
+			tellIn[s.Key] = tell
 			budgets[s.Key] = &supervisor.Budget{Core: c, Scope: s.Key, Zone: m.Zone, Log: lg,
 				Limits: supervisor.Limits{Turns: sv.TurnsPerHour, Sends: sv.SendsPerHour, Tokens: sv.TokensPerDay}, Tell: tell}
 			guards[s.Key] = &supervisor.LoopGuard{Core: c, Scope: s.Key, Cycles: sv.LoopCycles, Tell: tell, Log: lg}
@@ -474,7 +478,8 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 			// drops spend nothing.
 			b := budgets[s.Key]
 			w := &supervisor.Waker{Core: c, Scope: s.Key, Owner: control.Principal(cfg.Owner), Quiet: s.Supervisor.Quiet,
-				OutputMax: s.Supervisor.OutputMax, ThreadsMax: s.Supervisor.ThreadsMax, Gates: []supervisor.Gate{guards[s.Key], b}, Log: lg}
+				OutputMax: s.Supervisor.OutputMax, ThreadsMax: s.Supervisor.ThreadsMax, Gates: []supervisor.Gate{guards[s.Key], b}, Log: lg,
+				Files: sv, Tell: tellIn[s.Key]}
 			if wakerHook != nil {
 				wakerHook(w)
 			}

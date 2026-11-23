@@ -106,6 +106,11 @@ func (a *Adapter) Probe(context.Context) (agent.Health, error) {
 // session's state directory.
 const TranscriptFile = "fake-transcript.jsonl"
 
+// InstructionsFile holds the spec's instructions, in the session's state
+// directory, written at each launch that has any, as Claude Code's adapter
+// writes them; the program does not read it.
+const InstructionsFile = "fake-instructions.md"
+
 // MCPConfigFile holds a confined spec's MCP servers, in the session's state
 // directory, as agent.MCPServer values in JSON.
 const MCPConfigFile = "fake-mcp.json"
@@ -172,13 +177,16 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 			"--transcript", filepath.Join(spec.StateDir, TranscriptFile))
 		env = append(env, host.HookEnv(spec.StateDir))
 	}
-	l := agent.Launch{Argv: argv, Env: env, Terminal: a.c.Terminal}
+	l := agent.Launch{Argv: argv, Env: env, Terminal: a.c.Terminal, Files: map[string][]byte{}}
+	if spec.Instructions != "" {
+		l.Files[InstructionsFile] = []byte(spec.Instructions)
+	}
 	if spec.Confine != nil && a.c.Confines {
 		b, err := json.Marshal(spec.Confine.MCP)
 		if err != nil {
 			return agent.Launch{}, err
 		}
-		l.Files = map[string][]byte{MCPConfigFile: b}
+		l.Files[MCPConfigFile] = b
 		l.Argv = append(l.Argv, "--mcp-config", filepath.Join(spec.StateDir, MCPConfigFile))
 		l.Confined = true
 	}

@@ -531,6 +531,27 @@ var migrations = []Migration{
 			PRIMARY KEY (client, thread, end_at, name)
 		)`,
 	)},
+	// The user's files of a scope's supervisor (#656; design, section 7.1,
+	// "Two layers"), one row per scope and file, each a hash of the file's
+	// content, '' for a file not given: told, as its session was last given
+	// or told it; seen, as the daemon last looked at it after a turn of the
+	// supervisor's thread. With the waker: the files the wake being sent
+	// names, with their hashes when it was made, which become told once it
+	// was accepted; the last supervisor turn end after which the files
+	// were seen, so that one read again names nothing; and what the turn
+	// end after it found, until its line is posted and that is recorded.
+	{Name: "supervisor_files", Up: execAll(
+		`CREATE TABLE supervisor_files (
+			scope TEXT NOT NULL,
+			name  TEXT NOT NULL,
+			told  TEXT NOT NULL,
+			seen  TEXT NOT NULL,
+			PRIMARY KEY (scope, name)
+		)`,
+		`ALTER TABLE supervisor_wakes ADD COLUMN send_files TEXT`,
+		`ALTER TABLE supervisor_wakes ADD COLUMN files_pos INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE supervisor_wakes ADD COLUMN files_pending TEXT`, // JSON: what a turn end found, until its line is posted
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {
