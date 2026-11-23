@@ -1,12 +1,14 @@
 package supervisor
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -76,6 +78,15 @@ func keyFor(stored string, sv control.ThreadID, sentTo func(key string) (control
 
 // TurnEnded is the event kind that wakes a supervisor.
 const TurnEnded control.EventKind = "turn_ended"
+
+// The event kinds of a person's decision of a supervisor's request, in a
+// supervisor's thread of the scope: of an interrupt request, and of a
+// proposal. Each wakes the supervisor too, folded into the next wake as a
+// turn end is (design, section 7.1, "Autonomy").
+const (
+	ApprovalAnswered control.EventKind = "approval_answered"
+	ProposalAnswered control.EventKind = "proposal_answered"
+)
 
 // Ended is a thread's latest turn end since its supervisor was last woken.
 type Ended struct {
@@ -201,6 +212,7 @@ type waking struct {
 	pos     uint64                             // stored: the events up to here are handled
 	read    uint64                             // the last event read
 	ended   map[control.ThreadID]control.Event // folded: each thread's last turn end
+	decided []control.Event                    // folded: the decisions of its requests, in order
 	sending *wake                              // stored, not known to be accepted
 	sv      control.ThreadID                   // the supervisor's thread, as last looked up
 	own     map[control.ThreadID]bool          // whether a thread is a supervisor's, as asked
@@ -288,7 +300,7 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 	}
 	if e.Kind == control.CaughtUp {
 		// Nothing waits: the events read so far need not be read again.
-		if len(r.ended) == 0 && r.sending == nil && r.read > r.pos {
+		if r.empty() && r.sending == nil && r.read > r.pos {
 			return r.advance(ctx, r.read)
 		}
 		return nil
@@ -296,9 +308,22 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 	if e.Thread == 0 {
 		return nil
 	}
-	if e.Pos <= r.pos && e.Kind == TurnEnded {
+	if e.Pos <= r.pos && (e.Kind == TurnEnded || e.Kind == ApprovalAnswered || e.Kind == ProposalAnswered) {
 		// Covered by a wake already: one stored by the last run, sent again
 		// and accepted before the subscription reached it.
+		return nil
+	}
+	if e.Kind == ApprovalAnswered || e.Kind == ProposalAnswered {
+		// A person decided one of the supervisor's requests, in a supervisor's
+		// thread: it wakes the supervisor, whose own thread it is.
+		own, err := r.isOwn(ctx, e.Thread)
+		if err != nil || !Decides(e, own) {
+			return err
+		}
+		r.decided = append(r.decided, e)
+		if r.quiet == nil && r.sending == nil && r.later == nil {
+			r.quiet = r.w.clock().After(r.w.Quiet)
+		}
 		return nil
 	}
 	if e.Kind == TurnEnded {
@@ -321,13 +346,9 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 	}
 	// A supervisor's thread of the scope other than the current one, as
 	// one a person closed and the daemon replaced, wakes nothing either.
-	own, ok := r.own[e.Thread]
-	if !ok {
-		var err error
-		if own, err = r.w.Core.Confined(ctx, e.Thread); err != nil {
-			return err
-		}
-		r.own[e.Thread] = own
+	own, err := r.isOwn(ctx, e.Thread)
+	if err != nil {
+		return err
 	}
 	if !Fold(r.ended, e, own) {
 		return nil
@@ -339,10 +360,29 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 	return nil
 }
 
+// isOwn reports whether thread id is a supervisor's thread, as asked once.
+func (r *waking) isOwn(ctx context.Context, id control.ThreadID) (bool, error) {
+	if id == r.sv {
+		return true, nil
+	}
+	own, ok := r.own[id]
+	if !ok {
+		var err error
+		if own, err = r.w.Core.Confined(ctx, id); err != nil {
+			return false, err
+		}
+		r.own[id] = own
+	}
+	return own, nil
+}
+
+// empty reports whether nothing is folded.
+func (r *waking) empty() bool { return len(r.ended) == 0 && len(r.decided) == 0 }
+
 // attempt sends the stored wake, or makes one of what is folded and sends
 // it, unless the supervisor's thread cannot take it now.
 func (r *waking) attempt(ctx context.Context) error {
-	if r.sending == nil && len(r.ended) == 0 {
+	if r.sending == nil && r.empty() {
 		r.held = false
 		return nil
 	}
@@ -401,7 +441,7 @@ func (r *waking) attempt(ctx context.Context) error {
 		if err := r.advance(ctx, to); err != nil {
 			return err
 		}
-		if len(r.ended) > 0 && r.quiet == nil {
+		if !r.empty() && r.quiet == nil {
 			r.quiet = r.w.clock().After(r.w.Quiet)
 		}
 		return nil
@@ -457,15 +497,18 @@ func (r *waking) ready(ctx context.Context) (control.ThreadID, bool, error) {
 }
 
 // prepare makes the wake of what is folded. Without a thread the gate
-// admits, the events are handled and nothing is sent.
+// admits and without a decision, the events are handled and nothing is
+// sent. The decisions name no worker's turn end, so a gate drops none of
+// them, but a gate's hold holds them too.
 func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 	var threads []Ended
 	for id, e := range r.ended {
 		threads = append(threads, Ended{Thread: id, Event: e})
 	}
 	sort.Slice(threads, func(i, j int) bool { return threads[i].Thread < threads[j].Thread })
+	decided := slices.Clone(r.decided)
 	for _, g := range r.w.Gates {
-		if len(threads) == 0 {
+		if len(threads) == 0 && len(decided) == 0 {
 			break
 		}
 		var until time.Time
@@ -482,10 +525,10 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 			return nil, false, nil
 		}
 	}
-	if len(threads) == 0 {
+	if len(threads) == 0 && len(decided) == 0 {
 		return nil, false, r.advance(ctx, r.read)
 	}
-	text, err := DigestOf(threads, func(id control.ThreadID) (control.ThreadDetail, error) {
+	text, err := DigestOf(threads, decided, func(id control.ThreadID) (control.ThreadDetail, error) {
 		return r.api.Thread(ctx, id, r.w.OutputMax+utf8.UTFMax, 0)
 	}, r.w.OutputMax, r.w.ThreadsMax)
 	if err != nil {
@@ -509,6 +552,13 @@ func (r *waking) hold() bool {
 	return true
 }
 
+// Decides reports whether e is a person's decision of one of the
+// supervisor's requests that wakes it: an approval_answered or a
+// proposal_answered of a supervisor's thread of the scope (own).
+func Decides(e control.Event, own bool) bool {
+	return own && e.Thread != 0 && (e.Kind == ApprovalAnswered || e.Kind == ProposalAnswered)
+}
+
 // Fold folds e into ended, each thread's last turn end, and reports
 // whether it did: only a turn_ended, of a thread that is not a
 // supervisor's (own).
@@ -522,8 +572,9 @@ func Fold(ended map[control.ThreadID]control.Event, e control.Event, own bool) b
 
 // DigestOf is the digest of threads, in their order, each read with
 // thread: the first threadsMax of them, each with its last output cut to
-// outputMax bytes, and a line counting the others.
-func DigestOf(threads []Ended, thread func(control.ThreadID) (control.ThreadDetail, error), outputMax, threadsMax int) (string, error) {
+// outputMax bytes, and a line counting the others; then the decisions of
+// its requests, in their order.
+func DigestOf(threads []Ended, decided []control.Event, thread func(control.ThreadID) (control.ThreadDetail, error), outputMax, threadsMax int) (string, error) {
 	var lines []Line
 	for i, t := range threads {
 		if i == threadsMax {
@@ -535,16 +586,22 @@ func DigestOf(threads []Ended, thread func(control.ThreadID) (control.ThreadDeta
 		}
 		lines = append(lines, LineOf(t.Event, d, outputMax))
 	}
-	return Digest(lines, len(threads)-len(lines)), nil
+	var ds []Decision
+	for _, e := range decided {
+		ds = append(ds, DecisionOf(e))
+	}
+	return Digest(lines, len(threads)-len(lines), ds...), nil
 }
 
-// advance stores to as handled, and forgets the turn ends up to it.
+// advance stores to as handled, and forgets the turn ends and the
+// decisions up to it.
 func (r *waking) advance(ctx context.Context, to uint64) error {
 	for id, e := range r.ended {
 		if e.Pos <= to {
 			delete(r.ended, id)
 		}
 	}
+	r.decided = slices.DeleteFunc(r.decided, func(e control.Event) bool { return e.Pos <= to })
 	r.pos = max(r.pos, to)
 	return r.store(ctx)
 }
@@ -644,15 +701,98 @@ func LineOf(e control.Event, d control.ThreadDetail, max int) Line {
 	return l
 }
 
+// Decision is a person's decision of one of the supervisor's requests: an
+// interrupt request, or a proposal.
+type Decision struct {
+	Proposal bool             // a proposal's; else an interrupt request's
+	Number   int64            // the proposal's number
+	Action   string           // the proposal's: send or start
+	Target   control.ThreadID // the thread it was for; a start's once it ran
+	Outcome  string           // as its event says
+	Reason   string           // why an approved proposal could not run
+	By       string           // the person who decided it
+}
+
+// DecisionOf is the decision of e, an approval_answered or a
+// proposal_answered event.
+func DecisionOf(e control.Event) Decision {
+	var d struct {
+		Number    int64            `json:"number"`
+		Action    string           `json:"action"`
+		Target    control.ThreadID `json:"target"`
+		Outcome   string           `json:"outcome"`
+		Reason    string           `json:"reason"`
+		Principal string           `json:"principal"`
+	}
+	json.Unmarshal(e.Data, &d) // the store checked the event against its schema
+	return Decision{Proposal: e.Kind == ProposalAnswered, Number: d.Number, Action: d.Action, Target: d.Target,
+		Outcome: d.Outcome, Reason: d.Reason, By: cmp.Or(d.Principal, "someone")}
+}
+
+// line is the decision as one line of a digest.
+func (d Decision) line() string {
+	if !d.Proposal {
+		what := fmt.Sprintf("Your request to interrupt thread %d", d.Target)
+		switch d.Outcome {
+		case "interrupted":
+			return fmt.Sprintf("%s: approved by %s; its turn was interrupted, and it got your reason.", what, d.By)
+		case "ended":
+			return fmt.Sprintf("%s: approved by %s, but its turn had already ended; nothing was interrupted.", what, d.By)
+		case "refused":
+			return fmt.Sprintf("%s: refused by %s; nothing was interrupted.", what, d.By)
+		}
+		return fmt.Sprintf("%s: %s, by %s.", what, d.Outcome, d.By)
+	}
+	what := fmt.Sprintf("Your proposal %d, to start a thread", d.Number)
+	not := "not started"
+	if d.Action == "send" {
+		what, not = fmt.Sprintf("Your proposal %d, to send to thread %d", d.Number, d.Target), "not sent"
+	}
+	switch d.Outcome {
+	case "run":
+		if d.Action == "send" {
+			return fmt.Sprintf("%s: approved by %s, and sent.", what, d.By)
+		}
+		return fmt.Sprintf("%s: approved by %s; it started thread %d.", what, d.By, d.Target)
+	case "refused":
+		return fmt.Sprintf("%s: refused by %s; %s.", what, d.By, not)
+	case "busy":
+		return fmt.Sprintf("%s: approved by %s, but %s: the thread was running a turn or waiting on a question.", what, d.By, not)
+	case "ended":
+		return fmt.Sprintf("%s: approved by %s, but %s: the question it answered was no longer open.", what, d.By, not)
+	case "closed":
+		return fmt.Sprintf("%s: approved by %s, but %s: the thread is closed.", what, d.By, not)
+	case "failed":
+		return fmt.Sprintf("%s: approved by %s, but %s: %s.", what, d.By, not, cmp.Or(d.Reason, "it failed"))
+	}
+	return fmt.Sprintf("%s: %s, by %s.", what, d.Outcome, d.By)
+}
+
 // Digest is the message that wakes a supervisor: one paragraph per thread,
-// by number, and a line counting more threads that it does not show.
-func Digest(lines []Line, more int) string {
+// by number, and a line counting more threads that it does not show; then
+// one line per decision of its requests.
+func Digest(lines []Line, more int, decided ...Decision) string {
 	var b strings.Builder
 	n := len(lines) + more
-	if n == 1 {
+	var asked string
+	switch len(decided) {
+	case 0:
+	case 1:
+		asked = "1 of your requests was decided"
+	default:
+		asked = fmt.Sprintf("%d of your requests were decided", len(decided))
+	}
+	switch {
+	case n == 0:
+		fmt.Fprintf(&b, "hataori: %s.\n", asked)
+	case n == 1 && asked == "":
 		b.WriteString("hataori: a turn ended in 1 thread of this channel.\n")
-	} else {
+	case n == 1:
+		fmt.Fprintf(&b, "hataori: a turn ended in 1 thread of this channel, and %s.\n", asked)
+	case asked == "":
 		fmt.Fprintf(&b, "hataori: turns ended in %d threads of this channel.\n", n)
+	default:
+		fmt.Fprintf(&b, "hataori: turns ended in %d threads of this channel, and %s.\n", n, asked)
 	}
 	for _, l := range lines {
 		fmt.Fprintf(&b, "\nThread %d", l.Thread)
@@ -693,6 +833,12 @@ func Digest(lines []Line, more int) string {
 		b.WriteString("\nAnd 1 more thread; list_threads and read_thread show it.\n")
 	case more > 1:
 		fmt.Fprintf(&b, "\nAnd %d more threads; list_threads and read_thread show them.\n", more)
+	}
+	if len(decided) > 0 {
+		b.WriteString("\nDecided by a person:\n")
+		for _, d := range decided {
+			b.WriteString(d.line() + "\n")
+		}
 	}
 	return b.String()
 }

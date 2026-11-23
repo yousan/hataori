@@ -7,7 +7,12 @@
 package supervisor
 
 import (
+	"context"
+	"fmt"
+	"log/slog"
+
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/instance"
 	"github.com/yousan/hataori/internal/people"
 )
 
@@ -26,12 +31,23 @@ const Mark = "From the supervisor of this channel:"
 // ID is the id the supervisor of scope calls as.
 func ID(scope string) string { return people.Join(Client, scope) }
 
+// The supervisor's autonomy in a scope (design, section 7.1, "Autonomy"),
+// as the config names it: scopes[].supervisor.autonomy.
+const (
+	Watch   = instance.AutonomyWatch
+	Propose = instance.AutonomyPropose
+	Act     = instance.AutonomyAct
+)
+
 // Caller is the caller a supervisor's connection is bound to: the scope's
-// threads only; reading, starting and sending only; a send never goes into
-// or interrupts a running turn; and every input marked. The daemon chooses
-// it, never the client.
-func Caller(scope string, thread control.ThreadID) control.Caller {
-	return control.Caller{
+// threads only; reading, and as autonomy allows, starting, sending and
+// asking a person to approve an interrupt; a send never goes into or
+// interrupts a running turn; and every input marked. Under Watch it reads
+// only; under Propose its starts and sends are proposals shown in thread
+// (control.Caller.Propose); under Act they run. Any other autonomy, as
+// none, is Propose. The daemon chooses it, never the client.
+func Caller(scope string, thread control.ThreadID, autonomy string) control.Caller {
+	c := control.Caller{
 		From:       ID(scope),
 		AsksIn:     thread,
 		Scopes:     []string{scope},
@@ -39,4 +55,40 @@ func Caller(scope string, thread control.ThreadID) control.Caller {
 		RefuseBusy: true,
 		Mark:       Mark,
 	}
+	switch autonomy {
+	case Watch:
+		c.May = control.OpRead
+	case Act:
+	default:
+		c.Propose = true
+	}
+	return c
+}
+
+// watching is the API of a supervisor whose autonomy is Watch: its Start,
+// Send and AskInterrupt are refused at the call, with a reason that names
+// the mode. Its Caller has none of them either (Caller), so the core
+// refuses them too.
+type watching struct {
+	control.API
+	scope string
+	log   *slog.Logger
+}
+
+func (w *watching) refuse(op string) error {
+	w.log.Warn("control call refused", "op", op, "scope", w.scope, "id", ID(w.scope), "reason", "the supervisor's autonomy is watch")
+	return fmt.Errorf("the supervisor's autonomy in this channel is %q: it reads threads and tells people in its own thread, "+
+		"and does not start, send or ask to interrupt: %w", Watch, control.ErrForbidden)
+}
+
+func (w *watching) Start(ctx context.Context, r control.StartRequest) (control.ThreadID, error) {
+	return 0, w.refuse("Start")
+}
+
+func (w *watching) Send(ctx context.Context, id control.ThreadID, key string, in control.Input, busy control.Busy) error {
+	return w.refuse("Send")
+}
+
+func (w *watching) AskInterrupt(ctx context.Context, id control.ThreadID, key, reason string) (control.RequestID, error) {
+	return "", w.refuse("AskInterrupt")
 }

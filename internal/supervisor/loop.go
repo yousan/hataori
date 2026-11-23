@@ -29,7 +29,8 @@ import (
 // anyone but the supervisor, or a turn typed at W's terminal; in a
 // supervisor thread of the scope, a person's message or answer (any input
 // but those hataori gives there: a wake, and the first message of the
-// thread), or a turn typed at its terminal.
+// thread), a person's decision of one of its proposals or interrupt
+// requests, or a turn typed at its terminal.
 //
 // It counts from the event log, so a restart keeps the counts. A thread
 // at the count does not wake the supervisor: Admit drops its turn ends.
@@ -139,7 +140,7 @@ func (g *LoopGuard) supervisorReset(ctx context.Context) (uint64, error) {
 	}
 	rows, err := g.Core.Store.DB.QueryContext(ctx, `SELECT pos, kind, data FROM events
 		WHERE thread_id IN (SELECT id FROM threads WHERE scope = ? AND confined = 1) AND pos > ?
-		AND kind IN ('turn_started', 'input', 'answer') ORDER BY pos`, g.Scope, int64(g.scanned))
+		AND kind IN ('turn_started', 'input', 'answer', 'approval_answered', 'proposal_answered') ORDER BY pos`, g.Scope, int64(g.scanned))
 	if err != nil {
 		return 0, fmt.Errorf("supervisor: loop guard: %w", err)
 	}
@@ -174,7 +175,7 @@ func (g *LoopGuard) supervisorReset(ctx context.Context) (uint64, error) {
 			} else {
 				g.svReset = uint64(pos)
 			}
-		default: // an answer
+		default: // an answer; or a person's decision of one of its requests
 			g.svReset = uint64(pos)
 		}
 		g.scanned = uint64(pos)

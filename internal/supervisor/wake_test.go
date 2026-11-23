@@ -36,18 +36,22 @@ func TestDigestOfCapturedEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	ended := map[control.ThreadID]control.Event{}
+	var decided []control.Event
 	for _, e := range c.Events {
 		if err := control.CheckEvent(e); err != nil {
 			t.Fatalf("the capture's event %d: %v", e.Pos, err)
 		}
 		Fold(ended, e, e.Thread == c.Supervisor)
+		if Decides(e, e.Thread == c.Supervisor) {
+			decided = append(decided, e)
+		}
 	}
 	var threads []Ended
 	for id, e := range ended {
 		threads = append(threads, Ended{Thread: id, Event: e})
 	}
 	sort.Slice(threads, func(i, j int) bool { return threads[i].Thread < threads[j].Thread })
-	got, err := DigestOf(threads, func(id control.ThreadID) (control.ThreadDetail, error) {
+	got, err := DigestOf(threads, decided, func(id control.ThreadID) (control.ThreadDetail, error) {
 		th := c.Threads[id]
 		return control.ThreadDetail{ThreadInfo: control.ThreadInfo{ID: id, Title: th.Title}, Recent: th.Recent}, nil
 	}, 1024, 6)

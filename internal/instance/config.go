@@ -570,7 +570,7 @@ func ParseConfig(data []byte) (*Config, error) {
 				Quiet: DefaultQuiet, OutputMax: DefaultOutputMax, ThreadsMax: DefaultThreadsMax,
 				TurnsPerHour: DefaultTurnsPerHour, SendsPerHour: DefaultSendsPerHour, TokensPerDay: DefaultTokensPerDay,
 				LoopCycles: DefaultLoopCycles, Autonomy: AutonomyPropose}
-			switch a := sv.Autonomy; a {
+			switch a := strings.TrimSpace(sv.Autonomy); a {
 			case "":
 			case AutonomyWatch, AutonomyPropose, AutonomyAct:
 				sc.Supervisor.Autonomy = a

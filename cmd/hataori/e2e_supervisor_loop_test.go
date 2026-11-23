@@ -76,7 +76,7 @@ func TestLoopGuard(t *testing.T) {
 	)
 	supervisorHook = func(i func(string) (string, error), _ func(string)) { mu.Lock(); issue = i; mu.Unlock() }
 	t.Cleanup(func() { supervisorHook = nil })
-	wt := newWakeTest(t, budget(0, 0, 0), func(cfg map[string]any) {
+	wt := newWakeTest(t, budget(0, 0, 0), autonomy("act"), func(cfg map[string]any) {
 		cfg["scopes"].([]map[string]any)[0]["supervisor"].(map[string]any)["instructions"] = "relay 2 3"
 	})
 	stop, owner, sv := wt.start(t)
@@ -202,7 +202,7 @@ func TestLoopGuardTellsAtTheLastCycle(t *testing.T) {
 	)
 	supervisorHook = func(i func(string) (string, error), _ func(string)) { mu.Lock(); issue = i; mu.Unlock() }
 	t.Cleanup(func() { supervisorHook = nil })
-	wt := newWakeTest(t, budget(0, 0, 0))
+	wt := newWakeTest(t, budget(0, 0, 0), autonomy("act"))
 	stop, owner, sv := wt.start(t)
 	defer stop()
 	ctx := context.Background()
@@ -253,7 +253,7 @@ func TestLoopGuardResetInsideATurn(t *testing.T) {
 	)
 	supervisorHook = func(i func(string) (string, error), _ func(string)) { mu.Lock(); issue = i; mu.Unlock() }
 	t.Cleanup(func() { supervisorHook = nil })
-	wt := newWakeTest(t, budget(0, 0, 0))
+	wt := newWakeTest(t, budget(0, 0, 0), autonomy("act"))
 	stop, owner, sv := wt.start(t)
 	defer stop()
 	ctx := context.Background()

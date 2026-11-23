@@ -60,6 +60,10 @@ type Scope struct {
 	Effort       string // the effort; the scope's when empty
 	Instructions string // appended to the agent's own instructions
 	Repos        []Repo // the only repositories its Start may clone; none: it starts nothing
+	// Autonomy is Watch, Propose or Act: what its token's connection may
+	// do on its own (Caller). It is read when the token is bound, at each
+	// launch and after a restart.
+	Autonomy string
 }
 
 // Sessions is the supervisors' part of the daemon (design, section 7.1): it
@@ -160,15 +164,26 @@ func (s *Sessions) bind(session int64, thread control.ThreadID, scope, stateDir 
 }
 
 // API is what the connection of scope's supervisor is bound to: its
-// Caller, with its sends and starts counted against the scope's budget,
-// and its starts limited to the scope's repos (none for a scope that names
-// no supervisor).
+// Caller, as the scope's autonomy makes it, with its sends and starts
+// counted against the scope's budget, and its starts limited to the
+// scope's repos (none for a scope that names no supervisor); under Watch
+// they are refused, as asking to interrupt is, with a reason that names
+// the mode.
 func (s *Sessions) API(scope string, thread control.ThreadID) control.API {
-	api := s.Core.As(Caller(scope, thread))
+	return s.APIOf(scope, thread, s.Scopes[scope].Autonomy)
+}
+
+// APIOf is API with autonomy instead of the scope's.
+func (s *Sessions) APIOf(scope string, thread control.ThreadID, autonomy string) control.API {
+	api := s.Core.As(Caller(scope, thread, autonomy))
 	if b := s.Budgets[scope]; b != nil {
 		api = b.API(api)
 	}
-	return Repos(api, scope, s.Scopes[scope].Repos, s.Log)
+	api = Repos(api, scope, s.Scopes[scope].Repos, s.Log)
+	if autonomy == Watch {
+		api = &watching{API: api, scope: scope, log: s.Log}
+	}
+	return api
 }
 
 // writeToken writes token to file, readable by this user only, and syncs it.

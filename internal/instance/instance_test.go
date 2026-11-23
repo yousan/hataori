@@ -525,3 +525,36 @@ func TestTrustFilesConfig(t *testing.T) {
 		t.Fatalf("c2 trusts %q", got)
 	}
 }
+
+// A supervisor's autonomy is propose without the key, as given with it,
+// and any other value is refused at start, naming the key (#650).
+func TestSupervisorAutonomyConfig(t *testing.T) {
+	parse := func(sv string) (*Config, error) {
+		return ParseConfig([]byte(`{"owner": "o", "trigger": "!go", "idle": "30m", "scopes": [{"key": "c1", "client": "chat", "supervisor": ` + sv + `}]}`))
+	}
+	c, err := parse(`{}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Scopes[0].Supervisor.Autonomy; got != AutonomyPropose {
+		t.Fatalf("without the key: %q, want %q", got, AutonomyPropose)
+	}
+	for _, mode := range []string{AutonomyWatch, AutonomyPropose, AutonomyAct} {
+		c, err := parse(`{"autonomy": "` + mode + `"}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := c.Scopes[0].Supervisor.Autonomy; got != mode {
+			t.Fatalf("autonomy %q: %q", mode, got)
+		}
+	}
+	if c, err := parse(`{"autonomy": " act "}`); err != nil || c.Scopes[0].Supervisor.Autonomy != AutonomyAct {
+		t.Fatalf("autonomy with spaces: %v", err)
+	}
+	for _, bad := range []string{`"Act"`, `"auto"`, `"none"`} {
+		_, err := parse(`{"autonomy": ` + bad + `}`)
+		if err == nil || !strings.Contains(err.Error(), `"scopes[0].supervisor.autonomy"`) {
+			t.Fatalf("autonomy %s: %v", bad, err)
+		}
+	}
+}

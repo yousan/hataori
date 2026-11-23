@@ -3,6 +3,7 @@ package supervisor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -40,6 +41,8 @@ type Used struct {
 //     supervisor's id, in the current hour, each send's and each start's
 //     (its first input); and a thread_created of its own whose thread has
 //     no input of its yet, as a start that failed before its first input;
+//     and each proposal it made (proposal_made), once: the events of the
+//     call its approval made name the Via of a proposal, and are left out;
 //   - tokens: from the usage events of the scope's supervisor threads, by
 //     the rule of a thread's Tokens.Today: each report adds what it raises
 //     its turn's total by, counted in the day it came.
@@ -103,11 +106,14 @@ func (b *Budget) Used(ctx context.Context) (Used, error) {
 		return u, fmt.Errorf("supervisor: budget: turns: %w", err)
 	}
 	from := ID(b.Scope)
+	// A proposal counts once, when it is made: what its approval runs is
+	// the caller's with the Via of a proposal, and is not counted again.
 	err = db.QueryRowContext(ctx, `SELECT count(*) FROM events e WHERE e.scope = ? AND e.time >= ? AND e.time < ?
-		AND json_extract(e.data, '$.from') = ? AND (e.kind IN ('input', 'answer')
+		AND json_extract(e.data, '$.from') = ? AND coalesce(json_extract(e.data, '$.via'), '') != ?
+		AND (e.kind IN ('input', 'answer', 'proposal_made')
 			OR (e.kind = 'thread_created' AND NOT EXISTS (SELECT 1 FROM events f WHERE f.thread_id = e.thread_id
 				AND f.kind = 'input' AND json_extract(f.data, '$.from') = ?)))`,
-		b.Scope, hourMs, nextHourMs, from, from).Scan(&u.Sends)
+		b.Scope, hourMs, nextHourMs, from, control.ViaProposal, from).Scan(&u.Sends)
 	if err != nil {
 		return u, fmt.Errorf("supervisor: budget: sends: %w", err)
 	}
@@ -296,7 +302,9 @@ func (b *Budget) take(ctx context.Context, call func() error) error {
 		return fmt.Errorf("over budget: %d of %d sends and starts this hour; none until %s: %w",
 			u.Sends, b.Limits.Sends, u.Hour.Add(time.Hour).Format("15:04 MST"), control.ErrForbidden)
 	}
-	if err := call(); err != nil {
+	// A proposal is counted, as a send or a start that was made is.
+	err = call()
+	if err != nil && !errors.Is(err, control.ErrProposed) {
 		return err
 	}
 	b.mu.Lock()
@@ -304,5 +312,5 @@ func (b *Budget) take(ctx context.Context, call func() error) error {
 		b.granted = u.Sends + 1
 	}
 	b.mu.Unlock()
-	return nil
+	return err
 }
