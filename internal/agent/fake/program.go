@@ -40,7 +40,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	transcript := fs.String("transcript", "", "")
 	hook := fs.String("hook", "", "the hataori binary, for `hataori hook`")
 	windowRoot := fs.String("window", "", "started by a person in their own window: report with `hataori hook --window` to the instance at this root")
-	record := fs.String("record", "", "a directory to write, at the start, the arguments, environment and directory into")
+	record := fs.String("record", "", "a directory to write, at the start, the arguments, environment and directory into, and then each input taken")
 	neverStart := fs.Bool("never-start", false, "")
 	inputDelay := fs.Duration("input-delay", 0, "wait this long before taking each input")
 	conversations := fs.String("conversations", "", "a directory with one file per session started")
@@ -165,6 +165,14 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				text, by = rest, "terminal"
 			} else if rest, found := strings.CutPrefix(text, inputIDPrefix); found {
 				id, text, _ = strings.Cut(rest, "\n")
+			}
+			if *record != "" {
+				// Each input it takes, as it got it, after its start's record.
+				b, _ := json.Marshal(map[string]any{"text": text, "by": by})
+				if f, err := os.OpenFile(filepath.Join(*record, fmt.Sprintf("inputs-%d.jsonl", os.Getpid())), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600); err == nil {
+					f.Write(append(b, '\n'))
+					f.Close()
+				}
 			}
 			if code, exit := p.turn(by, id, text, agentTurns); exit {
 				if p.window != "" {
@@ -323,6 +331,7 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 			f.Close()
 		}
 	}
+	var late map[string]any // usage to report after the turn's end
 	run := script
 	if p.wakeScript {
 		if w, ok := quotedScript(script); ok {
@@ -492,6 +501,17 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 			}
 			p.report(map[string]any{"t": "usage", "in": n[0], "output": n[1], "cache_read": n[2], "cache_write": n[3],
 				"context_used": n[4], "context_size": n[5], "model": model})
+		case "late-usage":
+			// late-usage, as usage, reported some time after the turn's end.
+			f := strings.Fields(arg)
+			var n [6]int64
+			for i := range n {
+				if i < len(f) {
+					n[i], _ = strconv.ParseInt(f[i], 10, 64)
+				}
+			}
+			late = map[string]any{"t": "usage", "late": true, "in": n[0], "output": n[1], "cache_read": n[2], "cache_write": n[3],
+				"context_used": n[4], "context_size": n[5], "model": ""}
 		case "limits":
 			// limits AGE EVERY [NAME:MINUTES:USED:RESETS...], seconds; RESETS is Unix seconds, 0 for none
 			f := strings.Fields(arg)
@@ -534,8 +554,15 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 	p.say(final, true)
 	end["answer"] = final
 	p.report(end)
+	if late != nil {
+		time.Sleep(lateUsage)
+		p.report(late)
+	}
 	return 0, false
 }
+
+// lateUsage is how long after the turn's end late-usage is reported.
+const lateUsage = 300 * time.Millisecond
 
 // quotedScript returns the quoted output lines of a wake message, without
 // their "> ", as a script; ok is false for any other input.

@@ -39,7 +39,9 @@ type Config struct {
 	// code, every turn fails with the reason login.
 	ConfigDir string `json:"config_dir"`
 	// Record, when set, is a directory where the program writes, at each
-	// start, its arguments, environment and directory: one file per start.
+	// start, its arguments, environment and directory: one file per start,
+	// start-<pid>.json; and each input it takes, as it got it, one JSON
+	// line per input in inputs-<pid>.jsonl.
 	Record string `json:"record"`
 	// Login is what its login command does.
 	Login Login `json:"login"`

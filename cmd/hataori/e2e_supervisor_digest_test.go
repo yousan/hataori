@@ -110,8 +110,8 @@ func TestDigestOfANewSupervisorSession(t *testing.T) {
 }
 
 // A session of the supervisor's thread that replaced one that could not
-// resume is new too: the wake carried into it was made for the old one,
-// and the next digest gives the last output again.
+// resume, as when a person's message found its conversation lost, is new
+// too: the next digest gives the last output again.
 func TestDigestAfterASessionThatCouldNotResume(t *testing.T) {
 	// The real clock, which the idle period goes by, with a short idle
 	// period and quiet period.
@@ -145,15 +145,18 @@ func TestDigestAfterASessionThatCouldNotResume(t *testing.T) {
 	if err := os.Remove(filepath.Join(wt.conv, filepath.Base(agentSession))); err != nil {
 		t.Fatal(err)
 	}
-	wt.again(t, owner, w, "w-3", "reply three", 3)
-	wt.wokenN(t, owner, sv.ID, 3)
+	// A wake runs in a conversation of its own (#676), so a person's message
+	// is what resumes the supervisor's, and finds it lost.
+	if err := owner.Send(context.Background(), sv.ID, "p", control.Input{Text: "reply hello"}, control.Refuse); err != nil {
+		t.Fatal(err)
+	}
 	eventually(t, "the supervisor's session replaced", 15*time.Second, func() bool {
 		var n int
 		wt.db.QueryRow(`SELECT count(*) FROM events WHERE thread_id = ? AND kind = 'session_replaced'`, int64(sv.ID)).Scan(&n)
 		return n == 1
 	})
-	wt.again(t, owner, w, "w-4", "reply four", 4)
-	d := wt.wokenN(t, owner, sv.ID, 4)[3]
+	wt.again(t, owner, w, "w-4", "reply four", 3)
+	d := wt.wokenN(t, owner, sv.ID, 3)[2]
 	if !strings.Contains(d, "Last output:") || !strings.Contains(d, "> two") || !strings.Contains(d, "> four") || strings.Contains(d, "since the last digest") {
 		t.Fatalf("the first digest made for the new session:\n%s", d)
 	}
@@ -202,5 +205,47 @@ func TestDigestAfterAStoredWakeGoesToANewThread(t *testing.T) {
 	d := wt.wokenN(t, owner, sv.ID, 2)[1]
 	if !strings.Contains(d, "Last output:") || !strings.Contains(d, "> one") || !strings.Contains(d, "> three") {
 		t.Fatalf("the first digest made for the new thread:\n%s", d)
+	}
+}
+
+// Each wake runs in a conversation of its own (#676), and "since the last
+// digest" is since the last one the supervisor was given, whatever the
+// conversation: output given by one wake is not given again by the next.
+// Output given by a wake whose turn failed is: its conversation is gone,
+// and nothing of it was kept.
+func TestDigestWithAConversationPerWake(t *testing.T) {
+	record := t.TempDir()
+	wt := newWakeTest(t, budget(0, 0, 0), recordIn(record), func(cfg map[string]any) {
+		cfg["scopes"].([]map[string]any)[0]["supervisor"].(map[string]any)["instructions"] = "wake-script"
+	})
+	stop, owner, sv := wt.start(t)
+	defer stop()
+	w, pos := wt.worker(t, owner, "c1", "w", "reply reply one") // the supervisor runs "reply one"
+	wt.read(t, pos)
+	wt.wokenN(t, owner, sv.ID, 1)
+	wt.again(t, owner, w, "w-2", "reply fail api_error", 2) // in this wake its turn fails
+	if d := wt.wokenN(t, owner, sv.ID, 2)[1]; !strings.Contains(d, "Output since the last digest:\n> fail api_error") || strings.Contains(d, "> reply one") {
+		t.Fatalf("the second digest, given in another conversation:\n%s", d)
+	}
+	var outcome string
+	wt.db.QueryRow(`SELECT json_extract(data, '$.outcome') FROM events WHERE thread_id = ? AND kind = 'turn_ended' ORDER BY pos DESC LIMIT 1`,
+		int64(sv.ID)).Scan(&outcome)
+	if outcome != "failure" {
+		t.Fatalf("the second wake's turn ended as %q, want a failure", outcome)
+	}
+	wt.again(t, owner, w, "w-3", "reply reply three", 3)
+	d := wt.wokenN(t, owner, sv.ID, 3)[2]
+	if !strings.Contains(d, "Output since the last digest:") || !strings.Contains(d, "> fail api_error") || !strings.Contains(d, "> reply three") ||
+		strings.Contains(d, "> reply one") {
+		t.Fatalf("the digest after a wake whose turn failed; want what that one gave, and what came since:\n%s", d)
+	}
+	conversations := map[string]bool{}
+	for _, s := range starts(t, record) {
+		if id, ok := s.value("--session"); ok && len(s.Inputs) == 1 && strings.HasPrefix(s.Inputs[0], "hataori: ") {
+			conversations[id] = true
+		}
+	}
+	if len(conversations) != 3 {
+		t.Fatalf("the three wakes ran in %d conversations of their own, want 3", len(conversations))
 	}
 }

@@ -12,6 +12,8 @@ import (
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/store"
 	"github.com/yousan/hataori/internal/supervisor"
+	"github.com/yousan/hataori/internal/surface"
+	fakesurface "github.com/yousan/hataori/internal/surface/fake"
 	"github.com/yousan/hataori/internal/wire"
 )
 
@@ -334,4 +336,54 @@ func TestAskedMarkOfAThreadOnlyCounted(t *testing.T) {
 	}
 	wt.again(t, owner, b, "b-2", "reply more", 2)
 	wt.stays(t, sv.ID, 1, 10*time.Minute, "after the second turn end of the thread only counted")
+}
+
+// A wake's turn and a person's are told apart though the thread shows
+// both: a thread started in a wake's turn is not asked for by the person
+// whose message came while that turn ran, and waited for its end; the one
+// started in that person's own turn is.
+func TestAskedForByAMessageDuringAWake(t *testing.T) {
+	wt := newWakeTest(t, budget(0, 0, 0), autonomy("act"), func(cfg map[string]any) {
+		cfg["scopes"].([]map[string]any)[0]["supervisor"].(map[string]any)["instructions"] = "wake-script"
+	})
+	stop, owner, sv := wt.start(t)
+	defer stop()
+	conv := surface.Conversation{Channel: sv.Links[0].Channel, Thread: sv.Links[0].Thread}
+	// The wake's turn runs a tool, and starts a thread after the message.
+	_, pos := wt.worker(t, owner, "c1", "a", "reply tool hold 3s\nreply "+wt.startsThread("reply for the wake"))
+	wt.read(t, pos)
+	wt.quiet(t)
+	eventually(t, "the wake's turn to run", 10*time.Second, func() bool { return wt.wakeRunning(t, sv.ID) })
+	wt.r.driver.Inject(conv, fakesurface.Person(e2eOwner), wt.startsThread("reply for the person"))
+	thread := func(text string) (id int64) {
+		t.Helper()
+		eventually(t, "the thread started with "+text, 25*time.Second, func() bool {
+			wt.db.QueryRow(`SELECT thread_id FROM events WHERE kind = 'input' AND json_extract(data, '$.text') LIKE '%' || ?`, text).Scan(&id)
+			return id != 0
+		})
+		return id
+	}
+	forWake, forPerson := thread("reply for the wake"), thread("reply for the person")
+	// The marks, by what each start made.
+	var asked []int64
+	rows, err := wt.db.Query(`SELECT e.thread_id, a.person FROM supervisor_asked a JOIN inbox i ON i.key = 'start:' || a.scope || char(0) || a.key
+		JOIN events e ON e.kind = 'thread_created' AND e.thread_id = CAST(i.data AS INTEGER)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var person string
+		if err := rows.Scan(&id, &person); err != nil {
+			t.Fatal(err)
+		}
+		if person != "boss" {
+			t.Fatalf("thread %d is asked for by %q, want boss", id, person)
+		}
+		asked = append(asked, id)
+	}
+	if len(asked) != 1 || asked[0] != forPerson {
+		t.Fatalf("asked for by the person: threads %v; want %d alone, not %d, which the wake's turn started", asked, forPerson, forWake)
+	}
 }

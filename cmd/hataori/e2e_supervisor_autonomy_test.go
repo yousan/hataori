@@ -71,7 +71,7 @@ func (f *svAutonomy) start(t *testing.T) {
 	if f.wt.db == nil {
 		f.wt.db = f.wt.r.db(t)
 	}
-	f.sv = supervisorThread(t, f.owner, "c1", control.Idle)
+	f.sv = supervisorReady(t, f.owner, "c1")
 	f.conv = surface.Conversation{Channel: f.sv.Links[0].Channel, Thread: f.sv.Links[0].Thread}
 	var sid int64
 	if err := f.wt.db.QueryRow(`SELECT id FROM sessions WHERE thread_id = ? ORDER BY id DESC LIMIT 1`, f.sv.ID).Scan(&sid); err != nil {

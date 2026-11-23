@@ -114,8 +114,8 @@ func (r *fakeRunner) Device(ctx context.Context, sid int64) string {
 	}
 	return ""
 }
-func (r *fakeRunner) Resume(_ context.Context, _ int64, _ control.Principal, _ string, _ string, in control.Input) error {
-	return r.record("resume " + in.Text)
+func (r *fakeRunner) Resume(_ context.Context, _ int64, f FirstInput) error {
+	return r.record("resume " + f.Text)
 }
 func (r *fakeRunner) Wake(_ context.Context, sid int64, _ control.Principal) error {
 	return r.record(fmt.Sprint("wake ", sid))

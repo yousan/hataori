@@ -74,6 +74,28 @@ func supervisorThread(t *testing.T, c *wire.Client, scope string, state control.
 	return got
 }
 
+// supervisorReady waits until the supervisor's thread of scope may be
+// woken: idle after its first turn, or asleep, as after a wake answered in
+// a conversation of its own (#676).
+func supervisorReady(t *testing.T, c *wire.Client, scope string) control.ThreadInfo {
+	t.Helper()
+	var got control.ThreadInfo
+	eventually(t, "the supervisor's thread idle or asleep", 15*time.Second, func() bool {
+		ts, err := c.Threads(context.Background(), control.Filter{Scope: scope})
+		if err != nil {
+			return false
+		}
+		for _, th := range ts {
+			if th.Title == "Supervisor of this channel" && th.Turns > 0 && (th.State == control.Idle || th.State == control.Asleep) {
+				got = th
+				return true
+			}
+		}
+		return false
+	})
+	return got
+}
+
 // supervisorThreads counts the supervisor threads of scope.
 func supervisorThreads(t *testing.T, c *wire.Client, scope string) int {
 	t.Helper()

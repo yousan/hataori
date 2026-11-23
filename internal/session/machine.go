@@ -57,10 +57,11 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 		agentName string
 		thread    int64
 		id        control.ThreadID
+		aside     sql.NullString
 	)
 	err := tx.QueryRowContext(ctx, `
-		SELECT s.state, s.last_seq, s.agent, s.thread_id
-		FROM sessions s WHERE s.id = ?`, sessionID).Scan(&state, &lastSeq, &agentName, &thread)
+		SELECT s.state, s.last_seq, s.agent, s.thread_id, s.set_aside
+		FROM sessions s WHERE s.id = ?`, sessionID).Scan(&state, &lastSeq, &agentName, &thread, &aside)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("session: no session %d", sessionID)
 	}
@@ -78,7 +79,7 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 		return recordLimits(ctx, tx, sessionID, agentName, in.Agent)
 	}
 
-	snap := Snapshot{State: control.State(state)}
+	snap := Snapshot{State: control.State(state), Aside: aside.Valid}
 	var turnID int64
 	var t OpenTurn
 	err = tx.QueryRowContext(ctx, `SELECT id, started_by, principal, from_id FROM turns WHERE session_id = ? AND ended_at IS NULL`,
@@ -121,6 +122,20 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 		string(r.State), now, thread); err != nil {
 		return err
 	}
+	switch r.State {
+	case control.Asleep, control.Failed, control.Closed:
+		// A conversation set aside for one input's own (sessions.set_aside)
+		// is the session's again: the next wake resumes it.
+		if aside.Valid {
+			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET agent_session_id = set_aside, set_aside = NULL WHERE id = ?`,
+				sessionID); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM session_files WHERE session_id = ? AND aside = 1`, sessionID); err != nil {
+				return err
+			}
+		}
+	}
 	if in.Kind == AgentEvent {
 		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET last_seq = ? WHERE id = ?`, in.Agent.Seq, sessionID); err != nil {
 			return err
@@ -143,8 +158,10 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 	}
 	endedTurn := turnID
 	if r.Start != nil {
-		res, err := tx.ExecContext(ctx, `INSERT INTO turns (session_id, started_by, principal, from_id, trigger, started_at) VALUES (?, ?, ?, ?, ?, ?)`,
-			sessionID, r.Start.By, string(r.Start.Principal), r.Start.From, r.Key, now)
+		// Whether it runs in the conversation set aside's place is known
+		// from before: r.State may have ended that conversation.
+		res, err := tx.ExecContext(ctx, `INSERT INTO turns (session_id, started_by, principal, from_id, trigger, started_at, aside) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			sessionID, r.Start.By, string(r.Start.Principal), r.Start.From, r.Key, now, aside.Valid)
 		if err != nil {
 			return err
 		}

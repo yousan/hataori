@@ -15,7 +15,7 @@ import (
 func TestRealCheckLeavesTheLoginAlone(t *testing.T) {
 	// The supervisor's check uses the phase 1 check's helpers, so it names
 	// the config directory nowhere itself.
-	for file, configDir := range map[string]int{"real_test.go": 1, "real_supervisor_test.go": 0, "real_codex_test.go": 0} {
+	for file, configDir := range map[string]int{"real_test.go": 1, "real_supervisor_test.go": 0, "real_wakes_test.go": 0, "real_codex_test.go": 0} {
 		b, err := os.ReadFile(file)
 		if err != nil {
 			t.Fatal(err)

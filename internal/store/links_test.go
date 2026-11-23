@@ -145,6 +145,7 @@ func TestLinkThreadsOnTheReleasedDatabase(t *testing.T) {
 	}
 	const threadCols = `id, scope, key, title, repo, started_by, state, created_at, updated_at, tokens_turn, tokens_day, tokens_today, context_used, context_size`
 	const outboxCols = `id, client, event, part, channel, thread, message, decoration, state, failures, ref, created_at, sent_at`
+	const sessionCols = `id, thread_id, agent, agent_session_id, state, model, effort, host_pid, log_offset, last_seq, created_at, updated_at, spec, first_input, log_start, launch`
 	unchanged := map[string]string{
 		"threads":       `SELECT ` + threadCols + ` FROM threads ORDER BY id`,
 		"events":        `SELECT pos, scope, thread, time, kind, data FROM events ORDER BY pos`,
@@ -153,7 +154,7 @@ func TestLinkThreadsOnTheReleasedDatabase(t *testing.T) {
 		"chat_cursors":  `SELECT * FROM chat_cursors ORDER BY client`,
 		"chat_triggers": `SELECT * FROM chat_triggers ORDER BY client, channel, message`,
 		"inbox":         `SELECT * FROM inbox ORDER BY key`,
-		"sessions":      `SELECT * FROM sessions ORDER BY id`,
+		"sessions":      `SELECT ` + sessionCols + ` FROM sessions ORDER BY id`,
 		"turns":         `SELECT id, session_id, started_by, trigger, started_at, ended_at, status, reason, background FROM turns ORDER BY id`,
 	}
 	want := map[string][]string{}
@@ -354,6 +355,7 @@ func TestRelease226KeepsItsCursors(t *testing.T) {
 		t.Fatal(err)
 	}
 	const outboxCols = `id, client, event, part, channel, thread, message, decoration, state, failures, ref, created_at, sent_at`
+	const sessionCols = `id, thread_id, agent, agent_session_id, state, model, effort, host_pid, log_offset, last_seq, created_at, updated_at, spec, first_input, log_start, launch`
 	unchanged := map[string]string{
 		"chat_inbound":  `SELECT * FROM chat_inbound ORDER BY client, channel, thread`,
 		"chat_cursors":  `SELECT * FROM chat_cursors ORDER BY client`,
