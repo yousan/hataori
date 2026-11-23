@@ -902,7 +902,7 @@ func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.St
 			}
 		}
 		fe := &chat.FrontEnd{Name: name, Driver: d, API: c.As, Trigger: cfg.Trigger, People: cfg.People,
-			Scopes: scopes, ShowIn: showIn, ArchiveWhenAsleep: archive, Supervisors: posts, Log: lg.With("client", name), Instance: filepath.Base(root),
+			Scopes: scopes, ShowIn: showIn, ArchiveWhenAsleep: archive, Supervisors: posts, Supervisor: c.LastConfined, Log: lg.With("client", name), Instance: filepath.Base(root),
 			Outbox:  &chat.Outbox{Store: st, Client: name, Driver: d, Log: lg.With("client", name)},
 			FileDir: filepath.Join(root, "state", "chat", name, "files"),
 			FileRoots: func(ctx context.Context, id control.ThreadID, session int64) ([]string, error) {
