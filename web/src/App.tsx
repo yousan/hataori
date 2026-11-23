@@ -23,6 +23,7 @@ import { displayTitle } from "./format";
 import { hiddenCount, showsHost, useShow } from "./show";
 import { openInChat } from "./chatTree";
 import { type Density, Tree } from "./Tree";
+import { type Me, me as readMe } from "./api";
 
 const densityKey = "hataori.density";
 
@@ -54,6 +55,13 @@ export function App() {
   // threads of a scope it covers are those the chat shows (show.tsx).
   const open = useMemo(() => openInChat(d.layout, d.threads ?? []), [d.layout, d.threads]);
   const hiddenThreads = hiddenCount(showing, d.threads, open);
+  // Who signed in and how, for the tree's bottom bar: read once a session
+  // is there.
+  const [me, setMe] = useState<Me | null>(null);
+  useEffect(() => {
+    if (d.signedOut) return;
+    readMe().then(setMe, () => setMe(null));
+  }, [d.signedOut]);
 
   const pickDensity = (x: Density) => {
     setDensity(x);
@@ -344,6 +352,9 @@ export function App() {
             hosts={shownHosts}
             selectedHost={currentHost}
             onOpenHost={openHost}
+            clients={d.clients}
+            me={me}
+            limits={d.limits}
           />
         )}
         <div className="center">

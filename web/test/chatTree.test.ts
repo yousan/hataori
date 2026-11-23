@@ -47,10 +47,12 @@ test("group, channel, thread in the chat's order; a thread open in the chat what
   const [lobby] = tr.groups[0].channels;
   assert.deepEqual(lobby.items, [{ kind: "chat", key: "chat:discord/l1", name: "lunch", url: "https://chat.example/l1" }]);
   const [builds] = tr.groups[1].channels;
-  // The asleep thread open in the chat, the plain thread, then the scope's
-  // threads not open in the chat that the choice shows: not the asleep one.
-  assert.deepEqual(builds.items.map((i) => (i.kind === "thread" ? i.x.id : i.key)), [1, "chat:discord/p1", 3]);
-  assert.deepEqual(builds.threads.map((x) => x.id), [1, 3]);
+  // The plain thread, then the scope's threads not open in the chat that
+  // the choice shows; the asleep ones, open in the chat or not, apart.
+  assert.deepEqual(builds.items.map((i) => (i.kind === "thread" ? i.x.id : i.key)), ["chat:discord/p1", 3]);
+  assert.deepEqual(builds.threads.map((x) => x.id), [3]);
+  assert.deepEqual(builds.archived.map((x) => x.id), [2, 1]);
+  assert.deepEqual(lobby.archived, []);
   assert.deepEqual([...tr.scopes], ["c1"]);
 });
 
@@ -61,10 +63,12 @@ test("what is open in the chat, for the choice of threads", () => {
   assert.deepEqual([...open.threads], [1]);
 });
 
-test("All shows the archived thread under its channel, the newest first", () => {
-  const tr = chatTree(layout, all, everything, "", () => true)!;
+test("All shows a thread not open in the chat under its channel; asleep ones stay apart", () => {
+  const closed = thread(6, "c1", "closed", "2026-11-23T05:00:00Z", "closed");
+  const tr = chatTree(layout, [...all, closed], everything, "", () => true)!;
   const [builds] = tr.groups[1].channels;
-  assert.deepEqual(builds.items.map((i) => (i.kind === "thread" ? i.x.id : i.key)), [1, "chat:discord/p1", 3, 2]);
+  assert.deepEqual(builds.items.map((i) => (i.kind === "thread" ? i.x.id : i.key)), ["chat:discord/p1", 6, 3]);
+  assert.deepEqual(builds.archived.map((x) => x.id), [2, 1]);
 });
 
 test("the filter keeps what it finds, and the channels and groups that hold it", () => {
@@ -73,7 +77,7 @@ test("the filter keeps what it finds, and the channels and groups that hold it",
   tr = chatTree(layout, all, activeOnly, "lobby", title("lobby"))!;
   assert.deepEqual(tr.groups.map((g) => g.channels.map((c) => [c.key, c.items.length])), [[["chan:discord/u1", 0]]]);
   tr = chatTree(layout, all, activeOnly, "open", title("open"))!;
-  assert.deepEqual(tr.groups.map((g) => g.channels.map((c) => c.items.map((i) => (i.kind === "thread" ? i.x.id : i.key)))), [[[1]]]);
+  assert.deepEqual(tr.groups.map((g) => g.channels.map((c) => [c.items.length, c.archived.map((x) => x.id)])), [[[0, [1]]]]);
 });
 
 test("a thread linked into another channel is a row only in its own scope", () => {
@@ -93,7 +97,7 @@ test("a thread linked into another channel is a row only in its own scope", () =
   const tr = chatTree(l, ts, shown, "", () => true)!;
   const items = tr.groups[0].channels.map((c) => [c.key, c.items.map((i) => (i.kind === "thread" ? i.x.id : i.key))]);
   assert.deepEqual(items, [
-    ["scope:c1", [1, 5, 3]], // its own scope's row, as a thread not open there that works
+    ["scope:c1", [5, 3]], // its own scope's row, as a thread not open there that works; 1 is asleep
     ["scope:c2", ["chat:discord/t5"]],
     ["chan:discord/u1", ["chat:discord/t6"]],
   ]);

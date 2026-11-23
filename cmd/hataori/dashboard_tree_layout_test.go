@@ -28,7 +28,7 @@ func (b *browser) treeItems() []treeItem {
 	b.eval(`[...document.querySelectorAll('.tree [role=tree] [data-tree-item]')].map(i => ({
 		item: i.dataset.treeItem,
 		dim: i.classList.contains('chat-only'),
-		href: i.querySelector(':scope > a.chat-link, :scope > .chan-head a.chat-link')?.getAttribute('href') ?? '',
+		href: i.querySelector(':scope > a.chat-link, :scope > .box > a.chat-link, :scope > .chan-head a.chat-link')?.getAttribute('href') ?? '',
 	}))`, &items)
 	return items
 }
@@ -118,13 +118,12 @@ func newLayoutRig(t *testing.T, change func(cfg map[string]any)) (*chatRoot, lay
 
 // The tree mirrors the chat, driven by the real server with the fake
 // surface reporting a layout: group, then channel, then thread, in the
-// chat's order. The served channel is today's scope node with today's row
-// for its hataori thread open in the chat, asleep or not; the unserved
-// channel and the plain threads are dimmed links into the chat, which open
-// no tab. The hataori thread whose chat thread is archived is not in the
-// tree, and "All" shows it under its channel. The host terminals stay one
-// folded node at the bottom. A surface without the call keeps today's tree
-// (TestDashboardTreeChannels).
+// chat's order. The served channel is its scope's node; its asleep
+// threads, open in the chat or not, are folded into one row, which lists
+// them in place, the newest first (#635); the unserved channel and the
+// plain threads are dimmed links into the chat, which open no tab. The
+// host terminals stay one folded node at the bottom. A surface without the
+// call keeps today's tree (TestDashboardTreeChannels).
 func TestDashboardTreeMirrorsTheChat(t *testing.T) {
 	hrig := newHostTerminalRig(t)
 	hostTermsHook = func(l *hostterm.Lister) { l.Tmux = hrig.socket }
@@ -142,16 +141,16 @@ func TestDashboardTreeMirrorsTheChat(t *testing.T) {
 		{Item: "chat:" + client + "l1", Dim: true, Href: "https://chat.example/l1"},
 		{Item: "group:" + client + "g1"},
 		{Item: "scope:c1"},
-		{Item: fmt.Sprintf("thread:%d", rig.open)},
 		{Item: "chat:" + client + "p1", Dim: true, Href: "https://chat.example/p1"},
+		{Item: "archived:c1"},
 		{Item: "chan:" + client + "u2", Dim: true, Href: "https://chat.example/u2"},
 		{Item: "host"},
 	}
 	b.untilTree("the tree as the chat shows it", want)
 	var label string
-	b.eval(`document.querySelector('.tree [data-node="scope:c1"] .node-head .scope-name').textContent`, &label)
-	if label != "#builds" {
-		t.Fatalf("the served channel is named %q, want #builds", label)
+	b.eval(`document.querySelector('.tree [data-node="scope:c1"] .node-head').textContent`, &label)
+	if label != "#builds" { // its "#" mark, and its name without one
+		t.Fatalf("the served channel's head reads %q, want #builds", label)
 	}
 	var hostOpen string
 	b.eval(`document.querySelector('.tree [data-node=host]').dataset.open`, &hostOpen)
@@ -229,7 +228,7 @@ func TestDashboardTreeMirrorsTheChat(t *testing.T) {
 	var focusedItem string
 	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
 		b.eval(`document.activeElement?.dataset.treeItem ?? ''`, &focusedItem)
-		if focusedItem == fmt.Sprintf("thread:%d", rig.open) {
+		if focusedItem == "scope:c1" {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -237,12 +236,15 @@ func TestDashboardTreeMirrorsTheChat(t *testing.T) {
 		}
 	}
 
-	// "All": the hataori thread whose chat thread is archived, under its
-	// channel, after the threads open in the chat.
+	// "All" changes nothing here: both hataori threads are asleep, folded.
+	// Opened, the row lists them in place, the newest first, open in the
+	// chat or not, before itself.
 	b.showAll()
-	all := slices.Clone(want)
-	all = slices.Insert(all, 6, treeItem{Item: fmt.Sprintf("thread:%d", rig.archived)})
-	b.untilTree("All", all)
+	b.untilTree("All", want)
+	b.click(`.tree [data-tree-item="archived:c1"]`)
+	all := slices.Insert(slices.Clone(want), 5,
+		treeItem{Item: fmt.Sprintf("thread:%d", rig.open)}, treeItem{Item: fmt.Sprintf("thread:%d", rig.archived)})
+	b.untilTree("the asleep threads listed in place", all)
 }
 
 // A person other than the owner sees only the channels of the scopes they
@@ -261,7 +263,7 @@ func TestDashboardTreeMirrorsTheChatForAPerson(t *testing.T) {
 	b.untilTree("a person's tree", []treeItem{
 		{Item: "group:" + client + "g1"},
 		{Item: "scope:c1"},
-		{Item: fmt.Sprintf("thread:%d", rig.open)},
 		{Item: "chat:" + client + "p1", Dim: true, Href: "https://chat.example/p1"},
+		{Item: "archived:c1"},
 	})
 }

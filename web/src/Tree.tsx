@@ -1,12 +1,12 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { type ChatLayout, type HostTerminal, type ScopeInfo, type State, states, type ThreadInfo } from "./api";
+import { type AgentLimits, type ChatLayout, type ClientState, type HostTerminal, type Me, type ScopeInfo, type State, states, type ThreadInfo } from "./api";
 import { type ChatChannel, type ChatItem, chatTree } from "./chatTree";
 import { hostID, hostMatches } from "./hostTerminals";
 import { t } from "./catalog";
-import { age, contextUse, displayTitle, fullTitle, mark, matches, scopeLabel, stateName } from "./format";
+import { age, contextUse, displayTitle, fullTitle, matches, scopeLabel, stateName, when, windowName } from "./format";
 import type { Attention } from "./live";
 import { type OpenInChat, type Show, shows } from "./show";
-import { hostNode, scopeNode, useFolds } from "./folds";
+import { archivedNode, hostNode, scopeNode, useFolds } from "./folds";
 
 export type Density = "dense" | "normal";
 
@@ -36,6 +36,27 @@ interface Props {
   hosts: HostTerminal[] | null;
   selectedHost: string | null;
   onOpenHost: (device: string) => void;
+  // The bars on top and at the bottom: whether each chat client is
+  // connected; who signed in and how, null until read; each agent's
+  // remaining usage.
+  clients: ClientState[];
+  me: Me | null;
+  limits: AgentLimits[];
+}
+
+// Rail is where a row stands on the rail its channel's threads hang from:
+// on it, or its last item, where it ends.
+type Rail = "on" | "end";
+
+// awake reports whether a thread is not asleep, closed or removed: one a
+// channel's count counts, whatever the filter and the choice of threads.
+function awake(x: ThreadInfo): boolean {
+  return x.state !== "asleep" && x.state !== "closed" && x.state !== "removed";
+}
+
+// railClass is the class of an item on the rail.
+function railClass(rail: Rail | undefined): string {
+  return rail ? (rail === "end" ? " on-rail rail-end" : " on-rail") : "";
 }
 
 // attentionText is what a thread that needs attention waits on.
@@ -51,8 +72,11 @@ export function attentionText(a: Attention): string {
   }
 }
 
-// Row is one thread. In needs attention, what it waits on has a line of
-// its own, shown in either density; elsewhere it is on the second line.
+// Row is one thread: its title, its number and a dot for its state at the
+// right end, none when asleep. In needs attention, what it waits on has a
+// line of its own, shown in either density; elsewhere it is on the second
+// line, which the normal density shows. Hover and selection colour its box,
+// not the rail beside it.
 export function Row(props: {
   x: ThreadInfo;
   attention?: Attention;
@@ -62,12 +86,13 @@ export function Row(props: {
   onSelect: (n: number) => void;
   parent?: string; // in the tree: the node it is under
   level?: number; // in the tree: its depth, 2 when not given
+  rail?: Rail;
 }) {
-  const { x, attention, why, now, selected, onSelect, parent, level } = props;
+  const { x, attention, why, selected, onSelect, parent, level, rail } = props;
   const ctx = contextUse(x);
   return (
     <li
-      className={selected ? "row selected" : "row"}
+      className={(selected ? "row selected" : "row") + railClass(rail)}
       data-thread={x.id}
       data-state={x.state}
       role={parent ? "treeitem" : "option"}
@@ -84,25 +109,24 @@ export function Row(props: {
         }
       }}
     >
-      <div className="line1">
-        <span className={`agent-mark state-${x.state}`} title={stateName(x.state)}>
-          {mark(x)}
-        </span>
-        <span className="num">{t("thread.number", { n: x.id })}</span>
-        <span className="title" title={fullTitle(x) || undefined}>
-          {displayTitle(x)}
-        </span>
-        <span className="age">{age(x.updated, now)}</span>
-      </div>
-      {why && attention && <div className="why">{attentionText(attention)}</div>}
-      <div className="line2">
-        {x.model && <span className="model">{x.model}</span>}
-        {ctx && <span className="ctx">{ctx}</span>}
-        {attention && !why ? (
-          <span className="flag">{attentionText(attention)}</span>
-        ) : (
-          x.last && <span className="last">{x.last}</span>
-        )}
+      <div className="box">
+        <div className="line1">
+          <span className="title" title={fullTitle(x) || undefined}>
+            {displayTitle(x)}
+          </span>
+          <span className="num">{t("thread.number", { n: x.id })}</span>
+          {x.state !== "asleep" && <span className={`dot state-${x.state}`} data-dot={x.state} title={stateName(x.state)} />}
+        </div>
+        {why && attention && <div className="why">{attentionText(attention)}</div>}
+        <div className="line2">
+          {x.model && <span className="model">{x.model}</span>}
+          {ctx && <span className="ctx">{ctx}</span>}
+          {attention && !why ? (
+            <span className="flag">{attentionText(attention)}</span>
+          ) : (
+            x.last && <span className="last">{x.last}</span>
+          )}
+        </div>
       </div>
     </li>
   );
@@ -130,11 +154,17 @@ function Node(props: {
   children: React.ReactNode;
   attrs?: Record<string, string>;
   level?: number; // its depth, 1 when not given
+  // kind is how its head looks: a scope as before, a group of the chat as
+  // an upper-case label, a channel of the chat with its "#" and the count
+  // of its threads that are not asleep.
+  kind?: "scope" | "group" | "channel";
+  awake?: number; // a channel's threads that are not asleep
 }) {
-  const { node, label, count, open, onFold, dots, children, attrs, level } = props;
+  const { node, label, count, open, onFold, dots, children, attrs, level, kind = "scope", awake = 0 } = props;
+  const chat = kind !== "scope";
   return (
     <li
-      className="node"
+      className={`node node-${kind}`}
       role="treeitem"
       aria-level={level ?? 1}
       aria-expanded={open}
@@ -152,28 +182,41 @@ function Node(props: {
       }}
     >
       <div className="node-head" title={t(open ? "tree.fold" : "tree.unfold", { name: label })} onClick={() => onFold(node, open)}>
-        <span className="fold-mark" aria-hidden="true">
-          {t(open ? "tree.openMark" : "tree.foldedMark")}
-        </span>
-        <span className="scope-name">{label}</span>
-        <span className="node-count" data-count={count}>
-          {t("tree.count", { n: count })}
-        </span>
-        {dots && dots.length > 0 && (
+        {kind === "channel" ? (
+          <span className="hash" aria-hidden="true">
+            {t("tree.channelMark")}
+          </span>
+        ) : (
+          <span className="fold-mark" aria-hidden="true">
+            {t(open ? "tree.openMark" : "tree.foldedMark")}
+          </span>
+        )}
+        <span className="scope-name">{kind === "channel" ? label.replace(/^#/, "") : label}</span>
+        {kind === "channel" && awake > 0 && (
+          <span className="awake" data-awake={awake} title={t("tree.awake", { n: awake })}>
+            {t("tree.count", { n: awake })}
+          </span>
+        )}
+        {!chat && (
+          <span className="node-count" data-count={count}>
+            {t("tree.count", { n: count })}
+          </span>
+        )}
+        {!chat && dots && dots.length > 0 && (
           <span className="dots" data-dots={dots.length}>
             {dots.slice(0, maxDots).map((x) => (
               <span key={x.id} className={`dot state-${x.state}`} title={stateName(x.state)} />
             ))}
           </span>
         )}
-        {dots && dots.length > maxDots && (
+        {!chat && dots && dots.length > maxDots && (
           <span className="dots-more" data-more={dots.length - maxDots}>
             {t("tree.moreDots", { n: dots.length - maxDots })}
           </span>
         )}
       </div>
       {open && (
-        <ul role="group" className="node-body">
+        <ul role="group" className={kind === "channel" ? "node-body rail" : "node-body"}>
           {children}
         </ul>
       )}
@@ -184,23 +227,24 @@ function Node(props: {
 // chatLink is a link into the chat, in a window of its own, so that the
 // dashboard stays; without a URL (a reader that may not read text) the
 // name alone.
-function chatLink(name: string, url: string | undefined) {
+function chatLink(name: string, url: string | undefined, shown: string = name) {
   return url ? (
     <a className="chat-link" href={url} target="_blank" rel="noopener noreferrer" tabIndex={-1} title={t("tree.inChat", { name })}>
-      {name}
+      {shown}
     </a>
   ) : (
-    <span className="chat-link">{name}</span>
+    <span className="chat-link">{shown}</span>
   );
 }
 
 // ChatRow is an open thread of the chat that hataori does not hold: dimmed,
-// and a link into the chat rather than a tab. Enter follows the link.
-function ChatRow(props: { item: Extract<ChatItem, { kind: "chat" }>; parent: string; level: number }) {
-  const { item, parent, level } = props;
+// marked as opening in the chat, and a link into the chat rather than a
+// tab. Enter follows the link.
+function ChatRow(props: { item: Extract<ChatItem, { kind: "chat" }>; parent: string; level: number; rail?: Rail }) {
+  const { item, parent, level, rail } = props;
   return (
     <li
-      className="row chat-only"
+      className={"row chat-only" + railClass(rail)}
       role="treeitem"
       aria-level={level}
       tabIndex={-1}
@@ -209,8 +253,17 @@ function ChatRow(props: { item: Extract<ChatItem, { kind: "chat" }>; parent: str
       onKeyDown={(e) => {
         if (e.target === e.currentTarget && e.key === "Enter") e.currentTarget.querySelector<HTMLAnchorElement>("a.chat-link")?.click();
       }}
+      // Anywhere on the row opens the chat thread, as its name does.
+      onClick={(e) => {
+        if (!(e.target as Element).closest("a")) e.currentTarget.querySelector<HTMLAnchorElement>("a.chat-link")?.click();
+      }}
     >
-      {chatLink(item.name, item.url)}
+      <div className="box">
+        {chatLink(item.name, item.url)}
+        <span className="opens-in-chat" data-opens-in-chat="" title={t("tree.opensInChat")}>
+          {t("tree.opensInChatMark")}
+        </span>
+      </div>
     </li>
   );
 }
@@ -237,17 +290,18 @@ function ChatChannelItem(props: { c: ChatChannel; parent?: string; level: number
         if (e.target === e.currentTarget && e.key === "Enter") e.currentTarget.querySelector<HTMLAnchorElement>(":scope > .chan-head a.chat-link")?.click();
       }}
     >
-      <div className="chan-head">
-        {folds && (
-          <span className="fold-mark" title={t(open ? "tree.fold" : "tree.unfold", { name: c.name })} onClick={() => onFold(c.key, open)}>
-            {t(open ? "tree.openMark" : "tree.foldedMark")}
-          </span>
-        )}
-        {chatLink(c.name, c.url)}
+      <div className="chan-head" title={folds ? t(open ? "tree.fold" : "tree.unfold", { name: c.name }) : undefined}>
+        <span className="hash" aria-hidden="true" onClick={folds ? () => onFold(c.key, open) : undefined}>
+          {t("tree.channelMark")}
+        </span>
+        {chatLink(c.name, c.url, c.name.replace(/^#/, ""))}
       </div>
       {folds && open && (
-        <ul role="group">
-          {c.items.map((i) => i.kind === "chat" && <ChatRow key={i.key} item={i} parent={c.key} level={level + 1} />)}
+        <ul role="group" className="rail">
+          {c.items.map(
+            (i, n) =>
+              i.kind === "chat" && <ChatRow key={i.key} item={i} parent={c.key} level={level + 1} rail={n === c.items.length - 1 ? "end" : "on"} />,
+          )}
         </ul>
       )}
     </li>
@@ -291,6 +345,7 @@ function treeKeys(e: React.KeyboardEvent<HTMLElement>, fold: (node: string, fold
 export function Tree(props: Props) {
   const {
     threads, scopes, layout, open: openInChat, attention, now, filter, onFilter, density, onDensity, selected, onSelect, show, hidden, hosts, selectedHost, onOpenHost,
+    clients, me, limits,
   } = props;
   const [folded, setFolded] = useFolds();
   // The tree is one Tab stop: the item last focused in it, else its first;
@@ -344,7 +399,7 @@ export function Tree(props: Props) {
     else setFolded(node, f);
   };
 
-  const row = (why: boolean, parent?: string, level?: number) => (x: ThreadInfo) => (
+  const row = (why: boolean, parent?: string, level?: number, rail?: Rail) => (x: ThreadInfo) => (
     <Row
       key={x.id}
       x={x}
@@ -355,34 +410,88 @@ export function Tree(props: Props) {
       onSelect={onSelect}
       parent={parent}
       level={level}
+      rail={rail}
     />
   );
   // channel is a channel of the chat's layout at depth level: a served one
   // is its scope's node, with today's rows and the chat's other open
-  // threads in the chat's order; another is a dimmed link.
-  const channel = (c: ChatChannel, parent: string | undefined, level: number) =>
-    c.scope ? (
+  // threads in the chat's order, hanging from one rail, and its asleep
+  // threads folded into one row under them, which lists them in place, on
+  // the rail; another is a dimmed link.
+  const channel = (c: ChatChannel, parent: string | undefined, level: number) => {
+    if (!c.scope) {
+      return <ChatChannelItem key={c.key} c={c} parent={parent} level={level} open={open(c.key, c.items.length > 0)} onFold={fold} />;
+    }
+    const archived = archivedNode(c.scope);
+    const unfolded = c.archived.length > 0 && open(archived, true);
+    const onRail: ChatItem[] = [...c.items, ...(unfolded ? c.archived.map((x) => ({ kind: "thread" as const, x })) : [])];
+    return (
       <Node
         key={c.key}
         node={c.key}
         label={scopes?.find((s) => s.key === c.scope)?.name || c.name || c.scope}
         count={c.threads.length}
-        open={open(c.key, c.items.length > 0)}
+        open={open(c.key, c.items.length + c.archived.length > 0)}
         onFold={fold}
-        dots={c.threads}
         level={level}
+        kind="channel"
+        awake={all.filter((x) => x.scope === c.scope && awake(x)).length}
         attrs={parent ? { "data-scope": c.scope, "data-parent": parent } : { "data-scope": c.scope }}
       >
-        {c.items.map((i) =>
-          i.kind === "thread" ? row(false, c.key, level + 1)(i.x) : <ChatRow key={i.key} item={i} parent={c.key} level={level + 1} />,
+        {onRail.map((i, n) => {
+          const rail = n === onRail.length - 1 ? "end" : "on";
+          return i.kind === "thread" ? (
+            row(false, c.key, level + 1, rail)(i.x)
+          ) : (
+            <ChatRow key={i.key} item={i} parent={c.key} level={level + 1} rail={rail} />
+          );
+        })}
+        {c.archived.length > 0 && (
+          <li
+            className="archived-row"
+            role="treeitem"
+            aria-level={level + 1}
+            aria-expanded={unfolded}
+            tabIndex={-1}
+            data-tree-item={archived}
+            data-node={archived}
+            data-open={unfolded ? "yes" : "no"}
+            data-parent={c.key}
+            data-archived={c.archived.length}
+            title={t(unfolded ? "tree.archivedFold" : "tree.archivedUnfold", { n: c.archived.length })}
+            onClick={() => fold(archived, unfolded)}
+            onKeyDown={(e) => {
+              if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+                e.preventDefault();
+                fold(archived, unfolded);
+              }
+            }}
+          >
+            {t("tree.archived", { n: c.archived.length })} {t(unfolded ? "tree.archivedOpenMark" : "tree.archivedMark")}
+          </li>
         )}
       </Node>
-    ) : (
-      <ChatChannelItem key={c.key} c={c} parent={parent} level={level} open={open(c.key, c.items.length > 0)} onFold={fold} />
     );
+  };
 
   return (
     <nav className={`tree density-${density}`} aria-label={t("tree.label")}>
+      {clients.length > 0 && (
+        <div className="server-bar" data-section="server">
+          {clients.map((c) => (
+            <span
+              key={c.client}
+              className="server"
+              data-client={c.client}
+              data-connected={c.connected ? "yes" : "no"}
+              title={t(c.connected ? "tree.chatUp" : "tree.chatDown", { client: c.client })}
+            >
+              <span className="conn-dot" />
+              <span className="server-name">{c.client}</span>
+            </span>
+          ))}
+        </div>
+      )}
       <div className="tree-top">
         <input
           className="filter"
@@ -441,7 +550,7 @@ export function Tree(props: Props) {
                     count={held.length}
                     open={open(g.key, true)}
                     onFold={fold}
-                    dots={held}
+                    kind="group"
                     attrs={{ "data-group": g.key }}
                   >
                     {g.channels.map((c) => channel(c, g.key, 2))}
@@ -489,7 +598,44 @@ export function Tree(props: Props) {
             </li>
           ))}
       </ul>
+      <MeBar me={me} limits={limits} />
     </nav>
+  );
+}
+
+// MeBar is the bar at the bottom of the tree: who signed in and how, and
+// each agent's remaining usage with its reset time.
+function MeBar({ me, limits }: { me: Me | null; limits: AgentLimits[] }) {
+  const shown = limits.filter((l) => l.windows.length > 0);
+  if (!me && shown.length === 0) return null;
+  return (
+    <div className="me-bar" data-section="me" aria-label={t("tree.me")}>
+      {me && (
+        <>
+          <span className="avatar" aria-hidden="true">
+            {me.person.slice(0, 1).toUpperCase()}
+          </span>
+          <span className="who">
+            <span className="me-name">{me.person}</span>
+            <span className="me-how" data-how={me.passkey ? "passkey" : "link"}>
+              {t(me.passkey ? "tree.byPasskey" : me.way === "web" ? "tree.byLink" : "tree.byLocalLink")}
+            </span>
+          </span>
+        </>
+      )}
+      {shown.length > 0 && (
+        <span className="me-usage" aria-label={t("tree.usage")}>
+          {shown.flatMap((l) =>
+            l.windows.map((w) => (
+              <span key={`${l.agent}/${w.name}`} className="usage" data-agent={l.agent} data-window={w.name} data-used={w.used}>
+                {t("tree.usageWindow", { agent: l.agent, window: windowName(w), used: w.used })}
+                {w.resets && <span className="usage-resets">{t("tree.usageResets", { time: when(w.resets) })}</span>}
+              </span>
+            )),
+          )}
+        </span>
+      )}
+    </div>
   );
 }
 

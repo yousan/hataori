@@ -167,6 +167,19 @@ export function clients(): Promise<ClientState[]> {
   return get<ClientState[]>("/api/clients");
 }
 
+// Me is the person of the page's session and how they signed in: on which
+// listener ("local", this machine, or "web"), and whether with a passkey
+// rather than a sign-in link.
+export interface Me {
+  person: string;
+  way: string;
+  passkey: boolean;
+}
+
+export function me(): Promise<Me> {
+  return get<Me>("/api/me");
+}
+
 export const eventsPath = "/api/events";
 
 // HostTerminal is a terminal on the host that hataori does not own

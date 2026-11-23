@@ -342,7 +342,7 @@ func js(v any) string { b, _ := json.Marshal(v); return string(b) }
 // The tree and the status bar, driven by the real server: a question
 // enters needs attention and leaves it when answered; the footer counts
 // the threads per state; the filter matches title, number and terminal;
-// the normal density hides every row's second line; the live mark shows
+// the normal density shows a thread row's second line; the live mark shows
 // the last event's position and turns off when the stream goes down.
 func TestDashboardTreeAndStatusBar(t *testing.T) {
 	root := terminalRoot(t) // the fake agent in terminals; the page's caller sees scope s
@@ -512,14 +512,15 @@ func TestDashboardTreeAndStatusBar(t *testing.T) {
 	b.until("every thread with an empty filter", fmt.Sprintf(
 		`JSON.stringify([...document.querySelectorAll('[data-section=threads] .row')].map(r => +r.dataset.thread).sort((a, b) => a - b)) === %q`, js([]int64{n1, n2, n3})))
 
-	// 4. Normal density hides the second line of every row; dense shows it.
-	hidden := `[...document.querySelectorAll('.row')].every(r => getComputedStyle(r.querySelector('.line2')).display === 'none')`
-	shown := `[...document.querySelectorAll('.row')].every(r => getComputedStyle(r.querySelector('.line2')).display !== 'none')`
-	b.until("dense rows with their second line", shown)
+	// 4. A thread's row has one line in the dense density, the default; the
+	// normal density shows its second line (#635).
+	hidden := `[...document.querySelectorAll('.row[data-thread]')].every(r => getComputedStyle(r.querySelector('.line2')).display === 'none')`
+	shown := `[...document.querySelectorAll('.row[data-thread]')].every(r => getComputedStyle(r.querySelector('.line2')).display !== 'none')`
+	b.until("dense rows without their second line", hidden)
 	b.eval(`document.querySelector('[data-density=normal]').click(), true`, nil)
-	b.until("normal rows without a second line", hidden)
+	b.until("normal rows with a second line", shown)
 	b.eval(`document.querySelector('[data-density=dense]').click(), true`, nil)
-	b.until("dense rows again", shown)
+	b.until("dense rows again", hidden)
 
 	// The status bar shows the selected thread, with its terminal. A row is
 	// selected from the keyboard as well.
