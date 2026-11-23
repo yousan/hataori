@@ -86,12 +86,19 @@ func TestWakeKey(t *testing.T) {
 		ok bool
 	}{
 		"hataori-wake-1234-7": {1234, 7, true}, "hataori-wake-1234": {1234, 0, true},
+		"hataori-wake-1234-7-3.5": {1234, 7, true}, "hataori-wake-1234-7-": {}, "hataori-wake-1234-7-3.x": {},
 		"hataori-wake-x": {}, "hataori-wake-1234-": {}, "hataori-wake-1234-0": {}, "other-1234": {},
 	} {
 		to, sv, ok := ParseWakeKey(key)
 		if to != want.to || sv != want.sv || ok != want.ok {
 			t.Errorf("ParseWakeKey(%q) = %d, %d, %v; want %d, %d, %v", key, to, sv, ok, want.to, want.sv, want.ok)
 		}
+	}
+	if k := WakeKey(7, 1234, 3, 5); k != "hataori-wake-1234-7-3.5" || len(WakeOnly(k)) != 2 || WakeOnly(k)[1] != 5 || WakeOnly(WakeKey(7, 1234)) != nil {
+		t.Errorf("the key of a wake of two threads only %q, read %v", k, WakeOnly(k))
+	}
+	if k, _ := keyFor("hataori-wake-1234-7-3.5", 9, nil); k != "hataori-wake-1234-9-3.5" {
+		t.Errorf("for another thread %q", k)
 	}
 	took := map[string]control.ThreadID{"hataori-wake-1234": 7}
 	sentTo := func(key string) (control.ThreadID, bool, error) {

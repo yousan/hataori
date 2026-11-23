@@ -32,8 +32,39 @@ const WakeKeyPrefix = "hataori-wake-"
 // so the thread is part of it: a wake that a supervisor's thread took
 // without reading it, as when its resume failed, goes to the thread that
 // replaces it under a key of its own (#443).
-func WakeKey(sv control.ThreadID, to uint64) string {
-	return WakeKeyPrefix + strconv.FormatUint(to, 10) + "-" + strconv.FormatInt(int64(sv), 10)
+//
+// A wake that went past a gate's hold gave only some threads' turn ends
+// (#677): its key has one more part, those threads, so that a reader of
+// the log does not take it for a wake that covers the others'.
+func WakeKey(sv control.ThreadID, to uint64, only ...control.ThreadID) string {
+	key := WakeKeyPrefix + strconv.FormatUint(to, 10) + "-" + strconv.FormatInt(int64(sv), 10)
+	for i, id := range only {
+		sep := "."
+		if i == 0 {
+			sep = "-"
+		}
+		key += sep + strconv.FormatInt(int64(id), 10)
+	}
+	return key
+}
+
+// WakeOnly returns the threads that a wake's key says are all it gave; nil
+// for a wake that covers every turn end up to its position.
+func WakeOnly(key string) []control.ThreadID {
+	rest, _ := strings.CutPrefix(key, WakeKeyPrefix)
+	parts := strings.SplitN(rest, "-", 3)
+	if len(parts) < 3 {
+		return nil
+	}
+	var out []control.ThreadID
+	for _, p := range strings.Split(parts[2], ".") {
+		n, err := strconv.ParseInt(p, 10, 64)
+		if err != nil || n <= 0 {
+			return nil
+		}
+		out = append(out, control.ThreadID(n))
+	}
+	return out
 }
 
 // ParseWakeKey returns the position a wake's key covers and the thread it
@@ -49,6 +80,10 @@ func ParseWakeKey(key string) (to uint64, sv control.ThreadID, ok bool) {
 		return 0, 0, false
 	}
 	if two {
+		var three bool
+		if thread, _, three = strings.Cut(thread, "-"); three && WakeOnly(key) == nil {
+			return 0, 0, false
+		}
 		n, err := strconv.ParseInt(thread, 10, 64)
 		if err != nil || n <= 0 {
 			return 0, 0, false
@@ -73,7 +108,7 @@ func keyFor(stored string, sv control.ThreadID, sentTo func(key string) (control
 			return stored, err
 		}
 	}
-	return WakeKey(sv, to), nil
+	return WakeKey(sv, to, WakeOnly(stored)...), nil
 }
 
 // TurnEnded is the event kind that wakes a supervisor.
@@ -96,6 +131,9 @@ type Ended struct {
 	// after which the thread started no turn for BackgroundWait: it wakes
 	// the supervisor once, saying the background work has not come back.
 	Stale bool
+	// Asked marks a thread the supervisor started for a person, not woken
+	// for yet (#677).
+	Asked bool
 }
 
 // BackgroundWait is how long after a turn end with background tasks
@@ -124,9 +162,10 @@ type Gate interface {
 	// of the others are dropped as read. When it returns none, nothing is
 	// sent.
 	//
-	// A time instead holds the whole wake until then: nothing is dropped,
-	// the turn ends wait, those that come meanwhile are folded in, and
-	// the wake is made again at that time.
+	// With a time, it holds the wake until then: nothing is dropped, the
+	// turn ends wait, those that come meanwhile are folded in, and the
+	// wake is made again at that time. The threads it returns with the
+	// time, if any, go past the hold, in a wake of their own.
 	//
 	// It is asked only when the supervisor's thread is idle or asleep, but
 	// the thread may still start a turn before the wake is sent; the wake
@@ -267,8 +306,9 @@ type waking struct {
 	// the wake.
 	waiting map[control.ThreadID]control.Event
 	stale   map[control.ThreadID]control.Event
-	bg      <-chan time.Time // a step towards the first waiting thread's BackgroundWait
-	caught  bool             // the stored events were read: waits are timed from now on
+	asks    map[control.ThreadID]bool // the threads with a turn end that are marked (#677)
+	bg      <-chan time.Time          // a step towards the first waiting thread's BackgroundWait
+	caught  bool                      // the stored events were read: waits are timed from now on
 }
 
 func (w *Waker) clock() Clock {
@@ -282,7 +322,7 @@ func (w *Waker) run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	r := &waking{w: w, ended: map[control.ThreadID]control.Event{}, own: map[control.ThreadID]bool{},
-		waiting: map[control.ThreadID]control.Event{}, stale: map[control.ThreadID]control.Event{},
+		waiting: map[control.ThreadID]control.Event{}, stale: map[control.ThreadID]control.Event{}, asks: map[control.ThreadID]bool{},
 		api: w.Core.As(control.Caller{Principal: w.Owner, Scopes: []string{w.Scope}, May: control.OpRead | control.OpSend, NoAnswer: true})}
 	if err := r.load(ctx); err != nil {
 		return err
@@ -401,7 +441,7 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 	}
 	if e.Thread == r.sv {
 		// Its own turns never wake it, but end what holds a wake.
-		if r.held && r.quiet == nil && r.later == nil && (e.Kind == TurnEnded || e.Kind == "state") {
+		if r.held && r.quiet == nil && r.free() && (e.Kind == TurnEnded || e.Kind == "state") {
 			return r.attempt(ctx)
 		}
 		return nil
@@ -423,6 +463,18 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 	if err != nil {
 		return err
 	}
+	if !own {
+		// Given already, by a wake that went past a hold: the waker's
+		// position is still before it.
+		if to, err := r.wokenTo(ctx, e.Thread); err != nil || e.Pos <= to {
+			return err
+		}
+		asked, err := r.asked(ctx)
+		if err != nil {
+			return err
+		}
+		r.asks[e.Thread] = asked[e.Thread]
+	}
 	if !own && Waiting(e) {
 		// Not the end of anything yet (#672).
 		r.waiting[e.Thread] = e
@@ -434,11 +486,28 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 	if !Fold(r.ended, e, own) {
 		return nil
 	}
-	// While a gate holds the wake, what comes waits for the hold's end.
-	if r.quiet == nil && r.sending == nil && r.later == nil {
+	// While a gate holds the wake, what comes waits for the hold's end,
+	// unless a person waits for it.
+	if r.quiet == nil && r.sending == nil && (r.later == nil || r.asks[e.Thread]) {
 		r.quiet = r.w.clock().After(r.w.Quiet)
 	}
 	return nil
+}
+
+// free reports whether a wake may be made now for something folded: no
+// gate holds it, or a marked thread's turn end is there.
+func (r *waking) free() bool {
+	if r.later == nil {
+		return true
+	}
+	for id, asked := range r.asks {
+		_, ended := r.ended[id]
+		_, stale := r.stale[id]
+		if asked && (ended || stale) {
+			return true
+		}
+	}
+	return false
 }
 
 // isOwn reports whether thread id is a supervisor's thread, as asked once.
@@ -513,7 +582,7 @@ func (r *waking) background() {
 		}
 		delete(r.waiting, id)
 		r.stale[id] = e
-		if r.quiet == nil && r.sending == nil && r.later == nil {
+		if r.quiet == nil && r.sending == nil && (r.later == nil || r.asks[id]) {
 			r.quiet = r.w.clock().After(r.w.Quiet)
 		}
 	}
@@ -560,8 +629,13 @@ func (r *waking) loadWaiting(ctx context.Context) error {
 	if err := rows.Close(); err != nil {
 		return fmt.Errorf("supervisor: threads waiting on background tasks: %w", err)
 	}
+	asked, err := r.asked(ctx)
+	if err != nil {
+		return err
+	}
 	now := r.w.clock().Now()
 	for _, e := range found {
+		r.asks[e.Thread] = asked[e.Thread]
 		if due := e.Time.Add(BackgroundWait); due.After(now) {
 			r.waiting[e.Thread] = e
 			continue
@@ -685,13 +759,10 @@ func (r *waking) attempt(ctx context.Context) error {
 				}
 			}
 		}
-		to := r.sending.to
-		r.offered(r.sending.stale)
-		r.sending, r.held = nil, false
-		if err := r.advance(ctx, to); err != nil {
+		if err := r.delivered(ctx); err != nil {
 			return err
 		}
-		if !r.empty() && r.quiet == nil {
+		if !r.empty() && r.quiet == nil && r.free() {
 			r.quiet = r.w.clock().After(r.w.Quiet)
 		}
 		return nil
@@ -706,10 +777,7 @@ func (r *waking) attempt(ctx context.Context) error {
 		// ends it named wake no one. A handler that failed is not this
 		// case: the wake is tried again until the plugin is back.
 		r.w.Log.Warn("supervisor wake stopped by a plugin", "scope", r.w.Scope, "thread", int64(sv), "err", ErrText(err))
-		to := r.sending.to
-		r.offered(r.sending.stale)
-		r.sending, r.held = nil, false
-		return r.advance(ctx, to)
+		return r.delivered(ctx)
 	default:
 		r.w.Log.Warn("waking the supervisor; trying again", "scope", r.w.Scope, "thread", int64(sv), "err", ErrText(err))
 		r.retry = r.w.clock().After(max(r.w.Quiet, time.Second))
@@ -763,8 +831,23 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 		threads = append(threads, Ended{Thread: id, Event: e, Stale: true})
 		stale = append(stale, id)
 	}
-	sort.Slice(threads, func(i, j int) bool { return threads[i].Thread < threads[j].Thread })
+	asked, err := r.asked(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	for i := range threads {
+		threads[i].Asked = asked[threads[i].Thread]
+	}
+	// By number, those a person waits for first, so that ThreadsMax never
+	// cuts them off.
+	sort.Slice(threads, func(i, j int) bool {
+		if a, b := threads[i].Asked, threads[j].Asked; a != b {
+			return a
+		}
+		return threads[i].Thread < threads[j].Thread
+	})
 	decided := slices.Clone(r.decided)
+	past := false // only what goes past a hold
 	for _, g := range r.w.Gates {
 		if len(threads) == 0 && len(decided) == 0 {
 			break
@@ -780,7 +863,23 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 				r.until = until
 				r.hold()
 			}
-			return nil, false, nil
+			if len(threads) == 0 {
+				return nil, false, nil
+			}
+			past, decided = true, nil
+		}
+	}
+	if past && len(threads) == 0 {
+		return nil, false, nil // a later gate dropped them; the held ones wait
+	}
+	var only []control.ThreadID
+	if past {
+		stale = nil
+		for _, t := range threads {
+			only = append(only, t.Thread)
+			if t.Stale {
+				stale = append(stale, t.Thread)
+			}
 		}
 	}
 	if len(threads) == 0 && len(decided) == 0 {
@@ -807,7 +906,7 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	w := &wake{to: r.read, key: WakeKey(r.sv, r.read), text: text, threads: threads, stale: stale}
+	w := &wake{to: r.read, key: WakeKey(r.sv, r.read, only...), text: text, threads: threads, stale: stale}
 	if r.w.Files != nil {
 		changes, err := r.w.Files.Changed(ctx, r.w.Scope, r.sv)
 		if err != nil {
@@ -823,6 +922,36 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 		}
 	}
 	return w, true, nil
+}
+
+// delivered stores the wake that was sent as given, and clears the marks
+// of the threads it gave. A wake past a hold handled its own threads' turn
+// ends only: the position stays before what a gate holds.
+func (r *waking) delivered(ctx context.Context) error {
+	w := r.sending
+	ids := Named(w.text) // a wake stored by an earlier run
+	if w.threads != nil {
+		ids = nil
+		for _, t := range w.threads {
+			ids = append(ids, t.Thread)
+		}
+	}
+	clear, err := r.woke(ctx, ids, w.to)
+	if err != nil {
+		return err
+	}
+	r.offered(w.stale)
+	r.sending, r.held = nil, false
+	only := WakeOnly(w.key)
+	if only == nil {
+		return r.advance(ctx, w.to, clear)
+	}
+	for _, id := range only {
+		if e, ok := r.ended[id]; ok && e.Pos <= w.to {
+			delete(r.ended, id)
+		}
+	}
+	return r.store(ctx, clear)
 }
 
 // turned posts the line that names the user's files that changed by the
@@ -1061,7 +1190,7 @@ func DigestOf(threads []Ended, decided []control.Event, thread func(control.Thre
 
 // advance stores to as handled, and forgets the turn ends and the
 // decisions up to it.
-func (r *waking) advance(ctx context.Context, to uint64) error {
+func (r *waking) advance(ctx context.Context, to uint64, also ...func(*store.Tx) error) error {
 	for id, e := range r.ended {
 		if e.Pos <= to {
 			delete(r.ended, id)
@@ -1069,7 +1198,7 @@ func (r *waking) advance(ctx context.Context, to uint64) error {
 	}
 	r.decided = slices.DeleteFunc(r.decided, func(e control.Event) bool { return e.Pos <= to })
 	r.pos = max(r.pos, to)
-	return r.store(ctx)
+	return r.store(ctx, also...)
 }
 
 // load reads the stored position and wake. A scope seen for the first time
@@ -1125,7 +1254,7 @@ func Begin(ctx context.Context, c *core.Core, scope string) error {
 }
 
 // store writes the position and the wake being sent.
-func (r *waking) store(ctx context.Context) error {
+func (r *waking) store(ctx context.Context, also ...func(*store.Tx) error) error {
 	var to, key, text, files any
 	if s := r.sending; s != nil {
 		to, key, text = int64(s.to), s.key, s.text
@@ -1137,6 +1266,16 @@ func (r *waking) store(ctx context.Context) error {
 	err := r.w.Core.Store.Update(ctx, func(tx *store.Tx) error {
 		_, err := tx.ExecContext(ctx, `UPDATE supervisor_wakes SET pos = ?, send_to = ?, send_key = ?, send_text = ?, send_files = ? WHERE scope = ?`,
 			int64(r.pos), to, key, text, files, r.w.Scope)
+		if err != nil {
+			return err
+		}
+		for _, f := range also {
+			if err := f(tx); err != nil {
+				return err
+			}
+		}
+		// A cleared mark is needed only while its turn end may be read again.
+		_, err = tx.ExecContext(ctx, `DELETE FROM supervisor_asked WHERE scope = ? AND woken <= ?`, r.w.Scope, int64(r.pos))
 		return err
 	})
 	if err != nil {

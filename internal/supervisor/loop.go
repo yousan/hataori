@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -227,14 +228,17 @@ func (g *LoopGuard) count(ctx context.Context, w control.ThreadID, svReset uint6
 			return 0, 0, fmt.Errorf("supervisor: loop guard: %w", err)
 		}
 		if to, _, ok := ParseWakeKey(key); ok {
-			wakes = append(wakes, to)
+			if only := WakeOnly(key); only == nil || slices.Contains(only, w) {
+				wakes = append(wakes, to) // one past a hold gave only those (#677)
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return 0, 0, fmt.Errorf("supervisor: loop guard: %w", err)
 	}
 	sort.Slice(wakes, func(i, j int) bool { return wakes[i] < wakes[j] })
-	// Each end was told by the first wake that covers its position.
+	// Each end was told by the first wake that covers its position and its
+	// thread.
 	told := map[uint64]bool{}
 	for _, p := range ends {
 		i := sort.Search(len(wakes), func(i int) bool { return wakes[i] >= p })

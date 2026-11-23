@@ -233,6 +233,7 @@ func (s *Sessions) APIOf(scope string, thread control.ThreadID, autonomy string)
 		api = b.API(api)
 	}
 	api = Repos(api, scope, s.Scopes[scope].Repos, s.Log)
+	api = &asking{API: api, core: s.Core, scope: scope, thread: thread, log: s.Log}
 	api = Reads(api, scope, s.Scopes[scope].Repos, s.Forges, s.Scopes[scope].Trusted, s.Build, s.Log)
 	if autonomy == Watch {
 		api = &watching{API: api, scope: scope, log: s.Log}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -203,7 +204,8 @@ func (l Limits) over(u Used) (what, kinds []string, until time.Time) {
 
 // Admit holds a wake while the budget is used up, until the windows of
 // every limit reached have ended, and tells a person so, once for that
-// end and those limits. It is the budget's Gate.
+// end and those limits. A thread the supervisor started for a person goes
+// past the hourly limits (Ended.Asked). It is the budget's Gate.
 func (b *Budget) Admit(ctx context.Context, scope string, threads []Ended) ([]Ended, time.Time, error) {
 	u, err := b.Used(ctx)
 	if err != nil {
@@ -214,7 +216,18 @@ func (b *Budget) Admit(ctx context.Context, scope string, threads []Ended) ([]En
 		return threads, time.Time{}, nil
 	}
 	b.tell(ctx, u, what, kinds, until)
-	return nil, until, nil
+	// The hourly limits do not hold a thread a person waits for (#677);
+	// the day's tokens do.
+	if slices.Contains(kinds, "tokens") {
+		return nil, until, nil
+	}
+	var asked []Ended
+	for _, t := range threads {
+		if t.Asked {
+			asked = append(asked, t)
+		}
+	}
+	return asked, until, nil
 }
 
 // NoticeKeyPrefix starts the key of a budget notice; the rest is the end
@@ -224,10 +237,16 @@ const NoticeKeyPrefix = "hataori-budget-"
 
 // Notice is the line that tells a person the budget is used up: what
 // reached its limit, and until when the supervisor is not woken; with
-// refused, that its sends and starts are refused until refusedUntil.
-func Notice(what []string, until time.Time, refused bool, refusedUntil time.Time) string {
-	s := fmt.Sprintf("The supervisor's budget for this channel is used up: %s. It is not woken until %s; what happens in the channel until then is told to it then.",
-		strings.Join(what, ", "), until.Format("2006-01-02 15:04 MST"))
+// refused, that its sends and starts are refused until refusedUntil; with
+// hourly, that only the hour's limits are reached, which a thread it
+// started for a person goes past.
+func Notice(what []string, until time.Time, hourly, refused bool, refusedUntil time.Time) string {
+	except := ""
+	if hourly {
+		except = ", except for a thread it started for a person's question"
+	}
+	s := fmt.Sprintf("The supervisor's budget for this channel is used up: %s. It is not woken until %s%s; what else happens in the channel until then is told to it then.",
+		strings.Join(what, ", "), until.Format("2006-01-02 15:04 MST"), except)
 	if refused {
 		s += fmt.Sprintf(" Its sends and starts are refused until %s.", refusedUntil.Format("2006-01-02 15:04 MST"))
 	}
@@ -238,7 +257,7 @@ func Notice(what []string, until time.Time, refused bool, refusedUntil time.Time
 // until, the end of its hold, and the limits reached.
 func (b *Budget) tell(ctx context.Context, u Used, what, kinds []string, until time.Time) {
 	refused := b.Limits.Sends > 0 && u.Sends >= b.Limits.Sends
-	text := Notice(what, until, refused, u.Hour.Add(time.Hour))
+	text := Notice(what, until, !slices.Contains(kinds, "tokens"), refused, u.Hour.Add(time.Hour))
 	sv, _, err := b.Core.LastConfined(ctx, b.Scope)
 	if err == nil && sv != 0 && b.Tell != nil {
 		err = b.Tell(ctx, sv, NoticeKeyPrefix+until.UTC().Format(time.RFC3339)+"-"+strings.Join(kinds, "+"), text)
