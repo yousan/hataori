@@ -50,7 +50,24 @@ const (
 	ToolSend      = "send_to_thread"
 	ToolInterrupt = "interrupt_thread"
 	ToolStart     = "start_thread"
+
+	// The forge's reads (design, section 7.1), since protocol 3.27.
+	ToolIssues = "list_issues"
+	ToolIssue  = "read_issue"
+	ToolPulls  = "list_pulls"
+	ToolPull   = "read_pull"
+	ToolChecks = "read_checks"
 )
+
+// ForgeMax is the most bytes of a forge tool's answer; a longer one is cut,
+// with a line that says so.
+const ForgeMax = 16 * 1024
+
+// forgeReads are the reads of the forge tools.
+var forgeReads = map[string]string{
+	ToolIssues: control.ForgeReadIssues, ToolIssue: control.ForgeReadIssue, ToolPulls: control.ForgeReadPulls,
+	ToolPull: control.ForgeReadPull, ToolChecks: control.ForgeReadChecks,
+}
 
 // protocols are the MCP versions the server speaks, newest first.
 var protocols = []string{"2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"}
@@ -97,6 +114,14 @@ func object(props map[string]any, required ...string) map[string]any {
 
 var number = map[string]any{"type": "integer", "description": "the thread's number, as list_threads shows it"}
 
+var (
+	forgeRepo = map[string]any{"type": "string", "description": "the repository, as <owner>/<name>; one of this channel's repositories"}
+	listState = map[string]any{"type": "string", "description": "which to list: open, the default, closed or all", "enum": []string{control.ForgeOpen, control.ForgeClosed, control.ForgeAll}}
+)
+
+// withheldNote is what the forge tools' descriptions say of withheld text.
+const withheldNote = " Text by an author without write access to the repository is withheld, unless this channel trusts them; the answer names the author."
+
 // tools is what tools/list returns.
 var tools = []tool{
 	{ToolList, "List the threads of this channel: number, state, title, who started it, and the last line of output.",
@@ -114,6 +139,16 @@ var tools = []tool{
 			"model":  map[string]any{"type": "string", "description": "the model; leave out for the channel's default"},
 			"effort": map[string]any{"type": "string", "description": "the effort; leave out for the channel's default", "enum": control.Efforts},
 		}, "repo", "text")},
+	{ToolIssues, "List the issues of one of this channel's repositories on its forge, read only: number, state, title, author, labels, assignees, last change." + withheldNote,
+		object(map[string]any{"repo": forgeRepo, "state": listState}, "repo")},
+	{ToolIssue, "Read one issue of one of this channel's repositories on its forge, read only, with its comments." + withheldNote,
+		object(map[string]any{"repo": forgeRepo, "number": map[string]any{"type": "integer", "description": "the issue's number"}}, "repo", "number")},
+	{ToolPulls, "List the pull requests of one of this channel's repositories on its forge, read only: number, state, draft, title, branch, author, last change." + withheldNote,
+		object(map[string]any{"repo": forgeRepo, "state": listState}, "repo")},
+	{ToolPull, "Read one pull request of one of this channel's repositories on its forge, read only: its reviews, comments, changed files, merge state, merge commit and the checks of its head. No CI log is read." + withheldNote,
+		object(map[string]any{"repo": forgeRepo, "number": map[string]any{"type": "integer", "description": "the pull request's number"}}, "repo", "number")},
+	{ToolChecks, "Read the checks and commit statuses of a branch, a tag or a commit of one of this channel's repositories on its forge, read only: name, state, conclusion, address. No CI log is read.",
+		object(map[string]any{"repo": forgeRepo, "ref": map[string]any{"type": "string", "description": "the branch, tag or commit"}}, "repo", "ref")},
 }
 
 // Serve answers MCP requests read from r, one JSON-RPC message per line,
@@ -166,7 +201,8 @@ func (m *MCP) handle(ctx context.Context, msg rpcMessage) (any, *rpcError) {
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "hataori", "version": m.Version},
 			"instructions": "Tools for the threads of this channel. You can list, read, start and send; " +
-				"you can ask a person to approve interrupting a running turn. Your messages reach a thread marked as the supervisor's.",
+				"you can ask a person to approve interrupting a running turn. Your messages reach a thread marked as the supervisor's. " +
+				"You can read the issues, pull requests and checks of this channel's repositories, read only.",
 		}, nil
 	case "ping":
 		return map[string]any{}, nil
@@ -222,20 +258,39 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 		Repo   string `json:"repo"`
 		Model  string `json:"model"`
 		Effort string `json:"effort"`
+		State  string `json:"state"`
+		Ref    string `json:"ref"`
 	}
 	if len(raw) > 0 && string(raw) != "null" {
 		if err := json.Unmarshal(raw, &a); err != nil {
 			return "", fmt.Errorf("bad arguments: %v", err)
 		}
 	}
+	read, isForge := forgeReads[name]
 	switch name {
 	case ToolList, ToolRead, ToolSend, ToolInterrupt, ToolStart:
 	default:
-		return "", fmt.Errorf("no tool %q", name)
+		if !isForge {
+			return "", fmt.Errorf("no tool %q", name)
+		}
 	}
 	api, err := m.connect()
 	if err != nil {
 		return "", err
+	}
+	if isForge {
+		if strings.TrimSpace(a.Repo) == "" {
+			return "", errors.New("bad arguments: repo is required")
+		}
+		r := control.ForgeRequest{Repo: a.Repo, Read: read, State: a.State, Ref: a.Ref}
+		if a.Number != nil {
+			r.Number = int(*a.Number)
+		}
+		ans, err := api.Forge(ctx, r)
+		if err != nil {
+			return "", errors.New(cut(reason(err).Error(), ForgeMax))
+		}
+		return cut(forgeText(ans, r), ForgeMax), nil
 	}
 	switch name {
 	case ToolList:
@@ -343,6 +398,8 @@ func reason(err error) error {
 		return fmt.Errorf("not allowed: %v", err)
 	case errors.Is(err, core.ErrDisabled):
 		return fmt.Errorf("not allowed: the channel is not enabled")
+	case errors.Is(err, control.ErrNotSupported):
+		return fmt.Errorf("not allowed: hataori does not answer this here: %v", err)
 	}
 	return fmt.Errorf("failed: %v", err)
 }

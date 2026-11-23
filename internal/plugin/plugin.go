@@ -42,7 +42,7 @@ var points = map[string]Failure{
 
 // operations are the operations of the control protocol, as
 // docs/protocol.md lists them; a test keeps the two equal.
-var operations = []string{"Answer", "AskInterrupt", "AttachTerminal", "Clients", "Close", "End", "Events", "HostKeys", "HostScreen", "HostTerminals", "HostView", "Layout", "Limits", "Link",
+var operations = []string{"Answer", "AskInterrupt", "AttachTerminal", "Clients", "Close", "End", "Events", "Forge", "HostKeys", "HostScreen", "HostTerminals", "HostView", "Layout", "Limits", "Link",
 	"OperateHost", "Release", "Remove", "Scopes", "Send", "SetLayout", "SetName", "SignInLink", "Start", "Stop", "TakeIn", "Terminal", "Thread", "ThreadEvents", "Threads", "Workspace"}
 
 // never are the operations no plugin is given, whatever its manifest and
@@ -50,9 +50,10 @@ var operations = []string{"Answer", "AskInterrupt", "AttachTerminal", "Clients",
 // or typed into; a terminal attached to an agent, which reaches the agent
 // past the core's checks; closing or removing a thread, which ends or
 // deletes a person's work; and taking in a window a person started, or
-// letting it go.
+// letting it go; and reading a forge, which only a supervisor's
+// connection does, with the forge's token.
 var never = []string{"SignInLink", "HostTerminals", "HostScreen", "HostView", "OperateHost", "HostKeys", "End",
-	"AttachTerminal", "Close", "Remove", "TakeIn", "Release"}
+	"AttachTerminal", "Close", "Remove", "TakeIn", "Release", "Forge"}
 
 // classes are the classes of Caller.May that the operations a plugin may
 // be given need; the core checks the operation's name besides

@@ -120,6 +120,7 @@ func examples(t *testing.T) map[string]any {
 		"HostView":       hostScreenArgs{Pane: "%3"},
 		"Limits":         limitsArgs{},
 		"Clients":        clientsArgs{},
+		"Forge":          control.ForgeRequest{Repo: "acme/widgets", Read: control.ForgeReadPull, Number: 42},
 		"AttachTerminal": attachTerminalArgs{ID: exampleID},
 		"OperateHost":    operateHostArgs{Pane: "%3"},
 		"HostKeys": hostKeysArgs{Keys: []control.HostKey{{Key: "C-c"}, {Text: "make test"}, {Key: "Enter"},
@@ -166,6 +167,22 @@ func examples(t *testing.T) map[string]any {
 		"OperateHost":    hostOperation{Idle: 300},
 		"AttachTerminal": control.Attachment{Socket: "/srv/hataori/state/sessions/7/host.sock", Number: 7},
 		"Clients":        []control.ClientState{{Client: "discord", Connected: false, Since: exampleTime}},
+		"Forge": control.ForgeAnswer{Repo: "acme/widgets", Pull: &control.ForgePullDetail{
+			ForgePull: control.ForgePull{Number: 42, Title: "Fix the build", State: "open", Branch: "fix-build", Base: "main",
+				Author: control.ForgeAuthor{Login: "alice", Write: true}, Updated: exampleTime, URL: "https://forge.example.com/acme/widgets/pull/42"},
+			Body: "Closes #41.", Head: "9fceb02d0ae598e95dc970b74767f19372d61af8", MergeState: "clean",
+			Reviews: control.ForgeReviewList{Items: []control.ForgeReview{
+				{Author: control.ForgeAuthor{Login: "bob", Write: true}, State: "APPROVED", Body: "Looks good.", Submitted: exampleTime,
+					URL: "https://forge.example.com/acme/widgets/pull/42#review-1"},
+				{Author: control.ForgeAuthor{Login: "stranger"}, State: "COMMENTED", Submitted: exampleTime,
+					URL: "https://forge.example.com/acme/widgets/pull/42#review-2", Withheld: true}}},
+			Comments: control.ForgeCommentList{Items: []control.ForgeComment{}},
+			ReviewComments: control.ForgeCommentList{Items: []control.ForgeComment{{Author: control.ForgeAuthor{Login: "bob", Write: true},
+				Body: "Why this change?", Path: "build.sh", Created: exampleTime, URL: "https://forge.example.com/acme/widgets/pull/42#comment-3"}}},
+			Files: control.ForgeFileList{Items: []control.ForgeFile{{Path: "build.sh", Status: "modified", Additions: 3, Deletions: 1}}, More: true},
+			Checks: control.ForgeChecks{Commit: "9fceb02d0ae598e95dc970b74767f19372d61af8", State: "pending", Items: []control.ForgeCheck{
+				{Kind: "check_run", Name: "test", State: "completed", Conclusion: "success", URL: "https://forge.example.com/acme/widgets/runs/5"},
+				{Kind: "status", Name: "deploy/preview", State: "pending"}}}}},
 		"Limits": []control.AgentLimits{{Agent: "claude-code", At: exampleTime, Every: 300, Windows: []control.LimitWindow{
 			{Name: "five_hour", Minutes: 300, Used: 4, Resets: &exampleTime},
 			{Name: "seven_day", Minutes: 10080, Used: 21, Resets: &exampleTime}}}},

@@ -16,8 +16,9 @@ import (
 )
 
 // ErrNotSupported is the answer to a request whose operation the other
-// side does not know.
-var ErrNotSupported = errors.New("not supported")
+// side does not know, and the core's to an operation it does not answer
+// (control.ErrNotSupported).
+var ErrNotSupported = control.ErrNotSupported
 
 // Handler answers the requests the other side of a connection sends.
 // It returns ErrNotSupported for an operation it does not know.

@@ -162,6 +162,10 @@ type Checks struct {
 
 // Forge reads one forge. Implementations send only reads.
 type Forge interface {
+	// Serves returns the repository of address, a repository's address as
+	// an order's repo: names it, when the repository is on this forge;
+	// false for any other address. It sends nothing.
+	Serves(address string) (Repo, bool)
 	// Issues lists issues, excluding pull requests.
 	Issues(ctx context.Context, repo Repo, state State) (List[Issue], error)
 	// Issue reads one issue with its comments.

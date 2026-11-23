@@ -16,6 +16,7 @@ import (
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
+	"github.com/yousan/hataori/internal/forge"
 	"github.com/yousan/hataori/internal/runner"
 	"github.com/yousan/hataori/internal/workspace"
 )
@@ -64,6 +65,9 @@ type Scope struct {
 	// do on its own (Caller). It is read when the token is bound, at each
 	// launch and after a restart.
 	Autonomy string
+	// Trusted are the logins whose text on a forge it is given though they
+	// have no write access (supervisor.trusted_authors).
+	Trusted []string
 }
 
 // Sessions is the supervisors' part of the daemon (design, section 7.1): it
@@ -83,7 +87,10 @@ type Sessions struct {
 	// Budgets are the scopes' budgets, by key: a scope's sends and starts
 	// are counted, and refused over budget, on its token's connection.
 	Budgets map[string]*Budget
-	Log     *slog.Logger
+	// Forges are the forges the daemon reads for its supervisors, by name
+	// (Reads). Their tokens stay in them.
+	Forges map[string]forge.Forge
+	Log    *slog.Logger
 
 	mu     sync.Mutex
 	issued map[control.ThreadID]issued // by thread: the token of its newest session
@@ -180,6 +187,7 @@ func (s *Sessions) APIOf(scope string, thread control.ThreadID, autonomy string)
 		api = b.API(api)
 	}
 	api = Repos(api, scope, s.Scopes[scope].Repos, s.Log)
+	api = Reads(api, scope, s.Scopes[scope].Repos, s.Forges, s.Scopes[scope].Trusted, s.Log)
 	if autonomy == Watch {
 		api = &watching{API: api, scope: scope, log: s.Log}
 	}

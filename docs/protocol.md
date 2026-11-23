@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.26**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.27**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -479,6 +479,20 @@ Since 3.22. Whether each chat client is connected to its chat service: one entry
 
 Result: [`ClientState`]
 
+### Operation `Forge`
+
+Since 3.27. One read of a forge, read only, for a repository of the caller's scope (design, section 7.1): its issues, one issue with its comments, its pull requests, one pull request with its reviews, comments, changed files, merge state, merge commit and the checks of its head, or the checks and commit statuses of a branch, a tag or a commit. Only the daemon answers it, on a supervisor's token connection, for a repository its scope lists under `supervisor.repos`, named as listed there or by its forge name (`<owner>/<name>`, of any case), that has a forge name and a forge of the instance (`forges`) that serves its address; any other repository is `forbidden`, and nothing is read. Every other connection reaches the core, which answers `not_supported`. The daemon makes the request with the forge's token, which no message carries. Text written by an author without write access to the repository (a title, a pull request's branch, a body, a comment, a review) is left out unless the scope's `supervisor.trusted_authors` lists that login; the item then has `withheld` and still names its author. In a pull request so withheld, the paths of its changed files and of the comments on them, and the names of its head's checks, are left out too. A `checks` read leaves out the names of the checks of a ref that is a commit (4 to 40 hexadecimal digits) or a pull request's ref (one with a part `pull`), since whoever wrote that commit may have named them; a branch or a tag has them. The answer is the daemon's: the text left out never goes on the socket. No CI log is read. A forge's refusal or rate limit is `error`, with the forge's reason in its message. A daemon before 3.27 answers `not_supported`.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `repo` | string | required | the repository, as `supervisor.repos` lists it or by its forge name |
+| `read` | string | required | `issues`, `issue`, `pulls`, `pull` or `checks` |
+| `number` | integer | optional | the issue's or the pull request's number, for `issue` and `pull` |
+| `ref` | string | optional | the branch, tag or commit, for `checks` |
+| `state` | string | optional | for `issues` and `pulls`: `open`, the default, `closed` or `all` |
+
+Result: `ForgeAnswer`
+
 ## Requests the daemon sends
 
 Since 3.16. The daemon sends these to a plugin, on a connection made with the plugin's token that is not a stream: the oldest such connection that is still open. A connection that becomes a stream takes none from then on, so a plugin keeps one connection for requests, as the project's client does, and follows events on others. Until the daemon has read a connection's first request, it does not know that the connection will be a stream, and may send a request on it: a client skips such a line, unanswered, on its stream, and the daemon counts the request as failed once the stream starts. A plugin that does not know one answers `not_supported`, as for any request.
@@ -885,6 +899,214 @@ Since 1.13.
 | `minutes` | integer | optional | its length; absent when the agent does not say |
 | `used` | integer | required | the share used, in percent, 0 to 100 |
 | `resets` | time | optional | when it starts again; absent when the agent does not say |
+
+### Type `ForgeAnswer`
+
+The result of `Forge`: the one read asked for, in its field. Since 3.27.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `repo` | string | required | the forge name of the repository read |
+| `issues` | `ForgeIssueList` | optional | of `issues` |
+| `issue` | `ForgeIssueDetail` | optional | of `issue` |
+| `pulls` | `ForgePullList` | optional | of `pulls` |
+| `pull` | `ForgePullDetail` | optional | of `pull` |
+| `checks` | `ForgeChecks` | optional | of `checks` |
+
+### Type `ForgeAuthor`
+
+Who wrote an item's text, as the forge says. Since 3.27.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `login` | string | required | the author's login on the forge |
+| `write` | boolean | optional | the author has write access to the repository |
+
+### Type `ForgeIssue`
+
+One issue of a list. Since 3.27.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `number` | integer | required | its number |
+| `title` | string | optional | text; absent when withheld |
+| `state` | string | required | `open` or `closed` |
+| `author` | `ForgeAuthor` | required | who opened it |
+| `labels` | [string] | optional | its labels |
+| `assignees` | [string] | optional | the logins it is assigned to |
+| `updated` | time | required | its last change |
+| `url` | string | required | the page a person opens |
+| `withheld` | boolean | optional | its author has no write access and the scope does not trust them: its title and body are left out |
+
+### Type `ForgeIssueList`
+
+Since 3.27.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `items` | [`ForgeIssue`] | required | the issues read, at most the forge adapter's fixed number |
+| `more` | boolean | optional | the forge has more than were read |
+
+### Type `ForgeIssueDetail`
+
+An issue with its body and its comments: the fields of `ForgeIssue`, and these. Since 3.27.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `number` | integer | required | as in `ForgeIssue` |
+| `title` | string | optional | as in `ForgeIssue` |
+| `state` | string | required | as in `ForgeIssue` |
+| `author` | `ForgeAuthor` | required | as in `ForgeIssue` |
+| `labels` | [string] | optional | as in `ForgeIssue` |
+| `assignees` | [string] | optional | as in `ForgeIssue` |
+| `updated` | time | required | as in `ForgeIssue` |
+| `url` | string | required | as in `ForgeIssue` |
+| `withheld` | boolean | optional | as in `ForgeIssue` |
+| `body` | string | optional | text; absent when withheld |
+| `comments` | `ForgeCommentList` | required | its comments, each withheld by its own author |
+
+### Type `ForgeComment`
+
+A comment on a conversation, or on a line of a changed file. Since 3.27.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `author` | `ForgeAuthor` | required | who wrote it |
+| `body` | string | optional | text; absent when withheld |
+| `path` | string | optional | the file a comment on a changed line is on; absent in a withheld pull request, whose author wrote it |
+| `created` | time | required | when it was written |
+| `url` | string | required | its page |
+| `withheld` | boolean | optional | its text is left out, as for `ForgeIssue` |
+
+### Type `ForgeCommentList`
+
+Since 3.27.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `items` | [`ForgeComment`] | required | the comments read, oldest first |
+| `more` | boolean | optional | the forge has more than were read |
+
+### Type `ForgePull`
+
+One pull request of a list. Since 3.27.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `number` | integer | required | its number |
+| `title` | string | optional | text; absent when withheld |
+| `state` | string | required | `open`, `closed` or `merged` |
+| `draft` | boolean | optional | it is a draft |
+| `branch` | string | optional | its head branch; absent when withheld, since its author named it |
+| `base` | string | required | the branch it is to be merged into |
+| `author` | `ForgeAuthor` | required | who opened it |
+| `updated` | time | required | its last change |
+| `url` | string | required | the page a person opens |
+| `withheld` | boolean | optional | its author has no write access and the scope does not trust them: its title, branch and body are left out |
+
+### Type `ForgePullList`
+
+Since 3.27.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `items` | [`ForgePull`] | required | the pull requests read, at most the forge adapter's fixed number |
+| `more` | boolean | optional | the forge has more than were read |
+
+### Type `ForgePullDetail`
+
+A pull request with its discussion, its changed files, its merge state and the checks of its head: the fields of `ForgePull`, and these. Since 3.27.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `number` | integer | required | as in `ForgePull` |
+| `title` | string | optional | as in `ForgePull` |
+| `state` | string | required | as in `ForgePull` |
+| `draft` | boolean | optional | as in `ForgePull` |
+| `branch` | string | optional | as in `ForgePull` |
+| `base` | string | required | as in `ForgePull` |
+| `author` | `ForgeAuthor` | required | as in `ForgePull` |
+| `updated` | time | required | as in `ForgePull` |
+| `url` | string | required | as in `ForgePull` |
+| `withheld` | boolean | optional | as in `ForgePull` |
+| `body` | string | optional | text; absent when withheld |
+| `head` | string | required | its head commit |
+| `merged` | boolean | optional | it was merged |
+| `merge_commit` | string | optional | the merge commit, once merged |
+| `merge_state` | string | optional | the forge's word for whether it can be merged; absent when the forge gives none |
+| `reviews` | `ForgeReviewList` | required | its reviews |
+| `comments` | `ForgeCommentList` | required | the comments on its conversation |
+| `review_comments` | `ForgeCommentList` | required | the comments on lines of its changed files |
+| `files` | `ForgeFileList` | required | its changed files |
+| `checks` | `ForgeChecks` | required | the checks of its head commit |
+
+### Type `ForgeReview`
+
+A person's review of a pull request. Since 3.27.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `author` | `ForgeAuthor` | required | who reviewed |
+| `state` | string | required | the forge's word, such as `APPROVED`, `CHANGES_REQUESTED` or `COMMENTED` |
+| `body` | string | optional | text; absent when withheld |
+| `submitted` | time | required | when it was submitted |
+| `url` | string | required | its page |
+| `withheld` | boolean | optional | its text is left out, as for `ForgeIssue` |
+
+### Type `ForgeReviewList`
+
+Since 3.27.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `items` | [`ForgeReview`] | required | the reviews read |
+| `more` | boolean | optional | the forge has more than were read |
+
+### Type `ForgeFile`
+
+One file a pull request changes. Since 3.27.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `path` | string | optional | its path, which the pull request's author wrote; absent when withheld |
+| `previous` | string | optional | its path before a rename; absent when withheld |
+| `status` | string | required | the forge's word, such as `added`, `removed`, `modified` or `renamed` |
+| `additions` | integer | required | lines added |
+| `deletions` | integer | required | lines removed |
+| `withheld` | boolean | optional | the pull request is withheld, so its paths are left out |
+
+### Type `ForgeFileList`
+
+Since 3.27.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `items` | [`ForgeFile`] | required | the changed files read |
+| `more` | boolean | optional | the forge has more than were read |
+
+### Type `ForgeCheck`
+
+One check run or commit status, without its log or its output. Since 3.27.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `kind` | string | required | `check_run` or `status` |
+| `name` | string | optional | its name; absent when withheld: a check of the head of a withheld pull request, or of a commit or a pull request's ref in a `checks` read, which whoever wrote the commit may have named |
+| `state` | string | required | a check run's state (`queued`, `in_progress`, `completed`, ...) or a status's (`pending`, `success`, `failure`, `error`) |
+| `conclusion` | string | optional | a completed check run's: `success`, `failure`, `neutral`, `cancelled`, `skipped`, `timed_out` or `action_required` |
+| `url` | string | optional | its page; absent when withheld, since a commit status's poster gives it |
+| `withheld` | boolean | optional | its name and its page are left out |
+
+### Type `ForgeChecks`
+
+The checks and commit statuses of one commit. Since 3.27.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `commit` | string | required | the commit they are of |
+| `state` | string | optional | the combined commit status; absent without statuses |
+| `items` | [`ForgeCheck`] | required | check runs first, then commit statuses |
+| `more` | boolean | optional | the forge has more than were read |
 
 ### Type `Event`
 

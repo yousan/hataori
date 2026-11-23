@@ -525,6 +525,14 @@ func (c *Client) Clients(ctx context.Context) ([]control.ClientState, error) {
 	return out, err
 }
 
+// Forge is control.API.Forge. A daemon before 3.27 answers
+// not_supported, as the core does.
+func (c *Client) Forge(ctx context.Context, r control.ForgeRequest) (control.ForgeAnswer, error) {
+	var out control.ForgeAnswer
+	err := c.call(ctx, "Forge", r, &out)
+	return out, err
+}
+
 // AttachTerminal is control.API.AttachTerminal. It waits as long as the
 // daemon does for a thread that is being woken.
 func (c *Client) AttachTerminal(ctx context.Context, id control.ThreadID) (control.Attachment, error) {

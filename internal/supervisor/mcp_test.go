@@ -54,7 +54,7 @@ var four = []string{ToolList, ToolRead, ToolSend, ToolStart}
 // What Claude Code sent is answered as it was then: every request gets one
 // answer with its id and initialize in the version Claude Code asked for.
 // The four captured tools are what Claude Code was given then; the current
-// server also offers interrupt_thread.
+// server also offers interrupt_thread and the forge's tools.
 func TestClaudeCodeToolsList(t *testing.T) {
 	client, err := os.ReadFile(filepath.Join(captured, "client.jsonl"))
 	if err != nil {
@@ -97,14 +97,15 @@ func TestClaudeCodeToolsList(t *testing.T) {
 				t.Fatalf("initialize answered %v, Claude Code asked for %v", v, asked)
 			}
 		case "tools/list":
-			if names := toolNames(t, r["result"]); !slices.Equal(names, []string{ToolList, ToolRead, ToolSend, ToolInterrupt, ToolStart}) {
-				t.Fatalf("tools/list gives %v, want the five current tools", names)
+			current := []string{ToolList, ToolRead, ToolSend, ToolInterrupt, ToolStart, ToolIssues, ToolIssue, ToolPulls, ToolPull, ToolChecks}
+			if names := toolNames(t, r["result"]); !slices.Equal(names, current) {
+				t.Fatalf("tools/list gives %v, want the current tools %v", names, current)
 			}
 			// Compare the tools Claude Code was given in the capture.
 			result := r["result"].(map[string]any)
 			var capturedTools []any
 			for _, item := range result["tools"].([]any) {
-				if item.(map[string]any)["name"] != ToolInterrupt {
+				if n := item.(map[string]any)["name"].(string); slices.Contains(four, n) {
 					capturedTools = append(capturedTools, item)
 				}
 			}

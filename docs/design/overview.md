@@ -593,7 +593,7 @@ One limit is not enforced by this: the supervisor can *ask* a worker thread to m
 - a repository's pull requests: number, title, state, draft, branch, last change; one pull request with its reviews, comments, changed files, merge state and merge commit, and the checks of its head;
 - the checks and commit statuses of a branch or a commit: name, state, conclusion, address.
 
-Each read is a tool of `hataori mcp` and goes through one new control API operation, `Forge`, which the daemon's supervisor client answers on a supervisor's token connection only, for a repository its scope lists; any other caller or repository is refused. The daemon makes the request, not `hataori mcp` and not the session, with a token that the operator puts under `config/` and names in the config's `forges` section. The token is in no session's environment or MCP config, and in no event or log line. The adapter sends only reads (for GitHub, `GET` requests of its REST API), and a test fails if it can send anything else; the configuration documents a token with read access only, so that a fault cannot write either. An answer is cut to a fixed size, with a line that says so, and a forge's refusal or rate limit is a tool error with the forge's reason. Text written by someone without write access to the repository (a title, a body, a comment, a review) is withheld: the answer names the author and says that the text was withheld, unless `scopes[].supervisor.trusted_authors` lists that login. For GitHub, write access is the `author_association` `OWNER`, `MEMBER` or `COLLABORATOR`. CI logs are not read. Its code reads what a forge produced, so it is tested against real captured answers under `testdata/`. *Why:* "done" should mean something the supervisor checked. A stranger's text is where an instruction aimed at the supervisor would come from, and a log holds whatever a pull request's code prints.
+Each read is a tool of `hataori mcp` and goes through one new control API operation, `Forge`, which the daemon's supervisor client answers on a supervisor's token connection only, for a repository its scope lists; any other caller or repository is refused. The daemon makes the request, not `hataori mcp` and not the session, with a token that the operator puts under `config/` and names in the config's `forges` section. The token is in no session's environment or MCP config, and in no event or log line. The adapter sends only reads (for GitHub, `GET` requests of its REST API), and a test fails if it can send anything else; the configuration documents a token with read access only, so that a fault cannot write either. An answer is cut to a fixed size, with a line that says so, and a forge's refusal or rate limit is a tool error with the forge's reason. Text written by someone without write access to the repository (a title, a body, a comment, a review) is withheld: the answer names the author and says that the text was withheld, unless `scopes[].supervisor.trusted_authors` lists that login. For GitHub, write access is the `author_association` `OWNER`, `MEMBER` or `COLLABORATOR`. In such an author's pull request, its branch, the paths of its changed files and of the comments on them, and the names of its head's checks are withheld too, since its author wrote the files and the workflows that name the checks; for the same reason, a read of the checks of a commit or of a pull request's ref withholds their names and addresses, and one of a branch or a tag gives them (#648). CI logs are not read. Its code reads what a forge produced, so it is tested against real captured answers under `testdata/`. *Why:* "done" should mean something the supervisor checked. A stranger's text is where an instruction aimed at the supervisor would come from, and a log holds whatever a pull request's code prints.
 
 *A wake at a time it sets.* The supervisor can ask to be woken at a time, with a note: `Remind`, from a tool of `hataori mcp`, takes a time or a delay between 5 minutes and 7 days ahead and a note of at most 1 KB, and returns the reminder's number; the same operation cancels an open one by number. When the time has come, the waker puts the reminder, with its note and how late it is, into the next wake, or makes a wake of it alone under a key that names the reminder and the thread, stored and sent as every wake is, so it wakes the supervisor once across restarts. A due reminder goes through the waker's gates like a turn end: it names no worker thread, so the loop guard passes it, and it waits while the budget is used up. It is not polling: nothing wakes the supervisor without a request, and a reminder wakes it once. Reminders belong to the scope and are kept in the store, so a daemon restart keeps them and a new supervisor thread gets the scope's open ones. A reminder counts as one send in `sends_per_hour` when it is set, and its wake as a turn. At most `scopes[].supervisor.reminders_max` (10) are open in a scope; one more is refused. Each wake ends with the scope's open reminders. *Why:* "look again in two hours if the thread has not ended" was impossible; the bounds of time, number and budget keep it from becoming polling.
 
@@ -1716,6 +1716,19 @@ type API interface {
 	// Since protocol 3.22 (#598).
 	Clients(ctx context.Context) ([]ClientState, error)
 
+	// Forge makes one read of a forge, read only (section 7.1, "Reading
+	// issues, pull requests and CI"): a repository's issues, one issue with
+	// its comments, its pull requests, one pull request with its reviews,
+	// comments, changed files, merge state, merge commit and head checks,
+	// or the checks of a ref. Only the daemon's supervisor client answers
+	// it, on a supervisor's token connection, for a repository of its
+	// scope's repos that has a forge name and a forge that serves its
+	// address, with that forge's token; any other repository is
+	// ErrForbidden. The core answers ErrNotSupported. Text by an author
+	// without write access whom the scope's trusted_authors does not list
+	// is left out, and the item says Withheld. Since protocol 3.27 (#648).
+	Forge(ctx context.Context, r ForgeRequest) (ForgeAnswer, error)
+
 	// AttachTerminal readies the thread's agent for a terminal on the host
 	// (`hataori attach`, section 4.3): it needs OpAttach, which only the
 	// owner's connection on the control socket has, and the owner's
@@ -1728,6 +1741,19 @@ type API interface {
 
 // Attachment: Socket is the session host's socket path, Number the
 // thread's number.
+
+// ForgeRequest: Repo as the scope's repos lists it or by its forge name;
+// Read one of "issues", "issue", "pulls", "pull" and "checks"; Number for
+// an issue or a pull request, Ref for checks, State ("open", "closed",
+// "all") for a list. ForgeAnswer holds the one read in its field (Issues,
+// Issue, Pulls, Pull or Checks), each item with its author's login and
+// write access, and Withheld where its text was left out. The types are
+// internal/control's Forge* types, one per type of internal/forge, with
+// the protocol's field names.
+type ForgeRequest struct {
+	Repo, Read, Ref, State string
+	Number                 int
+}
 
 // Way is one of the dashboard's listeners (section 7.2), "local" or "web"
 // on the wire.
