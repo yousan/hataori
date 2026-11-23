@@ -129,7 +129,8 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 	// The start-up script is the spec's instructions: "never-start" makes
 	// the program never report that it is ready; "input-delay D" makes it
 	// wait D before it takes each input; "relay A B" makes it relay
-	// between threads A and B.
+	// between threads A and B; "wake-script" makes it run a wake's quoted
+	// output lines.
 	for _, l := range strings.Split(spec.Instructions, "\n") {
 		l = strings.TrimSpace(l)
 		if l == "never-start" {
@@ -137,6 +138,9 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 		}
 		if d, ok := strings.CutPrefix(l, "input-delay "); ok {
 			argv = append(argv, "--input-delay", strings.TrimSpace(d))
+		}
+		if l == "wake-script" {
+			argv = append(argv, "--wake-script")
 		}
 		if r, ok := strings.CutPrefix(l, "relay "); ok {
 			if f := strings.Fields(r); len(f) == 2 {

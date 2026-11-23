@@ -115,7 +115,9 @@
 // has a line starting "Thread A:", as a wake message does, ends by
 // sending "reply relayed from A" to thread B with the MCP server's
 // send_to_thread, and the other way round; a send refused as busy is
-// tried again for up to 10 seconds.
+// tried again for up to 10 seconds. A line "wake-script" makes it run, for
+// a wake message (input that starts "hataori: "), the lines of that
+// message quoted with "> " as the turn's script, without their "> ".
 //
 // The codec holds input while a turn runs and writes it when the turn
 // ends, as an agent that takes one prompt at a time would. Written input

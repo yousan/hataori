@@ -48,6 +48,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	dialog := fs.String("dialog", "", "a start-up dialog to show on the terminal, answered by Enter")
 	mcpConfig := fs.String("mcp-config", "", "a confined spec's MCP servers, for the script command mcp")
 	relay := fs.String("relay", "", "A,B: relay between threads A and B, as a supervisor that passes each one's answer to the other")
+	wakeScript := fs.Bool("wake-script", false, "run the quoted output lines of a wake message as the turn's script")
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
@@ -60,7 +61,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 	}
 	p := &program{out: stdout, hook: *hook, terminal: *terminal, window: *windowRoot, answers: map[string]chan string{}, configDir: *configDir,
-		model: *model, effort: *effort, mcp: &mcpClient{config: *mcpConfig}}
+		model: *model, effort: *effort, mcp: &mcpClient{config: *mcpConfig}, wakeScript: *wakeScript}
 	if a, b, ok := strings.Cut(*relay, ","); ok {
 		p.relay = [2]string{a, b}
 	}
@@ -191,6 +192,7 @@ type program struct {
 	turns          int        // turns started since the program started
 	mcp            *mcpClient // the confined spec's MCP server
 	relay          [2]string  // the two threads it relays between; empty for none
+	wakeScript     bool       // a wake message's quoted output lines are the turn's script
 }
 
 // A relay refused as busy is sent again after relayWait, at most relayTries
@@ -294,7 +296,13 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 		return 0, false
 	}
 	final, replied := "done", false
-	for _, line := range strings.Split(strings.TrimSpace(script), "\n") {
+	run := script
+	if p.wakeScript {
+		if w, ok := quotedScript(script); ok {
+			run = w
+		}
+	}
+	for _, line := range strings.Split(strings.TrimSpace(run), "\n") {
 		cmd, arg, _ := strings.Cut(strings.TrimSpace(line), " ")
 		select {
 		case <-p.interrupts:
@@ -472,6 +480,21 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 	end["answer"] = final
 	p.report(end)
 	return 0, false
+}
+
+// quotedScript returns the quoted output lines of a wake message, without
+// their "> ", as a script; ok is false for any other input.
+func quotedScript(input string) (string, bool) {
+	if !strings.HasPrefix(input, "hataori: ") {
+		return "", false
+	}
+	var lines []string
+	for _, l := range strings.Split(input, "\n") {
+		if q, ok := strings.CutPrefix(l, "> "); ok {
+			lines = append(lines, q)
+		}
+	}
+	return strings.Join(lines, "\n"), true
 }
 
 // askArgs splits the argument of "ask": the question, then, after " -- ",

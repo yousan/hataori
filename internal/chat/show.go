@@ -36,7 +36,7 @@ type reader struct {
 	lampKnown map[control.ThreadID]bool
 	// sv holds whether each thread looked up is a supervisor's
 	// (FrontEnd.supervisors); made when first needed.
-	sv map[control.ThreadID]bool
+	sv map[control.ThreadID]svThread
 	// outbox and ctx are the front end's, for looking up rows.
 	outbox *Outbox
 	ctx    context.Context
@@ -296,8 +296,25 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		if strings.TrimSpace(d.Text) == "" {
 			return nil, nil
 		}
+		sv, err := f.svThread(ctx, r, e.Thread)
+		if err != nil {
+			return nil, err
+		}
+		var notify []string
+		if sv.sv {
+			// A supervisor's thread: a wake's turn posts its final answer
+			// only, and nothing for "(quiet)"; "@<name>" mentions (#651).
+			key, _, err := r.turnKey(ctx, e)
+			if err != nil {
+				return nil, err
+			}
+			if woke(key) && (!d.Final || strings.TrimSpace(d.Text) == quietAnswer) {
+				return nil, nil
+			}
+			notify = f.mentions(sv.scope, d.Text)
+		}
 		if !d.Final {
-			return row(surface.Message{Text: d.Text, Quiet: true}), nil
+			return row(surface.Message{Text: d.Text, Quiet: len(notify) == 0, Notify: notify}), nil
 		}
 		key, by, err := r.turnKey(ctx, e)
 		if err != nil {
@@ -320,9 +337,9 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		}
 		row = func(m surface.Message) []Row { return []Row{{Event: e.Pos, Conv: conv, Message: m}} }
 		if by == "terminal" {
-			return row(surface.Message{Text: typedAtTerminal + "\n" + d.Text}), nil
+			return row(surface.Message{Text: typedAtTerminal + "\n" + d.Text, Notify: notify}), nil
 		}
-		rows := row(surface.Message{Text: d.Text})
+		rows := row(surface.Message{Text: d.Text, Notify: notify})
 		if key == "" || !replies {
 			return rows, nil // the agent started the turn by itself, or it came through no link here
 		}
@@ -346,7 +363,15 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		if d.Approval {
 			return nil, nil // allowed by the core in phase 1; nothing to answer
 		}
-		return row(f.questionMessage(d.Request, d.Text, d.Choices, d.Multi)), nil
+		m := f.questionMessage(d.Request, d.Text, d.Choices, d.Multi)
+		sv, err := f.svThread(ctx, r, e.Thread)
+		if err != nil {
+			return nil, err
+		}
+		if sv.sv {
+			m.Notify = f.mentions(sv.scope, d.Text)
+		}
+		return row(m), nil
 	case "file_out":
 		return f.fileRows(ctx, e, conv, d.Session, append([]string{d.File}, d.More...), d.Caption), nil
 	case "turn_ended":

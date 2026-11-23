@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -58,4 +59,76 @@ func TestSupervisorThreadPingsOnlyWhenAPersonIsNeeded(t *testing.T) {
 	if n := len(pings(r.driver, conv, e2eOwner)); n != 2 {
 		t.Fatalf("%d pings in the supervisor's thread after the worker's turn, want 2", n)
 	}
+}
+
+// postsIn returns the posts in conv, in order.
+func postsIn(d *fakesurface.Driver, conv surface.Conversation) []fakesurface.Call {
+	var out []fakesurface.Call
+	for _, c := range d.Calls(conv) {
+		if c.Op == fakesurface.OpPost {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// The acceptance criteria of #651: a wake's turn posts its final answer
+// only, and nothing when that answer is "(quiet)"; a person's turn is
+// posted whole, "(quiet)" too; "@<name>" of a person who may act in the
+// scope mentions them, and nothing else mentions anyone; a worker thread
+// is unchanged.
+func TestSupervisorWakePostsItsFinalAnswerOnly(t *testing.T) {
+	wt := newWakeTest(t, func(cfg map[string]any) {
+		cfg["people"] = append(cfg["people"].([]map[string]any),
+			map[string]any{"name": "outsider", "ids": []string{fakeSurface + ":out-1"}})
+		cfg["scopes"].([]map[string]any)[0]["supervisor"].(map[string]any)["instructions"] = "wake-script"
+	})
+	stop, owner, sv := wt.start(t)
+	defer stop()
+	conv := surface.Conversation{Channel: sv.Links[0].Channel, Thread: sv.Links[0].Thread}
+	person := fakesurface.Person(e2eOwner)
+	before := len(postsIn(wt.r.driver, conv))
+
+	// A wake whose final answer is "(quiet)" posts nothing, not even the
+	// text before it. Its worker posts as before.
+	wt.r.driver.Inject(c1, person, "!go repo:"+wt.repo+" reply reply thinking\nreply reply (quiet)")
+	quiet := wt.r.thread(t, 1)
+	wt.r.posted(t, quiet, "reply (quiet)")
+	wt.r.posted(t, quiet, "reply thinking")
+	wt.read(t, wt.ended(t, 2, 1))
+	wt.quiet(t)
+	wt.woken(t, owner, sv.ID, 1)
+	time.Sleep(300 * time.Millisecond)
+	if p := postsIn(wt.r.driver, conv); len(p) != before {
+		t.Fatalf("a quiet wake posted %+v", p[before:])
+	}
+
+	// A wake with another final answer posts it, and only it; "@<name>"
+	// of the owner and of one of the scope's people mentions them, of a
+	// person not allowed in the scope and of no person nobody.
+	named := "@boss and @dispatch, look; not @outsider, @nobody or x@boss"
+	wt.r.driver.Inject(c1, person, "!go repo:"+wt.repo+" reply reply looking\nreply reply "+named)
+	loud := wt.r.thread(t, 2)
+	wt.r.posted(t, loud, "reply "+named)
+	wt.read(t, wt.ended(t, 3, 1))
+	wt.quiet(t)
+	wt.woken(t, owner, sv.ID, 2)
+	got := wt.r.posted(t, conv, named)
+	if !slices.Equal(got.Message.Notify, []string{e2eOwner, e2eHook}) {
+		t.Fatalf("the wake's answer mentions %v, want the owner's and dispatch's ids", got.Message.Notify)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if p := postsIn(wt.r.driver, conv); len(p) != before+1 {
+		t.Fatalf("the wake posted %+v, want its final answer only", p[before:])
+	}
+	for _, c := range append(postsIn(wt.r.driver, quiet), postsIn(wt.r.driver, loud)...) {
+		if len(c.Message.Notify) > 0 && c.Message.Text != "Done." {
+			t.Fatalf("a worker's post mentions someone: %+v", c)
+		}
+	}
+
+	// A person's turn is posted whole, "(quiet)" too.
+	wt.r.driver.Inject(conv, person, "reply first\nreply (quiet)")
+	wt.r.posted(t, conv, "first")
+	wt.r.posted(t, conv, "(quiet)")
 }
