@@ -17,6 +17,7 @@ import (
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
 	"github.com/yousan/hataori/internal/forge"
+	"github.com/yousan/hataori/internal/instance"
 	"github.com/yousan/hataori/internal/runner"
 	"github.com/yousan/hataori/internal/workspace"
 )
@@ -59,7 +60,7 @@ type Tokens interface {
 type Scope struct {
 	Model        string // the model; the adapter's cheapest when empty
 	Effort       string // the effort; the scope's when empty
-	Instructions string // appended to the agent's own instructions
+	Instructions string // the config's instructions, last in the config's layer (ConfigLayer)
 	Repos        []Repo // the only repositories its Start may clone; none: it starts nothing
 	// Autonomy is Watch, Propose or Act: what its token's connection may
 	// do on its own (Caller). It is read when the token is bound, at each
@@ -68,6 +69,15 @@ type Scope struct {
 	// Trusted are the logins whose text on a forge it is given though they
 	// have no write access (supervisor.trusted_authors).
 	Trusted []string
+	// Limits are its budget, as the config's layer of its instructions
+	// states them; the Budget enforces them.
+	Limits Limits
+	// Report, ReportEvery, Mention and QuietHours are how the chat front
+	// end posts its thread (#657), as the config's layer states them.
+	Report      string
+	ReportEvery time.Duration
+	Mention     string
+	QuietHours  *instance.QuietHours
 }
 
 // Sessions is the supervisors' part of the daemon (design, section 7.1): it
@@ -107,9 +117,10 @@ const tokenLen = 43
 
 // Confine gives one launch of a confined session hataori's MCP server for
 // the session's scope, with the session's token, and the supervisor's
-// instructions. It is the runner's Confine. A scope that names no
-// supervisor, as after the operator removed it, gives none, and the launch
-// fails.
+// instructions: hataori's layer, the config's, then the user's files from
+// the session's directory as they are now (Compose), each skipped one
+// logged. It is the runner's Confine. A scope that names no supervisor, as
+// after the operator removed it, gives none, and the launch fails.
 func (s *Sessions) Confine(ctx context.Context, l runner.ConfinedLaunch) (runner.Confined, error) {
 	sv, ok := s.Scopes[l.Scope]
 	if !ok {
@@ -119,10 +130,19 @@ func (s *Sessions) Confine(ctx context.Context, l runner.ConfinedLaunch) (runner
 	if err != nil {
 		return runner.Confined{}, err
 	}
+	files := ReadUserFiles(l.Dir)
+	for _, f := range files {
+		if f.Skipped != "" {
+			s.Log.Warn("a user's file of the supervisor is not given", "scope", l.Scope, "session", l.Session, "file", f.Name, "reason", f.Skipped)
+		}
+	}
+	if err := s.given(ctx, l.Scope, files); err != nil {
+		return runner.Confined{}, err
+	}
 	return runner.Confined{
 		MCP: []agent.MCPServer{{Name: MCPName, Argv: []string{s.Hataori, "mcp", "--scope", l.Scope, "--root", s.Root},
 			Env: []string{TokenEnv + "=" + token}}},
-		Instructions: sv.Instructions,
+		Instructions: Compose(sv, files),
 	}, nil
 }
 

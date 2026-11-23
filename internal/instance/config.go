@@ -136,7 +136,7 @@ type Supervisor struct {
 	Agent        string // "agent": the adapter that runs it; the instance's when empty
 	Model        string // "model": the adapter's cheapest when empty
 	Effort       string // "effort": the scope's default when empty
-	Instructions string // "instructions": appended to the agent's own instructions
+	Instructions string // "instructions": the config's instructions, last in the config's layer of the supervisor's (#656)
 	// Quiet is how long the supervisor's waker waits after the first event
 	// that wakes it, folding the events until then into one message.
 	// "quiet"; 30 seconds when absent.
