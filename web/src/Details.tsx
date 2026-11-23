@@ -1,6 +1,6 @@
-import type { Event, ThreadInfo } from "./api";
+import type { ChatLayout, Event, ScopeInfo, ThreadInfo } from "./api";
 import { lang, t } from "./catalog";
-import { fullTitle, stateName } from "./format";
+import { displayTitle, fullTitle, scopeName, stateName } from "./format";
 import type { Attention } from "./live";
 import { eventLine, useThreadEvents } from "./threadEvents";
 import type { Workspace } from "./workspaces";
@@ -12,11 +12,11 @@ const dash = () => t("table.none");
 const recentEvents = 20;
 const eventOptions = { history: recentEvents, keep: recentEvents };
 
-function Field(props: { name: string; label: string; value: string; time?: string }) {
+function Field(props: { name: string; label: string; value: string; time?: string; tip?: string }) {
   return (
     <div className="field" data-field={props.name}>
       <dt>{props.label}</dt>
-      <dd>{props.time ? <time dateTime={props.time}>{props.value}</time> : props.value}</dd>
+      <dd title={props.tip || undefined}>{props.time ? <time dateTime={props.time}>{props.value}</time> : props.value}</dd>
     </div>
   );
 }
@@ -77,6 +77,8 @@ interface Props {
   workspace: Workspace | undefined;
   subscribe: (f: (e: Event) => void) => () => void;
   opens: number;
+  scopes: ScopeInfo[] | null; // their names; null until read
+  layout: ChatLayout[] | null; // the chats' channels, whose names a scope without one takes
   // withWaiting shows what the thread waits on at the top; a view that
   // shows it elsewhere leaves it out here.
   withWaiting?: boolean;
@@ -85,7 +87,7 @@ interface Props {
 // Details is the panel on the right for the active tab's thread. Every
 // value comes from the control API; one it leaves out is a dash. It only
 // shows: nothing in it answers, sends or changes anything.
-export function Details({ x, attention, workspace, subscribe, opens, withWaiting = true }: Props) {
+export function Details({ x, attention, workspace, subscribe, opens, scopes, layout, withWaiting = true }: Props) {
   if (!x) return <p className="empty">{t("details.none")}</p>;
   const ws = workspace && workspace !== "unreadable" ? workspace : undefined;
   const pct = x.context && x.context.size > 0 ? Math.round((100 * x.context.used) / x.context.size) : null;
@@ -96,9 +98,9 @@ export function Details({ x, attention, workspace, subscribe, opens, withWaiting
       <section data-block="thread">
         <h3>{t("details.thread")}</h3>
         <dl>
-          <Field name="title" label={t("details.title")} value={fullTitle(x) || dash()} />
+          <Field name="title" label={t("details.title")} value={displayTitle(x) || dash()} tip={fullTitle(x)} />
           <Field name="state" label={t("details.state")} value={stateName(x.state)} />
-          <Field name="scope" label={t("details.scope")} value={x.scope || dash()} />
+          <Field name="scope" label={t("details.scope")} value={x.scope ? scopeName(x.scope, scopes, layout) : dash()} tip={x.scope} />
           <Field name="startedBy" label={t("details.startedBy")} value={x.started_by || dash()} />
           <Field name="created" label={t("details.created")} value={new Date(x.created).toLocaleString()} time={x.created} />
           {/* turns is left out for none: that is zero, not unknown */}

@@ -114,9 +114,14 @@ export function ShowChoice({ show, onShow, hidden, terminals = 0 }: { show: Show
         </span>
       )}
       {show === "active" && terminals > 0 && (
-        <span className="hidden-terminals" data-hidden-terminals={terminals}>
-          {t("show.hiddenTerminals", { n: terminals })}
-        </span>
+        <>
+          <span className="hidden-sep" aria-hidden="true">
+            {t("show.hiddenSeparator")}
+          </span>
+          <span className="hidden-terminals" data-hidden-terminals={terminals}>
+            {t("show.hiddenTerminals", { n: terminals })}
+          </span>
+        </>
       )}
     </div>
   );

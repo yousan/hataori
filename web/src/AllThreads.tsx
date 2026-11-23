@@ -193,7 +193,7 @@ export function AllThreads({ threads, workspaces, now, selected, onOpen, show, o
       <thead>
         <tr>
           {heads.map((c) => (
-            <th key={c.col} scope="col" data-col={c.col}>
+            <th key={c.col} scope="col" data-col={c.col} title={t(c.head)}>
               {t(c.head)}
             </th>
           ))}

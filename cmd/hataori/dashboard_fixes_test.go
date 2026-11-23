@@ -184,7 +184,8 @@ func TestDashboardFourFixes(t *testing.T) {
 
 	// 3. In a window 1500 px wide, with the tree and without the details:
 	// the table does not scroll sideways, and a long value is cut, whole
-	// in its tooltip.
+	// in its tooltip. The last output is the long value: the title, cut to
+	// 80 characters, shows whole where the table has room (#631).
 	b.until("the long threads' last lines", `[...document.querySelectorAll('.pane.active .all-threads td[data-col=last]')].filter(td => td.textContent.startsWith('a long line')).length === 2`)
 	b.click(`.tools .show [data-choice=active]`)
 	b.until("only the two active threads", `document.querySelectorAll('.pane.active .all-threads tr[data-thread]').length === 2`)
@@ -194,14 +195,14 @@ func TestDashboardFourFixes(t *testing.T) {
 		var fit struct {
 			Window, Pane, Scroll float64
 			Tree, Details        bool
-			CutTitle, Tooltip    bool
+			CutLast, Tooltip     bool
 		}
 		b.eval(fmt.Sprintf(`(() => {
 			const p = document.querySelector('.pane.active');
-			const td = p.querySelector('.all-threads td[data-col=title]');
+			const td = p.querySelector('.all-threads td[data-col=last]');
 			return {window: innerWidth, pane: p.clientWidth, scroll: p.scrollWidth,
 				tree: !!document.querySelector('.tree'), details: !!document.querySelector('.details'),
-				cutTitle: td.scrollWidth > td.clientWidth, tooltip: td.title.startsWith('reply %s')};
+				cutLast: td.scrollWidth > td.clientWidth, tooltip: td.title.startsWith(%q)};
 		})()`, long[:40]), &fit)
 		if fit.Window != 1500 || !fit.Tree || fit.Details != details {
 			t.Fatalf("%s: the window is %+v: the check would test another layout", what, fit)
@@ -209,8 +210,8 @@ func TestDashboardFourFixes(t *testing.T) {
 		if fit.Scroll > fit.Pane {
 			t.Fatalf("%s: the All threads table scrolls sideways in a window 1500 px wide: %v px in %v", what, fit.Scroll, fit.Pane)
 		}
-		if !fit.CutTitle || !fit.Tooltip {
-			t.Fatalf("%s: a long title: cut %v, whole in its tooltip %v", what, fit.CutTitle, fit.Tooltip)
+		if !fit.CutLast || !fit.Tooltip {
+			t.Fatalf("%s: a long last output: cut %v, whole in its tooltip %v", what, fit.CutLast, fit.Tooltip)
 		}
 	}
 	fits("with the details panel", true)
