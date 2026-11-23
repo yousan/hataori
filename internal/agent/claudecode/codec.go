@@ -600,7 +600,9 @@ func (c *codec) usageOf(l transcriptLine) Actions {
 // started since: Claude Code writes a turn's last message to its
 // transcript after its Stop hook (2.1.330), and before the next prompt, so
 // its usage is read after the end. The core counts a Late report toward the
-// session's last ended turn, which is this one only until another starts.
+// session's last ended turn, which is this one at least until the agent
+// reports its next prompt: a caller's input may open the core's next turn
+// before that, but nothing ends it.
 func (c *codec) reportUsage(t *turnText) Actions {
 	if len(t.usage) == 0 || (t.ended && (t != c.lastEnded || c.running)) {
 		return Actions{}

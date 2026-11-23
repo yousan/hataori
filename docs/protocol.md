@@ -1450,7 +1450,7 @@ The agent asks a question or an approval; the turn ends `blocked`.
 
 ### Event `usage`
 
-What the agent reports about the tokens of the running turn. Each count is the turn's total so far, not what was added since the last report. Since 3.27 a report may come after the turn's `turn_ended`, and before the next `turn_started`: an agent may record a turn's last model message only after it reported the turn's end (Claude Code 2.1.330 does). That report names the ended turn in `turn`, and its counts go toward that turn. Before 3.27 such a report was dropped, and every report with a `turn` came before that turn's end.
+What the agent reports about the tokens of the running turn. Each count is the turn's total so far, not what was added since the last report. Since 3.27 a report may come after the turn's `turn_ended`: an agent may record a turn's last model message only after it reported the turn's end (Claude Code 2.1.330 does). That report names the ended turn in `turn`, and its counts go toward that turn, also when a caller's input has started the next turn by then (its `turn_started` may come first). It comes before the agent reports anything of its next prompt. Before 3.27 such a report was dropped, and every report with a `turn` came before that turn's end.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|

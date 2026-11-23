@@ -134,13 +134,24 @@ func TestLateUsageCountsTowardTheEndedTurn(t *testing.T) {
 	if fmt.Sprint(turns) != fmt.Sprint([]int64{turn, turn, 0}) {
 		t.Fatalf("the usage events' turns %v, want %d, %d and none", turns, turn, turn)
 	}
-	// The next turn is counted on its own.
+	// A caller's input opens the next turn before the agent reports it; a
+	// late report read then is still the ended turn's.
 	if err := f.owner.Send(ctx, id, "second", control.Input{Text: "again"}, control.Refuse); err != nil {
 		t.Fatal(err)
 	}
-	f.agentEvent(t, sid, 6, agent.Event{Kind: agent.TurnStarted})
-	f.agentEvent(t, sid, 7, usage(1, 2, 0, 0, 0, 0))
-	if got := f.info(t, f.owner, id); got.Tokens == nil || *got.Tokens != (control.TokenCount{Turn: 3, Today: 118}) {
-		t.Fatalf("after the next turn's report: %+v, want turn 3 today 118", got.Tokens)
+	later := usage(200, 15, 0, 0, 0, 0) // 215
+	later.Late = true
+	f.agentEvent(t, sid, 6, later)
+	f.agentEvent(t, sid, 7, agent.Event{Kind: agent.TurnStarted})
+	f.agentEvent(t, sid, 8, usage(1, 2, 0, 0, 0, 0)) // the next turn's own: 3
+	var first, second int64
+	if err := f.core.Store.DB.QueryRow(`SELECT max(tokens), min(tokens) FROM turns WHERE session_id = ?`, sid).Scan(&first, &second); err != nil {
+		t.Fatal(err)
+	}
+	if first != 215 || second != 3 {
+		t.Fatalf("turn tokens %d and %d, want 215 and 3", first, second)
+	}
+	if got := f.info(t, f.owner, id); got.Tokens == nil || *got.Tokens != (control.TokenCount{Turn: 3, Today: 218}) {
+		t.Fatalf("after the next turn's report: %+v, want turn 3 today 218", got.Tokens)
 	}
 }
