@@ -10,10 +10,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.org/x/term"
@@ -98,6 +100,9 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		// paste comes bracketed, so it is told from keys typed, whatever
 		// holds the terminal.
 		fmt.Fprint(stdout, "\x1b[?2004h")
+	}
+	if f, ok := stdin.(*os.File); ok && *terminal && term.IsTerminal(int(f.Fd())) {
+		go p.redrawOnResize(int(f.Fd()))
 	}
 	inputs := make(chan string, 16)
 	p.interrupts = make(chan struct{}, 1)
@@ -615,6 +620,25 @@ const (
 // terminalPrefix marks, on the inputs channel, a line a person typed at
 // the terminal; it cannot start a paste, which never holds a NUL.
 const terminalPrefix = "\x00terminal\n"
+
+// redrawOnResize writes "fake: size COLSxROWS" to the terminal each time
+// the terminal fd takes a new size, as an agent redraws its screen on
+// SIGWINCH.
+func (p *program) redrawOnResize(fd int) {
+	winch := make(chan os.Signal, 1)
+	signal.Notify(winch, syscall.SIGWINCH)
+	cols, rows, _ := term.GetSize(fd)
+	for range winch {
+		c, r, err := term.GetSize(fd)
+		if err != nil || (c == cols && r == rows) {
+			continue
+		}
+		cols, rows = c, r
+		p.mu.Lock()
+		fmt.Fprintf(p.out, "fake: size %dx%d\r\n", c, r)
+		p.mu.Unlock()
+	}
+}
 
 // echo writes what a person typed back to the terminal, for them to see.
 func (p *program) echo(b []byte) {

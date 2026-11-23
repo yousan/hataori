@@ -22,6 +22,10 @@ type boundedLog struct {
 	pos       uint64 // bytes written since the log was opened
 	followers map[*follower]struct{}
 	closed    bool
+	// cols and rows are the terminal's size: the bytes written from now on
+	// are drawn at it. resizedAt is the position where it last changed.
+	cols, rows int
+	resizedAt  uint64
 	// trimmed, when set, is told the position of the file's first byte
 	// after each trim; lock, when set, is held from before the trim until
 	// trimmed has returned.
@@ -143,6 +147,26 @@ func (l *boundedLog) since(after uint64) (data []byte, pos uint64, cut bool, err
 		return nil, after, false, err
 	}
 	return data, pos, cut, nil
+}
+
+// resize changes the terminal's size with set, and, when it succeeds,
+// records the new size and tells every follower where in the output it
+// changed. The log's lock is held throughout, so what the command writes
+// after the change, its redraw, follows the mark.
+func (l *boundedLog) resize(cols, rows int, set func() error) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if err := set(); err != nil {
+		return err
+	}
+	l.cols, l.rows, l.resizedAt = cols, rows, l.pos
+	for f := range l.followers {
+		f.mu.Lock()
+		f.marks = append(f.marks, sizeMark{at: len(f.buf), cols: cols, rows: rows})
+		f.mu.Unlock()
+		f.notify()
+	}
+	return nil
 }
 
 func (l *boundedLog) Close() error {

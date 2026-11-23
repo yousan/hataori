@@ -16,7 +16,8 @@ import (
 )
 
 // keysSent is what the page sent as keys on its attachments, from event
-// from on, joined, and every other frame it sent but the first of each.
+// from on, joined, and every other frame it sent but the first of each and
+// the pane's sizes (resizesSent).
 func (b *browser) keysSent(from int) (keys string, other []string) {
 	b.t.Helper()
 	for _, f := range b.sentFrames(from) {
@@ -28,7 +29,7 @@ func (b *browser) keysSent(from int) (keys string, other []string) {
 		switch {
 		case m["keys"] != nil:
 			keys += m["keys"].(string)
-		case m["session"] != nil && m["thread"] != nil, m["end"] == true:
+		case m["session"] != nil && m["thread"] != nil, m["end"] == true, m["resize"] != nil:
 		default:
 			other = append(other, f)
 		}
@@ -57,9 +58,9 @@ func focusTerminal(b *browser) {
 // terminal, the attachment opening at the first key and the keys typed
 // meanwhile arriving in order, and their turn is posted in chat; keys are
 // encoded for the session's modes; the page answers no query and sends no
-// mouse or focus report; the session's terminal keeps its size while the
-// page's pane changes size; leaving the terminal and closing the tab end
-// the attachment, and the next key opens it again.
+// mouse or focus report; leaving the terminal and closing the tab end the
+// attachment, and the next key opens it again. How the session's terminal
+// takes the pane's size is TestDashboardTerminalTakesThePaneSize's.
 func TestDashboardTerminalTakesKeys(t *testing.T) {
 	r := attachRoot(t, "1h", "1h")
 	logged := startDaemonLog(t, r.root)
@@ -72,7 +73,6 @@ func TestDashboardTerminalTakesKeys(t *testing.T) {
 	r.posted(t, th, "done")
 	x := threadOf(t, r.root)
 	eventually(t, "the session's terminal", 15*time.Second, func() bool { x = threadOf(t, r.root); return x.Terminal != "" })
-	size := ptySize(t, x.Terminal)
 
 	b := newBrowser(t)
 	b.call("Page.enable", map[string]any{})
@@ -122,15 +122,6 @@ func TestDashboardTerminalTakesKeys(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 	sentOnly("after the queries asked again")
 
-	// The page's pane changes size: the session's terminal does not.
-	for _, w := range []int{900, 1600} {
-		b.call("Emulation.setDeviceMetricsOverride", map[string]any{"width": w, "height": 700, "deviceScaleFactor": 1, "mobile": false})
-		time.Sleep(300 * time.Millisecond)
-		if got := ptySize(t, x.Terminal); got != size {
-			t.Fatalf("the session's terminal is %s with the window %d wide, %s before", got, w, size)
-		}
-	}
-
 	// Leaving the terminal ends the attachment; the next key opens it again.
 	b.eval(`document.querySelector('.filter').focus(), true`, nil)
 	eventually(t, "the end when the terminal lost focus", 10*time.Second, func() bool {
@@ -177,9 +168,6 @@ func TestDashboardTerminalTakesKeys(t *testing.T) {
 	// Closing the tab ends it.
 	b.click(fmt.Sprintf(`.tab[data-tab="thread:%d"] .tab-close`, x.ID))
 	eventually(t, "the end when the tab closed", 10*time.Second, func() bool { return strings.Count(logged(), `msg="dashboard: terminal detached"`) == 5 })
-	if got := ptySize(t, x.Terminal); got != size {
-		t.Fatalf("the session's terminal is %s after, %s before", got, size)
-	}
 	var csp []string
 	b.eval(`window.__csp`, &csp)
 	if len(csp) > 0 {

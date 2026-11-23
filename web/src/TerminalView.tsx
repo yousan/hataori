@@ -5,7 +5,7 @@ import { type TerminalChunk, type ThreadInfo, terminalPath } from "./api";
 import { muteQueries } from "./attach";
 import { personal } from "./reports";
 import { t } from "./catalog";
-import { fitted, sized } from "./fit";
+import { fitted, paneCells, sized } from "./fit";
 import { Stream } from "./stream";
 
 // bytes decodes a chunk's base64 data.
@@ -30,16 +30,27 @@ export function openReadOnly(el: HTMLElement): Terminal {
 // Typing is how a session's terminal takes the person's keys while its tab
 // allows it (attach.ts): onKeys gets what the terminal emulator made of
 // each key and paste, and onLeave is called when the terminal loses focus.
+// While attached, the pane's size in cells goes to onResize.
 export interface Typing {
   allowed: boolean;
+  attached: boolean;
   onKeys: (keys: string) => void;
   onLeave: () => void;
+  onResize: (cols: number, rows: number) => void;
 }
+
+// resizeQuiet is how long the pane's size must stay before it is given to
+// the session: a drag of the window or of a split gives a few sizes, not one
+// per frame.
+const resizeQuiet = 250;
 
 // TerminalView draws a session's live terminal. With fit, the font is
 // sized so that the session's grid fills the view's width or its height
-// (fit.ts); the session's own columns and rows are kept, and nothing here
-// resizes the session's terminal.
+// (fit.ts), centered. While only viewing, the session's own columns and
+// rows are kept. While the owner types into it (typing.attached), the
+// view gives the session its size in whole cells at the page's font size,
+// when it changes and once the attachment is on; a size out of bounds is
+// not given, and the grid is then drawn scaled as when viewing.
 //
 // It is read-only unless typing allows keys: the terminal is made with
 // stdin disabled, so xterm.js turns neither keys, a paste nor its answers
@@ -51,6 +62,7 @@ export function TerminalView({ x, fit, typing }: { x: ThreadInfo; fit?: boolean;
   const host = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLDivElement>(null);
   const termRef = useRef<ReturnType<typeof openReadOnly> | null>(null);
+  const toPane = useRef<(() => void) | null>(null); // gives the session the pane's size, after a quiet spell
   const live = useRef(typing); // what the terminal's listeners read
   live.current = typing;
   const [noProcess, setNoProcess] = useState(false);
@@ -68,7 +80,29 @@ export function TerminalView({ x, fit, typing }: { x: ThreadInfo; fit?: boolean;
     const textarea = term.textarea;
     textarea?.addEventListener("blur", leave);
     term.options.disableStdin = !live.current?.allowed;
-    const fitting = fit && box.current ? fitted(term, box.current) : null;
+    // The pane's size goes to the session only while attached, and only
+    // when it differs from the last one given in this attachment.
+    let quiet = 0;
+    let given = "";
+    const sizeToPane = () => {
+      clearTimeout(quiet);
+      if (!live.current?.attached) {
+        given = "";
+        return;
+      }
+      quiet = window.setTimeout(() => {
+        const el = box.current;
+        if (gone || !el || !live.current?.attached) return;
+        const z = paneCells(term, el);
+        if (!z) return; // out of bounds: drawn scaled, as when viewing
+        const key = `${z.cols}x${z.rows}`;
+        if (key === given) return;
+        given = key;
+        live.current.onResize(z.cols, z.rows);
+      }, resizeQuiet);
+    };
+    toPane.current = fit ? sizeToPane : null;
+    const fitting = fit && box.current ? fitted(term, box.current, sizeToPane) : null;
     const source = new Stream(terminalPath(id));
     // xterm.js parses what it is given later, while reset and resize act at
     // once: each chunk waits for the bytes before it to be drawn, so a reset
@@ -100,6 +134,8 @@ export function TerminalView({ x, fit, typing }: { x: ThreadInfo; fit?: boolean;
     };
     return () => {
       gone = true;
+      clearTimeout(quiet);
+      toPane.current = null;
       termRef.current = null;
       data.dispose();
       textarea?.removeEventListener("blur", leave);
@@ -119,6 +155,12 @@ export function TerminalView({ x, fit, typing }: { x: ThreadInfo; fit?: boolean;
     const term = termRef.current;
     if (term) term.options.disableStdin = !allowed;
   }, [allowed, id, fit]);
+  // An attachment that turns on takes the pane's size; one that ends
+  // forgets the size it gave.
+  const attached = !!typing?.attached;
+  useEffect(() => {
+    toPane.current?.();
+  }, [attached, id, fit]);
 
   // An asleep session has no process. A stream that was open when its host
   // ended sends nothing more until the next run, so the thread's state says

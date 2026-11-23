@@ -295,15 +295,18 @@ func (h *Host) follow(ctx context.Context, dir, run string, after uint64, out ch
 	// shown: the reader has the end of the log of a host that has ended,
 	// so nothing is sent until a host runs again.
 	shown := false
-	// sent: a chunk was sent. After the first, a chunk that adds nothing
-	// (a stream that started again where the last one stopped) is not.
+	// sent: a chunk was sent, last at that size. After the first, a chunk
+	// that adds nothing (a stream that started again where the last one
+	// stopped) is not; one with a new size alone is: the terminal was
+	// resized there.
 	sent := false
+	var cols, rows int
 	send0 := send
 	send = func(ch control.TerminalChunk) bool {
-		if sent && !ch.Reset && len(ch.Data) == 0 {
+		if sent && !ch.Reset && len(ch.Data) == 0 && ch.Cols == cols && ch.Rows == rows {
 			return true
 		}
-		sent = true
+		sent, cols, rows = true, ch.Cols, ch.Rows
 		return send0(ch)
 	}
 	for ctx.Err() == nil {

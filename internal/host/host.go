@@ -40,8 +40,6 @@ type host struct {
 	ptyName string      // the name of the terminal the command runs in, such as /dev/pts/3; "" on pipes
 	term    *boundedLog // the terminal's raw log, or nil on pipes
 	run     string      // this run of the host; positions in term count from its start
-	cols    int
-	rows    int
 
 	follows  atomic.Int32 // follow and attach requests being served
 	attached atomic.Int32 // attach requests being served: a person's terminal is connected
@@ -274,8 +272,8 @@ func (h *host) start() (*sync.WaitGroup, error) {
 			tty.Close()
 			return nil, fmt.Errorf("host: start %s: %w", h.spec.Argv[0], err)
 		}
+		tty.cols, tty.rows = int(size.Cols), int(size.Rows)
 		h.tty, h.input, h.term, h.ptyName = m, m, tty, name
-		h.cols, h.rows = int(size.Cols), int(size.Rows)
 		readers.Add(1)
 		go func() {
 			defer readers.Done()
@@ -480,6 +478,8 @@ type request struct {
 	Terminate time.Duration `json:"terminate,omitempty"` // stop: grace after SIGTERM
 	Run       string        `json:"run,omitempty"`       // follow: the run that After counts in
 	After     uint64        `json:"after,omitempty"`     // follow, screen: the position to continue after
+	Cols      int           `json:"cols,omitempty"`      // resize: the terminal's new size
+	Rows      int           `json:"rows,omitempty"`
 }
 
 type response struct {
@@ -494,7 +494,7 @@ type response struct {
 	Run     string        `json:"run,omitempty"`     // follow, screen: the host's run
 	Pos     uint64        `json:"pos,omitempty"`     // follow, screen: the position after Data
 	Reset   bool          `json:"reset,omitempty"`   // follow: Data is the end of the log, not a continuation; screen: part of what followed After was dropped
-	Cols    int           `json:"cols,omitempty"`    // follow: the terminal's size
+	Cols    int           `json:"cols,omitempty"`    // follow: the terminal's size, in the first answer and from a resize on
 	Rows    int           `json:"rows,omitempty"`
 	End     bool          `json:"end,omitempty"`    // follow: the terminal is closed and everything was sent
 	Device  string        `json:"device,omitempty"` // status: the terminal the command runs in; empty on pipes

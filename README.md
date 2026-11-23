@@ -77,6 +77,7 @@ Not built yet:
      "owner": "<your Discord user id>",
      "trigger": "!hataori",
      "idle": "30m",
+     "terminal_size": {"cols": 160, "rows": 60},
      "scopes": [
        {"key": "<channel id>", "client": "discord", "enabled": true}
      ],

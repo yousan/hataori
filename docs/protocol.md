@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.24**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.25**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -355,6 +355,8 @@ Result: string
 The terminal output of the thread's current session, then new output as the session writes it; since 1.9. It turns the connection into a stream, as `Events` does, and takes no input.
 
 Positions count the bytes the session host wrote since its run started; the host keeps the end of them. The first chunk continues after `after` of `run`. When `after` is 0, `run` is another run, or the bytes after `after` are no longer kept, the first chunk is the end of the kept log with `reset` set, and the reader redraws. Every later chunk continues the one before it, or, when the stream had to start again, has `reset` set.
+
+Since 3.25 the terminal's size may change while a stream is open: the dashboard gives the terminal the size of its owner's pane while the owner types into it (design, section 7.2). Every chunk carries the size its `data` and what follows are drawn at. A chunk whose size differs from the one before it says the terminal was resized at its position; it may have no `data`, and the agent's redraw at the new size follows it. A reader that meets one resizes its copy before it draws what follows. Before 3.25 the size never changed during a run.
 
 A session whose host has ended (an asleep session, for one) sends the end of its last run's log with `reset` set and an empty `run`, then nothing until it runs again; then the new run's output, starting with a chunk marked `reset`. When the thread gets a new session, because the agent could not resume the old one, the stream goes on with the new session, from a chunk marked `reset`. A session that runs on pipes has no terminal and is `not_found`. A caller that may not read text is answered `forbidden`, since the terminal shows the prompts and the agent's output. A reader that falls far behind is cut off by the session host; the daemon then asks again from the last position, so the reader gets either a continuation or a `reset`.
 
@@ -749,8 +751,8 @@ Since 1.9.
 | `run` | string | required | the session host's run, an opaque id; a new run starts a new count; empty when no host runs |
 | `pos` | integer | required | the position after `data`; 0 when `run` is empty |
 | `reset` | boolean | required | `data` is the end of the log, not a continuation: redraw |
-| `cols` | integer | required | the terminal's width |
-| `rows` | integer | required | the terminal's height |
+| `cols` | integer | required | the terminal's width, at which `data` and what follows are drawn; since 3.25 it may change during a stream (see `Terminal`) |
+| `rows` | integer | required | the terminal's height, as `cols` |
 | `data` | string | optional | the raw bytes the terminal was sent, in base64; uninterpreted |
 
 ### Type `HostTerminal`

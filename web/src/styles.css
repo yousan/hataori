@@ -858,9 +858,9 @@ body {
 }
 
 /* A fitted terminal: the box takes what the pane leaves, and the font is
-   sized so that the grid fills its width or its height (fit.ts). The
-   terminal scrolls its own scrollback; a grid too big even at the smallest
-   font scrolls in the box. */
+   sized so that the grid fills its width or its height (fit.ts), centered
+   in the other. The terminal scrolls its own scrollback; a grid too big
+   even at the smallest font scrolls in the box, from its start. */
 .terminal-view.fit {
   display: flex;
   flex-direction: column;
@@ -872,6 +872,14 @@ body {
   min-width: 0;
   min-height: 0;
   overflow: auto;
+  display: flex;
+}
+
+/* Centered; xterm.js's scrollbar element can be taller than the grid,
+   which would make the box scroll, so the host is clipped to the grid. */
+.terminal-view.fit .xterm-host {
+  margin: auto;
+  overflow: hidden;
 }
 
 .no-process {
