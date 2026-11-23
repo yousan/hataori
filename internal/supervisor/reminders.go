@@ -65,7 +65,8 @@ func (m *Reminders) now() time.Time {
 
 // Remind sets a reminder, or cancels an open one, as control.API.Remind
 // says. One that a stored wake carries has come due and is being given: it
-// is not open any more.
+// cannot be cancelled, and counts as open until it was, since a wake that
+// is dropped gives it back.
 func (m *Reminders) Remind(ctx context.Context, r control.RemindRequest) (control.RemindAnswer, error) {
 	a, err := m.remind(ctx, r)
 	if err != nil {
@@ -124,6 +125,9 @@ func (m *Reminders) remind(ctx context.Context, r control.RemindRequest) (contro
 		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM supervisor_reminders WHERE scope = ? AND state = ?`,
 			m.Scope, reminderOpen).Scan(&open); err != nil {
 			return err
+		}
+		if m.Max == 0 {
+			return errors.New("remind: this channel's reminders_max is 0: no reminder is set")
 		}
 		if open >= m.Max {
 			return fmt.Errorf("remind: %d reminders are open already, and reminders_max is %d: cancel one first", open, m.Max)

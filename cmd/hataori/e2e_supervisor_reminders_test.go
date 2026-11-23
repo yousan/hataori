@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/core"
 	"github.com/yousan/hataori/internal/supervisor"
 	"github.com/yousan/hataori/internal/wire"
 )
@@ -86,6 +87,12 @@ func TestReminderWakesOnceAtItsTime(t *testing.T) {
 		t.Fatalf("the key of the reminder's wake: %q", key)
 	}
 	wt.noWake(t, sv.ID, 3*time.Hour, 2, "after it")
+	// The next wake does not give it again.
+	_, pos = wt.worker(t, owner, "c1", "b", "reply beta")
+	wt.read(t, pos)
+	if got := wt.wokenN(t, owner, sv.ID, 3); strings.Contains(got[2], "eminder") {
+		t.Fatalf("the wake after the reminder's:\n%s", got[2])
+	}
 }
 
 // A reminder that came due while the daemon was down wakes the supervisor
@@ -154,7 +161,7 @@ func TestReminderIsFoldedAndOutlivesTheThread(t *testing.T) {
 	timers(1) // the reminder's
 	a, pos := wt.worker(t, owner, "c1", "a", "reply alpha")
 	wt.read(t, pos)
-	timers(2) // and the quiet period's
+	timers(2)                            // and the quiet period's
 	wt.clock().advance(20 * time.Second) // the reminder is due, the quiet period runs
 	time.Sleep(300 * time.Millisecond)
 	if n := wt.taken(t, first.ID); n != 0 {
@@ -288,4 +295,203 @@ func TestNoReminderNoInput(t *testing.T) {
 	if n := wt.clock().waiting(); n != 0 {
 		t.Fatalf("%d timers with no reminder and no event, want none", n)
 	}
+}
+
+// stopAt runs the daemon until the waker stops at step of a wake, and stops
+// it.
+func (wt *wakeTest) stopAt(t *testing.T, step string) {
+	t.Helper()
+	stopped := errors.New("stopped here")
+	h := func(at string) error {
+		if at == step {
+			return stopped
+		}
+		return nil
+	}
+	wt.hook.Store(&h)
+	stop, _, _ := wt.start(t)
+	eventually(t, "the wake to be "+step, 10*time.Second, func() bool {
+		var sending sql.NullInt64
+		wt.db.QueryRow(`SELECT send_to FROM supervisor_wakes WHERE scope = 'c1'`).Scan(&sending)
+		return sending.Valid
+	})
+	stop()
+}
+
+// A reminder whose stored wake is refused as busy, since a person's turn
+// started in between, is given after that turn.
+func TestReminderAfterABusyRefusal(t *testing.T) {
+	wt, conn := remindTest(t, budget(0, 0, 0))
+	stop, _, sv := wt.start(t)
+	remindIn(t, conn(), time.Hour, "reply looked again")
+	stop()
+	wt.clock().advance(3 * time.Hour)
+	wt.stopAt(t, "stored")
+	// Right before the stored wake is sent, a person's message comes.
+	var once sync.Once
+	prev := wakerHook
+	wakerHook = func(w *supervisor.Waker) {
+		prev(w)
+		before := w.Before
+		w.Before = func(ctx context.Context, id control.ThreadID) {
+			once.Do(func() {
+				owner, err := wire.Dial(wt.r.root)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				defer owner.Close()
+				for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+					if d, err := owner.Thread(ctx, id, 0, 0); err == nil && d.State == control.Running {
+						return
+					}
+					owner.Send(ctx, id, "hold", control.Input{Text: "tool hold 2s"}, control.Refuse)
+				}
+				t.Error("the person's turn did not start")
+			})
+			before(ctx, id)
+		}
+	}
+	stop, owner, _ := wt.start(t)
+	defer stop()
+	got := wt.woken(t, owner, sv.ID, 1)
+	if !strings.Contains(got[0], "\nReminder 1, due ") || !strings.Contains(got[0], "> reply looked again\n") {
+		t.Fatalf("the wake after the person's turn:\n%s", got[0])
+	}
+	wt.noWake(t, sv.ID, 2*time.Hour, 1, "after it")
+}
+
+// A due reminder does not go past the budget's hold with a thread that a
+// person asked for (#677); that wake lists it as open, and it wakes when
+// the hold ends.
+func TestReminderStaysBehindAnAskedThread(t *testing.T) {
+	wt, conn := remindTest(t, budget(1, 0, 0), autonomy("act"))
+	stop, owner, sv := wt.start(t) // its first turn is the hour's
+	defer stop()
+	remindIn(t, conn(), 10*time.Minute, "reply looked again")
+	wt.noWake(t, sv.ID, 11*time.Minute, 0, "with the budget used up")
+	w, pos := wt.asks(t, owner, sv, "q1", "reply the answer")
+	wt.read(t, pos)
+	time.Sleep(200 * time.Millisecond)
+	wt.steps(time.Minute)
+	got := wt.woken(t, owner, sv.ID, 1)
+	if !names(got[0], w) || strings.Contains(got[0], "\nReminder 1,") || !strings.Contains(got[0], "\nOpen reminders:\n- 1, due ") {
+		t.Fatalf("the wake past the hold:\n%s", got[0])
+	}
+	wt.noWake(t, sv.ID, 20*time.Minute, 1, "until the hold ends")
+	wt.until(t, wakeBase.Add(time.Hour))
+	if got := wt.wokenN(t, owner, sv.ID, 2); !strings.Contains(got[1], "\nReminder 1, due ") {
+		t.Fatalf("the wake of the next hour:\n%s", got[1])
+	}
+}
+
+// A reminder's wake stored for a thread that a person then closed goes to
+// the thread that replaces it, once: no wake after gives it again.
+func TestReminderOfAStoredWakeGoesToANewThread(t *testing.T) {
+	wt, conn := remindTest(t, budget(0, 0, 0))
+	stop, _, first := wt.start(t)
+	remindIn(t, conn(), time.Hour, "reply looked again")
+	stop()
+	wt.clock().advance(2 * time.Hour)
+	wt.stopAt(t, "stored")
+	// Closed while the waker is stopped.
+	hold := make(chan struct{})
+	prev := wakerHook
+	wakerHook = func(w *supervisor.Waker) {
+		prev(w)
+		w.Before = func(context.Context, control.ThreadID) { <-hold }
+	}
+	s := runDaemon(t, wt.r.root)
+	owner, err := wire.Dial(wt.r.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the supervisor's thread to close", 10*time.Second, func() bool { return owner.CloseThread(context.Background(), first.ID) == nil })
+	owner.Close()
+	close(hold)
+	s()
+	wakerHook = prev
+	if n := wt.taken(t, first.ID); n != 0 {
+		t.Fatalf("the closed thread took %d wakes, want none", n)
+	}
+	stop, owner, sv := wt.start(t)
+	defer stop()
+	if sv.ID == first.ID {
+		t.Fatalf("the closed supervisor %d was not replaced", first.ID)
+	}
+	if got := wt.wokenN(t, owner, sv.ID, 1); !strings.Contains(got[0], "\nReminder 1, due ") {
+		t.Fatalf("the replacing thread's wake:\n%s", got[0])
+	}
+	_, pos := wt.worker(t, owner, "c1", "b", "reply beta")
+	wt.read(t, pos)
+	if got := wt.wokenN(t, owner, sv.ID, 2); strings.Contains(got[1], "eminder") {
+		t.Fatalf("the wake after it:\n%s", got[1])
+	}
+}
+
+// A reminder cancelled after its wake was made, and before that was stored,
+// is not given: the wake is made again without it.
+func TestReminderCancelledWhileItsWakeIsMade(t *testing.T) {
+	wt, conn := remindTest(t, budget(0, 0, 0))
+	var c *wire.Client
+	prev := wakerHook
+	var once sync.Once
+	wakerHook = func(w *supervisor.Waker) {
+		prev(w)
+		sleep := w.Sleep // between making a wake and storing it
+		w.Sleep = func(ctx context.Context, id control.ThreadID) (bool, error) {
+			once.Do(func() {
+				if _, err := c.Remind(ctx, control.RemindRequest{Cancel: 1}); err != nil {
+					t.Error(err)
+				}
+			})
+			return sleep(ctx, id)
+		}
+	}
+	stop, owner, sv := wt.start(t)
+	defer stop()
+	c = conn()
+	remindIn(t, c, 10*time.Minute, "reply cancelled")
+	remindIn(t, c, 10*time.Minute, "reply kept")
+	got := wt.wokenN(t, owner, sv.ID, 1)
+	if strings.Contains(got[0], "cancelled") || !strings.HasPrefix(got[0], "hataori: 1 reminder of yours came due.\n\nReminder 2, due ") {
+		t.Fatalf("the wake:\n%s", got[0])
+	}
+}
+
+// stops stands in for a plugin that stops each input that has text, and
+// calls first when it does.
+type stops struct {
+	text string
+	did  func()
+}
+
+func (s stops) Run(_ context.Context, c control.HookCall) control.HookResult {
+	if strings.Contains(c.Text, s.text) {
+		s.did()
+		return control.HookResult{Text: c.Text, Stopped: true, By: "stopper", Reason: "stopped"}
+	}
+	return control.HookResult{Text: c.Text}
+}
+
+// A wake that a plugin stops takes its reminder with it, and leaves one
+// that came due meanwhile, which then wakes.
+func TestReminderAfterAWakeAPluginStopped(t *testing.T) {
+	wt, conn := remindTest(t, budget(0, 0, 0))
+	prev := coreHook
+	var once sync.Once
+	coreHook = func(c *core.Core) {
+		prev(c)
+		c.Hooks = stops{"stop this", func() { once.Do(func() { wt.clock().advance(time.Hour) }) }}
+	}
+	stop, owner, sv := wt.start(t)
+	defer stop()
+	c := conn()
+	remindIn(t, c, 10*time.Minute, "stop this")
+	remindIn(t, c, 30*time.Minute, "reply looked again") // due while the first is being stopped
+	got := wt.wokenN(t, owner, sv.ID, 1)
+	if !strings.Contains(got[0], "\nReminder 2, due ") || strings.Contains(got[0], "Reminder 1") {
+		t.Fatalf("the wake:\n%s", got[0])
+	}
+	wt.noWake(t, sv.ID, 2*time.Hour, 1, "after it")
 }

@@ -365,7 +365,7 @@ type API interface {
 	// Anything else is refused with the reason, and one reminder more than
 	// the scope's supervisor.reminders_max too. A reminder that is set counts
 	// as one send of the supervisor's budget: over it, ErrForbidden. One that
-	// came due and is being given is not open. Only the daemon's supervisor
+	// is being given by a wake cannot be cancelled any more. Only the daemon's supervisor
 	// client answers it, on a supervisor's token connection; the core answers
 	// ErrNotSupported. Since 3.32.
 	Remind(ctx context.Context, r RemindRequest) (RemindAnswer, error)
