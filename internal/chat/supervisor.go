@@ -151,19 +151,23 @@ func (q *QuietHours) in(t time.Time) bool {
 	return m >= q.From || m < q.To
 }
 
-// end returns the first end of the span after t.
+// end returns when the span that holds t ends: the first minute after t
+// that in does not hold. It goes by in, a minute at a time, so that it
+// agrees with in also where a clock change skips or repeats the wall
+// time of To.
 func (q *QuietHours) end(t time.Time) time.Time {
-	l := t.In(q.Zone)
-	for d := 0; ; d++ {
-		if e := time.Date(l.Year(), l.Month(), l.Day()+d, q.To/60, q.To%60, 0, 0, q.Zone); e.After(t) {
+	e := t.Truncate(time.Minute)
+	for i := 0; i < 2*24*60; i++ {
+		if e = e.Add(time.Minute); !q.in(e) {
 			return e
 		}
 	}
+	return e
 }
 
 // postsOf returns the keys of scope's supervisor; the zero Posts for a
 // scope this front end does not own.
-func (f *FrontEnd) postsOf(scope string) Posts { return f.Scopes[scope].Supervisor }
+func (f *FrontEnd) postsOf(scope string) Posts { return f.Supervisors[scope] }
 
 // heldPost is a wake's final answer held for a digest; namedPost is a
 // person named during quiet hours.
@@ -187,7 +191,8 @@ type namedPost struct {
 // that names nobody is not posted, under "digest" it is held for the next
 // digest. The person a post names is mentioned unless mention is "never";
 // during quiet hours nobody is, and the name is counted for the message at
-// their end.
+// their end. Quiet hours go by the front end's clock when it writes the
+// post, not by the event's time, which a restart may have left behind.
 func (f *FrontEnd) svPost(ctx context.Context, r *reader, e control.Event, sv svThread, answer bool, text string) ([]string, bool, error) {
 	p := f.postsOf(sv.scope)
 	names := f.named(sv.scope, text)
@@ -203,8 +208,8 @@ func (f *FrontEnd) svPost(ctx context.Context, r *reader, e control.Event, sv sv
 	switch {
 	case p.Never || len(names) == 0:
 		return nil, true, nil
-	case p.Quiet.in(e.Time):
-		end := p.Quiet.end(e.Time)
+	case p.Quiet.in(f.now()):
+		end := p.Quiet.end(f.now())
 		for _, n := range names {
 			r.named = append(r.named, namedPost{thread: e.Thread, end: end, name: n, pos: e.Pos})
 		}
@@ -224,11 +229,13 @@ func (f *FrontEnd) quietNow(sv svThread, t time.Time) bool {
 // transaction that moves the cursor past it.
 func (f *FrontEnd) holdTx(ctx context.Context, tx *store.Tx, r *reader) error {
 	for _, h := range r.held {
-		// The answer joins the digest its thread has waiting, if any.
+		// The answer joins the digest its thread has waiting, if that is
+		// not yet due by the answer's time: after a restart, an answer
+		// past it starts a digest of its own.
 		due := h.at.Add(f.postsOf(r.sv[h.thread].scope).every()).UnixMilli()
 		var open sql.NullInt64
-		if err := tx.QueryRowContext(ctx, `SELECT min(due_at) FROM chat_held WHERE client = ? AND thread = ?`,
-			f.Name, int64(h.thread)).Scan(&open); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT min(due_at) FROM chat_held WHERE client = ? AND thread = ? AND due_at > ?`,
+			f.Name, int64(h.thread), h.at.UnixMilli()).Scan(&open); err != nil {
 			return err
 		}
 		if open.Valid {
@@ -291,10 +298,17 @@ func (f *FrontEnd) flushHeld(ctx context.Context, now time.Time) error {
 		return err
 	}
 	convs := map[control.ThreadID][]surface.Conversation{}
+	scopes := map[control.ThreadID]string{}
 	for _, id := range threads {
 		if convs[id], err = f.convsOf(ctx, id); err != nil {
 			return err
 		}
+		var scope string
+		err := f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT scope FROM threads WHERE id = ?`, int64(id)).Scan(&scope)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		scopes[id] = scope
 	}
 	// One row for each conversation, the first first; the copies mention
 	// nobody (everyLink). A thread shown nowhere here gets nothing.
@@ -320,12 +334,23 @@ func (f *FrontEnd) flushHeld(ctx context.Context, now time.Time) error {
 			return err
 		}
 		for _, q := range ends {
+			// Told at the end of quiet hours, also late after a restart, but
+			// not during the next ones: then at their end. Under mention
+			// "never" it mentions nobody.
+			p := f.postsOf(scopes[q.thread])
+			if p.Quiet.in(now) {
+				continue
+			}
+			if p.Never {
+				q.notify = nil
+			}
 			rows = append(rows, every(q.thread, Row{Event: q.pos, Part: quietEndPart, Message: surface.Message{Text: q.text, Notify: q.notify}})...)
+			if _, err := tx.ExecContext(ctx, `DELETE FROM chat_named WHERE client = ? AND thread = ? AND end_at = ?`,
+				f.Name, int64(q.thread), q.end); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM chat_held WHERE client = ? AND due_at <= ?`, f.Name, at); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM chat_named WHERE client = ? AND end_at <= ?`, f.Name, at); err != nil {
 			return err
 		}
 		return f.Outbox.WriteTx(ctx, tx, rows...)
@@ -385,6 +410,7 @@ func (f *FrontEnd) dueDigests(ctx context.Context, tx *store.Tx, now int64) ([]d
 
 type dueQuietEnd struct {
 	thread control.ThreadID
+	end    int64 // unix milliseconds
 	pos    uint64
 	text   string
 	notify []string
@@ -416,7 +442,7 @@ func (f *FrontEnd) dueQuietEnds(ctx context.Context, tx *store.Tx, now int64) ([
 			return nil, err
 		}
 		if len(out) == 0 || k != last {
-			out = append(out, dueQuietEnd{thread: control.ThreadID(k.thread)})
+			out = append(out, dueQuietEnd{thread: control.ThreadID(k.thread), end: k.end})
 			parts, names = append(parts, nil), append(names, nil)
 			last = k
 		}

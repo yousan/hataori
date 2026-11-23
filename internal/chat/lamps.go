@@ -199,7 +199,7 @@ func (f *FrontEnd) lamps(ctx context.Context, r *reader, e control.Event, convs 
 		return nil, err
 	}
 	sv := t.sv
-	if sv && f.quietNow(t, e.Time) {
+	if sv && f.quietNow(t, f.now()) {
 		ping = "" // no post of the thread mentions anyone (#657)
 	}
 	if ping != "" && (!(byself || sv) || d.Outcome == "failure" || d.Outcome == "blocked") {

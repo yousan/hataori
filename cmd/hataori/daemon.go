@@ -836,7 +836,15 @@ func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.St
 			if s.Client != name {
 				continue
 			}
-			scopes[s.Key] = chat.Scope{Enabled: s.Enabled, Supervisor: supervisorPosts(s.Supervisor)}
+			scopes[s.Key] = chat.Scope{Enabled: s.Enabled}
+		}
+		// What a supervisor's thread posts, for the scopes of every
+		// client, as archive below.
+		posts := map[string]chat.Posts{}
+		for _, s := range cfg.Scopes {
+			if s.Supervisor != nil {
+				posts[s.Key] = supervisorPosts(s.Supervisor)
+			}
 		}
 		// The scopes, of every client, whose chat threads are archived
 		// while asleep: a link here may show another client's scope.
@@ -856,7 +864,7 @@ func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.St
 			}
 		}
 		fe := &chat.FrontEnd{Name: name, Driver: d, API: c.As, Trigger: cfg.Trigger, People: cfg.People,
-			Scopes: scopes, ShowIn: showIn, ArchiveWhenAsleep: archive, Log: lg.With("client", name), Instance: filepath.Base(root),
+			Scopes: scopes, ShowIn: showIn, ArchiveWhenAsleep: archive, Supervisors: posts, Log: lg.With("client", name), Instance: filepath.Base(root),
 			Outbox:  &chat.Outbox{Store: st, Client: name, Driver: d, Log: lg.With("client", name)},
 			FileDir: filepath.Join(root, "state", "chat", name, "files"),
 			FileRoots: func(ctx context.Context, id control.ThreadID, session int64) ([]string, error) {
