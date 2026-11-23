@@ -3,6 +3,7 @@ import { type Event, hasTerminal, type ThreadInfo } from "./api";
 import type { AttachState } from "./attach";
 import { type Key, t } from "./catalog";
 import { Conversation } from "./Conversation";
+import { age, stateName } from "./format";
 import { InputBox } from "./InputBox";
 import { Answers, useOpenRequests } from "./Answers";
 import { StopButton } from "./StopButton";
@@ -71,15 +72,29 @@ function Switch({ a }: { a: AttachSwitch }) {
   );
 }
 
+// PaneState is the thread's state in the pane's header, in words with its
+// colour and how long it has been in it: what the thread is doing, apart
+// from the controls beside it, which are actions.
+function PaneState({ x, now }: { x: ThreadInfo; now: number }) {
+  return (
+    <span className={`pane-state state-${x.state}`} data-pane-state={x.state}>
+      <span className="pane-state-dot" aria-hidden="true" />
+      {t("pane.state", { state: stateName(x.state), age: age(x.updated, now) })}
+    </span>
+  );
+}
+
 // ThreadPane is a thread's pane: its live terminal or its conversation,
 // switched in the pane; a session without a terminal has only the
 // conversation. view is the person's choice for this tab, or the view the
 // tab opened on. With fit, the terminal fills the pane. typing lets the
 // terminal take keys (attach.ts); attach, on the web listener, is its
 // switch. A session without a terminal, and every thread in the narrow
-// layout, has the input box, for a person who may act.
+// layout, has the input box, for a person who may act. Its header shows
+// the thread's state, then the controls: the views, Type and Stop.
 export function ThreadPane(props: {
   x: ThreadInfo;
+  now: number;
   subscribe: (f: (e: Event) => void) => () => void;
   opens: number;
   fit?: boolean;
@@ -90,7 +105,7 @@ export function ThreadPane(props: {
   mayAct?: boolean; // the server lets this person give the thread input
   narrow?: boolean; // the narrow layout, where every thread has the input box
 }) {
-  const { x, subscribe, opens, fit, onView, typing, attach, mayAct, narrow } = props;
+  const { x, now, subscribe, opens, fit, onView, typing, attach, mayAct, narrow } = props;
   const [terminal, setTerminal] = useState<boolean | null>(null);
   const id = x.id;
   // Each open question's and approval's buttons, for a person who may act;
@@ -126,24 +141,34 @@ export function ThreadPane(props: {
   const view: View = terminal ? (props.view ?? defaultView(x)) : "conversation";
   return (
     <div className="thread-pane" data-view={view}>
-      {terminal && (
-        <div className="view-switch" role="group" aria-label={t("view.label")}>
-          {(["terminal", "conversation"] as const).map((v) => (
-            <button key={v} type="button" data-view={v} aria-pressed={view === v} onClick={() => onView?.(v)}>
-              {t(v === "terminal" ? "view.terminal" : "view.conversation")}
-            </button>
-          ))}
+      <div className="pane-head">
+        <PaneState x={x} now={now} />
+        <div className="pane-controls">
+          {terminal && (
+            <div className="view-switch" role="group" aria-label={t("view.label")}>
+              {(["terminal", "conversation"] as const).map((v) => (
+                <button key={v} type="button" data-view={v} aria-pressed={view === v} onClick={() => onView?.(v)}>
+                  {t(v === "terminal" ? "view.terminal" : "view.conversation")}
+                </button>
+              ))}
+            </div>
+          )}
+          {terminal && view === "terminal" && attach && <Switch a={attach} />}
+          {mayAct && <StopButton x={x} subscribe={subscribe} opens={opens} />}
         </div>
-      )}
+      </div>
       {!terminal && x.state === "asleep" && (
         <p className="no-process" data-no-process="">
           {t("pane.noProcess")}
         </p>
       )}
-      {mayAct && <StopButton x={x} subscribe={subscribe} opens={opens} />}
-      {terminal && view === "terminal" && attach && <Switch a={attach} />}
       {view === "terminal" ? (
-        <TerminalView x={x} fit={fit} typing={terminal ? typing : undefined} />
+        <TerminalView
+          x={x}
+          fit={fit}
+          typing={terminal ? typing : undefined}
+          offer={terminal && attach && !typing?.allowed ? attach.onSwitch : undefined}
+        />
       ) : (
         <Conversation x={x} subscribe={subscribe} opens={opens} />
       )}

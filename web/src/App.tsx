@@ -299,6 +299,7 @@ export function App() {
               view={viewOf(threadTab(x.id))}
               onView={chooseView(threadTab(x.id))}
               mayAct={mayAct}
+              now={now}
             />
           ) : (
             <NarrowList
@@ -418,6 +419,7 @@ export function App() {
                       <ThreadPane
                         key={k}
                         x={paneThread(k)!}
+                        now={now}
                         subscribe={d.subscribe}
                         opens={d.opens}
                         fit

@@ -58,7 +58,12 @@ const resizeQuiet = 250;
 // Events have no way back. While typing allows it, stdin is on and what
 // the person types goes to typing.onKeys, and nothing else: the terminal
 // answers no query (muteQueries), and mouse and focus reports are dropped.
-export function TerminalView({ x, fit, typing }: { x: ThreadInfo; fit?: boolean; typing?: Typing }) {
+//
+// offer, while the terminal takes no keys only until the person turns
+// input on (the web listener's switch), starts that: a key or a click in
+// the terminal shows, over it, one line whose button calls offer. Nothing
+// is sent meanwhile.
+export function TerminalView({ x, fit, typing, offer }: { x: ThreadInfo; fit?: boolean; typing?: Typing; offer?: () => void }) {
   const host = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLDivElement>(null);
   const termRef = useRef<ReturnType<typeof openReadOnly> | null>(null);
@@ -66,6 +71,13 @@ export function TerminalView({ x, fit, typing }: { x: ThreadInfo; fit?: boolean;
   const live = useRef(typing); // what the terminal's listeners read
   live.current = typing;
   const [noProcess, setNoProcess] = useState(false);
+  const offered = useRef(offer); // what the terminal's listeners read
+  offered.current = offer;
+  const [hint, setHint] = useState(false);
+  const offering = !!offer;
+  useEffect(() => {
+    if (!offering) setHint(false);
+  }, [offering]);
   const id = x.id;
 
   useEffect(() => {
@@ -80,6 +92,17 @@ export function TerminalView({ x, fit, typing }: { x: ThreadInfo; fit?: boolean;
     const textarea = term.textarea;
     textarea?.addEventListener("blur", leave);
     term.options.disableStdin = !live.current?.allowed;
+    // A key or a click in the terminal while input could be turned on
+    // shows the way to turn it on. A modifier alone, or Tab leaving the
+    // terminal, is no attempt to type.
+    const el = box.current;
+    const poke = (e: Event) => {
+      if (!offered.current) return;
+      if (e instanceof KeyboardEvent && ["Shift", "Control", "Alt", "Meta", "Tab"].includes(e.key)) return;
+      setHint(true);
+    };
+    el?.addEventListener("keydown", poke, true);
+    el?.addEventListener("pointerdown", poke, true);
     // The pane's size goes to the session only while attached, and only
     // when it differs from the last one given in this attachment.
     let quiet = 0;
@@ -138,6 +161,8 @@ export function TerminalView({ x, fit, typing }: { x: ThreadInfo; fit?: boolean;
       toPane.current = null;
       termRef.current = null;
       data.dispose();
+      el?.removeEventListener("keydown", poke, true);
+      el?.removeEventListener("pointerdown", poke, true);
       textarea?.removeEventListener("blur", leave);
       // A terminal taken away with the focus in it, as when another tab is
       // shown, gets no blur: it is left all the same.
@@ -171,6 +196,20 @@ export function TerminalView({ x, fit, typing }: { x: ThreadInfo; fit?: boolean;
         <p className="no-process" data-no-process="">
           {t("pane.noProcess")}
         </p>
+      )}
+      {offer && hint && (
+        <div className="type-hint" data-type-hint="">
+          <button
+            type="button"
+            data-type-hint-on=""
+            onClick={() => {
+              setHint(false);
+              offer();
+            }}
+          >
+            {t("attach.hint")}
+          </button>
+        </div>
       )}
       <div className="xterm-box" ref={box}>
         <div className="xterm-host" ref={host} />
