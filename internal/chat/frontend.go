@@ -23,10 +23,6 @@ import (
 // against the people config (design, section 5.1).
 type Scope struct {
 	Enabled bool
-	// ArchiveWhenAsleep archives the chat threads of the scope's threads
-	// when they go asleep or are closed, and un-archives them when they
-	// are woken (archiveRows).
-	ArchiveWhenAsleep bool
 }
 
 // FrontEnd shows threads in one chat service. It is the surface.Sink of its
@@ -46,7 +42,12 @@ type FrontEnd struct {
 	// ShowIn lists, by channel of this client, the scopes of other channels
 	// whose show_in names it: their threads may be attached there.
 	ShowIn map[string][]string
-	Log    *slog.Logger
+	// ArchiveWhenAsleep holds the scopes, of any client, whose threads'
+	// chat threads are archived when the thread goes asleep or is closed,
+	// and un-archived when it is woken (archiveRows): also a chat thread
+	// of this client that shows another client's scope.
+	ArchiveWhenAsleep map[string]bool
+	Log               *slog.Logger
 
 	// The progress line: posted after QuietAfter (90s) of a turn without
 	// output, edited at most every EditEvery (15s), checked every Tick (1s).

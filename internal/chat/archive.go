@@ -12,15 +12,15 @@ import (
 // un-archives a chat thread: after what else the event shows.
 const threadPart = 1 << 28
 
-// archiveRows are the rows that archive the chat threads of a thread of a
-// scope with ArchiveWhenAsleep when it goes asleep or is closed, and
+// archiveRows are the rows that archive the chat threads here of a thread
+// of a scope in ArchiveWhenAsleep when it goes asleep or is closed, and
 // un-archive them when it is woken: whatever woke it, a message in the chat
 // thread (which the service has un-archived by itself), the dashboard or
 // `hataori attach`. The rows of the wake come before what the woken thread
 // posts, since they are the state event's. A driver that cannot set a
 // thread's flags (Limits.SetThread) gets none, and its threads stay open.
 func (f *FrontEnd) archiveRows(e control.Event, convs []surface.Conversation) []Row {
-	if e.Kind != "state" || !f.Scopes[e.Scope].ArchiveWhenAsleep || !f.Driver.Limits().SetThread {
+	if e.Kind != "state" || !f.ArchiveWhenAsleep[e.Scope] || !f.Driver.Limits().SetThread {
 		return nil
 	}
 	var d struct{ From, To control.State }

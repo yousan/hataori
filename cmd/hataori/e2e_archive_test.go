@@ -219,3 +219,47 @@ func TestArchiveFailureIsLoggedOnce(t *testing.T) {
 	r.driver.Inject(th, fakesurface.Webhook(e2eHook), "reply b")
 	r.posted(t, th, "b")
 }
+
+// A thread shown in a channel of another client (show_in) has that chat
+// thread archived too: the option is the thread's scope's, whichever client
+// shows it.
+func TestArchiveWhenAsleepOnASecondSurface(t *testing.T) {
+	var two *fakesurface.Driver
+	r := newChatRoot(t, func(cfg map[string]any) {
+		root := cfg["drivers"].(map[string]any)[fakeSurface].(map[string]any)["id"].(string)
+		two = fakesurface.New()
+		drivers.Store(root+"/two", two)
+		t.Cleanup(func() { drivers.Delete(root + "/two") })
+		cfg["owner"] = "ada"
+		cfg["people"] = []map[string]any{
+			{"name": "ada", "ids": []string{fakeSurface + ":" + e2eOwner}},
+			{"name": "dispatch", "ids": []string{fakeSurface + ":" + e2eHook}},
+			{"name": "grace", "ids": []string{secondSurface + ":g-1"}},
+		}
+		cfg["scopes"] = []map[string]any{
+			{"key": "c1", "client": fakeSurface, "enabled": true, "people": []string{"dispatch", "grace"},
+				"show_in": []string{secondSurface + ":d1"}, "archive_when_asleep": true},
+			{"key": "d1", "client": secondSurface, "enabled": true},
+		}
+		cfg["drivers"].(map[string]any)[secondSurface] = map[string]any{"id": root + "/two"}
+	})
+	startDaemon(t, r.root)
+	r.connected(t)
+	eventually(t, "the second driver to connect", 10*time.Second, two.Connected)
+	time.Sleep(20 * time.Millisecond)
+	th, _, _ := r.idleThread(t, 0, "hello")
+	d1 := surface.Conversation{Channel: "d1"}
+	two.InjectCommand(d1, fakesurface.Person("g-1"), "attach", surface.Arg{Name: "number", Value: numberOf(t, r.root, th)})
+	var there surface.Conversation
+	eventually(t, "the attached thread", 15*time.Second, func() bool {
+		o := opened(two, d1)
+		if len(o) == 1 {
+			there = o[0]
+		}
+		return len(o) == 1
+	})
+	if code, _, errOut := cli(t, "close", "--root", r.root, numberOf(t, r.root, th)); code != 0 {
+		t.Fatalf("close: %d %s", code, errOut)
+	}
+	eventually(t, "both chat threads archived", 10*time.Second, func() bool { return r.driver.Archived(th) && two.Archived(there) })
+}
