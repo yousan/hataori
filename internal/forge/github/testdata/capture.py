@@ -38,6 +38,19 @@ REQUESTS = [
     ("ref-status.json", "/repos/urfave/cli/commits/d5c06cb04479eeacbbb9378ea26261b6be516320/status?page=1&per_page=100"),
     ("not-found.json", "/repos/cli/cli/issues/999999999"),
 ]
+# The comparisons of a commit with the build: pull request 14910's merge
+# commit, the trunk commit four commits after it, and a commit of the
+# branch merged there, which does not contain it.
+MERGE = "c4513d446bf98cfcbe72ed83f17cd3220174d88f"
+LATER = "eeb44bc432c0107de002dadd34a61b4e2bd15882"
+BRANCH = "f44bd1dcc58a718327a4d1df89ea3d1145c827b2"
+COMPARES = [
+    ("compare-ahead.json", f"/repos/cli/cli/compare/{MERGE}...{LATER}?per_page=1"),
+    ("compare-behind.json", f"/repos/cli/cli/compare/{LATER}...{MERGE}?per_page=1"),
+    ("compare-identical.json", f"/repos/cli/cli/compare/{MERGE}...{MERGE}?per_page=1"),
+    ("compare-diverged.json", f"/repos/cli/cli/compare/{MERGE}...{BRANCH}?per_page=1"),
+    ("compare-not-found.json", f"/repos/cli/cli/compare/{MERGE}...0000000000000000000000000000000000000001?per_page=1"),
+]
 
 
 class CaptureError(Exception):
@@ -91,8 +104,8 @@ def scrub_message(message):
 
 
 def main():
-    if len(sys.argv) != 3 or sys.argv[1] not in ("answers", "ratelimit"):
-        raise CaptureError("Usage: python3 -I capture.py <answers|ratelimit> <out-dir>")
+    if len(sys.argv) != 3 or sys.argv[1] not in ("answers", "compare", "ratelimit"):
+        raise CaptureError("Usage: python3 -I capture.py <answers|compare|ratelimit> <out-dir>")
     step, directory = sys.argv[1], Path(sys.argv[2])
     token_file = os.environ.get("HATAORI_GITHUB_TOKEN_FILE")
     if step == "ratelimit" and token_file is not None:
@@ -105,7 +118,10 @@ def main():
         headers["Authorization"] = "Bearer " + token
     directory.mkdir(parents=True, exist_ok=True)
     opener = urllib.request.build_opener(NoRedirect())
-    if step == "answers":
+    if step == "compare":
+        for name, path in COMPARES:
+            save(directory, name, fetch(opener, path, headers))
+    elif step == "answers":
         sha = None
         for name, path in REQUESTS:
             if "{sha}" in path:

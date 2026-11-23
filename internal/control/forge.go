@@ -17,6 +17,9 @@ const (
 	ForgeReadPulls  = "pulls"  // a repository's pull requests
 	ForgeReadPull   = "pull"   // one pull request with its discussion, files and head checks
 	ForgeReadChecks = "checks" // the checks and commit statuses of a branch, a tag or a commit
+	// ForgeReadDeployed: whether a commit, or a pull request's merge
+	// commit, is in the running daemon's build. Since 3.29.
+	ForgeReadDeployed = "deployed"
 )
 
 // The states a list of issues or pull requests may select
@@ -34,8 +37,8 @@ type ForgeRequest struct {
 	// by its forge name, "<owner>/<name>".
 	Repo   string `json:"repo"`
 	Read   string `json:"read"`             // one of the ForgeRead values
-	Number int    `json:"number,omitempty"` // the issue's or the pull request's, for ForgeReadIssue and ForgeReadPull
-	Ref    string `json:"ref,omitempty"`    // the branch, tag or commit, for ForgeReadChecks
+	Number int    `json:"number,omitempty"` // the issue's or the pull request's, for ForgeReadIssue and ForgeReadPull; the pull request's, or none, for ForgeReadDeployed
+	Ref    string `json:"ref,omitempty"`    // the branch, tag or commit, for ForgeReadChecks; the commit, when no Number, for ForgeReadDeployed
 	State  string `json:"state,omitempty"`  // for a list: ForgeOpen, the default, ForgeClosed or ForgeAll
 }
 
@@ -49,6 +52,24 @@ type ForgeAnswer struct {
 	Pulls  *ForgePullList    `json:"pulls,omitempty"`
 	Pull   *ForgePullDetail  `json:"pull,omitempty"`
 	Checks *ForgeChecks      `json:"checks,omitempty"`
+	// Deployed is of ForgeReadDeployed. Since 3.29.
+	Deployed *ForgeDeployed `json:"deployed,omitempty"`
+}
+
+// ForgeDeployed is whether a commit, or a pull request's merge commit, is
+// in the build of the running daemon: that build's commit, or an ancestor
+// of it, as the forge compares them. When that is not known, In is absent
+// and Reason says why; nothing is guessed. Since 3.29.
+type ForgeDeployed struct {
+	// Build is the commit the running daemon was built from, as its build
+	// info records it; absent when it records none.
+	Build    string `json:"build,omitempty"`
+	Modified bool   `json:"modified,omitempty"` // the build had changes not in Build
+	Pull     int    `json:"pull,omitempty"`     // the pull request asked about
+	Merged   *bool  `json:"merged,omitempty"`   // of a pull request: whether it was merged
+	Commit   string `json:"commit,omitempty"`   // the commit checked: the one asked about, or the pull request's merge commit
+	In       *bool  `json:"in,omitempty"`       // Commit is Build or an ancestor of it; absent when not known
+	Reason   string `json:"reason,omitempty"`   // why In is absent
 }
 
 // ForgeAuthor is who wrote an item's text. Since 3.27.

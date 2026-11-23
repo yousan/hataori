@@ -11,6 +11,7 @@ import (
 
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/forge"
+	"github.com/yousan/hataori/internal/version"
 )
 
 // Reads gives api, a supervisor's caller in scope, the reads of a forge
@@ -20,8 +21,11 @@ import (
 // unless trusted lists them. Any other repository is refused with
 // control.ErrForbidden, and nothing is read. The daemon binds it to the
 // supervisor's token, so nothing `hataori mcp` sends gets past it.
-func Reads(api control.API, scope string, repos []Repo, forges map[string]forge.Forge, trusted []string, log *slog.Logger) control.API {
-	return &reader{API: api, scope: scope, repos: repos, forges: forges, trusted: trusted, log: log}
+//
+// Its deployed read compares a commit, or a pull request's merge commit,
+// with build, the running daemon's own build (version.ReadBuild when nil).
+func Reads(api control.API, scope string, repos []Repo, forges map[string]forge.Forge, trusted []string, build func() version.Build, log *slog.Logger) control.API {
+	return &reader{API: api, scope: scope, repos: repos, forges: forges, trusted: trusted, build: build, log: log}
 }
 
 type reader struct {
@@ -30,6 +34,7 @@ type reader struct {
 	repos   []Repo
 	forges  map[string]forge.Forge // by name; the token of each stays in it
 	trusted []string               // logins, of any case
+	build   func() version.Build   // nil for version.ReadBuild, read at each call
 	log     *slog.Logger
 }
 
@@ -155,8 +160,14 @@ func (b *reader) Forge(ctx context.Context, r control.ForgeRequest) (control.For
 		}
 		cs := checks(c, !namedRef(r.Ref))
 		out.Checks = &cs
+	case control.ForgeReadDeployed:
+		d, err := b.deployed(ctx, f, repo, r)
+		if err != nil {
+			return control.ForgeAnswer{}, err
+		}
+		out.Deployed = &d
 	default:
-		return control.ForgeAnswer{}, fmt.Errorf("forge: no read %q: one of issues, issue, pulls, pull and checks", r.Read)
+		return control.ForgeAnswer{}, fmt.Errorf("forge: no read %q: one of issues, issue, pulls, pull, checks and deployed", r.Read)
 	}
 	return out, nil
 }
@@ -181,6 +192,61 @@ func namedRef(ref string) bool {
 		}
 	}
 	return true
+}
+
+// commitRef is a commit as deployed takes one: 7 to 40 hexadecimal digits.
+var commitRef = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
+
+// deployed answers whether r's commit, or its pull request's merge commit,
+// is the running daemon's build commit or an ancestor of it, as the forge
+// compares them. What cannot be told is said in Reason, and In is left
+// out. Only a refusal of the pull request's read is an error.
+func (b *reader) deployed(ctx context.Context, f forge.Forge, repo forge.Repo, r control.ForgeRequest) (control.ForgeDeployed, error) {
+	read := version.ReadBuild
+	if b.build != nil {
+		read = b.build
+	}
+	build := read()
+	d := control.ForgeDeployed{Build: build.Commit, Modified: build.Modified}
+	switch {
+	case r.Number > 0:
+		d.Pull = r.Number
+		m, err := f.Merge(ctx, repo, r.Number)
+		if err != nil {
+			return control.ForgeDeployed{}, forgeErr(err)
+		}
+		merged := m.Merged
+		d.Merged = &merged
+		if !merged {
+			d.Reason = "the pull request is not merged (" + m.State + "), so no merge commit was compared; whether a build holds its commits some other way, such as one built from its branch, is not told"
+			return d, nil
+		}
+		if d.Commit = m.Commit; d.Commit == "" {
+			d.Reason = "the forge gives no merge commit for the merged pull request"
+			return d, nil
+		}
+	case commitRef.MatchString(strings.TrimSpace(r.Ref)):
+		d.Commit = strings.TrimSpace(r.Ref)
+	default:
+		return control.ForgeDeployed{}, errors.New("forge: a deployed read needs a pull request's number or a commit of 7 to 40 hexadecimal digits")
+	}
+	if build.Commit == "" {
+		d.Reason = "the running hataori's build info records no commit: it was built without version control information, so what it holds cannot be told"
+		return d, nil
+	}
+	c, err := f.Compare(ctx, repo, d.Commit, build.Commit)
+	if err != nil {
+		d.Reason = "the forge cannot tell: " + forgeErr(err).Error()
+		return d, nil
+	}
+	switch c.Status {
+	case forge.Identical, forge.Ahead, forge.Behind, forge.Diverged:
+		in := c.Contains()
+		d.In = &in
+	default:
+		d.Reason = fmt.Sprintf("the forge cannot tell: it compares them as %q", c.Status)
+	}
+	return d, nil
 }
 
 // forgeOf returns the forge that serves e's address, and the repository

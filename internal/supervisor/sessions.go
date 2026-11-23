@@ -19,6 +19,7 @@ import (
 	"github.com/yousan/hataori/internal/forge"
 	"github.com/yousan/hataori/internal/instance"
 	"github.com/yousan/hataori/internal/runner"
+	"github.com/yousan/hataori/internal/version"
 	"github.com/yousan/hataori/internal/workspace"
 )
 
@@ -106,7 +107,10 @@ type Sessions struct {
 	// Docs copies each scope's files into docs/ of its directory; nil for
 	// none.
 	Docs *Docs
-	Log  *slog.Logger
+	// Build is the running daemon's build, for the deployed read;
+	// version.ReadBuild when nil.
+	Build func() version.Build
+	Log   *slog.Logger
 
 	mu     sync.Mutex
 	issued map[control.ThreadID]issued // by thread: the token of its newest session
@@ -229,7 +233,7 @@ func (s *Sessions) APIOf(scope string, thread control.ThreadID, autonomy string)
 		api = b.API(api)
 	}
 	api = Repos(api, scope, s.Scopes[scope].Repos, s.Log)
-	api = Reads(api, scope, s.Scopes[scope].Repos, s.Forges, s.Scopes[scope].Trusted, s.Log)
+	api = Reads(api, scope, s.Scopes[scope].Repos, s.Forges, s.Scopes[scope].Trusted, s.Build, s.Log)
 	if autonomy == Watch {
 		api = &watching{API: api, scope: scope, log: s.Log}
 	}

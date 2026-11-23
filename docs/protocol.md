@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.28**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.29**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -522,12 +522,14 @@ Result: [`ClientState`]
 
 Since 3.27. One read of a forge, read only, for a repository of the caller's scope (design, section 7.1): its issues, one issue with its comments, its pull requests, one pull request with its reviews, comments, changed files, merge state, merge commit and the checks of its head, or the checks and commit statuses of a branch, a tag or a commit. Only the daemon answers it, on a supervisor's token connection, for a repository its scope lists under `supervisor.repos`, named as listed there or by its forge name (`<owner>/<name>`, of any case), that has a forge name and a forge of the instance (`forges`) that serves its address; any other repository is `forbidden`, and nothing is read. Every other connection reaches the core, which answers `not_supported`. The daemon makes the request with the forge's token, which no message carries. Text written by an author without write access to the repository (a title, a pull request's branch, a body, a comment, a review) is left out unless the scope's `supervisor.trusted_authors` lists that login; the item then has `withheld` and still names its author. In a pull request so withheld, the paths of its changed files and of the comments on them, and the names of its head's checks, are left out too. A `checks` read leaves out the names of the checks of a ref that is a commit (4 to 40 hexadecimal digits) or a pull request's ref (one with a part `pull`), since whoever wrote that commit may have named them; a branch or a tag has them. The answer is the daemon's: the text left out never goes on the socket. No CI log is read. A forge's refusal or rate limit is `error`, with the forge's reason in its message. A daemon before 3.27 answers `not_supported`.
 
+Since 3.29, the read `deployed` tells whether a commit, or a pull request's merge commit, is in the running daemon's build: the commit its build info records (`vcs.revision`, as `hataori version` shows it, and `vcs.modified`), and whether the commit asked about is that commit or an ancestor of it, as the forge compares the two. An unmerged pull request is answered `merged` false, with no comparison. When the build info records no commit, or the forge cannot tell (it does not know one of the commits, or refuses), `in` is absent and `reason` says why; only a refusal of the pull request's read is an `error`. A daemon before 3.29 answers it `error`, as a read it does not know.
+
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `repo` | string | required | the repository, as `supervisor.repos` lists it or by its forge name |
-| `read` | string | required | `issues`, `issue`, `pulls`, `pull` or `checks` |
-| `number` | integer | optional | the issue's or the pull request's number, for `issue` and `pull` |
-| `ref` | string | optional | the branch, tag or commit, for `checks` |
+| `read` | string | required | `issues`, `issue`, `pulls`, `pull`, `checks` or, since 3.29, `deployed` |
+| `number` | integer | optional | the issue's or the pull request's number, for `issue` and `pull`; the pull request's for `deployed` |
+| `ref` | string | optional | the branch, tag or commit, for `checks`; for `deployed` without `number`, the commit, 7 to 40 hexadecimal digits |
 | `state` | string | optional | for `issues` and `pulls`: `open`, the default, `closed` or `all` |
 
 Result: `ForgeAnswer`
@@ -964,6 +966,21 @@ The result of `Forge`: the one read asked for, in its field. Since 3.27.
 | `pulls` | `ForgePullList` | optional | of `pulls` |
 | `pull` | `ForgePullDetail` | optional | of `pull` |
 | `checks` | `ForgeChecks` | optional | of `checks` |
+| `deployed` | `ForgeDeployed` | optional | of `deployed`; since 3.29 |
+
+### Type `ForgeDeployed`
+
+The result of a `deployed` read. Since 3.29.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `build` | string | optional | the commit the running daemon was built from, as its build info records it; absent when it records none |
+| `modified` | boolean | optional | the build had changes not in `build` |
+| `pull` | integer | optional | the pull request asked about |
+| `merged` | boolean | optional | of a pull request: whether it was merged |
+| `commit` | string | optional | the commit checked: the one asked about, or the pull request's merge commit |
+| `in` | boolean | optional | `commit` is `build` or an ancestor of it; absent when not known |
+| `reason` | string | optional | why `in` is absent |
 
 ### Type `ForgeAuthor`
 

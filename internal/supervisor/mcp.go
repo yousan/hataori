@@ -57,6 +57,9 @@ const (
 	ToolPulls  = "list_pulls"
 	ToolPull   = "read_pull"
 	ToolChecks = "read_checks"
+	// ToolDeployed tells whether a commit or a pull request is in the
+	// running hataori. Since protocol 3.29.
+	ToolDeployed = "deployed"
 )
 
 // ForgeMax is the most bytes of a forge tool's answer; a longer one is cut,
@@ -66,7 +69,7 @@ const ForgeMax = 16 * 1024
 // forgeReads are the reads of the forge tools.
 var forgeReads = map[string]string{
 	ToolIssues: control.ForgeReadIssues, ToolIssue: control.ForgeReadIssue, ToolPulls: control.ForgeReadPulls,
-	ToolPull: control.ForgeReadPull, ToolChecks: control.ForgeReadChecks,
+	ToolPull: control.ForgeReadPull, ToolChecks: control.ForgeReadChecks, ToolDeployed: control.ForgeReadDeployed,
 }
 
 // protocols are the MCP versions the server speaks, newest first.
@@ -149,6 +152,11 @@ var tools = []tool{
 		object(map[string]any{"repo": forgeRepo, "number": map[string]any{"type": "integer", "description": "the pull request's number"}}, "repo", "number")},
 	{ToolChecks, "Read the checks and commit statuses of a branch, a tag or a commit of one of this channel's repositories on its forge, read only: name, state, conclusion, address. No CI log is read.",
 		object(map[string]any{"repo": forgeRepo, "ref": map[string]any{"type": "string", "description": "the branch, tag or commit"}}, "repo", "ref")},
+	{ToolDeployed, "Tell whether a pull request, or a commit, of one of this channel's repositories is in the running hataori: " +
+		"the commit the running daemon was built from, and whether the pull request's merge commit, or the commit, is that commit or an ancestor of it, as the forge compares them. " +
+		"Use it when asked whether a change is in production or deployed; it answers from the build and the forge, read only, and says why when it cannot tell. Give number or commit.",
+		object(map[string]any{"repo": forgeRepo, "number": map[string]any{"type": "integer", "description": "the pull request's number"},
+			"commit": map[string]any{"type": "string", "description": "a commit, 7 to 40 hexadecimal digits, instead of a pull request"}}, "repo")},
 }
 
 // Serve answers MCP requests read from r, one JSON-RPC message per line,
@@ -260,6 +268,7 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 		Effort string `json:"effort"`
 		State  string `json:"state"`
 		Ref    string `json:"ref"`
+		Commit string `json:"commit"`
 	}
 	if len(raw) > 0 && string(raw) != "null" {
 		if err := json.Unmarshal(raw, &a); err != nil {
@@ -283,6 +292,12 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 			return "", errors.New("bad arguments: repo is required")
 		}
 		r := control.ForgeRequest{Repo: a.Repo, Read: read, State: a.State, Ref: a.Ref}
+		if read == control.ForgeReadDeployed {
+			r.Ref = a.Commit
+			if (a.Number == nil) == (strings.TrimSpace(a.Commit) == "") {
+				return "", errors.New("bad arguments: give number or commit, one of them")
+			}
+		}
 		if a.Number != nil {
 			r.Number = int(*a.Number)
 		}

@@ -1,0 +1,1 @@
+{"id":1,"event":{"pos":42,"thread":7,"scope":"C0123","time":"2026-01-02T03:04:05.678Z","kind":"state","data":{"detail":"the folder-trust dialog names .mcp.json","from":"creating","reason":"blocked at start","session":3,"to":"failed","trust":[".mcp.json"]}}}

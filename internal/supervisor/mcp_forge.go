@@ -141,6 +141,8 @@ func forgeText(a control.ForgeAnswer, r control.ForgeRequest) string {
 		more(&b, p.Files.More, "changed files")
 		b.WriteString("Checks of the head:\n")
 		checkList(&b, p.Checks)
+	case a.Deployed != nil:
+		deployedText(&b, a.Repo, *a.Deployed)
 	case a.Checks != nil:
 		fmt.Fprintf(&b, "Checks of %s in %s:\n", r.Ref, a.Repo)
 		if slices.ContainsFunc(a.Checks.Items, func(c control.ForgeCheck) bool { return c.Withheld }) {
@@ -217,4 +219,39 @@ func checkList(b *strings.Builder, c control.ForgeChecks) {
 		b.WriteByte('\n')
 	}
 	more(b, c.More, "checks")
+}
+
+// deployedText is the deployed tool's answer: one line per fact, as
+// "key: value", then a sentence that says what they mean.
+func deployedText(b *strings.Builder, repo string, d control.ForgeDeployed) {
+	if d.Build == "" {
+		b.WriteString("build: (none)\n")
+	} else {
+		fmt.Fprintf(b, "build: %s\nmodified: %t\n", d.Build, d.Modified)
+	}
+	if d.Pull > 0 {
+		fmt.Fprintf(b, "pull: #%d of %s\n", d.Pull, repo)
+	}
+	if d.Merged != nil {
+		fmt.Fprintf(b, "merged: %t\n", *d.Merged)
+	}
+	if d.Commit != "" {
+		fmt.Fprintf(b, "commit: %s\n", d.Commit)
+	}
+	if d.In != nil {
+		fmt.Fprintf(b, "in: %t\n", *d.In)
+	}
+	switch {
+	case d.In != nil && *d.In:
+		fmt.Fprintf(b, "The running hataori has it: %s is its build commit or an ancestor of it.\n", d.Commit)
+	case d.In != nil:
+		fmt.Fprintf(b, "The running hataori does not have it: %s is not its build commit or an ancestor of it.\n", d.Commit)
+	case d.Merged != nil && !*d.Merged:
+		fmt.Fprintf(b, "Not merged: %s.\n", d.Reason)
+	default:
+		fmt.Fprintf(b, "Not known: %s.\n", d.Reason)
+	}
+	if d.Modified {
+		b.WriteString("The build had changes not in its commit, which this does not cover.\n")
+	}
 }

@@ -176,7 +176,40 @@ type Forge interface {
 	Pull(ctx context.Context, repo Repo, number int) (PullDetail, error)
 	// Checks reads checks of a branch, tag or commit.
 	Checks(ctx context.Context, repo Repo, ref string) (Checks, error)
+	// Merge reads whether a pull request was merged, and its merge
+	// commit, and nothing of its discussion.
+	Merge(ctx context.Context, repo Repo, number int) (Merge, error)
+	// Compare compares two commits of repo, as the forge does.
+	Compare(ctx context.Context, repo Repo, base, head string) (Comparison, error)
 }
+
+// Merge is whether a pull request was merged.
+type Merge struct {
+	State  string // "open", "closed" or "merged"
+	Merged bool
+	Commit string // the merge commit when merged, else empty
+}
+
+// The statuses of a Comparison: head is base (Identical), base is an
+// ancestor of head (Ahead), head is an ancestor of base (Behind), or
+// neither (Diverged).
+const (
+	Identical = "identical"
+	Ahead     = "ahead"
+	Behind    = "behind"
+	Diverged  = "diverged"
+)
+
+// Comparison is how head stands to base.
+type Comparison struct {
+	Status    string // Identical, Ahead, Behind or Diverged; another word the forge gives as it is
+	AheadBy   int    // commits of head that base does not have
+	BehindBy  int    // commits of base that head does not have
+	MergeBase string // their latest common commit
+}
+
+// Contains reports whether head is base or has it as an ancestor.
+func (c Comparison) Contains() bool { return c.Status == Identical || c.Status == Ahead }
 
 // Error is a forge's refusal of a read: its status and its own message.
 type Error struct {
