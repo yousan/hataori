@@ -1582,3 +1582,318 @@ a.chat-link:hover {
   border: 1px solid var(--st-failed);
   border-radius: 4px;
 }
+
+/* The tree as the chat client's sidebar (#635): a bar with the chat's
+   name, upper-case group labels, channels with "#", threads as one row
+   each that hang from their channel by one straight rail with a short
+   line into each, a row of the asleep threads, and a bar with who signed
+   in at the bottom. */
+.tree {
+  --rail: var(--line);
+  --hover: color-mix(in srgb, var(--fg) 7%, transparent);
+  --picked: color-mix(in srgb, var(--fg) 12%, transparent);
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* The rail stands under the middle of a channel's "#": the head's left
+     padding and half the mark's width. */
+  --hash-pad: 12px;
+  --hash-w: 16px;
+  --rail-x: calc(var(--hash-pad) + var(--hash-w) / 2);
+  --rail-w: 1.5px;
+  /* The middle of a thread's first line, where its line meets the rail. */
+  --elbow-y: 12px;
+}
+
+.server-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.server {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.server-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conn-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--st-failed);
+}
+
+.server[data-connected="yes"] .conn-dot {
+  background: var(--st-idle);
+}
+
+/* A group of the chat: a small upper-case label with its fold arrow. */
+.tree .node-group > .node-head {
+  padding: 12px 8px 4px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* A channel: "#", its name, and on the right how many of its threads are
+   not asleep. */
+.tree .node-channel > .node-head,
+.tree .chan-head {
+  padding: 4px 8px 4px var(--hash-pad);
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 4px;
+}
+
+.node-channel > .node-head:hover {
+  background: var(--hover);
+}
+
+.hash {
+  flex: none;
+  width: var(--hash-w);
+  text-align: center;
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.awake {
+  margin-left: auto;
+  flex: none;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.chan,
+.node > .node-body > .chan {
+  padding: 0;
+  font-size: 13px;
+}
+
+.chan-head .hash {
+  cursor: pointer;
+}
+
+/* A thread's row: its box takes the hover and the selection; the rail
+   beside it stays as it is. */
+.row:has(> .box) {
+  padding: 0;
+}
+
+.row:has(> .box):hover,
+.row.selected:has(> .box) {
+  background: none;
+  box-shadow: none;
+}
+
+.row > .box {
+  padding: 3px 10px;
+  border-radius: 4px;
+}
+
+.row:hover > .box {
+  background: var(--hover);
+}
+
+.row.selected > .box {
+  background: var(--picked);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.tree .row:has(> .box) {
+  padding: 0;
+}
+
+.node-body .row > .box {
+  padding-left: 22px;
+}
+
+.row > .box > .why,
+.row > .box > .line2 {
+  padding-left: 0;
+}
+
+.row .line1 .title {
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.row.selected .line1 .title {
+  font-weight: 600;
+}
+
+.line1 .num {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.line1 .dot {
+  flex: none;
+  align-self: center;
+  width: 8px;
+  height: 8px;
+}
+
+/* The second line, the model and the last output or the question or the
+   reason, only in the normal density. */
+.row[data-thread] .line2 {
+  display: none;
+}
+
+.density-normal .row[data-thread] .line2 {
+  display: flex;
+}
+
+.chat-only > .box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chat-only > .box > .chat-link {
+  flex: 1;
+  min-width: 0;
+}
+
+.opens-in-chat {
+  flex: none;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* The rail: one straight vertical line from under the channel's "#" to the
+   middle of the first line of its last thread, and from it a short line
+   into each thread with a slightly rounded corner. Each item draws its
+   part of the rail; the items touch, so the parts make one line. */
+.tree .rail > .on-rail {
+  position: relative;
+  margin-left: calc(var(--rail-x) - var(--rail-w) / 2);
+  padding: 0 6px 0 14px;
+}
+
+.tree .rail > .on-rail > .box {
+  padding: 3px 8px;
+}
+
+.tree .rail > .on-rail::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-left: var(--rail-w) solid var(--rail);
+}
+
+.tree .rail > .on-rail.rail-end::before {
+  bottom: auto;
+  height: var(--elbow-y);
+}
+
+.tree .rail > .on-rail::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: calc(var(--elbow-y) - 6px);
+  width: 11px;
+  height: 6px;
+  border-left: var(--rail-w) solid var(--rail);
+  border-bottom: var(--rail-w) solid var(--rail);
+  border-bottom-left-radius: 4px;
+}
+
+.tree .rail > .on-rail.selected::after {
+  border-color: var(--accent);
+}
+
+/* A channel's asleep threads, folded into one row under its threads. */
+.archived-row {
+  margin-left: calc(var(--rail-x) + 14px);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.archived-row:hover {
+  background: var(--hover);
+}
+
+.archived-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Who signed in and how, and the agents' remaining usage. */
+.me-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+  font-size: 12px;
+}
+
+.avatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+}
+
+.who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.me-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.me-how {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.me-usage {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: right;
+}
+
+.usage-resets {
+  margin-left: 4px;
+}

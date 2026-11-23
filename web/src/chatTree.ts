@@ -5,7 +5,9 @@
 // open threads, as links into the chat; a channel hataori does not serve
 // is a link with its open threads. A hataori thread whose chat thread is
 // not open (archived) is shown under its channel only when the choice of
-// threads shows it. With no layout, the tree is the scopes, as before.
+// threads shows it. The asleep threads of a served channel are apart, in
+// archived, whatever the choice: the tree folds them into one row (#635).
+// With no layout, the tree is the scopes, as before.
 //
 // This module only builds the model; Tree.tsx draws it. It imports no
 // module that reads the browser, so that node's tests can load it.
@@ -26,8 +28,11 @@ export interface ChatChannel {
   scope?: string;
   name: string;
   url?: string;
-  items: ChatItem[];
+  items: ChatItem[]; // none asleep
   threads: ThreadInfo[]; // the hataori threads among items, in their order
+  // archived are the scope's asleep threads the filter finds, the newest
+  // first, whether the chat shows them or not; none for another channel.
+  archived: ThreadInfo[];
 }
 
 // ChatGroup is a group of channels; the channels in no group have no key
@@ -81,20 +86,22 @@ export function chatTree(
           // other open thread there.
           const x = ownThread(th.thread, c.scope, byID) ? byID.get(th.thread!) : undefined;
           if (x) {
-            if (shown(x) && matches(x)) items.push({ kind: "thread", x });
+            if (x.state !== "asleep" && shown(x) && matches(x)) items.push({ kind: "thread", x });
           } else if (named(th.name)) {
             items.push({ kind: "chat", key: `chat:${l.client}/${th.id}`, name: th.name ?? "", url: th.url });
           }
         }
+        let archived: ThreadInfo[] = [];
         if (c.scope) {
           // The scope's threads that are not open in the chat, as the
           // choice of threads shows them, the newest first.
           const rest = all
-            .filter((x) => x.scope === c.scope && !inChat.has(x.id) && shown(x) && matches(x))
-            .sort((a, b) => Date.parse(b.updated) - Date.parse(a.updated) || b.id - a.id);
+            .filter((x) => x.scope === c.scope && x.state !== "asleep" && !inChat.has(x.id) && shown(x) && matches(x))
+            .sort(newestFirst);
           for (const x of rest) items.push({ kind: "thread", x });
+          archived = all.filter((x) => x.scope === c.scope && x.state === "asleep" && matches(x)).sort(newestFirst);
         }
-        if (filtering && items.length === 0 && (c.scope || !named(c.name))) continue;
+        if (filtering && items.length === 0 && archived.length === 0 && (c.scope || !named(c.name))) continue;
         channels.push({
           key: c.scope ? `scope:${c.scope}` : `chan:${l.client}/${c.id}`,
           scope: c.scope,
@@ -102,6 +109,7 @@ export function chatTree(
           url: c.url,
           items,
           threads: items.flatMap((i) => (i.kind === "thread" ? [i.x] : [])),
+          archived,
         });
       }
       if (channels.length === 0) continue;
@@ -109,6 +117,11 @@ export function chatTree(
     }
   }
   return { groups, scopes };
+}
+
+// newestFirst orders threads by their last activity, the newest first.
+function newestFirst(a: ThreadInfo, b: ThreadInfo): number {
+  return Date.parse(b.updated) - Date.parse(a.updated) || b.id - a.id;
 }
 
 // ownThread reports whether thread n is one of all, of scope.

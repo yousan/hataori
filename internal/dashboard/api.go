@@ -28,6 +28,7 @@ import (
 //	GET /api/clients                          [ClientState]
 //	GET /api/workspace?thread=N               WorkspaceState
 //	GET /api/hostterminals                    [HostTerminal]
+//	GET /api/me                               Me
 //
 // The event stream sends each event as one message whose id is the event's
 // position, and the caught_up mark as a message of type caught_up. A page
@@ -61,7 +62,19 @@ const (
 	// does not own. When host terminals are off, or the caller is not the
 	// owner, it answers one fixed 403 and nothing more.
 	HostTerminalsPath = "/api/hostterminals"
+	// MePath answers with who the page's session is and how they signed
+	// in (Me), for the tree's bottom bar (#635).
+	MePath = "/api/me"
 )
+
+// Me is the person of the page's session and how they signed in: on which
+// listener (control.WayLocal or control.WayWeb), and whether with a
+// passkey rather than a sign-in link.
+type Me struct {
+	Person  string      `json:"person"`
+	Way     control.Way `json:"way"`
+	Passkey bool        `json:"passkey"`
+}
 
 // Defaults and caps of /api/thread.
 const (
@@ -107,6 +120,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET "+ClientsPath, s.clients)
 	s.mux.HandleFunc("GET "+WorkspacePath, s.workspace)
 	s.mux.HandleFunc("GET "+HostTerminalsPath, s.hostTerminals)
+	s.mux.HandleFunc("GET "+MePath, s.me)
+}
+
+func (s *Server) me(w http.ResponseWriter, r *http.Request) {
+	ss := sessionOf(r)
+	writeJSON(w, Me{Person: ss.person, Way: listenerOfRequest(r).way, Passkey: !ss.checked.IsZero()})
 }
 
 func (s *Server) limits(w http.ResponseWriter, r *http.Request) {
