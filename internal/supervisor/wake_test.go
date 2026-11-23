@@ -55,7 +55,7 @@ func TestDigestOfCapturedEvents(t *testing.T) {
 	got, err := DigestOf(threads, decided, func(id control.ThreadID) (control.ThreadDetail, error) {
 		th := c.Threads[id]
 		return control.ThreadDetail{ThreadInfo: control.ThreadInfo{ID: id, Title: th.Title}, Recent: th.Recent}, nil
-	}, 1024, 6)
+	}, nil, 1024, 6)
 	if err != nil {
 		t.Fatal(err)
 	}

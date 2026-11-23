@@ -786,8 +786,22 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 		r.offered(stale) // dropped by a gate, as read
 		return nil, false, r.advance(ctx, r.read)
 	}
+	// Each thread's output after what a digest gave this session of the
+	// supervisor, up to the events this wake covers (#673).
+	given, err := r.given(ctx)
+	if err != nil {
+		return nil, false, err
+	}
 	text, err := DigestOf(threads, decided, func(id control.ThreadID) (control.ThreadDetail, error) {
-		return r.api.Thread(ctx, id, r.w.OutputMax+utf8.UTFMax, 0)
+		d, err := r.api.Thread(ctx, id, 0, 0)
+		if err != nil {
+			return d, err
+		}
+		d.Recent, err = r.output(ctx, id, given[id], r.read, r.w.OutputMax+utf8.UTFMax)
+		return d, err
+	}, func(id control.ThreadID) bool {
+		_, ok := given[id]
+		return ok
 	}, r.w.OutputMax, r.w.ThreadsMax)
 	if err != nil {
 		return nil, false, err
@@ -834,6 +848,116 @@ func (r *waking) turned(ctx context.Context, e control.Event) error {
 	return r.w.Files.Seen(ctx, r.w.Scope, e.Pos, now)
 }
 
+// given returns, for each worker thread that a wake given to the current
+// session of the supervisor's thread named, the last position such a wake
+// covered: its output up to there was given. It is read from the event
+// log, the wakes' inputs and the keys of the turns they started, so a
+// restart neither repeats nor leaves out output; a new session, of a new
+// thread or one that replaced a session that could not resume, has none.
+func (r *waking) given(ctx context.Context) (map[control.ThreadID]uint64, error) {
+	db := r.w.Core.Store.DB
+	var session sql.NullInt64
+	if err := db.QueryRowContext(ctx, `SELECT max(id) FROM sessions WHERE thread_id = ?`, int64(r.sv)).Scan(&session); err != nil {
+		return nil, fmt.Errorf("supervisor: the output given: %w", err)
+	}
+	out := map[control.ThreadID]uint64{}
+	if !session.Valid {
+		return out, nil
+	}
+	// A session that replaced one that could not resume took the wake the
+	// old one was woken for as its first input, made for the old one: it
+	// counts as given to neither, so the next digest gives the last output.
+	var carried sql.NullInt64
+	if err := db.QueryRowContext(ctx, `SELECT min(i.pos) FROM events i WHERE i.thread_id = ? AND i.kind = 'input'
+		AND json_extract(i.data, '$.session') = ?
+		AND EXISTS (SELECT 1 FROM events r WHERE r.thread_id = i.thread_id AND r.kind = 'session_replaced'
+			AND json_extract(r.data, '$.new_session') = ?)`, int64(r.sv), session.Int64, session.Int64).Scan(&carried); err != nil {
+		return nil, fmt.Errorf("supervisor: the output given: %w", err)
+	}
+	rows, err := db.QueryContext(ctx, `SELECT i.pos, json_extract(i.data, '$.text'),
+		(SELECT json_extract(s.data, '$.key') FROM events s WHERE s.thread_id = i.thread_id AND s.kind = 'turn_started'
+			AND json_extract(s.data, '$.session') = json_extract(i.data, '$.session')
+			AND json_extract(s.data, '$.turn') = json_extract(i.data, '$.turn') LIMIT 1)
+		FROM events i WHERE i.thread_id = ? AND i.kind = 'input' AND json_extract(i.data, '$.session') = ?
+		AND substr(json_extract(i.data, '$.text'), 1, 9) = 'hataori: ' ORDER BY i.pos`, int64(r.sv), session.Int64)
+	if err != nil {
+		return nil, fmt.Errorf("supervisor: the output given: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			pos       int64
+			text, key sql.NullString
+		)
+		if err := rows.Scan(&pos, &text, &key); err != nil {
+			return nil, fmt.Errorf("supervisor: the output given: %w", err)
+		}
+		to, _, ok := ParseWakeKey(key.String)
+		if !ok || (carried.Valid && pos == carried.Int64) {
+			continue // not a wake's turn, or the wake carried into this session
+		}
+		for _, id := range Named(text.String) {
+			out[id] = max(out[id], to)
+		}
+	}
+	return out, rows.Err()
+}
+
+// Named returns the threads a digest gives a paragraph to, in order.
+func Named(digest string) []control.ThreadID {
+	var out []control.ThreadID
+	for _, line := range strings.Split(digest, "\n") {
+		rest, ok := strings.CutPrefix(line, "Thread ")
+		if !ok {
+			continue
+		}
+		n, _, _ := strings.Cut(rest, ":")
+		if id, err := strconv.ParseInt(n, 10, 64); err == nil && id > 0 {
+			out = append(out, control.ThreadID(id))
+		}
+	}
+	return out
+}
+
+// outputSep goes between two text events of a thread's output, as in the
+// control API's recent output (ThreadDetail.Recent).
+const outputSep = "\n\n"
+
+// output returns thread id's text output after position from and up to
+// to, its text events oldest first with outputSep between them, cut to its
+// last max bytes at the start of a character.
+func (r *waking) output(ctx context.Context, id control.ThreadID, from, to uint64, max int) (string, error) {
+	rows, err := r.w.Core.Store.DB.QueryContext(ctx, `SELECT json_extract(data, '$.text') FROM events
+		WHERE thread_id = ? AND kind = 'text' AND pos > ? AND pos <= ? ORDER BY pos DESC`, int64(id), int64(from), int64(to))
+	if err != nil {
+		return "", fmt.Errorf("supervisor: a thread's output: %w", err)
+	}
+	defer rows.Close()
+	var parts []string
+	n := 0
+	for n < max && rows.Next() {
+		var text sql.NullString
+		if err := rows.Scan(&text); err != nil {
+			return "", fmt.Errorf("supervisor: a thread's output: %w", err)
+		}
+		parts = append(parts, text.String)
+		n += len(text.String) + len(outputSep)
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("supervisor: a thread's output: %w", err)
+	}
+	slices.Reverse(parts)
+	out := strings.Join(parts, outputSep)
+	if len(out) > max {
+		i := len(out) - max
+		for i < len(out) && !utf8.RuneStart(out[i]) {
+			i++
+		}
+		out = out[i:]
+	}
+	return out, nil
+}
+
 // offered forgets the stale turn ends a wake offered to the gates: they
 // woke the supervisor, or a gate dropped them.
 func (r *waking) offered(ids []control.ThreadID) {
@@ -876,10 +1000,13 @@ func Fold(ended map[control.ThreadID]control.Event, e control.Event, own bool) b
 }
 
 // DigestOf is the digest of threads, in their order, each read with
-// thread: the first threadsMax of them, each with its last output cut to
+// thread: the first threadsMax of them, each with its output cut to
 // outputMax bytes, and a line counting the others; then the decisions of
-// its requests, in their order.
-func DigestOf(threads []Ended, decided []control.Event, thread func(control.ThreadID) (control.ThreadDetail, error), outputMax, threadsMax int) (string, error) {
+// its requests, in their order. The output is the thread's last, or,
+// where since holds for the thread, what came since the last digest that
+// gave it (Line.Since); since may be nil.
+func DigestOf(threads []Ended, decided []control.Event, thread func(control.ThreadID) (control.ThreadDetail, error),
+	since func(control.ThreadID) bool, outputMax, threadsMax int) (string, error) {
 	var lines []Line
 	for i, t := range threads {
 		if i == threadsMax {
@@ -891,6 +1018,7 @@ func DigestOf(threads []Ended, decided []control.Event, thread func(control.Thre
 		}
 		l := LineOf(t.Event, d, outputMax)
 		l.Stale = t.Stale
+		l.Since = since != nil && since(t.Thread)
 		lines = append(lines, l)
 	}
 	var ds []Decision
@@ -998,6 +1126,10 @@ type Line struct {
 	// Stale: the thread started no turn for BackgroundWait after this
 	// turn end, whose background tasks have not come back (#672).
 	Stale bool
+	// Since: Last is the output since the last digest that gave the
+	// thread's output to this session of the supervisor, not its last
+	// output (#673).
+	Since bool
 }
 
 // LineOf is the digest line of a thread whose last turn end is e, from
@@ -1138,6 +1270,12 @@ func Digest(lines []Line, more int, decided ...Decision) string {
 			b.WriteString(staleLine + "\n")
 		}
 		switch {
+		case l.Since && l.Last == "":
+			b.WriteString("No output since the last digest.\n")
+		case l.Since && l.Cut > 0:
+			fmt.Fprintf(&b, "Output since the last digest, cut to its last %d bytes:\n", l.Cut)
+		case l.Since:
+			b.WriteString("Output since the last digest:\n")
 		case l.Last == "":
 			b.WriteString("Last output: none.\n")
 		case l.Cut > 0:
