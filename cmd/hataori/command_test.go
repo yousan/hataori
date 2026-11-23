@@ -366,7 +366,7 @@ func TestAdaptersOnlyUnderCmd(t *testing.T) {
 		patterns[i] = regexp.QuoteMeta(name)
 	}
 	words := regexp.MustCompile(`(?i)\b(?:` + strings.Join(patterns, "|") + `)\b`)
-	moduleHost := regexp.MustCompile(`(?i)github\.com`)
+	moduleHost := regexp.MustCompile(`(?i)(^|[^./A-Za-z0-9-])github\.com/`)
 
 	root := filepath.Join("..", "..")
 	fset := token.NewFileSet()
@@ -411,7 +411,7 @@ func TestAdaptersOnlyUnderCmd(t *testing.T) {
 		}
 		if strings.HasPrefix(pkg, "internal/") {
 			for i, line := range strings.Split(string(source), "\n") {
-				line = moduleHost.ReplaceAllString(line, "")
+				line = moduleHost.ReplaceAllString(line, "$1")
 				for _, word := range words.FindAllString(line, -1) {
 					t.Errorf("%s:%d: core source names surface or agent %q", rel, i+1, word)
 				}

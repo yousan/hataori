@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -38,7 +39,7 @@ func (f *fake) RoundTrip(r *http.Request) (*http.Response, error) {
 	if f.override != nil {
 		return f.override(r)
 	}
-	c, ok := f.captures[r.Method+" "+r.URL.RequestURI()]
+	c, ok := f.captures["GET "+r.URL.RequestURI()]
 	if !ok {
 		c = capture{Status: 404, Body: json.RawMessage(`{"message":"Not Found"}`)}
 	}
@@ -80,7 +81,7 @@ func newFake(t *testing.T) *fake {
 func TestReadsDecodeCaptures(t *testing.T) {
 	ctx := context.Background()
 	f := newFake(t)
-	c := newClient("marker", "https://api.github.com", f)
+	c := newClient("marker", f)
 	urfave := forge.Repo{Owner: "urfave", Name: "cli"}
 	cli := forge.Repo{Owner: "cli", Name: "cli"}
 	c.pageSize, c.pages = 5, 2
@@ -188,10 +189,21 @@ func TestReadsDecodeCaptures(t *testing.T) {
 	}
 }
 
+// roundTripFunc lets the request test inspect attempts before the guard.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
 func TestOnlyGETToTheAPIHost(t *testing.T) {
 	ctx := context.Background()
 	f := newFake(t)
-	c := newClient("marker", "https://api.github.com", f)
+	c := newClient("marker", f)
+	c.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected request method: %s", r.Method)
+		}
+		return c.guard.RoundTrip(r)
+	})
 	urfave := forge.Repo{Owner: "urfave", Name: "cli"}
 	cli := forge.Repo{Owner: "cli", Name: "cli"}
 	c.pageSize, c.pages, c.listLimit = 5, 2, 5
@@ -271,14 +283,14 @@ func TestOnlyGETToTheAPIHost(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "redirect") || len(f.requests) != before+1 {
 		t.Fatalf("redirect: %v", err)
 	}
-	if q := f.requests[before]; q.URL.Scheme != "https" || q.URL.Host != "api.github.com" {
+	if q := f.requests[before]; q.Method != http.MethodGet || q.URL.Scheme != "https" || q.URL.Host != "api.github.com" {
 		t.Fatalf("redirect request: %v", q)
 	}
 }
 
 func TestCleanPreservesErrors(t *testing.T) {
 	f := newFake(t)
-	c := newClient("marker", "https://api.github.com", f)
+	c := newClient("marker", f)
 	f.override = func(*http.Request) (*http.Response, error) { return nil, context.Canceled }
 	_, err := c.Issue(context.Background(), forge.Repo{Owner: "cli", Name: "cli"}, 15104)
 	if !errors.Is(err, context.Canceled) {
@@ -291,9 +303,9 @@ func TestCleanPreservesErrors(t *testing.T) {
 }
 
 func TestTokenInNoErrorOrLog(t *testing.T) {
-	const token = "hataori-marker-token-f73e1c92"
+	const marker = "hataori_marker_not_a_real_credential"
 	f := newFake(t)
-	c := newClient(token, "https://api.github.com", f)
+	c := newClient(marker, f)
 	var logs bytes.Buffer
 	old := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
@@ -304,12 +316,21 @@ func TestTokenInNoErrorOrLog(t *testing.T) {
 			if mode == 2 {
 				return nil, fmt.Errorf("transport %s", req.Header.Get("Authorization"))
 			}
-			body := `{"message":"` + token + `"}`
+			body := `{"message":"` + marker + `"}`
 			status := 401
 			h := http.Header{}
 			if mode == 1 {
 				v := captureFile(t, "rate-limited")
-				body = string(v.Body)
+				var captured map[string]any
+				if err := json.Unmarshal(v.Body, &captured); err != nil {
+					t.Fatal(err)
+				}
+				captured["message"] = captured["message"].(string) + " " + marker
+				encoded, err := json.Marshal(captured)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body = string(encoded)
 				status = v.Status
 				for k, v := range v.Headers {
 					h.Set(k, v)
@@ -318,11 +339,12 @@ func TestTokenInNoErrorOrLog(t *testing.T) {
 			return &http.Response{StatusCode: status, Header: h, Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
 		}
 		_, e := c.Issue(context.Background(), r, 15104)
-		if e == nil || strings.Contains(e.Error(), token) || strings.Contains(logs.String(), token) {
+		if e == nil || strings.Contains(e.Error(), marker) || strings.Contains(logs.String(), marker) {
 			t.Fatalf("leaked token: %v", e)
 		}
 	}
-	if strings.Contains(fmt.Sprintf("%v %+v %#v", c, c, c), token) {
+	format := "%v %+v %#v %s %q %x %d"
+	if strings.Contains(fmt.Sprintf(format, c, c, c, c, c, c, c), marker) {
 		t.Fatal("printed token")
 	}
 }
@@ -351,5 +373,153 @@ func TestCapturesHoldNoToken(t *testing.T) {
 				t.Errorf("address in %s", p)
 			}
 		}
+	}
+}
+
+func TestNew(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	name := "credential"
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte("letters_123"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	settings := []byte(`{"token_file":"credential"}`)
+	f, err := New(root, settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := f.(*client)
+	if c.base.Host != "api.github.com" || c.http.Transport != c.guard {
+		t.Fatal("incorrect guard or host")
+	}
+	transport := c.guard.inner.(*http.Transport)
+	if !transport.Protocols.HTTP1() || transport.Protocols.HTTP2() {
+		t.Fatal("transport permits HTTP/2")
+	}
+	if err := os.Chmod(path, 0640); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(root, settings); err == nil || !strings.Contains(err.Error(), "chmod 600") {
+		t.Fatalf("permissions: %v", err)
+	}
+	fifo := filepath.Join(dir, "fifo")
+	if err := syscall.Mkfifo(fifo, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(root, []byte(`{"token_file":"fifo"}`)); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("fifo: %v", err)
+	}
+	marker := "ghp_" + "not_a_real_credential"
+	input, _ := json.Marshal(Settings{TokenFile: marker})
+	if _, err := New(root, input); err == nil || strings.Contains(err.Error(), marker) || !strings.Contains(err.Error(), "looks like a token") {
+		t.Fatalf("token filename: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("not-valid"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(root, settings); err == nil || !strings.Contains(err.Error(), "character a token cannot have") {
+		t.Fatalf("token character: %v", err)
+	}
+}
+
+func TestGuard(t *testing.T) {
+	f := newFake(t)
+	c := newClient("marker", f)
+	for _, tc := range []struct{ method, address string }{{http.MethodPost, apiBase + "/x"}, {http.MethodGet, "https://elsewhere.example/x"}} {
+		req, err := http.NewRequest(tc.method, tc.address, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = c.guard.RoundTrip(req); err == nil {
+			t.Errorf("accepted %s %s", tc.method, tc.address)
+		}
+	}
+	if len(f.requests) != 0 {
+		t.Fatal("refused requests reached inner transport")
+	}
+}
+
+// These answers are made up from the documented rate-limit headers.
+func TestRateLimits(t *testing.T) {
+	cases := []struct {
+		name    string
+		status  int
+		message string
+		headers http.Header
+		seconds bool
+		date    time.Time
+	}{
+		{name: "429", status: 429},
+		{name: "secondary", status: 403, message: "You have exceeded a secondary rate limit"},
+		{name: "retry seconds", status: 403, headers: http.Header{"Retry-After": {"60"}, "X-Ratelimit-Reset": {"1"}}, seconds: true},
+		{name: "retry date", status: 429, headers: http.Header{"Retry-After": {"Wed, 21 Oct 2037 07:28:00 GMT"}}, date: time.Date(2037, 10, 21, 7, 28, 0, 0, time.UTC)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFake(t)
+			f.override = func(r *http.Request) (*http.Response, error) {
+				body, _ := json.Marshal(map[string]string{"message": tc.message})
+				return &http.Response{StatusCode: tc.status, Header: tc.headers, Body: io.NopCloser(bytes.NewReader(body)), Request: r}, nil
+			}
+			c := newClient("marker", f)
+			before := time.Now()
+			_, err := c.Issue(context.Background(), forge.Repo{Owner: "cli", Name: "cli"}, 1)
+			var got *forge.Error
+			if !errors.As(err, &got) || !got.RateLimited {
+				t.Fatalf("rate limit: %v", err)
+			}
+			if tc.seconds && (got.Reset.Before(before.Add(60*time.Second)) || got.Reset.After(time.Now().Add(60*time.Second))) {
+				t.Fatalf("retry reset: %v", got.Reset)
+			}
+			if !tc.date.IsZero() && !got.Reset.Equal(tc.date) {
+				t.Fatalf("date reset: %v", got.Reset)
+			}
+			if !tc.seconds && tc.date.IsZero() && !got.Reset.IsZero() {
+				t.Fatalf("unexpected reset: %v", got.Reset)
+			}
+		})
+	}
+}
+
+func TestShortPagesWithNext(t *testing.T) {
+	f := newFake(t)
+	f.override = func(r *http.Request) (*http.Response, error) {
+		h := http.Header{}
+		body := `[]`
+		if strings.HasSuffix(r.URL.Path, "/check-runs") {
+			body = `{"total_count":2,"check_runs":[{"name":"first","head_sha":"abc"}]}`
+			if r.URL.Query().Get("page") == "2" {
+				body = `{"total_count":2,"check_runs":[{"name":"second","head_sha":"abc"}]}`
+			}
+		} else if strings.HasSuffix(r.URL.Path, "/status") {
+			body = `{"sha":"abc","statuses":[]}`
+		} else {
+			body = `[{"number":1}]`
+			if r.URL.Query().Get("page") == "2" {
+				body = `[{"number":2}]`
+			}
+		}
+		if r.URL.Query().Get("page") == "1" && !strings.HasSuffix(r.URL.Path, "/status") {
+			h.Set("Link", `<ignored>; rel="next"`)
+		}
+		return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+	}
+	c := newClient("marker", f)
+	repo := forge.Repo{Owner: "a", Name: "b"}
+	issues, err := c.Issues(context.Background(), repo, forge.All)
+	if err != nil || len(issues.Items) != 2 {
+		t.Fatalf("issues: %+v %v", issues, err)
+	}
+	checks, err := c.Checks(context.Background(), repo, "abc")
+	if err != nil || len(checks.Items.Items) != 2 {
+		t.Fatalf("checks: %+v %v", checks, err)
 	}
 }

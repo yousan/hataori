@@ -27,6 +27,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/yousan/hataori/internal/forge"
@@ -34,6 +35,8 @@ import (
 
 // Name is the name the forge registers under.
 const Name = "github"
+
+const apiBase = "https://api.github.com"
 
 // Settings is the forge's section of the instance config.
 type Settings struct {
@@ -43,23 +46,39 @@ type Settings struct {
 
 // client reads the API using bounded requests.
 type client struct {
-	secret      *secret      // the token, hidden when the client is formatted
-	base        *url.URL     // the API origin
-	http        *http.Client // the client used for reads
-	pageSize    int          // items requested per page
-	listLimit   int          // issues or pull requests returned by a list
-	pages       int          // maximum pages per paged read
-	detailLimit int          // maximum items per detail read
+	guard       *authTransport // the only holder of the token
+	base        *url.URL       // the API origin
+	http        *http.Client   // the client used for reads
+	pageSize    int            // items requested per page
+	listLimit   int            // issues or pull requests returned by a list
+	pages       int            // maximum pages per paged read
+	detailLimit int            // maximum items per detail read
 }
 
-// secret keeps the token out of formatted client values.
-type secret struct{ token string }
+// Format keeps all formatted client representations free of credentials.
+func (c *client) Format(state fmt.State, verb rune) {
+	io.WriteString(state, "github forge")
+}
 
-// String hides the token in formatted output.
-func (s *secret) String() string { return "[secret]" }
+// authTransport sends authenticated reads only to the API origin.
+type authTransport struct {
+	token string
+	inner http.RoundTripper
+}
 
-// GoString hides the token in Go-syntax formatted output.
-func (s *secret) GoString() string { return "[secret]" }
+// RoundTrip checks the request before adding authentication to a clone.
+func (a *authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Method != http.MethodGet {
+		return nil, fmt.Errorf("github: refusing method %q", strings.ReplaceAll(req.Method, a.token, "[token]"))
+	}
+	api, _ := url.Parse(apiBase)
+	if req.URL.Scheme != api.Scheme || req.URL.Host != api.Host {
+		return nil, errors.New("github: refusing request outside the API origin")
+	}
+	clone := req.Clone(req.Context())
+	clone.Header.Set("Authorization", "Bearer "+a.token)
+	return a.inner.RoundTrip(clone)
+}
 
 // New is the forge's factory. It reads the token only from the config directory.
 func New(config *os.Root, settings []byte) (forge.Forge, error) {
@@ -73,13 +92,18 @@ func New(config *os.Root, settings []byte) (forge.Forge, error) {
 		return nil, errors.New("github: settings: unexpected trailing data")
 	}
 	name := strings.TrimSpace(s.TokenFile)
+	for _, prefix := range []string{"ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"} {
+		if strings.HasPrefix(name, prefix) {
+			return nil, errors.New(`github: settings: "token_file" holds what looks like a token; give the name of a file in the config directory that holds it`)
+		}
+	}
 	if name == "" || filepath.IsAbs(name) || !filepath.IsLocal(name) {
 		return nil, fmt.Errorf("github: settings: %q: %q is not a file name inside the config directory", "token_file", s.TokenFile)
 	}
 	if config == nil {
 		return nil, errors.New("github: no config directory")
 	}
-	f, err := config.Open(name)
+	f, err := config.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, fmt.Errorf("github: read the token file %q in the config directory: %w", name, err)
 	}
@@ -103,31 +127,35 @@ func New(config *os.Root, settings []byte) (forge.Forge, error) {
 		return nil, fmt.Errorf("github: the token file %q is empty", name)
 	}
 	for _, c := range []byte(token) {
-		if c < 0x21 || c > 0x7e {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_') {
 			return nil, fmt.Errorf("github: the token file %q holds a character a token cannot have", name)
 		}
 	}
-	return newClient(token, "https://api.github.com", http.DefaultTransport.(*http.Transport).Clone()), nil
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Protocols = new(http.Protocols)
+	transport.Protocols.SetHTTP1(true)
+	return newClient(token, transport), nil
 }
 
-// newClient makes a client with a testable origin and transport.
-func newClient(token, base string, transport http.RoundTripper) *client {
-	u, _ := url.Parse(base)
-	return &client{secret: &secret{token}, base: u, http: &http.Client{Transport: transport, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, pageSize: 100, listLimit: 100, pages: 3, detailLimit: 300}
+// newClient makes a client with a testable inner transport.
+func newClient(token string, transport http.RoundTripper) *client {
+	u, _ := url.Parse(apiBase)
+	guard := &authTransport{token: token, inner: transport}
+	return &client{guard: guard, base: u, http: &http.Client{Transport: guard, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, pageSize: 100, listLimit: 100, pages: 3, detailLimit: 300}
 }
 
 // clean removes the token from an error while preserving safe errors.
 func (c *client) clean(err error) error {
-	if err == nil || !strings.Contains(err.Error(), c.secret.token) {
+	if err == nil || !strings.Contains(err.Error(), c.guard.token) {
 		return err
 	}
 	var e *forge.Error
 	if errors.As(err, &e) {
 		copy := *e
-		copy.Message = strings.ReplaceAll(copy.Message, c.secret.token, "[token]")
+		copy.Message = strings.ReplaceAll(copy.Message, c.guard.token, "[token]")
 		return &copy
 	}
-	return errors.New(strings.ReplaceAll(err.Error(), c.secret.token, "[token]"))
+	return errors.New(strings.ReplaceAll(err.Error(), c.guard.token, "[token]"))
 }
 
 // get sends one bounded read and decodes its answer.
@@ -143,10 +171,6 @@ func (c *client) get(ctx context.Context, path string, q url.Values, out any) (n
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", "hataori")
-	if req.URL.Scheme != c.base.Scheme || req.URL.Host != c.base.Host {
-		return false, errors.New("forge: invalid API host")
-	}
-	req.Header.Set("Authorization", "Bearer "+c.secret.token)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return false, err
@@ -167,12 +191,22 @@ func (c *client) get(ctx context.Context, path string, q url.Values, out any) (n
 		if body.Message == "" {
 			body.Message = http.StatusText(resp.StatusCode)
 		}
-		e := &forge.Error{Status: resp.StatusCode, Message: body.Message, RateLimited: (resp.StatusCode == 403 || resp.StatusCode == 429) && (resp.Header.Get("X-RateLimit-Remaining") == "0" || resp.Header.Get("Retry-After") != "")}
+		retry, hasRetry := resp.Header[http.CanonicalHeaderKey("Retry-After")]
+		e := &forge.Error{Status: resp.StatusCode, Message: body.Message,
+			RateLimited: resp.StatusCode == 429 || resp.StatusCode == 403 && (resp.Header.Get("X-RateLimit-Remaining") == "0" || hasRetry || strings.Contains(strings.ToLower(body.Message), "rate limit"))}
 		if e.RateLimited {
-			if n, x := strconv.ParseInt(resp.Header.Get("X-RateLimit-Reset"), 10, 64); x == nil {
-				e.Reset = time.Unix(n, 0)
-			} else if n, x := strconv.Atoi(resp.Header.Get("Retry-After")); x == nil {
-				e.Reset = time.Now().Add(time.Duration(n) * time.Second)
+			if hasRetry {
+				value := ""
+				if len(retry) > 0 {
+					value = retry[0]
+				}
+				if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds > 0 && seconds <= int64((1<<63-1)/int64(time.Second)) {
+					e.Reset = time.Now().Add(time.Duration(seconds) * time.Second)
+				} else if date, err := http.ParseTime(value); err == nil {
+					e.Reset = date
+				}
+			} else if seconds, err := strconv.ParseInt(resp.Header.Get("X-RateLimit-Reset"), 10, 64); err == nil && seconds > 0 {
+				e.Reset = time.Unix(seconds, 0)
 			}
 		}
 		return false, e
@@ -355,7 +389,7 @@ func pages[T any](ctx context.Context, c *client, path string, limit int, extra 
 				return out, nil
 			}
 		}
-		if len(items) < c.pageSize || !next {
+		if len(items) == 0 || !next {
 			return out, nil
 		}
 		if p == c.pages {
@@ -521,7 +555,7 @@ func (c *client) Checks(ctx context.Context, r forge.Repo, ref string) (forge.Ch
 			out.Items.More = out.Items.More || next || a.Total > len(out.Items.Items)
 			break
 		}
-		if len(a.Runs) < c.pageSize || !next {
+		if len(a.Runs) == 0 || !next {
 			break
 		}
 	}
@@ -529,6 +563,7 @@ func (c *client) Checks(ctx context.Context, r forge.Repo, ref string) (forge.Ch
 		SHA, State string
 		Statuses   []status `json:"statuses"`
 	}
+	// Commit statuses take one page of at most 100.
 	next, e := c.get(ctx, p+"/status", page(1, c.pageSize), &s)
 	if e != nil {
 		return out, e
