@@ -7,6 +7,7 @@ Real output of the interactive `claude` CLI, for testing the adapter's codec. Th
 - `2.1.327/`: Claude Code 2.1.327, on 2026-11-18 (also in `2.1.327/VERSION`), on Linux: `first_enter_lost`, a real start of a session that hataori ran, taken for #178, `usage`, taken by `capture.py` for #195, and the `confine_*` scenarios, taken by `confine.py` for #268 (see below).
 - `2.1.328/`: Claude Code 2.1.328, on 2026-11-20 (also in `2.1.328/VERSION`), on Linux: `paste_tabs`, taken for #393, and the `trust_files_*` scenarios, taken for #423 (see below).
 - `2.1.329/`: Claude Code 2.1.329, on 2026-11-21 (also in `2.1.329/VERSION`), on Linux: `trust_hooks_*` and `trust_permissions`, taken for #592 (see below).
+- `2.1.330/`: Claude Code 2.1.330, on 2026-11-23 (also in `2.1.330/VERSION`), on Linux: `usage`, taken by `capture.py` for #675, with the transcript's line count at each hook call (see below).
 - `capture.py` took them (`confine.py`, the `confine_*` ones); `scrub.py` made them committable. `captures_test.go` in the package fails when a capture holds a home directory path, an e-mail address, an unscrubbed UUID or something shaped like a token.
 
 ## How they were taken
@@ -27,7 +28,7 @@ and its environment holds only `PATH`, `HOME`, `USER`, `LANG`, `SHELL`, `TERM=xt
 - `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` and `ENABLE_CLAUDEAI_MCP_SERVERS=false`, so that the user's own instructions, memory and connectors stay out of the transcripts;
 - `BROWSER=true`, so that nothing opens a browser.
 
-`--setting-sources project,local` keeps the user's settings (their hooks, plugins, permissions) out. The settings file passed with `--settings` registers one command for 14 hook events. The command stores each payload byte for byte, one file per call. For `PermissionRequest` it prints `{"behavior": "allow"}`. For `PreToolUse` of `AskUserQuestion` it prints `permissionDecision: "allow"` with `updatedInput.answers` set to the first option of each question. Nothing is written to the working directory or to the user's settings.
+`--setting-sources project,local` keeps the user's settings (their hooks, plugins, permissions) out. The settings file passed with `--settings` registers one command for 14 hook events. The command stores each payload byte for byte, one file per call, and, since #675, next to it how many complete lines the session's transcript held when it was called (`NN-<event>.lines`; `-1` before the transcript exists). For `PermissionRequest` it prints `{"behavior": "allow"}`. For `PreToolUse` of `AskUserQuestion` it prints `permissionDecision: "allow"` with `updatedInput.answers` set to the first option of each question. Nothing is written to the working directory or to the user's settings.
 
 Input is typed one character at a time and then Enter, or, for the paste scenario, sent as one bracketed paste and then Enter. Each scenario ends with `/exit`.
 
@@ -165,6 +166,22 @@ What it shows:
 - No hook payload carries usage, the model of a message, or the context window, and the transcript gives no context window either. The `cost-state` line holds the session's totals per model, larger than the sum of the messages: it also counts the CLI's own requests.
 - The final message's line was written 130 ms (turn 1) and 180 ms (turn 2) before the `Stop` hook was called.
 - The line the CLI writes for an API error (`2.1.322/failure`) has the model `<synthetic>` and zero counts.
+- The times above come from the lines' `timestamp`, which is when the message was made, not when the line reached the file. 2.1.330 (below) shows that the line can reach it after the `Stop` hook.
+
+## Usage per turn, written after the end (2.1.330, taken for #675)
+
+`2.1.330/usage/`, by `capture.py RAW_DIR usage` with the setup above, model `haiku`, and `TMPDIR` set to a directory of its own: the same two turns as `2.1.327/usage/`. The recorder also wrote, for each hook call, how many complete lines the transcript held at that moment (`hooks/NN-<event>.lines`).
+
+| Hook | Lines in the transcript | What it shows |
+|---|---|---|
+| `03-PreToolUse`, `04-PreToolUse` | 28 | The message with both tool calls is lines 31 and 32: not yet written when its tools' `PreToolUse` hooks ran. |
+| `05-PostToolUse`, `06-PostToolUse` | 32 | It is written by then. |
+| `07-Stop` | 43 | The first turn's answer, the message after the tool results, is line 46: written after the turn's `Stop`. |
+| `08-UserPromptSubmit` | 48 | It is written by the next prompt. |
+| `09-Stop` | 53 | The text-only turn's one message is line 55: written after its `Stop` too. |
+| `10-SessionEnd` | 60 | |
+
+So a reader of both, as the runner is, reads the last message of a turn, and its usage, after the turn's end, and a turn that calls no tool has all of its usage there. The lines' `timestamp` puts those two messages 168 and 227 ms before their `Stop`. 2.1.330 also writes lines of types the codec does not read (`mode`, `permission-mode`, `session-owner`, `atis-latch`, `data-flow-records`, `last-prompt`, `ai-title`, `tools-used`); their ids are scrubbed as all UUIDs are.
 
 ## A confined session (2.1.327, taken for #268)
 

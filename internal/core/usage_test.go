@@ -98,3 +98,53 @@ func TestTokensTodayStartsAtMidnight(t *testing.T) {
 		t.Fatalf("usage event %+v", evs)
 	}
 }
+
+// A Late usage report, of the turn that ended last and read after its end,
+// counts toward that turn: also when the next turn runs already, which it
+// does not count toward. Its usage event names the ended turn (#675).
+func TestLateUsageCountsTowardTheEndedTurn(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{})
+	id, sid := f.running(t, "t1")
+	late := func(in, out int64) agent.Event {
+		e := usage(in, out, 0, 0, 0, 0)
+		e.Late = true
+		return e
+	}
+	f.agentEvent(t, sid, 2, usage(10, 5, 0, 0, 0, 0)) // 15
+	f.agentEvent(t, sid, 3, agent.Event{Kind: agent.TurnEnded, Status: agent.Completed})
+	f.agentEvent(t, sid, 4, late(100, 15)) // the turn's last message, read after its end: 115
+	if got := f.info(t, f.owner, id); got.Tokens == nil || *got.Tokens != (control.TokenCount{Turn: 115, Today: 115}) {
+		t.Fatalf("after a late report: %+v, want turn 115 today 115", got.Tokens)
+	}
+	if err := f.owner.Send(ctx, id, "second", control.Input{Text: "again"}, control.Refuse); err != nil {
+		t.Fatal(err)
+	}
+	f.agentEvent(t, sid, 5, agent.Event{Kind: agent.TurnStarted})
+	f.agentEvent(t, sid, 6, late(200, 15)) // still the first turn's, now 215
+	f.agentEvent(t, sid, 7, usage(1, 2, 0, 0, 0, 0))
+	var first, second int64
+	if err := f.core.Store.DB.QueryRow(`SELECT min(tokens), max(tokens) FROM turns WHERE session_id = ?`, sid).Scan(&second, &first); err != nil {
+		t.Fatal(err)
+	}
+	if first != 215 || second != 3 {
+		t.Fatalf("turn tokens %d and %d, want 215 and 3", first, second)
+	}
+	if got := f.info(t, f.owner, id); got.Tokens == nil || got.Tokens.Today != 218 {
+		t.Fatalf("tokens today %+v, want 218", got.Tokens)
+	}
+	var turns []int64
+	rows, err := f.core.Store.DB.Query(`SELECT json_extract(data, '$.turn') FROM events WHERE kind = 'usage' ORDER BY pos`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var n int64
+		rows.Scan(&n)
+		turns = append(turns, n)
+	}
+	if len(turns) != 4 || turns[0] != turns[1] || turns[1] != turns[2] || turns[3] == turns[0] {
+		t.Fatalf("the usage events' turns %v, want the first three the first turn's and the last the second's", turns)
+	}
+}

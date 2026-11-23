@@ -3,8 +3,10 @@ package claudecode
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -153,15 +155,34 @@ func TestUsageSumsEachTurn(t *testing.T) {
 }
 
 // A turn's lines read only after its Stop, while the next turn runs, are
-// not reported: the core would add them to the running turn.
+// reported Late, with that turn's totals, so that the core counts them
+// toward the ended turn and not the running one (#675). Once a later turn
+// has ended too, they are not reported at all.
 func TestUsageAfterTheTurnEnded(t *testing.T) {
 	first, _ := usageTranscript(t)
 	c := newTestCodec()
 	for n := 1; n <= 8; n++ {
 		usageHook(t, c, n)
 	}
+	var late []agent.UsageCount
+	for _, e := range feedLines(c, first).Events {
+		if e.Kind == agent.Usage {
+			if !e.Late {
+				t.Fatalf("an ended turn's usage was reported as the running turn's: %+v", *e.Usage)
+			}
+			late = append(late, *e.Usage)
+		}
+	}
+	if len(late) == 0 || late[len(late)-1] != wantTurns[0] {
+		t.Fatalf("the ended turn's usage: %+v, want it to end at %+v", late, wantTurns[0])
+	}
+
+	c = newTestCodec()
+	for n := 1; n <= 10; n++ {
+		usageHook(t, c, n)
+	}
 	if _, all := turnUsage(t, feedLines(c, first)); len(all) != 0 {
-		t.Fatalf("an ended turn's usage was reported: %+v", all)
+		t.Fatalf("an earlier turn's usage was reported after a later turn ended: %+v", all)
 	}
 }
 
@@ -242,6 +263,101 @@ func TestSyntheticLineGivesNoUsage(t *testing.T) {
 			if e.Kind == agent.Usage || e.Kind == agent.Unknown {
 				t.Fatalf("transcript first=%v: %v event %+v", first, e.Kind, e)
 			}
+		}
+	}
+}
+
+// The usage capture of Claude Code 2.1.330 (#675): the same two turns, a
+// turn with tool calls and a turn that answers with text only, with the
+// number of transcript lines each hook call saw (NN-<event>.lines). That
+// CLI writes a turn's last message to its transcript after the turn's
+// Stop hook: the Stop of the text-only turn saw 53 lines, and its answer
+// is line 55.
+const usage330Dir = "testdata/2.1.330/usage"
+
+// replay330 gives the codec the capture as the runner reads it, files
+// before hook calls: before each call, the transcript lines that call saw
+// and that were not given yet, then the call; then the rest.
+func replay330(t *testing.T, c *codec) Actions {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(usage330Dir, "transcript.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := bytes.Split(bytes.TrimSpace(b), []byte("\n"))
+	files, _ := filepath.Glob(filepath.Join(usage330Dir, "hooks", "*.json"))
+	if len(files) != 10 {
+		t.Fatalf("%d hook calls in the capture, want 10", len(files))
+	}
+	var a Actions
+	given := 0
+	for _, f := range files {
+		n, err := os.ReadFile(strings.TrimSuffix(f, ".json") + ".lines")
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen, err := strconv.Atoi(strings.TrimSpace(string(n)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for ; given < min(seen, len(all)); given++ {
+			a = merge(a, c.Decode(agent.File, all[given]))
+		}
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a = merge(a, c.Decode(agent.Hook, envelope("v"+filepath.Base(f), f, raw)))
+	}
+	return merge(a, feedLines(c, all[given:]))
+}
+
+// A turn that calls no tool, whose last message Claude Code wrote after
+// its Stop, gives a usage event with its totals: Late, so that the core
+// counts it toward that turn. A turn with tool calls gives its first
+// message's usage before its end, and its totals, each message once, after
+// it (#675).
+func TestUsageOfAMessageWrittenAfterTheStop(t *testing.T) {
+	a := replay330(t, newTestCodec())
+	type report struct {
+		u    agent.UsageCount
+		late bool
+	}
+	var turns [][]report
+	ended := 0
+	for _, e := range a.Events {
+		switch e.Kind {
+		case agent.TurnStarted:
+			turns = append(turns, nil)
+		case agent.TurnEnded:
+			ended++
+		case agent.Usage:
+			if len(turns) == 0 || e.Usage == nil {
+				t.Fatalf("a usage event outside a turn: %+v", e)
+			}
+			if e.Late != (ended == len(turns)) {
+				t.Errorf("turn %d: a usage event %+v with Late %v, %d turns ended", len(turns), *e.Usage, e.Late, ended)
+			}
+			turns[len(turns)-1] = append(turns[len(turns)-1], report{*e.Usage, e.Late})
+		case agent.Unknown:
+			t.Errorf("unknown event %q", e.Text)
+		}
+	}
+	model := "claude-haiku-5-5"
+	want := [][]report{
+		// The tool calls' message, written twice before its tool hooks,
+		// counted once; then the answer, written after the Stop.
+		{{agent.UsageCount{Model: model, Input: 2, Output: 145, CacheRead: 30220, CacheWrite: 5535}, false},
+			{agent.UsageCount{Model: model, Input: 4, Output: 148, CacheRead: 65975, CacheWrite: 5762}, true}},
+		// The text-only turn: its one message, written after the Stop.
+		{{agent.UsageCount{Model: model, Input: 2, Output: 4, CacheRead: 35982, CacheWrite: 40}, true}},
+	}
+	if ended != 2 || len(turns) != 2 {
+		t.Fatalf("%d turns started, %d ended; want 2 and 2", len(turns), ended)
+	}
+	for i := range want {
+		if fmt.Sprint(turns[i]) != fmt.Sprint(want[i]) {
+			t.Errorf("turn %d: usage %+v, want %+v", i+1, turns[i], want[i])
 		}
 	}
 }

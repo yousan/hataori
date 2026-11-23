@@ -30,7 +30,8 @@ import uuid
 MODEL = "haiku"  # the cheapest model that produces every payload
 ROWS, COLS = 50, 160
 
-# The recorder every hook runs. It stores the payload unchanged, and answers
+# The recorder every hook runs. It stores the payload unchanged, and how
+# many complete lines the session's transcript held at the call, and answers
 # the two hooks that decide something: a permission request is allowed, and
 # a question gets the first option of each of its questions.
 HOOK = r'''
@@ -39,10 +40,20 @@ raw = sys.stdin.buffer.read()
 ev = json.loads(raw).get("hook_event_name", "Unknown")
 d = os.environ["CAPTURE_HOOK_DIR"]
 name = "%d-%s.json" % (time.time_ns(), ev)
+p = json.loads(raw)
+# How many complete lines the transcript holds when the hook is called:
+# what a reader of both could have read of it by then.
+lines = -1
+try:
+    with open(p.get("transcript_path") or "", "rb") as f:
+        lines = f.read().count(b"\n")
+except OSError:
+    pass
+with open(os.path.join(d, name[:-len(".json")] + ".lines"), "w") as f:
+    f.write("%d\n" % lines)
 with open(os.path.join(d, name + ".tmp"), "wb") as f:
     f.write(raw)
 os.rename(os.path.join(d, name + ".tmp"), os.path.join(d, name))
-p = json.loads(raw)
 if ev == "PermissionRequest":
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PermissionRequest",
                                              "decision": {"behavior": "allow"}}}))

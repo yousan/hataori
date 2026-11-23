@@ -94,6 +94,18 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 	if err != nil {
 		return err
 	}
+	// The turn a Usage event's counts are of: the open one, or for a Late
+	// report the turn that ended last, whose last message the agent
+	// recorded after its end (#675).
+	usageTurn := turnID
+	if in.Kind == AgentEvent && in.Agent.Kind == agent.Usage && in.Agent.Late {
+		usageTurn = 0
+		err := tx.QueryRowContext(ctx, `SELECT id FROM turns WHERE session_id = ? AND ended_at IS NOT NULL ORDER BY id DESC LIMIT 1`,
+			sessionID).Scan(&usageTurn)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("session: load turn: %w", err)
+		}
+	}
 	clock := time.Now
 	if m.Now != nil {
 		clock = m.Now
@@ -157,8 +169,8 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 		case KindTurnStarted, KindInput, KindAnswer:
 			data["turn"] = turnID
 		case KindUsage:
-			if turnID != 0 {
-				data["turn"] = turnID
+			if usageTurn != 0 {
+				data["turn"] = usageTurn
 			}
 		}
 		b, err := json.Marshal(data)
@@ -170,7 +182,7 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 		}
 	}
 	if in.Kind == AgentEvent && in.Agent.Kind == agent.Usage && in.Agent.Usage != nil {
-		if err := recordUsage(ctx, tx, thread, turnID, *in.Agent.Usage, DayOf(at, m.Zone)); err != nil {
+		if err := recordUsage(ctx, tx, thread, usageTurn, *in.Agent.Usage, DayOf(at, m.Zone)); err != nil {
 			return err
 		}
 	}
