@@ -157,9 +157,9 @@ func TestReminderIsFoldedAndOutlivesTheThread(t *testing.T) {
 	wt.read(t, pos)
 	eventually(t, "the quiet period to start", 10*time.Second, func() bool { return wt.clock().waiting() >= 2 })
 	wt.clock().advance(20 * time.Second) // the reminder is due, the quiet period runs
-	time.Sleep(200 * time.Millisecond)
-	if got := wt.wakes(t, first.ID); len(got) != 0 {
-		t.Fatalf("woken while a turn end is folded: %q", got)
+	time.Sleep(300 * time.Millisecond)
+	if n := wt.taken(t, first.ID); n != 0 {
+		t.Fatalf("%d wakes while a turn end is folded, want none yet", n)
 	}
 	wt.clock().advance(10 * time.Second)
 	got := wt.woken(t, owner, first.ID, 1)
@@ -187,7 +187,7 @@ func TestReminderIsFoldedAndOutlivesTheThread(t *testing.T) {
 func TestReminderWaitsForTheBudget(t *testing.T) {
 	wt, conn := remindTest(t, budget(1, 3, 0))
 	stop, owner, sv := wt.start(t) // its first turn is the hour's
-	defer stop()
+	defer func() { stop() }()
 	c := conn()
 	remindIn(t, c, 10*time.Minute, "reply looked again")
 	second := remindIn(t, c, 6*time.Hour, "later")
@@ -195,10 +195,17 @@ func TestReminderWaitsForTheBudget(t *testing.T) {
 		t.Fatal(err) // a cancel is no send
 	}
 	remindIn(t, c, 6*time.Hour, "later")
-	_, err := c.Remind(context.Background(), control.RemindRequest{Delay: 600, Note: "one more"})
-	if !errors.Is(err, control.ErrForbidden) || !strings.Contains(err.Error(), "3 of 3 sends") {
-		t.Fatalf("a reminder past sends_per_hour: %v", err)
+	over := func(c *wire.Client, when string) {
+		t.Helper()
+		_, err := c.Remind(context.Background(), control.RemindRequest{Delay: 600, Note: "one more"})
+		if !errors.Is(err, control.ErrForbidden) || !strings.Contains(err.Error(), "3 of 3 sends") {
+			t.Fatalf("a reminder past sends_per_hour, %s: %v", when, err)
+		}
 	}
+	over(c, "of the same daemon")
+	stop()
+	stop, owner, sv = wt.start(t)
+	over(conn(), "after a restart")
 	wt.noWake(t, sv.ID, 59*time.Minute, 0, "with the budget used up")
 	wt.until(t, wakeBase.Add(time.Hour))
 	if got := wt.wokenN(t, owner, sv.ID, 1); !strings.Contains(got[0], "\nReminder 1, due ") || !strings.Contains(got[0], "minutes late:\n> reply looked again\n") {

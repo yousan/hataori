@@ -44,6 +44,9 @@ func (wt *wakeTest) noWake(t *testing.T, sv control.ThreadID, d time.Duration, w
 	if got := wt.wakes(t, sv); len(got) != want {
 		t.Fatalf("%s: %d wakes, want %d: %q", what, len(got), want, got)
 	}
+	if n := wt.taken(t, sv); n != want {
+		t.Fatalf("%s: the thread took %d wakes, want %d", what, n, want)
+	}
 }
 
 // A completion with background tasks running, then the thread's own next
