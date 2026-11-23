@@ -170,6 +170,16 @@ HATAORI_REAL_CLAUDE=1 go test -count=1 -run TestRealClaudeCodeWakeUsage -v -time
 
 It runs the daemon as the supervisor check does, with the supervisor's hourly turn limit off, and measures what each digest wake uses (#676): a worker thread's turn ends 46 times in a row (as many turns as the day #676 measured had), each waking the supervisor, and a person talks to the supervisor now and then. Each wake's usage is the input, output, cache reads and cache writes that the CLI reports for its turn, summed; every wake must have one, and none may be more than a fifth above the first wake's (the least is logged too: a wake far below it is one whose first request the CLI made before hataori's MCP server was connected), since a wake runs in a conversation of its own. It is a day's number of wakes in a row, not a day: what grows with time alone is not in it. It logs every turn's sum. The rules above hold; the settings file is compared at the end.
 
+### The role check
+
+```sh
+HATAORI_REAL_CLAUDE=1 go test -count=1 -run TestRealClaudeCodeManager -v -timeout 40m ./cmd/hataori
+```
+
+It runs the daemon as the supervisor check does, with a supervisor on `sonnet` at effort `high` under the autonomy `act`, whose channel's `USER.md` asks for Japanese, and checks what hataori's layer of its instructions brings about (#653). Each step is judged by what happened, logs what the supervisor answered, and does not stop the others: 1. the ready line is one line in Japanese; 2. asked about its work, it reads `notes/`, also a note written since it last read them, and `docs/`; 3. a wake that needs nobody ends with exactly `(quiet)`; 4. asked for lighter reports, it edits `USER.md` or `SOUL.md` and names it; 5. asked to switch the autonomy, it says that this is the operator's key `autonomy`, and changes no file; 6. asked what its tools do not show, it starts a thread, and the first line of its report answers; 7. the user's settings file is unchanged. A model's answers vary: a run that fails a step another run passed is no proof either way, so look at several.
+
+Runs so far, 2026-11-24, Claude Code 2.1.330: three, each on a text changed after the one before, and none passed every step. Steps 1, 4, 5 and 7 passed in all three. Step 2 failed in the first two, where the supervisor answered from what it remembered, and passed on the text as it is. Step 3 passed in the first two and failed on the text as it is, where the wake said that nothing was to be done instead of `(quiet)`. Step 6 passed in the last two; in the first its check looked too early.
+
 ### New captures
 
 `internal/agent/claudecode/testdata/capture.py` records hook calls, transcripts and terminal output from the real CLI, and `scrub.py` makes them committable. Their README says how each capture was taken. Run `go test ./internal/agent/claudecode` before committing: it fails on a capture that still holds a home path, an e-mail address, an id or a token.
