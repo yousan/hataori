@@ -311,6 +311,9 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	}
 	sv := &supervisor.Sessions{Core: c, Tokens: srv, Root: abs, Hataori: exe, Scopes: supervisors,
 		Owner: control.Principal(cfg.Owner), Cheap: cheap, Budgets: budgets, Log: lg}
+	// A start a person approved as a supervisor's proposal is checked
+	// against its scope's repos too, as they are now (#650).
+	c.ApprovedStart = sv.CheckStart
 	// A test's token: of the scope's autonomy, or, for a scope that names no
 	// supervisor, one that acts, as every token did before autonomy (#650).
 	issueSupervisor := func(scope string) (string, error) {

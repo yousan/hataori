@@ -1901,7 +1901,8 @@ type Caller struct {
 	// Send with Refuse and NoAnswer, unless it was proposed as the answer
 	// to the question the thread waits on, which it then answers only while
 	// that question is open; a Start with the agent, the model and the
-	// effort the proposal showed. The approval is stored before the call:
+	// effort the proposal showed, after Core.ApprovedStart, which the
+	// daemon gives the scope's repos check (#646). The approval is stored before the call:
 	// when the call took something under the key and its outcome was not
 	// stored, the next answer records it as that approval's; when it took
 	// nothing, the next answer decides the proposal again. Keys that start

@@ -326,6 +326,11 @@ func (a *api) answerProposal(ctx context.Context, req control.RequestID, ans con
 		err = sender.send(ctx, control.ThreadID(target.Int64), key, control.Input{Text: call.Text}, control.Refuse,
 			&sendGuard{proposal: true, question: question})
 	case "start":
+		if a.c.ApprovedStart != nil {
+			if err = a.c.ApprovedStart(scope, call.Repo); err != nil {
+				break
+			}
+		}
 		var id control.ThreadID
 		id, err = sender.start(ctx, control.StartRequest{Key: key, Scope: scope, Repo: call.Repo, Agent: call.Agent,
 			Model: call.Model, Effort: call.Effort, Input: control.Input{Text: call.Text}}, "")

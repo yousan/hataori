@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/instance"
 	"github.com/yousan/hataori/internal/runner"
 	"github.com/yousan/hataori/internal/supervisor"
 	"github.com/yousan/hataori/internal/surface"
@@ -501,5 +503,43 @@ func TestLoopGuardResetByADecision(t *testing.T) {
 	f.decided(t, "approval_answered", 1)
 	if n := count(); n != 0 {
 		t.Fatalf("%d cycles on thread %d after a person's decision in the supervisor's thread, want 0", n, w)
+	}
+}
+
+// An approved start is checked against the scope's repos as they are when
+// it is made: a repository the scope no longer lists is not cloned, and
+// the outcome says so (#650, #646).
+func TestAutonomyApprovedStartOutsideTheRepos(t *testing.T) {
+	f := newSvAutonomy(t, "propose")
+	n := f.propose(t, supervisor.ToolStart, map[string]any{"repo": f.wt.repo, "text": "reply started"})
+	q := f.shown(t, n)
+	threads := f.threadsIn(t)
+	// The operator takes the repository off the scope's repos.
+	path := filepath.Join(f.wt.r.root, instance.ConfigFile)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg["scopes"].([]any)[0].(map[string]any)["supervisor"].(map[string]any)["repos"] = []string{bareRepo(t)}
+	if b, err = json.Marshal(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.restart(t)
+	f.press(t, q, e2eHook, "Approve")
+	ev, _ := f.decided(t, "proposal_answered", 1)
+	if ev[0]["outcome"] != "failed" || ev[0]["reason"] != "not allowed" {
+		t.Fatalf("proposal_answered: %v", ev[0])
+	}
+	f.wt.r.posted(t, f.conv, fmt.Sprintf("Approved by dispatch, but proposal %d was not started: not allowed.", n))
+	time.Sleep(300 * time.Millisecond)
+	if got := f.threadsIn(t); got != threads {
+		t.Fatalf("%d threads, want %d", got, threads)
 	}
 }

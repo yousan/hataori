@@ -231,8 +231,14 @@ type AgentDefaults struct{ Model, Effort string }
 type Core struct {
 	Store   *store.Store
 	Machine *session.Machine
-	Scopes  map[string]Scope              // by scope key
-	Owners  map[string]control.ScopeOwner // by client name
+	// ApprovedStart, when set, checks the Start that a person approved as
+	// a proposal (control.Caller.Propose) before it is made, as the
+	// proposer's connection checked it when it was proposed: the daemon
+	// gives the supervisor's repositories (#646). An error refuses it, and
+	// the proposal's outcome is failed. Nil checks nothing.
+	ApprovedStart func(scope, repo string) error
+	Scopes        map[string]Scope              // by scope key
+	Owners        map[string]control.ScopeOwner // by client name
 	// People resolves a caller's From to a person and says who may act in
 	// a scope. Without it no input is allowed.
 	People     *people.Directory
