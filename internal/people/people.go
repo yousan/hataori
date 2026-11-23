@@ -8,6 +8,7 @@
 package people
 
 import (
+	"maps"
 	"slices"
 	"strings"
 )
@@ -133,6 +134,24 @@ func (d *Directory) May(name, scope string) bool {
 		return false
 	}
 	return name == d.owner || d.scopes[scope][name]
+}
+
+// Of returns the names of the people who may act in scope: the owner first,
+// then the scope's people, by name.
+func (d *Directory) Of(scope string) []string {
+	if d == nil {
+		return nil
+	}
+	var out []string
+	if d.owner != "" {
+		out = append(out, d.owner)
+	}
+	for _, n := range slices.Sorted(maps.Keys(d.scopes[scope])) {
+		if n != d.owner {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // IDs returns the service's own ids of the person name on client, in config
