@@ -1103,8 +1103,8 @@ body {
 .all-threads td[data-col="agent"],
 .all-threads td[data-col="branch"],
 .all-threads td[data-col="last"] {
-  width: 10%;
-  min-width: 12ch;
+  width: 1%;
+  min-width: 14ch; /* about 12 characters of text, and the ellipsis */
 }
 
 /* The All threads tab when the choice hides every thread. */

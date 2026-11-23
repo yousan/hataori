@@ -238,14 +238,28 @@ func TestDashboardNamesAndWidths(t *testing.T) {
 				const cells = {};
 				for (const c of ['title', 'agent', 'branch', 'last']) {
 					const td = row.querySelector('td[data-col=' + c + ']');
-					const edge = td.getBoundingClientRect().right - parseFloat(getComputedStyle(td).paddingRight);
+					// A cut value's ellipsis is painted over its end, inside the
+					// edge: what shows is what ends before the ellipsis.
+					const right = td.getBoundingClientRect().right - parseFloat(getComputedStyle(td).paddingRight);
 					const text = td.firstChild;
-					let fits = 0;
 					const r = document.createRange();
-					for (let i = 1; i <= text.length; i++) {
-						r.setStart(text, 0); r.setEnd(text, i);
-						if (r.getBoundingClientRect().right > edge + 0.5) break;
-						fits = i;
+					const upTo = (edge) => {
+						let n = 0;
+						for (let i = 1; i <= text.length; i++) {
+							r.setStart(text, 0); r.setEnd(text, i);
+							if (r.getBoundingClientRect().right > edge + 0.5) break;
+							n = i;
+						}
+						return n;
+					};
+					let fits = upTo(right);
+					if (fits < text.length) {
+						const e = document.createElement('span');
+						e.textContent = '…';
+						td.append(e);
+						const ellipsis = e.getBoundingClientRect().width;
+						e.remove();
+						fits = upTo(right - ellipsis);
 					}
 					cells[c] = {text: td.textContent, fits, width: td.getBoundingClientRect().width};
 				}
@@ -282,6 +296,13 @@ func TestDashboardNamesAndWidths(t *testing.T) {
 		measure()
 		t.Logf("without the details panel: %s", w.Cols)
 		keeps("without the details panel")
+		// The other text columns keep about 12 characters and no more, also
+		// where there is room.
+		for _, c := range []string{"agent", "branch", "last"} {
+			if v := w.Cells[c]; v.Fits > 16 {
+				t.Errorf("without the details panel: the %s column shows %d characters, more than about 12, taking the title's room (%s)", c, v.Fits, w.Cols)
+			}
+		}
 		// The title gets what is left: at 1600 px with the tree, at least 30
 		// characters, and no narrower than another text column.
 		if v := w.Cells["title"]; v.Fits < 30 {
