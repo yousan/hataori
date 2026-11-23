@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -209,25 +208,13 @@ func TestRealClaudeCodeManager(t *testing.T) {
 	t.Run("6 asked what its tools do not show, it starts a thread and answers", func(t *testing.T) {
 		n := len(p.turnsEnded(t, sv))
 		ask(t, "リポジトリの main にある PASSPHRASE.txt には何と書いてある?")
-		var started int
+		// The order is there once the thread's session has started.
 		var prompt string
-		p.db(t).QueryRow(`SELECT count(*) FROM threads WHERE confined = 0 AND started_by LIKE '%sv1%'`).Scan(&started)
-		rows, err := p.db(t).Query(`SELECT data FROM events WHERE kind = 'input' AND json_extract(data, '$.from') = ?`, supervisor.ID("c1"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		for rows.Next() {
-			var b []byte
-			rows.Scan(&b)
-			var d struct{ Text string }
-			json.Unmarshal(b, &d)
-			prompt = d.Text
-		}
-		rows.Close()
-		t.Logf("threads it started: %d; its order:\n%s", started, prompt)
-		if prompt == "" {
-			t.Fatal("it started no thread")
-		}
+		eventually(t, "the thread it starts", p.within(2*time.Minute), func() bool {
+			return p.db(t).QueryRow(`SELECT json_extract(data, '$.text') FROM events WHERE kind = 'input' AND json_extract(data, '$.from') = ?`,
+				supervisor.ID("c1")).Scan(&prompt) == nil
+		})
+		t.Logf("its order:\n%s", prompt)
 		eventually(t, "the report", p.within(8*time.Minute), func() bool {
 			return len(p.turnsEnded(t, sv)) > n+1 && strings.Contains(last(), repoWord)
 		})

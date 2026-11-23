@@ -65,7 +65,7 @@ func TestLayerNamesTheTools(t *testing.T) {
 		}
 	}
 	unquoted := regexp.MustCompile("`[^`\n]+`").ReplaceAllString(Layer, "")
-	looks := regexp.MustCompile(`\b[a-z]+(_[a-z]+)+\b`)
+	looks := regexp.MustCompile(`\b[a-z0-9]+(_[a-z0-9]+)+\b`)
 	for _, w := range looks.FindAllString(unquoted, -1) {
 		t.Errorf("hataori's layer has %q unquoted", w)
 	}

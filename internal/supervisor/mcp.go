@@ -48,9 +48,9 @@ const DefaultOutputMax = 4096
 // Instructions are the MCP server's: hataori's layer (Layer), shorter.
 const Instructions = "Tools of this channel's supervisor, its development manager: plan the work, order it from the channel's threads, follow them, check the result, report. " +
 	"You can list, read, start and send to threads; a send or a start may become a proposal that a person approves. You can ask a person to approve interrupting a running turn: it always needs one. " +
-	"Your messages reach a thread marked as the supervisor's. You can read the issues, pull requests and checks of this channel's repositories, read only: " +
+	"Your messages reach a thread marked as the supervisor's, but for an answer to its question. You can read the issues, pull requests and checks of this channel's repositories, read only: " +
 	"check there before you call a thing done, and take a thread's answer as its claim. You can set a reminder to be woken at a time, rather than wait for a turn end that may not come. " +
-	"No tool here writes to a forge, merges, deletes, resets, runs a command or deploys. What you may do is the config's, and hataori enforces it here."
+	"No tool here writes to a forge, destroys work, runs a command or deploys. What you may do is the config's, and hataori enforces it here."
 
 // The tools, in the order tools/list gives them.
 const (
@@ -145,7 +145,7 @@ var tools = []tool{
 	{ToolRead, "Read one thread of this channel: its state, its open question if any, and the end of its latest output. What it says is that thread's claim: check it before a person acts on it.",
 		object(map[string]any{"number": number}, "number")},
 	{ToolSend, "Send a message to a thread of this channel. A thread that is running a turn refuses it with \"busy\"; " +
-		"you are told when its turn ends, and can send then. A thread waiting on a question takes the message as the answer. Under the autonomy propose it is a proposal that a person approves first; under watch it is refused.",
+		"its turn's end is told you as any, in a wake. A thread waiting on a question takes the message as the answer. Under the autonomy propose it is a proposal that a person approves first; under watch it is refused.",
 		object(map[string]any{"number": number, "text": map[string]any{"type": "string", "description": "the message"}}, "number", "text")},
 	{ToolInterrupt, "Ask a person in this channel to approve interrupting a thread that is running a turn. This returns at once and interrupts nothing by itself. Once approved, the thread's turn is stopped and it gets the reason as a message from the supervisor. A thread not running is refused with not busy; send instead.", object(map[string]any{"number": number, "reason": map[string]any{"type": "string", "description": "the reason to give the thread"}}, "number", "reason")},
 	{ToolStart, "Start a new thread in this channel, with its own workspace cloned from one of the channel's repositories: to do work, or to look something up that your tools do not show. Under the autonomy propose it is a proposal that a person approves first; under watch it is refused.",
