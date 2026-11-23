@@ -23,7 +23,8 @@ same way in every file:
   an interpreter under the home directory -> /usr/bin/python3
   sk-ant-... tokens, signatures, OAuth link parameters -> REDACTED
 
-Hook payloads are renamed NN-<event>.json in the order they were called.
+Hook payloads are renamed NN-<event>.json in the order they were called,
+and the transcript's line count at each call, when recorded, NN-<event>.lines.
 Only the trust, login_terminal and resume_missing scenarios keep their terminal output. In transcripts, lines
 that carry the session's context (attachments, recorded API requests) keep
 their shape with every string blanked.
@@ -183,6 +184,11 @@ def main():
                     data = s.bytes(f.read())
                 with open(os.path.join(dst, "hooks", "%02d-%s" % (i, event)), "wb") as f:
                     f.write(data)
+                # The transcript's line count at the call, when the recorder
+                # wrote it: a number, kept as it is.
+                count = os.path.join(hooks, n[:-len(".json")] + ".lines")
+                if os.path.exists(count):
+                    shutil.copyfile(count, os.path.join(dst, "hooks", "%02d-%s.lines" % (i, event[:-len(".json")])))
         for n in sorted(os.listdir(src)):
             p = os.path.join(src, n)
             if n == "hooks" or not os.path.isfile(p):

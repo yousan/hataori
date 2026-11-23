@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.29**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.30**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -1450,12 +1450,12 @@ The agent asks a question or an approval; the turn ends `blocked`.
 
 ### Event `usage`
 
-What the agent reports about the tokens of the running turn. Each count is the turn's total so far, not what was added since the last report.
+What the agent reports about the tokens of the running turn. Each count is the turn's total so far, not what was added since the last report. Since 3.30 a report may come after the turn's `turn_ended`: an agent may record a turn's last model message only after it reported the turn's end (Claude Code 2.1.330 does). That report names the ended turn in `turn`, and its counts go toward that turn, also when a caller's input has started the next turn by then (its `turn_started` may come first). It comes before the agent reports anything of its next prompt. Before 3.30 such a report was dropped, and every report with a `turn` came before that turn's end.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `session` | integer | required | the session |
-| `turn` | integer | optional | the turn; absent for a report outside a turn, whose counts go toward no `ThreadInfo.tokens`; since 1.8 |
+| `turn` | integer | optional | the turn the counts are of: the running one, or, for a report after a turn's end, the turn that ended last (since 3.30); absent for a report outside a turn, whose counts go toward no `ThreadInfo.tokens`; since 1.8 |
 | `model` | string | optional | the model the tokens were used with, when the agent says; since 1.8 |
 | `input` | integer | optional | input tokens of the turn so far; since 1.8 |
 | `output` | integer | optional | output tokens of the turn so far; since 1.8 |

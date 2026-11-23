@@ -54,6 +54,7 @@ type codec struct {
 	turns      map[string]*turnText // by prompt id
 	closed     bool                 // SessionEnd was reported
 	oddUsage   bool                 // usage of a shape the codec does not know was reported once
+	lastEnded  *turnText            // the turn whose end was reported last
 
 	// Input.
 	ready         bool          // the session reported its start
@@ -557,8 +558,9 @@ const synthetic = "<synthetic>"
 // skipped, and reported as one Unknown event for the whole session.
 //
 // The transcript gives no context window, so context use is never filled.
-// Usage read after the turn's end is not reported: the core would count it
-// toward the turn running then.
+// Usage read after the turn's end is reported Late, and only for the turn
+// that ended last before any other started (reportUsage), so that the core
+// counts it toward that turn and not toward one running then.
 func (c *codec) usageOf(l transcriptLine) Actions {
 	if len(l.Message.Usage) == 0 || string(l.Message.Usage) == "null" || l.Message.Model == synthetic {
 		return Actions{}
@@ -593,9 +595,16 @@ func (c *codec) usageOf(l transcriptLine) Actions {
 }
 
 // reportUsage produces a Usage event with the totals of t's turn, unless
-// they are the ones reported last or the turn has ended.
+// they are the ones reported last. Once the turn has ended, it reports
+// Late, and only while it is the turn that ended last and no turn has
+// started since: Claude Code writes a turn's last message to its
+// transcript after its Stop hook (2.1.330), and before the next prompt, so
+// its usage is read after the end. The core counts a Late report toward the
+// session's last ended turn, which is this one at least until the agent
+// reports its next prompt: a caller's input may open the core's next turn
+// before that, but nothing ends it.
 func (c *codec) reportUsage(t *turnText) Actions {
-	if len(t.usage) == 0 || t.ended {
+	if len(t.usage) == 0 || (t.ended && (t != c.lastEnded || c.running)) {
 		return Actions{}
 	}
 	n := agent.UsageCount{Model: t.model}
@@ -613,7 +622,7 @@ func (c *codec) reportUsage(t *turnText) Actions {
 		return Actions{}
 	}
 	t.reported = n
-	return c.events(agent.Event{Kind: agent.Usage, Usage: &n})
+	return c.events(agent.Event{Kind: agent.Usage, Usage: &n, Late: t.ended})
 }
 
 func (c *codec) item(it textItem) Actions {
@@ -638,6 +647,7 @@ func (c *codec) applyText(t *turnText, it textItem) Actions {
 		}
 		a := merge(c.withdrawAll(), c.release(t))
 		t.ended, t.interrupted = true, true
+		c.lastEnded = t
 		return merge(a, c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted}))
 	}
 	if t.ended {
@@ -675,6 +685,7 @@ func (c *codec) end(prompt, final string) Actions {
 		a = c.release(t)
 	}
 	t.held, t.ended, t.final = "", true, final
+	c.lastEnded = t
 	return a
 }
 

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -96,5 +97,61 @@ func TestTokensTodayStartsAtMidnight(t *testing.T) {
 	evs, _ := f.core.Store.Last(context.Background(), id, 1, func(e control.Event) bool { return e.Kind == "usage" })
 	if len(evs) != 1 || !evs[0].Time.Equal(clock.now()) {
 		t.Fatalf("usage event %+v", evs)
+	}
+}
+
+// A Late usage report, of the turn that ended last and read after its end,
+// counts toward that turn, and its usage event names it; a report outside
+// a turn that is not Late still counts toward none (#675).
+func TestLateUsageCountsTowardTheEndedTurn(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{})
+	id, sid := f.running(t, "t1")
+	late := usage(100, 15, 0, 0, 0, 0) // the turn's last message, read after its end: 115
+	late.Late = true
+	f.agentEvent(t, sid, 2, usage(10, 5, 0, 0, 0, 0)) // 15
+	f.agentEvent(t, sid, 3, agent.Event{Kind: agent.TurnEnded, Status: agent.Completed})
+	f.agentEvent(t, sid, 4, late)
+	f.agentEvent(t, sid, 5, usage(500, 0, 0, 0, 0, 0)) // outside a turn, not Late
+	if got := f.info(t, f.owner, id); got.Tokens == nil || *got.Tokens != (control.TokenCount{Turn: 115, Today: 115}) {
+		t.Fatalf("after a late report: %+v, want turn 115 today 115", got.Tokens)
+	}
+	var turn int64
+	if err := f.core.Store.DB.QueryRow(`SELECT id FROM turns WHERE session_id = ?`, sid).Scan(&turn); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := f.core.Store.DB.Query(`SELECT coalesce(json_extract(data, '$.turn'), 0) FROM events WHERE kind = 'usage' ORDER BY pos`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var turns []int64
+	for rows.Next() {
+		var n int64
+		rows.Scan(&n)
+		turns = append(turns, n)
+	}
+	if fmt.Sprint(turns) != fmt.Sprint([]int64{turn, turn, 0}) {
+		t.Fatalf("the usage events' turns %v, want %d, %d and none", turns, turn, turn)
+	}
+	// A caller's input opens the next turn before the agent reports it; a
+	// late report read then is still the ended turn's.
+	if err := f.owner.Send(ctx, id, "second", control.Input{Text: "again"}, control.Refuse); err != nil {
+		t.Fatal(err)
+	}
+	later := usage(200, 15, 0, 0, 0, 0) // 215
+	later.Late = true
+	f.agentEvent(t, sid, 6, later)
+	f.agentEvent(t, sid, 7, agent.Event{Kind: agent.TurnStarted})
+	f.agentEvent(t, sid, 8, usage(1, 2, 0, 0, 0, 0)) // the next turn's own: 3
+	var first, second int64
+	if err := f.core.Store.DB.QueryRow(`SELECT max(tokens), min(tokens) FROM turns WHERE session_id = ?`, sid).Scan(&first, &second); err != nil {
+		t.Fatal(err)
+	}
+	if first != 215 || second != 3 {
+		t.Fatalf("turn tokens %d and %d, want 215 and 3", first, second)
+	}
+	if got := f.info(t, f.owner, id); got.Tokens == nil || *got.Tokens != (control.TokenCount{Turn: 3, Today: 218}) {
+		t.Fatalf("after the next turn's report: %+v, want turn 3 today 218", got.Tokens)
 	}
 }
