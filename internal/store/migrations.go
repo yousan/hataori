@@ -477,6 +477,34 @@ var migrations = []Migration{
 			dir   TEXT NOT NULL
 		)`,
 	)},
+	// One row per send or start that a caller with Propose proposed
+	// (#650): shown and decided in the thread asks_in. Its id is the
+	// proposal's number. state is open; approved, with who approved it,
+	// from before its call is made until its outcome is stored; then the
+	// outcome: run, refused, busy, ended, closed or failed.
+	{Name: "proposals", Up: execAll(
+		`CREATE TABLE proposals (
+			id        INTEGER PRIMARY KEY,
+			handle    TEXT NOT NULL UNIQUE,                     -- what Answer names
+			asks_in   INTEGER NOT NULL REFERENCES threads(id),
+			action    TEXT NOT NULL,                            -- send or start
+			target    INTEGER REFERENCES threads(id),           -- a send's thread; a start's, once it ran
+			question  TEXT NOT NULL DEFAULT '',                 -- a send's: the open question it answers, by its handle
+			call      TEXT NOT NULL,                            -- JSON: what is run when approved
+			mark      TEXT NOT NULL,                            -- the caller's mark
+			principal TEXT NOT NULL,
+			from_id   TEXT NOT NULL,
+			ask_key   TEXT,
+			state     TEXT NOT NULL,
+			approved_by   TEXT NOT NULL DEFAULT '',             -- who approved it: principal, from, link (JSON) and via
+			approved_from TEXT NOT NULL DEFAULT '',
+			approved_link TEXT,
+			approved_via  TEXT NOT NULL DEFAULT '',
+			opened_at INTEGER NOT NULL,
+			closed_at INTEGER,
+			UNIQUE (asks_in, ask_key)
+		)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

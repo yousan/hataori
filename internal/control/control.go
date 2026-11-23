@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -38,7 +39,24 @@ var (
 	// ErrEnded: a HostOperation's Send after the operation ended. Nothing
 	// was sent. Since 3.11.
 	ErrEnded = errors.New("the operation has ended")
+	// ErrProposed: a Start or a Send of a caller with Propose was not made
+	// but stored as a proposal that a person decides. The error is a
+	// *Proposed. Since 3.26.
+	ErrProposed = errors.New("proposed")
 )
+
+// Proposed is the error of a Start or a Send that a caller with Propose
+// made: nothing ran, and the call waits as proposal Number in the caller's
+// AsksIn thread for a person's decision. Since 3.26.
+type Proposed struct {
+	Number int64
+}
+
+func (p *Proposed) Error() string {
+	return fmt.Sprintf("proposed as proposal %d: nothing runs until a person of the scope approves it", p.Number)
+}
+
+func (p *Proposed) Is(target error) bool { return target == ErrProposed }
 
 // Efforts are the effort values hataori knows. An agent adapter maps each
 // to what its agent takes.
@@ -92,13 +110,15 @@ type API interface {
 	Layout(ctx context.Context) ([]ChatLayout, error)
 
 	// Start starts a thread in a scope. A repeated r.Key starts nothing and
-	// returns the thread the first call started.
+	// returns the thread the first call started. For a caller with Propose
+	// it starts nothing and returns a *Proposed (Caller.Propose).
 	Start(ctx context.Context, r StartRequest) (ThreadID, error)
 	// Send gives input to a thread. key makes the call safe to repeat: a key
 	// that was accepted before is ignored. busy says what to do when a turn
-	// is running.
+	// is running. For a caller with Propose it gives nothing and returns a
+	// *Proposed (Caller.Propose).
 	Send(ctx context.Context, id ThreadID, key string, in Input, busy Busy) error
-	// Answer answers an open question or approval.
+	// Answer answers an open question, approval or proposal.
 	Answer(ctx context.Context, req RequestID, a Answer) error
 	// AskInterrupt asks a person to approve interrupting the running turn of
 	// thread id, with reason. It stores an approval request in the caller's
@@ -290,6 +310,19 @@ type Caller struct {
 	// that would take the input. The supervisor's waker has it, so that a
 	// wake never answers the supervisor's own question.
 	NoAnswer bool
+	// Propose makes the caller's Start and Send proposals (design, section
+	// 7.1, "Autonomy"): neither runs. Each is checked as the call would be
+	// up to the point where it would run, then stored as a proposal in the
+	// caller's AsksIn thread, and the call returns a *Proposed with the
+	// proposal's number; a repeated key returns the same proposal. A person
+	// of the scope other than the caller's person decides it with Answer.
+	// Approved, the core makes the call as the caller, marked as its input,
+	// once, under a key made from the proposal: a Send with Refuse that is
+	// not taken as the answer to a question unless it was proposed as one,
+	// to a thread waiting on that same question; a Start with the model and
+	// the effort the proposal showed. The daemon sets it when it binds the
+	// caller; zero AsksIn refuses every Start and Send. Since protocol 3.26.
+	Propose bool
 	// Mark, when set, is a line the core puts before the text of every
 	// input of the caller's Start and Send, so that the agent sees who it
 	// came from. The client cannot leave it out: the daemon sets it when it
@@ -366,6 +399,12 @@ const (
 	// only. Since 3.17.
 	OpTakeIn
 )
+
+// ViaProposal is the Via of the caller as which the core makes the call of
+// a proposal a person approved (Caller.Propose): the input, answer and
+// thread_created events of that call name it, so that a reader can tell
+// them from the proposer's own. Since 3.26.
+const ViaProposal = "proposal"
 
 // Way is one of the dashboard's listeners, each a way of reaching it with
 // its own proof of who is at the other end (design, section 7.2). Since 3.2.

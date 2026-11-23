@@ -20,6 +20,13 @@ func budget(turns, sends int, tokens int64) func(cfg map[string]any) {
 	}
 }
 
+// autonomy sets c1's supervisor autonomy.
+func autonomy(mode string) func(cfg map[string]any) {
+	return func(cfg map[string]any) {
+		cfg["scopes"].([]map[string]any)[0]["supervisor"].(map[string]any)["autonomy"] = mode
+	}
+}
+
 // notices returns the budget notices posted in the supervisor's thread.
 func (wt *wakeTest) notices(sv control.ThreadInfo) []string {
 	var out []string
@@ -164,7 +171,7 @@ func TestBudgetTokens(t *testing.T) {
 // call, a start counting once; a person is told once; the count holds
 // across a restart; and they work again in the next hour.
 func TestBudgetSends(t *testing.T) {
-	wt := newWakeTest(t, budget(0, 2, 0))
+	wt := newWakeTest(t, budget(0, 2, 0), autonomy("act"))
 	stop, owner, sv := wt.start(t)
 	w, _ := wt.worker(t, owner, "c1", "w", "reply w")
 	call := func(key, script string) string { return sendAndRead(t, owner, sv.ID, key, script) }

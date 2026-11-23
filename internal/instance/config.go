@@ -161,6 +161,10 @@ type Supervisor struct {
 	// Repos are the repositories the supervisor works on, "repos": the
 	// only ones its Start may clone. Empty: it starts no thread.
 	Repos []Repo
+	// Autonomy is what the supervisor does on its own (design, section
+	// 7.1): AutonomyWatch, AutonomyPropose or AutonomyAct. "autonomy";
+	// AutonomyPropose when absent.
+	Autonomy string
 }
 
 // Repo is one entry of a supervisor's repos.
@@ -212,6 +216,18 @@ func ForgeName(address string) string {
 	return owner + "/" + name
 }
 
+// The values of a supervisor's autonomy.
+const (
+	// AutonomyWatch: it reads, and gives no thread input; it may not ask to
+	// interrupt either.
+	AutonomyWatch = "watch"
+	// AutonomyPropose: its sends and starts are proposals that a person of
+	// the scope approves before they run.
+	AutonomyPropose = "propose"
+	// AutonomyAct: its sends and starts run on their own.
+	AutonomyAct = "act"
+)
+
 // The defaults of a supervisor's wake (decision 5 of #267).
 const (
 	DefaultQuiet      = 30 * time.Second
@@ -238,6 +254,7 @@ type fileSupervisor struct {
 	TokensPerDay *int64   `json:"tokens_per_day"`
 	LoopCycles   *int     `json:"loop_cycles"`
 	Repos        []string `json:"repos"`
+	Autonomy     string   `json:"autonomy"`
 }
 
 // Dashboard is the "dashboard" section of the config: a loopback listener,
@@ -552,7 +569,14 @@ func ParseConfig(data []byte) (*Config, error) {
 				Effort: strings.TrimSpace(sv.Effort), Instructions: strings.TrimSpace(sv.Instructions),
 				Quiet: DefaultQuiet, OutputMax: DefaultOutputMax, ThreadsMax: DefaultThreadsMax,
 				TurnsPerHour: DefaultTurnsPerHour, SendsPerHour: DefaultSendsPerHour, TokensPerDay: DefaultTokensPerDay,
-				LoopCycles: DefaultLoopCycles}
+				LoopCycles: DefaultLoopCycles, Autonomy: AutonomyPropose}
+			switch a := strings.TrimSpace(sv.Autonomy); a {
+			case "":
+			case AutonomyWatch, AutonomyPropose, AutonomyAct:
+				sc.Supervisor.Autonomy = a
+			default:
+				return nil, fmt.Errorf("config: key %q: %q is not one of %q, %q and %q", key+".supervisor.autonomy", a, AutonomyWatch, AutonomyPropose, AutonomyAct)
+			}
 			if a := sc.Supervisor.Agent; a != "" {
 				if err := registry.ValidName(a); err != nil {
 					return nil, fmt.Errorf("config: key %q: %v", key+".supervisor.agent", err)

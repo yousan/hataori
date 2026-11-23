@@ -39,7 +39,32 @@ func (l *repoLimited) Start(ctx context.Context, r control.StartRequest) (contro
 	if r.Scope != l.scope {
 		return l.API.Start(ctx, r)
 	}
-	address, ok := l.address(r.Repo)
+	address, err := l.check(r.Repo)
+	if err != nil {
+		return 0, err
+	}
+	r.Repo = address
+	return l.API.Start(ctx, r)
+}
+
+// CheckStart refuses a Start in scope of repo, as the supervisor's
+// connection does (Repos), unless repo is the address of one of the
+// scope's repos. It is the core's check of the Start that a person
+// approved as the supervisor's proposal (#650): the proposal named the
+// listed address, and the scope's repos may have changed since.
+func (s *Sessions) CheckStart(scope, repo string) error {
+	l := &repoLimited{scope: scope, repos: s.Scopes[scope].Repos, log: s.Log}
+	address, err := l.check(repo)
+	if err == nil && address != repo {
+		err = fmt.Errorf("the supervisor of scope %q may start a thread only in a repository its scope lists under supervisor.repos: %w", scope, control.ErrForbidden)
+	}
+	return err
+}
+
+// check returns the listed address that repo names, or the refusal of a
+// Start of it, logged.
+func (l *repoLimited) check(repo string) (string, error) {
+	address, ok := l.address(repo)
 	if !ok {
 		reason := "the repository is not one of the scope's supervisor.repos"
 		err := fmt.Errorf("the supervisor of scope %q may start a thread only in a repository its scope lists under supervisor.repos, "+
@@ -50,10 +75,9 @@ func (l *repoLimited) Start(ctx context.Context, r control.StartRequest) (contro
 				l.scope, control.ErrForbidden)
 		}
 		l.log.Warn("control call refused", "op", "Start", "from", ID(l.scope), "scope", l.scope, "reason", reason)
-		return 0, err
+		return "", err
 	}
-	r.Repo = address
-	return l.API.Start(ctx, r)
+	return address, nil
 }
 
 // address returns the listed address that repo names, as listed or by its

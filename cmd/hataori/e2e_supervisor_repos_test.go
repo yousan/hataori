@@ -68,7 +68,7 @@ func noReposLines(logged, scope string) int {
 func TestSupervisorStartsOnlyInItsRepos(t *testing.T) {
 	forged(t)
 	listed, other := bareRepo(t), bareRepo(t)
-	wt := newWakeTest(t, func(cfg map[string]any) {
+	wt := newWakeTest(t, autonomy("act"), func(cfg map[string]any) {
 		cfg["scopes"].([]map[string]any)[0]["supervisor"].(map[string]any)["repos"] = []string{listed, forgeAddress}
 	})
 	stop, logged := runDaemonLog(t, wt.r.root)

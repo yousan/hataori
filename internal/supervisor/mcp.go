@@ -250,6 +250,10 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 		}
 		id, err := api.Start(ctx, control.StartRequest{Key: newKey(), Scope: m.Scope, Repo: a.Repo,
 			Input: control.Input{Text: a.Text}, Model: a.Model, Effort: a.Effort})
+		if p := proposed(err); p != nil {
+			return fmt.Sprintf("Proposed as proposal %d: nothing is started until a person in this channel approves it in your thread. "+
+				"A wake tells you whether it was approved and what came of it.", p.Number), nil
+		}
 		if err != nil {
 			return "", reason(err)
 		}
@@ -279,17 +283,32 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 			}
 			return "", reason(err)
 		}
-		return "asked a person: nothing is interrupted until a person in this channel approves it. An approved interrupt ends the worker's turn, and that turn end wakes the supervisor as any other; a refusal or an approval after the turn ended is said in the supervisor's chat thread.", nil
+		return "asked a person: nothing is interrupted until a person in this channel approves it. An approved interrupt ends the worker's turn, and that turn end wakes the supervisor as any other; a refusal or an approval after the turn ended is said in the supervisor's chat thread. Each decision is in your next wake.", nil
 	}
 	if strings.TrimSpace(a.Text) == "" {
 		return "", errors.New("bad arguments: text is required")
 	}
 	// Refuse is all this caller can ask for; the daemon would refuse
 	// anything else the same way.
-	if err := api.Send(ctx, id, newKey(), control.Input{Text: a.Text}, control.Refuse); err != nil {
+	err = api.Send(ctx, id, newKey(), control.Input{Text: a.Text}, control.Refuse)
+	if p := proposed(err); p != nil {
+		return fmt.Sprintf("Proposed as proposal %d: nothing is sent to thread #%d until a person in this channel approves it in your thread. "+
+			"A wake tells you whether it was approved and what came of it; a thread busy by then is not given it.", p.Number, *a.Number), nil
+	}
+	if err != nil {
 		return "", reason(err)
 	}
 	return fmt.Sprintf("Sent to thread #%d.", *a.Number), nil
+}
+
+// proposed returns the proposal err is, if it is one: the call was not
+// made, and waits for a person's decision.
+func proposed(err error) *control.Proposed {
+	var p *control.Proposed
+	if errors.As(err, &p) {
+		return p
+	}
+	return nil
 }
 
 func (m *MCP) outputMax() int {

@@ -38,7 +38,9 @@ var (
 var eventData = map[control.EventKind]string{
 	"approval_asked":    `{"request":"approval-1","action":"interrupt","target":8,"turn":12,"reason":"urgent","principal":"sv1","from":"supervisor:C0123"}`,
 	"approval_answered": `{"request":"approval-1","allow":true,"outcome":"interrupted","target":8,"principal":"alice","from":"discord:W1","link":{"client":"discord","channel":"C0123","thread":"T0456"},"via":"dashboard"}`,
-	"thread_created":    `{"effort":"high","from":"discord:W1","model":"opus","principal":"dispatch","repo":"https://example.com/repo.git","session":3,"thread":7}`,
+	"proposal_made":     `{"action":"send","agent":"claude-code","effort":"high","from":"supervisor:C0123","model":"opus","number":3,"principal":"sv1","question":"request-1","repo":"https://example.com/repo.git","request":"proposal-1","target":8,"text":"Run the tests."}`,
+	"proposal_answered": `{"action":"send","allow":true,"from":"discord:W1","link":{"client":"discord","channel":"C0123","thread":"T0456"},"number":3,"outcome":"failed","principal":"alice","reason":"not allowed","request":"proposal-1","target":8,"via":"dashboard"}`,
+	"thread_created":    `{"effort":"high","from":"discord:W1","model":"opus","principal":"dispatch","repo":"https://example.com/repo.git","session":3,"thread":7,"via":"proposal"}`,
 	"state":             `{"detail":"last lines of the terminal","from":"running","reason":"interrupted","session":3,"to":"asleep"}`,
 	"turn_started":      `{"by":"caller","from":"discord:W1","key":"M0789","principal":"dispatch","session":3,"turn":12}`,
 	"turn_ended":        `{"background":0,"by":"caller","from":"discord:W1","outcome":"failure","principal":"dispatch","reason":"limit","session":3,"turn":12}`,
@@ -212,6 +214,7 @@ func examples(t *testing.T) map[string]any {
 		Before: "Answer in English.", After: "Say which tests failed."})}
 	ex["response-error-stopped.json"] = response{ID: 6, Error: encodeError(fmt.Errorf("core: Send in %q: %w", "C0123",
 		&control.Stopped{Point: "before_agent_run", Plugin: "secret-scan", Reason: "The input holds a secret."}))}
+	ex["response-error-proposed.json"] = response{ID: 7, Error: encodeError(fmt.Errorf("core: Send in %q: %w", "C0123", &control.Proposed{Number: 3}))}
 	for kind := range control.EventKinds {
 		d, ok := eventData[kind]
 		if !ok {

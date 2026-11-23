@@ -5,7 +5,7 @@
       "pos": 1,
       "thread": 1,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "thread_created",
       "data": {
         "effort": "",
@@ -20,7 +20,7 @@
       "pos": 2,
       "thread": 1,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "creating",
@@ -32,7 +32,7 @@
       "pos": 3,
       "thread": 1,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "idle",
@@ -44,7 +44,7 @@
       "pos": 4,
       "thread": 1,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "turn_started",
       "data": {
         "by": "caller",
@@ -58,7 +58,7 @@
       "pos": 5,
       "thread": 1,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "input",
       "data": {
         "principal": "boss",
@@ -71,7 +71,7 @@
       "pos": 6,
       "thread": 1,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "text",
       "data": {
         "final": true,
@@ -83,7 +83,7 @@
       "pos": 7,
       "thread": 1,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "turn_ended",
       "data": {
         "background": 0,
@@ -98,7 +98,7 @@
       "pos": 8,
       "thread": 1,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "running",
@@ -110,7 +110,7 @@
       "pos": 9,
       "thread": 2,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "thread_created",
       "data": {
         "effort": "",
@@ -125,7 +125,7 @@
       "pos": 10,
       "thread": 2,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "creating",
@@ -137,7 +137,7 @@
       "pos": 11,
       "thread": 2,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "idle",
@@ -149,7 +149,7 @@
       "pos": 12,
       "thread": 2,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "turn_started",
       "data": {
         "by": "caller",
@@ -163,7 +163,7 @@
       "pos": 13,
       "thread": 2,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "input",
       "data": {
         "principal": "boss",
@@ -176,7 +176,7 @@
       "pos": 14,
       "thread": 2,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "text",
       "data": {
         "final": true,
@@ -188,7 +188,7 @@
       "pos": 15,
       "thread": 2,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "turn_ended",
       "data": {
         "background": 0,
@@ -203,7 +203,7 @@
       "pos": 16,
       "thread": 2,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "running",
@@ -215,7 +215,7 @@
       "pos": 17,
       "thread": 3,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "thread_created",
       "data": {
         "effort": "",
@@ -230,7 +230,7 @@
       "pos": 18,
       "thread": 3,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "creating",
@@ -242,7 +242,7 @@
       "pos": 19,
       "thread": 3,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "idle",
@@ -254,7 +254,7 @@
       "pos": 20,
       "thread": 3,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "turn_started",
       "data": {
         "by": "caller",
@@ -268,7 +268,7 @@
       "pos": 21,
       "thread": 3,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "input",
       "data": {
         "principal": "boss",
@@ -281,7 +281,7 @@
       "pos": 22,
       "thread": 3,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "text",
       "data": {
         "final": true,
@@ -293,7 +293,7 @@
       "pos": 23,
       "thread": 3,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "turn_ended",
       "data": {
         "background": 0,
@@ -308,7 +308,7 @@
       "pos": 24,
       "thread": 3,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "running",
@@ -320,7 +320,7 @@
       "pos": 25,
       "thread": 4,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "thread_created",
       "data": {
         "effort": "",
@@ -335,7 +335,7 @@
       "pos": 26,
       "thread": 4,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "creating",
@@ -347,7 +347,7 @@
       "pos": 27,
       "thread": 4,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "idle",
@@ -359,7 +359,7 @@
       "pos": 28,
       "thread": 4,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "turn_started",
       "data": {
         "by": "caller",
@@ -373,7 +373,7 @@
       "pos": 29,
       "thread": 4,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "input",
       "data": {
         "principal": "boss",
@@ -386,7 +386,7 @@
       "pos": 30,
       "thread": 4,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "text",
       "data": {
         "final": false,
@@ -398,7 +398,7 @@
       "pos": 31,
       "thread": 4,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "text",
       "data": {
         "final": true,
@@ -410,7 +410,7 @@
       "pos": 32,
       "thread": 4,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "turn_ended",
       "data": {
         "background": 0,
@@ -425,7 +425,7 @@
       "pos": 33,
       "thread": 4,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "running",
@@ -437,7 +437,7 @@
       "pos": 34,
       "thread": 5,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "thread_created",
       "data": {
         "effort": "",
@@ -452,7 +452,7 @@
       "pos": 35,
       "thread": 5,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "creating",
@@ -464,7 +464,7 @@
       "pos": 36,
       "thread": 5,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "idle",
@@ -476,7 +476,7 @@
       "pos": 37,
       "thread": 5,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "turn_started",
       "data": {
         "by": "caller",
@@ -490,7 +490,7 @@
       "pos": 38,
       "thread": 5,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "input",
       "data": {
         "principal": "boss",
@@ -503,7 +503,7 @@
       "pos": 39,
       "thread": 5,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "request",
       "data": {
         "approval": false,
@@ -520,7 +520,7 @@
       "pos": 40,
       "thread": 5,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "turn_ended",
       "data": {
         "background": 0,
@@ -535,7 +535,7 @@
       "pos": 41,
       "thread": 5,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "running",
@@ -547,7 +547,7 @@
       "pos": 42,
       "thread": 6,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "thread_created",
       "data": {
         "effort": "",
@@ -562,7 +562,7 @@
       "pos": 43,
       "thread": 6,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "creating",
@@ -574,7 +574,7 @@
       "pos": 44,
       "thread": 6,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "idle",
@@ -586,7 +586,7 @@
       "pos": 45,
       "thread": 6,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "turn_started",
       "data": {
         "by": "caller",
@@ -600,7 +600,7 @@
       "pos": 46,
       "thread": 6,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "input",
       "data": {
         "principal": "boss",
@@ -613,7 +613,7 @@
       "pos": 47,
       "thread": 6,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "text",
       "data": {
         "final": true,
@@ -625,7 +625,7 @@
       "pos": 48,
       "thread": 6,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "turn_ended",
       "data": {
         "background": 0,
@@ -641,7 +641,7 @@
       "pos": 49,
       "thread": 6,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "running",
@@ -653,7 +653,7 @@
       "pos": 50,
       "thread": 7,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "thread_created",
       "data": {
         "effort": "",
@@ -668,7 +668,7 @@
       "pos": 51,
       "thread": 7,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "creating",
@@ -680,7 +680,7 @@
       "pos": 52,
       "thread": 7,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "idle",
@@ -692,7 +692,7 @@
       "pos": 53,
       "thread": 7,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "turn_started",
       "data": {
         "by": "caller",
@@ -706,7 +706,7 @@
       "pos": 54,
       "thread": 7,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "input",
       "data": {
         "principal": "boss",
@@ -719,7 +719,7 @@
       "pos": 55,
       "thread": 7,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "text",
       "data": {
         "final": true,
@@ -731,7 +731,7 @@
       "pos": 56,
       "thread": 7,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "turn_ended",
       "data": {
         "background": 1,
@@ -746,7 +746,7 @@
       "pos": 57,
       "thread": 7,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "running",
@@ -758,7 +758,7 @@
       "pos": 58,
       "thread": 8,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "thread_created",
       "data": {
         "effort": "",
@@ -773,7 +773,7 @@
       "pos": 59,
       "thread": 8,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "creating",
@@ -785,7 +785,7 @@
       "pos": 60,
       "thread": 8,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "idle",
@@ -797,7 +797,7 @@
       "pos": 61,
       "thread": 8,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "turn_started",
       "data": {
         "by": "caller",
@@ -811,7 +811,7 @@
       "pos": 62,
       "thread": 8,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "input",
       "data": {
         "principal": "boss",
@@ -824,7 +824,7 @@
       "pos": 63,
       "thread": 8,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "text",
       "data": {
         "final": true,
@@ -836,7 +836,7 @@
       "pos": 64,
       "thread": 8,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "turn_ended",
       "data": {
         "background": 0,
@@ -851,7 +851,7 @@
       "pos": 65,
       "thread": 8,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "running",
@@ -863,7 +863,7 @@
       "pos": 66,
       "thread": 2,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "idle",
@@ -875,7 +875,7 @@
       "pos": 67,
       "thread": 2,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "turn_started",
       "data": {
         "by": "caller",
@@ -889,7 +889,7 @@
       "pos": 68,
       "thread": 2,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "input",
       "data": {
         "principal": "boss",
@@ -902,7 +902,7 @@
       "pos": 69,
       "thread": 2,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "text",
       "data": {
         "final": true,
@@ -914,7 +914,7 @@
       "pos": 70,
       "thread": 2,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "turn_ended",
       "data": {
         "background": 0,
@@ -930,11 +930,363 @@
       "pos": 71,
       "thread": 2,
       "scope": "c1",
-      "time": "2026-11-20T02:00:00+09:00",
+      "time": "2026-11-23T20:00:00+09:00",
       "kind": "state",
       "data": {
         "from": "running",
         "session": 2,
+        "to": "idle"
+      }
+    },
+    {
+      "pos": 72,
+      "thread": 9,
+      "scope": "c1",
+      "time": "2026-11-23T20:00:00+09:00",
+      "kind": "thread_created",
+      "data": {
+        "effort": "",
+        "model": "",
+        "principal": "boss",
+        "repo": "/repo.git",
+        "session": 9,
+        "thread": 9
+      }
+    },
+    {
+      "pos": 73,
+      "thread": 9,
+      "scope": "c1",
+      "time": "2026-11-23T20:00:00+09:00",
+      "kind": "state",
+      "data": {
+        "from": "creating",
+        "session": 9,
+        "to": "idle"
+      }
+    },
+    {
+      "pos": 74,
+      "thread": 9,
+      "scope": "c1",
+      "time": "2026-11-23T20:00:00+09:00",
+      "kind": "state",
+      "data": {
+        "from": "idle",
+        "session": 9,
+        "to": "running"
+      }
+    },
+    {
+      "pos": 75,
+      "thread": 9,
+      "scope": "c1",
+      "time": "2026-11-23T20:00:00+09:00",
+      "kind": "turn_started",
+      "data": {
+        "by": "caller",
+        "key": "busy",
+        "principal": "boss",
+        "session": 9,
+        "turn": 10
+      }
+    },
+    {
+      "pos": 76,
+      "thread": 9,
+      "scope": "c1",
+      "time": "2026-11-23T20:00:00+09:00",
+      "kind": "input",
+      "data": {
+        "principal": "boss",
+        "session": 9,
+        "text": "tool t 30s",
+        "turn": 10
+      }
+    },
+    {
+      "pos": 77,
+      "thread": 1,
+      "scope": "c1",
+      "time": "2026-11-23T20:00:00+09:00",
+      "kind": "proposal_made",
+      "data": {
+        "action": "send",
+        "from": "supervisor:c1",
+        "number": 1,
+        "principal": "sv1",
+        "request": "proposal-06b19d4b6223a1368fdaa69c704cc577",
+        "target": 8,
+        "text": "reply again"
+      }
+    },
+    {
+      "pos": 78,
+      "thread": 1,
+      "scope": "c1",
+      "time": "2026-11-23T20:00:00+09:00",
+      "kind": "proposal_made",
+      "data": {
+        "action": "send",
+        "from": "supervisor:c1",
+        "number": 2,
+        "principal": "sv1",
+        "request": "proposal-a5de610d3e3a64e22eaa02808cf7ce8a",
+        "target": 8,
+        "text": "reply never"
+      }
+    },
+    {
+      "pos": 79,
+      "thread": 9,
+      "scope": "c1",
+      "time": "2026-11-23T20:00:00+09:00",
+      "kind": "tool_started",
+      "data": {
+        "id": "t-t",
+        "session": 9,
+        "tool": "t"
+      }
+    },
+    {
+      "pos": 80,
+      "thread": 1,
+      "scope": "c1",
+      "time": "2026-11-23T20:00:00+09:00",
+      "kind": "proposal_made",
+      "data": {
+        "action": "send",
+        "from": "supervisor:c1",
+        "number": 3,
+        "principal": "sv1",
+        "request": "proposal-6a65112c5684d22ed3d6adaf89968d6a",
+        "target": 9,
+        "text": "reply late"
+      }
+    },
+    {
+      "pos": 81,
+      "thread": 1,
+      "scope": "c1",
+      "time": "2026-11-23T19:39:56.652+09:00",
+      "kind": "approval_asked",
+      "data": {
+        "action": "interrupt",
+        "from": "supervisor:c1",
+        "principal": "sv1",
+        "reason": "urgent",
+        "request": "approval-789221bab5ab590aa6e6414fe738b5d7",
+        "target": 9,
+        "turn": 10
+      }
+    },
+    {
+      "pos": 82,
+      "thread": 8,
+      "scope": "c1",
+      "time": "2026-11-23T20:00:00+09:00",
+      "kind": "state",
+      "data": {
+        "from": "idle",
+        "session": 8,
+        "to": "running"
+      }
+    },
+    {
+      "pos": 83,
+      "thread": 8,
+      "scope": "c1",
+      "time": "2026-11-23T20:00:00+09:00",
+      "kind": "turn_started",
+      "data": {
+        "by": "caller",
+        "from": "supervisor:c1",
+        "key": "proposal:proposal-06b19d4b6223a1368fdaa69c704cc577",
+        "principal": "sv1",
+        "session": 8,
+        "turn": 11
+      }
+    },
+    {
+      "pos": 84,
+      "thread": 8,
+      "scope": "c1",
+      "time": "2026-11-23T20:00:00+09:00",
+      "kind": "input",
+      "data": {
+        "from": "supervisor:c1",
+        "principal": "sv1",
+        "session": 8,
+        "text": "From the supervisor of this channel:\nreply again",
+        "turn": 11,
+        "via": "proposal"
+      }
+    },
+    {
+      "pos": 85,
+      "thread": 1,
+      "scope": "c1",
+      "time": "2026-11-23T20:00:00+09:00",
+      "kind": "proposal_answered",
+      "data": {
+        "action": "send",
+        "allow": true,
+        "from": "fake-surface:hook-1",
+        "link": {
+          "client": "fake-surface",
+          "channel": "c1",
+          "thread": "thread1"
+        },
+        "number": 1,
+        "outcome": "run",
+        "principal": "dispatch",
+        "request": "proposal-06b19d4b6223a1368fdaa69c704cc577",
+        "target": 8
+      }
+    },
+    {
+      "pos": 86,
+      "thread": 8,
+      "scope": "c1",
+      "time": "2026-11-23T20:00:00+09:00",
+      "kind": "text",
+      "data": {
+        "final": true,
+        "session": 8,
+        "text": "again"
+      }
+    },
+    {
+      "pos": 87,
+      "thread": 8,
+      "scope": "c1",
+      "time": "2026-11-23T20:00:00+09:00",
+      "kind": "turn_ended",
+      "data": {
+        "background": 0,
+        "by": "caller",
+        "from": "supervisor:c1",
+        "outcome": "completion",
+        "principal": "sv1",
+        "session": 8,
+        "turn": 11
+      }
+    },
+    {
+      "pos": 88,
+      "thread": 8,
+      "scope": "c1",
+      "time": "2026-11-23T20:00:00+09:00",
+      "kind": "state",
+      "data": {
+        "from": "running",
+        "session": 8,
+        "to": "idle"
+      }
+    },
+    {
+      "pos": 89,
+      "thread": 1,
+      "scope": "c1",
+      "time": "2026-11-23T20:00:00+09:00",
+      "kind": "proposal_answered",
+      "data": {
+        "action": "send",
+        "allow": false,
+        "from": "fake-surface:hook-1",
+        "link": {
+          "client": "fake-surface",
+          "channel": "c1",
+          "thread": "thread1"
+        },
+        "number": 2,
+        "outcome": "refused",
+        "principal": "dispatch",
+        "request": "proposal-a5de610d3e3a64e22eaa02808cf7ce8a",
+        "target": 8
+      }
+    },
+    {
+      "pos": 90,
+      "thread": 1,
+      "scope": "c1",
+      "time": "2026-11-23T20:00:00+09:00",
+      "kind": "proposal_answered",
+      "data": {
+        "action": "send",
+        "allow": true,
+        "from": "fake-surface:hook-1",
+        "link": {
+          "client": "fake-surface",
+          "channel": "c1",
+          "thread": "thread1"
+        },
+        "number": 3,
+        "outcome": "busy",
+        "principal": "dispatch",
+        "request": "proposal-6a65112c5684d22ed3d6adaf89968d6a",
+        "target": 9
+      }
+    },
+    {
+      "pos": 91,
+      "thread": 9,
+      "scope": "c1",
+      "time": "2026-11-23T20:00:00+09:00",
+      "kind": "input",
+      "data": {
+        "from": "supervisor:c1",
+        "principal": "sv1",
+        "session": 9,
+        "text": "From the supervisor of this channel:\nurgent",
+        "turn": 10
+      }
+    },
+    {
+      "pos": 92,
+      "thread": 1,
+      "scope": "c1",
+      "time": "2026-11-23T19:39:56.751+09:00",
+      "kind": "approval_answered",
+      "data": {
+        "allow": true,
+        "from": "fake-surface:hook-1",
+        "link": {
+          "client": "fake-surface",
+          "channel": "c1",
+          "thread": "thread1"
+        },
+        "outcome": "interrupted",
+        "principal": "dispatch",
+        "request": "approval-789221bab5ab590aa6e6414fe738b5d7",
+        "target": 9
+      }
+    },
+    {
+      "pos": 93,
+      "thread": 9,
+      "scope": "c1",
+      "time": "2026-11-23T20:00:00+09:00",
+      "kind": "turn_ended",
+      "data": {
+        "background": 0,
+        "by": "caller",
+        "outcome": "failure",
+        "principal": "boss",
+        "reason": "interrupted",
+        "session": 9,
+        "turn": 10
+      }
+    },
+    {
+      "pos": 94,
+      "thread": 9,
+      "scope": "c1",
+      "time": "2026-11-23T20:00:00+09:00",
+      "kind": "state",
+      "data": {
+        "from": "running",
+        "session": 9,
         "to": "idle"
       }
     }
@@ -966,7 +1318,11 @@
     },
     "8": {
       "title": "reply done",
-      "recent": "done"
+      "recent": "done\n\nagain"
+    },
+    "9": {
+      "title": "tool t 30s",
+      "recent": ""
     }
   }
 }

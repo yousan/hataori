@@ -102,7 +102,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 			}
 			repos = append(repos, supervisor.Repo{Address: r.Address, Forge: r.Forge})
 		}
-		supervisors[s.Key] = supervisor.Scope{Model: sv.Model, Effort: sv.Effort, Instructions: sv.Instructions, Repos: repos}
+		supervisors[s.Key] = supervisor.Scope{Model: sv.Model, Effort: sv.Effort, Instructions: sv.Instructions, Repos: repos, Autonomy: sv.Autonomy}
 	}
 	var cheap string
 	if cm, ok := adapters[agentName].(agent.CheapModel); ok {
@@ -311,7 +311,17 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	}
 	sv := &supervisor.Sessions{Core: c, Tokens: srv, Root: abs, Hataori: exe, Scopes: supervisors,
 		Owner: control.Principal(cfg.Owner), Cheap: cheap, Budgets: budgets, Log: lg}
-	issueSupervisor := func(scope string) (string, error) { return srv.Issue(sv.API(scope, 0)) }
+	// A start a person approved as a supervisor's proposal is checked
+	// against its scope's repos too, as they are now (#650).
+	c.ApprovedStart = sv.CheckStart
+	// A test's token: of the scope's autonomy, or, for a scope that names no
+	// supervisor, one that acts, as every token did before autonomy (#650).
+	issueSupervisor := func(scope string) (string, error) {
+		if _, ok := supervisors[scope]; !ok {
+			return srv.Issue(sv.APIOf(scope, 0, supervisor.Act))
+		}
+		return srv.Issue(sv.API(scope, 0))
+	}
 	if supervisorHook != nil {
 		supervisorHook(issueSupervisor, srv.Revoke)
 	}

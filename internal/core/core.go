@@ -231,8 +231,14 @@ type AgentDefaults struct{ Model, Effort string }
 type Core struct {
 	Store   *store.Store
 	Machine *session.Machine
-	Scopes  map[string]Scope              // by scope key
-	Owners  map[string]control.ScopeOwner // by client name
+	// ApprovedStart, when set, checks the Start that a person approved as
+	// a proposal (control.Caller.Propose) before it is made, as the
+	// proposer's connection checked it when it was proposed: the daemon
+	// gives the supervisor's repositories (#646). An error refuses it, and
+	// the proposal's outcome is failed. Nil checks nothing.
+	ApprovedStart func(scope, repo string) error
+	Scopes        map[string]Scope              // by scope key
+	Owners        map[string]control.ScopeOwner // by client name
 	// People resolves a caller's From to a person and says who may act in
 	// a scope. Without it no input is allowed.
 	People     *people.Directory
@@ -988,6 +994,9 @@ func (a *api) Thread(ctx context.Context, id control.ThreadID, recent, events in
 		return d, err
 	}
 	rows.Close()
+	if d.Requests, err = a.c.openProposals(ctx, id, d.Requests, a.caller.NoText); err != nil {
+		return d, err
+	}
 	if !a.caller.NoText {
 		if d.Recent, err = a.c.recentText(ctx, id, recent); err != nil {
 			return d, err
@@ -1054,7 +1063,10 @@ func (c *Core) requestScope(ctx context.Context, req control.RequestID) string {
 		JOIN threads t ON t.id = s.thread_id WHERE r.handle = ?`, string(req)).Scan(&scope) == nil {
 		return scope
 	}
-	c.Store.DB.QueryRowContext(ctx, `SELECT t.scope FROM approvals a JOIN threads t ON t.id = a.asks_in WHERE a.handle = ?`, string(req)).Scan(&scope)
+	if c.Store.DB.QueryRowContext(ctx, `SELECT t.scope FROM approvals a JOIN threads t ON t.id = a.asks_in WHERE a.handle = ?`, string(req)).Scan(&scope) == nil {
+		return scope
+	}
+	c.Store.DB.QueryRowContext(ctx, `SELECT t.scope FROM proposals p JOIN threads t ON t.id = p.asks_in WHERE p.handle = ?`, string(req)).Scan(&scope)
 	return scope
 }
 
@@ -1178,8 +1190,12 @@ func (a *api) start(ctx context.Context, r control.StartRequest, dir string) (co
 	if err := a.act(control.OpStart, "Start", r.Scope); err != nil {
 		return 0, err
 	}
+	if err := a.proposalKey("Start", r.Scope, r.Key); err != nil {
+		return 0, err
+	}
 	// The title is the first line of what the caller wrote, not its mark.
 	name := title(r.Input.Text)
+	given := r.Input
 	r.Input = a.marked(r.Input)
 	sc, ok := a.c.Scopes[r.Scope]
 	if !ok || !sc.Enabled {
@@ -1198,8 +1214,25 @@ func (a *api) start(ctx context.Context, r control.StartRequest, dir string) (co
 		a.c.Log.Warn("start refused", "scope", r.Scope, "agent", chosen, "reason", "unknown agent")
 		return 0, fmt.Errorf("core: start in %q: agent %q: %w", r.Scope, chosen, control.ErrUnknownAgent)
 	}
-	if r.Effort != "" && !slices.Contains(control.Efforts, r.Effort) {
+	// An approved proposal's call names the effort the proposal showed:
+	// one asked for, checked here when it was proposed, or the config's.
+	if r.Effort != "" && !slices.Contains(control.Efforts, r.Effort) && a.caller.Via != control.ViaProposal {
 		return 0, fmt.Errorf("core: start in %q: effort %q: %w", r.Scope, r.Effort, control.ErrUnknownEffort)
+	}
+	var scopeModel, scopeEffort, defaultModel, defaultEffort string
+	if chosen == cmp.Or(sc.Agent, a.c.Agent) {
+		scopeModel, scopeEffort = sc.Model, sc.Effort
+	}
+	if chosen == a.c.Agent {
+		defaultModel, defaultEffort = a.c.Model, a.c.Effort
+	}
+	model := cmp.Or(r.Model, scopeModel, defaults.Model, defaultModel)
+	effort := cmp.Or(r.Effort, scopeEffort, defaults.Effort, defaultEffort)
+	if a.caller.Propose && !confined {
+		// Nothing starts: a person decides (Caller.Propose).
+		p := r
+		p.Input = given
+		return 0, a.proposeStart(ctx, p, chosen, model, effort)
 	}
 	// The key is per scope, so a caller cannot reach another scope's thread
 	// by reusing its key. Starts with one key run one at a time, so the
@@ -1235,15 +1268,6 @@ func (a *api) start(ctx context.Context, r control.StartRequest, dir string) (co
 		}
 		link = l
 	}
-	var scopeModel, scopeEffort, defaultModel, defaultEffort string
-	if chosen == cmp.Or(sc.Agent, a.c.Agent) {
-		scopeModel, scopeEffort = sc.Model, sc.Effort
-	}
-	if chosen == a.c.Agent {
-		defaultModel, defaultEffort = a.c.Model, a.c.Effort
-	}
-	model := cmp.Or(r.Model, scopeModel, defaults.Model, defaultModel)
-	effort := cmp.Or(r.Effort, scopeEffort, defaults.Effort, defaultEffort)
 
 	var (
 		id        control.ThreadID
@@ -1299,6 +1323,9 @@ func (a *api) start(ctx context.Context, r control.StartRequest, dir string) (co
 			"principal": string(a.caller.Principal), "model": model, "effort": effort}
 		if a.caller.From != "" {
 			d["from"] = a.caller.From
+		}
+		if a.caller.Via != "" {
+			d["via"] = a.caller.Via // since protocol 3.26
 		}
 		data, _ := json.Marshal(d)
 		_, err = tx.Append(ctx, control.Event{Thread: id, Scope: r.Scope, Time: a.c.now(), Kind: "thread_created", Data: data})
@@ -1724,6 +1751,12 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 type sendGuard struct {
 	session, turn                int64
 	interrupted, ended, repeated bool
+	// proposal makes it an approved proposal's send instead (#650): a
+	// closed thread is ErrClosed, as for any send, and with question, the
+	// handle of the question it was proposed to answer, it is sent only
+	// while the thread waits on that question, else errGuardEnded.
+	proposal bool
+	question string
 }
 
 var errGuardEnded = errors.New("the requested turn ended")
@@ -1732,6 +1765,13 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 	scope, err := a.actThread(ctx, control.OpSend, "Send", id)
 	if err != nil {
 		return err
+	}
+	if err := a.proposalKey("Send", scope, key); err != nil {
+		return err
+	}
+	if a.caller.Propose {
+		// Nothing is sent: a person decides (Caller.Propose).
+		return a.proposeSend(ctx, scope, id, key, in)
 	}
 	asked := busy
 	if a.caller.RefuseBusy {
@@ -1766,7 +1806,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		if err != nil {
 			return err
 		}
-		if guard == nil && (state == control.Closed || state == control.Removed) {
+		if (guard == nil || guard.proposal) && (state == control.Closed || state == control.Removed) {
 			// Nothing is accepted: a message does not wake a closed thread.
 			return fmt.Errorf("core: send to %v: %w", id, ErrClosed)
 		}
@@ -1783,7 +1823,19 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 				return err // a repeated key is ignored, whatever Busy says
 			}
 		}
-		if guard != nil {
+		if guard != nil && guard.proposal && guard.question != "" {
+			// A proposed answer answers the question it was proposed for, or
+			// nothing.
+			var open string
+			err := tx.QueryRowContext(ctx, `SELECT handle FROM requests WHERE session_id = ? AND state = 'open' ORDER BY id DESC LIMIT 1`, sid).Scan(&open)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			if state != control.Waiting || open != guard.question {
+				return errGuardEnded
+			}
+		}
+		if guard != nil && !guard.proposal {
 			var turn int64
 			err := tx.QueryRowContext(ctx, `SELECT id FROM turns WHERE session_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1`, sid).Scan(&turn)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {

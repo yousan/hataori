@@ -27,7 +27,7 @@ import (
 
 // Version is the protocol version this build speaks: major.minor. Two
 // sides work together when their major numbers are equal (docs/protocol.md).
-const Version = "3.25"
+const Version = "3.26"
 
 type hello struct {
 	Version string `json:"version"`
@@ -58,6 +58,8 @@ type response struct {
 type wireError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// Proposal is the proposal's number, for the code proposed. Since 3.26.
+	Proposal int64 `json:"proposal,omitempty"`
 }
 
 // The arguments of each operation.
@@ -347,10 +349,15 @@ var codes = []struct {
 	{"linked_elsewhere", control.ErrLinkedElsewhere}, // since 3.4
 	{"ended", control.ErrEnded},                      // since 3.11
 	{"stopped", control.ErrStopped},                  // since 3.18
+	{"proposed", control.ErrProposed},                // since 3.26
 	{"not_supported", ErrNotSupported},
 }
 
 func encodeError(err error) *wireError {
+	var p *control.Proposed
+	if errors.As(err, &p) {
+		return &wireError{Code: "proposed", Message: err.Error(), Proposal: p.Number}
+	}
 	for _, c := range codes {
 		if errors.Is(err, c.err) {
 			return &wireError{Code: c.code, Message: err.Error()}
@@ -379,6 +386,9 @@ func (e *remoteError) Is(target error) bool {
 func decodeError(e *wireError) error {
 	if e == nil {
 		return nil
+	}
+	if e.Code == "proposed" {
+		return &control.Proposed{Number: e.Proposal}
 	}
 	return &remoteError{code: e.Code, msg: e.Message}
 }

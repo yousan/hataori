@@ -122,8 +122,7 @@ func (a *api) answerApproval(ctx context.Context, req control.RequestID, ans con
 	var guard sendGuard
 	err := a.c.Store.DB.QueryRowContext(ctx, `SELECT t.scope, a.asks_in, a.target, a.session_id, a.turn_id, a.principal, a.from_id, a.marked, a.state FROM approvals a JOIN threads t ON t.id = a.asks_in WHERE a.handle = ?`, req).Scan(&scope, &thread, &target, &guard.session, &guard.turn, &principal, &from, &marked, &state)
 	if errors.Is(err, sql.ErrNoRows) {
-		a.c.Log.Warn("control call refused", "op", "Answer", "principal", string(a.caller.Principal), "request", string(req), "reason", ErrNotFound)
-		return noRequestErr(req)
+		return a.answerProposal(ctx, req, ans)
 	}
 	if err != nil {
 		return err

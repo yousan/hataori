@@ -208,6 +208,61 @@ type eventData struct {
 	// request, answer, request_withdrawn: the request; answer since 3.8
 	Request string `json:"request"`
 	Multi   bool   `json:"multi"` // request: several choices at once, since 3.8
+	// proposal_made, proposal_answered: since 3.26
+	Number   int64  `json:"number"`
+	Action   string `json:"action"`
+	Repo     string `json:"repo"`
+	Model    string `json:"model"`
+	Effort   string `json:"effort"`
+	Question string `json:"question"`
+}
+
+// proposalText is how a supervisor's proposal is put to a person: what it
+// would do, where, with which model and effort, and its text.
+func proposalText(d eventData) string {
+	var with []string
+	if d.Model != "" {
+		with = append(with, "model "+d.Model)
+	}
+	if d.Effort != "" {
+		with = append(with, "effort "+d.Effort)
+	}
+	what := fmt.Sprintf("start a thread in %s", d.Repo)
+	if d.Action == "send" {
+		what = fmt.Sprintf("send to thread %d", d.Target)
+		if d.Question != "" {
+			what += ", as the answer to its open question"
+		}
+	}
+	if len(with) > 0 {
+		what += " (" + strings.Join(with, ", ") + ")"
+	}
+	return strings.TrimSpace(fmt.Sprintf("Proposal %d of the supervisor: %s?\n%s", d.Number, what, d.Text))
+}
+
+// proposalDone is the line that says how a proposal was decided, and what
+// came of it.
+func proposalDone(d eventData) string {
+	not := "was not started"
+	if d.Action == "send" {
+		not = "was not sent"
+	}
+	switch d.Outcome {
+	case "run":
+		if d.Action == "send" {
+			return fmt.Sprintf("Approved by %s: proposal %d was sent to thread %d.", d.Principal, d.Number, d.Target)
+		}
+		return fmt.Sprintf("Approved by %s: proposal %d started thread %d.", d.Principal, d.Number, d.Target)
+	case "refused":
+		return fmt.Sprintf("Refused by %s: proposal %d %s.", d.Principal, d.Number, not)
+	case "busy":
+		return fmt.Sprintf("Approved by %s, but thread %d was running a turn or waiting on a question: proposal %d %s.", d.Principal, d.Target, d.Number, not)
+	case "ended":
+		return fmt.Sprintf("Approved by %s, but the question of thread %d it answered was no longer open: proposal %d %s.", d.Principal, d.Target, d.Number, not)
+	case "closed":
+		return fmt.Sprintf("Approved by %s, but thread %d is closed: proposal %d %s.", d.Principal, d.Target, d.Number, not)
+	}
+	return fmt.Sprintf("Approved by %s, but proposal %d %s: %s.", d.Principal, d.Number, not, d.Reason)
 }
 
 // typedAtTerminal is the line that goes before the final answer of a turn a
@@ -254,7 +309,8 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 			return nil, err
 		}
 		return []Row{sf.row(conv, first)}, nil
-	case "thread_created", "turn_started", "text", "request", "turn_ended", "file_out", "approval_asked", "approval_answered":
+	case "thread_created", "turn_started", "text", "request", "turn_ended", "file_out", "approval_asked", "approval_answered",
+		"proposal_made", "proposal_answered":
 	default:
 		return nil, nil // a kind the front end does not show, or does not know
 	}
@@ -285,6 +341,15 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 			text = fmt.Sprintf("Refused by %s: thread %d was not interrupted.", d.Principal, d.Target)
 		}
 		return row(surface.Message{Text: text}), nil
+	case "proposal_made":
+		text := proposalText(d)
+		choices := []string{"Approve", "Refuse"}
+		if !f.withButtons(choices, false) {
+			return row(surface.Message{Text: text + "\nThis chat service shows no buttons, so this cannot be approved here."}), nil
+		}
+		return row(f.questionMessage(d.Request, text, choices, false)), nil
+	case "proposal_answered":
+		return row(surface.Message{Text: proposalDone(d)}), nil
 	case "thread_created":
 		r.first[e.Thread] = e.Pos
 		r.session[e.Thread] = sessionOf(e)

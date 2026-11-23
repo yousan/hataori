@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -11,13 +12,15 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/supervisor"
 )
 
 // TestCaptureWakeEvents writes the capture behind the supervisor's digest
 // golden file (internal/supervisor/testdata/wake): the events of a scope
-// in which threads ended their turns in each way, as a daemon with the
-// fake agent wrote them, and each thread as the waker reads it. It runs
-// only when HATAORI_CAPTURE_WAKE names the directory to write.
+// in which threads ended their turns in each way and people decided the
+// supervisor's requests in each way, as a daemon with the fake agent wrote
+// them, and each thread as the waker reads it. It runs only when
+// HATAORI_CAPTURE_WAKE names the directory to write.
 //
 //	HATAORI_CAPTURE_WAKE=$PWD/internal/supervisor/testdata/wake go test -run TestCaptureWakeEvents ./cmd/hataori
 func TestCaptureWakeEvents(t *testing.T) {
@@ -25,9 +28,8 @@ func TestCaptureWakeEvents(t *testing.T) {
 	if out == "" {
 		t.Skip("set HATAORI_CAPTURE_WAKE to the directory to write")
 	}
-	wt := newWakeTest(t)
-	stop, owner, sv := wt.start(t)
-	defer stop()
+	f := newSvAutonomy(t, "propose")
+	wt, owner, sv := f.wt, f.owner, f.sv
 	ctx := context.Background()
 	long := "reply " + strings.TrimSpace(strings.Repeat("ünïcödé text, ", 120))
 	scripts := []string{
@@ -48,6 +50,28 @@ func TestCaptureWakeEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	wt.ended(t, ids[0], 2)
+
+	// The supervisor's requests, decided each way: a proposed send run, one
+	// refused, one approved while its thread ran a turn, and an interrupt
+	// request approved.
+	done, busy := ids[6], f.running(t, "busy")
+	ids = append(ids, busy)
+	run := f.propose(t, supervisor.ToolSend, map[string]any{"number": int64(done), "text": "reply again"})
+	refused := f.propose(t, supervisor.ToolSend, map[string]any{"number": int64(done), "text": "reply never"})
+	late := f.propose(t, supervisor.ToolSend, map[string]any{"number": int64(busy), "text": "reply late"})
+	if out := mcpCall(t, f.m, supervisor.ToolInterrupt, map[string]any{"number": int64(busy), "reason": "urgent"}); out.IsError {
+		t.Fatalf("interrupt: %+v", out)
+	}
+	f.press(t, f.shown(t, run), e2eHook, "Approve")
+	f.decided(t, "proposal_answered", 1)
+	wt.ended(t, done, 2)
+	f.press(t, f.shown(t, refused), e2eHook, "Refuse")
+	f.decided(t, "proposal_answered", 2)
+	f.press(t, f.shown(t, late), e2eHook, "Approve")
+	f.decided(t, "proposal_answered", 3)
+	f.press(t, f.buttons(t, fmt.Sprintf("Interrupt thread %d?", busy)), e2eHook, "Approve")
+	f.decided(t, "approval_answered", 1)
+	wt.ended(t, busy, 1)
 
 	var c struct {
 		Supervisor control.ThreadID                 `json:"supervisor"`
