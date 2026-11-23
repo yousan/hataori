@@ -43,6 +43,40 @@ var (
 	// but stored as a proposal that a person decides. The error is a
 	// *Proposed. Since 3.26.
 	ErrProposed = errors.New("proposed")
+	// ErrReopenRefused: a ReopenThread that changed nothing, for the reason
+	// its *ReopenRefused gives. Since 3.31.
+	ErrReopenRefused = errors.New("reopen refused")
+)
+
+// ReopenRefused is why a ReopenThread was refused: a sentence for a
+// person, such as the open supervisor thread that keeps a closed one from
+// being reopened. Nothing changed. It matches ErrReopenRefused.
+type ReopenRefused struct {
+	Reason string
+}
+
+func (e *ReopenRefused) Error() string { return "not reopened: " + e.Reason }
+
+// Is matches ErrReopenRefused.
+func (e *ReopenRefused) Is(target error) bool { return target == ErrReopenRefused }
+
+// Reopened is what a ReopenThread did. Since 3.31.
+type Reopened struct {
+	// Workspace says what became of the thread's directory: ReopenKept,
+	// ReopenRestored or ReopenRemade.
+	Workspace string `json:"workspace"`
+	// Conversation says what the next message does: ReopenResume, or
+	// ReopenNew when the conversation cannot be resumed.
+	Conversation string `json:"conversation"`
+}
+
+// The values of Reopened, and of the reopened event's fields.
+const (
+	ReopenKept     = "kept"     // the directory is where it was
+	ReopenRestored = "restored" // the directory was taken back from trash to its place
+	ReopenRemade   = "remade"   // the directory was gone, and was made again at its place
+	ReopenResume   = "resume"   // the next message resumes the recorded conversation
+	ReopenNew      = "new"      // the next message starts a new conversation in the directory
 )
 
 // Proposed is the error of a Start or a Send that a caller with Propose
@@ -156,6 +190,25 @@ type API interface {
 	// refusal writes one event. It is checked like Stop and needs OpRemove.
 	// On the wire it is the operation Remove.
 	RemoveThread(ctx context.Context, id ThreadID) error
+	// ReopenThread takes a closed or removed thread back to asleep, so that
+	// its next message wakes it (design, section 5.1): in its own
+	// directory, under the same number, links and key. The recorded
+	// conversation is resumed when it can be. A removed thread's directory
+	// is taken back from trash when it is still there, and made again at
+	// its place when it is not (a clone of the thread's repository, or an
+	// empty directory for a thread started confined); a made-again
+	// directory, or a session that never recorded its conversation, gets a
+	// new conversation. A path that something else took is never
+	// overwritten: the call is refused. So is a thread that is neither
+	// closed nor removed, one whose agent was never started, a removed
+	// thread taken in from a person's window, and a thread started confined while another confined thread
+	// of its scope is open (the reason names it). Each refusal is a
+	// *ReopenRefused and changes nothing. A reopen writes a state event
+	// (reason "reopen") and a reopened event. It needs OpReopen and the
+	// owner: the owner's connection on the control socket, and a chat
+	// front end's caller for the owner's press of a Reopen button. On the
+	// wire it is the operation Reopen. Since 3.31.
+	ReopenThread(ctx context.Context, id ThreadID) (Reopened, error)
 	// Link shows the thread in one more conversation and returns its link
 	// (design, section 5.2). It is checked like Send: the caller's person
 	// must be allowed in the thread's scope. It is refused, with one log
@@ -332,7 +385,7 @@ type Caller struct {
 	// names it in the log line of a refusal. Since protocol 3.23.
 	Via    string
 	Scopes []string // the scopes it may see and act in; a thread of another is answered as none (ErrNotFound)
-	May    Ops      // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName, OpAsk, OpHostInput, OpTakeIn, OpTrust
+	May    Ops      // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName, OpAsk, OpHostInput, OpTakeIn, OpTrust, OpReopen
 	// NoText leaves text written by a person or an agent out of what the
 	// caller reads: ThreadInfo.Title, ThreadInfo.Last and ThreadInfo.Name,
 	// ThreadDetail.Recent, the text of its requests and a question's
@@ -445,6 +498,11 @@ const (
 	// scope's repository, and withdraw that (Trust, Untrust). The core
 	// honours it only for the owner. Since 3.28.
 	OpTrust
+	// OpReopen may reopen a closed or removed thread (ReopenThread). The
+	// core honours it only for the owner: the owner's connection on the
+	// control socket has it, and a chat front end gives it to the caller
+	// it makes for a press of a Reopen button. Since 3.31.
+	OpReopen
 )
 
 // ViaProposal is the Via of the caller as which the core makes the call of

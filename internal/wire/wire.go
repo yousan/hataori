@@ -27,7 +27,7 @@ import (
 
 // Version is the protocol version this build speaks: major.minor. Two
 // sides work together when their major numbers are equal (docs/protocol.md).
-const Version = "3.30"
+const Version = "3.31"
 
 type hello struct {
 	Version string `json:"version"`
@@ -114,6 +114,9 @@ type (
 		ID control.ThreadID `json:"id"`
 	}
 	removeArgs struct { // since 2.3
+		ID control.ThreadID `json:"id"`
+	}
+	reopenArgs struct { // since 3.31
 		ID control.ThreadID `json:"id"`
 	}
 	releaseArgs struct { // since 3.17
@@ -311,6 +314,13 @@ var operations = map[string]operation{
 		}
 		return nil, api.CloseThread(ctx, a.ID)
 	}},
+	"Reopen": {reopenArgs{}, control.Reopened{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a reopenArgs
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return api.ReopenThread(ctx, a.ID)
+	}},
 	"Remove": {removeArgs{}, nil, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
 		var a removeArgs
 		if err := args(&a); err != nil {
@@ -394,6 +404,7 @@ var codes = []struct {
 	{"ended", control.ErrEnded},                      // since 3.11
 	{"stopped", control.ErrStopped},                  // since 3.18
 	{"proposed", control.ErrProposed},                // since 3.26
+	{"reopen_refused", control.ErrReopenRefused},     // since 3.31
 	{"not_supported", ErrNotSupported},
 }
 

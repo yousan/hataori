@@ -145,6 +145,27 @@ type Remover interface {
 	Remove(ctx context.Context, dir string) (trash string, err error)
 }
 
+// Restorer brings back the directory of a removed or closed thread for a
+// reopen (design, section 5.1). Neither of its calls replaces anything: a
+// directory at dir, in any form, is refused and left as it is.
+type Restorer interface {
+	// Restore takes the workspace that a Remover's Remove moved to trash
+	// back to dir. An entry no longer there, as after the purge, is an
+	// error that wraps fs.ErrNotExist, and nothing changes. Right before
+	// the rename, placed, when not nil, is called with what will identify
+	// the directory at dir, as Workspaces.Make's is; when it fails, the
+	// entry stays in trash.
+	Restore(ctx context.Context, trash, dir string, placed func(Placement) error) error
+	// Trashed finds the entry in trash of the workspace of thread that was
+	// at dir, by its name, for a removal that recorded none; "" when there
+	// is none. Several, or a place whose entry's name does not tell whose
+	// it was, is an error or "": it never guesses.
+	Trashed(thread control.ThreadID, dir string) (string, error)
+	// Remake makes the workspace of thread at dir again: a new clone of
+	// repo. placed is called as Restore's is.
+	Remake(ctx context.Context, thread control.ThreadID, repo, dir string, placed func(Placement) error) error
+}
+
 // RemovalRefusal is a Remover's error that says why the proof did not
 // hold: the reason, and where in the workspace it was found (repo, and
 // what kind of repository that is), with a detail for a person.
@@ -276,6 +297,9 @@ type Core struct {
 	// Remover removes the workspaces of closed threads. It is the only way
 	// the core removes a workspace; nil refuses every Remove.
 	Remover Remover
+	// Restorer takes a removed thread's workspace back from trash, or makes
+	// it again, for a reopen; nil refuses a reopen that needs either.
+	Restorer Restorer
 	// Hooks runs the plugins' handlers on the input hook points (design,
 	// section 7.3) inside Start and Send, before the input is accepted.
 	// Nil: there are none, and input is not held up.
@@ -394,7 +418,7 @@ func (a *api) via(attrs ...any) []any {
 
 // protocolNames are the names in docs/protocol.md of the operations whose
 // method has another name.
-var protocolNames = map[string]string{"CloseThread": "Close", "RemoveThread": "Remove"}
+var protocolNames = map[string]string{"CloseThread": "Close", "RemoveThread": "Remove", "ReopenThread": "Reopen"}
 
 // granted refuses an operation that the caller's Limit does not name, by
 // its name in the protocol, with one log line naming the operation, the
@@ -1245,6 +1269,20 @@ func (a *api) start(ctx context.Context, r control.StartRequest, dir string) (co
 		}
 		return id, a.c.sameConfinement(ctx, id, confined)
 	}
+	if confined {
+		// A scope's confined threads share its directory, and one is open
+		// at a time: none starts while another is open, or is being
+		// reopened (ReopenThread takes the same lock).
+		defer a.c.locks.lock(confinedLock(r.Scope))()
+		other, err := openConfined(ctx, a.c.Store.DB, r.Scope, 0)
+		if err != nil {
+			return 0, err
+		}
+		if other != 0 {
+			a.c.Log.Warn("start refused", "scope", r.Scope, "reason", "another confined thread of the scope is open", "open", int64(other))
+			return 0, fmt.Errorf("core: start in %q: thread %d, a confined thread of the scope, is open: %w", r.Scope, other, session.ErrRefused)
+		}
+	}
 	// Before anything is made: a stopped input opens no chat thread and
 	// no workspace. A key accepted before, above, runs no hook again.
 	var err error
@@ -1379,14 +1417,18 @@ func (c *Core) LiveConfined(ctx context.Context) ([]ConfinedSession, error) {
 }
 
 // LastConfined returns the newest thread of scope that was started
-// confined, and its state; 0 when there is none.
+// confined and is neither closed nor removed, and its state; else the
+// newest one, closed or removed; 0 when there is none. A scope has one
+// such thread open at a time, so the open one is its supervisor's also
+// when it is an older one that was reopened (ReopenThread).
 func (c *Core) LastConfined(ctx context.Context, scope string) (control.ThreadID, control.State, error) {
 	var (
 		id    int64
 		state string
 	)
-	err := c.Store.DB.QueryRowContext(ctx, `SELECT id, state FROM threads WHERE scope = ? AND confined = 1 ORDER BY id DESC LIMIT 1`,
-		scope).Scan(&id, &state)
+	err := c.Store.DB.QueryRowContext(ctx, `SELECT id, state FROM threads WHERE scope = ? AND confined = 1
+		ORDER BY state IN (?, ?), id DESC LIMIT 1`,
+		scope, string(control.Closed), string(control.Removed)).Scan(&id, &state)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, "", nil
 	}
@@ -2331,6 +2373,17 @@ func (a *api) AttachTerminal(ctx context.Context, id control.ThreadID) (control.
 			// reports it attached.
 			_, err := tx.ExecContext(ctx, `UPDATE sessions SET updated_at = max(updated_at, ?) WHERE id = ?`, a.c.now().UnixMilli(), sid)
 			return err
+		}
+		// A thread reopened with no conversation to resume is told what it
+		// said before with its first input, which an attach does not have:
+		// refused before anything changes, or the wake would fail it.
+		var conversation string
+		if err := tx.QueryRowContext(ctx, `SELECT agent_session_id FROM sessions WHERE id = ?`, sid).Scan(&conversation); err != nil {
+			return fmt.Errorf("core: attach to thread %d: %w", number, err)
+		}
+		if conversation == "" {
+			return fmt.Errorf("core: attach to thread %d: it has no conversation to resume; send it a message first, which starts one: %w",
+				number, session.ErrRefused)
 		}
 		wake = true
 		if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Wake}); err != nil {

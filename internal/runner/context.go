@@ -12,9 +12,11 @@ import (
 	"github.com/yousan/hataori/internal/control"
 )
 
-// Marks around the earlier context a replacing session starts with.
+// Marks around the earlier context a new conversation of a thread starts
+// with: one that replaces a conversation the agent lost, or that a reopen
+// starts because none could be resumed.
 const (
-	contextStart = "[Earlier in this thread, before the agent lost its conversation; oldest first, the oldest part may be cut]\n"
+	contextStart = "[This thread's earlier conversation is not there, so a new one starts here. The chat thread holds the earlier exchange; its last part follows, oldest first, the oldest part may be cut]\n"
 	contextEnd   = "[End of the earlier context. The new message follows.]\n\n"
 )
 

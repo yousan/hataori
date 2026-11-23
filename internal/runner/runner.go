@@ -480,8 +480,25 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 	if !ok {
 		return fmt.Errorf("runner: no agent %q", s.Agent)
 	}
+	if resumeID == "" && first.NoInput {
+		// A new conversation is told what the thread said before with its
+		// first input, and this wake has none.
+		return fmt.Errorf("runner: session %d has no conversation to resume; a message starts a new one", id)
+	}
 	if resumeID == "" {
-		return fmt.Errorf("runner: session %d never reported its id; it cannot be resumed", id)
+		// No conversation to resume: a reopen found none recorded, or made
+		// the thread's directory again (core's ReopenThread). A new one
+		// starts in the directory, told what the thread said before, as a
+		// session that replaces one the agent lost.
+		thread, _, _, err := r.confinement(ctx, id)
+		var earlier string
+		if err == nil {
+			earlier, err = r.earlier(ctx, r.Store.DB, thread)
+		}
+		if err != nil {
+			r.Log.Error("the thread's earlier context", "session", id, "err", err) // the new conversation starts without it
+		}
+		first.Context = earlier
 	}
 	// launch = 2: a daemon that died had begun this launch, after the old
 	// host was gone; a host running now is the new one.

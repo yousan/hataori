@@ -286,6 +286,8 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 		"Stop":         func(a control.API) error { return a.Stop(ctx, id, 0) },
 		"CloseThread":  func(a control.API) error { return a.CloseThread(ctx, id) },
 		"RemoveThread": func(a control.API) error { return a.RemoveThread(ctx, id) },
+		// Only the owner's caller with OpReopen may (reopen_test.go).
+		"ReopenThread": func(a control.API) error { _, err := a.ReopenThread(ctx, id); return err },
 		"Events":       func(a control.API) error { _, err := a.Events(ctx, control.Filter{Scope: "s"}, 0); return err },
 		"Workspace":    func(a control.API) error { _, err := a.Workspace(ctx, id); return err },
 		// Every other operation is allowed to "other scope": only the
@@ -334,7 +336,7 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 	// a caller of another scope gets the answer for a thread that does not
 	// exist (#479).
 	namesThread := []string{"Thread", "ThreadEvents", "Workspace", "Terminal", "AttachTerminal", "Send", "AskInterrupt",
-		"Answer", "Stop", "CloseThread", "RemoveThread", "Link", "Release", "Trust", "StartWithoutSettings"}
+		"Answer", "Stop", "CloseThread", "RemoveThread", "ReopenThread", "Link", "Release", "Trust", "StartWithoutSettings"}
 	events, threads, calls := count(t, f.core.Store, "events"), count(t, f.core.Store, "threads"), f.runner.Calls()
 	for cname, c := range callers {
 		a := f.core.As(c)

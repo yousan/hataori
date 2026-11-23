@@ -82,6 +82,11 @@ var EventKinds = map[EventKind][]Field{
 	"login_lost":       {req("agent", String), req("outage", Integer), req("thread", Integer)},
 	"login_restored":   {req("agent", String), req("outage", Integer), req("threads", Array), req("scopes", Array)},
 	"session_replaced": {req("session", Integer), req("new_session", Integer), req("reason", String)},
+	// reopened: a closed or removed thread was taken back to asleep
+	// (ReopenThread), after its state event: the session its next message
+	// wakes, who reopened it, what became of its directory and whether the
+	// conversation resumes (Reopened). Since 3.31.
+	"reopened": {req("session", Integer), opt("principal", String), req("workspace", String), req("conversation", String)},
 	"removal_refused": {req("session", Integer), req("trigger", String), opt("principal", String), req("reason", String),
 		opt("repo", String), opt("kind", String), text("detail", String)},
 	// named: the name the chat service shows for a conversation, a scope's

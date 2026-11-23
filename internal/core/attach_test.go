@@ -80,6 +80,9 @@ func TestAttachTerminalWakesWithoutInput(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, fakeOwner{key: "new"})
 	id, sid := f.asleep(t, "t1")
+	if _, err := f.core.Store.DB.Exec(`UPDATE sessions SET agent_session_id = 'conv'`); err != nil { // as the agent reports it
+		t.Fatal(err)
+	}
 	before := f.runner.Calls()
 	owner := f.core.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all | control.OpAttach})
 	at, err := owner.AttachTerminal(ctx, id)

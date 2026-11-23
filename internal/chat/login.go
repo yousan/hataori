@@ -172,7 +172,8 @@ func (f *FrontEnd) direct(in surface.Inbound) {
 }
 
 // Choice handles a button: a question's option, a turn's Stop, a blocked
-// start's choices, or the login message's "New link". A press that
+// start's choices, a closed thread's Reopen, or the login message's "New
+// link". A press that
 // does nothing writes one log line.
 func (f *FrontEnd) Choice(s surface.Selection) {
 	if rest, ok := strings.CutPrefix(s.Token, askToken); ok {
@@ -181,6 +182,14 @@ func (f *FrontEnd) Choice(s surface.Selection) {
 	}
 	if rest, ok := strings.CutPrefix(s.Token, stopToken); ok {
 		f.pressStop(s, rest)
+		return
+	}
+	if rest, ok := strings.CutPrefix(s.Token, reopenToken); ok {
+		// A reopen may clone a repository again: the driver's other
+		// messages and buttons do not wait for it. A second press meanwhile
+		// does nothing (f.pressing).
+		f.bg.Add(1)
+		go func() { defer f.bg.Done(); f.pressReopen(s, rest) }()
 		return
 	}
 	if rest, ok := strings.CutPrefix(s.Token, blockedToken); ok {

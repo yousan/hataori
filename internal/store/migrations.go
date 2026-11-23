@@ -603,6 +603,30 @@ var migrations = []Migration{
 			PRIMARY KEY (dir, name)
 		)`,
 	)},
+	// Where a removal put the thread's workspace in trash/, so that a
+	// reopen can take it back (design, section 5.1); '' for a thread whose
+	// workspace is in place, or was removed before this was recorded. And
+	// the owner's messages in a closed thread that the chat front end
+	// holds until its Reopen button is pressed.
+	{Name: "reopen", Up: execAll(
+		`ALTER TABLE threads ADD COLUMN trash TEXT NOT NULL DEFAULT ''`,
+		// The directory a reopen put in place and has not recorded the
+		// reopen of yet: what it was (restored or remade) and its identity,
+		// so that a reopen tried again after a crash knows it for its own.
+		`ALTER TABLE threads ADD COLUMN reopen_placed TEXT NOT NULL DEFAULT ''`,
+		`CREATE TABLE chat_reopen_held (
+			client      TEXT NOT NULL, -- the chat front end's name
+			channel     TEXT NOT NULL,
+			message     TEXT NOT NULL, -- the surface's message id
+			thread_id   INTEGER NOT NULL,
+			conv_thread TEXT NOT NULL, -- the conversation it was written in
+			author      TEXT NOT NULL, -- the surface's id of its author
+			ping        TEXT NOT NULL, -- whom its turn's end pings; '' for nobody
+			text        TEXT NOT NULL,
+			received_at INTEGER NOT NULL,
+			PRIMARY KEY (client, channel, message)
+		)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

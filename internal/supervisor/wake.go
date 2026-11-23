@@ -385,8 +385,9 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 		}
 		return nil
 	}
-	if e.Kind == TurnEnded {
-		// The supervisor's thread may be new since it was looked up.
+	if e.Kind == TurnEnded || e.Kind == "state" && reopened(e) {
+		// The supervisor's thread may be new since it was looked up, or an
+		// older one a person reopened (core's ReopenThread).
 		sv, _, err := r.w.Core.LastConfined(ctx, r.w.Scope)
 		if err != nil {
 			return err
@@ -1337,4 +1338,10 @@ func Digest(lines []Line, more int, decided ...Decision) string {
 		}
 	}
 	return b.String()
+}
+
+// reopened reports whether e, a state event, is a reopen's.
+func reopened(e control.Event) bool {
+	var d struct{ Reason string }
+	return json.Unmarshal(e.Data, &d) == nil && d.Reason == "reopen"
 }

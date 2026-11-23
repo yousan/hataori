@@ -303,6 +303,12 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		var d eventData
 		json.Unmarshal(e.Data, &d)
 		return f.questionDone(ctx, r, e, conv, d.Request)
+	case "reopened":
+		var d struct{ Workspace, Conversation string }
+		json.Unmarshal(e.Data, &d)
+		return []Row{{Event: e.Pos, Conv: conv, Message: surface.Message{Text: reopenedText(d.Workspace, d.Conversation)}}}, nil
+	case "session_replaced":
+		return []Row{{Event: e.Pos, Conv: conv, Message: surface.Message{Text: ReplacedLine}}}, nil
 	case "state":
 		// A session that ended before it started, whenever that was: also
 		// after the Start that made it returned (#589).

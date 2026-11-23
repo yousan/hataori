@@ -34,8 +34,9 @@ type FrontEnd struct {
 	API     func(control.Caller) control.API // the core, as one caller
 	Trigger string                           // the word that starts a thread
 	// People is the instance's people config. The front end uses it only
-	// to find the owner: whether a direct message is the owner's, and the
-	// owner's id on this service to send the login alert to. It checks no
+	// to find the owner: whether a direct message is the owner's, the
+	// owner's id on this service to send the login alert to, and whose
+	// message in a closed thread is held with a Reopen button. It checks no
 	// input against it.
 	People *people.Directory
 	Scopes map[string]Scope // by channel
@@ -81,7 +82,8 @@ type FrontEnd struct {
 	inboundOnce sync.Once
 	in          *inbound
 	opening     sync.Mutex       // held while a trigger's thread is looked up or opened
-	pressing    sync.Map         // the Stop buttons (stopKey) whose press is being handled
+	pressing    sync.Map         // the Stop and Reopen buttons whose press is being handled
+	reopening   sync.Map         // by thread: the mutex of its Reopen presses
 	renames     renames          // the names of conversations still to record
 	layout      layoutState      // the chat's layout being recorded (layout.go)
 	Now         func() time.Time // the clock; time.Now when nil
@@ -622,7 +624,7 @@ func (f *FrontEnd) followUp(in surface.Inbound) error {
 	if errors.Is(err, control.ErrClosed) {
 		f.Log.Warn("follow-up ignored", "reason", "the thread is closed", "scope", conv.Channel,
 			"thread", conv.Thread, "message", in.Ref.ID)
-		return f.closedNotice(ctx, in)
+		return f.closedReply(ctx, in, t)
 	}
 	if errors.Is(err, control.ErrStopped) {
 		return f.refusedNotice(ctx, in, "Not sent to the agent: "+StoppedLine(err)) // the core logged it
@@ -648,19 +650,29 @@ func (f *FrontEnd) closedNotice(ctx context.Context, in surface.Inbound) error {
 // refusedNotice answers a message that reached no agent with text, once: the row
 // is keyed by the message's place in chat_notices, as closedNotice's.
 func (f *FrontEnd) refusedNotice(ctx context.Context, in surface.Inbound, text string) error {
+	return f.noticeOnce(ctx, in, surface.Message{Text: text})
+}
+
+// noticeOnce posts m as a reply to the message in, once: the row is keyed
+// in chat_notices by the message's place, or by key when one is given.
+func (f *FrontEnd) noticeOnce(ctx context.Context, in surface.Inbound, m surface.Message, key ...string) error {
+	k := in.Ref.ID
+	if len(key) > 0 {
+		k = key[0]
+	}
 	err := f.Outbox.Store.Update(ctx, func(tx *store.Tx) error {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO chat_notices (client, channel, message, received_at)
-			VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`, f.Name, in.Ref.Conv.Channel, in.Ref.ID, time.Now().UnixMilli()); err != nil {
+			VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`, f.Name, in.Ref.Conv.Channel, k, time.Now().UnixMilli()); err != nil {
 			return err
 		}
 		var n int64
 		if err := tx.QueryRowContext(ctx, `SELECT rowid FROM chat_notices WHERE client = ? AND channel = ? AND message = ?`,
-			f.Name, in.Ref.Conv.Channel, in.Ref.ID).Scan(&n); err != nil {
+			f.Name, in.Ref.Conv.Channel, k).Scan(&n); err != nil {
 			return err
 		}
 		ref := in.Ref
-		return f.Outbox.WriteTx(ctx, tx, Row{Event: 0, Part: -int(n), Conv: in.Ref.Conv,
-			Message: surface.Message{Text: text, ReplyTo: &ref}})
+		m.ReplyTo = &ref
+		return f.Outbox.WriteTx(ctx, tx, Row{Event: 0, Part: -int(n), Conv: in.Ref.Conv, Message: m})
 	})
 	if err != nil {
 		f.Log.Error("follow-up: writing a notice", "scope", in.Ref.Conv.Channel, "thread", in.Ref.Conv.Thread,

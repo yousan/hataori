@@ -220,7 +220,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		agents[name] = core.AgentDefaults{Model: d.Model, Effort: d.Effort}
 	}
 	c = &core.Core{Agents: agents, Store: st, Machine: m, Scopes: scopes, Owners: map[string]control.ScopeOwner{}, People: cfg.People,
-		Workspaces: maker, Remover: remover,
+		Workspaces: maker, Remover: remover, Restorer: remover,
 		Runner: r, Agent: agentName, Model: cfg.Model, Effort: cfg.Effort, Log: lg}
 	if coreHook != nil {
 		coreHook(c)
@@ -274,13 +274,13 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	}
 
 	// The socket's connections are the owner's, and only they may make a
-	// dashboard sign-in link, attach a terminal on the host, and close and
-	// remove threads.
+	// dashboard sign-in link, attach a terminal on the host, and close,
+	// remove and reopen threads.
 	// Trust and Untrust too, which the core honours for the owner only.
 	// TakeIn and Release too: a release must work whatever the config says
 	// now; a take-in without window reports finds no window.
 	owner := control.OpRead | control.OpStart | control.OpSend | control.OpAnswer | control.OpStop | control.OpSignIn | control.OpAttach |
-		control.OpClose | control.OpRemove | control.OpName | control.OpTakeIn | control.OpTrust
+		control.OpClose | control.OpRemove | control.OpReopen | control.OpName | control.OpTakeIn | control.OpTrust
 	if cfg.HostTerminals { // off unless the config turns it on; only the owner gets it
 		lister := &hostterm.Lister{Own: filepath.Base(exe)}
 		if hostTermsHook != nil {
