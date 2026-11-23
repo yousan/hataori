@@ -83,7 +83,7 @@ func (r *chatRoot) unarchivedFirst(t *testing.T, th surface.Conversation, text s
 // service does, and resumes the thread, also when it came while the driver
 // was not connected; a wake from the dashboard's way (Send through the
 // control API, without a link) and one by `hataori attach` un-archive it
-// before anything is posted; a closed thread is archived too.
+// before anything is posted. A closed thread: TestArchiveWhenClosed.
 func TestArchiveWhenAsleep(t *testing.T) {
 	r := archiveRoot(t, true, "1s")
 	startDaemon(t, r.root)
@@ -134,16 +134,6 @@ func TestArchiveWhenAsleep(t *testing.T) {
 	eventually(t, "the attached thread awake", r.within(15*time.Second), func() bool { return r.state(t, th) == string(control.Idle) })
 	a.detach(t)
 	r.asleepAndArchived(t, th)
-
-	// Closed: archived too.
-	n = len(r.setThreads(th))
-	if code, _, errOut := cli(t, "close", "--root", r.root, numberOf(t, r.root, th)); code != 0 {
-		t.Fatalf("close: %d %s", code, errOut)
-	}
-	eventually(t, "the closed thread's archive", r.within(10*time.Second), func() bool {
-		s := r.setThreads(th)
-		return len(s) > n && s[len(s)-1] && r.driver.Archived(th)
-	})
 }
 
 // A thread closed while it is idle has its chat thread archived.
