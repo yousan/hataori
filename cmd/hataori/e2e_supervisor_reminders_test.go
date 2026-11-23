@@ -93,6 +93,7 @@ func TestReminderWakesOnceAtItsTime(t *testing.T) {
 	if got := wt.wokenN(t, owner, sv.ID, 3); strings.Contains(got[2], "eminder") {
 		t.Fatalf("the wake after the reminder's:\n%s", got[2])
 	}
+	wt.noWake(t, sv.ID, time.Hour, 3, "nor does one after that")
 }
 
 // A reminder that came due while the daemon was down wakes the supervisor
@@ -422,11 +423,18 @@ func TestReminderOfAStoredWakeGoesToANewThread(t *testing.T) {
 	if got := wt.wokenN(t, owner, sv.ID, 1); !strings.Contains(got[0], "\nReminder 1, due ") {
 		t.Fatalf("the replacing thread's wake:\n%s", got[0])
 	}
+	var key string
+	wt.db.QueryRow(`SELECT json_extract(data, '$.key') FROM events WHERE thread_id = ? AND kind = 'turn_started' ORDER BY pos DESC LIMIT 1`,
+		int64(sv.ID)).Scan(&key)
+	if _, to, _ := supervisor.ParseWakeKey(key); to != sv.ID || len(supervisor.WakeReminders(key)) != 1 {
+		t.Fatalf("the key of the wake given to thread %d: %q", sv.ID, key)
+	}
 	_, pos := wt.worker(t, owner, "c1", "b", "reply beta")
 	wt.read(t, pos)
 	if got := wt.wokenN(t, owner, sv.ID, 2); strings.Contains(got[1], "eminder") {
 		t.Fatalf("the wake after it:\n%s", got[1])
 	}
+	wt.noWake(t, sv.ID, time.Hour, 2, "after that one")
 }
 
 // A reminder cancelled after its wake was made, and before that was stored,
@@ -448,14 +456,24 @@ func TestReminderCancelledWhileItsWakeIsMade(t *testing.T) {
 			return sleep(ctx, id)
 		}
 	}
-	stop, owner, sv := wt.start(t)
+	stop, log := runDaemonLog(t, wt.r.root)
 	defer stop()
+	owner, err := wire.Dial(wt.r.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Close()
+	wt.db = wt.r.db(t)
+	sv := supervisorReady(t, owner, "c1")
 	c = conn()
 	remindIn(t, c, 10*time.Minute, "reply cancelled")
 	remindIn(t, c, 10*time.Minute, "reply kept")
 	got := wt.wokenN(t, owner, sv.ID, 1)
 	if strings.Contains(got[0], "cancelled") || !strings.HasPrefix(got[0], "hataori: 1 reminder of yours came due.\n\nReminder 2, due ") {
 		t.Fatalf("the wake:\n%s", got[0])
+	}
+	if l := log(); strings.Contains(l, "a reminder of the wake was cancelled") {
+		t.Fatalf("the waker stopped on it:\n%s", l)
 	}
 }
 
