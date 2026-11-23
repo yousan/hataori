@@ -47,7 +47,11 @@ type FrontEnd struct {
 	// and un-archived when it is woken (archiveRows): also a chat thread
 	// of this client that shows another client's scope.
 	ArchiveWhenAsleep map[string]bool
-	Log               *slog.Logger
+	// Supervisors is what the front end does with the posts of each
+	// scope's supervisor, by scope, of any client: a link here may show
+	// another client's scope (#657).
+	Supervisors map[string]Posts
+	Log         *slog.Logger
 
 	// The progress line: posted after QuietAfter (90s) of a turn without
 	// output, edited at most every EditEvery (15s), checked every Tick (1s).

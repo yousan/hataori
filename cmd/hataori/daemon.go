@@ -794,6 +794,19 @@ func sessionKey(root *os.Root) ([]byte, error) {
 	return key, nil
 }
 
+// supervisorPosts is what a scope's supervisor section says the chat front
+// end does with its posts; the zero Posts without one.
+func supervisorPosts(sv *instance.Supervisor) chat.Posts {
+	if sv == nil {
+		return chat.Posts{}
+	}
+	p := chat.Posts{Report: sv.Report, Every: sv.ReportEvery, Never: sv.Mention == instance.MentionNever}
+	if q := sv.QuietHours; q != nil {
+		p.Quiet = &chat.QuietHours{From: q.From, To: q.To, Zone: q.Zone}
+	}
+	return p
+}
+
 // frontEndHook, when a test sets it, sees each front end before it runs,
 // for a clock of the test's own.
 var frontEndHook func(*chat.FrontEnd)
@@ -825,6 +838,14 @@ func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.St
 			}
 			scopes[s.Key] = chat.Scope{Enabled: s.Enabled}
 		}
+		// What a supervisor's thread posts, for the scopes of every
+		// client, as archive below.
+		posts := map[string]chat.Posts{}
+		for _, s := range cfg.Scopes {
+			if s.Supervisor != nil {
+				posts[s.Key] = supervisorPosts(s.Supervisor)
+			}
+		}
 		// The scopes, of every client, whose chat threads are archived
 		// while asleep: a link here may show another client's scope.
 		archive := map[string]bool{}
@@ -843,7 +864,7 @@ func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.St
 			}
 		}
 		fe := &chat.FrontEnd{Name: name, Driver: d, API: c.As, Trigger: cfg.Trigger, People: cfg.People,
-			Scopes: scopes, ShowIn: showIn, ArchiveWhenAsleep: archive, Log: lg.With("client", name), Instance: filepath.Base(root),
+			Scopes: scopes, ShowIn: showIn, ArchiveWhenAsleep: archive, Supervisors: posts, Log: lg.With("client", name), Instance: filepath.Base(root),
 			Outbox:  &chat.Outbox{Store: st, Client: name, Driver: d, Log: lg.With("client", name)},
 			FileDir: filepath.Join(root, "state", "chat", name, "files"),
 			FileRoots: func(ctx context.Context, id control.ThreadID, session int64) ([]string, error) {

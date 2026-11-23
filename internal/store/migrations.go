@@ -505,6 +505,32 @@ var migrations = []Migration{
 			UNIQUE (asks_in, ask_key)
 		)`,
 	)},
+	// A supervisor's posts that a chat front end holds back (design,
+	// section 7.1, "What it posts"): the final answers of wakes under
+	// report "digest", posted together at due_at; and how many times each
+	// person was named during quiet hours, told when they end at end_at.
+	// A row is written with the reader's cursor and removed with the
+	// message that posts it, so a restart neither loses nor repeats one.
+	{Name: "chat: held posts", Up: execAll(
+		`CREATE TABLE chat_held (
+			client TEXT NOT NULL,    -- the chat front end's name
+			thread INTEGER NOT NULL, -- the supervisor's thread
+			due_at INTEGER NOT NULL, -- unix milliseconds: when the digest is posted
+			pos    INTEGER NOT NULL, -- the answer's event
+			at     INTEGER NOT NULL, -- unix milliseconds: the answer's time
+			text   TEXT NOT NULL,
+			PRIMARY KEY (client, pos)
+		)`,
+		`CREATE TABLE chat_named (
+			client TEXT NOT NULL,
+			thread INTEGER NOT NULL,
+			end_at INTEGER NOT NULL, -- unix milliseconds: when the quiet hours end
+			name   TEXT NOT NULL,    -- the person named
+			times  INTEGER NOT NULL,
+			pos    INTEGER NOT NULL, -- the last event that named them
+			PRIMARY KEY (client, thread, end_at, name)
+		)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

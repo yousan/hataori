@@ -37,6 +37,10 @@ type reader struct {
 	// sv holds whether each thread looked up is a supervisor's
 	// (FrontEnd.supervisors); made when first needed.
 	sv map[control.ThreadID]svThread
+	// held and named are what svPost held back of the event being read,
+	// written with the cursor (holdTx).
+	held  []heldPost
+	named []namedPost
 	// outbox and ctx are the front end's, for looking up rows.
 	outbox *Outbox
 	ctx    context.Context
@@ -124,6 +128,9 @@ func (f *FrontEnd) show(ctx context.Context) error {
 					return err
 				}
 			}
+			if err := f.flushHeld(ctx, f.now()); err != nil {
+				return err
+			}
 			continue
 		case ev, ok := <-evs:
 			if !ok {
@@ -173,6 +180,9 @@ func (f *FrontEnd) show(ctx context.Context) error {
 			if err := f.Outbox.WriteTx(ctx, tx, rows...); err != nil {
 				return err
 			}
+			if err := f.holdTx(ctx, tx, r); err != nil {
+				return err
+			}
 			_, err := tx.ExecContext(ctx, `INSERT INTO chat_cursors (client, pos) VALUES (?, ?)
 				ON CONFLICT (client) DO UPDATE SET pos = excluded.pos`, f.Name, e.Pos)
 			return err
@@ -180,6 +190,7 @@ func (f *FrontEnd) show(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		r.held, r.named = nil, nil
 		if len(rows) > 0 {
 			f.Outbox.Wake()
 		}
@@ -376,7 +387,12 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 			if woke(key) && (!d.Final || strings.TrimSpace(d.Text) == quietAnswer) {
 				return nil, nil
 			}
-			notify = f.mentions(sv.scope, d.Text)
+			// What the scope's keys make of it (#657): a wake's answer
+			// may be held back, and a mention may not be made.
+			var post bool
+			if notify, post, err = f.svPost(ctx, r, e, sv, woke(key) && d.Final, d.Text); err != nil || !post {
+				return nil, err
+			}
 		}
 		if !d.Final {
 			return row(surface.Message{Text: d.Text, Quiet: len(notify) == 0, Notify: notify}), nil
@@ -434,7 +450,9 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 			return nil, err
 		}
 		if sv.sv {
-			m.Notify = f.mentions(sv.scope, d.Text)
+			if m.Notify, _, err = f.svPost(ctx, r, e, sv, false, d.Text); err != nil {
+				return nil, err
+			}
 		}
 		return row(m), nil
 	case "file_out":

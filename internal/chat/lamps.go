@@ -194,9 +194,13 @@ func (f *FrontEnd) lamps(ctx context.Context, r *reader, e control.Event, convs 
 	}
 	// A completed turn pings nobody when the agent started it, or in a
 	// supervisor's thread, where the reply is already the answer (#639).
-	sv, err := f.supervisors(ctx, r, e.Thread)
+	t, err := f.svThread(ctx, r, e.Thread)
 	if err != nil {
 		return nil, err
+	}
+	sv := t.sv
+	if sv && f.quietNow(t, f.now()) {
+		ping = "" // no post of the thread mentions anyone (#657)
 	}
 	if ping != "" && (!(byself || sv) || d.Outcome == "failure" || d.Outcome == "blocked") {
 		rows = append(rows, f.pingRow(ctx, r, e, l, ping, d.Outcome, convs))

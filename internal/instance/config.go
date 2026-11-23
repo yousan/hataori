@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -165,6 +166,17 @@ type Supervisor struct {
 	// 7.1): AutonomyWatch, AutonomyPropose or AutonomyAct. "autonomy";
 	// AutonomyPropose when absent.
 	Autonomy string
+	// What the daemon does with its posts (design, section 7.1, "What it
+	// posts"). Report: which of a wake's final answers are posted,
+	// "report": ReportEvery (the default), ReportNeeded or ReportDigest.
+	// ReportEvery is how often a digest is posted, "report_every"; an
+	// hour when absent. Mention: whether "@<name>" mentions, "mention":
+	// MentionNamed (the default) or MentionNever. QuietHours: when no post
+	// mentions anyone, "quiet_hours"; nil for never.
+	Report      string
+	ReportEvery time.Duration
+	Mention     string
+	QuietHours  *QuietHours
 }
 
 // Repo is one entry of a supervisor's repos.
@@ -228,6 +240,26 @@ const (
 	AutonomyAct = "act"
 )
 
+// The values of Supervisor.Report and Supervisor.Mention.
+const (
+	ReportEvery  = "every"
+	ReportNeeded = "needed"
+	ReportDigest = "digest"
+
+	MentionNamed = "named"
+	MentionNever = "never"
+
+	DefaultReportEvery = time.Hour
+)
+
+// QuietHours is a daily span of a supervisor's thread with no mention,
+// "quiet_hours": From and To are minutes after midnight in Zone; a span
+// with From after To goes across midnight. From never equals To.
+type QuietHours struct {
+	From, To int
+	Zone     *time.Location
+}
+
 // The defaults of a supervisor's wake (decision 5 of #267).
 const (
 	DefaultQuiet      = 30 * time.Second
@@ -255,6 +287,14 @@ type fileSupervisor struct {
 	LoopCycles   *int     `json:"loop_cycles"`
 	Repos        []string `json:"repos"`
 	Autonomy     string   `json:"autonomy"`
+	Report       string   `json:"report"`
+	ReportEvery  string   `json:"report_every"`
+	Mention      string   `json:"mention"`
+	QuietHours   *struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+		Zone string `json:"zone"`
+	} `json:"quiet_hours"`
 }
 
 // Dashboard is the "dashboard" section of the config: a loopback listener,
@@ -645,6 +685,9 @@ func ParseConfig(data []byte) (*Config, error) {
 				}
 				sc.Supervisor.Repos = append(sc.Supervisor.Repos, r)
 			}
+			if err := sc.Supervisor.posts(sv, key+".supervisor"); err != nil {
+				return nil, err
+			}
 		}
 		for j, e := range s.ShowIn {
 			k := fmt.Sprintf("%s.show_in[%d]", key, j)
@@ -980,4 +1023,71 @@ func dashboardSection(d *fileDashboard) (*Dashboard, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// posts reads the keys of what the daemon does with the supervisor's posts
+// from sv, under key.
+func (s *Supervisor) posts(sv *fileSupervisor, key string) error {
+	s.Report, s.ReportEvery, s.Mention = ReportEvery, DefaultReportEvery, MentionNamed
+	switch r := strings.TrimSpace(sv.Report); r {
+	case "":
+	case ReportEvery, ReportNeeded, ReportDigest:
+		s.Report = r
+	default:
+		return fmt.Errorf("config: key %q: %q is not one of \"every\", \"needed\" and \"digest\"", key+".report", sv.Report)
+	}
+	if e := strings.TrimSpace(sv.ReportEvery); e != "" {
+		d, err := time.ParseDuration(e)
+		if err != nil || d <= 0 {
+			return fmt.Errorf("config: key %q: %q is not a positive duration such as \"1h\"", key+".report_every", sv.ReportEvery)
+		}
+		s.ReportEvery = d
+	}
+	switch m := strings.TrimSpace(sv.Mention); m {
+	case "":
+	case MentionNamed, MentionNever:
+		s.Mention = m
+	default:
+		return fmt.Errorf("config: key %q: %q is not one of \"named\" and \"never\"", key+".mention", sv.Mention)
+	}
+	q := sv.QuietHours
+	if q == nil {
+		return nil
+	}
+	qh := &QuietHours{Zone: time.Local}
+	for _, t := range []struct {
+		name, v string
+		to      *int
+	}{{"from", q.From, &qh.From}, {"to", q.To, &qh.To}} {
+		m, ok := clockTime(strings.TrimSpace(t.v))
+		if !ok {
+			return fmt.Errorf("config: key %q: %q is not a time of day such as \"22:00\"", key+".quiet_hours."+t.name, t.v)
+		}
+		*t.to = m
+	}
+	if qh.From == qh.To {
+		return fmt.Errorf("config: key %q: it is the same time as %q; quiet hours need a span", key+".quiet_hours.to", key+".quiet_hours.from")
+	}
+	if z := strings.TrimSpace(q.Zone); z != "" {
+		loc, err := time.LoadLocation(z)
+		if err != nil {
+			return fmt.Errorf("config: key %q: %q is not a time zone name such as \"Asia/Tokyo\"", key+".quiet_hours.zone", q.Zone)
+		}
+		qh.Zone = loc
+	}
+	s.QuietHours = qh
+	return nil
+}
+
+// clockTime reads "HH:MM", 00:00 to 23:59, as minutes after midnight.
+func clockTime(v string) (int, bool) {
+	if len(v) != 5 || v[2] != ':' {
+		return 0, false
+	}
+	h, err1 := strconv.Atoi(v[:2])
+	m, err2 := strconv.Atoi(v[3:])
+	if err1 != nil || err2 != nil || h < 0 || h > 23 || m < 0 || m > 59 || v[0] == '+' || v[0] == '-' || v[3] == '+' || v[3] == '-' {
+		return 0, false
+	}
+	return h*60 + m, true
 }
