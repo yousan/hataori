@@ -217,6 +217,8 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	c = &core.Core{Agents: agents, Store: st, Machine: m, Scopes: scopes, Owners: map[string]control.ScopeOwner{}, People: cfg.People,
 		Workspaces: maker, Remover: remover, Restorer: remover,
 		Runner: r, Agent: agentName, Model: cfg.Model, Effort: cfg.Effort, Log: lg}
+	// Also for threads a supervisor started that the config no longer names.
+	c.SupervisorOf = supervisor.StartedBy
 	for _, s := range cfg.Scopes {
 		if s.Supervisor != nil {
 			// A person's input to a supervisor's thread that resumes its
@@ -651,9 +653,9 @@ var purgeEvery time.Duration
 
 // dashboardCaller is the Caller of a dashboard session of person: the
 // scopes that person may act in, every scope for the owner (section 7.2).
-// It reads; only the owner's also sends, answers and stops, as for
-// `hataori attach` (giving a thread input from its tab, decided
-// 2026-11-23). Only the owner reads the host's terminals, and only when the config
+// It reads; only the owner's also sends, answers, stops and chooses for a
+// blocked start, as for `hataori attach` (giving a thread input from its
+// tab, decided 2026-11-23). Only the owner reads the host's terminals, and only when the config
 // turns them on; only the owner types into a host tmux pane, and only when
 // the config turns host input on (the dashboard asks for a passkey check
 // first on the web listener).
@@ -668,6 +670,8 @@ func dashboardCaller(dir *people.Directory, scopes []string, hostTerminals, host
 	}
 	if person != "" && person == dir.Owner() {
 		caller.May |= control.OpSend | control.OpAnswer | control.OpStop | control.OpAttach
+		// The choices for a start that files blocked (#680).
+		caller.May |= control.OpStart | control.OpTrust | control.OpClose
 	}
 	if hostTerminals && person == dir.Owner() {
 		caller.May |= control.OpHost

@@ -14,6 +14,7 @@ import (
 	"github.com/yousan/hataori/internal/core"
 	"github.com/yousan/hataori/internal/people"
 	"github.com/yousan/hataori/internal/session"
+	"github.com/yousan/hataori/internal/store"
 	"github.com/yousan/hataori/internal/surface"
 	"github.com/yousan/hataori/internal/surface/fake"
 )
@@ -65,8 +66,8 @@ func (r *starts) Interrupt(context.Context, int64, int64, session.Stopper) error
 	r.mu.Unlock()
 	return nil
 }
-func (r *starts) Shut(context.Context, int64, string) error { return nil }
-func (r *starts) Device(context.Context, int64) string      { return "" }
+func (r *starts) Shut(context.Context, int64, string, ...func(*store.Tx) error) error { return nil }
+func (r *starts) Device(context.Context, int64) string                                { return "" }
 func (r *starts) Resume(context.Context, int64, core.FirstInput) error {
 	return nil
 }

@@ -17,9 +17,10 @@ import (
 )
 
 // Giving a thread input from its tab (design, section 7.2): sending,
-// answering a question or an approval, and stopping the running turn, each
-// one call of the control API as the session's person, whose Caller the
-// daemon gives OpSend, OpAnswer and OpStop for the owner only. The core
+// answering a question or an approval, stopping the running turn, and
+// choosing for a start that files of the repository blocked, each one call
+// of the control API as the session's person, whose Caller the daemon gives
+// OpSend, OpAnswer, OpStop, OpStart, OpTrust and OpClose for the owner only. The core
 // checks each call as it checks chat's, and its events say the call came
 // through the dashboard (Caller.Via).
 //
@@ -29,9 +30,10 @@ import (
 //	POST /api/send        {"thread", "key", "text"}
 //	POST /api/answer      {"request", "text" | "choices" | "allow"}
 //	POST /api/stop        {"thread", "turn"}
+//	POST /api/start/choose {"thread", "session", "choice", "files"}
 //
 // On the loopback listener a signed-in session acts at once. On the web
-// listener each send, answer and stop needs a passkey check with user
+// listener each send, answer, stop and choice needs a passkey check with user
 // verification that the session made through act/check and act/verify
 // less than ActCheckWithin ago, and before which the person removed no
 // passkey; a person with no passkey needs instead a
@@ -43,7 +45,8 @@ import (
 //
 // A refusal answers with the reason and a status: 403 when the caller may
 // not, 404 for no such thread or request, 409 for a question that is not
-// open, a turn that is not running, or a thread that is closed.
+// open, a turn that is not running, a start that is not blocked any more,
+// or a thread that is closed.
 const (
 	ActMayPath    = "/api/act/may"
 	ActCheckPath  = "/api/act/check"
@@ -51,6 +54,7 @@ const (
 	SendPath      = "/api/send"
 	AnswerPath    = "/api/answer"
 	StopPath      = "/api/stop"
+	ChoosePath    = "/api/start/choose"
 )
 
 // ActCheckWithin is how long a passkey check lets a session of the web
@@ -71,10 +75,11 @@ func (s *Server) actRoutes() {
 	s.mux.HandleFunc("POST "+SendPath, s.send)
 	s.mux.HandleFunc("POST "+AnswerPath, s.answer)
 	s.mux.HandleFunc("POST "+StopPath, s.stop)
+	s.mux.HandleFunc("POST "+ChoosePath, s.choose)
 }
 
 // actPaths are the routes that take a POST from the page to act.
-var actPaths = []string{ActCheckPath, ActVerifyPath, SendPath, AnswerPath, StopPath}
+var actPaths = []string{ActCheckPath, ActVerifyPath, SendPath, AnswerPath, StopPath, ChoosePath}
 
 // mayAct reports whether the session's person may give threads input from
 // the dashboard: the daemon answers from the rule that gives their Caller
@@ -289,6 +294,62 @@ func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	s.actAnswer(w, api(r).Stop(ctx, req.Thread, req.Turn))
 }
+
+// choose carries out a choice for a start that files blocked: what the
+// chat's button of that choice does, through the same call. session and
+// files are the blocked session's, as the page showed them.
+func (s *Server) choose(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Thread  control.ThreadID    `json:"thread"`
+		Session int64               `json:"session"`
+		Choice  control.StartChoice `json:"choice"`
+		Files   []string            `json:"files"`
+	}
+	if !readBody(w, r, &req) || !s.acting(w, r) {
+		return
+	}
+	switch {
+	case req.Thread <= 0:
+		http.Error(w, "thread is required: the thread's number", http.StatusBadRequest)
+		return
+	case req.Session <= 0:
+		http.Error(w, "session is required: the blocked session", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), actTimeout)
+	defer cancel()
+	a := api(r)
+	// A close names no session to the core: as the chat's button does, make
+	// sure that the thread still waits for this choice.
+	t, err := a.Thread(ctx, req.Thread, 0, 0)
+	if err != nil {
+		s.actAnswer(w, err)
+		return
+	}
+	if f := t.FailedStart; t.State != control.Failed || f == nil || f.Session != req.Session || len(f.Trust) == 0 {
+		http.Error(w, notBlocked, http.StatusConflict)
+		return
+	}
+	switch req.Choice {
+	case control.StartTrusted:
+		err = a.Trust(ctx, req.Thread, req.Session, req.Files)
+	case control.StartWithoutSettings:
+		err = a.StartWithoutSettings(ctx, req.Thread, req.Session)
+	case control.StartClosed:
+		err = a.CloseThread(ctx, req.Thread)
+	default:
+		http.Error(w, "choice is required: trusted, without project settings or closed", http.StatusBadRequest)
+		return
+	}
+	if errors.Is(err, hsession.ErrRefused) {
+		http.Error(w, notBlocked, http.StatusConflict)
+		return
+	}
+	s.actAnswer(w, err)
+}
+
+// notBlocked is the answer to a choice that a start does not wait for.
+const notBlocked = "the thread no longer waits for this choice: nothing was changed"
 
 // actAnswer answers a send, an answer or a stop: 204, or the refusal with its
 // reason and its status.

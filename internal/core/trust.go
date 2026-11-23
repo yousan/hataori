@@ -24,9 +24,12 @@ import (
 // The reasons of the session_replaced event of a thread started again:
 // by Trust, and by StartWithoutSettings.
 const (
-	ReasonTrusted         = "trusted"
-	ReasonWithoutSettings = "without project settings"
+	ReasonTrusted         = string(control.StartTrusted)
+	ReasonWithoutSettings = string(control.StartWithoutSettings)
 )
+
+// KindStartChosen is the event of a choice for a start that files blocked.
+const KindStartChosen control.EventKind = "start_chosen"
 
 // blockedAtStart is the reason of a session that a start-up dialog
 // blocked, as its state event records it (agent.BlockedAtStart).
@@ -53,7 +56,7 @@ func (a *api) Trust(ctx context.Context, id control.ThreadID, blocked int64, fil
 		if err != nil {
 			return err
 		}
-		named, err := blockedFiles(ctx, tx, id, sid)
+		named, pos, err := blockedFiles(ctx, tx, id, sid)
 		if err != nil {
 			return err
 		}
@@ -71,8 +74,10 @@ func (a *api) Trust(ctx context.Context, id control.ThreadID, blocked int64, fil
 				return err
 			}
 		}
-		l, err = a.c.again(ctx, tx, id, scope, sid, now, ReasonTrusted)
-		return err
+		if l, err = a.c.again(ctx, tx, id, scope, sid, now, ReasonTrusted); err != nil {
+			return err
+		}
+		return a.startChosen(ctx, tx, id, scope, sid, pos, control.StartTrusted, l.Session, now)
 	})
 	if err != nil {
 		return err
@@ -110,7 +115,7 @@ func (a *api) StartWithoutSettings(ctx context.Context, id control.ThreadID, blo
 		if err != nil {
 			return err
 		}
-		named, err := blockedFiles(ctx, tx, id, sid)
+		named, pos, err := blockedFiles(ctx, tx, id, sid)
 		if err != nil {
 			return err
 		}
@@ -120,8 +125,11 @@ func (a *api) StartWithoutSettings(ctx context.Context, id control.ThreadID, blo
 		if _, err := tx.ExecContext(ctx, `UPDATE threads SET no_project_settings = 1 WHERE id = ?`, int64(id)); err != nil {
 			return err
 		}
-		l, err = a.c.again(ctx, tx, id, scope, sid, a.c.now(), ReasonWithoutSettings)
-		return err
+		now := a.c.now()
+		if l, err = a.c.again(ctx, tx, id, scope, sid, now, ReasonWithoutSettings); err != nil {
+			return err
+		}
+		return a.startChosen(ctx, tx, id, scope, sid, pos, control.StartWithoutSettings, l.Session, now)
 	})
 	if err != nil {
 		return err
@@ -146,35 +154,139 @@ func (a *api) owner(name, scope string) error {
 	return a.refused(name, scope, "only the owner may trust files")
 }
 
-// blockedFiles returns, sorted, the files that blocked session sid of
-// thread id at its start, by the session's last state event; nil when its
-// last state change was not that.
-func blockedFiles(ctx context.Context, tx *store.Tx, id control.ThreadID, sid int64) ([]string, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT data FROM events WHERE thread_id = ? AND kind = 'state' ORDER BY pos DESC`, int64(id))
+// startChosen records what the caller chose for session sid of thread id,
+// which files blocked at its start, as the state event at pos says; started
+// is the session started for it, 0 for none.
+func (a *api) startChosen(ctx context.Context, tx *store.Tx, id control.ThreadID, scope string, sid int64, pos uint64,
+	choice control.StartChoice, started int64, at time.Time) error {
+	d := map[string]any{"session": sid, "event": pos, "choice": string(choice)}
+	if started != 0 {
+		d["new_session"] = started
+	}
+	if a.caller.Principal != "" {
+		d["principal"] = string(a.caller.Principal)
+	}
+	if a.caller.From != "" {
+		d["from"] = a.caller.From
+	}
+	if a.caller.Via != "" {
+		d["via"] = a.caller.Via
+	}
+	data, _ := json.Marshal(d)
+	_, err := tx.Append(ctx, control.Event{Thread: id, Scope: scope, Time: at, Kind: KindStartChosen, Data: data})
+	return err
+}
+
+// stateChange is a state event of a session.
+type stateChange struct {
+	pos              uint64
+	Session          int64
+	From, To, Reason string
+	Detail           string
+	Trust            []string
+}
+
+// rowsQuerier reads rows: the database, or a transaction.
+type rowsQuerier interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+// lastChange returns session sid's last state event that passes ok; nil ok
+// takes any. false when there is none.
+func lastChange(ctx context.Context, q rowsQuerier, id control.ThreadID, sid int64, ok func(stateChange) bool) (stateChange, bool, error) {
+	rows, err := q.QueryContext(ctx, `SELECT pos, data FROM events WHERE thread_id = ? AND kind = 'state' ORDER BY pos DESC`, int64(id))
 	if err != nil {
-		return nil, err
+		return stateChange{}, false, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var data string
-		if err := rows.Scan(&data); err != nil {
-			return nil, err
+		var (
+			d    stateChange
+			data string
+		)
+		if err := rows.Scan(&d.pos, &data); err != nil {
+			return stateChange{}, false, err
 		}
-		var d struct {
-			Session          int64
-			From, To, Reason string
-			Trust            []string
-		}
-		if json.Unmarshal([]byte(data), &d) != nil || d.Session != sid {
+		if json.Unmarshal([]byte(data), &d) != nil || d.Session != sid || ok != nil && !ok(d) {
 			continue
 		}
-		if d.From != string(control.Creating) || d.To != string(control.Failed) || d.Reason != blockedAtStart || len(d.Trust) == 0 {
-			return nil, rows.Err()
-		}
-		slices.Sort(d.Trust)
-		return slices.Compact(d.Trust), rows.Err()
+		return d, true, nil
 	}
-	return nil, rows.Err()
+	return stateChange{}, false, rows.Err()
+}
+
+// blockedFiles returns, sorted, the files that blocked session sid of
+// thread id at its start, and the position of the session's last state
+// event, which says so; nil when its last state change was not that.
+func blockedFiles(ctx context.Context, q rowsQuerier, id control.ThreadID, sid int64) ([]string, uint64, error) {
+	d, ok, err := lastChange(ctx, q, id, sid, nil)
+	if err != nil || !ok || d.From != string(control.Creating) || d.To != string(control.Failed) || d.Reason != blockedAtStart || len(d.Trust) == 0 {
+		return nil, 0, err
+	}
+	slices.Sort(d.Trust)
+	return slices.Compact(d.Trust), d.pos, nil
+}
+
+// failedStart is the thread's current session that failed before its first
+// turn, or as it was woken, also once the thread was closed after it; nil
+// when it did not.
+func (a *api) failedStart(ctx context.Context, t control.ThreadInfo) (*control.FailedStart, error) {
+	if t.State != control.Failed && t.State != control.Closed && t.State != control.Removed {
+		return nil, nil
+	}
+	fail := func(err error) (*control.FailedStart, error) {
+		return nil, fmt.Errorf("core: thread %d: its start: %w", t.ID, err)
+	}
+	db := a.c.Store.DB
+	var (
+		sid   int64
+		input string
+		ran   bool // the thread had a turn: its start's input was given to its agent
+	)
+	if err := db.QueryRowContext(ctx, `SELECT s.id, s.first_input,
+		EXISTS (SELECT 1 FROM turns u JOIN sessions o ON o.id = u.session_id WHERE o.thread_id = s.thread_id)
+		FROM sessions s WHERE s.thread_id = ? ORDER BY s.id DESC LIMIT 1`, int64(t.ID)).Scan(&sid, &input, &ran); err != nil {
+		return fail(err)
+	}
+	// What the thread became after its session ended is not its failure.
+	d, ok, err := lastChange(ctx, db, t.ID, sid, func(d stateChange) bool {
+		return d.To != string(control.Closed) && d.To != string(control.Removed)
+	})
+	if err != nil {
+		return fail(err)
+	}
+	if !ok || d.To != string(control.Failed) {
+		return nil, nil
+	}
+	f := &control.FailedStart{Session: sid, Event: d.pos, Reason: d.Reason}
+	if !a.caller.NoText {
+		f.Detail, f.Trust = d.Detail, d.Trust
+		var first FirstInput
+		if !ran && input != "" && json.Unmarshal([]byte(input), &first) == nil {
+			f.Text = first.Text
+		}
+	}
+	if a.c.SupervisorOf == nil {
+		return f, nil
+	}
+	var (
+		pos  uint64
+		data string
+	)
+	err = db.QueryRowContext(ctx, `SELECT pos, data FROM events WHERE thread_id = ? AND kind = 'thread_created' ORDER BY pos LIMIT 1`, int64(t.ID)).Scan(&pos, &data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return f, nil
+	}
+	if err != nil {
+		return fail(err)
+	}
+	var created struct{ From string }
+	if json.Unmarshal([]byte(data), &created) == nil && created.From != "" {
+		if f.Supervisor, err = a.c.SupervisorOf(ctx, db, t.Scope, created.From, pos); err != nil {
+			return fail(err)
+		}
+	}
+	return f, nil
 }
 
 // again inserts a new session for thread id, whose session sid failed at

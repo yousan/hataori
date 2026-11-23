@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.32**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.33**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -774,6 +774,7 @@ The fields of `ThreadInfo`, and:
 | `recent` | string | required | the end of its last output, at most the bytes asked for: its `text` events in order, each a whole message of the agent, with a blank line (`\n\n`) between two of them, also between two turns; cut at the start of a character, and with no part of a blank line left at the cut. Before 3.12 the messages were joined with nothing between them, and the cut could fall inside a character |
 | `events` | [`Event`] | optional | its last events, as many as `events` asked for, newest last, each as `Events` delivers it; since 1.5 |
 | `cancelled` | [`CancelledPost`] | optional | its last posts that a plugin's `message_sending` handler cancelled, at most 20, newest last, from its `post_cancelled` events; absent for none. A summary, as `recent` is: a caller limited to some event kinds gets it whatever kinds it was granted; since 3.19 |
+| `failed_start` | `FailedStart` | optional | set while the thread's current session failed before its first turn, or when it was woken, also once the thread was closed after it; since 3.33 |
 
 ### Type `CancelledPost`
 
@@ -789,6 +790,20 @@ Since 3.19. A post of the chat front end, or an edit of one, that a plugin's `me
 | `failed` | boolean | optional | the handler failed where its policy blocks, rather than answered `stop`; `reason` is then hataori's account of the failure |
 | `edit` | boolean | optional | it was an edit of a post, which keeps what it showed before |
 | `reason` | string | optional | why: the plugin's own, or, when `failed`, hataori's account of the failure; text either way, left out for a caller that may not read text |
+
+### Type `FailedStart`
+
+Since 3.33. A session that failed before its first turn, or when it was woken. A summary, as `recent` is: a caller limited to some event kinds gets it whatever kinds it was granted.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `session` | integer | required | the session |
+| `event` | integer | required | the position of the `state` event of the failure |
+| `reason` | string | optional | that event's `reason` |
+| `detail` | string | optional | that event's `detail`; text, left out for a caller that may not read text |
+| `trust` | [string] | optional | that event's `trust`: the files a start-up dialog named, when they blocked the start; text, left out for a caller that may not read text |
+| `text` | string | optional | what the thread was asked: its start's first input, while it had no turn; text, left out for a caller that may not read text |
+| `supervisor` | integer | optional | the number of the supervisor thread that started the thread, when its scope's supervisor did; absent for a person's start |
 
 ### Type `Context`
 
@@ -1541,6 +1556,20 @@ The agent no longer had the conversation, or, since 3.28, a start that files blo
 | `session` | integer | required | the session that could not be resumed, or that a start-up dialog blocked |
 | `new_session` | integer | required | the new session |
 | `reason` | string | required | `cannot resume`, `trusted` or `without project settings` (both since 3.28) |
+
+### Event `start_chosen`
+
+Since 3.33. A choice for a start that files of the repository blocked, written in the step that carries it out: `Trust` or `StartWithoutSettings`, after the `session_replaced` event, or a close of the thread, before the `state` event to `closed`.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `session` | integer | required | the session that was blocked |
+| `event` | integer | required | the position of its `state` event, which names the files in `trust` |
+| `choice` | string | required | `trusted` (`Trust`), `without project settings` (`StartWithoutSettings`) or `closed` (a close) |
+| `new_session` | integer | optional | the session started for it; absent for `closed` |
+| `principal` | string | optional | who chose |
+| `from` | string | optional | as `from` in `thread_created` |
+| `via` | string | optional | as in `input` |
 
 ### Event `reopened`
 

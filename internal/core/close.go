@@ -43,7 +43,8 @@ const (
 func threadLock(id control.ThreadID) string { return fmt.Sprintf("thread:%d", id) }
 
 func (a *api) CloseThread(ctx context.Context, id control.ThreadID) error {
-	if _, err := a.actThread(ctx, control.OpClose, "CloseThread", id); err != nil {
+	scope, err := a.actThread(ctx, control.OpClose, "CloseThread", id)
+	if err != nil {
 		return err
 	}
 	defer a.c.locks.lock(threadLock(id))()
@@ -57,7 +58,23 @@ func (a *api) CloseThread(ctx context.Context, id control.ThreadID) error {
 	// or starting, or started a turn since it was read here, is refused. A
 	// closed thread is not closed again, but its agent is stopped if it
 	// still runs, as after a stop that failed.
-	if err := a.c.Runner.Shut(ctx, sid, ByCommand); err != nil {
+	//
+	// Closing a thread whose start files blocked is one of the choices it
+	// had, and is recorded as one. Read under the thread's lock, which every
+	// choice takes.
+	var also []func(*store.Tx) error
+	if state == control.Failed {
+		files, pos, err := blockedFiles(ctx, a.c.Store.DB, id, sid)
+		if err != nil {
+			return fmt.Errorf("core: close %v: %w", id, err)
+		}
+		if files != nil {
+			also = append(also, func(tx *store.Tx) error {
+				return a.startChosen(ctx, tx, id, scope, sid, pos, control.StartClosed, 0, a.c.now())
+			})
+		}
+	}
+	if err := a.c.Runner.Shut(ctx, sid, ByCommand, also...); err != nil {
 		return fmt.Errorf("core: close %v (%s): %w", id, state, err)
 	}
 	if state != control.Closed {

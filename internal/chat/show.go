@@ -307,6 +307,8 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		var d struct{ Workspace, Conversation string }
 		json.Unmarshal(e.Data, &d)
 		return []Row{{Event: e.Pos, Conv: conv, Message: surface.Message{Text: reopenedText(d.Workspace, d.Conversation)}}}, nil
+	case "start_chosen":
+		return f.chosenRows(ctx, r, e, conv)
 	case "session_replaced":
 		return []Row{{Event: e.Pos, Conv: conv, Message: surface.Message{Text: ReplacedLine}}}, nil
 	case "state":

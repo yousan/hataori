@@ -82,6 +82,13 @@ var EventKinds = map[EventKind][]Field{
 	"login_lost":       {req("agent", String), req("outage", Integer), req("thread", Integer)},
 	"login_restored":   {req("agent", String), req("outage", Integer), req("threads", Array), req("scopes", Array)},
 	"session_replaced": {req("session", Integer), req("new_session", Integer), req("reason", String)},
+	// start_chosen: what a person chose for a start that files of the
+	// repository blocked (Trust, StartWithoutSettings, CloseThread): the
+	// blocked session, the position of the state event that says so, the
+	// choice (StartChoice), the session started for it, if any, and who
+	// chose. Written in the step that carries the choice out. Since 3.33.
+	"start_chosen": {req("session", Integer), req("event", Integer), req("choice", String), opt("new_session", Integer),
+		opt("principal", String), opt("from", String), opt("via", String)},
 	// reopened: a closed or removed thread was taken back to asleep
 	// (ReopenThread), after its state event: the session its next message
 	// wakes, who reopened it, what became of its directory and whether the
