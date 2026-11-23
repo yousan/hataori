@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Event, HostTerminal, ThreadInfo } from "./api";
+import type { ChatLayout, Event, HostTerminal, ScopeInfo, ThreadInfo } from "./api";
 import { hostLabel } from "./hostTerminals";
 import { HostDetails, HostPane } from "./HostViews";
 import { t } from "./catalog";
@@ -115,6 +115,8 @@ interface ThreadProps {
   workspace: Workspace | undefined;
   subscribe: (f: (e: Event) => void) => () => void;
   opens: number;
+  scopes: ScopeInfo[] | null;
+  layout: ChatLayout[] | null;
   onBack: () => void;
   view: View | undefined; // the view this thread's tab shows
   onView: (v: View) => void;
@@ -123,7 +125,7 @@ interface ThreadProps {
 
 // NarrowThread is one thread opened from the list: what it waits on, its
 // terminal or its rebuilt output, then the details panel, and a way back.
-export function NarrowThread({ x, attention, workspace, subscribe, opens, onBack, view, onView, mayAct }: ThreadProps) {
+export function NarrowThread({ x, attention, workspace, subscribe, opens, scopes, layout, onBack, view, onView, mayAct }: ThreadProps) {
   return (
     <div className="narrow-thread" data-narrow-thread={x.id}>
       <div className="narrow-bar">
@@ -138,7 +140,7 @@ export function NarrowThread({ x, attention, workspace, subscribe, opens, onBack
       <div className="narrow-pane">
         <ThreadPane x={x} subscribe={subscribe} opens={opens} view={view} onView={onView} mayAct={mayAct} narrow />
       </div>
-      <Details x={x} attention={attention} workspace={workspace} subscribe={subscribe} opens={opens} withWaiting={false} />
+      <Details x={x} attention={attention} workspace={workspace} subscribe={subscribe} opens={opens} scopes={scopes} layout={layout} withWaiting={false} />
     </div>
   );
 }

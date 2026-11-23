@@ -285,6 +285,8 @@ export function App() {
               workspace={workspaces.get(x.id)}
               subscribe={d.subscribe}
               opens={d.opens}
+              scopes={d.scopes}
+              layout={d.layout}
               onBack={backNarrow}
               view={viewOf(threadTab(x.id))}
               onView={chooseView(threadTab(x.id))}
@@ -436,6 +438,8 @@ export function App() {
               workspace={current === null ? undefined : workspaces.get(current)}
               subscribe={d.subscribe}
               opens={d.opens}
+              scopes={d.scopes}
+              layout={d.layout}
             />
             )}
           </aside>

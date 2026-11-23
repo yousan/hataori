@@ -103,6 +103,7 @@ const en = {
   "show.allTitle": "Show every thread, asleep, closed and removed ones too",
   "show.hidden": "{n} hidden",
   "show.hiddenTerminals": "{n} idle shells hidden",
+  "show.hiddenSeparator": "·",
 
   "thread.number": "#{n}",
   "thread.ref": "{repo}#{n}",
@@ -409,6 +410,7 @@ const ja: Catalog = {
   "show.allTitle": "休止中・終了済み・削除済みも含め、すべてのスレッドを表示",
   "show.hidden": "{n} 件を非表示",
   "show.hiddenTerminals": "使われていないシェル {n} 件を非表示",
+  "show.hiddenSeparator": "・",
   "thread.number": "#{n}",
   "thread.ref": "{repo}#{n}",
   "thread.context": "コンテキスト {pct}%",

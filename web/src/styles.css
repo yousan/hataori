@@ -783,11 +783,20 @@ body {
   outline-offset: -2px;
 }
 
-.hidden-count {
+.hidden-count,
+.hidden-terminals {
   margin-left: 6px;
   font-size: 12px;
   color: var(--muted);
   white-space: nowrap;
+}
+
+/* Between the two counts: each keeps its own margin, so they never run
+   together. */
+.hidden-sep {
+  margin-left: 6px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .narrow-show {
@@ -1066,30 +1075,32 @@ body {
   outline-offset: -2px;
 }
 
-/* The title and the last output take what the other columns leave, and
-   are cut with an ellipsis, so the table fits its pane whenever the other
-   columns do (max-width: 0 lets a cell of a table 100% wide shrink below
-   its text); the tooltip has the whole value. */
-.cell-title,
-.cell-last {
+/* The text columns (title, agent and model, branch, last output) share
+   what the other columns leave and are cut with an ellipsis, their headers
+   too, so the table fits its pane whenever the other columns do (max-width:
+   0 lets a cell of a table 100% wide shrink below its text); the tooltip
+   has the whole value. The title takes most of that space and never less
+   than another text column. */
+.all-threads [data-col="title"],
+.all-threads [data-col="agent"],
+.all-threads [data-col="branch"],
+.all-threads [data-col="last"] {
   max-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.cell-title {
-  width: 45%;
+.all-threads [data-col="title"] {
+  width: 76%;
 }
 
-.cell-last {
-  width: 35%;
+.all-threads [data-col="last"] {
+  width: 12%;
 }
 
-.cell-branch,
-.cell-agent {
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.all-threads [data-col="agent"],
+.all-threads [data-col="branch"] {
+  width: 6%;
 }
 
 /* The All threads tab when the choice hides every thread. */

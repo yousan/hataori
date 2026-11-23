@@ -588,7 +588,7 @@ The unit is the thread, not the terminal, so the page does not depend on how hat
 - **Tab bar, above the main area.** An "All threads" tab is pinned first; the items opened from the tree follow. A tab shows the agent's mark coloured by state, the title, the time since the turn started while one runs, a badge for an open question or a failure, and a close button. The tabs are flat; the active one has the terminal's background. At the right end: show or hide the tree, split, show or hide the details, light or dark. Split goes from one pane to two to three, side by side; the extra panes show the tabs viewed before.
 - **Main panes.** The selected session's terminal, live; for the owner it takes keys (below). A Codex session: its output rebuilt from events, with an input box under it. An asleep session: its last screen, marked "no process". A tmux pane on the host: its screen, read-only until the owner switches the tab to "operate" (below). A running thread's pane has a Stop button, and a thread with an open question its choices as buttons.
 - **Details panel, on the right, shown on demand.** On top, the open question or the failure reason. Then:
-  - *thread*: state, scope, who started it, when, number of turns;
+  - *thread*: its title, short as the tree and the tabs write it and whole in the tooltip; state; scope, by the name the tree gives it; who started it, by the person's name in the config, or the id no person lists; when; number of turns (#631);
   - *agent*: kind, model, effort, context use, tokens this turn and today, background tasks running;
   - *workspace*: repository, branch, lines added and removed, uncommitted files, unpushed commits, pull request, terminal device;
   - *recent events*, with their times.
@@ -596,7 +596,7 @@ The unit is the thread, not the terminal, so the page does not depend on how hat
   For a terminal hataori does not own: tmux session, window and pane, terminal device, process, directory, last activity, and a line saying that hataori does not judge its state.
 - **Status bar, at the bottom.** On the left, the selected item: number, state, model, context use, terminal device. On the right: the remaining usage of each agent with its reset time, a live mark with the position of the last event read, and "read-only", or the pane being operated, or the thread whose terminal is attached.
 
-The **"All threads" tab** is a table with one row per thread, grouped by scope: state, number, title, agent and model, state with its age, context use as a bar, tokens today, branch, changes (lines added and removed, uncommitted files), unpushed commits, pull request, last output. Clicking a row opens the thread's tab.
+The **"All threads" tab** is a table with one row per thread, grouped by scope: state, number, title, agent and model, state with its age, context use as a bar, tokens today, branch, changes (lines added and removed, uncommitted files), unpushed commits, pull request, last output. Clicking a row opens the thread's tab. The text columns (title, agent and model, branch, last output) share the room the others leave, the title most of it, and are cut with the whole value in the tooltip (#631).
 
 Rows are dense by default; the normal density hides the second line of a tree row. On a narrow screen the same page becomes a list: needs attention first, then running, then the rest folded; a thread opened there has the input box, since a phone has no keyboard for a terminal. There is no separate app.
 

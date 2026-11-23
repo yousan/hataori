@@ -66,6 +66,15 @@ func (d *Directory) Resolve(id string) (name string, ok bool) {
 	return name, ok
 }
 
+// Listed reports whether name is the name of a person.
+func (d *Directory) Listed(name string) bool {
+	if d == nil {
+		return false
+	}
+	_, ok := d.ids[name]
+	return ok
+}
+
 // Owner returns the owner's name.
 func (d *Directory) Owner() string {
 	if d == nil {

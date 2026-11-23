@@ -1,4 +1,4 @@
-import type { LimitWindow, ScopeInfo, State, ThreadInfo } from "./api";
+import type { ChatLayout, LimitWindow, ScopeInfo, State, ThreadInfo } from "./api";
 import { type Key, lang, t } from "./catalog";
 
 // stateName is a state as the page shows it.
@@ -31,6 +31,16 @@ export function mark(x: ThreadInfo): string {
 // key. The tree's nodes and the All threads table's groups both use it.
 export function scopeLabel(key: string, scopes: readonly ScopeInfo[] | null): string {
   return scopes?.find((s) => s.key === key)?.name || key;
+}
+
+// scopeName is a scope's name as the tree shows it: its name from Scopes
+// (the config's, else its channel's), else the name the chat's layout
+// gives its channel, else its key.
+export function scopeName(key: string, scopes: readonly ScopeInfo[] | null, layouts: readonly ChatLayout[] | null): string {
+  const named = scopes?.find((s) => s.key === key)?.name;
+  if (named) return named;
+  for (const l of layouts ?? []) for (const g of l.groups) for (const c of g.channels) if (c.scope === key && c.name) return c.name;
+  return key;
 }
 
 // fullTitle is a thread's title as the page names it: the chat thread's
