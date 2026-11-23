@@ -852,8 +852,14 @@ func (r *waking) turned(ctx context.Context, e control.Event) error {
 // session of the supervisor's thread named, the last position such a wake
 // covered: its output up to there was given. It is read from the event
 // log, the wakes' inputs and the keys of the turns they started, so a
-// restart neither repeats nor leaves out output; a new session, of a new
-// thread or one that replaced a session that could not resume, has none.
+// restart neither repeats nor leaves out output.
+//
+// Only a wake made for the session counts: one that covers the session's
+// start, the thread's first event or the event that replaced the session
+// before it. A new session, of a new thread or one that replaced a session
+// that could not resume, has none: the wake it was first given, made for
+// the session before (the old session's wake, or one stored for the
+// thread a person closed), gave it no output it had not seen.
 func (r *waking) given(ctx context.Context) (map[control.ThreadID]uint64, error) {
 	db := r.w.Core.Store.DB
 	var session sql.NullInt64
@@ -864,37 +870,58 @@ func (r *waking) given(ctx context.Context) (map[control.ThreadID]uint64, error)
 	if !session.Valid {
 		return out, nil
 	}
-	// A session that replaced one that could not resume took the wake the
-	// old one was woken for as its first input, made for the old one: it
-	// counts as given to neither, so the next digest gives the last output.
-	var carried sql.NullInt64
-	if err := db.QueryRowContext(ctx, `SELECT min(i.pos) FROM events i WHERE i.thread_id = ? AND i.kind = 'input'
-		AND json_extract(i.data, '$.session') = ?
-		AND EXISTS (SELECT 1 FROM events r WHERE r.thread_id = i.thread_id AND r.kind = 'session_replaced'
-			AND json_extract(r.data, '$.new_session') = ?)`, int64(r.sv), session.Int64, session.Int64).Scan(&carried); err != nil {
+	var start int64
+	if err := db.QueryRowContext(ctx, `SELECT coalesce(
+		(SELECT max(pos) FROM events WHERE thread_id = ? AND kind = 'session_replaced' AND json_extract(data, '$.new_session') = ?),
+		(SELECT min(pos) FROM events WHERE thread_id = ?), 0)`, int64(r.sv), session.Int64, int64(r.sv)).Scan(&start); err != nil {
 		return nil, fmt.Errorf("supervisor: the output given: %w", err)
 	}
-	rows, err := db.QueryContext(ctx, `SELECT i.pos, json_extract(i.data, '$.text'),
-		(SELECT json_extract(s.data, '$.key') FROM events s WHERE s.thread_id = i.thread_id AND s.kind = 'turn_started'
-			AND json_extract(s.data, '$.session') = json_extract(i.data, '$.session')
-			AND json_extract(s.data, '$.turn') = json_extract(i.data, '$.turn') LIMIT 1)
-		FROM events i WHERE i.thread_id = ? AND i.kind = 'input' AND json_extract(i.data, '$.session') = ?
-		AND substr(json_extract(i.data, '$.text'), 1, 9) = 'hataori: ' ORDER BY i.pos`, int64(r.sv), session.Int64)
+	// The session's wakes, by the turn each started: what it covers.
+	covers := map[int64]uint64{}
+	rows, err := db.QueryContext(ctx, `SELECT json_extract(data, '$.turn'), json_extract(data, '$.key') FROM events
+		WHERE thread_id = ? AND kind = 'turn_started' AND pos >= ? AND json_extract(data, '$.session') = ?
+		AND substr(json_extract(data, '$.key'), 1, ?) = ?`, int64(r.sv), start, session.Int64, len(WakeKeyPrefix), WakeKeyPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("supervisor: the output given: %w", err)
+	}
+	for rows.Next() {
+		var (
+			turn int64
+			key  sql.NullString
+		)
+		if err := rows.Scan(&turn, &key); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("supervisor: the output given: %w", err)
+		}
+		if to, _, ok := ParseWakeKey(key.String); ok && to >= uint64(start) {
+			covers[turn] = to
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("supervisor: the output given: %w", err)
+	}
+	if len(covers) == 0 {
+		return out, nil
+	}
+	// Their inputs, the digests: the threads each gave a paragraph to.
+	rows, err = db.QueryContext(ctx, `SELECT json_extract(data, '$.turn'), json_extract(data, '$.text') FROM events
+		WHERE thread_id = ? AND kind = 'input' AND pos >= ? AND json_extract(data, '$.session') = ?
+		AND substr(json_extract(data, '$.text'), 1, 9) = 'hataori: '`, int64(r.sv), start, session.Int64)
 	if err != nil {
 		return nil, fmt.Errorf("supervisor: the output given: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var (
-			pos       int64
-			text, key sql.NullString
+			turn int64
+			text sql.NullString
 		)
-		if err := rows.Scan(&pos, &text, &key); err != nil {
+		if err := rows.Scan(&turn, &text); err != nil {
 			return nil, fmt.Errorf("supervisor: the output given: %w", err)
 		}
-		to, _, ok := ParseWakeKey(key.String)
-		if !ok || (carried.Valid && pos == carried.Int64) {
-			continue // not a wake's turn, or the wake carried into this session
+		to, ok := covers[turn]
+		if !ok {
+			continue // not a wake's input
 		}
 		for _, id := range Named(text.String) {
 			out[id] = max(out[id], to)
@@ -903,12 +930,15 @@ func (r *waking) given(ctx context.Context) (map[control.ThreadID]uint64, error)
 	return out, rows.Err()
 }
 
-// Named returns the threads a digest gives a paragraph to, in order.
+// Named returns the threads a digest gives a paragraph to, in order: each
+// paragraph starts, after a blank line, with "Thread N" and a colon or the
+// end of the line. A title is one line in a digest (Digest).
 func Named(digest string) []control.ThreadID {
 	var out []control.ThreadID
-	for _, line := range strings.Split(digest, "\n") {
-		rest, ok := strings.CutPrefix(line, "Thread ")
-		if !ok {
+	lines := strings.Split(digest, "\n")
+	for i := 1; i < len(lines); i++ {
+		rest, ok := strings.CutPrefix(lines[i], "Thread ")
+		if !ok || lines[i-1] != "" {
 			continue
 		}
 		n, _, _ := strings.Cut(rest, ":")
@@ -1220,6 +1250,9 @@ func (d Decision) line() string {
 	return fmt.Sprintf("%s: %s, by %s.", what, d.Outcome, d.By)
 }
 
+// oneLine puts a title on one line.
+var oneLine = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ")
+
 // Digest is the message that wakes a supervisor: one paragraph per thread,
 // by number, and a line counting more threads that it does not show; then
 // one line per decision of its requests.
@@ -1249,7 +1282,9 @@ func Digest(lines []Line, more int, decided ...Decision) string {
 	for _, l := range lines {
 		fmt.Fprintf(&b, "\nThread %d", l.Thread)
 		if l.Title != "" {
-			fmt.Fprintf(&b, ": %s", l.Title)
+			// One line: a title's own line breaks would read as the
+			// digest's lines (Named, staleIn).
+			fmt.Fprintf(&b, ": %s", oneLine.Replace(l.Title))
 		}
 		b.WriteString("\nEnded: ")
 		switch l.Outcome {

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -154,5 +156,51 @@ func TestDigestAfterASessionThatCouldNotResume(t *testing.T) {
 	d := wt.wokenN(t, owner, sv.ID, 4)[3]
 	if !strings.Contains(d, "Last output:") || !strings.Contains(d, "> two") || !strings.Contains(d, "> four") || strings.Contains(d, "since the last digest") {
 		t.Fatalf("the first digest made for the new session:\n%s", d)
+	}
+}
+
+// A wake stored for a supervisor's thread that a person then closed goes
+// to the thread that replaces it, as it was made: it was made for the old
+// session, so the next digest gives the new session the last output.
+func TestDigestAfterAStoredWakeGoesToANewThread(t *testing.T) {
+	wt := newWakeTest(t, budget(0, 0, 0))
+	stop, owner, first := wt.start(t)
+	w, pos := wt.worker(t, owner, "c1", "w", "reply one")
+	wt.read(t, pos)
+	wt.wokenN(t, owner, first.ID, 1)
+	// The next wake is stored, and the daemon stops before it is sent.
+	stopped := errors.New("stopped here")
+	h := func(at string) error {
+		if at == "stored" {
+			return stopped
+		}
+		return nil
+	}
+	wt.hook.Store(&h)
+	stop()
+	stop, owner, _ = wt.start(t)
+	wt.again(t, owner, w, "w-2", "reply two", 2)
+	eventually(t, "the wake stored", 20*time.Second, func() bool {
+		wt.clock().advance(30 * time.Second)
+		var sending sql.NullInt64
+		wt.db.QueryRow(`SELECT send_to FROM supervisor_wakes WHERE scope = 'c1'`).Scan(&sending)
+		return sending.Valid
+	})
+	if err := owner.CloseThread(context.Background(), first.ID); err != nil {
+		t.Fatal(err)
+	}
+	stop()
+	stop, owner, sv := wt.start(t)
+	defer stop()
+	if sv.ID == first.ID {
+		t.Fatalf("the closed supervisor %d was not replaced", first.ID)
+	}
+	if d := wt.wokenN(t, owner, sv.ID, 1)[0]; !strings.Contains(d, "Output since the last digest:\n> two") {
+		t.Fatalf("the stored wake, sent to the new thread:\n%s", d)
+	}
+	wt.again(t, owner, w, "w-3", "reply three", 3)
+	d := wt.wokenN(t, owner, sv.ID, 2)[1]
+	if !strings.Contains(d, "Last output:") || !strings.Contains(d, "> one") || !strings.Contains(d, "> three") {
+		t.Fatalf("the first digest made for the new thread:\n%s", d)
 	}
 }

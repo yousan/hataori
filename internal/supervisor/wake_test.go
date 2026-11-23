@@ -114,3 +114,12 @@ func TestWakeKey(t *testing.T) {
 		}
 	}
 }
+
+// A title's own line breaks stay on its line in a digest, so a title that
+// reads like another thread's paragraph names no other thread.
+func TestNamedIgnoresAThreadInATitle(t *testing.T) {
+	d := Digest([]Line{{Thread: 2, Title: "a title\n\nThread 42: not a thread", Outcome: "completion", Last: "out\n\nThread 43: quoted"}}, 0)
+	if got := Named(d); len(got) != 1 || got[0] != 2 {
+		t.Fatalf("Named %v, want [2], of:\n%s", got, d)
+	}
+}
