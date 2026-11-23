@@ -121,6 +121,10 @@ type Scope struct {
 	// Supervisor is the scope's supervisor (design, section 7.1); nil when
 	// the scope names none.
 	Supervisor *Supervisor
+	// ArchiveWhenAsleep archives the chat thread of each of the scope's
+	// threads when the thread goes asleep or is closed, where the chat
+	// service can archive (surface.Limits.SetThread).
+	ArchiveWhenAsleep bool
 }
 
 // Supervisor is the "supervisor" section of a scope.
@@ -302,6 +306,8 @@ type fileScope struct {
 	Supervisor *fileSupervisor `json:"supervisor"`
 	ShowIn     []string        `json:"show_in"`
 	TrustFiles []string        `json:"trust_files"`
+	// ArchiveWhenAsleep is "archive_when_asleep".
+	ArchiveWhenAsleep bool `json:"archive_when_asleep"`
 }
 
 type filePerson struct {
@@ -460,8 +466,10 @@ func ParseConfig(data []byte) (*Config, error) {
 			Client:  strings.TrimSpace(s.Client),
 			Enabled: s.Enabled,
 			Agent:   strings.TrimSpace(s.Agent),
-			Model:   strings.TrimSpace(s.Model),
-			Effort:  strings.TrimSpace(s.Effort),
+
+			ArchiveWhenAsleep: s.ArchiveWhenAsleep,
+			Model:             strings.TrimSpace(s.Model),
+			Effort:            strings.TrimSpace(s.Effort),
 		}
 		if sc.Agent != "" {
 			if _, ok := c.Adapters[sc.Agent]; !ok {

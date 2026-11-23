@@ -39,7 +39,8 @@ type Row struct {
 	// was never posted is dropped. A delete is never dropped for failing.
 	// Lamp shows Status on the message On names, or on the one the row
 	// Target posted; a lamp is a decoration, and is dropped once a later
-	// lamp on the same message is written.
+	// lamp on the same message is written. Archive and Unarchive set the
+	// archived flag of the chat thread Conv, once (archive.go).
 	Op     Op
 	Target *RowKey
 	On     *surface.MessageRef
@@ -55,6 +56,9 @@ const (
 	Edit   Op = "edit"
 	Delete Op = "delete"
 	Lamp   Op = "lamp"
+
+	Archive   Op = "archive"
+	Unarchive Op = "unarchive"
 )
 
 // RowKey names a row.
@@ -479,6 +483,9 @@ func (o *Outbox) send(ctx context.Context, conv surface.Conversation, r pending)
 	}
 	if meta.Op == Lamp {
 		return o.lamp(ctx, conv, r, meta)
+	}
+	if meta.Op == Archive || meta.Op == Unarchive {
+		return o.archive(ctx, conv, r, meta.Op)
 	}
 	text, out, ok := o.hooked(ctx, conv, r, m.Text, false)
 	if !ok {

@@ -345,7 +345,7 @@ func TestEditDeleteSetThread(t *testing.T) {
 	q := r.requests("PATCH " + title)
 	b0, _ := content(t, q[0])
 	b1, _ := content(t, q[1])
-	if b0["name"] != "renamed" || b0["archived"] != false || b1["archived"] != true || b1["name"] != nil {
+	if _, locks := b1["locked"]; b0["name"] != "renamed" || b0["archived"] != false || b1["archived"] != true || b1["name"] != nil || locks {
 		t.Fatalf("bodies %v %v", b0, b1)
 	}
 	if err := d.SetThread(context.Background(), tc, surface.ThreadMeta{Title: "x"}); !errors.As(err, &e) || e.Status != 403 || e.Temporary() {

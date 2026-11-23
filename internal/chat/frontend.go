@@ -23,6 +23,10 @@ import (
 // against the people config (design, section 5.1).
 type Scope struct {
 	Enabled bool
+	// ArchiveWhenAsleep archives the chat threads of the scope's threads
+	// when they go asleep or are closed, and un-archives them when they
+	// are woken (archiveRows).
+	ArchiveWhenAsleep bool
 }
 
 // FrontEnd shows threads in one chat service. It is the surface.Sink of its

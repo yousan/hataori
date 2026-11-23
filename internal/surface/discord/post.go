@@ -368,7 +368,8 @@ func (d *Driver) Delete(ctx context.Context, ref surface.MessageRef) error {
 }
 
 // SetThread sets a thread's title and archived flag. The bot may do this
-// to a thread it opened without Manage Threads.
+// to a thread it opened without Manage Threads. It never sets locked, so a
+// person's message un-archives an archived thread.
 func (d *Driver) SetThread(ctx context.Context, conv surface.Conversation, t surface.ThreadMeta) error {
 	th, err := parseID("thread", conv.Thread)
 	if err != nil {

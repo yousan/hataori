@@ -782,7 +782,7 @@ func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.St
 			if s.Client != name {
 				continue
 			}
-			scopes[s.Key] = chat.Scope{Enabled: s.Enabled}
+			scopes[s.Key] = chat.Scope{Enabled: s.Enabled, ArchiveWhenAsleep: s.ArchiveWhenAsleep}
 		}
 		// The channels of this client that may show other scopes' threads.
 		showIn := map[string][]string{}
