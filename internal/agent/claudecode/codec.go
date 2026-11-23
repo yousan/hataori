@@ -559,8 +559,8 @@ const synthetic = "<synthetic>"
 //
 // The transcript gives no context window, so context use is never filled.
 // Usage read after the turn's end is reported Late, and only for the turn
-// that ended last (reportUsage), so that the core counts it toward that
-// turn and not toward one running then.
+// that ended last before any other started (reportUsage), so that the core
+// counts it toward that turn and not toward one running then.
 func (c *codec) usageOf(l transcriptLine) Actions {
 	if len(l.Message.Usage) == 0 || string(l.Message.Usage) == "null" || l.Message.Model == synthetic {
 		return Actions{}
@@ -595,12 +595,14 @@ func (c *codec) usageOf(l transcriptLine) Actions {
 }
 
 // reportUsage produces a Usage event with the totals of t's turn, unless
-// they are the ones reported last. Once the turn has ended, only the turn
-// that ended last reports, Late: Claude Code writes a turn's last message
-// to its transcript after its Stop hook (2.1.330), so its usage is read
-// after the end. An earlier turn's is not reported.
+// they are the ones reported last. Once the turn has ended, it reports
+// Late, and only while it is the turn that ended last and no turn has
+// started since: Claude Code writes a turn's last message to its
+// transcript after its Stop hook (2.1.330), and before the next prompt, so
+// its usage is read after the end. The core counts a Late report toward the
+// session's last ended turn, which is this one only until another starts.
 func (c *codec) reportUsage(t *turnText) Actions {
-	if len(t.usage) == 0 || (t.ended && t != c.lastEnded) {
+	if len(t.usage) == 0 || (t.ended && (t != c.lastEnded || c.running)) {
 		return Actions{}
 	}
 	n := agent.UsageCount{Model: t.model}

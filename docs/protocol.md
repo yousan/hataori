@@ -1450,12 +1450,12 @@ The agent asks a question or an approval; the turn ends `blocked`.
 
 ### Event `usage`
 
-What the agent reports about the tokens of the running turn. Each count is the turn's total so far, not what was added since the last report. An agent may record a turn's last model message only after it reported the turn's end (Claude Code 2.1.330 does): that report comes after the turn's `turn_ended` and names that turn in `turn`, and its counts go toward that turn, not toward one running then.
+What the agent reports about the tokens of the running turn. Each count is the turn's total so far, not what was added since the last report. Since 3.27 a report may come after the turn's `turn_ended`, and before the next `turn_started`: an agent may record a turn's last model message only after it reported the turn's end (Claude Code 2.1.330 does). That report names the ended turn in `turn`, and its counts go toward that turn. Before 3.27 such a report was dropped, and every report with a `turn` came before that turn's end.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `session` | integer | required | the session |
-| `turn` | integer | optional | the turn the counts are of: the running one, or, for a report made after a turn's end, the turn that ended last; absent for a report outside a turn, whose counts go toward no `ThreadInfo.tokens`; since 1.8 |
+| `turn` | integer | optional | the turn the counts are of: the running one, or, for a report after a turn's end, the turn that ended last (since 3.27); absent for a report outside a turn, whose counts go toward no `ThreadInfo.tokens`; since 1.8 |
 | `model` | string | optional | the model the tokens were used with, when the agent says; since 1.8 |
 | `input` | integer | optional | input tokens of the turn so far; since 1.8 |
 | `output` | integer | optional | output tokens of the turn so far; since 1.8 |
