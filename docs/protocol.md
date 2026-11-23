@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.27**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.28**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -306,6 +306,45 @@ Since 3.17. Ends a take-in: the thread goes asleep, as an idle thread does after
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `id` | integer | required | the thread's number |
+
+Result: none
+
+### Operation `Trust`
+
+Since 3.28. Lets through the files a start-up dialog named, which blocked the start of the thread's current session, which `session` must name: its last `state` event, from `creating` to `failed` with reason `blocked at start`, lists them in `trust`, and `files` must be exactly those, in any order. The files are recorded as trusted for the thread's scope and repository (`TrustedFile`), and the thread starts again: a new session in the same workspace with the same first input, which names the same `via`, with one `session_replaced` event of reason `trusted`; a session that was woken from asleep gets the thread's earlier conversation before its input, as a session that replaces one that cannot resume does. From then on every launch in that scope on that repository may answer a dialog that names these files and no other, as the config's `trust_files` does. It needs a caller whose person is the owner; anyone else is answered `forbidden`, with one log line, and nothing is recorded. A thread whose current session is not `session` or did not fail that way, or `files` that are not those, are answered `refused`, and nothing changes. The owner's connection on the control socket may call it, and so may a chat front end's caller for a person who pressed its button.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `id` | integer | required | the thread's number |
+| `session` | integer | required | the session the `state` event names |
+| `files` | [string] | required | the files, as the `state` event's `trust` names them |
+
+Result: none
+
+### Operation `StartWithoutSettings`
+
+Since 3.28. Starts the thread again without its repository's settings, when a start-up dialog that named files blocked the start of its current session, which `session` must name (its last `state` event, from `creating` to `failed` with reason `blocked at start`, has `trust`). The thread is marked so that every later launch of it, after a sleep, a restart or a recovery too, leaves the project's and the local settings files out: their hooks and commands never run, and a dialog that names only those files is answered. The repository's code and instructions are still read. A new session starts in the same workspace with the same first input, with one `session_replaced` event of reason `without project settings`, as for `Trust`. It is checked as `Start` is: the caller's person must be allowed in the thread's scope; anyone else is answered `forbidden`, with one log line, and nothing changes. A connection whose calls are proposals (a supervisor's under the autonomy `propose`) is answered `forbidden` too: a person makes this choice. A thread whose current session is not `session` or did not fail that way is answered `refused`.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `id` | integer | required | the thread's number |
+| `session` | integer | required | the session the `state` event names |
+
+Result: none
+
+### Operation `Trusts`
+
+Since 3.28. Lists the files `Trust` recorded, in the scopes the caller may see, oldest first. It takes no arguments.
+
+Result: [`TrustedFile`]
+
+### Operation `Untrust`
+
+Since 3.28. Withdraws one file `Trust` recorded, by its `id`: the next start whose dialog names it is blocked again. A session already running is not changed. It is allowed as `Trust` is; an `id` that is not one, or one of a scope that is not the caller's, is answered `not_found`.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `id` | integer | required | the `TrustedFile`'s `id` |
 
 Result: none
 
@@ -635,6 +674,19 @@ One scope the caller may see; since 3.5.
 |---|---|---|---|
 | `key` | string | required | the scope's key |
 | `name` | string | optional | the config's name for it, else its channel's as the chat service shows it (`SetName`), which is text and absent for a caller that may not read text; absent when neither is known |
+
+### Type `TrustedFile`
+
+One file the owner let through with `Trust`; since 3.28.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `id` | integer | required | its number, which `Untrust` takes |
+| `scope` | string | required | the scope whose threads it is trusted for |
+| `repo` | string | required | the repository URL, as the threads' `Start` gave it |
+| `file` | string | required | the file, as the dialog named it |
+| `by` | string | required | the person who trusted it |
+| `at` | time | required | when |
 
 ### Type `ThreadInfo`
 
@@ -1151,6 +1203,7 @@ The session's state changed.
 | `to` | string | required | the state now |
 | `reason` | string | optional | why, such as `idle`, `interrupted`, `crashed`, `window closed` (a thread taken in whose window closed, since 3.20), `blocked at start`, `cannot resume`, `wake`; for `to: closed` or `to: removed`, what asked for it: `command` (the `Close` or `Remove` operation) or `closed age` (the removal pass of the config's `cleanup.remove_closed_after`), since 2.3 |
 | `detail` | string | optional | text for a person, such as the end of the terminal output of a session blocked at start |
+| `trust` | array | optional | for `to: failed` with reason `blocked at start`: every file the start-up dialog named, as it named them, when the start was blocked because some of them are not trusted; `Trust` takes them; text; since 3.28 |
 
 ### Event `turn_started`
 
@@ -1415,13 +1468,13 @@ A turn failed with reason `login`, and a login outage of the agent opened.
 
 ### Event `session_replaced`
 
-The agent no longer had the conversation; a new session started in the same workspace.
+The agent no longer had the conversation, or, since 3.28, a start that files blocked goes on: the owner let them through (`Trust`), or a person chose to start without the repository's settings (`StartWithoutSettings`); a new session started in the same workspace.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
-| `session` | integer | required | the session that could not be resumed |
+| `session` | integer | required | the session that could not be resumed, or that a start-up dialog blocked |
 | `new_session` | integer | required | the new session |
-| `reason` | string | required | `cannot resume` |
+| `reason` | string | required | `cannot resume`, `trusted` or `without project settings` (both since 3.28) |
 
 ### Event `removal_refused`
 

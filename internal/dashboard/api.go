@@ -54,6 +54,9 @@ const (
 	// ClientsPath answers with whether each chat client of the caller's
 	// scopes is connected: the control API's Clients.
 	ClientsPath = "/api/clients"
+	// TrustsPath answers with the files the owner trusted from a blocked
+	// start (control.API.Trusts), in the caller's scopes. Since 3.28.
+	TrustsPath = "/api/trusts"
 	// WorkspacePath answers with the thread's WorkspaceState. A thread
 	// outside the caller's scopes answers as one that does not exist, and a
 	// workspace that cannot be read is an error, never zeros.
@@ -118,6 +121,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET "+HostScreenPath, s.hostScreen)
 	s.mux.HandleFunc("GET "+LimitsPath, s.limits)
 	s.mux.HandleFunc("GET "+ClientsPath, s.clients)
+	s.mux.HandleFunc("GET "+TrustsPath, s.trusts)
 	s.mux.HandleFunc("GET "+WorkspacePath, s.workspace)
 	s.mux.HandleFunc("GET "+HostTerminalsPath, s.hostTerminals)
 	s.mux.HandleFunc("GET "+MePath, s.me)
@@ -150,6 +154,18 @@ func (s *Server) clients(w http.ResponseWriter, r *http.Request) {
 		cs = []control.ClientState{}
 	}
 	writeJSON(w, cs)
+}
+
+func (s *Server) trusts(w http.ResponseWriter, r *http.Request) {
+	ts, err := api(r).Trusts(r.Context())
+	if err != nil {
+		s.apiError(w, err)
+		return
+	}
+	if ts == nil {
+		ts = []control.TrustedFile{}
+	}
+	writeJSON(w, ts)
 }
 
 // workspaceTimeout bounds how long the route waits for git in a workspace:

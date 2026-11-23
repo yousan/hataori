@@ -3,6 +3,7 @@ import { t } from "./catalog";
 import { contextUse, stateName, when, windowName } from "./format";
 import type { Live } from "./live";
 import { Passkeys } from "./Passkeys";
+import { Trusts } from "./Trusts";
 import { clock, left, type OpState } from "./operate";
 
 interface Props {
@@ -64,7 +65,8 @@ function Clients({ clients }: { clients: ClientState[] }) {
 // StatusBar shows the selected thread on the left; on the right, each
 // chat client that is not connected, each agent's remaining usage, the live mark with the position of the last
 // event read, "read-only" or the pane being operated with the time left
-// before its idle end, and, signed in, the person's passkeys.
+// before its idle end, and, signed in, the files trusted from chat and the
+// person's passkeys.
 export function StatusBar({ selected: x, live, limits, clients, now, signedIn, operating, attached }: Props) {
   let mark: string;
   if (live.connected) {
@@ -106,6 +108,7 @@ export function StatusBar({ selected: x, live, limits, clients, now, signedIn, o
         ) : (
           <span className="mark">{t("app.readOnly")}</span>
         )}
+        {signedIn && <Trusts />}
         {signedIn && <Passkeys />}
       </div>
     </footer>

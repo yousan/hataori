@@ -251,6 +251,39 @@ type API interface {
 	// terminal, are refused and change nothing.
 	AttachTerminal(ctx context.Context, id ThreadID) (Attachment, error)
 
+	// Trust lets through the files a start-up dialog named, which blocked
+	// the start of thread id's session sid (its state event's trust): sid
+	// must be the thread's current session, and files exactly those. It records them as trusted for the thread's
+	// scope and repository, and starts the thread again, in a new session
+	// in the same workspace with the same first input (a session_replaced
+	// event, reason "trusted"); a session that was woken gets the thread's
+	// earlier conversation before it, as one that cannot resume does. From then on every launch in that scope on
+	// that repository may answer a dialog that names no other file. It
+	// needs OpTrust, and the caller's person must be the owner; anyone else
+	// is refused (ErrForbidden) and nothing is recorded. A thread whose
+	// current session did not fail that way is refused (the wire's
+	// refused). Since 3.28.
+	Trust(ctx context.Context, id ThreadID, sid int64, files []string) error
+	// StartWithoutSettings starts thread id again without its repository's
+	// settings, when a start-up dialog that named files blocked the start of
+	// its current session sid (its state event's trust): the thread is
+	// marked so that every later launch of it leaves the project's and the
+	// local settings files out, with their hooks, and a new session starts
+	// in the same workspace with the same first input (a session_replaced
+	// event, reason "without project settings"), as Trust starts one. It is
+	// checked as Start is: the caller's person must be allowed in the
+	// thread's scope, and needs OpStart. A thread whose current session did
+	// not fail that way is refused. Since 3.28.
+	StartWithoutSettings(ctx context.Context, id ThreadID, sid int64) error
+	// Trusts lists the files trusted by Trust, in the scopes the caller may
+	// see, oldest first. It needs OpRead. Since 3.28.
+	Trusts(ctx context.Context) ([]TrustedFile, error)
+	// Untrust withdraws one file trusted by Trust, by its id: the next start
+	// whose dialog names it is blocked again. A running session is not
+	// changed. It needs OpTrust and the owner, as Trust does; an id that
+	// is not one is ErrNotFound. Since 3.28.
+	Untrust(ctx context.Context, id int64) error
+
 	// Limits returns the remaining usage of each agent whose sessions
 	// report it, as the last report said, one entry per agent by name. An
 	// agent that reports none has no entry. It needs OpRead; the usage is
@@ -299,7 +332,7 @@ type Caller struct {
 	// names it in the log line of a refusal. Since protocol 3.23.
 	Via    string
 	Scopes []string // the scopes it may see and act in; a thread of another is answered as none (ErrNotFound)
-	May    Ops      // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName, OpAsk, OpHostInput, OpTakeIn
+	May    Ops      // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName, OpAsk, OpHostInput, OpTakeIn, OpTrust
 	// NoText leaves text written by a person or an agent out of what the
 	// caller reads: ThreadInfo.Title, ThreadInfo.Last and ThreadInfo.Name,
 	// ThreadDetail.Recent, the text of its requests and a question's
@@ -408,6 +441,10 @@ const (
 	// (TakeIn, Release): the owner's connection on the control socket
 	// only. Since 3.17.
 	OpTakeIn
+	// OpTrust may let the files a start-up dialog named through for a
+	// scope's repository, and withdraw that (Trust, Untrust). The core
+	// honours it only for the owner. Since 3.28.
+	OpTrust
 )
 
 // ViaProposal is the Via of the caller as which the core makes the call of
@@ -415,6 +452,17 @@ const (
 // thread_created events of that call name it, so that a reader can tell
 // them from the proposer's own. Since 3.26.
 const ViaProposal = "proposal"
+
+// TrustedFile is one file the owner let through for a scope's threads on
+// one repository (API.Trust). Since 3.28.
+type TrustedFile struct {
+	ID    int64     `json:"id"`
+	Scope string    `json:"scope"`
+	Repo  string    `json:"repo"`
+	File  string    `json:"file"`
+	By    Principal `json:"by"`
+	At    time.Time `json:"at"`
+}
 
 // Way is one of the dashboard's listeners, each a way of reaching it with
 // its own proof of who is at the other end (design, section 7.2). Since 3.2.

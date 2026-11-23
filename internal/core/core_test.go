@@ -320,6 +320,12 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 			_, err := a.Forge(ctx, control.ForgeRequest{Repo: "acme/widgets", Read: control.ForgeReadIssues})
 			return err
 		},
+		// Only the owner may (trust_test.go); Trusts needs OpRead and no
+		// scope, as Limits does.
+		"Trust":                func(a control.API) error { return a.Trust(ctx, id, sid, []string{".mcp.json"}) },
+		"Trusts":               func(a control.API) error { _, err := a.Trusts(ctx); return err },
+		"StartWithoutSettings": func(a control.API) error { return a.StartWithoutSettings(ctx, id, sid) },
+		"Untrust":              func(a control.API) error { return a.Untrust(ctx, 1) },
 	}
 	if len(ops) != reflect.TypeFor[control.API]().NumMethod() {
 		t.Fatal("the test does not cover every operation")
@@ -328,12 +334,12 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 	// a caller of another scope gets the answer for a thread that does not
 	// exist (#479).
 	namesThread := []string{"Thread", "ThreadEvents", "Workspace", "Terminal", "AttachTerminal", "Send", "AskInterrupt",
-		"Answer", "Stop", "CloseThread", "RemoveThread", "Link", "Release"}
+		"Answer", "Stop", "CloseThread", "RemoveThread", "Link", "Release", "Trust", "StartWithoutSettings"}
 	events, threads, calls := count(t, f.core.Store, "events"), count(t, f.core.Store, "threads"), f.runner.Calls()
 	for cname, c := range callers {
 		a := f.core.As(c)
 		for name, op := range ops {
-			if (name == "Limits" || name == "Scopes" || name == "Layout" || name == "Clients") && cname == "other scope" {
+			if (name == "Limits" || name == "Scopes" || name == "Layout" || name == "Clients" || name == "Trusts") && cname == "other scope" {
 				continue
 			}
 			want := ErrForbidden

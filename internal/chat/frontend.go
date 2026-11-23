@@ -401,7 +401,7 @@ func (f *FrontEnd) start(ctx context.Context, r request, o order, n int64) (cont
 	switch {
 	case out.failed != nil:
 		// The event reader writes the same row when it reads the event.
-		rows = append(rows, out.failed.row(conv, out.first))
+		rows = append(rows, f.failedRow(*out.failed, conv, out.first, o.Repo))
 	case startErr != nil:
 		// Not recorded as the session's end: no event shows it.
 		rows = append(rows, Row{Event: out.first, Part: 1, Conv: conv,
@@ -503,9 +503,14 @@ const couldNotStart = "This thread could not start: "
 // before it started.
 type startFailed struct {
 	pos     uint64 // the state event's position
+	thread  control.ThreadID
+	scope   string // the thread's
 	session int64
 	reason  string // as recorded, without the "start: " the core puts before its own
 	detail  string // the event's detail, for a person
+	// trust is the files a start-up dialog named, when they blocked the
+	// start: the owner may trust them (trustbutton.go).
+	trust []string
 }
 
 // startFailure reads e as a session's change from creating to failed.
@@ -516,20 +521,23 @@ func startFailure(e control.Event) (startFailed, bool) {
 	var d struct {
 		Session                  int64
 		From, To, Reason, Detail string
+		Trust                    []string
 	}
 	if json.Unmarshal(e.Data, &d) != nil || d.From != string(control.Creating) || d.To != string(control.Failed) {
 		return startFailed{}, false
 	}
-	return startFailed{pos: e.Pos, session: d.Session, reason: strings.TrimPrefix(d.Reason, "start: "), detail: d.Detail}, true
+	return startFailed{pos: e.Pos, thread: e.Thread, scope: e.Scope, session: d.Session, reason: strings.TrimPrefix(d.Reason, "start: "),
+		detail: d.Detail, trust: d.Trust}, true
 }
 
-// row is the one message the failure gets, keyed by its event, so that the
-// trigger's start and the event reader write it once between them, and
-// again after a restart write nothing. The failure of the thread's first
-// session replies to the thread's prompt, at first, and so is posted after
-// it.
-func (sf startFailed) row(conv surface.Conversation, first uint64) Row {
-	r := Row{Event: sf.pos, Part: 0, Conv: conv, Message: surface.Message{Text: sf.text()}}
+// failedRow is the one message the failure gets, keyed by its event, so
+// that the trigger's start and the event reader write it once between
+// them, and again after a restart write nothing. The failure of the
+// thread's first session replies to the thread's prompt, at first, and so
+// is posted after it. A start blocked by files the owner may trust carries
+// the button that trusts them (trustbutton.go); repo is the thread's.
+func (f *FrontEnd) failedRow(sf startFailed, conv surface.Conversation, first uint64, repo string) Row {
+	r := Row{Event: sf.pos, Part: 0, Conv: conv, Message: f.failedMessage(sf, repo, true)}
 	if first != 0 {
 		r.ReplyToRow = &RowKey{Event: first, Part: 0}
 	}

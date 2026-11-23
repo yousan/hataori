@@ -319,7 +319,11 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		} else if err := f.awaitPrompt(ctx, conv, first, e.Time); err != nil {
 			return nil, err
 		}
-		return []Row{sf.row(conv, first)}, nil
+		repo, err := r.repoOf(ctx, e.Thread)
+		if err != nil {
+			return nil, err
+		}
+		return []Row{f.failedRow(sf, conv, first, repo)}, nil
 	case "thread_created", "turn_started", "text", "request", "turn_ended", "file_out", "approval_asked", "approval_answered",
 		"proposal_made", "proposal_answered":
 	default:
@@ -584,6 +588,12 @@ func (r *reader) turnKey(ctx context.Context, e control.Event) (key, by string, 
 		}
 	})
 	return r.turn[e.Thread], r.by[e.Thread], err
+}
+
+// repoOf returns the repository of thread id.
+func (r *reader) repoOf(ctx context.Context, id control.ThreadID) (string, error) {
+	d, err := r.api.Thread(ctx, id, 0, 0)
+	return d.Repo, err
 }
 
 // firstPos returns the position of a thread's first event.
