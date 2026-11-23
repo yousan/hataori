@@ -23,6 +23,9 @@ import (
 // against the people config (design, section 5.1).
 type Scope struct {
 	Enabled bool
+	// Supervisor is what the front end does with the posts of the
+	// scope's supervisor (#657).
+	Supervisor Posts
 }
 
 // FrontEnd shows threads in one chat service. It is the surface.Sink of its
