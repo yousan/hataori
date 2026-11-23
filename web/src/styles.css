@@ -1461,18 +1461,23 @@ body {
 .type-hint {
   position: absolute;
   top: 8px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 8px;
+  right: 8px;
   z-index: 10;
-  max-width: calc(100% - 16px);
+  display: flex;
+  justify-content: center;
+  pointer-events: none; /* the terminal beside the button stays clickable */
+}
+
+.type-hint button {
+  pointer-events: auto;
 }
 
 .type-hint button {
   font: inherit;
   font-size: 13px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* One line where it fits; wrapped, not cut, in a narrow pane. */
+  width: max-content;
   max-width: 100%;
   color: var(--fg);
   background: var(--bg);
