@@ -21,8 +21,8 @@ import (
 // namesRig is the daemon with the fake surface and the fake agent, a
 // config with people, and two threads: one in a scope the config names,
 // with every column of the All threads table, a title with an issue's
-// address, and a row from before callers were resolved to people, which
-// records the bare chat id of its author; one asleep in a scope named by
+// address, and a row that records "owner", as an old-form config named its
+// owner, while its start records bob's id; one asleep in a scope named by
 // its channel only, started by an id no person lists; and more asleep there,
 // one for each other form an older hataori recorded who started a thread
 // in. Two idle shells of a fake list of host terminals are hidden, as the
@@ -42,14 +42,18 @@ type legacyStarter struct {
 	recorded, want string
 }
 
-// legacyStarters are the other forms of started_by: an old-form config's
-// name of a poster ("<client>/<id>") and of its owner, a full id, and an
-// old-form poster no person lists. The ids are made up.
+// legacyStarters are the other forms of started_by, in threads started on
+// the control socket, whose start records no id: the bare chat id of
+// before callers were resolved to people, an old-form config's name of a
+// poster ("<client>/<id>"), a full id, an old-form poster no person lists,
+// and "owner", which says nothing of who that owner was. The ids are made
+// up.
 var legacyStarters = []legacyStarter{
+	{recorded: e2eHook, want: "bob"},
 	{recorded: people.OldPoster(fakeSurface, e2eHook), want: "bob"},
-	{recorded: people.OldOwner, want: "ada"},
 	{recorded: people.Join(fakeSurface, e2eHook), want: "bob"},
 	{recorded: people.OldPoster(fakeSurface, "nobody-3"), want: people.OldPoster(fakeSurface, "nobody-3")},
+	{recorded: people.OldOwner, want: people.OldOwner},
 }
 
 // namesTitle is the full thread's title: an issue's address, which the
@@ -134,16 +138,15 @@ func newNamesRig(t *testing.T) namesRig {
 		}
 		return false
 	})
-	// The rows as a daemon from before callers were resolved to people
-	// wrote them: the author's chat id, without its client. The daemon
-	// is stopped meanwhile, as it holds the store.
+	// The rows as older daemons wrote them. The daemon is stopped
+	// meanwhile, as it holds the store.
 	c.Close()
 	stop()
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(r.root, store.File))
 	if err != nil {
 		t.Fatal(err)
 	}
-	recorded := map[control.ThreadID]string{full: e2eHook, asleep: "stranger-9"}
+	recorded := map[control.ThreadID]string{full: people.OldOwner, asleep: "stranger-9"}
 	for _, l := range legacy {
 		recorded[l.id] = l.recorded
 	}
@@ -295,7 +298,7 @@ func TestDashboardNamesAndWidths(t *testing.T) {
 			t.Errorf("the scope the config names shows as %q, want its name", f["scope"].Text)
 		}
 		if f["startedBy"].Text != "bob" {
-			t.Errorf("a thread whose row records bob's chat id shows started by %q, want bob", f["startedBy"].Text)
+			t.Errorf("a thread whose row records %q and whose start records bob's id shows started by %q, want bob", people.OldOwner, f["startedBy"].Text)
 		}
 		if f["title"].Text != namesShort || f["title"].Tip != namesTitle {
 			t.Errorf("the title shows %+v, want %q with the whole title in its tooltip", f["title"], namesShort)

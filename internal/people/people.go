@@ -84,8 +84,9 @@ func OldPoster(client, local string) string { return client + "/" + local }
 //     the author without its client, or the old-form owner's raw id.
 //
 // A name of today's people is kept; an id, in full or bare on client, or an
-// OldPoster name names the person who lists that id; OldOwner names the
-// owner. ok is false when no person is found, and by is then all there is.
+// OldPoster name names the person who lists that id. OldOwner names no
+// one: the owner then may not be today's owner. ok is false when no person
+// is found, and by is then all there is.
 func (d *Directory) Recorded(by, client string) (name string, ok bool) {
 	switch {
 	case d == nil || by == "":
@@ -97,10 +98,9 @@ func (d *Directory) Recorded(by, client string) (name string, ok bool) {
 		return name, true
 	}
 	if c, local, found := strings.Cut(by, "/"); found && c != "" && local != "" {
-		return d.Resolve(Join(c, local))
-	}
-	if by == OldOwner {
-		return d.owner, d.owner != ""
+		if name, ok := d.Resolve(Join(c, local)); ok {
+			return name, true
+		}
 	}
 	if client != "" {
 		return d.Resolve(Join(client, by))
