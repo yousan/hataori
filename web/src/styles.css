@@ -897,6 +897,47 @@ body {
   font-style: italic;
 }
 
+/* A thread's pane's header: the thread's state, in words with its colour,
+   then the controls, which are actions and wear no state's colour. */
+.pane-head {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.pane-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--st);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pane-state-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--st);
+}
+
+.pane-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.pane-head .view-switch,
+.pane-head .attach,
+.pane-head .stop {
+  margin: 0;
+}
+
 /* The switch between a thread's terminal and its conversation. */
 .view-switch {
   display: flex;
@@ -1369,12 +1410,22 @@ body {
   font-size: 13px;
 }
 
-.operate [role="switch"],
-.attach [role="switch"] {
+.operate [role="switch"] {
   font: inherit;
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 0 10px;
+}
+
+/* Type, on the web listener: a button, labelled as what it does. */
+.attach [role="switch"] {
+  font: inherit;
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--fg);
+  border-radius: 4px;
+  padding: 1px 10px;
+  cursor: pointer;
 }
 
 .operate [role="switch"][aria-checked="true"],
@@ -1399,6 +1450,42 @@ body {
 .operate-end,
 .attach-note {
   color: var(--muted);
+}
+
+/* On the web listener, a key or a click in a terminal that takes no keys
+   yet: one line over the terminal, whose button turns input on. */
+.terminal-view {
+  position: relative;
+}
+
+.type-hint {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  z-index: 10;
+  display: flex;
+  justify-content: center;
+  pointer-events: none; /* the terminal beside the button stays clickable */
+}
+
+.type-hint button {
+  pointer-events: auto;
+}
+
+.type-hint button {
+  font: inherit;
+  font-size: 13px;
+  /* One line where it fits; wrapped, not cut, in a narrow pane. */
+  width: max-content;
+  max-width: 100%;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--fg);
+  border-radius: 4px;
+  padding: 4px 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
 }
 
 /* While operated, or while a session's terminal takes keys and has the
@@ -1575,12 +1662,22 @@ a.chat-link:hover {
   gap: 6px;
 }
 
-.stop-button,
+/* An action, not a state: outlined, in the text's colour. */
+.stop-button {
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--fg);
+  border-radius: 4px;
+  padding: 1px 10px;
+  cursor: pointer;
+}
+
 .stop [data-stop-yes] {
   color: var(--bg);
-  background: var(--st-failed);
-  border: 1px solid var(--st-failed);
+  background: var(--fg);
+  border: 1px solid var(--fg);
   border-radius: 4px;
+  cursor: pointer;
 }
 
 /* The tree as the chat client's sidebar (#635): a bar with the chat's

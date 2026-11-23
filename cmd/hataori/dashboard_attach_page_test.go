@@ -115,6 +115,9 @@ func TestDashboardTerminalTakesKeys(t *testing.T) {
 		}
 	}
 	sentOnly("the first keys, and nothing else")
+	if n := countOf(b, ".pane.active [data-type-hint]"); n != 0 {
+		t.Fatalf("%d hints to turn input on, on the loopback listener", n)
+	}
 
 	// While attached, the session asks every query again: nothing answers.
 	r.driver.Inject(th, fakesurface.Webhook(e2eHook), "screen "+terminalQueries+esc+"[?25;1002;1006;1004h asked-again")
