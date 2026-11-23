@@ -16,7 +16,7 @@ import (
 
 // captured is the exchange of Claude Code with `hataori mcp`, taken by
 // testdata/capture.sh.
-const captured = "testdata/claudecode/2.1.328"
+const captured = "testdata/claudecode/2.1.330"
 
 func lines(t *testing.T, path string) []map[string]any {
 	t.Helper()
@@ -49,12 +49,10 @@ func toolNames(t *testing.T, result any) []string {
 	return names
 }
 
-var four = []string{ToolList, ToolRead, ToolSend, ToolStart}
-
 // What Claude Code sent is answered as it was then: every request gets one
-// answer with its id and initialize in the version Claude Code asked for.
-// The four captured tools are what Claude Code was given then; the current
-// server also offers interrupt_thread and the forge's tools.
+// answer with its id, initialize in the version Claude Code asked for and
+// with the server's instructions (#653), and tools/list with the tools
+// Claude Code was given then.
 func TestClaudeCodeToolsList(t *testing.T) {
 	client, err := os.ReadFile(filepath.Join(captured, "client.jsonl"))
 	if err != nil {
@@ -96,20 +94,15 @@ func TestClaudeCodeToolsList(t *testing.T) {
 			if v := r["result"].(map[string]any)["protocolVersion"]; v != asked {
 				t.Fatalf("initialize answered %v, Claude Code asked for %v", v, asked)
 			}
+			if got, was := r["result"].(map[string]any)["instructions"], want[string(id)]["result"].(map[string]any)["instructions"]; got != was || got != Instructions {
+				t.Fatalf("the instructions changed since the capture:\n%v\n%v", got, was)
+			}
 		case "tools/list":
 			current := []string{ToolList, ToolRead, ToolSend, ToolInterrupt, ToolStart, ToolIssues, ToolIssue, ToolPulls, ToolPull, ToolChecks, ToolDeployed, ToolRemind, ToolCancelRemind}
 			if names := toolNames(t, r["result"]); !slices.Equal(names, current) {
 				t.Fatalf("tools/list gives %v, want the current tools %v", names, current)
 			}
-			// Compare the tools Claude Code was given in the capture.
-			result := r["result"].(map[string]any)
-			var capturedTools []any
-			for _, item := range result["tools"].([]any) {
-				if n := item.(map[string]any)["name"].(string); slices.Contains(four, n) {
-					capturedTools = append(capturedTools, item)
-				}
-			}
-			a, _ := json.Marshal(map[string]any{"tools": capturedTools})
+			a, _ := json.Marshal(r["result"])
 			b, _ := json.Marshal(want[string(id)]["result"])
 			if !bytes.Equal(a, b) {
 				t.Fatalf("tools/list changed since the capture:\n%s\n%s", a, b)
@@ -132,9 +125,10 @@ func TestClaudeCodeToolsList(t *testing.T) {
 		t.Fatal(err)
 	}
 	var prefixed []string
-	for _, n := range four {
-		prefixed = append(prefixed, "mcp__hataori__"+n)
+	for _, x := range tools {
+		prefixed = append(prefixed, "mcp__hataori__"+x.Name)
 	}
+	slices.Sort(prefixed)
 	if len(init.MCPServers) != 1 || init.MCPServers[0].Status != "connected" || !slices.Equal(init.Tools, prefixed) {
 		t.Fatalf("Claude Code's init message: %+v", init)
 	}

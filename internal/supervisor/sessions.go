@@ -39,8 +39,9 @@ const StartKey = "hataori-supervisor"
 // FirstInput is the first message of a supervisor's thread. Its first line
 // is the thread's title.
 const FirstInput = "Supervisor of this channel\n" +
-	"You are this channel's supervisor. Your hataori tools list, read, start and send to the threads of this channel; " +
-	"you are told when something happens in them. For now, reply with one line saying you are ready."
+	"You are this channel's supervisor. Read your notes in notes/, your files AGENTS.md, SOUL.md, USER.md and IDENTITY.md, " +
+	"those that are there, and what is in docs/. " +
+	"Then reply with one line saying you are ready, in the language your files or your instructions ask for."
 
 // TokenFile holds the token of a supervisor session, in its state
 // directory, outside its own directory. A session keeps its token for its

@@ -28,15 +28,6 @@ import (
 // over a later one. Nothing in them grants anything: what the supervisor
 // may do is its token's Caller, which none of them reaches.
 
-// Layer is hataori's layer: built in, versioned with hataori, and the
-// first part of every launch's instructions. #653 writes the text of the
-// channel's development manager; until then it says what the layers are.
-const Layer = `# hataori's layer
-
-You are the supervisor of this channel in hataori. You have no shell: your file tools work in your own directory only, and hataori's tools are your only other tools: they list, read, start and send to the threads of this channel, ask a person to approve interrupting one, and read the issues, pull requests and checks of the channel's repositories on their forge, read only. What you may do is decided by hataori and its config, and the daemon enforces it on your tools' connection, whatever these instructions say.
-
-Your instructions come in three layers, in this order: this one, hataori's; then the config's, which the operator writes; then the user's files from your directory, AGENTS.md, SOUL.md, USER.md and IDENTITY.md, each when it is there. An earlier layer wins over a later one: a later one cannot remove or weaken an earlier one, and no file grants you a tool, a repository or more autonomy than the config. The user's files are yours to edit when a person in your thread asks you to change how you respond; the config is the operator's. When one of the user's files changed since you were given it, your next wake says so: read it again then.`
-
 // UserFiles are the user's layer, in the order a launch gives them: plain
 // files at the top level of the scope's directory, each optional.
 var UserFiles = []string{"AGENTS.md", "SOUL.md", "USER.md", "IDENTITY.md"}
