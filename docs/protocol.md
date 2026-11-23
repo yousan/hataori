@@ -6,7 +6,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 - The socket is `<root>/state/control.sock`. When that path is too long for a Unix socket, the daemon listens on a short path in the user's runtime or temporary directory and writes that path into `<root>/state/control.sock.path`.
 - Only the OS user that runs the daemon may connect. A connection whose client hello has no `token` acts as the instance's owner, except as below.
-- A connection whose client hello has a `token` acts as the caller the daemon issued that token for, with the scopes and operations the daemon chose; nothing the client sends widens them. The daemon issues a token for each supervisor session, limited to that supervisor's scope (design, section 7.1). It may also ask for approvals shown in its own thread. A token the daemon does not know, or no longer knows, is refused: the daemon's hello carries `error`, it logs the refusal without the token, and it closes the connection. A client that streams events or terminal output presents the token on that connection too. Since 2.2; an older daemon ignores the field and makes the connection the owner's, so a client with a token checks that the daemon speaks 2.2 or later.
+- A connection whose client hello has a `token` acts as the caller the daemon issued that token for, with the scopes and operations the daemon chose; nothing the client sends widens them. The daemon issues a token for each supervisor session, limited to that supervisor's scope (design, section 7.1). It may also ask for approvals shown in its own thread. Since 3.26 the scope's autonomy (`scopes[].supervisor.autonomy`, read when the daemon binds the token) limits it further: under `watch` its `Start`, `Send` and `AskInterrupt` are `forbidden`, with a message that names the mode; under `propose`, the default, its `Start` and `Send` are not made but stored as proposals that a person decides (`proposed`, below); under `act` they are made as before. A token the daemon does not know, or no longer knows, is refused: the daemon's hello carries `error`, it logs the refusal without the token, and it closes the connection. A client that streams events or terminal output presents the token on that connection too. Since 2.2; an older daemon ignores the field and makes the connection the owner's, so a client with a token checks that the daemon speaks 2.2 or later.
 - A connection without a `token` from a process in the process group of a plugin the daemon started is refused: the daemon's hello carries `error`, and it logs the refusal with the plugin. A plugin connects with its token. This is a guard against a plugin that forgot its token, not a boundary between processes of one OS user. It changes no message, so it has no version of its own.
 - Each message is one JSON object on one line.
 - Each side sends a `hello` first. The daemon reads the client's hello before it answers with its own. When the daemon refuses the client, its hello carries `error` and the daemon closes the connection.
@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.25**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.26**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -83,6 +83,7 @@ Events are stored, and a reader reads them from a position, possibly long after 
 |---|---|---|---|
 | `code` | string | required | one of the error codes below |
 | `message` | string | required | a sentence for a person |
+| `proposal` | integer | optional | for `proposed`: the proposal's number; since 3.26 |
 
 ### Error codes
 
@@ -98,6 +99,7 @@ Events are stored, and a reader reads them from a position, possibly long after 
 | `ended` | error code | - | the operation of a host pane has ended: nothing was sent; since 3.11 |
 | `refused` | error code | - | the session's state does not allow the call |
 | `stopped` | error code | - | a plugin's handler on an input hook point stopped the input, or failed where its policy blocks: nothing was accepted; the message names the plugin, the point and why; since 3.18 |
+| `proposed` | error code | - | a `Start` or a `Send` on a connection whose calls are proposals: nothing was made; it was stored as proposal `proposal`, which a person decides (see `Answer`); since 3.26 |
 | `not_supported` | error code | - | the receiver does not know the operation |
 | `error` | error code | - | any other failure |
 
@@ -177,6 +179,8 @@ Result: [`ChatLayout`]
 
 Starts a thread in a scope. The same `key` starts nothing twice and returns the thread the first call started.
 
+Since 3.26, on a supervisor's connection whose scope's autonomy is `propose`, a `Start` that the daemon would make is not made: it is checked as far as the scope, the agent and the effort go, then stored as a proposal in the supervisor's own thread, with the agent, the model and the effort it would run with, and answered `proposed` with the proposal's number. No thread, chat thread or workspace is made, and no hook runs. A repeated `key` returns the same proposal. A person decides it with `Answer`; approved, the daemon makes the `Start` then, as the supervisor, with that model and effort, its input marked and its `thread_created` and `input` naming `via` `proposal`, under a key made from the proposal, so that it starts one thread however often it is approved, also across restarts.
+
 Since 3.18, when plugins handle the input hook points in the scope, the daemon runs them in the call, before it accepts the input (design, section 7.3): `before_agent_run`, then `before_prompt_build`. One that stops the input makes the call `stopped`: no thread, no chat thread and no workspace is made, and nothing is recorded; the daemon logs the stop, without the text or the reason. The text `before_prompt_build` adds reaches the agent around the input, on lines of their own; the `input` event has the input as given in `text`, and the added text in `before` and `after`. A key accepted before runs no hook again.
 
 | Field | Type | Presence | Meaning |
@@ -202,6 +206,8 @@ Since 3.18 the input hook points run in the call, before the input is accepted, 
 
 On a supervisor's connection (a token, since 2.2) `busy` is always taken as 0: a `Send` with 1 or 2 to a running thread is refused with `busy` and logged, nothing is queued and the turn goes on. There, and in `Start`, the daemon puts the line `From the supervisor of this channel:` before the input's text; the `input` event has the text with that line, and the thread's title is made without it. A `Send` that answers an open question is not marked: the agent gets the answer, and the `answer` event its text, as given.
 
+Since 3.26, on a supervisor's connection whose scope's autonomy is `propose`, a `Send` gives the thread nothing: it is stored as a proposal in the supervisor's own thread and answered `proposed` with the proposal's number, whatever the thread's state but closed or removed (`closed`); the supervisor's own thread is `forbidden`. One to a thread waiting on a question is proposed as the answer to that question. A repeated `key` returns the same proposal. A person decides it with `Answer`; approved, the daemon makes the `Send` then, as the supervisor, marked as its input, with busy 0 and under a key made from the proposal, so that the thread gets it once however often it is approved, also across restarts. A thread that runs a turn then, or waits on a question it was not proposed to answer, is not given it (outcome `busy`); a proposed answer whose question is no longer open is not given (outcome `ended`). Its `input` or `answer` event names `via` `proposal`.
+
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `id` | integer | required | the thread's number; since 3.0, before it a `{scope, key}` object |
@@ -213,7 +219,7 @@ Result: none
 
 ### Operation `Answer`
 
-Answers an open question or approval. An approval asked with `AskInterrupt` is approved by `allow: true` or `choices: ["approve"]`; otherwise it is refused. The asker's own person, a guest and a person not in the scope are `forbidden`.
+Answers an open question, approval or proposal. An approval asked with `AskInterrupt` is approved by `allow: true` or `choices: ["approve"]`; otherwise it is refused. The asker's own person, a guest and a person not in the scope are `forbidden`. Since 3.26 a supervisor's proposal (`proposed`) is decided the same way, by the same people; approved, its call is made then (see `Start` and `Send`), and one `proposal_answered` says what came of it. A proposal decided before is `error`, as an answered approval is. An approval whose call failed in a way that may pass later, such as a chat service that did not open the new thread's chat thread, leaves the proposal open; approved again, the same call is made under the same key.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -665,7 +671,7 @@ The fields of `ThreadInfo`, and:
 | `context` | `Context` | optional | as in `ThreadInfo` |
 | `tokens` | `TokenCount` | optional | as in `ThreadInfo` |
 | `terminal` | string | optional | as in `ThreadInfo` |
-| `requests` | [`Request`] | required | the open questions and approvals; open approvals asked here are listed whatever the thread state; may be `null` |
+| `requests` | [`Request`] | required | the open questions and approvals; open approvals asked here are listed whatever the thread state, and since 3.26 so are the open proposals shown here, as approvals with the choices Approve and Refuse; may be `null` |
 | `recent` | string | required | the end of its last output, at most the bytes asked for: its `text` events in order, each a whole message of the agent, with a blank line (`\n\n`) between two of them, also between two turns; cut at the start of a character, and with no part of a blank line left at the cut. Before 3.12 the messages were joined with nothing between them, and the cut could fall inside a character |
 | `events` | [`Event`] | optional | its last events, as many as `events` asked for, newest last, each as `Events` delivers it; since 1.5 |
 | `cancelled` | [`CancelledPost`] | optional | its last posts that a plugin's `message_sending` handler cancelled, at most 20, newest last, from its `post_cancelled` events; absent for none. A summary, as `recent` is: a caller limited to some event kinds gets it whatever kinds it was granted; since 3.19 |
@@ -910,6 +916,7 @@ The `data` of each event kind. Integers are the instance's own numbers for threa
 | `from` | string | optional | the `<client>:<id>` the input came from, such as a chat message's author; absent for a caller with no such id, such as the `hataori` command; since 1.6 |
 | `model` | string | required | the model asked for, or the scope's default |
 | `effort` | string | required | the effort asked for, or the scope's default |
+| `via` | string | optional | as in `input`: `proposal` for the thread of a supervisor's proposal that a person approved; since 3.26 |
 
 ### Event `state`
 
@@ -987,7 +994,7 @@ Since 3.19. A plugin's `message_sending` handler cancelled a row of the chat fro
 | `link` | object | optional | the link it came through, a `LinkRef`: `client`, `channel` and `thread`; absent for input from outside chat, such as the supervisor's; since 3.6 |
 | `before` | string | optional | text the plugins' `before_prompt_build` handlers added before the input, which the agent got on lines of their own before `text`; absent when none did; since 3.18 |
 | `after` | string | optional | the same, after it; since 3.18 |
-| `via` | string | optional | the way of the daemon's own it came through when it came through no link: `dashboard` for input given in the dashboard; `terminal` for the prompt of a turn typed at the agent's terminal, when the agent reports it, written right after that turn's `turn_started` with the owner as `principal` and no `from` or `link` (since 3.24); absent for input through a link, from the control socket and from the supervisor; since 3.23 |
+| `via` | string | optional | the way of the daemon's own it came through when it came through no link: `dashboard` for input given in the dashboard; `terminal` for the prompt of a turn typed at the agent's terminal, when the agent reports it, written right after that turn's `turn_started` with the owner as `principal` and no `from` or `link` (since 3.24); `proposal` for the supervisor's input that a person approved as its proposal, with the supervisor as `principal` and `from` (since 3.26); absent for input through a link, from the control socket and from the supervisor's own sends; since 3.23 |
 
 ### Event `answer`
 
@@ -1082,6 +1089,43 @@ The decision in the asker's thread, since 3.10.
 | `from` | string | optional | the `<client>:<id>` it came from, as in `thread_created` |
 | `link` | object | optional | the conversation where answered |
 | `via` | string | optional | as in `input`; since 3.23 |
+
+### Event `proposal_made`
+
+A supervisor's `Start` or `Send`, stored as a proposal in its own thread instead of being made, since 3.26.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `request` | string | required | what `Answer` names |
+| `number` | integer | required | the proposal's number, as `proposed` gave it |
+| `action` | string | required | `send` or `start` |
+| `target` | integer | optional | for `send`, the thread |
+| `question` | string | optional | for `send` to a thread waiting on a question, the request it answers, as in `request` |
+| `repo` | string | optional | for `start`, the repository |
+| `agent` | string | optional | for `start`, the agent it runs |
+| `model` | string | optional | for `start`, the model it runs with; for `send`, the thread's |
+| `effort` | string | optional | the same, for the effort |
+| `text` | string | optional | the input as the supervisor gave it, without the mark; text |
+| `principal` | string | optional | the supervisor's person |
+| `from` | string | optional | the supervisor's id, as in `thread_created` |
+
+### Event `proposal_answered`
+
+A person's decision of a proposal, in the thread it was shown in, and what came of it, since 3.26. One per proposal.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `request` | string | required | what `Answer` names |
+| `number` | integer | required | the proposal's number |
+| `action` | string | required | `send` or `start` |
+| `allow` | boolean | required | whether approved |
+| `outcome` | string | required | `run`: the call was made; `refused`: a person refused it; `busy`: approved, but the thread ran a turn or waited on a question it was not proposed to answer, so nothing was sent; `ended`: approved, but the question it answered was no longer open; `closed`: approved, but the thread is closed or removed; `failed`: approved, but the call was refused for another reason, in `reason` |
+| `target` | integer | optional | the thread: for `send` its target, for a `start` that ran the thread it made |
+| `reason` | string | optional | for `failed`, why, in the daemon's words: such as `not allowed`, when the supervisor's person may no longer act in the scope |
+| `principal` | string | optional | the person who decided |
+| `from` | string | optional | the `<client>:<id>` it came from, as in `thread_created` |
+| `link` | object | optional | the conversation where decided |
+| `via` | string | optional | as in `input` |
 
 ### Event `request`
 

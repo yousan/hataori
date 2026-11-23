@@ -17,8 +17,9 @@ var update = flag.Bool("update", false, "rewrite the golden digest")
 // taken by TestCaptureWakeEvents in cmd/hataori) matches the golden file:
 // each thread once, with its latest turn end, the supervisor's own thread
 // left out, the output cut to 1 KB at a character, and the threads past
-// the cap counted in one line. The cap is 6 here, so that the capture's
-// seven threads reach it.
+// the cap counted in one line; then each decision of the supervisor's
+// requests, in order (#650). The cap is 6 here, so that the capture's
+// eight threads pass it.
 func TestDigestOfCapturedEvents(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("testdata", "wake", "capture.json"))
 	if err != nil {

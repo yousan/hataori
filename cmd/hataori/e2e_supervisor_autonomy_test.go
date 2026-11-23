@@ -451,7 +451,8 @@ func TestAutonomyActAndInterrupts(t *testing.T) {
 }
 
 // A proposal counts once in sends_per_hour, when it is made: its run after
-// a person approved it is not counted again (#650).
+// a person approved it is not counted again. The count is the event log's,
+// so a restart keeps it (#650).
 func TestBudgetCountsAProposalOnce(t *testing.T) {
 	f := newSvAutonomy(t, "propose", budget(0, 3, 0))
 	w, _ := f.wt.worker(t, f.owner, "c1", "w", "reply w")
@@ -463,9 +464,42 @@ func TestBudgetCountsAProposalOnce(t *testing.T) {
 	if got := f.fromSupervisor(t, w); got != 2 {
 		t.Fatalf("%d sends of the supervisor ran, want 2", got)
 	}
+	f.restart(t)
 	f.propose(t, supervisor.ToolSend, map[string]any{"number": int64(w), "text": "reply three"})
 	out := mcpCall(t, f.m, supervisor.ToolSend, map[string]any{"number": int64(w), "text": "reply four"})
 	if !out.IsError || !strings.HasPrefix(out.Text, "not allowed: over budget: 3 of 3 sends and starts this hour") {
 		t.Fatalf("a fourth proposal: %+v", out)
+	}
+}
+
+// A person's decision of one of the supervisor's requests in its thread is
+// a person's answer there, so it resets the loop guard (#650).
+func TestLoopGuardResetByADecision(t *testing.T) {
+	f := newSvAutonomy(t, "act", budget(0, 0, 0), func(cfg map[string]any) {
+		cfg["scopes"].([]map[string]any)[0]["supervisor"].(map[string]any)["loop_cycles"] = 1
+	})
+	ctx := context.Background()
+	w, _ := f.wt.worker(t, f.owner, "c1", "w", "reply w")
+	r := f.running(t, "r")
+	if out := mcpCall(t, f.m, supervisor.ToolSend, map[string]any{"number": int64(w), "text": "reply again"}); out.IsError {
+		t.Fatalf("send: %+v", out)
+	}
+	f.wt.read(t, f.wt.ended(t, w, 2))
+	guard := f.wt.waker.Gates[0].(*supervisor.LoopGuard)
+	count := func() int {
+		n, _, err := guard.Count(ctx, w)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	f.wt.settle(t, "a cycle on the worker", func() bool { return count() == 1 })
+	if out := mcpCall(t, f.m, supervisor.ToolInterrupt, map[string]any{"number": int64(r), "reason": "urgent"}); out.IsError {
+		t.Fatalf("interrupt: %+v", out)
+	}
+	f.press(t, f.buttons(t, fmt.Sprintf("Interrupt thread %d?", r)), e2eHook, "Refuse")
+	f.decided(t, "approval_answered", 1)
+	if n := count(); n != 0 {
+		t.Fatalf("%d cycles on thread %d after a person's decision in the supervisor's thread, want 0", n, w)
 	}
 }

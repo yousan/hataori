@@ -1,4 +1,4 @@
-hataori: turns ended in 7 threads of this channel.
+hataori: turns ended in 8 threads of this channel, and 4 of your requests were decided.
 
 Thread 2: reply first
 Ended: failed (api_error). Background tasks: 0.
@@ -33,4 +33,10 @@ Ended: completed. Background tasks: 1.
 Last output:
 > started a long task
 
-And 1 more thread; list_threads and read_thread show it.
+And 2 more threads; list_threads and read_thread show them.
+
+Decided by a person:
+Your proposal 1, to send to thread 8: approved by dispatch, and sent.
+Your proposal 2, to send to thread 8: refused by dispatch; not sent.
+Your proposal 3, to send to thread 9: approved by dispatch, but not sent: the thread was running a turn or waiting on a question.
+Your request to interrupt thread 9: approved by dispatch; its turn was interrupted, and it got your reason.

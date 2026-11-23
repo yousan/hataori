@@ -600,7 +600,7 @@ Each read is a tool of `hataori mcp` and goes through one new control API operat
 *Autonomy.* `scopes[].supervisor.autonomy` says what the supervisor does on its own:
 
 - `watch`: read only. Its connection is given no `Start`, `Send` or `AskInterrupt`. It reads threads and the forge, keeps notes, sets reminders and tells people in its thread.
-- `propose`, the default: a send or a start of the supervisor's is not run but stored as a proposal in the supervisor's thread, as an interrupt request is, showing the target (the thread, or the repository), the text, the model and the effort, with Approve and Refuse buttons. A person of the scope other than the supervisor decides it with `Answer`. On approval the daemon makes the call as the supervisor, marked as its input, once, under a key made from the proposal; a send is made with `Refuse`, so a thread that became busy is not given it, and the outcome says so. Its tool answers at once with the proposal's number.
+- `propose`, the default: a send or a start of the supervisor's is not run but stored as a proposal in the supervisor's thread, as an interrupt request is, showing the target (the thread, or the repository), the text, the model and the effort, with Approve and Refuse buttons. A person of the scope other than the supervisor decides it with `Answer`. On approval the daemon makes the call as the supervisor, marked as its input, once, under a key made from the proposal; a send is made with `Refuse`, so a thread that became busy is not given it, and the outcome says so. A send to a thread waiting on a question is proposed as the answer to that question, and approved, it answers it only while that question is still open; any other send is not taken as an answer to a question asked meanwhile. Its tool answers at once with the proposal's number.
 - `act`: sends and starts run on their own, as they did before this setting, within its instructions and its scope's `repos`.
 
 In every mode an interrupt is a request that a person approves (above, "How an interrupt is approved"). The outcome of each of its proposals and interrupt requests (run; refused, and by whom; not run, because the thread was busy or the turn had ended) wakes the supervisor like a turn end, folded into the next wake, so that its notes stay true. A proposal counts in `sends_per_hour` once, when it is made. An approval is a person's answer in a supervisor's thread, so it resets the loop guard as any such answer does. The daemon reads the mode when it binds the token, so a change takes effect at the daemon's restart, also for a session that keeps running; the config's layer of its instructions states the mode, and a change reaches them as below. *Why:* a person hands over only as much as they trust. Under `propose` the supervisor plans and drafts the orders, and a person still decides each one.
@@ -1571,10 +1571,13 @@ type API interface {
 	// OpRead. Since 3.21 (#599).
 	Layout(ctx context.Context) ([]ChatLayout, error)
 
+	// For a caller with Propose, Start and Send make nothing and return a
+	// *Proposed (Caller.Propose, #650).
 	Start(ctx context.Context, r StartRequest) (ThreadID, error)
 	// key makes Send safe to repeat; for chat, the surface's message id.
 	// in.Link names the link the input came through, if any.
 	Send(ctx context.Context, id ThreadID, key string, in Input, busy Busy) error
+	// Answer answers an open question, approval or proposal.
 	Answer(ctx context.Context, req RequestID, a Answer) error
 	// AskInterrupt asks a person to approve interrupting the running turn of
 	// thread id, with reason. It stores an approval request in the caller's
@@ -1858,7 +1861,9 @@ type Caller struct {
 	// dashboard session's Caller (section 7.2). Set by the daemon when it
 	// binds the caller, never by a client, and not on the wire. The core
 	// writes it into the input, answer and approval_answered events of the
-	// caller's Send and Answer and into the stop event of its Stop (a new
+	// caller's Send and Answer (since 3.26 also into the thread_created of
+	// its Start and the proposal_answered of its Answer, and "proposal"
+	// for the call an approved proposal makes) and into the stop event of its Stop (a new
 	// kind: session, turn, principal, from, via, written in the step that
 	// interrupts the turn, once per Stop that interrupted one), and names
 	// it in the log line of a refusal. Since protocol 3.23.
@@ -1883,6 +1888,23 @@ type Caller struct {
 	// transaction that would take the input. The supervisor's waker has it
 	// (section 7.1, #441).
 	NoAnswer bool
+	// Propose makes the caller's Start and Send proposals (section 7.1,
+	// "Autonomy", #650): each is checked as the call would be up to where
+	// it would run, then stored in the caller's AsksIn thread (a
+	// proposal_made event and a proposals row), and the call returns a
+	// *Proposed whose Number is the proposal's (errors.Is ErrProposed; the
+	// wire's code "proposed", with the number in WireError.proposal). A
+	// repeated key returns the same proposal. A person of the scope other
+	// than the caller's person decides it with Answer, as an approval.
+	// Approved, the core makes the call as the caller, marked, with Via
+	// ViaProposal ("proposal"), once, under the key "proposal:<request>": a
+	// Send with Refuse and NoAnswer, unless it was proposed as the answer
+	// to the question the thread waits on, which it then answers only while
+	// that question is open; a Start with the agent, the model and the
+	// effort the proposal showed. One proposal_answered says the outcome:
+	// run, refused, busy, ended, closed or failed. Set by the daemon when
+	// it binds the caller. Since protocol 3.26.
+	Propose bool
 	// Mark is a line the core puts before the text of every input of the
 	// caller's Start and Send, except a Send that answers an open question;
 	// the title is made without it. Set by the
@@ -1918,9 +1940,12 @@ type Limit struct {
 // carries a token that the daemon issued (wire.Server.Issue, since
 // protocol 2.2): then it is bound to the API of the Caller the token was
 // issued for. wire.Server.Revoke forgets a token and closes its
-// connections. supervisor.Caller(scope, thread) is a supervisor's Caller: From
+// connections. supervisor.Caller(scope, thread, autonomy) is a supervisor's Caller: From
 // "supervisor:<scope>", Scopes [scope], OpRead|OpStart|OpSend|OpAsk, AsksIn thread, RefuseBusy,
-// and the Mark of section 7.1. plugin.Grant.Caller() is a plugin's Caller
+// and the Mark of section 7.1; under the scope's autonomy (#650) "watch"
+// it has OpRead only, under "propose", the default, Propose, and under
+// "act" neither. The daemon binds a "watch" token to an API that also
+// refuses Start, Send and AskInterrupt with a reason naming the mode. plugin.Grant.Caller() is a plugin's Caller
 // (section 7.3): From "plugin:<id>", the grant's Scopes, the classes of May
 // its operations need, a Limit to exactly its operations and event kinds
 // (empty, never nil, when it names none), and NoText without the
