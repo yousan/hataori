@@ -196,6 +196,12 @@ func examples(t *testing.T) map[string]any {
 	ex["terminal.json"] = response{ID: 1, Terminal: &control.TerminalChunk{Run: "5f0c9a1e7b3d4c2a8e6f1b0d9c7a5e3f",
 		Pos: 1046, Reset: false, Cols: 120, Rows: 40, Data: []byte("\x1b[32mok\x1b[0m tests pass\r\n")}}
 	ex["operate-ended.json"] = response{ID: 1, Ended: control.HostIdle}
+	// A Forge read of whether a pull request is in the running build.
+	// Since 3.29.
+	in, merged := true, true
+	ex["request-Forge-deployed.json"] = request{ID: 1, Op: "Forge", Args: mustJSON(control.ForgeRequest{Repo: "acme/widgets", Read: control.ForgeReadDeployed, Number: 42})}
+	ex["response-Forge-deployed.json"] = response{ID: 1, Result: mustJSON(control.ForgeAnswer{Repo: "acme/widgets", Deployed: &control.ForgeDeployed{
+		Build: "1f2e3d4c5b6a79880706f5e4d3c2b1a098765432", Pull: 42, Merged: &merged, Commit: "9fceb02d0ae598e95dc970b74767f19372d61af8", In: &in}})}
 	for op := range operations {
 		a, ok := args[op]
 		if !ok {

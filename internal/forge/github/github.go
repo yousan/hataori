@@ -11,6 +11,7 @@
 //   - /repos/<owner>/<repo>/pulls/<number>/files
 //   - /repos/<owner>/<repo>/commits/<ref>/check-runs
 //   - /repos/<owner>/<repo>/commits/<ref>/status
+//   - /repos/<owner>/<repo>/compare/<ref>...<ref>
 package github
 
 import (
@@ -544,6 +545,55 @@ func (c *client) Pull(ctx context.Context, r forge.Repo, n int) (forge.PullDetai
 	}
 	out.Checks, e = c.Checks(ctx, r, x.Head.SHA)
 	return out, e
+}
+
+// Merge reads a pull request's merge state, from its one request.
+func (c *client) Merge(ctx context.Context, r forge.Repo, n int) (forge.Merge, error) {
+	p, e := numberPath(r, n, "pulls")
+	if e != nil {
+		return forge.Merge{}, e
+	}
+	var x pull
+	if _, e = c.get(ctx, p, nil, &x); e != nil {
+		return forge.Merge{}, e
+	}
+	out := forge.Merge{State: x.item().State, Merged: x.Merged || x.MergedAt != nil}
+	if out.Merged {
+		out.Commit = x.MergeCommit
+	}
+	return out, nil
+}
+
+// comparison holds the fields read from a comparison of two commits.
+type comparison struct {
+	Status    string `json:"status"`
+	AheadBy   int    `json:"ahead_by"`
+	BehindBy  int    `json:"behind_by"`
+	MergeBase struct {
+		SHA string `json:"sha"`
+	} `json:"merge_base_commit"`
+}
+
+// Compare compares base and head, asking for one commit of the list,
+// which it does not read.
+func (c *client) Compare(ctx context.Context, r forge.Repo, base, head string) (forge.Comparison, error) {
+	p, e := repoPath(r)
+	if e != nil {
+		return forge.Comparison{}, e
+	}
+	b, e := refPath(base)
+	if e != nil {
+		return forge.Comparison{}, e
+	}
+	h, e := refPath(head)
+	if e != nil {
+		return forge.Comparison{}, e
+	}
+	var x comparison
+	if _, e = c.get(ctx, p+"/compare/"+b+"..."+h, url.Values{"per_page": {"1"}}, &x); e != nil {
+		return forge.Comparison{}, e
+	}
+	return forge.Comparison{Status: x.Status, AheadBy: x.AheadBy, BehindBy: x.BehindBy, MergeBase: x.MergeBase.SHA}, nil
 }
 
 // checkRun holds the fields read from a check run.

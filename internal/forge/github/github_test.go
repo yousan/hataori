@@ -189,6 +189,39 @@ func TestReadsDecodeCaptures(t *testing.T) {
 	}
 }
 
+// A pull request's merge and the comparisons of two commits decode from
+// their captures: each status, and a commit the repository does not have.
+func TestMergeAndCompareDecodeCaptures(t *testing.T) {
+	ctx := context.Background()
+	c := newClient("marker", newFake(t))
+	cli := forge.Repo{Owner: "cli", Name: "cli"}
+	const merge, later, branch = "c4513d446bf98cfcbe72ed83f17cd3220174d88f", "eeb44bc432c0107de002dadd34a61b4e2bd15882", "f44bd1dcc58a718327a4d1df89ea3d1145c827b2"
+	m, err := c.Merge(ctx, cli, 14910)
+	if err != nil || m != (forge.Merge{State: "merged", Merged: true, Commit: merge}) {
+		t.Fatalf("merge: %+v %v", m, err)
+	}
+	for _, x := range []struct {
+		base, head string
+		want       forge.Comparison
+		contains   bool
+	}{
+		{merge, later, forge.Comparison{Status: forge.Ahead, AheadBy: 4, MergeBase: merge}, true},
+		{later, merge, forge.Comparison{Status: forge.Behind, BehindBy: 4, MergeBase: merge}, false},
+		{merge, merge, forge.Comparison{Status: forge.Identical, MergeBase: merge}, true},
+		{merge, branch, forge.Comparison{Status: forge.Diverged, AheadBy: 3, BehindBy: 8, MergeBase: "7e97c4c4f5124f5e74611c099a610989315f128b"}, false},
+	} {
+		got, err := c.Compare(ctx, cli, x.base, x.head)
+		if err != nil || got != x.want || got.Contains() != x.contains {
+			t.Errorf("compare %s...%s: %+v %v, want %+v", x.base[:7], x.head[:7], got, err, x.want)
+		}
+	}
+	_, err = c.Compare(ctx, cli, merge, "0000000000000000000000000000000000000001")
+	var refusal *forge.Error
+	if !errors.As(err, &refusal) || refusal.Status != 404 || refusal.Message != "Not Found" {
+		t.Fatalf("an unknown commit: %v", err)
+	}
+}
+
 // roundTripFunc lets the request test inspect attempts before the guard.
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
@@ -223,6 +256,12 @@ func TestOnlyGETToTheAPIHost(t *testing.T) {
 	if _, err := c.Checks(ctx, urfave, "d5c06cb04479eeacbbb9378ea26261b6be516320"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := c.Merge(ctx, cli, 14910); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Compare(ctx, cli, "c4513d446bf98cfcbe72ed83f17cd3220174d88f", "eeb44bc432c0107de002dadd34a61b4e2bd15882"); err != nil {
+		t.Fatal(err)
+	}
 	_, notFound := c.Issue(ctx, cli, 999999999)
 	var refusal *forge.Error
 	if !errors.As(notFound, &refusal) || refusal.Status != 404 || refusal.RateLimited || !refusal.Reset.IsZero() || refusal.Message != "Not Found" {
@@ -249,7 +288,8 @@ func TestOnlyGETToTheAPIHost(t *testing.T) {
 		t.Fatalf("rate fields: %+v", fe)
 	}
 	const prefix = `^/repos/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+`
-	patterns := []string{`/issues$`, `/issues/[0-9]+$`, `/issues/[0-9]+/comments$`, `/pulls$`, `/pulls/[0-9]+$`, `/pulls/[0-9]+/reviews$`, `/pulls/[0-9]+/comments$`, `/pulls/[0-9]+/files$`, `/commits/[A-Za-z0-9._/-]+/check-runs$`, `/commits/[A-Za-z0-9._/-]+/status$`}
+	patterns := []string{`/issues$`, `/issues/[0-9]+$`, `/issues/[0-9]+/comments$`, `/pulls$`, `/pulls/[0-9]+$`, `/pulls/[0-9]+/reviews$`, `/pulls/[0-9]+/comments$`, `/pulls/[0-9]+/files$`, `/commits/[A-Za-z0-9._/-]+/check-runs$`, `/commits/[A-Za-z0-9._/-]+/status$`,
+		`/compare/[A-Za-z0-9._/-]+\.\.\.[A-Za-z0-9._/-]+$`}
 	paths := make([]*regexp.Regexp, len(patterns))
 	counts := make([]int, len(patterns))
 	for j, pattern := range patterns {

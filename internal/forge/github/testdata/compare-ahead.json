@@ -1,0 +1,309 @@
+{
+ "request": "GET /repos/cli/cli/compare/c4513d446bf98cfcbe72ed83f17cd3220174d88f...eeb44bc432c0107de002dadd34a61b4e2bd15882?per_page=1",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json; charset=utf-8",
+  "link": "<https://api.github.com/repositories/212613049/compare/c4513d446bf98cfcbe72ed83f17cd3220174d88f...eeb44bc432c0107de002dadd34a61b4e2bd15882?per_page=1&page=4>; rel=\"last\", <https://api.github.com/repositories/212613049/compare/c4513d446bf98cfcbe72ed83f17cd3220174d88f...eeb44bc432c0107de002dadd34a61b4e2bd15882?per_page=1&page=2>; rel=\"next\", <https://api.github.com/repositories/212613049/compare/c4513d446bf98cfcbe72ed83f17cd3220174d88f...eeb44bc432c0107de002dadd34a61b4e2bd15882?per_page=1&page=1>; rel=\"first\"",
+  "x-github-api-version-selected": "2022-11-28",
+  "x-ratelimit-limit": "60",
+  "x-ratelimit-remaining": "59",
+  "x-ratelimit-used": "1",
+  "x-ratelimit-resource": "core",
+  "x-ratelimit-reset": "1795444148"
+ },
+ "body": {
+  "url": "https://api.github.com/repos/cli/cli/compare/c4513d446bf98cfcbe72ed83f17cd3220174d88f...eeb44bc432c0107de002dadd34a61b4e2bd15882",
+  "html_url": "https://github.com/cli/cli/compare/c4513d446bf98cfcbe72ed83f17cd3220174d88f...eeb44bc432c0107de002dadd34a61b4e2bd15882",
+  "permalink_url": "https://github.com/cli/cli/compare/cli:c4513d4...cli:eeb44bc",
+  "diff_url": "https://github.com/cli/cli/compare/c4513d446bf98cfcbe72ed83f17cd3220174d88f...eeb44bc432c0107de002dadd34a61b4e2bd15882.diff",
+  "patch_url": "https://github.com/cli/cli/compare/c4513d446bf98cfcbe72ed83f17cd3220174d88f...eeb44bc432c0107de002dadd34a61b4e2bd15882.patch",
+  "base_commit": {
+   "sha": "c4513d446bf98cfcbe72ed83f17cd3220174d88f",
+   "node_id": "C_kwDODKw3udoAKGM0NTEzZDQ0NmJmOThjZmNiZTcyZWQ4M2YxN2NkMzIyMDE3NGQ4OGY",
+   "commit": {
+    "author": {
+     "name": "tidy-dev",
+     "email": "75402236+tidy-dev@users.noreply.github.com",
+     "date": "2026-11-03T00:25:42Z"
+    },
+    "committer": {
+     "name": "GitHub",
+     "email": "noreply@github.com",
+     "date": "2026-11-03T00:25:42Z"
+    },
+    "message": "Merge pull request #14910 from cli/tidy-dev-merge-blocker\n\nchore: regenerate triage workflows with gh-aw v1.0.1",
+    "tree": {
+     "sha": "af456f01ff8f43761dc72e0fc4a369d8121f7491",
+     "url": "https://api.github.com/repos/cli/cli/git/trees/af456f01ff8f43761dc72e0fc4a369d8121f7491"
+    },
+    "url": "https://api.github.com/repos/cli/cli/git/commits/c4513d446bf98cfcbe72ed83f17cd3220174d88f",
+    "comment_count": 0,
+    "verification": {
+     "verified": true,
+     "reason": "valid",
+     "signature": "-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQBQJq6SoGCRC1aQ7uu5UhlAAANlAQAK1AJ+atsrHvvo+lpqnJfXJm\ngZq3y1HcR6WwOP39AYIH5u7rDsfZr83e3+z8zpO0yN4UcwOMf75YVU+lTDYcCKdP\nXAfwPat0HL83Hy13G7DgbBuebzrJG8x5mXy/A6WPabqNW5QU0QhReTVcmAp5qg39\nsbwXG4QSZqGpTzUlhRxRSRqhUOLozVf4J4RL02mu/5hdZj/IpRLLbDMBxGVX+3OD\nqTxPXsaH7yjLEGDT3K/jSK3y9jJRlGw2eLtSM7RMJyYx/rzdZwjPiR0GR+KIf0rZ\nI5kq0odC+driziS0iG7DR5e7VrjtZ10YBxJizMmXJtLG4b6IsOkF1mZSV3eP21qP\nuiMrUDSUqoDD7NsneRSa5UOQvpVIrSIQ4RmqHK2b4dpdtQaiyTFwsZZrNPQAaEem\nRIpc6rr1e6XcI7hULrP5bZhuxJsUxN0fawHP2GiFzVOmQCOQGsqe7sM5r2QXyeOw\nJGYKt3D4PaXjcfatbWcxIuQth6BiCdg9F8XOmI6Ap012mDVY8WJbQBIgjVB2Fqqc\nVuM6NuOweKbwuUWQLmisAipFOPFDgBdHwGUTJ223M+Iyw/7O+cTQs0sp4KsIT4QM\n66flt++4gvM21/1BqlqP/0NHnsuLjqtKIDo3rtovF+vRjmZ4hl3kC6W2eC42EEqq\nLlrsPE5G8bzynsA/M/C5\n=IJst\n-----END PGP SIGNATURE-----\n",
+     "payload": "tree af456f01ff8f43761dc72e0fc4a369d8121f7491\nparent 9c399f1520a45f1bffb968d7d6565ea4112937fa\nparent 6a79004e03cf5efc85a8d27dca55937e745f8b20\nauthor tidy-dev <75402236+tidy-dev@users.noreply.github.com> 1793665542 -0500\ncommitter GitHub <noreply@github.com> 1793665542 -0500\n\nMerge pull request #14910 from cli/tidy-dev-merge-blocker\n\nchore: regenerate triage workflows with gh-aw v1.0.1",
+     "verified_at": "2026-11-03T00:25:43Z"
+    }
+   },
+   "url": "https://api.github.com/repos/cli/cli/commits/c4513d446bf98cfcbe72ed83f17cd3220174d88f",
+   "html_url": "https://github.com/cli/cli/commit/c4513d446bf98cfcbe72ed83f17cd3220174d88f",
+   "comments_url": "https://api.github.com/repos/cli/cli/commits/c4513d446bf98cfcbe72ed83f17cd3220174d88f/comments",
+   "author": {
+    "login": "tidy-dev",
+    "id": 75402236,
+    "node_id": "MDQ6VXNlcjc1NDAyMjM2",
+    "avatar_url": "https://avatars.githubusercontent.com/u/75402236?v=4",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/tidy-dev",
+    "html_url": "https://github.com/tidy-dev",
+    "followers_url": "https://api.github.com/users/tidy-dev/followers",
+    "following_url": "https://api.github.com/users/tidy-dev/following{/other_user}",
+    "gists_url": "https://api.github.com/users/tidy-dev/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/tidy-dev/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/tidy-dev/subscriptions",
+    "organizations_url": "https://api.github.com/users/tidy-dev/orgs",
+    "repos_url": "https://api.github.com/users/tidy-dev/repos",
+    "events_url": "https://api.github.com/users/tidy-dev/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/tidy-dev/received_events",
+    "type": "User",
+    "user_view_type": "public",
+    "site_admin": true
+   },
+   "committer": {
+    "login": "web-flow",
+    "id": 19864447,
+    "node_id": "MDQ6VXNlcjE5ODY0NDQ3",
+    "avatar_url": "https://avatars.githubusercontent.com/u/19864447?v=4",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/web-flow",
+    "html_url": "https://github.com/web-flow",
+    "followers_url": "https://api.github.com/users/web-flow/followers",
+    "following_url": "https://api.github.com/users/web-flow/following{/other_user}",
+    "gists_url": "https://api.github.com/users/web-flow/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/web-flow/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/web-flow/subscriptions",
+    "organizations_url": "https://api.github.com/users/web-flow/orgs",
+    "repos_url": "https://api.github.com/users/web-flow/repos",
+    "events_url": "https://api.github.com/users/web-flow/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/web-flow/received_events",
+    "type": "User",
+    "user_view_type": "public",
+    "site_admin": false
+   },
+   "parents": [
+    {
+     "sha": "9c399f1520a45f1bffb968d7d6565ea4112937fa",
+     "url": "https://api.github.com/repos/cli/cli/commits/9c399f1520a45f1bffb968d7d6565ea4112937fa",
+     "html_url": "https://github.com/cli/cli/commit/9c399f1520a45f1bffb968d7d6565ea4112937fa"
+    },
+    {
+     "sha": "6a79004e03cf5efc85a8d27dca55937e745f8b20",
+     "url": "https://api.github.com/repos/cli/cli/commits/6a79004e03cf5efc85a8d27dca55937e745f8b20",
+     "html_url": "https://github.com/cli/cli/commit/6a79004e03cf5efc85a8d27dca55937e745f8b20"
+    }
+   ]
+  },
+  "merge_base_commit": {
+   "sha": "c4513d446bf98cfcbe72ed83f17cd3220174d88f",
+   "node_id": "C_kwDODKw3udoAKGM0NTEzZDQ0NmJmOThjZmNiZTcyZWQ4M2YxN2NkMzIyMDE3NGQ4OGY",
+   "commit": {
+    "author": {
+     "name": "tidy-dev",
+     "email": "75402236+tidy-dev@users.noreply.github.com",
+     "date": "2026-11-03T00:25:42Z"
+    },
+    "committer": {
+     "name": "GitHub",
+     "email": "noreply@github.com",
+     "date": "2026-11-03T00:25:42Z"
+    },
+    "message": "Merge pull request #14910 from cli/tidy-dev-merge-blocker\n\nchore: regenerate triage workflows with gh-aw v1.0.1",
+    "tree": {
+     "sha": "af456f01ff8f43761dc72e0fc4a369d8121f7491",
+     "url": "https://api.github.com/repos/cli/cli/git/trees/af456f01ff8f43761dc72e0fc4a369d8121f7491"
+    },
+    "url": "https://api.github.com/repos/cli/cli/git/commits/c4513d446bf98cfcbe72ed83f17cd3220174d88f",
+    "comment_count": 0,
+    "verification": {
+     "verified": true,
+     "reason": "valid",
+     "signature": "-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQBQJq6SoGCRC1aQ7uu5UhlAAANlAQAK1AJ+atsrHvvo+lpqnJfXJm\ngZq3y1HcR6WwOP39AYIH5u7rDsfZr83e3+z8zpO0yN4UcwOMf75YVU+lTDYcCKdP\nXAfwPat0HL83Hy13G7DgbBuebzrJG8x5mXy/A6WPabqNW5QU0QhReTVcmAp5qg39\nsbwXG4QSZqGpTzUlhRxRSRqhUOLozVf4J4RL02mu/5hdZj/IpRLLbDMBxGVX+3OD\nqTxPXsaH7yjLEGDT3K/jSK3y9jJRlGw2eLtSM7RMJyYx/rzdZwjPiR0GR+KIf0rZ\nI5kq0odC+driziS0iG7DR5e7VrjtZ10YBxJizMmXJtLG4b6IsOkF1mZSV3eP21qP\nuiMrUDSUqoDD7NsneRSa5UOQvpVIrSIQ4RmqHK2b4dpdtQaiyTFwsZZrNPQAaEem\nRIpc6rr1e6XcI7hULrP5bZhuxJsUxN0fawHP2GiFzVOmQCOQGsqe7sM5r2QXyeOw\nJGYKt3D4PaXjcfatbWcxIuQth6BiCdg9F8XOmI6Ap012mDVY8WJbQBIgjVB2Fqqc\nVuM6NuOweKbwuUWQLmisAipFOPFDgBdHwGUTJ223M+Iyw/7O+cTQs0sp4KsIT4QM\n66flt++4gvM21/1BqlqP/0NHnsuLjqtKIDo3rtovF+vRjmZ4hl3kC6W2eC42EEqq\nLlrsPE5G8bzynsA/M/C5\n=IJst\n-----END PGP SIGNATURE-----\n",
+     "payload": "tree af456f01ff8f43761dc72e0fc4a369d8121f7491\nparent 9c399f1520a45f1bffb968d7d6565ea4112937fa\nparent 6a79004e03cf5efc85a8d27dca55937e745f8b20\nauthor tidy-dev <75402236+tidy-dev@users.noreply.github.com> 1793665542 -0500\ncommitter GitHub <noreply@github.com> 1793665542 -0500\n\nMerge pull request #14910 from cli/tidy-dev-merge-blocker\n\nchore: regenerate triage workflows with gh-aw v1.0.1",
+     "verified_at": "2026-11-03T00:25:43Z"
+    }
+   },
+   "url": "https://api.github.com/repos/cli/cli/commits/c4513d446bf98cfcbe72ed83f17cd3220174d88f",
+   "html_url": "https://github.com/cli/cli/commit/c4513d446bf98cfcbe72ed83f17cd3220174d88f",
+   "comments_url": "https://api.github.com/repos/cli/cli/commits/c4513d446bf98cfcbe72ed83f17cd3220174d88f/comments",
+   "author": {
+    "login": "tidy-dev",
+    "id": 75402236,
+    "node_id": "MDQ6VXNlcjc1NDAyMjM2",
+    "avatar_url": "https://avatars.githubusercontent.com/u/75402236?v=4",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/tidy-dev",
+    "html_url": "https://github.com/tidy-dev",
+    "followers_url": "https://api.github.com/users/tidy-dev/followers",
+    "following_url": "https://api.github.com/users/tidy-dev/following{/other_user}",
+    "gists_url": "https://api.github.com/users/tidy-dev/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/tidy-dev/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/tidy-dev/subscriptions",
+    "organizations_url": "https://api.github.com/users/tidy-dev/orgs",
+    "repos_url": "https://api.github.com/users/tidy-dev/repos",
+    "events_url": "https://api.github.com/users/tidy-dev/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/tidy-dev/received_events",
+    "type": "User",
+    "user_view_type": "public",
+    "site_admin": true
+   },
+   "committer": {
+    "login": "web-flow",
+    "id": 19864447,
+    "node_id": "MDQ6VXNlcjE5ODY0NDQ3",
+    "avatar_url": "https://avatars.githubusercontent.com/u/19864447?v=4",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/web-flow",
+    "html_url": "https://github.com/web-flow",
+    "followers_url": "https://api.github.com/users/web-flow/followers",
+    "following_url": "https://api.github.com/users/web-flow/following{/other_user}",
+    "gists_url": "https://api.github.com/users/web-flow/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/web-flow/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/web-flow/subscriptions",
+    "organizations_url": "https://api.github.com/users/web-flow/orgs",
+    "repos_url": "https://api.github.com/users/web-flow/repos",
+    "events_url": "https://api.github.com/users/web-flow/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/web-flow/received_events",
+    "type": "User",
+    "user_view_type": "public",
+    "site_admin": false
+   },
+   "parents": [
+    {
+     "sha": "9c399f1520a45f1bffb968d7d6565ea4112937fa",
+     "url": "https://api.github.com/repos/cli/cli/commits/9c399f1520a45f1bffb968d7d6565ea4112937fa",
+     "html_url": "https://github.com/cli/cli/commit/9c399f1520a45f1bffb968d7d6565ea4112937fa"
+    },
+    {
+     "sha": "6a79004e03cf5efc85a8d27dca55937e745f8b20",
+     "url": "https://api.github.com/repos/cli/cli/commits/6a79004e03cf5efc85a8d27dca55937e745f8b20",
+     "html_url": "https://github.com/cli/cli/commit/6a79004e03cf5efc85a8d27dca55937e745f8b20"
+    }
+   ]
+  },
+  "status": "ahead",
+  "ahead_by": 4,
+  "behind_by": 0,
+  "total_commits": 4,
+  "commits": [
+   {
+    "sha": "0fafae6df3857ba116026b3cc056f1383c1fc9f6",
+    "node_id": "C_kwDODKw3udoAKDBmYWZhZTZkZjM4NTdiYTExNjAyNmIzY2MwNTZmMTM4M2MxZmM5ZjY",
+    "commit": {
+     "author": {
+      "name": "BagToad",
+      "email": "47394200+BagToad@users.noreply.github.com",
+      "date": "2026-11-02T22:24:25Z"
+     },
+     "committer": {
+      "name": "BagToad",
+      "email": "47394200+BagToad@users.noreply.github.com",
+      "date": "2026-11-03T17:15:19Z"
+     },
+     "message": "Clarify which hosts use GH_ENTERPRISE_TOKEN\n\n`gh help environment` said the enterprise tokens apply to GitHub\nEnterprise Server hosts, but not how `gh` decides a host is one. go-gh\nuses GH_TOKEN and GITHUB_TOKEN for github.com, subdomains of ghe.com,\nand github.localhost, and the enterprise tokens for every other host:\nhttps://github.com/cli/go-gh/blob/v2.17.0/pkg/auth/auth.go#L63-L84\n\nCo-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>",
+     "tree": {
+      "sha": "7281a535859ce26c461d43a78d04a04bd9e7d173",
+      "url": "https://api.github.com/repos/cli/cli/git/trees/7281a535859ce26c461d43a78d04a04bd9e7d173"
+     },
+     "url": "https://api.github.com/repos/cli/cli/git/commits/0fafae6df3857ba116026b3cc056f1383c1fc9f6",
+     "comment_count": 0,
+     "verification": {
+      "verified": false,
+      "reason": "unsigned",
+      "signature": null,
+      "payload": null,
+      "verified_at": null
+     }
+    },
+    "url": "https://api.github.com/repos/cli/cli/commits/0fafae6df3857ba116026b3cc056f1383c1fc9f6",
+    "html_url": "https://github.com/cli/cli/commit/0fafae6df3857ba116026b3cc056f1383c1fc9f6",
+    "comments_url": "https://api.github.com/repos/cli/cli/commits/0fafae6df3857ba116026b3cc056f1383c1fc9f6/comments",
+    "author": {
+     "login": "BagToad",
+     "id": 47394200,
+     "node_id": "MDQ6VXNlcjQ3Mzk0MjAw",
+     "avatar_url": "https://avatars.githubusercontent.com/u/47394200?v=4",
+     "gravatar_id": "",
+     "url": "https://api.github.com/users/BagToad",
+     "html_url": "https://github.com/BagToad",
+     "followers_url": "https://api.github.com/users/BagToad/followers",
+     "following_url": "https://api.github.com/users/BagToad/following{/other_user}",
+     "gists_url": "https://api.github.com/users/BagToad/gists{/gist_id}",
+     "starred_url": "https://api.github.com/users/BagToad/starred{/owner}{/repo}",
+     "subscriptions_url": "https://api.github.com/users/BagToad/subscriptions",
+     "organizations_url": "https://api.github.com/users/BagToad/orgs",
+     "repos_url": "https://api.github.com/users/BagToad/repos",
+     "events_url": "https://api.github.com/users/BagToad/events{/privacy}",
+     "received_events_url": "https://api.github.com/users/BagToad/received_events",
+     "type": "User",
+     "user_view_type": "public",
+     "site_admin": true
+    },
+    "committer": {
+     "login": "BagToad",
+     "id": 47394200,
+     "node_id": "MDQ6VXNlcjQ3Mzk0MjAw",
+     "avatar_url": "https://avatars.githubusercontent.com/u/47394200?v=4",
+     "gravatar_id": "",
+     "url": "https://api.github.com/users/BagToad",
+     "html_url": "https://github.com/BagToad",
+     "followers_url": "https://api.github.com/users/BagToad/followers",
+     "following_url": "https://api.github.com/users/BagToad/following{/other_user}",
+     "gists_url": "https://api.github.com/users/BagToad/gists{/gist_id}",
+     "starred_url": "https://api.github.com/users/BagToad/starred{/owner}{/repo}",
+     "subscriptions_url": "https://api.github.com/users/BagToad/subscriptions",
+     "organizations_url": "https://api.github.com/users/BagToad/orgs",
+     "repos_url": "https://api.github.com/users/BagToad/repos",
+     "events_url": "https://api.github.com/users/BagToad/events{/privacy}",
+     "received_events_url": "https://api.github.com/users/BagToad/received_events",
+     "type": "User",
+     "user_view_type": "public",
+     "site_admin": true
+    },
+    "parents": [
+     {
+      "sha": "7e97c4c4f5124f5e74611c099a610989315f128b",
+      "url": "https://api.github.com/repos/cli/cli/commits/7e97c4c4f5124f5e74611c099a610989315f128b",
+      "html_url": "https://github.com/cli/cli/commit/7e97c4c4f5124f5e74611c099a610989315f128b"
+     }
+    ]
+   }
+  ],
+  "files": [
+   {
+    "sha": "83da8ce08ce431104b98669f6c6d1fe226584dd6",
+    "filename": "pkg/cmd/api/api.go",
+    "status": "modified",
+    "additions": 4,
+    "deletions": 2,
+    "changes": 6,
+    "blob_url": "https://github.com/cli/cli/blob/eeb44bc432c0107de002dadd34a61b4e2bd15882/pkg%2Fcmd%2Fapi%2Fapi.go",
+    "raw_url": "https://github.com/cli/cli/raw/eeb44bc432c0107de002dadd34a61b4e2bd15882/pkg%2Fcmd%2Fapi%2Fapi.go",
+    "contents_url": "https://api.github.com/repos/cli/cli/contents/pkg%2Fcmd%2Fapi%2Fapi.go?ref=eeb44bc432c0107de002dadd34a61b4e2bd15882",
+    "patch": "@@ -219,10 +219,12 @@ func NewCmdApi(f *cmdutil.Factory, runF func(*ApiOptions) error) *cobra.Command\n \t\tAnnotations: map[string]string{\n \t\t\t\"help:environment\": heredoc.Docf(`\n \t\t\t\tGH_TOKEN, GITHUB_TOKEN (in order of precedence): an authentication token for\n-\t\t\t\t%[1]sgithub.com%[1]s API requests.\n+\t\t\t\tAPI requests to %[1]sgithub.com%[1]s, a subdomain of %[1]sghe.com%[1]s, or %[1]sgithub.localhost%[1]s.\n \n \t\t\t\tGH_ENTERPRISE_TOKEN, GITHUB_ENTERPRISE_TOKEN (in order of precedence): an\n-\t\t\t\tauthentication token for API requests to GitHub Enterprise.\n+\t\t\t\tauthentication token for API requests to GitHub Enterprise Server. %[1]sgh%[1]s treats\n+\t\t\t\tany host other than %[1]sgithub.com%[1]s, a subdomain of %[1]sghe.com%[1]s, or\n+\t\t\t\t%[1]sgithub.localhost%[1]s as a GitHub Enterprise Server host.\n \n \t\t\t\tGH_HOST: make the request to a GitHub host other than %[1]sgithub.com%[1]s.\n \t\t\t`, \"`\"),"
+   },
+   {
+    "sha": "f606039eb4b5782f261a5331d25d7d05d7231eff",
+    "filename": "pkg/cmd/root/help_topic.go",
+    "status": "modified",
+    "additions": 4,
+    "deletions": 3,
+    "changes": 7,
+    "blob_url": "https://github.com/cli/cli/blob/eeb44bc432c0107de002dadd34a61b4e2bd15882/pkg%2Fcmd%2Froot%2Fhelp_topic.go",
+    "raw_url": "https://github.com/cli/cli/raw/eeb44bc432c0107de002dadd34a61b4e2bd15882/pkg%2Fcmd%2Froot%2Fhelp_topic.go",
+    "contents_url": "https://api.github.com/repos/cli/cli/contents/pkg%2Fcmd%2Froot%2Fhelp_topic.go?ref=eeb44bc432c0107de002dadd34a61b4e2bd15882",
+    "patch": "@@ -43,11 +43,12 @@ var HelpTopics = []helpTopic{\n \t\tshort: \"Environment variables that can be used with gh\",\n \t\tlong: heredoc.Docf(`\n \t\t\t%[1]sGH_TOKEN%[1]s, %[1]sGITHUB_TOKEN%[1]s (in order of precedence): an authentication token that will be used when\n-\t\t\ta command targets either %[1]sgithub.com%[1]s or a subdomain of %[1]sghe.com%[1]s. Setting this avoids being prompted to\n-\t\t\tauthenticate and takes precedence over previously stored credentials.\n+\t\t\ta command targets %[1]sgithub.com%[1]s, a subdomain of %[1]sghe.com%[1]s, or %[1]sgithub.localhost%[1]s. Setting this avoids\n+\t\t\tbeing prompted to authenticate and takes precedence over previously stored credentials.\n \n \t\t\t%[1]sGH_ENTERPRISE_TOKEN%[1]s, %[1]sGITHUB_ENTERPRISE_TOKEN%[1]s (in order of precedence): an authentication\n-\t\t\ttoken that will be used when a command targets a GitHub Enterprise Server host.\n+\t\t\ttoken that will be used when a command targets a GitHub Enterprise Server host. %[1]sgh%[1]s treats any host other\n+\t\t\tthan %[1]sgithub.com%[1]s, a subdomain of %[1]sghe.com%[1]s, or %[1]sgithub.localhost%[1]s as a GitHub Enterprise Server host.\n \n \t\t\t%[1]sGH_HOST%[1]s: specify the GitHub hostname for commands where a hostname has not been provided, or\n \t\t\tcannot be inferred from the context of a local Git repository. If this host was previously"
+   }
+  ]
+ }
+}

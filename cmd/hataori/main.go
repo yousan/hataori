@@ -114,7 +114,7 @@ func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "version":
 		if len(args) == 1 {
-			fmt.Fprintln(stdout, version.String())
+			fmt.Fprintln(stdout, version.Line())
 			return 0
 		}
 	case "login-guard":

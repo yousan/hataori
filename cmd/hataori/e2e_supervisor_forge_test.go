@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +21,7 @@ import (
 	"github.com/yousan/hataori/internal/forge"
 	"github.com/yousan/hataori/internal/instance"
 	"github.com/yousan/hataori/internal/supervisor"
+	"github.com/yousan/hataori/internal/version"
 	"github.com/yousan/hataori/internal/wire"
 )
 
@@ -39,6 +41,10 @@ var fakeForge struct {
 	issues []forge.IssueDetail
 	pulls  []forge.PullDetail
 	checks forge.Checks
+	// merges are the pull requests' merge states, and compares how a
+	// head commit stands to a base, by "base...head".
+	merges   map[int]forge.Merge
+	compares map[string]forge.Comparison
 }
 
 // fakeForgeClient keeps its token in a field, as a forge does, so that a
@@ -136,6 +142,28 @@ func (c fakeForgeClient) Checks(ctx context.Context, repo forge.Repo, ref string
 	fakeForge.Lock()
 	defer fakeForge.Unlock()
 	return fakeForge.checks, nil
+}
+
+func (c fakeForgeClient) Merge(ctx context.Context, repo forge.Repo, n int) (forge.Merge, error) {
+	c.read(fmt.Sprintf("merge %s %d", repo, n))
+	fakeForge.Lock()
+	defer fakeForge.Unlock()
+	m, ok := fakeForge.merges[n]
+	if !ok {
+		return forge.Merge{}, &forge.Error{Status: 404, Message: "Not Found"}
+	}
+	return m, nil
+}
+
+func (c fakeForgeClient) Compare(ctx context.Context, repo forge.Repo, base, head string) (forge.Comparison, error) {
+	c.read(fmt.Sprintf("compare %s %s...%s", repo, base, head))
+	fakeForge.Lock()
+	defer fakeForge.Unlock()
+	cmp, ok := fakeForge.compares[base+"..."+head]
+	if !ok {
+		return forge.Comparison{}, &forge.Error{Status: 404, Message: "Not Found"}
+	}
+	return cmp, nil
 }
 
 // forgeReads returns how many reads the fake forge was asked for.
@@ -501,5 +529,101 @@ func noToken(t *testing.T, wt *wakeTest, logged string) {
 		if env, err := os.ReadFile(filepath.Join("/proc", p.Name(), "environ")); err == nil && bytes.Contains(env, []byte(fakeForgeToken)) {
 			t.Errorf("process %s has the forge's token in its environment", p.Name())
 		}
+	}
+}
+
+// The deployed tool tells whether a pull request, or a commit, is in the
+// running daemon's build: a merged pull request whose merge commit is an
+// ancestor of the build commit is in, one merged after it is not, an open
+// one is not merged and is compared with nothing. A commit the forge does
+// not know, and a build whose build info has no commit, are answered with
+// the reason and no in. A repository the scope does not list, or one with
+// no forge name, is refused as by the other forge tools.
+func TestSupervisorDeployed(t *testing.T) {
+	const build, before, after, unknown = "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+		"cccc3333cccc3333cccc3333cccc3333cccc3333", "dddd4444dddd4444dddd4444dddd4444dddd4444"
+	fillFakeForge()
+	fakeForge.Lock()
+	fakeForge.merges = map[int]forge.Merge{
+		3: {State: "merged", Merged: true, Commit: before},
+		6: {State: "merged", Merged: true, Commit: after},
+		// An open one with a commit the forge would compare, as a test
+		// merge, so that only the daemon's own check keeps it from it.
+		7: {State: "open", Commit: "eeee5555eeee5555eeee5555eeee5555eeee5555"},
+	}
+	fakeForge.compares = map[string]forge.Comparison{
+		before + "..." + build:                                {Status: forge.Ahead, AheadBy: 5, MergeBase: before},
+		after + "..." + build:                                 {Status: forge.Behind, BehindBy: 2, MergeBase: build},
+		"eeee5555eeee5555eeee5555eeee5555eeee5555..." + build: {Status: forge.Ahead, AheadBy: 1},
+	}
+	fakeForge.Unlock()
+	running := version.Build{Commit: build}
+	var mu sync.Mutex
+	old := version.ReadBuild
+	version.ReadBuild = func() version.Build { mu.Lock(); defer mu.Unlock(); return running }
+	t.Cleanup(func() { version.ReadBuild = old })
+
+	local := bareRepo(t)
+	wt := newWakeTest(t, forgeConfig(local))
+	if err := os.WriteFile(filepath.Join(wt.r.root, "config", "forge-token"), []byte(fakeForgeToken+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stop, owner, sv := wt.start(t)
+	defer stop()
+	n := 0
+	call := func(args map[string]any) string {
+		t.Helper()
+		b, _ := json.Marshal(args)
+		n++
+		return wt.ask(t, owner, sv.ID, fmt.Sprintf("d%d", n), "mcp "+supervisor.ToolDeployed+" "+string(b))
+	}
+	has := func(a string, want ...string) {
+		t.Helper()
+		for _, w := range want {
+			if !strings.Contains(a, w+"\n") {
+				t.Fatalf("deployed answered %q, want the line %q", a, w)
+			}
+		}
+	}
+	has(call(map[string]any{"repo": "acme/widgets", "number": 3}), "build: "+build, "pull: #3 of acme/widgets", "merged: true", "commit: "+before, "in: true")
+	has(call(map[string]any{"repo": "acme/widgets", "number": 6}), "merged: true", "commit: "+after, "in: false")
+	open := call(map[string]any{"repo": "acme/widgets", "number": 7})
+	has(open, "merged: false")
+	if strings.Contains(open, "in: ") || strings.Contains(open, "commit: ") {
+		t.Fatalf("an open pull request answered %q, want no commit and no in", open)
+	}
+	fakeForge.Lock()
+	compared := slices.ContainsFunc(fakeForge.reads, func(r string) bool { return strings.Contains(r, "eeee5555") })
+	fakeForge.Unlock()
+	if compared {
+		t.Fatal("an open pull request was compared")
+	}
+	has(call(map[string]any{"repo": forgeAddress, "commit": before}), "commit: "+before, "in: true")
+	if a := call(map[string]any{"repo": "acme/widgets", "commit": unknown}); strings.Contains(a, "in: ") || !strings.Contains(a, "Not known: the forge cannot tell: ") {
+		t.Fatalf("an unknown commit answered %q, want the forge's reason and no in", a)
+	}
+
+	// A build whose build info has no commit.
+	mu.Lock()
+	running = version.Build{}
+	mu.Unlock()
+	a := call(map[string]any{"repo": "acme/widgets", "number": 3})
+	has(a, "build: (none)", "merged: true", "commit: "+before)
+	if strings.Contains(a, "in: ") || !strings.Contains(a, "Not known: the running hataori's build info records no commit") {
+		t.Fatalf("a build with no commit answered %q, want that reason and no in", a)
+	}
+
+	// Refused as the other forge tools refuse.
+	before3 := forgeReads()
+	for repo, want := range map[string]string{
+		"acme/other": `mcp error: not allowed: the supervisor of scope "c1" reads a forge only for a repository its scope lists`,
+		local:        `mcp error: not allowed: the supervisor of scope "c1" cannot read this repository on a forge`,
+	} {
+		if a := call(map[string]any{"repo": repo, "number": 3}); !strings.HasPrefix(a, want) {
+			t.Fatalf("deployed of %q answered %q, want %q", repo, a, want)
+		}
+	}
+	if got := forgeReads(); got != before3 {
+		t.Fatalf("%d reads of the forge for refused calls", got-before3)
 	}
 }

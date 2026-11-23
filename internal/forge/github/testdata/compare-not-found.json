@@ -1,0 +1,18 @@
+{
+ "request": "GET /repos/cli/cli/compare/c4513d446bf98cfcbe72ed83f17cd3220174d88f...0000000000000000000000000000000000000001?per_page=1",
+ "status": 404,
+ "headers": {
+  "content-type": "application/json; charset=utf-8",
+  "x-github-api-version-selected": "2022-11-28",
+  "x-ratelimit-limit": "60",
+  "x-ratelimit-remaining": "55",
+  "x-ratelimit-used": "5",
+  "x-ratelimit-resource": "core",
+  "x-ratelimit-reset": "1795444148"
+ },
+ "body": {
+  "message": "Not Found",
+  "documentation_url": "https://docs.github.com/rest/commits/commits#compare-two-commits",
+  "status": "404"
+ }
+}
