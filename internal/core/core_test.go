@@ -314,6 +314,12 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 			return err
 		},
 		"Release": func(a control.API) error { return a.Release(ctx, id) },
+		// Only the daemon's supervisor client reads a forge: the core
+		// answers every caller not supported (#648).
+		"Forge": func(a control.API) error {
+			_, err := a.Forge(ctx, control.ForgeRequest{Repo: "acme/widgets", Read: control.ForgeReadIssues})
+			return err
+		},
 	}
 	if len(ops) != reflect.TypeFor[control.API]().NumMethod() {
 		t.Fatal("the test does not cover every operation")
@@ -333,6 +339,9 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 			want := ErrForbidden
 			if cname == "other scope" && slices.Contains(namesThread, name) {
 				want = ErrNotFound
+			}
+			if name == "Forge" {
+				want = control.ErrNotSupported
 			}
 			f.log.Reset()
 			if err := op(a); !errors.Is(err, want) {

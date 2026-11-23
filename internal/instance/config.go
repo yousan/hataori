@@ -177,6 +177,10 @@ type Supervisor struct {
 	ReportEvery time.Duration
 	Mention     string
 	QuietHours  *QuietHours
+	// TrustedAuthors are the logins on a forge whose text the supervisor
+	// is given though they have no write access to the repository,
+	// "trusted_authors"; empty for none.
+	TrustedAuthors []string
 }
 
 // Repo is one entry of a supervisor's repos.
@@ -274,23 +278,24 @@ const (
 )
 
 type fileSupervisor struct {
-	Agent        string   `json:"agent"`
-	Model        string   `json:"model"`
-	Effort       string   `json:"effort"`
-	Instructions string   `json:"instructions"`
-	Quiet        string   `json:"quiet"`
-	OutputMax    *int     `json:"output_max"`
-	ThreadsMax   *int     `json:"threads_max"`
-	TurnsPerHour *int     `json:"turns_per_hour"`
-	SendsPerHour *int     `json:"sends_per_hour"`
-	TokensPerDay *int64   `json:"tokens_per_day"`
-	LoopCycles   *int     `json:"loop_cycles"`
-	Repos        []string `json:"repos"`
-	Autonomy     string   `json:"autonomy"`
-	Report       string   `json:"report"`
-	ReportEvery  string   `json:"report_every"`
-	Mention      string   `json:"mention"`
-	QuietHours   *struct {
+	Agent          string   `json:"agent"`
+	Model          string   `json:"model"`
+	Effort         string   `json:"effort"`
+	Instructions   string   `json:"instructions"`
+	Quiet          string   `json:"quiet"`
+	OutputMax      *int     `json:"output_max"`
+	ThreadsMax     *int     `json:"threads_max"`
+	TurnsPerHour   *int     `json:"turns_per_hour"`
+	SendsPerHour   *int     `json:"sends_per_hour"`
+	TokensPerDay   *int64   `json:"tokens_per_day"`
+	LoopCycles     *int     `json:"loop_cycles"`
+	Repos          []string `json:"repos"`
+	Autonomy       string   `json:"autonomy"`
+	Report         string   `json:"report"`
+	ReportEvery    string   `json:"report_every"`
+	Mention        string   `json:"mention"`
+	TrustedAuthors []string `json:"trusted_authors"`
+	QuietHours     *struct {
 		From string `json:"from"`
 		To   string `json:"to"`
 		Zone string `json:"zone"`
@@ -684,6 +689,13 @@ func ParseConfig(data []byte) (*Config, error) {
 					forges[f] = k
 				}
 				sc.Supervisor.Repos = append(sc.Supervisor.Repos, r)
+			}
+			for j, l := range sv.TrustedAuthors {
+				k := fmt.Sprintf("%s.supervisor.trusted_authors[%d]", key, j)
+				if l == "" || strings.TrimSpace(l) != l || strings.ContainsAny(l, " \t\r\n/@") {
+					return nil, fmt.Errorf("config: key %q: %q is not a login: it is empty or has spaces, a slash or an @", k, l)
+				}
+				sc.Supervisor.TrustedAuthors = append(sc.Supervisor.TrustedAuthors, l)
 			}
 			if err := sc.Supervisor.posts(sv, key+".supervisor"); err != nil {
 				return nil, err

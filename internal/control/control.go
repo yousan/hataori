@@ -262,6 +262,16 @@ type API interface {
 	// sorted by it. A client that does not report one (Connection) has no
 	// entry. It needs OpRead. Since 3.22.
 	Clients(ctx context.Context) ([]ClientState, error)
+
+	// Forge makes one read of a forge, read only (design, section 7.1):
+	// the issues, pull requests or checks of a repository the caller's
+	// scope lists under supervisor.repos, which must have a forge name.
+	// Only the daemon's supervisor client answers it, on a supervisor's
+	// token connection, with the forge's token, which the caller never
+	// sees; for any other repository it is ErrForbidden. The core answers
+	// ErrNotSupported. Text by an author without write access whom the
+	// scope does not trust is withheld. Since 3.27.
+	Forge(ctx context.Context, r ForgeRequest) (ForgeAnswer, error)
 }
 
 // Caller is who is asking. An API value is bound to one Caller,

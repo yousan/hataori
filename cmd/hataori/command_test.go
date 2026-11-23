@@ -24,6 +24,7 @@ import (
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/agent/fake"
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/forge"
 	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/instance"
 	"github.com/yousan/hataori/internal/proctest"
@@ -79,6 +80,9 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	if err := surface.Register(remoteSurface, remoteDriver); err != nil {
+		panic(err)
+	}
+	if err := forge.Register(fakeForgeName, newFakeForge); err != nil {
 		panic(err)
 	}
 	// `hataori run` as a process of its own, which a test can kill.

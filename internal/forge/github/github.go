@@ -137,6 +137,43 @@ func New(config *os.Root, settings []byte) (forge.Forge, error) {
 	return newClient(token, transport), nil
 }
 
+// host is the host of the addresses of repositories on GitHub.
+const host = "github.com"
+
+// scpForm is git's form [user@]host:path.
+var scpForm = regexp.MustCompile(`^(?:[A-Za-z0-9._-]+@)?([A-Za-z0-9.-]+):([^/\s][^\s]*)$`)
+
+// Serves returns the repository of an address on GitHub: https, http, ssh
+// or git with the host github.com, or git's form [user@]github.com:path,
+// whose path is <owner>/<name>, with or without ".git" or a trailing "/".
+func (c *client) Serves(address string) (forge.Repo, bool) {
+	var h, p string
+	if strings.Contains(address, "://") {
+		u, err := url.Parse(address)
+		if err != nil || u.RawQuery != "" || u.Fragment != "" || u.Port() != "" {
+			return forge.Repo{}, false
+		}
+		switch u.Scheme {
+		case "https", "http", "ssh", "git":
+		default:
+			return forge.Repo{}, false
+		}
+		h, p = u.Hostname(), strings.TrimPrefix(u.Path, "/")
+	} else if m := scpForm.FindStringSubmatch(address); m != nil {
+		h, p = m[1], m[2]
+	} else {
+		return forge.Repo{}, false
+	}
+	if !strings.EqualFold(h, host) {
+		return forge.Repo{}, false
+	}
+	r, err := forge.ParseRepo(strings.TrimSuffix(strings.TrimSuffix(p, "/"), ".git"))
+	if err != nil {
+		return forge.Repo{}, false
+	}
+	return r, true
+}
+
 // newClient makes a client with a testable inner transport.
 func newClient(token string, transport http.RoundTripper) *client {
 	u, _ := url.Parse(apiBase)

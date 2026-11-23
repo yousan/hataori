@@ -102,7 +102,36 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 			}
 			repos = append(repos, supervisor.Repo{Address: r.Address, Forge: r.Forge})
 		}
-		supervisors[s.Key] = supervisor.Scope{Model: sv.Model, Effort: sv.Effort, Instructions: sv.Instructions, Repos: repos, Autonomy: sv.Autonomy}
+		supervisors[s.Key] = supervisor.Scope{Model: sv.Model, Effort: sv.Effort, Instructions: sv.Instructions, Repos: repos,
+			Autonomy: sv.Autonomy, Trusted: sv.TrustedAuthors}
+	}
+	// The forges the supervisors read (design, section 7.1), each made from
+	// its section with its token, read from config/, which stays in it.
+	forges := make(map[string]forge.Forge, len(cfg.Forges))
+	if len(cfg.Forges) > 0 {
+		confDir, err := in.Root.OpenRoot("config")
+		if err != nil {
+			return fmt.Errorf("config: %w", err)
+		}
+		names := make([]string, 0, len(cfg.Forges))
+		for name := range cfg.Forges {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			factory, ok := forge.Lookup(name)
+			if !ok {
+				confDir.Close()
+				return fmt.Errorf("config: key %q: no forge %q in this binary", "forges."+name, name)
+			}
+			f, err := factory(confDir, cfg.Forges[name])
+			if err != nil {
+				confDir.Close()
+				return err
+			}
+			forges[name] = f
+		}
+		confDir.Close()
 	}
 	var cheap string
 	if cm, ok := adapters[agentName].(agent.CheapModel); ok {
@@ -310,7 +339,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		}
 	}
 	sv := &supervisor.Sessions{Core: c, Tokens: srv, Root: abs, Hataori: exe, Scopes: supervisors,
-		Owner: control.Principal(cfg.Owner), Cheap: cheap, Budgets: budgets, Log: lg}
+		Owner: control.Principal(cfg.Owner), Cheap: cheap, Budgets: budgets, Forges: forges, Log: lg}
 	// A start a person approved as a supervisor's proposal is checked
 	// against its scope's repos too, as they are now (#650).
 	c.ApprovedStart = sv.CheckStart
@@ -382,30 +411,12 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	// the owner takes its updates: the chat front end sets Notify.
 	lr := &relay.Relay{Store: st, Adapters: adapters, People: cfg.People, Off: !cfg.LoginRelay, Log: lg, Guard: []string{exe, "login-guard"}}
 	var fronts []*chat.FrontEnd
-	if len(cfg.Drivers) > 0 || len(cfg.Forges) > 0 {
+	if len(cfg.Drivers) > 0 {
 		confDir, err := in.Root.OpenRoot("config")
 		if err != nil {
 			return fmt.Errorf("config: %w", err)
 		}
 		defer confDir.Close()
-		// The supervisor's forge reads will use these adapters.
-		forges := make(map[string]forge.Forge, len(cfg.Forges))
-		names := make([]string, 0, len(cfg.Forges))
-		for name := range cfg.Forges {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		for _, name := range names {
-			factory, ok := forge.Lookup(name)
-			if !ok {
-				return fmt.Errorf("config: key %q: no forge %q in this binary", "forges."+name, name)
-			}
-			f, err := factory(confDir, cfg.Forges[name])
-			if err != nil {
-				return err
-			}
-			forges[name] = f
-		}
 		if fronts, err = frontEnds(abs, confDir, cfg, st, c, lr, lg); err != nil {
 			return err
 		}
