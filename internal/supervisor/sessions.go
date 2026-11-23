@@ -57,6 +57,7 @@ type Scope struct {
 	Model        string // the model; the adapter's cheapest when empty
 	Effort       string // the effort; the scope's when empty
 	Instructions string // appended to the agent's own instructions
+	Repos        []Repo // the only repositories its Start may clone; none: it starts nothing
 }
 
 // Sessions is the supervisors' part of the daemon (design, section 7.1): it
@@ -157,13 +158,15 @@ func (s *Sessions) bind(session int64, thread control.ThreadID, scope, stateDir 
 }
 
 // API is what the connection of scope's supervisor is bound to: its
-// Caller, with its sends and starts counted against the scope's budget.
+// Caller, with its sends and starts counted against the scope's budget,
+// and its starts limited to the scope's repos (none for a scope that names
+// no supervisor).
 func (s *Sessions) API(scope string, thread control.ThreadID) control.API {
 	api := s.Core.As(Caller(scope, thread))
 	if b := s.Budgets[scope]; b != nil {
 		api = b.API(api)
 	}
-	return api
+	return Repos(api, scope, s.Scopes[scope].Repos, s.Log)
 }
 
 // writeToken writes token to file, readable by this user only, and syncs it.

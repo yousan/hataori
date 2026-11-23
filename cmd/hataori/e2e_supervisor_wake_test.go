@@ -113,8 +113,13 @@ type wakeTest struct {
 
 func newWakeTest(t *testing.T, more ...func(cfg map[string]any)) *wakeTest {
 	t.Helper()
-	r, _ := svRoot(t, true, more...)
-	wt := &wakeTest{r: r, repo: bareRepo(t), clk: &wakeClock{}}
+	// The supervisor of c1 may start threads in the test's repository.
+	repo := bareRepo(t)
+	listRepo := func(cfg map[string]any) {
+		cfg["scopes"].([]map[string]any)[0]["supervisor"].(map[string]any)["repos"] = []string{repo}
+	}
+	r, _ := svRoot(t, true, append([]func(map[string]any){listRepo}, more...)...)
+	wt := &wakeTest{r: r, repo: repo, clk: &wakeClock{}}
 	coreHook = func(c *core.Core) { c.Machine.Now = wt.clk.Now }
 	wakerHook = func(w *supervisor.Waker) {
 		if b := wt.before.Swap(nil); b != nil {

@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -155,6 +157,58 @@ type Supervisor struct {
 	// through, with no person's message in between, before it no longer
 	// wakes it. "loop_cycles"; 3 when absent; 0 turns the guard off.
 	LoopCycles int
+	// Repos are the repositories the supervisor works on, "repos": the
+	// only ones its Start may clone. Empty: it starts no thread.
+	Repos []Repo
+}
+
+// Repo is one entry of a supervisor's repos.
+type Repo struct {
+	// Address is the entry as written, as an order's repo: names the
+	// repository; what a Start of it clones.
+	Address string
+	// Forge is its forge name, "<owner>/<name>", or empty for an address
+	// that has none, such as a file:// one (ForgeName).
+	Forge string
+}
+
+// forgePart is one part of a forge name: a name or the owner it belongs to.
+var forgePart = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+
+// scpAddress is git's SSH form [user@]host:path, whose host has no '/'.
+var scpAddress = regexp.MustCompile(`^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9.-]+:([^\s]+)$`)
+
+// ForgeName returns the forge name of a repository's address, the
+// "<owner>/<name>" that a forge knows it by: the path of a URL with a host
+// (https, http, ssh or git), or of git's form [user@]host:path with a path
+// that does not start with "/", when it is two parts, without a trailing
+// ".git" or "/". Any other address, such as a
+// local one, has none, and ForgeName returns "".
+func ForgeName(address string) string {
+	var at string
+	if strings.Contains(address, "://") {
+		u, err := url.Parse(address)
+		if err != nil || u.Host == "" || u.RawQuery != "" || u.Fragment != "" {
+			return ""
+		}
+		switch u.Scheme {
+		case "https", "http", "ssh", "git":
+		default:
+			return ""
+		}
+		at = u.Path
+	} else if m := scpAddress.FindStringSubmatch(address); m != nil && !strings.HasPrefix(m[1], "/") {
+		at = m[1] // a path from "/", as of "file:/a/b", is no forge's
+	} else {
+		return ""
+	}
+	at = strings.TrimSuffix(strings.TrimSuffix(strings.TrimPrefix(at, "/"), "/"), ".git")
+	owner, name, ok := strings.Cut(at, "/")
+	if !ok || !forgePart.MatchString(owner) || !forgePart.MatchString(name) ||
+		owner == "." || owner == ".." || name == "." || name == ".." {
+		return ""
+	}
+	return owner + "/" + name
 }
 
 // The defaults of a supervisor's wake (decision 5 of #267).
@@ -171,17 +225,18 @@ const (
 )
 
 type fileSupervisor struct {
-	Agent        string `json:"agent"`
-	Model        string `json:"model"`
-	Effort       string `json:"effort"`
-	Instructions string `json:"instructions"`
-	Quiet        string `json:"quiet"`
-	OutputMax    *int   `json:"output_max"`
-	ThreadsMax   *int   `json:"threads_max"`
-	TurnsPerHour *int   `json:"turns_per_hour"`
-	SendsPerHour *int   `json:"sends_per_hour"`
-	TokensPerDay *int64 `json:"tokens_per_day"`
-	LoopCycles   *int   `json:"loop_cycles"`
+	Agent        string   `json:"agent"`
+	Model        string   `json:"model"`
+	Effort       string   `json:"effort"`
+	Instructions string   `json:"instructions"`
+	Quiet        string   `json:"quiet"`
+	OutputMax    *int     `json:"output_max"`
+	ThreadsMax   *int     `json:"threads_max"`
+	TurnsPerHour *int     `json:"turns_per_hour"`
+	SendsPerHour *int     `json:"sends_per_hour"`
+	TokensPerDay *int64   `json:"tokens_per_day"`
+	LoopCycles   *int     `json:"loop_cycles"`
+	Repos        []string `json:"repos"`
 }
 
 // Dashboard is the "dashboard" section of the config: a loopback listener,
@@ -539,6 +594,29 @@ func ParseConfig(data []byte) (*Config, error) {
 					return nil, fmt.Errorf("config: key %q: %d is not a number of 0 or more (0 turns the limit off)", key+".supervisor.tokens_per_day", *v)
 				}
 				sc.Supervisor.TokensPerDay = *v
+			}
+			// The entries are named by their keys, not their text, which
+			// may hold a credential.
+			forges := map[string]string{}
+			for j, e := range sv.Repos {
+				k := fmt.Sprintf("%s.supervisor.repos[%d]", key, j)
+				if e == "" || strings.TrimSpace(e) != e || strings.ContainsAny(e, " \t\r\n") {
+					return nil, fmt.Errorf("config: key %q: not a repository's address: it is empty or has spaces", k)
+				}
+				r := Repo{Address: e, Forge: ForgeName(e)}
+				for i, had := range sc.Supervisor.Repos {
+					if had.Address == e {
+						return nil, fmt.Errorf("config: key %q: the same address as %s.supervisor.repos[%d]", k, key, i)
+					}
+				}
+				if r.Forge != "" {
+					f := strings.ToLower(r.Forge)
+					if other, ok := forges[f]; ok {
+						return nil, fmt.Errorf("config: key %q: the forge name %q, as %s has: the forge tools could not tell them apart", k, r.Forge, other)
+					}
+					forges[f] = k
+				}
+				sc.Supervisor.Repos = append(sc.Supervisor.Repos, r)
 			}
 		}
 		for j, e := range s.ShowIn {
