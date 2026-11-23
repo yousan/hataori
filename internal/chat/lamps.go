@@ -20,7 +20,7 @@ import (
 //
 // A turn the agent started by itself lamps the message of the last turn a
 // caller started, and pings that sender only when it ends blocked or
-// failed (#248). A message held until the running turn ends gets its own
+// failed (#248); so does every turn in a supervisor's thread (#639). A message held until the running turn ends gets its own
 // lamp when its turn starts. A turn typed at the terminal gets neither.
 
 // The parts of a turn event's lamp and ping rows, far from the parts of
@@ -192,7 +192,13 @@ func (f *FrontEnd) lamps(ctx context.Context, r *reader, e control.Event, convs 
 		st.shown = s
 		rows = append(rows, lamp(l, lampPart, s))
 	}
-	if ping != "" && (!byself || d.Outcome == "failure" || d.Outcome == "blocked") {
+	// A completed turn pings nobody when the agent started it, or in a
+	// supervisor's thread, where the reply is already the answer (#639).
+	sv, err := f.supervisors(ctx, r, e.Thread)
+	if err != nil {
+		return nil, err
+	}
+	if ping != "" && (!(byself || sv) || d.Outcome == "failure" || d.Outcome == "blocked") {
 		rows = append(rows, f.pingRow(ctx, r, e, l, ping, d.Outcome, convs))
 	}
 	return rows, nil
