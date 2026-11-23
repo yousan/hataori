@@ -265,6 +265,7 @@ type waking struct {
 	waiting map[control.ThreadID]control.Event
 	stale   map[control.ThreadID]control.Event
 	bg      <-chan time.Time // a step towards the first waiting thread's BackgroundWait
+	caught  bool             // the stored events were read: waits are timed from now on
 }
 
 func (w *Waker) clock() Clock {
@@ -350,7 +351,9 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 		r.w.read.Store(e.Pos)
 	}
 	if e.Kind == control.CaughtUp {
-		// What waits for background tasks waits from now on, by the clock.
+		// What waits for background tasks waits from now on, by the clock:
+		// a turn end read before this may have its next turn further on.
+		r.caught = true
 		r.background()
 		// Nothing waits: the events read so far need not be read again.
 		if r.empty() && r.sending == nil && r.read > r.pos {
@@ -399,9 +402,10 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 		}
 		return nil
 	}
-	if e.Kind == "turn_started" {
-		// The thread's background work came back, or it went on: the turn
-		// end it waited from wakes nobody, and its next one wakes as any.
+	if e.Kind == "turn_started" || closed(e) {
+		// The thread's background work came back, or it went on, or the
+		// thread was closed: the turn end it waited from wakes nobody, and
+		// its next one wakes as any.
 		delete(r.waiting, e.Thread)
 		delete(r.stale, e.Thread)
 		return nil
@@ -418,7 +422,9 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 	if !own && Waiting(e) {
 		// Not the end of anything yet (#672).
 		r.waiting[e.Thread] = e
-		r.background()
+		if r.caught {
+			r.background()
+		}
 		return nil
 	}
 	if !Fold(r.ended, e, own) {
@@ -450,6 +456,42 @@ func (r *waking) isOwn(ctx context.Context, id control.ThreadID) (bool, error) {
 // empty reports whether nothing is folded.
 func (r *waking) empty() bool { return len(r.ended) == 0 && len(r.decided) == 0 && len(r.stale) == 0 }
 
+// closed reports whether e is a thread's change of state to closed.
+func closed(e control.Event) bool {
+	if e.Kind != "state" {
+		return false
+	}
+	var d struct {
+		To string `json:"to"`
+	}
+	json.Unmarshal(e.Data, &d) // the store checked the event against its schema
+	return d.To == string(control.Closed)
+}
+
+// staleLine is the digest's line for a stale turn end.
+const staleLine = "Its background work has not come back: no turn started in the hour since this turn end."
+
+// staleIn reports whether text, a digest, gives thread id's turn end as
+// stale: the paragraph of the thread has the stale line.
+func staleIn(text string, id control.ThreadID) bool {
+	at := "\nThread " + strconv.FormatInt(int64(id), 10)
+	for i := 0; ; {
+		j := strings.Index(text[i:], at)
+		if j < 0 {
+			return false
+		}
+		start := i + j + len(at)
+		if start < len(text) && (text[start] == ':' || text[start] == '\n') {
+			para := text[start:]
+			if end := strings.Index(para, "\n\n"); end >= 0 {
+				para = para[:end]
+			}
+			return strings.Contains(para, staleLine)
+		}
+		i = start
+	}
+}
+
 // background moves each waiting thread whose BackgroundWait has passed to
 // stale, opening the quiet period as a turn end does, and sets the timer
 // for the next one. A timer does not count the time the host slept, so it
@@ -479,16 +521,19 @@ func (r *waking) background() {
 
 // loadWaiting reads from the event log the worker threads of the scope
 // whose last turn end waits for background tasks, with no turn started
-// since. One the stored position covers and whose BackgroundWait has
-// passed was told already when a wake was given since then; any other
-// is stale. One after the stored position comes again with the events.
+// since and not closed, from after where the waker began (since) up to
+// its stored position: those after it come again with the events. One
+// whose BackgroundWait has passed was told if a wake given to a
+// supervisor thread of the scope since then, or the wake stored to be
+// sent, gives it as stale; any other is stale now.
 func (r *waking) loadWaiting(ctx context.Context) error {
 	db := r.w.Core.Store.DB
 	rows, err := db.QueryContext(ctx, `SELECT e.pos, e.thread_id, e.time, e.data FROM events e JOIN threads t ON t.id = e.thread_id
 		WHERE t.scope = ? AND t.confined = 0 AND t.state != ? AND e.kind = 'turn_ended' AND e.pos <= ?
+		AND e.pos > (SELECT since FROM supervisor_wakes WHERE scope = ?)
 		AND e.pos = (SELECT max(pos) FROM events WHERE thread_id = e.thread_id AND kind = 'turn_ended')
 		AND NOT EXISTS (SELECT 1 FROM events s WHERE s.thread_id = e.thread_id AND s.kind = 'turn_started' AND s.pos > e.pos)`,
-		r.w.Scope, string(control.Closed), int64(r.pos))
+		r.w.Scope, string(control.Closed), int64(r.pos), r.w.Scope)
 	if err != nil {
 		return fmt.Errorf("supervisor: threads waiting on background tasks: %w", err)
 	}
@@ -513,20 +558,15 @@ func (r *waking) loadWaiting(ctx context.Context) error {
 	}
 	now := r.w.clock().Now()
 	for _, e := range found {
-		due := e.Time.Add(BackgroundWait)
-		if due.After(now) {
+		if due := e.Time.Add(BackgroundWait); due.After(now) {
 			r.waiting[e.Thread] = e
 			continue
 		}
-		// A wake given since the wait was over offered it.
-		var told int
-		err := db.QueryRowContext(ctx, `SELECT count(*) FROM events WHERE kind = 'turn_started' AND pos > ? AND time >= ?
-			AND thread_id IN (SELECT id FROM threads WHERE scope = ? AND confined = 1)
-			AND substr(json_extract(data, '$.key'), 1, ?) = ?`, int64(e.Pos), due.UnixMilli(), r.w.Scope, len(WakeKeyPrefix), WakeKeyPrefix).Scan(&told)
+		told, err := r.toldStale(ctx, e)
 		if err != nil {
-			return fmt.Errorf("supervisor: threads waiting on background tasks: %w", err)
+			return err
 		}
-		if told == 0 {
+		if !told {
 			r.stale[e.Thread] = e
 		}
 	}
@@ -534,6 +574,31 @@ func (r *waking) loadWaiting(ctx context.Context) error {
 		r.quiet = r.w.clock().After(r.w.Quiet)
 	}
 	return nil
+}
+
+// toldStale reports whether a wake after e, given to a supervisor thread
+// of the scope or stored to be sent, gives e's thread as stale.
+func (r *waking) toldStale(ctx context.Context, e control.Event) (bool, error) {
+	if r.sending != nil && staleIn(r.sending.text, e.Thread) {
+		return true, nil
+	}
+	rows, err := r.w.Core.Store.DB.QueryContext(ctx, `SELECT json_extract(data, '$.text') FROM events WHERE kind = 'input' AND pos > ?
+		AND thread_id IN (SELECT id FROM threads WHERE scope = ? AND confined = 1)
+		AND substr(json_extract(data, '$.text'), 1, 9) = 'hataori: '`, int64(e.Pos), r.w.Scope)
+	if err != nil {
+		return false, fmt.Errorf("supervisor: threads waiting on background tasks: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var text sql.NullString
+		if err := rows.Scan(&text); err != nil {
+			return false, fmt.Errorf("supervisor: threads waiting on background tasks: %w", err)
+		}
+		if staleIn(text.String, e.Thread) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // attempt sends the stored wake, or makes one of what is folded and sends
@@ -884,8 +949,8 @@ func (r *waking) load(ctx context.Context) error {
 // supervisor (#445).
 func Begin(ctx context.Context, c *core.Core, scope string) error {
 	err := c.Store.Update(ctx, func(tx *store.Tx) error {
-		_, err := tx.ExecContext(ctx, `INSERT INTO supervisor_wakes (scope, pos)
-			SELECT ?, coalesce(max(pos), 0) FROM events WHERE true ON CONFLICT (scope) DO NOTHING`, scope)
+		_, err := tx.ExecContext(ctx, `INSERT INTO supervisor_wakes (scope, pos, since)
+			SELECT ?, coalesce(max(pos), 0), coalesce(max(pos), 0) FROM events WHERE true ON CONFLICT (scope) DO NOTHING`, scope)
 		return err
 	})
 	if err != nil {
@@ -1064,7 +1129,7 @@ func Digest(lines []Line, more int, decided ...Decision) string {
 		}
 		fmt.Fprintf(&b, ". Background tasks: %d.\n", l.Background)
 		if l.Stale {
-			b.WriteString("Its background work has not come back: no turn started in the hour since this turn end.\n")
+			b.WriteString(staleLine + "\n")
 		}
 		switch {
 		case l.Last == "":
