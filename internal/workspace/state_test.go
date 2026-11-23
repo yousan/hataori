@@ -31,7 +31,10 @@ func (f *repoFixture) env() []string {
 
 func (f *repoFixture) git(cwd string, args ...string) string {
 	f.t.Helper()
-	cmd := exec.Command("git", args...)
+	// git's automatic maintenance is off: a commit starts it in the
+	// background, and its files come and go while a test reads the
+	// directory.
+	cmd := exec.Command("git", append([]string{"-c", "maintenance.auto=false", "-c", "gc.auto=0"}, args...)...)
 	cmd.Dir = cwd
 	cmd.Env = f.env()
 	out, err := cmd.CombinedOutput()
