@@ -34,6 +34,9 @@ type reader struct {
 	// earlier turn events were read for it.
 	lamp      map[control.ThreadID]*lampState
 	lampKnown map[control.ThreadID]bool
+	// sv holds whether each thread looked up is a supervisor's
+	// (FrontEnd.supervisors); made when first needed.
+	sv map[control.ThreadID]bool
 	// outbox and ctx are the front end's, for looking up rows.
 	outbox *Outbox
 	ctx    context.Context
