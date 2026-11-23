@@ -73,12 +73,17 @@ func reopenedText(workspace, conversation string) string {
 
 // closedReply answers a message in a closed or removed thread t: the
 // owner's is held and gets the Reopen button, when the service shows
-// buttons; anyone else's gets ClosedLine alone.
+// buttons; anyone else's gets the closed text alone (closedText).
 func (f *FrontEnd) closedReply(ctx context.Context, in surface.Inbound, t control.ThreadInfo) error {
-	if !f.owner(in.Author) || !f.withButtons([]string{"Reopen"}, false) {
-		return f.closedNotice(ctx, in)
+	text, err := f.closedText(ctx, in.Ref.Conv, t)
+	if err != nil {
+		f.Log.Error("follow-up: the scope's supervisor thread", "scope", t.Scope, "thread", int64(t.ID), "message", in.Ref.ID, "err", err)
+		return err // not answered yet: try again
 	}
-	err := f.Outbox.Store.Update(ctx, func(tx *store.Tx) error {
+	if !f.owner(in.Author) || !f.withButtons([]string{"Reopen"}, false) {
+		return f.noticeOnce(ctx, in, surface.Message{Text: text})
+	}
+	err = f.Outbox.Store.Update(ctx, func(tx *store.Tx) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO chat_reopen_held (client, channel, message, thread_id, conv_thread, author, ping, text, received_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`, f.Name, in.Ref.Conv.Channel, in.Ref.ID, int64(t.ID),
 			in.Ref.Conv.Thread, in.Author.ID, pingOf(in.Author), in.Text, time.Now().UnixMilli())
@@ -89,8 +94,69 @@ func (f *FrontEnd) closedReply(ctx context.Context, in surface.Inbound, t contro
 			"message", in.Ref.ID, "err", err)
 		return err
 	}
-	return f.noticeOnce(ctx, in, surface.Message{Text: ClosedLine + "\n" + ReopenLine,
+	return f.noticeOnce(ctx, in, surface.Message{Text: text + "\n" + ReopenLine,
 		Choices: []surface.Choice{reopenChoice(t.ID, in.Ref.ID)}})
+}
+
+// closedText is what a message in the closed thread t gets in conv:
+// ClosedLine, and, when t was a supervisor's thread and its scope's
+// supervisor has another, open one now, one line that names that one (#667). It
+// is looked up for each message, so a chain of replacements names the live
+// one.
+func (f *FrontEnd) closedText(ctx context.Context, conv surface.Conversation, t control.ThreadInfo) (string, error) {
+	if f.Supervisor == nil {
+		return ClosedLine, nil
+	}
+	var confined bool
+	if err := f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT confined FROM threads WHERE id = ?`, int64(t.ID)).Scan(&confined); err != nil {
+		return "", fmt.Errorf("chat: whether thread %d is a supervisor's: %w", t.ID, err)
+	}
+	if !confined {
+		return ClosedLine, nil
+	}
+	now, state, err := f.Supervisor(ctx, t.Scope)
+	if err != nil {
+		return "", err
+	}
+	if now == 0 || now == t.ID || state == control.Closed || state == control.Removed {
+		return ClosedLine, nil // no other one is open
+	}
+	link, err := f.linkTo(ctx, now, conv.Channel)
+	if err != nil {
+		return "", err
+	}
+	return ClosedLine + "\n" + supervisorNow(now, link), nil
+}
+
+// supervisorNow is the line that names the thread that is a scope's
+// supervisor's now; link is "" when nothing here links to it.
+func supervisorNow(thread control.ThreadID, link string) string {
+	line := fmt.Sprintf("The supervisor is now in thread %d", thread)
+	if link != "" {
+		line += ": " + link
+	}
+	return line + "."
+}
+
+// linkTo is the text that links to a conversation of thread here, one in
+// channel if it has one; "" when there is none or the service shows none.
+func (f *FrontEnd) linkTo(ctx context.Context, thread control.ThreadID, channel string) (string, error) {
+	l, ok := f.Driver.(surface.Linker)
+	if !ok {
+		return "", nil
+	}
+	convs, err := f.convsOf(ctx, thread)
+	if err != nil || len(convs) == 0 {
+		return "", err
+	}
+	to := convs[0]
+	for _, c := range convs {
+		if c.Channel == channel {
+			to = c
+			break
+		}
+	}
+	return l.Link(to), nil
 }
 
 // held is a message held in a closed thread.

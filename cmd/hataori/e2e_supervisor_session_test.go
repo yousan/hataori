@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/agent/fake"
+	"github.com/yousan/hataori/internal/chat"
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/runner"
@@ -411,5 +413,107 @@ func TestSupervisorToolsAcrossRestartAndSleep(t *testing.T) {
 	dbOf(t, r.root).QueryRow(`SELECT spec FROM sessions WHERE thread_id = ?`, int64(work)).Scan(&spec)
 	if strings.Contains(spec, "Confine") {
 		t.Fatalf("an ordinary thread's stored spec %s has a confinement", spec)
+	}
+}
+
+// A message in a replaced supervisor's closed chat thread gets the closed
+// line and one line that names and links the supervisor's current thread:
+// after two replacements, in the first thread and in the second, the
+// third. The owner's has the Reopen button too. A message in an ordinary
+// closed thread of the same scope gets the closed line alone (#667).
+func TestClosedSupervisorThreadNamesTheCurrentOne(t *testing.T) {
+	r, _ := svRoot(t, true)
+	r.deadline = time.Now().Add(120 * time.Second)
+	conv := func(th control.ThreadInfo) surface.Conversation {
+		if len(th.Links) != 1 {
+			t.Fatalf("thread %d has the links %v", th.ID, th.Links)
+		}
+		return surface.Conversation{Channel: th.Links[0].Channel, Thread: th.Links[0].Thread}
+	}
+	line := func(now control.ThreadInfo) string {
+		return fmt.Sprintf("%s\nThe supervisor is now in thread %d: %s.", chat.ClosedLine, now.ID, r.driver.Link(conv(now)))
+	}
+	closeThread := func(id control.ThreadID) {
+		t.Helper()
+		if code, _, errOut := cli(t, "close", "--root", r.root, strconv.FormatInt(int64(id), 10)); code != 0 {
+			t.Fatalf("close: %d %s", code, errOut)
+		}
+	}
+	// replyTo posts as author in th and returns the one reply to it.
+	replyTo := func(th control.ThreadInfo, author surface.Author, text string) fakesurface.Call {
+		t.Helper()
+		in := r.driver.Inject(conv(th), author, text)
+		var got []fakesurface.Call
+		eventually(t, "the reply to "+text, r.within(15*time.Second), func() bool {
+			got = nil
+			for _, c := range r.driver.Calls(conv(th)) {
+				if c.Op == fakesurface.OpPost && c.Message.ReplyTo != nil && c.Message.ReplyTo.ID == in.Ref.ID {
+					got = append(got, c)
+				}
+			}
+			return len(got) > 0
+		})
+		return got[0]
+	}
+	var svs []control.ThreadInfo
+	start := func() (func(), *wire.Client) {
+		t.Helper()
+		stop, _ := runDaemonLog(t, r.root)
+		r.connected(t)
+		owner, err := wire.Dial(r.root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		svs = append(svs, supervisorThread(t, owner, "c1", control.Idle))
+		return func() { owner.Close(); stop() }, owner
+	}
+
+	stop, _ := start()
+	closeThread(svs[0].ID)
+	// Not replaced yet: no other thread to name.
+	if got := replyTo(svs[0], fakesurface.Webhook(e2eHook), "before"); got.Message.Text != chat.ClosedLine {
+		t.Fatalf("before a replacement: %q", got.Message.Text)
+	}
+	stop()
+	stop, _ = start()
+	if got := replyTo(svs[0], fakesurface.Webhook(e2eHook), "one"); got.Message.Text != line(svs[1]) || len(got.Message.Choices) != 0 {
+		t.Fatalf("after one replacement: %q %v, want %q", got.Message.Text, got.Message.Choices, line(svs[1]))
+	}
+	closeThread(svs[1].ID)
+	// The newer one is closed too, and nothing replaced it yet: it is not
+	// the supervisor now.
+	if got := replyTo(svs[0], fakesurface.Webhook(e2eHook), "neither open"); got.Message.Text != chat.ClosedLine {
+		t.Fatalf("while no supervisor thread is open: %q", got.Message.Text)
+	}
+	stop()
+	stop, owner := start()
+	defer func() { stop() }()
+	if svs[0].ID == svs[1].ID || svs[1].ID == svs[2].ID {
+		t.Fatalf("supervisor threads %d, %d, %d", svs[0].ID, svs[1].ID, svs[2].ID)
+	}
+	for _, old := range svs[:2] {
+		if got := replyTo(old, fakesurface.Webhook(e2eHook), "two"); got.Message.Text != line(svs[2]) {
+			t.Fatalf("in thread %d after two replacements: %q, want %q", old.ID, got.Message.Text, line(svs[2]))
+		}
+	}
+	got := replyTo(svs[0], fakesurface.Person(e2eOwner), "from the owner")
+	if got.Message.Text != line(svs[2])+"\n"+chat.ReopenLine || len(got.Message.Choices) != 1 {
+		t.Fatalf("the owner's: %q %v", got.Message.Text, got.Message.Choices)
+	}
+
+	// An ordinary closed thread of the scope: the closed line alone.
+	id, err := owner.Start(context.Background(), control.StartRequest{Key: "o", Scope: "c1", Thread: "to", Repo: bareRepo(t), Input: control.Input{Text: "reply ordinary"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ordinary control.ThreadInfo
+	eventually(t, "the ordinary thread idle", r.within(15*time.Second), func() bool {
+		d, err := owner.Thread(context.Background(), id, 0, 0)
+		ordinary = d.ThreadInfo
+		return err == nil && d.State == control.Idle && d.Turns > 0
+	})
+	closeThread(id)
+	if got := replyTo(ordinary, fakesurface.Webhook(e2eHook), "ordinary"); got.Message.Text != chat.ClosedLine || len(got.Message.Choices) != 0 {
+		t.Fatalf("in an ordinary closed thread: %q %v", got.Message.Text, got.Message.Choices)
 	}
 }

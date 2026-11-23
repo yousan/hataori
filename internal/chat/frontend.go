@@ -52,7 +52,11 @@ type FrontEnd struct {
 	// scope's supervisor, by scope, of any client: a link here may show
 	// another client's scope (#657).
 	Supervisors map[string]Posts
-	Log         *slog.Logger
+	// Supervisor returns the thread that is a scope's supervisor's now, 0
+	// when it has none: what a message in an earlier supervisor's closed
+	// thread names (core.Core.LastConfined). Nil: no thread is named.
+	Supervisor func(ctx context.Context, scope string) (control.ThreadID, control.State, error)
+	Log        *slog.Logger
 
 	// The progress line: posted after QuietAfter (90s) of a turn without
 	// output, edited at most every EditEvery (15s), checked every Tick (1s).
@@ -639,22 +643,16 @@ func (f *FrontEnd) followUp(in surface.Inbound) error {
 // ClosedLine is what a message in a closed thread gets.
 const ClosedLine = "This thread is closed: nothing was sent to the agent."
 
-// closedNotice answers a message in a closed thread with ClosedLine. The
-// row is keyed by the message's place in chat_notices, so the message
-// delivered again writes it once. Its event is 0 and its part negative,
-// which no other row uses.
-func (f *FrontEnd) closedNotice(ctx context.Context, in surface.Inbound) error {
-	return f.refusedNotice(ctx, in, ClosedLine)
-}
-
-// refusedNotice answers a message that reached no agent with text, once: the row
-// is keyed by the message's place in chat_notices, as closedNotice's.
+// refusedNotice answers a message that reached no agent with text, once
+// (noticeOnce).
 func (f *FrontEnd) refusedNotice(ctx context.Context, in surface.Inbound, text string) error {
 	return f.noticeOnce(ctx, in, surface.Message{Text: text})
 }
 
 // noticeOnce posts m as a reply to the message in, once: the row is keyed
-// in chat_notices by the message's place, or by key when one is given.
+// in chat_notices by the message's place, or by key when one is given, so
+// the message delivered again writes it once. Its event is 0 and its part
+// negative, which no other row uses.
 func (f *FrontEnd) noticeOnce(ctx context.Context, in surface.Inbound, m surface.Message, key ...string) error {
 	k := in.Ref.ID
 	if len(key) > 0 {

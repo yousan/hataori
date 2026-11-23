@@ -153,6 +153,13 @@ func New() *Driver {
 
 var _ surface.Namer = (*Driver)(nil)
 
+var _ surface.Linker = (*Driver)(nil)
+
+// Link returns a text that names conv.
+func (d *Driver) Link(conv surface.Conversation) string {
+	return "[link to " + conv.Channel + "/" + conv.Thread + "]"
+}
+
 // SetName makes Name answer name for conv, as a service that shows people
 // that name; "" for none.
 func (d *Driver) SetName(conv surface.Conversation, name string) {

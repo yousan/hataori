@@ -384,6 +384,18 @@ func (d *Driver) SetThread(ctx context.Context, conv surface.Conversation, t sur
 
 var _ surface.Namer = (*Driver)(nil)
 
+var _ surface.Linker = (*Driver)(nil)
+
+// Link returns the mention of a thread or a channel, which Discord shows
+// as a link to it and which notifies nobody.
+func (d *Driver) Link(conv surface.Conversation) string {
+	id, err := target(conv)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("<#%d>", id)
+}
+
 // Name is the name Discord shows for conv: "#" and the channel's name for
 // a channel, its own name for a thread, and none for a direct conversation.
 func (d *Driver) Name(ctx context.Context, conv surface.Conversation) (string, error) {

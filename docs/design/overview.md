@@ -420,6 +420,8 @@ The driver's calls are: run and deliver inbound messages, button presses and com
 
 The driver splits long text, picks buttons or a menu, and maps a status to whatever the surface has (a reaction, an edit). Its limits let the front end avoid asking for what a surface cannot do.
 
+**A message in a replaced supervisor's closed thread** (#667) gets the closed line followed by one line that names the scope's current supervisor thread, by its number and, where it has a conversation on that client, by a link to it that the service shows (`surface.Linker`; on a service without one, the number only). The current thread is looked up when the message comes in (`core.Core.LastConfined`), so after several replacements every old thread names the live one; while none is open, as between closing one and the daemon's next start, none is named. The owner's Reopen button (section 5.1) is offered there as in any closed thread. Other closed threads get the closed line as before.
+
 **Links.** A link is where a thread is shown in chat: the client's name, the channel, and the thread on that service (the conversation), with who made it and when. A thread has any number of links, at most one per conversation, and a conversation links to at most one thread. An inbound message in a conversation is resolved to a thread through its link: the front end looks the link up (by `Threads`, or from what it keeps of its own links) and sends to that number. A message in a conversation with no link is not for hataori, as today.
 
 - **The first link** is made when the thread starts: the scope's owner opens the chat thread, from the trigger message when there is one, and the core stores it with the thread in the same transaction.
@@ -2406,6 +2408,13 @@ type Factory func(config *os.Root, settings []byte) (Driver, error)
 // connect, and records the names with SetName (#405).
 type Namer interface {
 	Name(ctx context.Context, conv Conversation) (string, error)
+}
+
+// Linker is implemented by a Driver whose service shows a link to a
+// conversation in the text of a message: Link returns the text that does,
+// which a person opens conv with, or "" when conv cannot be linked to.
+type Linker interface {
+	Link(conv Conversation) string
 }
 
 // Renamer is implemented by a Sink that wants the names of conversations

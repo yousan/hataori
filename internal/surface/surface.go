@@ -66,6 +66,13 @@ type Namer interface {
 	Name(ctx context.Context, conv Conversation) (string, error)
 }
 
+// Linker is implemented by a Driver whose service shows a link to a
+// conversation in the text of a message: Link returns the text that does,
+// which a person opens conv with, or "" when conv cannot be linked to.
+type Linker interface {
+	Link(conv Conversation) string
+}
+
 // Renamer is implemented by a Sink that wants the names of conversations
 // as the service shows them: Run calls Renamed when it learns a thread's
 // name, and when the name changes.
