@@ -627,6 +627,22 @@ var migrations = []Migration{
 			PRIMARY KEY (client, channel, message)
 		)`,
 	)},
+	// A start the supervisor made during a person's turn (#677), under its
+	// key: asked for by that person until its thread's first wake. woken is
+	// then the position that wake covered, and the row goes once the
+	// waker's own position has passed it.
+	{Name: "supervisor_asked", Up: execAll(
+		`CREATE TABLE supervisor_asked (
+			scope   TEXT NOT NULL,
+			key     TEXT NOT NULL,    -- the start's
+			asks_in INTEGER NOT NULL, -- the supervisor's thread, where a proposal of it is shown
+			person  TEXT NOT NULL,
+			thread  INTEGER,          -- what the start made, once a wake carries it
+			wake    TEXT,             -- the key of the wake that carries it
+			woken   INTEGER,
+			PRIMARY KEY (scope, key)
+		)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

@@ -1469,6 +1469,27 @@ func (c *Core) SentTo(ctx context.Context, scope, key string) (control.ThreadID,
 	return d.Thread, true, nil
 }
 
+// StartMade returns the thread that a Start in scope with key made, as it
+// was called or as the proposal it made in asksIn was approved; 0 for
+// none. proposed is the state of that proposal, or empty for none.
+func (c *Core) StartMade(ctx context.Context, scope, key string, asksIn control.ThreadID) (id control.ThreadID, proposed string, err error) {
+	id, ok, err := c.started(ctx, "start:"+scope+"\x00"+key)
+	if err != nil || ok {
+		return id, "", err
+	}
+	var handle string
+	err = c.Store.DB.QueryRowContext(ctx, `SELECT handle, state FROM proposals WHERE asks_in = ? AND ask_key = ?`,
+		int64(asksIn), "start:"+key).Scan(&handle, &proposed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, "", nil
+	}
+	if err != nil {
+		return 0, "", fmt.Errorf("core: proposal: %w", err)
+	}
+	id, _, err = c.started(ctx, "start:"+scope+"\x00"+ProposalKeyPrefix+handle)
+	return id, proposed, err
+}
+
 // sameConfinement refuses a key that started a thread before whose
 // confinement is not the one asked for now: an ordinary Start never
 // returns a confined thread, and StartConfined never an ordinary one.
