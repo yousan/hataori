@@ -1,0 +1,18 @@
+{
+ "request": "GET /repos/cli/cli/issues/999999999",
+ "status": 404,
+ "headers": {
+  "content-type": "application/json; charset=utf-8",
+  "x-github-api-version-selected": "2022-11-28",
+  "x-ratelimit-limit": "60",
+  "x-ratelimit-remaining": "20",
+  "x-ratelimit-used": "40",
+  "x-ratelimit-resource": "core",
+  "x-ratelimit-reset": "1795430204"
+ },
+ "body": {
+  "message": "Not Found",
+  "documentation_url": "https://docs.github.com/rest/issues/issues#get-an-issue",
+  "status": "404"
+ }
+}

@@ -1,0 +1,87 @@
+{
+ "request": "GET /repos/cli/cli/pulls/14910/comments?page=1&per_page=100",
+ "status": 200,
+ "headers": {
+  "x-github-api-version-selected": "2022-11-28",
+  "content-type": "application/json; charset=utf-8",
+  "x-ratelimit-limit": "60",
+  "x-ratelimit-remaining": "27",
+  "x-ratelimit-used": "33",
+  "x-ratelimit-resource": "core",
+  "x-ratelimit-reset": "1795430204"
+ },
+ "body": [
+  {
+   "url": "https://api.github.com/repos/cli/cli/pulls/comments/4449348131",
+   "pull_request_review_id": 5745291665,
+   "id": 4449348131,
+   "node_id": "PRRC_kwDODKw3uc8AAAABCTOqIw",
+   "diff_hunk": "@@ -5,15 +5,10 @@\n       \"version\": \"v3.3.0\",\n       \"sha\": \"64ab729a6294000f5aa4a4bc0b73d1f32bc45510\"\n     },\n-    \"github/gh-aw-actions/setup-cli@v0.89.21\": {\n-      \"repo\": \"github/gh-aw-actions/setup-cli\",\n-      \"version\": \"v0.89.21\",\n-      \"sha\": \"924af5fdc64061cfbf66fb584c8b07e2ac230c60\"\n-    },\n-    \"github/gh-aw-actions/setup@v0.89.21\": {\n+    \"github/gh-aw-actions/setup@v1.0.1\": {\n       \"repo\": \"github/gh-aw-actions/setup\",\n-      \"version\": \"v0.89.21\",\n-      \"sha\": \"924af5fdc64061cfbf66fb584c8b07e2ac230c60\"\n+      \"version\": \"v1.0.1\",\n+      \"sha\": \"221ba4f4319de6b8e809d1a15528b3ae6a818aa5\"",
+   "path": ".github/aw/actions-lock.json",
+   "commit_id": "6a79004e03cf5efc85a8d27dca55937e745f8b20",
+   "original_commit_id": "d7ef60c60e9590daf94022f95ebf2b72f5306c5e",
+   "user": {
+    "login": "Copilot",
+    "id": 175728472,
+    "node_id": "BOT_kgDOCnlnWA",
+    "avatar_url": "https://avatars.githubusercontent.com/in/946600?v=4",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/Copilot",
+    "html_url": "https://github.com/apps/copilot-pull-request-reviewer",
+    "followers_url": "https://api.github.com/users/Copilot/followers",
+    "following_url": "https://api.github.com/users/Copilot/following{/other_user}",
+    "gists_url": "https://api.github.com/users/Copilot/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/Copilot/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/Copilot/subscriptions",
+    "organizations_url": "https://api.github.com/users/Copilot/orgs",
+    "repos_url": "https://api.github.com/users/Copilot/repos",
+    "events_url": "https://api.github.com/users/Copilot/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/Copilot/received_events",
+    "type": "Bot",
+    "user_view_type": "public",
+    "site_admin": false
+   },
+   "body": "\ud83d\uded1 Requirement: Update the repository-installed compiler alongside the runtime pins\n\nThe Copilot setup still installs gh-aw v0.89.21 (.github/workflows/copilot-setup-steps.yml:26-28), as do the compiler-install steps in .github/workflows/agentics-maintenance.yml, including validation at lines 655-657. Regenerating these workflows in those environments uses the older compiler and can undo the runtime upgrades in this PR. Update the setup-cli pins and version inputs to v1.0.1, and regenerate the maintenance workflow with that version so repository-managed compilation stays aligned.",
+   "created_at": "2026-11-03T00:16:54Z",
+   "updated_at": "2026-11-03T00:16:54Z",
+   "html_url": "https://github.com/cli/cli/pull/14910#discussion_r4449348131",
+   "pull_request_url": "https://api.github.com/repos/cli/cli/pulls/14910",
+   "_links": {
+    "self": {
+     "href": "https://api.github.com/repos/cli/cli/pulls/comments/4449348131"
+    },
+    "html": {
+     "href": "https://github.com/cli/cli/pull/14910#discussion_r4449348131"
+    },
+    "pull_request": {
+     "href": "https://api.github.com/repos/cli/cli/pulls/14910"
+    }
+   },
+   "reactions": {
+    "url": "https://api.github.com/repos/cli/cli/pulls/comments/4449348131/reactions",
+    "total_count": 0,
+    "+1": 0,
+    "-1": 0,
+    "laugh": 0,
+    "hooray": 0,
+    "confused": 0,
+    "heart": 0,
+    "rocket": 0,
+    "eyes": 0
+   },
+   "start_line": 13,
+   "original_start_line": 8,
+   "start_side": "RIGHT",
+   "line": 16,
+   "original_line": 11,
+   "side": "RIGHT",
+   "author_association": "CONTRIBUTOR",
+   "original_position": 15,
+   "position": 18,
+   "subject_type": "line",
+   "is_copilot_code_review": true,
+   "copilot_code_review_severity": "medium",
+   "copilot_code_review_sources": []
+  }
+ ]
+}

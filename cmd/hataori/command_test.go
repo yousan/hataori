@@ -350,7 +350,7 @@ func TestAdaptersOnlyUnderCmd(t *testing.T) {
 	// The trailing slashes keep the interface packages themselves on the
 	// core side: internal/agent is core, internal/agent/fake an adapter.
 	// Add future adapter, driver and client package prefixes here.
-	packagePrefixes := []string{"internal/agent/", "internal/surface/"}
+	packagePrefixes := []string{"internal/agent/", "internal/surface/", "internal/forge/"}
 	isAdapter := func(path string) bool {
 		for _, prefix := range packagePrefixes {
 			if strings.HasPrefix(path, prefix) {
@@ -359,13 +359,14 @@ func TestAdaptersOnlyUnderCmd(t *testing.T) {
 		}
 		return false
 	}
-	// Keep all surface and agent names in this one list.
-	names := []string{"Discord", "Slack", "Microsoft Teams", "Teams", "Claude Code", "Claude", "Codex"}
+	// Keep all surface, agent and forge names in this one list.
+	names := []string{"Discord", "Slack", "Microsoft Teams", "Teams", "Claude Code", "Claude", "Codex", "GitHub"}
 	patterns := make([]string, len(names))
 	for i, name := range names {
 		patterns[i] = regexp.QuoteMeta(name)
 	}
 	words := regexp.MustCompile(`(?i)\b(?:` + strings.Join(patterns, "|") + `)\b`)
+	moduleHost := regexp.MustCompile(`(?i)(^|[^./A-Za-z0-9-])github\.com/`)
 
 	root := filepath.Join("..", "..")
 	fset := token.NewFileSet()
@@ -410,6 +411,7 @@ func TestAdaptersOnlyUnderCmd(t *testing.T) {
 		}
 		if strings.HasPrefix(pkg, "internal/") {
 			for i, line := range strings.Split(string(source), "\n") {
+				line = moduleHost.ReplaceAllString(line, "$1")
 				for _, word := range words.FindAllString(line, -1) {
 					t.Errorf("%s:%d: core source names surface or agent %q", rel, i+1, word)
 				}

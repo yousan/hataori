@@ -54,6 +54,8 @@ import (
 	"github.com/yousan/hataori/internal/agent/claudecode"
 	"github.com/yousan/hataori/internal/agent/codex"
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/forge"
+	"github.com/yousan/hataori/internal/forge/github"
 	"github.com/yousan/hataori/internal/holder/tmux"
 	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/relay"
@@ -72,6 +74,9 @@ const (
 
 func init() {
 	// Adapters and drivers are registered here, and only here.
+	if err := forge.Register(github.Name, github.New); err != nil {
+		panic(err)
+	}
 	if err := agent.Register(claudecode.Name, claudecode.New); err != nil {
 		panic(err)
 	}

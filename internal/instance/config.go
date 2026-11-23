@@ -80,10 +80,11 @@ type Config struct {
 	// section, with its defaults when absent.
 	Cleanup Cleanup
 
-	// Drivers and Adapters hold each driver's and adapter's own section of
-	// the config, by registered name, unparsed.
+	// Drivers, Adapters and Forges hold each driver's, adapter's and forge's
+	// own section of the config, by registered name, unparsed.
 	Drivers  map[string][]byte
 	Adapters map[string][]byte
+	Forges   map[string][]byte
 	// AgentDefaults holds the model and effort keys of each adapter section,
 	// by adapter name, taken out of Adapters.
 	AgentDefaults map[string]AgentDefaults
@@ -331,6 +332,7 @@ type fileConfig struct {
 	Scopes     []fileScope                `json:"scopes"`
 	Dashboard  *fileDashboard             `json:"dashboard"`
 	Cleanup    *fileCleanup               `json:"cleanup"`
+	Forges     map[string]json.RawMessage `json:"forges"`
 	Drivers    map[string]json.RawMessage `json:"drivers"`
 	Adapters   map[string]json.RawMessage `json:"adapters"`
 	Plugins    []json.RawMessage          `json:"plugins"`
@@ -396,6 +398,7 @@ func ParseConfig(data []byte) (*Config, error) {
 		Trigger:       strings.TrimSpace(f.Trigger),
 		Model:         strings.TrimSpace(f.Model),
 		Effort:        strings.TrimSpace(f.Effort),
+		Forges:        raw(f.Forges),
 		Drivers:       raw(f.Drivers),
 		Adapters:      raw(f.Adapters),
 		Plugins:       f.Plugins,
@@ -653,7 +656,7 @@ func ParseConfig(data []byte) (*Config, error) {
 	for _, section := range []struct {
 		key string
 		m   map[string][]byte
-	}{{"drivers", c.Drivers}, {"adapters", c.Adapters}} {
+	}{{"drivers", c.Drivers}, {"adapters", c.Adapters}, {"forges", c.Forges}} {
 		for name := range section.m {
 			if err := registry.ValidName(name); err != nil {
 				return nil, fmt.Errorf("config: key %q: %v", section.key+"."+name, err)
@@ -851,7 +854,7 @@ func walkNull(key string, v any) error {
 		return fmt.Errorf("config: key %q must not be null", key)
 	case map[string]any:
 		for k, e := range v {
-			if key == "" && (k == "drivers" || k == "adapters" || k == "plugins") {
+			if key == "" && (k == "drivers" || k == "adapters" || k == "forges" || k == "plugins") {
 				if e == nil {
 					return fmt.Errorf("config: key %q must not be null", k)
 				}
