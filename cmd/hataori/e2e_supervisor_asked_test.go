@@ -315,3 +315,23 @@ func TestAskedMarkOfALostStartGoes(t *testing.T) {
 	wt.held(t, wt.ended(t, w, 1))
 	wt.stays(t, sv.ID, 0, 5*time.Minute, "after a start in no person's turn")
 }
+
+// A wake that is not held carries the mark of a thread it only counts too:
+// that was its first wake, and its next turn end is held as any.
+func TestAskedMarkOfAThreadOnlyCounted(t *testing.T) {
+	wt := newWakeTest(t, budget(3, 0, 0), autonomy("act"), func(cfg map[string]any) {
+		cfg["scopes"].([]map[string]any)[0]["supervisor"].(map[string]any)["threads_max"] = 1
+	})
+	stop, owner, sv := wt.start(t)
+	defer stop()
+	sendAndRead(t, owner, sv.ID, "q1", wt.startsThread("reply one answer")+"\n"+wt.startsThread("reply another answer")) // the second turn
+	b := wt.newest(t, 2)
+	a := b - 1
+	wt.read(t, max(wt.ended(t, a, 1), wt.ended(t, b, 1)))
+	wt.quiet(t)
+	if d := wt.woken(t, owner, sv.ID, 1)[0]; !names(d, a) || names(d, b) || !strings.Contains(d, "And 1 more thread") {
+		t.Fatalf("the wake, the third turn:\n%s", d)
+	}
+	wt.again(t, owner, b, "b-2", "reply more", 2)
+	wt.stays(t, sv.ID, 1, 10*time.Minute, "after the second turn end of the thread only counted")
+}

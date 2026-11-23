@@ -716,8 +716,12 @@ func (r *waking) attempt(ctx context.Context) error {
 			r.held = true
 			return err
 		}
+		carries, err := r.carries(ctx, w.key, w.threads)
+		if err != nil {
+			return err
+		}
 		r.sending = w
-		if err := r.store(ctx); err != nil {
+		if err := r.store(ctx, carries); err != nil {
 			return err
 		}
 		if err := r.hook("stored"); err != nil {
@@ -732,8 +736,9 @@ func (r *waking) attempt(ctx context.Context) error {
 	}
 	if key != r.sending.key {
 		// Stored for a thread that is no longer the supervisor's.
+		renames := r.renames(ctx, r.sending.key, key)
 		r.sending.key = key
-		if err := r.store(ctx); err != nil {
+		if err := r.store(ctx, renames); err != nil {
 			return err
 		}
 	}
@@ -770,7 +775,7 @@ func (r *waking) attempt(ctx context.Context) error {
 		// Not accepted: a repeated key is ignored before a running turn is
 		// refused. The next wake is made again, with what came since.
 		r.sending, r.held = nil, true
-		return r.store(ctx)
+		return r.store(ctx, r.drops(ctx))
 	case stoppedByPlugin(err):
 		// A plugin's handler stopped this wake (design, section 7.3): the
 		// same text would be stopped again, so it is dropped, and the turn
@@ -927,14 +932,11 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 }
 
 // delivered stores the wake that was sent as given, and clears the marks
-// of the threads its digest shows. A wake past a hold handled its own threads' turn
+// it carries. A wake past a hold handled its own threads' turn
 // ends only: the position stays before what a gate holds.
 func (r *waking) delivered(ctx context.Context) error {
 	w := r.sending
-	clear, err := r.woke(ctx, Named(w.text), w.to)
-	if err != nil {
-		return err
-	}
+	clear := r.clears(ctx, w.key, w.to)
 	r.offered(w.stale)
 	r.sending, r.held = nil, false
 	only := WakeOnly(w.key)

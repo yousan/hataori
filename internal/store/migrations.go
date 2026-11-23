@@ -637,7 +637,8 @@ var migrations = []Migration{
 			key     TEXT NOT NULL,    -- the start's
 			asks_in INTEGER NOT NULL, -- the supervisor's thread, where a proposal of it is shown
 			person  TEXT NOT NULL,
-			thread  INTEGER,          -- what the start made, once it was woken for
+			thread  INTEGER,          -- what the start made, once a wake carries it
+			wake    TEXT,             -- the key of the wake that carries it
 			woken   INTEGER,
 			PRIMARY KEY (scope, key)
 		)`,

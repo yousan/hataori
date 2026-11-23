@@ -31,7 +31,7 @@ type asking struct {
 	core   *core.Core
 	scope  string
 	thread control.ThreadID // the supervisor's
-	lock   *sync.Mutex      // the scope's: one start at a time, so that a mark is one call's
+	keys   *keyed           // one start of a key at a time, so that a mark is one call's
 	log    *slog.Logger
 }
 
@@ -39,8 +39,7 @@ func (a *asking) Start(ctx context.Context, r control.StartRequest) (control.Thr
 	if r.Scope != a.scope || r.Key == "" {
 		return a.API.Start(ctx, r)
 	}
-	a.lock.Lock()
-	defer a.lock.Unlock()
+	defer a.keys.lock(a.scope + "\x00" + r.Key)()
 	marked, err := a.mark(ctx, r.Key)
 	if err != nil {
 		// The start goes on: without its mark, the thread wakes as any.
@@ -83,6 +82,41 @@ func (a *asking) mark(ctx context.Context, key string) (bool, error) {
 		return err
 	})
 	return err == nil, err
+}
+
+// keyed is a lock for each key.
+type keyed struct {
+	mu   sync.Mutex
+	held map[string]*keyLock
+}
+
+type keyLock struct {
+	sync.Mutex
+	n int // who holds it or waits for it
+}
+
+// lock takes the lock of key, and returns what gives it back.
+func (k *keyed) lock(key string) func() {
+	k.mu.Lock()
+	if k.held == nil {
+		k.held = map[string]*keyLock{}
+	}
+	l := k.held[key]
+	if l == nil {
+		l = &keyLock{}
+		k.held[key] = l
+	}
+	l.n++
+	k.mu.Unlock()
+	l.Lock()
+	return func() {
+		l.Unlock()
+		k.mu.Lock()
+		if l.n--; l.n == 0 {
+			delete(k.held, key)
+		}
+		k.mu.Unlock()
+	}
 }
 
 // unmark removes the mark of the start under key.
@@ -202,27 +236,58 @@ func (r *waking) wokenTo(ctx context.Context, id control.ThreadID) (uint64, erro
 	return uint64(to.Int64), nil
 }
 
-// woke returns what clears, in the transaction that stores a wake as
-// given, the marks of the threads it gave: ids, up to to.
-func (r *waking) woke(ctx context.Context, ids []control.ThreadID, to uint64) (func(*store.Tx) error, error) {
+// carries returns what records, in the transaction that stores a wake to
+// be sent, that it carries the marks of threads: delivered clears those,
+// shown in the digest or only counted there, also after a restart.
+func (r *waking) carries(ctx context.Context, key string, threads []Ended) (func(*store.Tx) error, error) {
 	rows, err := askedRows(ctx, r.w.Core, r.w.Scope)
 	if err != nil {
 		return nil, err
 	}
-	given := map[control.ThreadID]bool{}
-	for _, id := range ids {
-		given[id] = true
+	in := map[control.ThreadID]bool{}
+	for _, t := range threads {
+		in[t.Thread] = true
 	}
 	return func(tx *store.Tx) error {
+		if err := r.drops(ctx)(tx); err != nil {
+			return err
+		}
 		for _, a := range rows {
-			if a.thread == 0 || !given[a.thread] {
+			if a.thread == 0 || !in[a.thread] {
 				continue
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE supervisor_asked SET thread = ?, woken = ? WHERE scope = ? AND key = ?`,
-				int64(a.thread), int64(to), r.w.Scope, a.key); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE supervisor_asked SET thread = ?, wake = ? WHERE scope = ? AND key = ?`,
+				int64(a.thread), key, r.w.Scope, a.key); err != nil {
 				return err
 			}
 		}
 		return nil
 	}, nil
+}
+
+// drops returns what forgets the marks a stored wake carries, as it is
+// made again.
+func (r *waking) drops(ctx context.Context) func(*store.Tx) error {
+	return func(tx *store.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE supervisor_asked SET wake = NULL WHERE scope = ? AND woken IS NULL`, r.w.Scope)
+		return err
+	}
+}
+
+// renames returns what gives the stored wake's marks its new key.
+func (r *waking) renames(ctx context.Context, from, to string) func(*store.Tx) error {
+	return func(tx *store.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE supervisor_asked SET wake = ? WHERE scope = ? AND wake = ?`, to, r.w.Scope, from)
+		return err
+	}
+}
+
+// clears returns what clears the marks that the wake under key carries,
+// in the transaction that stores it as given, up to to.
+func (r *waking) clears(ctx context.Context, key string, to uint64) func(*store.Tx) error {
+	return func(tx *store.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE supervisor_asked SET woken = ? WHERE scope = ? AND wake = ? AND woken IS NULL`,
+			int64(to), r.w.Scope, key)
+		return err
+	}
 }
