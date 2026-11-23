@@ -219,7 +219,7 @@ Result: none
 
 ### Operation `Answer`
 
-Answers an open question, approval or proposal. An approval asked with `AskInterrupt` is approved by `allow: true` or `choices: ["approve"]`; otherwise it is refused. The asker's own person, a guest and a person not in the scope are `forbidden`. Since 3.26 a supervisor's proposal (`proposed`) is decided the same way, by the same people; approved, its call is made then (see `Start` and `Send`), and one `proposal_answered` says what came of it. A proposal decided before is `error`, as an answered approval is. An approval whose call failed in a way that may pass later, such as a chat service that did not open the new thread's chat thread, leaves the proposal open; approved again, the same call is made under the same key.
+Answers an open question, approval or proposal. An approval asked with `AskInterrupt` is approved by `allow: true` or `choices: ["approve"]`; otherwise it is refused. The asker's own person, a guest and a person not in the scope are `forbidden`. Since 3.26 a supervisor's proposal (`proposed`) is decided the same way, by the same people; approved, its call is made then (see `Start` and `Send`), and one `proposal_answered` says what came of it. A proposal decided before is `error`, as an answered approval is. An approval is stored before its call is made. When the call failed in a way that may pass later, such as a chat service that did not open the new thread's chat thread, or the daemon stopped before the outcome was stored, the proposal stays listed in `requests`, and the next answer, whatever it says, makes the same call again under the same key, which runs it once, and records the outcome as that first approval's.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -671,7 +671,7 @@ The fields of `ThreadInfo`, and:
 | `context` | `Context` | optional | as in `ThreadInfo` |
 | `tokens` | `TokenCount` | optional | as in `ThreadInfo` |
 | `terminal` | string | optional | as in `ThreadInfo` |
-| `requests` | [`Request`] | required | the open questions and approvals; open approvals asked here are listed whatever the thread state, and since 3.26 so are the open proposals shown here, as approvals with the choices Approve and Refuse; may be `null` |
+| `requests` | [`Request`] | required | the open questions and approvals; open approvals asked here are listed whatever the thread state, and since 3.26 so are the open proposals shown here, and the approved ones whose outcome is not stored yet, as approvals with the choices Approve and Refuse; may be `null` |
 | `recent` | string | required | the end of its last output, at most the bytes asked for: its `text` events in order, each a whole message of the agent, with a blank line (`\n\n`) between two of them, also between two turns; cut at the start of a character, and with no part of a blank line left at the cut. Before 3.12 the messages were joined with nothing between them, and the cut could fall inside a character |
 | `events` | [`Event`] | optional | its last events, as many as `events` asked for, newest last, each as `Events` delivers it; since 1.5 |
 | `cancelled` | [`CancelledPost`] | optional | its last posts that a plugin's `message_sending` handler cancelled, at most 20, newest last, from its `post_cancelled` events; absent for none. A summary, as `recent` is: a caller limited to some event kinds gets it whatever kinds it was granted; since 3.19 |

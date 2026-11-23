@@ -1901,9 +1901,12 @@ type Caller struct {
 	// Send with Refuse and NoAnswer, unless it was proposed as the answer
 	// to the question the thread waits on, which it then answers only while
 	// that question is open; a Start with the agent, the model and the
-	// effort the proposal showed. One proposal_answered says the outcome:
-	// run, refused, busy, ended, closed or failed. Set by the daemon when
-	// it binds the caller. Since protocol 3.26.
+	// effort the proposal showed. The approval is stored before the call,
+	// so that an answer after a daemon that died in between makes the call
+	// again under the key and records what it did as that approval's. One
+	// proposal_answered says the outcome: run, refused, busy, ended, closed
+	// or failed. Set by the daemon when it binds the caller. Since protocol
+	// 3.26.
 	Propose bool
 	// Mark is a line the core puts before the text of every input of the
 	// caller's Start and Send, except a Send that answers an open question;

@@ -157,3 +157,49 @@ func eventsOf(t *testing.T, f *fixture, id control.ThreadID, kind string) []stri
 	}
 	return out
 }
+
+// An approval whose call took the input and failed after it, before the
+// outcome was stored, leaves the proposal approved and listed. The next
+// answer, a refusal too, gives the thread nothing more and records the
+// outcome as the first approval's: the send ran, also when the thread was
+// closed since (#650).
+func TestProposalApprovedBeforeItsOutcome(t *testing.T) {
+	ctx := context.Background()
+	f, proposer, asksIn, target := proposalFixture(t)
+	proposalOf(t, proposer.Send(ctx, target, "k", control.Input{Text: "do it"}, control.Refuse))
+	d, err := f.owner.Thread(ctx, asksIn, 0, 0)
+	if err != nil || len(d.Requests) != 1 {
+		t.Fatalf("requests: %+v %v", d.Requests, err)
+	}
+	req := d.Requests[0].ID
+	f.runner.mu.Lock()
+	f.runner.deliverErr = errors.New("the session is not reconnected yet")
+	f.runner.mu.Unlock()
+	if err := f.owner.Answer(ctx, req, control.Answer{Allow: true}); err == nil {
+		t.Fatal("the approval whose delivery failed succeeded")
+	}
+	if d, err := f.owner.Thread(ctx, asksIn, 0, 0); err != nil || len(d.Requests) != 1 || d.Requests[0].ID != req {
+		t.Fatalf("after the failed delivery, requests: %+v %v", d.Requests, err)
+	}
+	f.core.People = people.New([]people.Person{{Name: "sv", IDs: []string{"supervisor:s"}}, {Name: "other", IDs: []string{"chat:other"}}},
+		"owner", map[string][]string{"s": {"sv", "other"}})
+	// Meanwhile the runner handed the input over, the turn ran, and a person
+	// closed the thread.
+	if _, err := f.core.Store.DB.Exec(`UPDATE sessions SET state = 'closed' WHERE thread_id = ?`, int64(target)); err != nil {
+		t.Fatal(err)
+	}
+	other := f.core.As(control.Caller{From: "chat:other", Scopes: []string{"s"}, May: control.OpAnswer})
+	if err := other.Answer(ctx, req, control.Answer{Choices: []string{"refuse"}}); err != nil {
+		t.Fatal(err)
+	}
+	ev := eventsOf(t, f, asksIn, "proposal_answered")
+	if len(ev) != 1 || !strings.Contains(ev[0], `"outcome":"run"`) || !strings.Contains(ev[0], `"allow":true`) || !strings.Contains(ev[0], `"principal":"owner"`) {
+		t.Fatalf("proposal_answered: %v", ev)
+	}
+	if calls := f.runner.Calls(); strings.Contains(calls, "deliver supervisor\ndo it") {
+		t.Fatalf("delivered again: %s", calls)
+	}
+	if err := other.Answer(ctx, req, control.Answer{Allow: true}); !errors.Is(err, ErrNotOpen) {
+		t.Fatalf("a third answer: %v", err)
+	}
+}
