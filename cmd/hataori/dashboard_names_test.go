@@ -194,10 +194,11 @@ func newNamesRig(t *testing.T) namesRig {
 }
 
 // The acceptance criteria of #631 in the browser, against the daemon with
-// the fake surface: at 1600 px wide with every column shown, the All
-// threads table's agent, branch and last output columns each show at least
-// 12 characters and the title gets what is left, with the tree at least 30
-// characters and no narrower than the other text columns; the counts of hidden threads
+// the fake surface: at 1600 px wide with every column shown and the tree,
+// Details on or off, the All threads table's agent, branch and last output
+// columns each show about 12 characters and the title gets what is left, at
+// least 30 characters and no narrower than the other text columns, as the
+// details panel takes no width while no thread is in front; the counts of hidden threads
 // and hidden idle shells next to Active / All are apart, with a separator
 // between them, in English and Japanese; the details panel names the scope
 // as the tree does, the person who started the thread by their name (an
@@ -215,7 +216,7 @@ func TestDashboardNamesAndWidths(t *testing.T) {
 		b.until("the full thread's row with every column", fmt.Sprintf(`(() => {
 			const tb = document.querySelector('.pane.active .all-threads');
 			return !!tb && tb.dataset.columns === 'state number title agent age context tokens branch changes unpushed last' &&
-				!!tb.querySelector('tr[data-thread="%d"] td[data-col=title]') && !!document.querySelector('.tree') && !!document.querySelector('.details');
+				!!tb.querySelector('tr[data-thread="%d"] td[data-col=title]') && !!document.querySelector('.tree');
 		})()`, rig.full))
 		// cell is one text cell: its text, how many of its characters show
 		// before its edge, and its width.
@@ -285,36 +286,53 @@ func TestDashboardNamesAndWidths(t *testing.T) {
 				t.Errorf("%s: the table scrolls sideways: %v px in %v (%s)", layout, w.Scroll, w.Pane, w.Cols)
 			}
 		}
-		measure()
-		if w.Cells["agent"].Text != "fake · "+namesModel || w.Cells["branch"].Text != namesBranch {
-			t.Fatalf("the agent and model read %q and the branch %q: the check would test short values", w.Cells["agent"].Text, w.Cells["branch"].Text)
-		}
-		t.Logf("with the details panel: %s", w.Cols)
-		keeps("with the details panel")
-		b.click(`.tools [data-tool=details]`)
-		b.until("the details panel hidden", `!document.querySelector('.details')`)
-		measure()
-		t.Logf("without the details panel: %s", w.Cols)
-		keeps("without the details panel")
-		// The other text columns keep about 12 characters and no more, also
-		// where there is room.
-		for _, c := range []string{"agent", "branch", "last"} {
-			if v := w.Cells[c]; v.Fits > 16 {
-				t.Errorf("without the details panel: the %s column shows %d characters, more than about 12, taking the title's room (%s)", c, v.Fits, w.Cols)
+		// fits checks the table as it is laid out now: agent, branch and
+		// last output keep about 12 characters, and the title gets what is
+		// left, at least 30 characters and no narrower than any of them.
+		fits := func(layout string) {
+			t.Helper()
+			measure()
+			if w.Cells["agent"].Text != "fake · "+namesModel || w.Cells["branch"].Text != namesBranch {
+				t.Fatalf("the agent and model read %q and the branch %q: the check would test short values", w.Cells["agent"].Text, w.Cells["branch"].Text)
+			}
+			t.Logf("%s: %s", layout, w.Cols)
+			keeps(layout)
+			for _, c := range []string{"agent", "branch", "last"} {
+				if v := w.Cells[c]; v.Fits > 16 {
+					t.Errorf("%s: the %s column shows %d characters, more than about 12, taking the title's room (%s)", layout, c, v.Fits, w.Cols)
+				}
+			}
+			if v := w.Cells["title"]; v.Fits < 30 {
+				t.Errorf("%s: a title shows %d characters before it is cut, want at least 30 (%s)", layout, v.Fits, w.Cols)
+			}
+			for _, c := range []string{"agent", "branch", "last"} {
+				if w.Cells["title"].Width < w.Cells[c].Width {
+					t.Errorf("%s: the Title column is %v px, narrower than the %s column's %v px", layout, w.Cells["title"].Width, c, w.Cells[c].Width)
+				}
 			}
 		}
-		// The title gets what is left: at 1600 px with the tree, at least 30
-		// characters, and no narrower than another text column.
-		if v := w.Cells["title"]; v.Fits < 30 {
-			t.Errorf("a title shows %d characters before it is cut, want at least 30 (%s)", v.Fits, w.Cols)
+		const detailsOn = `document.querySelector('.tools [data-tool=details]')?.getAttribute('aria-pressed') === 'true'`
+		// The default view: Details on, the All threads tab in front. The
+		// panel would only say to open a thread: it takes no width.
+		b.until("Details on", detailsOn)
+		time.Sleep(300 * time.Millisecond) // the layout as it settles
+		fits("Details on, the All threads tab in front")
+		if w.Details {
+			t.Errorf("Details on, the All threads tab in front: the details panel takes width, though it has no thread to show")
 		}
-		for _, c := range []string{"agent", "branch", "last"} {
-			if w.Cells["title"].Width < w.Cells[c].Width {
-				t.Errorf("the Title column is %v px, narrower than the %s column's %v px", w.Cells["title"].Width, c, w.Cells[c].Width)
-			}
-		}
+		// A thread in front brings the panel back; the All threads tab in
+		// front again takes it away, and Details stays on.
+		openThread(t, b, rig.full)
+		b.until("the panel beside the thread", detailsOn+fmt.Sprintf(` && !!document.querySelector('.details [data-details="%d"]')`, rig.full))
+		b.click(`.tabbar .tab[data-tab=all] .tab-main`)
+		b.until("no panel beside the All threads tab again", detailsOn+` && !!document.querySelector('.pane.active .all-threads') && !document.querySelector('.details')`)
+		fits("Details on, the All threads tab in front again")
+		// Details off: the same.
 		b.click(`.tools [data-tool=details]`)
-		b.until("the details panel back", `!!document.querySelector('.details')`)
+		b.until("Details off", `document.querySelector('.tools [data-tool=details]')?.getAttribute('aria-pressed') === 'false' && !document.querySelector('.details')`)
+		fits("Details off")
+		b.click(`.tools [data-tool=details]`)
+		b.until("Details on again", detailsOn)
 	})
 
 	t.Run("hidden counts", func(t *testing.T) {

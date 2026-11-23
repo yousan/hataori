@@ -182,7 +182,7 @@ func TestDashboardFourFixes(t *testing.T) {
 	b.until("the Context column back", `(document.querySelector('.pane.active .all-threads')?.dataset.columns ?? '').includes('context') &&
 		[...document.querySelectorAll('.pane.active .all-threads [data-col=context] [role=meter]')].length === 1`)
 
-	// 3. In a window 1500 px wide, with the tree and without the details:
+	// 3. In a window 1500 px wide, with the tree:
 	// the table does not scroll sideways, and a long value is cut, whole
 	// in its tooltip. The last output is the long value: the title, cut to
 	// 80 characters, shows whole where the table has room (#631).
@@ -214,10 +214,13 @@ func TestDashboardFourFixes(t *testing.T) {
 			t.Fatalf("%s: a long last output: cut %v, whole in its tooltip %v", what, fit.CutLast, fit.Tooltip)
 		}
 	}
-	fits("with the details panel", true)
+	// With Details on and the All threads tab in front, the panel has no
+	// thread to show and takes no width (#631); with Details off, the same.
+	b.until("Details on", `document.querySelector('.tools [data-tool=details]')?.getAttribute('aria-pressed') === 'true'`)
+	fits("Details on, the All threads tab in front", false)
 	b.click(`.tools [data-tool=details]`)
-	b.until("the details panel hidden", `!document.querySelector('.details')`)
-	fits("without the details panel", false)
+	b.until("Details off", `document.querySelector('.tools [data-tool=details]')?.getAttribute('aria-pressed') === 'false'`)
+	fits("Details off", false)
 
 	// 1. The narrow list counts the same: the threads, and the idle
 	// shells apart.
