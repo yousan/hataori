@@ -146,6 +146,22 @@ The supervisor's launches run through a wrapper that passes a confined launch (o
 
 Last passed: 2026-11-19, Claude Code 2.1.328, logged in with a subscription, model `haiku`. All 6 steps passed in 3.9 minutes, and hataori's own status line handed on usage. Earlier runs that day found what #409, #410 and #426 fixed, and the blocked resume with a `.git` that #423 tracks.
 
+### The reopen check
+
+```sh
+HATAORI_REAL_CLAUDE=1 go test -count=1 -run TestRealClaudeCodeReopen -v -timeout 20m ./cmd/hataori
+```
+
+It runs the daemon as the phase 1 check does, through the same wrapper, and checks that a reopened thread resumes the recorded conversation rather than starting a new one (#670, design section 5.1):
+
+1. **A word to remember.** An order tells the agent a word.
+2. **Closed, reopened on the host, the conversation resumed.** `hataori close`, then `hataori reopen` answers `kept` and `resume`; asked for the word, the agent answers it, in the same agent session.
+3. **Removed, reopened from trash, the conversation resumed.** `hataori close` and `hataori remove` move the workspace into trash; `hataori reopen` answers `restored` and `resume`, the workspace is back at its place, and the agent still answers the word in the same agent session.
+4. **Removed and purged, reopened in a new clone, a new conversation.** The thread is removed again and its entry in trash is deleted, as the trash pass does. `hataori reopen` answers `remade` and `new`; the agent runs in another agent session and answers the word from the earlier exchange its first prompt gives it.
+5. **Nothing left running** and 6. **the user's settings file unchanged**, as steps 10 and 11 of the phase 1 check.
+
+Last passed: 2026-11-24, Claude Code 2.1.330, model `haiku`. All 6 steps passed in 59 s.
+
 ### New captures
 
 `internal/agent/claudecode/testdata/capture.py` records hook calls, transcripts and terminal output from the real CLI, and `scrub.py` makes them committable. Their README says how each capture was taken. Run `go test ./internal/agent/claudecode` before committing: it fails on a capture that still holds a home path, an e-mail address, an id or a token.

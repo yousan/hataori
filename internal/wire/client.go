@@ -277,6 +277,13 @@ func (c *Client) CloseThread(ctx context.Context, id control.ThreadID) error {
 	return c.call(ctx, "Close", closeArgs{ID: id}, nil)
 }
 
+// ReopenThread is the operation Reopen. Since 3.31.
+func (c *Client) ReopenThread(ctx context.Context, id control.ThreadID) (control.Reopened, error) {
+	var out control.Reopened
+	err := c.call(ctx, "Reopen", reopenArgs{ID: id}, &out)
+	return out, err
+}
+
 // TakeIn is the operation TakeIn. Since 3.17.
 func (c *Client) TakeIn(ctx context.Context, r control.TakeInRequest) (control.ThreadID, error) {
 	var out control.ThreadID

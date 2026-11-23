@@ -46,6 +46,8 @@
 //
 //	reply TEXT          say TEXT; the last reply is the final answer
 //	whoami              reply "model M effort E", as the program was started
+//	recall              reply "recall: " and the first lines of the session's earlier turns, joined by " | ",
+//	                    from its file under Conversations; "recall: nothing" when there are none
 //	heard               reply "heard: L", L the first line of the input
 //	tool NAME DURATION  run a tool (a child process) for DURATION
 //	ask QUESTION [-- CHOICE | CHOICE...]

@@ -180,6 +180,8 @@ creating ──► idle ◄──► running ◄──► waiting      (waiting:
               │
               ▼
            closed ──► removed      (closed: stopped by a person or by idle age; workspace kept)
+              │          │
+              └──────────┴──► asleep   (reopen: by the owner; section 5.1)
 ```
 
 Every transition is caused by one event (a chat message, an agent event, a timer, a command), is written to the database in the same transaction as the events it produces, and is the only place that state changes. Lamps, the progress line, pings and turn-end events are all derived from those events, so they cannot disagree with each other.
@@ -272,7 +274,7 @@ Questions and approvals are rows too: the agent's request id, the question, the 
 - **Wake:** the next message starts the agent with resume. If the agent no longer has the conversation (its own retention removed it), the thread is told so, and a new session starts in the same workspace with the thread's recent messages as context.
 - **Daemon restart:** nothing happens to sessions. The daemon reads each log from its stored offset and asks the surface for messages since its stored cursor.
 - **Host reboot:** all processes are gone. Sessions that were `running` become `asleep` with reason `interrupted`; the thread gets one notice; the next message resumes.
-- **Closed:** stopped by a person or by idle age. The workspace stays. A message does not wake a thread a person closed; a command does.
+- **Closed:** stopped by a person or by idle age. The workspace stays. A message does not wake a thread a person closed; a reopen does (section 5.1): `hataori reopen` on the host, or the owner's Reopen button in chat.
 
 ### 4.6 Cleanup without losing work
 
@@ -286,6 +288,8 @@ A workspace is removed only when all of this is proven, and removal is refused w
 4. No process is using the directory.
 
 Removal is a rename into `trash/` inside the root. A later pass deletes from trash after a retention period. This is the only code in hataori that deletes user data, and it is tested case by case before anything else.
+
+A reopen (section 5.1) undoes a removal while the workspace is in trash: the core records where the removal put it, and the workspace is renamed back to its place, as it was. An entry that was not recorded, as by a daemon that died between the move and its record, is found by its name, which holds the thread's number; two such entries refuse the reopen. Once the trash pass deleted it, the reopen clones the repository again at the same place. Neither replaces anything: both refuse when anything, an empty directory too, is at the place, and leave it and the trash entry as they are; the rename never replaces, so a directory that appears after the check is not overwritten either. The restore and the trash pass take one lock, so the pass never deletes an entry that a restore is taking out. Neither follows a link to make a missing parent directory. Right before the rename, the reopen records the identity of the directory it puts in place (its device and inode, as a clone records its placement); a reopen that a crash stopped before it recorded the reopen is finished by the next one, which knows that directory for its own, and any other directory at the place still refuses it.
 
 ### 4.7 Login alert and relay
 
@@ -381,6 +385,7 @@ Everything that can be asked of the core is one interface. In-process clients ca
 | `Send` | send input; says what to do if a turn is running: refuse, deliver, interrupt |
 | `Answer` | answer a question or an approval |
 | `Stop` | interrupt the running turn |
+| `Reopen` | take a closed or removed thread back to asleep (the owner only) |
 | `Events` | events after a position, then live ones |
 
 Every call is made as a `Caller`: who it is, which scopes it may see, and which operations it may use. The core checks each call against it. A scope has one owner, the client that gives it its threads; when a thread is started there, the core asks the owner for the thread's first link, and a chat front end answers by opening a chat thread. Appendix D has the Go declarations.
@@ -392,6 +397,18 @@ Every call is made as a `Caller`: who it is, which scopes it may see, and which 
 Every record of input keeps both the person and the id it came from (section 6.2).
 
 Sleep joins the interface with the phase that needs it. Close and remove joined it in the cleanup phase (#255): `Close` and `Remove`, checked like `Stop`, and given only to the owner's connection on the control socket, so they are reached through `hataori close` and `hataori remove` on the host; besides them, only the removal pass that the config's `cleanup.remove_closed_after` turns on (off by default) removes, and only threads closed longer than that. Nothing in chat closes or removes in that phase, and no thread is closed by its idle age. There is no operation to reset or merge anything, for any caller.
+
+**Reopen** (#670; section 10) is the other half of closing, as c-lord's `/workspace-start` and its Reopen button were (c-lord#512, c-lord#862). It takes a closed or removed thread back to asleep, and nothing runs until its next message, which wakes it as any asleep thread's does: in the thread's own directory and the same chat thread, under the same number, links and key. The chat thread is what people come back to, whatever is left behind it, so a thread whose session or directory is gone is reopened too:
+
+- *Closed, its directory in place:* the next message resumes the recorded conversation (`--resume`). If the agent no longer has it (`SessionEnded` `cannot resume`), a new session starts in the same directory, as at any wake (section 4.5), and the chat thread gets one line saying so before the new session's first answer.
+- *Removed, its directory still in trash:* the directory is renamed back to its place (section 4.6), so its unpushed work and its conversation come back, and the conversation resumes.
+- *Removed after the trash pass deleted the directory,* or a closed thread whose directory is gone: the directory is made again at the same path, a new clone of the thread's repository, or an empty directory for a confined thread, and the next message starts a new conversation, since one resumed in a fresh clone would act on work that is not there. So does a session that never recorded its conversation.
+- *A new conversation* gets the thread's earlier exchange in its first prompt, as a session that replaces a lost conversation does (section 4.5), marked as such and saying that the chat thread holds the rest, and the chat thread gets one line saying so before it. Attaching a terminal to such a thread before its first message is refused and changes nothing, since an attach wakes with no input and the exchange would be lost.
+- *Refused,* changing nothing: a thread that is neither closed nor removed; one whose agent was never started, as when its clone failed; a removed thread taken in from a person's window, whose directory is theirs (section 4.8); a place of the directory that something else took, which is never overwritten; and a confined thread while another confined thread of its scope is open, since a scope's supervisor threads share one directory and one is open at a time (section 7.1): the refusal names the open one. A refusal says why (`ReopenRefused`, the wire's `reopen_refused`).
+
+A reopen writes the `state` event to `asleep`, with reason `reopen`, and a `reopened` event with who reopened it, what became of the directory (`kept`, `restored`, `remade`) and whether the conversation resumes, so the dashboard and the event log show it. Every chat thread of the thread is un-archived, whatever archived it: the front end while the thread slept or was closed, or the chat service for inactivity.
+
+`Reopen` is the owner's only: it needs `OpReopen`, which the owner's connection on the control socket has (`hataori reopen NUMBER`), and the core honours it only when the caller's person is the owner. In chat, the owner's message in a closed or removed thread is held, and the reply to it, the closed line, offers a Reopen button; the front end calls `Reopen` with `OpReopen` and the presser as `From`, so the core decides, and then sends the held message as the owner's message it was, under its own id as the key, so that it is sent once. Anyone else's message gets the closed line alone, as before, and anyone else's press changes nothing and writes one log line. This is the one exception to closing and removal staying on the host (decision 5 of #248).
 
 ### 5.2 Chat front end and surface driver
 
@@ -584,7 +601,7 @@ One limit is not enforced by this: the supervisor can *ask* a worker thread to m
 
 **The channel's development manager** (#643; decided 2026-11-23, section 10). The supervisor was used for the first time in a channel where hataori's own development runs. It watched and answered, but did not manage. It dispatched nothing. It knew hataori only from thread titles, and asked a person to paste the design. It could not see an issue, a pull request or CI, so "done" could only mean that a thread said so. Its memory was its conversation, and the new supervisor thread that a config change needed remembered nothing. It could not come back at a time, since only turn ends woke it. Every folded batch of turn ends made it post several lines, also when no person was needed, and every reply to a person was followed by a `Done.` ping. On the cheapest model its answers stayed on the surface. Meanwhile an assistant outside hataori did the job, posting orders through a webhook (section 8, phase 1). The parts below let the supervisor take that job over. None of them gives it a shell, a way to write to a forge, or an operation that merges, deletes or resets.
 
-*Its directory and its notes.* A scope's supervisor threads share one directory, the scope's, which outlives each of them. A scope whose supervisor thread exists already keeps that thread's directory as its own, so what is in it carries on; a scope's first supervisor thread gets a new, empty directory under `<root>/confined/`, named from the scope's key so that no two scopes share one. The supervisor client records the directory per scope and starts each new supervisor thread in it (`core.Core.StartConfined` takes the directory). A thread's directory is still read from the database and never moved, and only one supervisor thread of a scope runs at a time, since a new one starts only after the last was closed. Nothing empties it: a directory is made empty only when it is made, and nothing in hataori removes it. In it:
+*Its directory and its notes.* A scope's supervisor threads share one directory, the scope's, which outlives each of them. A scope whose supervisor thread exists already keeps that thread's directory as its own, so what is in it carries on; a scope's first supervisor thread gets a new, empty directory under `<root>/confined/`, named from the scope's key so that no two scopes share one. The supervisor client records the directory per scope and starts each new supervisor thread in it (`core.Core.StartConfined` takes the directory). A thread's directory is still read from the database and never moved, and only one supervisor thread of a scope runs at a time, since a new one starts only after the last was closed and a closed one is reopened (section 5.1) only while no other of its scope is open; the scope's supervisor thread is its open confined thread, an older one that was reopened included, else its newest (`core.Core.LastConfined`). A confined start and a reopen of a confined thread take one lock per scope, and a confined start is refused while another confined thread of the scope is open, so the two never make two open ones; the waker looks up the scope's supervisor thread again when one is reopened. Nothing empties it: a directory is made empty only when it is made, and nothing in hataori removes it. In it:
 
 - `notes/` is the supervisor's: its plan, its decisions with their reasons, and the orders in flight (which thread, which issue, what was asked, what counts as done). hataori's layer of its instructions (below, *Two layers*) tells it to read them when it starts and whenever it does not remember, and to keep them current and short. A new supervisor thread of the scope finds them, and so does a new session after a lost conversation.
 - `docs/` is hataori's (#640). Before each launch of the session and before each wake, the daemon copies the files that `scopes[].supervisor.files` lists from the host into it, by their base names, so the supervisor reads what it manages (a design, a project's rules) as it is now. The session may not write there: its `PermissionRequest` hook refuses a write into `docs/` as it refuses one to a path with a part that starts with a dot, also when a link in the directory leads there. The daemon writes over or removes only a file it wrote there itself and that has not changed since, which it records with the file's size, hash and inode, holding the inode with a second link of its own in `docs/`, and it moves the file aside to check it again before it writes over or removes it. Any other file there is left as it is, and the listed file that would replace it is skipped with one log line. A listed path that is missing, not a regular file or larger than 1 MB is skipped with one log line, and the launch or the wake goes on. *Why:* at the first use the operator copied files there by hand, and a copy made by hand cannot be told from work, so the daemon proves that a file is its own before it replaces it.
@@ -1027,6 +1044,14 @@ None.
 
 ### Decided
 
+- **A closed or removed thread can be reopened, in the same chat thread** (#670; the maintainer, 2026-11-23, as recommended, after the owner kept writing in a replaced supervisor's closed thread and could not get its conversation back). Sections 4.2, 4.5, 4.6, 5.1 and 7.1, Appendix D. The c-lord table's "start" (Appendix A, Lifecycle) was the half that was never built.
+  1. *A control operation `Reopen`*, the owner's only, as `Close` is, and `hataori reopen NUMBER` on the host. It takes the thread back to asleep; its next message resumes the recorded conversation in the thread's own directory and chat thread, and nothing else of the thread changes.
+  2. *A Reopen button in chat* for the owner's message in a closed thread, which reopens it and then delivers that message; anyone else's message gets the closed line as before, and anyone else's press does nothing. *This is an exception to decision 5 of #248* (below), which keeps closing and removal on the host: reopening loses nothing, and the owner is in the chat thread when they need it.
+  3. *A thread whose session or directory is gone is reopened too*, as c-lord does (c-lord#862; added by the maintainer the same day): a conversation the agent no longer has gives a new session in the same directory, after one line in the chat thread, with a first prompt that says the chat thread holds the earlier exchange; a removed thread's directory comes back from trash while it is there, and is cloned again at the same path once the trash pass deleted it, with a new conversation and one line saying so. *Why:* the chat thread is what people come back to, whatever is left behind it.
+  4. *A supervisor thread* is reopened only while no other supervisor thread of its scope is open, and the refusal names the open one. *Why:* a scope's supervisor threads share one directory, and one is open at a time.
+  5. *An archived chat thread is opened again*, and *a reopen writes an event*.
+
+  The details in section 5.1 are the design's, not the maintainer's: a place of the directory that something else took refuses the reopen and is never overwritten; a removed thread taken in from a person's window is refused; a directory made again, and a session that never recorded its conversation, start a new conversation rather than resume one; the trash entry recorded with the thread, and one lock between the restore and the trash pass; the held message sent under its own id as the key, as the owner's; the reason `reopen`, the `reopened` event and the `reopen_refused` code; and the scope's supervisor thread being its open confined thread, else its newest.
 - **The supervisor is the channel's development manager** (#643; the maintainer, 2026-11-23, after its first use). Section 7.1, section 8 and Appendix E. At its first use the supervisor watched and answered, but did not manage (section 7.1, "The channel's development manager"). The maintainer wants a supervisor that a person can hand a channel's development to, in conversation: it plans, dispatches orders to the channel's worker threads, follows them, checks the result and reports, as an assistant outside hataori did by posting orders through a webhook.
   1. *Read-only tools for issues, pull requests and CI* of the repositories the scope lists. This changes section 7.1, whose tools were the control API's only, and "a supervisor has no shell: control API tools and files in its own directory only" below: it still has no shell, and nothing in hataori writes to a forge. *Why:* "done" should mean something it checked, not only that a thread said so.
   2. *A wake at a time it sets itself,* with a note that comes back in the wake. It is not polling: no wake without a request, each request counted in the budget, a cap on open requests, kept across restarts. *Why:* only turn ends woke it, so it could not look again later.
@@ -1075,7 +1100,7 @@ None.
   2. *Order:* the chat commands and buttons (#256 to #259) wait for thread numbers and links (#226, #227), so they are written once against thread numbers; the `discord`, `signin`, `attach` and `cleanup` groups start at once. The thread-number issues (#225 to #229) start without waiting for the people-settings trial.
   3. *Lamp and ping* for a turn the agent started by itself, and for held messages: the agent's turn shows its lamp on the message of the last turn a caller started, and that message's sender is pinged for the agent's turn only when it ends `blocked` or `failure`. A turn a caller started still pings its sender once when it ends. A held message gets its own lamp when its turn starts.
   4. *`hataori attach`:* chat input while someone is attached is delivered as usual (held until the running turn ends, as today). The final answer of a turn typed at the terminal is posted in the chat thread with a "typed at the terminal" line, so the chat thread stays the full record.
-  5. *Closing and removal* are host commands (`hataori close`, `hataori remove`), plus an automatic pass that removes threads closed longer than a configured age, off by default. Closing by idle age is off by default. No removal from chat in this phase.
+  5. *Closing and removal* are host commands (`hataori close`, `hataori remove`), plus an automatic pass that removes threads closed longer than a configured age, off by default. Closing by idle age is off by default. No removal from chat in this phase. (Reopening has an owner-only button in chat since 2026-11-23, above: the one exception.)
   6. *A dashboard link from chat* is for the owner only in this phase; other people later, after the dashboard's terminal view has been checked against what a scope's people may see. This narrows section 7.2 and Appendix E.
   7. *Items phase 1 left out:* the Stop button is in this phase, as one more issue in group `chat` after #257. The turn footer, attachments into the agent, thread naming beyond the prompt and "ask in chat" for permission requests are not in this phase; each gets its own issue when wanted.
 - **Supervisor: the five points of #267** (the maintainer, 2026-11-19, all as recommended). Section 7.1 and Appendix E.
@@ -1198,7 +1223,7 @@ None.
 | Sleep after idle hours; silent wake on the next message | keep | Explicit states. |
 | Cap on resident sessions from host memory; memory brake | keep | Simplified to counting processes. |
 | Sleep never interrupts work, including background tasks | keep | Background tasks are events now (c-lord#922). |
-| Manual stop, start and delete of a workspace | keep | |
+| Manual stop, start and delete of a workspace | keep | Stop and delete are `hataori close` and `hataori remove`; start is `Reopen` (section 5.1), from the host or the owner's Reopen button in chat, also for a thread whose directory was removed or whose conversation is gone. |
 | Automatic stop after idle days; closed threads renamed and archived | keep | |
 | Automatic delete at the agent's transcript-retention age | change | Moves to trash first, behind the proof in section 4.6. |
 | Running turns survive a bot restart | change | By the session host, not by tmux. |
@@ -1638,6 +1663,19 @@ type API interface {
 	CloseThread(ctx context.Context, id ThreadID) error
 	RemoveThread(ctx context.Context, id ThreadID) error
 
+	// ReopenThread takes a closed or removed thread back to asleep (section
+	// 5.1): its next message wakes it in its own directory, under the same
+	// number, links and key. A removed thread's directory is taken back from
+	// trash, or made again at its place when the trash pass deleted it;
+	// nothing at that place is ever overwritten. It reports what became of
+	// the directory and whether the conversation resumes. A refusal is a
+	// *ReopenRefused (ErrReopenRefused) and changes nothing: a thread not
+	// closed or removed, a removed thread taken in from a window, a place
+	// taken by something else, and a confined thread while another of its
+	// scope is open, which the reason names. It needs OpReopen and the
+	// owner. On the wire it is the operation Reopen. Since protocol 3.31.
+	ReopenThread(ctx context.Context, id ThreadID) (Reopened, error)
+
 	// Link shows the thread in one more conversation and returns its link.
 	// It is checked like Send, and refused when l.Channel is neither the
 	// scope's own channel nor in its show_in for l.Client; a refusal makes
@@ -1924,7 +1962,7 @@ type Caller struct {
 	// it in the log line of a refusal. Since protocol 3.23.
 	Via       string
 	Scopes    []string  // the scopes it may see and act in; a thread of another is answered as none (ErrNotFound)
-	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName, OpAsk, OpHostInput, OpTakeIn
+	May       Ops       // any of OpRead, OpStart, OpSend, OpAnswer, OpStop, OpSignIn, OpHost, OpAttach, OpClose, OpRemove, OpName, OpAsk, OpHostInput, OpTakeIn, OpReopen
 	// NoText leaves text written by a person or an agent out of what the
 	// caller reads: ThreadInfo.Title, ThreadInfo.Last and ThreadInfo.Name,
 	// ThreadDetail.Recent, the text of its requests and a question's
@@ -2158,6 +2196,17 @@ type Busy int // Refuse, Deliver, Interrupt
 // ThreadID is the thread's number, threads.id.
 type ThreadID int64
 
+// Reopened is what ReopenThread did: Workspace is "kept", "restored" or
+// "remade"; Conversation is "resume" or "new". Since protocol 3.31.
+type Reopened struct {
+	Workspace    string
+	Conversation string
+}
+
+// ReopenRefused is why a ReopenThread was refused, a sentence for a
+// person; it matches ErrReopenRefused. Since protocol 3.31.
+type ReopenRefused struct{ Reason string }
+
 // LinkRef is where a thread is shown: a conversation of one client.
 type LinkRef struct {
 	Client  string
@@ -2298,6 +2347,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `via` in the `input`, `answer` and `approval_answered` events, and the `stop` event (section 7.2, giving a thread input from its tab, #604) | minor: a new optional field and a new event kind; 3.23 |
 | An `input` event with `via` `terminal` for the prompt of a turn typed at the terminal (section 5.2, #609) | minor: a new value of a field, on an event kind that exists; 3.24 |
 | `Trust`, `StartWithoutSettings`, `Trusts` and `Untrust`, with `TrustedFile`, the `state` field `trust` and the `session_replaced` reasons `trusted` and `without project settings`: a blocked start's choices in chat (section 3.5, #590) | minor: new operations, a new optional field and new values of a reason; 3.28 |
+| `Reopen`, with `Ops` gaining `OpReopen`, `Reopened`, the `reopened` event, the `state` reason `reopen` and the `reopen_refused` error code (section 5.1, #670) | minor: a new operation, event kind, error code and value of a reason; 3.31 |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 
 Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event. In protocol 1.9: `Terminal`, which turns its connection into a stream as `Events` does. In protocol 1.12: `ThreadInfo.terminal`, the terminal device its session host opened, for the tree's filter, the status bar and the details panel (#285); `HostTerminals` still leaves these terminals out.

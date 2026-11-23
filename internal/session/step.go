@@ -30,9 +30,10 @@ const (
 	StartTimeout                  // timer: no SessionReady within the start timeout
 	IdleTimeout                   // timer: idle for the idle period
 	Wake                          // API: input for an asleep session, which is started again
+	Reopen                        // command: take a closed or removed session back to asleep
 )
 
-var inputNames = [...]string{"send", "answer", "close", "remove", "agent event", "exit", "start timeout", "idle timeout", "wake"}
+var inputNames = [...]string{"send", "answer", "close", "remove", "agent event", "exit", "start timeout", "idle timeout", "wake", "reopen"}
 
 func (k InputKind) String() string {
 	if int(k) < len(inputNames) {
@@ -50,7 +51,7 @@ type Input struct {
 	Text      string            // Send, Answer
 	Request   string            // Answer: the agent's id of the request answered
 	Agent     agent.Event       // AgentEvent
-	Reason    string            // Exit: why; empty for "crashed". Close, Remove: what asked for it, such as "command"
+	Reason    string            // Exit: why; empty for "crashed". Close, Remove: what asked for it, such as "command"; Reopen: ReasonReopen
 	Detail    string            // StartTimeout, Exit: what a person may want to read, such as the end of the terminal log
 	Link      *control.LinkRef  // Send, Answer: the link it came through, if any
 	// Before and After, Send: the text the plugins added around Text, which
@@ -111,6 +112,9 @@ const (
 	// went asleep: its agent in the window ended, or the window went
 	// (design, section 4.8).
 	ReasonWindowClosed = "window closed"
+	// ReasonReopen is the reason of the state change a reopen makes, from
+	// closed or removed to asleep.
+	ReasonReopen = "reopen"
 )
 
 // Who started a turn.
@@ -256,6 +260,13 @@ func Step(s Snapshot, in Input) (Result, error) {
 			return refuse()
 		}
 		to(control.Removed, in.Reason)
+	case Reopen:
+		// Nothing runs: the next message wakes it, as any asleep session.
+		// Whether its directory is in place is the core's to see to first.
+		if s.State != control.Closed && s.State != control.Removed {
+			return refuse()
+		}
+		to(control.Asleep, ReasonReopen)
 	case StartTimeout:
 		if s.State != control.Creating {
 			return refuse()

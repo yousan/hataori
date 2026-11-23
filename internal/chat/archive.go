@@ -19,16 +19,26 @@ const threadPart = 1 << 28
 // `hataori attach`. The rows of the wake come before what the woken thread
 // posts, since they are the state event's. A driver that cannot set a
 // thread's flags (Limits.SetThread) gets none, and its threads stay open.
+//
+// A reopen un-archives them in every scope, whatever archived them: this
+// front end while the thread slept or was closed, or the chat service for
+// inactivity.
 func (f *FrontEnd) archiveRows(e control.Event, convs []surface.Conversation) []Row {
-	if e.Kind != "state" || !f.ArchiveWhenAsleep[e.Scope] || !f.Driver.Limits().SetThread {
+	if e.Kind != "state" || !f.Driver.Limits().SetThread {
 		return nil
 	}
 	var d struct{ From, To control.State }
 	if json.Unmarshal(e.Data, &d) != nil {
 		return nil
 	}
+	reopened := (d.From == control.Closed || d.From == control.Removed) && d.To == control.Asleep
+	if !reopened && !f.ArchiveWhenAsleep[e.Scope] {
+		return nil
+	}
 	var op Op
 	switch {
+	case reopened:
+		op = Unarchive
 	case d.To == control.Asleep || d.To == control.Closed:
 		op = Archive
 	case d.From == control.Asleep:

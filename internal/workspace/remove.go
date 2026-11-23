@@ -17,10 +17,12 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode"
 
+	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
 )
 
@@ -290,6 +292,239 @@ func unescapeSegment(s string) (string, bool) {
 
 func upperHex(c byte) bool { return c >= '0' && c <= '9' || c >= 'A' && c <= 'F' }
 
+// trashMu keeps a Restore from taking an entry out of trash/ while the
+// purge deletes it, which would put a half-deleted directory back.
+var trashMu sync.Mutex
+
+var _ core.Restorer = Remover{}
+
+// Restore takes the workspace that Remove moved to entry back to dir, the
+// place it was removed from, for a reopen (design, section 5.1). It is a
+// rename that never replaces anything: a dir that exists in any form is
+// refused and left as it is, and so is a dir outside the instance's
+// workspaces directory. entry must be one Remove made, directly in
+// <root>/trash/; one that is not there any more, as after the purge,
+// returns an error that wraps fs.ErrNotExist, and nothing changes. It
+// waits for a purge that runs, and the purge for it.
+func (r Remover) Restore(ctx context.Context, entry, dir string, placed func(core.Placement) error) error {
+	trashMu.Lock()
+	defer trashMu.Unlock()
+	if r.Maker.Root == "" {
+		return errors.New("workspace: restore: no instance root")
+	}
+	root, err := filepath.EvalSymlinks(r.Maker.Root)
+	if err != nil {
+		return fmt.Errorf("workspace: restore: %w", err)
+	}
+	trash, err := realDir(filepath.Join(root, TrashDir), false)
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("workspace: restore: no trash directory: %w", fs.ErrNotExist)
+	}
+	if err != nil {
+		return fmt.Errorf("workspace: restore: %w", err)
+	}
+	entry = filepath.Clean(entry)
+	if filepath.Dir(entry) != trash || !trashName(filepath.Base(entry)) {
+		return fmt.Errorf("workspace: restore: %s is not an entry the removal made in %s", entry, trash)
+	}
+	before, err := os.Lstat(entry)
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("workspace: restore: %s is no longer in trash: %w", entry, fs.ErrNotExist)
+	}
+	if err != nil {
+		return fmt.Errorf("workspace: restore: %w", err)
+	}
+	if !before.IsDir() {
+		return fmt.Errorf("workspace: restore: %s is not a directory", entry)
+	}
+	target, err := r.placeBack(root, dir)
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if placed != nil {
+		// A rename keeps them: they identify the workspace at its place.
+		dev, ino, ok := identity(before)
+		if !ok {
+			return fmt.Errorf("workspace: restore: %s has no device and inode", entry)
+		}
+		if err := placed(core.Placement{Dir: dir, Dev: dev, Inode: ino}); err != nil {
+			return fmt.Errorf("workspace: restore: %w (the entry stays in trash)", err)
+		}
+	}
+	// The parent looked at is the one renamed into: one that became a
+	// link meanwhile is refused.
+	if p, err := filepath.EvalSymlinks(filepath.Dir(target)); err != nil || p != filepath.Dir(target) {
+		return fmt.Errorf("workspace: restore: %s changed during the restore", filepath.Dir(target))
+	}
+	if err := renameNoReplace(entry, target); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("%w: %s", ErrExists, target)
+		}
+		return fmt.Errorf("workspace: restore: %w", err)
+	}
+	if after, err := os.Lstat(target); err != nil || !os.SameFile(before, after) {
+		// Renamed, so the entry was the directory looked at; what is at
+		// target now is not, and is left as it is.
+		return fmt.Errorf("workspace: restore: %s was replaced during the restore", target)
+	}
+	return nil
+}
+
+// Trashed returns the entry in trash of the workspace of thread that was at
+// dir, found by its name, or "" when there is none. Only a workspace at
+// Path, named by the thread's number, is looked for: no other thread's
+// entry has that name. More than one is an error: which one is it cannot be
+// told.
+func (r Remover) Trashed(thread control.ThreadID, dir string) (string, error) {
+	if filepath.Clean(dir) != filepath.Clean(Path(r.Maker.Root, thread)) {
+		return "", nil
+	}
+	root, err := filepath.EvalSymlinks(r.Maker.Root)
+	if err != nil {
+		return "", fmt.Errorf("workspace: %w", err)
+	}
+	trash, err := realDir(filepath.Join(root, TrashDir), false)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("workspace: %w", err)
+	}
+	entries, err := os.ReadDir(trash)
+	if err != nil {
+		return "", fmt.Errorf("workspace: %w", err)
+	}
+	found := ""
+	for _, e := range entries {
+		name := e.Name()
+		loc := trashPrefix.FindStringIndex(name)
+		if loc == nil || !trashName(name) || name[loc[1]:] != Segment(filepath.Base(dir)) {
+			continue
+		}
+		if found != "" {
+			return "", fmt.Errorf("workspace: %s and %s are both of thread %d", filepath.Base(found), name, thread)
+		}
+		found = filepath.Join(trash, name)
+	}
+	return found, nil
+}
+
+// Remake makes the workspace of thread again at dir, its place, with a new
+// clone of repo, for a reopen of a thread whose workspace is gone (design,
+// section 5.1). A dir that exists in any form is refused and left as it
+// is, also one that appears during the clone, and so is a dir outside the
+// instance's workspaces directory.
+func (r Remover) Remake(ctx context.Context, thread control.ThreadID, repo, dir string, placed func(core.Placement) error) error {
+	if r.Maker.Root == "" {
+		return errors.New("workspace: remake: no instance root")
+	}
+	if thread <= 0 {
+		return fmt.Errorf("workspace: no thread %d", thread)
+	}
+	root, err := filepath.EvalSymlinks(r.Maker.Root)
+	if err != nil {
+		return fmt.Errorf("workspace: remake: %w", err)
+	}
+	target, err := r.placeBack(root, dir)
+	if err != nil {
+		return err
+	}
+	var at func(core.Placement) error
+	if placed != nil {
+		// Named by dir, as the thread records it, not by its resolved path.
+		at = func(p core.Placement) error { p.Dir = dir; return placed(p) }
+	}
+	_, err = r.Maker.cloneTo(ctx, repo, target, at)
+	return err
+}
+
+// placeBack returns where dir is, its parent resolved, made when it is
+// not there: strictly inside the instance's workspaces directory, and not
+// there in any form.
+func (r Remover) placeBack(root, dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("workspace: %w", err)
+	}
+	ws := filepath.Join(root, Dir)
+	// The parent is made only inside the workspaces directory, as a clone
+	// makes it, and resolved before it is compared.
+	parent := filepath.Dir(abs)
+	if p, err := filepath.EvalSymlinks(parent); err == nil {
+		parent = p
+	} else if errors.Is(err, fs.ErrNotExist) {
+		rel, ok := below(r.Maker.Root, parent)
+		real := filepath.Join(root, rel)
+		if !ok || !within(real, ws) && real != ws {
+			return "", fmt.Errorf("workspace: %s is not inside the instance's workspaces directory", dir)
+		}
+		if err := mkdirNoFollow(ws, real); err != nil {
+			return "", err
+		}
+		if parent, err = filepath.EvalSymlinks(real); err != nil {
+			return "", fmt.Errorf("workspace: %w", err)
+		}
+	} else {
+		return "", fmt.Errorf("workspace: %w", err)
+	}
+	target := filepath.Join(parent, filepath.Base(abs))
+	if !within(target, ws) {
+		return "", fmt.Errorf("workspace: %s is not inside the instance's workspaces directory", dir)
+	}
+	if _, err := os.Lstat(target); err == nil {
+		return "", fmt.Errorf("%w: %s", ErrExists, target)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("workspace: %w", err)
+	}
+	return target, nil
+}
+
+// mkdirNoFollow makes dir and the directories between ws and it, one at a
+// time, refusing any that is a link or no directory: nothing is made
+// outside ws through a link.
+func mkdirNoFollow(ws, dir string) error {
+	rel, err := filepath.Rel(ws, dir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("workspace: %s is not inside %s", dir, ws)
+	}
+	p := ws
+	for _, part := range append([]string{""}, strings.Split(rel, string(filepath.Separator))...) {
+		if part != "" && part != "." {
+			p = filepath.Join(p, part)
+		}
+		st, err := os.Lstat(p)
+		if errors.Is(err, fs.ErrNotExist) {
+			if err := os.Mkdir(p, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+				return fmt.Errorf("workspace: %w", err)
+			}
+			st, err = os.Lstat(p)
+		}
+		if err != nil {
+			return fmt.Errorf("workspace: %w", err)
+		}
+		if !st.IsDir() {
+			return fmt.Errorf("workspace: %s is not a directory", p)
+		}
+	}
+	return nil
+}
+
+// below returns p relative to base, and whether p is base or below it.
+func below(base, p string) (string, bool) {
+	abs, err := filepath.Abs(base)
+	if err != nil {
+		return "", false
+	}
+	rel, err := filepath.Rel(abs, p)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return rel, true
+}
+
 // Purge deletes the entries of trash/ that were moved there longer than
 // Retention ago, by the time in their names, and returns them. An entry
 // whose name the removal did not make is left alone. An entry that cannot
@@ -298,6 +533,8 @@ func (r Remover) Purge() ([]string, error) {
 	if r.Retention <= 0 {
 		return nil, errors.New("workspace: purge: no retention set")
 	}
+	trashMu.Lock()
+	defer trashMu.Unlock()
 	root, err := filepath.EvalSymlinks(r.Maker.Root)
 	if err != nil {
 		return nil, fmt.Errorf("workspace: purge: %w", err)

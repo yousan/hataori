@@ -293,13 +293,17 @@ func identity(st os.FileInfo) (dev, ino uint64, ok bool) {
 // Right before the rename, placed, when not nil, is called with the clone's
 // identity; when it fails, the clone is not renamed.
 func (m Maker) Clone(ctx context.Context, thread control.ThreadID, repo string, placed func(core.Placement) error) (string, error) {
-	if err := CheckAddress(repo); err != nil {
-		return "", err
-	}
 	if thread <= 0 {
 		return "", fmt.Errorf("workspace: no thread %d", thread)
 	}
-	target := Path(m.Root, thread)
+	return m.cloneTo(ctx, repo, Path(m.Root, thread), placed)
+}
+
+// cloneTo is Clone at target, which is not touched when it exists.
+func (m Maker) cloneTo(ctx context.Context, repo, target string, placed func(core.Placement) error) (string, error) {
+	if err := CheckAddress(repo); err != nil {
+		return "", err
+	}
 	if _, err := os.Lstat(target); err == nil {
 		return "", fmt.Errorf("%w: %s", ErrExists, target)
 	} else if !errors.Is(err, os.ErrNotExist) {

@@ -43,19 +43,19 @@ var points = map[string]Failure{
 // operations are the operations of the control protocol, as
 // docs/protocol.md lists them; a test keeps the two equal.
 var operations = []string{"Answer", "AskInterrupt", "AttachTerminal", "Clients", "Close", "End", "Events", "Forge", "HostKeys", "HostScreen", "HostTerminals", "HostView", "Layout", "Limits", "Link",
-	"OperateHost", "Release", "Remove", "Scopes", "Send", "SetLayout", "SetName", "SignInLink", "Start", "StartWithoutSettings", "Stop", "TakeIn", "Terminal", "Thread", "ThreadEvents", "Threads", "Trust", "Trusts", "Untrust", "Workspace"}
+	"OperateHost", "Release", "Remove", "Reopen", "Scopes", "Send", "SetLayout", "SetName", "SignInLink", "Start", "StartWithoutSettings", "Stop", "TakeIn", "Terminal", "Thread", "ThreadEvents", "Threads", "Trust", "Trusts", "Untrust", "Workspace"}
 
 // never are the operations no plugin is given, whatever its manifest and
 // its config say: the dashboard's sign-in; the terminals on the host, read
 // or typed into; a terminal attached to an agent, which reaches the agent
-// past the core's checks; closing or removing a thread, which ends or
-// deletes a person's work; taking in a window a person started, or
+// past the core's checks; closing, removing or reopening a thread, which
+// ends, deletes or brings back a person's work; taking in a window a person started, or
 // letting it go; reading a forge, which only a supervisor's connection
 // does, with the forge's token; trusting the files a start-up dialog
 // named, which lets a repository run commands, or withdrawing that; and
 // answering such a dialog otherwise, which a person does from chat.
 var never = []string{"SignInLink", "HostTerminals", "HostScreen", "HostView", "OperateHost", "HostKeys", "End",
-	"AttachTerminal", "Close", "Remove", "TakeIn", "Release", "Forge", "Trust", "Untrust", "StartWithoutSettings"}
+	"AttachTerminal", "Close", "Remove", "Reopen", "TakeIn", "Release", "Forge", "Trust", "Untrust", "StartWithoutSettings"}
 
 // classes are the classes of Caller.May that the operations a plugin may
 // be given need; the core checks the operation's name besides

@@ -135,6 +135,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	p.session, p.transcriptPath = id, *transcript
 	if *conversations != "" {
 		f := filepath.Join(*conversations, filepath.Base(id))
+		p.conversation = f
 		if *resume != "" {
 			if _, err := os.Stat(f); err != nil {
 				p.report(map[string]any{"t": "cannot-resume", "session": id})
@@ -203,6 +204,10 @@ type program struct {
 	mcp            *mcpClient // the confined spec's MCP server
 	relay          [2]string  // the two threads it relays between; empty for none
 	wakeScript     bool       // a wake message's quoted output lines are the turn's script
+	// conversation is the session's file under Conversations, when set:
+	// each turn's first line is added to it, and the script command
+	// recall answers with the lines of the turns before.
+	conversation string
 }
 
 // A relay refused as busy is sent again after relayWait, at most relayTries
@@ -306,6 +311,18 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 		return 0, false
 	}
 	final, replied := "done", false
+	var earlier []string
+	if p.conversation != "" {
+		b, _ := os.ReadFile(p.conversation)
+		if t := strings.TrimSpace(string(b)); t != "" {
+			earlier = strings.Split(t, "\n")
+		}
+		first, _, _ := strings.Cut(strings.TrimSpace(script), "\n")
+		if f, err := os.OpenFile(p.conversation, os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
+			fmt.Fprintln(f, first)
+			f.Close()
+		}
+	}
 	run := script
 	if p.wakeScript {
 		if w, ok := quotedScript(script); ok {
@@ -332,6 +349,12 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 			}
 			first, _, _ := strings.Cut(strings.TrimSpace(script), "\n")
 			final, replied = "heard: "+first, true
+		case "recall":
+			// The conversation's earlier turns, as the agent remembers them.
+			if replied {
+				p.say(final, false)
+			}
+			final, replied = "recall: "+cmp.Or(strings.Join(earlier, " | "), "nothing"), true
 		case "whoami":
 			if replied {
 				p.say(final, false)

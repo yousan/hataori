@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.30**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.31**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -100,6 +100,7 @@ Events are stored, and a reader reads them from a position, possibly long after 
 | `refused` | error code | - | the session's state does not allow the call |
 | `stopped` | error code | - | a plugin's handler on an input hook point stopped the input, or failed where its policy blocks: nothing was accepted; the message names the plugin, the point and why; since 3.18 |
 | `proposed` | error code | - | a `Start` or a `Send` on a connection whose calls are proposals: nothing was made; it was stored as proposal `proposal`, which a person decides (see `Answer`); since 3.26 |
+| `reopen_refused` | error code | - | a `Reopen` changed nothing; the message says why, such as the open supervisor thread it names; since 3.31 |
 | `not_supported` | error code | - | the receiver does not know the operation |
 | `error` | error code | - | any other failure |
 
@@ -273,6 +274,21 @@ Since 2.3. Ends the agent process of an idle, asleep or failed thread and closes
 | `id` | integer | required | the thread's number; since 3.0, before it a `{scope, key}` object |
 
 Result: none
+
+### Operation `Reopen`
+
+Since 3.31. Takes a closed or removed thread back to `asleep`, so that its next message wakes it, as any asleep thread's does ([design section 5.1](design/overview.md#51-the-control-api)): in the same directory, with the same number, links and key. Nothing runs until that message. The result says what became of the directory and of the conversation:
+
+- A closed thread whose directory is in place keeps it (`kept`). A removed thread's directory is taken back from `trash/` to its place while it is there (`restored`), with its unpushed work and its recorded conversation; when the trash pass deleted it, or a closed thread's directory is gone, it is made again at its place (`remade`): a new clone of the thread's repository, or an empty directory for a thread started confined. Neither ever replaces anything: when the place of a removed thread's directory is taken by something else, the call is answered `reopen_refused` and nothing changes.
+- The next message resumes the recorded conversation (`resume`). It starts a new one in the directory (`new`) when the directory was made again, or when the session never recorded its conversation; the agent's first prompt then says that the chat thread holds the earlier exchange, and gives its last part. A conversation the agent no longer has when it is resumed is replaced as at any wake: a `session_replaced` event, and a new session in the same directory.
+
+It writes a `state` event to `asleep` with reason `reopen`, then a `reopened` event. It is answered `reopen_refused`, and changes nothing, for a thread that is neither closed nor removed, a thread whose agent was never started, a removed thread that was taken in from a person's window (`TakeIn`), a thread whose directory cannot be put back, and a thread started confined (a supervisor's) while another confined thread of its scope is neither closed nor removed: the message names that one. Only the owner may reopen: the caller needs the `Reopen` permission, which the owner's connection on the control socket has and a chat front end gives the caller it makes for a press of its Reopen button, and its person must be the owner; any other caller is answered `forbidden`, nothing changes and one log line is written.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `id` | integer | required | the thread's number |
+
+Result: `Reopened`
 
 ### Operation `TakeIn`
 
@@ -807,6 +823,15 @@ Since 1.4.
 | `unpushed` | integer | required | commits reachable from the checked-out commit or a local branch and from no remote-tracking ref |
 | `fetched` | time | optional | when the remote-tracking refs were last updated, by a fetch, a push or the clone; absent when the repository does not say |
 
+### Type `Reopened`
+
+What a `Reopen` did; since 3.31.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `workspace` | string | required | `kept` (in place), `restored` (taken back from `trash/`) or `remade` (made again at its place) |
+| `conversation` | string | required | `resume` (the next message resumes the recorded conversation) or `new` (it starts a new one in the directory) |
+
 ### Type `Attachment`
 
 Since 2.1. The result of `AttachTerminal`.
@@ -1218,7 +1243,7 @@ The session's state changed.
 | `session` | integer | required | the session |
 | `from` | string | required | the state before |
 | `to` | string | required | the state now |
-| `reason` | string | optional | why, such as `idle`, `interrupted`, `crashed`, `window closed` (a thread taken in whose window closed, since 3.20), `blocked at start`, `cannot resume`, `wake`; for `to: closed` or `to: removed`, what asked for it: `command` (the `Close` or `Remove` operation) or `closed age` (the removal pass of the config's `cleanup.remove_closed_after`), since 2.3 |
+| `reason` | string | optional | why, such as `idle`, `interrupted`, `crashed`, `window closed` (a thread taken in whose window closed, since 3.20), `blocked at start`, `cannot resume`, `wake`, `reopen` (from `closed` or `removed` to `asleep`, by the operation `Reopen`, since 3.31); for `to: closed` or `to: removed`, what asked for it: `command` (the `Close` or `Remove` operation) or `closed age` (the removal pass of the config's `cleanup.remove_closed_after`), since 2.3 |
 | `detail` | string | optional | text for a person, such as the end of the terminal output of a session blocked at start |
 | `trust` | array | optional | for `to: failed` with reason `blocked at start`: every file the start-up dialog named, as it named them, when the start was blocked because some of them are not trusted; `Trust` takes them; text; since 3.28 |
 
@@ -1492,6 +1517,17 @@ The agent no longer had the conversation, or, since 3.28, a start that files blo
 | `session` | integer | required | the session that could not be resumed, or that a start-up dialog blocked |
 | `new_session` | integer | required | the new session |
 | `reason` | string | required | `cannot resume`, `trusted` or `without project settings` (both since 3.28) |
+
+### Event `reopened`
+
+Since 3.31. A closed or removed thread was taken back to `asleep` by the operation `Reopen`, after the `state` event of that change.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `session` | integer | required | the session the next message wakes |
+| `principal` | string | optional | who reopened it |
+| `workspace` | string | required | as `Reopened.workspace` |
+| `conversation` | string | required | as `Reopened.conversation` |
 
 ### Event `removal_refused`
 

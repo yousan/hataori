@@ -742,3 +742,38 @@ func TestWakeByATurnEndWrittenAtTheFirstStart(t *testing.T) {
 		t.Fatalf("the digest of the turn end written at the start:\n%s", got[0])
 	}
 }
+
+// A wake held because the scope's supervisor thread is closed reaches an
+// older supervisor thread once a person reopens that one, with no further
+// turn end (#670).
+func TestWakeReachesAReopenedOlderSupervisor(t *testing.T) {
+	wt := newWakeTest(t)
+	stop, owner, first := wt.start(t)
+	ctx := context.Background()
+	if err := owner.CloseThread(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	stop()
+	stop, owner, second := wt.start(t)
+	defer stop()
+	if second.ID == first.ID {
+		t.Fatalf("the closed supervisor %d was not replaced", first.ID)
+	}
+	if err := owner.CloseThread(ctx, second.ID); err != nil {
+		t.Fatal(err)
+	}
+	a, pos := wt.worker(t, owner, "c1", "a", "reply alpha")
+	wt.read(t, pos)
+	wt.quiet(t)
+	time.Sleep(300 * time.Millisecond)
+	if n := len(wt.wakes(t, first.ID)) + len(wt.wakes(t, second.ID)); n != 0 {
+		t.Fatalf("%d wakes while every supervisor thread is closed", n)
+	}
+	if _, err := owner.ReopenThread(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	got := wt.woken(t, owner, first.ID, 1)
+	if !strings.Contains(got[0], fmt.Sprintf("\nThread %d: reply alpha\n", a)) {
+		t.Fatalf("the reopened supervisor's digest:\n%s", got[0])
+	}
+}

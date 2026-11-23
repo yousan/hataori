@@ -61,6 +61,7 @@ var eventData = map[control.EventKind]string{
 	"login_lost":        `{"agent":"claude-code","outage":1,"thread":7}`,
 	"login_restored":    `{"agent":"claude-code","outage":1,"scopes":["C0123"],"threads":[7]}`,
 	"session_replaced":  `{"new_session":4,"reason":"cannot resume","session":3}`,
+	"reopened":          `{"conversation":"resume","principal":"alice","session":3,"workspace":"restored"}`,
 	"named":             `{"channel":"C0123","client":"discord","name":"Fix the build","thread":"T0456"}`,
 	"layout":            `{"client":"discord"}`,
 	"removal_refused":   `{"detail":"commit 9fceb02 on refs/heads/fix-build","kind":"submodule","principal":"dispatch","reason":"unpushed commit on a branch","repo":"vendor/lib","session":3,"trigger":"command"}`,
@@ -109,6 +110,7 @@ func examples(t *testing.T) map[string]any {
 		"Close":                closeArgs{ID: exampleID},
 		"Link":                 linkArgs{ID: exampleID, Link: control.LinkRef{Client: "discord", Channel: "C0999", Thread: ""}},
 		"Remove":               removeArgs{ID: exampleID},
+		"Reopen":               reopenArgs{ID: exampleID},
 		"TakeIn":               control.TakeInRequest{Window: "tmux:/tmp/tmux-1000/default,4242,%4", Scope: "C0123", Key: "take-1"},
 		"Release":              releaseArgs{ID: exampleID},
 		"Trust":                trustArgs{ID: exampleID, Session: 3, Files: []string{".mcp.json"}},
@@ -151,6 +153,7 @@ func examples(t *testing.T) map[string]any {
 		}}},
 		"Start":  exampleID,
 		"TakeIn": exampleID,
+		"Reopen": control.Reopened{Workspace: control.ReopenRestored, Conversation: control.ReopenResume},
 		"Trusts": []control.TrustedFile{{ID: 2, Scope: "C0123", Repo: "https://example.com/repo.git", File: ".mcp.json",
 			By: "alice", At: exampleTime}},
 		"AskInterrupt": control.RequestID("approval-1"),
@@ -244,6 +247,8 @@ func examples(t *testing.T) map[string]any {
 	ex["response-error-stopped.json"] = response{ID: 6, Error: encodeError(fmt.Errorf("core: Send in %q: %w", "C0123",
 		&control.Stopped{Point: "before_agent_run", Plugin: "secret-scan", Reason: "The input holds a secret."}))}
 	ex["response-error-proposed.json"] = response{ID: 7, Error: encodeError(fmt.Errorf("core: Send in %q: %w", "C0123", &control.Proposed{Number: 3}))}
+	ex["response-error-reopen_refused.json"] = response{ID: 8, Error: encodeError(fmt.Errorf("core: reopen 7: %w",
+		&control.ReopenRefused{Reason: "thread 9, another supervisor thread of this scope, is open: only one is open at a time"}))}
 	for kind := range control.EventKinds {
 		d, ok := eventData[kind]
 		if !ok {

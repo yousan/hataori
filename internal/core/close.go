@@ -148,7 +148,17 @@ func (c *Core) remove(ctx context.Context, id control.ThreadID, principal contro
 	// The workspace is in trash. The thread follows; if that fails, the
 	// workspace is still in trash for the retention, and the log says where.
 	// A caller that gave up meanwhile does not keep it from being recorded.
-	if err := c.Machine.Apply(context.WithoutCancel(ctx), sid, session.Input{Kind: session.Remove, Reason: trigger}); err != nil {
+	// Where it went is kept with the thread, so that a reopen can take it
+	// back while it is there (ReopenThread).
+	done := context.WithoutCancel(ctx)
+	err = c.Store.Update(done, func(tx *store.Tx) error {
+		if err := c.Machine.ApplyTx(done, tx, sid, session.Input{Kind: session.Remove, Reason: trigger}); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(done, `UPDATE threads SET trash = ? WHERE id = ?`, trash, int64(id))
+		return err
+	})
+	if err != nil {
 		c.Log.Error("workspace moved to trash, but the thread was not marked removed", "thread", int64(id),
 			"trash", trash, "err", err)
 		return fmt.Errorf("core: remove %v: the workspace is in trash, but: %w", id, err)

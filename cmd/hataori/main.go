@@ -10,6 +10,7 @@
 //	hataori attach [--root DIR] NUMBER          this terminal on the agent's, until Ctrl-\
 //	hataori close [--root DIR] NUMBER           end the thread's agent and close it; the workspace stays
 //	hataori remove [--root DIR] NUMBER          move a closed thread's workspace into trash, if nothing would be lost
+//	hataori reopen [--root DIR] NUMBER          take a closed or removed thread back to asleep; its next message wakes it
 //	hataori signin [--root DIR] [--web]         a single-use dashboard sign-in link, for the
 //	                                            loopback listener or, with --web, the web listener
 //	hataori connect [[user@]host] [--root DIR] [--hataori PATH] [--port N]
@@ -104,7 +105,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return runCtx(context.Background(), args, stdout, stderr)
 }
 
-const usage = "usage: hataori run|threads|thread NUMBER|events [--after N] [--follow]|stop NUMBER|attach NUMBER|close NUMBER|remove NUMBER|signin [--web]|take WINDOW --scope SCOPE [--key KEY]|release NUMBER|trusts|untrust ID [--root DIR] | hataori connect [[user@]host] [--root DIR] [--hataori PATH] [--port N] | hataori mcp --scope SCOPE [--root DIR] [--output-max BYTES] | hataori plugin [--root DIR] | hataori version | hataori host <state-dir> | hataori hook [--wait] [--timeout DURATION] | hataori hook --window --root DIR | hataori statusline --last FILE [--run COMMAND]"
+const usage = "usage: hataori run|threads|thread NUMBER|events [--after N] [--follow]|stop NUMBER|attach NUMBER|close NUMBER|remove NUMBER|reopen NUMBER|signin [--web]|take WINDOW --scope SCOPE [--key KEY]|release NUMBER|trusts|untrust ID [--root DIR] | hataori connect [[user@]host] [--root DIR] [--hataori PATH] [--port N] | hataori mcp --scope SCOPE [--root DIR] [--output-max BYTES] | hataori plugin [--root DIR] | hataori version | hataori host <state-dir> | hataori hook [--wait] [--timeout DURATION] | hataori hook --window --root DIR | hataori statusline --last FILE [--run COMMAND]"
 
 func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -172,7 +173,7 @@ func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return connectMain(ctx, args[1:], stderr, env)
 	case "statusline":
 		return claudecode.StatusLineMain(args[1:], os.Stdin, stdout, stderr, os.Getenv)
-	case "run", "threads", "thread", "events", "stop", "attach", "close", "remove", "signin", "take", "release", "trusts", "untrust":
+	case "run", "threads", "thread", "events", "stop", "attach", "close", "remove", "reopen", "signin", "take", "release", "trusts", "untrust":
 		return command(ctx, args[0], args[1:], stdout, stderr)
 	}
 	fmt.Fprintln(stderr, usage)
@@ -222,7 +223,7 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 		args = fs.Args()[1:]
 	}
 	want := 0
-	if name == "thread" || name == "stop" || name == "attach" || name == "close" || name == "remove" || name == "take" || name == "release" || name == "untrust" {
+	if name == "thread" || name == "stop" || name == "attach" || name == "close" || name == "remove" || name == "reopen" || name == "take" || name == "release" || name == "untrust" {
 		want = 1
 	}
 	if (name == "take") != (*scope != "") || name != "take" && *key != "" {
@@ -370,6 +371,23 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 			return fail(err)
 		}
 		if err := enc.Encode(map[string]any{"thread": t.ID, "scope": t.Scope, "state": control.Asleep}); err != nil {
+			return fail(err)
+		}
+	case "reopen":
+		t, ok, err := find(ctx, c, pos[0])
+		if err != nil {
+			return fail(err)
+		}
+		if !ok {
+			fmt.Fprintf(stderr, "hataori: no thread of this instance has the number %s\n", pos[0])
+			return exitNoThread
+		}
+		r, err := c.ReopenThread(ctx, t.ID)
+		if err != nil {
+			return fail(err)
+		}
+		if err := enc.Encode(map[string]any{"thread": t.ID, "scope": t.Scope, "state": control.Asleep,
+			"workspace": r.Workspace, "conversation": r.Conversation}); err != nil {
 			return fail(err)
 		}
 	case "trusts":
