@@ -1064,11 +1064,16 @@ func (r *waking) given(ctx context.Context) (map[control.ThreadID]uint64, error)
 		(SELECT min(pos) FROM events WHERE thread_id = ?), 0)`, int64(r.sv), session.Int64, int64(r.sv)).Scan(&start); err != nil {
 		return nil, fmt.Errorf("supervisor: the output given: %w", err)
 	}
-	// The session's wakes, by the turn each started: what it covers.
+	// The session's wakes, by the turn each started: what it covers. The
+	// session is the supervisor's, whatever conversation each wake ran in
+	// (#676); but what a wake gave a conversation of its own whose turn
+	// failed was kept nowhere, and is given again.
 	covers := map[int64]uint64{}
 	rows, err := db.QueryContext(ctx, `SELECT json_extract(data, '$.turn'), json_extract(data, '$.key') FROM events
 		WHERE thread_id = ? AND kind = 'turn_started' AND pos >= ? AND json_extract(data, '$.session') = ?
-		AND substr(json_extract(data, '$.key'), 1, ?) = ?`, int64(r.sv), start, session.Int64, len(WakeKeyPrefix), WakeKeyPrefix)
+		AND substr(json_extract(data, '$.key'), 1, ?) = ?
+		AND json_extract(data, '$.turn') NOT IN (SELECT id FROM turns WHERE session_id = ? AND aside = 1 AND status = 'failure')`,
+		int64(r.sv), start, session.Int64, len(WakeKeyPrefix), WakeKeyPrefix, session.Int64)
 	if err != nil {
 		return nil, fmt.Errorf("supervisor: the output given: %w", err)
 	}
