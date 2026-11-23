@@ -55,7 +55,7 @@ func TestDigestOfCapturedEvents(t *testing.T) {
 	got, err := DigestOf(threads, decided, func(id control.ThreadID) (control.ThreadDetail, error) {
 		th := c.Threads[id]
 		return control.ThreadDetail{ThreadInfo: control.ThreadInfo{ID: id, Title: th.Title}, Recent: th.Recent}, nil
-	}, 1024, 6)
+	}, nil, 1024, 6)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,5 +112,14 @@ func TestWakeKey(t *testing.T) {
 		if k, err := keyFor(c.stored, c.sv, sentTo); err != nil || k != c.want {
 			t.Errorf("keyFor(%q, %d) = %q, %v; want %q", c.stored, c.sv, k, err, c.want)
 		}
+	}
+}
+
+// A title's own line breaks stay on its line in a digest, so a title that
+// reads like another thread's paragraph names no other thread.
+func TestNamedIgnoresAThreadInATitle(t *testing.T) {
+	d := Digest([]Line{{Thread: 2, Title: "a title\n\nThread 42: not a thread", Outcome: "completion", Last: "out\n\nThread 43: quoted"}}, 0)
+	if got := Named(d); len(got) != 1 || got[0] != 2 {
+		t.Fatalf("Named %v, want [2], of:\n%s", got, d)
 	}
 }

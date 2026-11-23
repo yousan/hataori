@@ -100,6 +100,7 @@ func (c *wakeClock) waiting() int {
 // run on a clock of the test's own.
 type wakeTest struct {
 	r     *chatRoot
+	conv  string // the fake agent's conversations, one file per session
 	db    *sql.DB
 	repo  string
 	mu    sync.Mutex
@@ -118,8 +119,8 @@ func newWakeTest(t *testing.T, more ...func(cfg map[string]any)) *wakeTest {
 	listRepo := func(cfg map[string]any) {
 		cfg["scopes"].([]map[string]any)[0]["supervisor"].(map[string]any)["repos"] = []string{repo}
 	}
-	r, _ := svRoot(t, true, append([]func(map[string]any){listRepo}, more...)...)
-	wt := &wakeTest{r: r, repo: repo, clk: &wakeClock{}}
+	r, conv := svRoot(t, true, append([]func(map[string]any){listRepo}, more...)...)
+	wt := &wakeTest{r: r, conv: conv, repo: repo, clk: &wakeClock{}}
 	coreHook = func(c *core.Core) { c.Machine.Now = wt.clk.Now }
 	wakerHook = func(w *supervisor.Waker) {
 		if b := wt.before.Swap(nil); b != nil {
