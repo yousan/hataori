@@ -80,13 +80,17 @@ func postsIn(d *fakesurface.Driver, conv surface.Conversation) []fakesurface.Cal
 func TestSupervisorWakePostsItsFinalAnswerOnly(t *testing.T) {
 	wt := newWakeTest(t, func(cfg map[string]any) {
 		cfg["people"] = append(cfg["people"].([]map[string]any),
-			map[string]any{"name": "outsider", "ids": []string{fakeSurface + ":out-1"}})
+			map[string]any{"name": "outsider", "ids": []string{fakeSurface + ":out-1"}},
+			map[string]any{"name": "dispatch.lead", "ids": []string{fakeSurface + ":lead-1"}})
+		scope := cfg["scopes"].([]map[string]any)[0]
+		scope["people"] = append(scope["people"].([]string), "dispatch.lead")
 		cfg["scopes"].([]map[string]any)[0]["supervisor"].(map[string]any)["instructions"] = "wake-script"
 	})
 	stop, owner, sv := wt.start(t)
 	defer stop()
 	conv := surface.Conversation{Channel: sv.Links[0].Channel, Thread: sv.Links[0].Thread}
 	person := fakesurface.Person(e2eOwner)
+	wt.r.posted(t, conv, "done") // the answer to its first message
 	before := len(postsIn(wt.r.driver, conv))
 
 	// A wake whose final answer is "(quiet)" posts nothing, not even the
@@ -131,4 +135,10 @@ func TestSupervisorWakePostsItsFinalAnswerOnly(t *testing.T) {
 	wt.r.driver.Inject(conv, person, "reply first\nreply (quiet)")
 	wt.r.posted(t, conv, "first")
 	wt.r.posted(t, conv, "(quiet)")
+
+	// The longest name wins: "@dispatch.lead" is not also "@dispatch".
+	wt.r.driver.Inject(conv, person, "reply over to @dispatch.lead.")
+	if got := wt.r.posted(t, conv, "over to @dispatch.lead."); !slices.Equal(got.Message.Notify, []string{"lead-1"}) {
+		t.Fatalf("@dispatch.lead mentions %v, want lead-1 only", got.Message.Notify)
+	}
 }

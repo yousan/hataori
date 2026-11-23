@@ -70,7 +70,8 @@ func (f *FrontEnd) convsOf(ctx context.Context, id control.ThreadID) ([]surface.
 // conversation of the message it replies to: the reply of a final answer
 // to the message that started the turn, or to the prompt a trigger posted,
 // is in the link the turn's input came through; the copies are posted
-// without it.
+// without it. So is a mention (a supervisor's "@<name>", #651): a person is
+// mentioned once, in the conversation the row was written for.
 func everyLink(rows []Row, convs []surface.Conversation) []Row {
 	if len(convs) < 2 {
 		return rows
@@ -88,6 +89,7 @@ func everyLink(rows []Row, convs []surface.Conversation) []Row {
 			c := r
 			c.Conv = conv
 			c.ReplyToRow = nil
+			c.Message.Notify = nil
 			if c.Message.ReplyTo != nil && c.Message.ReplyTo.Conv != conv {
 				c.Message.ReplyTo = nil
 			}

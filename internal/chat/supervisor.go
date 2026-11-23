@@ -68,38 +68,35 @@ func (f *FrontEnd) mentions(scope, text string) []string {
 	if !strings.Contains(text, "@") {
 		return nil
 	}
+	names := f.People.Of(scope)
+	// The longest name that fits wins: "@ann.smith" names ann.smith, not
+	// also ann.
+	slices.SortStableFunc(names, func(a, b string) int { return len(b) - len(a) })
 	var out []string
-	for _, name := range f.People.Of(scope) {
-		if !named(text, name) {
+	for i := 0; i < len(text); i++ {
+		if text[i] != '@' {
 			continue
 		}
-		for _, id := range f.People.IDs(name, f.Name) {
-			if !slices.Contains(out, id) {
-				out = append(out, id)
+		if before, _ := utf8.DecodeLastRuneInString(text[:i]); i > 0 && nameRune(before) {
+			continue // as in an email address
+		}
+		for _, name := range names {
+			end := i + 1 + len(name)
+			if !strings.HasPrefix(text[i+1:], name) {
+				continue
 			}
+			if after, _ := utf8.DecodeRuneInString(text[end:]); end < len(text) && nameRune(after) {
+				continue // a longer word
+			}
+			for _, id := range f.People.IDs(name, f.Name) {
+				if !slices.Contains(out, id) {
+					out = append(out, id)
+				}
+			}
+			break
 		}
 	}
 	return out
-}
-
-// named reports whether text has "@"+name as a word of its own: not right
-// after a letter or a digit, as in an email address, and not followed by
-// one more character of a name.
-func named(text, name string) bool {
-	at := "@" + name
-	for i := 0; ; {
-		j := strings.Index(text[i:], at)
-		if j < 0 {
-			return false
-		}
-		start, end := i+j, i+j+len(at)
-		before, _ := utf8.DecodeLastRuneInString(text[:start])
-		after, _ := utf8.DecodeRuneInString(text[end:])
-		if (start == 0 || !nameRune(before)) && (end == len(text) || !nameRune(after)) {
-			return true
-		}
-		i = start + 1
-	}
 }
 
 // nameRune reports whether r can be part of a name next to "@<name>".
