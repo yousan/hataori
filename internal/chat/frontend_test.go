@@ -67,7 +67,7 @@ func (r *starts) Interrupt(context.Context, int64, int64, session.Stopper) error
 }
 func (r *starts) Shut(context.Context, int64, string) error { return nil }
 func (r *starts) Device(context.Context, int64) string      { return "" }
-func (r *starts) Resume(context.Context, int64, control.Principal, string, string, control.Input) error {
+func (r *starts) Resume(context.Context, int64, core.FirstInput) error {
 	return nil
 }
 func (r *starts) Wake(context.Context, int64, control.Principal) error { return nil }

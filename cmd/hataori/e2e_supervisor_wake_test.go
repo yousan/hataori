@@ -152,7 +152,8 @@ func newWakeTest(t *testing.T, more ...func(cfg map[string]any)) *wakeTest {
 }
 
 // start runs the daemon and returns its stop, a client of the owner and
-// the supervisor's thread, idle after its first turn.
+// the supervisor's thread, idle after its first turn, or asleep after a
+// wake.
 func (wt *wakeTest) start(t *testing.T) (func(), *wire.Client, control.ThreadInfo) {
 	t.Helper()
 	stop := runDaemon(t, wt.r.root)
@@ -164,7 +165,7 @@ func (wt *wakeTest) start(t *testing.T) (func(), *wire.Client, control.ThreadInf
 	if wt.db == nil {
 		wt.db = wt.r.db(t)
 	}
-	return stop, owner, supervisorThread(t, owner, "c1", control.Idle)
+	return stop, owner, supervisorReady(t, owner, "c1")
 }
 
 func (wt *wakeTest) clock() *wakeClock {

@@ -110,8 +110,8 @@ func TestDigestOfANewSupervisorSession(t *testing.T) {
 }
 
 // A session of the supervisor's thread that replaced one that could not
-// resume is new too: the wake carried into it was made for the old one,
-// and the next digest gives the last output again.
+// resume, as when a person's message found its conversation lost, is new
+// too: the next digest gives the last output again.
 func TestDigestAfterASessionThatCouldNotResume(t *testing.T) {
 	// The real clock, which the idle period goes by, with a short idle
 	// period and quiet period.
@@ -145,15 +145,18 @@ func TestDigestAfterASessionThatCouldNotResume(t *testing.T) {
 	if err := os.Remove(filepath.Join(wt.conv, filepath.Base(agentSession))); err != nil {
 		t.Fatal(err)
 	}
-	wt.again(t, owner, w, "w-3", "reply three", 3)
-	wt.wokenN(t, owner, sv.ID, 3)
+	// A wake runs in a conversation of its own (#676), so a person's message
+	// is what resumes the supervisor's, and finds it lost.
+	if err := owner.Send(context.Background(), sv.ID, "p", control.Input{Text: "reply hello"}, control.Refuse); err != nil {
+		t.Fatal(err)
+	}
 	eventually(t, "the supervisor's session replaced", 15*time.Second, func() bool {
 		var n int
 		wt.db.QueryRow(`SELECT count(*) FROM events WHERE thread_id = ? AND kind = 'session_replaced'`, int64(sv.ID)).Scan(&n)
 		return n == 1
 	})
-	wt.again(t, owner, w, "w-4", "reply four", 4)
-	d := wt.wokenN(t, owner, sv.ID, 4)[3]
+	wt.again(t, owner, w, "w-4", "reply four", 3)
+	d := wt.wokenN(t, owner, sv.ID, 3)[2]
 	if !strings.Contains(d, "Last output:") || !strings.Contains(d, "> two") || !strings.Contains(d, "> four") || strings.Contains(d, "since the last digest") {
 		t.Fatalf("the first digest made for the new session:\n%s", d)
 	}

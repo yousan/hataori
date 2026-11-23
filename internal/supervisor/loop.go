@@ -85,7 +85,7 @@ func (g *LoopGuard) Admit(ctx context.Context, scope string, threads []Ended) ([
 	}
 	var kept []Ended
 	for _, t := range threads {
-		n, reset, err := g.count(ctx, t.Thread, svReset)
+		n, reset, err := g.count(ctx, t.Thread, svReset, 0)
 		if err != nil {
 			return nil, time.Time{}, err
 		}
@@ -98,9 +98,11 @@ func (g *LoopGuard) Admit(ctx context.Context, scope string, threads []Ended) ([
 	return kept, time.Time{}, nil
 }
 
-// Woken tells a person of each thread whose count the accepted wake made
-// reach the limit, the wake being in the log now.
-func (g *LoopGuard) Woken(ctx context.Context, scope string, threads []Ended) error {
+// Woken tells a person of each thread whose count the accepted wake, which
+// covers the events up to to, made reach the limit. The wake counts though
+// its turn_started may not be in the log yet, as for a wake that starts
+// the agent of an asleep thread (#676).
+func (g *LoopGuard) Woken(ctx context.Context, scope string, to uint64, threads []Ended) error {
 	if g.Cycles <= 0 {
 		return nil
 	}
@@ -109,7 +111,7 @@ func (g *LoopGuard) Woken(ctx context.Context, scope string, threads []Ended) er
 		return err
 	}
 	for _, t := range threads {
-		n, reset, err := g.count(ctx, t.Thread, svReset)
+		n, reset, err := g.count(ctx, t.Thread, svReset, to)
 		if err != nil {
 			return err
 		}
@@ -127,7 +129,7 @@ func (g *LoopGuard) Count(ctx context.Context, w control.ThreadID) (int, uint64,
 	if err != nil {
 		return 0, 0, err
 	}
-	return g.count(ctx, w, svReset)
+	return g.count(ctx, w, svReset, 0)
 }
 
 // supervisorReset returns the position of the last thing a person did in
@@ -188,8 +190,10 @@ func (g *LoopGuard) supervisorReset(ctx context.Context) (uint64, error) {
 }
 
 // count returns the cycles on thread w since the last reset, of w or of
-// the supervisor's threads (svReset), and the position of that reset.
-func (g *LoopGuard) count(ctx context.Context, w control.ThreadID, svReset uint64) (int, uint64, error) {
+// the supervisor's threads (svReset), and the position of that reset. A
+// wake covering the events up to accepted counts as well, its turn
+// started or not; 0 names none.
+func (g *LoopGuard) count(ctx context.Context, w control.ThreadID, svReset, accepted uint64) (int, uint64, error) {
 	db := g.Core.Store.DB
 	from := ID(g.Scope)
 	// The last thing a person did in w: the index on (thread, pos) is read
@@ -235,6 +239,9 @@ func (g *LoopGuard) count(ctx context.Context, w control.ThreadID, svReset uint6
 	}
 	if err := rows.Err(); err != nil {
 		return 0, 0, fmt.Errorf("supervisor: loop guard: %w", err)
+	}
+	if accepted > 0 && !slices.Contains(wakes, accepted) {
+		wakes = append(wakes, accepted)
 	}
 	sort.Slice(wakes, func(i, j int) bool { return wakes[i] < wakes[j] })
 	// Each end was told by the first wake that covers its position and its

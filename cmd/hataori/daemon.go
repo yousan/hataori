@@ -222,6 +222,15 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	c = &core.Core{Agents: agents, Store: st, Machine: m, Scopes: scopes, Owners: map[string]control.ScopeOwner{}, People: cfg.People,
 		Workspaces: maker, Remover: remover, Restorer: remover,
 		Runner: r, Agent: agentName, Model: cfg.Model, Effort: cfg.Effort, Log: lg}
+	for _, s := range cfg.Scopes {
+		if s.Supervisor != nil {
+			// A person's input to a supervisor's thread that resumes its
+			// conversation names the wakes it answered in conversations of
+			// their own meanwhile (#676).
+			c.Preface = supervisor.Answered
+			break
+		}
+	}
 	if coreHook != nil {
 		coreHook(c)
 	}
@@ -497,7 +506,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 			b := budgets[s.Key]
 			w := &supervisor.Waker{Core: c, Scope: s.Key, Owner: control.Principal(cfg.Owner), Quiet: s.Supervisor.Quiet,
 				OutputMax: s.Supervisor.OutputMax, ThreadsMax: s.Supervisor.ThreadsMax, Gates: []supervisor.Gate{guards[s.Key], b}, Log: lg,
-				Files: sv, Tell: tellIn[s.Key]}
+				Files: sv, Tell: tellIn[s.Key], Sleep: r.Sleep}
 			// Each wake finds the current content of the scope's files in
 			// docs/ (#640).
 			scope := s.Key

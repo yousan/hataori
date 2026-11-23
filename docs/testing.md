@@ -162,6 +162,14 @@ It runs the daemon as the phase 1 check does, through the same wrapper, and chec
 
 Last passed: 2026-11-24, Claude Code 2.1.330, model `haiku`. All 6 steps passed in 59 s.
 
+### A wake's usage
+
+```sh
+HATAORI_REAL_CLAUDE=1 go test -count=1 -run TestRealClaudeCodeWakeUsage -v -timeout 60m ./cmd/hataori
+```
+
+It runs the daemon as the supervisor check does, with the supervisor's hourly turn limit off, and measures what each digest wake uses (#676): a worker thread's turn ends 46 times in a row (as many turns as the day #676 measured had), each waking the supervisor, and a person talks to the supervisor now and then. Each wake's usage is the input, output, cache reads and cache writes that the CLI reports for its turn, summed; every wake must have one, and none may be more than a fifth above the first wake's (the least is logged too: a wake far below it is one whose first request the CLI made before hataori's MCP server was connected), since a wake runs in a conversation of its own. It is a day's number of wakes in a row, not a day: what grows with time alone is not in it. It logs every turn's sum. The rules above hold; the settings file is compared at the end.
+
 ### New captures
 
 `internal/agent/claudecode/testdata/capture.py` records hook calls, transcripts and terminal output from the real CLI, and `scrub.py` makes them committable. Their README says how each capture was taken. Run `go test ./internal/agent/claudecode` before committing: it fails on a capture that still holds a home path, an e-mail address, an id or a token.

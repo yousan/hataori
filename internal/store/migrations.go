@@ -643,6 +643,22 @@ var migrations = []Migration{
 			PRIMARY KEY (scope, key)
 		)`,
 	)},
+	// The agent's id of the conversation a session set aside while it runs
+	// one input in a conversation of its own, as a supervisor's wake does
+	// (core.Core.AsFresh, #676): it is the session's id again once the
+	// session is asleep, failed or closed. NULL while it runs its own.
+	// A turn that ran in such a conversation, and a file followed for one,
+	// are marked: the turn is no turn of the session's own conversation, and
+	// the file's row goes when the session gets its own back (it is never
+	// read again, and each would be one more file to poll).
+	{Name: "sessions.set_aside", Up: execAll(
+		`ALTER TABLE sessions ADD COLUMN set_aside TEXT`,
+		`ALTER TABLE turns ADD COLUMN aside INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE session_files ADD COLUMN aside INTEGER NOT NULL DEFAULT 0`,
+		// Input an agent before the session's current one left, which none
+		// reports any more.
+		`ALTER TABLE pending_inputs ADD COLUMN stale INTEGER NOT NULL DEFAULT 0`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

@@ -176,11 +176,14 @@ type Gate interface {
 }
 
 // Woken is a Gate that is also told of each wake once the supervisor's
-// thread accepted it, with the threads the gates admitted to it. A wake
-// that an earlier run of the waker stored, and this one sent again, is not
-// told: its threads are not stored.
+// thread accepted it, with the position it covers (the to of its key) and
+// the threads the gates admitted to it. The wake's turn may not have
+// started yet: a wake that starts the agent of an asleep thread starts its
+// turn once the agent is ready. A wake that an earlier run of the waker
+// stored, and this one sent again, is not told: its threads are not
+// stored.
 type Woken interface {
-	Woken(ctx context.Context, scope string, threads []Ended) error
+	Woken(ctx context.Context, scope string, to uint64, threads []Ended) error
 }
 
 // Clock is the waker's time: the real clock, or a test's.
@@ -243,6 +246,16 @@ type Waker struct {
 	// Before, when set, is called right before each wake is sent to the
 	// supervisor's thread, as for the files copied into its docs/.
 	Before func(ctx context.Context, thread control.ThreadID)
+	// Sleep, when set, puts the supervisor's thread to sleep now, if it is
+	// idle with nothing running and no person at its terminal, and reports
+	// whether it did (runner.Runner.Sleep). With it, each wake is given to
+	// a conversation of its own (core.Core.AsFresh, #676): an idle thread
+	// is put to sleep first, and the wake starts its agent in a new
+	// conversation, which ends with the wake's turn; a person's next
+	// message resumes the thread's conversation as before. One that is not
+	// put to sleep holds the wake for a while. Without it, a wake goes into
+	// the thread's conversation.
+	Sleep func(ctx context.Context, thread control.ThreadID) (bool, error)
 
 	read atomic.Uint64
 }
@@ -321,9 +334,13 @@ func (w *Waker) clock() Clock {
 func (w *Waker) run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	caller := control.Caller{Principal: w.Owner, Scopes: []string{w.Scope}, May: control.OpRead | control.OpSend, NoAnswer: true}
 	r := &waking{w: w, ended: map[control.ThreadID]control.Event{}, own: map[control.ThreadID]bool{},
 		waiting: map[control.ThreadID]control.Event{}, stale: map[control.ThreadID]control.Event{}, asks: map[control.ThreadID]bool{},
-		api: w.Core.As(control.Caller{Principal: w.Owner, Scopes: []string{w.Scope}, May: control.OpRead | control.OpSend, NoAnswer: true})}
+		api: w.Core.As(caller)}
+	if w.Sleep != nil {
+		r.api = w.Core.AsFresh(caller)
+	}
 	if err := r.load(ctx); err != nil {
 		return err
 	}
@@ -436,6 +453,11 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 	}
 	if e.Thread == r.sv && e.Kind == TurnEnded && r.w.Files != nil {
 		if err := r.turned(ctx, e); err != nil {
+			return err
+		}
+	}
+	if e.Thread == r.sv && e.Kind == "state" {
+		if err := r.notStarted(ctx, e); err != nil {
 			return err
 		}
 	}
@@ -710,6 +732,11 @@ func (r *waking) attempt(ctx context.Context) error {
 		if err != nil || !ok {
 			return err
 		}
+		// Only for a wake the gates let through, and before it is stored: one
+		// that has to wait is made again, with what came since.
+		if ok, err := r.toSleep(ctx, sv); err != nil || !ok {
+			return err
+		}
 		// Making it read every thread: the supervisor's may have started a
 		// turn since, which could also have asked a question by now.
 		if again, ready, err := r.ready(ctx); err != nil || !ready || again != sv {
@@ -727,6 +754,9 @@ func (r *waking) attempt(ctx context.Context) error {
 		if err := r.hook("stored"); err != nil {
 			return err
 		}
+	}
+	if ok, err := r.toSleep(ctx, sv); err != nil || !ok {
+		return err // one stored by an earlier run
 	}
 	key, err := keyFor(r.sending.key, sv, func(key string) (control.ThreadID, bool, error) {
 		return r.w.Core.SentTo(ctx, r.w.Scope, key)
@@ -759,7 +789,7 @@ func (r *waking) attempt(ctx context.Context) error {
 		}
 		for _, g := range r.w.Gates {
 			if t, ok := g.(Woken); ok && r.sending.threads != nil {
-				if err := t.Woken(ctx, r.w.Scope, r.sending.threads); err != nil {
+				if err := t.Woken(ctx, r.w.Scope, r.sending.to, r.sending.threads); err != nil {
 					r.w.Log.Error("supervisor waker: a gate on a wake", "scope", r.w.Scope, "err", err)
 				}
 			}
@@ -798,6 +828,37 @@ func (r *waking) hook(step string) error {
 		return errHook{err}
 	}
 	return nil
+}
+
+// toSleep puts the supervisor's thread sv, idle, to sleep before a wake is
+// given, since a conversation of its own starts only from asleep (Sleep),
+// and reports whether the wake may go on. One that is not put to sleep
+// holds the wake, until the thread changes or holdStep has passed, and it
+// is made then, with what came since. A wake the thread took already, which
+// the Send only ignores, puts nothing to sleep.
+func (r *waking) toSleep(ctx context.Context, sv control.ThreadID) (bool, error) {
+	if r.w.Sleep == nil {
+		return true, nil
+	}
+	now, state, err := r.w.Core.LastConfined(ctx, r.w.Scope)
+	if err != nil || now != sv || state != control.Idle {
+		return err == nil, err
+	}
+	if r.sending != nil {
+		if took, ok, err := r.w.Core.SentTo(ctx, r.w.Scope, r.sending.key); err != nil || ok && took == sv {
+			return err == nil, err
+		}
+	}
+	slept, err := r.w.Sleep(ctx, sv)
+	if err != nil {
+		return false, err
+	}
+	if !slept {
+		r.w.Log.Info("the supervisor's thread was not put to sleep for a wake; trying again", "scope", r.w.Scope, "thread", int64(sv))
+		r.held = true
+		r.retry = r.w.clock().After(holdStep)
+	}
+	return slept, nil
 }
 
 // ready looks up the supervisor's thread and reports whether it may be
@@ -1113,6 +1174,42 @@ func (r *waking) output(ctx context.Context, id control.ThreadID, from, to uint6
 		out = out[i:]
 	}
 	return out, nil
+}
+
+// WakeFailedKeyPrefix starts the key of the line that tells a person a
+// wake's conversation could not be started; the rest is the position of
+// the state event.
+const WakeFailedKeyPrefix = "hataori-wake-failed-"
+
+// WakeFailed is the line that tells a person that a wake's conversation
+// could not be started, for reason: the digest it was given is not read.
+func WakeFailed(reason string) string {
+	text := "A wake could not start its agent, so it was not read."
+	if reason != "" {
+		text += " Reason: " + reason + "."
+	}
+	return text
+}
+
+// notStarted tells a person, once, of a wake whose conversation could not
+// be started: the thread's session goes asleep from creating (its own
+// conversation is there to resume), and the wake's digest is lost to the
+// supervisor, though not to the thread's log.
+func (r *waking) notStarted(ctx context.Context, e control.Event) error {
+	var d struct {
+		From   string `json:"from"`
+		To     string `json:"to"`
+		Reason string `json:"reason"`
+	}
+	json.Unmarshal(e.Data, &d) // the store checked the event against its schema
+	if d.From != string(control.Creating) || d.To != string(control.Asleep) {
+		return nil
+	}
+	if r.w.Tell == nil {
+		r.w.Log.Warn(WakeFailed(d.Reason), "scope", r.w.Scope, "thread", int64(e.Thread))
+		return nil
+	}
+	return r.w.Tell(ctx, e.Thread, WakeFailedKeyPrefix+strconv.FormatUint(e.Pos, 10), WakeFailed(d.Reason))
 }
 
 // offered forgets the stale turn ends a wake offered to the gates: they

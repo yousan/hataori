@@ -89,6 +89,49 @@ func TestIdleSessionSleepsAndResumes(t *testing.T) {
 	})
 }
 
+// Sleep puts an idle session to sleep at once, but not one whose agent was
+// given input that no turn has reported yet, such as a message its codec
+// held; input an earlier run left, which nothing reports any more, does not
+// keep it awake, though a row of its id is made again.
+func TestSleepNow(t *testing.T) {
+	f := newFixture(t, options{})
+	f.start("reply hello")
+	waitFor(t, "the turn's end", 15*time.Second, f.has("turn_ended", 1))
+	sleep := func(want bool) {
+		t.Helper()
+		if slept, err := f.run.Sleep(context.Background(), thread); err != nil || slept != want {
+			t.Fatalf("Sleep: %v, %v; want %v", slept, err, want)
+		}
+	}
+	left := func() {
+		t.Helper()
+		if _, err := f.st.DB.Exec(`INSERT INTO pending_inputs (id, session_id, request, data, written) VALUES (10, 1, '', '{}', 1)`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	left()
+	sleep(false)
+	if s := sessionState(t, f.st, 1); s != "idle" {
+		t.Fatalf("the session is %s, want idle", s)
+	}
+	f.st.DB.Exec(`DELETE FROM pending_inputs`)
+	sleep(true)
+	if s := sessionState(t, f.st, 1); s != "asleep" {
+		t.Fatalf("the session is %s, want asleep", s)
+	}
+	sleep(false) // asleep already
+
+	left() // by the run before
+	send(t, owner(f.core), thread, "m2", "reply again")
+	waitFor(t, "the resumed turn", 15*time.Second, f.has("turn_ended", 2))
+	sleep(true) // what the run before left does not keep it awake
+	send(t, owner(f.core), thread, "m3", "reply once more")
+	waitFor(t, "the next resumed turn", 15*time.Second, f.has("turn_ended", 3))
+	f.st.DB.Exec(`DELETE FROM pending_inputs`)
+	left() // this run's, with the id of the one before
+	sleep(false)
+}
+
 func count(t *testing.T, st *store.Store, table string) int {
 	t.Helper()
 	var n int

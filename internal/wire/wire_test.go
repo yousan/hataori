@@ -34,7 +34,7 @@ func (nopRunner) Device(context.Context, int64) string                          
 func (nopRunner) Answer(context.Context, int64, int64, string, control.Answer) error {
 	return nil
 }
-func (nopRunner) Resume(context.Context, int64, control.Principal, string, string, control.Input) error {
+func (nopRunner) Resume(context.Context, int64, core.FirstInput) error {
 	return nil
 }
 

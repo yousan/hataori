@@ -107,10 +107,11 @@ type Runner interface {
 	// interrupt nobody asked for as a stop, which records nothing.
 	Interrupt(ctx context.Context, sessionID, turn int64, by session.Stopper) error
 	// Resume starts the agent of an asleep session again with its
-	// conversation, and sends it in as a Send of principal and key once it
-	// reports that it is ready.
-	// from is the "<client>:<id>" the input came from, if relayed.
-	Resume(ctx context.Context, sessionID int64, principal control.Principal, from, key string, in control.Input) error
+	// conversation, and sends it f's input as a Send of f.Principal and
+	// f.Key once it reports that it is ready, with f.Context before it. A
+	// session whose conversation is set aside (sessions.set_aside, AsFresh)
+	// is started in a new conversation instead.
+	Resume(ctx context.Context, sessionID int64, f FirstInput) error
 	// Wake starts the agent of an asleep session again with its
 	// conversation and gives it no input, so that the session becomes idle.
 	Wake(ctx context.Context, sessionID int64, principal control.Principal) error
@@ -304,6 +305,14 @@ type Core struct {
 	// section 7.3) inside Start and Send, before the input is accepted.
 	// Nil: there are none, and input is not held up.
 	Hooks control.Hooks
+	// Preface, when set, is what the agent of an asleep thread is given
+	// before the input of a Send that wakes it (FirstInput.Context), read
+	// in the Send's transaction, unless the Send is a fresh caller's
+	// (AsFresh). The daemon's supervisor client names there the wakes a
+	// supervisor's thread answered in conversations of their own since its
+	// conversation's last turn (design, section 7.1, #676). Nil gives
+	// nothing.
+	Preface func(ctx context.Context, tx *store.Tx, thread control.ThreadID) (string, error)
 
 	locks   keyedMutex
 	hostOps hostOpSet
@@ -384,9 +393,29 @@ func (c *Core) As(caller control.Caller) control.API {
 	return &api{c: c, caller: caller}
 }
 
+// AsFresh is As, except that a Send of it is taken only by an asleep
+// thread, whose agent it starts in a new conversation, for that input
+// alone: the conversation the session had is set aside
+// (sessions.set_aside), and is the session's again once it is asleep,
+// failed or closed, so the next Send resumes it. The runner puts the
+// session to sleep when that conversation's turn ends. A thread that is
+// not asleep is ErrAwake, and the Send takes nothing. It is no operation
+// of the control API: the supervisor's waker gives each wake to a
+// conversation of its own (design, section 7.1, #676).
+func (c *Core) AsFresh(caller control.Caller) control.API {
+	a := c.As(caller).(*api)
+	a.fresh = true
+	return a
+}
+
+// ErrAwake is a fresh caller's Send to a thread that is not asleep
+// (AsFresh): nothing was taken.
+var ErrAwake = errors.New("the thread is not asleep")
+
 type api struct {
 	c      *Core
 	caller control.Caller
+	fresh  bool // AsFresh
 }
 
 // check is the one authorization function: the caller must be allowed op,
@@ -1563,8 +1592,11 @@ func (c *Core) launch(ctx context.Context, l Launch, repo string) error {
 
 // resume starts the agent of a woken session. A failure is recorded as the
 // session's end.
-func (c *Core) resume(ctx context.Context, sid int64, principal control.Principal, from, key string, in control.Input) error {
-	if err := c.Runner.Resume(ctx, sid, principal, from, key, in); err != nil {
+func (c *Core) resume(ctx context.Context, sid int64, f FirstInput) error {
+	// The input as it was given: nothing of an earlier launch's progress.
+	f = FirstInput{Principal: f.Principal, From: f.From, Key: f.Key, Text: f.Text, Wake: true, Link: f.Link, Via: f.Via,
+		Context: f.Context, Before: f.Before, After: f.After}
+	if err := c.Runner.Resume(ctx, sid, f); err != nil {
 		if ferr := c.Machine.Apply(ctx, sid, session.Input{Kind: session.Exit, Reason: "resume: " + err.Error()}); ferr != nil {
 			c.Log.Error("recording a failed resume", "session", sid, "err", ferr)
 		}
@@ -1612,7 +1644,7 @@ func (c *Core) Recover(ctx context.Context) error {
 				}
 			}
 		} else if x.f.Wake {
-			err = c.resume(ctx, x.l.Session, x.f.Principal, x.f.From, x.f.Key, in)
+			err = c.resume(ctx, x.l.Session, x.f)
 		} else {
 			x.l.Dir, x.l.Principal, x.l.From, x.l.Key, x.l.Input, x.l.Context = x.f.Dir, x.f.Principal, x.f.From, x.f.Key, in, x.f.Context
 			x.l.placed, x.l.NoInput = x.f.Placed, x.f.NoInput
@@ -1857,8 +1889,9 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		pending   int64
 		accepted  bool
 		interrupt bool
-		answer    string // the agent's id of the open question this input answers
-		wake      bool   // the session is asleep: its agent starts again
+		answer    string     // the agent's id of the open question this input answers
+		wake      bool       // the session is asleep: its agent starts again
+		first     FirstInput // a woken session's input
 	)
 	// The state is read in the write transaction, so it cannot change
 	// between the Busy decision and the input.
@@ -1920,14 +1953,43 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 				interrupt = true
 			}
 		}
+		if a.fresh && state != control.Asleep {
+			// The key is not taken: the transaction is rolled back.
+			return fmt.Errorf("core: send to %v: %s: %w", id, state, ErrAwake)
+		}
+		if !a.fresh && guard == nil && (state == control.Creating || state == control.Idle || state == control.Running) {
+			// A conversation of one input's own runs (AsFresh): this input is
+			// for the conversation it set aside, which the session resumes once
+			// that one ended. It is refused, not delivered into it; the chat
+			// front end tries again, and an answer to a question of it is taken.
+			var aside sql.NullString
+			if err := tx.QueryRowContext(ctx, `SELECT set_aside FROM sessions WHERE id = ?`, sid).Scan(&aside); err != nil {
+				return fmt.Errorf("core: send to %v: %w", id, err)
+			}
+			if aside.Valid {
+				return fmt.Errorf("core: send to %v: a wake's conversation runs: %w", id, ErrBusy)
+			}
+		}
 		accepted = true
 		if state == control.Asleep {
 			wake = true
 			if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Wake}); err != nil {
 				return err
 			}
-			fi, _ := json.Marshal(FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: key, Text: in.Text, Wake: true, Link: in.Link,
-				Before: in.Before, After: in.After, Via: a.caller.Via})
+			first = FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: key, Text: in.Text, Wake: true, Link: in.Link,
+				Before: in.Before, After: in.After, Via: a.caller.Via}
+			if a.fresh {
+				// The conversation is set aside for this input's own.
+				if _, err := tx.ExecContext(ctx, `UPDATE sessions SET set_aside = agent_session_id WHERE id = ? AND set_aside IS NULL`, sid); err != nil {
+					return fmt.Errorf("core: wake: %w", err)
+				}
+			} else if a.c.Preface != nil {
+				var err error
+				if first.Context, err = a.c.Preface(ctx, tx, id); err != nil {
+					return fmt.Errorf("core: wake: %w", err)
+				}
+			}
+			fi, _ := json.Marshal(first)
 			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ?, launch = 1 WHERE id = ?`, string(fi), sid); err != nil {
 				return fmt.Errorf("core: wake: %w", err)
 			}
@@ -1969,8 +2031,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		return a.c.Runner.Answer(ctx, sid, pending, answer, control.Answer{Text: given.Text})
 	}
 	if wake {
-		in.Via = a.caller.Via
-		if err := a.c.resume(ctx, sid, a.caller.Principal, a.caller.From, key, in); err != nil {
+		if err := a.c.resume(ctx, sid, first); err != nil {
 			return fmt.Errorf("core: send to %v: %w", id, err)
 		}
 		return nil

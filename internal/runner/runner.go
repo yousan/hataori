@@ -61,7 +61,9 @@ type Runner struct {
 	InterruptGrace time.Duration // after an interrupt, before the session's processes are stopped; 5s when zero
 	Poll           time.Duration // how often the logs are read; 50ms when zero
 	IdlePeriod     time.Duration // idle this long, a session's agent is stopped; 30 minutes when zero
-	ContextBytes   int           // the cap on the earlier context a replacing session starts with; 8192 when zero
+	// UsageDrain is usageDrain's bound; 2 s when zero.
+	UsageDrain   time.Duration
+	ContextBytes int // the cap on the earlier context a replacing session starts with; 8192 when zero
 	// Cols and Rows are the size of the terminal a session's agent runs in,
 	// for an agent that runs in one; the session host's 80×24 when zero.
 	// Every launch takes them: a new session, a resumed one, one begun again.
@@ -108,15 +110,20 @@ type live struct {
 	codec   agent.Codec
 	client  *host.Client // to the session host: the relay of hook calls, and the first sign that it answers
 	started time.Time
-	ready   bool   // the session left creating; no start check any more
-	resend  bool   // after a reconnect: send a first input that was not confirmed
-	pending bool   // after a reconnect: hand over pending input once the logs are read
-	held    bool   // lv.mu is held from follow until the loop's first step has handed over the pending input
-	upTo    int64  // the last pending input there was at the reconnect; later ones are handed over by their call
-	failed  bool   // the start timed out; the session is being stopped
-	asleep  bool   // put to sleep: its agent is being stopped, and nothing more is read
-	screen  bool   // the codec watches the terminal; until it says StopScreen
-	seenTo  uint64 // the position in the host's run up to which the codec was given its terminal
+	ready   bool  // the session left creating; no start check any more
+	resend  bool  // after a reconnect: send a first input that was not confirmed
+	pending bool  // after a reconnect: hand over pending input once the logs are read
+	held    bool  // lv.mu is held from follow until the loop's first step has handed over the pending input
+	upTo    int64 // the last pending input there was at the reconnect; later ones are handed over by their call
+	// drain is until when the agent, its session asleep, is still read
+	// before it is stopped: an agent may record a turn's last usage after
+	// the turn's end (agent.Event.Late). Zero: not asleep by hataori's hand.
+	drain  time.Time
+	late   bool   // a late usage was read while draining
+	failed bool   // the start timed out; the session is being stopped
+	asleep bool   // put to sleep: its agent is being stopped, and nothing more is read
+	screen bool   // the codec watches the terminal; until it says StopScreen
+	seenTo uint64 // the position in the host's run up to which the codec was given its terminal
 	// taken is the window a person started that the session was taken in
 	// from; nil for a session hataori's own host holds. Its input goes to
 	// that window, and nothing ends the window's process.
@@ -155,6 +162,16 @@ func (r *Runner) idlePeriod() time.Duration {
 		return r.IdlePeriod
 	}
 	return 30 * time.Minute
+}
+
+// usageDrain bounds how long the agent of a session that hataori puts to
+// sleep right after its turn is still read, for the usage it records after
+// the turn's end.
+func (r *Runner) usageDrain() time.Duration {
+	if r.UsageDrain > 0 {
+		return r.UsageDrain
+	}
+	return 2 * time.Second
 }
 
 func (r *Runner) interruptGrace() time.Duration {
@@ -408,10 +425,13 @@ func (r *Runner) at(point string) {
 }
 
 // Resume starts the agent of an asleep session again, resuming its
-// conversation, and sends in once the agent reports that it is ready.
-func (r *Runner) Resume(ctx context.Context, id int64, principal control.Principal, from, key string, in control.Input) error {
-	return r.resume(ctx, id, firstInput{Principal: principal, From: from, Key: key, Text: in.Text, Wake: true, Link: in.Link,
-		Before: in.Before, After: in.After, Via: in.Via})
+// conversation, and sends f's input once the agent reports that it is
+// ready. A session whose conversation is set aside (sessions.set_aside) is
+// started in a new conversation instead, and put to sleep when its turn
+// ends (commit).
+func (r *Runner) Resume(ctx context.Context, id int64, f core.FirstInput) error {
+	f.Wake = true
+	return r.resume(ctx, id, f)
 }
 
 // Wake starts the agent of an asleep session again, resuming its
@@ -468,8 +488,9 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 	}
 	var specJSON, resumeID string
 	var launching int
-	if err := r.Store.DB.QueryRowContext(ctx, `SELECT spec, agent_session_id, launch FROM sessions WHERE id = ?`, id).
-		Scan(&specJSON, &resumeID, &launching); err != nil {
+	var aside sql.NullString
+	if err := r.Store.DB.QueryRowContext(ctx, `SELECT spec, agent_session_id, launch, set_aside FROM sessions WHERE id = ?`, id).
+		Scan(&specJSON, &resumeID, &launching, &aside); err != nil {
 		return fmt.Errorf("runner: session %d: %w", id, err)
 	}
 	var s storedSpec
@@ -480,12 +501,16 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 	if !ok {
 		return fmt.Errorf("runner: no agent %q", s.Agent)
 	}
-	if resumeID == "" && first.NoInput {
+	switch {
+	case aside.Valid:
+		// Its conversation is set aside (sessions.set_aside): the input gets
+		// one of its own, told nothing of what the thread said before.
+		resumeID = ""
+	case resumeID == "" && first.NoInput:
 		// A new conversation is told what the thread said before with its
 		// first input, and this wake has none.
 		return fmt.Errorf("runner: session %d has no conversation to resume; a message starts a new one", id)
-	}
-	if resumeID == "" {
+	case resumeID == "":
 		// No conversation to resume: a reopen found none recorded, or made
 		// the thread's directory again (core's ReopenThread). A new one
 		// starts in the directory, told what the thread said before, as a
@@ -498,7 +523,7 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 		if err != nil {
 			r.Log.Error("the thread's earlier context", "session", id, "err", err) // the new conversation starts without it
 		}
-		first.Context = earlier
+		first.Context = earlier + first.Context
 	}
 	// launch = 2: a daemon that died had begun this launch, after the old
 	// host was gone; a host running now is the new one.
@@ -533,6 +558,11 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 			return fmt.Errorf("runner: %w", err)
 		}
 	}
+	// What a conversation of one input's own left behind, in case the
+	// daemon ended it without the machine doing so.
+	if _, err := r.Store.DB.ExecContext(ctx, `DELETE FROM session_files WHERE session_id = ? AND aside = 1`, id); err != nil {
+		return fmt.Errorf("runner: session %d: %w", id, err)
+	}
 	if t, ok := takenOf(s.Spec.StateDir); ok {
 		// Left by a take-in that ended another way: the new agent's input
 		// must not go to the window.
@@ -541,7 +571,7 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 		}
 	}
 	spec := s.Spec
-	spec.ResumeID = resumeID
+	spec.ResumeID = resumeID // "" for a new conversation
 	// A session taken in keeps the model its window last reported, as the
 	// take-in stored it; the options the person started it with are not
 	// known, and are not reused.
@@ -708,6 +738,12 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) err
 		Scan(&lv.seq, &lv.offset, &lv.start, &created)
 	if err != nil {
 		return fmt.Errorf("runner: session %d: %w", id, err)
+	}
+	if !resumed {
+		// Rows left by an agent before this one are not this one's input.
+		if _, err := r.Store.DB.Exec(`UPDATE pending_inputs SET stale = 1 WHERE session_id = ?`, id); err != nil {
+			return fmt.Errorf("runner: session %d: %w", id, err)
+		}
 	}
 	if resumed {
 		lv.started = time.UnixMilli(created)
@@ -938,8 +974,11 @@ func saveRead(ctx context.Context, tx *store.Tx, session int64, b batch) error {
 		return err
 	}
 	for p, o := range b.files {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO session_files (session_id, path, offset) VALUES (?, ?, ?)
-			ON CONFLICT (session_id, path) DO UPDATE SET offset = excluded.offset`, session, p, o); err != nil {
+		// A file first followed for a conversation of one input's own goes
+		// when that conversation ends (session.Machine).
+		if _, err := tx.ExecContext(ctx, `INSERT INTO session_files (session_id, path, offset, aside)
+			SELECT ?, ?, ?, set_aside IS NOT NULL FROM sessions WHERE id = ?
+			ON CONFLICT (session_id, path) DO UPDATE SET offset = excluded.offset`, session, p, o, session); err != nil {
 			return err
 		}
 	}
@@ -1277,6 +1316,19 @@ func (r *Runner) stepLocked(lv *live) bool {
 		return false // never had a host: nothing more will come
 	}
 	r.checkStart(lv)
+	if !lv.drain.IsZero() && !lv.asleep {
+		// Its agent was put to sleep and is still read: stop it now, or
+		// once the turn's late usage was read.
+		for _, e := range b.events {
+			if e.Kind == agent.Usage && e.Late {
+				lv.late = true
+			}
+		}
+		if lv.late || !time.Now().Before(lv.drain) {
+			lv.asleep = true
+			go r.stop(lv.dir, time.Second, 2*time.Second)
+		}
+	}
 	return true
 }
 
@@ -1379,12 +1431,13 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 	var (
 		first *firstInput
 		rep   *replacement
+		slept bool
 	)
 	seq := lv.seq
 	err := r.Store.Update(context.Background(), func(tx *store.Tx) error {
 		ctx := context.Background()
 		seq = lv.seq
-		first, rep = nil, nil
+		first, rep, slept = nil, nil, false
 		for _, e := range b.events {
 			seq++
 			e.Seq = seq
@@ -1408,69 +1461,113 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 				return fmt.Errorf("replacing a session that cannot resume: %w", err)
 			}
 		}
-		if err := saveRead(ctx, tx, lv.id, b); err != nil {
+		rb := b
+		if !lv.drain.IsZero() {
+			rb.files = nil // the rows of the conversation that ended are gone
+		}
+		if err := saveRead(ctx, tx, lv.id, rb); err != nil {
 			return err
 		}
-		// The first input goes once the agent is ready.
-		var state, fi string
-		if err := tx.QueryRowContext(ctx, `SELECT state, first_input FROM sessions WHERE id = ?`, lv.id).Scan(&state, &fi); err != nil {
+		if err := r.firstInputStep(ctx, tx, lv, b, &first); err != nil {
 			return err
 		}
-		if err := clearReported(ctx, tx, lv.id, b.events); err != nil {
-			return err
-		}
-		if fi == "" {
-			return nil
-		}
-		var f firstInput
-		if err := json.Unmarshal([]byte(fi), &f); err != nil {
-			return err
-		}
-		switch {
-		case f.NoInput && control.State(state) == control.Idle:
-			// Woken with nothing to say: ready is all it waited for.
-			f = firstInput{}
-		case f.NoInput:
-			return nil
-		case !f.Sent && control.State(state) == control.Idle:
-			if err := r.Machine.ApplyTx(ctx, tx, lv.id, session.Input{Kind: session.Send, Principal: f.Principal, From: f.From, Key: f.Key, Text: f.Text, Link: f.Link,
-				Before: f.Before, After: f.After, Via: f.Via}); err != nil {
-				return err
-			}
-			f.Sent = true
-			first = &f
-		case f.Sent && reported(b.events, firstInputID):
-			// The agent reported the turn: delivered.
-			f = firstInput{}
-		case f.Sent && notDelivered(b.events, firstInputID):
-			// The agent never reported it; its turn failed, as the events say.
-			f = firstInput{}
-		case f.Sent && lv.resend:
-			// The daemon died between starting the turn and a report of it:
-			// hand it to the codec again.
-			first = &f
-		default:
-			return nil
-		}
-		fb := ""
-		if f.Sent {
-			b, _ := json.Marshal(f)
-			fb = string(b)
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, fb, lv.id); err != nil {
-			return err
-		}
-		return nil
+		return r.endAside(ctx, tx, lv, b, &slept)
 	})
 	if err == nil {
 		lv.seq = seq
 		lv.resend = false
+		if slept {
+			r.Log.Info("the conversation of one input ended with its turn; the session sleeps", "session", lv.id)
+			lv.drain = time.Now().Add(r.usageDrain())
+		}
 		if rep != nil {
 			r.at("after cannot resume")
 			go r.launchReplacement(*rep)
 		}
 	}
 	return first, err
+}
+
+// firstInputStep hands over the session's first input once its agent is
+// ready, and clears it once the agent reported its turn.
+func (r *Runner) firstInputStep(ctx context.Context, tx *store.Tx, lv *live, b batch, first **firstInput) error {
+	// The first input goes once the agent is ready.
+	var state, fi string
+	if err := tx.QueryRowContext(ctx, `SELECT state, first_input FROM sessions WHERE id = ?`, lv.id).Scan(&state, &fi); err != nil {
+		return err
+	}
+	if err := clearReported(ctx, tx, lv.id, b.events); err != nil {
+		return err
+	}
+	if fi == "" {
+		return nil
+	}
+	var f firstInput
+	if err := json.Unmarshal([]byte(fi), &f); err != nil {
+		return err
+	}
+	switch {
+	case f.NoInput && control.State(state) == control.Idle:
+		// Woken with nothing to say: ready is all it waited for.
+		f = firstInput{}
+	case f.NoInput:
+		return nil
+	case !f.Sent && control.State(state) == control.Idle:
+		if err := r.Machine.ApplyTx(ctx, tx, lv.id, session.Input{Kind: session.Send, Principal: f.Principal, From: f.From, Key: f.Key, Text: f.Text, Link: f.Link,
+			Before: f.Before, After: f.After, Via: f.Via}); err != nil {
+			return err
+		}
+		f.Sent = true
+		*first = &f
+	case f.Sent && reported(b.events, firstInputID):
+		// The agent reported the turn: delivered.
+		f = firstInput{}
+	case f.Sent && notDelivered(b.events, firstInputID):
+		// The agent never reported it; its turn failed, as the events say.
+		f = firstInput{}
+	case f.Sent && lv.resend:
+		// The daemon died between starting the turn and a report of it:
+		// hand it to the codec again.
+		*first = &f
+	default:
+		return nil
+	}
+	fb := ""
+	if f.Sent {
+		b, _ := json.Marshal(f)
+		fb = string(b)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, fb, lv.id); err != nil {
+		return err
+	}
+	return nil
+}
+
+// endAside puts a session to sleep that ran one input in a conversation of
+// its own (sessions.set_aside), once that input's turn has ended. It does
+// so in the transaction that ends the turn, and the core gives no input to
+// a session in such a conversation (core.Core.send), so none reaches it
+// after its turn; what the turn left running in the background ends with
+// it. The machine gives the session back the conversation it set aside.
+func (r *Runner) endAside(ctx context.Context, tx *store.Tx, lv *live, b batch, slept *bool) error {
+	if len(b.events) == 0 {
+		return nil
+	}
+	var (
+		state, fi string
+		aside     sql.NullString
+	)
+	if err := tx.QueryRowContext(ctx, `SELECT state, first_input, set_aside FROM sessions WHERE id = ?`, lv.id).Scan(&state, &fi, &aside); err != nil {
+		return err
+	}
+	if !aside.Valid || control.State(state) != control.Idle || fi != "" {
+		return nil // its own conversation, or the input's turn has not ended
+	}
+	if err := r.Machine.ApplyTx(ctx, tx, lv.id, session.Input{Kind: session.IdleTimeout}); err != nil {
+		return err
+	}
+	*slept = true
+	return nil
 }
 
 // cannotResume reports whether evs end the session because its agent no
@@ -1711,6 +1808,69 @@ func (r *Runner) checkIdle(lv *live) {
 		lv.asleep = true
 		go r.stop(lv.dir, time.Second, 2*time.Second)
 	}
+}
+
+// Sleep puts the newest session of thread to sleep now, as the idle period
+// would (checkIdle): only an idle one this runner follows, with no
+// background task running, no open request and no person's terminal
+// attached, and stops its agent. It reports whether it did; the session
+// keeps its id, so its next input resumes it. The supervisor's waker sleeps
+// an idle supervisor this way before it gives a wake a conversation of its
+// own (#676).
+func (r *Runner) Sleep(ctx context.Context, thread control.ThreadID) (bool, error) {
+	var id int64
+	if err := r.Store.DB.QueryRowContext(ctx, `SELECT id FROM sessions WHERE thread_id = ? ORDER BY id DESC LIMIT 1`, int64(thread)).Scan(&id); err != nil {
+		return false, fmt.Errorf("runner: the session of thread %d: %w", thread, err)
+	}
+	r.mu.Lock()
+	lv := r.live[id]
+	r.mu.Unlock()
+	if lv == nil {
+		return false, nil
+	}
+	lv.mu.Lock()
+	defer lv.mu.Unlock()
+	if lv.asleep || lv.failed || lv.taken != nil || r.attached(lv) {
+		return false, nil
+	}
+	slept := false
+	err := r.Store.Update(ctx, func(tx *store.Tx) error {
+		slept = false
+		var state string
+		if err := tx.QueryRowContext(ctx, `SELECT state FROM sessions WHERE id = ?`, id).Scan(&state); err != nil {
+			return err
+		}
+		if control.State(state) != control.Idle {
+			return nil
+		}
+		var background int
+		err := tx.QueryRowContext(ctx, `SELECT background FROM turns WHERE session_id = ? ORDER BY id DESC LIMIT 1`, id).Scan(&background)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		// Input this run's agent was given and no turn has reported yet, as
+		// a message the codec held until the last turn ended. A row an
+		// earlier run left, which nothing reports any more, does not count.
+		var pending int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pending_inputs WHERE session_id = ? AND stale = 0`, id).Scan(&pending); err != nil {
+			return err
+		}
+		if background > 0 || pending > 0 {
+			return nil
+		}
+		if err := r.Machine.ApplyTx(ctx, tx, id, session.Input{Kind: session.IdleTimeout}); err != nil {
+			return err
+		}
+		slept = true
+		return nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("runner: putting session %d to sleep: %w", id, err)
+	}
+	if slept {
+		lv.drain = time.Now().Add(r.usageDrain())
+	}
+	return slept, nil
 }
 
 // attached reports whether a person's terminal is attached to the

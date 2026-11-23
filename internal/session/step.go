@@ -142,6 +142,18 @@ const (
 type Snapshot struct {
 	State control.State
 	Turn  *OpenTurn // the running turn, if any
+	// Aside: the session runs one input in a conversation of its own, its
+	// own set aside (sessions.set_aside). One that cannot start goes
+	// asleep, not failed: its own conversation is there to resume.
+	Aside bool
+}
+
+// ended is the state of a session whose agent ends before it was ready.
+func (s Snapshot) ended() control.State {
+	if s.Aside {
+		return control.Asleep
+	}
+	return control.Failed
 }
 
 // OpenTurn is a turn that has started and not ended.
@@ -271,7 +283,7 @@ func Step(s Snapshot, in Input) (Result, error) {
 		if s.State != control.Creating {
 			return refuse()
 		}
-		to(control.Failed, string(agent.BlockedAtStart))
+		to(s.ended(), string(agent.BlockedAtStart))
 		if in.Detail != "" {
 			r.Out[len(r.Out)-1].Data["detail"] = in.Detail
 		}
@@ -292,7 +304,7 @@ func Step(s Snapshot, in Input) (Result, error) {
 		}
 		switch s.State {
 		case control.Creating:
-			to(control.Failed, reason)
+			to(s.ended(), reason)
 		case control.Idle, control.Waiting:
 			to(control.Asleep, reason)
 		case control.Running:
@@ -391,7 +403,7 @@ func stepAgent(s Snapshot, e agent.Event, typist control.Principal, r *Result,
 			// It ended before it was ready, for a reason it gave, such as
 			// a conversation it cannot resume, or a start-up dialog it may
 			// not answer; its text, if any, is for a person.
-			to(control.Failed, string(e.Reason))
+			to(s.ended(), string(e.Reason))
 			if e.Text != "" {
 				r.Out[len(r.Out)-1].Data["detail"] = e.Text
 			}
@@ -405,6 +417,15 @@ func stepAgent(s Snapshot, e agent.Event, typist control.Principal, r *Result,
 		}
 	case agent.InputTaken:
 		return live
+	case agent.Usage:
+		// Late usage is read also after hataori put the session to sleep
+		// right at its turn's end, while its agent is still read; by then an
+		// input may have woken it, and its next agent waits for that one's
+		// end (creating).
+		if !live && !(e.Late && (s.State == control.Asleep || s.State == control.Creating)) {
+			return false
+		}
+		r.Out = append(r.Out, agentOut(e))
 	case agent.Unknown:
 		if !live {
 			return false

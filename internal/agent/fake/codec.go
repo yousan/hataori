@@ -93,6 +93,7 @@ type report struct {
 // Tokens are the counts of a usage report.
 type Tokens struct {
 	In          int64 `json:"in"`
+	Late        bool  `json:"late"`
 	Output      int64 `json:"output"`
 	CacheRead   int64 `json:"cache_read"`
 	CacheWrite  int64 `json:"cache_write"`
@@ -254,7 +255,7 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 		c.asked[id] = r.ID
 		a = c.events(agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: id, Text: r.Text, Choices: r.Choices, Multi: r.Multi}})
 	case "usage":
-		a = c.events(agent.Event{Kind: agent.Usage, Usage: &agent.UsageCount{Model: r.Model, Input: r.In, Output: r.Output,
+		a = c.events(agent.Event{Kind: agent.Usage, Late: r.Late, Usage: &agent.UsageCount{Model: r.Model, Input: r.In, Output: r.Output,
 			CacheRead: r.CacheRead, CacheWrite: r.CacheWrite, ContextUsed: r.ContextUsed, ContextSize: r.ContextSize}})
 	case "limits":
 		l := &agent.LimitReport{At: time.UnixMilli(r.At), Every: time.Duration(r.Every) * time.Second}
