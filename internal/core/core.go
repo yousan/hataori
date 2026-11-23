@@ -701,7 +701,6 @@ func (a *api) Threads(ctx context.Context, f control.Filter) ([]control.ThreadIn
 		if err != nil {
 			return nil, err
 		}
-		t.StartedBy = a.c.starter(t.StartedBy, t.Scope)
 		out = append(out, t)
 	}
 	if err := rows.Err(); err != nil {
@@ -710,6 +709,9 @@ func (a *api) Threads(ctx context.Context, f control.Filter) ([]control.ThreadIn
 	rows.Close() // the store has one connection: summary needs it
 	sids := make([]int64, len(out))
 	for i := range out {
+		if err := a.c.starter(ctx, &out[i]); err != nil {
+			return nil, err
+		}
 		if sids[i], err = a.summary(ctx, &out[i]); err != nil {
 			return nil, err
 		}
@@ -903,25 +905,34 @@ func scanThread(row interface{ Scan(...any) error }) (control.ThreadInfo, error)
 	return t, nil
 }
 
-// starter is who started a thread, as its row records them, named as a
-// person. A row written before callers were resolved to people holds the
-// chat service's id of its author, without the client: it names the
-// person who lists that id on the scope's client, or that id in full. A
-// value no person lists stays as it is.
-func (c *Core) starter(by control.Principal, scope string) control.Principal {
-	s := string(by)
-	if s == "" || c.People.Listed(s) {
-		return by
+// starter names who started t as the person, in place of what its row
+// records. A name of today's people is kept. Otherwise the id the start
+// came from, which its thread_created event records since the daemon kept
+// it (#222), names the person who lists it; else the recorded value does
+// (people.Directory.Recorded); else it stays as it is.
+func (c *Core) starter(ctx context.Context, t *control.ThreadInfo) error {
+	by := string(t.StartedBy)
+	if by == "" || c.People.Listed(by) {
+		return nil
 	}
-	if name, ok := c.People.Resolve(s); ok {
-		return control.Principal(name)
+	var data []byte
+	err := c.Store.DB.QueryRowContext(ctx, `SELECT data FROM events WHERE thread_id = ? AND kind = 'thread_created' ORDER BY pos LIMIT 1`, int64(t.ID)).Scan(&data)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("core: thread %d: its start: %w", t.ID, err)
 	}
-	if sc, ok := c.Scopes[scope]; ok && sc.Owner != "" {
-		if name, ok := c.People.Resolve(people.Join(sc.Owner, s)); ok {
-			return control.Principal(name)
+	var created struct {
+		From string `json:"from"`
+	}
+	if len(data) > 0 && json.Unmarshal(data, &created) == nil && created.From != "" {
+		if name, ok := c.People.Resolve(created.From); ok {
+			t.StartedBy = control.Principal(name)
+			return nil
 		}
 	}
-	return by
+	if name, ok := c.People.Recorded(by, c.Scopes[t.Scope].Owner); ok {
+		t.StartedBy = control.Principal(name)
+	}
+	return nil
 }
 
 func (a *api) Thread(ctx context.Context, id control.ThreadID, recent, events int) (control.ThreadDetail, error) {
@@ -932,7 +943,9 @@ func (a *api) Thread(ctx context.Context, id control.ThreadID, recent, events in
 	if err != nil {
 		return control.ThreadDetail{}, err
 	}
-	t.StartedBy = a.c.starter(t.StartedBy, t.Scope)
+	if err := a.c.starter(ctx, &t); err != nil {
+		return control.ThreadDetail{}, err
+	}
 	sid, err := a.summary(ctx, &t)
 	if err != nil {
 		return control.ThreadDetail{}, err

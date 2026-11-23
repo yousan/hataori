@@ -66,6 +66,48 @@ func (d *Directory) Resolve(id string) (name string, ok bool) {
 	return name, ok
 }
 
+// OldOwner is the name an old-form config, one without people whose owner
+// and posters are raw ids, gives its owner.
+const OldOwner = "owner"
+
+// OldPoster is the name an old-form config gives the poster local on
+// client: "<client>/<id>". A client name has no "/", so no two ids get one
+// name.
+func OldPoster(client, local string) string { return client + "/" + local }
+
+// Recorded names the person that by, who acted as an older hataori
+// recorded it (a thread's started_by), stands for, with client the client
+// of the thread's scope. A row has held, over time:
+//   - the person's name, today and with an old-form config, whose owner is
+//     OldOwner and whose posters are OldPoster names;
+//   - before callers were resolved to people, the chat service's id of
+//     the author without its client, or the old-form owner's raw id.
+//
+// A name of today's people is kept; an id, in full or bare on client, or an
+// OldPoster name names the person who lists that id. OldOwner names no
+// one: the owner then may not be today's owner. ok is false when no person
+// is found, and by is then all there is.
+func (d *Directory) Recorded(by, client string) (name string, ok bool) {
+	switch {
+	case d == nil || by == "":
+		return "", false
+	case d.Listed(by):
+		return by, true
+	}
+	if name, ok := d.Resolve(by); ok {
+		return name, true
+	}
+	if c, local, found := strings.Cut(by, "/"); found && c != "" && local != "" {
+		if name, ok := d.Resolve(Join(c, local)); ok {
+			return name, true
+		}
+	}
+	if client != "" {
+		return d.Resolve(Join(client, by))
+	}
+	return "", false
+}
+
 // Listed reports whether name is the name of a person.
 func (d *Directory) Listed(name string) bool {
 	if d == nil {

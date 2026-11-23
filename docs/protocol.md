@@ -627,7 +627,7 @@ One scope the caller may see; since 3.5.
 | `name` | string | optional | the chat thread's own name as the chat service shows it, of the thread's first link (`SetName`), which follows a rename; text; absent for a caller that may not read text, and when none is known; since 3.7 |
 | `repo` | string | required | the repository of its workspace |
 | `state` | string | required | `creating`, `idle`, `running`, `waiting`, `asleep`, `closed`, `removed` or `failed` |
-| `started_by` | string | required | the principal that started it; a thread recorded before callers were resolved to people (#221) holds its author's chat id, and reports the person who lists that id, or the id when no person does |
+| `started_by` | string | required | the principal that started it; a thread recorded by an older daemon holds its author's chat id (before callers were resolved to people, #221) or the name an old-form config, one without `people`, gave them (`owner`, or `<client>/<id>` for a poster): it reports the person who lists the id its `thread_created` event's `from` records, else the person who lists the recorded id, else the recorded value (`owner` among them) |
 | `created` | time | required | when it was started |
 | `updated` | time | required | when its state last changed |
 | `agent` | string | optional | the registered name of the agent of its current session; since 1.5 |

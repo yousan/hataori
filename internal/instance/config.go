@@ -697,7 +697,7 @@ func (c *Config) people(list []filePerson, scopes []fileScope) error {
 }
 
 // OldOwner is the name the owner of an old-form config gets.
-const OldOwner = "owner"
+const OldOwner = people.OldOwner
 
 // oldForm converts a config without "people", whose owner and posters are
 // raw ids, so that it allows exactly the authors it allowed before: the
@@ -740,7 +740,7 @@ func (c *Config) oldForm(scopes []fileScope) error {
 			if isOwner[id] {
 				continue // the owner may act everywhere already
 			}
-			name := sc.Client + "/" + p
+			name := people.OldPoster(sc.Client, p)
 			if !listed[id] {
 				listed[id] = true
 				ps = append(ps, people.Person{Name: name, IDs: []string{id}})
