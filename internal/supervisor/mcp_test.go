@@ -97,7 +97,7 @@ func TestClaudeCodeToolsList(t *testing.T) {
 				t.Fatalf("initialize answered %v, Claude Code asked for %v", v, asked)
 			}
 		case "tools/list":
-			current := []string{ToolList, ToolRead, ToolSend, ToolInterrupt, ToolStart, ToolIssues, ToolIssue, ToolPulls, ToolPull, ToolChecks, ToolDeployed}
+			current := []string{ToolList, ToolRead, ToolSend, ToolInterrupt, ToolStart, ToolIssues, ToolIssue, ToolPulls, ToolPull, ToolChecks, ToolDeployed, ToolRemind, ToolCancelRemind}
 			if names := toolNames(t, r["result"]); !slices.Equal(names, current) {
 				t.Fatalf("tools/list gives %v, want the current tools %v", names, current)
 			}

@@ -232,6 +232,9 @@ func (g *LoopGuard) count(ctx context.Context, w control.ThreadID, svReset, acce
 			return 0, 0, fmt.Errorf("supervisor: loop guard: %w", err)
 		}
 		if to, _, ok := ParseWakeKey(key); ok {
+			if WakeReminders(key) != nil {
+				continue // it gave no turn end (#649)
+			}
 			if only := WakeOnly(key); only == nil || slices.Contains(only, w) {
 				wakes = append(wakes, to) // one past a hold gave only those (#677)
 			}

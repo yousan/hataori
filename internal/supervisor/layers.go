@@ -169,6 +169,11 @@ func ConfigLayer(sv Scope) string {
 	}
 	fmt.Fprintf(&b, "- Budget: turns_per_hour %s, sends_per_hour %s (a start counts as a send), tokens_per_day %s. Over it you are not woken, and your sends and starts are refused.\n",
 		limit(int64(sv.Limits.Turns)), limit(int64(sv.Limits.Sends)), limit(sv.Limits.Tokens))
+	if sv.RemindersMax > 0 {
+		fmt.Fprintf(&b, "- reminders_max: %d. The most reminders you may have open; setting one counts as a send.\n", sv.RemindersMax)
+	} else {
+		b.WriteString("- reminders_max: 0. You set no reminder.\n")
+	}
 	switch sv.Report {
 	case instance.ReportNeeded:
 		b.WriteString("- report: needed. A wake's final answer is posted only when it names a person with @<name>; the others stay in your thread's events.\n")

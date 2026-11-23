@@ -358,6 +358,17 @@ type API interface {
 	// ErrNotSupported. Text by an author without write access whom the
 	// scope does not trust is withheld. Since 3.27.
 	Forge(ctx context.Context, r ForgeRequest) (ForgeAnswer, error)
+
+	// Remind sets a reminder of the caller's scope, a wake of its supervisor
+	// at a time from 5 minutes to 7 days ahead with a note of at most 1024
+	// bytes, or cancels an open one by its number (design, section 7.1).
+	// Anything else is refused with the reason, and one reminder more than
+	// the scope's supervisor.reminders_max too. A reminder that is set counts
+	// as one send of the supervisor's budget: over it, ErrForbidden. One that
+	// came due and is being given is not open. Only the daemon's supervisor
+	// client answers it, on a supervisor's token connection; the core answers
+	// ErrNotSupported. Since 3.32.
+	Remind(ctx context.Context, r RemindRequest) (RemindAnswer, error)
 }
 
 // Caller is who is asking. An API value is bound to one Caller,

@@ -9,9 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/yousan/hataori/internal/control"
@@ -60,6 +62,10 @@ const (
 	// ToolDeployed tells whether a commit or a pull request is in the
 	// running hataori. Since protocol 3.29.
 	ToolDeployed = "deployed"
+
+	// A wake at a time it sets (design, section 7.1), since protocol 3.32.
+	ToolRemind       = "set_reminder"
+	ToolCancelRemind = "cancel_reminder"
 )
 
 // ForgeMax is the most bytes of a forge tool's answer; a longer one is cut,
@@ -157,6 +163,15 @@ var tools = []tool{
 		"Use it when asked whether a change is in production or deployed; it answers from the build and the forge, read only, and says why when it cannot tell. Give number or commit.",
 		object(map[string]any{"repo": forgeRepo, "number": map[string]any{"type": "integer", "description": "the pull request's number"},
 			"commit": map[string]any{"type": "string", "description": "a commit, 7 to 40 hexadecimal digits, instead of a pull request"}}, "repo")},
+	{ToolRemind, "Set a reminder: you are woken once at a time, from 5 minutes to 7 days ahead, with the note you give, also when nothing happened in the channel. " +
+		"Give minutes or at, one of them. It returns the reminder's number; each wake ends with the open ones. It counts as one send of your budget.",
+		object(map[string]any{
+			"minutes": map[string]any{"type": "integer", "description": "how many minutes from now"},
+			"at":      map[string]any{"type": "string", "description": "or when, in RFC 3339 with its zone, such as 2026-01-02T15:04:00+09:00"},
+			"note":    map[string]any{"type": "string", "description": "what to look at then; at most 1024 bytes"},
+		}, "note")},
+	{ToolCancelRemind, "Cancel an open reminder of this channel by its number: it wakes you no more.",
+		object(map[string]any{"number": map[string]any{"type": "integer", "description": "the reminder's number"}}, "number")},
 }
 
 // Serve answers MCP requests read from r, one JSON-RPC message per line,
@@ -269,6 +284,10 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 		State  string `json:"state"`
 		Ref    string `json:"ref"`
 		Commit string `json:"commit"`
+
+		Minutes *int64 `json:"minutes"`
+		At      string `json:"at"`
+		Note    string `json:"note"`
 	}
 	if len(raw) > 0 && string(raw) != "null" {
 		if err := json.Unmarshal(raw, &a); err != nil {
@@ -277,7 +296,7 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 	}
 	read, isForge := forgeReads[name]
 	switch name {
-	case ToolList, ToolRead, ToolSend, ToolInterrupt, ToolStart:
+	case ToolList, ToolRead, ToolSend, ToolInterrupt, ToolStart, ToolRemind, ToolCancelRemind:
 	default:
 		if !isForge {
 			return "", fmt.Errorf("no tool %q", name)
@@ -314,6 +333,37 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 			return "", reason(err)
 		}
 		return listing(ts), nil
+	case ToolRemind:
+		r := control.RemindRequest{Note: a.Note}
+		if (a.Minutes == nil) == (strings.TrimSpace(a.At) == "") {
+			return "", errors.New("bad arguments: give minutes or at, one of them")
+		}
+		if a.Minutes != nil {
+			if *a.Minutes < 1 {
+				return "", errors.New("bad arguments: minutes is from 5 to 10080, 7 days")
+			}
+			r.Delay = min(*a.Minutes, math.MaxInt64/60) * 60
+		} else {
+			at, err := time.Parse(time.RFC3339, strings.TrimSpace(a.At))
+			if err != nil {
+				return "", errors.New("bad arguments: at is a time in RFC 3339 with its zone, such as 2026-01-02T15:04:00+09:00")
+			}
+			r.At = &at
+		}
+		ans, err := api.Remind(ctx, r)
+		if err != nil {
+			return "", reason(err)
+		}
+		return fmt.Sprintf("Reminder %d is set for %s.", ans.Number, ans.At.Format(time.RFC3339)), nil
+	case ToolCancelRemind:
+		if a.Number == nil || *a.Number <= 0 {
+			return "", errors.New("bad arguments: number is required")
+		}
+		ans, err := api.Remind(ctx, control.RemindRequest{Cancel: *a.Number})
+		if err != nil {
+			return "", reason(err)
+		}
+		return fmt.Sprintf("Reminder %d is cancelled.", ans.Number), nil
 	case ToolStart:
 		if a.Repo == "" || strings.TrimSpace(a.Text) == "" {
 			return "", errors.New("bad arguments: repo and text are required")

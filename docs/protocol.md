@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.31**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.32**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -552,6 +552,19 @@ Since 3.29, the read `deployed` tells whether a commit, or a pull request's merg
 
 Result: `ForgeAnswer`
 
+### Operation `Remind`
+
+Since 3.32. Sets a reminder of the caller's scope, a wake of its supervisor at a time it asks for, with a note that the wake gives back; or cancels an open one by its number (design, section 7.1). Exactly one of `at`, `delay` and `cancel` is given. The time is from 5 minutes to 7 days ahead, and `note`, which a reminder that is set needs, is at most 1024 bytes. At most `supervisor.reminders_max` reminders of a scope are open; a reminder that a wake already being given carries is not open any more and cannot be cancelled. Anything else is answered `error` with the reason in its message, and nothing changes. A reminder that is set counts as one send of the supervisor's `sends_per_hour`, whatever becomes of it, and over that budget it is `forbidden`; a cancel counts as none. Reminders are the scope's, kept in the store: a daemon restart keeps them, and a new supervisor thread of the scope gets the open ones. Each wakes once. Only the daemon answers it, on a supervisor's token connection, in every autonomy. Every other connection reaches the core, which answers `not_supported`, as a daemon before 3.32 does. The call is not safe to repeat: each that is answered sets a reminder of its own.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `at` | time | optional | when the reminder is due |
+| `delay` | integer | optional | or how many seconds from now |
+| `note` | string | optional | what the wake gives back; required to set a reminder |
+| `cancel` | integer | optional | the number of the open reminder to cancel |
+
+Result: `RemindAnswer`
+
 ## Requests the daemon sends
 
 Since 3.16. The daemon sends these to a plugin, on a connection made with the plugin's token that is not a stream: the oldest such connection that is still open. A connection that becomes a stream takes none from then on, so a plugin keeps one connection for requests, as the project's client does, and follows events on others. Until the daemon has read a connection's first request, it does not know that the connection will be a stream, and may send a request on it: a client skips such a line, unanswered, on its stream, and the daemon counts the request as failed once the stream starts. A plugin that does not know one answers `not_supported`, as for any request.
@@ -994,6 +1007,15 @@ The result of `Forge`: the one read asked for, in its field. Since 3.27.
 | `pull` | `ForgePullDetail` | optional | of `pull` |
 | `checks` | `ForgeChecks` | optional | of `checks` |
 | `deployed` | `ForgeDeployed` | optional | of `deployed`; since 3.29 |
+
+### Type `RemindAnswer`
+
+The result of `Remind`: the reminder that was set or cancelled. Since 3.32.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `number` | integer | required | its number, which no other reminder of the instance has |
+| `at` | time | required | when it is due, or was |
 
 ### Type `ForgeDeployed`
 

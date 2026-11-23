@@ -104,8 +104,8 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		}
 		supervisors[s.Key] = supervisor.Scope{Model: sv.Model, Effort: sv.Effort, Instructions: sv.Instructions, Repos: repos,
 			Autonomy: sv.Autonomy, Trusted: sv.TrustedAuthors,
-			Limits: supervisor.Limits{Turns: sv.TurnsPerHour, Sends: sv.SendsPerHour, Tokens: sv.TokensPerDay},
-			Report: sv.Report, ReportEvery: sv.ReportEvery, Mention: sv.Mention, QuietHours: sv.QuietHours,
+			Limits:       supervisor.Limits{Turns: sv.TurnsPerHour, Sends: sv.SendsPerHour, Tokens: sv.TokensPerDay},
+			RemindersMax: sv.RemindersMax, Report: sv.Report, ReportEvery: sv.ReportEvery, Mention: sv.Mention, QuietHours: sv.QuietHours,
 			Files: sv.Files}
 	}
 	// The forges the supervisors read (design, section 7.1), each made from
@@ -350,6 +350,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	// And its loop guard (section 7.1), the waker's first gate.
 	budgets := map[string]*supervisor.Budget{}
 	guards := map[string]*supervisor.LoopGuard{}
+	reminders := map[string]*supervisor.Reminders{}
 	tells := map[string]func(ctx context.Context, id control.ThreadID, key, text string) error{}
 	tellIn := map[string]func(ctx context.Context, id control.ThreadID, key, text string) error{} // by scope
 	for _, s := range cfg.Scopes {
@@ -365,11 +366,12 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 			tellIn[s.Key] = tell
 			budgets[s.Key] = &supervisor.Budget{Core: c, Scope: s.Key, Zone: m.Zone, Log: lg,
 				Limits: supervisor.Limits{Turns: sv.TurnsPerHour, Sends: sv.SendsPerHour, Tokens: sv.TokensPerDay}, Tell: tell}
+			reminders[s.Key] = supervisor.NewReminders(c, s.Key, sv.RemindersMax, lg)
 			guards[s.Key] = &supervisor.LoopGuard{Core: c, Scope: s.Key, Cycles: sv.LoopCycles, Tell: tell, Log: lg}
 		}
 	}
 	sv := &supervisor.Sessions{Core: c, Tokens: srv, Root: abs, Hataori: exe, Scopes: supervisors,
-		Owner: control.Principal(cfg.Owner), Cheap: cheap, Budgets: budgets, Forges: forges, Log: lg,
+		Owner: control.Principal(cfg.Owner), Cheap: cheap, Budgets: budgets, Reminders: reminders, Forges: forges, Log: lg,
 		Docs: &supervisor.Docs{DB: st.DB, Log: lg}}
 	// A start a person approved as a supervisor's proposal is checked
 	// against its scope's repos too, as they are now (#650).
@@ -506,7 +508,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 			b := budgets[s.Key]
 			w := &supervisor.Waker{Core: c, Scope: s.Key, Owner: control.Principal(cfg.Owner), Quiet: s.Supervisor.Quiet,
 				OutputMax: s.Supervisor.OutputMax, ThreadsMax: s.Supervisor.ThreadsMax, Gates: []supervisor.Gate{guards[s.Key], b}, Log: lg,
-				Files: sv, Tell: tellIn[s.Key], Sleep: r.Sleep}
+				Files: sv, Tell: tellIn[s.Key], Sleep: r.Sleep, Reminders: reminders[s.Key]}
 			// Each wake finds the current content of the scope's files in
 			// docs/ (#640).
 			scope := s.Key
@@ -515,6 +517,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 				wakerHook(w)
 			}
 			b.Clock = w.Clock // a test's clock, when it set one
+			reminders[s.Key].Clock = w.Clock
 			svDone.Add(1)
 			go func() {
 				defer svDone.Done()

@@ -588,3 +588,19 @@ func TestSupervisorFilesConfig(t *testing.T) {
 		}
 	}
 }
+
+// reminders_max is 10 without the key, and 0 or more (#649).
+func TestSupervisorRemindersMaxConfig(t *testing.T) {
+	for sv, want := range map[string]int{`{}`: 10, `{"reminders_max": 3}`: 3, `{"reminders_max": 0}`: 0, `{"reminders_max": -1}`: -1} {
+		c, err := ParseConfig([]byte(`{"owner": "o", "trigger": "!go", "idle": "30m", "scopes": [{"key": "c1", "client": "chat", "supervisor": ` + sv + `}]}`))
+		if want < 0 {
+			if err == nil || !strings.Contains(err.Error(), `"scopes[0].supervisor.reminders_max"`) {
+				t.Fatalf("%s: %v; want refused", sv, err)
+			}
+			continue
+		}
+		if err != nil || c.Scopes[0].Supervisor.RemindersMax != want {
+			t.Fatalf("%s: %v, want %d", sv, err, want)
+		}
+	}
+}

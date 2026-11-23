@@ -44,6 +44,7 @@ type Used struct {
 //     no input of its yet, as a start that failed before its first input;
 //     and each proposal it made (proposal_made), once: the events of the
 //     call its approval made name the Via of a proposal, and are left out;
+//     and each reminder it set (#649);
 //   - tokens: from the usage events of the scope's supervisor threads, by
 //     the rule of a thread's Tokens.Today: each report adds what it raises
 //     its turn's total by, counted in the day it came.
@@ -118,6 +119,11 @@ func (b *Budget) Used(ctx context.Context) (Used, error) {
 	if err != nil {
 		return u, fmt.Errorf("supervisor: budget: sends: %w", err)
 	}
+	set, err := remindersSet(ctx, b.Core, b.Scope, u.Hour, u.Hour.Add(time.Hour))
+	if err != nil {
+		return u, fmt.Errorf("supervisor: budget: reminders: %w", err)
+	}
+	u.Sends += set
 	if u.Tokens, err = b.tokens(ctx, u.Day); err != nil {
 		return u, err
 	}
@@ -298,7 +304,21 @@ func (l *limited) Send(ctx context.Context, id control.ThreadID, key string, in 
 	return l.b.take(ctx, func() error { return l.API.Send(ctx, id, key, in, busy) })
 }
 
-// take makes call, a send or a start, unless the sends limit is reached.
+// Remind counts a reminder that is set as one send; a cancel is none.
+func (l *limited) Remind(ctx context.Context, r control.RemindRequest) (control.RemindAnswer, error) {
+	if r.Cancel != 0 {
+		return l.API.Remind(ctx, r)
+	}
+	var a control.RemindAnswer
+	err := l.b.take(ctx, func() error {
+		var err error
+		a, err = l.API.Remind(ctx, r)
+		return err
+	})
+	return a, err
+}
+
+// take makes call, a send, a start or a reminder, unless the sends limit is reached.
 // Calls are made one at a time, so that two cannot both take the last one;
 // the waker's count does not wait for them.
 func (b *Budget) take(ctx context.Context, call func() error) error {
@@ -317,7 +337,7 @@ func (b *Budget) take(ctx context.Context, call func() error) error {
 	if u.Sends >= b.Limits.Sends {
 		what, kinds, until := b.Limits.over(u)
 		b.tell(ctx, u, what, kinds, until)
-		b.Log.Warn("control call refused", "op", "Send or Start", "scope", b.Scope, "reason", "over budget")
+		b.Log.Warn("control call refused", "op", "Send, Start or Remind", "scope", b.Scope, "reason", "over budget")
 		return fmt.Errorf("over budget: %d of %d sends and starts this hour; none until %s: %w",
 			u.Sends, b.Limits.Sends, u.Hour.Add(time.Hour).Format("15:04 MST"), control.ErrForbidden)
 	}

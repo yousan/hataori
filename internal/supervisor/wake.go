@@ -81,7 +81,7 @@ func ParseWakeKey(key string) (to uint64, sv control.ThreadID, ok bool) {
 	}
 	if two {
 		var three bool
-		if thread, _, three = strings.Cut(thread, "-"); three && WakeOnly(key) == nil {
+		if thread, _, three = strings.Cut(thread, "-"); three && WakeOnly(key) == nil && WakeReminders(key) == nil {
 			return 0, 0, false
 		}
 		n, err := strconv.ParseInt(thread, 10, 64)
@@ -107,6 +107,9 @@ func keyFor(stored string, sv control.ThreadID, sentTo func(key string) (control
 		if err != nil || !taken || took == sv {
 			return stored, err
 		}
+	}
+	if reminders := WakeReminders(stored); reminders != nil {
+		return ReminderKey(sv, to, reminders...), nil
 	}
 	return WakeKey(sv, to, WakeOnly(stored)...), nil
 }
@@ -246,6 +249,10 @@ type Waker struct {
 	// Before, when set, is called right before each wake is sent to the
 	// supervisor's thread, as for the files copied into its docs/.
 	Before func(ctx context.Context, thread control.ThreadID)
+	// Reminders, when set, are the scope's reminders (#649): one that is due
+	// goes into the next wake, or wakes by itself, and each wake ends with
+	// those still open.
+	Reminders *Reminders
 	// Sleep, when set, puts the supervisor's thread to sleep now, if it is
 	// idle with nothing running and no person at its terminal, and reports
 	// whether it did (runner.Runner.Sleep). With it, each wake is given to
@@ -291,6 +298,7 @@ type wake struct {
 	to        uint64
 	key, text string
 	threads   []Ended            // what the gates admitted; nil for a wake stored by an earlier run
+	reminders []Reminder         // due, given by it
 	files     []Change           // the user's files it names, told of once it is accepted
 	stale     []control.ThreadID // the stale turn ends offered to the gates for it
 }
@@ -322,6 +330,10 @@ type waking struct {
 	asks    map[control.ThreadID]bool // the threads with a turn end that are marked (#677)
 	bg      <-chan time.Time          // a step towards the first waiting thread's BackgroundWait
 	caught  bool                      // the stored events were read: waits are timed from now on
+	// due is whether a reminder is due and no stored wake carries it;
+	// remindAt is a step towards the next one (remind).
+	due      bool
+	remindAt <-chan time.Time
 }
 
 func (w *Waker) clock() Clock {
@@ -352,6 +364,13 @@ func (w *Waker) run(ctx context.Context) error {
 	}
 	r.sv = sv
 	if err := r.loadWaiting(ctx); err != nil {
+		return err
+	}
+	var reminders <-chan struct{}
+	if w.Reminders != nil {
+		reminders = w.Reminders.changed
+	}
+	if err := r.remind(ctx); err != nil {
 		return err
 	}
 	evs, err := r.api.Events(ctx, control.Filter{Scope: w.Scope}, r.pos)
@@ -397,6 +416,10 @@ func (w *Waker) run(ctx context.Context) error {
 		case <-r.bg:
 			r.bg = nil
 			r.background()
+		case <-r.remindAt:
+			err = r.reminded(ctx)
+		case <-reminders:
+			err = r.reminded(ctx)
 		}
 		if err != nil {
 			return err
@@ -415,6 +438,11 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 		// a turn end read before this may have its next turn further on.
 		r.caught = true
 		r.background()
+		if r.due {
+			if err := r.reminded(ctx); err != nil {
+				return err
+			}
+		}
 		// Nothing waits: the events read so far need not be read again.
 		if r.empty() && r.sending == nil && r.read > r.pos {
 			return r.advance(ctx, r.read)
@@ -549,7 +577,9 @@ func (r *waking) isOwn(ctx context.Context, id control.ThreadID) (bool, error) {
 }
 
 // empty reports whether nothing is folded.
-func (r *waking) empty() bool { return len(r.ended) == 0 && len(r.decided) == 0 && len(r.stale) == 0 }
+func (r *waking) empty() bool {
+	return len(r.ended) == 0 && len(r.decided) == 0 && len(r.stale) == 0 && !r.due
+}
 
 // closed reports whether e is a thread's change of state to closed.
 func closed(e control.Event) bool {
@@ -748,7 +778,10 @@ func (r *waking) attempt(ctx context.Context) error {
 			return err
 		}
 		r.sending = w
-		if err := r.store(ctx, carries); err != nil {
+		if err := r.store(ctx, carries, r.carriesReminders(ctx, w.key, w.reminders)); errors.Is(err, errReminder) {
+			r.sending = nil // made again, without it
+			return r.attempt(ctx)
+		} else if err != nil {
 			return err
 		}
 		if err := r.hook("stored"); err != nil {
@@ -766,9 +799,10 @@ func (r *waking) attempt(ctx context.Context) error {
 	}
 	if key != r.sending.key {
 		// Stored for a thread that is no longer the supervisor's.
-		renames := r.renames(ctx, r.sending.key, key)
+		from := r.sending.key
+		renames := r.renames(ctx, from, key)
 		r.sending.key = key
-		if err := r.store(ctx, renames); err != nil {
+		if err := r.store(ctx, renames, r.renamesReminders(ctx, from, key)); err != nil {
 			return err
 		}
 	}
@@ -805,7 +839,7 @@ func (r *waking) attempt(ctx context.Context) error {
 		// Not accepted: a repeated key is ignored before a running turn is
 		// refused. The next wake is made again, with what came since.
 		r.sending, r.held = nil, true
-		return r.store(ctx, r.drops(ctx))
+		return r.store(ctx, r.drops(ctx), r.dropsReminders(ctx))
 	case stoppedByPlugin(err):
 		// A plugin's handler stopped this wake (design, section 7.3): the
 		// same text would be stopped again, so it is dropped, and the turn
@@ -913,9 +947,23 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 		return threads[i].Thread < threads[j].Thread
 	})
 	decided := slices.Clone(r.decided)
+	// The reminders, as they are now: those due go into this wake, the
+	// others are listed at its end.
+	if err := r.remind(ctx); err != nil {
+		return nil, false, err
+	}
+	var due, open []Reminder
+	now := r.w.clock().Now()
+	if r.w.Reminders != nil {
+		if open, err = r.w.Reminders.open(ctx); err != nil {
+			return nil, false, err
+		}
+		i := sort.Search(len(open), func(i int) bool { return open[i].Due.After(now) })
+		due, open = open[:i], open[i:]
+	}
 	past := false // only what goes past a hold
 	for _, g := range r.w.Gates {
-		if len(threads) == 0 && len(decided) == 0 {
+		if len(threads) == 0 && len(decided) == 0 && len(due) == 0 {
 			break
 		}
 		var until time.Time
@@ -933,6 +981,7 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 				return nil, false, nil
 			}
 			past, decided = true, nil
+			due, open = nil, slices.Concat(due, open)
 		}
 	}
 	if past && len(threads) == 0 {
@@ -950,7 +999,7 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 			}
 		}
 	}
-	if len(threads) == 0 && len(decided) == 0 {
+	if len(threads) == 0 && len(decided) == 0 && len(due) == 0 {
 		r.offered(stale) // dropped by a gate, as read
 		return nil, false, r.advance(ctx, r.read)
 	}
@@ -970,11 +1019,18 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 	}, func(id control.ThreadID) bool {
 		_, ok := given[id]
 		return ok
-	}, r.w.OutputMax, r.w.ThreadsMax)
+	}, due, now, r.w.OutputMax, r.w.ThreadsMax)
 	if err != nil {
 		return nil, false, err
 	}
-	w := &wake{to: r.read, key: WakeKey(r.sv, r.read, only...), text: text, threads: threads, stale: stale}
+	w := &wake{to: r.read, key: WakeKey(r.sv, r.read, only...), text: text, threads: threads, stale: stale, reminders: due}
+	if len(threads) == 0 && len(decided) == 0 {
+		var numbers []int64
+		for _, d := range due {
+			numbers = append(numbers, d.Number)
+		}
+		w.key = ReminderKey(r.sv, r.read, numbers...)
+	}
 	if r.w.Files != nil {
 		changes, err := r.w.Files.Changed(ctx, r.w.Scope, r.sv)
 		if err != nil {
@@ -989,6 +1045,7 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 			w.files = changes
 		}
 	}
+	w.text += OpenReminders(open)
 	return w, true, nil
 }
 
@@ -997,19 +1054,25 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 // ends only: the position stays before what a gate holds.
 func (r *waking) delivered(ctx context.Context) error {
 	w := r.sending
-	clear := r.clears(ctx, w.key, w.to)
+	clear, given := r.clears(ctx, w.key, w.to), r.clearsReminders(ctx, w.key)
 	r.offered(w.stale)
 	r.sending, r.held = nil, false
 	only := WakeOnly(w.key)
 	if only == nil {
-		return r.advance(ctx, w.to, clear)
+		if err := r.advance(ctx, w.to, clear, given); err != nil {
+			return err
+		}
+		return r.remind(ctx)
 	}
 	for _, id := range only {
 		if e, ok := r.ended[id]; ok && e.Pos <= w.to {
 			delete(r.ended, id)
 		}
 	}
-	return r.store(ctx, clear)
+	if err := r.store(ctx, clear, given); err != nil {
+		return err
+	}
+	return r.remind(ctx)
 }
 
 // turned posts the line that names the user's files that changed by the
@@ -1261,11 +1324,11 @@ func Fold(ended map[control.ThreadID]control.Event, e control.Event, own bool) b
 // DigestOf is the digest of threads, in their order, each read with
 // thread: the first threadsMax of them, each with its output cut to
 // outputMax bytes, and a line counting the others; then the decisions of
-// its requests, in their order. The output is the thread's last, or,
-// where since holds for the thread, what came since the last digest that
+// its requests, in their order; then the reminders due at now. The output
+// is the thread's last, or, where since holds for the thread, what came since the last digest that
 // gave it (Line.Since); since may be nil.
 func DigestOf(threads []Ended, decided []control.Event, thread func(control.ThreadID) (control.ThreadDetail, error),
-	since func(control.ThreadID) bool, outputMax, threadsMax int) (string, error) {
+	since func(control.ThreadID) bool, due []Reminder, now time.Time, outputMax, threadsMax int) (string, error) {
 	var lines []Line
 	for i, t := range threads {
 		if i == threadsMax {
@@ -1284,7 +1347,7 @@ func DigestOf(threads []Ended, decided []control.Event, thread func(control.Thre
 	for _, e := range decided {
 		ds = append(ds, DecisionOf(e))
 	}
-	return Digest(lines, len(threads)-len(lines), ds...), nil
+	return Digest(lines, len(threads)-len(lines), len(due), ds...) + DueReminders(due, now), nil
 }
 
 // advance stores to as handled, and forgets the turn ends and the
@@ -1494,8 +1557,9 @@ var oneLine = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ")
 
 // Digest is the message that wakes a supervisor: one paragraph per thread,
 // by number, and a line counting more threads that it does not show; then
-// one line per decision of its requests.
-func Digest(lines []Line, more int, decided ...Decision) string {
+// one line per decision of its requests. Its first line counts them, and
+// the due reminders (DueReminders).
+func Digest(lines []Line, more, due int, decided ...Decision) string {
 	var b strings.Builder
 	n := len(lines) + more
 	var asked string
@@ -1506,18 +1570,27 @@ func Digest(lines []Line, more int, decided ...Decision) string {
 	default:
 		asked = fmt.Sprintf("%d of your requests were decided", len(decided))
 	}
+	var what []string
 	switch {
-	case n == 0:
-		fmt.Fprintf(&b, "hataori: %s.\n", asked)
-	case n == 1 && asked == "":
-		b.WriteString("hataori: a turn ended in 1 thread of this channel.\n")
 	case n == 1:
-		fmt.Fprintf(&b, "hataori: a turn ended in 1 thread of this channel, and %s.\n", asked)
-	case asked == "":
-		fmt.Fprintf(&b, "hataori: turns ended in %d threads of this channel.\n", n)
-	default:
-		fmt.Fprintf(&b, "hataori: turns ended in %d threads of this channel, and %s.\n", n, asked)
+		what = append(what, "a turn ended in 1 thread of this channel")
+	case n > 1:
+		what = append(what, fmt.Sprintf("turns ended in %d threads of this channel", n))
 	}
+	if asked != "" {
+		what = append(what, asked)
+	}
+	switch {
+	case due == 1:
+		what = append(what, "1 reminder of yours came due")
+	case due > 1:
+		what = append(what, fmt.Sprintf("%d reminders of yours came due", due))
+	}
+	first := strings.Join(what, ", and ")
+	if n := len(what); n > 2 {
+		first = strings.Join(what[:n-1], ", ") + ", and " + what[n-1]
+	}
+	fmt.Fprintf(&b, "hataori: %s.\n", first)
 	for _, l := range lines {
 		fmt.Fprintf(&b, "\nThread %d", l.Thread)
 		if l.Title != "" {

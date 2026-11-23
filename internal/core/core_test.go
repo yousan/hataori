@@ -318,6 +318,10 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 		"Release": func(a control.API) error { return a.Release(ctx, id) },
 		// Only the daemon's supervisor client reads a forge: the core
 		// answers every caller not supported (#648).
+		"Remind": func(a control.API) error {
+			_, err := a.Remind(ctx, control.RemindRequest{Delay: 600, Note: "look again"})
+			return err
+		},
 		"Forge": func(a control.API) error {
 			_, err := a.Forge(ctx, control.ForgeRequest{Repo: "acme/widgets", Read: control.ForgeReadIssues})
 			return err
@@ -348,7 +352,7 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 			if cname == "other scope" && slices.Contains(namesThread, name) {
 				want = ErrNotFound
 			}
-			if name == "Forge" {
+			if name == "Forge" || name == "Remind" {
 				want = control.ErrNotSupported
 			}
 			f.log.Reset()

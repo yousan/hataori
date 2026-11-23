@@ -105,7 +105,7 @@ func TestSupervisorInstructionsInLayers(t *testing.T) {
 			sv := supervisorThread(t, owner, "c1", control.Idle)
 			got := instructionsOf(t, r.root, sv.ID)
 			if !strings.HasPrefix(got, supervisor.Layer+"\n\n"+supervisor.ConfigLayer(supervisor.Scope{Instructions: "Route the channel's work.",
-				Limits: supervisor.Limits{Turns: 12, Sends: 20, Tokens: 2_000_000}})) {
+				Limits: supervisor.Limits{Turns: 12, Sends: 20, Tokens: 2_000_000}, RemindersMax: 10})) {
 				t.Fatalf("the instructions do not start with hataori's layer and the config's:\n%s", got)
 			}
 			if c.files == nil && strings.Contains(got, "# The user's files") {

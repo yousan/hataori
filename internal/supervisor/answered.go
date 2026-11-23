@@ -81,7 +81,7 @@ func Answered(ctx context.Context, tx *store.Tx, id control.ThreadID) (string, e
 		if err != nil && err != sql.ErrNoRows {
 			return fail(err)
 		}
-		a.Threads = Named(text.String)
+		a.Threads, a.Reminders = Named(text.String), RemindersNamed(text.String)
 		a.Decided = strings.Contains(text.String, "\nDecided by a person:\n")
 		// The last final text between the turn's start and its end.
 		var from, to sql.NullInt64
@@ -111,9 +111,11 @@ type WakeAnswered struct {
 	At      time.Time
 	Threads []control.ThreadID // the threads its digest named
 	Decided bool               // it gave decisions of the supervisor's requests
-	Answer  string             // its final answer
-	Failed  bool               // its turn failed, for Reason
-	Reason  string
+	// Reminders are the reminders it gave (#649).
+	Reminders []int64
+	Answer    string // its final answer
+	Failed    bool   // its turn failed, for Reason
+	Reason    string
 }
 
 // Line is the wake as the line its conversation's next turn is given.
@@ -129,6 +131,9 @@ func (a WakeAnswered) Line() string {
 			ns[i] = strconv.FormatInt(int64(t), 10)
 		}
 		on = append(on, "threads "+strings.Join(ns[:n-1], ", ")+" and "+ns[n-1])
+	}
+	for _, n := range a.Reminders {
+		on = append(on, fmt.Sprintf("reminder %d", n))
 	}
 	if a.Decided {
 		on = append(on, "decisions of your requests")
