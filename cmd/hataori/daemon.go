@@ -92,8 +92,13 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		if sv.Agent != "" && sv.Agent != agentName {
 			return fmt.Errorf("config: key %q: %q is not the default agent adapter %q", fmt.Sprintf("scopes[%d].supervisor.agent", i), sv.Agent, agentName)
 		}
+		// Each entry must be an address a thread's workspace can be cloned
+		// from, as an order's repo: must.
 		var repos []supervisor.Repo
-		for _, r := range sv.Repos {
+		for j, r := range sv.Repos {
+			if err := workspace.CheckAddress(r.Address); err != nil {
+				return fmt.Errorf("config: key %q: %v", fmt.Sprintf("scopes[%d].supervisor.repos[%d]", i, j), err)
+			}
 			repos = append(repos, supervisor.Repo{Address: r.Address, Forge: r.Forge})
 		}
 		supervisors[s.Key] = supervisor.Scope{Model: sv.Model, Effort: sv.Effort, Instructions: sv.Instructions, Repos: repos}

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -341,7 +342,7 @@ func listing(ts []control.ThreadInfo) string {
 	fmt.Fprintf(&b, "%d threads in this channel:\n", len(ts))
 	for _, t := range ts {
 		fmt.Fprintf(&b, "#%d %s %q, started by %s, updated %s; repository %s, model %s, effort %s", t.ID, t.State, t.Title, t.StartedBy,
-			t.Updated.UTC().Format("2006-01-02 15:04Z"), orNone(t.Repo), orNone(t.Model), orNone(t.Effort))
+			t.Updated.UTC().Format("2006-01-02 15:04Z"), repository(t.Repo), orNone(t.Model), orNone(t.Effort))
 		if t.Last != "" {
 			fmt.Fprintf(&b, "; last: %s", t.Last)
 		}
@@ -359,10 +360,20 @@ func orNone(s string) string {
 	return s
 }
 
+// userinfo is the user and password of a URL, which may be a credential:
+// up to the last "@" before the path, since a password may hold one.
+var userinfo = regexp.MustCompile(`(://)[^/\s]*@`)
+
+// repository is a thread's repository as the tools show it: its address
+// without the user and password of a URL, or "(none)".
+func repository(address string) string {
+	return orNone(userinfo.ReplaceAllString(address, "${1}***@"))
+}
+
 func detail(d control.ThreadDetail, max int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Thread #%d: %s\nState: %s, since %s\nStarted by: %s\nRepository: %s\nModel: %s, effort: %s\n", d.ID, d.Title, d.State,
-		d.Updated.UTC().Format("2006-01-02 15:04Z"), d.StartedBy, orNone(d.Repo), orNone(d.Model), orNone(d.Effort))
+		d.Updated.UTC().Format("2006-01-02 15:04Z"), d.StartedBy, repository(d.Repo), orNone(d.Model), orNone(d.Effort))
 	for _, r := range d.Requests {
 		kind := "Open question"
 		if r.Kind == control.Approval {

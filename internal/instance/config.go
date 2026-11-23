@@ -180,8 +180,9 @@ var scpAddress = regexp.MustCompile(`^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9.-]+:([^\s]
 
 // ForgeName returns the forge name of a repository's address, the
 // "<owner>/<name>" that a forge knows it by: the path of a URL with a host
-// (https, http, ssh or git), or of git's form [user@]host:path, when it is
-// two parts, without a trailing ".git" or "/". Any other address, such as a
+// (https, http, ssh or git), or of git's form [user@]host:path with a path
+// that does not start with "/", when it is two parts, without a trailing
+// ".git" or "/". Any other address, such as a
 // local one, has none, and ForgeName returns "".
 func ForgeName(address string) string {
 	var at string
@@ -196,8 +197,8 @@ func ForgeName(address string) string {
 			return ""
 		}
 		at = u.Path
-	} else if m := scpAddress.FindStringSubmatch(address); m != nil {
-		at = m[1]
+	} else if m := scpAddress.FindStringSubmatch(address); m != nil && !strings.HasPrefix(m[1], "/") {
+		at = m[1] // a path from "/", as of "file:/a/b", is no forge's
 	} else {
 		return ""
 	}

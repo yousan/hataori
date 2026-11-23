@@ -17,11 +17,13 @@ type Repo struct {
 }
 
 // Repos limits the starts of api, a supervisor's caller in scope, to the
-// repositories repos lists: a Start names one by its address, as listed,
-// or by its forge name, which is replaced by the address. Any other Start
-// is refused with control.ErrForbidden before it reaches api, so nothing
-// is cloned; with no repos, every Start is. The daemon binds it to the
-// supervisor's token, so nothing `hataori mcp` sends gets past it.
+// repositories repos lists: a Start in scope names one by its address, as
+// listed, or by its forge name, which is replaced by the address. Any
+// other Start in scope is refused with control.ErrForbidden before it
+// reaches api, so nothing is cloned; with no repos, every one is. A Start
+// in another scope goes on to api, the core, which refuses it as it
+// refuses any call of the caller outside its scope. The daemon binds it to
+// the supervisor's token, so nothing `hataori mcp` sends gets past it.
 func Repos(api control.API, scope string, repos []Repo, log *slog.Logger) control.API {
 	return &repoLimited{API: api, scope: scope, repos: repos, log: log}
 }
@@ -34,6 +36,9 @@ type repoLimited struct {
 }
 
 func (l *repoLimited) Start(ctx context.Context, r control.StartRequest) (control.ThreadID, error) {
+	if r.Scope != l.scope {
+		return l.API.Start(ctx, r)
+	}
 	address, ok := l.address(r.Repo)
 	if !ok {
 		reason := "the repository is not one of the scope's supervisor.repos"
@@ -44,7 +49,7 @@ func (l *repoLimited) Start(ctx context.Context, r control.StartRequest) (contro
 			err = fmt.Errorf("the supervisor of scope %q starts no thread: its scope lists no repositories under supervisor.repos: %w",
 				l.scope, control.ErrForbidden)
 		}
-		l.log.Warn("control call refused", "op", "Start", "from", ID(l.scope), "scope", r.Scope, "reason", reason)
+		l.log.Warn("control call refused", "op", "Start", "from", ID(l.scope), "scope", l.scope, "reason", reason)
 		return 0, err
 	}
 	r.Repo = address
