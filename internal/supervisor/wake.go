@@ -92,6 +92,28 @@ const (
 type Ended struct {
 	Thread control.ThreadID
 	Event  control.Event // its last turn_ended event
+	// Stale marks a turn end that ended with background tasks running,
+	// after which the thread started no turn for BackgroundWait: it wakes
+	// the supervisor once, saying the background work has not come back.
+	Stale bool
+}
+
+// BackgroundWait is how long after a turn end with background tasks
+// running the waker waits for the thread's next turn before it wakes the
+// supervisor for it (#672).
+const BackgroundWait = time.Hour
+
+// Waiting reports whether e, a worker's turn end, waits for the thread's
+// background tasks: it completed with some still running. It wakes nobody;
+// the thread's next turn end does, or BackgroundWait without one. A turn
+// end that is blocked on a question, or failed, wakes as any.
+func Waiting(e control.Event) bool {
+	var d struct {
+		Outcome    string `json:"outcome"`
+		Background int    `json:"background"`
+	}
+	json.Unmarshal(e.Data, &d) // the store checked the event against its schema
+	return e.Kind == TurnEnded && d.Outcome == "completion" && d.Background > 0
 }
 
 // Gate decides whether a wake happens. The waker's Gates are where the
@@ -213,8 +235,9 @@ func (w *Waker) Run(ctx context.Context) {
 type wake struct {
 	to        uint64
 	key, text string
-	threads   []Ended  // what the gates admitted; nil for a wake stored by an earlier run
-	files     []Change // the user's files it names, told of once it is accepted
+	threads   []Ended            // what the gates admitted; nil for a wake stored by an earlier run
+	files     []Change           // the user's files it names, told of once it is accepted
+	stale     []control.ThreadID // the stale turn ends offered to the gates for it
 }
 
 // waking is one run of the waker, from the stored position.
@@ -233,6 +256,15 @@ type waking struct {
 	later   <-chan time.Time                   // a step towards the end of a gate's hold
 	until   time.Time                          // the end of a gate's hold; zero for none
 	held    bool                               // waits for the supervisor's thread to change
+	// waiting holds each worker thread whose last turn end waits for its
+	// background tasks (Waiting), until the thread starts a turn or
+	// BackgroundWait has passed; then stale holds it, folded like a turn
+	// end, until a wake offered it. Both are read again from the event log
+	// at each run (loadWaiting), so a restart neither loses nor repeats
+	// the wake.
+	waiting map[control.ThreadID]control.Event
+	stale   map[control.ThreadID]control.Event
+	bg      <-chan time.Time // a step towards the first waiting thread's BackgroundWait
 }
 
 func (w *Waker) clock() Clock {
@@ -246,6 +278,7 @@ func (w *Waker) run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	r := &waking{w: w, ended: map[control.ThreadID]control.Event{}, own: map[control.ThreadID]bool{},
+		waiting: map[control.ThreadID]control.Event{}, stale: map[control.ThreadID]control.Event{},
 		api: w.Core.As(control.Caller{Principal: w.Owner, Scopes: []string{w.Scope}, May: control.OpRead | control.OpSend, NoAnswer: true})}
 	if err := r.load(ctx); err != nil {
 		return err
@@ -257,6 +290,9 @@ func (w *Waker) run(ctx context.Context) error {
 		return err
 	}
 	r.sv = sv
+	if err := r.loadWaiting(ctx); err != nil {
+		return err
+	}
 	evs, err := r.api.Events(ctx, control.Filter{Scope: w.Scope}, r.pos)
 	if err != nil {
 		return err
@@ -297,6 +333,9 @@ func (w *Waker) run(ctx context.Context) error {
 			}
 			r.until = time.Time{}
 			err = r.attempt(ctx)
+		case <-r.bg:
+			r.bg = nil
+			r.background()
 		}
 		if err != nil {
 			return err
@@ -311,6 +350,8 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 		r.w.read.Store(e.Pos)
 	}
 	if e.Kind == control.CaughtUp {
+		// What waits for background tasks waits from now on, by the clock.
+		r.background()
 		// Nothing waits: the events read so far need not be read again.
 		if r.empty() && r.sending == nil && r.read > r.pos {
 			return r.advance(ctx, r.read)
@@ -358,6 +399,13 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 		}
 		return nil
 	}
+	if e.Kind == "turn_started" {
+		// The thread's background work came back, or it went on: the turn
+		// end it waited from wakes nobody, and its next one wakes as any.
+		delete(r.waiting, e.Thread)
+		delete(r.stale, e.Thread)
+		return nil
+	}
 	if e.Kind != TurnEnded {
 		return nil
 	}
@@ -366,6 +414,12 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 	own, err := r.isOwn(ctx, e.Thread)
 	if err != nil {
 		return err
+	}
+	if !own && Waiting(e) {
+		// Not the end of anything yet (#672).
+		r.waiting[e.Thread] = e
+		r.background()
+		return nil
 	}
 	if !Fold(r.ended, e, own) {
 		return nil
@@ -394,7 +448,93 @@ func (r *waking) isOwn(ctx context.Context, id control.ThreadID) (bool, error) {
 }
 
 // empty reports whether nothing is folded.
-func (r *waking) empty() bool { return len(r.ended) == 0 && len(r.decided) == 0 }
+func (r *waking) empty() bool { return len(r.ended) == 0 && len(r.decided) == 0 && len(r.stale) == 0 }
+
+// background moves each waiting thread whose BackgroundWait has passed to
+// stale, opening the quiet period as a turn end does, and sets the timer
+// for the next one. A timer does not count the time the host slept, so it
+// waits a step at a time, by the wall clock.
+func (r *waking) background() {
+	now := r.w.clock().Now()
+	var next time.Time
+	for id, e := range r.waiting {
+		due := e.Time.Add(BackgroundWait)
+		if due.After(now) {
+			if next.IsZero() || due.Before(next) {
+				next = due
+			}
+			continue
+		}
+		delete(r.waiting, id)
+		r.stale[id] = e
+		if r.quiet == nil && r.sending == nil && r.later == nil {
+			r.quiet = r.w.clock().After(r.w.Quiet)
+		}
+	}
+	r.bg = nil
+	if !next.IsZero() {
+		r.bg = r.w.clock().After(min(next.Sub(now), holdStep))
+	}
+}
+
+// loadWaiting reads from the event log the worker threads of the scope
+// whose last turn end waits for background tasks, with no turn started
+// since. One the stored position covers and whose BackgroundWait has
+// passed was told already when a wake was given since then; any other
+// is stale. One after the stored position comes again with the events.
+func (r *waking) loadWaiting(ctx context.Context) error {
+	db := r.w.Core.Store.DB
+	rows, err := db.QueryContext(ctx, `SELECT e.pos, e.thread_id, e.time, e.data FROM events e JOIN threads t ON t.id = e.thread_id
+		WHERE t.scope = ? AND t.confined = 0 AND t.state != ? AND e.kind = 'turn_ended' AND e.pos <= ?
+		AND e.pos = (SELECT max(pos) FROM events WHERE thread_id = e.thread_id AND kind = 'turn_ended')
+		AND NOT EXISTS (SELECT 1 FROM events s WHERE s.thread_id = e.thread_id AND s.kind = 'turn_started' AND s.pos > e.pos)`,
+		r.w.Scope, string(control.Closed), int64(r.pos))
+	if err != nil {
+		return fmt.Errorf("supervisor: threads waiting on background tasks: %w", err)
+	}
+	var found []control.Event
+	for rows.Next() {
+		var (
+			e    = control.Event{Kind: TurnEnded, Scope: r.w.Scope}
+			ms   int64
+			data []byte
+		)
+		if err := rows.Scan(&e.Pos, &e.Thread, &ms, &data); err != nil {
+			rows.Close()
+			return fmt.Errorf("supervisor: threads waiting on background tasks: %w", err)
+		}
+		e.Time, e.Data = time.UnixMilli(ms), json.RawMessage(data)
+		if Waiting(e) {
+			found = append(found, e)
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("supervisor: threads waiting on background tasks: %w", err)
+	}
+	now := r.w.clock().Now()
+	for _, e := range found {
+		due := e.Time.Add(BackgroundWait)
+		if due.After(now) {
+			r.waiting[e.Thread] = e
+			continue
+		}
+		// A wake given since the wait was over offered it.
+		var told int
+		err := db.QueryRowContext(ctx, `SELECT count(*) FROM events WHERE kind = 'turn_started' AND pos > ? AND time >= ?
+			AND thread_id IN (SELECT id FROM threads WHERE scope = ? AND confined = 1)
+			AND substr(json_extract(data, '$.key'), 1, ?) = ?`, int64(e.Pos), due.UnixMilli(), r.w.Scope, len(WakeKeyPrefix), WakeKeyPrefix).Scan(&told)
+		if err != nil {
+			return fmt.Errorf("supervisor: threads waiting on background tasks: %w", err)
+		}
+		if told == 0 {
+			r.stale[e.Thread] = e
+		}
+	}
+	if len(r.stale) > 0 && r.quiet == nil {
+		r.quiet = r.w.clock().After(r.w.Quiet)
+	}
+	return nil
+}
 
 // attempt sends the stored wake, or makes one of what is folded and sends
 // it, unless the supervisor's thread cannot take it now.
@@ -474,6 +614,7 @@ func (r *waking) attempt(ctx context.Context) error {
 			}
 		}
 		to := r.sending.to
+		r.offered(r.sending.stale)
 		r.sending, r.held = nil, false
 		if err := r.advance(ctx, to); err != nil {
 			return err
@@ -494,6 +635,7 @@ func (r *waking) attempt(ctx context.Context) error {
 		// case: the wake is tried again until the plugin is back.
 		r.w.Log.Warn("supervisor wake stopped by a plugin", "scope", r.w.Scope, "thread", int64(sv), "err", ErrText(err))
 		to := r.sending.to
+		r.offered(r.sending.stale)
 		r.sending, r.held = nil, false
 		return r.advance(ctx, to)
 	default:
@@ -540,7 +682,14 @@ func (r *waking) ready(ctx context.Context) (control.ThreadID, bool, error) {
 func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 	var threads []Ended
 	for id, e := range r.ended {
-		threads = append(threads, Ended{Thread: id, Event: e})
+		if _, ok := r.stale[id]; !ok {
+			threads = append(threads, Ended{Thread: id, Event: e})
+		}
+	}
+	var stale []control.ThreadID
+	for id, e := range r.stale {
+		threads = append(threads, Ended{Thread: id, Event: e, Stale: true})
+		stale = append(stale, id)
 	}
 	sort.Slice(threads, func(i, j int) bool { return threads[i].Thread < threads[j].Thread })
 	decided := slices.Clone(r.decided)
@@ -563,6 +712,7 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 		}
 	}
 	if len(threads) == 0 && len(decided) == 0 {
+		r.offered(stale) // dropped by a gate, as read
 		return nil, false, r.advance(ctx, r.read)
 	}
 	text, err := DigestOf(threads, decided, func(id control.ThreadID) (control.ThreadDetail, error) {
@@ -571,7 +721,7 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	w := &wake{to: r.read, key: WakeKey(r.sv, r.read), text: text, threads: threads}
+	w := &wake{to: r.read, key: WakeKey(r.sv, r.read), text: text, threads: threads, stale: stale}
 	if r.w.Files != nil {
 		changes, err := r.w.Files.Changed(ctx, r.w.Scope, r.sv)
 		if err != nil {
@@ -611,6 +761,14 @@ func (r *waking) turned(ctx context.Context, e control.Event) error {
 		}
 	}
 	return r.w.Files.Seen(ctx, r.w.Scope, e.Pos, now)
+}
+
+// offered forgets the stale turn ends a wake offered to the gates: they
+// woke the supervisor, or a gate dropped them.
+func (r *waking) offered(ids []control.ThreadID) {
+	for _, id := range ids {
+		delete(r.stale, id)
+	}
 }
 
 // holdStep is the longest a gate's hold waits on one timer: a timer does
@@ -660,7 +818,9 @@ func DigestOf(threads []Ended, decided []control.Event, thread func(control.Thre
 		if err != nil {
 			return "", err
 		}
-		lines = append(lines, LineOf(t.Event, d, outputMax))
+		l := LineOf(t.Event, d, outputMax)
+		l.Stale = t.Stale
+		lines = append(lines, l)
 	}
 	var ds []Decision
 	for _, e := range decided {
@@ -764,6 +924,9 @@ type Line struct {
 	Background int
 	Last       string // the end of its output, at most the cap
 	Cut        int    // the cap, when Last was cut to it; 0 when not
+	// Stale: the thread started no turn for BackgroundWait after this
+	// turn end, whose background tasks have not come back (#672).
+	Stale bool
 }
 
 // LineOf is the digest line of a thread whose last turn end is e, from
@@ -900,6 +1063,9 @@ func Digest(lines []Line, more int, decided ...Decision) string {
 			b.WriteString(l.Outcome)
 		}
 		fmt.Fprintf(&b, ". Background tasks: %d.\n", l.Background)
+		if l.Stale {
+			b.WriteString("Its background work has not come back: no turn started in the hour since this turn end.\n")
+		}
 		switch {
 		case l.Last == "":
 			b.WriteString("Last output: none.\n")
