@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/people"
 	"github.com/yousan/hataori/internal/store"
 	"github.com/yousan/hataori/internal/surface"
@@ -61,6 +62,10 @@ var legacyStarters = []legacyStarter{
 const (
 	namesTitle = "Do https://github.com/example/widgets/issues/631 and make the title column wide enough to read"
 	namesShort = "Do widgets#631 and make the title column wide enough to read"
+	// The model and the branch are longer than the 12 characters a text
+	// column keeps.
+	namesModel  = "a-model-with-a-long-name"
+	namesBranch = "feature/a-branch-with-a-long-name"
 )
 
 func newNamesRig(t *testing.T) namesRig {
@@ -96,7 +101,7 @@ func newNamesRig(t *testing.T) namesRig {
 
 	// The full thread, ordered in the chat by bob; its chat thread is
 	// renamed to the title with the issue's address.
-	th := r.order(t, 0, "!go repo:"+bareRepo(t)+" usage 1200 300 40000 5000 45000 200000 a-model-with-a-name\nreply "+strings.Repeat("the last line of the agent goes on ", 6))
+	th := r.order(t, 0, "!go repo:"+bareRepo(t)+" model:"+namesModel+" usage 1200 300 40000 5000 45000 200000\nreply "+strings.Repeat("the last line of the agent goes on ", 6))
 	r.driver.Rename(th, namesTitle)
 	var full control.ThreadID
 	eventually(t, "the full thread idle, with its name", 30*time.Second, func() bool {
@@ -107,6 +112,17 @@ func newNamesRig(t *testing.T) namesRig {
 		full = ts[0].ID
 		return ts[0].State == control.Idle && ts[0].Name == namesTitle && ts[0].StartedBy == "bob"
 	})
+	// Its workspace, the only one so far, on a branch whose name is longer
+	// than the 12 characters a text column keeps.
+	dirs, _ := filepath.Glob(filepath.Join(r.root, "state", "sessions", "*"))
+	if len(dirs) != 1 {
+		t.Fatalf("%d sessions, want the full thread's", len(dirs))
+	}
+	spec, ok, err := host.ReadSpec(dirs[0])
+	if err != nil || !ok {
+		t.Fatalf("the full thread's session: %v", err)
+	}
+	gitIn(t, spec.Dir, "checkout", "-q", "-b", namesBranch)
 	asleep, err := c.Start(ctx, control.StartRequest{Key: "k-asleep", Scope: "c2", Repo: bareRepo(t), Input: control.Input{Text: "exit"}})
 	if err != nil {
 		t.Fatal(err)
@@ -178,9 +194,10 @@ func newNamesRig(t *testing.T) namesRig {
 }
 
 // The acceptance criteria of #631 in the browser, against the daemon with
-// the fake surface: the All threads table's Title column, at 1600 px wide
-// with every column shown, shows at least 30 characters of a title and is
-// no narrower than the other text columns; the counts of hidden threads
+// the fake surface: at 1600 px wide with every column shown, the All
+// threads table's agent, branch and last output columns each show at least
+// 12 characters and the title gets what is left, with the tree at least 30
+// characters and no narrower than the other text columns; the counts of hidden threads
 // and hidden idle shells next to Active / All are apart, with a separator
 // between them, in English and Japanese; the details panel names the scope
 // as the tree does, the person who started the thread by their name (an
@@ -193,51 +210,90 @@ func TestDashboardNamesAndWidths(t *testing.T) {
 	b.call("Emulation.setDeviceMetricsOverride", map[string]any{"width": 1600, "height": 900, "deviceScaleFactor": 1, "mobile": false})
 	b.call("Page.navigate", map[string]any{"url": rig.link})
 
-	t.Run("title column", func(t *testing.T) {
+	t.Run("text columns", func(t *testing.T) {
 		b.t = t
 		b.until("the full thread's row with every column", fmt.Sprintf(`(() => {
 			const tb = document.querySelector('.pane.active .all-threads');
 			return !!tb && tb.dataset.columns === 'state number title agent age context tokens branch changes unpushed last' &&
 				!!tb.querySelector('tr[data-thread="%d"] td[data-col=title]') && !!document.querySelector('.tree') && !!document.querySelector('.details');
 		})()`, rig.full))
+		// cell is one text cell: its text, how many of its characters show
+		// before its edge, and its width.
+		type cell struct {
+			Text  string
+			Fits  int
+			Width float64
+		}
 		var w struct {
-			Window       float64
-			Text         string
-			Fits         float64 // how many characters of the title show before the cell's edge
-			Title, Other float64 // the Title cell's width, and the widest other text column's
-			OtherCol     string
-			Cols         string // every cell's width, for the failure's message
+			Window, Pane, Scroll float64
+			Details              bool
+			Cells                map[string]cell
+			Cols                 string // every cell's width, for a failure's message
 		}
-		b.eval(fmt.Sprintf(`(() => {
-			const row = document.querySelector('.pane.active .all-threads tr[data-thread="%d"]');
-			const td = row.querySelector('td[data-col=title]');
-			const cs = getComputedStyle(td);
-			const edge = td.getBoundingClientRect().right - parseFloat(cs.paddingRight);
-			const text = td.firstChild;
-			let fits = 0;
-			const r = document.createRange();
-			for (let i = 1; i <= text.length; i++) {
-				r.setStart(text, 0); r.setEnd(text, i);
-				if (r.getBoundingClientRect().right > edge + 0.5) break;
-				fits = i;
+		measure := func() {
+			t.Helper()
+			b.eval(fmt.Sprintf(`(() => {
+				const p = document.querySelector('.pane.active');
+				const row = p.querySelector('.all-threads tr[data-thread="%d"]');
+				const cells = {};
+				for (const c of ['title', 'agent', 'branch', 'last']) {
+					const td = row.querySelector('td[data-col=' + c + ']');
+					const edge = td.getBoundingClientRect().right - parseFloat(getComputedStyle(td).paddingRight);
+					const text = td.firstChild;
+					let fits = 0;
+					const r = document.createRange();
+					for (let i = 1; i <= text.length; i++) {
+						r.setStart(text, 0); r.setEnd(text, i);
+						if (r.getBoundingClientRect().right > edge + 0.5) break;
+						fits = i;
+					}
+					cells[c] = {text: td.textContent, fits, width: td.getBoundingClientRect().width};
+				}
+				const cols = [...row.children].map(c => c.dataset.col + ' ' + Math.round(c.getBoundingClientRect().width)).join(', ');
+				return {window: innerWidth, pane: p.clientWidth, scroll: p.scrollWidth, details: !!document.querySelector('.details'), cells, cols};
+			})()`, rig.full), &w)
+			if w.Window != 1600 || w.Cells["title"].Text != namesShort {
+				t.Fatalf("the window is %v px and the title %q: the check would test another layout", w.Window, w.Cells["title"].Text)
 			}
-			let other = 0, otherCol = '';
-			for (const c of ['agent', 'branch', 'last']) {
-				const w = row.querySelector('td[data-col=' + c + ']').getBoundingClientRect().width;
-				if (w > other) { other = w; otherCol = c; }
+		}
+		// keeps checks that each text column but the title shows at least 12
+		// characters (all of a shorter value), and that the table does not
+		// scroll sideways.
+		keeps := func(layout string) {
+			t.Helper()
+			for _, c := range []string{"agent", "branch", "last"} {
+				v := w.Cells[c]
+				if want := min(12, len([]rune(v.Text))); v.Fits < want {
+					t.Errorf("%s: the %s column shows %d characters of %q, want at least %d (%s)", layout, c, v.Fits, v.Text, want, w.Cols)
+				}
 			}
-			const cols = [...row.children].map(c => c.dataset.col + ' ' + Math.round(c.getBoundingClientRect().width)).join(', ');
-			return {window: innerWidth, text: td.textContent, fits, title: td.getBoundingClientRect().width, other, otherCol, cols};
-		})()`, rig.full), &w)
-		if w.Window != 1600 || w.Text != namesShort {
-			t.Fatalf("the window is %v px and the title %q: the check would test another layout", w.Window, w.Text)
+			if w.Scroll > w.Pane {
+				t.Errorf("%s: the table scrolls sideways: %v px in %v (%s)", layout, w.Scroll, w.Pane, w.Cols)
+			}
 		}
-		if w.Fits < 30 {
-			t.Errorf("a title shows %v characters before it is cut, want at least 30: %+v", w.Fits, w)
+		measure()
+		if w.Cells["agent"].Text != "fake · "+namesModel || w.Cells["branch"].Text != namesBranch {
+			t.Fatalf("the agent and model read %q and the branch %q: the check would test short values", w.Cells["agent"].Text, w.Cells["branch"].Text)
 		}
-		if w.Title < w.Other {
-			t.Errorf("the Title column is %v px, narrower than the %s column's %v px", w.Title, w.OtherCol, w.Other)
+		t.Logf("with the details panel: %s", w.Cols)
+		keeps("with the details panel")
+		b.click(`.tools [data-tool=details]`)
+		b.until("the details panel hidden", `!document.querySelector('.details')`)
+		measure()
+		t.Logf("without the details panel: %s", w.Cols)
+		keeps("without the details panel")
+		// The title gets what is left: at 1600 px with the tree, at least 30
+		// characters, and no narrower than another text column.
+		if v := w.Cells["title"]; v.Fits < 30 {
+			t.Errorf("a title shows %d characters before it is cut, want at least 30 (%s)", v.Fits, w.Cols)
 		}
+		for _, c := range []string{"agent", "branch", "last"} {
+			if w.Cells["title"].Width < w.Cells[c].Width {
+				t.Errorf("the Title column is %v px, narrower than the %s column's %v px", w.Cells["title"].Width, c, w.Cells[c].Width)
+			}
+		}
+		b.click(`.tools [data-tool=details]`)
+		b.until("the details panel back", `!!document.querySelector('.details')`)
 	})
 
 	t.Run("hidden counts", func(t *testing.T) {
