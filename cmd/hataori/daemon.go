@@ -92,7 +92,11 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		if sv.Agent != "" && sv.Agent != agentName {
 			return fmt.Errorf("config: key %q: %q is not the default agent adapter %q", fmt.Sprintf("scopes[%d].supervisor.agent", i), sv.Agent, agentName)
 		}
-		supervisors[s.Key] = supervisor.Scope{Model: sv.Model, Effort: sv.Effort, Instructions: sv.Instructions}
+		var repos []supervisor.Repo
+		for _, r := range sv.Repos {
+			repos = append(repos, supervisor.Repo{Address: r.Address, Forge: r.Forge})
+		}
+		supervisors[s.Key] = supervisor.Scope{Model: sv.Model, Effort: sv.Effort, Instructions: sv.Instructions, Repos: repos}
 	}
 	var cheap string
 	if cm, ok := adapters[agentName].(agent.CheapModel); ok {
@@ -334,6 +338,9 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		if name, ok := cfg.People.Resolve(supervisor.ID(scope)); !ok || !cfg.People.May(name, scope) {
 			lg.Warn("the supervisor of a scope is no person of that scope: it may read its threads, but not send or start",
 				"scope", scope, "id", supervisor.ID(scope))
+		}
+		if len(supervisors[scope].Repos) == 0 {
+			lg.Warn("the scope lists no supervisor.repos: its supervisor starts no thread", "scope", scope)
 		}
 	}
 	// Before anything reconnects or recovers: where each scope's waker

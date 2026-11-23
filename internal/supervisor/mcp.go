@@ -340,7 +340,8 @@ func listing(ts []control.ThreadInfo) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%d threads in this channel:\n", len(ts))
 	for _, t := range ts {
-		fmt.Fprintf(&b, "#%d %s %q, started by %s, updated %s", t.ID, t.State, t.Title, t.StartedBy, t.Updated.UTC().Format("2006-01-02 15:04Z"))
+		fmt.Fprintf(&b, "#%d %s %q, started by %s, updated %s; repository %s, model %s, effort %s", t.ID, t.State, t.Title, t.StartedBy,
+			t.Updated.UTC().Format("2006-01-02 15:04Z"), orNone(t.Repo), orNone(t.Model), orNone(t.Effort))
 		if t.Last != "" {
 			fmt.Fprintf(&b, "; last: %s", t.Last)
 		}
@@ -349,10 +350,19 @@ func listing(ts []control.ThreadInfo) string {
 	return b.String()
 }
 
+// orNone is s, or "(none)" when it is empty: a thread with no repository,
+// or a model or an effort not known yet.
+func orNone(s string) string {
+	if s == "" {
+		return "(none)"
+	}
+	return s
+}
+
 func detail(d control.ThreadDetail, max int) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Thread #%d: %s\nState: %s, since %s\nStarted by: %s\nRepository: %s\n", d.ID, d.Title, d.State,
-		d.Updated.UTC().Format("2006-01-02 15:04Z"), d.StartedBy, d.Repo)
+	fmt.Fprintf(&b, "Thread #%d: %s\nState: %s, since %s\nStarted by: %s\nRepository: %s\nModel: %s, effort: %s\n", d.ID, d.Title, d.State,
+		d.Updated.UTC().Format("2006-01-02 15:04Z"), d.StartedBy, orNone(d.Repo), orNone(d.Model), orNone(d.Effort))
 	for _, r := range d.Requests {
 		kind := "Open question"
 		if r.Kind == control.Approval {

@@ -218,7 +218,8 @@ func TestUnknownAndRevokedTokens(t *testing.T) {
 // Sending to a busy thread is refused with "busy", whatever the
 // supervisor's connection asks for: the turn is not interrupted and
 // nothing is queued. Its input reaches the agent with the mark, and the
-// input event names its person.
+// input event names its person. (Its start, marked the same way, is
+// TestSupervisorStartsOnlyInItsRepos: this scope lists no repos.)
 func TestSupervisorSendIsRefusedWhenBusyAndMarked(t *testing.T) {
 	r, logged, issue, _ := supervisorRoot(t)
 	ctx := context.Background()
@@ -231,10 +232,23 @@ func TestSupervisorSendIsRefusedWhenBusyAndMarked(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer sv.Close()
-
-	// The supervisor starts a thread; the core asks the front end for it.
-	id, err := sv.Start(ctx, control.StartRequest{Key: "sv-1", Scope: "c1", Repo: bareRepo(t), Input: control.Input{Text: "heard\ntool t 2s"}})
+	owner, err := wire.Dial(r.root)
 	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Close()
+
+	// The owner starts a thread, and the supervisor's send runs its next
+	// turn.
+	id, err := owner.Start(ctx, control.StartRequest{Key: "o-1", Scope: "c1", Thread: "t1", Repo: bareRepo(t), Input: control.Input{Text: "reply ready"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the first turn to end", 15*time.Second, func() bool {
+		d, err := sv.Thread(ctx, id, 0, 0)
+		return err == nil && d.State == control.Idle && len(threadEvents(t, sv, id, "turn_ended")) == 1
+	})
+	if err := sv.Send(ctx, id, "sv-1", control.Input{Text: "heard\ntool t 2s"}, control.Refuse); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, "the turn to run", 15*time.Second, func() bool {
@@ -248,21 +262,21 @@ func TestSupervisorSendIsRefusedWhenBusyAndMarked(t *testing.T) {
 		}
 	}
 	eventually(t, "the turn to end", 15*time.Second, func() bool {
-		return len(threadEvents(t, sv, id, "turn_ended")) == 1
+		return len(threadEvents(t, sv, id, "turn_ended")) == 2
 	})
-	ended := threadEvents(t, sv, id, "turn_ended")[0]
+	ended := threadEvents(t, sv, id, "turn_ended")[1]
 	if ended["outcome"] != "completion" {
 		t.Fatalf("the turn ended %v, want completion: it was interrupted", ended)
 	}
 	time.Sleep(300 * time.Millisecond) // a queued input would start a turn now
-	if n := len(threadEvents(t, sv, id, "turn_started")); n != 1 {
-		t.Fatalf("%d turns started, want 1: a refused send was queued", n)
+	if n := len(threadEvents(t, sv, id, "turn_started")); n != 2 {
+		t.Fatalf("%d turns started, want 2: a refused send was queued", n)
 	}
 	inputs := threadEvents(t, sv, id, "input")
-	if len(inputs) != 1 {
-		t.Fatalf("input events %v, want the first input only", inputs)
+	if len(inputs) != 2 {
+		t.Fatalf("input events %v, want the first input and the supervisor's only", inputs)
 	}
-	in := inputs[0]
+	in := inputs[1]
 	if in["principal"] != "sv1" || in["from"] != supervisor.ID("c1") || !strings.HasPrefix(in["text"].(string), supervisor.Mark+"\n") {
 		t.Fatalf("the input event %v, want sv1's, from %s, marked", in, supervisor.ID("c1"))
 	}
@@ -273,9 +287,6 @@ func TestSupervisorSendIsRefusedWhenBusyAndMarked(t *testing.T) {
 	d, err := sv.Thread(ctx, id, 0, 0)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if d.Title != "heard" || d.StartedBy != "sv1" {
-		t.Fatalf("title %q started by %q, want the unmarked first line, by sv1", d.Title, d.StartedBy)
 	}
 	if !refusedLine(logged(), "Send", "c1") {
 		t.Fatal("the Deliver and Interrupt sends were not logged")
@@ -296,7 +307,7 @@ func TestSupervisorSendIsRefusedWhenBusyAndMarked(t *testing.T) {
 		t.Fatalf("send_to_thread to a busy thread: %+v, want a busy tool error", out)
 	}
 	eventually(t, "the turn to end", 15*time.Second, func() bool {
-		return len(threadEvents(t, sv, id, "turn_ended")) == 2
+		return len(threadEvents(t, sv, id, "turn_ended")) == 3
 	})
 	out = mcpCall(t, m, supervisor.ToolSend, map[string]any{"number": int64(d.ID), "text": "heard"})
 	if out.IsError {
