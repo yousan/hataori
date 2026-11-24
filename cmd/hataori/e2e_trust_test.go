@@ -182,6 +182,13 @@ func (r *chatRoot) trusted(t *testing.T) int {
 // hookRan reports whether the fake's project hook ran in th's workspace.
 func (r *chatRoot) hookRan(t *testing.T, th surface.Conversation) bool {
 	t.Helper()
+	_, err := os.Stat(filepath.Join(r.workspace(t, th), fake.ProjectHookFile))
+	return err == nil
+}
+
+// workspace is th's workspace.
+func (r *chatRoot) workspace(t *testing.T, th surface.Conversation) string {
+	t.Helper()
 	var dir string
 	if err := r.db(t).QueryRow(`SELECT workspace FROM threads WHERE id = ?`, numberOf(t, r.root, th)).Scan(&dir); err != nil || dir == "" {
 		t.Fatalf("the thread's workspace: %q %v", dir, err)
@@ -189,6 +196,5 @@ func (r *chatRoot) hookRan(t *testing.T, th surface.Conversation) bool {
 	if !filepath.IsAbs(dir) {
 		dir = filepath.Join(r.root, dir)
 	}
-	_, err := os.Stat(filepath.Join(dir, fake.ProjectHookFile))
-	return err == nil
+	return dir
 }
