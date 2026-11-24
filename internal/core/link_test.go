@@ -167,3 +167,36 @@ func TestFirstInputLinkOnlyFromItsClient(t *testing.T) {
 		t.Fatalf("first inputs' links %q and %q, want the chat start's only", chatLink, socketLink)
 	}
 }
+
+// A conversation the client opened for the thread is input from its start.
+// One that was there before, which a Link or a Start names, is from when
+// the link was made.
+func TestLinkCountsFromWhenItWasMadeInAConversationThatWasThere(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{key: "opened"})
+	f.core.Owners["two"] = &clientOwner{name: "two"}
+	sc := f.core.Scopes["s"]
+	sc.ShowIn = []string{"two:d1"}
+	f.core.Scopes["s"] = sc
+	named, err := f.owner.Start(ctx, control.StartRequest{Key: "k1", Scope: "s", Thread: "named", Repo: "r", Input: control.Input{Text: "x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.owner.Start(ctx, control.StartRequest{Key: "k2", Scope: "s", Repo: "r", Input: control.Input{Text: "x"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range []control.LinkRef{{Client: "chat", Channel: "s", Thread: "attached"}, {Client: "two", Channel: "d1"}} {
+		if _, err := f.owner.Link(ctx, named, l); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for thread, there := range map[string]bool{"named": true, "opened": false, "attached": true, "opened-1": false} {
+		var made, since int64
+		if err := f.core.Store.DB.QueryRow(`SELECT created_at, since FROM links WHERE thread = ?`, thread).Scan(&made, &since); err != nil {
+			t.Fatalf("link to %s: %v", thread, err)
+		}
+		if want := made; there && since != want || !there && since != 0 {
+			t.Errorf("link to %s: since %d, made %d, want it to count from when it was made: %v", thread, since, made, there)
+		}
+	}
+}

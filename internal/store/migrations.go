@@ -686,6 +686,16 @@ var migrations = []Migration{
 			PRIMARY KEY (scope, thread)
 		)`,
 	)},
+	// From when on what is written in a link's conversation is input, in
+	// unix milliseconds: for a conversation that was there before the link,
+	// the time the link was made, since what was written in it before was
+	// not for hataori (#571). 0 for one opened for its thread. Of the links
+	// made before this step, a thread's first one was opened for it.
+	{Name: "links.since", Up: execAll(
+		`ALTER TABLE links ADD COLUMN since INTEGER NOT NULL DEFAULT 0`,
+		`UPDATE links SET since = created_at
+			WHERE id NOT IN (SELECT min(id) FROM links GROUP BY thread_id)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {
