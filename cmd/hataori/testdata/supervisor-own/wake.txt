@@ -63,7 +63,7 @@ The operator's settings for this channel, from hataori's config. The daemon enfo
 
 - autonomy: propose. Your sends and starts are proposals that a person of this channel approves before they run.
 - repos: <repo>. The only repositories you may start a thread in, and read on their forge.
-- Budget: turns_per_hour 12, sends_per_hour 20 (a start counts as a send), tokens_per_day 2000000. Over it you are not woken, and your sends and starts are refused.
+- Budget: turns_per_hour 12, sends_per_hour 20 (a start counts as a send, and so does setting a reminder), tokens_per_day 2000000. Once sends_per_hour is used up, your sends, starts and reminders are refused until the hour ends; the other two limits refuse none of them. Once any limit is used up, what would wake you waits until the hour or the day ends, with two exceptions: the first turn end of a thread you started for a person's message, and a thread you started that fails to start (one that no person asked for only up to twice turns_per_hour). tokens_per_day holds these two as well.
 - reminders_max: 10. The most reminders you may have open; setting one counts as a send.
 - report: every. Each wake's final answer is posted, unless it is exactly (quiet).
 - mention: named. @<name> of a person of this channel mentions them; nothing else you post mentions anyone.
