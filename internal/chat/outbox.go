@@ -29,7 +29,9 @@ type Row struct {
 	Conv    surface.Conversation
 	Message surface.Message
 	// Decoration marks a message that may be lost: it is dropped after
-	// MaxFailures failed posts and never holds back the rows behind it.
+	// MaxFailures failed posts and never holds back the rows behind it. Any
+	// other post that fails holds them back until it is posted, or is given
+	// up as the service refused it (surface.ErrRefused).
 	Decoration bool
 	// ReplyToRow makes the message a reply to the message another row
 	// posted, once that row is sent; Message.ReplyTo is used otherwise.
@@ -487,7 +489,7 @@ func (o *Outbox) send(ctx context.Context, conv surface.Conversation, r pending)
 	if meta.Op == Archive || meta.Op == Unarchive {
 		return o.archive(ctx, conv, r, meta.Op)
 	}
-	text, out, ok := o.hooked(ctx, conv, r, m.Text, false)
+	text, out, ok := o.hooked(ctx, conv, r, m.Text, len(m.Files) > 0, false)
 	if !ok {
 		return out
 	}
@@ -502,6 +504,9 @@ func (o *Outbox) send(ctx context.Context, conv surface.Conversation, r pending)
 	if r.decoration && r.failures+1 >= o.MaxFailures {
 		o.Log.Warn("chat outbox: dropping a decoration", "key", k, "failures", r.failures+1, "err", err)
 		return o.record(ctx, failedPost, r.id, `UPDATE chat_outbox SET state = 'dropped', failures = failures + 1 WHERE id = ?`, r.id)
+	}
+	if !r.decoration && errors.Is(err, surface.ErrRefused) {
+		return o.refused(ctx, conv, r, k, err)
 	}
 	o.Log.Warn("chat outbox: post failed", "key", k, "decoration", r.decoration, "err", err)
 	return o.record(ctx, failedPost, r.id, `UPDATE chat_outbox SET failures = failures + 1 WHERE id = ?`, r.id)
@@ -562,7 +567,7 @@ func (o *Outbox) change(ctx context.Context, conv surface.Conversation, r pendin
 			before.Text = shown.String
 		}
 		if m.Text != before.Text {
-			text, out, ok := o.hooked(ctx, conv, r, m.Text, true)
+			text, out, ok := o.hooked(ctx, conv, r, m.Text, len(m.Files) > 0, true)
 			if !ok {
 				return out
 			}
@@ -666,7 +671,7 @@ func (o *Outbox) where(ctx context.Context, conv surface.Conversation, r pending
 // that every link shows the same. It returns the text to post, or ok
 // false with the outcome when the row is cancelled or the result could
 // not be stored.
-func (o *Outbox) hooked(ctx context.Context, conv surface.Conversation, r pending, text string, edit bool) (string, outcome, bool) {
+func (o *Outbox) hooked(ctx context.Context, conv surface.Conversation, r pending, text string, files, edit bool) (string, outcome, bool) {
 	if r.hook == "passed" {
 		if r.hookText.Valid {
 			return r.hookText.String, posted, true
@@ -707,7 +712,7 @@ func (o *Outbox) hooked(ctx context.Context, conv surface.Conversation, r pendin
 	case "cancelled":
 		res = control.HookResult{Stopped: true, By: by, Reason: reason, Failed: failed}
 	default:
-		res = o.Hooks.Run(ctx, control.HookCall{Point: PointMessageSending, Thread: thread, Scope: scope, Text: text})
+		res = o.Hooks.Run(ctx, control.HookCall{Point: PointMessageSending, Thread: thread, Scope: scope, Text: text, Files: files})
 		if ctx.Err() != nil {
 			return "", stuck, false
 		}
@@ -834,6 +839,50 @@ func (o *Outbox) sent(ctx context.Context, r pending, ref surface.MessageRef, te
 		return stuck
 	}
 	return posted
+}
+
+// refused gives up row r, whose post the chat service refused for good with
+// cause: it would hold back the rows behind it for ever. For a row of a
+// link it writes the post_refused event in the same transaction, from which
+// ThreadDetail.Refused is read.
+func (o *Outbox) refused(ctx context.Context, conv surface.Conversation, r pending, k string, cause error) outcome {
+	var thread control.ThreadID
+	err := o.Store.Update(ctx, func(tx *store.Tx) error {
+		x, err := tx.ExecContext(ctx, `UPDATE chat_outbox SET state = 'dropped', failures = failures + 1
+			WHERE id = ? AND state = 'pending'`, r.id)
+		if err != nil {
+			return err
+		}
+		if n, _ := x.RowsAffected(); n == 0 || r.link == 0 {
+			return nil
+		}
+		var (
+			id    int64
+			scope string
+			link  control.LinkRef
+		)
+		err = tx.QueryRowContext(ctx, `SELECT l.thread_id, t.scope, l.client, l.channel, l.thread FROM links l
+			JOIN threads t ON t.id = l.thread_id WHERE l.id = ?`, r.link).Scan(&id, &scope, &link.Client, &link.Channel, &link.Thread)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		thread = control.ThreadID(id)
+		data, _ := json.Marshal(map[string]any{"link": link, "event": r.event, "part": r.part, "reason": cut(cause.Error(), 500)})
+		_, err = tx.Append(ctx, control.Event{Thread: thread, Scope: scope, Time: o.now(), Kind: "post_refused", Data: data})
+		return err
+	})
+	if err != nil {
+		if ctx.Err() == nil {
+			o.Log.Error("chat outbox: recording a refused post", "key", k, "err", err)
+		}
+		return stuck
+	}
+	o.Log.Error("chat outbox: the chat service refused a post, which is given up", "key", k, "thread", int64(thread),
+		"channel", conv.Channel, "err", cause)
+	return posted // done: the rows behind it go on
 }
 
 // record runs q on row id and returns ok, or stuck when it fails.

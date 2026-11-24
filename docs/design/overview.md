@@ -256,7 +256,7 @@ Orca is not a holder. It is an orchestrator at the same level as hataori, and it
 3. The core finds or creates the thread, workspace and session, and sends the input. If a turn is running, the call says what to do: refuse, deliver into the turn, or interrupt (section 10).
 4. The agent adapter decodes what the agent reported into agent events: lines of the host's log, and lines of any file the adapter asked to follow, such as a transcript. Each event has `(session, sequence number)`.
 5. For each agent event the core updates state and appends to the **event log** in the database: thread created, turn started, text, question asked, tool progress, turn ended. Events are numbered per instance. Any client can read them from a position, so a reader that was down misses nothing.
-6. The chat front end is one such reader. For each event it decides what to show and writes rows to its **outbox**, keyed by `(event, part)`, so reading an event twice writes nothing twice. The sender posts rows in order per thread, paced per route, and stores the surface's message id on success. Rows marked as decoration (lamps, progress line, thread rename) are dropped after a few failures and never block a reply.
+6. The chat front end is one such reader. For each event it decides what to show and writes rows to its **outbox**, keyed by `(event, part)`, so reading an event twice writes nothing twice. The sender posts rows in order per thread, paced per route, and stores the surface's message id on success. Rows marked as decoration (lamps, progress line, thread rename) are dropped after a few failures and never block a reply. A reply whose post fails is tried again and holds back the rows behind it, until it is posted or the driver says that the service refuses it for good; a refused reply is given up, with a log line and a `post_refused` event (#569).
 
 One gap remains: if the daemon dies after the surface accepted a post but before the id was stored, the post is sent again. An adapter closes the gap where its surface offers an idempotency key (Discord's message nonce, **unverified**).
 
@@ -2179,6 +2179,15 @@ type HookResult struct {
 // cancels it; post_sent only while Outbox.PostSent, which the daemon sets
 // when a plugin is granted that kind. Nil Hooks, as without plugins,
 // posts as before. Since protocol 3.19.
+//
+// A driver's error that matches surface.ErrRefused says that the same call
+// can never succeed. The outbox gives up a reply whose post fails with it
+// ('dropped'), logs it and appends post_refused (link, event, part, reason)
+// in the same transaction, from which ThreadDetail.Refused ([]RefusedPost,
+// at most RefusedMax) is read; every other error is tried again. A
+// message_sending answer with a blank text for a post without files
+// (HookCall.Files) is one the point does not allow. Since protocol 3.35
+// (#569).
 
 // Not operations of the control API, for a client inside the daemon (#270):
 // core.Core.StartConfined(ctx, caller, r, dir) is Start for a thread whose
@@ -2422,6 +2431,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `Trust`, `StartWithoutSettings`, `Trusts` and `Untrust`, with `TrustedFile`, the `state` field `trust` and the `session_replaced` reasons `trusted` and `without project settings`: a blocked start's choices in chat (section 3.5, #590) | minor: new operations, a new optional field and new values of a reason; 3.28 |
 | `Reopen`, with `Ops` gaining `OpReopen`, `Reopened`, the `reopened` event, the `state` reason `reopen` and the `reopen_refused` error code (section 5.1, #670) | minor: a new operation, event kind, error code and value of a reason; 3.31 |
 | `ThreadDetail.FailedStart` and the `start_chosen` event: a start that failed before its first turn, and what was chosen for one that files blocked (section 7.2, #680) | minor: a new optional field and a new event kind; 3.33 |
+| `ThreadDetail.Refused` with `RefusedPost`, and the `post_refused` event: a post the chat service refused for good (#569) | minor: a new optional field and a new event kind; 3.35 |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 
 Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event. In protocol 1.9: `Terminal`, which turns its connection into a stream as `Events` does. In protocol 1.12: `ThreadInfo.terminal`, the terminal device its session host opened, for the tree's filter, the status bar and the details panel (#285); `HostTerminals` still leaves these terminals out.

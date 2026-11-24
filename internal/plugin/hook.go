@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -215,7 +216,7 @@ func (d *Dispatcher) Run(ctx context.Context, c control.HookCall) control.HookRe
 		a, why := d.call(ctx, x, c, control.Input{Before: res.Before, Text: res.Text, After: res.After}.ForAgent())
 		log := []any{"plugin", x.g.ID, "point", c.Point, "thread", c.Thread, "scope", c.Scope, "took", time.Since(began)}
 		if why == "" {
-			why = allowed(c.Point, a)
+			why = allowed(c, a)
 		}
 		if why != "" {
 			p := policy(x.h)
@@ -270,8 +271,11 @@ func (d *Dispatcher) call(ctx context.Context, x handler, c control.HookCall, te
 	return a, ""
 }
 
-// allowed says why answer a is not one that point allows, or nothing.
-func allowed(point string, a control.HookAnswer) string {
+// allowed says why answer a is not one that the point of c allows, or
+// nothing. A post of no text and no file is none: a handler that wants
+// nothing posted stops it.
+func allowed(c control.HookCall, a control.HookAnswer) string {
+	point := c.Point
 	k := kinds[point]
 	switch {
 	case a.Action != control.HookStop && a.Action != control.HookContinue:
@@ -282,6 +286,8 @@ func allowed(point string, a control.HookAnswer) string {
 		return "it answered stop with a text"
 	case a.Action == control.HookContinue && a.Text != nil && !k.change:
 		return fmt.Sprintf("it answered a changed text, which %s does not allow", point)
+	case a.Text != nil && strings.TrimSpace(*a.Text) == "" && !c.Files:
+		return fmt.Sprintf("it answered a text with nothing in it, which %s does not allow", point)
 	case (a.Before != "" || a.After != "") && a.Action == control.HookStop:
 		return "it answered stop with text to add"
 	case (a.Before != "" || a.After != "") && !k.add:

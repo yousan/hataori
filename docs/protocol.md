@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.34**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.35**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -574,7 +574,7 @@ Since 3.16. The daemon sends these to a plugin, on a connection made with the pl
 
 ### Request `hook`
 
-Calls the plugin's handler on one hook point (design, section 7.3). The handlers of a point run one after another: by the priority of the plugin's grant, higher first, then in the config's order, each given the text as the one before left it. A handler fails when it does not answer within its timeout (`left`), when its plugin has no connection open or the connection closes before the answer, when it answers with an error (`not_supported` too), and when its answer is one the point does not allow. A failure blocks or skips by the handler's policy (`GrantedHook.on_failure`): blocked, what passes the point is stopped, with hataori's account of the failure and the plugin's name; skipped, the next handler gets the text as it was. The daemon logs each call with the plugin, the point, the thread and the outcome, and no text.
+Calls the plugin's handler on one hook point (design, section 7.3). The handlers of a point run one after another: by the priority of the plugin's grant, higher first, then in the config's order, each given the text as the one before left it. A handler fails when it does not answer within its timeout (`left`), when its plugin has no connection open or the connection closes before the answer, when it answers with an error (`not_supported` too), and when its answer is one the point does not allow; a `text` that is empty or only white space is such an answer for a post without files, since 3.35. A failure blocks or skips by the handler's policy (`GrantedHook.on_failure`): blocked, what passes the point is stopped, with hataori's account of the failure and the plugin's name; skipped, the next handler gets the text as it was. The daemon logs each call with the plugin, the point, the thread and the outcome, and no text.
 
 | Point | May answer `stop` | May answer `text` | May answer `before`, `after` | Policy unless the config says otherwise |
 |---|---|---|---|---|
@@ -777,6 +777,7 @@ The fields of `ThreadInfo`, and:
 | `recent` | string | required | the end of its last output, at most the bytes asked for: its `text` events in order, each a whole message of the agent, with a blank line (`\n\n`) between two of them, also between two turns; cut at the start of a character, and with no part of a blank line left at the cut. Before 3.12 the messages were joined with nothing between them, and the cut could fall inside a character |
 | `events` | [`Event`] | optional | its last events, as many as `events` asked for, newest last, each as `Events` delivers it; since 1.5 |
 | `cancelled` | [`CancelledPost`] | optional | its last posts that a plugin's `message_sending` handler cancelled, at most 20, newest last, from its `post_cancelled` events; absent for none. A summary, as `recent` is: a caller limited to some event kinds gets it whatever kinds it was granted; since 3.19 |
+| `refused` | [`RefusedPost`] | optional | its last posts that the chat service refused, at most 20, newest last, from its `post_refused` events; absent for none. A summary, as `recent` is: a caller limited to some event kinds gets it whatever kinds it was granted; since 3.35 |
 | `failed_start` | `FailedStart` | optional | set while the thread's current session failed before its first turn, or when it was woken, also once the thread was closed after it; since 3.33 |
 
 ### Type `CancelledPost`
@@ -793,6 +794,18 @@ Since 3.19. A post of the chat front end, or an edit of one, that a plugin's `me
 | `failed` | boolean | optional | the handler failed where its policy blocks, rather than answered `stop`; `reason` is then hataori's account of the failure |
 | `edit` | boolean | optional | it was an edit of a post, which keeps what it showed before |
 | `reason` | string | optional | why: the plugin's own, or, when `failed`, hataori's account of the failure; text either way, left out for a caller that may not read text |
+
+### Type `RefusedPost`
+
+Since 3.35. A post of the chat front end that the chat service, or its driver, refused for good, as one that is too long or in a conversation the bot may not post in. It was given up: it is not shown in that conversation, and the posts behind it went on.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `time` | time | required | when it was refused |
+| `link` | `LinkRef` | required | the conversation it was to be posted in |
+| `event` | integer | required | the position of the event it was to show |
+| `part` | integer | required | which of that event's messages it was |
+| `reason` | string | optional | what the chat service or its driver said; text, left out for a caller that may not read text |
 
 ### Type `FailedStart`
 
@@ -1341,6 +1354,17 @@ Since 3.19. A plugin's `message_sending` handler cancelled a row of the chat fro
 | `failed` | boolean | optional | the handler failed where its policy blocks |
 | `edit` | boolean | optional | it was an edit of a post |
 | `reason` | string | optional | why, as in `CancelledPost`; text |
+
+### Event `post_refused`
+
+Since 3.35. The chat service, or its driver, refused a row of the chat front end's outbox in a link of the thread for good: it was given up, and the rows behind it go on. It is written in the transaction that gives the row up. A row whose failure may pass is posted again instead, and a decoration that is dropped, as a progress line, writes none. `ThreadDetail.refused` lists them.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `link` | object | required | the link it was to be posted in, a `LinkRef` |
+| `event` | integer | required | the position of the event it was to show |
+| `part` | integer | required | which of that event's messages it was |
+| `reason` | string | optional | why, as in `RefusedPost`; text |
 
 ### Event `input`
 

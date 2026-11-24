@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"syscall"
 	"unicode/utf16"
 	"unicode/utf8"
 
@@ -31,9 +32,11 @@ const (
 
 // Error is a failed call to the service. Temporary reports whether trying
 // the same call again later can succeed: true for a rate limit that outlasted
-// the retries, a server error or a network failure; false for a request the
-// service refused, such as a message that is too long or a missing
-// permission.
+// the retries, a server error, a network failure, or a refusal that is not of
+// this request (a token the service does not take, a 403 from what stands
+// before it); false for a request the service refused, such as a message that
+// is too long or a missing permission. One that is not temporary is
+// surface.ErrRefused.
 type Error struct {
 	Op      string
 	Status  int    // the HTTP status, 0 when no response came
@@ -56,7 +59,22 @@ func (e *Error) Unwrap() error { return e.Err }
 
 // Temporary reports whether a retry can help.
 func (e *Error) Temporary() bool {
-	return !e.Local && (e.Status == 0 || e.Status == http.StatusTooManyRequests || e.Status >= 500)
+	switch {
+	case e.Local:
+		return false
+	case e.Status == 0, e.Status == http.StatusTooManyRequests, e.Status >= 500:
+		return true
+	}
+	return e.Code == 0 && (e.Status == http.StatusUnauthorized || e.Status == http.StatusForbidden)
+}
+
+// Is makes an error that is not temporary surface.ErrRefused.
+func (e *Error) Is(target error) bool { return target == surface.ErrRefused && !e.Temporary() }
+
+// refusal is the error of a call that the driver refuses before it sends
+// anything.
+func refusal(op, format string, args ...any) error {
+	return &Error{Op: op, Local: true, Err: fmt.Errorf(format, args...)}
 }
 
 // Discord's JSON error code for a message that does not exist.
@@ -82,20 +100,18 @@ func wrap(op string, err error) error {
 		return e
 	}
 	var ne net.Error
-	if errors.As(err, &ne) || errors.Is(err, context.DeadlineExceeded) {
-		return e
-	}
-	if errors.Is(err, context.Canceled) {
+	if !errors.As(err, &ne) && errors.Is(err, context.Canceled) {
 		return err
 	}
-	e.Local = true
+	// No answer, or one that could not be read: the service has not refused
+	// the call.
 	return e
 }
 
 func parseID(what, s string) (snowflake.ID, error) {
 	id, err := snowflake.Parse(s)
 	if err != nil || id == 0 {
-		return 0, fmt.Errorf("discord: %s %q is not an id", what, s)
+		return 0, refusal(what, "%q is not an id", s)
 	}
 	return id, nil
 }
@@ -196,10 +212,10 @@ func (d *Driver) Post(ctx context.Context, conv surface.Conversation, key string
 		return surface.MessageRef{}, err
 	}
 	if len(m.Choices) > 0 && len(m.Files) > 0 {
-		return surface.MessageRef{}, errors.New("discord: a post with choices cannot carry files")
+		return surface.MessageRef{}, refusal("post", "a post with choices cannot carry files")
 	}
 	if len(m.Files) > maxFiles {
-		return surface.MessageRef{}, fmt.Errorf("discord: %d files, at most %d fit in one message", len(m.Files), maxFiles)
+		return surface.MessageRef{}, refusal("post", "%d files, at most %d fit in one message", len(m.Files), maxFiles)
 	}
 	text := m.Text
 	if len(m.Notify) > 0 {
@@ -210,7 +226,7 @@ func (d *Driver) Post(ctx context.Context, conv surface.Conversation, key string
 		text = b.String() + text
 	}
 	if text == "" && len(m.Files) == 0 {
-		return surface.MessageRef{}, errors.New("discord: nothing to post")
+		return surface.MessageRef{}, refusal("post", "nothing to post")
 	}
 	// The files are opened before anything is posted, so that a file that
 	// cannot be read does not leave half a post behind.
@@ -310,7 +326,9 @@ func openFiles(fs []surface.File) ([]openFile, error) {
 			for _, o := range out {
 				o.r.Close()
 			}
-			return nil, &Error{Op: "post", Local: true, Err: fmt.Errorf("file %q: %w", f.Name, err)}
+			// A host out of file descriptors opens the file later.
+			local := !errors.Is(err, syscall.EMFILE) && !errors.Is(err, syscall.ENFILE)
+			return nil, &Error{Op: "post", Local: local, Err: fmt.Errorf("file %q: %w", f.Name, err)}
 		}
 		out = append(out, openFile{name: f.Name, r: r})
 	}

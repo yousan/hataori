@@ -296,7 +296,7 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 		}
 		l := threadLine(d.ThreadInfo)
 		l.Requests = len(d.Requests)
-		l.Cancelled = d.Cancelled
+		l.Cancelled, l.Refused = d.Cancelled, d.Refused
 		if err := enc.Encode(l); err != nil {
 			return fail(err)
 		}
@@ -451,6 +451,8 @@ type line struct {
 	Requests int               `json:"requests,omitempty"` // open questions, for thread
 	// Cancelled are the posts a plugin cancelled, for thread (#352).
 	Cancelled []control.CancelledPost `json:"cancelled,omitempty"`
+	// Refused are the posts the chat service refused, for thread (#569).
+	Refused []control.RefusedPost `json:"refused,omitempty"`
 }
 
 func threadLine(t control.ThreadInfo) line {

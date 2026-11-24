@@ -786,6 +786,9 @@ type ThreadDetail struct {
 	// Cancelled are the thread's last posts that a plugin's message_sending
 	// handler cancelled, at most CancelledMax, newest last. Since 3.19.
 	Cancelled []CancelledPost `json:"cancelled,omitempty"`
+	// Refused are the thread's last posts that the chat service refused, at
+	// most RefusedMax, newest last. Since 3.35.
+	Refused []RefusedPost `json:"refused,omitempty"`
 	// FailedStart is set while the thread's current session failed before
 	// its first turn, or when it was woken, also once the thread was closed
 	// after it. Since 3.33.
@@ -832,6 +835,20 @@ type CancelledPost struct {
 	Failed bool      `json:"failed,omitempty"` // the handler failed where its policy blocks; Reason is hataori's
 	Edit   bool      `json:"edit,omitempty"`   // an edit of a post, which keeps what it showed
 	Reason string    `json:"reason,omitempty"` // the plugin's own, which is text, unless Failed
+}
+
+// RefusedMax is how many refused posts ThreadDetail lists at most.
+const RefusedMax = 20
+
+// RefusedPost is a post that the chat service, or the driver for it,
+// refused for good, from its post_refused event: it was given up and is not
+// shown in that conversation. Since 3.35.
+type RefusedPost struct {
+	Time   time.Time `json:"time"`
+	Link   LinkRef   `json:"link"`  // where it was to be posted
+	Event  uint64    `json:"event"` // the position of the event it was to show
+	Part   int       `json:"part"`
+	Reason string    `json:"reason,omitempty"` // the driver's error; text
 }
 
 // WorkspaceState is what a thread's workspace holds that may exist nowhere

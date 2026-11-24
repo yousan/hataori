@@ -1063,6 +1063,9 @@ func (a *api) Thread(ctx context.Context, id control.ThreadID, recent, events in
 	if d.Cancelled, err = a.cancelled(ctx, id); err != nil {
 		return d, err
 	}
+	if d.Refused, err = a.refusedPosts(ctx, id); err != nil {
+		return d, err
+	}
 	if d.FailedStart, err = a.failedStart(ctx, t); err != nil {
 		return d, err
 	}
@@ -1078,31 +1081,57 @@ func (a *api) Thread(ctx context.Context, id control.ThreadID, recent, events in
 // plugin's reason, which is text, is left out for a caller that may not
 // read text.
 func (a *api) cancelled(ctx context.Context, id control.ThreadID) ([]control.CancelledPost, error) {
-	rows, err := a.c.Store.DB.QueryContext(ctx, `SELECT time, data FROM events WHERE thread_id = ? AND kind = 'post_cancelled'
-		ORDER BY pos DESC LIMIT ?`, int64(id), control.CancelledMax)
-	if err != nil {
-		return nil, fmt.Errorf("core: cancelled posts: %w", err)
-	}
-	defer rows.Close()
 	var out []control.CancelledPost
-	for rows.Next() {
-		var ms int64
-		var data []byte
-		if err := rows.Scan(&ms, &data); err != nil {
-			return nil, fmt.Errorf("core: cancelled posts: %w", err)
-		}
+	err := a.posts(ctx, id, "post_cancelled", control.CancelledMax, func(at time.Time, data []byte) {
 		var c control.CancelledPost
-		if err := json.Unmarshal(data, &c); err != nil {
-			continue
+		if json.Unmarshal(data, &c) != nil {
+			return
 		}
-		c.Time = time.UnixMilli(ms).UTC()
+		c.Time = at
 		if a.caller.NoText {
 			c.Reason = "" // as the event's text field is left out
 		}
 		out = append(out, c)
+	})
+	return out, err
+}
+
+// refusedPosts is thread id's last posts that the chat service refused, from
+// the post_refused events (#569), as cancelled is.
+func (a *api) refusedPosts(ctx context.Context, id control.ThreadID) ([]control.RefusedPost, error) {
+	var out []control.RefusedPost
+	err := a.posts(ctx, id, "post_refused", control.RefusedMax, func(at time.Time, data []byte) {
+		var p control.RefusedPost
+		if json.Unmarshal(data, &p) != nil {
+			return
+		}
+		p.Time = at
+		if a.caller.NoText {
+			p.Reason = "" // as the event's text field is left out
+		}
+		out = append(out, p)
+	})
+	return out, err
+}
+
+// posts gives fn the time and the data of thread id's last n events of
+// kind, oldest first.
+func (a *api) posts(ctx context.Context, id control.ThreadID, kind string, n int, fn func(at time.Time, data []byte)) error {
+	rows, err := a.c.Store.DB.QueryContext(ctx, `SELECT time, data FROM (SELECT pos, time, data FROM events
+		WHERE thread_id = ? AND kind = ? ORDER BY pos DESC LIMIT ?) ORDER BY pos`, int64(id), kind, n)
+	if err != nil {
+		return fmt.Errorf("core: %s: %w", kind, err)
 	}
-	slices.Reverse(out)
-	return out, rows.Err()
+	defer rows.Close()
+	for rows.Next() {
+		var ms int64
+		var data []byte
+		if err := rows.Scan(&ms, &data); err != nil {
+			return fmt.Errorf("core: %s: %w", kind, err)
+		}
+		fn(time.UnixMilli(ms).UTC(), data)
+	}
+	return rows.Err()
 }
 
 func (a *api) ThreadEvents(ctx context.Context, id control.ThreadID, before uint64, n int) ([]control.Event, error) {

@@ -20,6 +20,9 @@ type HookCall struct {
 	Thread ThreadID // 0 at a point before the thread has a number
 	Scope  string
 	Text   string // the input, or the post
+	// Files says that the post has files, so that it is something to post
+	// without a text too.
+	Files bool
 }
 
 // HookResult is what comes out of a hook point.
