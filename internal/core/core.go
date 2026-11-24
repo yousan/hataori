@@ -236,10 +236,10 @@ type FirstInput struct {
 
 // pend stores input or an answer for a session's agent until the runner
 // has handed it over. req is the agent's id of the request an answer is for;
-// carries says that an input's text begins with the session's context (owed).
-func pend(ctx context.Context, tx *store.Tx, sid int64, req string, v any, carries bool) (int64, error) {
+// earlier is what an input's text is given to the agent after (owed).
+func pend(ctx context.Context, tx *store.Tx, sid int64, req string, v any, earlier string) (int64, error) {
 	b, _ := json.Marshal(v)
-	res, err := tx.ExecContext(ctx, `INSERT INTO pending_inputs (session_id, request, data, context) VALUES (?, ?, ?, ?)`, sid, req, string(b), carries)
+	res, err := tx.ExecContext(ctx, `INSERT INTO pending_inputs (session_id, request, data, context) VALUES (?, ?, ?, ?)`, sid, req, string(b), earlier)
 	if err != nil {
 		return 0, fmt.Errorf("core: pending input: %w", err)
 	}
@@ -257,7 +257,7 @@ func pend(ctx context.Context, tx *store.Tx, sid int64, req string, v any, carri
 func owed(ctx context.Context, tx *store.Tx, sid int64) (string, error) {
 	var c string
 	err := tx.QueryRowContext(ctx, `SELECT CASE WHEN set_aside IS NULL AND first_input = '' AND NOT EXISTS
-		(SELECT 1 FROM pending_inputs p WHERE p.session_id = s.id AND p.context AND NOT p.stale)
+		(SELECT 1 FROM pending_inputs p WHERE p.session_id = s.id AND p.context != '')
 		THEN context ELSE '' END FROM sessions s WHERE id = ?`, sid).Scan(&c)
 	if err != nil {
 		return "", fmt.Errorf("core: earlier conversation: %w", err)
@@ -2110,7 +2110,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 					Key: key, Text: given.Text, Request: req, Link: in.Link, Via: a.caller.Via}); err != nil {
 					return err
 				}
-				pending, err = pend(ctx, tx, sid, req, control.Answer{Text: given.Text}, false)
+				pending, err = pend(ctx, tx, sid, req, control.Answer{Text: given.Text}, "")
 				return err
 			}
 		}
@@ -2123,8 +2123,8 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 			return err
 		}
 		hand = forAgent(in)
+		pending, err = pend(ctx, tx, sid, "", hand, earlier)
 		hand.Text = earlier + hand.Text
-		pending, err = pend(ctx, tx, sid, "", hand, earlier != "")
 		return err
 	})
 	if err != nil || !accepted {
@@ -2263,7 +2263,7 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 			Key: "answer:" + string(req), Text: ans.Text, Request: agentReq, Link: ans.Link, Via: a.caller.Via}); err != nil {
 			return err
 		}
-		pending, err = pend(ctx, tx, sid, agentReq, ans, false)
+		pending, err = pend(ctx, tx, sid, agentReq, ans, "")
 		return err
 	})
 	if err != nil {

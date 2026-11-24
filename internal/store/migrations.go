@@ -698,12 +698,12 @@ var migrations = []Migration{
 	)},
 	// The thread's earlier conversation that a session's agent was not told
 	// yet, since its conversation was started with no input to tell it with;
-	// '' when it was, or there is none (#579). Of a session's pending inputs,
-	// those whose text begins with it are marked: it is cleared with the
-	// report of one.
+	// '' when it was, or there is none (#579). A pending input that is given
+	// to the agent after it carries a copy: the session's is cleared with the
+	// report of that input.
 	{Name: "sessions.context", Up: execAll(
 		`ALTER TABLE sessions ADD COLUMN context TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE pending_inputs ADD COLUMN context INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE pending_inputs ADD COLUMN context TEXT NOT NULL DEFAULT ''`,
 	)},
 }
 

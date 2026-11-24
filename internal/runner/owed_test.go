@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,6 +15,8 @@ import (
 	"github.com/yousan/hataori/internal/agent/fake"
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
+	"github.com/yousan/hataori/internal/host"
+	"github.com/yousan/hataori/internal/proctest"
 )
 
 // attachOnly attaches a terminal to the thread, which wakes it with no
@@ -190,6 +194,66 @@ func TestFirstMessageAfterAnAttachTellsTheEarlierConversation(t *testing.T) {
 		waitFor(t, "its turn", 15*time.Second, f.has("turn_ended", 2))
 		want(t, f, *recs, []string{helloContext + "reply more"}, []string{"reply hello", "reply more"})
 	})
+	// A message queued behind a typed turn, whose agent died before it was
+	// given to it. The next agent of the session is told with what wakes it,
+	// and the row of the message, which a daemon hands over later, tells it
+	// nothing more.
+	queued := func(t *testing.T) (*fixture, *[]*recorder, func() options) {
+		f, recs, opts := replaced(t)
+		c, err := host.Dial(StateDir(f.root, 2))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		if err := c.Input([]byte("tool wait 60s\r")); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "the typed turn's tool", 15*time.Second, f.has("tool_started", 1))
+		if err := owner(f.core).Send(context.Background(), thread, "m2", control.Input{Text: "reply more"}, control.Deliver); err != nil {
+			t.Fatal(err)
+		}
+		proctest.Kill(filepath.Join(StateDir(f.root, 2), host.PIDFile))
+		waitFor(t, "asleep", 15*time.Second, func() bool { return sessionState(t, f.st, 2) == "asleep" })
+		return f, recs, opts
+	}
+	t.Run("the agent died before it", func(t *testing.T) {
+		f, recs, opts := queued(t)
+		given := len((*recs)[0].of(f.root, 2))
+		if err := owner(f.core).Send(context.Background(), thread, "m3", control.Input{Text: "reply last"}, control.Deliver); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "its turn", 15*time.Second, f.has("text", 2))
+		restart(t, f, opts)
+		waitFor(t, "the queued message", 15*time.Second, f.has("text", 3))
+		if got, want := (*recs)[0].of(f.root, 2)[given:], []string{helloContext + "reply last"}; !slices.Equal(got, want) {
+			t.Errorf("after the wake: %q, want %q", got, want)
+		}
+		if got, want := (*recs)[1].of(f.root, 2), []string{"reply more"}; !slices.Equal(got, want) {
+			t.Errorf("after the restart: %q, want %q", got, want)
+		}
+	})
+	t.Run("a conversation of one input's own", func(t *testing.T) {
+		f, recs, opts := queued(t)
+		fresh := f.core.AsFresh(control.Caller{From: ownerFrom, Scopes: []string{"s"}, May: all})
+		if err := fresh.Send(context.Background(), thread, "w1", control.Input{Text: "tool wake 5s\nreply woken"}, control.Deliver); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "its tool", 15*time.Second, f.has("tool_started", 2))
+		restart(t, f, opts)
+		waitFor(t, "the queued message", 30*time.Second, func() bool { return len((*recs)[1].of(f.root, 2)) > 0 })
+		waitFor(t, "asleep again", 30*time.Second, func() bool { return sessionState(t, f.st, 2) == "asleep" })
+		send(t, owner(f.core), thread, "m3", "reply last")
+		waitFor(t, "the session's own conversation", 15*time.Second, func() bool {
+			got := (*recs)[1].of(f.root, 2)
+			return len(got) > 0 && strings.HasSuffix(got[len(got)-1], "reply last")
+		})
+		for _, text := range (*recs)[1].of(f.root, 2) {
+			// Of these, only the one the set-aside conversation goes on with.
+			if strings.HasPrefix(text, contextStart) != strings.HasSuffix(text, "reply last") {
+				t.Errorf("given: %q", (*recs)[1].of(f.root, 2))
+			}
+		}
+	})
 	t.Run("restart before the message", func(t *testing.T) {
 		f, recs, opts := replaced(t)
 		restart(t, f, opts)
@@ -247,6 +311,61 @@ func TestFirstMessageAfterAnAttachAndTheChoice(t *testing.T) {
 	if got, want := f.inputTexts(t), []string{"reply hello", "reply more", "reply last"}; !slices.Equal(got, want) {
 		t.Errorf("the input events: %q\nwant: %q", got, want)
 	}
+}
+
+// A turn typed at the terminal as soon as the agent is ready, read with the
+// report that it is: a message into that turn comes with the thread's
+// earlier conversation too (#579).
+func TestMessageIntoATurnTypedRightAfterAnAttachTellsTheEarlierConversation(t *testing.T) {
+	conv := t.TempDir()
+	rec := &recorder{inputs: map[string][]string{}}
+	var typed atomic.Bool
+	f := newFixture(t, options{terminal: true, conversations: conv,
+		wrap: func(a agent.Adapter) agent.Adapter { rec.Adapter = typedAtOnce{a, &typed}; return rec }})
+	f.start("reply hello")
+	waitFor(t, "the first turn", 15*time.Second, f.has("turn_ended", 1))
+	f.sleepNow(t, 1)
+	files, _ := filepath.Glob(filepath.Join(conv, "*"))
+	for _, p := range files {
+		os.Remove(p)
+	}
+	typed.Store(true)
+	f.attachOnly(t)
+	waitFor(t, "the typed turn", 15*time.Second, f.has("turn_started", 2))
+	if err := owner(f.core).Send(context.Background(), thread, "m2", control.Input{Text: "reply more"}, control.Deliver); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "its answer", 15*time.Second, f.has("text", 2))
+	if got, want := rec.of(f.root, 2), []string{helloContext + "reply more"}; !slices.Equal(got, want) {
+		t.Errorf("the new session's inputs: %q\nwant: %q", got, want)
+	}
+}
+
+// typedAtOnce is an adapter whose codec reports, while typed is set, a turn
+// typed at the terminal with the report that the agent is ready.
+type typedAtOnce struct {
+	agent.Adapter
+	typed *atomic.Bool
+}
+
+type typedAtOnceCodec struct {
+	agent.Codec
+	typed *atomic.Bool
+}
+
+func (a typedAtOnce) NewCodec(s agent.Spec) agent.Codec {
+	return typedAtOnceCodec{a.Adapter.NewCodec(s), a.typed}
+}
+
+func (c typedAtOnceCodec) Decode(src agent.Source, line []byte) agent.Actions {
+	a := c.Codec.Decode(src, line)
+	for _, e := range a.Events {
+		if e.Kind == agent.SessionReady && c.typed.Load() {
+			a.Events = append(a.Events, agent.Event{Kind: agent.TurnStarted, StartedBy: agent.ByTerminal, Text: "typed"})
+			break
+		}
+	}
+	return a
 }
 
 var _ core.Runner = lostDelivery{}

@@ -858,8 +858,9 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) err
 		return err
 	}
 	if !resumed {
-		// Rows left by an agent before this one are not this one's input.
-		if _, err := r.Store.DB.Exec(`UPDATE pending_inputs SET stale = 1 WHERE session_id = ?`, id); err != nil {
+		// Rows left by an agent before this one are not this one's input, and
+		// carry nothing to it.
+		if _, err := r.Store.DB.Exec(`UPDATE pending_inputs SET stale = 1, context = '' WHERE session_id = ?`, id); err != nil {
 			return fmt.Errorf("runner: session %d: %w", id, err)
 		}
 	}
@@ -939,20 +940,20 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) err
 // agent, oldest first: those the core accepted and a daemon that died did
 // not hand over, or whose input the agent had not reported. lv.mu is held.
 func (r *Runner) handOverPending(lv *live) {
-	rows, err := r.Store.DB.Query(`SELECT id, request, data FROM pending_inputs
+	rows, err := r.Store.DB.Query(`SELECT id, request, data, context FROM pending_inputs
 		WHERE session_id = ? AND id <= ? AND written = 0 ORDER BY id`, lv.id, lv.upTo)
 	if err != nil {
 		r.Log.Error("pending input", "session", lv.id, "err", err)
 		return
 	}
 	type row struct {
-		id        int64
-		req, data string
+		id                 int64
+		req, data, earlier string
 	}
 	var found []row
 	for rows.Next() {
 		var x row
-		if err := rows.Scan(&x.id, &x.req, &x.data); err != nil {
+		if err := rows.Scan(&x.id, &x.req, &x.data, &x.earlier); err != nil {
 			r.Log.Error("pending input", "session", lv.id, "err", err)
 			break
 		}
@@ -972,7 +973,7 @@ func (r *Runner) handOverPending(lv *live) {
 			var in control.Input
 			if err = json.Unmarshal([]byte(x.data), &in); err == nil {
 				err = r.handOver(lv, x.id, false, func() (agent.Actions, error) {
-					return lv.codec.Input(agent.Input{ID: strconv.FormatInt(x.id, 10), Text: in.Text})
+					return lv.codec.Input(agent.Input{ID: strconv.FormatInt(x.id, 10), Text: x.earlier + in.Text})
 				})
 			}
 		}
@@ -993,7 +994,7 @@ func (r *Runner) handOverWritten(lv *live) {
 		r.do(lv, r.inputActions(lv, agent.Input{ID: firstInputID, Text: f.Context + f.Input().ForAgent(), Written: true}))
 		lv.resend = false
 	}
-	rows, err := r.Store.DB.Query(`SELECT id, data FROM pending_inputs
+	rows, err := r.Store.DB.Query(`SELECT id, data, context FROM pending_inputs
 		WHERE session_id = ? AND request = '' AND written = 1 ORDER BY id`, lv.id)
 	if err != nil {
 		r.Log.Error("written input", "session", lv.id, "err", err)
@@ -1002,10 +1003,10 @@ func (r *Runner) handOverWritten(lv *live) {
 	var ins []agent.Input
 	for rows.Next() {
 		var id int64
-		var data string
+		var data, earlier string
 		var in control.Input
-		if rows.Scan(&id, &data) == nil && json.Unmarshal([]byte(data), &in) == nil {
-			ins = append(ins, agent.Input{ID: strconv.FormatInt(id, 10), Text: in.Text, Written: true})
+		if rows.Scan(&id, &data, &earlier) == nil && json.Unmarshal([]byte(data), &in) == nil {
+			ins = append(ins, agent.Input{ID: strconv.FormatInt(id, 10), Text: earlier + in.Text, Written: true})
 		}
 	}
 	rows.Close()
@@ -1648,9 +1649,10 @@ func (r *Runner) firstInputStep(ctx context.Context, tx *store.Tx, lv *live, b b
 		return err
 	}
 	switch {
-	case f.NoInput && control.State(state) == control.Idle:
-		// Woken with nothing to say: ready is all it waited for. What its
-		// agent was to be told before an input waits for the next one.
+	case f.NoInput && (control.State(state) == control.Idle || control.State(state) == control.Running || control.State(state) == control.Waiting):
+		// Woken with nothing to say: ready is all it waited for, and a turn
+		// typed at the terminal may be read with it. What its agent was to be
+		// told before an input waits for the next one.
 		if f.Context != "" {
 			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET context = ? WHERE id = ?`, f.Context, lv.id); err != nil {
 				return err
@@ -1747,9 +1749,9 @@ func clearReported(ctx context.Context, tx *store.Tx, id int64, evs []agent.Even
 			continue // not one of ours
 		}
 		if e.Kind != agent.TurnEnded {
-			// The agent got what its text began with, if anything.
+			// The agent got what it was given before its text, if anything.
 			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET context = '' WHERE id = ?1
-				AND EXISTS (SELECT 1 FROM pending_inputs WHERE id = ?2 AND session_id = ?1 AND context)`, id, row); err != nil {
+				AND EXISTS (SELECT 1 FROM pending_inputs WHERE id = ?2 AND session_id = ?1 AND context != '')`, id, row); err != nil {
 				return err
 			}
 		}
