@@ -617,6 +617,9 @@ func (r Remover) check(ctx context.Context, abs, root string) error {
 	defer cancel()
 	c := &checker{r: r, ctx: ctx, top: abs, root: root}
 	err := c.run()
+	if c.noTree != "" {
+		os.Remove(c.noTree)
+	}
 	if err == nil {
 		return nil
 	}
@@ -678,6 +681,8 @@ type checker struct {
 	top  string // the workspace, resolved
 	root string // the instance root, resolved
 	n    int    // scratch repositories made
+	// noTree is an empty directory, made when it is first needed (emptyTree).
+	noTree string
 	// trees are the work trees find returned.
 	trees map[string]bool
 }
@@ -710,10 +715,12 @@ func (c *checker) run() error {
 			return err
 		}
 		readers[i] = g
-		if !rp.gitDir {
-			if err := c.files(g, rp); err != nil {
-				return err
-			}
+		step1 := c.files
+		if rp.gitDir {
+			step1 = c.leftover
+		}
+		if err := step1(g, rp); err != nil {
+			return err
 		}
 	}
 	for i, rp := range repos {
@@ -855,6 +862,14 @@ func (c *checker) open(rp repo) (*reader, error) {
 	var got string
 	var err error
 	if rp.gitDir {
+		// Its core.worktree may name a directory that is gone, as after git rm
+		// of a submodule, and git then runs nothing there. It is read without
+		// a work tree; git takes an empty one before core.worktree.
+		empty, eerr := c.emptyTree()
+		if eerr != nil {
+			return nil, eerr
+		}
+		g.env = append(g.env, "GIT_WORK_TREE="+empty)
 		got, err = g.line(c.ctx, "rev-parse", "--absolute-git-dir")
 	} else {
 		got, err = g.line(c.ctx, "rev-parse", "--show-toplevel")
@@ -875,8 +890,7 @@ func (c *checker) open(rp repo) (*reader, error) {
 }
 
 // files is step 1 for one work tree: nothing modified, staged, untracked,
-// hidden from status, or ignored and not disposable, and no linked
-// worktree, whose files are elsewhere.
+// hidden from status, or ignored and not disposable, and no linked worktree.
 func (c *checker) files(g *reader, rp repo) error {
 	out, _, err := g.run(c.ctx, "status", "--porcelain=v2", "-z", "--untracked-files=all", "--ignored=no", "--ignore-submodules=none")
 	if err != nil {
@@ -942,7 +956,27 @@ func (c *checker) files(g *reader, rp repo) error {
 	if err := c.gitlinks(g, rp); err != nil {
 		return err
 	}
+	return c.worktrees(g, rp)
+}
 
+// leftover is step 1 for a repository with no work tree here: what its index
+// alone holds, and no linked worktree.
+func (c *checker) leftover(g *reader, rp repo) error {
+	// A path that only HEAD has holds nothing: a bare repository has no
+	// index, and git leaves an empty one when it removes a submodule's
+	// checkout (submodule.recurse).
+	out, _, err := g.run(c.ctx, "diff", "--cached", "--name-only", "-z", "--no-ext-diff", "--no-textconv", "--no-renames", "--diff-filter=d", "--ignore-submodules=none")
+	if err != nil {
+		return err
+	}
+	if name, _, _ := strings.Cut(string(out), "\x00"); name != "" {
+		return c.refuse(rp, Staged, name)
+	}
+	return c.worktrees(g, rp)
+}
+
+// worktrees refuses a linked worktree, whose files are elsewhere.
+func (c *checker) worktrees(g *reader, rp repo) error {
 	worktrees, err := g.gitPath(c.ctx, "worktrees")
 	if err != nil {
 		return err
@@ -1202,6 +1236,28 @@ func (c *checker) autostashes(g *reader) ([]string, error) {
 // objectID is a full object id, SHA-1 or SHA-256.
 var objectID = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
 
+// scratchBase makes the directory that a check's own files are in.
+func (c *checker) scratchBase() (string, error) {
+	if _, err := realDir(filepath.Join(c.root, "state"), true); err != nil {
+		return "", err
+	}
+	return realDir(filepath.Join(c.root, scratchDir), true)
+}
+
+// emptyTree is an empty directory, the same for the whole check.
+func (c *checker) emptyTree() (string, error) {
+	if c.noTree == "" {
+		base, err := c.scratchBase()
+		if err != nil {
+			return "", err
+		}
+		if c.noTree, err = os.MkdirTemp(base, "empty-"); err != nil {
+			return "", err
+		}
+	}
+	return c.noTree, nil
+}
+
 // ask fetches every ref of each remote into a scratch repository of its
 // own, under the instance's state, that borrows the repository's objects
 // so that only what it lacks is downloaded. It returns one "^<commit>"
@@ -1215,10 +1271,7 @@ func (c *checker) ask(g *reader, rp repo, urls []string) (tips, scratch string, 
 	if objects, err = filepath.Abs(objects); err != nil {
 		return "", "", nil, err
 	}
-	if _, err := realDir(filepath.Join(c.root, "state"), true); err != nil {
-		return "", "", nil, err
-	}
-	base, err := realDir(filepath.Join(c.root, scratchDir), true)
+	base, err := c.scratchBase()
 	if err != nil {
 		return "", "", nil, err
 	}
