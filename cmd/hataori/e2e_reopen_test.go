@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -297,7 +298,7 @@ func TestReopenButtonDeliversTheHeldMessage(t *testing.T) {
 
 // A closed thread whose recorded conversation was deleted reopens with a
 // new session in the same directory and the same chat thread, after one
-// line that says so; the new conversation's first prompt says that the
+// line that says so, and no other; the new conversation's first prompt says that the
 // chat thread holds the earlier exchange.
 func TestReopenWhenTheConversationIsGone(t *testing.T) {
 	r := newReopenRoot(t, nil)
@@ -313,20 +314,19 @@ func TestReopenWhenTheConversationIsGone(t *testing.T) {
 
 	r.driver.Inject(th, fakesurface.Webhook(e2eHook), "reply again")
 	r.posted(t, th, "again")
-	if !r.before(t, th, chat.ReplacedLine, "again") {
-		t.Fatal("no line before the new conversation's first answer")
+	// All that the chat thread shows, with no line that says the thread could
+	// not start (#703).
+	var lines []string
+	for _, c := range r.driver.Calls(th) {
+		if c.Op == fakesurface.OpPost {
+			lines = append(lines, c.Message.Text)
+		}
+	}
+	if want := []string{"reply first", "first", chat.ReopenedLine, chat.ReplacedLine, "again"}; !slices.Equal(lines, want) {
+		t.Fatalf("the chat thread shows %q, want %q", lines, want)
 	}
 	if ev := r.events(t, "session_replaced", th); len(ev) != 1 {
 		t.Fatalf("session_replaced %v", ev)
-	}
-	lines := 0
-	for _, c := range r.driver.Calls(th) {
-		if c.Op == fakesurface.OpPost && c.Message.Text == chat.ReplacedLine {
-			lines++
-		}
-	}
-	if lines != 1 {
-		t.Fatalf("the line was posted %d times, want once", lines)
 	}
 	ss := r.starts(t)
 	if len(ss) != n+2 { // the resume that failed, and the new conversation
