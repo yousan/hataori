@@ -65,6 +65,13 @@ const (
 // line there leaves the dialog unanswered.
 const hooksWarning = "⚠ This folder configures hooks that can run commands without asking, declared in "
 
+// fullscreenNotice is the line 2.1.331 prints above the dialog, before it
+// draws anything, when its last start with the full-screen interface did
+// not finish and this one uses the other (#707, testdata/2.1.331/
+// trust_notice_*). Only this line is known above the dialog's top rule.
+const fullscreenNotice = "Claude Code's fullscreen renderer didn't finish starting last time on this machine, " +
+	"so this launch is using the classic renderer. It will try fullscreen again next launch; /tui classic keeps the classic renderer."
+
 const (
 	trustYes    = "Yes, I trust this folder"
 	trustNo     = "No, exit"
@@ -107,7 +114,10 @@ const (
 // choices, and the files the dialog says trusting the folder loads, if it
 // names any. ok is false when the screen is anything else.
 func trustDialog(screen []string, dir string) (cursor, yes int, files []string, ok bool) {
-	lines := trimLines(screen)
+	lines, ok := belowNotice(trimLines(screen))
+	if !ok {
+		return 0, 0, nil, false
+	}
 	footer := -1
 	for i, l := range lines {
 		if l == trustFooter {
@@ -156,7 +166,7 @@ func trustDialog(screen []string, dir string) (cursor, yes int, files []string, 
 	// The text above the choices: a top rule, then the header.
 	var words []string
 	for _, l := range lines[:start] {
-		if l != "" && strings.Trim(l, "─") == "" {
+		if isRule(l) {
 			continue
 		}
 		words = append(words, strings.Fields(l)...)
@@ -166,6 +176,22 @@ func trustDialog(screen []string, dir string) (cursor, yes int, files []string, 
 		return 0, 0, nil, false
 	}
 	return cursor, yes, files, true
+}
+
+// isRule reports whether a line is a rule, as the dialog draws one at its
+// top.
+func isRule(line string) bool {
+	return line != "" && strings.Trim(line, "─") == ""
+}
+
+// belowNotice drops fullscreenNotice from the top of the screen's trimmed
+// lines. ok is false when anything but the dialog's top rule follows it.
+func belowNotice(lines []string) (below []string, ok bool) {
+	if len(lines) == 0 || lines[0] != fullscreenNotice {
+		return lines, true
+	}
+	below = trimLines(lines[1:])
+	return below, len(below) > 0 && isRule(below[0])
 }
 
 // headerMatches reports whether text is the dialog's header for the
@@ -731,7 +757,7 @@ func dialogBody(screen []string) []string {
 	lines := trimLines(screen)
 	from := -1
 	for i, l := range lines {
-		if strings.HasPrefix(l, "Claude Code") {
+		if strings.HasPrefix(l, "Claude Code'll") {
 			from = i
 			break
 		}

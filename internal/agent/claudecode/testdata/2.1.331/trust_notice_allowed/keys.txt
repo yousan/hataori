@@ -1,0 +1,2 @@
+after screen-06 and a tick: "\x1b[B"
+after screen-07 and a tick: "\r"

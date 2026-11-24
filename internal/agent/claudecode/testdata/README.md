@@ -8,7 +8,7 @@ Real output of the interactive `claude` CLI, for testing the adapter's codec. Th
 - `2.1.328/`: Claude Code 2.1.328, on 2026-11-20 (also in `2.1.328/VERSION`), on Linux: `paste_tabs`, taken for #393, and the `trust_files_*` scenarios, taken for #423 (see below).
 - `2.1.329/`: Claude Code 2.1.329, on 2026-11-21 (also in `2.1.329/VERSION`), on Linux: `trust_hooks_*` and `trust_permissions`, taken for #592 (see below).
 - `2.1.330/`: Claude Code 2.1.330, on 2026-11-23 (also in `2.1.330/VERSION`), on Linux: `usage`, taken by `capture.py` for #675, with the transcript's line count at each hook call (see below).
-- `2.1.331/`: Claude Code 2.1.331, on 2026-11-25 (also in `2.1.331/VERSION`), on Linux: `held_notification`, taken by `capture.py` for #593.
+- `2.1.331/`: Claude Code 2.1.331, on 2026-11-25 (also in `2.1.331/VERSION`), on Linux: `held_notification`, taken by `capture.py` for #593, and `trust_notice_*`, taken by `TestLiveTrustFiles` for #707 (see "The folder-trust dialog below a notice").
 - `capture.py` took them (`confine.py`, the `confine_*` ones); `scrub.py` made them committable. `captures_test.go` in the package fails when a capture holds a home directory path, an e-mail address, an unscrubbed UUID or something shaped like a token.
 
 ## How they were taken
@@ -283,3 +283,16 @@ HATAORI_REAL_CLAUDE=1 HATAORI_CAPTURE_DIR=<raw dir> HATAORI_CAPTURE_ONLY=trust_p
 | `trust_permissions` | `.claude/settings.json` allowing `Bash(ls:*)` | ordinary, `TrustFiles: [".claude/settings.json"]` | `⚠ This folder pre-approves 1 tool permission in .claude/settings.json:`, `Bash(ls:*)`, `These will apply without asking. Only proceed if you trust this configuration.`, then `Trusting this folder loads .claude/settings.json.` | nothing: a screen the codec does not know, so no key and no event within 15 s; such a start fails at the start timeout |
 
 Each holds the screens, `keys.txt`, `events.txt` and, when the CLI started, `hooks/`.
+
+## The folder-trust dialog below a notice (2.1.331, taken for #707)
+
+`2.1.331/trust_notice_*/`, taken by `TestLiveTrustFiles` as above with `HATAORI_CAPTURE_ONLY=trust_notice`, then `scrub.py`.
+
+The CLI prints one line before it draws anything, "Claude Code's fullscreen renderer didn't finish starting last time on this machine, ...", when an earlier start with its full-screen interface did not get far enough. Its state (`.claude.json`) names such a start under `fullscreenBootPending`, by process, from the moment the interface starts until it has run for a while; the next start that finds the named process gone counts a strike (`fullscreenBootStrikes`), prints the line and uses the other interface. So the test (`interruptedStart`) sets `"tui": "fullscreen"` in the throwaway `CLAUDE_CONFIG_DIR`, starts the CLI once in a directory of its own, answers its dialog, and kills it as soon as the state names the start. The capture is the next start, in another new directory.
+
+| Scenario | Workspace | Spec | What the codec did |
+|---|---|---|---|
+| `trust_notice_allowed` | no file | ordinary, no `TrustFiles` | Down, then Enter; `SessionStart` followed |
+| `trust_notice_refused` | `.claude/settings.json` | ordinary, no `TrustFiles` | no key; one `SessionEnded`, `blocked at start`, naming the file, quoting the dialog without the notice. No hook ran. |
+
+After a second such start the CLI prints another line once, "... has repeatedly failed to start on this machine, so it has been turned off here. ..." (seen by hand, not kept). The codec does not know that one.

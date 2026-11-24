@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -25,8 +26,9 @@ import (
 //	HATAORI_REAL_CLAUDE=1 HATAORI_CAPTURE_DIR=<raw dir> go test -run TestLiveTrustFiles -v ./internal/agent/claudecode
 //
 // Each case runs with a new, empty CLAUDE_CONFIG_DIR, so nothing of the
-// user's is read or written and no login is needed: the test writes only a
-// .claude.json there that skips the first-run screens, and removes it. The
+// user's settings or login is read or written and no login is needed: the
+// test writes only there, a .claude.json that skips the first-run screens
+// and, for the notice (#707), a settings.json, and removes it. The
 // hooks are a recorder given with --settings in place of hataori's. The raw
 // dir gets, per case, the screen as the codec was given it up to its key
 // or its event, the keys, the events and the hook calls: run scrub.py on
@@ -54,6 +56,9 @@ func TestLiveTrustFiles(t *testing.T) {
 		answered bool
 		ignored  bool // a screen the codec does not know: no key and no event
 	}{
+		// The notice above the dialog (#707): see interruptedStart.
+		{"trust_notice_allowed", nil, agent.Spec{}, true, false},
+		{"trust_notice_refused", map[string]string{".claude/settings.json": settings}, agent.Spec{}, false, false},
 		{"trust_hooks_refused", map[string]string{".claude/settings.json": hooks}, agent.Spec{}, false, false},
 		{"trust_hooks_allowed", map[string]string{".claude/settings.json": hooks},
 			agent.Spec{TrustFiles: []string{".claude/settings.json"}}, true, false},
@@ -105,6 +110,10 @@ func liveTrust(t *testing.T, raw, name string, files map[string]string, spec age
 	for p, body := range files {
 		os.MkdirAll(filepath.Dir(filepath.Join(dir, p)), 0o700)
 		os.WriteFile(filepath.Join(dir, p), []byte(body), 0o600)
+	}
+
+	if strings.HasPrefix(name, "trust_notice") {
+		interruptedStart(t, work, cfg)
 	}
 
 	// hataori's launch, with the recorder's settings in place of its own.
@@ -179,6 +188,7 @@ func liveTrust(t *testing.T, raw, name string, files map[string]string, spec age
 	c := a.NewCodec(spec).(*codec)
 	c.Open()
 	var keys, events []string
+	var drawn []byte
 	n, done := 0, false
 	act := func(x Actions, after string) {
 		for _, e := range x.Events {
@@ -215,6 +225,7 @@ func liveTrust(t *testing.T, raw, name string, files map[string]string, spec age
 				t.Fatalf("the CLI ended; keys %q events %q", keys, events)
 			}
 			n++
+			drawn = append(drawn, b...)
 			os.WriteFile(filepath.Join(out, fmt.Sprintf("screen-%02d.raw", n)), b, 0o600)
 			act(c.Decode(agent.Screen, b), fmt.Sprintf("screen-%02d", n))
 		case <-time.After(200 * time.Millisecond):
@@ -232,6 +243,9 @@ func liveTrust(t *testing.T, raw, name string, files map[string]string, spec age
 	}
 	os.WriteFile(filepath.Join(out, "keys.txt"), []byte(strings.Join(keys, "\n")+"\n"), 0o600)
 	os.WriteFile(filepath.Join(out, "events.txt"), []byte(strings.Join(events, "\n")+"\n"), 0o600)
+	if strings.HasPrefix(name, "trust_notice") && !strings.HasPrefix(string(drawn), fullscreenNotice) {
+		t.Fatal("the CLI did not print the notice: the capture is not of it")
+	}
 	if ignored {
 		if len(keys) != 0 || len(events) != 0 {
 			t.Fatalf("keys %q events %q, want none for a screen the codec does not know", keys, events)
@@ -275,4 +289,61 @@ func liveTrust(t *testing.T, raw, name string, files map[string]string, spec age
 			return
 		}
 	}
+}
+
+// interruptedStart leaves in cfg what a CLI killed right after its
+// full-screen interface started leaves there, so that the next one prints
+// that its full-screen renderer did not finish starting (#707): with
+// "tui": "fullscreen" in cfg's settings, it starts the CLI in a directory
+// of its own, answers the trust dialog, and kills the CLI as soon as its
+// state names the start ("fullscreenBootPending").
+func interruptedStart(t *testing.T, work, cfg string) {
+	dir := filepath.Join(work, "killed")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(cfg, "settings.json"), []byte(`{"tui": "fullscreen"}`+"\n"), 0o600)
+	cmd := exec.Command("claude", "--model", "haiku")
+	cmd.Dir = dir
+	cmd.Env = []string{"CLAUDE_CONFIG_DIR=" + cfg, "PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "TERM=xterm-256color", "BROWSER=true"}
+	tty, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tty.Close()
+	defer cmd.Wait()
+	defer syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	var mu sync.Mutex
+	var seen []byte
+	go func() {
+		b := make([]byte, 64<<10)
+		for {
+			n, err := tty.Read(b)
+			mu.Lock()
+			seen = append(seen, b[:n]...)
+			mu.Unlock()
+			if err != nil {
+				return
+			}
+		}
+	}()
+	yes := false
+	for i, quiet, was := 0, 0, 0; i < 3000; i++ {
+		time.Sleep(10 * time.Millisecond)
+		if b, _ := os.ReadFile(filepath.Join(cfg, ".claude.json")); strings.Contains(string(b), "fullscreenBootPending") {
+			return
+		}
+		mu.Lock()
+		n := len(seen)
+		mu.Unlock()
+		if n != was {
+			quiet, was = 0, n
+		} else if quiet++; n > 0 && quiet == 200 && !yes { // the dialog has settled
+			yes = true
+			tty.Write([]byte("\x1b[B"))
+			time.Sleep(time.Second)
+			tty.Write([]byte("\r"))
+		}
+	}
+	t.Fatal("the CLI's state never named the start of its full-screen interface")
 }
