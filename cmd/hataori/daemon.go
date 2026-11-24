@@ -406,7 +406,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	if pluginHook != nil {
 		pluginHook(issuePlugin, srv.Revoke)
 	}
-	r.Confine = sv.Confine
+	r.Confine, r.ConfinedConfig = sv.Confine, sv.Config
 	for scope := range supervisors {
 		if name, ok := cfg.People.Resolve(supervisor.ID(scope)); !ok || !cfg.People.May(name, scope) {
 			lg.Warn("the supervisor of a scope is no person of that scope: it may read its threads, but not send or start",

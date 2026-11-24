@@ -1237,6 +1237,23 @@ func (c *Core) StartConfined(ctx context.Context, caller control.Caller, r contr
 	return c.As(caller).(*api).start(ctx, r, dir)
 }
 
+// ModelOf returns the model and the effort a session of agent in scope is
+// started with when model and effort are asked for, each empty for none:
+// the scope's when the scope runs agent, then agent's own section's, then
+// the instance's when agent is the default one.
+func (c *Core) ModelOf(scope, agent, model, effort string) (string, string) {
+	var sc Scope
+	if s, ok := c.Scopes[scope]; ok && agent == cmp.Or(s.Agent, c.Agent) {
+		sc = s
+	}
+	var model0, effort0 string
+	if agent == c.Agent {
+		model0, effort0 = c.Model, c.Effort
+	}
+	d := c.Agents[agent]
+	return cmp.Or(model, sc.Model, d.Model, model0), cmp.Or(effort, sc.Effort, d.Effort, effort0)
+}
+
 // start is Start, and StartConfined in dir when dir is set.
 func (a *api) start(ctx context.Context, r control.StartRequest, dir string) (control.ThreadID, error) {
 	confined := dir != ""
@@ -1259,7 +1276,7 @@ func (a *api) start(ctx context.Context, r control.StartRequest, dir string) (co
 	if confined {
 		chosen = cmp.Or(r.Agent, a.c.Agent)
 	}
-	defaults, known := a.c.Agents[chosen]
+	_, known := a.c.Agents[chosen]
 	if a.c.Agents == nil {
 		known = chosen == a.c.Agent
 	}
@@ -1272,15 +1289,7 @@ func (a *api) start(ctx context.Context, r control.StartRequest, dir string) (co
 	if r.Effort != "" && !slices.Contains(control.Efforts, r.Effort) && a.caller.Via != control.ViaProposal {
 		return 0, fmt.Errorf("core: start in %q: effort %q: %w", r.Scope, r.Effort, control.ErrUnknownEffort)
 	}
-	var scopeModel, scopeEffort, defaultModel, defaultEffort string
-	if chosen == cmp.Or(sc.Agent, a.c.Agent) {
-		scopeModel, scopeEffort = sc.Model, sc.Effort
-	}
-	if chosen == a.c.Agent {
-		defaultModel, defaultEffort = a.c.Model, a.c.Effort
-	}
-	model := cmp.Or(r.Model, scopeModel, defaults.Model, defaultModel)
-	effort := cmp.Or(r.Effort, scopeEffort, defaults.Effort, defaultEffort)
+	model, effort := a.c.ModelOf(r.Scope, chosen, r.Model, r.Effort)
 	if a.caller.Propose && !confined {
 		// Nothing starts: a person decides (Caller.Propose).
 		p := r
