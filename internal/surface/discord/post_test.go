@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -246,6 +247,12 @@ func TestWhatIsRefusedForGood(t *testing.T) {
 	for _, e := range []*Error{{Status: 400, Code: 50035}, {Status: 403, Code: 50001}, {Status: 404, Code: 10003}, {Status: 401, Code: 50027}} {
 		if !errors.Is(e, surface.ErrRefused) {
 			t.Errorf("%v is not refused for good", e)
+		}
+	}
+	for err, want := range map[error]bool{os.ErrNotExist: true, os.ErrPermission: true, errNotRegular: true,
+		syscall.EMFILE: false, syscall.EIO: false, syscall.ESTALE: false} {
+		if got := unreadable(&os.PathError{Op: "open", Path: "f", Err: err}); got != want {
+			t.Errorf("a file that fails to open with %v is refused for good: %v", err, got)
 		}
 	}
 	for _, err := range []error{wrap("post", errors.New("the answer broke off")), wrap("post", context.DeadlineExceeded),

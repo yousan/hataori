@@ -506,7 +506,7 @@ func (o *Outbox) send(ctx context.Context, conv surface.Conversation, r pending)
 		return o.record(ctx, failedPost, r.id, `UPDATE chat_outbox SET state = 'dropped', failures = failures + 1 WHERE id = ?`, r.id)
 	}
 	if !r.decoration && errors.Is(err, surface.ErrRefused) {
-		return o.refused(ctx, conv, r, k, err)
+		return o.refused(ctx, conv, r, k, ref, err)
 	}
 	o.Log.Warn("chat outbox: post failed", "key", k, "decoration", r.decoration, "err", err)
 	return o.record(ctx, failedPost, r.id, `UPDATE chat_outbox SET failures = failures + 1 WHERE id = ?`, r.id)
@@ -842,10 +842,12 @@ func (o *Outbox) sent(ctx context.Context, r pending, ref surface.MessageRef, te
 }
 
 // refused gives up row r, whose post the chat service refused for good with
-// cause: it would hold back the rows behind it for ever. For a row of a
+// cause: it would hold back the rows behind it for ever. first is the first
+// message of a post of several, when the service took that one and refused a
+// later one; what was posted stays. For a row of a
 // link it writes the post_refused event in the same transaction, from which
 // ThreadDetail.Refused is read.
-func (o *Outbox) refused(ctx context.Context, conv surface.Conversation, r pending, k string, cause error) outcome {
+func (o *Outbox) refused(ctx context.Context, conv surface.Conversation, r pending, k string, first surface.MessageRef, cause error) outcome {
 	var thread control.ThreadID
 	err := o.Store.Update(ctx, func(tx *store.Tx) error {
 		x, err := tx.ExecContext(ctx, `UPDATE chat_outbox SET state = 'dropped', failures = failures + 1
@@ -870,7 +872,11 @@ func (o *Outbox) refused(ctx context.Context, conv surface.Conversation, r pendi
 			return err
 		}
 		thread = control.ThreadID(id)
-		data, _ := json.Marshal(map[string]any{"link": link, "event": r.event, "part": r.part, "reason": cut(cause.Error(), 500)})
+		d := map[string]any{"link": link, "event": r.event, "part": r.part, "reason": cut(cause.Error(), 500)}
+		if first.ID != "" {
+			d["message"] = first.ID
+		}
+		data, _ := json.Marshal(d)
 		_, err = tx.Append(ctx, control.Event{Thread: thread, Scope: scope, Time: o.now(), Kind: "post_refused", Data: data})
 		return err
 	})
@@ -881,7 +887,7 @@ func (o *Outbox) refused(ctx context.Context, conv surface.Conversation, r pendi
 		return stuck
 	}
 	o.Log.Error("chat outbox: the chat service refused a post, which is given up", "key", k, "thread", int64(thread),
-		"channel", conv.Channel, "err", cause)
+		"channel", conv.Channel, "partly", first.ID != "", "err", cause)
 	return posted // done: the rows behind it go on
 }
 

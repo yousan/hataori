@@ -2182,7 +2182,7 @@ type HookResult struct {
 //
 // A driver's error that matches surface.ErrRefused says that the same call
 // can never succeed. The outbox gives up a reply whose post fails with it
-// ('dropped'), logs it and appends post_refused (link, event, part, reason)
+// ('dropped'), logs it and appends post_refused (link, event, part, message, reason)
 // in the same transaction, from which ThreadDetail.Refused ([]RefusedPost,
 // at most RefusedMax) is read; every other error is tried again. A
 // message_sending answer with a blank text for a post without files

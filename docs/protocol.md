@@ -797,7 +797,7 @@ Since 3.19. A post of the chat front end, or an edit of one, that a plugin's `me
 
 ### Type `RefusedPost`
 
-Since 3.35. A post of the chat front end that the chat service, or its driver, refused for good, as one that is too long or in a conversation the bot may not post in. It was given up: it is not shown in that conversation, and the posts behind it went on.
+Since 3.35. A post of the chat front end that the chat service, or its driver, refused for good, as one that is too long or in a conversation the bot may not post in. It was given up: it is not shown in that conversation, or, when it became several messages and a later one was refused, not all of it. The posts behind it went on.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -805,6 +805,7 @@ Since 3.35. A post of the chat front end that the chat service, or its driver, r
 | `link` | `LinkRef` | required | the conversation it was to be posted in |
 | `event` | integer | required | the position of the event it was to show |
 | `part` | integer | required | which of that event's messages it was |
+| `message` | string | optional | the chat service's id of its first message, when a later one was refused: the ones before that stay |
 | `reason` | string | optional | what the chat service or its driver said; text, left out for a caller that may not read text |
 
 ### Type `FailedStart`
@@ -1364,6 +1365,7 @@ Since 3.35. The chat service, or its driver, refused a row of the chat front end
 | `link` | object | required | the link it was to be posted in, a `LinkRef` |
 | `event` | integer | required | the position of the event it was to show |
 | `part` | integer | required | which of that event's messages it was |
+| `message` | string | optional | the chat service's id of its first message, as in `RefusedPost` |
 | `reason` | string | optional | why, as in `RefusedPost`; text |
 
 ### Event `input`

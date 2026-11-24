@@ -342,3 +342,40 @@ func TestAReplyThatFailsForNowIsTriedAgain(t *testing.T) {
 		t.Fatalf("%d post_refused events", n)
 	}
 }
+
+// halfway is the fake driver, except that the service takes the first
+// message of a post and refuses the next for good.
+type halfway struct{ *fake.Driver }
+
+func (d halfway) Post(ctx context.Context, conv surface.Conversation, key string, m surface.Message) (surface.MessageRef, error) {
+	ref, err := d.Driver.Post(ctx, conv, key, m)
+	if err == nil && m.Text == "first" {
+		err = fmt.Errorf("post: the file is too large: %w", surface.ErrRefused)
+	}
+	return ref, err
+}
+
+// A post of which the service took the first message and refused a later
+// one is given up too, and its post_refused event names what was posted.
+func TestAPartlyRefusedPostNamesItsFirstMessage(t *testing.T) {
+	a := surface.Conversation{Channel: "c1", Thread: "a"}
+	st := newThread(t, t.TempDir(), map[string][]surface.Conversation{"f": {a}})
+	d := fake.New()
+	o := &Outbox{Store: st, Client: "f", Driver: halfway{d}, Retry: 20 * time.Millisecond}
+	if err := o.Write(ctx, row(5, 0, a, "first"), row(6, 0, a, "second")); err != nil {
+		t.Fatal(err)
+	}
+	run(t, o)
+	waitFor(t, "the row behind it", func() bool { return slices.Contains(postsIn(d, a), "second") })
+	if got := postsIn(d, a); !slices.Equal(got, []string{"first", "second"}) {
+		t.Fatalf("posts %q", got)
+	}
+	var data []byte
+	if err := st.DB.QueryRow(`SELECT data FROM events WHERE kind = 'post_refused'`).Scan(&data); err != nil {
+		t.Fatal(err)
+	}
+	var p control.RefusedPost
+	if err := json.Unmarshal(data, &p); err != nil || p.Event != 5 || p.Message == "" {
+		t.Fatalf("post_refused %s, %v", data, err)
+	}
+}

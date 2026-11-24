@@ -274,7 +274,8 @@ func (d *Driver) Post(ctx context.Context, conv surface.Conversation, key string
 		body, err := mc.ToBody()
 		var out wireMessage
 		if err != nil {
-			return first, &Error{Op: "post", Local: true, Err: err}
+			// With files it read them, which may work later.
+			return first, &Error{Op: "post", Local: len(mc.Files) == 0, Err: err}
 		}
 		if i == len(parts)-1 && len(m.Choices) > 0 {
 			// The buttons go on the last part, added as plain JSON rather
@@ -309,6 +310,20 @@ type openFile struct {
 	r    *os.File
 }
 
+var errNotRegular = errors.New("not a regular file")
+
+// unreadable reports whether a file that failed to open with err is one that
+// cannot be posted. Any other failure may pass, as that of a host out of file
+// descriptors or of a file system that does not answer.
+func unreadable(err error) bool {
+	for _, e := range []error{os.ErrNotExist, os.ErrPermission, errNotRegular, syscall.ENOTDIR, syscall.ELOOP, syscall.ENAMETOOLONG} {
+		if errors.Is(err, e) {
+			return true
+		}
+	}
+	return false
+}
+
 func openFiles(fs []surface.File) ([]openFile, error) {
 	var out []openFile
 	for _, f := range fs {
@@ -316,7 +331,7 @@ func openFiles(fs []surface.File) ([]openFile, error) {
 		if err == nil {
 			var st os.FileInfo
 			if st, err = r.Stat(); err == nil && !st.Mode().IsRegular() {
-				err = errors.New("not a regular file")
+				err = errNotRegular
 			}
 			if err != nil {
 				r.Close()
@@ -326,9 +341,7 @@ func openFiles(fs []surface.File) ([]openFile, error) {
 			for _, o := range out {
 				o.r.Close()
 			}
-			// A host out of file descriptors opens the file later.
-			local := !errors.Is(err, syscall.EMFILE) && !errors.Is(err, syscall.ENFILE)
-			return nil, &Error{Op: "post", Local: local, Err: fmt.Errorf("file %q: %w", f.Name, err)}
+			return nil, &Error{Op: "post", Local: unreadable(err), Err: fmt.Errorf("file %q: %w", f.Name, err)}
 		}
 		out = append(out, openFile{name: f.Name, r: r})
 	}

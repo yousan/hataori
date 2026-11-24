@@ -841,14 +841,17 @@ type CancelledPost struct {
 const RefusedMax = 20
 
 // RefusedPost is a post that the chat service, or the driver for it,
-// refused for good, from its post_refused event: it was given up and is not
-// shown in that conversation. Since 3.35.
+// refused for good, from its post_refused event: it was given up, and is
+// not shown in that conversation, or not all of it. Since 3.35.
 type RefusedPost struct {
-	Time   time.Time `json:"time"`
-	Link   LinkRef   `json:"link"`  // where it was to be posted
-	Event  uint64    `json:"event"` // the position of the event it was to show
-	Part   int       `json:"part"`
-	Reason string    `json:"reason,omitempty"` // the driver's error; text
+	Time  time.Time `json:"time"`
+	Link  LinkRef   `json:"link"`  // where it was to be posted
+	Event uint64    `json:"event"` // the position of the event it was to show
+	Part  int       `json:"part"`
+	// Message is the chat service's id of the post's first message, when it
+	// became several and a later one was refused: the ones before it stay.
+	Message string `json:"message,omitempty"`
+	Reason  string `json:"reason,omitempty"` // the driver's error; text
 }
 
 // WorkspaceState is what a thread's workspace holds that may exist nowhere
