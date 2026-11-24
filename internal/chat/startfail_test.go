@@ -143,17 +143,69 @@ func TestALaterSessionsStartFailureIsShownToo(t *testing.T) {
 }
 
 func TestReadableDetail(t *testing.T) {
-	for in, want := range map[string]string{
-		"":                        "",
-		" one line ":              "one line",
-		"two\nlines":              "two\nlines",
-		"two\r\nlines":            "",
-		"\x1b[1mbold":             "",
-		strings.Repeat("x", 2001): "",
+	long := strings.Repeat("\u3042", maxDetail)
+	for _, c := range []struct {
+		in, want string
+		dialog   bool
+		cut      bool
+	}{
+		{in: ""},
+		{in: " one line ", want: "one line"},
+		{in: "two\nlines", want: "two\nlines"},
+		{in: "two\r\nlines"},
+		{in: "\x1b[1mbold"},
+		{in: "why\n> a\x1b[1mb\x85c\td\x7f", dialog: true, want: "why\n> a\uFFFD[1mb\uFFFDc\uFFFDd\uFFFD"},
+		{in: "why\n> a\u0085b", dialog: true, want: "why\n> a\uFFFDb"},
+		{in: long, want: long}, // the bound is in characters
+		{in: long + "x", want: long, cut: true},
+		{in: long + "\x1b[1m"}, // terminal output however long
+		{in: long + "\x1b[1m", dialog: true, want: long, cut: true},
 	} {
-		if got := ReadableDetail(in); got != want {
-			t.Errorf("ReadableDetail(%q) = %q, want %q", in, got, want)
+		if got, cut := readableDetail(c.in, c.dialog); got != c.want || cut != c.cut {
+			t.Errorf("readableDetail(%q, %v) = %q, %v, want %q, %v", c.in, c.dialog, got, cut, c.want, c.cut)
 		}
+	}
+}
+
+// Nothing the repository has the agent show takes the adapter's words away:
+// neither a text over the bound nor a control character in it (#759). What
+// is over the bound is cut, and the message says so.
+func TestAStartFailureWithALongDialogIsCut(t *testing.T) {
+	const why = "why hataori stopped.\nThe agent showed:\n"
+	rules := strings.Repeat(strings.Repeat("\u3042", 60)+", ", 8)
+	quoted := strings.Repeat("\u3042", maxDetail-len(why)-len(quoteMark))
+	for _, c := range []struct {
+		name, shown, want string
+		cut               bool
+	}{
+		{"as the CLI may show it", "pre-approves 8 tool permissions:\n" + rules, "pre-approves 8 tool permissions:\n" + strings.TrimSpace(rules), false},
+		{"over the bound", quoted + "more", quoted, true},
+		{"a control character", "Bash(\x1b[2J)", "Bash(\uFFFD[2J)", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFront(t, workspaces{})
+			id, _ := f.started(t)
+			f.showing(t)
+			f.event(t, id, "state", map[string]any{"from": "creating", "to": "failed", "reason": "blocked at start",
+				"detail": why + "> " + strings.ReplaceAll(c.shown, "\n", "\n> "), "trust": []string{".agent/settings.json"}})
+			want := couldNotStart + "blocked at start.\n" + why + f.driver.Verbatim(c.want)
+			if c.cut {
+				want += "\n" + detailCut
+			}
+			want += "\nWhat to do next: "
+			var got string
+			waitFor(t, "the message", func() bool {
+				for _, c := range f.driver.Calls(f.conv(id)) {
+					if c.Op == fake.OpPost && strings.HasPrefix(c.Message.Text, couldNotStart) {
+						got = c.Message.Text
+					}
+				}
+				return got != ""
+			})
+			if !strings.HasPrefix(got, want) {
+				t.Fatalf("thread shows %q, want it to begin with %q", got, want)
+			}
+		})
 	}
 }
 

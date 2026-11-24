@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/people"
@@ -592,23 +593,28 @@ func (f *FrontEnd) failedRow(sf startFailed, conv surface.Conversation, first ui
 
 // failedText says why the session could not start: its reason, and the
 // event's detail when that is text for a person, after the reason on its
-// line, or below it when it has several lines. A detail with control
-// characters other than line breaks is terminal output, such as the screen
-// of a start that timed out: the dashboard shows it, not the chat.
+// line, or below it when it has several lines. A detail of no dialog with
+// control characters other than line breaks is terminal output, such as the
+// screen of a start that timed out: the dashboard shows it, not the chat. A
+// detail that is too long is shown up to a bound, and the message says so.
 //
 // What the agent showed may hold text of the repository (#754), so it is
 // shown verbatim: the lines that the detail of a dialog quotes ("> "), and
 // any other detail whole, which is the agent's output.
 func (f *FrontEnd) failedText(sf startFailed) string {
 	t := couldNotStart + sf.reason
-	d := ReadableDetail(sf.detail)
+	d, cut := readableDetail(sf.detail, len(sf.trust) > 0)
 	if d == "" {
 		return t
 	}
-	if len(sf.trust) == 0 {
-		return t + ".\n" + f.verbatim(d)
+	note := ""
+	if cut {
+		note = "\n" + detailCut
 	}
-	if !strings.Contains(d, "\n") && !strings.HasPrefix(d, quoteMark) {
+	if len(sf.trust) == 0 {
+		return t + ".\n" + f.verbatim(d) + note
+	}
+	if !cut && !strings.Contains(d, "\n") && !strings.HasPrefix(d, quoteMark) {
 		return t + ": " + d
 	}
 	var out, quoted []string
@@ -623,11 +629,14 @@ func (f *FrontEnd) failedText(sf startFailed) string {
 			quoted = append(quoted, q)
 			continue
 		}
+		if l == strings.TrimSpace(quoteMark) { // cut behind the mark, or quotes nothing
+			continue
+		}
 		end()
 		out = append(out, l)
 	}
 	end()
-	return t + ".\n" + strings.Join(out, "\n")
+	return t + ".\n" + strings.Join(out, "\n") + note
 }
 
 // quoteMark begins a line of a detail that quotes what the agent showed.
@@ -641,23 +650,36 @@ func (f *FrontEnd) verbatim(s string) string {
 	return s
 }
 
-// maxDetail bounds the detail a failure message carries.
+// maxDetail bounds the detail a failure message carries, in characters.
 const maxDetail = 2000
 
-// ReadableDetail returns a state event's detail when it is text for a
+// detailCut is the line below a detail that is longer.
+const detailCut = "(The rest is cut: it is too long.)"
+
+// readableDetail returns a state event's detail when it is text for a
 // person: lines with no control character, such as an escape code or a
-// carriage return; "" otherwise.
-func ReadableDetail(detail string) string {
-	d := strings.TrimSpace(detail)
-	if d == "" || len(d) > maxDetail {
-		return ""
-	}
-	for _, r := range d {
-		if r != '\n' && (r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0)) {
-			return ""
+// carriage return; "" otherwise. The detail of a dialog that names files
+// (dialog) is the adapter's words, then what the agent showed: a control
+// character in that becomes U+FFFD, so that nothing in a repository takes
+// the words away. A text over maxDetail is cut there, and cut is set.
+func readableDetail(detail string, dialog bool) (text string, cut bool) {
+	d := strings.TrimSpace(strings.ToValidUTF8(detail, "\uFFFD"))
+	control := func(r rune) bool { return r != '\n' && unicode.IsControl(r) }
+	if strings.ContainsFunc(d, control) {
+		if !dialog {
+			return "", false
 		}
+		d = strings.Map(func(r rune) rune {
+			if control(r) {
+				return unicode.ReplacementChar
+			}
+			return r
+		}, d)
 	}
-	return d
+	if rs := []rune(d); len(rs) > maxDetail {
+		return strings.TrimSpace(string(rs[:maxDetail])), true
+	}
+	return d, false
 }
 
 // followUp sends a message in a thread to the thread's session. A thread
