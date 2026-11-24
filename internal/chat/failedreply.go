@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -45,8 +46,16 @@ func (f *FrontEnd) failedAnswered(ctx context.Context, in surface.Inbound) (bool
 	return n > 0, err
 }
 
+// errMovedOn is a thread that was started again or closed as its message was
+// about to be answered: the message is tried again, as one in what the thread
+// is now.
+var errMovedOn = errors.New("chat: the thread is no longer failed")
+
 // failedReply answers the message in, which the core refused in the failed
-// thread t, once.
+// thread t, once. It is errMovedOn when the thread is no longer failed: a
+// choice changes the state in the transaction of its event, so a reply written
+// before it is found by chosenRows, and one after it is not written, its
+// buttons being of a choice already made.
 func (f *FrontEnd) failedReply(ctx context.Context, in surface.Inbound, t control.ThreadInfo) error {
 	fail := func(err error) error {
 		f.Log.Error("follow-up: answering in a failed thread", "scope", in.Ref.Conv.Channel, "thread", in.Ref.Conv.Thread,
@@ -67,6 +76,13 @@ func (f *FrontEnd) failedReply(ctx context.Context, in surface.Inbound, t contro
 	ref := in.Ref
 	m.ReplyTo = &ref
 	err = f.Outbox.Store.Update(ctx, func(tx *store.Tx) error {
+		var state string
+		if err := tx.QueryRowContext(ctx, `SELECT state FROM threads WHERE id = ?`, int64(t.ID)).Scan(&state); err != nil {
+			return err
+		}
+		if control.State(state) != control.Failed {
+			return errMovedOn
+		}
 		res, err := tx.ExecContext(ctx, `INSERT INTO chat_notices (client, channel, message, received_at)
 			VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`, f.Name, in.Ref.Conv.Channel, failedKey(in), time.Now().UnixMilli())
 		if err != nil {
@@ -85,6 +101,9 @@ func (f *FrontEnd) failedReply(ctx context.Context, in surface.Inbound, t contro
 		}
 		return f.Outbox.WriteTx(ctx, tx, r)
 	})
+	if errors.Is(err, errMovedOn) {
+		return err // nothing was said yet
+	}
 	if err != nil {
 		return fail(err)
 	}

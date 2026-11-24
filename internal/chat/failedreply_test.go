@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -144,5 +145,29 @@ func TestTheReplyInABlockedThreadOffersTheChoices(t *testing.T) {
 		if got := f.runner.handed(); inputs != 0 || len(got) != 0 {
 			t.Fatalf("the answered message was sent: %q", got)
 		}
+	}
+}
+
+// A choice made after the core refused the message and before its reply is
+// written: no reply, whose buttons nothing would take away, and the message
+// is not taken as answered.
+func TestAChoiceMadeBeforeTheReplyIsWritten(t *testing.T) {
+	f := newFront(t, workspaces{})
+	id, msg := failedThread(t, f, agent.Event{Text: "the dialog", Trust: []string{".agent/settings.json"}})
+	th := f.conv(id)
+	ctx := context.Background()
+	in := f.driver.Inject(th, fake.Webhook(hook), "are you there")
+	f.fe.Choice(surface.Selection{Ref: msg.Ref, Author: fake.Webhook(hook), Token: msg.Message.Choices[0].Token})
+	waitFor(t, "the start", func() bool { return len(f.runner.all()) == 2 })
+
+	if err := f.fe.failedReply(ctx, in, control.ThreadInfo{ID: id, Scope: channel, State: control.Failed}); !errors.Is(err, errMovedOn) {
+		t.Fatalf("failedReply: %v, want errMovedOn", err)
+	}
+	if done, err := f.fe.failedAnswered(ctx, in); done || err != nil {
+		t.Fatalf("answered %v, %v", done, err)
+	}
+	f.settled(t, th)
+	if n := len(f.postsOf(th)); n != 2 {
+		t.Fatalf("%d posts, want 2", n)
 	}
 }
