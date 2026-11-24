@@ -11,12 +11,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // removal is an instance root with one workspace, a clone of a bare
@@ -32,11 +34,17 @@ type removal struct {
 
 func newRemoval(t *testing.T) *removal {
 	t.Helper()
+	return newRemovalIn(t, "root")
+}
+
+// newRemovalIn makes the instance root a directory of that name.
+func newRemovalIn(t *testing.T, name string) *removal {
+	t.Helper()
 	tmp, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := filepath.Join(tmp, "root")
+	root := filepath.Join(tmp, name)
 	f := &repoFixture{t: t, home: tmp, bare: filepath.Join(tmp, "remote", "repo.git"),
 		clone: filepath.Join(root, Dir, "c", "s", "k")}
 	work := filepath.Join(tmp, "work")
@@ -1226,6 +1234,120 @@ func TestRefuseProcessUsingTheDirectory(t *testing.T) {
 	}
 	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
 	wantRefusal(t, x.check(), InUse, "")
+}
+
+// lsof writes a byte that is not printable in its locale as \xNN, and a
+// backslash as two.
+func TestRefuseProcessUsingAWorkspaceWhosePathLsofEscapes(t *testing.T) {
+	for _, tc := range []struct{ root, locale string }{
+		{"ルート", ""}, {"ルート", "C"}, {"ルート", "C.UTF-8"},
+		{`back\slash`, "C"}, {`back\slash`, "C.UTF-8"},
+		{`\xe3\\`, "C"}, {"ü\xff", "C.UTF-8"}, {"a  b ", "C"},
+	} {
+		t.Run(fmt.Sprintf("%q in %q", tc.root, tc.locale), func(t *testing.T) {
+			if runtime.GOOS == "darwin" && !utf8.ValidString(tc.root) {
+				t.Skip("the file system takes UTF-8 names only")
+			}
+			t.Setenv("LC_ALL", tc.locale) // as the daemon was started with
+			if tc.locale == "" {
+				t.Setenv("LANG", "")
+				t.Setenv("LC_CTYPE", "")
+			}
+			x := newRemovalIn(t, tc.root)
+			if err := x.check(); err != nil {
+				t.Fatalf("clean, pushed, unused: %v", err)
+			}
+			cmd := exec.Command("sleep", "60")
+			cmd.Dir = x.clone
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			stop := func() { cmd.Process.Kill(); cmd.Wait() }
+			t.Cleanup(stop)
+			wantRefusal(t, x.check(), InUse, "")
+			stop()
+
+			f, err := os.Open(filepath.Join(x.clone, "a"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			wantRefusal(t, x.check(), InUse, "")
+		})
+	}
+}
+
+// The check holds the workspace open itself while it asks lsof. Another
+// descriptor of the same process is a use like any other.
+func TestRefuseWorkspaceTheDaemonHoldsOpen(t *testing.T) {
+	x := newRemoval(t)
+	f, err := os.Open(x.clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	wantRefusal(t, x.check(), InUse, "")
+}
+
+// Nor is another process's descriptor the check's own, whatever its number.
+func TestRefuseProcessHoldingTheWorkspaceWithTheSameDescriptor(t *testing.T) {
+	x := newRemoval(t)
+	if err := x.check(); err != nil {
+		t.Fatal(err)
+	}
+	null, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer null.Close()
+	held, err := os.Open(x.clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sleep", "60")
+	cmd.Dir = "/"
+	for fd := 3; fd < int(held.Fd()); fd++ {
+		cmd.ExtraFiles = append(cmd.ExtraFiles, null)
+	}
+	cmd.ExtraFiles = append(cmd.ExtraFiles, held)
+	err = cmd.Start()
+	held.Close() // the check's own gets this number
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
+	wantRefusal(t, x.check(), InUse, "")
+}
+
+func TestRefuseWorkspaceWhosePathLsofCannotBeComparedWith(t *testing.T) {
+	for _, root := range []string{"t\tab", "new\nline", "c\x01", "d\x7f"} {
+		if names, ok := lsofNames("/" + root + "/workspaces/7"); ok {
+			t.Errorf("%q: %q", root, names)
+		}
+	}
+	x := newRemovalIn(t, "t\tab")
+	wantRefusal(t, x.check(), UnknownUse, "")
+}
+
+// An lsof that answers, but not what is asked, as BusyBox's does, or that
+// does not see this process, says nothing about the others.
+func TestRefuseWhenLsofDoesNotReportTheWorkspaceHeldOpen(t *testing.T) {
+	for name, output := range map[string]string{
+		"nothing":       ``,
+		"busybox":       `1\t/bin/busybox\t0\t/dev/null\n`,
+		"other process": `p1\0\nfcwd\0n/\0\n`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			x := newRemoval(t)
+			bin := filepath.Join(x.tmp, "bin")
+			os.Mkdir(bin, 0o700)
+			if err := os.WriteFile(filepath.Join(bin, "lsof"), []byte("#!/bin/sh\nprintf '"+output+"'\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin+string(filepath.ListSeparator)+os.Getenv("PATH"))
+			wantRefusal(t, x.check(), UnknownUse, "")
+		})
+	}
 }
 
 func TestRefuseGitError(t *testing.T) {
