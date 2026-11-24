@@ -351,6 +351,10 @@ type Core struct {
 	// when no supervisor did (FailedStart.Supervisor). Nil gives none.
 	SupervisorOf func(ctx context.Context, db *sql.DB, scope, from string, pos uint64) (control.ThreadID, error)
 
+	// stateRead, set by tests, is called between the two reads of a thread's
+	// state in a Send: sendHooks's and its transaction's.
+	stateRead func()
+
 	locks   keyedMutex
 	hostOps hostOpSet
 	layouts layouts
@@ -1970,7 +1974,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		// transaction that takes it see the same.
 		defer a.c.locks.lock("send:" + scope + "\x00" + key)()
 	}
-	if in, err = a.sendHooks(ctx, id, scope, key, in); err != nil {
+	if in, err = a.sendHooks(ctx, id, scope, key, in, guard); err != nil {
 		return err
 	}
 	var (
@@ -2171,12 +2175,16 @@ func forAgent(in control.Input) control.Input {
 }
 
 // sendHooks runs the input hook points for in, a Send of key to thread id
-// in scope (inputHooks), unless the key was accepted before or the thread
-// is closed: the Send then takes nothing, and a hook runs once for one
-// accepted input, also when the input is given again after a restart. A
-// failed thread's Send is refused.
+// in scope (inputHooks), unless the key was accepted before: the Send then
+// takes nothing, and a hook runs once for one accepted input, also when the
+// input is given again after a restart. No hook runs for a thread that is
+// closed, removed or failed: its Send is refused here, and not left to the
+// transaction, which would take the input without its hooks should the
+// thread be reopened or started again in between. Only a Send that guard
+// ties to the running turn is left to it in a closed or removed thread:
+// that turn is over.
 // The caller holds the key's lock.
-func (a *api) sendHooks(ctx context.Context, id control.ThreadID, scope, key string, in control.Input) (control.Input, error) {
+func (a *api) sendHooks(ctx context.Context, id control.ThreadID, scope, key string, in control.Input, guard *sendGuard) (control.Input, error) {
 	in.Before, in.After = "", ""
 	if a.c.Hooks == nil {
 		return in, nil
@@ -2191,13 +2199,16 @@ func (a *api) sendHooks(ctx context.Context, id control.ThreadID, scope, key str
 		}
 	}
 	sid, state, err := a.c.current(ctx, a.c.Store.DB, id)
+	if a.c.stateRead != nil {
+		a.c.stateRead()
+	}
 	if err == nil && (state == control.Closed || state == control.Removed) {
-		return in, nil
+		if guard != nil && !guard.proposal {
+			return in, nil
+		}
+		return in, fmt.Errorf("core: send to %v: %w", id, ErrClosed)
 	}
 	if err == nil && state == control.Failed {
-		// Refused here, so that no hook runs for it; not left to the
-		// transaction, which would take it without its hooks should the
-		// thread be started again in between.
 		return in, fmt.Errorf("core: send to %v: the thread is failed: %w", id, session.ErrRefused)
 	}
 	if err == nil && state == control.Waiting && !a.caller.NoAnswer {
