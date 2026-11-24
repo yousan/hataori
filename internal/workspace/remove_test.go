@@ -575,6 +575,72 @@ func TestRefuseEveryFileRemovedInASubmoduleRemovedWithGitRm(t *testing.T) {
 	wantRefusal(t, x.check(), Staged, filepath.Join(".git", "modules", "sub"))
 }
 
+// A check runs no filter that a repository below the workspace configures,
+// and still sees what is modified there.
+func TestCheckRunsNoFilterOfARepositoryBelow(t *testing.T) {
+	for name, add := range map[string]func(x *removal) string{
+		"submodule": func(x *removal) string { return x.withSubmodule() },
+		"submodule of a submodule": func(x *removal) string {
+			sub := x.withSubmodule()
+			x.git(sub, "-c", "protocol.file.allow=always", "submodule", "add", "-q", x.bareWithCommit("inner"), "inner")
+			x.git(sub, "commit", "-q", "-m", "add inner")
+			x.git(sub, "push", "-q")
+			x.git(x.clone, "commit", "-q", "-a", "-m", "move sub")
+			x.git(x.clone, "push", "-q")
+			return filepath.Join(sub, "inner")
+		},
+		"link in the place of a submodule": func(x *removal) string {
+			sub := x.withSubmodule()
+			other := filepath.Join(x.tmp, "other")
+			x.git(x.tmp, "clone", "-q", filepath.Join(x.tmp, "remote", "sub.git"), other)
+			os.RemoveAll(sub)
+			if err := os.Symlink(other, sub); err != nil {
+				x.t.Fatal(err)
+			}
+			return other
+		},
+		"nested repository": func(x *removal) string {
+			x.r.Disposable = []string{"cache"}
+			x.write(".git/info/exclude", "cache/\n")
+			dir := filepath.Join(x.clone, "cache", "nested")
+			x.git(x.tmp, "clone", "-q", x.bareWithCommit("nested"), dir)
+			return dir
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			x := newRemoval(t)
+			dir := add(x)
+			ran := filepath.Join(x.tmp, "ran")
+			x.git(dir, "config", "filter.x.clean", "touch "+ran+"; cat")
+			attributes := x.git(dir, "rev-parse", "--path-format=absolute", "--git-path", "info/attributes")
+			os.MkdirAll(filepath.Dir(attributes), 0o700)
+			if err := os.WriteFile(attributes, []byte("* filter=x\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			file := filepath.Join(dir, "s")
+			// Of the size the index has, or git does not read it.
+			if err := os.WriteFile(file, []byte("t\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := x.check()
+			if _, rerr := os.Lstat(ran); rerr == nil {
+				t.Fatal("the check ran the filter that the repository's configuration names")
+			}
+			var ref *Refusal
+			if !errors.As(err, &ref) {
+				t.Fatalf("got %v, want a refusal", err)
+			}
+			want := Modified
+			if strings.HasPrefix(name, "link ") && refusesLink(err) {
+				want = GitError
+			}
+			if ref.Reason != want {
+				t.Fatalf("got %v, want %s", err, want)
+			}
+		})
+	}
+}
+
 // The git directory that git rm left, moved to where git says nothing about
 // it, still has those of its own submodules.
 func TestRefuseSubmoduleOfAMovedGitDirectory(t *testing.T) {

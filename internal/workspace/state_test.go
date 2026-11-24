@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -277,6 +278,261 @@ func TestStateRunsNoFilter(t *testing.T) {
 	}
 	if st.Added != 1 || st.Removed != 1 || st.Uncommitted != 2 {
 		t.Errorf("%+v", st)
+	}
+}
+
+// addSubmodule makes a repository with the file "s" and adds it to the
+// repository at dir, as its submodule name.
+func (f *repoFixture) addSubmodule(dir, name string) string {
+	f.t.Helper()
+	work := filepath.Join(f.home, name+"-work")
+	os.Mkdir(work, 0o700)
+	f.git(work, "init", "-q", "-b", "main")
+	os.WriteFile(filepath.Join(work, "s"), []byte("s\n"), 0o600)
+	f.git(work, "add", "s")
+	f.git(work, "commit", "-q", "-m", "s")
+	bare := filepath.Join(f.home, name+".git")
+	f.git(f.home, "clone", "-q", "--bare", work, bare)
+	f.git(dir, "-c", "protocol.file.allow=always", "submodule", "add", "-q", bare, name)
+	f.git(dir, "commit", "-q", "-m", "add "+name)
+	return filepath.Join(dir, name)
+}
+
+// recordFilter configures a filter driver for every file of the repository
+// at dir, which makes the file it returns.
+func (f *repoFixture) recordFilter(dir, driver, command string) string {
+	f.t.Helper()
+	ran := filepath.Join(f.home, "filter-ran")
+	f.git(dir, "config", "filter."+driver+"."+command, "touch "+ran+"; cat")
+	attributes := f.git(dir, "rev-parse", "--path-format=absolute", "--git-path", "info/attributes")
+	os.MkdirAll(filepath.Dir(attributes), 0o700)
+	if err := os.WriteFile(attributes, []byte("* filter="+driver+"\n"), 0o600); err != nil {
+		f.t.Fatal(err)
+	}
+	return ran
+}
+
+// git runs git status in each submodule, where the submodule's configuration
+// names filters of its own.
+func TestStateRunsNoFilterOfASubmodule(t *testing.T) {
+	for name, add := range map[string]func(f *repoFixture) string{
+		"submodule": func(f *repoFixture) string { return f.addSubmodule(f.clone, "sub") },
+		"second submodule": func(f *repoFixture) string {
+			f.addSubmodule(f.clone, "first")
+			return f.addSubmodule(f.clone, "second")
+		},
+		"submodule of a submodule": func(f *repoFixture) string {
+			sub := f.addSubmodule(f.clone, "sub")
+			inner := f.addSubmodule(sub, "inner")
+			f.git(f.clone, "commit", "-q", "-a", "-m", "move sub")
+			return inner
+		},
+		"gitlink with no .gitmodules": func(f *repoFixture) string {
+			dir := filepath.Join(f.clone, "own")
+			f.git(f.home, "clone", "-q", f.bare, dir)
+			os.Remove(filepath.Join(dir, "a"))
+			os.WriteFile(filepath.Join(dir, "s"), []byte("s\n"), 0o600)
+			f.git(dir, "add", "-A")
+			f.git(dir, "commit", "-q", "-m", "s")
+			f.git(f.clone, "-c", "advice.addEmbeddedRepo=false", "add", "own")
+			f.git(f.clone, "commit", "-q", "-m", "add own")
+			return dir
+		},
+		"link in the place of a submodule": func(f *repoFixture) string {
+			sub := f.addSubmodule(f.clone, "sub")
+			other := filepath.Join(f.home, "other")
+			f.git(f.home, "clone", "-q", filepath.Join(f.home, "sub.git"), other)
+			os.RemoveAll(sub)
+			if err := os.Symlink(other, sub); err != nil {
+				f.t.Fatal(err)
+			}
+			return other
+		},
+		"submodule below a directory with a blank": func(f *repoFixture) string {
+			sub := f.addSubmodule(f.clone, "sub")
+			os.Mkdir(filepath.Join(f.clone, "a b"), 0o700)
+			f.git(f.clone, "mv", "sub", "a b/\u00e9")
+			f.git(f.clone, "commit", "-q", "-m", "move")
+			return strings.TrimSuffix(sub, "sub") + "a b/\u00e9"
+		},
+	} {
+		for _, command := range []string{"clean", "process"} {
+			t.Run(name+", "+command, func(t *testing.T) {
+				f := newRepo(t)
+				dir := add(f)
+				ran := f.recordFilter(dir, "x", command)
+				// Of the size the index has, or git does not read it.
+				if err := os.WriteFile(filepath.Join(dir, "s"), []byte("t\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				st, err := f.state()
+				if _, rerr := os.Lstat(ran); rerr == nil {
+					t.Fatal("State ran the filter that the submodule's configuration names")
+				}
+				if strings.HasPrefix(name, "link ") && refusesLink(err) {
+					return
+				}
+				if err != nil || st.Uncommitted != 1 {
+					t.Errorf("%+v, %v; want the modified submodule counted", st, err)
+				}
+			})
+		}
+	}
+}
+
+// git asks for safe.directory in the repository it was started in, not in
+// the submodules it goes into.
+func TestStateRunsNoFilterOfASubmoduleOfAnotherOwner(t *testing.T) {
+	f := newRepo(t)
+	sub := f.addSubmodule(f.clone, "sub")
+	ran := f.recordFilter(sub, "x", "clean")
+	if err := os.WriteFile(filepath.Join(sub, "s"), []byte("t\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	top, err := filepath.EvalSymlinks(f.clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	global := filepath.Join(f.home, "gitconfig")
+	f.git(f.home, "config", "--file", global, "safe.directory", top)
+	st, err := Maker{Environ: func() []string {
+		return append(f.env(), "GIT_CONFIG_GLOBAL="+global, "GIT_TEST_ASSUME_DIFFERENT_OWNER=1")
+	}}.State(context.Background(), f.clone)
+	if _, rerr := os.Lstat(ran); rerr == nil {
+		t.Fatal("State ran the filter that the submodule's configuration names")
+	}
+	if err != nil || st.Uncommitted != 1 {
+		t.Errorf("%+v, %v; want the modified submodule counted", st, err)
+	}
+}
+
+// A submodule that is not checked out has no git status run in it.
+func TestStateWithASubmoduleThatIsNotThere(t *testing.T) {
+	for name, change := range map[string]func(f *repoFixture, sub string) error{
+		"not checked out": func(f *repoFixture, sub string) error {
+			f.git(f.clone, "submodule", "deinit", "-q", "sub")
+			return nil
+		},
+		"directory gone": func(f *repoFixture, sub string) error { return os.RemoveAll(sub) },
+		"link to itself": func(f *repoFixture, sub string) error {
+			os.RemoveAll(sub)
+			return os.Symlink("sub", sub)
+		},
+		"file": func(f *repoFixture, sub string) error {
+			os.RemoveAll(sub)
+			return os.WriteFile(sub, nil, 0o600)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newRepo(t)
+			if err := change(f, f.addSubmodule(f.clone, "sub")); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.state(); err != nil && !refusesLink(err) {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// refusesLink is whether err is git's, of a symbolic link in the place of a
+// submodule: git 2.43 follows it, git 2.56 refuses it.
+func refusesLink(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "not to be a symbolic link")
+}
+
+// git status goes round until the path is too long.
+func TestDisarmWithASubmoduleThatLinksToItsOwnRepository(t *testing.T) {
+	f := newRepo(t)
+	sub := f.addSubmodule(f.clone, "sub")
+	os.RemoveAll(sub)
+	if err := os.Symlink(".", sub); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	dir, err := filepath.EvalSymlinks(f.clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (&reader{dir: dir, env: f.env()}).disarm(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// git's -c takes the first "=" for the end of the key, and would turn off
+// another filter.
+func TestStateRunsNoFilterWithAnEqualsSignInItsName(t *testing.T) {
+	for name, dir := range map[string]func(f *repoFixture) string{
+		"workspace": func(f *repoFixture) string { return f.clone },
+		"submodule": func(f *repoFixture) string { return f.addSubmodule(f.clone, "sub") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newRepo(t)
+			dir := dir(f)
+			file := filepath.Join(dir, f.git(dir, "ls-files", "a", "s"))
+			old, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ran := f.recordFilter(dir, "x=y", "clean")
+			f.git(dir, "config", "filter.x=y.process", "touch "+ran+"; exit 1")
+			os.WriteFile(file, bytes.Repeat([]byte("t"), len(old)), 0o600)
+			st, err := f.state()
+			if _, rerr := os.Lstat(ran); rerr == nil {
+				t.Fatal("a filter ran")
+			}
+			if err != nil || st.Uncommitted != 1 {
+				t.Errorf("%+v, %v", st, err)
+			}
+		})
+	}
+}
+
+// git fails when it may not run a required filter.
+func TestStateCountsAFileUnderARequiredFilterOfASubmodule(t *testing.T) {
+	f := newRepo(t)
+	sub := f.addSubmodule(f.clone, "sub")
+	ran := f.recordFilter(sub, "x", "clean")
+	f.git(sub, "config", "filter.x.required", "true")
+	os.WriteFile(filepath.Join(sub, "s"), []byte("t\n"), 0o600)
+	if st := f.mustState(); st.Uncommitted != 1 {
+		t.Errorf("%+v", st)
+	}
+	if _, err := os.Lstat(ran); err == nil {
+		t.Fatal("a filter ran")
+	}
+}
+
+// The submodules of a submodule are in its work tree, not in its directory.
+func TestStateRefusesASubmoduleWithItsWorkTreeElsewhere(t *testing.T) {
+	for name, set := range map[string]func(f *repoFixture) (sub, top string){
+		"another directory": func(f *repoFixture) (string, string) {
+			return f.addSubmodule(f.clone, "sub"), filepath.Join(f.home, "elsewhere")
+		},
+		"the workspace": func(f *repoFixture) (string, string) {
+			return f.addSubmodule(f.clone, "sub"), f.clone
+		},
+		"submodule of a submodule": func(f *repoFixture) (string, string) {
+			return f.addSubmodule(f.addSubmodule(f.clone, "outer"), "sub"), filepath.Join(f.home, "elsewhere")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newRepo(t)
+			sub, top := set(f)
+			f.addSubmodule(sub, "inner")
+			f.git(f.home, "clone", "-q", filepath.Join(f.home, "inner.git"), filepath.Join(top, "inner"))
+			ran := f.recordFilter(filepath.Join(top, "inner"), "x", "clean")
+			os.WriteFile(filepath.Join(top, "inner", "s"), []byte("t\n"), 0o600)
+			f.git(sub, "config", "core.worktree", top)
+			st, err := f.state()
+			if _, rerr := os.Lstat(ran); rerr == nil {
+				t.Fatal("a filter ran")
+			}
+			if err == nil || st != (control.WorkspaceState{}) {
+				t.Fatalf("%+v, %v", st, err)
+			}
+		})
 	}
 }
 

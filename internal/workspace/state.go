@@ -7,11 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
@@ -118,28 +121,146 @@ type reader struct {
 // disarm reads the repository's configuration and refuses what would make
 // git write or ask a remote: a partial clone, which fetches missing objects
 // on demand. It turns off every filter driver, whose clean command diff and
-// status would run on changed files and which can do anything.
+// status would run on changed files and which can do anything: the ones that
+// the submodules below configure too, as git runs git status there and hands
+// it these options.
 func (g *reader) disarm(ctx context.Context) error {
-	out, code, err := g.run(ctx, "config", "--null", "--get-regexp", `^(filter\..*\.(clean|process)|extensions\.partialclone|remote\..*\.promisor)$`)
-	if err != nil && code == 1 { // none is set
-		return nil
-	}
-	if err != nil {
+	// Exit 1: none is set.
+	out, code, err := g.run(ctx, "config", "--null", "--get-regexp", `^(extensions\.partialclone|remote\..*\.promisor)$`)
+	if err != nil && code != 1 {
 		return err
 	}
 	for _, kv := range strings.Split(string(out), "\x00") {
 		key, value, _ := strings.Cut(kv, "\n")
-		switch {
-		case key == "":
-		case key == "extensions.partialclone",
-			strings.HasSuffix(key, ".promisor") && isTrue(value):
+		if key == "extensions.partialclone" || strings.HasSuffix(key, ".promisor") && isTrue(value) {
 			return fmt.Errorf("workspace: %s is a partial clone, which git may complete from the remote", g.dir)
-		case strings.HasPrefix(key, "filter."):
-			name := key[len("filter."):strings.LastIndex(key, ".")]
-			g.extra = append(g.extra, "-c", "filter."+name+".clean=", "-c", "filter."+name+".process=")
+		}
+	}
+	own, err := g.filters(ctx)
+	if err != nil {
+		return err
+	}
+	g.turnOff(own)
+	names := map[string]bool{}
+	if err := g.submoduleFilters(ctx, names, map[string]bool{g.dir: true}); err != nil {
+		return err
+	}
+	for _, name := range own {
+		delete(names, name)
+	}
+	below := slices.Collect(maps.Keys(names))
+	g.turnOff(below)
+	for _, name := range below {
+		// git would fail on a changed file under a filter that is required.
+		g.set("filter."+name+".required", "false")
+	}
+	return nil
+}
+
+// turnOff makes every later git command, and the ones git runs in
+// submodules, run no filter driver of these names.
+func (g *reader) turnOff(names []string) {
+	for _, name := range names {
+		g.set("filter."+name+".clean", "")
+		g.set("filter."+name+".process", "")
+	}
+}
+
+// set gives every later git command a configuration value.
+func (g *reader) set(key, value string) {
+	if strings.Contains(key, "=") { // -c would end the key there
+		env := fmt.Sprintf("HATAORI_GIT_VALUE_%d", len(g.extra))
+		g.env = append(slices.Clip(g.env), env+"="+value)
+		g.extra = append(g.extra, "--config-env="+key+"="+env)
+		return
+	}
+	g.extra = append(g.extra, "-c", key+"="+value)
+}
+
+// filters are the names of the filter drivers that the repository's
+// configuration has a command for.
+func (g reader) filters(ctx context.Context) ([]string, error) {
+	// Exit 1: none is set.
+	out, code, err := g.run(ctx, "config", "--null", "--name-only", "--get-regexp", `^filter\..*\.(clean|process)$`)
+	if err != nil && code != 1 {
+		return nil, err
+	}
+	var names []string
+	for _, key := range strings.Split(string(out), "\x00") {
+		if key != "" {
+			names = append(names, key[len("filter."):strings.LastIndex(key, ".")])
+		}
+	}
+	return names, nil
+}
+
+// submoduleFilters adds the filters of the submodules below the repository
+// to names. Directories in seen have been read.
+func (g reader) submoduleFilters(ctx context.Context, names, seen map[string]bool) error {
+	links, err := g.gitlinks(ctx)
+	if err != nil {
+		return err
+	}
+	for _, link := range links {
+		// git 2.43 follows a symbolic link in the place of a submodule.
+		dir := filepath.Join(g.dir, link)
+		if _, err := os.Stat(filepath.Join(dir, ".git")); missing(err) || errors.Is(err, syscall.ELOOP) {
+			continue // not checked out
+		} else if err != nil {
+			return fmt.Errorf("workspace: %w", err)
+		}
+		if dir, err = filepath.EvalSymlinks(dir); err != nil {
+			return fmt.Errorf("workspace: %w", err)
+		}
+		if seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		// git runs git status there with this GIT_DIR.
+		sub := reader{dir: dir, env: append(slices.Clip(g.env), "GIT_DIR=.git")}
+		// Its own submodules are below its work tree, which core.worktree
+		// can put elsewhere.
+		at, _, err := sub.run(ctx, "rev-parse", "--is-inside-work-tree", "--show-prefix")
+		if err != nil {
+			return err
+		}
+		if string(at) != "true\n\n" {
+			return fmt.Errorf("workspace: the work tree of the submodule at %s is elsewhere", dir)
+		}
+		filters, err := sub.filters(ctx)
+		if err != nil {
+			return err
+		}
+		for _, name := range filters {
+			names[name] = true
+		}
+		if err := sub.submoduleFilters(ctx, names, seen); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// gitlinks are the paths of the submodules in the index.
+func (g reader) gitlinks(ctx context.Context) ([]string, error) {
+	out, _, err := g.run(ctx, "ls-files", "-s", "-z")
+	if err != nil {
+		return nil, err
+	}
+	var links []string
+	for _, r := range strings.Split(string(out), "\x00") {
+		if r == "" {
+			continue
+		}
+		info, name, ok := strings.Cut(r, "\t")
+		if !ok {
+			return nil, fmt.Errorf("workspace: git ls-files -s printed %q", r)
+		}
+		if strings.HasPrefix(info, "160000 ") {
+			links = append(links, name)
+		}
+	}
+	return links, nil
 }
 
 func isTrue(v string) bool {
