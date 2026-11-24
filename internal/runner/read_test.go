@@ -190,3 +190,122 @@ func TestFinalMessageUsageBeforeTheTurnEnds(t *testing.T) {
 		t.Fatalf("the turn did not end: %v", kinds(evs))
 	}
 }
+
+// partial writes b to the file without a newline.
+func (x *reader) partial(path string, b []byte) {
+	x.t.Helper()
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		x.t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.Write(b); err != nil {
+		x.t.Fatal(err)
+	}
+}
+
+// texts are the texts of the Text events among evs.
+func texts(evs []agent.Event) []string {
+	var ts []string
+	for _, e := range evs {
+		if e.Kind == agent.Text {
+			ts = append(ts, e.Text)
+		}
+	}
+	return ts
+}
+
+func textLine(s string) []byte {
+	return []byte(fmt.Sprintf(`{"t":"text","text":%q,"final":false}`, s))
+}
+
+// bothSources runs f for a followed file and for the host's log: write
+// appends a text as a line of it, partial the beginning of one, path is the
+// file, and offset what is stored for it.
+func bothSources(t *testing.T, f func(t *testing.T, x *reader, path string, line func(string) []byte, offset func() int64)) {
+	start := func(t *testing.T) (*reader, string) {
+		x := newReader(t, fakeTerminalCodec(t))
+		transcript := filepath.Join(x.lv.dir, "transcript.jsonl")
+		x.hooks(hookLine("h1", `{"t":"ready","session":"s","transcript":"`+transcript+`"}`),
+			hookLine("h2", `{"t":"turn","by":"caller"}`))
+		x.step()
+		return x, transcript
+	}
+	t.Run("a followed file", func(t *testing.T) {
+		x, p := start(t)
+		f(t, x, p, textLine, func() int64 { return x.lv.files[p] })
+	})
+	t.Run("the host's log", func(t *testing.T) {
+		x, _ := start(t)
+		line := func(s string) []byte { return hookLine("h-"+s, string(textLine(s))) }
+		f(t, x, filepath.Join(x.lv.dir, host.EventsFile), line, func() int64 { return x.lv.offset })
+	})
+}
+
+// A last line without its newline is left for a later step, however often
+// it is looked at and however it grows.
+func TestLineWithoutItsEndIsLeft(t *testing.T) {
+	bothSources(t, func(t *testing.T, x *reader, path string, line func(string) []byte, offset func() int64) {
+		x.appendTo(path, line("one"))
+		x.partial(path, line("two")[:10])
+		if got := texts(x.step()); len(got) != 1 || got[0] != "one" {
+			t.Fatalf("texts %q, want one", got)
+		}
+		at := offset()
+		x.step()
+		x.partial(path, line("two")[10:])
+		for range 2 {
+			if got := texts(x.step()); len(got) != 0 || offset() != at {
+				t.Fatalf("texts %q at offset %d, want none and still %d: the line has no end yet", got, offset(), at)
+			}
+		}
+		x.appendTo(path, nil) // the newline
+		x.partial(path, line("three"))
+		if got := texts(x.step()); len(got) != 1 || got[0] != "two" {
+			t.Fatalf("texts %q, want two", got)
+		}
+		x.appendTo(path, nil)
+		if got := texts(x.step()); len(got) != 1 || got[0] != "three" {
+			t.Fatalf("texts %q, want three", got)
+		}
+		// What is written of a line may be replaced by a whole one that is
+		// as long: the file's size does not say that nothing is new.
+		four := line("four")
+		x.partial(path, append(append([]byte{}, four...), ' '))
+		x.step()
+		if err := os.Truncate(path, offset()); err != nil {
+			t.Fatal(err)
+		}
+		x.appendTo(path, four)
+		if got := texts(x.step()); len(got) != 1 || got[0] != "four" {
+			t.Fatalf("texts %q, want four", got)
+		}
+		if st, _ := os.Stat(path); offset() != st.Size() {
+			t.Fatalf("offset %d of a file of %d", offset(), st.Size())
+		}
+	})
+}
+
+// A file that became shorter than the stored offset is not read until it
+// is longer again, and then from that offset.
+func TestFileShorterThanTheOffset(t *testing.T) {
+	bothSources(t, func(t *testing.T, x *reader, path string, line func(string) []byte, offset func() int64) {
+		x.appendTo(path, line("one"), line("two"))
+		x.step()
+		at := offset()
+		if err := os.Truncate(path, at-5); err != nil {
+			t.Fatal(err)
+		}
+		if got := x.step(); len(got) != 0 || offset() != at {
+			t.Fatalf("events %v at offset %d, want none and still %d", kinds(got), offset(), at)
+		}
+		x.partial(path, []byte("xxxx\n")) // as long as the offset again
+		if got := x.step(); len(got) != 0 || offset() != at {
+			t.Fatalf("events %v at offset %d, want none and still %d", kinds(got), offset(), at)
+		}
+		x.appendTo(path, line("three"))
+		if got := texts(x.step()); len(got) != 1 || got[0] != "three" {
+			t.Fatalf("texts %q, want three", got)
+		}
+	})
+}

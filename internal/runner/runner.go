@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -1463,35 +1464,57 @@ func (r *Runner) read(lv *live) batch {
 	}
 	readFiles := func() {
 		for i := 0; i < len(b.files)+1; i++ { // a followed file may name another
+			found := false
 			for p, off := range b.files {
-				data, err := os.ReadFile(p)
-				if err != nil {
+				ls, end := newLines(p, off)
+				if end == off {
 					continue
 				}
-				end := complete(data, off)
-				if end > off {
-					b.reads = append(b.reads, readRange{path: p, start: off, end: end})
-				}
-				for _, l := range lines(data, off, end) {
+				found = true
+				b.reads = append(b.reads, readRange{path: p, start: off, end: end})
+				for _, l := range ls {
 					r.decode(lv, &b, agent.File, l)
 				}
 				b.files[p] = end
 			}
+			if !found {
+				break
+			}
 		}
 	}
 	readFiles()
-	if data, err := os.ReadFile(filepath.Join(lv.dir, host.EventsFile)); err == nil {
-		end := complete(data, lv.offset)
-		if end > lv.offset {
-			b.reads = append(b.reads, readRange{start: lv.offset, end: end})
-		}
-		for _, l := range lines(data, lv.offset, end) {
+	if ls, end := newLines(filepath.Join(lv.dir, host.EventsFile), lv.offset); end > lv.offset {
+		b.reads = append(b.reads, readRange{start: lv.offset, end: end})
+		for _, l := range ls {
 			r.decode(lv, &b, source(l), l)
 		}
 		b.offset = end
 	}
 	readFiles()
 	return b
+}
+
+// newLines returns the complete lines of the file path behind offset off,
+// and the offset after them; off when there are none. A last line without
+// its newline is left for later. Only what is behind off is read, and a
+// file no longer than off is not opened.
+func newLines(path string, off int64) ([][]byte, int64) {
+	st, err := os.Stat(path)
+	if err != nil || st.Size() <= off {
+		return nil, off
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, off
+	}
+	defer f.Close()
+	data := make([]byte, st.Size()-off)
+	n, err := f.ReadAt(data, off)
+	if err != nil && err != io.EOF { // EOF: it became shorter meanwhile
+		return nil, off
+	}
+	end := complete(data[:n], 0)
+	return lines(data[:n], 0, end), off + end
 }
 
 // watchScreen gives the codec what the agent wrote to its terminal since
