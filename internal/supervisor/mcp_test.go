@@ -16,7 +16,7 @@ import (
 
 // captured is the exchange of Claude Code with `hataori mcp`, taken by
 // testdata/capture.sh.
-const captured = "testdata/claudecode/2.1.330"
+const captured = "testdata/claudecode/2.1.331"
 
 func lines(t *testing.T, path string) []map[string]any {
 	t.Helper()

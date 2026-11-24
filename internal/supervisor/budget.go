@@ -211,7 +211,10 @@ func (l Limits) over(u Used) (what, kinds []string, until time.Time) {
 // Admit holds a wake while the budget is used up, until the windows of
 // every limit reached have ended, and tells a person so, once for that
 // end and those limits. A thread the supervisor started for a person goes
-// past the hourly limits (Ended.Asked). It is the budget's Gate.
+// past the hourly limits (Ended.Asked), and so does one it started that
+// failed to start (Ended.Failure). One that no person asked for does so
+// only up to twice the hour's turns, so that a start that always fails and
+// is always made again ends. It is the budget's Gate.
 func (b *Budget) Admit(ctx context.Context, scope string, threads []Ended) ([]Ended, time.Time, error) {
 	u, err := b.Used(ctx)
 	if err != nil {
@@ -222,14 +225,14 @@ func (b *Budget) Admit(ctx context.Context, scope string, threads []Ended) ([]En
 		return threads, time.Time{}, nil
 	}
 	b.tell(ctx, u, what, kinds, until)
-	// The hourly limits do not hold a thread a person waits for (#677);
-	// the day's tokens do.
+	// The hourly limits do not hold a thread a person waits for (#677), or
+	// one that failed to start (#681); the day's tokens do.
 	if slices.Contains(kinds, "tokens") {
 		return nil, until, nil
 	}
 	var asked []Ended
 	for _, t := range threads {
-		if t.Asked {
+		if t.Asked || t.Failure != nil && (b.Limits.Turns == 0 || u.Turns < 2*b.Limits.Turns) {
 			asked = append(asked, t)
 		}
 	}
@@ -249,7 +252,7 @@ const NoticeKeyPrefix = "hataori-budget-"
 func Notice(what []string, until time.Time, hourly, refused bool, refusedUntil time.Time) string {
 	except := ""
 	if hourly {
-		except = ", except for a thread it started for a person's question"
+		except = ", except for a thread it started for a person's question, or that fails to start"
 	}
 	s := fmt.Sprintf("The supervisor's budget for this channel is used up: %s. It is not woken until %s%s; what else happens in the channel until then is told to it then.",
 		strings.Join(what, ", "), until.Format("2006-01-02 15:04 MST"), except)

@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.33**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.34**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -184,6 +184,8 @@ Since 3.26 a `key` that starts with `proposal:` is kept for the calls of approve
 
 Since 3.18, when plugins handle the input hook points in the scope, the daemon runs them in the call, before it accepts the input (design, section 7.3): `before_agent_run`, then `before_prompt_build`. One that stops the input makes the call `stopped`: no thread, no chat thread and no workspace is made, and nothing is recorded; the daemon logs the stop, without the text or the reason. The text `before_prompt_build` adds reaches the agent around the input, on lines of their own; the `input` event has the input as given in `text`, and the added text in `before` and `after`. A key accepted before runs no hook again.
 
+Since 3.34 a supervisor may ask for a thread that only reads, with `research`: the thread is marked as one of `StartWithoutSettings` is, from its first launch, so that its repository's hooks and commands never run and a start-up dialog that names only those files is answered. Only a supervisor's connection may ask for it, for a thread it starts; from any other caller a `Start` with it is `forbidden`, and nothing starts. Under `propose` the proposal keeps it and shows it (`proposal_made`), and the approved `Start` is made so. A daemon before 3.34 ignores the field and would start the thread with its repository's settings, so a client does not send it to one.
+
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `key` | string | required | makes the call safe to repeat |
@@ -194,6 +196,7 @@ Since 3.18, when plugins handle the input hook points in the scope, the daemon r
 | `input` | `Input` | required | the first input |
 | `model` | string | required | the model; empty for the scope's default |
 | `effort` | string | required | the effort; empty for the scope's default |
+| `research` | boolean | optional | the thread only reads: every launch of it leaves its repository's settings out, as for a thread of `StartWithoutSettings`; since 3.34 |
 
 Result: integer
 
@@ -1272,6 +1275,7 @@ The `data` of each event kind. Integers are the instance's own numbers for threa
 | `model` | string | required | the model asked for, or the scope's default |
 | `effort` | string | required | the effort asked for, or the scope's default |
 | `via` | string | optional | as in `input`: `proposal` for the thread of a supervisor's proposal that a person approved; since 3.26 |
+| `research` | boolean | optional | `true` for a thread started as research (`Start`): its launches leave its repository's settings out; absent otherwise; since 3.34 |
 
 ### Event `state`
 
@@ -1464,6 +1468,7 @@ A supervisor's `Start` or `Send`, stored as a proposal in its own thread instead
 | `text` | string | optional | the input as the supervisor gave it, without the mark; text |
 | `principal` | string | optional | the supervisor's person |
 | `from` | string | optional | the supervisor's id, as in `thread_created` |
+| `research` | boolean | optional | for `start`, `true` when the thread would be started as research (`Start`): without its repository's settings; absent otherwise; since 3.34 |
 
 ### Event `proposal_answered`
 

@@ -89,7 +89,7 @@ func (g *LoopGuard) Admit(ctx context.Context, scope string, threads []Ended) ([
 		if err != nil {
 			return nil, time.Time{}, err
 		}
-		if n < g.Cycles {
+		if n < g.Cycles || t.Failure != nil { // a failed start is no round
 			kept = append(kept, t)
 			continue
 		}

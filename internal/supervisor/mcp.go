@@ -154,6 +154,8 @@ var tools = []tool{
 			"text":   map[string]any{"type": "string", "description": "the first message; its first line becomes the title"},
 			"model":  map[string]any{"type": "string", "description": "the model; leave out for the channel's default"},
 			"effort": map[string]any{"type": "string", "description": "the effort; leave out for the channel's default", "enum": control.Efforts},
+			"research": map[string]any{"type": "boolean", "description": "true for a thread that only reads, to look something up: it starts without the repository's own settings and hooks, so that no dialog about them blocks it; " +
+				"never for a thread that changes anything"},
 		}, "repo", "text")},
 	{ToolIssues, "List the issues of one of this channel's repositories on its forge, read only: number, state, title, author, labels, assignees, last change." + withheldNote,
 		object(map[string]any{"repo": forgeRepo, "state": listState}, "repo")},
@@ -292,7 +294,9 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 
 		Minutes *int64 `json:"minutes"`
 		At      string `json:"at"`
-		Note    string `json:"note"`
+
+		Research bool   `json:"research"`
+		Note     string `json:"note"`
 	}
 	if len(raw) > 0 && string(raw) != "null" {
 		if err := json.Unmarshal(raw, &a); err != nil {
@@ -374,7 +378,7 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 			return "", errors.New("bad arguments: repo and text are required")
 		}
 		id, err := api.Start(ctx, control.StartRequest{Key: newKey(), Scope: m.Scope, Repo: a.Repo,
-			Input: control.Input{Text: a.Text}, Model: a.Model, Effort: a.Effort})
+			Input: control.Input{Text: a.Text}, Model: a.Model, Effort: a.Effort, Research: a.Research})
 		if p := proposed(err); p != nil {
 			return fmt.Sprintf("Proposed as proposal %d: nothing is started until a person in this channel approves it in your thread. "+
 				"A wake tells you whether it was approved and what came of it.", p.Number), nil

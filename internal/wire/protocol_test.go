@@ -212,3 +212,25 @@ func TestWayNeeds32(t *testing.T) {
 		t.Fatalf("asked %q, want %q", asked, want)
 	}
 }
+
+// A research start is asked for only of a daemon that knows it (3.34): an
+// older one would ignore the field and start the thread with its
+// repository's settings. Any other start is asked of it.
+func TestResearchNeeds334(t *testing.T) {
+	answer := func(m message) []string { return []string{fmt.Sprintf(`{"id":%d,"result":7}`, m.ID)} }
+	for _, tc := range []struct {
+		daemon   string
+		research bool
+		ok       bool
+	}{{"3.33", true, false}, {"3.33", false, true}, {"3.34", true, true}} {
+		c, err := dialPath(fakeDaemon(t, tc.daemon, answer), Version)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, err := c.Start(context.Background(), control.StartRequest{Key: "k", Scope: "s", Research: tc.research})
+		c.Close()
+		if (err == nil && id == 7) != tc.ok {
+			t.Errorf("%+v: %d, %v", tc, id, err)
+		}
+	}
+}

@@ -612,6 +612,10 @@ One limit is not enforced by this: the supervisor can *ask* a worker thread to m
 
 *Orders.* A scope's own rules for an order (which repository, one issue or one group per thread, model and effort, what to check before calling a thread's work done, who deploys) are in the scope's `AGENTS.md` (below, *Two layers*); a scope that keeps them in a file on the host copies it into `docs/` with `files`, and its `AGENTS.md` names it. hataori gives the rules no format and checks none of them. The supervisor dispatches with `start_thread`, and continues a group by sending to the group's thread when it is idle, as a person would. It deploys nothing itself; when the rules say that a worker deploys, it orders a worker thread to. `start_thread` clones only a repository that the scope lists under `scopes[].supervisor.repos`, written as there or by its forge name (`<owner>/<name>`); for any other the daemon refuses the call on the token's connection, and a scope that lists none gives its supervisor no start. `list_threads` and `read_thread` show each thread's repository, model and effort, so that it can tell which thread carries which order. *Why:* with the tools below the supervisor reads text from public issues, which anyone can write, and under `act` it starts threads without a person; a worker thread has a shell, and its permission requests are allowed. Limiting starts to the scope's repositories keeps an instruction planted in such text from cloning anything else.
 
+*Research threads* (#681). A thread that the supervisor starts to look something up does not need its repository's settings, and a folder-trust dialog that names them stopped it as `blocked at start` (section 3.5). `start_thread` has `research` for such a thread: the core marks it from its first launch as "Start without this repository's settings" marks one (`threads.no_project_settings`), so the dialog that names only those files is answered, and their hooks and commands never run, at any launch. An agent whose launch does not say that it leaves them out (`Launch.NoProjectSettings`), as Codex's, is not started with such a thread: it fails, and the supervisor is told. Only a supervisor's caller may ask for it (`Caller.Research`), and only for a thread it starts, never for one that exists; under `propose` the proposal shows it to the person who approves, in chat and in the dashboard. No tool of the supervisor makes the choice for a blocked thread. That the thread only reads is its order's to say: its session is an ordinary worker's, and what it may do is decided by that worker's own rules.
+
+*A thread that fails to start* (#681). A start that fails is a `state` event from `creating` to `failed`, with no turn, and so no turn end. The waker folds that of a thread the supervisor started (its `thread_created` is `from` the supervisor, an approved proposal's included) while that event is the thread's last change of state, which it looks at again as it makes the wake: not one whose session was replaced in the same step, one that a person started again or closed, or one that a person started in the first place. It is given at once: with no quiet period when nothing is being folded, else in that wake; after the supervisor's own turn when one runs. The budget's hourly limits do not hold it, as they do not hold the first turn end of a thread a person asked for (#677); the day's tokens do, and the loop guard, which counts rounds, does not stop it. One that no person asked for goes past the hour only up to twice `turns_per_hour`, so that a start that always fails and that the supervisor always makes again is bounded. The digest says which thread, why it could not start and what the start showed, quoted and cut, and, when a person's message had asked for the thread, who that is; hataori's layer has the supervisor tell that person what failed and what it does instead. Every failed thread is shown, also over the digest's limit of threads. A turn end of the thread that was not given yet is in the same paragraph, before the failure; a paragraph without one counts as no digest of the thread's output (#673). The mark of #677 stays with a thread that ran no turn, so its first turn end still goes past the hour should a person start it after all. The decision of an approved proposal whose thread has failed says so. A wake that goes past a hold leaves the waker's position where it is: up to where it gave each of its threads is kept (`supervisor_given`) until the position has passed it, so a restart does not give a failure again.
+
 *Reading issues, pull requests and CI.* The supervisor reads the forge of the repositories under `repos`, read only, so that it can check what a thread says before it reports a thing done. A forge is an adapter, as a chat surface and a coding agent are: `internal/forge` says what can be read, and GitHub is the first forge, in a package of its own; nothing outside that package names GitHub. What it reads:
 
 - a repository's issues: number, title, state, labels, assignees, last change; one issue with its comments;
@@ -2022,6 +2026,11 @@ type Caller struct {
 	// transaction that would take the input. The supervisor's waker has it
 	// (section 7.1, #441).
 	NoAnswer bool
+	// Research lets the caller's Start ask for a thread that only reads
+	// (StartRequest.Research), for a thread of its own making and never for
+	// one that exists. The daemon sets it for a supervisor's caller
+	// (section 7.1). Since protocol 3.34.
+	Research bool
 	// Propose makes the caller's Start and Send proposals (section 7.1,
 	// "Autonomy", #650): each is checked as the call would be up to where
 	// it would run, then stored in the caller's AsksIn thread (a
@@ -2244,6 +2253,11 @@ type StartRequest struct {
 	Input  Input
 	Model  string
 	Effort string
+	// Research: the thread only reads, and every launch of it leaves its
+	// repository's settings out, as StartWithoutSettings makes a thread
+	// (section 3.5). Only a caller with Caller.Research may ask for it.
+	// Since protocol 3.34 (#681).
+	Research bool
 }
 
 // Busy says what Send does when a turn is running.
@@ -2402,6 +2416,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `Clients` and `ClientState`, with `ScopeOwner`s that are a `Connection`: whether each chat client is connected (#598) | minor: new operation; 3.22 |
 | `via` in the `input`, `answer` and `approval_answered` events, and the `stop` event (section 7.2, giving a thread input from its tab, #604) | minor: a new optional field and a new event kind; 3.23 |
 | An `input` event with `via` `terminal` for the prompt of a turn typed at the terminal (section 5.2, #609) | minor: a new value of a field, on an event kind that exists; 3.24 |
+| `StartRequest.Research` with `Caller.Research`, and `research` in `thread_created` and `proposal_made`: a supervisor's read-only thread without its repository's settings | protocol 3.34 (#681) |
 | `Trust`, `StartWithoutSettings`, `Trusts` and `Untrust`, with `TrustedFile`, the `state` field `trust` and the `session_replaced` reasons `trusted` and `without project settings`: a blocked start's choices in chat (section 3.5, #590) | minor: new operations, a new optional field and new values of a reason; 3.28 |
 | `Reopen`, with `Ops` gaining `OpReopen`, `Reopened`, the `reopened` event, the `state` reason `reopen` and the `reopen_refused` error code (section 5.1, #670) | minor: a new operation, event kind, error code and value of a reason; 3.31 |
 | `ThreadDetail.FailedStart` and the `start_chosen` event: a start that failed before its first turn, and what was chosen for one that files blocked (section 7.2, #680) | minor: a new optional field and a new event kind; 3.33 |
@@ -2643,6 +2658,10 @@ type Launch struct {
 	// runner never starts a confined spec's launch without it, so an
 	// adapter that knows nothing of confinement refuses.
 	Confined bool
+	// NoProjectSettings: the launch leaves the project's settings out, as
+	// Spec.NoProjectSettings asks. The runner never starts such a spec
+	// without it, unless it is confined (#681).
+	NoProjectSettings bool
 }
 
 // Source says where a line came from: Output (the agent's output on pipes),

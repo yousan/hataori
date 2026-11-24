@@ -56,7 +56,7 @@ func TestOpenNewThenAgain(t *testing.T) {
 		t.Fatalf("journal_mode = %q", mode)
 	}
 	want := tables(t, s)
-	if want != "agent_limits,approvals,chat_cursors,chat_held,chat_inbound,chat_logins,chat_named,chat_notices,chat_outbox,chat_reopen_held,chat_senders,chat_triggers,events,inbox,links,login_outage_threads,login_outages,names,pending_inputs,plugin_outages,proposals,requests,schema_version,session_files,session_reads,sessions,sqlite_sequence,startup_steps,supervisor_asked,supervisor_dirs,supervisor_docs,supervisor_files,supervisor_reminders,supervisor_wakes,threads,trusted_files,turns,workspaces" {
+	if want != "agent_limits,approvals,chat_cursors,chat_held,chat_inbound,chat_logins,chat_named,chat_notices,chat_outbox,chat_reopen_held,chat_senders,chat_triggers,events,inbox,links,login_outage_threads,login_outages,names,pending_inputs,plugin_outages,proposals,requests,schema_version,session_files,session_reads,sessions,sqlite_sequence,startup_steps,supervisor_asked,supervisor_dirs,supervisor_docs,supervisor_files,supervisor_given,supervisor_reminders,supervisor_wakes,threads,trusted_files,turns,workspaces" {
 		t.Fatalf("tables = %s", want)
 	}
 	s.Close()

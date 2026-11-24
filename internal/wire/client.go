@@ -236,7 +236,11 @@ func (c *Client) SetLayout(ctx context.Context, client string, groups []control.
 
 func (c *Client) Start(ctx context.Context, r control.StartRequest) (control.ThreadID, error) {
 	var out control.ThreadID
-	err := c.call(ctx, "Start", r, &out)
+	since := ""
+	if r.Research {
+		since = "3.34" // an older daemon would start it with the settings
+	}
+	err := c.callSince(ctx, since, "a research thread", "Start", r, &out)
 	return out, err
 }
 

@@ -334,12 +334,12 @@ func TestNoProjectSettings(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if i := slices.Index(l.Argv, "--setting-sources"); i < 0 || l.Argv[i+1] != "user" {
+		if i := slices.Index(l.Argv, "--setting-sources"); i < 0 || l.Argv[i+1] != "user" || !l.NoProjectSettings {
 			t.Fatalf("resume %q: argv %q", resume, l.Argv)
 		}
 	}
 	l, _ := (&Adapter{command: "claude", hataori: "hataori", environ: func() []string { return nil }}).Launch(agent.Spec{Dir: "/w", StateDir: "/s"})
-	if slices.Contains(l.Argv, "--setting-sources") {
+	if slices.Contains(l.Argv, "--setting-sources") || l.NoProjectSettings {
 		t.Fatalf("an ordinary launch: %q", l.Argv)
 	}
 	without := agent.Spec{NoProjectSettings: true}

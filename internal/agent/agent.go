@@ -74,6 +74,10 @@ type Launch struct {
 	// A confined spec whose launch does not say so is never started, so an
 	// adapter that knows nothing of confinement refuses it.
 	Confined bool
+	// NoProjectSettings says the launch leaves the project's settings out,
+	// as Spec.NoProjectSettings asks. Unless it is confined, such a spec is
+	// never started without it either.
+	NoProjectSettings bool
 }
 
 // Source says where a line came from: Output (the agent's output on pipes),

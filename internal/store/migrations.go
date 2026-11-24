@@ -675,6 +675,17 @@ var migrations = []Migration{
 		)`,
 		`CREATE INDEX supervisor_reminders_scope ON supervisor_reminders (scope, state)`,
 	)},
+	// Up to where a wake that went past a gate's hold gave a thread, while
+	// the waker's position is before it: the wake left what the gate held
+	// (#681). Such a thread's events up to there are not given again.
+	{Name: "supervisor_given", Up: execAll(
+		`CREATE TABLE supervisor_given (
+			scope  TEXT NOT NULL,
+			thread INTEGER NOT NULL,
+			upto   INTEGER NOT NULL,
+			PRIMARY KEY (scope, thread)
+		)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

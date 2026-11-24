@@ -1271,6 +1271,9 @@ func (a *api) start(ctx context.Context, r control.StartRequest, dir string) (co
 	if err := a.proposalKey("Start", r.Scope, r.Key); err != nil {
 		return 0, err
 	}
+	if r.Research && (!a.caller.Research || confined) {
+		return 0, a.refused("Start", r.Scope, "the caller starts no thread without its repository's settings")
+	}
 	// The title is the first line of what the caller wrote, not its mark.
 	name := title(r.Input.Text)
 	given := r.Input
@@ -1361,8 +1364,8 @@ func (a *api) start(ctx context.Context, r control.StartRequest, dir string) (co
 	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
 		now := time.Now().UnixMilli()
 		res, err := tx.ExecContext(ctx,
-			`INSERT INTO threads (scope, key, title, repo, started_by, state, created_at, updated_at, confined) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			r.Scope, link.Thread, name, r.Repo, string(a.caller.Principal), string(control.Creating), now, now, confined)
+			`INSERT INTO threads (scope, key, title, repo, started_by, state, created_at, updated_at, confined, no_project_settings) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			r.Scope, link.Thread, name, r.Repo, string(a.caller.Principal), string(control.Creating), now, now, confined, r.Research)
 		if err != nil {
 			return fmt.Errorf("core: create thread: %w", err)
 		}
@@ -1410,6 +1413,9 @@ func (a *api) start(ctx context.Context, r control.StartRequest, dir string) (co
 		}
 		if a.caller.Via != "" {
 			d["via"] = a.caller.Via // since protocol 3.26
+		}
+		if r.Research {
+			d["research"] = true // since protocol 3.34
 		}
 		data, _ := json.Marshal(d)
 		_, err = tx.Append(ctx, control.Event{Thread: id, Scope: r.Scope, Time: a.c.now(), Kind: "thread_created", Data: data})

@@ -137,6 +137,12 @@ type Ended struct {
 	// Asked marks a thread the supervisor started for a person, not woken
 	// for yet (#677).
 	Asked bool
+	// Failure is the state event of a thread the supervisor started that
+	// failed to start (#681); Event is then the turn end before it that was
+	// not given yet, or nothing. Person is who asked for it, when a person
+	// did and it was not woken for yet.
+	Failure *control.Event
+	Person  string
 }
 
 // BackgroundWait is how long after a turn end with background tasks
@@ -309,7 +315,8 @@ type waking struct {
 	api     control.API
 	pos     uint64                             // stored: the events up to here are handled
 	read    uint64                             // the last event read
-	ended   map[control.ThreadID]control.Event // folded: each thread's last turn end
+	ended   map[control.ThreadID]control.Event // folded: each thread's last turn end, or its failed start
+	before  map[control.ThreadID]control.Event // the turn end a failed start in ended came after, not given yet
 	decided []control.Event                    // folded: the decisions of its requests, in order
 	sending *wake                              // stored, not known to be accepted
 	sv      control.ThreadID                   // the supervisor's thread, as last looked up
@@ -347,7 +354,7 @@ func (w *Waker) run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	caller := control.Caller{Principal: w.Owner, Scopes: []string{w.Scope}, May: control.OpRead | control.OpSend, NoAnswer: true}
-	r := &waking{w: w, ended: map[control.ThreadID]control.Event{}, own: map[control.ThreadID]bool{},
+	r := &waking{w: w, ended: map[control.ThreadID]control.Event{}, before: map[control.ThreadID]control.Event{}, own: map[control.ThreadID]bool{},
 		waiting: map[control.ThreadID]control.Event{}, stale: map[control.ThreadID]control.Event{}, asks: map[control.ThreadID]bool{},
 		api: w.Core.As(caller)}
 	if w.Sleep != nil {
@@ -452,7 +459,7 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 	if e.Thread == 0 {
 		return nil
 	}
-	if e.Pos <= r.pos && (e.Kind == TurnEnded || e.Kind == ApprovalAnswered || e.Kind == ProposalAnswered) {
+	if e.Pos <= r.pos && (e.Kind == TurnEnded || e.Kind == ApprovalAnswered || e.Kind == ProposalAnswered || failedStart(e)) {
 		// Covered by a wake already: one stored by the last run, sent again
 		// and accepted before the subscription reached it.
 		return nil
@@ -495,6 +502,9 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 			return r.attempt(ctx)
 		}
 		return nil
+	}
+	if failedStart(e) {
+		return r.failed(ctx, e)
 	}
 	if e.Kind == "turn_started" || closed(e) {
 		// The thread's background work came back, or it went on, or the
@@ -591,6 +601,67 @@ func closed(e control.Event) bool {
 	}
 	json.Unmarshal(e.Data, &d) // the store checked the event against its schema
 	return d.To == string(control.Closed)
+}
+
+// failedStart reports whether e is a session's failure to start: its
+// thread runs no turn, and no turn end will tell the supervisor.
+func failedStart(e control.Event) bool {
+	if e.Kind != "state" {
+		return false
+	}
+	var d struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}
+	json.Unmarshal(e.Data, &d) // the store checked the event against its schema
+	return d.From == string(control.Creating) && d.To == string(control.Failed)
+}
+
+// stands reports whether e, a failed start, is of a thread that the
+// supervisor started, and how that thread is still: a session that could
+// not resume was replaced in the same step, and a person may have started
+// the thread again, or closed it.
+func (r *waking) stands(ctx context.Context, e control.Event) (bool, error) {
+	var stands bool
+	err := r.w.Core.Store.DB.QueryRowContext(ctx, `SELECT state = ?
+		AND EXISTS (SELECT 1 FROM events WHERE thread_id = threads.id AND kind = 'thread_created' AND json_extract(data, '$.from') = ?)
+		AND NOT EXISTS (SELECT 1 FROM events WHERE thread_id = threads.id AND kind = 'state' AND pos > ?)
+		FROM threads WHERE id = ?`, string(control.Failed), ID(r.w.Scope), int64(e.Pos), int64(e.Thread)).Scan(&stands)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, fmt.Errorf("supervisor: a thread that failed: %w", err)
+	}
+	return stands, nil
+}
+
+// failed folds e, a failed start that stands. It is given at once, with no
+// quiet period, and no hourly limit holds it. A turn end of the thread that
+// was not given yet goes with it.
+func (r *waking) failed(ctx context.Context, e control.Event) error {
+	own, err := r.isOwn(ctx, e.Thread)
+	if err != nil || own {
+		return err
+	}
+	if to, err := r.wokenTo(ctx, e.Thread); err != nil || e.Pos <= to {
+		return err
+	}
+	if stands, err := r.stands(ctx, e); err != nil || !stands {
+		return err
+	}
+	switch last, ok := r.ended[e.Thread]; {
+	case !ok:
+		delete(r.before, e.Thread)
+	case last.Kind == TurnEnded:
+		r.before[e.Thread] = last
+	}
+	r.ended[e.Thread], r.asks[e.Thread] = e, true
+	switch {
+	case r.quiet != nil || r.sending != nil:
+		return nil // into the wake being folded, or the one after it
+	case !r.caught:
+		r.quiet = r.w.clock().After(r.w.Quiet) // with what else the log still has
+		return nil
+	}
+	return r.attempt(ctx)
 }
 
 // staleLine is the digest's line for a stale turn end.
@@ -929,29 +1000,66 @@ func (r *waking) ready(ctx context.Context) (control.ThreadID, bool, error) {
 // sent. The decisions name no worker's turn end, so a gate drops none of
 // them, but a gate's hold holds them too.
 func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
-	var threads []Ended
-	for id, e := range r.ended {
-		if _, ok := r.stale[id]; !ok {
-			threads = append(threads, Ended{Thread: id, Event: e})
-		}
-	}
-	var stale []control.ThreadID
-	for id, e := range r.stale {
-		threads = append(threads, Ended{Thread: id, Event: e, Stale: true})
-		stale = append(stale, id)
-	}
-	asked, err := r.asked(ctx)
+	rows, err := askedRows(ctx, r.w.Core, r.w.Scope)
 	if err != nil {
 		return nil, false, err
 	}
-	for i := range threads {
-		threads[i].Asked = asked[threads[i].Thread]
+	fails := map[control.ThreadID]*control.Event{}
+	for id, e := range r.ended {
+		if e.Kind != "state" {
+			continue
+		}
+		stands, err := r.stands(ctx, e)
+		if err != nil {
+			return nil, false, err
+		}
+		if stands {
+			fails[id] = &e
+			continue
+		}
+		// It went on since: what is left is the turn end before it.
+		delete(r.ended, id)
+		if b, ok := r.before[id]; ok {
+			r.ended[id] = b
+		}
+		r.asks[id] = slices.ContainsFunc(rows, func(a askedRow) bool { return a.thread == id })
 	}
-	// By number, those a person waits for first, so that ThreadsMax never
-	// cuts them off.
+	var threads []Ended
+	for id, e := range r.ended {
+		if _, ok := r.stale[id]; ok {
+			continue
+		}
+		if fails[id] != nil {
+			e = r.before[id] // or none
+		}
+		threads = append(threads, Ended{Thread: id, Event: e, Failure: fails[id]})
+	}
+	var stale []control.ThreadID
+	for id, e := range r.stale {
+		threads = append(threads, Ended{Thread: id, Event: e, Stale: true, Failure: fails[id]})
+		stale = append(stale, id)
+	}
+	for i, t := range threads {
+		for _, a := range rows {
+			if a.thread == t.Thread {
+				threads[i].Asked, threads[i].Person = true, a.person
+			}
+		}
+	}
+	// By number, those that failed first, then those a person waits for:
+	// ThreadsMax cuts off the others.
+	rank := func(t Ended) int {
+		switch {
+		case t.Failure != nil:
+			return 0
+		case t.Asked:
+			return 1
+		}
+		return 2
+	}
 	sort.Slice(threads, func(i, j int) bool {
-		if a, b := threads[i].Asked, threads[j].Asked; a != b {
-			return a
+		if a, b := rank(threads[i]), rank(threads[j]); a != b {
+			return a < b
 		}
 		return threads[i].Thread < threads[j].Thread
 	})
@@ -1077,8 +1185,20 @@ func (r *waking) delivered(ctx context.Context) error {
 		if e, ok := r.ended[id]; ok && e.Pos <= w.to {
 			delete(r.ended, id)
 		}
+		if e, ok := r.before[id]; ok && e.Pos <= w.to {
+			delete(r.before, id)
+		}
 	}
-	if err := r.store(ctx, clear, given); err != nil {
+	upTo := func(tx *store.Tx) error {
+		for _, id := range only {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO supervisor_given (scope, thread, upto) VALUES (?, ?, ?)
+				ON CONFLICT (scope, thread) DO UPDATE SET upto = max(upto, excluded.upto)`, r.w.Scope, int64(id), int64(w.to)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := r.store(ctx, clear, given, upTo); err != nil {
 		return err
 	}
 	return r.remind(ctx)
@@ -1206,6 +1326,9 @@ func Named(digest string) []control.ThreadID {
 		if !ok || lines[i-1] != "" {
 			continue
 		}
+		if i+1 < len(lines) && strings.HasPrefix(lines[i+1], failedLine) {
+			continue // it gives none of the thread's output
+		}
 		n, _, _ := strings.Cut(rest, ":")
 		if id, err := strconv.ParseInt(n, 10, 64); err == nil && id > 0 {
 			out = append(out, control.ThreadID(id))
@@ -1331,7 +1454,7 @@ func Fold(ended map[control.ThreadID]control.Event, e control.Event, own bool) b
 }
 
 // DigestOf is the digest of threads, in their order, each read with
-// thread: the first threadsMax of them, each with its output cut to
+// thread: the first threadsMax of them, and every one that failed, each with its output cut to
 // outputMax bytes, and a line counting the others; then the decisions of
 // its requests, in their order; then the reminders due at now. The output
 // is the thread's last, or, where since holds for the thread, what came since the last digest that
@@ -1340,21 +1463,33 @@ func DigestOf(threads []Ended, decided []control.Event, thread func(control.Thre
 	since func(control.ThreadID) bool, due []Reminder, now time.Time, outputMax, threadsMax int) (string, error) {
 	var lines []Line
 	for i, t := range threads {
-		if i == threadsMax {
-			break
+		if i >= threadsMax && t.Failure == nil {
+			break // those that failed come first
 		}
 		d, err := thread(t.Thread)
 		if err != nil {
 			return "", err
 		}
-		l := LineOf(t.Event, d, outputMax)
+		l := Line{Thread: t.Thread, Title: d.Title}
+		if t.Event.Kind == TurnEnded {
+			l = LineOf(t.Event, d, outputMax)
+		}
+		if t.Failure != nil {
+			l.Failed = failureOf(*t.Failure, outputMax)
+		}
+		l.Person = t.Person
 		l.Stale = t.Stale
 		l.Since = since != nil && since(t.Thread)
 		lines = append(lines, l)
 	}
 	var ds []Decision
 	for _, e := range decided {
-		ds = append(ds, DecisionOf(e))
+		d := DecisionOf(e)
+		if d.Proposal && d.Action == "start" && d.Outcome == "run" {
+			t, err := thread(d.Target)
+			d.Failed = err == nil && t.State == control.Failed
+		}
+		ds = append(ds, d)
 	}
 	return Digest(lines, len(threads)-len(lines), len(due), ds...) + DueReminders(due, now), nil
 }
@@ -1365,6 +1500,11 @@ func (r *waking) advance(ctx context.Context, to uint64, also ...func(*store.Tx)
 	for id, e := range r.ended {
 		if e.Pos <= to {
 			delete(r.ended, id)
+		}
+	}
+	for id, e := range r.before {
+		if e.Pos <= to {
+			delete(r.before, id)
 		}
 	}
 	r.decided = slices.DeleteFunc(r.decided, func(e control.Event) bool { return e.Pos <= to })
@@ -1446,7 +1586,10 @@ func (r *waking) store(ctx context.Context, also ...func(*store.Tx) error) error
 			}
 		}
 		// A cleared mark is needed only while its turn end may be read again.
-		_, err = tx.ExecContext(ctx, `DELETE FROM supervisor_asked WHERE scope = ? AND woken <= ?`, r.w.Scope, int64(r.pos))
+		if _, err := tx.ExecContext(ctx, `DELETE FROM supervisor_asked WHERE scope = ? AND woken <= ?`, r.w.Scope, int64(r.pos)); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `DELETE FROM supervisor_given WHERE scope = ? AND upto <= ?`, r.w.Scope, int64(r.pos))
 		return err
 	})
 	if err != nil {
@@ -1467,10 +1610,83 @@ type Line struct {
 	// Stale: the thread started no turn for BackgroundWait after this
 	// turn end, whose background tasks have not come back (#672).
 	Stale bool
+	// Failed: its session could not start (#681), after the turn end the
+	// line has, or with none (Outcome is empty). Person asked for the
+	// thread, and waits.
+	Failed *Failure
+	Person string
 	// Since: Last is the output since the last digest that gave the
 	// thread's output to this session of the supervisor, not its last
 	// output (#673).
 	Since bool
+}
+
+// Failure is why a thread's session could not start.
+type Failure struct {
+	Reason string // on one line, at most reasonMax bytes
+	Shown  string // what the state event has for a person to read
+	Cut    int    // the cap, when Shown was cut to it; 0 when not
+}
+
+// reasonMax is the most of a failure's reason that a digest has, in bytes:
+// an error's text, which may be another program's.
+const reasonMax = 500
+
+// failureOf is the failure of e, a failed start, what it showed cut to max
+// bytes.
+func failureOf(e control.Event, max int) *Failure {
+	var d struct {
+		Reason string `json:"reason"`
+		Detail string `json:"detail"`
+	}
+	json.Unmarshal(e.Data, &d) // the store checked the event against its schema
+	var f Failure
+	f.Reason, _ = tail(strings.Join(strings.Fields(noteLines.Replace(d.Reason)), " "), reasonMax)
+	f.Shown, f.Cut = tail(strings.TrimRight(noteLines.Replace(d.Detail), "\n"), max)
+	return &f
+}
+
+// tail cuts s to its last max bytes, at the start of a character, and
+// returns max when it did, else 0.
+func tail(s string, max int) (string, int) {
+	if len(s) <= max {
+		return s, 0
+	}
+	cut := len(s) - max
+	for cut < len(s) && !utf8.RuneStart(s[cut]) {
+		cut++
+	}
+	return s[cut:], max
+}
+
+// failedLine starts the second line of the paragraph of a thread that
+// failed, with no turn end to give.
+const failedLine = "Failed: "
+
+// failed writes the lines of a thread that failed to start.
+func (l Line) failed(b *strings.Builder) {
+	if l.Outcome != "" {
+		b.WriteString("Then it failed: it could not start again")
+	} else {
+		b.WriteString(failedLine + "it could not start")
+	}
+	if l.Failed.Reason != "" {
+		fmt.Fprintf(b, " (%s)", l.Failed.Reason)
+	}
+	b.WriteString(", so no turn ran.\n")
+	if l.Failed.Shown != "" {
+		if l.Failed.Cut > 0 {
+			fmt.Fprintf(b, "What it showed, cut to its last %d bytes:\n", l.Failed.Cut)
+		} else {
+			b.WriteString("What it showed:\n")
+		}
+		for _, line := range strings.Split(l.Failed.Shown, "\n") {
+			b.WriteString(strings.TrimRight("> "+line, " ") + "\n")
+		}
+	}
+	if l.Person != "" {
+		fmt.Fprintf(b, "Asked for by %s, who waits for an answer: tell @%s what failed, and what you do instead.\n", l.Person, l.Person)
+	}
 }
 
 // LineOf is the digest line of a thread whose last turn end is e, from
@@ -1482,15 +1698,8 @@ func LineOf(e control.Event, d control.ThreadDetail, max int) Line {
 		Background int    `json:"background"`
 	}
 	json.Unmarshal(e.Data, &end) // the store checked the event against its schema
-	l := Line{Thread: e.Thread, Title: d.Title, Outcome: end.Outcome, Reason: end.Reason, Background: end.Background,
-		Last: strings.TrimRight(d.Recent, "\n")}
-	if len(l.Last) > max {
-		cut := len(l.Last) - max
-		for cut < len(l.Last) && !utf8.RuneStart(l.Last[cut]) {
-			cut++
-		}
-		l.Last, l.Cut = l.Last[cut:], max
-	}
+	l := Line{Thread: e.Thread, Title: d.Title, Outcome: end.Outcome, Reason: end.Reason, Background: end.Background}
+	l.Last, l.Cut = tail(strings.TrimRight(d.Recent, "\n"), max)
 	return l
 }
 
@@ -1504,6 +1713,7 @@ type Decision struct {
 	Outcome  string           // as its event says
 	Reason   string           // why an approved proposal could not run
 	By       string           // the person who decided it
+	Failed   bool             // the thread an approved start made has failed (#681)
 }
 
 // DecisionOf is the decision of e, an approval_answered or a
@@ -1546,6 +1756,9 @@ func (d Decision) line() string {
 		if d.Action == "send" {
 			return fmt.Sprintf("%s: approved by %s, and sent.", what, d.By)
 		}
+		if d.Failed {
+			return fmt.Sprintf("%s: approved by %s, but thread %d, which it made, has failed.", what, d.By, d.Target)
+		}
 		return fmt.Sprintf("%s: approved by %s; it started thread %d.", what, d.By, d.Target)
 	case "refused":
 		return fmt.Sprintf("%s: refused by %s; %s.", what, d.By, not)
@@ -1570,7 +1783,15 @@ var oneLine = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ")
 // the due reminders (DueReminders).
 func Digest(lines []Line, more, due int, decided ...Decision) string {
 	var b strings.Builder
-	n := len(lines) + more
+	n, failed := more, 0
+	for _, l := range lines {
+		if l.Failed != nil {
+			failed++
+		}
+		if l.Failed == nil || l.Outcome != "" {
+			n++
+		}
+	}
 	var asked string
 	switch len(decided) {
 	case 0:
@@ -1580,6 +1801,12 @@ func Digest(lines []Line, more, due int, decided ...Decision) string {
 		asked = fmt.Sprintf("%d of your requests were decided", len(decided))
 	}
 	var what []string
+	switch {
+	case failed == 1:
+		what = append(what, "a thread you started failed")
+	case failed > 1:
+		what = append(what, fmt.Sprintf("%d threads you started failed", failed))
+	}
 	switch {
 	case n == 1:
 		what = append(what, "a turn ended in 1 thread of this channel")
@@ -1607,7 +1834,12 @@ func Digest(lines []Line, more, due int, decided ...Decision) string {
 			// digest's lines (Named, staleIn).
 			fmt.Fprintf(&b, ": %s", oneLine.Replace(l.Title))
 		}
-		b.WriteString("\nEnded: ")
+		b.WriteString("\n")
+		if l.Failed != nil && l.Outcome == "" {
+			l.failed(&b)
+			continue
+		}
+		b.WriteString("Ended: ")
 		switch l.Outcome {
 		case "completion":
 			b.WriteString("completed")
@@ -1643,6 +1875,9 @@ func Digest(lines []Line, more, due int, decided ...Decision) string {
 			for _, line := range strings.Split(l.Last, "\n") {
 				b.WriteString(strings.TrimRight("> "+line, " ") + "\n")
 			}
+		}
+		if l.Failed != nil {
+			l.failed(&b)
 		}
 	}
 	switch {

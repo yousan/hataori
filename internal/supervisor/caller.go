@@ -54,10 +54,11 @@ func Caller(scope string, thread control.ThreadID, autonomy string) control.Call
 		May:        control.OpRead | control.OpStart | control.OpSend | control.OpAsk,
 		RefuseBusy: true,
 		Mark:       Mark,
+		Research:   true, // of its own starts only (#681)
 	}
 	switch autonomy {
 	case Watch:
-		c.May = control.OpRead
+		c.May, c.Research = control.OpRead, false
 	case Act:
 	default:
 		c.Propose = true

@@ -430,6 +430,11 @@ type Caller struct {
 	// the effort the proposal showed. The daemon sets it when it binds the
 	// caller; zero AsksIn refuses every Start and Send. Since protocol 3.26.
 	Propose bool
+	// Research lets the caller's Start ask for a thread that only reads,
+	// without its repository's settings (StartRequest.Research): for a
+	// thread of its own making, and never for one that exists. The daemon
+	// sets it for a supervisor's caller. Since protocol 3.34.
+	Research bool
 	// Mark, when set, is a line the core puts before the text of every
 	// input of the caller's Start and Send, so that the agent sees who it
 	// came from. The client cannot leave it out: the daemon sets it when it
@@ -582,6 +587,12 @@ type StartRequest struct {
 	Input  Input  `json:"input"`           // the first input
 	Model  string `json:"model"`           // empty for the scope's default
 	Effort string `json:"effort"`          // empty for the scope's default
+	// Research marks a thread that only reads: it is started, and started
+	// again, without its repository's settings, as StartWithoutSettings
+	// makes a thread, so that a start-up dialog that names only those files
+	// never blocks it. Only a caller with Caller.Research may ask for it;
+	// any other is ErrForbidden. Since 3.34.
+	Research bool `json:"research,omitempty"`
 }
 
 // Input is what a client gives an agent.

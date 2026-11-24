@@ -226,6 +226,7 @@ type eventData struct {
 	Model    string `json:"model"`
 	Effort   string `json:"effort"`
 	Question string `json:"question"`
+	Research bool   `json:"research"` // proposal_made: since 3.34
 }
 
 // proposalText is how a supervisor's proposal is put to a person: what it
@@ -239,6 +240,9 @@ func proposalText(d eventData) string {
 		with = append(with, "effort "+d.Effort)
 	}
 	what := fmt.Sprintf("start a thread in %s", d.Repo)
+	if d.Research {
+		what = fmt.Sprintf("start a read-only research thread, without the repository's settings, in %s", d.Repo)
+	}
 	if d.Action == "send" {
 		what = fmt.Sprintf("send to thread %d", d.Target)
 		if d.Question != "" {

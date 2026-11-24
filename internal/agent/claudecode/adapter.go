@@ -151,6 +151,7 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 		// The project's and the local settings stay out, with their hooks:
 		// every launch of the spec, a --resume too (#590).
 		l.Argv = append(l.Argv, "--setting-sources", "user")
+		l.NoProjectSettings = true
 	}
 	if spec.Confine != nil {
 		// The flags belong to each launch: a --resume without them has a

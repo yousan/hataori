@@ -323,6 +323,9 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 	if run.Confine != nil && !launch.Confined {
 		return agent.Spec{}, fmt.Errorf("runner: the agent %q cannot start a confined session; it was not started", agentName)
 	}
+	if run.NoProjectSettings && run.Confine == nil && !launch.NoProjectSettings {
+		return agent.Spec{}, fmt.Errorf("runner: the agent %q cannot start without the repository's settings; it was not started", agentName)
+	}
 	for name, b := range launch.Files {
 		if !filepath.IsLocal(name) {
 			return agent.Spec{}, fmt.Errorf("runner: the agent asks for a file outside its state directory: %q", name)

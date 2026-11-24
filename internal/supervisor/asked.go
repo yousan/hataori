@@ -165,23 +165,24 @@ func personsTurn(ctx context.Context, c *core.Core, scope string, thread control
 type askedRow struct {
 	key    string
 	thread control.ThreadID // 0 for none yet
+	person string           // who asked
 }
 
 // askedRows returns the marks of scope not cleared yet. A mark whose
 // proposal was decided and made no thread is removed.
 func askedRows(ctx context.Context, c *core.Core, scope string) ([]askedRow, error) {
-	rows, err := c.Store.DB.QueryContext(ctx, `SELECT key, asks_in FROM supervisor_asked WHERE scope = ? AND woken IS NULL`, scope)
+	rows, err := c.Store.DB.QueryContext(ctx, `SELECT key, asks_in, person FROM supervisor_asked WHERE scope = ? AND woken IS NULL`, scope)
 	if err != nil {
 		return nil, fmt.Errorf("supervisor: threads asked for by a person: %w", err)
 	}
 	type row struct {
-		key string
-		in  int64
+		key, person string
+		in          int64
 	}
 	var all []row
 	for rows.Next() {
 		var r row
-		if err := rows.Scan(&r.key, &r.in); err != nil {
+		if err := rows.Scan(&r.key, &r.in, &r.person); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("supervisor: threads asked for by a person: %w", err)
 		}
@@ -198,7 +199,7 @@ func askedRows(ctx context.Context, c *core.Core, scope string) ([]askedRow, err
 		}
 		switch {
 		case id != 0 || proposed == "" || proposed == "open" || proposed == "approved":
-			out = append(out, askedRow{r.key, id})
+			out = append(out, askedRow{r.key, id, r.person})
 		default:
 			// Decided, and it made no thread: it never will.
 			if err := unmark(ctx, c, scope, r.key); err != nil {
@@ -225,7 +226,8 @@ func (r *waking) asked(ctx context.Context) (map[control.ThreadID]bool, error) {
 }
 
 // wokenTo returns the position that the first wake of thread id, marked
-// when it was made, covered; 0 when none did. The waker's position may be
+// when it was made, covered, or a wake past a hold that gave the thread; 0
+// when none did. The waker's position may be
 // before it: that wake left the turn ends a gate held.
 func (r *waking) wokenTo(ctx context.Context, id control.ThreadID) (uint64, error) {
 	var to sql.NullInt64
@@ -233,7 +235,12 @@ func (r *waking) wokenTo(ctx context.Context, id control.ThreadID) (uint64, erro
 		r.w.Scope, int64(id)).Scan(&to); err != nil {
 		return 0, fmt.Errorf("supervisor: threads asked for by a person: %w", err)
 	}
-	return uint64(to.Int64), nil
+	var given sql.NullInt64
+	if err := r.w.Core.Store.DB.QueryRowContext(ctx, `SELECT upto FROM supervisor_given WHERE scope = ? AND thread = ?`,
+		r.w.Scope, int64(id)).Scan(&given); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("supervisor: threads given past a hold: %w", err)
+	}
+	return uint64(max(to.Int64, given.Int64)), nil
 }
 
 // carries returns what records, in the transaction that stores a wake to
@@ -246,7 +253,9 @@ func (r *waking) carries(ctx context.Context, key string, threads []Ended) (func
 	}
 	in := map[control.ThreadID]bool{}
 	for _, t := range threads {
-		in[t.Thread] = true
+		// A failed start with no turn end leaves the mark: the person waits
+		// still, should the thread start after all.
+		in[t.Thread] = t.Event.Kind == TurnEnded
 	}
 	return func(tx *store.Tx) error {
 		if err := r.drops(ctx)(tx); err != nil {
