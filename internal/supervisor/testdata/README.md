@@ -8,7 +8,7 @@
 
 Claude Code 2.1.328 first sends `server/discover`, which the server answers "method not found"; it then sends `initialize`, `notifications/initialized` and `tools/list`.
 
-The test reads the newest, 2.1.330, taken when the tools' descriptions and the server's instructions were written (#653); 2.1.328 has the first four tools.
+The test reads the newest, 2.1.331, taken when `start_thread` got `research` (#681); 2.1.330 is from when the tools' descriptions and the server's instructions were written (#653), and 2.1.328 has the first four tools.
 
 To take a new capture, run `./capture.sh claudecode` from this directory, with `claude` and `jq` installed and logged in. It makes one small model request, saves no session, and starts no daemon. Add the new directory next to the old ones and point the test at it.
 

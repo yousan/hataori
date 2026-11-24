@@ -25,6 +25,9 @@ type proposalCall struct {
 	Agent  string `json:"agent,omitempty"`
 	Model  string `json:"model,omitempty"`
 	Effort string `json:"effort,omitempty"`
+	// Research is the start's (control.StartRequest.Research), kept from a
+	// caller that may ask for it.
+	Research bool `json:"research,omitempty"`
 }
 
 // The outcomes of a proposal, in its proposal_answered event and its row.
@@ -56,9 +59,12 @@ func (a *api) proposeStart(ctx context.Context, r control.StartRequest, agent, m
 	if err := a.asksHere(ctx, "Start", r.Scope); err != nil {
 		return err
 	}
-	call := proposalCall{Text: r.Input.Text, Repo: r.Repo, Agent: agent, Model: model, Effort: effort}
+	call := proposalCall{Text: r.Input.Text, Repo: r.Repo, Agent: agent, Model: model, Effort: effort, Research: r.Research}
 	return a.propose(ctx, "start", r.Key, call, func(tx *store.Tx, d map[string]any) (control.ThreadID, string, error) {
 		d["repo"], d["agent"], d["model"], d["effort"] = r.Repo, agent, model, effort
+		if r.Research {
+			d["research"] = true // since protocol 3.34
+		}
 		return 0, "", nil
 	})
 }
@@ -320,7 +326,7 @@ func (a *api) answerProposal(ctx context.Context, req control.RequestID, ans con
 	// scope; marked as its input; never into a running turn.
 	sender := a.c.As(control.Caller{From: from, Principal: control.Principal(principal), Scopes: []string{scope},
 		May: control.OpStart | control.OpSend, RefuseBusy: true, NoAnswer: question == "", Mark: mark,
-		Via: control.ViaProposal}).(*api)
+		Via: control.ViaProposal, Research: call.Research}).(*api)
 	switch action {
 	case "send":
 		err = sender.send(ctx, control.ThreadID(target.Int64), key, control.Input{Text: call.Text}, control.Refuse,
@@ -333,7 +339,7 @@ func (a *api) answerProposal(ctx context.Context, req control.RequestID, ans con
 		}
 		var id control.ThreadID
 		id, err = sender.start(ctx, control.StartRequest{Key: key, Scope: scope, Repo: call.Repo, Agent: call.Agent,
-			Model: call.Model, Effort: call.Effort, Input: control.Input{Text: call.Text}}, "")
+			Model: call.Model, Effort: call.Effort, Input: control.Input{Text: call.Text}, Research: call.Research}, "")
 		if id != 0 {
 			// The thread is made; a launch that failed is the thread's own
 			// failure, which its events show.
@@ -460,7 +466,11 @@ func (c *Core) openProposals(ctx context.Context, id control.ThreadID, reqs []co
 				if len(with) > 0 {
 					repo += " (" + strings.Join(with, ", ") + ")"
 				}
-				r.Text = fmt.Sprintf("Proposal %d: start a thread in %s? %s", number, repo, p.Text)
+				what := "a thread"
+				if p.Research {
+					what = "a read-only research thread, without the repository's settings,"
+				}
+				r.Text = fmt.Sprintf("Proposal %d: start %s in %s? %s", number, what, repo, p.Text)
 			} else {
 				r.Text = fmt.Sprintf("Proposal %d: send to thread %d? %s", number, target.Int64, p.Text)
 			}

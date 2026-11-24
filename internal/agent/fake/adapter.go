@@ -64,6 +64,9 @@ type Config struct {
 	// unless the launch leaves the project's settings out
 	// (Spec.NoProjectSettings), which also lets the dialog be answered.
 	ProjectHook bool `json:"project_hook"`
+	// KeepsSettings makes it an agent that cannot leave the project's
+	// settings out, and whose launch does not say that it does.
+	KeepsSettings bool `json:"keeps_settings"`
 	// ReportModel and ReportEffort, when set, are what the program reports
 	// when it is ready, instead of the model and effort it was asked for.
 	ReportModel  string `json:"report_model"`
@@ -181,7 +184,7 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 	if a.c.Terminal && a.c.Dialog != "" {
 		argv = append(argv, "--dialog", a.c.Dialog)
 	}
-	if spec.NoProjectSettings {
+	if spec.NoProjectSettings && !a.c.KeepsSettings {
 		argv = append(argv, "--no-project-settings")
 	} else if a.c.ProjectHook {
 		argv = append(argv, "--project-hook")
@@ -192,7 +195,7 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 			"--transcript", filepath.Join(spec.StateDir, TranscriptFile))
 		env = append(env, host.HookEnv(spec.StateDir))
 	}
-	l := agent.Launch{Argv: argv, Env: env, Terminal: a.c.Terminal, Files: map[string][]byte{}}
+	l := agent.Launch{Argv: argv, Env: env, Terminal: a.c.Terminal, Files: map[string][]byte{}, NoProjectSettings: !a.c.KeepsSettings}
 	if spec.Instructions != "" {
 		l.Files[InstructionsFile] = []byte(spec.Instructions)
 	}
@@ -215,7 +218,9 @@ func (a *Adapter) NewCodec(spec agent.Spec) agent.Codec {
 	if a.c.Terminal && !spec.TakenIn { // a session taken in is past any dialog
 		c.dialog = a.c.Dialog
 		for _, f := range a.c.DialogTrust {
-			if !spec.NoProjectSettings && !slices.Contains(spec.TrustFiles, f) {
+			// A confined session ignores the files: its dialog is answered
+			// whatever it names.
+			if spec.Confine == nil && !spec.NoProjectSettings && !slices.Contains(spec.TrustFiles, f) {
 				c.trust = a.c.DialogTrust
 			}
 		}
