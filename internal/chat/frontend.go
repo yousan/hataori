@@ -132,6 +132,19 @@ func (f *FrontEnd) Run(ctx context.Context) error {
 		return err
 	}
 	f.Outbox.init() // its defaults, before the goroutines below read them
+	for ctx.Err() == nil {
+		err := f.settleLinks(ctx)
+		if err == nil {
+			break
+		}
+		if ctx.Err() == nil {
+			f.Log.Error("chat: nothing is posted before this succeeds", "err", err)
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Second):
+		}
+	}
 	var wg sync.WaitGroup
 	wg.Add(4)
 	go func() { defer wg.Done(); f.runCatchUp(ctx) }()

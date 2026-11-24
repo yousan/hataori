@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 
 	"github.com/yousan/hataori/internal/control"
@@ -110,7 +111,15 @@ func (f *FrontEnd) lamps(ctx context.Context, r *reader, e control.Event, convs 
 		st = &lampState{}
 		r.lamp[e.Thread] = st
 	}
-	lamp := func(l *lit, part int, s surface.Status) Row {
+	// A message in a channel that is no longer served (serves), of a turn
+	// that began before, gets nothing more (#572).
+	served := func(l *lit) bool {
+		return slices.ContainsFunc(convs, func(c surface.Conversation) bool { return c.Channel == l.conv.Channel })
+	}
+	lamp := func(l *lit, part int, s surface.Status) []Row {
+		if !served(l) {
+			return nil
+		}
 		row := Row{Event: e.Pos, Part: part, Conv: l.conv, Decoration: true, Op: Lamp, Status: s}
 		if l.on != nil {
 			on := *l.on
@@ -118,7 +127,7 @@ func (f *FrontEnd) lamps(ctx context.Context, r *reader, e control.Event, convs 
 		} else {
 			row.Target = l.row
 		}
-		return row
+		return []Row{row}
 	}
 	if e.Kind == "turn_started" {
 		st.turn, st.ping, st.byself = nil, "", false
@@ -155,7 +164,7 @@ func (f *FrontEnd) lamps(ctx context.Context, r *reader, e control.Event, convs 
 			}
 			if st.last != nil && !st.last.same(l) && st.shown == surface.Waiting {
 				// A typed answer took over from the message that waited.
-				rows = append(rows, lamp(st.last, formerPart, surface.Done))
+				rows = append(rows, lamp(st.last, formerPart, surface.Done)...)
 			}
 			st.last, st.turn, st.ping = l, l, ping
 		case "agent":
@@ -167,7 +176,7 @@ func (f *FrontEnd) lamps(ctx context.Context, r *reader, e control.Event, convs 
 			return nil, nil // typed at the terminal
 		}
 		st.shown = surface.Working
-		return append(rows, lamp(st.turn, lampPart, surface.Working)), nil
+		return append(rows, lamp(st.turn, lampPart, surface.Working)...), nil
 	}
 	// turn_ended
 	l, ping, byself := st.turn, st.ping, st.byself
@@ -190,7 +199,7 @@ func (f *FrontEnd) lamps(ctx context.Context, r *reader, e control.Event, convs 
 	}
 	if l != nil {
 		st.shown = s
-		rows = append(rows, lamp(l, lampPart, s))
+		rows = append(rows, lamp(l, lampPart, s)...)
 	}
 	// A completed turn pings nobody when the agent started it, or in a
 	// supervisor's thread, where the reply is already the answer (#639).
@@ -203,6 +212,9 @@ func (f *FrontEnd) lamps(ctx context.Context, r *reader, e control.Event, convs 
 		ping = "" // no post of the thread mentions anyone (#657)
 	}
 	if ping != "" && (!(byself || sv) || d.Outcome == "failure" || d.Outcome == "blocked") {
+		if l != nil && !served(l) {
+			l = nil
+		}
 		rows = append(rows, f.pingRow(ctx, r, e, l, ping, d.Outcome, convs))
 	}
 	return rows, nil
