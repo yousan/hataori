@@ -19,6 +19,12 @@ import (
 // bring it back.
 var ErrGone = errors.New("the conversation is gone")
 
+// ErrRefused is what a driver's error wraps, or matches with errors.Is,
+// when the same call can never succeed: the service, or the driver for it,
+// refuses what it asks. Any other error may pass, and the call may be made
+// again.
+var ErrRefused = errors.New("the chat service refuses it")
+
 // Driver is one chat service.
 type Driver interface {
 	// Run connects and delivers inbound events to sink until ctx ends.
@@ -39,7 +45,9 @@ type Driver interface {
 	// by the person's id on the service.
 	OpenDirect(ctx context.Context, who string) (Conversation, error)
 	// Post posts m. key makes the post safe to repeat where the service
-	// supports it.
+	// supports it. A post that fails with ErrRefused is given up; with any
+	// other error it is posted again later. When a post that became several
+	// messages failed after the first, the first is returned with the error.
 	Post(ctx context.Context, conv Conversation, key string, m Message) (MessageRef, error)
 	// Edit replaces a posted message.
 	Edit(ctx context.Context, ref MessageRef, m Message) error

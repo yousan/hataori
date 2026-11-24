@@ -679,3 +679,38 @@ func TestBeforePromptBuildAdds(t *testing.T) {
 		}
 	}
 }
+
+// A message_sending answer that leaves nothing to post is one the point
+// does not allow, so the handler's policy applies; a post with files is
+// something to post without a text.
+func TestABlankPostIsNotAllowed(t *testing.T) {
+	for _, text := range []string{"", " \n\t"} {
+		for _, files := range []bool{false, true} {
+			for _, policy := range []Failure{Skip, Block} {
+				t.Run(fmt.Sprintf("%q/files %v/%s", text, files, policy), func(t *testing.T) {
+					g := grant("a", "message_sending", 0, true)
+					g.Hooks[0].OnFailure = policy
+					f := newHookFixture(t, g)
+					f.connect("a", hookHandler(func(control.HookRequest, json.RawMessage) (any, error) {
+						return control.HookAnswer{Action: control.HookContinue, Text: &text}, nil
+					}))
+					res := f.d.Run(context.Background(), control.HookCall{Point: "message_sending", Thread: 7, Scope: "s", Text: "x", Files: files})
+					switch {
+					case files:
+						if res.Stopped || res.Text != text {
+							t.Fatalf("result %+v, want the blank text", res)
+						}
+					case policy == Block:
+						if !res.Stopped || !res.Failed || res.By != "a" || !strings.Contains(res.Reason, "nothing in it") {
+							t.Fatalf("result %+v, want stopped by a", res)
+						}
+					default:
+						if res.Stopped || res.Text != "x" || !strings.Contains(f.log.String(), "nothing in it") {
+							t.Fatalf("result %+v, want x passing; log:\n%s", res, f.log)
+						}
+					}
+				})
+			}
+		}
+	}
+}

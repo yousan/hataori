@@ -282,7 +282,7 @@ func (d *Driver) postAnswer(ctx context.Context, conv surface.Conversation, key 
 		text = fmt.Sprintf("<@%s> ", who) + text
 	}
 	if text == "" {
-		return surface.MessageRef{}, errors.New("discord: nothing to post")
+		return surface.MessageRef{}, refusal(answerOp, "nothing to post")
 	}
 	d.mu.Lock()
 	a := d.answers[id]

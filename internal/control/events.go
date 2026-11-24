@@ -61,6 +61,9 @@ var EventKinds = map[EventKind][]Field{
 	"post_sent": {req("link", Object), req("event", Integer), req("part", Integer), req("message", String), text("text", String)},
 	"post_cancelled": {req("link", Object), req("event", Integer), req("part", Integer), req("plugin", String),
 		opt("failed", Boolean), opt("edit", Boolean), text("reason", String)},
+	// post_refused: the chat service refused a row for good, so it was given
+	// up (#569). Since 3.35.
+	"post_refused": {req("link", Object), req("event", Integer), req("part", Integer), opt("message", String), text("reason", String)},
 	"input": {req("session", Integer), req("turn", Integer), text("text", String), opt("principal", String), opt("from", String),
 		opt("link", Object), text("before", String), text("after", String), opt("via", String)},
 	"answer": {req("session", Integer), req("turn", Integer), text("text", String), opt("principal", String), opt("from", String),

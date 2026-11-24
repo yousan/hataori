@@ -21,8 +21,8 @@ What the plugin writes to its standard output and error goes to the daemon's log
 
 A plugin without the `conversation` grant gets no text written by a person or an agent:
 
-- events come without each field that [protocol.md](protocol.md#events) marks as text, such as the `text` of `input`, `answer` and `text` events, the question and choices of `request`, the `before` and `after` of `input`, a `state`'s `detail`, a `file_out`'s `caption`, the `text` of `post_sent` and the `reason` of `post_cancelled`;
-- `Threads` and `Thread` leave out thread titles and names, the last line and `recent` output, and the text and choices of open requests, and `Thread` the reasons of cancelled posts;
+- events come without each field that [protocol.md](protocol.md#events) marks as text, such as the `text` of `input`, `answer` and `text` events, the question and choices of `request`, the `before` and `after` of `input`, a `state`'s `detail`, a `file_out`'s `caption`, the `text` of `post_sent` and the `reason` of `post_cancelled` and `post_refused`;
+- `Threads` and `Thread` leave out thread titles and names, the last line and `recent` output, and the text and choices of open requests, and `Thread` the reasons of cancelled and refused posts;
 - `hook` requests come without `text`, so a handler can stop an input or a post, or add text at `before_prompt_build`, but not read it;
 - `Terminal` and `HostScreen` are refused.
 
@@ -128,7 +128,7 @@ A handler fails, and its policy (`block` or `skip`) applies, when:
 - its plugin is not connected, while it starts, starts again or stays stopped: so by default a `before_agent_run` handler blocks input in its scopes until the plugin is back. An operator who prefers that work goes on sets that plugin's `on_failure` to `skip`;
 - its connection closes before it answers;
 - it answers with an error, `not_supported` too;
-- its answer is one the point does not allow, such as `stop` or `text` at `before_prompt_build`.
+- its answer is one the point does not allow, such as `stop` or `text` at `before_prompt_build`, or, at `message_sending`, a `text` with nothing in it for a post without files. A handler that wants nothing posted answers `stop`.
 
 ### The input points
 

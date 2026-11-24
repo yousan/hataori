@@ -8,7 +8,9 @@ import (
 	"mime/multipart"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -217,6 +219,47 @@ func TestPostChecksFilesFirst(t *testing.T) {
 	}
 	if n := r.called("POST "); n != 0 {
 		t.Fatalf("%d messages posted before the file was checked", n)
+	}
+}
+
+// What the driver refuses before it sends anything, it refuses for good; a
+// call with no answer, and a refusal that is not of the request, may pass.
+func TestWhatIsRefusedForGood(t *testing.T) {
+	d := testDriver(t, botID(t), newFakeREST(t), nil)
+	conv := surface.Conversation{Channel: "1", Thread: "2"}
+	choice := []surface.Choice{{Token: "t", Label: "l"}}
+	file := []surface.File{{Name: "f", Path: "f"}}
+	for name, c := range map[string]struct {
+		conv surface.Conversation
+		m    surface.Message
+	}{
+		"nothing to post":          {conv, surface.Message{}},
+		"no id":                    {surface.Conversation{Channel: "x"}, surface.Message{Text: "x"}},
+		"choices with files":       {conv, surface.Message{Text: "x", Choices: choice, Files: file}},
+		"a choice without a label": {conv, surface.Message{Text: "x", Choices: []surface.Choice{{Token: "t"}}}},
+		"too many files":           {conv, surface.Message{Text: "x", Files: slices.Repeat(file, maxFiles+1)}},
+		"an empty answer":          {conv, surface.Message{ReplyTo: &surface.MessageRef{Conv: conv, ID: commandReplyPrefix + "5"}}},
+	} {
+		if _, err := d.Post(context.Background(), c.conv, "", c.m); !errors.Is(err, surface.ErrRefused) {
+			t.Errorf("%s: %v is not refused for good", name, err)
+		}
+	}
+	for _, e := range []*Error{{Status: 400, Code: 50035}, {Status: 403, Code: 50001}, {Status: 404, Code: 10003}, {Status: 401, Code: 50027}} {
+		if !errors.Is(e, surface.ErrRefused) {
+			t.Errorf("%v is not refused for good", e)
+		}
+	}
+	for err, want := range map[error]bool{os.ErrNotExist: true, os.ErrPermission: true, errNotRegular: true,
+		syscall.EMFILE: false, syscall.EIO: false, syscall.ESTALE: false} {
+		if got := unreadable(&os.PathError{Op: "open", Path: "f", Err: err}); got != want {
+			t.Errorf("a file that fails to open with %v is refused for good: %v", err, got)
+		}
+	}
+	for _, err := range []error{wrap("post", errors.New("the answer broke off")), wrap("post", context.DeadlineExceeded),
+		&Error{Status: 401}, &Error{Status: 401, Code: 40001}, &Error{Status: 403}, &Error{Status: 403, Code: 40001}, &Error{Status: 429}, &Error{Status: 502}} {
+		if errors.Is(err, surface.ErrRefused) {
+			t.Errorf("%v is refused for good", err)
+		}
 	}
 }
 

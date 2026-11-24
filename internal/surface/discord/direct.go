@@ -52,7 +52,7 @@ func (d *Driver) OpenDirect(ctx context.Context, who string) (surface.Conversati
 // which removes the buttons and the menu of an edited message.
 func components(choices []surface.Choice, multi bool) ([]map[string]any, error) {
 	if len(choices) > maxChoices {
-		return nil, fmt.Errorf("discord: %d choices, at most %d fit in one message", len(choices), maxChoices)
+		return nil, refusal("post", "%d choices, at most %d fit in one message", len(choices), maxChoices)
 	}
 	if len(choices) == 0 {
 		return []map[string]any{}, nil
@@ -60,14 +60,14 @@ func components(choices []surface.Choice, multi bool) ([]map[string]any, error) 
 	seen := map[string]bool{}
 	for _, c := range choices {
 		if c.Token == "" || len(c.Token) > maxCustomID {
-			return nil, fmt.Errorf("discord: a choice's token must have 1 to %d bytes", maxCustomID)
+			return nil, refusal("post", "a choice's token must have 1 to %d bytes", maxCustomID)
 		}
 		if seen[c.Token] {
-			return nil, fmt.Errorf("discord: two choices have the token %q", c.Token)
+			return nil, refusal("post", "two choices have the token %q", c.Token)
 		}
 		seen[c.Token] = true
 		if strings.TrimSpace(c.Label) == "" {
-			return nil, fmt.Errorf("discord: the choice %q has no label", c.Token)
+			return nil, refusal("post", "the choice %q has no label", c.Token)
 		}
 	}
 	if multi {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,6 +69,69 @@ func (r *chatRoot) cancelledOf(t *testing.T, th surface.Conversation) []control.
 		t.Fatalf("hataori thread: %q: %v", out, err)
 	}
 	return l.Cancelled
+}
+
+// refusedOf is what `hataori thread` shows of thread th's refused posts.
+func (r *chatRoot) refusedOf(t *testing.T, th surface.Conversation) []control.RefusedPost {
+	t.Helper()
+	_, out, _ := cli(t, "thread", "--root", r.root, numberOf(t, r.root, th))
+	var l struct{ Refused []control.RefusedPost }
+	if err := json.Unmarshal([]byte(out), &l); err != nil {
+		t.Fatalf("hataori thread: %q: %v", out, err)
+	}
+	return l.Refused
+}
+
+// A handler that rewrites a post to nothing is skipped, or blocks the post
+// by its policy, and the posts behind it go on.
+func TestMessageSendingRewritesToNothing(t *testing.T) {
+	for _, block := range []bool{false, true} {
+		t.Run(map[bool]string{false: "skip", true: "block"}[block], func(t *testing.T) {
+			r, issue := outboxRoot(t, true, "", map[bool]string{false: "", true: "block"}[block])
+			startDaemon(t, r.root)
+			r.connected(t)
+			p := &fakePlugin{}
+			p.connect(t, r.root, *issue, func(q control.HookRequest) control.HookAnswer {
+				if q.Text == "EMPTY-ME" {
+					return control.HookAnswer{Action: control.HookContinue, Text: ptr("")}
+				}
+				return goOn(q)
+			})
+			th := r.order(t, 0, "!go repo:"+bareRepo(t)+" reply EMPTY-ME")
+			r.driver.Inject(th, fakesurface.Webhook(e2eHook), "reply after")
+			r.posted(t, th, "after")
+			c := r.cancelledOf(t, th)
+			if !block {
+				if r.count(th, "EMPTY-ME") != 1 || len(c) != 0 {
+					t.Fatalf("skipped: %d posts of EMPTY-ME, cancelled %+v", r.count(th, "EMPTY-ME"), c)
+				}
+				return
+			}
+			if r.count(th, "EMPTY-ME") != 0 || len(c) != 1 || !c[0].Failed || !strings.Contains(c[0].Reason, "nothing in it") {
+				t.Fatalf("blocked: %d posts of EMPTY-ME, cancelled %+v", r.count(th, "EMPTY-ME"), c)
+			}
+		})
+	}
+}
+
+// A post the chat service refuses for good does not hold back the ones
+// behind it, and `hataori thread` shows it with the reason.
+func TestARefusedPostIsShown(t *testing.T) {
+	r := newChatRoot(t, nil)
+	startDaemon(t, r.root)
+	r.connected(t)
+	th := r.order(t, 0, "!go repo:"+bareRepo(t)+" reply hello")
+	r.posted(t, th, "hello")
+	r.driver.Fail(fakesurface.OpPost, 1000, fmt.Errorf("post: no permission: %w", surface.ErrRefused))
+	r.driver.Inject(th, fakesurface.Webhook(e2eHook), "reply after")
+	eventually(t, "the refused post", r.within(15*time.Second), func() bool { return len(r.refusedOf(t, th)) > 0 })
+	r.driver.Fail(fakesurface.OpPost, 0, nil)
+	p := r.refusedOf(t, th)[0]
+	if p.Link.Thread != th.Thread || !strings.Contains(p.Reason, "no permission") || p.Time.IsZero() {
+		t.Fatalf("hataori thread shows %+v", p)
+	}
+	r.driver.Inject(th, fakesurface.Webhook(e2eHook), "reply last")
+	r.posted(t, th, "last")
 }
 
 // A handler rewrites one post and cancels another: the chat service gets

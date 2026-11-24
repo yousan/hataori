@@ -1,8 +1,14 @@
 package chat
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -193,5 +199,183 @@ func TestUnlinkedRowsOfAScope(t *testing.T) {
 	defer h.mu.Unlock()
 	if len(h.calls) != 1 || h.calls[0].Text != "status" || h.calls[0].Scope != "c1" || h.calls[0].Thread != 0 {
 		t.Fatalf("calls %+v", h.calls)
+	}
+}
+
+// noEmpty is the fake driver, except that it refuses a post with nothing to
+// post before it sends anything, as a driver of a service does.
+type noEmpty struct{ *fake.Driver }
+
+func (d noEmpty) Post(ctx context.Context, conv surface.Conversation, key string, m surface.Message) (surface.MessageRef, error) {
+	if m.Text == "" && len(m.Files) == 0 {
+		return surface.MessageRef{}, fmt.Errorf("nothing to post: %w", surface.ErrRefused)
+	}
+	return d.Driver.Post(ctx, conv, key, m)
+}
+
+// A message_sending handler that answers continue with an empty text must
+// not stop the thread's chat output: the rows behind that one are posted.
+func TestAnEmptyRewriteDoesNotHoldBackTheRowsBehindIt(t *testing.T) {
+	a := surface.Conversation{Channel: "c1", Thread: "a"}
+	st := newThread(t, t.TempDir(), map[string][]surface.Conversation{"f": {a}})
+	d := fake.New()
+	h := &script{answers: map[string]control.HookResult{"first": {Text: ""}}}
+	o := &Outbox{Store: st, Client: "f", Driver: noEmpty{d}, Hooks: h, Retry: 20 * time.Millisecond}
+	if err := o.Write(ctx, row(5, 0, a, "first"), row(6, 0, a, "second")); err != nil {
+		t.Fatal(err)
+	}
+	run(t, o)
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline) && !slices.Contains(postsIn(d, a), "second"); {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !slices.Contains(postsIn(d, a), "second") {
+		var state, hook, behind string
+		var failures int
+		var text any
+		st.DB.QueryRow(`SELECT state, hook, hook_text, failures FROM chat_outbox WHERE event = 5`).Scan(&state, &hook, &text, &failures)
+		st.DB.QueryRow(`SELECT state FROM chat_outbox WHERE event = 6`).Scan(&behind)
+		t.Fatalf("the row behind the rewritten one was not posted in 3s: posts %q; the rewritten row: state %q, hook %q, hook_text %q, %d failed posts; the row behind it: state %q; the handler was called %d time(s)",
+			postsIn(d, a), state, hook, text, failures, behind, len(h.got()))
+	}
+}
+
+// The outbox tells the hooks whether a post has files, which make it
+// something to post without a text.
+func TestHooksAreToldOfFiles(t *testing.T) {
+	a := surface.Conversation{Channel: "c1", Thread: "a"}
+	st := newThread(t, t.TempDir(), map[string][]surface.Conversation{"f": {a}})
+	d := fake.New()
+	h := &script{}
+	o := &Outbox{Store: st, Client: "f", Driver: d, Hooks: h}
+	with := row(6, 0, a, "with")
+	with.Message.Files = []surface.File{{Name: "f", Path: "/f"}}
+	if err := o.Write(ctx, row(5, 0, a, "without"), with); err != nil {
+		t.Fatal(err)
+	}
+	run(t, o)
+	waitFor(t, "both posts", func() bool { return len(postsIn(d, a)) == 2 })
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.calls) != 2 || h.calls[0].Files || !h.calls[1].Files {
+		t.Fatalf("calls %+v", h.calls)
+	}
+}
+
+// A reply the service refuses for good is given up after one try: the rows
+// behind it are posted, a reply to it without the reply, and the log and
+// one post_refused event say what happened.
+func TestARefusedReplyIsGivenUp(t *testing.T) {
+	a := surface.Conversation{Channel: "c1", Thread: "a"}
+	st := newThread(t, t.TempDir(), map[string][]surface.Conversation{"f": {a}})
+	d := fake.New()
+	d.Fail(fake.OpPost, 1, fmt.Errorf("post: no permission: %w", surface.ErrRefused))
+	var log bytes.Buffer
+	o := &Outbox{Store: st, Client: "f", Driver: d, Retry: 20 * time.Millisecond, Log: slog.New(slog.NewTextHandler(&log, nil))}
+	reply := row(6, 0, a, "second")
+	reply.ReplyToRow = &RowKey{Event: 5}
+	if err := o.Write(ctx, row(5, 0, a, "first"), reply); err != nil {
+		t.Fatal(err)
+	}
+	stop := run(t, o)
+	waitFor(t, "the row behind it", func() bool { return slices.Contains(postsIn(d, a), "second") })
+	waitFor(t, "nothing pending", func() bool {
+		var n int
+		st.DB.QueryRow(`SELECT count(*) FROM chat_outbox WHERE state = 'pending'`).Scan(&n)
+		return n == 0
+	})
+	stop()
+	var state string
+	var failures int
+	st.DB.QueryRow(`SELECT state, failures FROM chat_outbox WHERE event = 5`).Scan(&state, &failures)
+	if state != "dropped" || failures != 1 {
+		t.Fatalf("the refused row: %s, %d failed posts", state, failures)
+	}
+	rows, err := st.DB.Query(`SELECT thread_id, scope, data FROM events WHERE kind = 'post_refused'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		n++
+		var thread int64
+		var scope string
+		var data []byte
+		if err := rows.Scan(&thread, &scope, &data); err != nil {
+			t.Fatal(err)
+		}
+		var p control.RefusedPost
+		if err := json.Unmarshal(data, &p); err != nil {
+			t.Fatal(err)
+		}
+		if thread != 7 || scope != "c1" || p.Event != 5 || p.Link != (control.LinkRef{Client: "f", Channel: "c1", Thread: "a"}) || !strings.Contains(p.Reason, "no permission") {
+			t.Fatalf("post_refused %s of thread %d in %s", data, thread, scope)
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d post_refused events", n)
+	}
+	if got := strings.Count(log.String(), "refused a post"); got != 1 || !strings.Contains(log.String(), "no permission") {
+		t.Fatalf("%d log lines of the refused post:\n%s", got, log.String())
+	}
+}
+
+// A reply whose post fails with any other error is tried again, and holds
+// back the rows behind it until it is posted.
+func TestAReplyThatFailsForNowIsTriedAgain(t *testing.T) {
+	a := surface.Conversation{Channel: "c1", Thread: "a"}
+	st := newThread(t, t.TempDir(), map[string][]surface.Conversation{"f": {a}})
+	d := fake.New()
+	d.Fail(fake.OpPost, 5, errors.New("no answer"))
+	o := &Outbox{Store: st, Client: "f", Driver: d, Retry: 20 * time.Millisecond}
+	if err := o.Write(ctx, row(5, 0, a, "first"), row(6, 0, a, "second")); err != nil {
+		t.Fatal(err)
+	}
+	run(t, o)
+	waitFor(t, "both posts", func() bool { return slices.Contains(postsIn(d, a), "second") })
+	if got := postsIn(d, a); !slices.Equal(got[len(got)-2:], []string{"first", "second"}) {
+		t.Fatalf("posts %q", got)
+	}
+	var n int
+	st.DB.QueryRow(`SELECT count(*) FROM events WHERE kind = 'post_refused'`).Scan(&n)
+	if n != 0 {
+		t.Fatalf("%d post_refused events", n)
+	}
+}
+
+// halfway is the fake driver, except that the service takes the first
+// message of a post and refuses the next for good.
+type halfway struct{ *fake.Driver }
+
+func (d halfway) Post(ctx context.Context, conv surface.Conversation, key string, m surface.Message) (surface.MessageRef, error) {
+	ref, err := d.Driver.Post(ctx, conv, key, m)
+	if err == nil && m.Text == "first" {
+		err = fmt.Errorf("post: the file is too large: %w", surface.ErrRefused)
+	}
+	return ref, err
+}
+
+// A post of which the service took the first message and refused a later
+// one is given up too, and its post_refused event names what was posted.
+func TestAPartlyRefusedPostNamesItsFirstMessage(t *testing.T) {
+	a := surface.Conversation{Channel: "c1", Thread: "a"}
+	st := newThread(t, t.TempDir(), map[string][]surface.Conversation{"f": {a}})
+	d := fake.New()
+	o := &Outbox{Store: st, Client: "f", Driver: halfway{d}, Retry: 20 * time.Millisecond}
+	if err := o.Write(ctx, row(5, 0, a, "first"), row(6, 0, a, "second")); err != nil {
+		t.Fatal(err)
+	}
+	run(t, o)
+	waitFor(t, "the row behind it", func() bool { return slices.Contains(postsIn(d, a), "second") })
+	if got := postsIn(d, a); !slices.Equal(got, []string{"first", "second"}) {
+		t.Fatalf("posts %q", got)
+	}
+	var data []byte
+	if err := st.DB.QueryRow(`SELECT data FROM events WHERE kind = 'post_refused'`).Scan(&data); err != nil {
+		t.Fatal(err)
+	}
+	var p control.RefusedPost
+	if err := json.Unmarshal(data, &p); err != nil || p.Event != 5 || p.Message == "" {
+		t.Fatalf("post_refused %s, %v", data, err)
 	}
 }
