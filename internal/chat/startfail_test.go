@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/session"
+	"github.com/yousan/hataori/internal/store"
 	"github.com/yousan/hataori/internal/surface"
 	"github.com/yousan/hataori/internal/surface/fake"
 )
@@ -300,4 +302,66 @@ func TestAChoiceMadeElsewhereEndsTheButtons(t *testing.T) {
 			t.Errorf("%s: edits %q, want one that ends with %q", choice, got, want)
 		}
 	}
+}
+
+// What a session_replaced event says in the chat (#710): a session that a
+// choice replaced is said to be one only if it ran a turn, and one that the
+// agent lost always is. Each is said once, also when the start after a
+// choice is blocked in its turn.
+func TestAReplacedSessionsLine(t *testing.T) {
+	f := newFront(t, workspaces{})
+	id, _ := f.started(t)
+	f.showing(t)
+	replaced := func(old int, reason string) {
+		t.Helper()
+		b, _ := json.Marshal(map[string]any{"session": old, "new_session": old + 1, "reason": reason})
+		if err := f.fe.Outbox.Store.Update(context.Background(), func(tx *store.Tx) error {
+			_, err := tx.Append(context.Background(), control.Event{Thread: id, Kind: "session_replaced", Data: b})
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := "the prompt"
+	shows := func(line string) {
+		t.Helper()
+		want += "|" + line
+		var got string
+		waitFor(t, want, func() bool {
+			var posts []fake.Call
+			for _, c := range f.driver.Calls(f.conv(id)) {
+				if c.Op == fake.OpPost {
+					posts = append(posts, c)
+				}
+			}
+			got = texts(posts)
+			return strings.Count(got, "|") >= strings.Count(want, "|")
+		})
+		if got != want {
+			t.Fatalf("thread shows %q, want %q", got, want)
+		}
+	}
+	nothing := func() {
+		t.Helper()
+		// The next event's row comes after any of the replaced session's.
+		f.event(t, id, "reopened", map[string]any{"workspace": "kept", "conversation": "resume"})
+		shows(ReopenedLine)
+	}
+
+	replaced(1, "trusted") // before any turn
+	nothing()
+	replaced(1, "without project settings")
+	nothing()
+	turn(f, t, id, 1, "k")
+	ended(f, t, id, 1, "success", "")
+	replaced(1, "trusted") // blocked as it woke
+	shows(StartedAgainLine)
+	replaced(2, "without project settings") // blocked again before a turn
+	nothing()
+	replaced(1, "without project settings")
+	shows(StartedAgainLine)
+	replaced(1, "cannot resume")
+	shows(ReplacedLine)
+	replaced(9, "cannot resume") // before any turn, as today
+	shows(ReplacedLine)
 }

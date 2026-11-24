@@ -48,8 +48,12 @@ const (
 	// NewConversationLine: the next message starts a new conversation.
 	NewConversationLine = "The earlier conversation is not there, so the next message starts a new one in the same directory; the agent is told that this chat thread holds the earlier exchange."
 	// ReplacedLine is what a thread gets when the agent no longer has its
-	// conversation (the session_replaced event).
+	// conversation (the session_replaced event; see replacedLine).
 	ReplacedLine = "The agent no longer has this thread's conversation, so a new one starts in the same directory; the agent is told that this chat thread holds the earlier exchange."
+	// StartedAgainLine is what a thread gets whose wake files blocked, once
+	// a choice starts it again. It does not say what the agent is told: a
+	// thread woken without a message gets no earlier exchange.
+	StartedAgainLine = "The thread starts again in a new conversation, in the same directory."
 )
 
 func reopenChoice(thread control.ThreadID, message string) surface.Choice {

@@ -314,7 +314,11 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 	case "start_chosen":
 		return f.chosenRows(ctx, r, e, conv)
 	case "session_replaced":
-		return []Row{{Event: e.Pos, Conv: conv, Message: surface.Message{Text: ReplacedLine}}}, nil
+		line, err := r.replacedLine(ctx, e)
+		if err != nil || line == "" {
+			return nil, err
+		}
+		return []Row{{Event: e.Pos, Conv: conv, Message: surface.Message{Text: line}}}, nil
 	case "state":
 		// A session that ended before it started, whenever that was: also
 		// after the Start that made it returned (#589).
@@ -600,6 +604,32 @@ func (r *reader) turnKey(ctx context.Context, e control.Event) (key, by string, 
 		}
 	})
 	return r.turn[e.Thread], r.by[e.Thread], err
+}
+
+// replacedLine is the line e, a session_replaced event, gets: ReplacedLine,
+// or, when a choice started the thread again after files blocked its start
+// (#590), StartedAgainLine if the session blocked had run a turn, and so had
+// a conversation, and no line if it had not: there is nothing to say beyond
+// what chosenRows says.
+func (r *reader) replacedLine(ctx context.Context, e control.Event) (string, error) {
+	var d struct {
+		Session int64
+		Reason  string
+	}
+	json.Unmarshal(e.Data, &d)
+	switch control.StartChoice(d.Reason) {
+	case control.StartTrusted, control.StartWithoutSettings:
+	default:
+		return ReplacedLine, nil
+	}
+	ran := false
+	err := r.scan(ctx, e.Thread, e.Pos, func(ev control.Event) {
+		ran = ran || ev.Kind == "turn_started" && sessionOf(ev) == d.Session
+	})
+	if err != nil || !ran {
+		return "", err
+	}
+	return StartedAgainLine, nil
 }
 
 // repoOf returns the repository of thread id.

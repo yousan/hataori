@@ -319,6 +319,15 @@ func TestReopenWhenTheConversationIsGone(t *testing.T) {
 	if ev := r.events(t, "session_replaced", th); len(ev) != 1 {
 		t.Fatalf("session_replaced %v", ev)
 	}
+	lines := 0
+	for _, c := range r.driver.Calls(th) {
+		if c.Op == fakesurface.OpPost && c.Message.Text == chat.ReplacedLine {
+			lines++
+		}
+	}
+	if lines != 1 {
+		t.Fatalf("the line was posted %d times, want once", lines)
+	}
 	ss := r.starts(t)
 	if len(ss) != n+2 { // the resume that failed, and the new conversation
 		t.Fatalf("%d starts after the reopen, want 2", len(ss)-n)
