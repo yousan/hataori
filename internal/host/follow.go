@@ -415,6 +415,20 @@ type Attachment struct {
 	*TerminalStream
 	mu  sync.Mutex
 	enc *json.Encoder
+
+	reading sync.Mutex // held by Next, and by Close while it reads to the end
+	closed  bool       // Close read to the end; under reading
+}
+
+// Next is TerminalStream.Next; once Close reads to the end it returns
+// net.ErrClosed.
+func (a *Attachment) Next() (TerminalChunk, error) {
+	a.reading.Lock()
+	defer a.reading.Unlock()
+	if a.closed {
+		return TerminalChunk{}, net.ErrClosed
+	}
+	return a.TerminalStream.Next()
 }
 
 // Attach connects to the host listening on the socket sock, as
@@ -473,8 +487,10 @@ func (a *Attachment) Resize(cols, rows int) error {
 func (a *Attachment) Close() error {
 	if c, ok := a.conn.(*net.UnixConn); ok && c.CloseWrite() == nil {
 		c.SetReadDeadline(time.Now().Add(closeWait))
-		// Another reader may be in Next: between them they read to the end.
+		a.reading.Lock() // a Next under way returns with what comes, or at the deadline
+		a.closed = true
 		io.Copy(io.Discard, c)
+		a.reading.Unlock()
 	}
 	return a.conn.Close()
 }
