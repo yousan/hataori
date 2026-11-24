@@ -127,6 +127,74 @@ func TestTrustDialogWithTheHooksWarning(t *testing.T) {
 	}
 }
 
+// The line 2.1.331 prints above the dialog when its last full-screen start
+// did not finish (#707): the dialog below is read as it is without it, and
+// a refused one is quoted without it.
+func TestTrustDialogBelowTheFullscreenNotice(t *testing.T) {
+	trusted := agent.Spec{TrustFiles: []string{".claude/settings.json"}}
+	if keys, events := replayTrustOf(t, "2.1.331", "trust_notice_allowed", agent.Spec{}); keys != "down enter" || len(events) != 0 {
+		t.Fatalf("allowed: keys %q events %+v", keys, events)
+	}
+	keys, events := replayTrustOf(t, "2.1.331", "trust_notice_refused", agent.Spec{})
+	if keys != "" || len(events) != 1 || events[0].Reason != agent.BlockedAtStart ||
+		!slices.Equal(events[0].Trust, []string{".claude/settings.json"}) ||
+		!strings.Contains(events[0].Text, "Claude Code showed:\n> Claude Code'll be able to read") ||
+		strings.Contains(events[0].Text, "fullscreen") {
+		t.Fatalf("refused: keys %q events %+v", keys, events)
+	}
+	// The refused capture ends with the dialog: only the first key goes.
+	if keys, events := replayTrustOf(t, "2.1.331", "trust_notice_refused", trusted); keys != "down" || len(events) != 0 {
+		t.Fatalf("refused capture, trusted: keys %q events %+v", keys, events)
+	}
+}
+
+// Only that line, once, right above the dialog's top rule: the captured
+// dialog with anything else above the rule, or with a line added below it,
+// is a screen the codec does not know.
+func TestNoticeAboveTheTrustDialogShapes(t *testing.T) {
+	const dir = "/tmp/capture-work/sessions/trust_notice_allowed"
+	var b []byte
+	for i := 1; i <= 6; i++ { // the dialog, with the cursor on "No, exit"
+		b = append(b, readScreen(t, fmt.Sprintf("testdata/2.1.331/trust_notice_allowed/screen-%02d.raw", i))...)
+	}
+	screen, ok := renderScreen(b)
+	if !ok || len(screen) == 0 || strings.TrimSpace(screen[0]) != fullscreenNotice {
+		t.Fatalf("rendered %v, first line %q", ok, screen[:min(1, len(screen))])
+	}
+	rule := slices.IndexFunc(screen, func(l string) bool { return isRule(strings.TrimSpace(l)) })
+	header := slices.IndexFunc(screen, func(l string) bool { return strings.TrimSpace(l) == "Accessing workspace:" })
+	if rule < 1 || header != rule+1 {
+		t.Fatalf("rule on line %d, header on %d", rule, header)
+	}
+	notice, dialog := screen[:rule], screen[rule:]
+	const other = "Claude Code's fullscreen renderer has repeatedly failed to start on this machine, so it has been turned off here. " +
+		"Run /tui fullscreen to try it again (this also resets after an update)."
+	for _, tc := range []struct {
+		name   string
+		screen []string
+		ok     bool
+	}{
+		{"as captured", screen, true},
+		{"without the notice", dialog, true},
+		{"another line in its place", slices.Concat([]string{other}, dialog), false},
+		{"a line above it", slices.Concat([]string{"x"}, screen), false},
+		{"a line between it and the rule", slices.Concat(notice, []string{"x"}, dialog), false},
+		{"the notice twice", slices.Concat(notice, screen), false},
+		{"more on its line", slices.Concat([]string{fullscreenNotice + " x"}, dialog), false},
+		{"only a part of it", slices.Concat([]string{fullscreenNotice[:40]}, dialog), false},
+		{"no rule below it", slices.Concat(notice, dialog[1:]), false},
+		{"a line below the rule", slices.Concat(notice, dialog[:1], []string{"x"}, dialog[1:]), false},
+		{"the notice below the rule", slices.Concat(dialog[:1], notice, dialog[1:]), false},
+		{"the notice on both sides of the rule", slices.Concat(notice, dialog[:1], notice, dialog[1:]), false},
+		{"a line below the header", slices.Concat(notice, dialog[:2], []string{"x"}, dialog[2:]), false},
+	} {
+		cursor, yes, files, ok := trustDialog(tc.screen, dir)
+		if ok != tc.ok || (ok && (cursor != 0 || yes != 1 || len(files) != 0)) {
+			t.Errorf("%s: ok %v, cursor %d, yes %d, files %q; want ok %v", tc.name, ok, cursor, yes, files, tc.ok)
+		}
+	}
+}
+
 // Only the warning's known shape is read: one that names a file the dialog
 // does not load, or says something else, leaves the dialog unanswered.
 func TestHooksWarningShapes(t *testing.T) {
