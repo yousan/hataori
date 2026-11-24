@@ -5,8 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"time"
 
+	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/supervisor"
 	"github.com/yousan/hataori/internal/version"
 	"github.com/yousan/hataori/internal/wire"
@@ -41,6 +44,18 @@ func mcpMain(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		Scope:     *scope,
 		OutputMax: *max,
 		Version:   version.String(),
+	}
+	if report, socket := getenv(agent.MCPReportEnv), getenv(host.HookEnvVar); report != "" && socket != "" {
+		// The agent's adapter asked to be told when the agent has the tools.
+		// Not handed over, the first input waits for its deadline instead;
+		// the server goes on answering meanwhile.
+		m.Listed = func() {
+			go func() {
+				if _, err := host.Call(socket, []byte(report), false, 5*time.Second); err != nil {
+					fmt.Fprintln(stderr, "hataori mcp: the report that the agent has the tools:", err)
+				}
+			}()
+		}
 	}
 	if err := m.Serve(ctx, stdin, stdout); err != nil && ctx.Err() == nil {
 		fmt.Fprintln(stderr, "hataori mcp:", err)

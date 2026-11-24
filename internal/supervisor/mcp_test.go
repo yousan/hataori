@@ -49,6 +49,25 @@ func toolNames(t *testing.T, result any) []string {
 	return names
 }
 
+// Listed is called once, after the first answer to tools/list was written,
+// and not for one that asks for anything else.
+func TestListedAfterTheFirstToolsList(t *testing.T) {
+	client, err := os.ReadFile(filepath.Join(captured, "client.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	var at []string // what was answered when it was called
+	m := &MCP{Dial: func() (control.API, error) { return nil, errors.New("no daemon in this test") }, Scope: "C0123", Version: "test",
+		Listed: func() { at = append(at, out.String()) }}
+	if err := m.Serve(context.Background(), bytes.NewReader(bytes.Repeat(client, 2)), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(at) != 1 || !strings.HasSuffix(at[0], "\n") || !strings.Contains(at[0][strings.LastIndex(at[0][:len(at[0])-1], "\n")+1:], `"tools":[`) {
+		t.Fatalf("called %d times, after %.400q", len(at), at)
+	}
+}
+
 // What Claude Code sent is answered as it was then: every request gets one
 // answer with its id, initialize in the version Claude Code asked for and
 // with the server's instructions (#653), and tools/list with the tools

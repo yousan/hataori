@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/yousan/hataori/internal/agent"
+	"github.com/yousan/hataori/internal/host"
 )
 
 var update = flag.Bool("update", false, "rewrite the golden files of the launch")
@@ -163,6 +165,28 @@ func TestConfinedLaunch(t *testing.T) {
 	l, err := a.Launch(s)
 	if err != nil || !l.Confined || string(l.Files[MCPConfigFile]) != "{\n  \"mcpServers\": {}\n}" {
 		t.Fatalf("no servers: %v %s", err, l.Files[MCPConfigFile])
+	}
+	// One that reports gets the session's socket and what it reports, beside
+	// its own environment; the spec's own list stays as it is.
+	own := append(make([]string, 0, 8), "HATAORI_TOKEN=t0k=en")
+	s.Confine = &agent.Confinement{MCP: []agent.MCPServer{{Name: "hataori", Argv: []string{"x"}, Env: own, Reports: true}, {Name: "other", Argv: []string{"y"}}}}
+	l, err = a.Launch(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		MCPServers map[string]struct{ Env map[string]string }
+	}
+	if err := json.Unmarshal(l.Files[MCPConfigFile], &cfg); err != nil {
+		t.Fatal(err)
+	}
+	_, socket, _ := strings.Cut(host.HookEnv(s.StateDir), "=")
+	if got, want := cfg.MCPServers["hataori"].Env, map[string]string{"HATAORI_TOKEN": "t0k=en", host.HookEnvVar: socket,
+		agent.MCPReportEnv: `{"hook_event_name":"hataori:mcp","server":"hataori"}`}; !maps.Equal(got, want) {
+		t.Errorf("the reporting server's environment %q, want %q", got, want)
+	}
+	if got := cfg.MCPServers["other"].Env; len(got) != 0 {
+		t.Errorf("the other server's environment %q", got)
 	}
 	for _, bad := range []agent.MCPServer{{Name: "", Argv: []string{"x"}}, {Name: "x"}, {Name: "x", Argv: []string{"x"}, Env: []string{"NOEQUALS"}}} {
 		s.Confine = &agent.Confinement{MCP: []agent.MCPServer{bad}}

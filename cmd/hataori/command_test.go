@@ -50,6 +50,8 @@ func TestMain(m *testing.M) {
 			os.Exit(codexLogin(os.Args[1:]))
 		case "app-server":
 			os.Exit(codexReplay(os.Args[2:]))
+		case "claude-standin":
+			os.Exit(claudeStandin(os.Args[2:]))
 		case "fake":
 			os.Exit(fake.Main(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 		case "codex-standin":

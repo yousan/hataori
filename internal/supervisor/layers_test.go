@@ -81,6 +81,9 @@ func TestUserFilesSkippedAndNotFollowed(t *testing.T) {
 	if !strings.Contains(c.Instructions, "## AGENTS.md\n\nHow to work here.\n@../outside.md\n") {
 		t.Fatalf("AGENTS.md is not given as text:\n%s", c.Instructions)
 	}
+	if len(c.MCP) != 1 || !c.MCP[0].Reports {
+		t.Fatalf("MCP servers %+v, want one that reports", c.MCP)
+	}
 	if strings.Contains(c.Instructions, "MARKER") {
 		t.Fatalf("a file that is skipped, or that an import names, is given:\n%s", c.Instructions)
 	}

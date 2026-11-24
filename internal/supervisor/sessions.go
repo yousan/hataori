@@ -163,7 +163,7 @@ func (s *Sessions) Confine(ctx context.Context, l runner.ConfinedLaunch) (runner
 	}
 	s.CopyDocs(ctx, l.Scope, l.Thread)
 	return runner.Confined{
-		MCP:          []agent.MCPServer{{Name: MCPName, Argv: s.mcp(l.Scope), Env: []string{TokenEnv + "=" + token}}},
+		MCP:          []agent.MCPServer{{Name: MCPName, Argv: s.mcp(l.Scope), Env: []string{TokenEnv + "=" + token}, Reports: true}},
 		Instructions: Compose(sv, files),
 	}, nil
 }
