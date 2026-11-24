@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -316,6 +317,10 @@ func (f *repoFixture) recordFilter(dir, driver, command string) string {
 func TestStateRunsNoFilterOfASubmodule(t *testing.T) {
 	for name, add := range map[string]func(f *repoFixture) string{
 		"submodule": func(f *repoFixture) string { return f.addSubmodule(f.clone, "sub") },
+		"second submodule": func(f *repoFixture) string {
+			f.addSubmodule(f.clone, "first")
+			return f.addSubmodule(f.clone, "second")
+		},
 		"submodule of a submodule": func(f *repoFixture) string {
 			sub := f.addSubmodule(f.clone, "sub")
 			inner := f.addSubmodule(sub, "inner")
@@ -325,7 +330,8 @@ func TestStateRunsNoFilterOfASubmodule(t *testing.T) {
 		"gitlink with no .gitmodules": func(f *repoFixture) string {
 			dir := filepath.Join(f.clone, "own")
 			f.git(f.home, "clone", "-q", f.bare, dir)
-			os.Rename(filepath.Join(dir, "a"), filepath.Join(dir, "s"))
+			os.Remove(filepath.Join(dir, "a"))
+			os.WriteFile(filepath.Join(dir, "s"), []byte("s\n"), 0o600)
 			f.git(dir, "add", "-A")
 			f.git(dir, "commit", "-q", "-m", "s")
 			f.git(f.clone, "-c", "advice.addEmbeddedRepo=false", "add", "own")
@@ -355,6 +361,7 @@ func TestStateRunsNoFilterOfASubmodule(t *testing.T) {
 				f := newRepo(t)
 				dir := add(f)
 				ran := f.recordFilter(dir, "x", command)
+				// Of the size the index has, or git does not read it.
 				if err := os.WriteFile(filepath.Join(dir, "s"), []byte("t\n"), 0o600); err != nil {
 					t.Fatal(err)
 				}
@@ -444,24 +451,77 @@ func TestDisarmWithASubmoduleThatLinksToItsOwnRepository(t *testing.T) {
 
 // git's -c takes the first "=" for the end of the key, and would turn off
 // another filter.
-func TestStateRefusesAFilterItCannotTurnOff(t *testing.T) {
-	f := newRepo(t)
-	ran := f.recordFilter(f.clone, "x=y", "clean")
-	f.write("a", "changed here\n")
-	st, err := f.state()
-	if _, rerr := os.Lstat(ran); rerr == nil {
-		t.Fatal("a filter ran")
-	}
-	if err == nil || st != (control.WorkspaceState{}) {
-		t.Fatalf("%+v, %v", st, err)
+func TestStateRunsNoFilterWithAnEqualsSignInItsName(t *testing.T) {
+	for name, dir := range map[string]func(f *repoFixture) string{
+		"workspace": func(f *repoFixture) string { return f.clone },
+		"submodule": func(f *repoFixture) string { return f.addSubmodule(f.clone, "sub") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newRepo(t)
+			dir := dir(f)
+			file := filepath.Join(dir, f.git(dir, "ls-files", "a", "s"))
+			old, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ran := f.recordFilter(dir, "x=y", "clean")
+			f.git(dir, "config", "filter.x=y.process", "touch "+ran+"; exit 1")
+			os.WriteFile(file, bytes.Repeat([]byte("t"), len(old)), 0o600)
+			st, err := f.state()
+			if _, rerr := os.Lstat(ran); rerr == nil {
+				t.Fatal("a filter ran")
+			}
+			if err != nil || st.Uncommitted != 1 {
+				t.Errorf("%+v, %v", st, err)
+			}
+		})
 	}
 }
 
-func TestStateRefusesAPartialCloneAsASubmodule(t *testing.T) {
+// git fails when it may not run a required filter.
+func TestStateCountsAFileUnderARequiredFilterOfASubmodule(t *testing.T) {
 	f := newRepo(t)
-	f.git(f.addSubmodule(f.clone, "sub"), "config", "remote.origin.promisor", "true")
-	if st, err := f.state(); err == nil || st != (control.WorkspaceState{}) {
-		t.Fatalf("%+v, %v", st, err)
+	sub := f.addSubmodule(f.clone, "sub")
+	ran := f.recordFilter(sub, "x", "clean")
+	f.git(sub, "config", "filter.x.required", "true")
+	os.WriteFile(filepath.Join(sub, "s"), []byte("t\n"), 0o600)
+	if st := f.mustState(); st.Uncommitted != 1 {
+		t.Errorf("%+v", st)
+	}
+	if _, err := os.Lstat(ran); err == nil {
+		t.Fatal("a filter ran")
+	}
+}
+
+// The submodules of a submodule are in its work tree, not in its directory.
+func TestStateRefusesASubmoduleWithItsWorkTreeElsewhere(t *testing.T) {
+	for name, set := range map[string]func(f *repoFixture) (sub, top string){
+		"another directory": func(f *repoFixture) (string, string) {
+			return f.addSubmodule(f.clone, "sub"), filepath.Join(f.home, "elsewhere")
+		},
+		"the workspace": func(f *repoFixture) (string, string) {
+			return f.addSubmodule(f.clone, "sub"), f.clone
+		},
+		"submodule of a submodule": func(f *repoFixture) (string, string) {
+			return f.addSubmodule(f.addSubmodule(f.clone, "outer"), "sub"), filepath.Join(f.home, "elsewhere")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newRepo(t)
+			sub, top := set(f)
+			f.addSubmodule(sub, "inner")
+			f.git(f.home, "clone", "-q", filepath.Join(f.home, "inner.git"), filepath.Join(top, "inner"))
+			ran := f.recordFilter(filepath.Join(top, "inner"), "x", "clean")
+			os.WriteFile(filepath.Join(top, "inner", "s"), []byte("t\n"), 0o600)
+			f.git(sub, "config", "core.worktree", top)
+			st, err := f.state()
+			if _, rerr := os.Lstat(ran); rerr == nil {
+				t.Fatal("a filter ran")
+			}
+			if err == nil || st != (control.WorkspaceState{}) {
+				t.Fatalf("%+v, %v", st, err)
+			}
+		})
 	}
 }
 

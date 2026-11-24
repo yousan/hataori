@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,7 +27,7 @@ import (
 //
 // It changes nothing in dir: git runs with optional locks off, so not even
 // the index's cached file times are written, no filter driver runs, and it
-// never asks a remote: a partial clone is refused. That holds in submodules.
+// never asks a remote: a partial clone is refused.
 // A directory that is not the top of a repository, and any git failure,
 // is an error: the numbers are never guessed.
 func (m Maker) State(ctx context.Context, dir string) (control.WorkspaceState, error) {
@@ -117,46 +118,85 @@ type reader struct {
 	extra []string // options for every git command after the first
 }
 
-// disarm reads the configuration of the repository and of the submodules
-// below it, in which git diff and git status run git status, and refuses what
-// would make git write or ask a remote: a partial clone, which fetches missing
-// objects on demand. It turns off every filter driver, whose clean command
-// diff and status would run on changed files and which can do anything. git
-// hands the options to its commands in submodules.
+// disarm reads the repository's configuration and refuses what would make
+// git write or ask a remote: a partial clone, which fetches missing objects
+// on demand. It turns off every filter driver, whose clean command diff and
+// status would run on changed files and which can do anything: the ones that
+// the submodules below configure too, as git runs git status there and hands
+// it these options.
 func (g *reader) disarm(ctx context.Context) error {
-	names := map[string]bool{}
-	if err := g.filters(ctx, names, map[string]bool{g.dir: true}); err != nil {
-		return err
-	}
-	for name := range names {
-		if strings.Contains(name, "=") { // -c would take it for the key's end
-			return fmt.Errorf("workspace: %s: filter %q cannot be turned off", g.dir, name)
-		}
-		g.extra = append(g.extra, "-c", "filter."+name+".clean=", "-c", "filter."+name+".process=")
-	}
-	return nil
-}
-
-// filters adds the names of the filter drivers that the repository and the
-// submodules below it configure, and refuses a partial clone. Directories in
-// seen have been read.
-func (g reader) filters(ctx context.Context, names, seen map[string]bool) error {
 	// Exit 1: none is set.
-	out, code, err := g.run(ctx, "config", "--null", "--get-regexp", `^(filter\..*\.(clean|process)|extensions\.partialclone|remote\..*\.promisor)$`)
+	out, code, err := g.run(ctx, "config", "--null", "--get-regexp", `^(extensions\.partialclone|remote\..*\.promisor)$`)
 	if err != nil && code != 1 {
 		return err
 	}
 	for _, kv := range strings.Split(string(out), "\x00") {
 		key, value, _ := strings.Cut(kv, "\n")
-		switch {
-		case key == "":
-		case key == "extensions.partialclone",
-			strings.HasSuffix(key, ".promisor") && isTrue(value):
+		if key == "extensions.partialclone" || strings.HasSuffix(key, ".promisor") && isTrue(value) {
 			return fmt.Errorf("workspace: %s is a partial clone, which git may complete from the remote", g.dir)
-		case strings.HasPrefix(key, "filter."):
-			names[key[len("filter."):strings.LastIndex(key, ".")]] = true
 		}
 	}
+	own, err := g.filters(ctx)
+	if err != nil {
+		return err
+	}
+	g.turnOff(own)
+	names := map[string]bool{}
+	if err := g.submoduleFilters(ctx, names, map[string]bool{g.dir: true}); err != nil {
+		return err
+	}
+	for _, name := range own {
+		delete(names, name)
+	}
+	below := slices.Collect(maps.Keys(names))
+	g.turnOff(below)
+	for _, name := range below {
+		// git would fail on a changed file under a filter that is required.
+		g.set("filter."+name+".required", "false")
+	}
+	return nil
+}
+
+// turnOff makes every later git command, and the ones git runs in
+// submodules, run no filter driver of these names.
+func (g *reader) turnOff(names []string) {
+	for _, name := range names {
+		g.set("filter."+name+".clean", "")
+		g.set("filter."+name+".process", "")
+	}
+}
+
+// set gives every later git command a configuration value.
+func (g *reader) set(key, value string) {
+	if strings.Contains(key, "=") { // -c would end the key there
+		env := fmt.Sprintf("HATAORI_GIT_VALUE_%d", len(g.extra))
+		g.env = append(slices.Clip(g.env), env+"="+value)
+		g.extra = append(g.extra, "--config-env="+key+"="+env)
+		return
+	}
+	g.extra = append(g.extra, "-c", key+"="+value)
+}
+
+// filters are the names of the filter drivers that the repository's
+// configuration has a command for.
+func (g reader) filters(ctx context.Context) ([]string, error) {
+	// Exit 1: none is set.
+	out, code, err := g.run(ctx, "config", "--null", "--name-only", "--get-regexp", `^filter\..*\.(clean|process)$`)
+	if err != nil && code != 1 {
+		return nil, err
+	}
+	var names []string
+	for _, key := range strings.Split(string(out), "\x00") {
+		if key != "" {
+			names = append(names, key[len("filter."):strings.LastIndex(key, ".")])
+		}
+	}
+	return names, nil
+}
+
+// submoduleFilters adds the filters of the submodules below the repository
+// to names. Directories in seen have been read.
+func (g reader) submoduleFilters(ctx context.Context, names, seen map[string]bool) error {
 	links, err := g.gitlinks(ctx)
 	if err != nil {
 		return err
@@ -176,9 +216,25 @@ func (g reader) filters(ctx context.Context, names, seen map[string]bool) error 
 			continue
 		}
 		seen[dir] = true
-		// git runs git status there in this environment.
+		// git runs git status there with this GIT_DIR.
 		sub := reader{dir: dir, env: append(slices.Clip(g.env), "GIT_DIR=.git")}
-		if err := sub.filters(ctx, names, seen); err != nil {
+		// Its own submodules are below its work tree, which core.worktree
+		// can put elsewhere.
+		at, _, err := sub.run(ctx, "rev-parse", "--is-inside-work-tree", "--show-prefix")
+		if err != nil {
+			return err
+		}
+		if string(at) != "true\n\n" {
+			return fmt.Errorf("workspace: the work tree of the submodule at %s is elsewhere", dir)
+		}
+		filters, err := sub.filters(ctx)
+		if err != nil {
+			return err
+		}
+		for _, name := range filters {
+			names[name] = true
+		}
+		if err := sub.submoduleFilters(ctx, names, seen); err != nil {
 			return err
 		}
 	}

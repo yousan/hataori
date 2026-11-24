@@ -618,7 +618,8 @@ func TestCheckRunsNoFilterOfARepositoryBelow(t *testing.T) {
 				t.Fatal(err)
 			}
 			file := filepath.Join(dir, "s")
-			if err := os.WriteFile(file, []byte("work that is committed nowhere\n"), 0o600); err != nil {
+			// Of the size the index has, or git does not read it.
+			if err := os.WriteFile(file, []byte("t\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			err := x.check()
