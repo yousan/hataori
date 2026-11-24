@@ -39,6 +39,9 @@ type request struct {
 // withdrawAll withdraws every waiting question: the CLI went on without
 // its answer (the turn ended, was interrupted, or the session ended).
 func (c *codec) withdrawAll() Actions {
+	for _, t := range c.turns {
+		t.goOn()
+	}
 	ids := make([]string, 0, len(c.requests))
 	for id := range c.requests {
 		ids = append(ids, id)

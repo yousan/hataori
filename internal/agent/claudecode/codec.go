@@ -90,6 +90,33 @@ type turnText struct {
 	usage    map[string]tokens // the usage of each model message of the turn, by message id
 	model    string            // the model of the latest of them
 	reported agent.UsageCount  // the last Usage event produced for the turn
+
+	// A question splits the prompt's turn in two for the core: the question
+	// ends its turn, and what the CLI does after the answer is the next one.
+	// Each reports its own usage only.
+	asking string           // the tool use id of the question the CLI waits in, or ""
+	total  agent.UsageCount // the usage read of the prompt
+	base   agent.UsageCount // what of it belongs to the core's turns before the current one
+}
+
+// ask notes that the CLI waits in a question. Until it goes on, usage still
+// belongs to the turn that asked: the message that asks may be read later
+// than the question.
+func (t *turnText) ask(toolUseID string) {
+	t.goOn() // a question before it whose end no hook reported
+	t.asking = toolUseID
+}
+
+// goOn notes that the CLI went on after a question: what it uses from here
+// on is the next turn's. The hooks and lines read say so, never the answer
+// given or a deadline, so that reading them again after a restart gives the
+// same counts.
+func (t *turnText) goOn() {
+	if t.asking == "" {
+		return
+	}
+	t.asking = ""
+	t.base, t.reported = t.total, agent.UsageCount{Model: t.model}
 }
 
 // tokens is the usage of one model message, as the transcript gives it.
@@ -620,6 +647,10 @@ func (c *codec) usageOf(l transcriptLine) Actions {
 // session's last ended turn, which is this one at least until the agent
 // reports its next prompt: a caller's input may open the core's next turn
 // before that, but nothing ends it.
+//
+// While the CLI waits in a question it reports Late too: the question ended
+// the core's turn. The answer opens the next one, and nothing ends that
+// before the CLI goes on.
 func (c *codec) reportUsage(t *turnText) Actions {
 	if len(t.usage) == 0 || (t.ended && (t != c.lastEnded || c.running)) {
 		return Actions{}
@@ -635,11 +666,16 @@ func (c *codec) reportUsage(t *turnText) Actions {
 			n.CacheWrite += *u.CacheWrite
 		}
 	}
+	t.total = n
+	n.Input = max(0, n.Input-t.base.Input)
+	n.Output = max(0, n.Output-t.base.Output)
+	n.CacheRead = max(0, n.CacheRead-t.base.CacheRead)
+	n.CacheWrite = max(0, n.CacheWrite-t.base.CacheWrite)
 	if n == t.reported {
 		return Actions{}
 	}
 	t.reported = n
-	return c.events(agent.Event{Kind: agent.Usage, Usage: &n, Late: t.ended})
+	return c.events(agent.Event{Kind: agent.Usage, Usage: &n, Late: t.ended || t.asking != ""})
 }
 
 func (c *codec) item(it textItem) Actions {
@@ -762,13 +798,20 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 			if !k.Wait {
 				return Actions{} // the duplicate the settings file registers; the waiting call is the question
 			}
-			return c.question(k, p)
+			a := c.question(k, p)
+			if p.PromptID != "" && len(a.Events) == 1 && a.Events[0].Kind == agent.Request {
+				c.turn(p.PromptID).ask(p.ToolUseID)
+			}
+			return a
 		}
 		// agent_id is set in the hooks of a subagent's own tools, as in
 		// its SubagentStart, and absent for the main agent's.
 		return c.events(agent.Event{Kind: agent.ToolStarted, ID: p.ToolUseID, Tool: p.ToolName, Parent: p.AgentID})
 	case "PostToolUse", "PostToolUseFailure":
 		if p.ToolName == askTool {
+			if t := c.turns[p.PromptID]; t != nil && t.asking == p.ToolUseID {
+				t.goOn()
+			}
 			return c.withdrawTool(p.ToolUseID) // answered some other way, or refused
 		}
 		return c.events(agent.Event{Kind: agent.ToolEnded, ID: p.ToolUseID, Tool: p.ToolName, Parent: p.AgentID})
