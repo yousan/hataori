@@ -14,6 +14,7 @@ import (
 
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/people"
+	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
 	"github.com/yousan/hataori/internal/surface"
 )
@@ -607,16 +608,13 @@ func (f *FrontEnd) followUp(in surface.Inbound) error {
 		return nil // not a hataori thread
 	}
 	id := t.ID
-	if t.State == control.Failed {
-		// Its session cannot take input; the message is not for later.
-		f.Log.Warn("follow-up ignored", "reason", "the thread is "+string(t.State), "scope", conv.Channel,
-			"thread", conv.Thread, "message", in.Ref.ID)
-		return nil
+	if done, err := f.failedAnswered(ctx, in); done || err != nil {
+		return err // it was said not to be sent, so it is not, also when a choice started the thread again since
 	}
 	// The key makes a second delivery one input; a running turn gets it
 	// delivered, an open question gets it as the answer. Whether the author
 	// may give input at all, the core decides too, and it refuses input to a
-	// closed thread, which a message does not wake.
+	// closed thread, which a message does not wake, and to a failed one.
 	if err := f.rememberSender(ctx, in.Ref.ID, sender{lamp: "message", msg: in.Ref, ping: pingOf(in.Author)}); err != nil {
 		return err
 	}
@@ -632,6 +630,17 @@ func (f *FrontEnd) followUp(in surface.Inbound) error {
 	}
 	if errors.Is(err, control.ErrStopped) {
 		return f.refusedNotice(ctx, in, "Not sent to the agent: "+StoppedLine(err)) // the core logged it
+	}
+	if errors.Is(err, session.ErrRefused) {
+		now, ok, terr := f.threadIn(ctx, api, conv)
+		if terr != nil {
+			return terr
+		}
+		if ok && now.ID == id && now.State == control.Failed {
+			f.Log.Warn("follow-up ignored", "reason", "the thread is failed", "scope", conv.Channel,
+				"thread", conv.Thread, "message", in.Ref.ID)
+			return f.failedReply(ctx, in, now)
+		}
 	}
 	if err != nil {
 		f.Log.Error("follow-up: send failed", "scope", conv.Channel, "thread", conv.Thread, "message", in.Ref.ID, "err", err)

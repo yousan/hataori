@@ -2093,7 +2093,8 @@ func forAgent(in control.Input) control.Input {
 // sendHooks runs the input hook points for in, a Send of key to thread id
 // in scope (inputHooks), unless the key was accepted before or the thread
 // is closed: the Send then takes nothing, and a hook runs once for one
-// accepted input, also when the input is given again after a restart.
+// accepted input, also when the input is given again after a restart. A
+// failed thread's Send is refused.
 // The caller holds the key's lock.
 func (a *api) sendHooks(ctx context.Context, id control.ThreadID, scope, key string, in control.Input) (control.Input, error) {
 	in.Before, in.After = "", ""
@@ -2112,6 +2113,12 @@ func (a *api) sendHooks(ctx context.Context, id control.ThreadID, scope, key str
 	sid, state, err := a.c.current(ctx, a.c.Store.DB, id)
 	if err == nil && (state == control.Closed || state == control.Removed) {
 		return in, nil
+	}
+	if err == nil && state == control.Failed {
+		// Refused here, so that no hook runs for it; not left to the
+		// transaction, which would take it without its hooks should the
+		// thread be started again in between.
+		return in, fmt.Errorf("core: send to %v: the thread is failed: %w", id, session.ErrRefused)
 	}
 	if err == nil && state == control.Waiting && !a.caller.NoAnswer {
 		var open int
