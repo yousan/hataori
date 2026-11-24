@@ -8,6 +8,7 @@ Real output of the interactive `claude` CLI, for testing the adapter's codec. Th
 - `2.1.328/`: Claude Code 2.1.328, on 2026-11-20 (also in `2.1.328/VERSION`), on Linux: `paste_tabs`, taken for #393, and the `trust_files_*` scenarios, taken for #423 (see below).
 - `2.1.329/`: Claude Code 2.1.329, on 2026-11-21 (also in `2.1.329/VERSION`), on Linux: `trust_hooks_*` and `trust_permissions`, taken for #592 (see below).
 - `2.1.330/`: Claude Code 2.1.330, on 2026-11-23 (also in `2.1.330/VERSION`), on Linux: `usage`, taken by `capture.py` for #675, with the transcript's line count at each hook call (see below).
+- `2.1.331/`: Claude Code 2.1.331, on 2026-11-25 (also in `2.1.331/VERSION`), on Linux: `held_notification`, taken by `capture.py` for #593.
 - `capture.py` took them (`confine.py`, the `confine_*` ones); `scrub.py` made them committable. `captures_test.go` in the package fails when a capture holds a home directory path, an e-mail address, an unscrubbed UUID or something shaped like a token.
 
 ## How they were taken
@@ -51,6 +52,7 @@ In transcripts, lines that carry the session's context rather than the conversat
 | `question` | ask with `AskUserQuestion`, two options | `PreToolUse` for `AskUserQuestion` (answered by the hook), `PostToolUse` with the answers, `Stop` with the chosen option | |
 | `background` | start `sleep 8` in the background, do not wait | `Stop` with one task in `background_tasks` (`running`), then `UserPromptSubmit` with a `<task-notification>` prompt, then `Stop` with an empty list | |
 | `subagent` | start one general-purpose subagent | `PreToolUse`/`PostToolUse` of the Agent tool, `SubagentStart`, `SubagentStop`, `Stop`, then a `<task-notification>` `UserPromptSubmit` | a turn with a subagent, and the subagent's own transcript (`subagent-agent-<id>.jsonl`) |
+| `held_notification` (2.1.331) | start `sleep 8` in the background; 3 s after the turn's `Stop`, one bracketed paste without Enter; Enter 1.5 s after the next turn's `Stop` | `Stop` with one task running, a `SubagentStop` of the CLI's own, `UserPromptSubmit` with a `<task-notification>` prompt (the turn that starts while the paste is in the input box; it runs an 8 s command), its `Stop`, then one `UserPromptSubmit` with the pasted text, under a prompt id of its own, and its `Stop` | the paste is the next user message after the agent's own turn |
 | `paste` | one bracketed paste of 4,463 characters in 102 lines (leading `-`, trailing `;`, Japanese, backticks, quotes, `$HOME`) | `UserPromptSubmit` with the text inside a `<pasted_content>` tag | |
 | `interrupt` | run a 45-second foreground command; Escape 3 s after its `PreToolUse` | `PreToolUse`, `PermissionRequest`, then nothing until `SessionEnd`: no `PostToolUse`, no `Stop` | an interrupted turn, ending with the `[Request interrupted by user for tool use]` line |
 | `compact` | one typed turn, then `/compact` | `PreCompact` (`trigger: manual`), `SubagentStop` (the summarising agent, empty `agent_type`), `SessionStart` (`source: compact`), `PostCompact` | a compaction |

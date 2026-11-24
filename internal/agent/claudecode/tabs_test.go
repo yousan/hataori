@@ -103,6 +103,10 @@ func TestPromptMatchForgivesOnlyTabsTrimAndLineEndings(t *testing.T) {
 			t.Errorf("input %q, prompt %q: %s, want %s", tc.input, tc.prompt, got, want)
 			continue
 		}
+		// The turn of a prompt that is not the input ends first.
+		end := []byte(`{"hook":"s","wait":false,"payload":{"hook_event_name":"Stop"}}`)
+		c.Decode(agent.Hook, end)
+		c.Tick(now.Add(time.Minute))
 		late := c.Tick(now.Add(time.Hour))
 		failed := len(late.Events) == 1 && late.Events[0].Reason == agent.NotDelivered && late.Events[0].Input == "in-1"
 		if tc.match == failed {
