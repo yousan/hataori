@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.35**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.36**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -747,6 +747,7 @@ One file the owner let through with `Trust`; since 3.28.
 | `context` | `Context` | optional | the last context use the agent reported; absent until it reports one; since 1.8 |
 | `tokens` | `TokenCount` | optional | the thread's tokens; absent until the agent reports usage; since 1.8 |
 | `terminal` | string | optional | the terminal device the agent of its current session runs in, as its session host opened it, such as `/dev/pts/3` or `/dev/ttys003`; absent for a session on pipes, while the thread is asleep, closed, removed or failed, once the agent's command has exited, while its session host does not answer within a second, and for a session host started before 1.12 until the session's next start; not text; since 1.12 |
+| `confined` | boolean | optional | it was started confined, as a scope's supervisor thread is: its directory is the scope's, not a workspace with a repository, so `Workspace` has nothing to read there and fails; since 3.36 |
 
 ### Type `ThreadDetail`
 
@@ -773,6 +774,7 @@ The fields of `ThreadInfo`, and:
 | `context` | `Context` | optional | as in `ThreadInfo` |
 | `tokens` | `TokenCount` | optional | as in `ThreadInfo` |
 | `terminal` | string | optional | as in `ThreadInfo` |
+| `confined` | boolean | optional | as in `ThreadInfo` |
 | `requests` | [`Request`] | required | the open questions and approvals; open approvals asked here are listed whatever the thread state, and since 3.26 so are the open proposals shown here, and the approved ones whose outcome is not stored yet, as approvals with the choices Approve and Refuse; may be `null` |
 | `recent` | string | required | the end of its last output, at most the bytes asked for: its `text` events in order, each a whole message of the agent, with a blank line (`\n\n`) between two of them, also between two turns; cut at the start of a character, and with no part of a blank line left at the cut. Before 3.12 the messages were joined with nothing between them, and the cut could fall inside a character |
 | `events` | [`Event`] | optional | its last events, as many as `events` asked for, newest last, each as `Events` delivers it; since 1.5 |

@@ -32,6 +32,8 @@ var (
 		State: control.Running, StartedBy: "webhook:W1", Created: exampleTime, Updated: exampleTime,
 		Agent: "claude-code", Model: "opus", Effort: "high", Turns: 12, Last: "Running the tests...", Background: 1,
 		Context: &control.Context{Used: 45000, Size: 200000}, Tokens: &control.TokenCount{Turn: 2450, Today: 98000}, Terminal: "/dev/pts/3"}
+	exampleConfined = control.ThreadInfo{ID: 2, Scope: "C0123", Links: []control.LinkRef{{Client: "discord", Channel: "C0123", Thread: "T0455"}}, Title: "Supervisor of this channel",
+		State: control.Idle, StartedBy: "owner", Created: exampleTime, Updated: exampleTime, Confined: true}
 )
 
 // eventData is an example of every event kind's data.
@@ -137,7 +139,7 @@ func examples(t *testing.T) map[string]any {
 		"End": endArgs{},
 	}
 	results := map[string]any{
-		"Threads": []control.ThreadInfo{exampleInfo},
+		"Threads": []control.ThreadInfo{exampleInfo, exampleConfined},
 		"Thread": control.ThreadDetail{ThreadInfo: exampleInfo, Recent: "Reading the code.\n\nRunning the tests...",
 			Cancelled: []control.CancelledPost{{Time: exampleTime, Link: exampleLink, Event: 41, Part: 0, Plugin: "secret-scan",
 				Failed: true, Edit: true, Reason: "The post holds a secret."}},

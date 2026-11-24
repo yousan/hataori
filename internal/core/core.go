@@ -983,7 +983,7 @@ func cut(s string, n int) string {
 	return s[:n]
 }
 
-const threadSelect = `SELECT id, scope, title, repo, started_by, state, created_at, updated_at FROM threads`
+const threadSelect = `SELECT id, scope, title, repo, started_by, state, created_at, updated_at, confined FROM threads`
 
 func scanThread(row interface{ Scan(...any) error }) (control.ThreadInfo, error) {
 	var (
@@ -991,7 +991,7 @@ func scanThread(row interface{ Scan(...any) error }) (control.ThreadInfo, error)
 		by, state  string
 		created, u int64
 	)
-	if err := row.Scan(&t.ID, &t.Scope, &t.Title, &t.Repo, &by, &state, &created, &u); err != nil {
+	if err := row.Scan(&t.ID, &t.Scope, &t.Title, &t.Repo, &by, &state, &created, &u, &t.Confined); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return t, fmt.Errorf("core: thread: %w", ErrNotFound)
 		}
