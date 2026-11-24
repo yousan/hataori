@@ -524,6 +524,47 @@ func (r *Runner) waitEnded(ctx context.Context, dir string, d time.Duration) boo
 	return true
 }
 
+// endEarlier returns once the earlier run of session id, whose state
+// directory is dir, has ended: a wake was accepted and not begun, so what
+// runs there is the agent that was put to sleep, or closed. One that runs
+// is stopped: a daemon that stopped while that agent was still read after
+// its sleep (usageDrain), or before the stop reached its host, has not
+// stopped it, and stopSleepers does not see it: the session is creating
+// (#713). Either way its host records the end a little after the
+// agent is gone (it drains the output and lets its followers finish), and
+// the end is waited for, hostEndWait at most (#549).
+func (r *Runner) endEarlier(ctx context.Context, id int64, dir string) error {
+	stopped := make(chan struct{})
+	if r.alive(dir).State == holder.Running {
+		go func() {
+			defer close(stopped)
+			if _, err := r.stop(dir, time.Second, 2*time.Second); err != nil {
+				r.Log.Warn("stopping the agent of an earlier run", "session", id, "err", err)
+			}
+		}()
+	} else {
+		close(stopped)
+	}
+	deadline := time.After(r.hostEndWait())
+	ended := r.waitEnded(ctx, dir, r.hostEndWait())
+	if ended {
+		// A stop that still ran could reach the agent about to be started.
+		select {
+		case <-stopped:
+			return nil
+		case <-deadline:
+		case <-ctx.Done():
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if ended {
+		return fmt.Errorf("runner: session %d: stopping its earlier agent has not ended after %v", id, r.hostEndWait())
+	}
+	return fmt.Errorf("runner: session %d: its host is still running after %v", id, r.hostEndWait())
+}
+
 func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 	// The agent that was put to sleep must be gone, and read to its end,
 	// before another starts in the same state directory.
@@ -578,19 +619,19 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 		}
 		first.Context = earlier + first.Context
 	}
+	if t, ok := takenOf(s.Spec.StateDir); ok {
+		// Left by a take-in that ended another way: the new agent's input
+		// must not go to the window. Before the earlier run is ended, as
+		// its relay host goes after the window's record.
+		if err := r.letGo(ctx, id, s.Spec.StateDir, t, nil); err != nil {
+			return fmt.Errorf("runner: session %d: %w", id, err)
+		}
+	}
 	// launch = 2: a daemon that died had begun this launch, after the old
 	// host was gone; a host running now is the new one.
 	if launching != 2 {
-		// A host records its end a little after its agent is gone (it drains
-		// the output and lets its followers finish), and a daemon started
-		// again has no old run to wait for (Recover): it waits for the end
-		// here, as a wake in the daemon that put the session to sleep waits
-		// for the old run (#549).
-		if !r.waitEnded(ctx, s.Spec.StateDir, r.hostEndWait()) {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			return fmt.Errorf("runner: session %d: its host is still running after %v", id, r.hostEndWait())
+		if err := r.endEarlier(ctx, id, s.Spec.StateDir); err != nil {
+			return err
 		}
 		// A held window whose end a daemon that died did not see through:
 		// its relay host and window go before another start.
@@ -615,13 +656,6 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 	// daemon ended it without the machine doing so.
 	if _, err := r.Store.DB.ExecContext(ctx, `DELETE FROM session_files WHERE session_id = ? AND aside = 1`, id); err != nil {
 		return fmt.Errorf("runner: session %d: %w", id, err)
-	}
-	if t, ok := takenOf(s.Spec.StateDir); ok {
-		// Left by a take-in that ended another way: the new agent's input
-		// must not go to the window.
-		if err := r.letGo(ctx, id, s.Spec.StateDir, t, nil); err != nil {
-			return fmt.Errorf("runner: session %d: %w", id, err)
-		}
 	}
 	spec := s.Spec
 	spec.ResumeID = resumeID // "" for a new conversation
