@@ -285,6 +285,75 @@ func (s *server) before(n int, do string) string {
 	return p
 }
 
+// A person's session may have any name.
+func TestAWindowInASessionNamedWithSpaces(t *testing.T) {
+	for _, name := range []string{"作業\u3000メモ", "a\tb", "a\u00a0b", "a  b", " a ", "a\u2028b", "\u3000", ""} {
+		t.Run(fmt.Sprintf("%q", name), func(t *testing.T) {
+			s := newServer(t)
+			w, _ := s.reader()
+			h := &Holder{}
+			s.run("new-window", "-d", "-t", "t", "exec sleep 600") // keeps the server
+			if out, err := exec.Command(s.tmux, "-S", s.sock, "rename-session", "-t", "t", name).CombinedOutput(); strings.Contains(string(out), "invalid session") {
+				t.Skip("no such name in this tmux") // a tab since 3.7; none in some
+			} else if err != nil {
+				t.Fatalf("%v: %s", err, out)
+			}
+			if err := h.CheckTakeIn(t.Context(), w); err != nil {
+				t.Errorf("the take-in check: %v", err)
+			}
+			if l, err := h.Alive(t.Context(), w); err != nil || l.State != holder.Running {
+				t.Errorf("Alive: %+v %v", l, err)
+			}
+			r, err := parseRef(w)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p, err := h.find(t.Context(), r)
+			if got := s.run("-u", "display-message", "-p", "-t", r.Pane, "x#{session_name}x"); err != nil || "x"+p.session+"x" != strings.ReplaceAll(got, " ", "_") {
+				t.Errorf("the session: %q %v, tmux says %q", p.session, err, got)
+			}
+			if err := h.Input(t.Context(), w, []agent.Part{{Key: agent.Enter}}); err != nil {
+				t.Errorf("Input: %v", err)
+			}
+			s.run("kill-pane", "-t", r.Pane)
+			if l, err := h.Alive(t.Context(), w); err != nil || l.State != holder.Gone {
+				t.Errorf("Alive after it closed: %+v %v", l, err)
+			}
+		})
+	}
+}
+
+// A name with a newline does not read as the line of a pane, its own or
+// another's. tmux up to 3.1 prints it as it is, later ones escape it, and
+// since 3.7 there is no such name.
+func TestASessionsNameIsNoPane(t *testing.T) {
+	s := newServer(t)
+	w, _ := s.reader()
+	r, err := parseRef(w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One listed before the window's own session, one after it, and its own.
+	for _, name := range []string{"0", "z", "t"} {
+		if name != "t" {
+			s.run("new-session", "-d", "-s", name, "exec sleep 600")
+		}
+		id := s.run("display-message", "-p", "-t", "="+name+":", "#{session_id}")
+		for _, sep := range []string{" ", "\t", "\u3000"} {
+			line := strings.ReplaceAll(fmt.Sprintf("%d %s /dev/pts/1 80 24 1 1 x0 - z", r.Server, r.Pane), " ", sep)
+			if out, err := exec.Command(s.tmux, "-S", s.sock, "rename-session", "-t", id, name+"\n"+line).CombinedOutput(); strings.Contains(string(out), "invalid session") {
+				t.Skip("no such name in this tmux")
+			} else if err != nil {
+				t.Fatalf("%v: %s", err, out)
+			}
+			p, err := (&Holder{}).find(t.Context(), r)
+			if err != nil || p.dead || p.pid == 1 {
+				t.Errorf("a session %q with the line %q: %+v %v", name, line, p, err)
+			}
+		}
+	}
+}
+
 // The pane may enter a mode at any moment, also between any two of the
 // holder's commands: the whole input arrives, or it is refused and nothing
 // of it does.
