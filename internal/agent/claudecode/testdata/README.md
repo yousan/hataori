@@ -8,7 +8,7 @@ Real output of the interactive `claude` CLI, for testing the adapter's codec. Th
 - `2.1.328/`: Claude Code 2.1.328, on 2026-11-20 (also in `2.1.328/VERSION`), on Linux: `paste_tabs`, taken for #393, and the `trust_files_*` scenarios, taken for #423 (see below).
 - `2.1.329/`: Claude Code 2.1.329, on 2026-11-21 (also in `2.1.329/VERSION`), on Linux: `trust_hooks_*` and `trust_permissions`, taken for #592 (see below).
 - `2.1.330/`: Claude Code 2.1.330, on 2026-11-23 (also in `2.1.330/VERSION`), on Linux: `usage`, taken by `capture.py` for #675, with the transcript's line count at each hook call (see below).
-- `2.1.331/`: Claude Code 2.1.331, on 2026-11-25 (also in `2.1.331/VERSION`), on Linux: `held_notification`, taken by `capture.py` for #593, and `trust_notice_*`, taken by `TestLiveTrustFiles` for #707 (see "The folder-trust dialog below a notice").
+- `2.1.331/`: Claude Code 2.1.331, on 2026-11-25 (also in `2.1.331/VERSION`), on Linux: `held_notification`, taken by `capture.py` for #593, `trust_notice_*`, taken by `TestLiveTrustFiles` for #707 (see "The folder-trust dialog below a notice"), and `trust_permissions_*`, taken by it for #596 (see "The folder-trust dialog with a permission warning").
 - `capture.py` took them (`confine.py`, the `confine_*` ones); `scrub.py` made them committable. `captures_test.go` in the package fails when a capture holds a home directory path, an e-mail address, an unscrubbed UUID or something shaped like a token.
 
 ## How they were taken
@@ -280,7 +280,7 @@ HATAORI_REAL_CLAUDE=1 HATAORI_CAPTURE_DIR=<raw dir> HATAORI_CAPTURE_ONLY=trust_p
 |---|---|---|---|---|
 | `trust_hooks_refused` | `.claude/settings.json` with a `SessionStart` hook | ordinary, no `TrustFiles` | `⚠ This folder configures hooks that can run commands without asking, declared in .claude/settings.json`, then `Trusting this folder loads .claude/settings.json (runs commands).` | no key; one `SessionEnded`, `blocked at start`, naming the file, with the warning quoted. No hook ran. |
 | `trust_hooks_allowed` | the same | ordinary, `TrustFiles: [".claude/settings.json"]` | the same | Down, then Enter; `SessionStart` followed |
-| `trust_permissions` | `.claude/settings.json` allowing `Bash(ls:*)` | ordinary, `TrustFiles: [".claude/settings.json"]` | `⚠ This folder pre-approves 1 tool permission in .claude/settings.json:`, `Bash(ls:*)`, `These will apply without asking. Only proceed if you trust this configuration.`, then `Trusting this folder loads .claude/settings.json.` | nothing: a screen the codec does not know, so no key and no event within 15 s; such a start fails at the start timeout |
+| `trust_permissions` | `.claude/settings.json` allowing `Bash(ls:*)` | ordinary, `TrustFiles: [".claude/settings.json"]` | `⚠ This folder pre-approves 1 tool permission in .claude/settings.json:`, `Bash(ls:*)`, `These will apply without asking. Only proceed if you trust this configuration.`, then `Trusting this folder loads .claude/settings.json.` | nothing, as the codec of that time did not know the screen: no key and no event within 15 s. It reads it since #596. |
 
 Each holds the screens, `keys.txt`, `events.txt` and, when the CLI started, `hooks/`.
 
@@ -296,3 +296,18 @@ The CLI prints one line before it draws anything, "Claude Code's fullscreen rend
 | `trust_notice_refused` | `.claude/settings.json` | ordinary, no `TrustFiles` | no key; one `SessionEnded`, `blocked at start`, naming the file, quoting the dialog without the notice. No hook ran. |
 
 After a second such start the CLI prints another line once, "... has repeatedly failed to start on this machine, so it has been turned off here. ..." (seen by hand, not kept). The codec does not know that one.
+
+## The folder-trust dialog with a permission warning (2.1.331, taken for #596)
+
+`2.1.331/trust_permissions_*/`, taken by `TestLiveTrustFiles` as above with `HATAORI_CAPTURE_ONLY=trust_permissions`, then `scrub.py`.
+
+| Scenario | Workspace | Spec | What the codec did |
+|---|---|---|---|
+| `trust_permissions_refused` | `.claude/settings.json` allowing `Bash(ls:*)` | ordinary, no `TrustFiles` | no key; one `SessionEnded`, `blocked at start`, naming the file, with the warning, the rule and its sentence quoted. No hook ran. |
+| `trust_permissions_allowed` | the same | ordinary, `TrustFiles: [".claude/settings.json"]` | Down, then Enter; `SessionStart` followed |
+| `trust_permissions_both` | both settings files, with ten rules, one of them `Trusting this folder loads x.` | ordinary, `TrustFiles` naming both | Down, then Enter; `SessionStart` followed |
+| `trust_permissions_dirs` | `.claude/settings.json` allowing a tool and naming `additionalDirectories` | ordinary, `TrustFiles: [".claude/settings.json"]` | nothing: a second warning stands between the rules and the sentence, which the codec does not know. No key and no event within 15 s. |
+
+The rules are on the line below the warning: up to eight, each cut at a width with `…`, then `, and N more`. Their text is the repository's. The warning counts every rule of every file; a rule written twice is shown once. On a short terminal the dialog is drawn without its blank lines.
+
+Seen by hand on the same version, not kept: with hooks as well, the hooks warning follows the permission warning's sentence. The codec reads either warning alone, not the two together.

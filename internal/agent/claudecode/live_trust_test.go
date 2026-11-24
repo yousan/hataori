@@ -45,10 +45,13 @@ func TestLiveTrustFiles(t *testing.T) {
 	// A status line, a hook and environment: what a supervisor could plant.
 	local := `{"statusLine": {"type": "command", "command": "true"}, "env": {"X": "1"},` +
 		` "hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "true"}]}]}}` + "\n"
-	// Hooks in the project settings, and a tool permission they allow: the
-	// warnings 2.1.329 draws above the line naming the files (#592).
+	// Hooks in the project settings, and tools they allow: the warnings
+	// 2.1.329 draws above the line naming the files (#592, #596).
 	hooks := `{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "true"}]}]}}` + "\n"
 	permissions := `{"permissions": {"allow": ["Bash(ls:*)"]}}` + "\n"
+	many := `{"permissions": {"allow": ["Bash(ls:*)", "Trusting this folder loads x.", "Read(/etc/**)", "Bash(a, b and c)",` +
+		` "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)", "Bash(git status:*)", "Bash(cat:*)"]}}` + "\n"
+	dirs := `{"permissions": {"allow": ["Bash(ls:*)"], "additionalDirectories": ["/etc"]}}` + "\n"
 	for _, tc := range []struct {
 		name     string
 		files    map[string]string
@@ -62,7 +65,15 @@ func TestLiveTrustFiles(t *testing.T) {
 		{"trust_hooks_refused", map[string]string{".claude/settings.json": hooks}, agent.Spec{}, false, false},
 		{"trust_hooks_allowed", map[string]string{".claude/settings.json": hooks},
 			agent.Spec{TrustFiles: []string{".claude/settings.json"}}, true, false},
-		{"trust_permissions", map[string]string{".claude/settings.json": permissions},
+		{"trust_permissions_refused", map[string]string{".claude/settings.json": permissions}, agent.Spec{}, false, false},
+		{"trust_permissions_allowed", map[string]string{".claude/settings.json": permissions},
+			agent.Spec{TrustFiles: []string{".claude/settings.json"}}, true, false},
+		// Two files, more rules than the dialog shows, and one that writes
+		// the dialog's own line.
+		{"trust_permissions_both", map[string]string{".claude/settings.json": many, ".claude/settings.local.json": permissions},
+			agent.Spec{TrustFiles: []string{".claude/settings.json", ".claude/settings.local.json"}}, true, false},
+		// Another warning below the permissions: not known.
+		{"trust_permissions_dirs", map[string]string{".claude/settings.json": dirs},
 			agent.Spec{TrustFiles: []string{".claude/settings.json"}}, false, true},
 		{"trust_files_refused", map[string]string{".claude/settings.json": settings}, agent.Spec{}, false, false},
 		{"trust_files_allowed", map[string]string{".claude/settings.json": settings},

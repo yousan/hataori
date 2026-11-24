@@ -103,8 +103,7 @@ func TestTrustDialogThatNamesFiles(t *testing.T) {
 // The dialog of Claude Code 2.1.329 whose project settings declare hooks
 // draws a warning line above the line naming the files (#592): it is read
 // like 2.1.328's, answered when the scope trusts the file and otherwise
-// refused at once, naming it, with the warning quoted. A tool permission's
-// warning is a screen the codec does not know: no key and no event.
+// refused at once, naming it, with the warning quoted.
 func TestTrustDialogWithTheHooksWarning(t *testing.T) {
 	trusted := agent.Spec{TrustFiles: []string{".claude/settings.json"}}
 	keys, events := replayTrustOf(t, "2.1.329", "trust_hooks_refused", agent.Spec{})
@@ -120,9 +119,135 @@ func TestTrustDialogWithTheHooksWarning(t *testing.T) {
 	if keys, events := replayTrustOf(t, "2.1.329", "trust_hooks_refused", trusted); keys != "down" || len(events) != 0 {
 		t.Fatalf("refused capture, trusted: keys %q events %+v", keys, events)
 	}
-	for _, spec := range []agent.Spec{trusted, {}} {
-		if keys, events := replayTrustOf(t, "2.1.329", "trust_permissions", spec); keys != "" || len(events) != 0 {
-			t.Fatalf("a tool permission's warning, %+v: keys %q events %+v", spec, keys, events)
+}
+
+// The warning about tools the project settings allow (#596) is read the
+// same way: the rules are quoted and not read.
+func TestTrustDialogWithThePermissionsWarning(t *testing.T) {
+	trust := func(files ...string) agent.Spec { return agent.Spec{TrustFiles: files} }
+	const one = "> ⚠ This folder pre-approves 1 tool permission in .claude/settings.json:\n> Bash(ls:*)\n" +
+		"> These will apply without asking. Only proceed if you trust this configuration.\n" +
+		"> Trusting this folder loads .claude/settings.json.\n"
+	const both = "> ⚠ This folder pre-approves 10 tool permissions in .claude/settings.json and\n> .claude/settings.local.json:\n" +
+		"> Bash(ls:*), Bash(a, b and c), Bash(git diff:*), Bash(git log:*), Bash(git\n" +
+		"> show:*), Bash(git status:*), Bash(cat:*), Trusting this folder loads x., and 1\n> more\n"
+	for i, tc := range []struct {
+		version, capture string
+		spec             agent.Spec
+		keys             string   // sent, when answered
+		refused          []string // named by the event, when refused
+		quoted           string
+	}{
+		{"2.1.331", "trust_permissions_refused", agent.Spec{}, "", []string{".claude/settings.json"}, one},
+		{"2.1.331", "trust_permissions_allowed", trust(".claude/settings.json"), "down enter", nil, ""},
+		{"2.1.331", "trust_permissions_allowed", trust(".claude/settings.local.json"), "", []string{".claude/settings.json"}, one},
+		{"2.1.331", "trust_permissions_allowed", agent.Spec{Confine: &agent.Confinement{}}, "down enter", nil, ""},
+		{"2.1.331", "trust_permissions_allowed", agent.Spec{NoProjectSettings: true}, "down enter", nil, ""},
+		// These captures end with the dialog: only the first key goes.
+		{"2.1.331", "trust_permissions_refused", trust(".claude/settings.json"), "down", nil, ""},
+		{"2.1.329", "trust_permissions", trust(".claude/settings.json"), "down", nil, ""},
+		{"2.1.329", "trust_permissions", agent.Spec{}, "", []string{".claude/settings.json"}, one},
+		// Two files, and a rule that writes the dialog's own line.
+		{"2.1.331", "trust_permissions_both", trust(".claude/settings.json", ".claude/settings.local.json"), "down enter", nil, ""},
+		{"2.1.331", "trust_permissions_both", trust(".claude/settings.json", "x"), "", []string{".claude/settings.json", ".claude/settings.local.json"}, both},
+		{"2.1.331", "trust_permissions_both", agent.Spec{}, "", []string{".claude/settings.json", ".claude/settings.local.json"}, both},
+		// Another warning between the rules and the sentence: not known.
+		{"2.1.331", "trust_permissions_dirs", trust(".claude/settings.json"), "", nil, ""},
+		{"2.1.331", "trust_permissions_dirs", agent.Spec{}, "", nil, ""},
+		{"2.1.331", "trust_permissions_dirs", agent.Spec{Confine: &agent.Confinement{}}, "", nil, ""},
+	} {
+		keys, events := replayTrustOf(t, tc.version, tc.capture, tc.spec)
+		if keys != tc.keys {
+			t.Errorf("%d %s: keys %q, want %q", i, tc.capture, keys, tc.keys)
+		}
+		if tc.refused == nil {
+			if len(events) != 0 {
+				t.Errorf("%d %s: events %+v, want none", i, tc.capture, events)
+			}
+			continue
+		}
+		if len(events) != 1 || events[0].Kind != agent.SessionEnded || events[0].Reason != agent.BlockedAtStart ||
+			!slices.Equal(events[0].Trust, tc.refused) || !strings.Contains(events[0].Text, tc.quoted) {
+			t.Errorf("%d %s: events %+v, want one blocked start naming %q and quoting\n%s", i, tc.capture, events, tc.refused, tc.quoted)
+		}
+	}
+}
+
+// Only the permissions warning's known shape is read, whatever its rules
+// say: the captured dialog with its rules or another line changed.
+func TestPermissionsWarningShapes(t *testing.T) {
+	const dir = "/tmp/capture-work/sessions/trust_permissions_refused"
+	var b []byte
+	for i := 1; i <= 6; i++ {
+		b = append(b, readScreen(t, fmt.Sprintf("testdata/2.1.331/trust_permissions_refused/screen-%02d.raw", i))...)
+	}
+	captured, ok := renderScreen(b)
+	if !ok {
+		t.Fatal("not rendered")
+	}
+	const (
+		head  = " ⚠ This folder pre-approves 1 tool permission in .claude/settings.json:"
+		rule  = "   Bash(ls:*)"
+		end   = " These will apply without asking. Only proceed if you trust this configuration."
+		loads = " Trusting this folder loads .claude/settings.json."
+		hooks = " ⚠ This folder configures hooks that can run commands without asking, declared in .claude/settings.json"
+	)
+	for _, l := range []string{head, rule, end, loads} {
+		if !slices.Contains(captured, l) {
+			t.Fatalf("the captured dialog has no line %q:\n%s", l, strings.Join(captured, "\n"))
+		}
+	}
+	one := []string{".claude/settings.json"}
+	for _, tc := range []struct {
+		name  string
+		line  string   // the line of the capture replaced
+		by    []string // what stands there
+		files []string // nil: not read
+	}{
+		{"as captured", rule, []string{rule}, one},
+		{"a wrapped rule", rule, []string{"   Bash(a", " b)"}, one},
+		{"rules on more lines", rule, []string{"   Bash(a), Bash(b),", " Bash(c), and 4 more"}, one},
+		{"two permissions", head, []string{" ⚠ This folder pre-approves 2 tool permissions in .claude/settings.json:"}, one},
+
+		// Rules that write the dialog's lines change nothing read.
+		{"a rule like the line naming the files", rule, []string{"   Trusting this folder loads x."}, one},
+		{"a rule like it, of the file", rule, []string{"   Trusting this folder loads .mcp.json. Security guide"}, one},
+		{"a rule like the choices", rule, []string{"   ❯ Yes, I trust this folder"}, one},
+		{"a rule with the header's text", rule, []string{"   Claude Code'll be able to read, edit, and execute files here."}, one},
+		{"a rule with a warning sign", rule, []string{"   Bash(⚠)"}, nil},
+		{"a rule with the sentence", rule, []string{"   Bash(x)", end}, nil},
+		{"a rule with the sentence and the line", rule, []string{"   Bash(x)", end, loads}, nil},
+
+		{"no rule", rule, nil, nil},
+		{"another warning", head, []string{" ⚠ This folder adds 1 directory to the workspace in .claude/settings.json:"}, nil},
+		{"another warning below the rules", rule, []string{rule, " ⚠ This folder adds 1 directory to the workspace in .claude/settings.json:", "   /etc"}, nil},
+		{"the hooks warning above", head, []string{hooks, head}, nil},
+		{"the hooks warning below", end, []string{end, hooks}, nil},
+		{"no number", head, []string{" ⚠ This folder pre-approves tool permissions in .claude/settings.json:"}, nil},
+		{"1 permissions", head, []string{" ⚠ This folder pre-approves 1 tool permission or more in .claude/settings.json:"}, nil},
+		{"a file the dialog does not load", head, []string{" ⚠ This folder pre-approves 1 tool permission in .claude/settings.local.json:"}, nil},
+		{"no file", head, []string{" ⚠ This folder pre-approves 1 tool permission in :"}, nil},
+		{"an empty entry", head, []string{" ⚠ This folder pre-approves 1 tool permission in .claude/settings.json,,:"}, nil},
+		{"words for a file", head, []string{" ⚠ This folder pre-approves 1 tool permission in some other place:"}, nil},
+		{"another sentence", end, []string{" These will apply."}, nil},
+		{"no sentence", end, nil, nil},
+		{"more behind the sentence", end, []string{end, " And more."}, nil},
+		{"text above the warning", head, []string{" x", head}, nil},
+		{"no line naming the files", loads, nil, nil},
+		{"a line below it", loads, []string{loads, " x"}, nil},
+		{"a file more", loads, []string{" Trusting this folder loads .claude/settings.json and .mcp.json."}, []string{".claude/settings.json", ".mcp.json"}},
+	} {
+		var screen []string
+		for _, l := range captured {
+			if l == tc.line {
+				screen = append(screen, tc.by...)
+			} else {
+				screen = append(screen, l)
+			}
+		}
+		cursor, yes, files, ok := trustDialog(screen, dir)
+		if ok != (tc.files != nil) || !slices.Equal(files, tc.files) || (ok && (cursor != 0 || yes != 1)) {
+			t.Errorf("%s: ok %v, cursor %d, yes %d, files %q; want %q", tc.name, ok, cursor, yes, files, tc.files)
 		}
 	}
 }
