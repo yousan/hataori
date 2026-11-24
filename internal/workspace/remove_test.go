@@ -567,6 +567,14 @@ func TestRefuseWhatASubmoduleWithoutCheckoutHolds(t *testing.T) {
 	}
 }
 
+// git rm leaves the index and core.worktree: git did not empty this one.
+func TestRefuseEveryFileRemovedInASubmoduleRemovedWithGitRm(t *testing.T) {
+	x := newRemoval(t)
+	x.git(x.withSubmodule(), "rm", "-q", "-r", ".")
+	withoutCheckout["git rm"](x)
+	wantRefusal(t, x.check(), Staged, filepath.Join(".git", "modules", "sub"))
+}
+
 // The git directory that git rm left, moved to where git says nothing about
 // it, still has those of its own submodules.
 func TestRefuseSubmoduleOfAMovedGitDirectory(t *testing.T) {

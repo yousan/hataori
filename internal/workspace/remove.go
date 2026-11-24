@@ -964,15 +964,19 @@ func (c *checker) files(g *reader, rp repo) error {
 }
 
 // leftover is step 1 for a repository with no work tree here: its index is
-// as its HEAD, and no linked worktree. An empty index or none holds nothing:
-// git leaves an empty one when it removes a submodule's checkout
-// (submodule.recurse), and a bare repository has none.
+// as its HEAD, and no linked worktree. With no core.worktree an empty index
+// or none holds nothing: git empties it and unsets that when it removes a
+// submodule's checkout (submodule.recurse), and a bare repository has neither.
 func (c *checker) leftover(g *reader, rp repo) error {
-	out, _, err := g.run(c.ctx, "ls-files", "-z")
+	index, _, err := g.run(c.ctx, "ls-files", "-z")
 	if err != nil {
 		return err
 	}
-	if len(out) > 0 {
+	_, code, err := g.run(c.ctx, "config", "--get", "core.worktree")
+	if err != nil && code != 1 { // 1: it is not set
+		return err
+	}
+	if len(index) > 0 || err == nil {
 		out, _, err := g.run(c.ctx, "diff", "--cached", "--name-only", "-z", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none")
 		if err != nil {
 			return err
