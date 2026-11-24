@@ -207,6 +207,7 @@ func TestPermissionsWarningShapes(t *testing.T) {
 		{"as captured", rule, []string{rule}, one},
 		{"a wrapped rule", rule, []string{"   Bash(a", " b)"}, one},
 		{"rules on more lines", rule, []string{"   Bash(a), Bash(b),", " Bash(c), and 4 more"}, one},
+		{"a rule with a colon and a space", rule, []string{"   Bash(echo a: b), 日本"}, one},
 		{"two permissions", head, []string{" ⚠ This folder pre-approves 2 tool permissions in .claude/settings.json:"}, one},
 
 		// Rules that write the dialog's lines change nothing read.
@@ -220,6 +221,7 @@ func TestPermissionsWarningShapes(t *testing.T) {
 
 		{"no rule", rule, nil, nil},
 		{"another warning", head, []string{" ⚠ This folder adds 1 directory to the workspace in .claude/settings.json:"}, nil},
+		{"another warning above", head, []string{" ⚠ This folder adds 1 directory to the workspace in .claude/settings.json:", "   /etc", head}, nil},
 		{"another warning below the rules", rule, []string{rule, " ⚠ This folder adds 1 directory to the workspace in .claude/settings.json:", "   /etc"}, nil},
 		{"the hooks warning above", head, []string{hooks, head}, nil},
 		{"the hooks warning below", end, []string{end, hooks}, nil},
