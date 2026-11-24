@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -364,4 +365,69 @@ func TestAReplacedSessionsLine(t *testing.T) {
 	shows(ReplacedLine)
 	replaced(9, "cannot resume") // before any turn, as today
 	shows(ReplacedLine)
+}
+
+// A session that could not resume and was replaced: the thread did start, so
+// it gets the line of the new conversation and not that it could not start
+// (#703), from the event reader and from a trigger delivered again alike. One
+// that no session replaced, or that another was replaced for, is shown.
+func TestAReplacedSessionsFailureIsNotShown(t *testing.T) {
+	for name, c := range map[string]struct {
+		session  int64  // of session_replaced; the failed one is 1
+		reason   string // of session_replaced
+		notShown bool
+	}{
+		"replaced":          {1, "cannot resume", true},
+		"another session":   {9, "cannot resume", false},
+		"another's reason":  {1, "trusted", false},
+		"no event after it": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFront(t, workspaces{})
+			id, trigger := f.started(t)
+			events := []control.Event{{Kind: "state", Data: json.RawMessage(`{"session":1,"from":"creating","to":"failed","reason":"cannot resume"}`)}}
+			if c.session != 0 {
+				b, _ := json.Marshal(map[string]any{"session": c.session, "new_session": c.session + 1, "reason": c.reason})
+				events = append(events, control.Event{Kind: "session_replaced", Data: b})
+			}
+			// In one transaction, as the runner stores them.
+			if err := f.fe.Outbox.Store.Update(context.Background(), func(tx *store.Tx) error {
+				for _, e := range events {
+					e.Thread = id
+					if _, err := tx.Append(context.Background(), e); err != nil {
+						return err
+					}
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			var want []string
+			if !c.notShown {
+				want = append(want, couldNotStart+"cannot resume")
+			}
+			// The trigger again, before the events are read: what it writes.
+			f.fe.Message(trigger)
+			f.settled(t, f.conv(id))
+			if got := postsIn(f.driver, f.conv(id)); !slices.Equal(got, append([]string{"the prompt"}, append(want, "marker")...)) {
+				t.Fatalf("after the trigger came again the thread shows %q", got)
+			}
+			f.showing(t)
+			ended(f, t, id, 1, "failure", "login")
+			last := failureLine("login")
+			f.postedUntil(t, id, last)
+			if c.reason == "cannot resume" {
+				want = append(want, ReplacedLine)
+			}
+			var got []string
+			for _, p := range postsIn(f.driver, f.conv(id)) {
+				if p != "marker" {
+					got = append(got, p)
+				}
+			}
+			if !slices.Equal(got, append(append([]string{"the prompt"}, want...), last)) {
+				t.Fatalf("the thread shows %q", got)
+			}
+		})
+	}
 }

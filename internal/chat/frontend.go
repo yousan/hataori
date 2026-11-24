@@ -487,6 +487,8 @@ func startOutcome(ctx context.Context, api control.API, id control.ThreadID) (st
 			if sf, ok := startFailure(e); ok && sf.session == out.session {
 				out.failed = &sf
 			}
+		} else if out.failed.replacedBy(e) {
+			out.failed = nil
 		}
 	}
 	if out.first == 0 {
@@ -535,6 +537,23 @@ func startFailure(e control.Event) (startFailed, bool) {
 	}
 	return startFailed{pos: e.Pos, thread: e.Thread, scope: e.Scope, session: d.Session, reason: strings.TrimPrefix(d.Reason, "start: "),
 		detail: d.Detail, trust: d.Trust}, true
+}
+
+// replacedBy reports whether e says that a new session took the place of the
+// one that failed, for the reason it failed with: the agent no longer had its
+// conversation. The thread did start then, and its session_replaced line says
+// what happened (replacedLine), so the failure is not shown. A session that a
+// choice replaced (trustbutton.go) has that choice as the reason, and its
+// failure's message stays.
+func (sf startFailed) replacedBy(e control.Event) bool {
+	if e.Kind != "session_replaced" || e.Pos <= sf.pos {
+		return false
+	}
+	var d struct {
+		Session int64
+		Reason  string
+	}
+	return json.Unmarshal(e.Data, &d) == nil && d.Session == sf.session && d.Reason == sf.reason
 }
 
 // failedRow is the one message the failure gets, keyed by its event, so

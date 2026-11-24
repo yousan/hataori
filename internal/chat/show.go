@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -325,6 +326,13 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		sf, ok := startFailure(e)
 		if !ok {
 			return nil, nil
+		}
+		// The new session and its event are stored in the transaction of the
+		// failure, so they are there when the failure is read.
+		replaced := false
+		err := r.scan(ctx, e.Thread, math.MaxUint64, func(ev control.Event) { replaced = replaced || sf.replacedBy(ev) })
+		if err != nil || replaced {
+			return nil, err
 		}
 		first, err := r.firstPos(ctx, e.Thread)
 		if err != nil {
