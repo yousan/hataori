@@ -25,8 +25,9 @@ import (
 // CLI reports them for the turn) stays about the same however many came
 // before; the check is that no
 // wake uses more than a fifth above the first. It logs the least too: a
-// wake far below the first is one whose first request the CLI made before
-// hataori's MCP server was connected, without its tools.
+// wake far below the first is one the agent answered in one request instead
+// of two, or one whose first request went out without hataori's tools (#704;
+// its transcript then names the server in pendingMcpServers).
 // Between the wakes, a person talks to the supervisor now and then, which
 // its own conversation, not a wake's, reads again.
 func TestRealClaudeCodeWakeUsage(t *testing.T) {

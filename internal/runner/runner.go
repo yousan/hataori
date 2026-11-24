@@ -27,6 +27,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -303,8 +304,8 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 		spec.TrustFiles = r.TrustFiles(ctx, scope, repo)
 	}
 	// What the adapter gets: the spec, with what this launch alone is given.
-	// The stored spec keeps the confinement, not the MCP servers, whose
-	// credentials hold for this launch only.
+	// The stored spec keeps the confinement and which MCP servers report,
+	// not the servers, whose credentials hold for this launch only.
 	run := spec
 	if spec.Confine != nil {
 		spec.Confine = &agent.Confinement{}
@@ -316,6 +317,11 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 			return agent.Spec{}, fmt.Errorf("runner: session %d: confinement: %w", id, err)
 		}
 		run.Confine = &agent.Confinement{MCP: c.MCP}
+		for _, s := range c.MCP {
+			if s.Reports {
+				spec.Confine.Awaits = append(spec.Confine.Awaits, s.Name)
+			}
+		}
 		if c.Instructions != "" {
 			run.Instructions = strings.TrimSpace(run.Instructions + "\n\n" + c.Instructions)
 		}
@@ -1385,7 +1391,8 @@ func (r *Runner) stepLocked(lv *live) bool {
 		lv.screen = false // the new codec is not opened: it does not watch
 		r.warm(lv)
 		// What the old codec knew of input: what was written, and what it
-		// held to write later.
+		// held to write later, the first input among it.
+		lv.resend = true
 		r.handOverWritten(lv)
 		lv.pending = true
 		r.Store.DB.QueryRow(`SELECT coalesce(max(id), 0) FROM pending_inputs WHERE session_id = ?`, lv.id).Scan(&lv.upTo)
@@ -1677,7 +1684,8 @@ func (r *Runner) firstInputStep(ctx context.Context, tx *store.Tx, lv *live, b b
 		}
 		f = firstInput{}
 	case f.Sent && notDelivered(b.events, firstInputID):
-		// The agent never reported it; its turn failed, as the events say.
+		// The agent never reported it, or it was stopped before it was
+		// written; its turn failed, as the events say.
 		f = firstInput{}
 	case f.Sent && lv.resend:
 		// The daemon died between starting the turn and a report of it:
@@ -1736,11 +1744,11 @@ func cannotResume(evs []agent.Event) bool {
 }
 
 // clearReported removes the pending input whose turn the agent reported, or
-// whose turn failed because it never reported it:
+// whose turn ended without one (unreported):
 // the codec names it by the Input.ID it was given, the row's id.
 func clearReported(ctx context.Context, tx *store.Tx, id int64, evs []agent.Event) error {
 	for _, e := range evs {
-		gone := e.Kind == agent.TurnStarted || e.Kind == agent.InputTaken || e.Kind == agent.TurnEnded && e.Reason == agent.NotDelivered
+		gone := e.Kind == agent.TurnStarted || e.Kind == agent.InputTaken || unreported(e)
 		if !gone || e.Input == "" {
 			continue
 		}
@@ -1766,15 +1774,16 @@ func clearReported(ctx context.Context, tx *store.Tx, id int64, evs []agent.Even
 // number, so it names no pending input.
 const firstInputID = "first"
 
-// notDelivered reports whether a turn among evs failed because the input
-// id was never reported.
+// unreported reports whether e ends a turn whose input the agent did not
+// report and will not: it never did, or the input was stopped before it was
+// written.
+func unreported(e agent.Event) bool {
+	return e.Kind == agent.TurnEnded && (e.Reason == agent.NotDelivered || e.Status == agent.Interrupted)
+}
+
+// notDelivered reports whether a turn among evs ended so for the input id.
 func notDelivered(evs []agent.Event, id string) bool {
-	for _, e := range evs {
-		if e.Kind == agent.TurnEnded && e.Reason == agent.NotDelivered && e.Input == id {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(evs, func(e agent.Event) bool { return unreported(e) && e.Input == id })
 }
 
 // reported reports whether a turn among evs reports the input id.
@@ -1799,12 +1808,16 @@ func (r *Runner) do(lv *live, a agent.Actions) error {
 			b.files[p] = o
 		}
 		for _, e := range a.Events {
-			if e.Kind != agent.Unknown {
-				b.events = append(b.events, e)
+			if e.Kind == agent.Unknown {
+				r.Log.Warn("the codec reports", "session", lv.id, "text", truncate(e.Text, 200))
+				continue
 			}
+			b.events = append(b.events, e)
 		}
-		if _, err := r.commit(lv, b); err != nil {
-			r.Log.Error("commit", "session", lv.id, "err", err)
+		if len(b.events) > 0 {
+			if _, err := r.commit(lv, b); err != nil {
+				r.Log.Error("commit", "session", lv.id, "err", err)
+			}
 		}
 	}
 	for _, p := range a.Follow {

@@ -439,6 +439,7 @@ hataori reads these:
 | `HATAORI_ROOT` | The instance root when `--root` is not given. |
 | `XDG_RUNTIME_DIR` | Used for the control socket when `<root>/state/control.sock` is too long for a Unix socket. Then the system temporary directory is tried. The chosen path is written into `<root>/state/control.sock.path`, where the commands find it. |
 | `HATAORI_HOST_SOCKET` | Internal. hataori sets it for Claude Code so that `hataori hook` reaches its session. Do not set it yourself. |
+| `HATAORI_MCP_REPORT` | Internal. What `hataori mcp` hands to its session's host once the agent has its tools. Do not set it yourself. |
 | `HATAORI_TOKEN` | Internal. The token of a supervisor's session, which hataori puts in that session's MCP config for `hataori mcp`. Do not set it yourself. |
 
 Claude Code does not inherit the daemon's whole environment. It gets only `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`, `TMPDIR`, `XDG_RUNTIME_DIR`, `XDG_CONFIG_HOME`, `CLAUDE_CONFIG_DIR`, the variables named in `pass_env`, and `TERM=xterm-256color`.

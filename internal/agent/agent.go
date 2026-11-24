@@ -109,7 +109,9 @@ type Codec interface {
 	Input(in Input) (Actions, error)
 	// Answer translates the answer to an approval or a question.
 	Answer(a Answer) (Actions, error)
-	// Interrupt returns how to stop the running turn.
+	// Interrupt returns how to stop the running turn. A codec that still
+	// holds the turn's input back may drop it and end the turn instead:
+	// TurnEnded with Interrupted and the Input.ID.
 	Interrupt() Actions
 	// Tick tells the codec the time, so that it can act on its deadlines
 	// without a clock of its own. The caller calls it every second or so.
@@ -215,6 +217,10 @@ type Confinement struct {
 	// MCP are the session's only MCP servers, each started on stdio. They
 	// may carry credentials for one launch, so the runner never stores them.
 	MCP []MCPServer
+	// Awaits names those of MCP that report (MCPServer.Reports). It holds no
+	// credential, and the runner stores it: the session's codec, which is
+	// not given MCP, knows from it what a first input may wait for.
+	Awaits []string `json:",omitempty"`
 }
 
 // MCPServer is an MCP server the agent starts on stdio.
@@ -222,7 +228,18 @@ type MCPServer struct {
 	Name string   // the name its tools are listed under
 	Argv []string // the command and its arguments
 	Env  []string // NAME=value, added to the agent's environment for it
+
+	// Reports is set for a server that says once when the agent has its
+	// tools: it hands the value of MCPReportEnv, when its environment has
+	// one, to the session's host as a hook call that does not wait, after it
+	// answered the agent's first request for the list of its tools. The
+	// adapter gives it the value, which its codec reads back.
+	Reports bool `json:",omitempty"`
 }
+
+// MCPReportEnv is the variable that holds what a server that reports
+// (MCPServer.Reports) hands to the session's host.
+const MCPReportEnv = "HATAORI_MCP_REPORT"
 
 // Policy says what happens to the agent's permission requests.
 type Policy int
@@ -329,7 +346,7 @@ type Event struct {
 	Final bool   // Text: the turn's final answer
 
 	StartedBy Starter // TurnStarted
-	Input     string  // TurnStarted, InputTaken: the Input.ID of the input this turn reports; TurnEnded with NotDelivered: of the input never reported; "" when none or not known
+	Input     string  // TurnStarted, InputTaken: the Input.ID of the input this turn reports; TurnEnded with NotDelivered: of the input never reported; TurnEnded with Interrupted: of the input that is not written any more; "" when none or not known
 
 	Tool string // ToolStarted, ToolEnded: the tool's name or label; SubagentStarted, SubagentEnded: the subagent's name or type
 	ID   string // ToolStarted, ToolEnded, SubagentStarted, SubagentEnded: pairs start and end

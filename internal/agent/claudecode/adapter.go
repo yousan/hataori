@@ -156,7 +156,7 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 	if spec.Confine != nil {
 		// The flags belong to each launch: a --resume without them has a
 		// shell again (Appendix B), so every launch of the spec has them.
-		mcp, err := mcpConfig(spec.Confine.MCP)
+		mcp, err := mcpConfig(spec)
 		if err != nil {
 			return agent.Launch{}, err
 		}
@@ -172,8 +172,10 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 	return l, nil
 }
 
-// mcpConfig is the file given with --mcp-config: the servers, each on stdio.
-func mcpConfig(servers []agent.MCPServer) ([]byte, error) {
+// mcpConfig is the file given with --mcp-config: the spec's servers, each
+// on stdio, and those that report with what they hand to the session's
+// host (mcpwait.go).
+func mcpConfig(spec agent.Spec) ([]byte, error) {
 	type server struct {
 		Type    string            `json:"type"`
 		Command string            `json:"command"`
@@ -181,7 +183,7 @@ func mcpConfig(servers []agent.MCPServer) ([]byte, error) {
 		Env     map[string]string `json:"env,omitempty"`
 	}
 	all := map[string]server{}
-	for _, s := range servers {
+	for _, s := range spec.Confine.MCP {
 		if s.Name == "" || len(s.Argv) == 0 {
 			return nil, fmt.Errorf("%s: an MCP server needs a name and a command", Name)
 		}
@@ -189,7 +191,11 @@ func mcpConfig(servers []agent.MCPServer) ([]byte, error) {
 			return nil, fmt.Errorf("%s: MCP server %q is named twice", Name, s.Name)
 		}
 		v := server{Type: "stdio", Command: s.Argv[0], Args: append([]string{}, s.Argv[1:]...)}
-		for _, kv := range s.Env {
+		env := s.Env
+		if s.Reports {
+			env = append(slices.Clone(env), host.HookEnv(spec.StateDir), agent.MCPReportEnv+"="+mcpReport(s.Name))
+		}
+		for _, kv := range env {
 			k, val, ok := strings.Cut(kv, "=")
 			if !ok || k == "" {
 				return nil, fmt.Errorf("%s: MCP server %q: %q is not NAME=value", Name, s.Name, kv)

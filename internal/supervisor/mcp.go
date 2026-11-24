@@ -38,6 +38,10 @@ type MCP struct {
 	OutputMax int
 	// Version is hataori's version, for serverInfo.
 	Version string
+	// Listed, when set, is called once, after the first answer to
+	// tools/list was written: the agent has the tools from then on. Serve
+	// answers nothing before it returns.
+	Listed func()
 
 	mu  sync.Mutex
 	api control.API
@@ -190,6 +194,7 @@ func (m *MCP) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64*1024), 8<<20)
 	enc := json.NewEncoder(w)
+	listed := false // the agent was given the tools
 	for sc.Scan() {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -211,6 +216,12 @@ func (m *MCP) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 		result, rerr := m.handle(ctx, msg)
 		if err := enc.Encode(rpcResponse{JSONRPC: "2.0", ID: msg.ID, Result: result, Error: rerr}); err != nil {
 			return err
+		}
+		if msg.Method == "tools/list" && rerr == nil && !listed {
+			listed = true
+			if m.Listed != nil {
+				m.Listed()
+			}
 		}
 	}
 	return sc.Err()

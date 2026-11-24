@@ -63,6 +63,7 @@ type codec struct {
 	queue         []queued      // input held until the CLI can take it
 	sent          *sentInput    // input written, not yet reported
 	timeout       time.Duration // for sent; DefaultInputTimeout when zero
+	mcp           mcpState      // the MCP servers input waits for (mcpwait.go)
 
 	// Questions.
 	requests    map[string]*request // by hook call id, while the call waits
@@ -275,11 +276,12 @@ func cleanPaste(text string) string {
 
 // flush writes the next queued input when the CLI can take it: after the
 // session reported its start, once the screen shows the CLI takes pastes
-// (screen.go), with no turn running and no input waiting to be reported.
+// (screen.go) and the CLI has its MCP servers' tools (mcpwait.go), with no
+// turn running and no input waiting to be reported.
 // Input is one bracketed paste; Tick presses Enter after it (tickInput).
 // It counts as delivered only when UserPromptSubmit reports the same text.
 func (c *codec) flush() Actions {
-	if !c.ready || c.running || c.sent != nil || len(c.queue) == 0 || !c.pasteReady() {
+	if !c.ready || c.running || c.sent != nil || len(c.queue) == 0 || !c.pasteReady() || !c.mcpReady() {
 		return Actions{}
 	}
 	q := c.queue[0]
@@ -314,7 +316,7 @@ const pasteSettle = 400 * time.Millisecond
 func (c *codec) Tick(now time.Time) Actions {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	a := merge(merge(c.tickScreen(now), c.tickInput(now)), c.tickRequests(now))
+	a := merge(merge(merge(c.tickScreen(now), c.tickMCP(now)), c.tickInput(now)), c.tickRequests(now))
 	return c.number(merge(a, c.endWatch(false)))
 }
 
@@ -375,7 +377,18 @@ const DefaultInputTimeout = 30 * time.Second
 
 // Interrupt returns the key that stops a turn. The turn counts as
 // interrupted only when the transcript says so.
+//
+// With input still held back, for the screen or for the MCP servers, there
+// is nothing in the CLI to stop, and no transcript will say anything: the
+// turn that the oldest of it was to start ends here, and it is not written.
 func (c *codec) Interrupt() Actions {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.running && c.sent == nil && len(c.queue) > 0 {
+		q := c.queue[0]
+		c.queue = c.queue[1:]
+		return c.number(c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted, Input: q.id}))
+	}
 	return Actions{Keys: []agent.Part{stopKey}}
 }
 
@@ -403,13 +416,19 @@ func (c *codec) decode(src agent.Source, line []byte) Actions {
 	if err := json.Unmarshal(line, &k); err != nil || k.Hook == "" {
 		return c.events(agent.Event{Kind: agent.Unknown, Text: string(line)})
 	}
-	c.started = true // no hook runs before a start-up dialog is answered
 	if c.seen[k.Hook] {
 		return Actions{} // the same call again
 	}
 	c.seen[k.Hook] = true
 	var p payload
-	if err := json.Unmarshal(k.Payload, &p); err != nil {
+	err := json.Unmarshal(k.Payload, &p)
+	if err == nil && p.Event == mcpListedEvent {
+		// Not the CLI's call but its MCP server's: it says nothing of the
+		// CLI's start.
+		return c.mcpListed(k.Payload, line)
+	}
+	c.started = true // no hook runs before a start-up dialog is answered
+	if err != nil {
 		return c.events(agent.Event{Kind: agent.Unknown, Text: string(line)})
 	}
 	var follow []string
