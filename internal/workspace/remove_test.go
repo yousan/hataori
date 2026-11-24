@@ -1242,7 +1242,7 @@ func TestRefuseProcessUsingAWorkspaceWhosePathLsofEscapes(t *testing.T) {
 	for _, tc := range []struct{ root, locale string }{
 		{"ルート", ""}, {"ルート", "C"}, {"ルート", "C.UTF-8"},
 		{`back\slash`, "C"}, {`back\slash`, "C.UTF-8"},
-		{`\xe3\\`, "C"}, {"ü\xff", "C.UTF-8"}, {"a  b ", "C"},
+		{`\xe3\\`, "C"}, {"ü\xfe", "C.UTF-8"}, {"a  b ", "C"},
 	} {
 		t.Run(fmt.Sprintf("%q in %q", tc.root, tc.locale), func(t *testing.T) {
 			if runtime.GOOS == "darwin" && !utf8.ValidString(tc.root) {
@@ -1272,6 +1272,17 @@ func TestRefuseProcessUsingAWorkspaceWhosePathLsofEscapes(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer f.Close()
+			wantRefusal(t, x.check(), InUse, "")
+
+			if runtime.GOOS != "linux" {
+				return
+			}
+			m, err := syscall.Mmap(int(f.Fd()), 0, 1, syscall.PROT_READ, syscall.MAP_SHARED)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer syscall.Munmap(m)
+			f.Close()
 			wantRefusal(t, x.check(), InUse, "")
 		})
 	}
@@ -1321,8 +1332,8 @@ func TestRefuseProcessHoldingTheWorkspaceWithTheSameDescriptor(t *testing.T) {
 
 func TestRefuseWorkspaceWhosePathLsofCannotBeComparedWith(t *testing.T) {
 	for _, root := range []string{"t\tab", "new\nline", "c\x01", "d\x7f"} {
-		if names, ok := lsofNames("/" + root + "/workspaces/7"); ok {
-			t.Errorf("%q: %q", root, names)
+		if name, ok := lsofName("/" + root + "/workspaces/7"); ok {
+			t.Errorf("%q: %q", root, name)
 		}
 	}
 	x := newRemovalIn(t, "t\tab")

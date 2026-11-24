@@ -1837,7 +1837,7 @@ func readGitfile(p string) (string, error) {
 // lsof prints are the ones compared with. Only the processes of the user
 // hataori runs as can be seen, unless it runs as root.
 func (c *checker) processes() error {
-	tops, ok := lsofNames(c.top)
+	top, ok := lsofName(c.top)
 	if !ok {
 		return &Refusal{Reason: UnknownUse, Detail: "lsof's names cannot be compared with " + strconv.Quote(c.top)}
 	}
@@ -1876,13 +1876,10 @@ func (c *checker) processes() error {
 			fd = f[1:]
 		case 'n':
 			name := f[1:]
-			for _, top := range tops {
-				if name != top && !strings.HasPrefix(name, top+"/") && !strings.HasPrefix(name, top+" ") {
-					continue
-				}
+			if name == top || strings.HasPrefix(name, top+"/") || strings.HasPrefix(name, top+" ") {
 				if pid == self && fd == heldFD {
 					seen = true
-					break
+					continue
 				}
 				return &Refusal{Reason: InUse, Detail: "process " + pid + " uses " + name}
 			}
@@ -1894,27 +1891,25 @@ func (c *checker) processes() error {
 	return nil
 }
 
-// lsofNames are the ways lsof may print the path p in the C locale: a byte
-// that is not ASCII as \xNN, a backslash as two, or as one in case some lsof
-// does not escape it. ok is false when p has a control character: how lsof
-// prints one depends on where it read the path, and it cuts the path of a
-// mapped file at a tab.
-func lsofNames(p string) (names []string, ok bool) {
-	var one, two strings.Builder
+// lsofName is how lsof prints the path p in the C locale: a byte that is not
+// ASCII as \xNN, a backslash as two. ok is false when p has a control
+// character: how lsof prints one depends on where it read the path, and it
+// cuts the path of a mapped file at a tab.
+func lsofName(p string) (name string, ok bool) {
+	var b strings.Builder
 	for i := 0; i < len(p); i++ {
-		s := p[i : i+1]
 		switch ch := p[i]; {
 		case ch < 0x20 || ch == 0x7f:
-			return nil, false
+			return "", false
 		case ch >= 0x80:
-			s = fmt.Sprintf(`\x%02x`, ch)
+			fmt.Fprintf(&b, `\x%02x`, ch)
 		case ch == '\\':
-			two.WriteByte(ch)
+			b.WriteString(`\\`)
+		default:
+			b.WriteByte(ch)
 		}
-		one.WriteString(s)
-		two.WriteString(s)
 	}
-	return []string{two.String(), one.String()}, true
+	return b.String(), true
 }
 
 // input runs git with stdin and returns its output's first line, or "".
