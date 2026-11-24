@@ -193,6 +193,36 @@ func TestReadThreadIsCapped(t *testing.T) {
 	}
 }
 
+// A number below 1 names no thread and is not looked up, and what a lookup
+// returned is used only when it is the number asked for (#570).
+func TestOnlyTheThreadAskedForIsUsed(t *testing.T) {
+	api := &otherAPI{}
+	m := &MCP{Dial: func() (control.API, error) { return api, nil }, Scope: "C0123"}
+	for _, name := range []string{ToolRead, ToolSend, ToolInterrupt} {
+		for _, n := range []string{"0", "-1", "-9223372036854775808", "8"} {
+			text, isErr := call(t, m, name, `{"number":`+n+`,"text":"hello","reason":"urgent"}`)
+			if want := "not in this scope: no thread #" + n + " in this channel"; !isErr || text != want {
+				t.Errorf("%s of number %s: error %v, %q; want %q", name, n, isErr, text, want)
+			}
+		}
+	}
+	if len(api.asked) != 3 { // 8, once by each tool
+		t.Errorf("threads were looked up for %v", api.asked)
+	}
+}
+
+// otherAPI answers Threads with thread 7, whatever the filter; a call on a
+// thread panics, as the API it embeds is nil.
+type otherAPI struct {
+	control.API
+	asked []control.ThreadID
+}
+
+func (o *otherAPI) Threads(_ context.Context, flt control.Filter) ([]control.ThreadInfo, error) {
+	o.asked = append(o.asked, flt.Thread)
+	return []control.ThreadInfo{{ID: fakeID, Scope: "C0123", Title: "Fix it", State: control.Idle}}, nil
+}
+
 // A cut never splits a character.
 func TestReadThreadCutsAtACharacter(t *testing.T) {
 	api := &fakeAPI{out: strings.Repeat("あ", 10)} // 3 bytes each

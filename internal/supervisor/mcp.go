@@ -11,6 +11,7 @@ import (
 	"io"
 	"math"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -447,16 +448,20 @@ func (m *MCP) outputMax() int {
 	return DefaultOutputMax
 }
 
-// find returns the thread of the scope with number n.
+// find returns the thread of the scope with number n. A number below 1
+// names no thread, and is not looked up: a filter's 0 means any thread.
 func (m *MCP) find(ctx context.Context, api control.API, n int64) (control.ThreadID, error) {
-	ts, err := api.Threads(ctx, control.Filter{Scope: m.Scope, Thread: control.ThreadID(n)})
-	if err != nil && !errors.Is(err, control.ErrForbidden) { // forbidden: the scope is not readable; another scope's number reads as none
-		return 0, reason(err)
+	id := control.ThreadID(n)
+	if n > 0 {
+		ts, err := api.Threads(ctx, control.Filter{Scope: m.Scope, Thread: id})
+		if err != nil && !errors.Is(err, control.ErrForbidden) { // forbidden: the scope is not readable; another scope's number reads as none
+			return 0, reason(err)
+		}
+		if slices.ContainsFunc(ts, func(t control.ThreadInfo) bool { return t.ID == id }) {
+			return id, nil
+		}
 	}
-	if len(ts) == 0 {
-		return 0, fmt.Errorf("not in this scope: no thread #%d in this channel", n)
-	}
-	return ts[0].ID, nil
+	return 0, fmt.Errorf("not in this scope: no thread #%d in this channel", n)
 }
 
 // reason turns an error of the control API into what the model reads:
