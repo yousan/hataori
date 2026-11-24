@@ -457,14 +457,11 @@ func (c *codec) track(prompt string, a Actions) Actions {
 			if prompt == "" || c.runningPrompt == "" || prompt == c.runningPrompt {
 				c.running = false
 				if c.sent != nil {
-					c.sent.at = time.Time{} // its wait starts now (tickInput)
-					if c.sent.entered.IsZero() {
-						// Not pressed by this codec: written before a
-						// restart, and if it was not submitted then, it
-						// is in the box still. In an empty box, Enter
-						// does nothing.
-						c.sent.pressed = false
-					}
+					// Its wait starts now (tickInput). An Enter before that
+					// turn, pressed as it started or before a restart, may
+					// not have reached the box; one in an empty box does
+					// nothing (2.1.331, also with a suggested prompt shown).
+					c.sent.at, c.sent.pressed = time.Time{}, false
 				}
 			}
 		case agent.SessionEnded:

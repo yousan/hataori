@@ -104,6 +104,23 @@ func TestHeldInputWaitsForASecondOwnTurn(t *testing.T) {
 	}
 }
 
+// An Enter pressed just as the agent's own turn started, and not reported,
+// is pressed again after that turn.
+func TestHeldInputWhoseEnterWasLost(t *testing.T) {
+	c := newTestCodec()
+	heldTurn(t, c)
+	now, n := enters(t, c, time.Now(), time.Second)
+	if n != 1 {
+		t.Fatalf("Enter pressed %d times after the paste, want once", n)
+	}
+	decodeFile(t, c, "07", held+"07-UserPromptSubmit.json")
+	now = quiet(t, c, now, 2*DefaultInputTimeout, "during the own turn")
+	decodeFile(t, c, "11", held+"11-Stop.json")
+	if _, n = enters(t, c, now, 2*time.Second); n != 1 {
+		t.Fatalf("Enter pressed %d times after the own turn, want once", n)
+	}
+}
+
 // The input timeout starts over at the end of the agent's own turn: an
 // input that is not reported then still ends "not delivered".
 func TestHeldInputTimesOutAfterTheOwnTurn(t *testing.T) {
