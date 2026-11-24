@@ -1832,22 +1832,38 @@ func readGitfile(p string) (string, error) {
 
 // processes is step 4: no process has a file or its working directory in
 // the workspace. lsof is asked on Linux and on macOS alike; a missing or
-// failing lsof refuses. Only the processes of the user hataori runs as can
-// be seen, unless it runs as root.
+// failing lsof refuses, and so does one that does not report a directory
+// this check holds open: the workspace itself, which shows that the names
+// lsof prints are the ones compared with. Only the processes of the user
+// hataori runs as can be seen, unless it runs as root.
 func (c *checker) processes() error {
-	args := []string{"-n", "-P", "-w", "-F0pn"}
+	top, ok := lsofName(c.top)
+	if !ok {
+		return &Refusal{Reason: UnknownUse, Detail: "lsof's names cannot be compared with " + strconv.Quote(c.top)}
+	}
+	held, err := os.Open(c.top)
+	if err != nil {
+		return c.unreadable(c.top, err)
+	}
+	defer held.Close()
+	self, heldFD := strconv.Itoa(os.Getpid()), strconv.Itoa(int(held.Fd()))
+
+	args := []string{"-n", "-P", "-w", "-F0pfn"}
 	if uid := os.Geteuid(); uid != 0 {
 		args = append(args, "-u", strconv.Itoa(uid))
 	}
 	cmd := exec.CommandContext(c.ctx, "lsof", args...)
 	cmd.Dir = "/"
+	// How lsof prints a byte that is not ASCII depends on the locale.
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
 	cmd.WaitDelay = time.Second
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
 		return &Refusal{Reason: UnknownUse, Detail: "lsof: " + lastLines(stderr.String(), 3, err.Error())}
 	}
-	pid := ""
+	seen := false
+	pid, fd := "", ""
 	for _, f := range strings.Split(stdout.String(), "\x00") {
 		f = strings.TrimLeft(f, "\n")
 		if f == "" {
@@ -1855,15 +1871,45 @@ func (c *checker) processes() error {
 		}
 		switch f[0] {
 		case 'p':
-			pid = f[1:]
+			pid, fd = f[1:], ""
+		case 'f':
+			fd = f[1:]
 		case 'n':
 			name := f[1:]
-			if name == c.top || strings.HasPrefix(name, c.top+"/") || strings.HasPrefix(name, c.top+" ") {
+			if name == top || strings.HasPrefix(name, top+"/") || strings.HasPrefix(name, top+" ") {
+				if pid == self && fd == heldFD {
+					seen = true
+					continue
+				}
 				return &Refusal{Reason: InUse, Detail: "process " + pid + " uses " + name}
 			}
 		}
 	}
+	if !seen {
+		return &Refusal{Reason: UnknownUse, Detail: "lsof does not report the workspace, which this check holds open"}
+	}
 	return nil
+}
+
+// lsofName is how lsof prints the path p in the C locale: a byte that is not
+// ASCII as \xNN, a backslash as two. ok is false when p has a control
+// character: how lsof prints one depends on where it read the path, and it
+// cuts the path of a mapped file at a tab.
+func lsofName(p string) (name string, ok bool) {
+	var b strings.Builder
+	for i := 0; i < len(p); i++ {
+		switch ch := p[i]; {
+		case ch < 0x20 || ch == 0x7f:
+			return "", false
+		case ch >= 0x80:
+			fmt.Fprintf(&b, `\x%02x`, ch)
+		case ch == '\\':
+			b.WriteString(`\\`)
+		default:
+			b.WriteByte(ch)
+		}
+	}
+	return b.String(), true
 }
 
 // input runs git with stdin and returns its output's first line, or "".
