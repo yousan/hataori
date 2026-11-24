@@ -117,13 +117,20 @@ var (
 
 // Run connects the driver, shows the events of its scopes and sends the
 // outbox until ctx ends. A driver whose Run fails, at the start or later,
-// is run again after a delay (runDriver), for as long as ctx lasts.
+// is run again after a delay (runDriver), for as long as ctx lasts. Only a
+// driver whose credential is for another identity than the configured one
+// ends Run, with that error; nothing is started before that is checked, so
+// that nothing is posted as another identity and the pending rows of the
+// outbox stay as they are.
 func (f *FrontEnd) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	f.ctx = ctx
 	f.conn.down(f.now()) // not connected until the driver says so
 	f.inboundState().started()
+	if err := f.checkIdentity(ctx); err != nil || ctx.Err() != nil {
+		return err
+	}
 	f.Outbox.init() // its defaults, before the goroutines below read them
 	var wg sync.WaitGroup
 	wg.Add(4)
@@ -142,11 +149,11 @@ func (f *FrontEnd) Run(ctx context.Context) error {
 			}
 		}
 	}()
-	f.runDriver(ctx)
-	cancel() // ctx ended: stop the rest too
+	err := f.runDriver(ctx)
+	cancel() // ctx ended, or the driver may not go on: stop the rest too
 	wg.Wait()
 	f.bg.Wait()
-	return nil
+	return err
 }
 
 func (f *FrontEnd) context() context.Context {

@@ -27,7 +27,8 @@ const (
 	OpOpenThread
 	OpOpenDirect
 	OpSince
-	OpRun // Run fails before it connects
+	OpRun      // Run fails before it connects
+	OpIdentity // CheckIdentity
 )
 
 func (o Op) String() string {
@@ -50,6 +51,8 @@ func (o Op) String() string {
 		return "since"
 	case OpRun:
 		return "run"
+	case OpIdentity:
+		return "identity"
 	}
 	return "op(" + strconv.Itoa(int(o)) + ")"
 }
@@ -228,6 +231,14 @@ func (d *LayoutDriver) Layout(context.Context) (surface.Layout, error) {
 func (d *Driver) id(prefix string) string {
 	d.next++
 	return prefix + strconv.Itoa(d.next)
+}
+
+// CheckIdentity returns the planned failure of OpIdentity (Fail), or nil.
+func (d *Driver) CheckIdentity(context.Context) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	before, after := d.failing(OpIdentity)
+	return errors.Join(before, after)
 }
 
 // Run connects: injected messages go to sink until ctx ends or Disconnect.

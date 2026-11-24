@@ -43,8 +43,18 @@ import (
 )
 
 // daemon runs the instance at root until ctx ends. Every error before it
-// serves is one line.
-func daemon(ctx context.Context, root string, logOut io.Writer) error {
+// serves is one line, and so is the error of a chat front end that may not
+// go on, which ends the daemon.
+func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
+	ctx, end := context.WithCancelCause(ctx)
+	defer end(nil)
+	defer func() {
+		// What ctx ended made fail meanwhile is not the reason.
+		var f frontEndError
+		if errors.As(context.Cause(ctx), &f) {
+			err = f.error
+		}
+	}()
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return err
@@ -475,7 +485,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 		go func() {
 			defer feDone.Done()
 			if err := fe.Run(feCtx); err != nil && feCtx.Err() == nil {
-				lg.Error("chat front end", "client", fe.Name, "err", err)
+				end(frontEndError{err}) // it returns only for what will not pass
 			}
 		}()
 	}
@@ -600,6 +610,9 @@ func daemon(ctx context.Context, root string, logOut io.Writer) error {
 	}
 	return err
 }
+
+// frontEndError is the error of a chat front end that ended the daemon.
+type frontEndError struct{ error }
 
 // removalPass runs the automatic removal pass until ctx ends: at the start
 // and then every quarter of age, at least every second and at most every

@@ -2455,7 +2455,10 @@ type Driver interface {
 	// because the network is not up yet, the chat front end runs it again
 	// after 1 s, doubling to at most 1 min, for as long as the daemon
 	// runs, and logs at most one line a minute while it keeps failing
-	// and one when it connects (#598).
+	// and one when it connects (#598). Only an error that wraps
+	// ErrOtherIdentity, for a credential that is not the configured
+	// identity's, ends the front end and with it the daemon; before that
+	// is checked no call makes a request (#566).
 	Run(ctx context.Context, sink Sink) error
 
 	// Since returns the messages in a conversation after cursor,

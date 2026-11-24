@@ -211,11 +211,13 @@ becomes
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `bot_id` | string | required | The bot's user id. At start hataori checks that the token belongs to this bot and refuses to run as any other. |
+| `bot_id` | string | required | The bot's user id. At start hataori checks that the token belongs to this bot and refuses to run as any other: with another bot's token nothing is read, posted or opened with it, what waits to be posted stays waiting, and the daemon exits with one line that names both bots. |
 | `token_file` | string | required | The name of a file in `<root>/config/` that holds the bot token. A plain file name: an absolute path or a path out of `config/` is refused. Spaces and line breaks around the token are ignored; an empty file is refused. |
 | `command_prefix` | string | empty | Put before the name of every command the bot registers: with `"stg-"`, the commands are `/stg-new`, `/stg-stop`, `/stg-status`, `/stg-attach` and `/stg-dashboard`. Up to 31 of `a-z`, `0-9`, `-` and `_`; each name with it must still fit Discord's 32 characters. Empty registers `/new` and the others. Changing it replaces the bot's commands at the next start. |
 
 Unknown keys are refused. The token is read from this file only, never from the environment. Keep the file readable by its owner only (`chmod 600`); hataori checks the mode of `hataori.json` but not of the token file.
+
+**When Discord cannot be reached.** The daemon goes on without it, and tries again until it is connected: after 1 second, then twice as long after each failure up to 1 minute. The daemon's own line about it is logged at most once a minute; the Discord library's lines about a gateway that cannot be reached come on top. That holds for every failure but another bot's token, at the start (the check of the token's bot, the registration of the commands) and later, also for one that does not pass by itself, such as a token Discord does not take. While the daemon is not connected, `hataori threads` and the dashboard say so.
 
 **Several instances in one server.** Each instance runs its own bot, and Discord shows every bot's commands in every channel, with the bot's name in small print only, so `/stop` of one instance is easily picked in a channel another one serves. Give each instance but one a `command_prefix`, such as `"stg-"` for a staging instance, so that their commands have different names. A command that does reach an instance outside its scopes (see "Commands") is answered with one line saying so.
 

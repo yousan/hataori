@@ -67,6 +67,7 @@ type Driver struct {
 	botID      snowflake.ID
 	token      string
 	client     rest.Client
+	identity   *identity // in front of client (identity.go)
 	gatewayURL string
 	log        *slog.Logger
 
@@ -84,7 +85,10 @@ type Driver struct {
 	lampLocks [64]sync.Mutex // SetStatus, by message id
 }
 
-var _ surface.Driver = (*Driver)(nil)
+var (
+	_ surface.Driver     = (*Driver)(nil)
+	_ surface.Identified = (*Driver)(nil)
+)
 
 // New is the driver's surface.Factory. The token is read from config, the
 // instance's config directory, and nowhere else.
@@ -127,10 +131,12 @@ func newDriver(botID snowflake.ID, token, restURL, gatewayURL string, log *slog.
 	if log == nil {
 		log = slog.Default()
 	}
+	client, who := newClient(botID, token, rest.WithURL(restURL), rest.WithLogger(log))
 	return &Driver{
 		botID:      botID,
 		token:      token,
-		client:     rest.NewClient(token, rest.WithURL(restURL), rest.WithLogger(log)),
+		client:     client,
+		identity:   who,
 		gatewayURL: gatewayURL,
 		log:        log,
 		pageSize:   100,
@@ -143,7 +149,7 @@ func newDriver(botID snowflake.ID, token, restURL, gatewayURL string, log *slog.
 }
 
 // Run connects and delivers inbound messages to sink until ctx ends. It
-// first checks that the token is the configured bot's. A dropped
+// first checks that the token is the configured bot's (CheckIdentity). A dropped
 // connection is reopened and the session resumed; events are handled one at
 // a time, in the order the service sends them, so inbound order per
 // conversation is kept.
@@ -158,15 +164,8 @@ func newDriver(botID snowflake.ID, token, restURL, gatewayURL string, log *slog.
 // each under its name with the configured prefix before it, and fails when
 // the service refuses them.
 func (d *Driver) Run(ctx context.Context, sink surface.Sink) error {
-	var me struct {
-		ID  snowflake.ID `json:"id"`
-		Bot bool         `json:"bot"`
-	}
-	if err := d.client.Do(rest.GetCurrentUser.Compile(nil), nil, &me, rest.WithCtx(ctx)); err != nil {
-		return fmt.Errorf("discord: check the bot's identity: %w", err)
-	}
-	if me.ID != d.botID {
-		return fmt.Errorf("discord: the token is for bot %s, but the config names bot %s", me.ID, d.botID)
+	if err := d.CheckIdentity(ctx); err != nil {
+		return err
 	}
 	if c, ok := sink.(surface.Commander); ok {
 		if err := d.register(ctx, c.Commands()); err != nil {
@@ -195,7 +194,9 @@ func (d *Driver) Run(ctx context.Context, sink surface.Sink) error {
 		switch e := ev.(type) {
 		case gateway.EventReady:
 			if e.User.ID != d.botID {
-				report(fmt.Errorf("discord: logged in as bot %s, but the config names bot %s", e.User.ID, d.botID))
+				stopped.Store(true) // nothing is read as that bot
+				d.identity.refuse(e.User.ID)
+				report(d.CheckIdentity(ctx))
 				return
 			}
 			d.newSession(e.Guilds)

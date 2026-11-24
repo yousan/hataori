@@ -25,10 +25,19 @@ var ErrGone = errors.New("the conversation is gone")
 // again.
 var ErrRefused = errors.New("the chat service refuses it")
 
-// Driver is one chat service.
+// ErrOtherIdentity is what a driver's error wraps when its credential is for
+// another identity on the service than the one its settings name. It does
+// not pass: the driver makes no request with that credential again.
+var ErrOtherIdentity = errors.New("the credential is not for the configured identity")
+
+// Driver is one chat service. A driver whose settings name the identity its
+// credential is for makes no request with it, in any call, before it has
+// checked that (Identified).
 type Driver interface {
 	// Run connects and delivers inbound events to sink until ctx ends.
 	// It reconnects by itself and calls sink in order per conversation.
+	// A Run that returned before may be called again, unless its error
+	// wraps ErrOtherIdentity.
 	Run(ctx context.Context, sink Sink) error
 
 	// Since returns the messages in a conversation after cursor,
@@ -65,6 +74,15 @@ type Driver interface {
 	// Limits reports message length, choices per message, and which
 	// optional calls work.
 	Limits() Limits
+}
+
+// Identified is implemented by a Driver whose settings name the identity its
+// credential is for. CheckIdentity asks the service which one it is for, and
+// returns an error that wraps ErrOtherIdentity when it is another one. Any
+// other error may pass, and it may be called again. Once it has returned
+// nil, it costs the service nothing.
+type Identified interface {
+	CheckIdentity(ctx context.Context) error
 }
 
 // Namer is implemented by a Driver that can tell the name the service shows
