@@ -127,6 +127,25 @@ export function TabBar(props: Props) {
     bar.current?.querySelector<HTMLElement>(".tab-main[aria-selected=true]")?.focus();
   }, [active, open]);
 
+  // The active tab is kept in view in a bar too narrow for every tab: when
+  // another one becomes active, and when the bar or the tab changes its
+  // size. The rest are reached by scrolling the bar, or with the keys.
+  useEffect(() => {
+    const el = bar.current;
+    const tab = el?.querySelector<HTMLElement>(".tab.active");
+    if (!el || !tab) return;
+    const reveal = () => {
+      const [b, r] = [el.getBoundingClientRect(), tab.getBoundingClientRect()];
+      if (r.left < b.left) el.scrollLeft -= b.left - r.left;
+      else if (r.right > b.right) el.scrollLeft += Math.min(r.right - b.right, r.left - b.left);
+    };
+    reveal();
+    const watch = new ResizeObserver(reveal);
+    watch.observe(el);
+    watch.observe(tab);
+    return () => watch.disconnect();
+  }, [active, open]);
+
   // onKey moves along the tabs with the arrow keys, Home and End, as a tab
   // list does, and closes the tab with Delete.
   const onKey = (e: React.KeyboardEvent, k: TabKey) => {
