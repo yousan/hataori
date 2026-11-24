@@ -106,7 +106,8 @@ func TestNoEnterAgainForAnEmptyBox(t *testing.T) {
 }
 
 // A turn that starts between the paste and its Enter, typed at the
-// terminal, gets no Enter; the input then ends "not delivered".
+// terminal, gets no Enter, and the input does not time out meanwhile; Enter
+// is pressed after the turn.
 func TestNoEnterDuringATurn(t *testing.T) {
 	c := firstStart(t)
 	c.Decode(agent.Screen, readScreen(t, firstEnter+"screen-after.raw"))
@@ -118,10 +119,16 @@ func TestNoEnterDuringATurn(t *testing.T) {
 		t.Fatal("the typed prompt did not start a turn")
 	}
 	now := time.Now()
-	for i := 0; i <= 20; i++ {
-		if k := keysOf(c.Tick(now.Add(time.Duration(i) * time.Second))); k != "" {
-			t.Fatalf("keys %q during the typed turn", k)
+	for i := 0; i <= 120; i++ {
+		now = now.Add(time.Second)
+		if a := c.Tick(now); len(a.Keys) != 0 || len(a.Events) != 0 {
+			t.Fatalf("keys %q and events %+v during the typed turn", a.Keys, a.Events)
 		}
+	}
+	c.Decode(agent.Hook, []byte(`{"hook":"u2","wait":false,"payload":{"hook_event_name":"Stop","prompt_id":"p1","last_assistant_message":"ok"}}`))
+	c.Tick(now)
+	if a := c.Tick(now.Add(pasteSettle)); len(a.Keys) != 1 || a.Keys[0] != confirm {
+		t.Fatalf("after the typed turn: keys %q, want Enter", a.Keys)
 	}
 }
 

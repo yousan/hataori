@@ -298,6 +298,23 @@ def background(out, work):
     run(out, work, "background", steps)
 
 
+def held_notification(out, work):
+    def steps(s):
+        # A paste that is in the input box when the task notification
+        # starts a turn of the agent's own; Enter after that turn's end.
+        s.turn("Run the shell command `sleep 8` with the Bash tool, with run_in_background set to true. "
+               "Do not wait for it. Reply with just: started. Later, when you are told that it finished, "
+               "run the shell command `python3 -c 'import time; time.sleep(8)'` in the foreground and then "
+               "reply with just: finished")
+        time.sleep(3)
+        s.write(b"\x1b[200~Reply with just: held message\x1b[201~")
+        s.wait("Stop", 2)
+        time.sleep(1.5)
+        s.write(b"\r")
+        s.wait("Stop", 3)
+    run(out, work, "held_notification", steps)
+
+
 def subagent(out, work):
     run(out, work, "subagent", lambda s: s.turn(
         "Use the Agent tool to start one general-purpose subagent with the prompt 'Reply with just: sub-ok'. "
@@ -555,7 +572,8 @@ def main():
     with open(os.path.join(out, "VERSION"), "w") as f:
         f.write("%s\n%s\n" % (ver, time.strftime("%Y-%m-%d")))
     order = ["plain", "tools", "question", "background", "subagent", "paste", "interrupt", "compact",
-             "failure", "trust", "login", "login_terminal", "resume_missing", "clear", "sleep", "subagent_tools", "usage", "paste_tabs"]
+             "failure", "trust", "login", "login_terminal", "resume_missing", "clear", "sleep", "subagent_tools", "usage", "paste_tabs",
+             "held_notification"]
     for name in order:
         if want and name not in want and not (name == "plain" and "resume" in want):
             continue

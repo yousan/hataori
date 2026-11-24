@@ -182,7 +182,9 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 	if in.Written {
 		// Pasted before a restart: its prompt is still to come.
 		// Nothing is written for it, Enter neither: if the restart came
-		// between the paste and its Enter, it ends "not delivered".
+		// between the paste and its Enter, it ends "not delivered". Only
+		// when another turn runs meanwhile, which Enter waits for (track),
+		// it is pressed after that turn.
 		typed := c.pasteText(in.Text)
 		text := normalize(typed)
 		c.pasted = append(c.pasted, queued{id: in.ID, text: text})
@@ -270,7 +272,7 @@ type sentInput struct {
 	text    string    // normalized, as compared with the prompt
 	typed   string    // as pasted
 	id      string    // its Input.ID
-	at      time.Time // the first Tick after pasting it
+	at      time.Time // the first Tick after pasting it, or after a turn that ran meanwhile
 	pressed bool      // Enter was pressed for it
 	entered time.Time // when Enter was last pressed for it
 	again   int       // times Enter was pressed again
@@ -293,9 +295,18 @@ func (c *codec) Tick(now time.Time) Actions {
 // again while the input box still holds the text (screen.go), and ends the
 // wait for input the CLI never reported: after the input timeout the turn
 // it was to start ends as failed, "not delivered".
+//
+// A turn that started between the paste and the report, the agent's own
+// after a background task or one typed at the terminal, is another one:
+// Enter and the timeout wait for its end, so that the timeout never ends
+// it. The text stays in the CLI's input box meanwhile (2.1.331,
+// testdata/2.1.331/held_notification).
 func (c *codec) tickInput(now time.Time) Actions {
 	if c.sent == nil {
 		return c.holdPaste(now)
+	}
+	if c.running {
+		return Actions{}
 	}
 	if c.sent.at.IsZero() {
 		c.sent.at = now // not before the paste: it is handed over before the next Tick
@@ -303,8 +314,7 @@ func (c *codec) tickInput(now time.Time) Actions {
 	}
 	if now.Sub(c.sent.at) < c.inputTimeout() {
 		switch {
-		case !c.ready || c.running || now.Sub(c.sent.at) < pasteSettle:
-			// Not during a turn, such as one typed at the terminal.
+		case !c.ready || now.Sub(c.sent.at) < pasteSettle:
 		case !c.sent.pressed:
 			c.sent.pressed, c.sent.entered = true, now
 			return Actions{Keys: []agent.Part{confirm}}
@@ -446,6 +456,16 @@ func (c *codec) track(prompt string, a Actions) Actions {
 		case agent.TurnEnded:
 			if prompt == "" || c.runningPrompt == "" || prompt == c.runningPrompt {
 				c.running = false
+				if c.sent != nil {
+					c.sent.at = time.Time{} // its wait starts now (tickInput)
+					if c.sent.entered.IsZero() {
+						// Not pressed by this codec: written before a
+						// restart, and if it was not submitted then, it
+						// is in the box still. In an empty box, Enter
+						// does nothing.
+						c.sent.pressed = false
+					}
+				}
 			}
 		case agent.SessionEnded:
 			c.ready, c.running = false, false

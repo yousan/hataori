@@ -242,7 +242,7 @@ type Input struct {
 	Text string
 	// Written says the input was written to the agent before the caller
 	// restarted, and its report has not been read. The codec records it as
-	// written and waiting for its report, and writes nothing.
+	// written and waiting for its report, and never writes its text again.
 	Written bool
 }
 
