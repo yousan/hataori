@@ -1,0 +1,5 @@
+4242 %4 /dev/ttys009 80 24 4168350 0 - - a_person's_window
+4242 %0 /dev/ttys009 80 24 4168341 0 - - hataori-x-1
+4242 %1 /dev/ttys009 80 24 - 1 x0 - hataori-x-1
+4242 %2 /dev/ttys009 80 24 - 1 x3 - hataori-x-1
+4242 %3 /dev/ttys009 80 24 - 1 x 15 hataori-x-1

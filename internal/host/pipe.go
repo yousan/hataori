@@ -50,6 +50,17 @@ func ResetPipe(stateDir string) error {
 	return writeFile(filepath.Join(stateDir, StartFile), "0")
 }
 
+// PipeRuns reports whether a Pipe of stateDir runs; it says no when it
+// cannot tell.
+func PipeRuns(stateDir string) bool {
+	f, err := os.Open(filepath.Join(stateDir, pipeLock))
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	return errors.Is(unix.Flock(int(f.Fd()), unix.LOCK_SH|unix.LOCK_NB), unix.EWOULDBLOCK)
+}
+
 // lockStart takes the lock of stateDir's StartFile, shared or not.
 func lockStart(stateDir string, how int) func() {
 	return lockFile(filepath.Join(stateDir, StartFile+".lock"), how)

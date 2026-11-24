@@ -131,7 +131,7 @@ func (h *Holder) Stop(ctx context.Context, w holder.Window, interrupt, terminate
 	if err != nil {
 		return holder.StopResult{}, err
 	}
-	return h.startedStop(ctx, r, interrupt, terminate)
+	return h.startedStop(ctx, r, w.Process, interrupt, terminate)
 }
 
 // cmdTimeout bounds each tmux and ps command.
@@ -151,9 +151,10 @@ func (h *Holder) tmux(ctx context.Context, r ref, stdin []byte, args ...string) 
 
 // runTmux runs prog with the server's arguments, then a command's args, and
 // stdin on its standard input. It returns what prog printed, with an error
-// too.
+// too. With -u the client prints UTF-8 whatever the locale: else, under one
+// that is not UTF-8, it prints each character outside ASCII as "_" (#483).
 func runTmux(ctx context.Context, prog string, server, args []string, stdin []byte) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, prog, append(append([]string{}, server...), args...)...)
+	cmd := exec.CommandContext(ctx, prog, slices.Concat([]string{"-u"}, server, args)...)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
@@ -386,7 +387,7 @@ func (h *Holder) Input(ctx context.Context, w holder.Window, parts []agent.Part)
 	if notPasted && enterFirst {
 		return errNotPasted
 	}
-	if err := h.hand(ctx, r, parts); err != nil {
+	if err := h.hand(ctx, r, startedProcess(w), parts); err != nil {
 		return err
 	}
 	if pastes {
@@ -396,10 +397,14 @@ func (h *Holder) Input(ctx context.Context, w holder.Window, parts []agent.Part)
 }
 
 // hand hands the parts over, all of them or, with an error, none, unless
-// tmux failed halfway.
-func (h *Holder) hand(ctx context.Context, r ref, parts []agent.Part) (err error) {
-	if _, err := h.find(ctx, r); err != nil {
+// tmux failed halfway. process is the pane's process, 0 when not known.
+func (h *Holder) hand(ctx context.Context, r ref, process int, parts []agent.Part) (err error) {
+	found, err := h.findStarted(ctx, r, process)
+	if err != nil {
 		return err
+	}
+	if process > 0 {
+		process = found.pid
 	}
 	// Not cut short by ctx: a tmux client killed halfway does not undo
 	// what it asked of the server, and the buffers must still be deleted.
@@ -434,11 +439,11 @@ func (h *Holder) hand(ctx context.Context, r ref, parts []agent.Part) (err error
 	// it runs any of them, and pastes the buffer as it is.
 	_, old := h.noRawPaste.Load(r.Socket)
 	raw := !old && len(bufs) > 0
-	out, err := h.tmux(cctx, r, nil, handOver(r, parts, bufs, raw)...)
+	out, err := h.tmux(cctx, r, nil, handOver(r, process, parts, bufs, raw)...)
 	var te *tmuxError
 	if raw && errors.As(err, &te) && strings.Contains(te.msg, "unknown flag -S") {
 		h.noRawPaste.Store(r.Socket, true)
-		out, err = h.tmux(cctx, r, nil, handOver(r, parts, bufs, false)...)
+		out, err = h.tmux(cctx, r, nil, handOver(r, process, parts, bufs, false)...)
 	}
 	// A hook a person set on these commands may print lines of its own, and
 	// may fail after a part was handed over.
@@ -447,7 +452,7 @@ func (h *Holder) hand(ctx context.Context, r ref, parts []agent.Part) (err error
 	case slices.Contains(said, saidHanded):
 		return nil
 	case slices.Contains(said, saidRefused):
-		if _, err := h.find(ctx, r); err != nil {
+		if _, err := h.findStarted(ctx, r, process); err != nil {
 			return err // gone
 		}
 		return ErrTakesNoInput
@@ -459,13 +464,13 @@ func (h *Holder) hand(ctx context.Context, r ref, parts []agent.Part) (err error
 }
 
 // handOver is the tmux command that hands the parts over, the pastes from
-// bufs, when the pane takes input (ErrTakesNoInput) and is on the window's
-// own server, and that hands over nothing otherwise. tmux runs the commands
-// of an if-shell -F one right after the other and after its condition: no
+// bufs, when the pane takes input (ErrTakesNoInput), runs process, when
+// known, and is on the window's own server, and that hands over nothing
+// otherwise. tmux runs the commands of an if-shell -F one right after the other and after its condition: no
 // key of a person and no command of another client comes between them. For
 // a pane that is gone, tmux reads the condition on another pane or on none:
 // the pane's id is part of it.
-func handOver(r ref, parts []agent.Part, bufs []string, raw bool) []string {
+func handOver(r ref, process int, parts []agent.Part, bufs []string, raw bool) []string {
 	var cmds []string
 	for _, p := range parts {
 		if p.Key != "" {
@@ -479,10 +484,12 @@ func handOver(r ref, parts []agent.Part, bufs []string, raw bool) []string {
 		cmds, bufs = append(cmds, c), bufs[1:]
 	}
 	cmds = append(cmds, "display-message -p "+saidHanded)
-	return []string{"if-shell", "-F", "-t", r.Pane,
-		all(fmt.Sprintf("#{==:#{pid},%d}", r.Server), "#{==:#{pane_id},"+r.Pane+"}", "#{==:#{pane_dead},0}", "#{==:#{pane_in_mode},0}", "#{==:#{pane_input_off},0}",
-			"#{||:#{==:#{pane_synchronized},0},#{==:#{window_panes},1}}"),
-		strings.Join(cmds, " ; "), "display-message -p " + saidRefused}
+	conds := []string{fmt.Sprintf("#{==:#{pid},%d}", r.Server), "#{==:#{pane_id}," + r.Pane + "}", "#{==:#{pane_dead},0}", "#{==:#{pane_in_mode},0}", "#{==:#{pane_input_off},0}",
+		"#{||:#{==:#{pane_synchronized},0},#{==:#{window_panes},1}}"}
+	if process > 0 {
+		conds = append(conds, fmt.Sprintf("#{==:#{pane_pid},%d}", process))
+	}
+	return []string{"if-shell", "-F", "-t", r.Pane, all(conds...), strings.Join(cmds, " ; "), "display-message -p " + saidRefused}
 }
 
 // all is the tmux condition that holds when each of conds does.
@@ -605,7 +612,7 @@ func (h *Holder) Alive(ctx context.Context, w holder.Window) (holder.Liveness, e
 		return holder.Liveness{}, err
 	}
 	if w.Owned {
-		return h.startedAlive(ctx, r), nil
+		return h.startedAlive(ctx, r, w.Process), nil
 	}
 	if _, err := h.find(ctx, r); errors.Is(err, errGone) {
 		return holder.Liveness{State: holder.Gone}, nil
@@ -652,7 +659,7 @@ func (h *Holder) Screen(ctx context.Context, w holder.Window, run string, after 
 		var last []byte
 		var n uint64
 		for ctx.Err() == nil {
-			p, err := h.find(ctx, r)
+			p, err := h.findStarted(ctx, r, startedProcess(w))
 			if errors.Is(err, errGone) {
 				return
 			}
