@@ -1006,21 +1006,11 @@ func (c *checker) worktrees(g *reader, rp repo) error {
 // is no work tree of its own: git reports nothing below it, neither as
 // untracked nor as ignored. A bare repository there is none either.
 func (c *checker) gitlinks(g *reader, rp repo) error {
-	out, _, err := g.run(c.ctx, "ls-files", "-s", "-z")
+	links, err := g.gitlinks(c.ctx)
 	if err != nil {
 		return err
 	}
-	for _, r := range strings.Split(string(out), "\x00") {
-		if r == "" {
-			continue
-		}
-		info, name, ok := strings.Cut(r, "\t")
-		if !ok {
-			return fmt.Errorf("workspace: git ls-files -s printed %q", r)
-		}
-		if !strings.HasPrefix(info, "160000 ") {
-			continue
-		}
+	for _, name := range links {
 		dir := filepath.Join(rp.dir, name)
 		if c.trees[dir] {
 			continue

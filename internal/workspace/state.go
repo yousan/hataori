@@ -10,8 +10,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
@@ -24,7 +26,7 @@ import (
 //
 // It changes nothing in dir: git runs with optional locks off, so not even
 // the index's cached file times are written, no filter driver runs, and it
-// never asks a remote: a partial clone is refused.
+// never asks a remote: a partial clone is refused. That holds in submodules.
 // A directory that is not the top of a repository, and any git failure,
 // is an error: the numbers are never guessed.
 func (m Maker) State(ctx context.Context, dir string) (control.WorkspaceState, error) {
@@ -115,16 +117,33 @@ type reader struct {
 	extra []string // options for every git command after the first
 }
 
-// disarm reads the repository's configuration and refuses what would make
-// git write or ask a remote: a partial clone, which fetches missing objects
-// on demand. It turns off every filter driver, whose clean command diff and
-// status would run on changed files and which can do anything.
+// disarm reads the configuration of the repository and of the submodules
+// below it, in which git diff and git status run git status, and refuses what
+// would make git write or ask a remote: a partial clone, which fetches missing
+// objects on demand. It turns off every filter driver, whose clean command
+// diff and status would run on changed files and which can do anything. git
+// hands the options to its commands in submodules.
 func (g *reader) disarm(ctx context.Context) error {
-	out, code, err := g.run(ctx, "config", "--null", "--get-regexp", `^(filter\..*\.(clean|process)|extensions\.partialclone|remote\..*\.promisor)$`)
-	if err != nil && code == 1 { // none is set
-		return nil
+	names := map[string]bool{}
+	if err := g.filters(ctx, names, map[string]bool{g.dir: true}); err != nil {
+		return err
 	}
-	if err != nil {
+	for name := range names {
+		if strings.Contains(name, "=") { // -c would take it for the key's end
+			return fmt.Errorf("workspace: %s: filter %q cannot be turned off", g.dir, name)
+		}
+		g.extra = append(g.extra, "-c", "filter."+name+".clean=", "-c", "filter."+name+".process=")
+	}
+	return nil
+}
+
+// filters adds the names of the filter drivers that the repository and the
+// submodules below it configure, and refuses a partial clone. Directories in
+// seen have been read.
+func (g reader) filters(ctx context.Context, names, seen map[string]bool) error {
+	// Exit 1: none is set.
+	out, code, err := g.run(ctx, "config", "--null", "--get-regexp", `^(filter\..*\.(clean|process)|extensions\.partialclone|remote\..*\.promisor)$`)
+	if err != nil && code != 1 {
 		return err
 	}
 	for _, kv := range strings.Split(string(out), "\x00") {
@@ -135,11 +154,57 @@ func (g *reader) disarm(ctx context.Context) error {
 			strings.HasSuffix(key, ".promisor") && isTrue(value):
 			return fmt.Errorf("workspace: %s is a partial clone, which git may complete from the remote", g.dir)
 		case strings.HasPrefix(key, "filter."):
-			name := key[len("filter."):strings.LastIndex(key, ".")]
-			g.extra = append(g.extra, "-c", "filter."+name+".clean=", "-c", "filter."+name+".process=")
+			names[key[len("filter."):strings.LastIndex(key, ".")]] = true
+		}
+	}
+	links, err := g.gitlinks(ctx)
+	if err != nil {
+		return err
+	}
+	for _, link := range links {
+		// git follows a symbolic link in the place of a submodule.
+		dir := filepath.Join(g.dir, link)
+		if _, err := os.Stat(filepath.Join(dir, ".git")); missing(err) || errors.Is(err, syscall.ELOOP) {
+			continue // not checked out
+		} else if err != nil {
+			return fmt.Errorf("workspace: %w", err)
+		}
+		if dir, err = filepath.EvalSymlinks(dir); err != nil {
+			return fmt.Errorf("workspace: %w", err)
+		}
+		if seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		// git runs git status there in this environment.
+		sub := reader{dir: dir, env: append(slices.Clip(g.env), "GIT_DIR=.git")}
+		if err := sub.filters(ctx, names, seen); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// gitlinks are the paths of the submodules in the index.
+func (g reader) gitlinks(ctx context.Context) ([]string, error) {
+	out, _, err := g.run(ctx, "ls-files", "-s", "-z")
+	if err != nil {
+		return nil, err
+	}
+	var links []string
+	for _, r := range strings.Split(string(out), "\x00") {
+		if r == "" {
+			continue
+		}
+		info, name, ok := strings.Cut(r, "\t")
+		if !ok {
+			return nil, fmt.Errorf("workspace: git ls-files -s printed %q", r)
+		}
+		if strings.HasPrefix(info, "160000 ") {
+			links = append(links, name)
+		}
+	}
+	return links, nil
 }
 
 func isTrue(v string) bool {
