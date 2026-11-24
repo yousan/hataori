@@ -2,6 +2,7 @@ package claudecode
 
 import (
 	"bytes"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -61,9 +62,21 @@ const (
 // files when the project settings declare hooks, followed by the files
 // that declare them: "⚠ This folder configures hooks that can run commands
 // without asking, declared in .claude/settings.json" (#592,
-// testdata/2.1.329/trust_hooks_*). Only this warning is known; any other
-// line there leaves the dialog unanswered.
+// testdata/2.1.329/trust_hooks_*). Only this warning and permissionsWarning
+// are known, and only one of them at a time; any other line there leaves
+// the dialog unanswered.
 const hooksWarning = "⚠ This folder configures hooks that can run commands without asking, declared in "
+
+// permissionsWarning is the warning 2.1.329 draws in the same place when the
+// project settings allow tools (#596, testdata/2.1.329/trust_permissions,
+// 2.1.331/trust_permissions_*), with the dialog's words joined by single
+// spaces: how many, the files that allow them, the rules, and a sentence.
+// The rules are the repository's own text, which the codec does not read:
+// see permissionsDeclared for what they may not hold.
+var permissionsWarning = regexp.MustCompile(`^⚠ This folder pre-approves (?:1 tool permission|[0-9]+ tool permissions) in ([^:]+): (.+) ` +
+	regexp.QuoteMeta(permissionsEnd) + `$`)
+
+const permissionsEnd = "These will apply without asking. Only proceed if you trust this configuration."
 
 // fullscreenNotice is the line 2.1.331 prints above the dialog, before it
 // draws anything, when its last start with the full-screen interface did
@@ -226,6 +239,11 @@ func headerMatches(text, dir string) ([]string, bool) {
 		}
 		loads = loadsPrefix + line
 	}
+	if strings.HasPrefix(loads, "⚠") {
+		if declared, loads, ok = permissionsDeclared(loads); !ok {
+			return nil, false
+		}
+	}
 	files := loadedFiles(loads)
 	for _, f := range declared {
 		if !slices.Contains(files, f) {
@@ -233,6 +251,26 @@ func headerMatches(text, dir string) ([]string, bool) {
 		}
 	}
 	return files, files != nil
+}
+
+// permissionsDeclared reads the text below the dialog's question as
+// permissionsWarning and the line naming the files: the files the warning
+// names, and that line. The rules may hold anything the repository writes,
+// also a line like the dialog's own. So the line naming the files is the
+// last that looks like it, right below the warning's sentence, and rules
+// that hold a warning sign or that sentence are not read: another warning
+// of the CLI's must not pass for a rule.
+func permissionsDeclared(text string) (declared []string, loads string, ok bool) {
+	i := strings.LastIndex(text, " "+loadsPrefix)
+	if i < 0 {
+		return nil, "", false
+	}
+	m := permissionsWarning.FindStringSubmatch(text[:i])
+	if m == nil || strings.Contains(m[2], "⚠") || strings.Contains(m[2], permissionsEnd) {
+		return nil, "", false
+	}
+	declared = fileList(m[1])
+	return declared, text[i+1:], declared != nil
 }
 
 // loadedFiles reads the dialog's line about the files trusting the folder
