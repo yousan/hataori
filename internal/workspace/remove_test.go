@@ -627,8 +627,15 @@ func TestCheckRunsNoFilterOfARepositoryBelow(t *testing.T) {
 				t.Fatal("the check ran the filter that the repository's configuration names")
 			}
 			var ref *Refusal
-			if !errors.As(err, &ref) || ref.Reason != Modified {
-				t.Fatalf("got %v, want %s", err, Modified)
+			if !errors.As(err, &ref) {
+				t.Fatalf("got %v, want a refusal", err)
+			}
+			want := Modified
+			if strings.HasPrefix(name, "link ") && refusesLink(err) {
+				want = GitError
+			}
+			if ref.Reason != want {
+				t.Fatalf("got %v, want %s", err, want)
 			}
 		})
 	}

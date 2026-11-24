@@ -202,7 +202,7 @@ func (g reader) submoduleFilters(ctx context.Context, names, seen map[string]boo
 		return err
 	}
 	for _, link := range links {
-		// git follows a symbolic link in the place of a submodule.
+		// git 2.43 follows a symbolic link in the place of a submodule.
 		dir := filepath.Join(g.dir, link)
 		if _, err := os.Stat(filepath.Join(dir, ".git")); missing(err) || errors.Is(err, syscall.ELOOP) {
 			continue // not checked out

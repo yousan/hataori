@@ -369,6 +369,9 @@ func TestStateRunsNoFilterOfASubmodule(t *testing.T) {
 				if _, rerr := os.Lstat(ran); rerr == nil {
 					t.Fatal("State ran the filter that the submodule's configuration names")
 				}
+				if strings.HasPrefix(name, "link ") && refusesLink(err) {
+					return
+				}
 				if err != nil || st.Uncommitted != 1 {
 					t.Errorf("%+v, %v; want the modified submodule counted", st, err)
 				}
@@ -425,9 +428,17 @@ func TestStateWithASubmoduleThatIsNotThere(t *testing.T) {
 			if err := change(f, f.addSubmodule(f.clone, "sub")); err != nil {
 				t.Fatal(err)
 			}
-			f.mustState()
+			if _, err := f.state(); err != nil && !refusesLink(err) {
+				t.Fatal(err)
+			}
 		})
 	}
+}
+
+// refusesLink is whether err is git's, of a symbolic link in the place of a
+// submodule: git 2.43 follows it, git 2.56 refuses it.
+func refusesLink(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "not to be a symbolic link")
 }
 
 // git status goes round until the path is too long.
