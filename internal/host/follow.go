@@ -463,5 +463,25 @@ func (a *Attachment) Resize(cols, rows int) error {
 	return a.enc.Encode(request{Op: "resize", Cols: cols, Rows: rows})
 }
 
+// Close ends the attachment; the host keeps running. What Input and Resize
+// wrote before reaches the host: it is told that nothing more comes, and
+// its output is read until it closes, as it does once it has read all. A
+// connection closed under it would lose what it had not read yet: its next
+// write of output fails and it drops the connection, and output left unread
+// here resets it. A host that does not close in closeWait, as when its
+// command takes no input, loses the rest.
+func (a *Attachment) Close() error {
+	if c, ok := a.conn.(*net.UnixConn); ok && c.CloseWrite() == nil {
+		c.SetReadDeadline(time.Now().Add(closeWait))
+		// Another reader may be in Next: between them they read to the end.
+		io.Copy(io.Discard, c)
+	}
+	return a.conn.Close()
+}
+
+// closeWait bounds how long closing an attachment waits for the host to
+// read what was written to it.
+const closeWait = 2 * time.Second
+
 // Size is the size of the host's terminal, as the stream last carried it.
 func (a *Attachment) Size() (cols, rows int) { return a.cols, a.rows }
