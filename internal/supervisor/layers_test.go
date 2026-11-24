@@ -177,7 +177,12 @@ func TestConfigLayerStatesTheKeys(t *testing.T) {
 	got := ConfigLayer(Scope{Autonomy: Watch, Repos: []Repo{{Address: "https://user:secret@example.com/o/a"}, {Address: "x", Forge: "o/b"}},
 		Limits: Limits{Turns: 0, Sends: 5, Tokens: 100}, RemindersMax: 4, Report: instance.ReportDigest, ReportEvery: 90 * time.Minute,
 		Mention: instance.MentionNever, QuietHours: &instance.QuietHours{From: 22 * 60, To: 7*60 + 30, Zone: tokyo}, Instructions: "Be kind."})
-	for _, want := range []string{"- autonomy: watch.", "- repos: https://***@example.com/o/a, o/b.", "turns_per_hour no limit, sends_per_hour 5", "tokens_per_day 100.", "- reminders_max: 4.",
+	for _, want := range []string{"- autonomy: watch.", "- repos: https://***@example.com/o/a, o/b.", "\n- Budget: turns_per_hour no limit, sends_per_hour 5 (a start counts as a send, and so does setting a reminder), tokens_per_day 100. " +
+		"Once sends_per_hour is used up, your sends, starts and reminders are refused until the hour ends; the other two limits refuse none of them. " +
+		"Once any limit is used up, what would wake you waits until the hour or the day ends, with two exceptions: " +
+		"the first turn end of a thread you started for a person's message, and a thread you started that fails to start " +
+		"(one that no person asked for only up to twice turns_per_hour). tokens_per_day holds these two as well.\n",
+		"- reminders_max: 4.",
 		"- report: digest, report_every 1h30m.", "- mention: never.", "- quiet_hours: from 22:00 to 07:30, Asia/Tokyo.", "## The config's instructions\n\nBe kind."} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("no %q in:\n%s", want, got)

@@ -158,7 +158,12 @@ func ConfigLayer(sv Scope) string {
 		}
 		fmt.Fprintf(&b, "- repos: %s. The only repositories you may start a thread in, and read on their forge.\n", strings.Join(names, ", "))
 	}
-	fmt.Fprintf(&b, "- Budget: turns_per_hour %s, sends_per_hour %s (a start counts as a send), tokens_per_day %s. Over it you are not woken, and your sends and starts are refused.\n",
+	// What Budget's API refuses and its Admit holds.
+	fmt.Fprintf(&b, "- Budget: turns_per_hour %s, sends_per_hour %s (a start counts as a send, and so does setting a reminder), tokens_per_day %s. "+
+		"Once sends_per_hour is used up, your sends, starts and reminders are refused until the hour ends; the other two limits refuse none of them. "+
+		"Once any limit is used up, what would wake you waits until the hour or the day ends, with two exceptions: "+
+		"the first turn end of a thread you started for a person's message, and a thread you started that fails to start "+
+		"(one that no person asked for only up to twice turns_per_hour). tokens_per_day holds these two as well.\n",
 		limit(int64(sv.Limits.Turns)), limit(int64(sv.Limits.Sends)), limit(sv.Limits.Tokens))
 	if sv.RemindersMax > 0 {
 		fmt.Fprintf(&b, "- reminders_max: %d. The most reminders you may have open; setting one counts as a send.\n", sv.RemindersMax)
