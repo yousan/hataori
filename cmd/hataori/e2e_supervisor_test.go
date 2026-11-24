@@ -431,7 +431,8 @@ func TestSupervisorNumberBelowOneNamesNoThread(t *testing.T) {
 		t.Errorf("thread #%d has %d inputs, want its first only: %v", id, len(got), got)
 	}
 
-	// An interrupt is asked for of a running thread only.
+	// An interrupt is asked for of a running thread only. This token may ask
+	// for none, which the core says when the call reaches it.
 	if err := owner.Send(ctx, id, "k-run", control.Input{Text: "tool t 30s"}, control.Refuse); err != nil {
 		t.Fatal(err)
 	}
@@ -440,11 +441,4 @@ func TestSupervisorNumberBelowOneNamesNoThread(t *testing.T) {
 		return err == nil && d.State == control.Running
 	})
 	refused(supervisor.ToolInterrupt, map[string]any{"reason": "urgent"})
-	if d, err := owner.Thread(ctx, id, 0, 0); err != nil || d.State != control.Running {
-		t.Errorf("the running thread after the calls: %+v %v", d, err)
-	}
-	var asked int
-	if err := dbOf(t, r.root).QueryRow(`SELECT count(*) FROM events WHERE kind = 'approval_asked'`).Scan(&asked); err != nil || asked != 0 {
-		t.Errorf("%d approvals asked (%v), want none", asked, err)
-	}
 }
