@@ -150,9 +150,10 @@ func (f *FrontEnd) pressBlocked(s surface.Selection, rest string) {
 	f.Log.Info("blocked start: choice pressed", "thread", int64(thread), "choice", choice, "client", f.Name, "id", s.Author.ID)
 }
 
-// chosenRows is the edit of the blocked start's message that e, a
-// start_chosen event, names, for the thread's first conversation: the
-// message without its buttons, and who chose what, wherever they did.
+// chosenRows are the edits of the blocked start's message that e, a
+// start_chosen event, names, and of the replies that repeat it, for the
+// thread's first conversation: each without its buttons, and who chose
+// what, wherever they did.
 func (f *FrontEnd) chosenRows(ctx context.Context, r *reader, e control.Event, conv surface.Conversation) ([]Row, error) {
 	var d struct {
 		Event     uint64
@@ -195,7 +196,19 @@ func (f *FrontEnd) chosenRows(ctx context.Context, r *reader, e control.Event, c
 	}
 	m := f.failedMessage(sf, repo, false)
 	m.Text += "\n" + done
-	return []Row{{Event: e.Pos, Conv: conv, Op: Edit, Target: &RowKey{Event: sf.pos, Part: 0}, Message: m, Decoration: true}}, nil
+	rows := []Row{{Event: e.Pos, Conv: conv, Op: Edit, Target: &RowKey{Event: sf.pos, Part: 0}, Message: m, Decoration: true}}
+	// The replies that offered the choices too (failedreply.go), each in the
+	// link it was posted in: in the others the edit has no target.
+	replies, err := f.failedReplies(ctx, sf.pos)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range replies {
+		m := f.failedReplyMessage(sf, repo, false)
+		m.Text += "\n" + done
+		rows = append(rows, Row{Event: e.Pos, Part: p, Conv: conv, Op: Edit, Target: &RowKey{Event: sf.pos, Part: p}, Message: m, Decoration: true})
+	}
+	return rows, nil
 }
 
 // failureAt reads the event at pos of thread t as its session's start
