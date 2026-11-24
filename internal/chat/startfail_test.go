@@ -251,8 +251,8 @@ func TestAnOldBlockedMessagesButtonsDoNothing(t *testing.T) {
 }
 
 // A choice taken anywhere, as in the dashboard, takes the buttons away from
-// the blocked start's message, which then says who
-// chose what (#680). A choice of a later version changes nothing.
+// the blocked start's message, which then says who chose what (#680). A
+// choice of a later version changes nothing.
 func TestAChoiceMadeElsewhereEndsTheButtons(t *testing.T) {
 	for choice, want := range map[control.StartChoice]string{
 		control.StartWithoutSettings:  "Started without this repository's settings by ada.",
