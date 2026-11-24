@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -392,6 +393,52 @@ func TestRecoveredWakeStopsTheOldAgent(t *testing.T) {
 	rows.Close()
 	if len(texts) != 2 || texts[1] != "anew" {
 		t.Fatalf("texts %q; session %s\n%s", texts, sessionState(t, st, 1), log.String())
+	}
+}
+
+// A message to an asleep session whose agent the daemon started again is
+// still stopping starts the next agent after that stop, however late it
+// is: the stop does not reach the next agent (#713).
+func TestLateStopOfASleeperSparesTheNextAgent(t *testing.T) {
+	root := t.TempDir()
+	t.Cleanup(func() { killSessions(root) })
+	st := wokenWithItsHostRunning(t, root)
+	if _, err := st.DB.Exec(`UPDATE sessions SET state = 'asleep', first_input = '', launch = 0 WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	log := &syncBuffer{}
+	st2, c, r, err := build(root, options{}, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { r.Close(); st2.Close() }()
+	var seen atomic.Bool
+	late := make(chan struct{})
+	r.point = func(p string) {
+		if p == "stop-earlier" && !seen.Swap(true) {
+			<-late
+		}
+	}
+	if err := r.Reconnect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	sent := make(chan error, 1)
+	go func() {
+		sent <- owner(c).Send(context.Background(), 1, "m2", control.Input{Text: "tool hold 2s"}, control.Refuse)
+	}()
+	time.Sleep(time.Second) // a next agent that does not wait for the stop runs its turn by now
+	close(late)
+	if err := <-sent; err != nil {
+		t.Fatal(err)
+	}
+	until(t, "the woken turn's end", st, "turn_ended", 2)
+	var end string
+	st.DB.QueryRow(`SELECT data FROM events WHERE kind = 'turn_ended' ORDER BY pos DESC LIMIT 1`).Scan(&end)
+	var started, ended int64
+	st.DB.QueryRow(`SELECT max(time) FROM events WHERE kind = 'turn_started'`).Scan(&started)
+	st.DB.QueryRow(`SELECT max(time) FROM events WHERE kind = 'turn_ended'`).Scan(&ended)
+	if d := ended - started; d < 1900 {
+		t.Fatalf("the next turn ended after %d ms, want 2 s: %s\n%s", d, end, log.String())
 	}
 }
 

@@ -102,6 +102,9 @@ type Runner struct {
 	startedMu sync.Mutex
 	started   map[int64]bool // the sessions Start started in this process (claim)
 
+	endingMu sync.Mutex
+	ending   map[int64]chan struct{} // by session, closed as the stop of its earlier run returns (stopEarlier)
+
 	point   func(name string) // for tests: called at the named points of a launch
 	endWait time.Duration     // for tests: hostEndWait, when set
 }
@@ -524,6 +527,38 @@ func (r *Runner) waitEnded(ctx context.Context, dir string, d time.Duration) boo
 	return true
 }
 
+// stopEarlier stops the agent of an earlier run of session id, whose state
+// directory is dir, when it runs. It returns a channel that is closed once
+// that stop has returned. A run has one stop: one under way is not begun
+// again, since a stop that is late reaches the agent started meanwhile.
+func (r *Runner) stopEarlier(id int64, dir string) <-chan struct{} {
+	r.endingMu.Lock()
+	defer r.endingMu.Unlock()
+	if c, ok := r.ending[id]; ok {
+		return c
+	}
+	stopped := make(chan struct{})
+	if r.alive(dir).State != holder.Running {
+		close(stopped)
+		return stopped
+	}
+	if r.ending == nil {
+		r.ending = map[int64]chan struct{}{}
+	}
+	r.ending[id] = stopped
+	go func() {
+		r.at("stop-earlier")
+		if _, err := r.stop(dir, time.Second, 2*time.Second); err != nil {
+			r.Log.Warn("stopping the agent of an earlier run", "session", id, "err", err)
+		}
+		r.endingMu.Lock()
+		delete(r.ending, id)
+		r.endingMu.Unlock()
+		close(stopped)
+	}()
+	return stopped
+}
+
 // endEarlier returns once the earlier run of session id, whose state
 // directory is dir, has ended: a wake was accepted and not begun, so what
 // runs there is the agent that was put to sleep, or closed. One that runs
@@ -534,17 +569,7 @@ func (r *Runner) waitEnded(ctx context.Context, dir string, d time.Duration) boo
 // agent is gone (it drains the output and lets its followers finish), and
 // the end is waited for, hostEndWait at most (#549).
 func (r *Runner) endEarlier(ctx context.Context, id int64, dir string) error {
-	stopped := make(chan struct{})
-	if r.alive(dir).State == holder.Running {
-		go func() {
-			defer close(stopped)
-			if _, err := r.stop(dir, time.Second, 2*time.Second); err != nil {
-				r.Log.Warn("stopping the agent of an earlier run", "session", id, "err", err)
-			}
-		}()
-	} else {
-		close(stopped)
-	}
+	stopped := r.stopEarlier(id, dir)
 	deadline := time.After(r.hostEndWait())
 	ended := r.waitEnded(ctx, dir, r.hostEndWait())
 	if ended {
@@ -805,7 +830,7 @@ func (r *Runner) stopSleepers(ctx context.Context) error {
 			continue
 		}
 		r.Log.Warn("stopping the agent of an asleep, closed or failed session", "session", id)
-		go r.stop(dir, time.Second, 2*time.Second)
+		r.stopEarlier(id, dir)
 	}
 	return nil
 }
