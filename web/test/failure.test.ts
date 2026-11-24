@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { failureReason } from "../src/failure.ts";
+import { failureReason, startFailure } from "../src/failure.ts";
 
 const trust =
   "the folder-trust dialog says trusting the folder loads .claude/settings.json; " +
@@ -28,4 +28,18 @@ test("no reason, no text", () => {
   assert.equal(failureReason({ detail: trust }), undefined);
   assert.equal(failureReason(undefined), undefined);
   assert.equal(failureReason({ reason: "crashed" }), "crashed");
+});
+
+test("why a start failed, by its reason and the files the dialog named", () => {
+  assert.equal(startFailure("blocked at start", [".claude/settings.json"]), "trust");
+  assert.equal(startFailure("blocked at start", []), "blocked");
+  assert.equal(startFailure("blocked at start", undefined), "blocked");
+  assert.equal(startFailure("cannot resume", undefined), "gone");
+  assert.equal(startFailure("resumed another session", undefined), "gone");
+  assert.equal(startFailure("crashed", undefined), "ended");
+  assert.equal(startFailure("start: no such agent", undefined), "start");
+  assert.equal(startFailure("resume: no such agent", undefined), "resume");
+  assert.equal(startFailure("take in: gone", undefined), "takeIn");
+  assert.equal(startFailure("a reason of a later version", undefined), "other");
+  assert.equal(startFailure(undefined, undefined), "other");
 });
