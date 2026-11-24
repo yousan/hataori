@@ -315,6 +315,13 @@ func TestRefuseAnythingInTheDirectoryOfASubmoduleNotCheckedOut(t *testing.T) {
 			if err := check(); err != nil {
 				t.Fatalf("a new workspace: %v", err)
 			}
+			t.Cleanup(func() {
+				for _, p := range []string{"sub", "deps/a b\tü"} {
+					dir := filepath.Join(ws, p)
+					os.RemoveAll(dir)
+					os.Mkdir(dir, 0o700)
+				}
+			})
 			tc.put()
 			if got := x.git(ws, "status", "--porcelain", "--untracked-files=all", "--ignored"); got != "" {
 				t.Fatalf("git status reports it after all:\n%s", got)
@@ -323,11 +330,6 @@ func TestRefuseAnythingInTheDirectoryOfASubmoduleNotCheckedOut(t *testing.T) {
 			wantRefusal(t, err, Untracked, "")
 			if d := err.(*Refusal).Detail; d != tc.want {
 				t.Fatalf("the refusal names %q, want %q", d, tc.want)
-			}
-			for _, p := range []string{"sub", "deps/a b\tü"} {
-				dir := filepath.Join(ws, p)
-				os.RemoveAll(dir)
-				os.Mkdir(dir, 0o700)
 			}
 		})
 	}
