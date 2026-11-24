@@ -1081,7 +1081,11 @@ func (c *checker) commits(g *reader, rp repo) error {
 	if err != nil {
 		return err
 	}
-	first, err := unpushed(append([]string{"--all", "--reflog"}, pseudo...)...)
+	autostash, err := c.autostashes(g)
+	if err != nil {
+		return err
+	}
+	first, err := unpushed(append(append([]string{"--all", "--reflog"}, pseudo...), autostash...)...)
 	if err != nil || first == "" {
 		return err
 	}
@@ -1101,7 +1105,7 @@ func (c *checker) commits(g *reader, rp repo) error {
 	}{
 		{UnpushedRef, []string{"--branches"}},
 		{DetachedHEAD, nil},
-		{Stash, stash},
+		{Stash, append(stash, autostash...)},
 		{RemoteGone, []string{"--remotes"}},
 		{OtherRef, append([]string{"--all"}, pseudo...)},
 	}
@@ -1152,6 +1156,51 @@ func (c *checker) stashCommits(g *reader) ([]string, error) {
 	}
 	return strings.Fields(string(out)), nil
 }
+
+// autostashes are the commits that hold the uncommitted changes a stopped
+// rebase, merge or checkout put aside (--autostash, checkout -m). No ref
+// below refs/ and no reflog names them: a rebase's is named by a file of the
+// rebase, the others by a pseudo-ref, which is a file too unless the
+// repository keeps its refs elsewhere. A file that names no commit is an
+// error.
+func (c *checker) autostashes(g *reader) ([]string, error) {
+	var commits []string
+	for _, name := range []string{"rebase-merge/autostash", "rebase-apply/autostash", "MERGE_AUTOSTASH", "CHECKOUT_AUTOSTASH_HEAD"} {
+		p, err := g.gitPath(c.ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		var b []byte
+		fi, err := os.Lstat(p)
+		if err == nil && fi.Mode().IsRegular() {
+			b, err = os.ReadFile(p)
+		}
+		switch {
+		case err == nil: // anything but a regular file names no commit
+			id := strings.TrimSpace(string(b))
+			if !objectID.MatchString(id) {
+				return nil, fmt.Errorf("workspace: %s names no commit", p)
+			}
+			commits = append(commits, id+"^{commit}")
+		case !errors.Is(err, fs.ErrNotExist):
+			return nil, c.unreadable(p, err)
+		}
+		if strings.Contains(name, "/") {
+			continue
+		}
+		_, code, err := g.run(c.ctx, "rev-parse", "--quiet", "--verify", "--end-of-options", name)
+		if err != nil && code != 1 { // 1: absent
+			return nil, err
+		}
+		if err == nil {
+			commits = append(commits, name+"^{commit}")
+		}
+	}
+	return commits, nil
+}
+
+// objectID is a full object id, SHA-1 or SHA-256.
+var objectID = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
 
 // ask fetches every ref of each remote into a scratch repository of its
 // own, under the instance's state, that borrows the repository's objects

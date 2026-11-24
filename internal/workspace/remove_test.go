@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -62,7 +63,13 @@ func (x *removal) check() error {
 // commit commits a new file in dir.
 func (x *removal) commit(dir, name string) {
 	x.t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(name+"\n"), 0o600); err != nil {
+	x.commitAs(dir, name, name+"\n")
+}
+
+// commitAs commits a new file with a content in dir.
+func (x *removal) commitAs(dir, name, content string) {
+	x.t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
 		x.t.Fatal(err)
 	}
 	x.git(dir, "add", name)
@@ -187,6 +194,188 @@ func TestRefuseStash(t *testing.T) {
 	x.write("a", "changed\n")
 	x.git(x.clone, "stash", "-q")
 	wantRefusal(t, x.check(), Stash, "")
+}
+
+// autostashed makes the workspace hold uncommitted work that only an
+// autostash of a stopped rebase, merge or checkout holds, and returns that commit. The
+// tree is clean, and every commit a ref or reflog names is pushed.
+func (x *removal) autostashed(kind string) string {
+	x.t.Helper()
+	x.git(x.clone, "branch", "-q", "other")
+	x.commit(x.clone, "b")
+	x.git(x.clone, "checkout", "-q", "other")
+	x.commitAs(x.clone, "b", "another\n") // conflicts with main's
+	x.git(x.clone, "checkout", "-q", "main")
+	x.git(x.clone, "push", "-q", "origin", "main", "other")
+	if err := x.check(); err != nil {
+		x.t.Fatalf("clean and pushed: %v", err)
+	}
+	x.write("a", "work that is committed nowhere\n")
+	// Those that stop exit with 1; what they leave is looked at below.
+	run := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir, cmd.Env = x.clone, x.env()
+		out, err := cmd.CombinedOutput()
+		x.t.Logf("git %v: %v\n%s", args, err, out)
+	}
+	switch kind {
+	case "rebase-merge/autostash":
+		run("rebase", "--autostash", "--exec", "false", "HEAD~1")
+	case "rebase-apply/autostash":
+		run("rebase", "--apply", "--autostash", "other")
+		x.git(x.clone, "reset", "-q", "--hard") // the rebase goes on
+	case "MERGE_AUTOSTASH":
+		run("merge", "-s", "ours", "--no-commit", "--autostash", "other")
+	case "CHECKOUT_AUTOSTASH_HEAD":
+		// What checkout -m of git 2.56 leaves when it dies, as on a failing
+		// required filter; git before it has no such autostash.
+		x.git(x.clone, "update-ref", kind, x.git(x.clone, "stash", "create"))
+		x.git(x.clone, "reset", "-q", "--hard")
+	}
+	b, err := os.ReadFile(filepath.Join(x.clone, ".git", filepath.FromSlash(kind)))
+	if err != nil {
+		x.t.Fatalf("no autostash: %v", err)
+	}
+	id := strings.TrimSpace(string(b))
+	if got := x.git(x.clone, "status", "--porcelain", "--untracked-files=all"); got != "" {
+		x.t.Fatalf("the tree is not clean:\n%s", got)
+	}
+	if got := x.git(x.clone, "stash", "list"); got != "" {
+		x.t.Fatalf("the stash is not empty:\n%s", got)
+	}
+	if got := x.git(x.clone, "show", id+":a"); got != "work that is committed nowhere" {
+		x.t.Fatalf("the autostash %s holds %q", id, got)
+	}
+	return id
+}
+
+func TestRefuseAutostash(t *testing.T) {
+	for _, kind := range []string{"rebase-merge/autostash", "rebase-apply/autostash", "MERGE_AUTOSTASH", "CHECKOUT_AUTOSTASH_HEAD"} {
+		t.Run(kind, func(t *testing.T) {
+			x := newRemoval(t)
+			id := x.autostashed(kind)
+			err := x.check()
+			wantRefusal(t, err, Stash, "")
+			if d := err.(*Refusal).Detail; d != "commit "+id {
+				t.Fatalf("the refusal names %q, want commit %s", d, id)
+			}
+
+			// A remote that has the commit is a place it exists.
+			x.git(x.clone, "push", "-q", "origin", id+":refs/heads/wip")
+			if err := x.check(); err != nil {
+				t.Fatalf("the autostash is pushed: %v", err)
+			}
+
+			// What names no commit answers nothing.
+			p := filepath.Join(x.clone, ".git", filepath.FromSlash(kind))
+			tree := x.git(x.clone, "rev-parse", "HEAD^{tree}")
+			for _, content := range []string{"", "HEAD\n", id[:20] + "\n", strings.Repeat("1", 40) + "\n", tree + "\n", id + "\n" + id + "\n"} {
+				if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := x.check(); err == nil {
+					t.Fatalf("the check passed with %q in %s", content, kind)
+				}
+			}
+			// Nor does what is no file of git's: a link that leads nowhere, or a
+			// FIFO, which would hold up the one that reads it.
+			os.Remove(p)
+			if err := os.Symlink("gone", p); err != nil {
+				t.Fatal(err)
+			}
+			if err := x.check(); err == nil {
+				t.Fatalf("the check passed with a dangling link at %s", kind)
+			}
+			os.Remove(p)
+			if err := syscall.Mkfifo(p, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- x.check() }()
+			select {
+			case err := <-done:
+				if err == nil {
+					t.Fatalf("the check passed with a FIFO at %s", kind)
+				}
+			case <-time.After(30 * time.Second):
+				t.Fatalf("the check hangs at a FIFO at %s", kind)
+			}
+
+			// Nor does what cannot be looked at.
+			if dir := filepath.Dir(p); strings.Contains(kind, "/") {
+				os.RemoveAll(dir)
+				if err := os.WriteFile(dir, nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := x.check(); err == nil {
+					t.Fatalf("the check passed with a file at %s", dir)
+				}
+			}
+		})
+	}
+}
+
+// The git directory of a submodule is checked without its work tree too.
+func TestRefuseAutostashOfASubmoduleWithoutCheckout(t *testing.T) {
+	x := newRemoval(t)
+	sub := x.bareWithCommit("sub")
+	x.git(x.clone, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "sub")
+	x.commit(filepath.Join(x.clone, "sub"), "t")
+	x.git(filepath.Join(x.clone, "sub"), "push", "-q")
+	x.git(x.clone, "add", "sub")
+	x.git(x.clone, "commit", "-q", "-m", "add sub")
+	x.git(x.clone, "push", "-q")
+	x.write("sub/s", "work that is committed nowhere\n")
+	cmd := exec.Command("git", "rebase", "--autostash", "--exec", "false", "HEAD~1")
+	cmd.Dir, cmd.Env = filepath.Join(x.clone, "sub"), x.env()
+	if out, err := cmd.CombinedOutput(); err == nil {
+		t.Fatalf("the rebase did not stop:\n%s", out)
+	}
+	x.git(x.clone, "submodule", "deinit", "-q", "-f", "sub")
+	wantRefusal(t, x.check(), Stash, filepath.Join(".git", "modules", "sub"))
+}
+
+// With its refs in a reftable, a repository has no file for a pseudo-ref; a
+// file there is none of git's, and says nothing about the pseudo-ref.
+func TestRefuseAutostashInAReftable(t *testing.T) {
+	for _, ref := range []string{"MERGE_AUTOSTASH", "CHECKOUT_AUTOSTASH_HEAD"} {
+		t.Run(ref, func(t *testing.T) {
+			x := newRemoval(t)
+			os.RemoveAll(x.clone)
+			cmd := exec.Command("git", "clone", "-q", "--ref-format=reftable", x.bare, x.clone)
+			cmd.Env = x.env()
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Skipf("this git makes no reftable: %.60s", out)
+			}
+			x.commit(x.clone, "b")
+			x.git(x.clone, "push", "-q", "origin", "main")
+			if err := x.check(); err != nil {
+				t.Fatal(err)
+			}
+			x.git(x.clone, "branch", "-q", "other", "HEAD~1")
+			x.git(x.clone, "checkout", "-q", "other")
+			x.commit(x.clone, "c")
+			x.git(x.clone, "push", "-q", "origin", "other")
+			x.git(x.clone, "checkout", "-q", "main")
+			x.write("a", "work that is committed nowhere\n")
+			if ref == "MERGE_AUTOSTASH" {
+				x.git(x.clone, "merge", "-q", "-s", "ours", "--no-commit", "--autostash", "other")
+			} else {
+				x.git(x.clone, "update-ref", ref, x.git(x.clone, "stash", "create"))
+				x.git(x.clone, "reset", "-q", "--hard")
+			}
+			x.git(x.clone, "rev-parse", "--verify", ref)
+			p := filepath.Join(x.clone, ".git", ref)
+			if _, err := os.Lstat(p); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("%s is a file: %v", ref, err)
+			}
+			wantRefusal(t, x.check(), Stash, "")
+			if err := os.WriteFile(p, []byte(x.git(x.clone, "rev-parse", "HEAD")+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			wantRefusal(t, x.check(), Stash, "")
+		})
+	}
 }
 
 func TestRefuseCommitOnlyInReflog(t *testing.T) {
