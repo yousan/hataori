@@ -75,6 +75,13 @@ type Runner struct {
 	// fails, the launch fails: a confined session is never started
 	// unconfined, and never with what another launch was given.
 	Confine func(ctx context.Context, l ConfinedLaunch) (Confined, error)
+	// ConfinedConfig is what the loaded config gives a launch, made now, of
+	// a confined session of agent in scope, or false when it has none for
+	// it. Each launch of a confined session takes its model and effort from
+	// it, and a session that a daemon finds running with another one is put
+	// to sleep at its first idle moment (follow). nil: a launch takes what
+	// the session was started with, and nothing is compared.
+	ConfinedConfig func(scope, agent string) (LaunchConfig, bool)
 	// TrustFiles gives each launch the files of its scope that a start-up
 	// dialog may name and the session may be let past it for
 	// (agent.Spec.TrustFiles), for a thread of the scope on the repository
@@ -124,6 +131,11 @@ type live struct {
 	asleep bool   // put to sleep: its agent is being stopped, and nothing more is read
 	screen bool   // the codec watches the terminal; until it says StopScreen
 	seenTo uint64 // the position in the host's run up to which the codec was given its terminal
+	// stale: the session was launched with another config than a launch
+	// would be given now, and is put to sleep once it is idle (compare, set
+	// once before the loop starts); staleAt is when that is tried next.
+	stale   bool
+	staleAt time.Time
 	// taken is the window a person started that the session was taken in
 	// from; nil for a session hataori's own host holds. Its input goes to
 	// that window, and nothing ends the window's process.
@@ -189,6 +201,9 @@ type firstInput = core.FirstInput
 type storedSpec struct {
 	Agent string     `json:"agent"`
 	Spec  agent.Spec `json:"spec"`
+	// Config is what a confined session's running agent was launched with
+	// (Runner.ConfinedConfig); nil when that was not recorded.
+	Config *LaunchConfig `json:"config,omitempty"`
 }
 
 // ConfinedLaunch is one launch of a session whose thread was started
@@ -265,6 +280,13 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 	if confined && spec.Confine == nil {
 		spec.Confine = &agent.Confinement{}
 	}
+	var config *LaunchConfig
+	if spec.Confine != nil && r.ConfinedConfig != nil {
+		if c, ok := r.ConfinedConfig(scope, agentName); ok {
+			config = &c
+			spec.Model, spec.Effort = c.Model, c.Effort
+		}
+	}
 	// The scope's config as it is at this launch, not as it was at the
 	// session's first.
 	spec.TrustFiles = nil
@@ -314,17 +336,37 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 		}
 	}
 	first.Dir = spec.Dir // so that a launch begun here can be begun again
-	sb, _ := json.Marshal(storedSpec{Agent: agentName, Spec: spec})
 	fb, _ := json.Marshal(first)
 	var before, recorded int
-	if err := r.Store.DB.QueryRowContext(ctx, `SELECT launch, host_pid FROM sessions WHERE id = ?`, id).Scan(&before, &recorded); err != nil {
+	var model, effort, stored string
+	if err := r.Store.DB.QueryRowContext(ctx, `SELECT launch, host_pid, model, effort, spec FROM sessions WHERE id = ?`, id).
+		Scan(&before, &recorded, &model, &effort, &stored); err != nil {
 		return agent.Spec{}, fmt.Errorf("runner: %w", err)
 	}
+	if config != nil {
+		var last storedSpec
+		if stored != "" {
+			if err := json.Unmarshal([]byte(stored), &last); err != nil {
+				return agent.Spec{}, fmt.Errorf("runner: session %d: spec: %w", id, err)
+			}
+		}
+		switch {
+		case before == 2:
+			// The host this launch may find running was started with what
+			// was recorded then (hs.Again, below).
+			config = last.Config
+		case last.Config == nil || len(config.Changed(*last.Config)) > 0:
+			// Otherwise the model the agent reported stays: a resume
+			// reports none.
+			model, effort = config.Model, config.Effort
+		}
+	}
+	sb, _ := json.Marshal(storedSpec{Agent: agentName, Spec: spec, Config: config})
 	// launch = 2: the host is being started. Until it is recorded as
 	// started, a daemon that comes back launches the session again, and
 	// keeps the host it finds running instead of starting another.
-	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET spec = ?, first_input = ?, launch = 2 WHERE id = ?`,
-		string(sb), string(fb), id); err != nil {
+	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET spec = ?, first_input = ?, model = ?, effort = ?, launch = 2 WHERE id = ?`,
+		string(sb), string(fb), model, effort, id); err != nil {
 		return agent.Spec{}, fmt.Errorf("runner: %w", err)
 	}
 	r.at("before host start")
@@ -625,7 +667,8 @@ func (r *Runner) skipRest(ctx context.Context, id int64, dir string) error {
 // Reconnect follows every session that was live when the daemon stopped.
 // Their agents kept running under their hosts. An asleep session whose
 // agent is still running, because the daemon stopped while putting it to
-// sleep, has its agent stopped.
+// sleep, has its agent stopped. One launched with another config, and idle,
+// is put to sleep.
 func (r *Runner) Reconnect(ctx context.Context) error {
 	if err := r.stopSleepers(ctx); err != nil {
 		return err
@@ -664,6 +707,7 @@ func (r *Runner) Reconnect(ctx context.Context) error {
 			r.Log.Error("reconnect", "session", x.id, "err", err)
 		}
 	}
+	r.settle(ctx)
 	return nil
 }
 
@@ -738,6 +782,9 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) err
 		Scan(&lv.seq, &lv.offset, &lv.start, &created)
 	if err != nil {
 		return fmt.Errorf("runner: session %d: %w", id, err)
+	}
+	if err := r.compare(lv); err != nil {
+		return err
 	}
 	if !resumed {
 		// Rows left by an agent before this one are not this one's input.
@@ -1316,6 +1363,7 @@ func (r *Runner) stepLocked(lv *live) bool {
 		return false // never had a host: nothing more will come
 	}
 	r.checkStart(lv)
+	r.checkStale(lv, len(b.events) > 0)
 	if !lv.drain.IsZero() && !lv.asleep {
 		// Its agent was put to sleep and is still read: stop it now, or
 		// once the turn's late usage was read.
@@ -1830,6 +1878,12 @@ func (r *Runner) Sleep(ctx context.Context, thread control.ThreadID) (bool, erro
 	}
 	lv.mu.Lock()
 	defer lv.mu.Unlock()
+	return r.sleep(ctx, lv)
+}
+
+// sleep is Sleep of lv, with lv.mu held.
+func (r *Runner) sleep(ctx context.Context, lv *live) (bool, error) {
+	id := lv.id
 	if lv.asleep || lv.failed || lv.taken != nil || r.attached(lv) {
 		return false, nil
 	}
@@ -1851,11 +1905,14 @@ func (r *Runner) Sleep(ctx context.Context, thread control.ThreadID) (bool, erro
 		// Input this run's agent was given and no turn has reported yet, as
 		// a message the codec held until the last turn ended. A row an
 		// earlier run left, which nothing reports any more, does not count.
-		var pending int
+		var pending, open int
 		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pending_inputs WHERE session_id = ? AND stale = 0`, id).Scan(&pending); err != nil {
 			return err
 		}
-		if background > 0 || pending > 0 {
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM requests WHERE session_id = ? AND state = 'open'`, id).Scan(&open); err != nil {
+			return err
+		}
+		if background > 0 || pending > 0 || open > 0 {
 			return nil
 		}
 		if err := r.Machine.ApplyTx(ctx, tx, id, session.Input{Kind: session.IdleTimeout}); err != nil {

@@ -3,7 +3,9 @@ package supervisor
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -161,10 +163,39 @@ func (s *Sessions) Confine(ctx context.Context, l runner.ConfinedLaunch) (runner
 	}
 	s.CopyDocs(ctx, l.Scope, l.Thread)
 	return runner.Confined{
-		MCP: []agent.MCPServer{{Name: MCPName, Argv: []string{s.Hataori, "mcp", "--scope", l.Scope, "--root", s.Root},
-			Env: []string{TokenEnv + "=" + token}}},
+		MCP:          []agent.MCPServer{{Name: MCPName, Argv: s.mcp(l.Scope), Env: []string{TokenEnv + "=" + token}}},
 		Instructions: Compose(sv, files),
 	}, nil
+}
+
+// mcp is the command of the MCP server of scope's supervisor.
+func (s *Sessions) mcp(scope string) []string {
+	return []string{s.Hataori, "mcp", "--scope", scope, "--root", s.Root}
+}
+
+// Config is the model and the effort a launch of a session of agentName of
+// scope's supervisor is given by the loaded config, and the digests of what
+// else it is given, the user's files and the token apart. It is the
+// runner's ConfinedConfig.
+func (s *Sessions) Config(scope, agentName string) (runner.LaunchConfig, bool) {
+	sv, ok := s.Scopes[scope]
+	if !ok {
+		return runner.LaunchConfig{}, false
+	}
+	model := sv.Model
+	if agentName != s.Core.Agent {
+		model = "" // one of the default agent's, which the section names
+	}
+	model, effort := s.Core.ModelOf(scope, agentName, model, cmp.Or(sv.Effort, DefaultEffort))
+	digest := func(parts ...string) string {
+		sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+		return hex.EncodeToString(sum[:])
+	}
+	return runner.LaunchConfig{Model: model, Effort: effort, Parts: map[string]string{
+		"hataori's instructions":    digest(Layer),
+		"the config's instructions": digest(ConfigLayer(sv)),
+		"MCP server":                digest(append([]string{MCPName}, s.mcp(scope)...)...),
+	}}, true
 }
 
 // CopyDocs copies the files scope's supervisor lists into docs/ of the
