@@ -26,8 +26,9 @@ import (
 //	HATAORI_REAL_CLAUDE=1 HATAORI_CAPTURE_DIR=<raw dir> go test -run TestLiveTrustFiles -v ./internal/agent/claudecode
 //
 // Each case runs with a new, empty CLAUDE_CONFIG_DIR, so nothing of the
-// user's is read or written and no login is needed: the test writes only a
-// .claude.json there that skips the first-run screens, and removes it. The
+// user's settings or login is read or written and no login is needed: the
+// test writes only there, a .claude.json that skips the first-run screens
+// and, for the notice (#707), a settings.json, and removes it. The
 // hooks are a recorder given with --settings in place of hataori's. The raw
 // dir gets, per case, the screen as the codec was given it up to its key
 // or its event, the keys, the events and the hook calls: run scrub.py on
@@ -187,6 +188,7 @@ func liveTrust(t *testing.T, raw, name string, files map[string]string, spec age
 	c := a.NewCodec(spec).(*codec)
 	c.Open()
 	var keys, events []string
+	var drawn []byte
 	n, done := 0, false
 	act := func(x Actions, after string) {
 		for _, e := range x.Events {
@@ -223,6 +225,7 @@ func liveTrust(t *testing.T, raw, name string, files map[string]string, spec age
 				t.Fatalf("the CLI ended; keys %q events %q", keys, events)
 			}
 			n++
+			drawn = append(drawn, b...)
 			os.WriteFile(filepath.Join(out, fmt.Sprintf("screen-%02d.raw", n)), b, 0o600)
 			act(c.Decode(agent.Screen, b), fmt.Sprintf("screen-%02d", n))
 		case <-time.After(200 * time.Millisecond):
@@ -240,6 +243,9 @@ func liveTrust(t *testing.T, raw, name string, files map[string]string, spec age
 	}
 	os.WriteFile(filepath.Join(out, "keys.txt"), []byte(strings.Join(keys, "\n")+"\n"), 0o600)
 	os.WriteFile(filepath.Join(out, "events.txt"), []byte(strings.Join(events, "\n")+"\n"), 0o600)
+	if strings.HasPrefix(name, "trust_notice") && !strings.HasPrefix(string(drawn), fullscreenNotice) {
+		t.Fatal("the CLI did not print the notice: the capture is not of it")
+	}
 	if ignored {
 		if len(keys) != 0 || len(events) != 0 {
 			t.Fatalf("keys %q events %q, want none for a screen the codec does not know", keys, events)
