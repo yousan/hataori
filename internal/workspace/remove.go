@@ -678,6 +678,8 @@ type checker struct {
 	top  string // the workspace, resolved
 	root string // the instance root, resolved
 	n    int    // scratch repositories made
+	// trees are the work trees find returned.
+	trees map[string]bool
 }
 
 // repo is a repository found in the workspace.
@@ -692,6 +694,12 @@ func (c *checker) run() error {
 	repos, err := c.find()
 	if err != nil {
 		return err
+	}
+	c.trees = map[string]bool{}
+	for _, rp := range repos {
+		if !rp.gitDir {
+			c.trees[rp.dir] = true
+		}
 	}
 	// Every work tree first: a dirty file is the most common reason, and
 	// asking the remotes is the slowest step.
@@ -931,6 +939,10 @@ func (c *checker) files(g *reader, rp repo) error {
 		}
 	}
 
+	if err := c.gitlinks(g, rp); err != nil {
+		return err
+	}
+
 	worktrees, err := g.gitPath(c.ctx, "worktrees")
 	if err != nil {
 		return err
@@ -941,6 +953,60 @@ func (c *checker) files(g *reader, rp repo) error {
 		return c.unreadable(worktrees, err)
 	}
 	return nil
+}
+
+// gitlinks refuses anything in the directory of a gitlink (a submodule) that
+// is no work tree of its own: git reports nothing below it, neither as
+// untracked nor as ignored. A bare repository there is none either.
+func (c *checker) gitlinks(g *reader, rp repo) error {
+	out, _, err := g.run(c.ctx, "ls-files", "-s", "-z")
+	if err != nil {
+		return err
+	}
+	for _, r := range strings.Split(string(out), "\x00") {
+		if r == "" {
+			continue
+		}
+		info, name, ok := strings.Cut(r, "\t")
+		if !ok {
+			return fmt.Errorf("workspace: git ls-files -s printed %q", r)
+		}
+		if !strings.HasPrefix(info, "160000 ") {
+			continue
+		}
+		dir := filepath.Join(rp.dir, name)
+		if c.trees[dir] {
+			continue
+		}
+		held, err := c.firstIn(dir)
+		if err != nil {
+			return err
+		}
+		if held != "" {
+			return c.refuse(rp, Untracked, held[len(rp.dir)+1:])
+		}
+	}
+	return nil
+}
+
+// firstIn returns a path below dir, a file rather than a directory when
+// there is one, or "" when dir is empty. A dir that is absent or no
+// directory, which status has reported already, is refused or returned.
+func (c *checker) firstIn(dir string) (string, error) {
+	var found string
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		switch {
+		case err != nil:
+			return c.unreadable(p, err)
+		case !d.IsDir():
+			found = p
+			return filepath.SkipAll
+		case found == "" && p != dir:
+			found = p
+		}
+		return nil
+	})
+	return found, err
 }
 
 // disposable reports whether an ignored path, relative to its repository

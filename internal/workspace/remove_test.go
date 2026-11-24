@@ -257,6 +257,105 @@ func TestRefuseSubmoduleWithoutCheckout(t *testing.T) {
 	wantRefusal(t, x.check(), UnpushedRef, filepath.Join(".git", "modules", "sub"))
 }
 
+// A plain clone, which is what Maker.Clone makes, leaves the directory of a
+// submodule empty and no repository. git reports nothing below it: not as
+// untracked, not as ignored.
+func TestRefuseAnythingInTheDirectoryOfASubmoduleNotCheckedOut(t *testing.T) {
+	x := newRemoval(t)
+	sub := x.bareWithCommit("sub")
+	for _, p := range []string{"sub", "deps/a b\tü"} {
+		x.git(x.clone, "-c", "protocol.file.allow=always", "submodule", "add", "-q", "--name", strconv.Itoa(len(p)), sub, p)
+	}
+	x.git(x.clone, "commit", "-q", "-m", "add sub")
+	x.git(x.clone, "push", "-q")
+	if err := x.check(); err != nil {
+		t.Fatalf("every submodule is checked out: %v", err)
+	}
+
+	m := Maker{Root: x.root, Environ: x.env}
+	ws, err := m.Clone(context.Background(), 7, "file://"+x.bare, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func() error { return x.r.Check(context.Background(), ws) }
+	put := func(name string) {
+		t.Helper()
+		p := filepath.Join(ws, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("work that is committed nowhere\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		put  func()
+		want string // what the refusal names
+	}{
+		{"a file", func() { put("sub/notes.txt") }, "sub/notes.txt"},
+		{"a file in a directory", func() { put("sub/d/e/notes.txt") }, "sub/d/e/notes.txt"},
+		{"a file after an empty directory", func() {
+			os.MkdirAll(filepath.Join(ws, "sub", "a"), 0o700)
+			put("sub/b/notes.txt")
+		}, "sub/b/notes.txt"},
+		{"an ignored, disposable name", func() { put("sub/x.log") }, "sub/x.log"},
+		{"a directory", func() { os.MkdirAll(filepath.Join(ws, "sub", "d"), 0o700) }, "sub/d"},
+		{"a link", func() { os.Symlink("nowhere", filepath.Join(ws, "sub", "l")) }, "sub/l"},
+		{"below a path git quotes", func() { put("deps/a b\tü/notes.txt") }, "deps/a b\tü/notes.txt"},
+		// find takes it for a repository, but it has no work tree whose
+		// files are checked.
+		{"a bare repository", func() {
+			x.git(x.tmp, "clone", "-q", "--bare", sub, filepath.Join(ws, "sub"))
+			put("sub/notes.txt")
+		}, "sub/HEAD"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			x.r.Disposable = []string{"*.log"}
+			if err := check(); err != nil {
+				t.Fatalf("a new workspace: %v", err)
+			}
+			tc.put()
+			if got := x.git(ws, "status", "--porcelain", "--untracked-files=all", "--ignored"); got != "" {
+				t.Fatalf("git status reports it after all:\n%s", got)
+			}
+			err := check()
+			wantRefusal(t, err, Untracked, "")
+			if d := err.(*Refusal).Detail; d != tc.want {
+				t.Fatalf("the refusal names %q, want %q", d, tc.want)
+			}
+			for _, p := range []string{"sub", "deps/a b\tü"} {
+				dir := filepath.Join(ws, p)
+				os.RemoveAll(dir)
+				os.Mkdir(dir, 0o700)
+			}
+		})
+	}
+}
+
+// The same one level down: a submodule that is checked out, but not its own.
+func TestRefuseAnythingInTheDirectoryOfANestedSubmoduleNotCheckedOut(t *testing.T) {
+	x := newRemoval(t)
+	inner := x.bareWithCommit("inner")
+	outer := x.bareWithCommit("outer")
+	work := filepath.Join(x.tmp, "outer-work")
+	x.git(work, "-c", "protocol.file.allow=always", "submodule", "add", "-q", inner, "in")
+	x.git(work, "commit", "-q", "-m", "add in")
+	x.git(work, "push", "-q", outer, "main")
+	x.git(x.clone, "-c", "protocol.file.allow=always", "submodule", "add", "-q", outer, "out")
+	x.git(x.clone, "commit", "-q", "-m", "add out")
+	x.git(x.clone, "push", "-q")
+	if err := x.check(); err != nil {
+		t.Fatalf("untouched: %v", err)
+	}
+	x.write("out/in/notes.txt", "work that is committed nowhere\n")
+	err := x.check()
+	wantRefusal(t, err, Untracked, "out")
+	if d := err.(*Refusal).Detail; d != "in/notes.txt" {
+		t.Fatalf("the refusal names %q", d)
+	}
+}
+
 func TestRefuseNestedRepositoryWithUnpushedCommit(t *testing.T) {
 	x := newRemoval(t)
 	nested := filepath.Join(x.clone, "nested")
