@@ -269,6 +269,11 @@ func TestDashboardChooseRoute(t *testing.T) {
 	d := newPasskeyDash(t)
 	setConfig(t, d.root, func(cfg map[string]any) { cfg["adapters"] = blockedAdapters() })
 	logged := startDaemonLog(t, d.root)
+	t.Cleanup(func() {
+		if t.Failed() { // why the daemon answered as it did is in its log only
+			t.Logf("the daemon's log:\n%s", logged())
+		}
+	})
 	c, err := wire.Dial(d.root)
 	if err != nil {
 		t.Fatal(err)
