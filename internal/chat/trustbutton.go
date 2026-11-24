@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -27,8 +28,9 @@ import (
 // A token names the thread, the state event and the choice, so it works
 // after a restart. A press calls the core as the person who pressed; the
 // core decides who may, and refuses everyone else, who sees nothing, as
-// with any button. Once the core has taken a press, the message loses its
-// buttons, in every link, and says who chose what.
+// with any button. Once the core has taken a choice, made here or anywhere
+// else, its start_chosen event takes the message's buttons away, in every
+// link, and the message says who chose what.
 
 // blockedToken starts a choice's token: trust:<thread>#<state event>:<choice>.
 const blockedToken = "trust:"
@@ -43,9 +45,6 @@ const (
 	labelTrust   = "Trust and start"
 	labelClose   = "Do not start"
 )
-
-// chosenPart is the part of the message's edit once a press was taken.
-const chosenPart = 1
 
 func blockedChoice(sf startFailed, choice, label string) surface.Choice {
 	return surface.Choice{Label: label, Token: fmt.Sprintf("%s%d#%d:%s", blockedToken, sf.thread, sf.pos, choice)}
@@ -122,21 +121,16 @@ func (f *FrontEnd) pressBlocked(s surface.Selection, rest string) {
 	}
 	defer f.pressing.Delete(key)
 	caller := control.Caller{From: f.from(s.Author), Scopes: f.scopesIn(s.Ref.Conv.Channel), May: control.OpRead}
-	who, _ := f.People.Resolve(f.from(s.Author))
-	var done string
 	switch choice {
 	case choiceWithout:
 		caller.May |= control.OpStart
 		err = f.API(caller).StartWithoutSettings(ctx, thread, sf.session)
-		done = "Started without this repository's settings by " + who + "."
 	case choiceTrust:
 		caller.May |= control.OpTrust
 		err = f.API(caller).Trust(ctx, thread, sf.session, sf.trust)
-		done = "Trusted by " + who + " for this channel's threads on " + t.Repo + ": starting again."
 	case choiceClose:
 		caller.May |= control.OpClose
 		err = f.API(caller).CloseThread(ctx, thread)
-		done = "Not started: closed by " + who + "."
 	default:
 		ignored("no button of the front end's", nil)
 		return
@@ -151,25 +145,57 @@ func (f *FrontEnd) pressBlocked(s surface.Selection, rest string) {
 		}
 		return
 	}
+	// The core's start_chosen event takes the message's buttons away and
+	// says who chose (chosenRows), as for a choice made elsewhere.
 	f.Log.Info("blocked start: choice pressed", "thread", int64(thread), "choice", choice, "client", f.Name, "id", s.Author.ID)
-	// The message loses its buttons, in every link of the thread.
-	convs, err := f.convsOf(ctx, thread)
+}
+
+// chosenRows is the edit of the blocked start's message that e, a
+// start_chosen event, names, for the thread's first conversation: the
+// message without its buttons, and who chose what, wherever they did.
+func (f *FrontEnd) chosenRows(ctx context.Context, r *reader, e control.Event, conv surface.Conversation) ([]Row, error) {
+	var d struct {
+		Event     uint64
+		Choice    string
+		Principal string
+	}
+	if json.Unmarshal(e.Data, &d) != nil || d.Event == 0 {
+		return nil, nil
+	}
+	var (
+		sf    startFailed
+		found bool
+	)
+	err := r.scan(ctx, e.Thread, e.Pos, func(ev control.Event) {
+		if ev.Pos == d.Event {
+			sf, found = startFailure(ev)
+		}
+	})
+	if err != nil || !found {
+		return nil, err
+	}
+	repo, err := r.repoOf(ctx, e.Thread)
 	if err != nil {
-		f.Log.Warn("blocked start: the message could not be changed", "thread", int64(thread), "err", err)
-		return
+		return nil, err
 	}
-	m := f.failedMessage(sf, t.Repo, false)
+	who := d.Principal
+	if who == "" {
+		who = "a person"
+	}
+	var done string
+	switch control.StartChoice(d.Choice) {
+	case control.StartWithoutSettings:
+		done = "Started without this repository's settings by " + who + "."
+	case control.StartTrusted:
+		done = "Trusted by " + who + " for this channel's threads on " + repo + ": starting again."
+	case control.StartClosed:
+		done = "Not started: closed by " + who + "."
+	default:
+		return nil, nil // a choice of a later version
+	}
+	m := f.failedMessage(sf, repo, false)
 	m.Text += "\n" + done
-	var rows []Row
-	for _, c := range convs {
-		rows = append(rows, Row{Event: pos, Part: chosenPart, Conv: c, Op: Edit, Target: &RowKey{Event: pos, Part: 0}, Message: m,
-			Decoration: true})
-	}
-	if err := f.Outbox.Write(ctx, rows...); err != nil {
-		f.Log.Warn("blocked start: the message could not be changed", "thread", int64(thread), "err", err)
-		return
-	}
-	f.Outbox.Wake()
+	return []Row{{Event: e.Pos, Conv: conv, Op: Edit, Target: &RowKey{Event: sf.pos, Part: 0}, Message: m, Decoration: true}}, nil
 }
 
 // failureAt reads the event at pos of thread t as its session's start

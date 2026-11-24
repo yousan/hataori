@@ -249,3 +249,55 @@ func TestAnOldBlockedMessagesButtonsDoNothing(t *testing.T) {
 		t.Fatalf("the thread is %s, %v; want failed", d.State, err)
 	}
 }
+
+// A choice taken anywhere, as in the dashboard, takes the buttons away from
+// the blocked start's message, which then says who chose what (#680). A
+// choice of a later version changes nothing.
+func TestAChoiceMadeElsewhereEndsTheButtons(t *testing.T) {
+	for choice, want := range map[control.StartChoice]string{
+		control.StartWithoutSettings:  "Started without this repository's settings by ada.",
+		control.StartTrusted:          "Trusted by ada for this channel's threads on https://example.com/r.git: starting again.",
+		control.StartClosed:           "Not started: closed by ada.",
+		"a choice of a later version": "",
+	} {
+		f := newFront(t, workspaces{})
+		id, _ := f.started(t)
+		f.showing(t)
+		blocked := f.event(t, id, "state", map[string]any{"session": 1, "from": "creating", "to": "failed", "reason": "blocked at start",
+			"detail": "the dialog", "trust": []string{".agent/settings.json"}})
+		var msg fake.Call
+		waitFor(t, "the choices", func() bool {
+			for _, c := range f.driver.Calls(f.conv(id)) {
+				if c.Op == fake.OpPost && len(c.Message.Choices) == 3 {
+					msg = c
+					return true
+				}
+			}
+			return false
+		})
+		f.event(t, id, "start_chosen", map[string]any{"session": 1, "event": blocked, "choice": choice, "principal": "ada", "via": "dashboard"})
+		if err := f.fe.Outbox.Write(context.Background(), row(1<<40, 0, f.conv(id), "marker")); err != nil {
+			t.Fatal(err)
+		}
+		f.postedUntil(t, id, "marker")
+		edits := func() (got []string) {
+			for _, c := range f.driver.Calls(f.conv(id)) {
+				if c.Op == fake.OpEdit && c.Ref == msg.Ref && len(c.Message.Choices) == 0 {
+					got = append(got, c.Message.Text)
+				}
+			}
+			return got
+		}
+		if want == "" {
+			time.Sleep(100 * time.Millisecond)
+			if got := edits(); len(got) != 0 {
+				t.Errorf("%s: edits %q", choice, got)
+			}
+			continue
+		}
+		waitFor(t, "the buttons to go", func() bool { return len(edits()) > 0 })
+		if got := edits(); len(got) != 1 || !strings.HasPrefix(got[0], couldNotStart) || !strings.HasSuffix(got[0], "\n"+want) {
+			t.Errorf("%s: edits %q, want one that ends with %q", choice, got, want)
+		}
+	}
+}

@@ -95,14 +95,21 @@ func (r *fakeRunner) Interrupt(_ context.Context, sid, turn int64, _ session.Sto
 	}
 	return r.record("interrupt")
 }
-func (r *fakeRunner) Shut(ctx context.Context, sid int64, reason string) error {
+func (r *fakeRunner) Shut(ctx context.Context, sid int64, reason string, also ...func(*store.Tx) error) error {
 	if r.shutErr != nil {
 		return r.shutErr
 	}
 	var state string
 	r.machine.Store.DB.QueryRow(`SELECT state FROM sessions WHERE id = ?`, sid).Scan(&state)
 	if control.State(state) != control.Closed {
-		if err := r.machine.Apply(ctx, sid, session.Input{Kind: session.Close, Reason: reason}); err != nil {
+		if err := r.machine.Store.Update(ctx, func(tx *store.Tx) error {
+			for _, f := range also {
+				if err := f(tx); err != nil {
+					return err
+				}
+			}
+			return r.machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Close, Reason: reason})
+		}); err != nil {
 			return err
 		}
 	}

@@ -6,6 +6,8 @@
 import { useEffect, useState } from "react";
 import { type Event, sameThread, type ThreadID, thread } from "./api";
 import { t } from "./catalog";
+import { chosenLine } from "./chosen";
+import { who } from "./conversation";
 
 export interface ThreadEventsOptions {
   history: number; // how many of the thread's last events to start with
@@ -103,6 +105,8 @@ export function eventLine(e: Event): string {
       return t("events.answer");
     case "input":
       return t("events.input");
+    case "start_chosen":
+      return chosenLine(str(d.choice), who(d));
   }
   return t("events.other", { kind: e.kind });
 }

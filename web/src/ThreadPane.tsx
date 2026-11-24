@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
-import { type Event, hasTerminal, type ThreadInfo } from "./api";
+import { type Event, hasTerminal, type ThreadID, type ThreadInfo } from "./api";
 import type { AttachState } from "./attach";
 import { type Key, t } from "./catalog";
+import { chosenLine } from "./chosen";
 import { Conversation } from "./Conversation";
+import { who } from "./conversation";
+import { FailedStartView, useStart } from "./FailedStart";
 import { age, stateName } from "./format";
 import { InputBox } from "./InputBox";
 import { Answers, useOpenRequests } from "./Answers";
@@ -91,7 +94,9 @@ function PaneState({ x, now }: { x: ThreadInfo; now: number }) {
 // terminal take keys (attach.ts); attach, on the web listener, is its
 // switch. A session without a terminal, and every thread in the narrow
 // layout, has the input box, for a person who may act. Its header shows
-// the thread's state, then the controls: the views, Type and Stop.
+// the thread's state, then the controls: the views, Type and Stop. Under
+// it, in either view, a thread that failed as it started says what it was;
+// the terminal, which holds no events, also has who chose what for it.
 export function ThreadPane(props: {
   x: ThreadInfo;
   now: number;
@@ -104,14 +109,16 @@ export function ThreadPane(props: {
   attach?: AttachSwitch;
   mayAct?: boolean; // the server lets this person give the thread input
   narrow?: boolean; // the narrow layout, where every thread has the input box
+  onOpen?: (id: ThreadID) => void; // opens another thread
 }) {
-  const { x, now, subscribe, opens, fit, onView, typing, attach, mayAct, narrow } = props;
+  const { x, now, subscribe, opens, fit, onView, typing, attach, mayAct, narrow, onOpen } = props;
   const [terminal, setTerminal] = useState<boolean | null>(null);
   const id = x.id;
   // Each open question's and approval's buttons, for a person who may act;
   // a refused answer's reason stays after them, until another request
   // opens. The box answers the open question, if any.
   const requests = useOpenRequests(x, subscribe, opens);
+  const start = useStart(x, subscribe, opens);
   const question = requests.find((r) => !r.approval) ?? null;
   const [refused, setRefused] = useState<{ request: string; reason: string } | null>(null);
   useEffect(() => {
@@ -157,6 +164,12 @@ export function ThreadPane(props: {
           {mayAct && <StopButton x={x} subscribe={subscribe} opens={opens} />}
         </div>
       </div>
+      {start.failed && <FailedStartView key={`${x.id}/${start.failed.session}`} x={x} f={start.failed} mayAct={mayAct === true} onOpen={onOpen} />}
+      {view === "terminal" && start.chosen && (
+        <p className="start-chosen" role="status" data-start-chosen="">
+          {chosenLine(typeof start.chosen.data.choice === "string" ? start.chosen.data.choice : "", who(start.chosen.data))}
+        </p>
+      )}
       {!terminal && x.state === "asleep" && (
         <p className="no-process" data-no-process="">
           {t("pane.noProcess")}

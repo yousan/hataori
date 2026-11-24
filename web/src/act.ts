@@ -1,8 +1,8 @@
-// The calls that give a thread input from its tab (design, section 7.2;
-// internal/dashboard, act.go): send, answer, stop. On the web listener the
-// server answers 428 until the session has made the check acting needs;
-// the page then makes it (attach.ts, actCheck) and makes the call again,
-// once.
+// The calls that act on a thread from its tab (design, section 7.2;
+// internal/dashboard, act.go): send, answer, stop, and choose for a blocked
+// start. On the web listener the server answers 428 until the session has
+// made the check acting needs; the page then makes it (attach.ts, actCheck)
+// and makes the call again, once.
 
 import { actCheck, type CheckFailure } from "./attach";
 import { authorized } from "./session";
@@ -10,6 +10,7 @@ import { authorized } from "./session";
 export const sendPath = "/api/send";
 export const answerPath = "/api/answer";
 export const stopPath = "/api/stop";
+export const choosePath = "/api/start/choose";
 
 // ActResult is how a call went: done, or refused with the server's words,
 // or the check it needed failed.

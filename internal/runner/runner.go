@@ -1979,8 +1979,9 @@ const shutWait = 15 * time.Second
 // session's host, when one runs, and waits until the host and the runner's
 // following of it have ended. A closed session is only stopped and waited
 // for: a Close repeated after a stop that failed tries again, and a removal
-// knows that the agent has ended.
-func (r *Runner) Shut(ctx context.Context, id int64, reason string) error {
+// knows that the agent has ended. also runs in the transaction of the
+// change, before it, and not for a session that is closed already.
+func (r *Runner) Shut(ctx context.Context, id int64, reason string, also ...func(*store.Tx) error) error {
 	r.mu.Lock()
 	lv := r.live[id]
 	r.mu.Unlock()
@@ -2021,6 +2022,11 @@ func (r *Runner) Shut(ctx context.Context, id int64, reason string) error {
 			}
 			if pending > 0 && control.State(state) == control.Idle {
 				return fmt.Errorf("runner: session %d: %d pending inputs not reported by a turn: %w", id, pending, session.ErrRefused)
+			}
+			for _, f := range also {
+				if err := f(tx); err != nil {
+					return err
+				}
 			}
 			return r.Machine.ApplyTx(ctx, tx, id, session.Input{Kind: session.Close, Reason: reason})
 		})

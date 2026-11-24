@@ -59,6 +59,20 @@ export interface Event {
 export interface ThreadDetail extends ThreadInfo {
   requests: Request[] | null;
   events?: Event[];
+  failed_start?: FailedStart;
+}
+
+// FailedStart is a session that failed before its first turn, or when it
+// was woken (protocol 3.33). Its texts are left out for a caller that may
+// not read text.
+export interface FailedStart {
+  session: number;
+  event: number; // the position of the state event of the failure
+  reason?: string;
+  detail?: string;
+  trust?: string[]; // the files a start-up dialog named
+  text?: string; // what the thread was asked, while it had no turn
+  supervisor?: ThreadID; // the supervisor thread that started it
 }
 
 // AgentLimits is an agent's remaining usage as its sessions last reported

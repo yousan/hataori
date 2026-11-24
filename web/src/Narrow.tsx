@@ -122,11 +122,12 @@ interface ThreadProps {
   onView: (v: View) => void;
   mayAct: boolean; // the server lets this person give the thread input
   now: number;
+  onOpen: (n: number) => void; // opens another thread
 }
 
 // NarrowThread is one thread opened from the list: what it waits on, its
 // terminal or its rebuilt output, then the details panel, and a way back.
-export function NarrowThread({ x, attention, workspace, subscribe, opens, scopes, layout, onBack, view, onView, mayAct, now }: ThreadProps) {
+export function NarrowThread({ x, attention, workspace, subscribe, opens, scopes, layout, onBack, view, onView, mayAct, now, onOpen }: ThreadProps) {
   return (
     <div className="narrow-thread" data-narrow-thread={x.id}>
       <div className="narrow-bar">
@@ -139,7 +140,7 @@ export function NarrowThread({ x, attention, workspace, subscribe, opens, scopes
       </div>
       {attention && <Waiting a={attention} />}
       <div className="narrow-pane">
-        <ThreadPane x={x} now={now} subscribe={subscribe} opens={opens} view={view} onView={onView} mayAct={mayAct} narrow />
+        <ThreadPane x={x} now={now} subscribe={subscribe} opens={opens} view={view} onView={onView} mayAct={mayAct} narrow onOpen={onOpen} />
       </div>
       <Details x={x} attention={attention} workspace={workspace} subscribe={subscribe} opens={opens} scopes={scopes} layout={layout} withWaiting={false} />
     </div>

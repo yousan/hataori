@@ -1641,6 +1641,54 @@ a.chat-link:hover {
   padding: 4px 6px;
 }
 
+/* A thread that failed as it started: what it was asked, who started it,
+   why it stopped, and its choices (FailedStart.tsx). */
+.failed-start {
+  flex: none;
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--st-failed);
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.failed-start dl {
+  margin: 0;
+}
+
+.failed-start dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.failed-start dd {
+  margin: 0 0 6px;
+  overflow-wrap: anywhere;
+}
+
+.failed-start-text {
+  max-height: 8em;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.failed-start .link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.start-chosen {
+  flex: none;
+  margin: 0 0 6px;
+  color: var(--muted);
+}
+
 /* A running thread's Stop button and its confirmation (StopButton.tsx). */
 .stop {
   display: flex;

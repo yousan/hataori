@@ -3,8 +3,11 @@ package core
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -64,9 +67,10 @@ func TestTheOwnerTrustsTheFilesAndTheThreadStartsAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e := evs[len(evs)-1]; e.Kind != "session_replaced" || !strings.Contains(string(e.Data), `"reason":"trusted"`) {
-		t.Fatalf("last event %s %s", e.Kind, e.Data)
+	if e := evs[len(evs)-2]; e.Kind != "session_replaced" || !strings.Contains(string(e.Data), `"reason":"trusted"`) {
+		t.Fatalf("the event before the last %s %s", e.Kind, e.Data)
 	}
+	wantChosen(t, evs, map[string]any{"session": float64(sid), "new_session": float64(nsid), "choice": "trusted", "principal": "owner"})
 	ts, err := owner.Trusts(ctx)
 	if err != nil || len(ts) != 2 || ts[0].By != "owner" || ts[0].Repo != trustRepo {
 		t.Fatalf("Trusts: %+v %v", ts, err)
@@ -241,10 +245,175 @@ func TestStartWithoutSettings(t *testing.T) {
 		t.Fatalf("marked %v, runner %q", marked(), f.runner.Calls())
 	}
 	evs, _ := f.owner.ThreadEvents(ctx, id, 0, 100)
-	if e := evs[len(evs)-1]; e.Kind != "session_replaced" || !strings.Contains(string(e.Data), `"reason":"without project settings"`) {
-		t.Fatalf("last event %s %s", e.Kind, e.Data)
+	if e := evs[len(evs)-2]; e.Kind != "session_replaced" || !strings.Contains(string(e.Data), `"reason":"without project settings"`) {
+		t.Fatalf("the event before the last %s %s", e.Kind, e.Data)
 	}
+	nsid, _, _ := f.core.current(ctx, f.core.Store.DB, id)
+	wantChosen(t, evs, map[string]any{"session": float64(sid), "new_session": float64(nsid), "choice": "without project settings",
+		"principal": "ada", "from": "chat:ada"})
 	if n := count(t, f.core.Store, "trusted_files"); n != 0 {
 		t.Fatalf("%d files trusted", n)
+	}
+}
+
+// wantChosen checks that the last event is a start_chosen of want, beside
+// the position of the blocked session's state event.
+func wantChosen(t *testing.T, evs []control.Event, want map[string]any) {
+	t.Helper()
+	var blocked uint64
+	for _, e := range evs {
+		if e.Kind == "state" && strings.Contains(string(e.Data), `"blocked at start"`) {
+			blocked = e.Pos
+		}
+	}
+	want["event"] = float64(blocked)
+	for _, e := range evs {
+		if e.Kind != KindStartChosen {
+			continue
+		}
+		var got map[string]any
+		if err := json.Unmarshal(e.Data, &got); err != nil {
+			t.Fatal(err)
+		}
+		if blocked == 0 || !maps.Equal(got, want) {
+			t.Fatalf("start_chosen %v, want %v", got, want)
+		}
+		if err := control.CheckEvent(e); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	t.Fatalf("no start_chosen event among %d", len(evs))
+}
+
+// Closing a thread whose start files blocked is the choice not to start
+// it: one start_chosen event, before the close. Closing any other failed
+// thread is no choice, and a close that is refused records none.
+func TestAClosedBlockedStartIsAChoice(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{key: "new"})
+	id, sid := f.blocked(t, "t1", ".mcp.json")
+	web := f.core.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all | control.OpClose, Via: "dashboard"})
+	f.runner.shutErr = errors.New("the agent could not be stopped")
+	if err := web.CloseThread(ctx, id); err == nil {
+		t.Fatal("no error of the runner's")
+	}
+	f.runner.shutErr = nil
+	evs, _ := f.owner.ThreadEvents(ctx, id, 0, 100)
+	if n := countKind(evs, KindStartChosen); n != 0 {
+		t.Fatalf("%d start_chosen events after a close that failed", n)
+	}
+	for range 2 { // a second close changes nothing
+		if err := web.CloseThread(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	evs, _ = f.owner.ThreadEvents(ctx, id, 0, 100)
+	if n := countKind(evs, KindStartChosen); n != 1 {
+		t.Fatalf("%d start_chosen events, want 1", n)
+	}
+	if evs[len(evs)-2].Kind != KindStartChosen || evs[len(evs)-1].Kind != "state" {
+		t.Fatalf("the last events are %s, %s; want start_chosen, then the close", evs[len(evs)-2].Kind, evs[len(evs)-1].Kind)
+	}
+	wantChosen(t, evs, map[string]any{"session": float64(sid), "choice": "closed", "principal": "owner", "via": "dashboard"})
+
+	other, sid2 := f.blocked(t, "t2") // a dialog that named no files
+	if err := web.CloseThread(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	evs, _ = f.owner.ThreadEvents(ctx, other, 0, 100)
+	if n := countKind(evs, KindStartChosen); n != 0 {
+		t.Fatalf("session %d: %d start_chosen events for a start no files blocked", sid2, n)
+	}
+}
+
+func countKind(evs []control.Event, kind control.EventKind) (n int) {
+	for _, e := range evs {
+		if e.Kind == kind {
+			n++
+		}
+	}
+	return n
+}
+
+// A thread whose session failed before its first turn says what it was
+// asked and why, also once it is closed; a caller that may not read text
+// gets the reason only. A start that went on, and a thread that failed
+// after a turn, say nothing.
+func TestTheFailedStartOfAThread(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, fakeOwner{key: "new"})
+	f.core.SupervisorOf = func(_ context.Context, _ *sql.DB, scope, from string, pos uint64) (control.ThreadID, error) {
+		if scope == "s" && from == "chat:ada" && pos > 0 {
+			return 78, nil
+		}
+		return 0, nil
+	}
+	failed := func(a control.API, id control.ThreadID) *control.FailedStart {
+		t.Helper()
+		d, err := a.Thread(ctx, id, 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d.FailedStart
+	}
+	id, sid := f.blocked(t, "t1", ".mcp.json")
+	evs, _ := f.owner.ThreadEvents(ctx, id, 0, 100)
+	want := control.FailedStart{Session: sid, Event: evs[len(evs)-1].Pos, Reason: "blocked at start", Detail: "the dialog names .mcp.json",
+		Trust: []string{".mcp.json"}, Text: "go"}
+	if got := failed(f.owner, id); got == nil || !reflect.DeepEqual(*got, want) {
+		t.Fatalf("failed start %+v, want %+v", got, want)
+	}
+	blind := f.core.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all, NoText: true})
+	if got := failed(blind, id); got == nil || got.Reason != "blocked at start" || got.Text+got.Detail != "" || got.Trust != nil {
+		t.Fatalf("without text %+v", got)
+	}
+	closer := f.core.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all | control.OpClose})
+	if err := closer.CloseThread(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if got := failed(f.owner, id); got == nil || !reflect.DeepEqual(*got, want) {
+		t.Fatalf("once closed %+v, want %+v", got, want)
+	}
+
+	// Started by the scope's supervisor, and started again after a choice.
+	f.core.People = people.New([]people.Person{{Name: "owner", IDs: []string{"chat:o"}}, {Name: "ada", IDs: []string{"chat:ada"}}},
+		"owner", map[string][]string{"s": {"ada"}})
+	ada := f.core.As(control.Caller{From: "chat:ada", Scopes: []string{"s"}, May: all})
+	sv, err := ada.Start(ctx, control.StartRequest{Key: "t2", Scope: "s", Thread: "t2", Repo: trustRepo, Input: control.Input{Text: "go"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := failed(f.owner, sv); got != nil {
+		t.Fatalf("a thread that is starting: %+v", got)
+	}
+	sid, _, _ = f.core.current(ctx, f.core.Store.DB, sv)
+	f.agentEvent(t, sid, 1, agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart, Trust: []string{".mcp.json"}, Text: "x"})
+	if got := failed(f.owner, sv); got == nil || got.Supervisor != 78 {
+		t.Fatalf("a supervisor's start: %+v", got)
+	}
+	if err := f.owner.StartWithoutSettings(ctx, sv, sid); err != nil {
+		t.Fatal(err)
+	}
+	if got := failed(f.owner, sv); got != nil {
+		t.Fatalf("a start that goes on: %+v", got)
+	}
+
+	// It had a turn, and failed as it was woken: its start's input is not
+	// what it waits with, and is in its conversation.
+	ran, sid := f.running(t, "t3")
+	f.agentEvent(t, sid, 2, agent.Event{Kind: agent.TurnStarted})
+	f.agentEvent(t, sid, 3, agent.Event{Kind: agent.TurnEnded, Status: agent.Completed})
+	for _, in := range []session.Input{{Kind: session.IdleTimeout}, {Kind: session.Wake}} {
+		if err := f.core.Machine.Apply(ctx, sid, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := failed(f.owner, ran); got != nil {
+		t.Fatalf("a thread that wakes: %+v", got)
+	}
+	f.agentEvent(t, sid, 50, agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart, Trust: []string{".mcp.json"}, Text: "x"})
+	if got := failed(f.owner, ran); got == nil || got.Session != sid || got.Text != "" || len(got.Trust) != 1 {
+		t.Fatalf("a blocked wake: %+v", got)
 	}
 }

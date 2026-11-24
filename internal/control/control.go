@@ -775,7 +775,36 @@ type ThreadDetail struct {
 	// Cancelled are the thread's last posts that a plugin's message_sending
 	// handler cancelled, at most CancelledMax, newest last. Since 3.19.
 	Cancelled []CancelledPost `json:"cancelled,omitempty"`
+	// FailedStart is set while the thread's current session failed before
+	// its first turn, or when it was woken, also once the thread was closed
+	// after it. Since 3.33.
+	FailedStart *FailedStart `json:"failed_start,omitempty"`
 }
+
+// FailedStart is a session that failed before its first turn, or when it
+// was woken: what it was asked, who started it and why it failed. Since 3.33.
+type FailedStart struct {
+	Session int64    `json:"session"`
+	Event   uint64   `json:"event"`            // the position of the state event of the failure
+	Reason  string   `json:"reason,omitempty"` // that event's
+	Detail  string   `json:"detail,omitempty"` // that event's; text
+	Trust   []string `json:"trust,omitempty"`  // that event's: the files a start-up dialog named, when they blocked the start; text
+	Text    string   `json:"text,omitempty"`   // what the thread was asked: its start's first input, while it had no turn; text
+	// Supervisor is the supervisor thread that started the thread, when its
+	// scope's supervisor did; 0 for a person's start.
+	Supervisor ThreadID `json:"supervisor,omitempty"`
+}
+
+// StartChoice is what a person chose for a start that files of the
+// repository blocked, as the start_chosen event says. Since 3.33.
+type StartChoice string
+
+// The choices: Trust, StartWithoutSettings, CloseThread.
+const (
+	StartTrusted         StartChoice = "trusted"
+	StartWithoutSettings StartChoice = "without project settings"
+	StartClosed          StartChoice = "closed"
+)
 
 // CancelledMax is how many cancelled posts ThreadDetail lists at most.
 const CancelledMax = 20

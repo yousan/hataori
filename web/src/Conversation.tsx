@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { type Event, sameThread, type ThreadInfo, threadEvents } from "./api";
 import { t } from "./catalog";
+import { chosenLine } from "./chosen";
 import { conversationKinds, type Entry, entries, merge } from "./conversation";
 
 // page is how many events one read asks for: the control API's most.
@@ -87,6 +88,12 @@ function Line({ e }: { e: Entry }) {
         <li className={e.final ? "conv-entry conv-agent conv-final" : "conv-entry conv-agent"} data-kind={e.kind} data-pos={e.pos}>
           <Head who={t("conv.agent")} time={e.time} />
           <Text text={e.text} />
+        </li>
+      );
+    case "start_chosen":
+      return (
+        <li className="conv-turn" data-kind={e.kind} data-pos={e.pos}>
+          {t("conv.chosen", { line: chosenLine(e.choice, e.who), time: clock(e.time) })}
         </li>
       );
     case "tool":

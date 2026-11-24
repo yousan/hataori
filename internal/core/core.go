@@ -133,8 +133,9 @@ type Runner interface {
 	// with what the runner reads of the agent, so nothing the agent reports
 	// after it is read, and then stops the agent's process, when one runs,
 	// and waits for it to end. A refused Close is returned and stops
-	// nothing.
-	Shut(ctx context.Context, sessionID int64, reason string) error
+	// nothing. also runs in the transaction of the change, before it; a
+	// session that is closed already is not changed, and runs none of it.
+	Shut(ctx context.Context, sessionID int64, reason string, also ...func(*store.Tx) error) error
 }
 
 // Remover removes workspaces behind the proof of design section 4.6.
@@ -313,6 +314,10 @@ type Core struct {
 	// conversation's last turn (design, section 7.1, #676). Nil gives
 	// nothing.
 	Preface func(ctx context.Context, tx *store.Tx, thread control.ThreadID) (string, error)
+	// SupervisorOf, when set, returns the supervisor thread that started a
+	// thread of scope whose thread_created event, at pos, names from; 0
+	// when no supervisor did (FailedStart.Supervisor). Nil gives none.
+	SupervisorOf func(ctx context.Context, db *sql.DB, scope, from string, pos uint64) (control.ThreadID, error)
 
 	locks   keyedMutex
 	hostOps hostOpSet
@@ -1056,6 +1061,9 @@ func (a *api) Thread(ctx context.Context, id control.ThreadID, recent, events in
 		}
 	}
 	if d.Cancelled, err = a.cancelled(ctx, id); err != nil {
+		return d, err
+	}
+	if d.FailedStart, err = a.failedStart(ctx, t); err != nil {
 		return d, err
 	}
 	d.Events, err = a.c.Store.Last(ctx, id, min(events, control.MaxEvents), a.mayRead)
