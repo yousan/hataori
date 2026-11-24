@@ -220,21 +220,22 @@ type pane struct {
 	dead          bool   // remain-on-exit kept the pane after its process ended
 	status        string // how it ended, when dead: "x" and its exit status, or "-"
 	signal        string // the signal that ended it, when dead and known, or "-"
-	session       string // the name of the session it is in, each space as "_"
+	session       string // the name of the session it is in, each U+0020 as "_"
 }
 
-// paneFormat is what find asks list-panes for. Spaces between the fields,
-// none of which holds one: under a locale that is not UTF-8, tmux 3.5
-// prints a tab in a format as "_" (#483). Every field prints something,
-// "-" for nothing, so that a line always has as many: a dead pane may have
-// no terminal any more.
+// paneFormat is what find asks list-panes for. Spaces between the fields:
+// without -u, tmux may print a tab in a format as "_" (#483). Only the
+// session's name, the last, may hold anything a person chose: without the
+// U+0020, as tmux up to 3.1 prints a newline of it as it is, and what follows
+// must not read as another pane's line. Every other field prints something,
+// "-" for nothing: a dead pane may have no terminal any more.
 const paneFormat = "#{pid} #{pane_id} #{?pane_tty,#{pane_tty},-} #{pane_width} #{pane_height} #{?pane_pid,#{pane_pid},-} #{pane_dead} " +
 	"#{?pane_dead,x#{pane_dead_status},-} #{?pane_dead_signal,#{pane_dead_signal},-} #{s/ /_/:session_name}"
 
 // parsePane reads one line of list-panes in paneFormat: the server's
 // process id, the pane's id and the pane.
 func parsePane(l string) (server int, id string, p pane, ok bool) {
-	f := strings.Fields(l)
+	f := strings.SplitN(l, " ", 10)
 	if len(f) != 10 || !paneID.MatchString(f[1]) {
 		return 0, "", pane{}, false
 	}
