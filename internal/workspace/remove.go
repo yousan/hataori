@@ -29,8 +29,8 @@ import (
 // TrashDir is where removed workspaces go, relative to the instance root.
 const TrashDir = "trash"
 
-// scratchDir holds the scratch repositories a check fetches into, relative
-// to the instance root.
+// scratchDir holds a check's own files, the scratch repositories it fetches
+// into above all, relative to the instance root.
 const scratchDir = "state/removal"
 
 // trashStamp starts the name of every entry the removal puts in trash: the
@@ -737,8 +737,8 @@ func (c *checker) refuse(rp repo, reason Reason, detail string) error {
 
 // find walks the workspace and returns every repository in it: the
 // workspace's own, each directory below it that has a .git or is a git
-// directory itself (a bare repository), and each git directory under a
-// repository's .git/modules, whether checked out or not. A directory it
+// directory itself (a bare repository), and each git directory under the
+// modules of a repository's git directory, whether checked out or not. A directory it
 // cannot read refuses.
 func (c *checker) find() ([]repo, error) {
 	var repos []repo
@@ -789,7 +789,11 @@ func (c *checker) find() ([]repo, error) {
 	var modules []repo
 	for _, rp := range repos {
 		if rp.gitDir {
-			continue // a bare repository: no submodules
+			// A bare repository has none; a git directory that was moved may.
+			if err := c.modules(filepath.Join(rp.dir, "modules"), &modules); err != nil {
+				return nil, err
+			}
+			continue
 		}
 		gitDir := filepath.Join(rp.dir, ".git")
 		if st, err := os.Lstat(gitDir); err != nil {
@@ -959,18 +963,23 @@ func (c *checker) files(g *reader, rp repo) error {
 	return c.worktrees(g, rp)
 }
 
-// leftover is step 1 for a repository with no work tree here: what its index
-// alone holds, and no linked worktree.
+// leftover is step 1 for a repository with no work tree here: its index is
+// as its HEAD, and no linked worktree. An empty index or none holds nothing:
+// git leaves an empty one when it removes a submodule's checkout
+// (submodule.recurse), and a bare repository has none.
 func (c *checker) leftover(g *reader, rp repo) error {
-	// A path that only HEAD has holds nothing: a bare repository has no
-	// index, and git leaves an empty one when it removes a submodule's
-	// checkout (submodule.recurse).
-	out, _, err := g.run(c.ctx, "diff", "--cached", "--name-only", "-z", "--no-ext-diff", "--no-textconv", "--no-renames", "--diff-filter=d", "--ignore-submodules=none")
+	out, _, err := g.run(c.ctx, "ls-files", "-z")
 	if err != nil {
 		return err
 	}
-	if name, _, _ := strings.Cut(string(out), "\x00"); name != "" {
-		return c.refuse(rp, Staged, name)
+	if len(out) > 0 {
+		out, _, err := g.run(c.ctx, "diff", "--cached", "--name-only", "-z", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none")
+		if err != nil {
+			return err
+		}
+		if name, _, _ := strings.Cut(string(out), "\x00"); name != "" {
+			return c.refuse(rp, Staged, name)
+		}
 	}
 	return c.worktrees(g, rp)
 }
