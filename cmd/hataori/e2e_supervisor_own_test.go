@@ -19,6 +19,7 @@ import (
 	"github.com/yousan/hataori/internal/agent/fake"
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
+	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/runner"
 	"github.com/yousan/hataori/internal/supervisor"
 	"github.com/yousan/hataori/internal/surface"
@@ -413,4 +414,99 @@ func wakeLateUsage(t *testing.T, then string) {
 	if turn == 0 || usageTurn != turn {
 		t.Fatalf("the late usage counts toward turn %d, want the wake's %d", usageTurn, turn)
 	}
+}
+
+// A daemon stopped while the session's next start waits for the agent that
+// was put to sleep just before, which is still read for its late usage,
+// and started again: the message, or the wake, that the start was for is
+// given once (#713).
+func TestSupervisorNextStartOnceAcrossARestart(t *testing.T) {
+	// stopAtNextStart stops the daemon as soon as sv's next start was
+	// accepted, while the agent put to sleep runs.
+	stopAtNextStart := func(t *testing.T, wt *wakeTest, sv control.ThreadID, stop func()) {
+		t.Helper()
+		sid, _, _, _ := wt.conversation(t, sv)
+		eventually(t, "the next start to be accepted", 10*time.Second, func() bool {
+			var launch int
+			wt.db.QueryRow(`SELECT launch FROM sessions WHERE id = ? AND state = 'creating'`, sid).Scan(&launch)
+			return launch == 1
+		})
+		stop()
+		var state string
+		var launch int
+		wt.db.QueryRow(`SELECT state, launch FROM sessions WHERE id = ?`, sid).Scan(&state, &launch)
+		if dir := runner.StateDir(wt.r.root, sid); state != "creating" || launch != 1 || host.Gone(dir) {
+			t.Fatalf("stopped outside the window: state %s, launch %d, the old host gone %v", state, launch, host.Gone(dir))
+		}
+	}
+	// given returns the starts that were given an input ending in text.
+	given := func(t *testing.T, record, text string) (out []fakeStart) {
+		t.Helper()
+		for _, s := range starts(t, record) {
+			if slices.ContainsFunc(s.Inputs, func(in string) bool { return strings.HasSuffix(in, text) }) {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+
+	t.Run("a message", func(t *testing.T) {
+		record := t.TempDir()
+		wt := newWakeTest(t, recordIn(record))
+		stop, owner, sv := wt.start(t)
+		_, main, _, _ := wt.conversation(t, sv.ID)
+		_, pos := wt.worker(t, owner, "c1", "a", "reply alpha")
+		wt.read(t, pos)
+		wt.quiet(t)
+		wt.woken(t, owner, sv.ID, 1)
+		eventually(t, "the wake's conversation to end", 10*time.Second, func() bool {
+			_, _, aside, state := wt.conversation(t, sv.ID)
+			return state == control.Asleep && !aside.Valid
+		})
+		go owner.Send(context.Background(), sv.ID, "p", control.Input{Text: "reply hello"}, control.Refuse)
+		stopAtNextStart(t, wt, sv.ID, stop)
+
+		stop = runDaemon(t, wt.r.root)
+		defer stop()
+		wt.ended(t, sv.ID, 3)
+		got := given(t, record, "reply hello")
+		if len(got) != 1 || len(got[0].Inputs) != 1 {
+			t.Fatalf("the message was given to %+v, want one start, once", got)
+		}
+		if r, _ := got[0].value("--resume"); r != main {
+			t.Fatalf("the message started %q, want --resume %s", got[0].Args, main)
+		}
+		if n := wt.turns(t, sv.ID); n != 3 {
+			t.Fatalf("%d supervisor turns, want 3: its first, the wake and the message", n)
+		}
+	})
+
+	t.Run("a wake", func(t *testing.T) {
+		record := t.TempDir()
+		wt := newWakeTest(t, recordIn(record))
+		stop, owner, sv := wt.start(t)
+		_, main, _, _ := wt.conversation(t, sv.ID)
+		_, pos := wt.worker(t, owner, "c1", "a", "reply alpha")
+		wt.read(t, pos)
+		wt.quiet(t)
+		stopAtNextStart(t, wt, sv.ID, stop)
+
+		stop, owner, _ = wt.start(t)
+		defer stop()
+		wt.read(t, pos)
+		digest := wt.woken(t, owner, sv.ID, 1)[0]
+		wt.asleepIn(t, sv.ID, main)
+		got := given(t, record, digest)
+		if len(got) != 1 || len(got[0].Inputs) != 1 {
+			t.Fatalf("the wake was given to %+v, want one start, once", got)
+		}
+		if _, ok := got[0].value("--resume"); ok {
+			t.Fatalf("the wake's start resumes a conversation: %q", got[0].Args)
+		}
+		wt.hour()
+		time.Sleep(300 * time.Millisecond)
+		if got := wt.wakes(t, sv.ID); len(got) != 1 {
+			t.Fatalf("%d wakes after the restart and an hour, want 1: %q", len(got), got)
+		}
+	})
 }

@@ -362,10 +362,10 @@ func wokenWithItsHostRunning(t *testing.T, root string) *store.Store {
 	return st
 }
 
-// A wake that a daemon started again recovers waits for the old host to
-// record its end, as a wake in one daemon waits for the old run, and the
-// agent gets the input (#549).
-func TestRecoveredWakeWaitsForTheOldHost(t *testing.T) {
+// A wake that a daemon started again recovers stops the agent that was put
+// to sleep when it still runs, waits for its host to record its end, and
+// the new agent gets the input (#549, #713).
+func TestRecoveredWakeStopsTheOldAgent(t *testing.T) {
 	root := t.TempDir()
 	t.Cleanup(func() { killSessions(root) })
 	st := wokenWithItsHostRunning(t, root)
@@ -378,11 +378,6 @@ func TestRecoveredWakeWaitsForTheOldHost(t *testing.T) {
 	if err := r.Reconnect(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	// The old agent goes a moment after the restart; its host then ends.
-	go func() {
-		time.Sleep(time.Second)
-		proctest.Kill(filepath.Join(StateDir(root, 1), host.PIDFile))
-	}()
 	if err := c.Recover(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -401,7 +396,7 @@ func TestRecoveredWakeWaitsForTheOldHost(t *testing.T) {
 }
 
 // A wake recovered after a restart whose old host does not end within the
-// bound fails, and says so (#549).
+// bound, even when told to, fails, and says so (#549).
 func TestRecoveredWakeFailsWhenTheOldHostRunsOn(t *testing.T) {
 	root := t.TempDir()
 	t.Cleanup(func() { killSessions(root) })
@@ -412,6 +407,10 @@ func TestRecoveredWakeFailsWhenTheOldHostRunsOn(t *testing.T) {
 	}
 	defer func() { r.Close(); st2.Close() }()
 	r.endWait = 500 * time.Millisecond
+	// Its host gets no signal and answers nobody, until it is killed.
+	if pid, ok := proctest.PID(filepath.Join(StateDir(root, 1), host.HostPIDFile)); !ok || syscall.Kill(pid, syscall.SIGSTOP) != nil {
+		t.Fatal("the host was not stopped")
+	}
 	if err := r.Reconnect(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -422,9 +421,6 @@ func TestRecoveredWakeFailsWhenTheOldHostRunsOn(t *testing.T) {
 	st.DB.QueryRow(`SELECT json_extract(data, '$.reason') FROM events WHERE kind = 'state' AND json_extract(data, '$.to') = 'failed'`).Scan(&reason)
 	if s := sessionState(t, st, 1); s != "failed" || !strings.Contains(reason, "its host is still running after 500ms") {
 		t.Fatalf("session %s, reason %q", s, reason)
-	}
-	if !agentAlive(t, root, 1) {
-		t.Error("the old agent was stopped") // left as it was: nothing here stops it
 	}
 }
 
