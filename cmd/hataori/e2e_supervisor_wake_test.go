@@ -211,6 +211,27 @@ func (wt *wakeTest) read(t *testing.T, pos uint64) {
 	})
 }
 
+// handled returns the position up to which the waker stored the events as
+// handled.
+func (wt *wakeTest) handled(t *testing.T) uint64 {
+	t.Helper()
+	var pos uint64
+	if err := wt.db.QueryRow(`SELECT pos FROM supervisor_wakes WHERE scope = 'c1'`).Scan(&pos); err != nil {
+		t.Fatal(err)
+	}
+	return pos
+}
+
+// last returns the position of the last event stored of scope c1's threads.
+func (wt *wakeTest) last(t *testing.T) uint64 {
+	t.Helper()
+	var pos uint64
+	if err := wt.db.QueryRow(`SELECT max(pos) FROM events WHERE thread_id IN (SELECT id FROM threads WHERE scope = 'c1')`).Scan(&pos); err != nil {
+		t.Fatal(err)
+	}
+	return pos
+}
+
 // inputs returns the texts of the inputs of thread sv.
 func (wt *wakeTest) inputs(t *testing.T, sv control.ThreadID) []string {
 	t.Helper()

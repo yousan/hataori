@@ -384,8 +384,10 @@ func TestAutonomyOutcomesWakeTheSupervisor(t *testing.T) {
 	f.press(t, f.buttons(t, fmt.Sprintf("Interrupt thread %d?", r)), e2eHook, "Refuse")
 	_, p1 := f.decided(t, "proposal_answered", 2)
 	_, p2 := f.decided(t, "approval_answered", 1)
-	f.wt.ended(t, w, 2) // the approved send's turn
-	f.wt.read(t, max(p1, p2))
+	// The approved send's turn may end after the last decision. A wake made
+	// before the waker read that turn end leaves it to the next one.
+	p3 := f.wt.ended(t, w, 2)
+	f.wt.read(t, max(p1, p2, p3))
 	f.wt.quiet(t)
 	wakes := f.wt.woken(t, f.owner, f.sv.ID, 1)
 	for _, want := range []string{
@@ -398,8 +400,16 @@ func TestAutonomyOutcomesWakeTheSupervisor(t *testing.T) {
 			t.Fatalf("the wake:\n%s\nwant %q", wakes[0], want)
 		}
 	}
+	last := f.wt.last(t)
+	if pos := f.wt.handled(t); pos >= last {
+		t.Fatalf("before the restart, the waker's position is %d, want it before %d", pos, last)
+	}
 	f.restart(t)
-	time.Sleep(500 * time.Millisecond)
+	// Once it read what was stored, with nothing to wake for, the new waker
+	// stores its position there.
+	eventually(t, "the waker to handle the stored events after the restart, or a wake to wait", 20*time.Second, func() bool {
+		return f.wt.handled(t) >= last || f.wt.clock().waiting() != 0
+	})
 	if n := f.wt.clock().waiting(); n != 0 {
 		t.Fatalf("after the restart, a wake waits: %d timers", n)
 	}
