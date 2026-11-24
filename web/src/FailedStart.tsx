@@ -14,10 +14,10 @@ const detailEvents = 40;
 const retryDelay = 2000;
 
 // startKinds are the events of a thread after which its start is read again.
-const startKinds: ReadonlySet<string> = new Set(["state", "session_replaced", "start_chosen", "turn_ended"]);
+const startKinds: ReadonlySet<string> = new Set(["state", "session_replaced", "start_chosen", "turn_started"]);
 
 // Start is how a thread's start went: failed, and the last choice a person
-// made for it, until the first turn after it has ended.
+// made for it, until the second turn after it starts.
 export interface Start {
   failed: FailedStart | null;
   chosen: string | null; // who chose what
@@ -25,13 +25,16 @@ export interface Start {
 
 const none: Start = { failed: null, chosen: null };
 
-function chosenOf(evs: readonly Event[]): string | null {
+// chosenOf is the choice that evs, a thread's last events, show; before is
+// the one shown until now, which stays when evs do not reach back to it.
+function chosenOf(evs: readonly Event[], before: string | null): string | null {
+  let turns = 0;
   for (let i = evs.length - 1; i >= 0; i--) {
     const e = evs[i];
-    if (e.kind === "turn_ended") return null;
+    if (e.kind === "turn_started" && ++turns > 1) return null;
     if (e.kind === "start_chosen") return chosenLine(typeof e.data?.choice === "string" ? e.data.choice : "", who(e.data ?? {}));
   }
-  return null;
+  return before;
 }
 
 // useStart is thread x's start, read again when an event of the thread may
@@ -50,7 +53,7 @@ export function useStart(x: ThreadInfo, subscribe: (f: (e: Event) => void) => ()
       const current = () => !gone && n === seq.current;
       thread(id, detailEvents)
         .then((d) => {
-          if (current()) setStart({ failed: d.failed_start ?? null, chosen: chosenOf(d.events ?? []) });
+          if (current()) setStart((s) => ({ failed: d.failed_start ?? null, chosen: chosenOf(d.events ?? [], s.chosen) }));
         })
         .catch(() => {
           if (current()) timer = setTimeout(read, retryDelay);
