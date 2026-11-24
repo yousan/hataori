@@ -144,7 +144,7 @@ export function Details({ x, attention, workspace, subscribe, opens, scopes, lay
         <h3>{t("details.workspace")}</h3>
         {none && (
           <p className="empty" data-field="noWorkspace" data-why={none}>
-            {t(none === "supervisor" ? "details.noRepo" : "details.workspaceRemoved")}
+            {t(none === "supervisor" ? "details.noRepo" : "details.threadRemoved")}
           </p>
         )}
         <dl>
