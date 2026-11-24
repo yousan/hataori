@@ -16,11 +16,15 @@ type lampEvents struct {
 	f   *front
 	r   *reader
 	pos uint64
+	// The thread's conversations at the next event; lampThread if none.
+	convs []surface.Conversation
 }
 
 func newLampEvents(t *testing.T) *lampEvents {
 	f := newFront(t, workspaces{})
-	return &lampEvents{t: t, f: f, r: &reader{lamp: map[control.ThreadID]*lampState{}, lampKnown: map[control.ThreadID]bool{}}}
+	return &lampEvents{t: t, f: f, r: &reader{
+		api:  f.fe.API(control.Caller{Principal: "owner", Scopes: []string{channel}, May: control.OpRead}),
+		lamp: map[control.ThreadID]*lampState{}, lampKnown: map[control.ThreadID]bool{}}}
 }
 
 var lampThread = surface.Conversation{Channel: channel, Thread: "t1"}
@@ -30,8 +34,11 @@ func (l *lampEvents) send(kind string, data map[string]any) []Row {
 	l.pos++
 	data["session"], data["turn"] = 1, int(l.pos)
 	b, _ := json.Marshal(data)
-	rows, err := l.f.fe.lamps(context.Background(), l.r, control.Event{Pos: l.pos, Thread: 1, Kind: control.EventKind(kind), Data: b},
-		[]surface.Conversation{lampThread})
+	convs := l.convs
+	if convs == nil {
+		convs = []surface.Conversation{lampThread}
+	}
+	rows, err := l.f.fe.lamps(context.Background(), l.r, control.Event{Pos: l.pos, Thread: 1, Kind: control.EventKind(kind), Data: b}, convs)
 	if err != nil {
 		l.t.Fatal(err)
 	}
@@ -87,4 +94,48 @@ func TestATurnOfInputFromElsewhereLeavesTheLampsAlone(t *testing.T) {
 	if len(rows) != 0 {
 		t.Fatalf("rows %+v, want none", rows)
 	}
+}
+
+// The turn of a message in a chat thread whose channel left show_in lamps
+// nothing there, and pings in the thread's own conversation (#572).
+func TestNoLampOrPingInAChannelNoLongerServed(t *testing.T) {
+	gone := surface.Conversation{Channel: "c9", Thread: "t9"}
+	start := func(t *testing.T) *lampEvents {
+		l := newLampEvents(t)
+		l.convs = []surface.Conversation{lampThread, gone}
+		l.sender("m9", sender{lamp: "message", msg: surface.MessageRef{Conv: gone, ID: "m9"}, ping: "ada"})
+		if rows := l.send("turn_started", map[string]any{"by": "caller", "key": "m9", "from": "chat:ada"}); len(rows) != 1 || rows[0].Conv != gone {
+			t.Fatalf("the rows while the channel is listed: %+v", rows)
+		}
+		return l
+	}
+	check := func(t *testing.T, rows []Row, ping string) {
+		t.Helper()
+		for _, r := range rows {
+			if r.Conv != lampThread || r.On != nil && r.On.Conv != lampThread || r.Message.ReplyTo != nil {
+				t.Errorf("a row in or to the channel that left: %+v", r)
+			}
+		}
+		if p := pinged(rows); len(p) != 1 || p[0] != ping {
+			t.Errorf("pinged %v, want %s", p, ping)
+		}
+	}
+	t.Run("the turn ends", func(t *testing.T) {
+		l := start(t)
+		l.convs = nil
+		check(t, l.send("turn_ended", map[string]any{"by": "caller", "outcome": "completion", "background": 0}), "ada")
+		// A turn the agent starts by itself later.
+		rows := l.send("turn_started", map[string]any{"by": "agent"})
+		check(t, append(rows, l.send("turn_ended", map[string]any{"by": "agent", "outcome": "failure", "background": 0})...), "ada")
+	})
+	t.Run("another message takes over", func(t *testing.T) {
+		l := start(t)
+		l.send("turn_ended", map[string]any{"by": "caller", "outcome": "blocked", "background": 0})
+		l.convs = nil
+		l.sender("m1", sender{lamp: "message", msg: surface.MessageRef{Conv: lampThread, ID: "m1"}, ping: "grace"})
+		rows := l.send("turn_started", map[string]any{"by": "caller", "key": "m1", "from": "chat:grace"})
+		if len(rows) != 1 || rows[0].Conv != lampThread {
+			t.Errorf("the rows of the message that took over: %+v", rows)
+		}
+	})
 }

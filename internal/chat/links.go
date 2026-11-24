@@ -3,19 +3,116 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"math"
 	"slices"
 	"strings"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/store"
 	"github.com/yousan/hataori/internal/surface"
 )
 
-// linkConvs returns the conversations of t's links of this front end, the
-// first link first.
+// serves says whether threads of scope may be shown in channel, as the
+// config the daemon loaded says: the channel is the scope's own, or in the
+// scope's show_in. A link made while the channel was listed is not served
+// once it no longer is; its row stays, so that putting the entry back shows
+// the thread there again (#572).
+func (f *FrontEnd) serves(channel, scope string) bool {
+	return slices.Contains(f.scopesIn(channel), scope)
+}
+
+// neverSince is the since of a link that is not served: nothing written in
+// its chat thread is input.
+const neverSince int64 = math.MaxInt64
+
+// settleLinks brings the stored state of the front end's links in line with
+// the config the daemon loaded. A link that is no longer served (serves)
+// loses its pending outbox rows: they were written while the channel was
+// listed, and must not be posted there now. What is written in its chat
+// thread meanwhile is no input, also when it is caught up on later: a link
+// served again is so since this start. One log line names the links that
+// are not served, the first maxListed of them. Run calls it before the
+// outbox is sent and the driver connects.
+func (f *FrontEnd) settleLinks(ctx context.Context) error {
+	type link struct {
+		id     int64
+		since  int64
+		served bool
+	}
+	var names []string
+	dropped := int64(0)
+	err := f.Outbox.Store.Update(ctx, func(tx *store.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT l.id, l.channel, l.thread, l.since, t.id, t.scope FROM links l
+			JOIN threads t ON t.id = l.thread_id WHERE l.client = ? ORDER BY l.id`, f.Name)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		var links []link
+		for rows.Next() {
+			var l link
+			var id int64
+			var channel, thread, scope string
+			if err := rows.Scan(&l.id, &channel, &thread, &l.since, &id, &scope); err != nil {
+				return err
+			}
+			l.served = f.serves(channel, scope)
+			if !l.served {
+				names = append(names, fmt.Sprintf("thread %d of %s in %s/%s", id, scope, channel, thread))
+			}
+			links = append(links, l)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		rows.Close()
+		for _, l := range links {
+			since := l.since
+			switch {
+			case !l.served:
+				since = neverSince
+			case l.since == neverSince:
+				since = f.inboundState().started()
+			}
+			if since != l.since {
+				if _, err := tx.ExecContext(ctx, `UPDATE links SET since = ? WHERE id = ?`, since, l.id); err != nil {
+					return err
+				}
+			}
+			if l.served {
+				continue
+			}
+			r, err := tx.ExecContext(ctx, `UPDATE chat_outbox SET state = 'dropped' WHERE client = ? AND link = ? AND state = 'pending'`, f.Name, l.id)
+			if err != nil {
+				return err
+			}
+			n, err := r.RowsAffected()
+			if err != nil {
+				return err
+			}
+			dropped += n
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("chat: settling the links: %w", err)
+	}
+	if len(names) > 0 {
+		n := len(names)
+		names = names[:min(n, maxListed)]
+		f.Log.Warn("chat: links are no longer served, as their channel is neither the scope's own nor in its show_in",
+			"count", n, "links", names, "pending_messages_dropped", dropped)
+	}
+	return nil
+}
+
+// linkConvs returns the conversations of t's links of this front end that
+// it serves, the first link first.
 func (f *FrontEnd) linkConvs(t control.ThreadInfo) []surface.Conversation {
 	var out []surface.Conversation
 	for _, l := range t.Links {
-		if l.Client == f.Name {
+		if l.Client == f.Name && f.serves(l.Channel, t.Scope) {
 			out = append(out, surface.Conversation{Channel: l.Channel, Thread: l.Thread})
 		}
 	}
@@ -33,15 +130,15 @@ func (f *FrontEnd) convOf(ctx context.Context, id control.ThreadID) (surface.Con
 }
 
 // convsOf returns every conversation thread id is shown in by this front
-// end, one per link, the first link first; none when it has no link here,
-// or its scope is not one this front end shows. It reads the links as they
+// end, one per link that it serves, the first link first; none when it has
+// no such link here. It reads the links as they
 // are now, so a link made since, by any client, is seen at once.
 func (f *FrontEnd) convsOf(ctx context.Context, id control.ThreadID) ([]surface.Conversation, error) {
 	scopes := f.scopeList()
 	if len(scopes) == 0 {
 		return nil, nil
 	}
-	q := `SELECT l.channel, l.thread FROM links l JOIN threads t ON t.id = l.thread_id
+	q := `SELECT l.channel, l.thread, t.scope FROM links l JOIN threads t ON t.id = l.thread_id
 		WHERE l.thread_id = ? AND l.client = ? AND t.scope IN (?` + strings.Repeat(", ?", len(scopes)-1) + `) ORDER BY l.id`
 	args := []any{int64(id), f.Name}
 	for _, sc := range scopes {
@@ -55,10 +152,13 @@ func (f *FrontEnd) convsOf(ctx context.Context, id control.ThreadID) ([]surface.
 	var out []surface.Conversation
 	for rows.Next() {
 		var c surface.Conversation
-		if err := rows.Scan(&c.Channel, &c.Thread); err != nil {
+		var scope string
+		if err := rows.Scan(&c.Channel, &c.Thread, &scope); err != nil {
 			return nil, err
 		}
-		out = append(out, c)
+		if f.serves(c.Channel, scope) {
+			out = append(out, c)
+		}
 	}
 	return out, rows.Err()
 }

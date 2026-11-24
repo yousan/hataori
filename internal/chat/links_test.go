@@ -2,14 +2,18 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/core"
 	"github.com/yousan/hataori/internal/surface"
 	"github.com/yousan/hataori/internal/surface/fake"
 )
@@ -201,5 +205,159 @@ func TestMirrorOnlyWhatCameThroughALink(t *testing.T) {
 				t.Fatalf("a row of an %s through the dashboard: %+v, want a quiet \"ada: from the page\"", kind, r)
 			}
 		}
+	}
+}
+
+// shownIn attaches thread id in channel ch and returns the chat thread it
+// is shown in there.
+func (f *front) shownIn(t *testing.T, id control.ThreadID, ch string) surface.Conversation {
+	t.Helper()
+	f.command(surface.Conversation{Channel: ch}, fake.Person(owner), "attach-"+ch, attachCommand,
+		surface.Arg{Name: "number", Value: strconv.FormatInt(int64(id), 10)})
+	for _, c := range f.driver.Calls(surface.Conversation{Channel: ch}) {
+		if c.Op == fake.OpOpenThread {
+			return c.Opened
+		}
+	}
+	t.Fatalf("the attach opened no thread in %s", ch)
+	return surface.Conversation{}
+}
+
+// A channel taken out of a scope's show_in gets no more of the scope's
+// threads: a link made while it was listed posts nothing there once the
+// daemon runs with the new config, and what is written there is no input,
+// then or later. With the entry back, the thread is shown there again
+// (#572).
+func TestNothingIsPostedInAChannelRemovedFromShowIn(t *testing.T) {
+	f := newFront(t, workspaces{}, func(fe *FrontEnd) {
+		fe.ShowIn = map[string][]string{"c9": {channel}}
+	})
+	id := f.runningThread(t)
+	th := f.conv(id)
+	shown := f.shownIn(t, id, "c9")
+	ctx := context.Background()
+	start := func(meanwhile ...string) { // as Run and Connected
+		t.Helper()
+		time.Sleep(5 * time.Millisecond) // later than the last message, in milliseconds
+		f.fe.in, f.fe.inboundOnce = nil, sync.Once{}
+		f.fe.inboundState().started()
+		for _, text := range meanwhile { // the service could not be reached yet
+			f.driver.Inject(shown, fake.Person(owner), text)
+			time.Sleep(5 * time.Millisecond)
+		}
+		if err := f.fe.settleLinks(ctx); err != nil {
+			t.Fatal(err)
+		}
+		convs, err := f.fe.toCatchUp(ctx)
+		if err != nil || !slices.Contains(convs, th) {
+			t.Fatalf("to catch up: %v, %v", convs, err)
+		}
+		if got := slices.Contains(convs, shown); got != (f.fe.ShowIn["c9"][0] == channel) {
+			t.Fatalf("%v caught up: %v", shown, got)
+		}
+		for _, c := range convs {
+			f.fe.catchUp(ctx, c)
+		}
+	}
+	// The operator removes c9 from the scope's show_in and restarts. c9 is
+	// listed for another scope, whose threads are still shown there.
+	f.fe.ShowIn = map[string][]string{"c9": {"off"}}
+	f.core.Scopes[channel] = core.Scope{Enabled: true, Owner: "chat"}
+	before := f.runner.handed()
+	start()
+	f.deliver(shown, fake.Person(owner), "from the removed channel")
+	if got := f.runner.handed(); !slices.Equal(got, before) {
+		t.Fatalf("input from the removed channel reached the agent: %q", got)
+	}
+	// Written last, while the front end was not connected.
+	f.driver.Inject(shown, fake.Person(owner), "missed, from the removed channel")
+	start()
+	stop := f.showing(t)
+	f.event(t, id, "input", map[string]any{"text": "typed elsewhere", "principal": "owner", "via": "web", "turn": 9})
+	f.event(t, id, "text", map[string]any{"text": "secret answer", "final": true})
+	waitFor(t, "the answer in the scope's own channel", func() bool { return posts(f.driver, th, "secret answer") == 1 })
+	f.settled(t, th, shown)
+	for _, text := range []string{"secret answer", "owner: typed elsewhere"} {
+		if n := posts(f.driver, shown, text); n != 0 {
+			t.Errorf("%q was posted %d time(s) in a channel no longer in show_in: %q", text, n, postsIn(f.driver, shown))
+		}
+	}
+	stop()
+	f.fe.ShowIn = map[string][]string{"c9": {channel}}
+	f.core.Scopes[channel] = core.Scope{Enabled: true, Owner: "chat", ShowIn: []string{"chat:c9"}}
+	// From this start on it is input, also after one more.
+	start("while starting")
+	f.driver.Inject(shown, fake.Person(owner), "missed, after the entry is back")
+	start()
+	got := strings.Join(f.runner.handed(), "\n")
+	for text, want := range map[string]int{"from the removed channel": 0, "while starting": 1, "missed, after the entry is back": 1} {
+		if n := strings.Count(got, text); n != want {
+			t.Errorf("%q became input %d time(s), want %d: %q", text, n, want, got)
+		}
+	}
+	f.showing(t)
+	f.event(t, id, "text", map[string]any{"text": "after the entry is back", "final": true})
+	waitFor(t, "the answer in the channel listed again", func() bool { return posts(f.driver, shown, "after the entry is back") == 1 })
+}
+
+// What was still to be posted in a channel when it left show_in is not
+// posted there, and one log line at start names the link; the rows of the
+// other conversations are posted (#572).
+func TestPendingRowsOfARemovedChannelAreDropped(t *testing.T) {
+	f := newFront(t, workspaces{}, func(fe *FrontEnd) {
+		fe.ShowIn = map[string][]string{"c9": {channel}, "c8": {channel}}
+	})
+	f.core.Scopes[channel] = core.Scope{Enabled: true, Owner: "chat", ShowIn: []string{"chat:c9", "chat:c8"}}
+	id := f.runningThread(t)
+	th, c9, c8 := f.conv(id), f.shownIn(t, id, "c9"), f.shownIn(t, id, "c8")
+	f.settled(t, th, c9, c8)
+	// Another client's scope has the key c7, which is a channel of this one
+	// too: the channel is not the scope's own.
+	c7 := surface.Conversation{Channel: "c7", Thread: "t7"}
+	for _, q := range []string{
+		`INSERT INTO threads (id, scope, key, started_by, state, created_at, updated_at) VALUES (900, 'c7', 'k', 'owner', 'closed', 0, 0)`,
+		`INSERT INTO links (thread_id, client, channel, thread, created_at) VALUES (900, 'chat', 'c7', 't7', 0)`,
+	} {
+		if _, err := f.fe.Outbox.Store.DB.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.driver.Fail(fake.OpPost, 1<<30, errors.New("network is unreachable"))
+	ctx, cancel := context.WithCancel(context.Background())
+	for i, conv := range []surface.Conversation{th, c9, c8, c7} {
+		if err := f.fe.Outbox.Write(ctx, row(uint64(1<<41+i), 0, conv, "secret answer")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The daemon runs again, with c8 alone listed.
+	d, log := fake.New(), &logBuf{}
+	lg := slog.New(slog.NewTextHandler(log, nil))
+	fe := &FrontEnd{Name: "chat", Driver: d, API: f.fe.API, Trigger: "!go", People: testPeople(), Log: lg,
+		Outbox: &Outbox{Store: f.fe.Outbox.Store, Client: "chat", Driver: d, Log: lg, Retry: 5 * time.Millisecond},
+		Scopes: f.fe.Scopes, ShowIn: map[string][]string{"c8": {channel}}}
+	done := make(chan error, 1)
+	go func() { done <- fe.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	for _, conv := range []surface.Conversation{th, c8} {
+		waitFor(t, "the row of a served conversation", func() bool { return posts(d, conv, "secret answer") == 1 })
+	}
+	for i, conv := range map[int]surface.Conversation{1: c9, 3: c7} {
+		var state string
+		if err := f.fe.Outbox.Store.DB.QueryRow(`SELECT state FROM chat_outbox WHERE event = ?`, 1<<41+i).Scan(&state); err != nil || state != "dropped" {
+			t.Errorf("the row of %v is %q, %v", conv, state, err)
+		}
+		if n := len(postsIn(d, conv)); n != 0 {
+			t.Errorf("%d posts in %v", n, conv)
+		}
+	}
+	var lines []string
+	for _, l := range log.lines() {
+		if strings.Contains(l, "links are no longer served") {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) != 1 || !strings.Contains(lines[0], c9.Channel+"/"+c9.Thread) || strings.Contains(lines[0], c8.Channel+"/"+c8.Thread) {
+		t.Errorf("the log's lines about the link: %q", lines)
 	}
 }
