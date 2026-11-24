@@ -369,8 +369,42 @@ func TestThreadNamesTold(t *testing.T) {
 	deliver(t, d, s, "bot/gw-05-THREAD_CREATE.json")
 	deliver(t, d, s, "bot/gw-17-THREAD_UPDATE.json")
 	conv := surface.Conversation{Channel: id(created["parent_id"]), Thread: id(created["id"])}
-	want := []renaming{{conv, created["name"].(string)}, {conv, updated["name"].(string)}}
+	want := []renaming{{conv, created["name"].(string), 0}, {conv, updated["name"].(string), 0}}
 	if !slices.Equal(s.renamed, want) || want[0].name == want[1].name {
+		t.Fatalf("told %+v, want %+v", s.renamed, want)
+	}
+}
+
+// Run tells the sink a thread's name when it is created and when it is
+// renamed, in order with the messages (#614).
+func TestRunTellsThreadNames(t *testing.T) {
+	r, g := newFakeREST(t), newFakeGateway(t, payload(t, "bot/gw-01-READY.json"))
+	r.serveJSON(t, "GET /users/@me", 200, payload(t, "bot/rest-users-me.json"))
+	d := testDriver(t, botID(t), r, g)
+	s := newSink()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx, s) }()
+	<-g.connected
+	created, updated := payload(t, "bot/gw-05-THREAD_CREATE.json"), payload(t, "bot/gw-17-THREAD_UPDATE.json")
+	g.event("THREAD_CREATE", created)
+	g.event("MESSAGE_CREATE", person(t, "between the names", 0))
+	g.event("THREAD_UPDATE", updated)
+	g.event("MESSAGE_CREATE", person(t, "after them", 1))
+	for range 2 {
+		select {
+		case <-s.got:
+		case <-time.After(5 * time.Second):
+			t.Fatal("no message")
+		}
+	}
+	cancel()
+	<-done
+	conv := surface.Conversation{Channel: id(created["parent_id"]), Thread: id(created["id"])}
+	want := []renaming{{conv, created["name"].(string), 0}, {conv, updated["name"].(string), 1}}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !slices.Equal(s.renamed, want) {
 		t.Fatalf("told %+v, want %+v", s.renamed, want)
 	}
 }
