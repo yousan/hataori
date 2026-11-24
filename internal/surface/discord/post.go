@@ -442,6 +442,18 @@ func (d *Driver) Link(conv surface.Conversation) string {
 	return fmt.Sprintf("<#%d>", id)
 }
 
+var _ surface.Verbatimer = (*Driver)(nil)
+
+// Verbatim returns s as a block of code, in which Discord reads no markup.
+// The one thing that would end the block, three backticks in a row, gets a
+// zero-width space, which shows nothing, after every other backtick.
+func (d *Driver) Verbatim(s string) string {
+	if strings.Contains(s, fenceMark) {
+		s = strings.ReplaceAll(s, "``", "`\u200b`")
+	}
+	return fenceMark + "\n" + s + "\n" + fenceMark
+}
+
 // Name is the name Discord shows for conv: "#" and the channel's name for
 // a channel, its own name for a thread, and none for a direct conversation.
 func (d *Driver) Name(ctx context.Context, conv surface.Conversation) (string, error) {

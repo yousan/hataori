@@ -40,7 +40,8 @@ func TestAStartThatFailsLaterIsShownOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := couldNotStart + "blocked at start: " + trustBlocked
+	// The event names no files: the detail is the agent's, shown verbatim.
+	want := couldNotStart + "blocked at start.\n" + f.driver.Verbatim(trustBlocked)
 	calls := f.postedUntil(t, id, want)
 	if texts(calls) != "the prompt|"+want {
 		t.Fatalf("thread shows %q, want the prompt and one message with the reason", texts(calls))
@@ -67,17 +68,46 @@ func TestAStartThatFailsLaterIsShownOnce(t *testing.T) {
 
 // A detail of several lines for a person, as the agent adapter writes for
 // a start blocked at a start-up dialog that names files (#589): the
-// message holds it whole, below the reason: why hataori stopped, the
-// dialog as the agent drew it with the files it names, and the next step.
+// message holds it below the reason: why hataori stopped, and the dialog as
+// the agent drew it with the files it names. The dialog may hold text of the
+// repository, such as the rules its settings allow, so it is shown verbatim
+// (#754); the words around it, which are the adapter's, are as they are.
 func TestAStartFailureWithTheDialogPostsItBelowTheReason(t *testing.T) {
 	f := newFront(t, workspaces{})
 	id, _ := f.started(t)
 	f.showing(t)
-	detail := "hataori did not answer the dialog for you, because it names files of the repository; it has not judged this repository dangerous.\n" +
-		"The agent showed:\n> Trusting this folder loads .agent/settings.json.\n> ❯ No, exit\n> Yes, I trust this folder\n" +
-		`What to do next: list it under "trust_files" of the scope "c1" in hataori's config, and start again.`
-	f.event(t, id, "state", map[string]any{"from": "creating", "to": "failed", "reason": "blocked at start", "detail": detail})
-	want := couldNotStart + "blocked at start.\n" + detail
+	const why = "hataori did not answer the dialog for you, because it names files of the repository; it has not judged this repository dangerous.\n" +
+		"The agent showed:\n"
+	shown := []string{"⚠ This folder pre-approves 3 tool permissions in .agent/settings.json:",
+		"Bash(ls:*), Bash([text](https://example.com)), Bash(> # a)", "# a heading", "> a quote", "```",
+		"Trusting this folder loads .agent/settings.json.", "❯ No, exit", "Yes, I trust this folder"}
+	const after = "\nMore of the adapter's."
+	f.event(t, id, "state", map[string]any{"from": "creating", "to": "failed", "reason": "blocked at start",
+		"detail": why + "> " + strings.Join(shown, "\n> ") + after, "trust": []string{".agent/settings.json"}})
+	want := couldNotStart + "blocked at start.\n" + why + f.driver.Verbatim(strings.Join(shown, "\n")) + after + "\nWhat to do next: "
+	var got string
+	waitFor(t, "the message", func() bool {
+		for _, c := range f.driver.Calls(f.conv(id)) {
+			if c.Op == fake.OpPost && strings.HasPrefix(c.Message.Text, couldNotStart) {
+				got = c.Message.Text
+			}
+		}
+		return got != ""
+	})
+	if !strings.HasPrefix(got, want) {
+		t.Fatalf("thread shows %q, want it to begin with %q", got, want)
+	}
+}
+
+// A detail of a start that no dialog blocked is the agent's own output, of
+// which nothing is known: all of it is shown verbatim (#754).
+func TestAStartFailuresOutputIsShownVerbatim(t *testing.T) {
+	f := newFront(t, workspaces{})
+	id, _ := f.started(t)
+	f.showing(t)
+	const out = "> # not\n[a link](https://example.com)"
+	f.event(t, id, "state", map[string]any{"from": "creating", "to": "failed", "reason": "blocked at start", "detail": out})
+	want := couldNotStart + "blocked at start.\n" + f.driver.Verbatim(out)
 	if got := texts(f.postedUntil(t, id, want)); got != "the prompt|"+want {
 		t.Fatalf("thread shows %q", got)
 	}

@@ -99,6 +99,16 @@ type Linker interface {
 	Link(conv Conversation) string
 }
 
+// Verbatimer is implemented by a Driver whose service reads the text of a
+// message as markup. Verbatim returns the text that shows s, which has one
+// line or more, as its own characters and lines, as in a block of code:
+// nothing in s is read as a link, a mention or any other formatting, and
+// nothing in it ends that. It stands on lines of its own in a message's
+// text. On a Driver without it, a text shows as its characters.
+type Verbatimer interface {
+	Verbatim(s string) string
+}
+
 // Renamer is implemented by a Sink that wants the names of conversations
 // as the service shows them: Run calls Renamed when it learns a thread's
 // name, and when the name changes.
