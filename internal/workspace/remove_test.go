@@ -454,6 +454,163 @@ func TestRefuseSubmoduleWithoutCheckout(t *testing.T) {
 	wantRefusal(t, x.check(), UnpushedRef, filepath.Join(".git", "modules", "sub"))
 }
 
+// withSubmodule adds a submodule at sub, with everything pushed, and returns
+// its directory.
+func (x *removal) withSubmodule() string {
+	x.t.Helper()
+	sub := x.bareWithCommit("sub")
+	x.git(x.clone, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "sub")
+	x.git(x.clone, "commit", "-q", "-m", "add sub")
+	x.git(x.clone, "push", "-q")
+	if err := x.check(); err != nil {
+		x.t.Fatalf("pushed submodule: %v", err)
+	}
+	return filepath.Join(x.clone, "sub")
+}
+
+// withoutCheckout are the ways git removes the checkout of the submodule at
+// sub and keeps its git directory. After git rm, core.worktree names a
+// directory that is gone, and git runs nothing there; after the others it is
+// not set.
+var withoutCheckout = map[string]func(x *removal){
+	"git rm": func(x *removal) {
+		x.git(x.clone, "rm", "-q", "-f", "sub")
+		x.git(x.clone, "commit", "-q", "-m", "remove sub")
+		x.git(x.clone, "push", "-q")
+		if got := x.git(x.clone, "config", "--file", ".git/modules/sub/config", "core.worktree"); got != "../../../sub" {
+			x.t.Fatalf("core.worktree is %q", got)
+		}
+	},
+	"deinit": func(x *removal) {
+		x.git(x.clone, "submodule", "deinit", "-q", "-f", "sub")
+	},
+	"checkout with submodule.recurse": func(x *removal) {
+		x.git(x.clone, "-c", "submodule.recurse=true", "checkout", "-q", "-f", "HEAD^{/first}")
+	},
+}
+
+func TestRemovableAfterASubmodulesCheckoutWasRemoved(t *testing.T) {
+	for name, remove := range withoutCheckout {
+		t.Run(name, func(t *testing.T) {
+			x := newRemoval(t)
+			sub := x.withSubmodule()
+			// git diff fails when it reads an order file that is not there.
+			x.git(sub, "config", "diff.orderFile", ".gitorder")
+			remove(x)
+			if _, err := os.Lstat(filepath.Join(sub, ".git")); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("sub is still checked out: %v", err)
+			}
+			if err := x.check(); err != nil {
+				t.Fatalf("nothing would be lost, and the check refuses: %v", err)
+			}
+			if entries, err := os.ReadDir(filepath.Join(x.root, scratchDir)); err != nil || len(entries) != 0 {
+				t.Fatalf("the check leaves %v, %v", entries, err)
+			}
+		})
+	}
+}
+
+// TestRefuseSubmoduleWithoutCheckout, where core.worktree names a directory
+// that is gone.
+func TestRefuseCommitOfASubmoduleRemovedWithGitRm(t *testing.T) {
+	x := newRemoval(t)
+	sub := x.withSubmodule()
+	x.commit(sub, "t")
+	x.git(x.clone, "add", "sub")
+	x.git(x.clone, "commit", "-q", "-m", "move sub")
+	x.git(x.clone, "push", "-q")
+	withoutCheckout["git rm"](x)
+	wantRefusal(t, x.check(), UnpushedRef, filepath.Join(".git", "modules", "sub"))
+}
+
+// What is only in the git directory refuses, whatever removed the checkout.
+func TestRefuseWhatASubmoduleWithoutCheckoutHolds(t *testing.T) {
+	for how, remove := range withoutCheckout {
+		t.Run("linked worktree after "+how, func(t *testing.T) {
+			x := newRemoval(t)
+			x.git(x.withSubmodule(), "worktree", "add", "-q", "--detach", filepath.Join(x.tmp, "linked"))
+			remove(x)
+			wantRefusal(t, x.check(), Worktree, filepath.Join(".git", "modules", "sub"))
+		})
+	}
+	// git takes the file out of the index with submodule.recurse.
+	for _, how := range []string{"git rm", "deinit"} {
+		for name, stage := range map[string]func(x *removal, sub string){
+			"new file": func(x *removal, sub string) {
+				x.write("sub/new", "work that is committed nowhere\n")
+				x.git(sub, "add", "new")
+			},
+			"changed file": func(x *removal, sub string) {
+				x.write("sub/s", "work that is committed nowhere\n")
+				x.git(sub, "add", "s")
+			},
+			"removed file": func(x *removal, sub string) {
+				x.commit(sub, "other")
+				x.git(sub, "push", "-q")
+				x.git(sub, "rm", "-q", "s")
+			},
+			"file before the first commit": func(x *removal, sub string) {
+				x.git(sub, "checkout", "-q", "--orphan", "fresh")
+			},
+			"gitlink": func(x *removal, sub string) {
+				x.git(sub, "config", "diff.ignoreSubmodules", "all")
+				x.git(sub, "update-index", "--add", "--cacheinfo", "160000,"+x.git(sub, "rev-parse", "HEAD")+",inner")
+			},
+		} {
+			t.Run(name+" staged after "+how, func(t *testing.T) {
+				x := newRemoval(t)
+				stage(x, x.withSubmodule())
+				withoutCheckout[how](x)
+				wantRefusal(t, x.check(), Staged, filepath.Join(".git", "modules", "sub"))
+			})
+		}
+	}
+}
+
+// git rm leaves the index and core.worktree: git did not empty this one.
+func TestRefuseEveryFileRemovedInASubmoduleRemovedWithGitRm(t *testing.T) {
+	x := newRemoval(t)
+	x.git(x.withSubmodule(), "rm", "-q", "-r", ".")
+	withoutCheckout["git rm"](x)
+	wantRefusal(t, x.check(), Staged, filepath.Join(".git", "modules", "sub"))
+}
+
+// The git directory that git rm left, moved to where git says nothing about
+// it, still has those of its own submodules.
+func TestRefuseSubmoduleOfAMovedGitDirectory(t *testing.T) {
+	x := newRemoval(t)
+	sub := x.withSubmodule()
+	x.git(sub, "-c", "protocol.file.allow=always", "submodule", "add", "-q", x.bareWithCommit("inner"), "inner")
+	x.git(sub, "commit", "-q", "-m", "add inner")
+	x.git(sub, "push", "-q")
+	x.git(x.clone, "add", "sub")
+	x.git(x.clone, "commit", "-q", "-m", "move sub")
+	x.git(x.clone, "push", "-q")
+	x.commit(filepath.Join(sub, "inner"), "work")
+	withoutCheckout["git rm"](x)
+	x.r.Disposable = []string{"cache"}
+	os.Mkdir(filepath.Join(x.clone, "cache"), 0o700)
+	moved := filepath.Join(x.clone, "cache", "sub.git")
+	if err := os.Rename(filepath.Join(x.clone, ".git", "modules", "sub"), moved); err != nil {
+		t.Fatal(err)
+	}
+	wantRefusal(t, x.check(), UnpushedRef, filepath.Join("cache", "sub.git", "modules", "inner"))
+}
+
+// A linked worktree of a bare repository is elsewhere, and needs it.
+func TestRefuseLinkedWorktreeOfANestedBareRepository(t *testing.T) {
+	x := newRemoval(t)
+	x.r.Disposable = []string{"cache"}
+	os.Mkdir(filepath.Join(x.clone, "cache"), 0o700)
+	bare := filepath.Join(x.clone, "cache", "b.git")
+	x.git(x.tmp, "clone", "-q", "--bare", x.bare, bare)
+	if err := x.check(); err != nil {
+		t.Fatalf("pushed bare repository: %v", err)
+	}
+	x.git(bare, "worktree", "add", "-q", "--detach", filepath.Join(x.tmp, "linked"))
+	wantRefusal(t, x.check(), Worktree, filepath.Join("cache", "b.git"))
+}
+
 // A plain clone, which is what Maker.Clone makes, leaves the directory of a
 // submodule empty and no repository. git reports nothing below it: not as
 // untracked, not as ignored.
