@@ -2,6 +2,7 @@ package fake
 
 import (
 	"bufio"
+	"cmp"
 	"crypto/rand"
 	"errors"
 	"flag"
@@ -58,11 +59,12 @@ func loggedIn(configDir string) bool {
 
 // LoginLaunch runs the fake's login command on pipes, with the config
 // directory sessions use.
-func (a *Adapter) LoginLaunch(agent.Spec) (agent.Launch, error) {
-	if a.c.ConfigDir == "" {
+func (a *Adapter) LoginLaunch(spec agent.Spec) (agent.Launch, error) {
+	dir := cmp.Or(spec.ConfigDir, a.c.ConfigDir)
+	if dir == "" {
 		return agent.Launch{}, errors.New(Name + ": no config directory to log in to")
 	}
-	argv := append(append([]string{}, a.c.Command...), "login", "--config", a.c.ConfigDir, "--accept", a.c.Login.Code)
+	argv := append(append([]string{}, a.c.Command...), "login", "--config", dir, "--accept", a.c.Login.Code)
 	if a.c.Login.Device {
 		argv = append(argv, "--device", "--device-fail", a.c.Login.DeviceFail)
 	}

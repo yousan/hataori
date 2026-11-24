@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
@@ -73,6 +74,85 @@ func TestLoginOutage(t *testing.T) {
 	got = loginEvents(t, m)
 	if len(got) != 3 || got[2].Kind != KindLoginLost || got[2].Data["outage"] == got[0].Data["outage"] {
 		t.Fatalf("a new outage after a closed one: %v", got)
+	}
+}
+
+// setConfigDir gives the session a configuration directory of its own, as a
+// session taken in has.
+func setConfigDir(t *testing.T, m *Machine, id int64, dir string) {
+	t.Helper()
+	b, _ := json.Marshal(map[string]any{"agent": "fake", "spec": agent.Spec{ConfigDir: dir}})
+	if _, err := m.Store.DB.Exec(`UPDATE sessions SET spec = ? WHERE id = ?`, string(b), id); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// An outage is one of an agent and a configuration directory: a turn of a
+// session with another login neither joins it nor closes it.
+func TestLoginOutageOfEachConfigDir(t *testing.T) {
+	m, a := newMachine(t, control.Idle)
+	b := addSession(t, m)
+	setConfigDir(t, m, b, "/home/alice/.claude-work")
+
+	turn(t, m, b, "b1", agent.Failed, agent.Login)
+	turn(t, m, a, "a1", agent.Completed, "")
+	got := loginEvents(t, m)
+	if len(got) != 1 || got[0].Kind != KindLoginLost {
+		t.Fatalf("a completed turn with another login, login events: %v", got)
+	}
+	turn(t, m, a, "a2", agent.Failed, agent.Login)
+	got = loginEvents(t, m)
+	if len(got) != 2 || got[1].Kind != KindLoginLost || got[1].Data["outage"] == got[0].Data["outage"] {
+		t.Fatalf("both logins lost: %v", got)
+	}
+	ctx := context.Background()
+	outage := func(i int) int64 { return int64(got[i].Data["outage"].(float64)) }
+	for i, want := range []Login{{"fake", "/home/alice/.claude-work"}, {"fake", ""}} {
+		if l, ok, err := OutageLogin(ctx, m.Store.DB, outage(i)); err != nil || !ok || l != want {
+			t.Fatalf("outage %d is of %+v (%v, %v), want %+v", outage(i), l, ok, err, want)
+		}
+		if id, err := OpenOutage(ctx, m.Store.DB, want); err != nil || id != outage(i) {
+			t.Fatalf("open outage of %+v: %d (%v), want %d", want, id, err, outage(i))
+		}
+	}
+	// The relay's login in one directory closes that one only.
+	if err := m.Store.Update(ctx, func(tx *store.Tx) error {
+		_, err := CloseLoginOutage(ctx, tx, Login{Agent: "fake"})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got = loginEvents(t, m)
+	if len(got) != 3 || got[2].Kind != KindLoginRestored || got[2].Data["outage"] != got[1].Data["outage"] {
+		t.Fatalf("after a login in one directory: %v", got)
+	}
+	turn(t, m, b, "b2", agent.Completed, "")
+	got = loginEvents(t, m)
+	if len(got) != 4 || got[3].Kind != KindLoginRestored || got[3].Data["outage"] != got[0].Data["outage"] {
+		t.Fatalf("after a completed turn of the other: %v", got)
+	}
+}
+
+// What the adapter says is one login is one, whatever the sessions call it.
+func TestLoginOutageOfOneDirUnderTwoNames(t *testing.T) {
+	m, a := newMachine(t, control.Idle)
+	m.LoginDir = func(_ string, s agent.Spec) string {
+		if s.ConfigDir == "/home/alice/.claude" {
+			return ""
+		}
+		return s.ConfigDir
+	}
+	b := addSession(t, m)
+	setConfigDir(t, m, b, "/home/alice/.claude")
+	turn(t, m, a, "a1", agent.Failed, agent.Login)
+	turn(t, m, b, "b1", agent.Failed, agent.Login)
+	turn(t, m, b, "b2", agent.Completed, "")
+	got := loginEvents(t, m)
+	if len(got) != 2 || got[0].Kind != KindLoginLost || got[1].Kind != KindLoginRestored {
+		t.Fatalf("login events %v", got)
+	}
+	if threads, _ := got[1].Data["threads"].([]any); len(threads) != 2 {
+		t.Fatalf("restored event names %v, want both threads", got[1].Data["threads"])
 	}
 }
 

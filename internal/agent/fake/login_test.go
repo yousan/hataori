@@ -90,7 +90,7 @@ func (l *login) exit() int {
 }
 
 func loggedInNow(t *testing.T, a *Adapter) bool {
-	h, err := a.Probe(context.Background())
+	h, err := a.Probe(context.Background(), agent.Spec{})
 	if err != nil {
 		t.Fatal(err)
 	}

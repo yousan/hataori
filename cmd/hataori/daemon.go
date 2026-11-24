@@ -169,7 +169,8 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 	if cfg.OldForm {
 		lg.Warn("config: owner and posters are ids, the old form; they are read as people (see docs/configuration.md)")
 	}
-	m := &session.Machine{Store: st, Typist: control.Principal(cfg.People.Owner())}
+	m := &session.Machine{Store: st, Typist: control.Principal(cfg.People.Owner()),
+		LoginDir: func(name string, spec agent.Spec) string { return agent.LoginDir(adapters[name], spec) }}
 	r := &runner.Runner{Store: st, Machine: m, Adapters: adapters,
 		Host: host.Command{Path: exe, Args: []string{"host"}}, Root: abs, Log: lg, IdlePeriod: cfg.Idle,
 		ContextBytes: cfg.ContextBytes, Cols: uint16(cfg.TerminalCols), Rows: uint16(cfg.TerminalRows)}

@@ -209,7 +209,7 @@ func TestProbe(t *testing.T) {
 		}
 		path, log := fakeCLI(t, string(status))
 		a := newAdapter(t, `{"command": "`+path+`"}`)
-		h, err := a.Probe(context.Background())
+		h, err := a.Probe(context.Background(), agent.Spec{})
 		if err != nil || !h.Installed || h.Version != "2.1.322" || h.LoggedIn != tc.loggedIn {
 			t.Fatalf("probe: %+v, %v", h, err)
 		}
@@ -220,7 +220,7 @@ func TestProbe(t *testing.T) {
 	}
 
 	a := newAdapter(t, `{"command": "/nonexistent/claude"}`)
-	if h, err := a.Probe(context.Background()); err != nil || h.Installed {
+	if h, err := a.Probe(context.Background(), agent.Spec{}); err != nil || h.Installed {
 		t.Fatalf("probe of a missing CLI: %+v, %v", h, err)
 	}
 }

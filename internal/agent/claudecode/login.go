@@ -21,7 +21,7 @@ var _ agent.LoginFlow = (*Adapter)(nil)
 // session for the same spec gets, so it logs in the same config directory.
 // BROWSER is set so that nothing opens a browser on the host.
 func (a *Adapter) LoginLaunch(spec agent.Spec) (agent.Launch, error) {
-	return agent.Launch{Argv: []string{a.command, "auth", "login"}, Env: append(a.baseEnv(), "BROWSER=true")}, nil
+	return agent.Launch{Argv: []string{a.command, "auth", "login"}, Env: append(a.loginEnv(spec), "BROWSER=true")}, nil
 }
 
 var (

@@ -26,6 +26,10 @@ type Machine struct {
 	// terminal (`hataori attach`, the dashboard, a window taken in; design,
 	// section 5.2). Empty: the typed prompt's input event names nobody.
 	Typist control.Principal
+	// LoginDir gives the configuration directory that holds the login of a
+	// session of the agent started from spec (agent.LoginDir); the spec's
+	// own when nil.
+	LoginDir func(agentName string, spec agent.Spec) string
 
 	// beforeCommit, when set, runs inside the transaction after everything
 	// is written; an error rolls it all back. For tests.
@@ -207,7 +211,7 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 		return err
 	}
 	if r.End != nil {
-		return recordLogin(ctx, tx, agentName, thread, id, *r.End)
+		return m.recordLogin(ctx, tx, agentName, sessionID, thread, id, *r.End)
 	}
 	return nil
 }

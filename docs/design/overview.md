@@ -297,13 +297,13 @@ A reopen (section 5.1) undoes a removal while the workspace is in trash: the cor
 
 When an agent's login runs out, every turn fails until someone logs in on the host, and the owner is usually not at the host. c-lord solved this in two steps, and hataori keeps both.
 
-**Alert.** A turn that fails with reason `login` opens a *login outage* for that agent on this instance. The owner gets one direct message for the outage: which instance, which threads stopped. Threads that stop later are added to the same message. The outage is a row in the database, so a restart does not send a second message. It closes when any turn of that agent ends without a failure, or when the relay succeeds.
+**Alert.** A turn that fails with reason `login` opens a *login outage* for that agent on this instance. Sessions that keep their login in different places, as one taken in from a window with a configuration directory of its own (section 4.8) does, have outages of their own: an outage is one of an agent and a configuration directory, and neither a turn nor a login in another directory joins or closes it. The owner gets one direct message for the outage: which instance, which threads stopped, and the configuration directory when it is not the one of the daemon's own sessions. Threads that stop later are added to the same message. The outage is a row in the database, so a restart does not send a second message. It closes when any turn of a session with that login ends without a failure, or when the relay succeeds.
 
 **Relay.** With the alert, hataori starts the agent CLI's own login command, as a process of its own, with the same config directory as the agent that is logged out.
 
 1. The command prints a sign-in link. hataori puts the link into the owner's direct message, with the time until which a code is accepted.
 2. The owner opens the link, signs in, and replies in the direct message with the code the page shows.
-3. hataori writes that reply to the login command and reports the result in the direct message. Success is the command ending cleanly and the CLI's own status check saying it is logged in. On success each stopped thread gets one line: the login is back, send your message again.
+3. hataori writes that reply to the login command and reports the result in the direct message. When several logins wait for a code, it is passed only as a reply to the message of one of them, and goes to that one. Success is the command ending cleanly and the CLI's own status check, in the same config directory, saying it is logged in. On success each stopped thread gets one line: the login is back, send your message again.
 4. If no code arrives in time, the command is stopped and the message says so. A button on the message starts a fresh login at any time, also after a restart.
 
 The rules:
@@ -311,7 +311,7 @@ The rules:
 - **Only the owner's direct message is ever passed to the login command, and only while the command is waiting for a code.** A login that takes no code back is passed nothing. The owner is the person of section 5.5, reached at their id on each client; the relay resolves the author's `<client>:<id>` and compares the person. A direct message from anyone else, a guest included, does nothing. The owner's message at any other time gets "not waiting for a code". A reply that is not shaped like a code (one word, no spaces) is not passed on.
 - **The link and the code exist only in the direct message and in memory.** They are not written to the database, the event log, any log file or any other conversation, and no client of the control API can read them. The log says that a code arrived and how long it was. For this reason the login command is a direct child of the daemon and does not run under the session host, which logs what it sees. A daemon restart ends a login that is in progress; the button starts another.
 - **Nothing is resent.** A message that failed is sent again by whoever sent it.
-- **If someone logs in on the host instead**, the next turn that completes closes the outage, the waiting login is stopped, and the message says the login is back.
+- **If someone logs in on the host instead**, the next turn that completes with that login closes the outage, the waiting login is stopped, and the message says the login is back.
 - The relay can be switched off in the config; the alert stays.
 
 This is the only input hataori takes from direct messages in phase 1, and the only button.
