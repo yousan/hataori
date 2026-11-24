@@ -256,7 +256,7 @@ func TestWhatIsRefusedForGood(t *testing.T) {
 		}
 	}
 	for _, err := range []error{wrap("post", errors.New("the answer broke off")), wrap("post", context.DeadlineExceeded),
-		&Error{Status: 401}, &Error{Status: 403}, &Error{Status: 429}, &Error{Status: 502}} {
+		&Error{Status: 401}, &Error{Status: 401, Code: 40001}, &Error{Status: 403}, &Error{Status: 403, Code: 40001}, &Error{Status: 429}, &Error{Status: 502}} {
 		if errors.Is(err, surface.ErrRefused) {
 			t.Errorf("%v is refused for good", err)
 		}

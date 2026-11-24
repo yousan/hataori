@@ -65,7 +65,13 @@ func (e *Error) Temporary() bool {
 	case e.Status == 0, e.Status == http.StatusTooManyRequests, e.Status >= 500:
 		return true
 	}
-	return e.Code == 0 && (e.Status == http.StatusUnauthorized || e.Status == http.StatusForbidden)
+	switch e.Status {
+	case http.StatusUnauthorized:
+		return e.Code != codeInvalidWebhookToken
+	case http.StatusForbidden:
+		return e.Code == 0 || e.Code == codeUnauthorized || e.Code == codeNetwork
+	}
+	return false
 }
 
 // Is makes an error that is not temporary surface.ErrRefused.
@@ -76,6 +82,15 @@ func (e *Error) Is(target error) bool { return target == surface.ErrRefused && !
 func refusal(op, format string, args ...any) error {
 	return &Error{Op: op, Local: true, Err: fmt.Errorf(format, args...)}
 }
+
+// Discord's JSON error codes that tell whether a 401 or a 403 is of the
+// request: a command's answer token that is not valid (any more), a token the
+// service does not take, and its own network failing.
+const (
+	codeInvalidWebhookToken = 50027
+	codeUnauthorized        = 40001
+	codeNetwork             = 40333
+)
 
 // Discord's JSON error code for a message that does not exist.
 const codeUnknownMessage = 10008
