@@ -235,14 +235,46 @@ type FirstInput struct {
 }
 
 // pend stores input or an answer for a session's agent until the runner
-// has handed it over. req is the agent's id of the request an answer is for.
-func pend(ctx context.Context, tx *store.Tx, sid int64, req string, v any) (int64, error) {
+// has handed it over. req is the agent's id of the request an answer is for;
+// carries says that an input's text begins with the session's context (owed).
+func pend(ctx context.Context, tx *store.Tx, sid int64, req string, v any, carries bool) (int64, error) {
 	b, _ := json.Marshal(v)
-	res, err := tx.ExecContext(ctx, `INSERT INTO pending_inputs (session_id, request, data) VALUES (?, ?, ?)`, sid, req, string(b))
+	res, err := tx.ExecContext(ctx, `INSERT INTO pending_inputs (session_id, request, data, context) VALUES (?, ?, ?, ?)`, sid, req, string(b), carries)
 	if err != nil {
 		return 0, fmt.Errorf("core: pending input: %w", err)
 	}
 	return res.LastInsertId()
+}
+
+// owed returns the thread's earlier conversation that session sid's agent was
+// not told yet, as its conversation was started with no input
+// (sessions.context), for the input about to be stored for it; "" when there
+// is none, or when an input not yet reported carries it: the one the agent
+// was woken for, or one pending. The runner clears it
+// with the report of the input that carried it, so one that never reached the
+// agent leaves it to the next. A conversation of one input's own (AsFresh)
+// gets none of it.
+func owed(ctx context.Context, tx *store.Tx, sid int64) (string, error) {
+	var c string
+	err := tx.QueryRowContext(ctx, `SELECT CASE WHEN set_aside IS NULL AND first_input = '' AND NOT EXISTS
+		(SELECT 1 FROM pending_inputs p WHERE p.session_id = s.id AND p.context AND NOT p.stale)
+		THEN context ELSE '' END FROM sessions s WHERE id = ?`, sid).Scan(&c)
+	if err != nil {
+		return "", fmt.Errorf("core: earlier conversation: %w", err)
+	}
+	return c, nil
+}
+
+// owedAtWake is owed for a wake's input: what an earlier run of the agent was
+// given and never reported carries nothing any more, and a session with no
+// conversation to resume is told the thread's earlier conversation by the
+// runner.
+func owedAtWake(ctx context.Context, tx *store.Tx, sid int64) (string, error) {
+	var c string
+	if err := tx.QueryRowContext(ctx, `SELECT CASE WHEN agent_session_id = '' THEN '' ELSE context END FROM sessions WHERE id = ?`, sid).Scan(&c); err != nil {
+		return "", fmt.Errorf("core: earlier conversation: %w", err)
+	}
+	return c, nil
 }
 
 // AgentDefaults are the model and effort of the threads of one agent, from
@@ -1946,9 +1978,10 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		pending   int64
 		accepted  bool
 		interrupt bool
-		answer    string     // the agent's id of the open question this input answers
-		wake      bool       // the session is asleep: its agent starts again
-		first     FirstInput // a woken session's input
+		answer    string        // the agent's id of the open question this input answers
+		wake      bool          // the session is asleep: its agent starts again
+		first     FirstInput    // a woken session's input
+		hand      control.Input // what a running session's agent is given
 	)
 	// The state is read in the write transaction, so it cannot change
 	// between the Busy decision and the input.
@@ -2040,11 +2073,18 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 				if _, err := tx.ExecContext(ctx, `UPDATE sessions SET set_aside = agent_session_id WHERE id = ? AND set_aside IS NULL`, sid); err != nil {
 					return fmt.Errorf("core: wake: %w", err)
 				}
-			} else if a.c.Preface != nil {
-				var err error
-				if first.Context, err = a.c.Preface(ctx, tx, id); err != nil {
-					return fmt.Errorf("core: wake: %w", err)
+			} else {
+				if a.c.Preface != nil {
+					var err error
+					if first.Context, err = a.c.Preface(ctx, tx, id); err != nil {
+						return fmt.Errorf("core: wake: %w", err)
+					}
 				}
+				earlier, err := owedAtWake(ctx, tx, sid)
+				if err != nil {
+					return err
+				}
+				first.Context = earlier + first.Context
 			}
 			fi, _ := json.Marshal(first)
 			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ?, launch = 1 WHERE id = ?`, string(fi), sid); err != nil {
@@ -2070,7 +2110,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 					Key: key, Text: given.Text, Request: req, Link: in.Link, Via: a.caller.Via}); err != nil {
 					return err
 				}
-				pending, err = pend(ctx, tx, sid, req, control.Answer{Text: given.Text})
+				pending, err = pend(ctx, tx, sid, req, control.Answer{Text: given.Text}, false)
 				return err
 			}
 		}
@@ -2078,7 +2118,13 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 			Text: in.Text, Link: in.Link, Before: in.Before, After: in.After, Via: a.caller.Via}); err != nil {
 			return err
 		}
-		pending, err = pend(ctx, tx, sid, "", forAgent(in))
+		earlier, err := owed(ctx, tx, sid)
+		if err != nil {
+			return err
+		}
+		hand = forAgent(in)
+		hand.Text = earlier + hand.Text
+		pending, err = pend(ctx, tx, sid, "", hand, earlier != "")
 		return err
 	})
 	if err != nil || !accepted {
@@ -2114,7 +2160,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 			guard.interrupted = true
 		}
 	}
-	return a.c.Runner.Deliver(ctx, sid, pending, forAgent(in))
+	return a.c.Runner.Deliver(ctx, sid, pending, hand)
 }
 
 // forAgent is in as the agent gets it: the text the plugins added is in
@@ -2217,7 +2263,7 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 			Key: "answer:" + string(req), Text: ans.Text, Request: agentReq, Link: ans.Link, Via: a.caller.Via}); err != nil {
 			return err
 		}
-		pending, err = pend(ctx, tx, sid, agentReq, ans)
+		pending, err = pend(ctx, tx, sid, agentReq, ans, false)
 		return err
 	})
 	if err != nil {

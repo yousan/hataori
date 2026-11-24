@@ -1649,7 +1649,13 @@ func (r *Runner) firstInputStep(ctx context.Context, tx *store.Tx, lv *live, b b
 	}
 	switch {
 	case f.NoInput && control.State(state) == control.Idle:
-		// Woken with nothing to say: ready is all it waited for.
+		// Woken with nothing to say: ready is all it waited for. What its
+		// agent was to be told before an input waits for the next one.
+		if f.Context != "" {
+			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET context = ? WHERE id = ?`, f.Context, lv.id); err != nil {
+				return err
+			}
+		}
 		f = firstInput{}
 	case f.NoInput:
 		return nil
@@ -1661,7 +1667,12 @@ func (r *Runner) firstInputStep(ctx context.Context, tx *store.Tx, lv *live, b b
 		f.Sent = true
 		*first = &f
 	case f.Sent && reported(b.events, firstInputID):
-		// The agent reported the turn: delivered.
+		// The agent reported the turn: delivered, and with it what the
+		// agent was still to be told, except by an input that has a
+		// conversation of its own.
+		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET context = '' WHERE id = ? AND set_aside IS NULL`, lv.id); err != nil {
+			return err
+		}
 		f = firstInput{}
 	case f.Sent && notDelivered(b.events, firstInputID):
 		// The agent never reported it; its turn failed, as the events say.
@@ -1734,6 +1745,13 @@ func clearReported(ctx context.Context, tx *store.Tx, id int64, evs []agent.Even
 		row, err := strconv.ParseInt(e.Input, 10, 64)
 		if err != nil {
 			continue // not one of ours
+		}
+		if e.Kind != agent.TurnEnded {
+			// The agent got what its text began with, if anything.
+			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET context = '' WHERE id = ?1
+				AND EXISTS (SELECT 1 FROM pending_inputs WHERE id = ?2 AND session_id = ?1 AND context)`, id, row); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM pending_inputs WHERE id = ? AND session_id = ? AND request = ''`, row, id); err != nil {
 			return err
