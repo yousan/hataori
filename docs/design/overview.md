@@ -273,7 +273,7 @@ Questions and approvals are rows too: the agent's request id, the question, the 
 ### 4.5 Sleep, wake, restart
 
 - **Sleep:** after an idle period with no running turn, no open request and no background task, the core stops the agent process. The session keeps its id. A cap on resident processes sleeps the longest-idle ones first.
-- **Wake:** the next message starts the agent with resume. If the agent no longer has the conversation (its own retention removed it), the thread is told so, and a new session starts in the same workspace with the thread's recent messages as context.
+- **Wake:** the next message starts the agent with resume. If the agent no longer has the conversation (its own retention removed it), the thread is told so, and a new session starts in the same workspace with the thread's recent messages as context. One started with no message to carry them, as by `hataori attach`, is told them with its next message.
 - **Daemon restart:** nothing happens to sessions. The daemon reads each log from its stored offset and asks the surface for messages since its stored cursor.
 - **Host reboot:** all processes are gone. Sessions that were `running` become `asleep` with reason `interrupted`; the thread gets one notice; the next message resumes.
 - **Closed:** stopped by a person or by idle age. The workspace stays. A message does not wake a thread a person closed; a reopen does (section 5.1): `hataori reopen` on the host, or the owner's Reopen button in chat.

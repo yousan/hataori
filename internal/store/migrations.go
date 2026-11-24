@@ -696,6 +696,15 @@ var migrations = []Migration{
 		`UPDATE links SET since = created_at
 			WHERE id NOT IN (SELECT min(id) FROM links GROUP BY thread_id)`,
 	)},
+	// The thread's earlier conversation that a session's agent was not told
+	// yet, since its conversation was started with no input to tell it with;
+	// '' when it was, or there is none (#579). A pending input that is given
+	// to the agent after it carries a copy: the session's is cleared with the
+	// report of that input.
+	{Name: "sessions.context", Up: execAll(
+		`ALTER TABLE sessions ADD COLUMN context TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE pending_inputs ADD COLUMN context TEXT NOT NULL DEFAULT ''`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {
