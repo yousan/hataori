@@ -39,10 +39,24 @@ func newServer(t *testing.T) *server {
 		t.Fatal(err)
 	}
 	s := &server{t: t, tmux: prog, dir: dir, sock: filepath.Join(dir, "s")}
+	done := make(chan struct{})
 	t.Cleanup(func() {
+		close(done)
 		exec.Command(prog, "-S", s.sock, "kill-server").Run()
 		os.RemoveAll(dir)
 	})
+	// Now and then a tmux server misses the end of a program, and sees it
+	// with the next one's only.
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case <-time.After(time.Second):
+				exec.Command(prog, "-S", s.sock, "run-shell", "-b", "true").Run()
+			}
+		}
+	}()
 	return s
 }
 
