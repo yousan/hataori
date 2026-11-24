@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { act, choosePath } from "./act";
 import { type Event, type FailedStart, sameThread, thread, type ThreadID, type ThreadInfo } from "./api";
 import { type Key, t } from "./catalog";
-import { chosenLine, closed, trusted, withoutSettings } from "./chosen";
-import { who } from "./conversation";
+import { closed, trusted, withoutSettings } from "./chosen";
 import { startFailure, type StartFailure } from "./failure";
+import { type Chosen, chosenOf } from "./lastChoice";
 
 // detailEvents is how many of a thread's last events are read for the last
 // choice made for its start.
@@ -20,22 +20,10 @@ const startKinds: ReadonlySet<string> = new Set(["state", "session_replaced", "s
 // made for it, until the second turn after it starts.
 export interface Start {
   failed: FailedStart | null;
-  chosen: string | null; // who chose what
+  chosen: Chosen | null;
 }
 
 const none: Start = { failed: null, chosen: null };
-
-// chosenOf is the choice that evs, a thread's last events, show; before is
-// the one shown until now, which stays when evs do not reach back to it.
-function chosenOf(evs: readonly Event[], before: string | null): string | null {
-  let turns = 0;
-  for (let i = evs.length - 1; i >= 0; i--) {
-    const e = evs[i];
-    if (e.kind === "turn_started" && ++turns > 1) return null;
-    if (e.kind === "start_chosen") return chosenLine(typeof e.data?.choice === "string" ? e.data.choice : "", who(e.data ?? {}));
-  }
-  return before;
-}
 
 // useStart is thread x's start, read again when an event of the thread may
 // have changed it, when the event stream opens again, and after a read that

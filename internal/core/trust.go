@@ -255,7 +255,7 @@ func (a *api) failedStart(ctx context.Context, t control.ThreadInfo) (*control.F
 	if err != nil {
 		return fail(err)
 	}
-	if !ok || d.To != string(control.Failed) {
+	if !ok || d.From != string(control.Creating) || d.To != string(control.Failed) {
 		return nil, nil
 	}
 	f := &control.FailedStart{Session: sid, Event: d.pos, Reason: d.Reason}

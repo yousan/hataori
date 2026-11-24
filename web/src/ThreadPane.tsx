@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { type Event, hasTerminal, type ThreadID, type ThreadInfo } from "./api";
 import type { AttachState } from "./attach";
 import { type Key, t } from "./catalog";
+import { chosenLine } from "./chosen";
 import { Conversation } from "./Conversation";
+import { who } from "./conversation";
 import { FailedStartView, useStart } from "./FailedStart";
 import { age, stateName } from "./format";
 import { InputBox } from "./InputBox";
@@ -165,7 +167,7 @@ export function ThreadPane(props: {
       {start.failed && <FailedStartView key={`${x.id}/${start.failed.session}`} x={x} f={start.failed} mayAct={mayAct === true} onOpen={onOpen} />}
       {view === "terminal" && start.chosen && (
         <p className="start-chosen" role="status" data-start-chosen="">
-          {start.chosen}
+          {chosenLine(typeof start.chosen.data.choice === "string" ? start.chosen.data.choice : "", who(start.chosen.data))}
         </p>
       )}
       {!terminal && x.state === "asleep" && (
