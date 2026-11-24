@@ -361,7 +361,7 @@ func TestRelease226KeepsItsCursors(t *testing.T) {
 		"chat_cursors":  `SELECT * FROM chat_cursors ORDER BY client`,
 		"chat_triggers": `SELECT * FROM chat_triggers ORDER BY client, channel, message`,
 		"chat_outbox":   `SELECT ` + outboxCols + ` FROM chat_outbox ORDER BY id`,
-		"links":         `SELECT * FROM links ORDER BY id`,
+		"links":         `SELECT id, thread_id, client, channel, thread, made_by, created_at FROM links ORDER BY id`,
 	}
 	want := map[string][]string{}
 	for table, q := range unchanged {

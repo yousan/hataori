@@ -277,3 +277,35 @@ func TestSessionReadsAddedOnUpgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Of the links made before links.since, a thread's first one was opened for
+// it, and everything in it is input; another counts from when it was made.
+func TestLinksSinceOnUpgrade(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "db")
+	step := slices.IndexFunc(migrations, func(m Migration) bool { return m.Name == "links.since" })
+	if step < 0 {
+		t.Fatal("no step links.since")
+	}
+	s, err := open(ctx, path, migrations[:step])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO threads (id, scope, key, started_by, state, created_at, updated_at) VALUES (1, 's', 't1', 'owner', 'idle', 0, 0), (2, 's', 't2', 'owner', 'idle', 0, 0)`,
+		`INSERT INTO links (thread_id, client, channel, thread, created_at) VALUES (1, 'chat', 's', 't1', 10), (2, 'chat', 's', 't2', 20),
+			(1, 'chat', 's', 'attached', 30), (2, 'chat', 's', 'attached too', 40), (1, 'chat', 'c9', 'opened', 50)`,
+	} {
+		if _, err := s.DB.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Close()
+	s, err = open(ctx, path, migrations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	sameRows(t, "links", dump(t, s.DB, `SELECT thread, since FROM links ORDER BY id`),
+		[]string{"t1|0|", "t2|0|", "attached|30|", "attached too|40|", "opened|50|"})
+}

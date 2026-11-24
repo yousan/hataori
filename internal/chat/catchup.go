@@ -263,14 +263,21 @@ func (f *FrontEnd) catchUp(ctx context.Context, conv surface.Conversation) {
 		s.setBehind(conv, true)
 		return
 	}
+	skipped := "" // the cursor of the last message passed over, until a later one is stored
 	for _, in := range msgs {
 		if in.Direct || (cursor == "" && since > 0 && in.Time.UnixMilli() < since) {
 			continue
 		}
-		if err := f.handle(in); err != nil {
+		before, err := f.handleCaughtUp(ctx, in)
+		if err != nil {
 			s.setBehind(conv, true)
 			return
 		}
+		if before {
+			skipped = in.Cursor
+			continue
+		}
+		skipped = ""
 		if in.Cursor != "" {
 			if err := f.setCursor(ctx, conv, in.Cursor); err != nil {
 				s.setBehind(conv, true)
@@ -278,7 +285,43 @@ func (f *FrontEnd) catchUp(ctx context.Context, conv surface.Conversation) {
 			}
 		}
 	}
+	if skipped != "" {
+		if err := f.setCursor(ctx, conv, skipped); err != nil {
+			s.setBehind(conv, true)
+			return
+		}
+	}
 	s.setBehind(conv, false)
+}
+
+// handleCaughtUp handles a message of a catch-up. before reports that it
+// was passed over: it was written in its chat thread before that was
+// linked to a hataori thread, when it was not for hataori (design, section
+// 5.2). The link is looked up at each message, not once for the catch-up,
+// and a message met with no link is given to no thread: a link made while
+// the catch-up runs does not turn the messages already fetched into input.
+func (f *FrontEnd) handleCaughtUp(ctx context.Context, in surface.Inbound) (before bool, err error) {
+	conv := in.Ref.Conv
+	if conv.Thread == "" {
+		return false, f.handle(in)
+	}
+	var since int64
+	err = f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT since FROM links WHERE client = ? AND channel = ? AND thread = ?`,
+		f.Name, conv.Channel, conv.Thread).Scan(&since)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		if in.Service {
+			return false, nil
+		}
+		_, err := f.textCommandOnce(ctx, in)
+		return false, err
+	case err != nil:
+		f.Log.Error("chat: catch-up: reading the link", "channel", conv.Channel, "thread", conv.Thread, "err", err)
+		return false, err
+	case in.Time.UnixMilli() < since:
+		return true, nil
+	}
+	return false, f.handle(in)
 }
 
 // runCatchUp catches up again, every retry, on conversations where a

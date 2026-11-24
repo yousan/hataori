@@ -1410,8 +1410,13 @@ func (a *api) start(ctx context.Context, r control.StartRequest, dir string) (co
 		}
 		// The first link, with the thread. A conversation links to one
 		// thread at most, so a second thread in it is refused here.
-		if _, err := tx.ExecContext(ctx, `INSERT INTO links (thread_id, client, channel, thread, made_by, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-			thread, link.Client, link.Channel, link.Thread, string(a.caller.Principal), now); err != nil {
+		// What was written before in one the caller named is no input.
+		var since int64
+		if r.Thread != "" {
+			since = now
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO links (thread_id, client, channel, thread, made_by, created_at, since) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			thread, link.Client, link.Channel, link.Thread, string(a.caller.Principal), now, since); err != nil {
 			return fmt.Errorf("core: create thread: link %s %s %s: %w", link.Client, link.Channel, link.Thread, err)
 		}
 		// The first input came through the first link when the client that

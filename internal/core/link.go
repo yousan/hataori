@@ -43,7 +43,10 @@ func (a *api) Link(ctx context.Context, id control.ThreadID, l control.LinkRef) 
 	// open one conversation.
 	defer a.c.locks.lock("link:" + l.Client + "\x00" + l.Channel)()
 	db := a.c.Store.DB
-	if l.Thread != "" {
+	// A conversation that was there before: what was written in it until
+	// now was written with no link, and is no input (since).
+	there := l.Thread != ""
+	if there {
 		var other int64
 		err := db.QueryRowContext(ctx, `SELECT thread_id FROM links WHERE client = ? AND channel = ? AND thread = ?`,
 			l.Client, l.Channel, l.Thread).Scan(&other)
@@ -91,8 +94,13 @@ func (a *api) Link(ctx context.Context, id control.ThreadID, l control.LinkRef) 
 		}
 		l = opened
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO links (thread_id, client, channel, thread, made_by, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		int64(id), l.Client, l.Channel, l.Thread, string(a.caller.Principal), time.Now().UnixMilli()); err != nil {
+	now := time.Now().UnixMilli()
+	since := now
+	if !there {
+		since = 0
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO links (thread_id, client, channel, thread, made_by, created_at, since) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		int64(id), l.Client, l.Channel, l.Thread, string(a.caller.Principal), now, since); err != nil {
 		return control.LinkRef{}, fmt.Errorf("core: link thread %d: %w", id, err)
 	}
 	a.c.Log.Info("thread linked", "thread", int64(id), "client", l.Client, "channel", l.Channel, "conversation", l.Thread,
