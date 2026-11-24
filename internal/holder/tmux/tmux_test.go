@@ -201,6 +201,320 @@ func TestRefusedInputHandsOverNothing(t *testing.T) {
 	}
 }
 
+// A person who looks at the window may scroll back in it, or open tmux's
+// own tree in it: the pane is then in a mode. Input is refused whole, and
+// the mode stays, as does what the person looks at. Once the mode is left,
+// input arrives as before.
+func TestInputToAPaneInAModeIsRefused(t *testing.T) {
+	for _, mode := range []string{"copy-mode", "clock-mode", "choose-tree"} {
+		t.Run(mode, func(t *testing.T) {
+			s := newServer(t)
+			w, out := s.reader()
+			r, _ := parseRef(w)
+			s.run(mode, "-t", r.Pane)
+			in := func() string {
+				return s.run("display-message", "-p", "-t", r.Pane, "#{pane_in_mode} #{pane_mode} #{scroll_position}")
+			}
+			before := in()
+			if !strings.HasPrefix(before, "1 ") {
+				t.Fatalf("the pane is in no mode: %q", before)
+			}
+			h := &Holder{}
+			for _, parts := range [][]agent.Part{
+				{{Paste: paste}, {Key: agent.Enter}},
+				{{Paste: paste}},
+				{{Key: agent.Escape}},
+				{{Key: agent.Down}, {Key: agent.Enter}},
+				{{Key: agent.Escape}, {Paste: paste}, {Paste: "another"}},
+			} {
+				if err := h.Input(t.Context(), w, parts); err == nil {
+					t.Errorf("%q was handed over", parts)
+				}
+			}
+			if err := h.Input(t.Context(), w, []agent.Part{{Paste: "x"}}); !errors.Is(err, ErrTakesNoInput) {
+				t.Errorf("a paste was refused with %v", err)
+			}
+			if err := h.Input(t.Context(), w, []agent.Part{{Key: agent.Escape}}); !errors.Is(err, ErrTakesNoInput) {
+				t.Errorf("Escape was refused with %v", err)
+			}
+			if b := s.run("list-buffers", "-F", "#{buffer_name}"); b != "" {
+				t.Errorf("buffers left: %q", b)
+			}
+			if after := in(); after != before {
+				t.Errorf("the pane's mode after the input: %q, before it %q", after, before)
+			}
+			s.run("copy-mode", "-q", "-t", r.Pane)
+			if err := h.Input(t.Context(), w, []agent.Part{{Paste: paste}, {Key: agent.Enter}}); err != nil {
+				t.Fatal(err)
+			}
+			want := "\x1b[200~" + paste + "\x1b[201~" + "\r"
+			if got := waitBytes(t, out, len(want)); got != want {
+				t.Fatalf("the pane read\n%q\nwant only\n%q", got, want)
+			}
+		})
+	}
+}
+
+// before is a tmux that runs the shell commands do right before its nth
+// command, and then the command.
+func (s *server) before(n int, do string) string {
+	s.t.Helper()
+	count := filepath.Join(s.dir, fmt.Sprintf("count-%d", s.n))
+	os.Remove(count)
+	script := "#!/bin/sh\necho x >> " + count + "\n" +
+		fmt.Sprintf("if [ $(wc -l < %s) -eq %d ]; then %s; fi\n", count, n, do) +
+		"exec " + s.tmux + " \"$@\"\n"
+	p := filepath.Join(s.dir, "tmux-before")
+	if err := os.WriteFile(p, []byte(script), 0o700); err != nil {
+		s.t.Fatal(err)
+	}
+	return p
+}
+
+// The pane may enter a mode at any moment, also between any two of the
+// holder's commands: the whole input arrives, or it is refused and nothing
+// of it does.
+func TestAModeEnteredWhileInputIsHandedOver(t *testing.T) {
+	s := newServer(t)
+	w, out := s.reader()
+	r, _ := parseRef(w)
+	want := ""
+	handed := 0
+	for _, c := range []struct {
+		parts []agent.Part
+		bytes string
+	}{
+		{[]agent.Part{{Paste: paste}, {Key: agent.Enter}}, "\x1b[200~" + paste + "\x1b[201~\r"},
+		{[]agent.Part{{Key: agent.Escape}, {Key: agent.Down}}, "\x1b\x1b[B"},
+	} {
+		for n := 1; n <= 6; n++ {
+			h := &Holder{Tmux: s.before(n, s.tmux+" -S "+s.sock+" copy-mode -t "+r.Pane)}
+			err := h.Input(t.Context(), w, c.parts)
+			s.run("copy-mode", "-q", "-t", r.Pane)
+			switch {
+			case err == nil:
+				handed++
+				want += c.bytes
+			case !errors.Is(err, ErrTakesNoInput):
+				t.Errorf("%q, the mode entered before command %d: %v", c.parts, n, err)
+			}
+			if got := waitBytes(t, out, len(want)); got != want {
+				t.Fatalf("%q, the mode entered before command %d (%v): the pane read\n%q\nwant\n%q", c.parts, n, err, got, want)
+			}
+		}
+	}
+	if handed == 0 || handed == 12 {
+		t.Fatalf("%d of 12 inputs were handed over: the mode was entered always, or never, in time", handed)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if got := waitBytes(t, out, len(want)); got != want {
+		t.Fatalf("the pane read\n%q\nwant\n%q", got, want)
+	}
+}
+
+// attach attaches a client to the server's first session, as a person does,
+// until the test ends.
+func (s *server) attach() {
+	s.t.Helper()
+	cmd := exec.Command(s.tmux, "-S", s.sock, "-C", "attach-session", "-t", "t")
+	cmd.Env = env()
+	in, err := cmd.StdinPipe()
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		s.t.Fatal(err)
+	}
+	s.t.Cleanup(func() {
+		in.Close()
+		cmd.Wait()
+	})
+	for deadline := time.Now().Add(10 * time.Second); s.run("list-clients", "-t", "t") == ""; time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			s.t.Fatal("the client never attached")
+		}
+	}
+}
+
+// The window may go between the holder's last look and its input: the pane,
+// also while a person's client looks at another one, and the whole server,
+// whose successor has a pane of the same id, a person's.
+func TestInputToAWindowThatGoesMeanwhile(t *testing.T) {
+	s := newServer(t)
+	theirs, out := s.reader()
+	gone, goneOut := s.reader()
+	s.attach()
+	r, _ := parseRef(gone)
+	h := &Holder{Tmux: s.before(2, s.tmux+" -S "+s.sock+" kill-pane -t "+r.Pane)}
+	if err := h.Input(t.Context(), gone, []agent.Part{{Key: agent.Escape}}); !errors.Is(err, errGone) {
+		t.Errorf("a pane killed meanwhile: %v", err)
+	}
+	// Another server on the socket: list-panes named the one before.
+	r, _ = parseRef(theirs)
+	stale, _ := Window(fmt.Sprintf("%s,%d,0", r.Socket, r.Server+1), r.Pane, theirs.Process)
+	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in *list-panes*) %s \"$@\" | sed 's/^%d /%d /'; exit;; esac\nexec %s \"$@\"\n", s.tmux, r.Server, r.Server+1, s.tmux)
+	prog := filepath.Join(s.dir, "tmux-stale")
+	if err := os.WriteFile(prog, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&Holder{Tmux: prog}).Input(t.Context(), stale, []agent.Part{{Paste: "x"}, {Key: agent.Enter}}); err == nil {
+		t.Error("input for a pane of a server that ended was handed to the next one's")
+	}
+	time.Sleep(200 * time.Millisecond)
+	for _, p := range []string{out, goneOut} {
+		if b, _ := os.ReadFile(p); len(b) > 0 {
+			t.Errorf("a pane read %q", b)
+		}
+	}
+}
+
+// In a window whose panes are synchronized, tmux types each key sent to one
+// pane into the others, such as a split a person opened beside the agent.
+// Input is refused there, and to a pane whose input is off, which would
+// drop it; also to the only pane of a window it goes whatever the option.
+func TestInputThatWouldReachOtherPanesOrNoneIsRefused(t *testing.T) {
+	s := newServer(t)
+	w, out := s.reader()
+	r, _ := parseRef(w)
+	h := &Holder{}
+	theirs, ready := filepath.Join(s.dir, "theirs"), filepath.Join(s.dir, "theirs-ready")
+	split := s.run("split-window", "-d", "-t", r.Pane, "-P", "-F", "#{pane_id}",
+		fmt.Sprintf("stty raw -echo; echo x > %s; exec cat > %s", ready, theirs))
+	waitFile(t, ready)
+	in := []agent.Part{{Paste: "never"}, {Key: agent.Enter}}
+	s.run("set-option", "-w", "-t", r.Pane, "synchronize-panes", "on")
+	for _, parts := range [][]agent.Part{in, {{Key: agent.Escape}}} {
+		if err := h.Input(t.Context(), w, parts); !errors.Is(err, ErrTakesNoInput) {
+			t.Errorf("synchronized panes, %q: %v", parts, err)
+		}
+	}
+	s.run("set-option", "-w", "-t", r.Pane, "synchronize-panes", "off")
+	s.run("select-pane", "-d", "-t", r.Pane)
+	for _, parts := range [][]agent.Part{in, {{Key: agent.Escape}}} {
+		if err := h.Input(t.Context(), w, parts); !errors.Is(err, ErrTakesNoInput) {
+			t.Errorf("input off, %q: %v", parts, err)
+		}
+	}
+	s.run("select-pane", "-e", "-t", r.Pane)
+	s.run("copy-mode", "-t", r.Pane)
+	s.run("set-hook", "-g", "after-display-message", "select-pane -t :.9") // a person's, which fails
+	if err := h.Input(t.Context(), w, in); !errors.Is(err, ErrTakesNoInput) {
+		t.Errorf("a pane in copy mode beside a hook that fails: %v", err)
+	}
+	s.run("set-hook", "-gu", "after-display-message")
+	s.run("copy-mode", "-q", "-t", r.Pane)
+	s.run("kill-pane", "-t", split)
+	s.run("set-option", "-w", "-t", r.Pane, "synchronize-panes", "on")
+	if err := h.Input(t.Context(), w, []agent.Part{{Paste: "ok"}, {Key: agent.Enter}}); err != nil {
+		t.Fatal(err)
+	}
+	want := "\x1b[200~ok\x1b[201~\r"
+	if got := waitBytes(t, out, len(want)); got != want {
+		t.Errorf("the pane read %q, want only %q", got, want)
+	}
+	if b, _ := os.ReadFile(theirs); len(b) > 0 {
+		t.Errorf("the person's pane read %q", b)
+	}
+}
+
+// A pane that outlives its program, as remain-on-exit keeps the one of a
+// window hataori started, drops a key, and a paste to it ends the server of
+// tmux up to 3.3a.
+func TestInputToADeadPaneIsRefused(t *testing.T) {
+	s := newServer(t)
+	s.pane("exec sleep 600")
+	s.run("set-option", "-g", "remain-on-exit", "on")
+	pane, pid := s.pane("exec true")
+	for deadline := time.Now().Add(10 * time.Second); s.run("display-message", "-p", "-t", pane, "#{pane_dead}") != "1"; time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the pane never died")
+		}
+	}
+	w := s.window(pane, pid)
+	for _, parts := range [][]agent.Part{{{Key: agent.Escape}}, {{Paste: "x"}, {Key: agent.Enter}}} {
+		if err := (&Holder{}).Input(t.Context(), w, parts); !errors.Is(err, ErrTakesNoInput) {
+			t.Errorf("%q: %v", parts, err)
+		}
+	}
+	if got := s.run("list-buffers"); got != "" {
+		t.Errorf("buffers left: %s", got)
+	}
+}
+
+// A hook a person set on tmux's own commands may print something, or fail
+// after the paste: the input was handed over.
+func TestInputBesideAPersonsHooks(t *testing.T) {
+	s := newServer(t)
+	w, out := s.reader()
+	h := &Holder{}
+	s.run("set-hook", "-g", "after-display-message", "display-message -p hooked")
+	s.run("set-hook", "-g", "after-paste-buffer", "display-message -p hooked")
+	want := ""
+	for _, hook := range []string{"", "select-pane -t :.9"} {
+		if hook != "" {
+			s.run("set-hook", "-gu", "after-display-message")
+			s.run("set-hook", "-g", "after-paste-buffer", hook)
+		}
+		if err := h.Input(t.Context(), w, []agent.Part{{Paste: "ok"}}); err != nil {
+			t.Errorf("a paste with the hook %q: %v", hook, err)
+		}
+		if err := h.Input(t.Context(), w, []agent.Part{{Key: agent.Enter}}); err != nil {
+			t.Errorf("its Enter: %v", err)
+		}
+		want += "\x1b[200~ok\x1b[201~\r"
+	}
+	if got := waitBytes(t, out, len(want)); got != want {
+		t.Errorf("the pane read %q, want %q", got, want)
+	}
+}
+
+// A codec presses Enter some time after its paste. When the paste was
+// refused, that Enter would submit what the person has typed in the window:
+// it is refused too, until a paste is handed over. Other keys are not.
+func TestNoEnterAfterARefusedPaste(t *testing.T) {
+	s := newServer(t)
+	w, out := s.reader()
+	other, otherOut := s.reader()
+	r, _ := parseRef(w)
+	h := &Holder{}
+	s.run("copy-mode", "-t", r.Pane)
+	if err := h.Input(t.Context(), w, []agent.Part{{Paste: "refused"}}); !errors.Is(err, ErrTakesNoInput) {
+		t.Fatalf("a paste into a pane in copy mode: %v", err)
+	}
+	s.run("copy-mode", "-q", "-t", r.Pane)
+	if err := h.Input(t.Context(), w, []agent.Part{{Key: agent.Enter}}); err == nil {
+		t.Error("the Enter of a refused paste was handed over")
+	}
+	if err := h.Input(t.Context(), w, []agent.Part{{Key: agent.Enter}, {Paste: "x"}}); err == nil {
+		t.Error("the Enter of a refused paste was handed over before another paste")
+	}
+	if err := h.Input(t.Context(), other, []agent.Part{{Key: agent.Enter}}); err != nil {
+		t.Errorf("Enter in another window: %v", err)
+	}
+	if err := h.Input(t.Context(), w, []agent.Part{{Key: agent.Escape}}); err != nil {
+		t.Errorf("Escape: %v", err)
+	}
+	if err := h.Input(t.Context(), w, []agent.Part{{Paste: "next"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Input(t.Context(), w, []agent.Part{{Key: agent.Enter}}); err != nil {
+		t.Error(err)
+	}
+	if err := h.Input(t.Context(), w, []agent.Part{{Paste: "x"}, {Key: "no such key"}}); err == nil {
+		t.Error("a key with no name was handed over")
+	}
+	if err := h.Input(t.Context(), w, []agent.Part{{Key: agent.Enter}}); err == nil {
+		t.Error("the Enter of a paste that could not be encoded was handed over")
+	}
+	want := "\x1b" + "\x1b[200~next\x1b[201~" + "\r"
+	if got := waitBytes(t, out, len(want)); got != want {
+		t.Errorf("the pane read %q, want %q", got, want)
+	}
+	if got := waitBytes(t, otherOut, 1); got != "\r" {
+		t.Errorf("the other pane read %q", got)
+	}
+}
+
 // wrapper is a tmux that records its arguments and runs the real one, and
 // fails a paste-buffer when fail is set.
 func (s *server) wrapper(fail bool) (string, string) {
