@@ -289,13 +289,14 @@ func newSink() *sink { return &sink{got: make(chan struct{}, 64)} }
 
 // renaming is one call of Renamed.
 type renaming struct {
-	conv surface.Conversation
-	name string
+	conv  surface.Conversation
+	name  string
+	after int // messages delivered before it
 }
 
 func (s *sink) Renamed(conv surface.Conversation, name string) {
 	s.mu.Lock()
-	s.renamed = append(s.renamed, renaming{conv, name})
+	s.renamed = append(s.renamed, renaming{conv, name, len(s.messages)})
 	s.mu.Unlock()
 }
 

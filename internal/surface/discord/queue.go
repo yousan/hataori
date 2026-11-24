@@ -94,6 +94,16 @@ func (q *queue) LayoutChanged() {
 	})
 }
 
+// Renamed tells the sink a conversation's name, in order with the messages,
+// when the sink wants names (surface.Renamer).
+func (q *queue) Renamed(conv surface.Conversation, name string) {
+	q.push(func(s surface.Sink) {
+		if r, ok := s.(surface.Renamer); ok {
+			r.Renamed(conv, name)
+		}
+	})
+}
+
 func (q *queue) Message(in surface.Inbound) { q.push(func(s surface.Sink) { s.Message(in) }) }
 func (q *queue) Choice(c surface.Selection) { q.push(func(s surface.Sink) { s.Choice(c) }) }
 func (q *queue) Command(c surface.Command)  { q.push(func(s surface.Sink) { s.Command(c) }) }
