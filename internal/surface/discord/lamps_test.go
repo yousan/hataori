@@ -257,6 +257,7 @@ func TestSetStatusConcurrent(t *testing.T) {
 	}))
 	defer srv.Close()
 	d := newDriver(botID(t), "test-token", srv.URL, "ws://127.0.0.1:1", nil)
+	d.identity.passed.Store(true)
 	var wg sync.WaitGroup
 	for _, s := range []surface.Status{surface.Done, surface.Failed} {
 		wg.Add(1)

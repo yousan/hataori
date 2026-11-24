@@ -3,6 +3,7 @@ package discord
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -22,12 +23,15 @@ func botID(t *testing.T) snowflake.ID {
 
 func id(v any) string { return v.(string) }
 
+// testDriver is a driver on the fakes. One without a gateway is not run, and
+// its identity counts as checked.
 func testDriver(t *testing.T, self snowflake.ID, r *fakeREST, g *fakeGateway) *Driver {
-	gw := "ws://127.0.0.1:1"
-	if g != nil {
-		gw = g.URL()
+	if g == nil {
+		d := newDriver(self, "test-token", r.URL, "ws://127.0.0.1:1", nil)
+		d.identity.passed.Store(true)
+		return d
 	}
-	return newDriver(self, "test-token", r.URL, gw, nil)
+	return newDriver(self, "test-token", r.URL, g.URL(), nil)
 }
 
 // deliver feeds one gateway capture to the driver as the gateway would.
@@ -139,7 +143,7 @@ func TestRunRefusesAnotherBot(t *testing.T) {
 	g := newFakeGateway(t, payload(t, "bot/gw-01-READY.json"))
 	d := testDriver(t, 1000000000000000999, r, g)
 	err := d.Run(context.Background(), newSink())
-	if err == nil || !strings.Contains(err.Error(), botID(t).String()) || !strings.Contains(err.Error(), "1000000000000000999") {
+	if !errors.Is(err, surface.ErrOtherIdentity) || !strings.Contains(err.Error(), botID(t).String()) || !strings.Contains(err.Error(), "1000000000000000999") {
 		t.Fatalf("Run: %v", err)
 	}
 	if g.identify != 0 {
@@ -153,9 +157,17 @@ func TestRunRefusesAnotherBot(t *testing.T) {
 	g2 := newFakeGateway(t, ready)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	err = testDriver(t, botID(t), r, g2).Run(ctx, newSink())
-	if err == nil || !strings.Contains(err.Error(), "1000000000000000998") || !strings.Contains(err.Error(), botID(t).String()) {
+	d = testDriver(t, botID(t), r, g2)
+	err = d.Run(ctx, newSink())
+	if !errors.Is(err, surface.ErrOtherIdentity) || !strings.Contains(err.Error(), "1000000000000000998") || !strings.Contains(err.Error(), botID(t).String()) {
 		t.Fatalf("Run: %v", err)
+	}
+	n := r.called("")
+	if err := d.CheckIdentity(context.Background()); !errors.Is(err, surface.ErrOtherIdentity) {
+		t.Fatalf("CheckIdentity after that: %v", err)
+	}
+	if _, err := d.OpenDirect(context.Background(), "1000000000000000001"); !errors.Is(err, surface.ErrOtherIdentity) || r.called("") != n {
+		t.Fatalf("a call after that: %v, with %d requests", err, r.called("")-n)
 	}
 }
 

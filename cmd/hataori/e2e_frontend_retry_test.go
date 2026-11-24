@@ -1,14 +1,20 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/surface"
 	fakesurface "github.com/yousan/hataori/internal/surface/fake"
 )
 
@@ -57,4 +63,33 @@ func TestFrontEndThatCannotConnectYet(t *testing.T) {
 	if n, m := strings.Count(log, "the driver stopped; trying again"), strings.Count(log, "chat front end connected"); n != 1 || m != 1 {
 		t.Fatalf("logged %d failure lines and %d connection lines, want 1 and 1:\n%s", n, m, log)
 	}
+}
+
+// A driver whose credential is another identity's ends the daemon with one
+// line that names both; nothing is opened on the chat service, and the
+// daemon runs again once the credential is right (#566).
+func TestDaemonEndsWithAnotherIdentity(t *testing.T) {
+	r := newChatRoot(t, nil)
+	reason := "the token is for bot 1, but the config names bot 2"
+	r.driver.Fail(fakesurface.OpIdentity, 1, fmt.Errorf("%s: %w", reason, surface.ErrOtherIdentity))
+	var log bytes.Buffer
+	var mu sync.Mutex
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	code := runCtx(ctx, []string{"run", "--root", r.root}, io.Discard, lockedWriter{&mu, &log})
+	mu.Lock()
+	defer mu.Unlock()
+	if ctx.Err() != nil || code != exitError {
+		t.Fatalf("run returned %d (%v), want %d by itself; it logged:\n%s", code, ctx.Err(), exitError, log.String())
+	}
+	last := log.String()[strings.LastIndex(strings.TrimSpace(log.String()), "\n")+1:]
+	if strings.Count(log.String(), reason) != 1 || !strings.HasPrefix(last, "hataori: ") || !strings.Contains(last, reason) {
+		t.Fatalf("it logged:\n%s", log.String())
+	}
+	if c := r.driver.Calls(c1); len(c) != 0 || r.driver.Runs() != 0 {
+		t.Fatalf("%d runs of the driver, calls %+v", r.driver.Runs(), c)
+	}
+
+	runDaemon(t, r.root)
+	r.connected(t)
 }
