@@ -98,9 +98,11 @@ func (r *Runner) checkStale(lv *live, reported bool) {
 	lv.staleAt = time.Now().Add(staleCheck)
 	ctx := context.Background()
 	// Before the host is asked for attached terminals: it is busy most of
-	// the time it is tried.
-	var state string
-	if err := r.Store.DB.QueryRowContext(ctx, `SELECT state FROM sessions WHERE id = ?`, lv.id).Scan(&state); err != nil || control.State(state) != control.Idle {
+	// the time it is tried. A first input its agent was given and did not
+	// report yet is not left behind.
+	var state, first string
+	if err := r.Store.DB.QueryRowContext(ctx, `SELECT state, first_input FROM sessions WHERE id = ?`, lv.id).Scan(&state, &first); err != nil ||
+		control.State(state) != control.Idle || first != "" {
 		return
 	}
 	if _, err := r.sleep(ctx, lv); err != nil {

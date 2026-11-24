@@ -219,7 +219,7 @@ func TestSupervisorConfigChangeInterruptsNothing(t *testing.T) {
 		then   func(t *testing.T, owner *wire.Client, sv control.ThreadID)
 		text   string // the last text
 	}{
-		"a running turn": {"tool hold 5s\nreply the old one", control.Running, 1, nil, "the old one"},
+		"a running turn": {"tool hold 8s\nreply the old one", control.Running, 1, nil, "the old one"},
 		"a question": {"ask which colour? -- red | blue", control.Waiting, 2, func(t *testing.T, owner *wire.Client, sv control.ThreadID) {
 			d, err := owner.Thread(context.Background(), sv, 0, 1)
 			if err != nil || len(d.Requests) != 1 {
@@ -229,7 +229,7 @@ func TestSupervisorConfigChangeInterruptsNothing(t *testing.T) {
 				t.Fatal(err)
 			}
 		}, "answer: red"},
-		"a background task": {"background 5s\nreply started", control.Idle, 2, nil, ""},
+		"a background task": {"background 8s\nreply started", control.Idle, 2, nil, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			record := t.TempDir()

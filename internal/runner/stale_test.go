@@ -13,14 +13,15 @@ import (
 	"github.com/yousan/hataori/internal/store"
 )
 
-// A launch that a daemon that died had begun may find the host that daemon
-// started, with what it was given then: the record of that stays, so that
-// the session still counts as launched with another config.
-func TestLaunchBegunAgainKeepsWhatWasRecorded(t *testing.T) {
+// A launch records what the config gave it, and shows its model where the
+// config's changed. One that a daemon that died had begun may find the host
+// that daemon started, with what it was given then: the record of that
+// stays, so that the session still counts as launched with another config.
+func TestLaunchRecordsWhatItWasGiven(t *testing.T) {
 	f := newFixture(t, options{confines: true})
-	model := "m-1"
+	model, effort, part := "m-1", "low", "x"
 	f.run.ConfinedConfig = func(scope, agent string) (LaunchConfig, bool) {
-		return LaunchConfig{Model: model, Parts: map[string]string{"a part": "x"}}, scope == "s" && agent == "fake"
+		return LaunchConfig{Model: model, Effort: effort, Parts: map[string]string{"a part": part}}, scope == "s" && agent == "fake"
 	}
 	if _, err := f.core.StartConfined(context.Background(), control.Caller{From: ownerFrom, Scopes: []string{"s"}, May: all},
 		control.StartRequest{Key: "k", Scope: "s", Thread: "t", Input: control.Input{Text: "reply hello"}}, t.TempDir()); err != nil {
@@ -48,6 +49,35 @@ func TestLaunchBegunAgainKeepsWhatWasRecorded(t *testing.T) {
 	}
 
 	f.run.Close()
+	// Another launch, given another part, leaves the model the agent
+	// reported as it is, also after a hataori that recorded nothing.
+	if _, err := f.st.DB.Exec(`UPDATE sessions SET model = 'm-1-reported' WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"y", "z", "another effort"} {
+		killSessions(f.root)
+		waitFor(t, "the host's end", 10*time.Second, func() bool { return len(hosts(t, StateDir(f.root, 1))) == 0 })
+		part = p
+		if p == "another effort" {
+			effort = "max"
+		}
+		if _, err := f.run.launch(context.Background(), 1, "fake", f.run.Adapters["fake"], s.Spec, firstInput{NoInput: true}); err != nil {
+			t.Fatal(err)
+		}
+		if s, column = stored(); s.Config == nil || s.Config.Parts["a part"] != p || column != "m-1-reported" {
+			t.Fatalf("stored %+v, model %q; want the part %q, and the model the agent reported", s, column, p)
+		}
+		var e string
+		if err := f.st.DB.QueryRow(`SELECT effort FROM sessions WHERE id = 1`).Scan(&e); err != nil || e != effort {
+			t.Fatalf("%s: effort %q, %v; want %q", p, e, err, effort)
+		}
+		if p == "y" {
+			if _, err := f.st.DB.Exec(`UPDATE sessions SET spec = json_remove(spec, '$.config') WHERE id = 1`); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
 	model = "m-2"
 	if _, err := f.st.DB.Exec(`UPDATE sessions SET launch = 2 WHERE id = 1`); err != nil {
 		t.Fatal(err)
@@ -58,7 +88,7 @@ func TestLaunchBegunAgainKeepsWhatWasRecorded(t *testing.T) {
 	if n := len(hosts(t, StateDir(f.root, 1))); n != 1 {
 		t.Fatalf("%d hosts, want the one that ran", n)
 	}
-	if s, column = stored(); s.Config == nil || s.Config.Model != "m-1" || column != "m-1" {
+	if s, column = stored(); s.Config == nil || s.Config.Model != "m-1" || column != "m-1-reported" {
 		t.Fatalf("stored %+v, model %q; want what the running host was given", s, column)
 	}
 	lv = &live{id: 1, spec: s.Spec}
@@ -135,5 +165,33 @@ func reconnectStale(t *testing.T, request bool) {
 	}
 	if got := state(); got != string(control.Asleep) {
 		t.Fatalf("the session is %s once Reconnect is done, want it asleep; the log:\n%s", got, f.log.String())
+	}
+}
+
+// A stale session that is idle with a first input its agent has not
+// reported yet, as after a turn the agent started on its own, is not put to
+// sleep before that input is reported.
+func TestStaleSessionKeepsAnUnreportedFirstInput(t *testing.T) {
+	f := newFixture(t, options{})
+	f.start("reply hello")
+	waitFor(t, "the turn", 15*time.Second, f.has("turn_ended", 1))
+	f.run.mu.Lock()
+	lv := f.run.live[1]
+	f.run.mu.Unlock()
+	lv.mu.Lock()
+	defer lv.mu.Unlock()
+	lv.stale = true
+	for _, c := range []struct {
+		first string
+		want  control.State
+	}{{`{"sent":true}`, control.Idle}, {"", control.Asleep}} {
+		if _, err := f.st.DB.Exec(`UPDATE sessions SET first_input = ? WHERE id = 1`, c.first); err != nil {
+			t.Fatal(err)
+		}
+		f.run.checkStale(lv, true)
+		var state string
+		if err := f.st.DB.QueryRow(`SELECT state FROM sessions WHERE id = 1`).Scan(&state); err != nil || state != string(c.want) {
+			t.Fatalf("with the first input %q the session is %s, %v; want it %s", c.first, state, err, c.want)
+		}
 	}
 }

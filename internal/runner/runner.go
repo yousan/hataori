@@ -350,15 +350,23 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 				return agent.Spec{}, fmt.Errorf("runner: session %d: spec: %w", id, err)
 			}
 		}
-		switch {
-		case before == 2:
+		if before == 2 {
 			// The host this launch may find running was started with what
 			// was recorded then (hs.Again, below).
 			config = last.Config
-		case last.Config == nil || len(config.Changed(*last.Config)) > 0:
-			// Otherwise the model the agent reported stays: a resume
-			// reports none.
-			model, effort = config.Model, config.Effort
+		} else {
+			was := LaunchConfig{Model: last.Spec.Model, Effort: last.Spec.Effort}
+			if last.Config != nil {
+				was = *last.Config
+			}
+			// Not changed, what the agent reported stays: a resume may
+			// report none.
+			if config.Model != was.Model {
+				model = config.Model
+			}
+			if config.Effort != was.Effort {
+				effort = config.Effort
+			}
 		}
 	}
 	sb, _ := json.Marshal(storedSpec{Agent: agentName, Spec: spec, Config: config})
