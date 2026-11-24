@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -389,4 +390,55 @@ func TestSupervisorAnswerIsNotMarked(t *testing.T) {
 	if len(answers) != 1 || answers[0]["text"] != "blue" || answers[0]["principal"] != "sv1" || answers[0]["from"] != supervisor.ID("c1") {
 		t.Fatalf("answer events %v", answers)
 	}
+}
+
+// No thread has the number 0 or a negative one: the tools that take a
+// thread's number answer that it is not in this scope, and reach no thread
+// of it (#570).
+func TestSupervisorNumberBelowOneNamesNoThread(t *testing.T) {
+	r, _, issue, _ := supervisorRoot(t)
+	ctx := context.Background()
+	owner, err := wire.Dial(r.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Close()
+	id, err := owner.Start(ctx, control.StartRequest{Key: "k-zero", Scope: "c1", Thread: "tzero", Repo: bareRepo(t), Input: control.Input{Text: "heard"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the first turn to end", 15*time.Second, func() bool {
+		return len(threadEvents(t, owner, id, "turn_ended")) == 1
+	})
+	token, err := issue("c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := &supervisor.MCP{Dial: func() (control.API, error) { return wire.DialToken(r.root, token) }, Scope: "c1"}
+	refused := func(name string, args map[string]any) {
+		t.Helper()
+		for _, n := range []int64{0, -1, -int64(id)} {
+			args["number"] = n
+			if out := mcpCall(t, m, name, args); !out.IsError || out.Text != fmt.Sprintf("not in this scope: no thread #%d in this channel", n) {
+				t.Errorf("%s with number %d: error %v, %q", name, n, out.IsError, out.Text)
+			}
+		}
+	}
+	refused(supervisor.ToolRead, map[string]any{})
+	refused(supervisor.ToolSend, map[string]any{"text": "heard"})
+	time.Sleep(time.Second) // an input that was taken shows by now
+	if got := threadEvents(t, owner, id, "input"); len(got) != 1 {
+		t.Errorf("thread #%d has %d inputs, want its first only: %v", id, len(got), got)
+	}
+
+	// An interrupt is asked for of a running thread only. This token may ask
+	// for none, which the core says when the call reaches it.
+	if err := owner.Send(ctx, id, "k-run", control.Input{Text: "tool t 30s"}, control.Refuse); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the thread to run", 15*time.Second, func() bool {
+		d, err := owner.Thread(ctx, id, 0, 0)
+		return err == nil && d.State == control.Running
+	})
+	refused(supervisor.ToolInterrupt, map[string]any{"reason": "urgent"})
 }
