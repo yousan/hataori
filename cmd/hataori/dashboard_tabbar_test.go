@@ -130,6 +130,23 @@ func TestDashboardTabBarNarrowWindow(t *testing.T) {
 			inView(lang+", with Home and End", k)
 		}
 		last := open[len(open)-1]
+		// Another tab grows: the active one, the last, stays in view, but
+		// is not pulled back after it was scrolled away.
+		grow := func(px int) {
+			b.eval(fmt.Sprintf(`document.querySelector('.tabbar .tab').style.minWidth = '%dpx', window.__drawn = false, requestAnimationFrame(() => requestAnimationFrame(() => { window.__drawn = true; })), true`, px), nil)
+			b.until("a frame with the grown tab", "window.__drawn")
+		}
+		grow(500)
+		inView(lang+", another tab grown", last)
+		b.eval(`document.querySelector('.tabbar .tabs').scrollLeft = 0, true`, nil)
+		grow(600)
+		var left float64
+		if b.eval(`document.querySelector('.tabbar .tabs').scrollLeft`, &left); left != 0 {
+			t.Fatalf("%s: the active tab was pulled back to %v after it was scrolled away", lang, left)
+		}
+		grow(0)
+		b.eval(`document.querySelector('.tabbar .tabs').scrollLeft = 10000, true`, nil)
+		inView(lang+", scrolled back", last)
 		width(1920)
 		inView(lang+", many tabs, 1920 px", last)
 		oneLine(lang + ", many tabs, 1920 px")

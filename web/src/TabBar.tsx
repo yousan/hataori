@@ -128,22 +128,38 @@ export function TabBar(props: Props) {
   }, [active, open]);
 
   // The active tab is kept in view in a bar too narrow for every tab: when
-  // another one becomes active, and when the bar or the tab changes its
-  // size. The rest are reached by scrolling the bar, or with the keys.
+  // another one becomes active, and when the bar or any tab changes its
+  // size, unless the person scrolled it away. The rest are reached by
+  // scrolling the bar, or with the keys.
   useEffect(() => {
     const el = bar.current;
     const tab = el?.querySelector<HTMLElement>(".tab.active");
     if (!el || !tab) return;
+    // Whether the person left the tab in view, by where it and the bar were
+    // when the observer last told: a scroll's event comes later, when a tab
+    // may have grown already that the observer has yet to tell of.
+    let shown = true;
+    let seen = { left: 0, width: 0, room: 0 };
     const reveal = () => {
       const [b, r] = [el.getBoundingClientRect(), tab.getBoundingClientRect()];
+      seen = { left: r.left - b.left + el.scrollLeft, width: r.width, room: b.width };
+      if (!shown) return;
       if (r.left < b.left) el.scrollLeft -= b.left - r.left;
       else if (r.right > b.right) el.scrollLeft += Math.min(r.right - b.right, r.left - b.left);
+    };
+    const onScroll = () => {
+      const left = seen.left - el.scrollLeft;
+      shown = Math.min(left + seen.width, seen.room) - Math.max(left, 0) >= Math.min(seen.width, seen.room) - 1;
     };
     reveal();
     const watch = new ResizeObserver(reveal);
     watch.observe(el);
-    watch.observe(tab);
-    return () => watch.disconnect();
+    for (const e of el.querySelectorAll(".tab")) watch.observe(e);
+    el.addEventListener("scroll", onScroll);
+    return () => {
+      watch.disconnect();
+      el.removeEventListener("scroll", onScroll);
+    };
   }, [active, open]);
 
   // onKey moves along the tabs with the arrow keys, Home and End, as a tab
