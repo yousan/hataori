@@ -29,7 +29,8 @@ const Name = "discord"
 // privileged and must be switched on for the application.
 //
 //   - GUILDS: threads being created and changed, to know a thread's channel;
-//     the servers' channels and categories, for the layout (layout.go).
+//     the servers' channels and categories, for the layout (layout.go); their
+//     roles, to know the one that is managed for the bot (calls.go).
 //   - GUILD_MESSAGES: messages in channels and threads.
 //   - MESSAGE_CONTENT: the text of those messages, which a webhook post does
 //     not get without it because it does not mention the bot.
@@ -78,6 +79,8 @@ type Driver struct {
 	parents map[snowflake.ID]snowflake.ID // thread -> the channel it is in
 	direct  map[snowflake.ID]bool         // channel -> whether it is a direct conversation
 	guilds  map[snowflake.ID]*guildLayout // the layout of each server, from the gateway (layout.go)
+	roles   map[snowflake.ID]bool         // role -> whether it is managed for the bot (calls.go)
+	session time.Time                     // when the last session began
 
 	commands map[string]surface.CommandSpec // by the name registered by Run, with the front end's name
 	answers  map[snowflake.ID]*answer       // command interactions that can still be answered
@@ -143,6 +146,7 @@ func newDriver(botID snowflake.ID, token, restURL, gatewayURL string, log *slog.
 		parents:    map[snowflake.ID]snowflake.ID{},
 		direct:     map[snowflake.ID]bool{},
 		guilds:     map[snowflake.ID]*guildLayout{},
+		roles:      map[snowflake.ID]bool{},
 		commands:   map[string]surface.CommandSpec{},
 		answers:    map[snowflake.ID]*answer{},
 	}
@@ -265,6 +269,13 @@ func (d *Driver) dispatch(ctx context.Context, t string, payload io.Reader, sink
 		if err != nil {
 			return err
 		}
+		if t == "GUILD_CREATE" {
+			// Before the layout: a server whose channels are known has its
+			// roles known.
+			if err := d.roleEvent(t, b); err != nil {
+				d.log.Warn("discord: a server's roles skipped", "err", err)
+			}
+		}
 		changed, err := d.layoutEvent(t, b)
 		if err != nil {
 			return err
@@ -293,6 +304,12 @@ func (d *Driver) dispatch(ctx context.Context, t string, payload io.Reader, sink
 			d.setParent(c)
 			renamed(sink, c)
 		}
+	case "GUILD_ROLE_CREATE", "GUILD_ROLE_UPDATE":
+		b, err := readAll(payload)
+		if err != nil {
+			return err
+		}
+		return d.roleEvent(t, b)
 	case "INTERACTION_CREATE":
 		return d.interaction(ctx, payload, sink)
 	case "MESSAGE_CREATE":
@@ -310,7 +327,7 @@ func (d *Driver) dispatch(ctx context.Context, t string, payload io.Reader, sink
 		if conv.Thread == "" {
 			d.setDirect(m.ChannelID, m.GuildID == 0)
 		}
-		sink.Message(m.inbound(conv, m.GuildID == 0))
+		sink.Message(d.inbound(m, conv, m.GuildID == 0))
 	}
 	return nil
 }
@@ -387,6 +404,7 @@ type wireMessage struct {
 	Type        int          `json:"type"`
 	Content     string       `json:"content"`
 	Timestamp   time.Time    `json:"timestamp"`
+	Edited      *string      `json:"edited_timestamp"` // nil when it was never edited
 	WebhookID   snowflake.ID `json:"webhook_id"`
 	Author      struct {
 		ID         snowflake.ID `json:"id"`
@@ -400,6 +418,15 @@ type wireMessage struct {
 		MessageID snowflake.ID `json:"message_id"`
 		ChannelID snowflake.ID `json:"channel_id"`
 	} `json:"message_reference"`
+	Mentions        []wireUser        `json:"mentions"`
+	MentionRoles    []snowflake.ID    `json:"mention_roles"`
+	MentionEveryone bool              `json:"mention_everyone"`
+	Snapshots       []json.RawMessage `json:"message_snapshots"` // what it forwards
+	// Referenced is the post a reply is to, nil when the service does not
+	// report it, as when it was deleted.
+	Referenced *struct {
+		Author wireUser `json:"author"`
+	} `json:"referenced_message"`
 }
 
 // Message types that a person or a poster writes; every other type is the
@@ -412,12 +439,12 @@ const (
 // inbound turns m, posted in conv, into a surface.Inbound. direct is
 // whether conv is a direct conversation: a gateway message says so by having
 // no guild_id, but a message read through REST has none either way.
-func (m wireMessage) inbound(conv surface.Conversation, direct bool) surface.Inbound {
+func (d *Driver) inbound(m wireMessage, conv surface.Conversation, direct bool) surface.Inbound {
 	in := surface.Inbound{
 		Ref:     surface.MessageRef{Conv: conv, ID: m.ID.String()},
 		Text:    m.Content,
 		Direct:  direct,
-		Service: m.Author.System || (m.Type != typeDefault && m.Type != typeReply),
+		Service: !m.written(),
 		Time:    m.Timestamp,
 		Cursor:  m.ID.String(),
 	}
@@ -438,5 +465,6 @@ func (m wireMessage) inbound(conv surface.Conversation, direct bool) surface.Inb
 	if m.Type == typeReply && m.MessageReference != nil && m.MessageReference.MessageID != 0 {
 		in.ReplyTo = &surface.MessageRef{Conv: conv, ID: m.MessageReference.MessageID.String()}
 	}
+	d.call(m, &in)
 	return in
 }

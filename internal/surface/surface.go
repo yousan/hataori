@@ -263,9 +263,29 @@ type Inbound struct {
 	ReplyTo *MessageRef
 	Direct  bool // the conversation is a private one with the author
 	Service bool // written by the service itself, such as a notice that a thread was renamed
-	Time    time.Time
-	Cursor  string // pass to Since to get the messages after this one
+	// Call says that a person wrote the message to the driver's own account:
+	// it mentions the account, or the role the service manages for it, or it
+	// replies to a post of the account. The driver decides it from what the
+	// service reports, never from a name in Text, and in doubt it is false. A
+	// mention in a quote or in code is none, and a message in a Direct
+	// conversation, one that forwards another and one that was edited are no
+	// call. A driver that cannot tell reports none.
+	Call bool
+	// OthersOnly says that the message mentions an account or replies to a
+	// post, and neither is the driver's own or may be: a mention of a group
+	// that may hold the account, such as a role or everyone, and a reply to a
+	// post whose author the service does not report, count as its own.
+	OthersOnly bool
+	// OwnMentions are the places in Text, in order, that mention the driver's
+	// account or the role the service manages for it, so that they can be
+	// taken out. A mention in a quote or in code is not among them.
+	OwnMentions []Span
+	Time        time.Time
+	Cursor      string // pass to Since to get the messages after this one
 }
+
+// Span is the part of a text from byte Start to before byte End.
+type Span struct{ Start, End int }
 
 // Selection is a use of a choice on a posted message.
 type Selection struct {
