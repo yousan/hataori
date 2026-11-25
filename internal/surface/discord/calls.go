@@ -152,31 +152,35 @@ func userMentions(text string) []mention {
 // fence straight after the first one is in the block.
 var codeBlock = regexp.MustCompile("^(?is:```(?:[a-z0-9_+.#-]+?\n)?\n*[^\n].*?\n*```)")
 
-// white is white space that ends no line.
-const white = `[ \t\v\f\r\p{Z}\x{85}]`
-
-// quoteSign is how a line begins that is one of a quote, or may be: what
-// stands before the sign, the two signs more of a quote to the end of the
-// text, and the space after the sign.
-var quoteSign = regexp.MustCompile("^((?:" + white + `|(?:[*+-]|[0-9]+[.)]|-?#{1,3})` + white + ")*)>(>>)?(" + white + "?)")
-
-// What is in doubt about what Discord shows as a quote. Each is taken both
-// ways, for the whole of a text: lines of one form are all quotes or none.
 const (
-	indented   = 1 << iota // after white space
-	inList                 // in an item of a list
-	inHeading              // in a heading or in small text
-	noSpace                // without a space after the sign
-	afterBlock             // where a code block ends
-	returns                // after a "\r" that ends a line
-	readings               // how many ways there are to take them
+	// white is white space that ends no line.
+	white = `[ \t\v\f\r\p{Z}\x{85}\x{feff}]`
+	// item begins an item of a list, a heading or small text.
+	item = `(?:[*+-]|[0-9]+[.)]|-?#{1,3})` + white
 )
+
+var (
+	// quoteSign is how a line begins that is one of a quote, or may be: what
+	// stands before the sign, the two signs more of a quote to the end of the
+	// text, and the space after the sign.
+	quoteSign = regexp.MustCompile("^((?:" + white + "|" + item + ")*)>(>>)?(" + white + "?)")
+	itemSign  = regexp.MustCompile("^" + white + "*(?:" + item + ")+")
+	indented  = regexp.MustCompile("^" + white)
+	number    = regexp.MustCompile("[0-9]+")
+)
+
+// mostDoubts is how many doubts a text may raise. One that raises more is
+// taken for no one's own words.
+const mostDoubts = 6
 
 // spoken is text with spaces for what its author quoted (a line that begins
 // with ">", and everything from one that begins with ">>>"), for code (also
 // a block left open) and for escaped characters. What is left stands at the
-// byte it stood at, and is left however the doubts are taken: code that
-// opens in a quote ends with the quote, and any other runs on.
+// byte it stood at.
+//
+// Where the client may show a text in either of two ways, it is read in both,
+// each doubt taken one way for the whole text, and what is left is what every
+// reading leaves.
 func spoken(text string) string {
 	out := []byte(text)
 	blank := func(from, to int) {
@@ -184,101 +188,150 @@ func spoken(text string) string {
 			out[i] = ' '
 		}
 	}
-	for taken := range readings {
-		if taken&returns != 0 {
-			read(strings.ReplaceAll(text, "\r", "\n"), taken, blank)
-		} else {
-			read(text, taken, blank)
+	var doubts []string
+	for taken := 0; taken < 1<<len(doubts); taken++ { // a doubt met on the way is not taken yet
+		doubt := func(what string) bool {
+			n := slices.Index(doubts, what)
+			if n < 0 {
+				n, doubts = len(doubts), append(doubts, what)
+			}
+			return taken&(1<<n) != 0
+		}
+		text := text
+		if strings.Contains(text, "\r") && doubt("\r") {
+			text = strings.ReplaceAll(text, "\r", "\n")
+		}
+		read(text, doubt, blank)
+		if len(doubts) > mostDoubts {
+			return strings.Repeat(" ", len(text))
 		}
 	}
 	return string(out)
 }
 
 // read calls blank with each part of text that is quoted, in code or
-// escaped, when the doubts in taken are taken for a quote and no others.
-func read(text string, taken int, blank func(from, to int)) {
-	start, in := 0, 0             // where a quote may begin, and what is in doubt about it there
-	var none [len(fenceMark)]bool // no code ends with so many backticks any more
+// escaped. doubt reports whether a doubt is taken in this reading:
+//   - whether lines that begin in one way are quotes, for each way but "> "
+//     and ">>> " where a line begins;
+//   - whether code ends at the latest with the heading or with the item of a
+//     list that it opens in;
+//   - whether inline code ends at the latest before a line that begins as one
+//     of a quote does.
+func read(text string, doubt func(string) bool, blank func(from, to int)) {
+	var quotes []int // the lines that begin as one of a quote does
+	for i := 0; i < len(text); i = lineEnd(text, i) + 1 {
+		if _, _, ok := quote(text[i:]); ok {
+			quotes = append(quotes, i)
+		}
+	}
+	start, block := 0, ""        // where a quote may begin, and whether a block ends there
+	in, inEnd := "", 0           // an item or a heading, and its end
+	var next [len(fenceMark)]int // where a run of so many backticks is next
 	for i := 0; i < len(text); {
+		for len(quotes) > 0 && quotes[0] <= i {
+			quotes = quotes[1:]
+		}
 		if i == start {
-			if doubts, toEnd, ok := quote(text[i:]); ok && (doubts|in)&^taken == 0 {
+			if form, toEnd, ok := quote(text[i:]); ok && (block+form == "" || doubt(block+form)) {
 				end := len(text)
-				if n := strings.IndexByte(text[i:], '\n'); n >= 0 && !toEnd {
-					end = i + n
+				if !toEnd {
+					end = lineEnd(text, i)
 				}
 				blank(i, end)
-				i, start, in = end+1, end+1, 0
+				i, start, block = end+1, end+1, ""
 				continue
+			}
+			if block == "" {
+				if sign := itemSign.FindString(text[i:]); sign != "" {
+					in, inEnd = "#", lineEnd(text, i)
+					if !strings.Contains(sign, in) {
+						in, inEnd = "-", itemEnd(text, i)
+					}
+				}
 			}
 		}
 		switch {
 		case text[i] == '\n':
 			i++
-			start, in = i, 0
+			start, block = i, ""
 		case text[i] == '\\' && i+1 < len(text) && strings.IndexByte("\\`<", text[i+1]) >= 0:
 			blank(i, i+2)
 			i += 2
 		case strings.HasPrefix(text[i:], fenceMark):
 			end := len(text)
-			if block := codeBlock.FindString(text[i:]); block != "" {
-				end = i + len(block)
+			if code := codeBlock.FindString(text[i:]); code != "" {
+				end = i + len(code)
+			}
+			if i < inEnd && inEnd < end && doubt(in) {
+				end = inEnd
 			}
 			blank(i, end)
-			i, start, in = end, end, afterBlock
+			i, start, block = end, end, fenceMark
 		case text[i] == '`':
-			end := i
-			if run := ticks(text[i:]); !none[run] {
-				end += inlineCode(text[i:], run)
-				none[run] = end == i
+			run := len(text[i:]) - len(strings.TrimLeft(text[i:], "`"))
+			if next[run] < i+run {
+				next[run] = i + run + ticks(text[i+run:], run)
 			}
-			blank(i, end)
-			i = max(end, i+1)
+			end := next[run]
+			if end == len(text) || i < inEnd && inEnd < end && doubt(in) ||
+				len(quotes) > 0 && quotes[0] < end && doubt("`") {
+				i++ // a shorter part of the run may begin code
+				continue
+			}
+			blank(i, end+run)
+			i = end + run
 		default:
 			i++
 		}
 	}
 }
 
-// quote reports whether line may begin as one of a quote does, what is in
-// doubt about that, and whether the quote has all that follows.
-func quote(line string) (doubts int, toEnd, ok bool) {
+// quote reports whether line may begin as one of a quote does, how it begins
+// when that leaves it in doubt, and whether the quote has all that follows.
+func quote(line string) (form string, toEnd, ok bool) {
 	m := quoteSign.FindStringSubmatch(line)
 	if m == nil {
-		return 0, false, false
+		return "", false, false
 	}
 	before, more, after := m[1], m[2], m[3]
-	switch {
-	case strings.Contains(before, "#"):
-		doubts = inHeading
-	case strings.ContainsAny(before, "*+-.)"):
-		doubts = inList
-	case before != "":
-		doubts = indented
+	if after == "" && strings.ContainsAny(before, "#*+-.)") {
+		return "", false, false // "- >50%"
 	}
-	if after != " " {
-		if after == "" && doubts&(inList|inHeading) != 0 {
-			return 0, false, false // "- >50%"
-		}
-		doubts |= noSpace
+	if before != "" || after != " " {
+		form = number.ReplaceAllString(m[0], "1")
 	}
-	return doubts, more != "", true
+	return form, more != "", true
 }
 
-// ticks is how many backticks text begins with.
-func ticks(text string) int { return len(text) - len(strings.TrimLeft(text, "`")) }
-
-// inlineCode is where the code ends that text, which begins with run
-// backticks, begins with: at the next run as long. It is 0 when there is
-// none, and a shorter part of the run may begin code.
-func inlineCode(text string, run int) int {
-	for i := run; i < len(text); {
-		n := ticks(text[i:])
-		if n == run {
-			return i + n
-		}
-		i += max(n, 1)
+// lineEnd is where the line of text ends that i is in.
+func lineEnd(text string, i int) int {
+	if n := strings.IndexByte(text[i:], '\n'); n >= 0 {
+		return i + n
 	}
-	return 0
+	return len(text)
+}
+
+// itemEnd is where the item of a list ends that begins at i: before a line
+// that is not indented, or begins an item itself.
+func itemEnd(text string, i int) int {
+	end := lineEnd(text, i)
+	for end < len(text) && indented.MatchString(text[end+1:]) && !itemSign.MatchString(text[end+1:]) {
+		end = lineEnd(text, end+1)
+	}
+	return end
+}
+
+// ticks is where in text the first run of just n backticks begins, or its
+// length when there is none.
+func ticks(text string, n int) int {
+	for i := 0; i < len(text); {
+		run := len(text[i:]) - len(strings.TrimLeft(text[i:], "`"))
+		if run == n {
+			return i
+		}
+		i += max(run, 1)
+	}
+	return len(text)
 }
 
 // wireRole is the part of a role the driver reads.
@@ -352,7 +405,7 @@ const rolesWithin = time.Minute
 // made again. Without them in time the role is nobody's, so that one
 // message does not hold back the conversation.
 func (d *Driver) awaitsRoles(m wireMessage, conv surface.Conversation, direct bool) bool {
-	if !m.mayCall(direct) {
+	if len(m.MentionRoles) == 0 || !m.mayCall(direct) {
 		return false
 	}
 	mentions := userMentions(m.Content)

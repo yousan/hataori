@@ -68,6 +68,7 @@ type fields = map[string]any
 func TestCalls(t *testing.T) {
 	bot := botID(t).String()
 	at, role := "<@"+bot+">", "<@&"+ownRole+">"
+	const six = "- > a\n+ > a\n* > a\n1. > a\n# > a\n>a\n"
 	// says is a message that the service says mentions the bot.
 	says := func(text string) fields { return fields{"content": text, "mentions": users(bot)} }
 	roles := func(text string, ids ...any) fields { return fields{"content": text, "mention_roles": ids} }
@@ -107,6 +108,7 @@ func TestCalls(t *testing.T) {
 		{"a reply to its post that mentions another", reply(bot, "<@"+another+"> see this", another), true, false, nil},
 
 		{"in a quote and outside", says("> " + at + "\n" + at + " yes"), true, false, []string{at}},
+		{"after a quote with a fence, after a block", says("```a```\n> ```\n" + at), true, false, []string{at}},
 		{"after a quote with a fence", says("> ```\n" + at), true, false, []string{at}},
 		{"after code and between", says("`a` " + at + " ```b``` " + at + " ``c`"), true, false, []string{at, at}},
 		{"after a lone backtick", says("it`s " + at), true, false, []string{at}},
@@ -121,10 +123,23 @@ func TestCalls(t *testing.T) {
 		{"after many lines that may be quotes", says(strings.Repeat(">\n", 500) + at), true, false, []string{at}},
 		{"after a block quoted by hand", says(">```\npanic: x\n>```\n" + at), true, false, []string{at}},
 		{"after a block in lists", says("- > ```\nx\n- > ```\n" + at), true, false, []string{at}},
+		{"after a block in a list of numbers", says("9. > ```\nx\n10. > ```\n" + at), true, false, []string{at}},
 		{"after code in lines that may be quotes", says(">a ``` b\n>c ``` d\n" + at), true, false, []string{at}},
+		{"after a list with a lone backtick", says("- it`s fine\n" + at), true, false, []string{at}},
+		{"after a list with code", says("- `a`\n- `b` " + at), true, false, []string{at}},
+		{"after a list with a block", says("- ```\n  x\n  ```\n" + at), true, false, []string{at}},
+		{"after a block on an item's line", says("1. ```x```\n" + at), true, false, []string{at}},
+		{"after a list with code over two lines", says("- `a\n  b`\n" + at), true, false, []string{at}},
+		{"after a heading with code", says("# `a`\n" + at + " `b`"), true, false, []string{at}},
+		{"after a lone backtick and a quote with one", says("**don`t**\n> it`s\n" + at), true, false, []string{at}},
+		{"after six forms that may be quotes", says(six + at), true, false, []string{at}},
 		{"in a list, after a greater-than sign", says("- >50% of them fail " + at), true, false, []string{at}},
 		{"in a list of numbers, after a greater-than sign", says("1. >=3 " + at), true, false, []string{at}},
+		{"in a list of stars, after a greater-than sign", says("* >50% " + at), true, false, []string{at}},
+		{"in a list of pluses, after a greater-than sign", says("+ >50% " + at), true, false, []string{at}},
+		{"in a list of numbers in brackets, after a greater-than sign", says("1) >50% " + at), true, false, []string{at}},
 		{"in a heading, after a greater-than sign", says("# >3 " + at), true, false, []string{at}},
+		{"after four hashes and a greater-than sign", says("#### > " + at), true, false, []string{at}},
 		{"after a line that may be a quote, with a fence", says(">```\n" + at), false, false, nil},
 		{"after the end of a line of two characters", says("> a\r\n" + at), true, false, []string{at}},
 
@@ -133,6 +148,17 @@ func TestCalls(t *testing.T) {
 		{"in an indented quote", says("a\n \t> " + at), false, false, nil},
 		{"in a quote after another line", says("hello\n> " + at + "\nhello"), false, false, nil},
 		{"in a quote of many lines", says("hello\n>>> a\n\n" + at), false, false, nil},
+		{"after seven forms that may be quotes", says(" > a\n" + six + at), false, false, nil},
+		{"in a quote after a byte order mark", says("\ufeff> " + at), false, false, nil},
+		{"in a quote of many lines after a backslash", says("a\\\n>>> b\n" + at), false, false, nil},
+		{"in a quote after a list with a lone backtick", says("- don`t\n> you said `x` " + at), false, false, nil},
+		{"in a quote after a heading with a lone backtick", says("# don`t\n> you said `x` " + at), false, false, nil},
+		{"in a quote of many lines after a heading with a lone backtick", says("# don`t\n>>> you said `x` " + at), false, false, nil},
+		{"in a quote after a small line with a lone backtick", says("-# don`t\n> you said `x` " + at), false, false, nil},
+		{"in a quote after bold text with a lone backtick", says("**don`t**\n> you said `x` " + at), false, false, nil},
+		{"in a quote of many lines after bold text with a lone backtick", says("**don`t**\n>>> you said `x` " + at), false, false, nil},
+		{"in a quote in a list with a lone backtick", says("- don`t\n  > you said `x` " + at), false, false, nil},
+		{"in an indented quote without a space", says("  >" + at), false, false, nil},
 		{"in a quote after a wide space", says("\u3000> " + at), false, false, nil},
 		{"in a quote after a vertical tab", says("\v> " + at), false, false, nil},
 		{"in a quote after a form feed", says("\f> " + at), false, false, nil},
@@ -146,6 +172,7 @@ func TestCalls(t *testing.T) {
 		{"in a quote in a list of numbers in brackets", says("1) > " + at), false, false, nil},
 		{"in a quote in a list, after a wide space", says("-\u3000> " + at), false, false, nil},
 		{"in a quote in a list, before a tab", says("- >\t" + at), false, false, nil},
+		{"in a quote in a list, before a return", says("- >\r" + at), false, false, nil},
 		{"in a quote in a list in a list", says("- - > " + at), false, false, nil},
 		{"in a quote of many lines in a list", says("- >>> a\n" + at), false, false, nil},
 		{"in a quote in a heading", says("## > " + at), false, false, nil},
@@ -154,6 +181,15 @@ func TestCalls(t *testing.T) {
 		{"in a quote that may go on after such an end", says("> a\r" + at), false, false, nil},
 		{"in code", says("`" + at + "`"), false, false, nil},
 		{"in code of two backticks", says("`` ` " + at + "``"), false, false, nil},
+		{"in the second of two codes", says("`a` `" + at + "`"), false, false, nil},
+		{"in code after a lone backtick", says("` ``" + at + "``"), false, false, nil},
+		{"in the second code over a lone backtick", says("``a`` ` ``" + at + "``"), false, false, nil},
+		{"in code after an item with a lone backtick", says("- don`t ping\n- `" + at + "` is its name"), false, false, nil},
+		{"in code after a list with a lone backtick", says("- don`t ping\n`" + at + "` is its name"), false, false, nil},
+		{"in code after a heading with a lone backtick", says("# Don`t ping\n`" + at + "`"), false, false, nil},
+		{"in code after a heading in a list with a lone backtick", says("- # Don`t ping\n  `" + at + "`"), false, false, nil},
+		{"in a block after a heading with a fence", says("# Use ``` for code\n```\n" + at + " help\n```"), false, false, nil},
+		{"in a block after a list with a fence", says("- type ``` to open a block\n\n```\n" + at + " do x\n```"), false, false, nil},
 		{"in code over two lines", says("`a\n" + at + "`"), false, false, nil},
 		{"in code that a part of a run opens", says("``" + at + "` a"), false, false, nil},
 		{"in a block of code", says("hello ```" + at + "```"), false, false, nil},
@@ -171,6 +207,16 @@ func TestCalls(t *testing.T) {
 		{"in code that such a line opens", says(">`a\n" + at + "`"), false, false, nil},
 		{"in a block that an indented line of a list opens", says("- a\n  > ```\n  " + at + "\n  ```"), false, false, nil},
 		{"in a block that such a line opens in a heading", says("# > ```\n" + at + "\n```"), false, false, nil},
+		{"in a block that one list opens and not another", says("- > ```\n+ > ```\n" + at + "\n```"), false, false, nil},
+		{"in a block that one list of numbers opens and not another", says("1. > ```\n2) > ```\n" + at + "\n```"), false, false, nil},
+		{"in a block that one white space opens and not another", says(">\t```\n>```\n" + at + "\n```"), false, false, nil},
+		{"in a block that a small line opens and not a heading", says("# > ```\n-# > ```\n" + at + "\n```"), false, false, nil},
+		{"in a block that a list opens and not an indented line", says("  > ```\n- > ```\n" + at + "\n```"), false, false, nil},
+		{"in a block that a heading opens and not an indented line", says("  > ```\n# > ```\n" + at + "\n```"), false, false, nil},
+		{"in a block that an indented line opens and not one without a space", says(">```\n  > ```\n" + at + "\n```"), false, false, nil},
+		{"in a block that a line without a space opens and not one after a block", says("```a```> ```\n>```\n" + at + "\n```"), false, false, nil},
+		{"in a block that an indented line opens and not one after a block", says("```a```> ```\n  > ```\n" + at + "\n```"), false, false, nil},
+		{"in a block that a line with another space opens", says(">\t```\n" + at + "\n```"), false, false, nil},
 		{"in a block that a list opens and not a heading", says("# > ```\n- > ```\n" + at + "\n```"), false, false, nil},
 		{"in a block that a heading opens and not a list", says("- > ```\n# > ```\n" + at + "\n```"), false, false, nil},
 		{"in a block left open", says("hello\n```\n" + at), false, false, nil},
@@ -432,10 +478,11 @@ func TestTheManagedRoleIsLearned(t *testing.T) {
 		"not a list":        {"GUILD_CREATE", fields{"id": p["guild_id"], "roles": "none"}, false, true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			d, s := testDriver(t, botID(t), newFakeREST(t), nil), newSink()
-			if err := d.roleEvent(c.typ, raw(t, c.payload)); (err != nil) != c.unread {
+			if err := testDriver(t, botID(t), newFakeREST(t), nil).roleEvent(c.typ, raw(t, c.payload)); (err != nil) != c.unread {
 				t.Errorf("%v, want an error: %v", err, c.unread)
 			}
+			// A driver that was told only by the gateway.
+			d, s := testDriver(t, botID(t), newFakeREST(t), nil), newSink()
 			event(t, d, s, c.typ, c.payload)
 			event(t, d, s, "MESSAGE_CREATE", p)
 			if len(s.messages) != 1 || s.messages[0].Call != c.call {
