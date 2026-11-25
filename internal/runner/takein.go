@@ -66,7 +66,8 @@ func reportWindow(rep window.Report) (holder.Window, error) {
 
 // CheckTakeIn asks the window's holder whether the window rep names may be
 // taken in: it exists, and the agent's process that reported runs on its
-// terminal as its foreground process (design, section 4.8).
+// terminal as its foreground process, on a server that is not too old
+// (design, section 4.8).
 func (r *Runner) CheckTakeIn(ctx context.Context, rep window.Report) error {
 	w, err := reportWindow(rep)
 	if err != nil {
