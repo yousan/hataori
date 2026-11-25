@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -521,6 +522,109 @@ func TestInputToADeadPaneIsRefused(t *testing.T) {
 	}
 	if got := s.run("list-buffers"); got != "" {
 		t.Errorf("buffers left: %s", got)
+	}
+}
+
+// agentBelow starts a pane as a person has one: a shell with job control, and
+// the agent they started in it, which writes what it reads to the file
+// returned. Once the agent leaves the foreground, the shell reads its
+// terminal, as a shell at its prompt does, into "<file>-shell".
+func (s *server) agentBelow(program string) (holder.Window, string) {
+	s.t.Helper()
+	if _, err := exec.LookPath("bash"); err != nil {
+		s.t.Skip("no bash for job control")
+	}
+	out, pidFile := filepath.Join(s.dir, fmt.Sprintf("below%d", s.n)), filepath.Join(s.dir, fmt.Sprintf("pid%d", s.n))
+	script := filepath.Join(s.dir, fmt.Sprintf("shell%d", s.n))
+	for p, text := range map[string]string{
+		script:            fmt.Sprintf("set -m\nstty raw -echo\nbash %[1]s-agent\necho x > %[2]s-back\nexec tee %[2]s-shell > /dev/null\n", script, out),
+		script + "-agent": fmt.Sprintf("echo $$ > %s\n%s > %s\n", pidFile, program, out),
+	} {
+		if err := os.WriteFile(p, []byte(text), 0o600); err != nil {
+			s.t.Fatal(err)
+		}
+	}
+	pane, _ := s.pane("exec bash " + script)
+	pid, err := strconv.Atoi(strings.TrimSpace(string(waitFile(s.t, pidFile))))
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	w := s.window(pane, pid)
+	s.runs(pid, "cat")
+	for deadline := time.Now().Add(10 * time.Second); (&Holder{}).CheckTakeIn(s.t.Context(), w) != nil; time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			s.t.Fatal((&Holder{}).CheckTakeIn(s.t.Context(), w))
+		}
+	}
+	s.t.Cleanup(func() { syscall.Kill(pid, syscall.SIGKILL) })
+	return w, out
+}
+
+// The agent of a window hataori did not start may run below the pane's own
+// process, a shell, and have any name.
+func TestInputToAnAgentBelowThePanesProcess(t *testing.T) {
+	s := newServer(t)
+	for _, program := range []string{"exec cat", "exec -a 2.1.331 cat", "exec -a 'a,b}c#d{e' cat", "exec -a '#{pid}' cat", "exec -a '%0 #,}' cat", "exec -a '日本 it' cat", "exec -a '' cat", "exec -a 100% cat"} {
+		w, out := s.agentBelow(program)
+		if err := (&Holder{}).Input(t.Context(), w, []agent.Part{{Paste: "x"}, {Key: agent.Enter}}); err != nil {
+			t.Errorf("%s: %v", program, err)
+		} else if got := waitBytes(t, out, 2); got != "x\r" {
+			t.Errorf("%s: it read %q", program, got)
+		}
+	}
+}
+
+// A person may suspend or leave the agent that was taken in at any moment,
+// also between any two of the holder's commands: their shell is then in the
+// foreground, and reads nothing of the input.
+func TestInputWhileTheAgentLeavesTheForeground(t *testing.T) {
+	s := newServer(t)
+	for _, signal := range []string{"STOP", "KILL"} {
+		for _, parts := range [][]agent.Part{{{Paste: "never"}, {Key: agent.Enter}}, {{Key: agent.Enter}}} {
+			for n := 1; n <= 6; n++ {
+				w, out := s.agentBelow("exec cat")
+				h := &Holder{Tmux: s.before(n, fmt.Sprintf("kill -%s %d; until [ -s %s-back ]; do sleep 0.02; done", signal, w.Process, out))}
+				err := h.Input(t.Context(), w, parts)
+				if _, left := os.Stat(out + "-back"); left != nil {
+					if err != nil { // fewer commands than n
+						t.Errorf("%s, %q: %v", signal, parts, err)
+					}
+					continue
+				}
+				if err == nil {
+					t.Errorf("%s before command %d: %q was handed over", signal, n, parts)
+				}
+				time.Sleep(200 * time.Millisecond)
+				if b, _ := os.ReadFile(out + "-shell"); len(b) > 0 {
+					t.Errorf("%s before command %d: the shell read %q", signal, n, b)
+				}
+				if b := s.run("list-buffers", "-F", "#{buffer_name}"); b != "" {
+					t.Errorf("buffers left: %q", b)
+				}
+			}
+		}
+	}
+}
+
+// A person may give the window's pane another program, also one of the
+// agent's name: it reads nothing of the input.
+func TestInputWhileThePaneIsRespawned(t *testing.T) {
+	s := newServer(t)
+	for _, program := range []string{"tee", "cat"} {
+		for n := 1; n <= 6; n++ {
+			w, _ := s.agentBelow("exec cat")
+			r, _ := parseRef(w)
+			theirs := filepath.Join(s.dir, fmt.Sprintf("theirs-%s-%d", program, n))
+			h := &Holder{Tmux: s.before(n, fmt.Sprintf("%s -S %s respawn-pane -k -t %s 'stty raw -echo; echo x > %s-ready; exec %s > %s'; until [ -s %s-ready ]; do sleep 0.02; done",
+				s.tmux, s.sock, r.Pane, theirs, program, theirs, theirs))}
+			if err := h.Input(t.Context(), w, []agent.Part{{Paste: "never"}, {Key: agent.Enter}}); err == nil {
+				t.Errorf("%s before command %d: handed over", program, n)
+			}
+			time.Sleep(200 * time.Millisecond)
+			if b, _ := os.ReadFile(theirs); len(b) > 0 {
+				t.Errorf("%s before command %d: it read %q", program, n, b)
+			}
+		}
 	}
 }
 
