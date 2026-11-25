@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net/url"
 	"os"
 	"os/exec"
@@ -1354,12 +1356,15 @@ func (c *checker) commits(g *reader, rp repo) error {
 	return c.refuse(rp, ReflogOnly, "commit "+first)
 }
 
+// stoppedDirs are where git keeps what stopped refuses.
+var stoppedDirs = []string{"rebase-merge", "rebase-apply", "sequencer"}
+
 // stopped refuses a rebase or am, or a sequence of cherry-picks or reverts,
 // that has stopped. What git keeps of it names commits that nothing else may
 // name, and holds patches, messages and a list of what is to be done that are
 // in no object. Each is of one worktree, as HEAD is.
 func (c *checker) stopped(g *reader, rp repo) error {
-	for _, name := range []string{"rebase-merge", "rebase-apply", "sequencer"} {
+	for _, name := range stoppedDirs {
 		p, err := g.gitPath(c.ctx, name)
 		if err != nil {
 			return err
@@ -1390,9 +1395,10 @@ func (c *checker) pseudoRefs(g *reader) ([]string, error) {
 }
 
 // named are the objects that a line of a file directly in the git directory
-// starts with, as each line of FETCH_HEAD and of any other pseudo-ref does,
-// and those of the pseudo-refs git lists of a repository that keeps its refs
-// elsewhere.
+// starts with, as each line of FETCH_HEAD and of any other pseudo-ref does;
+// those that a file in a directory of it starts with, as that of a ref does,
+// which may be outside refs/, where git lists none; and those whose id is in a
+// reftable.
 // One the repository has no more, as when it was pruned, has nothing to lose.
 func (c *checker) named(g *reader) ([]string, error) {
 	gitDir, err := g.line(c.ctx, "rev-parse", "--absolute-git-dir")
@@ -1407,47 +1413,33 @@ func (c *checker) named(g *reader) ([]string, error) {
 	if common := filepath.Dir(objects); common != gitDir {
 		dirs = append(dirs, common)
 	}
-	var ids []string
-	for _, dir := range dirs {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			return nil, c.unreadable(dir, err)
-		}
-		for _, e := range entries {
-			// --all reads packed-refs; the index is as HEAD is (step 1); shallow
-			// says where the history was cut.
-			if e.IsDir() || e.Name() == "packed-refs" || e.Name() == "index" || e.Name() == "shallow" {
-				continue
-			}
-			p := filepath.Join(dir, e.Name())
-			if fi, err := os.Stat(p); missing(err) {
-				continue // a link to nothing
-			} else if err != nil {
-				return nil, c.unreadable(p, err)
-			} else if !fi.Mode().IsRegular() {
-				continue
-			}
-			in, err := c.lineIDs(p)
-			if err != nil {
-				return nil, c.unreadable(p, err)
-			}
-			ids = append(ids, in...)
-		}
-	}
 	// Exit 1: not set, and the refs are files.
-	format, code, err := g.run(c.ctx, "config", "--get", "extensions.refStorage")
+	format, code, err := g.run(c.ctx, "config", "--local", "--get", "extensions.refStorage")
 	if err != nil && code != 1 {
 		return nil, err
 	}
-	if f := strings.TrimSpace(string(format)); err == nil && f != "files" {
-		out, _, err := g.run(c.ctx, "for-each-ref", "--include-root-refs", "--format=%(objectname)")
+	if f := strings.ToLower(strings.TrimSpace(string(format))); err == nil && f != "files" && f != "reftable" {
+		// In a way, or at a place, that is not known here.
+		return nil, c.unreadable(filepath.Join(dirs[len(dirs)-1], "config"), errors.New("the refs are in "+strconv.Quote(f)))
+	}
+	var have []string
+	names := refNames{c: c, skip: map[string]bool{}, seen: map[string]bool{}, left: 10000}
+	for _, name := range stoppedDirs {
+		names.skip[filepath.Join(gitDir, name)] = true // refused in any case
+	}
+	for _, dir := range dirs {
+		if err := names.read(dir, dir, false); err != nil {
+			return nil, err
+		}
+		in, err := c.tableIDs(g, filepath.Join(dir, "reftable"))
 		if err != nil {
 			return nil, err
 		}
-		ids = append(ids, strings.Fields(string(out))...)
+		have = append(have, in...)
 	}
+	ids := names.ids
 	if len(ids) == 0 {
-		return nil, nil
+		return have, nil
 	}
 	slices.Sort(ids)
 	ids = slices.Compact(ids)
@@ -1455,7 +1447,6 @@ func (c *checker) named(g *reader) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var have []string
 	read := false // each pack can be
 	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
 	if len(lines) != len(ids) {
@@ -1474,6 +1465,139 @@ func (c *checker) named(g *reader) ([]string, error) {
 		}
 	}
 	return have, nil
+}
+
+// refNames finds the object ids that the files in a git directory name.
+type refNames struct {
+	c    *checker
+	ids  []string
+	skip map[string]bool
+	seen map[string]bool
+	left int // of the files behind links, which may lead anywhere
+}
+
+// read adds those of the files in dir, which is the git directory top or is in
+// it. git goes through a directory that is a link as well.
+func (n *refNames) read(top, dir string, linked bool) error {
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return n.c.unreadable(dir, err)
+	}
+	if n.seen[real] {
+		return nil
+	}
+	n.seen[real] = true
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return n.c.unreadable(dir, err)
+	}
+	for _, e := range entries {
+		if err := n.c.ctx.Err(); err != nil {
+			return err
+		}
+		p := filepath.Join(dir, e.Name())
+		if n.skip[p] {
+			continue
+		}
+		if linked {
+			if n.left--; n.left < 0 {
+				return n.c.unreadable(p, errors.New("too many files behind a link"))
+			}
+		}
+		fi, err := os.Stat(p)
+		if missing(err) {
+			continue // a link to nothing
+		} else if err != nil {
+			return n.c.unreadable(p, err)
+		}
+		link := linked || e.Type()&fs.ModeSymlink != 0
+		var in []string
+		switch {
+		case fi.IsDir():
+			if err := n.read(top, p, link); err != nil {
+				return err
+			}
+		case !fi.Mode().IsRegular():
+		case dir != top:
+			in, err = n.c.firstID(p)
+		case e.Name() != "index" && e.Name() != "shallow":
+			// The index is as HEAD is (step 1); shallow says where the history
+			// was cut.
+			in, err = n.c.lineIDs(p, e.Name() == "packed-refs")
+		}
+		if err != nil {
+			return n.c.unreadable(p, err)
+		}
+		n.ids = append(n.ids, in...)
+	}
+	return nil
+}
+
+// firstID is the object id that the file p starts with, as that of a ref does.
+func (c *checker) firstID(p string) ([]string, error) {
+	f, err := os.Open(p)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, 100))
+	if err != nil {
+		return nil, err
+	}
+	if m := lineID.FindSubmatch(b); m != nil {
+		return []string{strings.ToLower(string(m[1]))}, nil
+	}
+	return nil, nil
+}
+
+// tableIDs are the repository's objects whose id is somewhere in the files of
+// the reftable in dir. git lists only those of its refs that have one of a few
+// names or are in refs/. Ids are stored there as they are; what a reflog names,
+// which is compressed, --reflog lists.
+func (c *checker) tableIDs(g *reader, dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if missing(err) {
+		return nil, nil
+	} else if err != nil {
+		return nil, c.unreadable(dir, err)
+	}
+	const most = 8 << 20
+	var tables []byte
+	for _, e := range entries {
+		p := filepath.Join(dir, e.Name())
+		f, err := os.Open(p)
+		if err != nil {
+			return nil, c.unreadable(p, err)
+		}
+		b, err := io.ReadAll(io.LimitReader(f, most))
+		f.Close()
+		if err != nil {
+			return nil, c.unreadable(p, err)
+		}
+		if tables = append(tables, b...); len(tables) >= most {
+			return nil, c.unreadable(dir, errors.New("too large to find its refs in"))
+		}
+	}
+	if len(tables) == 0 {
+		return nil, nil
+	}
+	starts := make([]uint64, 0, len(tables))
+	for i := 0; i+8 <= len(tables); i++ {
+		starts = append(starts, binary.BigEndian.Uint64(tables[i:]))
+	}
+	slices.Sort(starts)
+	have, err := g.picked(c.ctx, func(id string) bool {
+		b, err := hex.DecodeString(id)
+		if err != nil || len(b) < 8 {
+			return false
+		}
+		_, found := slices.BinarySearch(starts, binary.BigEndian.Uint64(b))
+		return found && bytes.Contains(tables, b)
+	}, "", "cat-file", "--batch-all-objects", "--unordered", "--batch-check=%(objectname)")
+	if err != nil {
+		return nil, err
+	}
+	return slices.Sorted(maps.Keys(have)), nil
 }
 
 // readable refuses when a file below dir, which may be a link, cannot be
@@ -1505,8 +1629,10 @@ func (c *checker) readable(dir string) error {
 	})
 }
 
-// lineIDs are the object ids that the lines of the file p start with.
-func (c *checker) lineIDs(p string) ([]string, error) {
+// lineIDs are the object ids that the lines of the file p start with. Of packed
+// refs those in refs/ are left out: --all lists them, and one that is in a file
+// as well has its id there.
+func (c *checker) lineIDs(p string, packed bool) ([]string, error) {
 	f, err := os.Open(p)
 	if err != nil {
 		return nil, err
@@ -1519,7 +1645,7 @@ func (c *checker) lineIDs(p string) ([]string, error) {
 			return nil, err
 		}
 		s, err := r.ReadSlice('\n') // a long line in parts
-		if m := lineID.FindSubmatch(s); start && m != nil {
+		if m := lineID.FindSubmatch(s); start && m != nil && !(packed && bytes.HasPrefix(s[len(m[1]):], []byte(" refs/"))) {
 			ids = append(ids, strings.ToLower(string(m[1])))
 		}
 		switch start = err == nil; err {
@@ -2468,9 +2594,13 @@ func (g reader) listed(ctx context.Context, ids []string, stdin string) (map[str
 	for _, id := range ids {
 		wanted[id] = true
 	}
-	// The list may be long, and only some of it is kept.
-	cmd := gitCommand(ctx, append(append([]string{"-C", g.dir, "-c", "core.fsmonitor=false"}, g.extra...),
-		"rev-list", "--objects", "--no-object-names", "--stdin")...)
+	return g.picked(ctx, func(id string) bool { return wanted[id] }, stdin, "rev-list", "--objects", "--no-object-names", "--stdin")
+}
+
+// picked are the lines git prints that keep takes. The list may be long, and
+// only some of it is kept.
+func (g reader) picked(ctx context.Context, keep func(string) bool, stdin string, args ...string) (map[string]bool, error) {
+	cmd := gitCommand(ctx, append(append([]string{"-C", g.dir, "-c", "core.fsmonitor=false"}, g.extra...), args...)...)
 	cmd.Env = g.env
 	cmd.Stdin = strings.NewReader(stdin)
 	var stderr bytes.Buffer
@@ -2480,13 +2610,13 @@ func (g reader) listed(ctx context.Context, ids []string, stdin string) (map[str
 		err = cmd.Start()
 	}
 	if err != nil {
-		return nil, fmt.Errorf("workspace: git rev-list: %w", err)
+		return nil, fmt.Errorf("workspace: git %s: %w", args[0], err)
 	}
 	found := map[string]bool{}
 	lines := bufio.NewScanner(stdout)
 	for lines.Scan() {
-		if id := lines.Text(); wanted[id] {
-			found[id] = true
+		if line := lines.Text(); keep(line) {
+			found[line] = true
 		}
 	}
 	err = lines.Err()
@@ -2494,7 +2624,7 @@ func (g reader) listed(ctx context.Context, ids []string, stdin string) (map[str
 		err = werr
 	}
 	if err != nil {
-		return nil, fmt.Errorf("workspace: git rev-list: %s", lastLines(redact(stderr.String()), 3, redactErr(err)))
+		return nil, fmt.Errorf("workspace: git %s: %s", args[0], lastLines(redact(stderr.String()), 3, redactErr(err)))
 	}
 	return found, nil
 }
