@@ -9,8 +9,8 @@ Real output of the interactive `claude` CLI, for testing the adapter's codec. Th
 - `2.1.329/`: Claude Code 2.1.329, on 2026-11-21 (also in `2.1.329/VERSION`), on Linux: `trust_hooks_*` and `trust_permissions`, taken for #592 (see below).
 - `2.1.330/`: Claude Code 2.1.330, on 2026-11-23 (also in `2.1.330/VERSION`), on Linux: `usage`, taken by `capture.py` for #675, with the transcript's line count at each hook call (see below).
 - `2.1.331/`: Claude Code 2.1.331, on 2026-11-25 (also in `2.1.331/VERSION`), on Linux: `held_notification`, taken by `capture.py` for #593, `failure_background`, `interrupt_background`, `failure_resumed` and `failure_monitor`, taken by it for #801 (see "Turns that end without the list of background tasks"), `trust_notice_*`, taken by `TestLiveTrustFiles` for #707 (see "The folder-trust dialog below a notice"), and `trust_permissions_*`, taken by it for #596 (see "The folder-trust dialog with a permission warning").
-- `2.1.332/`: Claude Code 2.1.332, on 2026-11-25 (also in `2.1.332/VERSION`), on Linux: `trust_notice_off_*`, taken by `TestLiveTrustFiles` for #728 (see "The folder-trust dialog below a notice"), `trust_files_env` and `trust_line_*`, taken by it for #730 and #758 (see "The folder-trust dialog that names files"), `trust_warnings_*`, taken by it for #752, and `trust_marks_*`, taken by it for #760 (see "The folder-trust dialog with several warnings"); `mention_*`, taken by `mention.py` for #887 (see "Mentions in a pasted text").
-- `capture.py` took them (`confine.py`, the `confine_*` ones, and `mention.py`, the `mention_*` ones); `scrub.py` made them committable. `captures_test.go` in the package fails when a capture holds a home directory path, an e-mail address, an unscrubbed UUID or something shaped like a token.
+- `2.1.332/`: Claude Code 2.1.332, on 2026-11-25 (also in `2.1.332/VERSION`), on Linux: `trust_notice_off_*`, taken by `TestLiveTrustFiles` for #728 (see "The folder-trust dialog below a notice"), `trust_files_env` and `trust_line_*`, taken by it for #730 and #758 (see "The folder-trust dialog that names files"), `trust_warnings_*`, taken by it for #752, and `trust_marks_*`, taken by it for #760 (see "The folder-trust dialog with several warnings"); `mention_*`, taken by `mention.py` for #887 (see "Mentions in a pasted text"); `writes_*`, taken by `writes.py` for #868 on 2026-11-26 (see "What a confined session can write with").
+- `capture.py` took them (`confine.py`, the `confine_*` ones, `mention.py`, the `mention_*` ones, and `writes.py`, the `writes_*` ones); `scrub.py` made them committable. `captures_test.go` in the package fails when a capture holds a home directory path, an e-mail address, an unscrubbed UUID or something shaped like a token.
 
 ## How they were taken
 
@@ -229,6 +229,25 @@ Notes:
 - The model kept to the prompts except in `confine_mcp_only_shell`: it called `mcp__sv__ping` before answering `no-tool`.
 - Every session also leaves the CLI's own state in the user's configuration: a transcript under `projects/`, its prompts in `history.jsonl`, and a project entry in `~/.claude.json`. A full run of `confine.py` adds about 65 of each, one per session. They are not settings, and the script does not remove them.
 - A person at the terminal could still type commands such as `/add-dir`, `/cd` or `!`. Those were not tried: the confinement is about what the model can do.
+
+## What a confined session can write with (2.1.332, taken for #868)
+
+`2.1.332/writes_*/`, by `writes.py RAW_DIR`, then `scrub.py` with the same `TMPDIR`. As in `mention.py`, whose directories and stand-in for the API the script uses, no model and no login took part. To a text that names one of the script's calls the stand-in answers with that call, whether or not the session was given the tool, so what is seen is what the CLI does with a call, not whether a model makes one. The recorder hook answers every `PermissionRequest` with allow.
+
+| Scenario | `--tools`, the rest as a confined launch's |
+|---|---|
+| `writes_confined` | `Read,Glob,Grep`: as the adapter launches a confined session |
+| `writes_files` | `Read,Write,Edit,Glob,Grep`: as it did before #868 |
+
+`outcome.json` has for the `start` and for the `resume` of the session the lists of `tools` of the requests, each list once, and the `tries`: the `case` and its `tool`, the `hooks` of the call, the `results` that the CLI gave the model, and the files that were `changed` in the directory or in one outside. The scrubber writes the directory as `/tmp/capture-work`. The transcripts are not kept.
+
+| Call | `writes_confined` | `writes_files` |
+|---|---|---|
+| `Read` | its hooks, the content | the same |
+| `Edit`, and `Write` of a file that is there and of a new one | `No such tool available`, no hook, nothing changed | `PreToolUse`, `PermissionRequest`, `PostToolUse`; the file is written |
+| `MultiEdit`, `NotebookEdit`, `Bash`, `Monitor`, `PowerShell`, `REPL`, `Agent`, `Task`, `Skill`, `ToolSearch`, `Workflow`, `EnterWorktree`, `ExitPlanMode`, `TodoWrite`, `TaskCreate`, `CronCreate`, `DeferredToolPlaceholder` | `No such tool available`, no hook, nothing changed | the same |
+
+Both are the same at the start and at the resume. The requests of `writes_confined` list `Glob`, `Grep`, `Read`, `DeferredToolPlaceholder` and the MCP server's `mcp__sv__ping`, and no request lists others. `advisor`, which the 2.1.327 captures list, is not there: those were taken with a real login.
 
 ## Mentions in a pasted text (2.1.332, taken for #887)
 

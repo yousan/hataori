@@ -101,6 +101,11 @@ type Launch struct {
 	// before a path) that makes it put what is named into the conversation.
 	// A confined spec whose launch does not say so is never started either.
 	NoMentions bool
+	// NoWriteTools says that the launch leaves the agent no tool of its own
+	// that writes a file or starts something that could: what the session
+	// writes, it writes with the tools of the spec's MCP servers. A confined
+	// spec whose launch does not say so is never started either.
+	NoWriteTools bool
 	// NoProjectSettings says the launch leaves the project's settings out,
 	// as Spec.NoProjectSettings asks. Unless it is confined, such a spec is
 	// never started without it either.

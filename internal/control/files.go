@@ -46,7 +46,7 @@ type ScopeFile struct {
 	Path string `json:"path"`
 	Size int64  `json:"size"` // in bytes
 	// Version is a hash of the content; absent for a file that Files does
-	// not read: one too large, one that is not UTF-8, or no regular file.
+	// not read: one too large, or one that is not UTF-8.
 	Version string `json:"version,omitempty"`
 	Text    string `json:"text,omitempty"` // the content, where the answer has it
 }

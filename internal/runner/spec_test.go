@@ -77,16 +77,19 @@ func TestCodecKnowsWhichMCPServersReport(t *testing.T) {
 	}
 }
 
-// mentions is the fake adapter, whose launch does not say NoMentions while
-// on is set.
-type mentions struct {
+// unsafely is the fake adapter, whose launch is changed by drop while on is
+// set.
+type unsafely struct {
 	agent.Adapter
-	on atomic.Bool
+	drop func(*agent.Launch)
+	on   atomic.Bool
 }
 
-func (m *mentions) Launch(s agent.Spec) (agent.Launch, error) {
+func (m *unsafely) Launch(s agent.Spec) (agent.Launch, error) {
 	l, err := m.Adapter.Launch(s)
-	l.NoMentions = l.NoMentions && !m.on.Load()
+	if m.on.Load() {
+		m.drop(&l)
+	}
 	return l, err
 }
 
@@ -94,8 +97,18 @@ func (m *mentions) Launch(s agent.Spec) (agent.Launch, error) {
 // adapter whose launch says that its agent takes no input for a mention; an
 // ordinary one is started without (#887).
 func TestConfinedNeedsNoMentions(t *testing.T) {
-	const refusal = "its input could name files to it"
-	m := &mentions{}
+	needs(t, "its input could name files to it", func(l *agent.Launch) { l.NoMentions = false })
+}
+
+// And only by one whose launch says that it leaves the agent no tool of its
+// own that writes (#868).
+func TestConfinedNeedsNoWriteTools(t *testing.T) {
+	needs(t, "its own tools could write files", func(l *agent.Launch) { l.NoWriteTools = false })
+}
+
+func needs(t *testing.T, refusal string, drop func(*agent.Launch)) {
+	t.Helper()
+	m := &unsafely{drop: drop}
 	f := newFixture(t, options{confines: true, conversations: t.TempDir(), idlePeriod: 300 * time.Millisecond,
 		wrap: func(a agent.Adapter) agent.Adapter { m.Adapter = a; return m }})
 	confined := func(key string) (control.ThreadID, error) {

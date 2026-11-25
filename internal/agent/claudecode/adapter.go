@@ -97,11 +97,13 @@ const (
 	MCPConfigFile    = "claude-mcp.json" // a confined session's only MCP servers
 )
 
-// ConfinedTools are the built-in tools a confined session keeps: the file
-// tools, which --restricted confines to the working directory. The set and
-// the flags of Launch are the ones checked against Claude Code 2.1.327
-// (design, Appendix B, "Confining a supervisor session").
-const ConfinedTools = "Read,Write,Edit,Glob,Grep"
+// ConfinedTools are the built-in tools a confined session keeps: those that
+// read files, which --restricted confines to the working directory. The
+// flags of Launch are the ones checked against Claude Code 2.1.327 with the
+// file tools that write too; that this shorter list leaves no tool that
+// writes was checked against 2.1.332 (design, Appendix B, "Confining a
+// supervisor session").
+const ConfinedTools = "Read,Glob,Grep"
 
 // ConfinedEnv is added to a confined session's environment, so that what
 // the session can write in its own directory reaches nothing: no CLAUDE.md
@@ -175,7 +177,8 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 			"--tools", ConfinedTools, "--setting-sources", "user")
 		l.Env = append(l.Env, ConfinedEnv...)
 		l.Confined = true
-		l.NoMentions = true // pasteText
+		l.NoMentions = true   // pasteText
+		l.NoWriteTools = true // ConfinedTools
 	}
 	return l, nil
 }

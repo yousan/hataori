@@ -409,7 +409,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 	}
 	sv := &supervisor.Sessions{Core: c, Tokens: srv, Root: abs, Hataori: exe, Scopes: supervisors,
 		Owner: control.Principal(cfg.Owner), Budgets: budgets, Reminders: reminders, Forges: forges, Log: lg,
-		Docs: &supervisor.Docs{DB: st.DB, Log: lg}}
+		Docs: &supervisor.Docs{DB: st.DB, Log: lg}, Files: &supervisor.ScopeFiles{Store: st, Log: lg}}
 	// A start a person approved as a supervisor's proposal is checked
 	// against its scope's repos too, as they are now (#650).
 	c.ApprovedStart = sv.CheckStart

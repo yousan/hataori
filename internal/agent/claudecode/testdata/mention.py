@@ -236,7 +236,7 @@ class World:
 def command(w, confined, restricted):
     args = ["claude", "--settings", w.settings, "--permission-mode", "default", "--model", "haiku",
             "--append-system-prompt-file", w.instructions, "--strict-mcp-config", "--mcp-config", w.mcp, "--setting-sources", "user"]
-    if confined:  # as the adapter launches a confined session
+    if confined:  # as the adapter launched a confined session; since #868 without Write and Edit (writes.py)
         args += ["--tools", "Read,Write,Edit,Glob,Grep"]
     if restricted:
         args += ["--restricted"]

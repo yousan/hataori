@@ -4,9 +4,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -266,13 +264,12 @@ func hashes(files []UserFile) map[string]string {
 }
 
 // The user's files of a scope as its supervisor sessions were given them
-// (told) and as the daemon last looked at them after a supervisor's turn
-// (seen), in supervisor_files: one row per scope and file, "" for a file
-// not given.
+// (told), in supervisor_files: one row per scope and file, "" for a file
+// not given. The column seen, and files_pos and files_pending of
+// supervisor_wakes, are what told the files that a turn changed before the
+// daemon wrote them itself (supervisor_writes); nothing reads them.
 
-// given records files as given to a launch of scope's session: told, and,
-// for a file of the scope seen for the first time, seen too, so that no
-// turn is said to have changed what was there before it.
+// given records files as given to a launch of scope's session.
 func (s *Sessions) given(ctx context.Context, scope string, files []UserFile) error {
 	return s.Core.Store.Update(ctx, func(tx *store.Tx) error {
 		for _, f := range files {
@@ -285,10 +282,10 @@ func (s *Sessions) given(ctx context.Context, scope string, files []UserFile) er
 	})
 }
 
-// recorded returns the column col (told or seen) of scope's files, by
-// name; a file without a row is missing.
-func (s *Sessions) recorded(ctx context.Context, scope, col string) (map[string]string, error) {
-	rows, err := s.Core.Store.DB.QueryContext(ctx, `SELECT name, `+col+` FROM supervisor_files WHERE scope = ?`, scope)
+// recorded returns what scope's sessions were given of its files, by name;
+// a file without a row is missing.
+func (s *Sessions) recorded(ctx context.Context, scope string) (map[string]string, error) {
+	rows, err := s.Core.Store.DB.QueryContext(ctx, `SELECT name, told FROM supervisor_files WHERE scope = ?`, scope)
 	if err != nil {
 		return nil, fmt.Errorf("supervisor: the user's files: %w", err)
 	}
@@ -314,19 +311,6 @@ func (s *Sessions) now(ctx context.Context, thread control.ThreadID) (map[string
 	return hashes(ReadUserFiles(dir)), nil
 }
 
-// differ returns the names of the files whose hash in now is not the one
-// in was, a file with no row in was taken as not given, in the order of
-// UserFiles.
-func differ(was, now map[string]string) []string {
-	var names []string
-	for _, name := range UserFiles {
-		if was[name] != now[name] {
-			names = append(names, name)
-		}
-	}
-	return names
-}
-
 // Change is one of the user's files that a wake names: its hash as the
 // session was last given or told it when the wake was made (Was), and as
 // it was then (Now).
@@ -344,7 +328,7 @@ func (s *Sessions) Changed(ctx context.Context, scope string, thread control.Thr
 	if err != nil {
 		return nil, err
 	}
-	told, err := s.recorded(ctx, scope, "told")
+	told, err := s.recorded(ctx, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -359,16 +343,12 @@ func (s *Sessions) Changed(ctx context.Context, scope string, thread control.Thr
 
 // Told is part of Files: a wake that named changes was accepted. Each file
 // is told as it was when the wake was made, unless a launch gave the
-// session another content since (told is no longer Was), which stays;
-// either is what the turn the wake starts begins from, so it is seen too,
-// and a change made before that turn is not the turn's.
+// session another content since (told is no longer Was), which stays.
 func (s *Sessions) Told(ctx context.Context, scope string, changes []Change) error {
 	return s.Core.Store.Update(ctx, func(tx *store.Tx) error {
 		for _, c := range changes {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO supervisor_files (scope, name, told, seen) VALUES (?1, ?2, ?3, ?3)
-				ON CONFLICT (scope, name) DO UPDATE SET
-					told = CASE WHEN told = ?4 THEN ?3 ELSE told END,
-					seen = CASE WHEN told = ?4 THEN ?3 ELSE told END`, scope, c.Name, c.Now, c.Was); err != nil {
+				ON CONFLICT (scope, name) DO UPDATE SET told = CASE WHEN told = ?4 THEN ?3 ELSE told END`, scope, c.Name, c.Now, c.Was); err != nil {
 				return fmt.Errorf("supervisor: the user's files: %w", err)
 			}
 		}
@@ -376,112 +356,65 @@ func (s *Sessions) Told(ctx context.Context, scope string, changes []Change) err
 	})
 }
 
-// Turned is part of Files: the user's files in the directory of thread,
-// scope's supervisor thread, that its turn ended at pos changed, as the
-// daemon looks once it read that end: those that differ from what it saw
-// after the last turn, from what the first launch gave, or from what the
-// wake that started the turn told; and the hashes of all of them now, for
-// Seen once the line that names them was posted. A file it has never
-// looked at is not named, nor is anything for a turn end at or before the
-// last one Seen recorded, as one read again after a restart. What it
-// returns is stored before it returns, and a turn end read again before
-// Seen gets the same, so that the line posted once names what was found
-// the first time.
-func (s *Sessions) Turned(ctx context.Context, scope string, thread control.ThreadID, pos uint64) ([]string, map[string]string, error) {
-	var (
-		last    int64
-		pending sql.NullString
-	)
-	if err := s.Core.Store.DB.QueryRowContext(ctx, `SELECT files_pos, files_pending FROM supervisor_wakes WHERE scope = ?`, scope).
-		Scan(&last, &pending); err != nil {
-		return nil, nil, fmt.Errorf("supervisor: the user's files: %w", err)
+// Ended is part of Files, as ScopeFiles.Ended.
+func (s *Sessions) Ended(ctx context.Context, scope string, thread control.ThreadID, pos uint64) error {
+	if s.Files == nil {
+		return nil
 	}
-	if pos <= uint64(last) {
-		return nil, nil, nil
-	}
-	type found struct {
-		Pos    uint64            `json:"pos"`
-		Names  []string          `json:"names"`
-		Hashes map[string]string `json:"hashes"`
-	}
-	if pending.Valid {
-		var f found
-		if err := json.Unmarshal([]byte(pending.String), &f); err == nil && f.Pos == pos {
-			return f.Names, f.Hashes, nil
-		}
-	}
-	now, err := s.now(ctx, thread)
-	if err != nil {
-		return nil, nil, err
-	}
-	seen, err := s.recorded(ctx, scope, "seen")
-	if err != nil {
-		return nil, nil, err
-	}
-	var names []string
-	for _, name := range differ(seen, now) {
-		if _, ok := seen[name]; ok {
-			names = append(names, name)
-		}
-	}
-	if len(names) > 0 {
-		b, _ := json.Marshal(found{Pos: pos, Names: names, Hashes: now})
-		if _, err := s.Core.Store.DB.ExecContext(ctx, `UPDATE supervisor_wakes SET files_pending = ? WHERE scope = ?`, string(b), scope); err != nil {
-			return nil, nil, fmt.Errorf("supervisor: the user's files: %w", err)
-		}
-	}
-	return names, now, nil
+	return s.Files.Ended(ctx, scope, thread, pos)
 }
 
-// Seen is part of Files: the daemon looked at scope's files, as hashed,
-// after its supervisor's turn that ended at pos.
-func (s *Sessions) Seen(ctx context.Context, scope string, pos uint64, hashed map[string]string) error {
-	if hashed == nil {
+// Untold is part of Files, as ScopeFiles.Untold.
+func (s *Sessions) Untold(ctx context.Context, scope string) ([]FilesTurn, error) {
+	if s.Files == nil {
+		return nil, nil
+	}
+	return s.Files.Untold(ctx, scope)
+}
+
+// Named is part of Files, as ScopeFiles.Named.
+func (s *Sessions) Named(ctx context.Context, scope string, t FilesTurn) error {
+	if s.Files == nil {
 		return nil
 	}
-	return s.Core.Store.Update(ctx, func(tx *store.Tx) error {
-		for _, name := range UserFiles {
-			h, ok := hashed[name]
-			if !ok {
-				continue
-			}
-			// A file first seen after a turn was never given (told "").
-			if _, err := tx.ExecContext(ctx, `INSERT INTO supervisor_files (scope, name, told, seen) VALUES (?, ?, '', ?)
-				ON CONFLICT (scope, name) DO UPDATE SET seen = excluded.seen`, scope, name, h); err != nil {
-				return fmt.Errorf("supervisor: the user's files: %w", err)
-			}
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE supervisor_wakes SET files_pos = max(files_pos, ?), files_pending = NULL WHERE scope = ?`, int64(pos), scope); err != nil {
-			return fmt.Errorf("supervisor: the user's files: %w", err)
-		}
-		return nil
-	})
+	return s.Files.Named(ctx, scope, t)
 }
 
 // Files is what a Waker asks about the user's files of its scope (design,
 // section 7.1, "Two layers"): before each wake, which changed since the
-// session was last given or told them, to name them in the wake; after
-// each turn of the supervisor's thread, which changed by its end, to name
-// them in a line in its thread. Sessions is one.
+// session was last given or told them, to name them in the wake; and after
+// each turn of a supervisor's thread, which of them it wrote, to name them
+// in a line. Sessions is one.
 type Files interface {
 	Changed(ctx context.Context, scope string, thread control.ThreadID) ([]Change, error)
 	Told(ctx context.Context, scope string, changes []Change) error
-	Turned(ctx context.Context, scope string, thread control.ThreadID, pos uint64) ([]string, map[string]string, error)
-	Seen(ctx context.Context, scope string, pos uint64, hashed map[string]string) error
+
+	Ended(ctx context.Context, scope string, thread control.ThreadID, pos uint64) error
+	Untold(ctx context.Context, scope string) ([]FilesTurn, error)
+	Named(ctx context.Context, scope string, t FilesTurn) error
 }
 
 var _ Files = (*Sessions)(nil)
 
 // FilesKeyPrefix starts the key of the line that names the user's files a
-// supervisor's turn changed; the rest is the position of its turn_ended.
-const FilesKeyPrefix = "hataori-files-"
+// supervisor's turn changed; the rest is the position of the event that
+// ended it. The line about a conversation's turn in the supervisor's own
+// thread has filesOwnKey after it.
+const (
+	FilesKeyPrefix = "hataori-files-"
+	filesOwnKey    = "-own"
+)
 
 // FilesNotice is the line that names the user's files a turn of the
-// supervisor changed (Turned). A file a person edited on the host before a
-// turn that a person started, rather than a wake, is named after that turn
-// too.
+// supervisor changed, in the thread of that turn.
 func FilesNotice(names []string) string {
-	return "Changed by the end of this turn, in the supervisor's instructions: " + list(names) + "."
+	return "Changed by this turn, in the supervisor's instructions: " + list(names) + "."
+}
+
+// FilesNoticeOf is that line in the supervisor's own thread, about a turn
+// of the conversation thread.
+func FilesNoticeOf(thread control.ThreadID, names []string) string {
+	return fmt.Sprintf("Changed by a turn of thread #%d, in the supervisor's instructions: %s.", int64(thread), list(names))
 }
 
 // FilesChanged is the part of a wake that names the user's files that

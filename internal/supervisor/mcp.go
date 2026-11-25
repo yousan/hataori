@@ -81,6 +81,13 @@ const (
 	// A wake at a time it sets (design, section 7.1), since protocol 3.32.
 	ToolRemind       = "set_reminder"
 	ToolCancelRemind = "cancel_reminder"
+
+	// The files of the scope's directory (design, section 7.1, "No write is
+	// lost"), since protocol 3.41.
+	ToolFiles = "list_files"
+	ToolFile  = "read_file"
+	ToolWrite = "write_file"
+	ToolEdit  = "edit_file"
 )
 
 // ForgeMax is the most bytes of a forge tool's answer; a longer one is cut,
@@ -198,6 +205,21 @@ var tools = []tool{
 		}, "note")},
 	{ToolCancelRemind, "Cancel an open reminder of this channel by its number: it wakes you no more.",
 		object(map[string]any{"number": map[string]any{"type": "integer", "description": "the reminder's number"}}, "number")},
+	{ToolFiles, "List the files of your directory, those of docs/ too: path and size.", object(map[string]any{})},
+	{ToolFile, "Read one file of your directory, with its version, which a write that replaces the file needs.", object(map[string]any{"path": filePathArg}, "path")},
+	{ToolWrite, "Write one file of your directory, the whole of it: a new one, or, with the version you read, in the place of the one that is there. " +
+		"When the file is no longer of that version, or is there already, nothing is written, and the answer shows what is there now, with its version: put your change into that, and write it. " +
+		"To change a part, edit instead. You cannot write in docs/, nor a name that starts with a dot, and nothing removes a file.",
+		object(map[string]any{"path": filePathArg,
+			"text":    map[string]any{"type": "string", "description": "the whole text of the file"},
+			"version": map[string]any{"type": "string", "description": "the version of the file that this replaces, as it was given with the file's text; leave out for a new file"},
+		}, "path", "text")},
+	{ToolEdit, "Change one part of a file of your directory: the passage must be in the file exactly once, as it is now, and is replaced; the rest stays as it is, also what another conversation of yours wrote meanwhile. " +
+		"When the passage is not there, or more than once, nothing is written, and the answer shows what is there now.",
+		object(map[string]any{"path": filePathArg,
+			"old": map[string]any{"type": "string", "description": "the passage to replace, exactly as it is in the file, long enough to be there only once"},
+			"new": map[string]any{"type": "string", "description": "what stands there instead; empty to take the passage out"},
+		}, "path", "old", "new")},
 }
 
 // Serve answers MCP requests read from r, one JSON-RPC message per line,
@@ -326,6 +348,9 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 		if err := json.Unmarshal(raw, &a); err != nil {
 			return "", fmt.Errorf("bad arguments: %v", err)
 		}
+	}
+	if op, ok := fileOps[name]; ok {
+		return m.file(ctx, op, raw)
 	}
 	read, isForge := forgeReads[name]
 	switch name {
