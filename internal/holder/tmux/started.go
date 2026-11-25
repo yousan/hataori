@@ -771,20 +771,23 @@ func (h *Holder) leftover(ctx context.Context, stateDir string) (map[string]pane
 	name := h.Prefix + filepath.Base(stateDir)
 	// The pane Start made runs the placeholder until the respawn, and
 	// `hataori exec <stateDir>` after it. A line that does not end with the
-	// pane was cut (makeWindow), or has a line break of a person's command.
+	// pane was cut (makeWindow): tmux escapes a line break of a command. What
+	// it was of is not known, so that no listing without it is taken for one
+	// of all panes.
 	ps := map[string]pane{}
+	var cut error
 	for range makeTries {
 		out, err := h.serverCmd(ctx, "list-panes", "-s", "-t", "="+name+":", "-F", "#{pane_id} #{pane_pid} #{pane_dead} #{pane_start_command} #{pane_id}")
 		if err != nil {
 			return nil, err
 		}
 		clear(ps)
-		whole := true
-		for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		cut = nil
+		for _, l := range strings.Split(strings.TrimSuffix(string(out), "\n"), "\n") {
 			f := strings.SplitN(l, " ", 4)
 			start, ended := strings.CutSuffix(f[len(f)-1], " "+f[0])
 			if len(f) != 4 || !ended {
-				whole = false
+				cut = fmt.Errorf("tmux: list-panes printed %.200q", l)
 				continue
 			}
 			if !runsExec(start, stateDir) && strings.Trim(start, `"`) != placeholder {
@@ -793,11 +796,11 @@ func (h *Holder) leftover(ctx context.Context, stateDir string) (map[string]pane
 			pid, _ := strconv.Atoi(f[1])
 			ps[f[0]] = pane{pid: pid, dead: f[2] == "1", start: start}
 		}
-		if whole {
+		if cut == nil {
 			break
 		}
 	}
-	return ps, nil
+	return ps, cut
 }
 
 // clearLeftover ends the agent an earlier run left and removes its panes.

@@ -1227,8 +1227,8 @@ func (s *server) starter() *Holder {
 // one; when every one is cut, the start fails.
 func TestAWindowWhoseAnswerIsCutIsMadeAgain(t *testing.T) {
 	for _, at := range []string{"pane-pid", "version"} {
-		for _, always := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s always %v", at, always), func(t *testing.T) {
+		for _, cuts := range []struct{ made, listed int }{{1, 2}, {1, 9}, {9, 2}} {
+			t.Run(fmt.Sprintf("%s %+v", at, cuts), func(t *testing.T) {
 				cut, listing := capture(t, "new-session-cut-"+at+"-3.8.txt"), capture(t, "list-panes-cut-3.8.txt")
 				s := newServer(t)
 				dir := filepath.Join(s.dir, "7")
@@ -1241,16 +1241,28 @@ func TestAWindowWhoseAnswerIsCutIsMadeAgain(t *testing.T) {
 				made, listed := filepath.Join(s.dir, "made"), filepath.Join(s.dir, "listed")
 				h.Tmux = s.script(`case "$*" in *" new-session "*)
 	echo x >> ` + made + `
-	if [ $(wc -l < ` + made + `) -eq 1 ] || ` + strconv.FormatBool(always) + `; then
+	if [ $(wc -l < ` + made + `) -le ` + strconv.Itoa(cuts.made) + ` ]; then
 		` + s.tmux + ` "$@" > /dev/null && exec cat ` + quote(cut) + `
 	fi;;
-*" list-panes -s "*) # two in a row, after a window was made
-	if [ -e ` + made + ` ] && echo x >> ` + listed + ` && [ $(wc -l < ` + listed + `) -le 2 ]; then exec cat ` + quote(listing) + `; fi;;
+*" list-panes -s "*) # after a window was made
+	if [ -e ` + made + ` ] && echo x >> ` + listed + ` && [ $(wc -l < ` + listed + `) -le ` + strconv.Itoa(cuts.listed) + ` ]; then exec cat ` + quote(listing) + `; fi;;
 esac
 exec ` + s.tmux + ` "$@"`)
 				w, err := h.Start(t.Context(), dir, sleeper)
 				after := s.panes()
-				if always {
+				switch {
+				case cuts.listed == 9:
+					// The pane cannot be found: no second one beside it, and
+					// the next start removes it.
+					if err == nil || !strings.Contains(err.Error(), "list-panes printed") || len(after) != len(before)+1 {
+						t.Errorf("a start: %v; the panes after it: %v, before it %v", err, after, before)
+					}
+					h.Tmux = ""
+					if w, err = h.Start(t.Context(), dir, sleeper); err != nil {
+						t.Fatal(err)
+					}
+					after = s.panes()
+				case cuts.made == 9:
 					if b, _ := os.ReadFile(cut); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("printed %q", b)) {
 						t.Errorf("a start: %v", err)
 					}
