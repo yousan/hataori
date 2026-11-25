@@ -15,6 +15,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -2088,11 +2089,18 @@ func (c *checker) processes() error {
 	}
 	for _, open := range [][]openFile{before, after} {
 		seen := false
+		// On Linux each thread but the first is reported on its own, and may
+		// have its own working directory and open files.
+		threadSeen := runtime.GOOS != "linux"
 		for _, f := range open {
 			id, hasID := f.id()
 			if f.name == top || strings.HasPrefix(f.name, top+"/") || strings.HasPrefix(f.name, top+" ") {
 				if f.pid == self && f.fd == heldFD {
-					seen = hasID && id == topID
+					if !hasID || id != topID {
+						return &Refusal{Reason: UnknownUse, Detail: "lsof does not say which file it is that this check holds open"}
+					}
+					seen = seen || f.thread == ""
+					threadSeen = threadSeen || f.thread != ""
 					continue
 				}
 				return &Refusal{Reason: InUse, Detail: f.use()}
@@ -2107,14 +2115,21 @@ func (c *checker) processes() error {
 		if !seen {
 			return &Refusal{Reason: UnknownUse, Detail: "lsof does not report the workspace, which this check holds open"}
 		}
+		if !threadSeen {
+			return &Refusal{Reason: UnknownUse, Detail: "lsof does not report what each thread has open"}
+		}
 	}
 	return nil
 }
 
 // lsof is every file that lsof reports.
 func (c *checker) lsof() ([]openFile, error) {
-	args := []string{"-n", "-P", "-w", "-F0pftDin"}
-	if uid := os.Geteuid(); uid != 0 {
+	args := []string{"-n", "-P", "-w"}
+	if uid := os.Geteuid(); runtime.GOOS == "linux" {
+		// lsof lists the threads of every process when no process is selected;
+		// with -K, or -K and -u, it leaves out those with one thread only.
+		args = append(args, "-F0pKftDin")
+	} else if args = append(args, "-F0pftDin"); uid != 0 {
 		args = append(args, "-u", strconv.Itoa(uid))
 	}
 	cmd := exec.CommandContext(c.ctx, "lsof", args...)
@@ -2128,17 +2143,20 @@ func (c *checker) lsof() ([]openFile, error) {
 		return nil, &Refusal{Reason: UnknownUse, Detail: "lsof: " + lastLines(stderr.String(), 3, err.Error())}
 	}
 	var open []openFile
-	pid := ""
+	pid, thread := "", ""
 	for _, set := range strings.Split(stdout.String(), "\x00\n") {
-		f := openFile{pid: pid}
+		f := openFile{pid: pid, thread: thread}
 		for _, field := range strings.Split(set, "\x00") {
 			if field == "" {
 				continue
 			}
 			switch v := field[1:]; field[0] {
 			case 'p':
-				pid = v
-				f.pid = v
+				pid, thread = v, ""
+				f.pid, f.thread = v, ""
+			case 'K':
+				thread = v
+				f.thread = v
 			case 'f':
 				f.fd = v
 			case 't':
@@ -2192,9 +2210,15 @@ type inside struct {
 func (i inside) all() bool { return i.dir || i.names >= i.links }
 
 // openFile is a file that lsof reports, with the fields as it prints them.
-type openFile struct{ pid, fd, kind, dev, ino, name string }
+type openFile struct{ pid, thread, fd, kind, dev, ino, name string }
 
-func (f openFile) use() string { return "process " + f.pid + " uses " + f.name }
+func (f openFile) use() string {
+	who := "process " + f.pid
+	if f.thread != "" {
+		who += ", thread " + f.thread + ","
+	}
+	return who + " uses " + f.name
+}
 
 // id is the file's identity; ok is false when lsof prints none, as of a
 // socket.

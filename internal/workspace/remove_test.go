@@ -2057,6 +2057,107 @@ func TestRefuseWorkspaceTheDaemonHoldsOpen(t *testing.T) {
 	wantRefusal(t, x.check(), InUse, "")
 }
 
+// On Linux a thread may have a working directory and open files that the
+// first thread of its process has not.
+func TestRefuseThreadUsingTheWorkspace(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("lsof is asked for threads on Linux only")
+	}
+	const unshareFS, unshareFiles = "unshare(0x200)", "unshare(0x400)"
+	const chdir, open = "os.chdir(sys.argv[1])", "os.open(sys.argv[1], os.O_RDONLY)"
+	x := newRemoval(t)
+	for name, tc := range map[string]struct{ thread, first, ends string }{
+		"its own working directory":                 {unshareFS + "; " + chdir, "", "False"},
+		"its own open file":                         {unshareFiles + "; " + open, "", "False"},
+		"working directory, the first thread ended": {chdir, "c.syscall(int(sys.argv[2]), 0)", "True"},
+		"open file, the first thread ended":         {open, "c.syscall(int(sys.argv[2]), 0)", "True"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cmd := exec.Command("python3", "-c", `
+import ctypes, os, sys, threading, time
+c = ctypes.CDLL(None)
+there = threading.Event()
+def say(what):
+  print(what, flush=True)
+def unshare(flags):
+  if c.unshare(flags) != 0:
+    say("unshare is denied")
+    os._exit(1)
+def f():
+  try:
+    `+tc.thread+`
+  except BaseException as e:
+    say(repr(e))
+    os._exit(1)
+  there.set()
+  time.sleep(60)
+threading.Thread(target=f, daemon=True).start()
+there.wait()
+def said():
+  while `+tc.ends+` and open("/proc/self/stat").read().rpartition(")")[2].split()[0] != "Z":
+    time.sleep(0.01)
+  say("there")
+threading.Thread(target=said, daemon=True).start()
+`+tc.first+`
+time.sleep(60)`, x.clone, strconv.Itoa(syscall.SYS_EXIT))
+			cmd.Dir = "/"
+			cmd.Stderr = os.Stderr
+			out, err := cmd.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := cmd.Start(); err != nil {
+				t.Skip(err)
+			}
+			defer func() { cmd.Process.Kill(); cmd.Wait() }()
+			said, _ := bufio.NewReader(out).ReadString('\n')
+			if said == "unshare is denied\n" {
+				t.Skip(said)
+			}
+			if said != "there\n" {
+				t.Fatalf("the process says %q", said)
+			}
+			err = x.check()
+			wantRefusal(t, err, InUse, "")
+			if d := err.(*Refusal).Detail; !strings.Contains(d, ", thread ") {
+				t.Fatal(d)
+			}
+		})
+	}
+	if err := x.check(); err != nil {
+		t.Fatalf("no thread uses it: %v", err)
+	}
+}
+
+// An lsof that does not list threads does not say what they use.
+func TestRefuseWhenLsofDoesNotReportThreads(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("lsof is asked for threads on Linux only")
+	}
+	lsof, err := exec.LookPath("lsof")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for drop, drops := range map[string]bool{"p[^\\0]*\\0K": true, "p[0-9]*\\0(?!K)": true, "never": false} {
+		x := newRemoval(t)
+		bin := filepath.Join(x.tmp, "bin")
+		os.Mkdir(bin, 0o700)
+		// A process set and the files that follow it.
+		script := "#!/bin/sh\n'" + lsof + "' \"$@\" | perl -ne '$drop = /^" + drop + "/ if /^p/; print unless $drop'\n"
+		if err := os.WriteFile(filepath.Join(bin, "lsof"), []byte(script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		path := os.Getenv("PATH")
+		t.Setenv("PATH", bin+string(filepath.ListSeparator)+path)
+		if err := x.check(); drops {
+			wantRefusal(t, err, UnknownUse, "")
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", path)
+	}
+}
+
 // Nor is another process's descriptor the check's own, whatever its number.
 func TestRefuseProcessHoldingTheWorkspaceWithTheSameDescriptor(t *testing.T) {
 	x := newRemoval(t)
