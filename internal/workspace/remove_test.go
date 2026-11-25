@@ -271,8 +271,12 @@ func TestRefuseAutostash(t *testing.T) {
 
 			// A remote that has the commit is a place it exists.
 			x.git(x.clone, "push", "-q", "origin", id+":refs/heads/wip")
-			if err := x.check(); err != nil {
-				t.Fatalf("the autostash is pushed: %v", err)
+			if err := x.check(); !strings.Contains(kind, "/") {
+				if err != nil {
+					t.Fatalf("the autostash is pushed: %v", err)
+				}
+			} else {
+				wantRefusal(t, err, Stopped, "") // whatever it names
 			}
 
 			// What names no commit answers nothing.
@@ -282,9 +286,7 @@ func TestRefuseAutostash(t *testing.T) {
 				if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
 					t.Fatal(err)
 				}
-				if err := x.check(); err == nil {
-					t.Fatalf("the check passed with %q in %s", content, kind)
-				}
+				wantRefusal(t, x.check(), GitError, "")
 			}
 			// Nor does what is no file of git's: a link that leads nowhere, or a
 			// FIFO, which would hold up the one that reads it.
@@ -292,9 +294,7 @@ func TestRefuseAutostash(t *testing.T) {
 			if err := os.Symlink("gone", p); err != nil {
 				t.Fatal(err)
 			}
-			if err := x.check(); err == nil {
-				t.Fatalf("the check passed with a dangling link at %s", kind)
-			}
+			wantRefusal(t, x.check(), GitError, "")
 			os.Remove(p)
 			if err := syscall.Mkfifo(p, 0o600); err != nil {
 				t.Fatal(err)
@@ -303,9 +303,7 @@ func TestRefuseAutostash(t *testing.T) {
 			go func() { done <- x.check() }()
 			select {
 			case err := <-done:
-				if err == nil {
-					t.Fatalf("the check passed with a FIFO at %s", kind)
-				}
+				wantRefusal(t, err, GitError, "")
 			case <-time.After(30 * time.Second):
 				t.Fatalf("the check hangs at a FIFO at %s", kind)
 			}
@@ -316,11 +314,118 @@ func TestRefuseAutostash(t *testing.T) {
 				if err := os.WriteFile(dir, nil, 0o600); err != nil {
 					t.Fatal(err)
 				}
-				if err := x.check(); err == nil {
-					t.Fatalf("the check passed with a file at %s", dir)
-				}
+				wantRefusal(t, x.check(), Unreadable, "")
 			}
 		})
+	}
+}
+
+// stops runs a git command that is to stop.
+func (x *removal) stops(dir string, args ...string) {
+	x.t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir, cmd.Env = dir, x.env()
+	if out, err := cmd.CombinedOutput(); err == nil {
+		x.t.Fatalf("git %v did not stop:\n%s", args, out)
+	}
+}
+
+// onOrigin puts dir where its remote has everything that any of its refs,
+// pseudo-refs and reflogs name, with no file changed, as a stop leaves it.
+func (x *removal) onOrigin(dir string) {
+	x.t.Helper()
+	x.git(dir, "reset", "-q", "--hard", "origin/main")
+	for _, ref := range []string{"ORIG_HEAD", "REBASE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "AUTO_MERGE"} {
+		x.git(dir, "update-ref", "-d", ref)
+	}
+	x.git(dir, "reflog", "expire", "--expire=now", "--all")
+	if got := x.git(dir, "status", "--porcelain"); got != "" {
+		x.t.Fatalf("the tree is not clean:\n%s", got)
+	}
+}
+
+// What a rebase, am, cherry-pick or revert keeps while it is stopped may be
+// the only place that names a commit, or that has a patch at all.
+func TestRefuseWhatIsStopped(t *testing.T) {
+	for name, tc := range map[string]struct {
+		keeps string
+		stop  func(x *removal, dir string)
+	}{
+		"rebase": {"rebase-merge/orig-head", func(x *removal, dir string) {
+			x.commit(dir, "b")
+			x.stops(dir, "rebase", "--exec", "false", "--root", "--force-rebase")
+		}},
+		"rebase --apply": {"rebase-apply/orig-head", func(x *removal, dir string) {
+			x.commit(dir, "b")
+			x.git(dir, "checkout", "-q", "--detach", "origin/main")
+			x.commitAs(dir, "b", "another\n")
+			x.stops(dir, "rebase", "--apply", "main")
+		}},
+		"am": {"rebase-apply/0001", func(x *removal, dir string) {
+			x.commitAs(dir, "f", "two\n")
+			x.commitAs(dir, "f", "three\n")
+			patch := filepath.Join(x.tmp, "patch")
+			if err := os.WriteFile(patch, []byte(x.git(dir, "format-patch", "-1", "--stdout")+"\n"), 0o600); err != nil {
+				x.t.Fatal(err)
+			}
+			x.git(dir, "reset", "-q", "--hard", "origin/main")
+			x.stops(dir, "am", patch)
+		}},
+		"cherry-pick": {"sequencer/todo", func(x *removal, dir string) {
+			x.git(dir, "checkout", "-q", "--detach")
+			x.commitAs(dir, "f", "two\n")
+			x.commitAs(dir, "f", "three\n")
+			x.commitAs(dir, "f", "four\n")
+			x.git(dir, "checkout", "-q", "main")
+			x.stops(dir, "cherry-pick", "HEAD@{1}~1", "HEAD@{1}")
+		}},
+		"revert": {"sequencer/todo", func(x *removal, dir string) {
+			x.commitAs(dir, "f", "two\n")
+			x.commitAs(dir, "f", "three\n")
+			x.commitAs(dir, "f", "four\n")
+			x.stops(dir, "revert", "--no-edit", "HEAD~1", "HEAD~2")
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			x := newRemoval(t)
+			tc.stop(x, x.clone)
+			x.git(x.clone, "checkout", "-q", "-f", "--detach", "origin/main")
+			x.git(x.clone, "update-ref", "refs/heads/main", "origin/main") // git branch -f refuses while it is rebased
+			x.onOrigin(x.clone)
+			if _, err := os.Lstat(filepath.Join(x.clone, ".git", filepath.FromSlash(tc.keeps))); err != nil {
+				t.Fatal(err)
+			}
+			err := x.check()
+			wantRefusal(t, err, Stopped, "")
+			if dir, _, _ := strings.Cut(tc.keeps, "/"); err.(*Refusal).Detail != dir {
+				t.Fatalf("the refusal names %q", err.(*Refusal).Detail)
+			}
+			os.RemoveAll(filepath.Join(x.clone, ".git", filepath.Dir(tc.keeps)))
+			if err := x.check(); err != nil {
+				t.Fatalf("with nothing stopped: %v", err)
+			}
+		})
+	}
+	// Whatever is at the place of one, and whatever the repository.
+	for _, at := range []string{"rebase-merge", "rebase-apply", "sequencer"} {
+		t.Run("a link at "+at, func(t *testing.T) {
+			x := newRemoval(t)
+			if err := os.Symlink("gone", filepath.Join(x.clone, ".git", at)); err != nil {
+				t.Fatal(err)
+			}
+			wantRefusal(t, x.check(), Stopped, "")
+		})
+		for how, remove := range withoutCheckout {
+			t.Run(at+" of a submodule after "+how, func(t *testing.T) {
+				x := newRemoval(t)
+				x.withSubmodule()
+				remove(x)
+				if err := os.Mkdir(filepath.Join(x.clone, ".git", "modules", "sub", at), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				wantRefusal(t, x.check(), Stopped, filepath.Join(".git", "modules", "sub"))
+			})
+		}
 	}
 }
 

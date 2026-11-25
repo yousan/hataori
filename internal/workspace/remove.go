@@ -59,6 +59,7 @@ const (
 	RemoteGone    Reason = "commit the remote no longer has"
 	OtherRef      Reason = "unpushed commit on a ref"
 	ReflogOnly    Reason = "commit only in a reflog"
+	Stopped       Reason = "stopped rebase, am, cherry-pick or revert"
 	RemoteIsLocal Reason = "remote is another workspace"
 	RemoteInRoot  Reason = "remote under a hataori root"
 	// RemoteUnresolved is a local remote address that cannot be resolved
@@ -1212,8 +1213,11 @@ func (c *checker) commits(g *reader, rp repo) error {
 		return err
 	}
 	first, err := unpushed(append(append([]string{"--all", "--reflog"}, pseudo...), autostash...)...)
-	if err != nil || first == "" {
+	if err != nil {
 		return err
+	}
+	if first == "" {
+		return c.stopped(g, rp)
 	}
 	if skipped != nil {
 		skipped.Detail += "; commit " + first + " is on no other remote"
@@ -1251,6 +1255,25 @@ func (c *checker) commits(g *reader, rp repo) error {
 		}
 	}
 	return c.refuse(rp, ReflogOnly, "commit "+first)
+}
+
+// stopped refuses a rebase or am, or a sequence of cherry-picks or reverts,
+// that has stopped. What git keeps of it names commits that nothing else may
+// name, and holds patches, messages and a list of what is to be done that are
+// in no object. Each is of one worktree, as HEAD is.
+func (c *checker) stopped(g *reader, rp repo) error {
+	for _, name := range []string{"rebase-merge", "rebase-apply", "sequencer"} {
+		p, err := g.gitPath(c.ctx, name)
+		if err != nil {
+			return err
+		}
+		if _, err := os.Lstat(p); err == nil {
+			return c.refuse(rp, Stopped, name)
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return c.unreadable(p, err)
+		}
+	}
+	return nil
 }
 
 // pseudoRefs are those of HEAD, ORIG_HEAD, MERGE_HEAD, CHERRY_PICK_HEAD,
