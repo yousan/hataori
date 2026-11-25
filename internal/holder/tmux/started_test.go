@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -757,12 +758,7 @@ func TestStopLeavesAnothersGroupAlone(t *testing.T) {
 			s.run("set-option", "-p", "-t", pane, "remain-on-exit", "on")
 			end := func() {
 				if !c.runs {
-					syscall.Kill(w.Process, syscall.SIGTERM)
-				}
-				for deadline := time.Now().Add(10 * time.Second); !c.runs && s.run("display-message", "-p", "-t", pane, "#{pane_dead}") != "1"; time.Sleep(10 * time.Millisecond) {
-					if time.Now().After(deadline) {
-						t.Fatal("the pane is not dead")
-					}
+					s.ended(w, pane)
 				}
 			}
 			if !c.early {
@@ -1052,6 +1048,122 @@ func TestElapsed(t *testing.T) {
 	for _, s := range []string{"", "-", "7", "x:y", "1-2"} {
 		if got, ok := elapsed(s); ok {
 			t.Errorf("%s: %v", s, got)
+		}
+	}
+}
+
+// ended makes the pane's program end and waits until tmux has seen it.
+func (s *server) ended(w holder.Window, pane string) {
+	s.t.Helper()
+	syscall.Kill(w.Process, syscall.SIGTERM)
+	// tmux up to 3.2 does not tell the signal.
+	old := regexp.MustCompile(`^3\.[0-2]`).MatchString(s.run("display-message", "-p", "#{version}"))
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		dead, how, _ := strings.Cut(s.run("display-message", "-p", "-t", pane, "#{pane_dead} #{pane_dead_status}#{pane_dead_signal}"), " ")
+		if dead == "1" && (how != "" || old) {
+			return
+		}
+		if time.Now().After(deadline) {
+			s.t.Fatalf("the pane is not dead: %q %q", dead, how)
+		}
+	}
+}
+
+// Since tmux 3.8 a dead pane has no process. Its removal is refused once a
+// person ran a command of theirs there after the holder's look, also one that
+// ended as well.
+func TestADeadPaneAPersonRespawnedStays(t *testing.T) {
+	for _, how := range []string{"Record", "Stop", "a leftover"} {
+		t.Run(how, func(t *testing.T) {
+			for n := 2; ; n++ {
+				s := newServer(t)
+				h := &Holder{Prefix: "hataori-t-", Server: []string{"-S", s.sock, "-f", "/dev/null"}}
+				w, pane, dir := s.started(h, "exec sleep 600")
+				s.ended(w, pane)
+				if s.run("display-message", "-p", "-t", pane, "#{pane_pid}") != "" {
+					t.Skip("a dead pane keeps its process in this tmux")
+				}
+				on := s.tmux + " -S " + s.sock
+				done := filepath.Join(s.dir, "theirs")
+				h.Tmux = s.before(n, on+" respawn-pane -t "+pane+" 'echo > "+done+"'; until [ -e "+done+" ] && [ \"$("+on+" display-message -p -t "+pane+" '#{pane_dead}')\" = 1 ]; do sleep 0.02; done")
+				var err error
+				switch how {
+				case "Record":
+					err = h.Record(t.Context(), w)
+				case "Stop":
+					_, err = h.Stop(t.Context(), w, time.Second, time.Second)
+				default:
+					h.clearLeftover(t.Context(), dir)
+				}
+				if _, serr := os.Stat(done); serr != nil {
+					if n == 2 {
+						t.Error("no command of the holder's came after the respawn")
+					}
+					break
+				}
+				if err != nil {
+					t.Errorf("before command %d: %v", n, err)
+				}
+				if s.panes()[pane] == "" {
+					t.Errorf("before command %d: the person's pane went", n)
+				}
+			}
+		})
+	}
+}
+
+// A pane whose program ended after the holder's look is removed.
+func TestAPaneThatEndedSinceIsRemoved(t *testing.T) {
+	s := newServer(t)
+	h := &Holder{Prefix: "hataori-t-"}
+	w, pane, _ := s.started(h, "exec sleep 600")
+	r, _ := parseRef(w)
+	p, err := h.findStarted(t.Context(), r, w.Process)
+	if err != nil || p.pid != w.Process {
+		t.Fatalf("%+v %v", p, err)
+	}
+	s.ended(w, pane)
+	if err := h.removePane(t.Context(), r, p); err != nil {
+		t.Error(err)
+	}
+	if got := s.panes(); len(got) != 0 {
+		t.Errorf("panes left: %v", got)
+	}
+}
+
+// The dead pane of a window a person started is there, without the process
+// tmux up to 3.7 tells of it too.
+func TestADeadPaneOfAPersonsWindowIsThere(t *testing.T) {
+	s := newServer(t)
+	h := &Holder{Prefix: "hataori-t-"}
+	pane, pid := s.pane("exec sleep 600")
+	s.run("set-option", "-w", "-t", pane, "remain-on-exit", "on")
+	w := s.window(pane, pid)
+	s.ended(holder.Window{Process: pid}, pane)
+	if tty, err := h.Device(t.Context(), w); err != nil || tty != "" {
+		t.Errorf("Device: %q %v", tty, err)
+	}
+}
+
+// The agent's own dead pane is removed, whatever its state directory's path.
+func TestADeadPaneOfAnyStateDirectoryGoes(t *testing.T) {
+	for _, locale := range []string{"C", "C.UTF-8", "en_US.UTF-8"} {
+		for _, name := range []string{"a b", "it's", `a"b`, "a#b", "#{x}", "#[x]#(x)##", "a,b", "a}b{", "日本é", "a_b", `a\b\n\101`, "[a]*?", "$HOME;~`", ":"} {
+			t.Run(locale+" "+name, func(t *testing.T) {
+				s := newServer(t)
+				t.Setenv("LC_ALL", locale)
+				in := *s
+				in.dir = filepath.Join(s.dir, name)
+				h := &Holder{Prefix: "hataori-t-"}
+				w, pane, _ := in.started(h, "exec sleep 600")
+				s.ended(w, pane)
+				if err := h.Record(t.Context(), w); err != nil {
+					t.Error(err)
+				}
+				if got := s.panes(); len(got) != 0 {
+					t.Errorf("panes left: %v", got)
+				}
+			})
 		}
 	}
 }

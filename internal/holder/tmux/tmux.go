@@ -221,6 +221,7 @@ type pane struct {
 	status        string // how it ended, when dead: "x" and its exit status, or "-"
 	signal        string // the signal that ended it, when dead and known, or "-"
 	session       string // the name of the session it is in, each U+0020 as "_"
+	start         string // its start command, as list-panes prints it, where that was looked at
 }
 
 // paneFormat is what find asks list-panes for. Spaces between the fields:

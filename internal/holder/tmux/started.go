@@ -264,7 +264,7 @@ func startedProcess(w holder.Window) int {
 // again, which is still hataori's.
 func (h *Holder) findStarted(ctx context.Context, r ref, process int) (pane, error) {
 	p, err := h.find(ctx, r)
-	if err != nil || process <= 0 || p.pid == process {
+	if err != nil || p.pid > 0 && (process <= 0 || p.pid == process) || process <= 0 && r.Dir == "" {
 		return p, err
 	}
 	out, err := h.tmux(ctx, r, nil, "list-panes", "-t", r.Pane, "-F", "#{pane_id} #{pane_pid} #{pane_start_command}")
@@ -281,13 +281,14 @@ func (h *Holder) findStarted(ctx context.Context, r ref, process int) (pane, err
 			continue
 		}
 		if runsExec(started, r.Dir) {
+			p.start = started
 			return p, nil
 		}
 		// The pane's pipe is hataori's while one runs: a person's own takes
 		// its place. Left there, it would keep the next start waiting.
 		if r.Dir != "" && host.PipeRuns(r.Dir) {
 			h.tmux(context.WithoutCancel(ctx), r, nil, ifPane(r.Pane, "pipe-pane -t "+r.Pane,
-				fmt.Sprintf("#{==:#{pid},%d}", r.Server), hasProcess(p.pid))...)
+				fmt.Sprintf("#{==:#{pid},%d}", r.Server), hasProcess(p.pid, started))...)
 		}
 		return pane{}, fmt.Errorf("%w: the pane %s runs process %s, not the agent's %d", errGone, r.Pane, pid, process)
 	}
@@ -352,7 +353,7 @@ func (h *Holder) Record(ctx context.Context, w holder.Window) error {
 // hataori's, as when its agent was run again meanwhile.
 func (h *Holder) removePane(ctx context.Context, r ref, p pane) error {
 	ctx = context.WithoutCancel(ctx)
-	out, err := h.tmux(ctx, r, nil, killPane(r.Pane, p.pid, fmt.Sprintf("#{==:#{pid},%d}", r.Server))...)
+	out, err := h.tmux(ctx, r, nil, killPane(r.Pane, p, fmt.Sprintf("#{==:#{pid},%d}", r.Server))...)
 	if err != nil && !noServer(err) && !strings.Contains(err.Error(), "can't find") {
 		return err
 	}
@@ -360,28 +361,44 @@ func (h *Holder) removePane(ctx context.Context, r ref, p pane) error {
 		return nil
 	}
 	// 1 is no pane's: without a process, the pane is told by what it runs.
-	switch _, err := h.findStarted(ctx, r, cmp.Or(p.pid, 1)); {
+	q, err := h.findStarted(ctx, r, cmp.Or(p.pid, 1))
+	switch {
 	case errors.Is(err, errGone):
 		return nil
 	case err != nil:
 		return err
+	case p.pid > 0 && q.pid == 0: // it ended since
+		return h.removePane(ctx, r, q)
 	}
 	return fmt.Errorf("tmux: the pane %s is still there", r.Pane)
 }
 
-// killPane is the tmux command that removes the pane id when it has process
+// killPane is the tmux command that removes the pane id when it is as p
 // (hasProcess) and conds hold. It does nothing otherwise, as when the pane
 // went, or got another program, after it was looked at.
-func killPane(id string, process int, conds ...string) []string {
-	return ifPane(id, "kill-pane -t "+id, append(conds, hasProcess(process))...)
+func killPane(id string, p pane, conds ...string) []string {
+	return ifPane(id, "kill-pane -t "+id, append(conds, hasProcess(p.pid, p.start))...)
 }
 
 // hasProcess is the tmux condition that the pane's process is process, or
-// ended with none in its place. A dead pane still has its process up to tmux
-// 3.7, and none since.
-func hasProcess(process int) string {
-	return fmt.Sprintf("#{||:#{==:#{pane_pid},%d},#{&&:#{==:#{pane_dead},1},#{?pane_pid,0,1}}}", process)
+// ended with none in its place, where the pane's start command is start, as
+// list-panes printed it; with no start, only the first. A dead pane still has
+// its process up to tmux 3.7, and none since: a person may have run a program
+// of theirs there, which ended too.
+func hasProcess(process int, start string) string {
+	has := fmt.Sprintf("#{==:#{pane_pid},%d}", process)
+	if start == "" {
+		return has
+	}
+	return "#{||:" + has + ",#{&&:#{&&:#{==:#{pane_dead},1},#{?pane_pid,0,1}},#{m:" + startPattern(start) + ",#{pane_start_command}}}}"
 }
+
+// startPattern is the pattern a pane's start command is compared with. A
+// character that means something in a tmux format or in a pattern, or that is
+// not ASCII, matches any one.
+func startPattern(start string) string { return special.ReplaceAllString(start, "?") }
+
+var special = regexp.MustCompile(`[^a-zA-Z0-9_./:+@= -]`)
 
 // ifPane is the tmux command that runs do when conds hold for the pane id,
 // in one go. It prints notDone when they do not.
@@ -740,7 +757,7 @@ func (h *Holder) leftover(ctx context.Context, stateDir string) (map[string]pane
 			continue
 		}
 		pid, _ := strconv.Atoi(f[1])
-		ps[f[0]] = pane{pid: pid, dead: f[2] == "1"}
+		ps[f[0]] = pane{pid: pid, dead: f[2] == "1", start: f[3]}
 	}
 	return ps, nil
 }
@@ -754,7 +771,7 @@ func (h *Holder) clearLeftover(ctx context.Context, stateDir string) {
 			syscall.Kill(-p.pid, syscall.SIGKILL)
 			waitGone(p.pid, killWait)
 		}
-		h.serverCmd(context.WithoutCancel(ctx), killPane(id, p.pid)...)
+		h.serverCmd(context.WithoutCancel(ctx), killPane(id, p)...)
 	}
 }
 
