@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/control"
@@ -264,5 +267,34 @@ func TestConfinedStartAsksForItsDirectoryLast(t *testing.T) {
 	}
 	if got := count(t, k.core.Store, "threads"); got != threads+1 {
 		t.Fatalf("%d threads, want %d", got, threads+1)
+	}
+}
+
+// Two calls with one key at once make one thread: the second one asks for
+// no directory and opens no chat thread.
+func TestConfinedStartsOfOneKeyGoOneAtATime(t *testing.T) {
+	k := newKinds(t)
+	var asked atomic.Int32
+	dir := func(context.Context) (string, error) {
+		asked.Add(1)
+		time.Sleep(100 * time.Millisecond) // a second one would come in here
+		return k.dir, nil
+	}
+	threads := count(t, k.core.Store, "threads")
+	var ids [2]control.ThreadID
+	var wg sync.WaitGroup
+	for i := range ids {
+		wg.Go(func() {
+			id, err := k.core.StartConfined(context.Background(), control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all},
+				control.StartRequest{Key: "k", Scope: "s", Thread: "k", Input: control.Input{Text: "go"}}, control.KindConversation, dir)
+			if err != nil {
+				t.Error(err)
+			}
+			ids[i] = id
+		})
+	}
+	wg.Wait()
+	if got := count(t, k.core.Store, "threads"); ids[0] != ids[1] || got != threads+1 || asked.Load() != 1 {
+		t.Fatalf("threads %v, %d made, the directory asked for %d times; want one of each", ids, got-threads, asked.Load())
 	}
 }

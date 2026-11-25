@@ -21,7 +21,11 @@ type Call struct {
 	// (control.ScopeOwner.NewThread, with Key).
 	Thread string
 	Key    string // the message's id: the same one starts nothing twice
-	From   string // who wrote the message, as Caller.From: "<client>:<id>"
+	// From is who wrote the message, as Caller.From: "<client>:<id>". A
+	// message of a bot or a webhook is no call, also when the config lists
+	// its id (design, section 5.2): that is the front end's to see, since
+	// the id alone does not tell.
+	From string
 	// Text is what was written, with the mention of hataori's own account
 	// taken out by the front end, which alone knows how its service writes
 	// one. Its first line is the thread's title.

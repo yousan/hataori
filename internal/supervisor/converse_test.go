@@ -8,7 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
@@ -131,6 +134,63 @@ func TestUnconfineRevokesTheSessionsToken(t *testing.T) {
 	s.Unconfine(50)
 	if len(tokens.revoked) != 3 || tokens.revoked[2] != testToken {
 		t.Fatalf("the own thread's: revoked %q", tokens.revoked)
+	}
+}
+
+// oneByOne are Tokens that note when two of their calls run at once.
+type oneByOne struct {
+	in      atomic.Int32
+	overlap atomic.Bool
+}
+
+func (o *oneByOne) step() {
+	if o.in.Add(1) > 1 {
+		o.overlap.Store(true)
+	}
+	time.Sleep(20 * time.Millisecond)
+	o.in.Add(-1)
+}
+func (o *oneByOne) Issue(control.API) (string, error) { o.step(); return testToken, nil }
+func (o *oneByOne) Restore(string, control.API) error { o.step(); return nil }
+func (o *oneByOne) Revoke(string)                     { o.step() }
+
+// Binding a session's token and revoking a closed one's go one at a time,
+// and a session that a newer one of its thread replaced is bound none, so
+// no token is bound that a close does not revoke.
+func TestTokensAreBoundAndRevokedOneAtATime(t *testing.T) {
+	var log bytes.Buffer
+	s, recorded := layerSessions(t, &log)
+	beside(t, s.Core, control.Idle, control.Idle, control.Idle)
+	dir := t.TempDir()
+	dirs := map[int64]string{40: t.TempDir(), 50: t.TempDir(), 80: t.TempDir()}
+	confine := func(session int64, thread control.ThreadID) error {
+		_, err := s.Confine(context.Background(), runner.ConfinedLaunch{Scope: "c1", Thread: thread, Session: session, Dir: dir, StateDir: dirs[session]})
+		return err
+	}
+	tokens := &oneByOne{}
+	s.Tokens = tokens
+	for range 3 {
+		var wg sync.WaitGroup
+		wg.Go(func() { confine(50, own) })
+		wg.Go(func() { confine(80, newer) })
+		wg.Go(func() { s.Unconfine(50) })
+		wg.Go(func() { s.Unconfine(80) })
+		wg.Wait()
+	}
+	if tokens.overlap.Load() {
+		t.Error("two bindings or revocations ran at once")
+	}
+
+	s.Tokens = recorded
+	if err := confine(50, own); err != nil {
+		t.Fatal(err)
+	}
+	bound := len(recorded.bound)
+	if err := confine(40, own); err == nil || len(recorded.bound) != bound || len(recorded.revoked) != 0 {
+		t.Fatalf("a replaced session: %v, bound %d more, revoked %q; want it refused and nothing bound", err, len(recorded.bound)-bound, recorded.revoked)
+	}
+	if s.Unconfine(50); len(recorded.revoked) != 1 {
+		t.Fatalf("the newer session's close revoked %q, want its token", recorded.revoked)
 	}
 }
 

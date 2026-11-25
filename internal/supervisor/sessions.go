@@ -227,9 +227,18 @@ func (s *Sessions) CopyDocs(ctx context.Context, scope string, thread control.Th
 // bind binds the token of session, kept in its state directory, to the
 // scope's supervisor Caller. With issue, a session without a token gets a
 // new one; without, it is left without. The token of an older session of
-// the same thread, as one a session replaced, is revoked.
+// the same thread, as one a session replaced, is revoked, and an older
+// session is bound none once a newer one is. Bindings and revocations go
+// one at a time, so that the token of a thread's newest session, which
+// Unconfine revokes, is the only one of the thread that is bound.
 func (s *Sessions) bind(session int64, thread control.ThreadID, scope, stateDir string, issue bool) (string, error) {
 	api := s.API(scope, thread)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old, had := s.issued[thread]
+	if had && old.session > session {
+		return "", fmt.Errorf("supervisor: session %d of thread %d: a newer one, %d, has the thread's token", session, int64(thread), old.session)
+	}
 	file := filepath.Join(stateDir, TokenFile)
 	b, err := os.ReadFile(file)
 	token := strings.TrimSpace(string(b))
@@ -253,15 +262,10 @@ func (s *Sessions) bind(session int64, thread control.ThreadID, scope, stateDir 
 			return "", err
 		}
 	}
-	s.mu.Lock()
 	if s.issued == nil {
 		s.issued = map[control.ThreadID]issued{}
 	}
-	old, had := s.issued[thread]
-	if !had || old.session <= session {
-		s.issued[thread] = issued{session, token}
-	}
-	s.mu.Unlock()
+	s.issued[thread] = issued{session, token}
 	if had && old.session < session && old.token != token {
 		s.Tokens.Revoke(old.token)
 	}
@@ -274,16 +278,12 @@ func (s *Sessions) bind(session int64, thread control.ThreadID, scope, stateDir 
 // binds it again (Confine). It is the runner's Unconfine.
 func (s *Sessions) Unconfine(session int64) {
 	s.mu.Lock()
-	var token string
+	defer s.mu.Unlock()
 	for thread, i := range s.issued {
 		if i.session == session {
-			token = i.token
 			delete(s.issued, thread)
+			s.Tokens.Revoke(i.token)
 		}
-	}
-	s.mu.Unlock()
-	if token != "" {
-		s.Tokens.Revoke(token)
 	}
 }
 

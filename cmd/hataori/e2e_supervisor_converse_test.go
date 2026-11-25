@@ -41,7 +41,18 @@ type svTalks struct {
 func newSvTalks(t *testing.T, mode string, more ...func(cfg map[string]any)) *svTalks {
 	t.Helper()
 	s := supervisors(t)
-	return &svTalks{newSvAutonomy(t, mode, more...), s}
+	return &svTalks{newSvAutonomy(t, mode, append([]func(cfg map[string]any){caller}, more...)...), s}
+}
+
+// svCaller is a person of each scope who calls the supervisor. The other
+// tests' person, the webhook e2eHook, calls nobody (design, section 7.1).
+const svCaller = "caller-1"
+
+func caller(cfg map[string]any) {
+	cfg["people"] = append(cfg["people"].([]map[string]any), map[string]any{"name": "ann", "ids": []string{fakeSurface + ":" + svCaller}})
+	for _, sc := range cfg["scopes"].([]map[string]any) {
+		sc["people"] = append(sc["people"].([]string), "ann")
+	}
 }
 
 // as calls the supervisor of c1 from the chat thread key, as from.
@@ -53,7 +64,7 @@ func (f *svTalks) as(from, key, text string) (control.ThreadID, error) {
 // t-<key>, and waits for the end of its first turn.
 func (f *svTalks) talk(t *testing.T, key string) control.ThreadID {
 	t.Helper()
-	id, err := f.as(people.Join(fakeSurface, e2eHook), key, "reply hello from "+key)
+	id, err := f.as(people.Join(fakeSurface, svCaller), key, "reply hello from "+key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +161,7 @@ func TestConversationIsStartedByAPerson(t *testing.T) {
 		t.Fatalf("after refused calls: %s (threads, links, recorded directories; directories; chat threads), want %s still", got, before)
 	}
 	// Nobody has taken the key.
-	id, err := f.as(people.Join(fakeSurface, e2eHook), "key-of-the-refused", "\n  \nreply hello  \nand more")
+	id, err := f.as(people.Join(fakeSurface, svCaller), "key-of-the-refused", "\n  \nreply hello  \nand more")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +171,7 @@ func TestConversationIsStartedByAPerson(t *testing.T) {
 		d.Links[0] != (control.LinkRef{Client: fakeSurface, Channel: "c1", Thread: "t-key-of-the-refused"}) {
 		t.Fatalf("the conversation: %+v %v", d, err)
 	}
-	if in := threadEvents(t, f.owner, id, "input"); len(in) != 1 || in[0]["principal"] != "dispatch" || in[0]["from"] != people.Join(fakeSurface, e2eHook) {
+	if in := threadEvents(t, f.owner, id, "input"); len(in) != 1 || in[0]["principal"] != "ann" || in[0]["from"] != people.Join(fakeSurface, svCaller) {
 		t.Fatalf("its input: %v", in)
 	}
 	var dir, own string
@@ -174,7 +185,7 @@ func TestConversationIsStartedByAPerson(t *testing.T) {
 	once := f.made(t)
 	again := func(when string) {
 		t.Helper()
-		if got, err := f.as(people.Join(fakeSurface, e2eHook), "key-of-the-refused", "reply hello"); err != nil || got != id {
+		if got, err := f.as(people.Join(fakeSurface, svCaller), "key-of-the-refused", "reply hello"); err != nil || got != id {
 			t.Fatalf("%s: thread %d, %v; want %d again", when, got, err, id)
 		}
 		if got := f.made(t); got != once {
@@ -202,7 +213,7 @@ func TestConversationIsStartedByAPerson(t *testing.T) {
 	// A key is of one kind.
 	f.wt.worker(t, f.owner, "c1", "worker-key", "reply w")
 	once = f.made(t)
-	if got, err := f.as(people.Join(fakeSurface, e2eHook), "worker-key", "reply no"); !errors.Is(err, core.ErrKindKey) {
+	if got, err := f.as(people.Join(fakeSurface, svCaller), "worker-key", "reply no"); !errors.Is(err, core.ErrKindKey) {
 		t.Fatalf("a worker's key: thread %d, %v; want it refused", got, err)
 	}
 	if got := f.made(t); got != once {
@@ -496,7 +507,7 @@ func TestSupervisorReachesNoThreadOfItsOwn(t *testing.T) {
 					t.Errorf("a person's send to thread %d: %q", id, got)
 				}
 			}
-			f.wt.r.driver.Inject(f.chat("a"), fakesurface.Webhook(e2eHook), "reply in the chat")
+			f.wt.r.driver.Inject(f.chat("a"), fakesurface.Person(svCaller), "reply in the chat")
 			f.wt.r.postedWith(t, f.chat("a"), "in the chat")
 		})
 	}
@@ -547,6 +558,7 @@ func TestConversationsTurnedOffInOneScope(t *testing.T) {
 		cfg["people"] = append(cfg["people"].([]map[string]any), map[string]any{"name": "sv2", "ids": []string{supervisor.ID("c2")}})
 		c2 := cfg["scopes"].([]map[string]any)[1]
 		c2["people"], c2["supervisor"] = []string{"dispatch", "sv2"}, map[string]any{}
+		caller(cfg)
 	})
 	ctx := context.Background()
 	var (
@@ -569,7 +581,7 @@ func TestConversationsTurnedOffInOneScope(t *testing.T) {
 	defer func() { stop() }()
 	defer func() { owner.Close() }()
 	talk := func(scope, key string) (control.ThreadID, error) {
-		return s.Load().Converse(ctx, supervisor.Call{Scope: scope, Thread: "t-" + key, Key: key, From: people.Join(fakeSurface, e2eHook), Text: "reply hello"})
+		return s.Load().Converse(ctx, supervisor.Call{Scope: scope, Thread: "t-" + key, Key: key, From: people.Join(fakeSurface, svCaller), Text: "reply hello"})
 	}
 	ended := func(id control.ThreadID) {
 		t.Helper()
