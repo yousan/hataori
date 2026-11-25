@@ -264,6 +264,84 @@ func TestThePersonsWindowsInTheSessionStay(t *testing.T) {
 	}
 }
 
+// Start sets up only the pane it made: not a person's of the same id, on a
+// server started again meanwhile, and not one a person gave a program.
+func TestStartSetsUpOnlyThePaneItMade(t *testing.T) {
+	for how, do := range map[string]string{
+		"the server started again": "%[1]s kill-server; while %[1]s has-session 2> /dev/null; do sleep 0.02; done; %[1]s -f /dev/null new-session -d -s person 'exec sleep 611'",
+		"a person's respawn":       "%[1]s respawn-pane -k -t =hataori-t-7: 'exec sleep 611'",
+	} {
+		t.Run(how, func(t *testing.T) {
+			s := newServer(t)
+			h := s.starter()
+			dir := filepath.Join(s.dir, "7")
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			look := "#{pane_id} #{pane_pid} #{pane_pipe} #{pane_dead} #{pane_start_command}"
+			then := filepath.Join(s.dir, "then")
+			h.Tmux = s.before(3, fmt.Sprintf(do, s.tmux+" -S "+s.sock)+"; "+s.tmux+" -S "+s.sock+" list-panes -a -F '"+look+"' > "+then)
+			if w, err := h.Start(t.Context(), dir, sleeper); !errors.Is(err, errGone) {
+				t.Errorf("Start: %+v %v", w, err)
+			}
+			want, _ := os.ReadFile(then)
+			if !strings.Contains(string(want), "sleep 611") {
+				t.Fatalf("not the person's: %q", want)
+			}
+			if got := s.run("list-panes", "-a", "-F", look); got != strings.TrimSpace(string(want)) {
+				t.Errorf("the person's pane was %q, is %q", want, got)
+			}
+			for _, scope := range []string{"-p", "-w"} {
+				if got := s.run("show-options", scope, "-t", "%0", "remain-on-exit"); got != "" {
+					t.Errorf("set on the person's pane: %q", got)
+				}
+			}
+		})
+	}
+}
+
+// A person's hooks on the commands Start uses may print anything, also what
+// hataori prints itself when the pane is not the one it made.
+func TestStartBesideAPersonsHooks(t *testing.T) {
+	s := newServer(t)
+	s.run("new-session", "-d", "-s", "person", "exec sleep 600")
+	s.run("set-hook", "-g", "after-set-option", "display-message -p "+notDone)
+	h := s.starter()
+	dir := filepath.Join(s.dir, "7")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	w, err := h.Start(t.Context(), dir, sleeper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live, err := h.Alive(t.Context(), w); err != nil || live.State != holder.Running {
+		t.Errorf("the agent: %+v %v", live, err)
+	}
+	if _, err := h.Stop(t.Context(), w, time.Second, time.Second); err != nil {
+		t.Error(err)
+	}
+}
+
+// A person's hook may make tmux wait between Start's commands: the pane a
+// person gave a program meanwhile keeps it.
+func TestStartWhileAPersonsHookWaits(t *testing.T) {
+	s := newServer(t)
+	s.run("new-session", "-d", "-s", "person", "exec sleep 600")
+	s.run("set-hook", "-g", "after-pipe-pane", "run-shell '"+s.tmux+" -S "+s.sock+" respawn-pane -k -t =hataori-t-7: \"exec sleep 611\"'")
+	h := s.starter()
+	dir := filepath.Join(s.dir, "7")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if w, err := h.Start(t.Context(), dir, sleeper); !errors.Is(err, errGone) {
+		t.Errorf("Start: %+v %v", w, err)
+	}
+	if got := s.run("list-panes", "-t", "=hataori-t-7:", "-F", "#{pane_dead} #{pane_start_command}"); !strings.Contains(got, "0 ") || !strings.Contains(got, "sleep 611") {
+		t.Errorf("the person's pane is %q", got)
+	}
+}
+
 // A person may give the agent's pane a program of their own (respawn-pane):
 // it is theirs then. The agent's window is gone; the program is not typed
 // to, not signalled, and its pane stays, also when that happens right before
@@ -407,7 +485,7 @@ func TestAPaneAPersonRespawnedIsTheirs(t *testing.T) {
 		s := newServer(t)
 		t.Setenv("LC_ALL", "C") // as a daemon's may be
 		h := s.starter()
-		dir := filepath.Join(s.dir, "日本 it's $7")
+		dir := filepath.Join(s.dir, `a;{~} \"b" it's $HOME;`, "日本 it's $7")
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -476,7 +554,7 @@ func TestAPaneAPersonRespawnedIsTheirs(t *testing.T) {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		h.Tmux = s.before(8, s.tmux+" -S "+s.sock+" respawn-pane -k -t =hataori-t-7: 'exec cat > "+s.dir+"/typed'")
+		h.Tmux = s.before(4, s.tmux+" -S "+s.sock+" respawn-pane -k -t =hataori-t-7: 'exec cat > "+s.dir+"/typed'")
 		if w, err := h.Start(t.Context(), dir, sleeper); !errors.Is(err, errGone) {
 			t.Errorf("Start: %+v %v", w, err)
 		}
@@ -489,7 +567,7 @@ func TestAPaneAPersonRespawnedIsTheirs(t *testing.T) {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		h.Tmux = s.before(8, "sleep 1")
+		h.Tmux = s.before(4, "sleep 1")
 		spec := sleeper
 		spec.Argv = []string{"true"}
 		w, err := h.Start(t.Context(), dir, spec)

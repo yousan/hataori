@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -109,33 +110,27 @@ func (h *Holder) Start(ctx context.Context, stateDir string, spec holder.Spec) (
 		return holder.Window{}, fmt.Errorf("tmux: new-session printed %q", out)
 	}
 	r := ref{Socket: f[3], Server: server, Pane: f[0], Dir: stateDir}
-	// remain-on-exit is a pane option since tmux 3.3, and a window option
-	// before; it is set as both, and again after the respawn, which can
-	// set a pane's options back.
-	steps := [][]string{
-		{"set-option", "-w", "-t", r.Pane, "remain-on-exit", "on"},
-		{"set-option", "-p", "-t", r.Pane, "remain-on-exit", "on"},
-		{"pipe-pane", "-O", "-t", r.Pane, "exec " + quote(h.Hataori) + " pipe " + quote(stateDir)},
-		{"respawn-pane", "-k", "-t", r.Pane, "exec " + quote(h.Hataori) + " exec " + quote(stateDir)},
-		// The window's own goes, so that a split a person opens in it ends
-		// with its program; where there is no pane option, it is set again.
-		{"set-option", "-p", "-t", r.Pane, "remain-on-exit", "on", ";", "set-option", "-w", "-u", "-t", r.Pane, "remain-on-exit", ";",
-			"set-option", "-p", "-t", r.Pane, "remain-on-exit", "on"},
-	}
-	for i, s := range steps {
-		if _, err := h.tmux(ctx, r, nil, s...); err != nil {
-			p := pane{pid: made}
-			if i >= len(steps)-2 { // the respawn may have given it another
-				var ferr error
-				if p, ferr = h.findStarted(context.WithoutCancel(ctx), r, made); ferr != nil {
-					return holder.Window{}, err // gone or a person's; or the next start clears it
-				}
-			}
+	// In one go, and only while the pane is the one made: on a server started
+	// again meanwhile its id is another's, and a person may have given it a
+	// program of theirs. A person's hook on one of the commands may make tmux
+	// wait there, so the pane is looked at again right before its program is
+	// replaced.
+	onServer, withProcess := fmt.Sprintf("#{==:#{pid},%d}", r.Server), fmt.Sprintf("#{==:#{pane_pid},%d}", made)
+	keep, run := h.setUp(r)
+	if out, err = h.tmux(ctx, r, nil, slices.Concat(ifPane(r.Pane, keep, onServer, withProcess), []string{";"}, ifPane(r.Pane, run, onServer, withProcess))...); err != nil {
+		// The respawn may have given it another process. Gone or a person's,
+		// it is left as it is; the next start clears what else is left.
+		if p, ferr := h.findStarted(context.WithoutCancel(ctx), r, made); ferr == nil {
 			h.removePane(ctx, r, p)
-			return holder.Window{}, err
 		}
+		return holder.Window{}, err
 	}
 	p, err := h.findStarted(ctx, r, made)
+	// A person's hooks on these commands may print lines of their own, also
+	// this one: only a pane that is not the agent's was left as it was.
+	if err != nil && slices.Contains(strings.Split(string(out), "\n"), notDone) {
+		return holder.Window{}, fmt.Errorf("%w: the pane %s is no longer the one made for the agent; it was left as it is", errGone, r.Pane)
+	}
 	if err != nil {
 		h.startedStop(context.WithoutCancel(ctx), r, made, time.Second, time.Second)
 		return holder.Window{}, err
@@ -144,6 +139,28 @@ func (h *Holder) Start(ctx context.Context, stateDir string, spec holder.Spec) (
 	// One that ended already has no process on tmux 3.8: the pane is then
 	// told by what it runs (findStarted), not by its process.
 	return holder.Window{Holder: Name, Ref: string(rb), Owned: true, Process: cmp.Or(p.pid, made)}, nil
+}
+
+// setUp is the tmux commands that make the pane Start made the agent's: those
+// that keep what becomes of it, and those that run the agent in it.
+func (h *Holder) setUp(r ref) (keep, run string) {
+	// remain-on-exit is a pane option since tmux 3.3, and a window option
+	// before; it is set as both, and again after the respawn, which can set
+	// a pane's options back. The window's own goes then, so that a split a
+	// person opens in it ends with its program; where there is no pane
+	// option, it is set again.
+	onPane := "set-option -p -t " + r.Pane + " remain-on-exit on"
+	keep = strings.Join([]string{
+		"set-option -w -t " + r.Pane + " remain-on-exit on",
+		onPane,
+		"pipe-pane -O -t " + r.Pane + " " + quote("exec "+quote(h.Hataori)+" pipe "+quote(r.Dir)),
+	}, " ; ")
+	return keep, strings.Join([]string{
+		"respawn-pane -k -t " + r.Pane + " " + quote("exec "+quote(h.Hataori)+" exec "+quote(r.Dir)),
+		onPane,
+		"set-option -w -u -t " + r.Pane + " remain-on-exit",
+		onPane,
+	}, " ; ")
 }
 
 // serverCmd runs a tmux command on the server Server names, or the default
@@ -158,7 +175,8 @@ func (h *Holder) serverCmd(ctx context.Context, args ...string) ([]byte, error) 
 	return runTmux(ctx, prog, h.Server, args, nil)
 }
 
-// quote quotes s for the shell tmux runs a command in.
+// quote quotes s for the shell tmux runs a command in, and for tmux's own
+// commands, which read single quotes as it does.
 func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 func writePrivate(path string, b []byte) error {
