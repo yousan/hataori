@@ -313,6 +313,62 @@ func TestInterruptRequestsOfEachThreadAreItsOwn(t *testing.T) {
 	}
 }
 
+// Open requests of several of the supervisor's threads for one turn that are
+// approved at once interrupt it once, for one of them: the others end
+// without one (#871).
+func TestInterruptRequestsApprovedAtOnceInterruptOnce(t *testing.T) {
+	ctx := context.Background()
+	k := newKinds(t)
+	k.core.People = people.New([]people.Person{{Name: "sv", IDs: []string{"supervisor:s"}}}, "owner", map[string][]string{"s": {"sv"}})
+	threads := []control.ThreadID{k.start(t, control.KindSupervisor, "sv")}
+	for i := range 5 {
+		threads = append(threads, k.start(t, control.KindConversation, fmt.Sprint("c", i)))
+	}
+	owner := k.core.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all})
+	for round := range 10 {
+		key := fmt.Sprint("w", round)
+		worker, err := k.owner.Start(ctx, control.StartRequest{Key: key, Scope: "s", Thread: key, Input: control.Input{Text: "go"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		k.agentEvent(t, k.session(t, worker), 1, agent.Event{Kind: agent.SessionReady})
+		if err := owner.Send(ctx, worker, key+"p", control.Input{Text: "a person's"}, control.Refuse); err != nil {
+			t.Fatal(err)
+		}
+		var reqs []control.RequestID
+		for _, id := range threads {
+			sv := k.core.As(control.Caller{From: "supervisor:s", Scopes: []string{"s"}, May: control.OpAsk | control.OpSend, AsksIn: id, Mark: "supervisor", OrdinaryOnly: true})
+			req, err := sv.AskInterrupt(ctx, worker, "", fmt.Sprintf("round %d, asked in %d", round, id))
+			if err != nil {
+				t.Fatal(err)
+			}
+			reqs = append(reqs, req)
+		}
+		before := strings.Count(k.runner.Calls(), "interrupt")
+		var wg sync.WaitGroup
+		for _, req := range reqs {
+			wg.Go(func() {
+				if err := owner.Answer(ctx, req, control.Answer{Allow: true}); err != nil {
+					t.Errorf("round %d: %v", round, err)
+				}
+			})
+		}
+		wg.Wait()
+		outcomes := map[string]int{}
+		for _, id := range threads {
+			ev := eventsOf(t, k.fixture, id, "approval_answered")
+			for _, o := range []string{"interrupted", "ended"} {
+				if len(ev) == round+1 && strings.Contains(ev[round], `"outcome":"`+o+`"`) {
+					outcomes[o]++
+				}
+			}
+		}
+		if n := strings.Count(k.runner.Calls(), "interrupt") - before; n != 1 || outcomes["interrupted"] != 1 || outcomes["ended"] != len(threads)-1 {
+			t.Fatalf("round %d: %d interrupts, outcomes %v; want one, for one of the %d requests", round, n, outcomes, len(threads))
+		}
+	}
+}
+
 // The directory of a confined start is asked for after everything that may
 // refuse the start, and once for a key: not for a guest, a person of no
 // scope, a caller without OpStart, a scope that is off, nor for a key that

@@ -141,6 +141,37 @@ func TestUnconfineRevokesTheSessionsToken(t *testing.T) {
 	}
 }
 
+// A launch of a newer session of a thread revokes the token of the one it
+// replaces, when its own is another (#871).
+func TestANewerSessionsTokenReplacesTheOlders(t *testing.T) {
+	var log bytes.Buffer
+	s, tokens := layerSessions(t, &log)
+	beside(t, s.Core, control.Idle, control.Idle, control.Idle)
+	sessionOf(t, s.Core, newer, 80)
+	sessionOf(t, s.Core, newer, 81)
+	dir, second := t.TempDir(), "1"+testToken[1:]
+	if err := os.WriteFile(filepath.Join(dir, TokenFile), []byte(second+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	confine := func(session int64, state string) {
+		t.Helper()
+		if _, err := s.Confine(context.Background(), runner.ConfinedLaunch{Scope: "c1", Thread: newer, Session: session, Dir: t.TempDir(), StateDir: state}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	confine(80, t.TempDir())
+	for range 2 { // again, as a resume of it
+		confine(81, dir)
+		if got := fmt.Sprint(tokens.revoked); got != "["+testToken+"]" {
+			t.Fatalf("revoked %s, want the older session's token, once", got)
+		}
+	}
+	s.Unconfine(newer, 81)
+	if got := fmt.Sprint(tokens.revoked); got != "["+testToken+" "+second+"]" {
+		t.Fatalf("closed: revoked %s, want the newer one's too", got)
+	}
+}
+
 // oneByOne are Tokens that note when two of their calls run at once.
 type oneByOne struct {
 	in      atomic.Int32

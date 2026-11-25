@@ -1803,10 +1803,10 @@ type API interface {
 	// that ended first. An approval approved again after an answer that failed
 	// is decided again the same way, without taking the reason again. A
 	// repeated key returns the original request; an empty key makes no
-	// repeat check. An open request for the same running turn is returned
-	// instead of a second one. The caller's AsksIn thread cannot be the
-	// target, nor for a caller with OrdinaryOnly any confined thread
-	// (ErrForbidden). Since protocol 3.10.
+	// repeat check. An open request for the same running turn, asked in the
+	// same thread, is returned instead of a second one. The caller's AsksIn
+	// thread cannot be the target, nor for a caller with OrdinaryOnly any
+	// confined thread (ErrForbidden). Since protocol 3.10.
 	AskInterrupt(ctx context.Context, id ThreadID, key string, reason string) (RequestID, error)
 	// Stop interrupts the thread's running turn. A turn other than 0 names
 	// it by turn_started's number, checked in the step that interrupts: when
@@ -2175,7 +2175,8 @@ type Caller struct {
 	// confined thread, whichever it is, its own included (ThreadKind): its
 	// Send, whether it runs or is a proposal, its AskInterrupt of one, and
 	// its Answer of a request shown in one. A supervisor's caller has it
-	// (section 7.1), and the call an approved proposal makes.
+	// (section 7.1), and the call an approved proposal or interrupt request
+	// makes.
 	OrdinaryOnly bool
 	// Research lets the caller's Start ask for a thread that only reads
 	// (StartRequest.Research), for a thread of its own making and never for
