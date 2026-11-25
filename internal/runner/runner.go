@@ -1064,8 +1064,12 @@ func (r *Runner) inputActions(lv *live, in agent.Input) agent.Actions {
 
 // markWritten records that the inputs ids are about to be written to the
 // agent: from now on a restart tells the codec instead of writing them
-// again.
-func (r *Runner) markWritten(lv *live, ids []string) error {
+// again. unmarkWritten records that nothing of them was.
+func (r *Runner) markWritten(lv *live, ids []string) error { return r.setWritten(lv, ids, true) }
+
+func (r *Runner) unmarkWritten(lv *live, ids []string) { r.setWritten(lv, ids, false) }
+
+func (r *Runner) setWritten(lv *live, ids []string, written bool) error {
 	err := r.Store.Update(context.Background(), func(tx *store.Tx) error {
 		ctx := context.Background()
 		for _, id := range ids {
@@ -1078,7 +1082,7 @@ func (r *Runner) markWritten(lv *live, ids []string) error {
 				if fi == "" || json.Unmarshal([]byte(fi), &f) != nil {
 					continue
 				}
-				f.Written = true
+				f.Written = written
 				b, _ := json.Marshal(f)
 				if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, string(b), lv.id); err != nil {
 					return err
@@ -1089,7 +1093,7 @@ func (r *Runner) markWritten(lv *live, ids []string) error {
 			if err != nil {
 				continue // not one of ours
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE pending_inputs SET written = 1 WHERE id = ? AND session_id = ?`, row, lv.id); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE pending_inputs SET written = ? WHERE id = ? AND session_id = ?`, written, row, lv.id); err != nil {
 				return err
 			}
 		}
@@ -1103,13 +1107,18 @@ func (r *Runner) markWritten(lv *live, ids []string) error {
 
 // handOver carries out what the codec makes of one pending input or
 // answer. Input stays pending until the agent reports the turn it starts
-// (see commit): a codec may hold it until the agent can take it. An answer
-// is removed once the host has taken it. One the codec refuses is removed,
-// and its error returned. lv.mu is held.
+// (see commit): a codec may hold it until the agent can take it, and one
+// told that it was not handed over (Actions.KeysFailed) says with its turn's
+// end what became of it, so that is no error. An answer is removed once the
+// host has taken it. One the codec refuses is removed, and its error
+// returned. lv.mu is held.
 func (r *Runner) handOver(lv *live, pending int64, answer bool, f func() (agent.Actions, error)) error {
 	a, err := f()
 	if err == nil {
-		if err = r.do(lv, a); err != nil || !answer {
+		if err = r.do(lv, a); err != nil && !answer && a.KeysFailed != nil {
+			return nil
+		}
+		if err != nil || !answer {
 			return err
 		}
 	}
@@ -1810,7 +1819,7 @@ const firstInputID = "first"
 // report and will not: it never did, or the input was stopped before it was
 // written.
 func unreported(e agent.Event) bool {
-	return e.Kind == agent.TurnEnded && (e.Reason == agent.NotDelivered || e.Status == agent.Interrupted)
+	return e.Kind == agent.TurnEnded && (e.Reason == agent.NotDelivered || e.Reason == agent.NotTaken || e.Status == agent.Interrupted)
 }
 
 // notDelivered reports whether a turn among evs ended so for the input id.
@@ -1866,10 +1875,21 @@ func (r *Runner) act(lv *live, a agent.Actions) error {
 	if len(a.Keys) == 0 && len(a.Write) == 0 && len(a.Reply) == 0 {
 		return nil
 	}
+	// failed tells the codec that its keys were not handed over.
+	failed := func(nothing bool) {
+		if a.KeysFailed == nil {
+			return
+		}
+		if nothing && len(a.Inputs) > 0 {
+			r.unmarkWritten(lv, a.Inputs)
+		}
+		a.KeysFailed(nothing)
+	}
 	if len(a.Inputs) > 0 {
 		if err := r.markWritten(lv, a.Inputs); err != nil {
-			// Not written: the codec, which counts it written, fails its
-			// turn as "not delivered" when no report comes.
+			// Not written: a codec that is not told so, which counts it
+			// written, fails its turn as "not delivered" when no report comes.
+			failed(true)
 			a.Keys, a.Write = nil, nil
 			if len(a.Reply) == 0 {
 				return err
@@ -1882,7 +1902,8 @@ func (r *Runner) act(lv *live, a agent.Actions) error {
 		c, err := host.Dial(lv.dir)
 		if err != nil {
 			r.Log.Error("host unreachable", "session", lv.id, "err", err)
-			return err
+			failed(true)
+			return &holder.NotSent{Err: err, Refused: lv.taken != nil}
 		}
 		lv.client = c
 	}
@@ -1899,8 +1920,14 @@ func (r *Runner) act(lv *live, a agent.Actions) error {
 			in = func() error { return r.tmuxHolder().Input(ctx, lv.taken.Window, a.Keys) }
 		}
 		if err := in(); err != nil {
-			r.Log.Error("input", "session", lv.id, "err", err)
+			var no *holder.NotSent
+			level := slog.LevelError
+			if errors.As(err, &no) && no.Refused {
+				level = slog.LevelWarn // the window may take it later
+			}
+			r.Log.Log(ctx, level, "input", "session", lv.id, "err", err)
 			first = err
+			failed(no != nil)
 		}
 	}
 	if len(a.Write) > 0 {
@@ -2373,12 +2400,18 @@ func (r *Runner) Answer(ctx context.Context, id, pending int64, req string, ans 
 
 // recordStop records that by stopped turn of session id: the person on the
 // turn, unless it names someone already, and a stop event of the thread,
-// in one transaction.
-func (r *Runner) recordStop(ctx context.Context, id, turn int64, by session.Stopper) error {
-	return r.Store.Update(ctx, func(tx *store.Tx) error {
-		if _, err := tx.ExecContext(ctx, `UPDATE turns SET stopped_by = ? WHERE id = ? AND stopped_by = ''`, string(by.Principal), turn); err != nil {
+// in one transaction. It reports whether the turn names by now.
+func (r *Runner) recordStop(ctx context.Context, id, turn int64, by session.Stopper) (names bool, err error) {
+	err = r.Store.Update(ctx, func(tx *store.Tx) error {
+		res, err := tx.ExecContext(ctx, `UPDATE turns SET stopped_by = ? WHERE id = ? AND stopped_by = ''`, string(by.Principal), turn)
+		if err != nil {
 			return err
 		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		names = n > 0
 		var thread int64
 		if err := tx.QueryRowContext(ctx, `SELECT thread_id FROM sessions WHERE id = ?`, id).Scan(&thread); err != nil {
 			return err
@@ -2397,6 +2430,7 @@ func (r *Runner) recordStop(ctx context.Context, id, turn int64, by session.Stop
 		_, err = tx.Append(ctx, control.Event{Thread: control.ThreadID(thread), Kind: session.KindStop, Data: data})
 		return err
 	})
+	return names, err
 }
 
 // Interrupt stops a session's running turn: the agent's own interrupt
@@ -2405,7 +2439,11 @@ func (r *Runner) recordStop(ctx context.Context, id, turn int64, by session.Stop
 // named turn (not 0) that is not the running one is refused, and nothing is
 // interrupted. A Stop's (by with a Principal) names its person on the turn,
 // unless the turn names someone already, and writes one stop event, both
-// in one transaction before the interrupt is sent.
+// in one transaction before the interrupt is sent. An interrupt that the
+// agent's window did not take as it is (holder.NotSent), or that the codec
+// cannot carry out yet (Actions.NotInterrupted), is none: the turn
+// goes on, its Stop's name is taken back, and the error says
+// control.ErrNotInterrupted.
 func (r *Runner) Interrupt(ctx context.Context, id, named int64, by session.Stopper) error {
 	lv, err := r.get(id)
 	if err != nil {
@@ -2422,16 +2460,32 @@ func (r *Runner) Interrupt(ctx context.Context, id, named int64, by session.Stop
 		lv.mu.Unlock()
 		return fmt.Errorf("runner: session %d: turn %d is not the running turn: %w", id, named, session.ErrRefused)
 	}
+	names := false
 	if by.Principal != "" && turn != 0 {
 		// Before the interrupt, which can end the turn at once: a reader
 		// of its end finds who stopped it, after the stop event. The first
 		// stop names it.
-		if err := r.recordStop(ctx, id, turn, by); err != nil {
+		if names, err = r.recordStop(ctx, id, turn, by); err != nil {
 			lv.mu.Unlock()
 			return fmt.Errorf("runner: session %d: record who stops turn %d: %w", id, turn, err)
 		}
 	}
-	r.do(lv, lv.codec.Interrupt())
+	a := lv.codec.Interrupt()
+	err = r.do(lv, a)
+	var no *holder.NotSent
+	if a.NotInterrupted || errors.As(err, &no) && no.Refused {
+		if names {
+			// Its end, whatever it is, is not this Stop's.
+			if _, err := r.Store.DB.Exec(`UPDATE turns SET stopped_by = '' WHERE id = ?`, turn); err != nil {
+				r.Log.Error("interrupt: forget who stopped the turn", "session", id, "err", err)
+			}
+		}
+		lv.mu.Unlock()
+		if err != nil {
+			return fmt.Errorf("runner: session %d: %w: %w", id, control.ErrNotInterrupted, err)
+		}
+		return fmt.Errorf("runner: session %d: %w", id, control.ErrNotInterrupted)
+	}
 	lv.mu.Unlock()
 	if turn == 0 {
 		return nil // no turn runs: nothing to stop later

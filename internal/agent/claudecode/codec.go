@@ -289,13 +289,60 @@ func (c *codec) flush() Actions {
 	q := c.queue[0]
 	c.queue = c.queue[1:]
 	c.sent = &sentInput{text: normalize(q.text), typed: q.text, id: q.id}
-	c.pasted = append(c.pasted, queued{id: q.id, text: normalize(q.text)})
+	return c.paste()
+}
+
+// paste pastes c.sent. With a paste that was not handed over the CLI has
+// nothing to submit, and one that may have been handed over in part is not
+// submitted either: Enter would submit what a person has typed.
+func (c *codec) paste() Actions {
+	s := c.sent
+	c.pasted = append(c.pasted, queued{id: s.id, text: s.text})
 	c.wrote = true
-	a := Actions{Keys: []agent.Part{{Paste: q.text}}}
-	if q.id != "" {
-		a.Inputs = []string{q.id}
+	a := c.press(agent.Part{Paste: s.typed}, func(nothing bool) {
+		if c.sent != s {
+			return
+		}
+		s.unsure, s.refused = !nothing, nothing
+		if nothing {
+			c.forget(s.text)
+		}
+	})
+	if s.id != "" {
+		a.Inputs = []string{s.id}
 	}
 	return a
+}
+
+// enter presses Enter for c.sent. One that was not handed over is pressed on
+// a later Tick: the CLI holds the text.
+func (c *codec) enter(now time.Time) Actions {
+	s := c.sent
+	s.pressed, s.entered = true, now
+	return c.press(confirm, func(nothing bool) {
+		if c.sent == s && nothing {
+			s.pressed, s.owed = false, true
+		}
+	})
+}
+
+// press is the actions that hand over p, and call failed if it cannot be.
+func (c *codec) press(p agent.Part, failed func(nothing bool)) Actions {
+	return Actions{Keys: []agent.Part{p}, KeysFailed: func(nothing bool) {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		failed(nothing)
+	}}
+}
+
+// forget removes text from what was pasted.
+func (c *codec) forget(text string) {
+	for i, p := range c.pasted {
+		if p.text == text {
+			c.pasted = append(c.pasted[:i], c.pasted[i+1:]...)
+			return
+		}
+	}
 }
 
 // sentInput is input written and not yet reported by a hook.
@@ -307,7 +354,33 @@ type sentInput struct {
 	pressed bool      // Enter was pressed for it
 	entered time.Time // when Enter was last pressed for it
 	again   int       // times Enter was pressed again
+
+	unsure  bool      // its paste may have been handed over in part: no Enter is pressed for it
+	refused bool      // its paste was not handed over: it is pasted again
+	owed    bool      // its Enter was not handed over: it is pressed again
+	since   time.Time // the first Tick after its paste was first refused, or after a turn that ran meanwhile
+	tries   int       // times it was refused
+	next    time.Time // when it is tried again; zero until the Tick after it was refused
 }
+
+// retry reports whether what was refused may be tried again now: after a
+// second, then two, up to maxRetry.
+func (s *sentInput) retry(now time.Time) bool {
+	if s.next.IsZero() {
+		s.tries++
+		s.next = now.Add(min(time.Duration(s.tries)*time.Second, maxRetry))
+	}
+	if now.Before(s.next) {
+		return false
+	}
+	s.next = time.Time{}
+	return true
+}
+
+// maxRetry is how long an input the window refused waits at most between
+// two tries. It is short, so that its Enter follows soon after the person
+// in the window has left what kept it from taking input.
+const maxRetry = 5 * time.Second
 
 // pasteSettle is how long Enter waits after the paste. An Enter that comes
 // with the paste can be taken as part of it.
@@ -327,6 +400,11 @@ func (c *codec) Tick(now time.Time) Actions {
 // wait for input the CLI never reported: after the input timeout the turn
 // it was to start ends as failed, "not delivered".
 //
+// What the window did not take is tried again: a paste until the input
+// timeout, after which the turn ends as failed, NotTaken; an Enter for as
+// long as it is refused, as the CLI holds the text, and would submit it
+// with the next input.
+//
 // A turn that started between the paste and the report, the agent's own
 // after a background task or one typed at the terminal, is another one:
 // Enter and the timeout wait for its end, so that the timeout never ends
@@ -334,10 +412,30 @@ func (c *codec) Tick(now time.Time) Actions {
 // testdata/2.1.331/held_notification).
 func (c *codec) tickInput(now time.Time) Actions {
 	if c.sent == nil {
-		return c.holdPaste(now)
+		return merge(c.holdPaste(now), c.flush())
 	}
 	if c.running {
 		return Actions{}
+	}
+	switch s := c.sent; {
+	case s.refused:
+		if s.since.IsZero() {
+			s.since = now
+		}
+		if now.Sub(s.since) >= c.inputTimeout() {
+			return c.unsent(agent.NotTaken)
+		}
+		if !c.ready || !s.retry(now) {
+			return Actions{}
+		}
+		s.refused, s.at = false, time.Time{}
+		return c.paste()
+	case s.owed && c.ready:
+		if !s.retry(now) {
+			return Actions{}
+		}
+		s.owed, s.at = false, now
+		return c.enter(now)
 	}
 	if c.sent.at.IsZero() {
 		c.sent.at = now // not before the paste: it is handed over before the next Tick
@@ -345,25 +443,25 @@ func (c *codec) tickInput(now time.Time) Actions {
 	}
 	if now.Sub(c.sent.at) < c.inputTimeout() {
 		switch {
-		case !c.ready || now.Sub(c.sent.at) < pasteSettle:
+		case !c.ready || c.sent.unsure || now.Sub(c.sent.at) < pasteSettle:
 		case !c.sent.pressed:
-			c.sent.pressed, c.sent.entered = true, now
-			return Actions{Keys: []agent.Part{confirm}}
+			return c.enter(now)
 		case c.stillInBox(now):
-			c.sent.entered, c.sent.again = now, c.sent.again+1
-			return Actions{Keys: []agent.Part{confirm}}
+			c.sent.again++
+			return c.enter(now)
 		}
 		return Actions{}
 	}
-	for i, p := range c.pasted {
-		if p.text == c.sent.text {
-			c.pasted = append(c.pasted[:i], c.pasted[i+1:]...)
-			break
-		}
-	}
+	c.forget(c.sent.text)
+	return c.unsent(agent.NotDelivered)
+}
+
+// unsent ends the turn of c.sent, which the CLI did not get, and writes the
+// next input.
+func (c *codec) unsent(why agent.Reason) Actions {
 	id := c.sent.id
 	c.sent = nil
-	a := c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered, Input: id}))
+	a := c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: why, Input: id}))
 	return merge(a, c.flush())
 }
 
@@ -380,9 +478,13 @@ const DefaultInputTimeout = 30 * time.Second
 // Interrupt returns the key that stops a turn. The turn counts as
 // interrupted only when the transcript says so.
 //
-// With input still held back, for the screen or for the MCP servers, there
-// is nothing in the CLI to stop, and no transcript will say anything: the
-// turn that the oldest of it was to start ends here, and it is not written.
+// With input still held back, for the screen or for the MCP servers, or
+// whose paste was refused, there is nothing in the CLI to stop, and no
+// transcript will say anything: the turn that the oldest of it was to start
+// ends here, and it is not written.
+//
+// While an Enter is owed the CLI holds the text, and has no turn to stop: a
+// later Tick presses the Enter, as the next input would be submitted with it.
 func (c *codec) Interrupt() Actions {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -390,6 +492,14 @@ func (c *codec) Interrupt() Actions {
 		q := c.queue[0]
 		c.queue = c.queue[1:]
 		return c.number(c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted, Input: q.id})))
+	}
+	if !c.running && c.sent != nil && c.sent.refused {
+		id := c.sent.id
+		c.sent = nil // a Tick writes the next
+		return c.number(c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted, Input: id})))
+	}
+	if !c.running && c.sent != nil && c.sent.owed {
+		return Actions{NotInterrupted: true}
 	}
 	return Actions{Keys: []agent.Part{stopKey}}
 }
@@ -509,7 +619,7 @@ func (c *codec) track(prompt string, a Actions) Actions {
 					// turn, pressed as it started or before a restart, may
 					// not have reached the box; one in an empty box does
 					// nothing (2.1.331, also with a suggested prompt shown).
-					c.sent.at, c.sent.pressed = time.Time{}, false
+					c.sent.at, c.sent.since, c.sent.pressed, c.sent.owed = time.Time{}, time.Time{}, false, false
 				}
 			}
 		case agent.SessionEnded:
@@ -527,6 +637,11 @@ func merge(a, b Actions) Actions {
 	a.Reply = append(a.Reply, b.Reply...)
 	a.Follow = append(a.Follow, b.Follow...)
 	a.Inputs = append(a.Inputs, b.Inputs...)
+	if f, g := a.KeysFailed, b.KeysFailed; f == nil {
+		a.KeysFailed = g
+	} else if g != nil {
+		a.KeysFailed = func(nothing bool) { f(nothing); g(nothing) }
+	}
 	return a
 }
 

@@ -333,14 +333,14 @@ func newBuffer() (string, error) {
 //     the other panes too, which are a person's;
 //   - its foreground process changed as the input was handed over, in a
 //     window hataori did not start: a shell would run the text as a command.
-var ErrTakesNoInput = errors.New("tmux: the window's pane takes no input as it is: its program has ended, it is in a mode such as copy mode, its input is off, the window's panes are synchronized, or its foreground process changed; nothing was sent")
+var ErrTakesNoInput = errors.New("tmux: the window's pane takes no input as it is: its program has ended, it is in a mode such as copy mode, its input is off, the window's panes are synchronized, or its foreground process changed")
 
 // errNotPasted refuses an Enter whose paste was refused.
-var errNotPasted = errors.New("tmux: the paste before this Enter was not handed over; nothing was sent")
+var errNotPasted = errors.New("tmux: the paste before this Enter was not handed over")
 
 // errNoName refuses input to an agent whose name has nothing that tells it
 // from any other program (unsure).
-var errNoName = errors.New("tmux: the name of the window's foreground process cannot be compared; nothing was sent")
+var errNoName = errors.New("tmux: the name of the window's foreground process cannot be compared")
 
 // What the command of Input prints: that every part was handed over, or
 // that none was.
@@ -374,9 +374,18 @@ const (
 // was meant for that paste, and would submit what a person has typed in the
 // window.
 func (h *Holder) Input(ctx context.Context, w holder.Window, parts []agent.Part) error {
+	sent, err := h.input(ctx, w, parts)
+	if err == nil || sent {
+		return err
+	}
+	return &holder.NotSent{Err: err, Refused: !w.Owned || errors.Is(err, ErrTakesNoInput) || errors.Is(err, errNotPasted)}
+}
+
+// input is Input; with an error, sent is false when nothing was handed over.
+func (h *Holder) input(ctx context.Context, w holder.Window, parts []agent.Part) (sent bool, err error) {
 	r, err := parseRef(w)
 	if err != nil {
-		return err
+		return false, err
 	}
 	_, notPasted := h.notPasted.Load(w.Ref)
 	pastes := slices.ContainsFunc(parts, func(p agent.Part) bool { return p.Paste != "" })
@@ -387,38 +396,38 @@ func (h *Holder) Input(ctx context.Context, w holder.Window, parts []agent.Part)
 	for i, p := range parts {
 		if p.Key == "" {
 			if p.Paste == "" {
-				return fmt.Errorf("tmux: part %d is empty", i+1)
+				return false, fmt.Errorf("tmux: part %d is empty", i+1)
 			}
 			continue
 		}
 		if p.Paste != "" {
-			return fmt.Errorf("tmux: part %d is both a paste and a key", i+1)
+			return false, fmt.Errorf("tmux: part %d is both a paste and a key", i+1)
 		}
 		if _, ok := keyNames[p.Key]; !ok {
-			return fmt.Errorf("tmux: part %d: no key %q", i+1, p.Key)
+			return false, fmt.Errorf("tmux: part %d: no key %q", i+1, p.Key)
 		}
 		if p.Key == agent.Enter && !slices.ContainsFunc(parts[:i], func(p agent.Part) bool { return p.Paste != "" }) {
 			enterFirst = true
 		}
 	}
 	if notPasted && enterFirst {
-		return errNotPasted
+		return false, errNotPasted
 	}
-	if err := h.hand(ctx, r, w, parts); err != nil {
-		return err
+	if sent, err := h.hand(ctx, r, w, parts); err != nil {
+		return sent, err
 	}
 	if pastes {
 		h.notPasted.Delete(w.Ref)
 	}
-	return nil
+	return true, nil
 }
 
 // hand hands the parts over, all of them or, with an error, none, unless
-// tmux failed halfway.
-func (h *Holder) hand(ctx context.Context, r ref, w holder.Window, parts []agent.Part) (err error) {
+// tmux failed halfway: sent is then true.
+func (h *Holder) hand(ctx context.Context, r ref, w holder.Window, parts []agent.Part) (sent bool, err error) {
 	conds, err := h.takes(ctx, r, w)
 	if err != nil {
-		return err
+		return false, err
 	}
 	// Not cut short by ctx: a tmux client killed halfway does not undo
 	// what it asked of the server, and the buffers must still be deleted.
@@ -431,22 +440,22 @@ func (h *Holder) hand(ctx context.Context, r ref, w holder.Window, parts []agent
 	}()
 	for _, p := range parts {
 		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("tmux: the input was stopped: %w", err)
+			return false, fmt.Errorf("tmux: the input was stopped: %w", err)
 		}
 		if p.Key != "" {
 			continue
 		}
 		buf, err := newBuffer()
 		if err != nil {
-			return err
+			return false, err
 		}
 		bufs = append(bufs, buf)
 		if _, err := h.tmux(cctx, r, []byte(p.Paste), "load-buffer", "-b", buf, "-"); err != nil {
-			return err
+			return false, err
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("tmux: the input was stopped: %w", err)
+		return false, fmt.Errorf("tmux: the input was stopped: %w", err)
 	}
 	// Since 3.7 tmux pastes a buffer's control characters as ^X unless
 	// given -S. An older server refuses -S as it reads the commands, before
@@ -463,16 +472,16 @@ func (h *Holder) hand(ctx context.Context, r ref, w holder.Window, parts []agent
 	said := strings.Fields(string(out))
 	switch {
 	case slices.Contains(said, saidHanded):
-		return nil
+		return true, nil
 	case slices.Contains(said, saidRefused):
 		if _, err := h.takes(ctx, r, w); err != nil {
-			return err // gone, or not the agent's
+			return false, err // gone, or not the agent's
 		}
-		return ErrTakesNoInput
+		return false, ErrTakesNoInput
 	case err != nil:
-		return err
+		return true, err
 	default:
-		return fmt.Errorf("tmux: the server answered an input with %.200q", out)
+		return true, fmt.Errorf("tmux: the server answered an input with %.200q", out)
 	}
 }
 
@@ -500,7 +509,7 @@ func (h *Holder) takes(ctx context.Context, r ref, w holder.Window) ([]string, e
 		case p.dead:
 			return p, ErrTakesNoInput
 		case err != nil:
-			return p, fmt.Errorf("%w; nothing was sent", err)
+			return p, err
 		}
 		return p, nil
 	}

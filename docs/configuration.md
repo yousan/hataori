@@ -261,7 +261,7 @@ The section may be empty (`{}`). The common `model` and `effort` keys are also a
 | `command` | string | `"claude"`, found on `PATH` | The Claude Code command to run. |
 | `hataori` | string | this binary | The hataori binary that Claude Code's hooks run as `<hataori> hook`. |
 | `hook_timeout` | duration | `"24h"` | How long a hook that waits for an answer (a question from the agent, a permission request) waits. At least one second. |
-| `input_timeout` | duration | `"30s"` | How long input pasted into Claude Code may go unreported by its `UserPromptSubmit` hook before it counts as not delivered. At least one second. |
+| `input_timeout` | duration | `"30s"` | How long input pasted into Claude Code may go unreported by its `UserPromptSubmit` hook before it counts as not delivered, and how long a paste that the agent's window does not take is tried again. At least one second. |
 | `pass_env` | array of strings | empty | Names of variables in the daemon's environment to pass to Claude Code besides the fixed list below, for example an API key it logs in with. |
 
 Unknown keys are refused; `model` and `effort` are hataori's (see [Keys of every adapter section](#keys-of-every-adapter-section)).

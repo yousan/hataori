@@ -325,6 +325,60 @@ func TestTmuxHolderEnds(t *testing.T) {
 	eventually(t, "the agent of the killed server gone", 10*time.Second, func() bool { return errorsIsESRCH(syscall.Kill(-w3.Process, 0)) })
 }
 
+// A Stop while a person has scrolled back in the agent's window: the window
+// takes no key then, so the Stop says it was not taken, the turn goes on, and
+// the agent is not ended as one that ignored an interrupt. Out of the copy
+// mode, a Stop stops the turn (#741).
+func TestTmuxHolderStopWhileScrolledBack(t *testing.T) {
+	server := heldServer(t)
+	r, _ := heldRoot(t, "tmux", server)
+	th, id, sid := startedHeld(t, r, 0, "reply one", "one")
+	w := heldWindow(t, runner.StateDir(r.root, sid))
+	r.driver.Inject(th, fakesurface.Person(e2eOwner), "tool wait 120s\nreply two")
+	var turn int64
+	eventually(t, "the turn running", 15*time.Second, func() bool {
+		return r.db(t).QueryRow(`SELECT id FROM turns WHERE session_id = ? AND ended_at IS NULL`, sid).Scan(&turn) == nil
+	})
+	if out, err := tmuxOn(server, "copy-mode", "-t", w3pane(t, w)).CombinedOutput(); err != nil {
+		t.Fatalf("copy-mode: %v: %s", err, out)
+	}
+	c, err := wire.Dial(r.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.Stop(context.Background(), id, 0); err == nil || !strings.Contains(err.Error(), control.ErrNotInterrupted.Error()) {
+		t.Fatalf("the Stop's answer: %v", err)
+	}
+	r.driver.InjectCommand(th, fakesurface.Person(e2eOwner), "stop")
+	eventually(t, "the command's answer", 15*time.Second, func() bool {
+		return posts(r.driver, th, fmt.Sprintf("Not stopped: the window of thread #%d's agent did not take the interrupt. The turn goes on.", id)) == 1
+	})
+	time.Sleep(7 * time.Second) // more than the grace after an interrupt
+	if err := syscall.Kill(w.Process, 0); err != nil {
+		t.Fatalf("the agent: %v", err)
+	}
+	var by, ended string
+	if err := r.db(t).QueryRow(`SELECT stopped_by, coalesce(ended_at, '') FROM turns WHERE id = ?`, turn).Scan(&by, &ended); err != nil || by != "" || ended != "" {
+		t.Fatalf("the turn after the refused stops: stopped by %q, ended %q, %v", by, ended, err)
+	}
+
+	if out, err := tmuxOn(server, "send-keys", "-X", "-t", w3pane(t, w), "cancel").CombinedOutput(); err != nil {
+		t.Fatalf("leave copy mode: %v: %s", err, out)
+	}
+	if err := c.Stop(context.Background(), id, 0); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the turn stopped", 15*time.Second, func() bool {
+		var reason string
+		r.db(t).QueryRow(`SELECT coalesce(reason, ''), stopped_by FROM turns WHERE id = ?`, turn).Scan(&reason, &by)
+		return reason == "interrupted" && by == "owner"
+	})
+	if err := syscall.Kill(w.Process, 0); err != nil {
+		t.Fatalf("the agent after the Stop: %v", err)
+	}
+}
+
 func errorsIsESRCH(err error) bool { return err == syscall.ESRCH }
 
 // w3pane is the pane id the window's reference names.

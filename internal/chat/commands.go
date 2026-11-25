@@ -306,6 +306,9 @@ func (f *FrontEnd) stopTurn(ctx context.Context, c surface.Command) error {
 	switch {
 	case errors.Is(err, control.ErrForbidden):
 		return nil // the core logged it; nothing is shown
+	case errors.Is(err, control.ErrNotInterrupted):
+		f.Log.Warn("stop: not interrupted", "thread", int64(t.ID), "err", err)
+		return f.answer(ctx, c, fmt.Sprintf("Not stopped: the window of thread #%d's agent did not take the interrupt. The turn goes on.", t.ID))
 	case err != nil:
 		f.once(ctx, c.Conv.Channel, "stop:"+c.ID, false) // to be tried again
 		f.answer(ctx, c, "Not stopped: an error, which is in the log.")
