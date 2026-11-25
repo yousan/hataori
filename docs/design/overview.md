@@ -2491,7 +2491,7 @@ type LinkRef struct {
 // LinkRef.
 type ThreadLink struct {
 	LinkRef
-	Opened bool // the client opened the conversation; without it, it was there before the link, and is not hataori's to archive, rename or close
+	Opened bool // the client opened the conversation; without it, it was there before the link or counts as that (a link made before 3.40, but its thread's first one), and is not hataori's to archive, rename or close
 }
 
 // Filter gains Link: Threads with a Link returns the thread linked there,

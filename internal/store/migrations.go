@@ -737,9 +737,12 @@ var migrations = []Migration{
 	)},
 	// Whether the link's client opened its conversation: 1, or 0 for one
 	// that was there before the link (#870). Of the links made before this
-	// step, a thread's first one counts as opened, and no other does: what
-	// opened it was not recorded. An archive not sent yet is dropped, unless
-	// it is of a conversation that a link counts as opened.
+	// step, a thread's first one counts as opened and no other does: who
+	// opened a conversation was not recorded, and the first is the one that
+	// a thread is started with. (Not by since: it is set anew for a link
+	// that was not served for a time, and in the links older than it says
+	// only which one is the first.) An archive not sent yet is dropped,
+	// unless it is of a conversation that a link counts as opened.
 	{Name: "links.opened", Up: execAll(
 		`ALTER TABLE links ADD COLUMN opened INTEGER NOT NULL DEFAULT 0`,
 		`UPDATE links SET opened = 1 WHERE id IN (SELECT min(id) FROM links GROUP BY thread_id)`,

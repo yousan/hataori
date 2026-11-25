@@ -347,7 +347,8 @@ func TestLinksOpenedOnUpgrade(t *testing.T) {
 			(11, 'chat', 10, 1, 's', 'attached', '{"op":"archive"}', 'pending', 0, 0),
 			(12, 'chat', 11, 1, 's', 'attached', '{"op":"archive"}', 'pending', 0, 1),
 			(13, 'two', 12, 1, 's', 't1', '{"op":"archive"}', 'pending', 0, 0),
-			(14, 'chat', 13, 1, 'c9', 't1', '{"op":"archive"}', 'pending', 0, 0)`,
+			(14, 'chat', 13, 1, 'c9', 't1', '{"op":"archive"}', 'pending', 0, 0),
+			(15, 'chat', 14, 1, 's', 't1', '{"op":"archive"}', 'pending', 0, 3)`,
 	} {
 		if _, err := s.DB.ExecContext(ctx, q); err != nil {
 			t.Fatal(err)

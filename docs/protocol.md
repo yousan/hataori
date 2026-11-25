@@ -645,7 +645,7 @@ A link of a thread: a `LinkRef`, and who opened the conversation; since 3.40. Un
 | `client` | string | required | as in `LinkRef` |
 | `channel` | string | required | as in `LinkRef` |
 | `thread` | string | required | as in `LinkRef` |
-| `opened` | boolean | optional | the client opened the conversation; absent for one that was there before the link, as one that a `Link` or a `Start` named. Nothing archives, renames or closes such a conversation ([design section 5.2](design/overview.md#52-chat-front-end-and-surface-driver)). Of the links made before 3.40, the first of each thread has it and no other |
+| `opened` | boolean | optional | the client opened the conversation; absent for one that was there before the link, as one that a `Link` or a `Start` named. Nothing archives, renames or closes such a conversation ([design section 5.2](design/overview.md#52-chat-front-end-and-surface-driver)). Of the links made before 3.40, the first of each thread has it and no other. A daemon before 3.40 sends it for no link |
 
 ### Type `Filter`
 

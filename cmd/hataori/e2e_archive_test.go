@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/yousan/hataori/internal/agent/fake"
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/store"
 	"github.com/yousan/hataori/internal/surface"
 	fakesurface "github.com/yousan/hataori/internal/surface/fake"
 	"github.com/yousan/hataori/internal/wire"
@@ -205,7 +207,18 @@ func TestArchiveLeavesAChatThreadThatWasThere(t *testing.T) {
 	r.asleepAndArchived(t, th)
 	r.leftAlone(t, there)
 
+	// After a restart too, and whatever the opened link's since says: one
+	// made before `since` was kept, or served again after a time in which
+	// it was not, has another than the 0 of one that was just opened.
 	stop()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(r.root, store.File)+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`UPDATE links SET since = 1 WHERE thread_id = ? AND opened = 1`, num); err != nil {
+		t.Fatal(err)
+	}
 	stop = runDaemon(t, r.root)
 	defer stop()
 	r.connected(t)
@@ -293,9 +306,9 @@ func TestArchiveFailureIsLoggedOnce(t *testing.T) {
 	r.posted(t, th, "b")
 }
 
-// A thread shown in a channel of another client (show_in) has that chat
-// thread archived too: the option is the thread's scope's, whichever client
-// shows it.
+// A thread shown in a channel of another client, and in a second one of its
+// own client (show_in), has those chat threads archived too: the option is
+// the thread's scope's, whichever client shows it.
 func TestArchiveWhenAsleepOnASecondSurface(t *testing.T) {
 	var two *fakesurface.Driver
 	r := newChatRoot(t, func(cfg map[string]any) {
@@ -311,7 +324,8 @@ func TestArchiveWhenAsleepOnASecondSurface(t *testing.T) {
 		}
 		cfg["scopes"] = []map[string]any{
 			{"key": "c1", "client": fakeSurface, "enabled": true, "people": []string{"dispatch", "grace"},
-				"show_in": []string{secondSurface + ":d1"}, "archive_when_asleep": true},
+				"show_in": []string{secondSurface + ":d1", fakeSurface + ":c2"}, "archive_when_asleep": true},
+			{"key": "c2", "client": fakeSurface, "enabled": true},
 			{"key": "d1", "client": secondSurface, "enabled": true},
 		}
 		cfg["drivers"].(map[string]any)[secondSurface] = map[string]any{"id": root + "/two"}
@@ -323,16 +337,21 @@ func TestArchiveWhenAsleepOnASecondSurface(t *testing.T) {
 	th, _, _ := r.idleThread(t, 0, "hello")
 	d1 := surface.Conversation{Channel: "d1"}
 	two.InjectCommand(d1, fakesurface.Person("g-1"), "attach", surface.Arg{Name: "number", Value: numberOf(t, r.root, th)})
-	var there surface.Conversation
-	eventually(t, "the attached thread", 15*time.Second, func() bool {
-		o := opened(two, d1)
-		if len(o) == 1 {
-			there = o[0]
+	c2 := surface.Conversation{Channel: "c2"}
+	r.driver.InjectCommand(c2, fakesurface.Person(e2eOwner), "attach", surface.Arg{Name: "number", Value: numberOf(t, r.root, th)})
+	var there, second surface.Conversation
+	eventually(t, "the attached threads", 15*time.Second, func() bool {
+		o, p := opened(two, d1), opened(r.driver, c2)
+		if len(o) != 1 || len(p) != 1 {
+			return false
 		}
-		return len(o) == 1
+		there, second = o[0], p[0]
+		return true
 	})
 	if code, _, errOut := cli(t, "close", "--root", r.root, numberOf(t, r.root, th)); code != 0 {
 		t.Fatalf("close: %d %s", code, errOut)
 	}
-	eventually(t, "both chat threads archived", 10*time.Second, func() bool { return r.driver.Archived(th) && two.Archived(there) })
+	eventually(t, "all chat threads archived", 10*time.Second, func() bool {
+		return r.driver.Archived(th) && r.driver.Archived(second) && two.Archived(there)
+	})
 }

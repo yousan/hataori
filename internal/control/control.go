@@ -584,8 +584,10 @@ type LinkRef struct {
 type ThreadLink struct {
 	LinkRef
 	// Opened: the client opened the conversation, for this thread. Without
-	// it the conversation was there before the link, and is not hataori's
-	// to archive, rename or close.
+	// it the conversation was there before the link, or counts as that (a
+	// link made before 3.40 that is not its thread's first one), and is not
+	// hataori's to archive, rename or close. A daemon before 3.40 says it of
+	// no link.
 	Opened bool `json:"opened,omitempty"`
 }
 
