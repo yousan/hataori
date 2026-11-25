@@ -1074,7 +1074,8 @@ func TestRefuseRepositoryOfReflogs(t *testing.T) {
 	}
 }
 
-// The refs of a git directory that has them elsewhere, or in no files.
+// The refs of a git directory that has them elsewhere, or in no files, or that
+// has a link for HEAD or objects.
 func TestRefuseFilesInRefsThatGitDoesNotUse(t *testing.T) {
 	for _, name := range []string{"reftable", "commondir"} {
 		x := newRemoval(t)
@@ -1094,6 +1095,21 @@ func TestRefuseFilesInRefsThatGitDoesNotUse(t *testing.T) {
 		if !c.onlyRefs(n, d) {
 			t.Fatalf("with no %s", name)
 		}
+		for _, name := range []string{"HEAD", "objects"} {
+			if err := os.Rename(filepath.Join(n, name), filepath.Join(x.tmp, name)); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(x.tmp, name), filepath.Join(n, name)); err != nil {
+				t.Fatal(err)
+			}
+			if c.onlyRefs(n, d) {
+				t.Fatalf("with a link for %s", name)
+			}
+			os.Remove(filepath.Join(n, name))
+			if err := os.Rename(filepath.Join(x.tmp, name), filepath.Join(n, name)); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 }
 
@@ -1108,6 +1124,7 @@ func TestRefuseRefsThatGitDoesNotRead(t *testing.T) {
 		"refs/n/m ": ref, "refs/n/m\t": ref, "refs/n/m\\": ref, "logs/.n/m": log, "hooks/n/m": ref,
 		"refs/n/m": "ref: refs/remotes/origin/main\n" + ref,
 		"refs/n/l": "ref: refs/" + strings.Repeat("l", 4096) + "\n" + ref, "refs/n/commondir": ref, "refs/n/objects/info/alternates": ref,
+		"refs/n/Commondir": ref, "refs/n/objects/info/Alternates": ref,
 	} {
 		d := filepath.Dir(filepath.Join(git, filepath.FromSlash(p)))
 		if err := os.MkdirAll(filepath.Join(d, "objects"), 0o700); err != nil {
