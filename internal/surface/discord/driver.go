@@ -203,8 +203,8 @@ func (d *Driver) Run(ctx context.Context, sink surface.Sink) error {
 				report(d.CheckIdentity(ctx))
 				return
 			}
-			d.newSession(e.Guilds)
-			q.connected() // a new session
+			d.newSession(e.Guilds) // first: a catch-up begins when the sink is told
+			q.connected()          // a new session
 		case gateway.EventResumed:
 			q.connected() // the session resumed after a drop
 		case gateway.EventRaw:

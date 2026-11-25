@@ -693,8 +693,8 @@ def calls_run(raw, minutes):
                 ("other", says(f"<@{owner}> [hataori test] hello")),
                 ("reply-other", replies("reply to your own message of the step before", lambda: kept["other"]["d"]["id"])),
                 ("forward", ("forward your message of the step \"mention\" to this channel", lambda ev: (
-                    ev["t"] == "MESSAGE_CREATE" and ev["d"].get("message_reference", {}).get("message_id") == kept["mention"]["d"]["id"]
-                    and not ev["d"].get("content")))),
+                    ev["t"] == "MESSAGE_CREATE" and (ev["d"].get("message_reference") or {}).get("type") == 1
+                    and ev["d"]["message_reference"]["message_id"] == kept["mention"]["d"]["id"]))),
                 ("webhook", says(f"{at} [hataori test] a webhook", webhook=True))):
             if name == "webhook":
                 do = do.replace("post", "post with a webhook of this channel", 1)

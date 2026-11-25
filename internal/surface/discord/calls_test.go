@@ -119,6 +119,12 @@ func TestCalls(t *testing.T) {
 		{"after a number and a greater-than sign", says("1 > " + at), true, false, []string{at}},
 		{"after a line that may be a quote", says(">a `b`\n" + at), true, false, []string{at}},
 		{"after many lines that may be quotes", says(strings.Repeat(">\n", 500) + at), true, false, []string{at}},
+		{"after a block quoted by hand", says(">```\npanic: x\n>```\n" + at), true, false, []string{at}},
+		{"after a block in lists", says("- > ```\nx\n- > ```\n" + at), true, false, []string{at}},
+		{"after code in lines that may be quotes", says(">a ``` b\n>c ``` d\n" + at), true, false, []string{at}},
+		{"in a list, after a greater-than sign", says("- >50% of them fail " + at), true, false, []string{at}},
+		{"in a list of numbers, after a greater-than sign", says("1. >=3 " + at), true, false, []string{at}},
+		{"in a heading, after a greater-than sign", says("# >3 " + at), true, false, []string{at}},
 		{"after a line that may be a quote, with a fence", says(">```\n" + at), false, false, nil},
 		{"after the end of a line of two characters", says("> a\r\n" + at), true, false, []string{at}},
 
@@ -127,15 +133,25 @@ func TestCalls(t *testing.T) {
 		{"in an indented quote", says("a\n \t> " + at), false, false, nil},
 		{"in a quote after another line", says("hello\n> " + at + "\nhello"), false, false, nil},
 		{"in a quote of many lines", says("hello\n>>> a\n\n" + at), false, false, nil},
+		{"in a quote after a wide space", says("\u3000> " + at), false, false, nil},
+		{"in a quote after a vertical tab", says("\v> " + at), false, false, nil},
+		{"in a quote after a form feed", says("\f> " + at), false, false, nil},
+		{"in a quote after a next line", says("\u0085> " + at), false, false, nil},
+		{"in a quote before a wide space", says(">\u3000" + at), false, false, nil},
 		{"in a quote after a block of code", says("```a```> " + at), false, false, nil},
 		{"in a quote in a list", says("- > " + at), false, false, nil},
 		{"in a quote in a list of stars", says("* > " + at), false, false, nil},
 		{"in a quote in a list of numbers", says("a\n 10. > " + at), false, false, nil},
+		{"in a quote in a list of pluses", says("+ > " + at), false, false, nil},
+		{"in a quote in a list of numbers in brackets", says("1) > " + at), false, false, nil},
+		{"in a quote in a list, after a wide space", says("-\u3000> " + at), false, false, nil},
+		{"in a quote in a list, before a tab", says("- >\t" + at), false, false, nil},
 		{"in a quote in a list in a list", says("- - > " + at), false, false, nil},
 		{"in a quote of many lines in a list", says("- >>> a\n" + at), false, false, nil},
 		{"in a quote in a heading", says("## > " + at), false, false, nil},
 		{"in a quote in a small line", says("-# > " + at), false, false, nil},
 		{"in a quote after another end of a line", says("a\r> " + at), false, false, nil},
+		{"in a quote that may go on after such an end", says("> a\r" + at), false, false, nil},
 		{"in code", says("`" + at + "`"), false, false, nil},
 		{"in code of two backticks", says("`` ` " + at + "``"), false, false, nil},
 		{"in code over two lines", says("`a\n" + at + "`"), false, false, nil},
@@ -145,6 +161,7 @@ func TestCalls(t *testing.T) {
 		{"in a block that begins with a fence", says("```\n```\n" + at + "\n```"), false, false, nil},
 		{"in a block in a language that begins with a fence", says("```go\n```\n" + at + "\n```"), false, false, nil},
 		{"in a block in a language of other letters", says("```C++\n```\n" + at + "\n```"), false, false, nil},
+		{"in a block in a language with a hash", says("```c#\n```\n" + at + "\n```"), false, false, nil},
 		{"in a block in a language, with other ends of lines", says("```go\r\n```\r\n" + at + "\r\n```"), false, false, nil},
 		{"in a block that a line opens which may be a quote", says(">```\n" + at + "\n```"), false, false, nil},
 		{"in a block in a language that such a line opens", says("\t> ```go\n" + at + "\n```"), false, false, nil},
@@ -152,7 +169,10 @@ func TestCalls(t *testing.T) {
 		{"in a block that such a line opens in a list", says("- > ```\n" + at + "\n```"), false, false, nil},
 		{"in a block that such a line opens after a block", says("```a```> ```\n" + at + "\n```"), false, false, nil},
 		{"in code that such a line opens", says(">`a\n" + at + "`"), false, false, nil},
-		{"in a block when one of two such lines is a quote", says(">```\n>```\n" + at + "\n```"), false, false, nil},
+		{"in a block that an indented line of a list opens", says("- a\n  > ```\n  " + at + "\n  ```"), false, false, nil},
+		{"in a block that such a line opens in a heading", says("# > ```\n" + at + "\n```"), false, false, nil},
+		{"in a block that a list opens and not a heading", says("# > ```\n- > ```\n" + at + "\n```"), false, false, nil},
+		{"in a block that a heading opens and not a list", says("- > ```\n# > ```\n" + at + "\n```"), false, false, nil},
 		{"in a block left open", says("hello\n```\n" + at), false, false, nil},
 		{"after a block of nothing", says("```\n\n```" + at), false, false, nil},
 		{"in a block left open after a closed one", says("```a``` ```" + at), false, false, nil},
@@ -374,28 +394,48 @@ func roleCall(t *testing.T, role string) map[string]any {
 	return p
 }
 
+// What a message costs to read grows with its length and no faster: whoever
+// can post chooses it.
+func TestALongTextIsReadInTime(t *testing.T) {
+	const ticks = "```"
+	text := strings.Repeat(">\\``\n", 4000) + "` " + strings.Repeat("\\"+ticks, 11000)
+	began := time.Now()
+	if got := spoken(text); strings.Contains(got, ">") {
+		t.Errorf("a quote is left of %d bytes", len(text))
+	}
+	if took := time.Since(began); took > 10*time.Second {
+		t.Errorf("%d bytes took %v", len(text), took)
+	}
+}
+
 // The role that is managed for the bot is learned from a server's Guild
 // Create, and from its Guild Role Create or Update; a list that cannot be
 // read takes nothing from the layout.
 func TestTheManagedRoleIsLearned(t *testing.T) {
 	bot := botID(t).String()
 	role := guildRoles(bot)[0]
+	unread := fields{"id": ownRole, "managed": true, "tags": fields{"bot_id": []any{}}}
 	p := roleCall(t, ownRole)
 	for name, c := range map[string]struct {
 		typ     string
 		payload any
 		call    bool
+		unread  bool // a part of it cannot be read
 	}{
-		"Guild Create":      {"GUILD_CREATE", fields{"id": p["guild_id"], "roles": guildRoles(bot)}, true},
-		"Guild Role Create": {"GUILD_ROLE_CREATE", fields{"guild_id": p["guild_id"], "role": role}, true},
-		"Guild Role Update": {"GUILD_ROLE_UPDATE", fields{"guild_id": p["guild_id"], "role": role}, true},
-		"one of two":        {"GUILD_CREATE", fields{"id": p["guild_id"], "roles": append([]any{fields{"id": []any{}}}, guildRoles(bot)...)}, true},
-		"another's role":    {"GUILD_ROLE_CREATE", fields{"guild_id": p["guild_id"], "role": fields{"id": ownRole, "managed": true, "tags": fields{"bot_id": another}}}, false},
-		"no role":           {"GUILD_ROLE_UPDATE", fields{"guild_id": p["guild_id"]}, false},
-		"not a list":        {"GUILD_CREATE", fields{"id": p["guild_id"], "roles": "none"}, false},
+		"Guild Create":      {"GUILD_CREATE", fields{"id": p["guild_id"], "roles": guildRoles(bot)}, true, false},
+		"Guild Role Create": {"GUILD_ROLE_CREATE", fields{"guild_id": p["guild_id"], "role": role}, true, false},
+		"Guild Role Update": {"GUILD_ROLE_UPDATE", fields{"guild_id": p["guild_id"], "role": role}, true, false},
+		"one of two":        {"GUILD_CREATE", fields{"id": p["guild_id"], "roles": append([]any{unread}, guildRoles(bot)...)}, true, true},
+		"one read in part":  {"GUILD_CREATE", fields{"id": p["guild_id"], "roles": append(guildRoles(bot), unread)}, true, true},
+		"another's role":    {"GUILD_ROLE_CREATE", fields{"guild_id": p["guild_id"], "role": fields{"id": ownRole, "managed": true, "tags": fields{"bot_id": another}}}, false, false},
+		"no role":           {"GUILD_ROLE_UPDATE", fields{"guild_id": p["guild_id"]}, false, false},
+		"not a list":        {"GUILD_CREATE", fields{"id": p["guild_id"], "roles": "none"}, false, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			d, s := testDriver(t, botID(t), newFakeREST(t), nil), newSink()
+			if err := d.roleEvent(c.typ, raw(t, c.payload)); (err != nil) != c.unread {
+				t.Errorf("%v, want an error: %v", err, c.unread)
+			}
 			event(t, d, s, c.typ, c.payload)
 			event(t, d, s, "MESSAGE_CREATE", p)
 			if len(s.messages) != 1 || s.messages[0].Call != c.call {
@@ -530,6 +570,9 @@ func TestASessionBeginsTheWaitForItsRoles(t *testing.T) {
 	}()
 	for _, session := range []string{"the first", "another"} {
 		if session == "another" {
+			d.mu.Lock()
+			d.session = d.session.Add(-2 * rolesWithin) // the first wait is over
+			d.mu.Unlock()
 			g.mu.Lock()
 			g.refuseResume = true
 			g.mu.Unlock()
