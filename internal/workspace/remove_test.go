@@ -1033,6 +1033,44 @@ func TestRefuseRepositoryInRefs(t *testing.T) {
 	}
 }
 
+// A repository whose files are all lines of a reflog, one of which says where
+// its objects are.
+func TestRefuseRepositoryOfReflogs(t *testing.T) {
+	for name, want := range map[string]Reason{"commondir": UnpushedRef, "objects/info/alternates": DetachedHEAD} {
+		t.Run(name, func(t *testing.T) {
+			x := newRemoval(t)
+			dir := filepath.Join(x.clone, ".git")
+			store, n := filepath.Join(dir, "store"), filepath.Join(dir, "logs", "n")
+			x.git(x.tmp, "clone", "-q", "--bare", x.bare, store)
+			id := x.git(x.clone, "commit-tree", "-m", "w", "HEAD^{tree}")
+			x.git(x.clone, "push", "-q", store, id+":refs/heads/wip")
+			os.Remove(filepath.Join(store, "HEAD")) // nothing but objects to look at
+			zero := strings.Repeat("0", 40)
+			line := id + " " + zero + " x"
+			file := filepath.Join(n, filepath.FromSlash(name))
+			for _, d := range []string{filepath.Dir(file), filepath.Join(n, "objects", line), filepath.Join(n, "refs"), filepath.Join(n, line)} {
+				if err := os.MkdirAll(d, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			to := line + "/../../../store" // from n
+			if name != "commondir" {
+				to = line + "/../../../../store/objects" // from n/objects
+			}
+			for p, content := range map[string]string{filepath.Join(n, "HEAD"): line + "\n", file: to + "\n"} {
+				if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := x.git(n, "rev-parse", "HEAD^{commit}"); got != id {
+				t.Fatalf("the repository is at %s, not at %s", got, id)
+			}
+			os.Remove(filepath.Join(dir, "objects", id[:2], id[2:]))
+			wantRefusal(t, x.check(), want, filepath.Join(".git", "logs", "n"))
+		})
+	}
+}
+
 // A pipe is not read.
 func TestRefuseFIFOAsHEAD(t *testing.T) {
 	x := newRemoval(t)

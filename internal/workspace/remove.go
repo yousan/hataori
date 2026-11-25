@@ -863,7 +863,9 @@ func isGitDir(p string) bool {
 // onlyRefs reports whether p, in the git directory in, is below its refs or
 // logs and holds nothing but refs or reflogs, as refs/remotes/origin does of a
 // remote that has a branch objects/x, beside the remote's HEAD. No file of it
-// is an object.
+// is an object, nor says where objects are, as commondir and
+// objects/info/alternates do: git takes a line of a reflog for a HEAD, and for
+// a path.
 func (c *checker) onlyRefs(in, p string) bool {
 	holds := refFile
 	switch {
@@ -880,7 +882,7 @@ func (c *checker) onlyRefs(in, p string) bool {
 		if err != nil || d.IsDir() {
 			return err
 		}
-		if !d.Type().IsRegular() {
+		if !d.Type().IsRegular() || d.Name() == "commondir" || d.Name() == "alternates" {
 			return errors.New("neither a ref nor a reflog")
 		}
 		f, err := os.Open(p)
