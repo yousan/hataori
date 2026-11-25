@@ -166,7 +166,13 @@ func TestANewerSessionsTokenReplacesTheOlders(t *testing.T) {
 			t.Fatalf("revoked %s, want the older session's token, once", got)
 		}
 	}
-	s.Unconfine(newer, 81)
+	// One whose token is the older's keeps it bound.
+	sessionOf(t, s.Core, newer, 82)
+	confine(82, dir)
+	if got := fmt.Sprint(tokens.revoked); got != "["+testToken+"]" {
+		t.Fatalf("revoked %s: the newer session's own token too", got)
+	}
+	s.Unconfine(newer, 82)
 	if got := fmt.Sprint(tokens.revoked); got != "["+testToken+" "+second+"]" {
 		t.Fatalf("closed: revoked %s, want the newer one's too", got)
 	}
@@ -252,6 +258,30 @@ func TestAClosedSessionIsBoundNoToken(t *testing.T) {
 		if (err == nil) != (c.bound == 1) || len(tokens.bound) != c.bound {
 			t.Errorf("a launch of a session that is %s: %v, bound %d, want %d", c.state, err, len(tokens.bound), c.bound)
 		}
+	}
+}
+
+// A session closed while its launch waits to bind its token is bound none:
+// its state is read once no other binding or revocation runs, so that one
+// closed after that is unbound by its Unconfine.
+func TestASessionClosedBeforeItsTokenIsBound(t *testing.T) {
+	var log bytes.Buffer
+	s, tokens := layerSessions(t, &log)
+	beside(t, s.Core, control.Idle, control.Idle, control.Idle)
+	sessionOf(t, s.Core, newer, 80)
+	exec(t, s.Core, `UPDATE sessions SET state = 'failed' WHERE id = 80`)
+	s.mu.Lock() // as another thread's binding
+	done := make(chan error, 1)
+	l := runner.ConfinedLaunch{Scope: "c1", Thread: newer, Session: 80, Dir: t.TempDir(), StateDir: t.TempDir()}
+	go func() {
+		_, err := s.Confine(context.Background(), l)
+		done <- err
+	}()
+	time.Sleep(200 * time.Millisecond) // it waits for the lock
+	exec(t, s.Core, `UPDATE sessions SET state = 'closed' WHERE id = 80`)
+	s.mu.Unlock()
+	if err := <-done; err == nil || len(tokens.bound) != 0 {
+		t.Fatalf("a launch of a session closed meanwhile: %v, bound %d, want none", err, len(tokens.bound))
 	}
 }
 

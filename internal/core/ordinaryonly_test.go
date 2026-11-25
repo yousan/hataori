@@ -314,58 +314,63 @@ func TestInterruptRequestsOfEachThreadAreItsOwn(t *testing.T) {
 }
 
 // Open requests of several of the supervisor's threads for one turn that are
-// approved at once interrupt it once, for one of them: the others end
-// without one (#871).
+// approved at once interrupt it once: the ones approved while the first's
+// interrupt is on its way wait for it, and end without one (#871).
 func TestInterruptRequestsApprovedAtOnceInterruptOnce(t *testing.T) {
 	ctx := context.Background()
 	k := newKinds(t)
 	k.core.People = people.New([]people.Person{{Name: "sv", IDs: []string{"supervisor:s"}}}, "owner", map[string][]string{"s": {"sv"}})
 	threads := []control.ThreadID{k.start(t, control.KindSupervisor, "sv")}
-	for i := range 5 {
+	for i := range 4 {
 		threads = append(threads, k.start(t, control.KindConversation, fmt.Sprint("c", i)))
 	}
+	worker, err := k.owner.Start(ctx, control.StartRequest{Key: "w", Scope: "s", Thread: "w", Input: control.Input{Text: "go"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	k.agentEvent(t, k.session(t, worker), 1, agent.Event{Kind: agent.SessionReady})
 	owner := k.core.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all})
-	for round := range 10 {
-		key := fmt.Sprint("w", round)
-		worker, err := k.owner.Start(ctx, control.StartRequest{Key: key, Scope: "s", Thread: key, Input: control.Input{Text: "go"}})
+	if err := owner.Send(ctx, worker, "p", control.Input{Text: "a person's"}, control.Refuse); err != nil {
+		t.Fatal(err)
+	}
+	var reqs []control.RequestID
+	for _, id := range threads {
+		sv := k.core.As(control.Caller{From: "supervisor:s", Scopes: []string{"s"}, May: control.OpAsk | control.OpSend, AsksIn: id, Mark: "supervisor", OrdinaryOnly: true})
+		req, err := sv.AskInterrupt(ctx, worker, "", fmt.Sprint("asked in ", id))
 		if err != nil {
 			t.Fatal(err)
 		}
-		k.agentEvent(t, k.session(t, worker), 1, agent.Event{Kind: agent.SessionReady})
-		if err := owner.Send(ctx, worker, key+"p", control.Input{Text: "a person's"}, control.Refuse); err != nil {
-			t.Fatal(err)
-		}
-		var reqs []control.RequestID
-		for _, id := range threads {
-			sv := k.core.As(control.Caller{From: "supervisor:s", Scopes: []string{"s"}, May: control.OpAsk | control.OpSend, AsksIn: id, Mark: "supervisor", OrdinaryOnly: true})
-			req, err := sv.AskInterrupt(ctx, worker, "", fmt.Sprintf("round %d, asked in %d", round, id))
-			if err != nil {
-				t.Fatal(err)
-			}
-			reqs = append(reqs, req)
-		}
-		before := strings.Count(k.runner.Calls(), "interrupt")
-		var wg sync.WaitGroup
-		for _, req := range reqs {
+		reqs = append(reqs, req)
+	}
+	var wg sync.WaitGroup
+	k.runner.mu.Lock()
+	k.runner.beforeInterrupt = func() {
+		for _, req := range reqs[1:] {
 			wg.Go(func() {
 				if err := owner.Answer(ctx, req, control.Answer{Allow: true}); err != nil {
-					t.Errorf("round %d: %v", round, err)
+					t.Error(err)
 				}
 			})
 		}
-		wg.Wait()
-		outcomes := map[string]int{}
-		for _, id := range threads {
-			ev := eventsOf(t, k.fixture, id, "approval_answered")
-			for _, o := range []string{"interrupted", "ended"} {
-				if len(ev) == round+1 && strings.Contains(ev[round], `"outcome":"`+o+`"`) {
-					outcomes[o]++
-				}
-			}
+		// Each comes as far as it can while the first has no outcome.
+		time.Sleep(500 * time.Millisecond)
+	}
+	k.runner.mu.Unlock()
+	if err := owner.Answer(ctx, reqs[0], control.Answer{Allow: true}); err != nil {
+		t.Fatal(err)
+	}
+	wg.Wait()
+	for i, id := range threads {
+		want := "ended"
+		if i == 0 {
+			want = "interrupted"
 		}
-		if n := strings.Count(k.runner.Calls(), "interrupt") - before; n != 1 || outcomes["interrupted"] != 1 || outcomes["ended"] != len(threads)-1 {
-			t.Fatalf("round %d: %d interrupts, outcomes %v; want one, for one of the %d requests", round, n, outcomes, len(threads))
+		if ev := eventsOf(t, k.fixture, id, "approval_answered"); len(ev) != 1 || !strings.Contains(ev[0], `"outcome":"`+want+`"`) {
+			t.Errorf("thread %d: approval_answered %v; want one, %s", id, ev, want)
 		}
+	}
+	if calls := k.runner.Calls(); strings.Count(calls, "interrupt") != 1 {
+		t.Errorf("runner calls %s; want one interrupt", calls)
 	}
 }
 
