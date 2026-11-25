@@ -1229,10 +1229,7 @@ func TestAWindowWhoseAnswerIsCutIsMadeAgain(t *testing.T) {
 	for _, at := range []string{"pane-pid", "version"} {
 		for _, always := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s always %v", at, always), func(t *testing.T) {
-				cut, err := filepath.Abs("testdata/new-session-cut-" + at + "-3.8.txt")
-				if err != nil {
-					t.Fatal(err)
-				}
+				cut, listing := capture(t, "new-session-cut-"+at+"-3.8.txt"), capture(t, "list-panes-cut-3.8.txt")
 				s := newServer(t)
 				dir := filepath.Join(s.dir, "7")
 				if err := os.Mkdir(dir, 0o700); err != nil {
@@ -1241,12 +1238,15 @@ func TestAWindowWhoseAnswerIsCutIsMadeAgain(t *testing.T) {
 				s.run("new-session", "-d", "-s", "theirs", placeholder)
 				before := s.panes()
 				h := s.starter()
-				made := filepath.Join(s.dir, "made")
+				made, listed := filepath.Join(s.dir, "made"), filepath.Join(s.dir, "listed")
 				h.Tmux = s.script(`case "$*" in *" new-session "*)
 	echo x >> ` + made + `
 	if [ $(wc -l < ` + made + `) -eq 1 ] || ` + strconv.FormatBool(always) + `; then
 		` + s.tmux + ` "$@" > /dev/null && exec cat ` + quote(cut) + `
-	fi;; esac
+	fi;;
+*" list-panes -s "*) # two in a row, after a window was made
+	if [ -e ` + made + ` ] && echo x >> ` + listed + ` && [ $(wc -l < ` + listed + `) -le 2 ]; then exec cat ` + quote(listing) + `; fi;;
+esac
 exec ` + s.tmux + ` "$@"`)
 				w, err := h.Start(t.Context(), dir, sleeper)
 				after := s.panes()
@@ -1271,6 +1271,16 @@ exec ` + s.tmux + ` "$@"`)
 			})
 		}
 	}
+}
+
+// capture is the path of a capture.
+func capture(t *testing.T, name string) string {
+	t.Helper()
+	p, err := filepath.Abs(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }
 
 // With windows of a person's left in its session, the next start makes the

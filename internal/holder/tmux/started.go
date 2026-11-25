@@ -140,7 +140,8 @@ func (h *Holder) Start(ctx context.Context, stateDir string, spec holder.Spec) (
 	return holder.Window{Holder: Name, Ref: string(rb), Owned: true, Process: cmp.Or(p.pid, made)}, nil
 }
 
-// makeTries is how often a window is made whose answer tmux cut short.
+// makeTries is how often a window is made, or a listing read, whose answer
+// tmux cut short.
 const makeTries = 3
 
 // makeWindow makes the window Start runs the agent in, with the placeholder
@@ -768,20 +769,33 @@ func signalName(s string) string {
 // directory.
 func (h *Holder) leftover(ctx context.Context, stateDir string) (map[string]pane, error) {
 	name := h.Prefix + filepath.Base(stateDir)
-	out, err := h.serverCmd(ctx, "list-panes", "-s", "-t", "="+name+":", "-F", "#{pane_id} #{pane_pid} #{pane_dead} #{pane_start_command}")
-	if err != nil {
-		return nil, err
-	}
 	// The pane Start made runs the placeholder until the respawn, and
-	// `hataori exec <stateDir>` after it.
+	// `hataori exec <stateDir>` after it. A line that does not end with the
+	// pane was cut (makeWindow), or has a line break of a person's command.
 	ps := map[string]pane{}
-	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		f := strings.SplitN(l, " ", 4)
-		if len(f) != 4 || !(runsExec(f[3], stateDir) || strings.Trim(f[3], `"`) == placeholder) {
-			continue
+	for range makeTries {
+		out, err := h.serverCmd(ctx, "list-panes", "-s", "-t", "="+name+":", "-F", "#{pane_id} #{pane_pid} #{pane_dead} #{pane_start_command} #{pane_id}")
+		if err != nil {
+			return nil, err
 		}
-		pid, _ := strconv.Atoi(f[1])
-		ps[f[0]] = pane{pid: pid, dead: f[2] == "1", start: f[3]}
+		clear(ps)
+		whole := true
+		for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			f := strings.SplitN(l, " ", 4)
+			start, ended := strings.CutSuffix(f[len(f)-1], " "+f[0])
+			if len(f) != 4 || !ended {
+				whole = false
+				continue
+			}
+			if !runsExec(start, stateDir) && strings.Trim(start, `"`) != placeholder {
+				continue
+			}
+			pid, _ := strconv.Atoi(f[1])
+			ps[f[0]] = pane{pid: pid, dead: f[2] == "1", start: start}
+		}
+		if whole {
+			break
+		}
 	}
 	return ps, nil
 }
