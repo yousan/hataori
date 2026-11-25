@@ -217,7 +217,11 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 		// it is pressed after that turn.
 		typed := c.pasteText(in.Text)
 		text := normalize(typed)
-		c.pasted = append(c.pasted, queued{id: in.ID, text: text})
+		q := queued{id: in.ID, text: text}
+		if c.spec.Confine != nil {
+			q.older = normalize(noCommand(cleanPaste(in.Text)))
+		}
+		c.pasted = append(c.pasted, q)
 		if c.sent == nil {
 			c.sent = &sentInput{text: text, typed: typed, id: in.ID, pressed: true}
 		}
@@ -227,8 +231,12 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 	return c.number(c.flush()), nil
 }
 
-// queued is an input and its Input.ID.
-type queued struct{ id, text string }
+// queued is an input and its Input.ID. older is set for one that was pasted
+// before a restart into a confined session: what a hataori that left each
+// "@" (before #887) pasted for it. Which hataori pasted it is not recorded,
+// so a person who types just that meanwhile counts as the input, as a person
+// who types just what is pasted always does.
+type queued struct{ id, text, older string }
 
 // Bracketed paste: what the terminal sends around pasted text. The holder
 // adds them; pasted text must not hold them.
@@ -251,13 +259,34 @@ var (
 // trims it when it puts an interrupted prompt back in the box.
 const commandPrefix = "(message) "
 
+// atSign is what is pasted for each "@" of an input of a confined session.
+// The CLI takes an "@" for a mention and puts what it names into the
+// conversation: a file, an MCP server's resource, a subagent
+// (testdata/2.1.332/mention_*). --restricted keeps out files outside the
+// session's directory only. Which "@" it takes depends on what is before
+// it, but the CLI first takes out escape sequences and characters that do
+// not show, so every "@" is written so, one in a word too. A text's own
+// "(at)" is not told from it.
+const atSign = "(at)"
+
+// atSignNote tells the agent of a confined session about atSign, so that
+// what it passes on, shows to a person or mentions a person with has the
+// "@" again.
+const atSignNote = "In every message you are given, each at sign (@) is written as " + atSign + ", so that your program takes none for a mention. " +
+	"In everything you write, use @ itself: where you quote such a text, where you pass it on, and where you mention a person, also when the message says whom to mention."
+
 // pasteText is what is pasted for text: without the paste markers, and in
-// a confined session, with commandPrefix before a command.
+// a confined session, with no "@" and with commandPrefix before a command.
 func (c *codec) pasteText(text string) string {
 	text = cleanPaste(text)
 	if c.spec.Confine == nil {
 		return text
 	}
+	return noCommand(strings.ReplaceAll(text, "@", atSign))
+}
+
+// noCommand is text with commandPrefix before it if it would be a command.
+func noCommand(text string) string {
 	// Spaces, and characters such as a zero-width space, which the CLI
 	// dropped before "/add-dir", do not count as the start.
 	first := strings.TrimLeftFunc(text, func(r rune) bool { return unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) })
@@ -1139,9 +1168,9 @@ func denyWrite(path string) []byte {
 func (c *codec) starter(prompt string) (agent.Starter, string) {
 	text := normalize(unwrapPaste(prompt))
 	for i, p := range c.pasted {
-		if p.text == text {
+		if p.text == text || p.older != "" && p.older == text {
 			c.pasted = append(c.pasted[:i], c.pasted[i+1:]...)
-			if c.sent != nil && c.sent.text == text {
+			if c.sent != nil && c.sent.text == p.text {
 				c.sent = nil // delivered
 			}
 			return agent.ByCaller, p.id

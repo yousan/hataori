@@ -95,6 +95,12 @@ type Launch struct {
 	// A confined spec whose launch does not say so is never started, so an
 	// adapter that knows nothing of confinement refuses it.
 	Confined bool
+	// NoMentions says that the agent takes nothing in a text that the
+	// session is given as input, whoever wrote it, for a mention: its own
+	// notation for a file, a resource or another agent (such as an "@"
+	// before a path) that makes it put what is named into the conversation.
+	// A confined spec whose launch does not say so is never started either.
+	NoMentions bool
 	// NoProjectSettings says the launch leaves the project's settings out,
 	// as Spec.NoProjectSettings asks. Unless it is confined, such a spec is
 	// never started without it either.

@@ -206,7 +206,7 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 		}
 		l.Files[MCPConfigFile] = b
 		l.Argv = append(l.Argv, "--mcp-config", filepath.Join(spec.StateDir, MCPConfigFile))
-		l.Confined = true
+		l.Confined, l.NoMentions = true, true
 	}
 	return l, nil
 }
