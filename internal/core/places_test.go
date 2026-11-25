@@ -419,6 +419,29 @@ func TestPlacesGoToWhatWaitsLongest(t *testing.T) {
 		"deliver b1, deliver a1, deliver c1, start d, deliver a2, deliver a3, deliver a4, ")
 }
 
+// A turn that the agent began by itself, or that a person typed at its
+// terminal, puts what waits in its conversation behind nobody's.
+func TestAnAgentsOwnTurnChangesNoOrder(t *testing.T) {
+	for what, by := range map[string]agent.Starter{"the agent": agent.ByAgent, "a terminal": agent.ByTerminal} {
+		t.Run(what, func(t *testing.T) {
+			k := newTalks(t, 1)
+			a, b := k.idles(t, "a"), k.idles(t, "b")
+			busy := k.runs(t, "busy")
+			k.say(t, a, "a1")
+			k.event(t, a, agent.Event{Kind: agent.TurnStarted, StartedBy: by})
+			k.say(t, a, "a2")
+			k.say(t, b, "b1")
+			k.ends(t, a)
+			k.ends(t, busy)
+			want(t, "what came first", k.pass(t), "deliver a1")
+			k.ends(t, a)
+			want(t, "then", k.pass(t), "deliver b1")
+			k.ends(t, b)
+			want(t, "behind a's turn of a1", k.pass(t), "deliver a2")
+		})
+	}
+}
+
 // A person's message gets its place before a wake that waits longer, and only
 // the message gets the line.
 func TestAPersonsMessageGoesBeforeAWake(t *testing.T) {
@@ -453,6 +476,30 @@ func TestAPersonsMessageBehindAWakeGetsTheLine(t *testing.T) {
 	want(t, "then", k.pass(t), "deliver wake")
 }
 
+// A message that goes before the start of its conversation, which nobody
+// wrote, is the first input: the conversation starts with it, in the directory
+// of its start.
+func TestAMessageBeforeItsConversationsStart(t *testing.T) {
+	k := newTalks(t, 1)
+	busy := k.runs(t, "busy")
+	id, err := k.core.StartConfined(context.Background(), control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all, NoAnswer: true},
+		control.StartRequest{Key: "w", Scope: "s", Thread: "w", Input: control.Input{Text: "w"}}, control.KindConversation, InDir(k.dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	k.say(t, id, "m")
+	k.ends(t, busy)
+	r := &recordingRunner{fakeRunner: k.runner}
+	k.core.Runner = r
+	want(t, "the message", k.pass(t), "start m")
+	if l := r.started[0]; l.Dir != k.dir || l.Key != "m" || l.From != "chat:U1" {
+		t.Fatalf("started as %+v", l)
+	}
+	k.ready(t, id)
+	k.ends(t, id)
+	want(t, "its start", k.pass(t), "deliver w")
+}
+
 // A place that is free while others wait for it is not taken by a newcomer,
 // which waits behind them.
 func TestANewcomerWaitsBehindThoseThatWait(t *testing.T) {
@@ -483,6 +530,32 @@ func TestWhatCannotBeGivenHoldsNoPlaceBack(t *testing.T) {
 	k.event(t, blocked, agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: "r", Text: "which?"}})
 	want(t, "a2 is no answer", k.pass(t), "")
 	want(t, "another's message", k.got(t, func() { k.say(t, b, "b1") }), "deliver b1")
+
+	// It goes on, waits again, and its launch fails.
+	want(t, "the answer", k.got(t, func() { k.say(t, blocked, "blue") }), "answer r")
+	k.ends(t, blocked)
+	k.sleeps(t, blocked)
+	k.say(t, blocked, "a3")
+	k.ends(t, b)
+	want(t, "a2", k.pass(t), "resume a2")
+	k.say(t, b, "b2")
+	if err := k.core.Machine.Apply(context.Background(), k.session(t, blocked), session.Input{Kind: session.StartTimeout}); err != nil {
+		t.Fatal(err)
+	}
+	if st := k.threadState(t, blocked); st != control.Failed {
+		t.Fatalf("it is %s", st)
+	}
+	want(t, "another's", k.pass(t), "deliver b2")
+	k.ends(t, b)
+	want(t, "with a place free", k.pass(t), "")
+	want(t, "another's message", k.got(t, func() { k.say(t, b, "b3") }), "deliver b3")
+	if n := k.waits(t); n != 1 {
+		t.Fatalf("%d inputs wait", n)
+	}
+	k.close(t, blocked)
+	if n := k.waits(t); n != 0 {
+		t.Fatalf("%d inputs wait once it is closed", n)
+	}
 }
 
 // A message to a conversation whose turn runs waits for its end, and is not
@@ -727,6 +800,8 @@ func TestAClosedConversationsInputIsDropped(t *testing.T) {
 // One whose input cannot be given is logged and tried again, and holds no
 // other back.
 func TestOneThatCannotBeGivenHoldsNobodyBack(t *testing.T) {
+	defer func(d time.Duration) { placesRetry = d }(placesRetry)
+	placesRetry = 10 * time.Millisecond
 	k := newTalks(t, 1)
 	a, b := k.idles(t, "a"), k.idles(t, "b")
 	busy := k.runs(t, "busy")
@@ -748,10 +823,27 @@ func TestOneThatCannotBeGivenHoldsNobodyBack(t *testing.T) {
 		t.Fatalf("%d inputs wait", n)
 	}
 	k.ends(t, b)
-	if _, err := k.core.Store.DB.Exec(`UPDATE waiting_inputs SET input = substr(input, 2)`); err != nil {
-		t.Fatal(err)
-	}
-	want(t, "a's", k.pass(t), "deliver a1")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	want(t, "a's, again", k.got(t, func() {
+		go func() {
+			defer close(done)
+			k.core.GiveWaiting(ctx)
+		}()
+		given := func() bool { return strings.Count(k.log.String(), "input that waits is not given") > 3 }
+		for end := time.Now().Add(10 * time.Second); !given(); time.Sleep(5 * time.Millisecond) {
+			if time.Now().After(end) {
+				t.Fatalf("it is not tried again:\n%s", k.log)
+			}
+		}
+		if _, err := k.core.Store.DB.Exec(`UPDATE waiting_inputs SET input = substr(input, 2)`); err != nil {
+			t.Fatal(err)
+		}
+		for end := time.Now().Add(10 * time.Second); k.waits(t) != 0 && time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
+		}
+		cancel()
+		<-done
+	}), "deliver a1")
 }
 
 // A wake that asks for a conversation of its own is refused while no place is
@@ -779,8 +871,10 @@ func TestAFreshWakeOfAConversationIsRefusedWithoutAPlace(t *testing.T) {
 	}), "resume w")
 }
 
-// A limit taken out of the config, or made larger, gives what waited under
-// it; a smaller one takes nobody's place.
+// A larger limit gives what waited under a smaller one, which takes nobody's
+// place. What waits in a scope whose supervisor was taken out of the config,
+// or that left the config, is kept until it is back: a conversation could not
+// be launched there.
 func TestAnotherLimit(t *testing.T) {
 	k := newTalks(t, 1)
 	a, b := k.idles(t, "a"), k.idles(t, "b")
@@ -795,16 +889,24 @@ func TestAnotherLimit(t *testing.T) {
 	k.ends(t, a)
 	want(t, "with one again", k.pass(t), "")
 	k.limit(0)
+	k.ends(t, busy)
+	want(t, "with no supervisor", k.pass(t), "")
+	want(t, "nor told that it waits", k.lines(t, busy), "")
 	want(t, "behind what waits in it", k.got(t, func() { k.say(t, b, "b2") }), "")
-	want(t, "with none", k.pass(t), "deliver b1")
-	want(t, "behind what waits", k.got(t, func() { k.say(t, busy, "m2") }), "")
-	want(t, "while its turn runs", k.pass(t), "")
-	k.ends(t, busy)
-	want(t, "after it", k.pass(t), "deliver m")
-	k.ends(t, busy)
-	want(t, "after that", k.pass(t), "deliver m2")
+	k.runs(t, "c")
+	want(t, "nothing waits for it", k.got(t, func() { k.say(t, a, "a2") }), "deliver a2")
+	k.ends(t, a)
+	s := k.core.Scopes["s"]
+	delete(k.core.Scopes, "s")
+	k.core.Scopes["t"] = Scope{Enabled: true, ConversationsAtOnce: 1}
+	want(t, "with no scope", k.pass(t), "")
+	k.core.Scopes["s"] = s
+	k.limit(2)
+	want(t, "with two again", k.pass(t), "deliver b1")
 	k.ends(t, b)
-	want(t, "after the other's", k.pass(t), "deliver b2")
+	want(t, "the one whose turn ran", k.pass(t), "deliver m")
+	k.ends(t, busy)
+	want(t, "in order", k.pass(t), "deliver b2")
 }
 
 // GiveWaiting gives what waits when a place becomes free and when input
@@ -861,20 +963,37 @@ func TestGiveWaiting(t *testing.T) {
 	k.ends(t, busy)
 	runner("; deliver a1; deliver b1; deliver a2")
 	k.ends(t, a)
-	// With no place free, then nobody's turn in the way: told by the message.
-	end()
-	k.core.places = places{}
+	// What comes while it runs and waits is told so.
 	k.say(t, busy, "b2")
-	k.say(t, busy, "b3")
+	before := k.lines(t, a)
+	k.say(t, a, "a3")
+	until("the line of a message", func() bool { return k.lines(t, a) != before })
+	c := k.call(t, "c")
+	until("the line of a call", func() bool { return k.lines(t, c) != "" })
 	k.ends(t, busy)
-	end = gives()
-	runner("; deliver a1; deliver b1; deliver a2; deliver b2; deliver b3")
-	k.say(t, busy, "b4")
-	k.ends(t, busy)
-	runner("; deliver a1; deliver b1; deliver a2; deliver b2; deliver b3; deliver b4")
+	runner("; deliver a1; deliver b1; deliver a2; deliver b2; deliver a3")
+	k.ends(t, a)
+	runner("; deliver a1; deliver b1; deliver a2; deliver b2; deliver a3; start c")
+	k.ready(t, c)
+	k.say(t, a, "a4")
 	end()
 
-	k.ends(t, busy)
+	// After an error it goes on.
+	defer func(d time.Duration) { placesRetry = d }(placesRetry)
+	placesRetry = 10 * time.Millisecond
+	rename := func(from, to string) {
+		if _, err := k.core.Store.DB.Exec(`ALTER TABLE ` + from + ` RENAME TO ` + to); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rename("waiting_inputs", "gone")
+	end = gives()
+	until("the error", func() bool { return strings.Contains(k.log.String(), "trying again") })
+	rename("gone", "waiting_inputs")
+	k.ends(t, c)
+	runner("; deliver a1; deliver b1; deliver a2; deliver b2; deliver a3; start c; deliver a4")
+	end()
+
 	k.limit(0)
 	done := make(chan struct{})
 	go func() {
@@ -884,6 +1003,51 @@ func TestGiveWaiting(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
-		t.Fatal("GiveWaiting goes on though nothing waits and nothing can")
+		t.Fatal("GiveWaiting goes on though nothing can wait")
+	}
+}
+
+// heldRunner hands nothing over until it may.
+type heldRunner struct {
+	*fakeRunner
+	asked, may chan struct{}
+}
+
+func (r *heldRunner) Deliver(ctx context.Context, sid, pending int64, in control.Input) error {
+	close(r.asked)
+	<-r.may
+	return r.fakeRunner.Deliver(ctx, sid, pending, in)
+}
+
+// GiveWaiting does not return while it hands over what it gave.
+func TestGiveWaitingEndsAfterItsHands(t *testing.T) {
+	k := newTalks(t, 1)
+	a := k.idles(t, "a")
+	busy := k.runs(t, "busy")
+	k.say(t, a, "a1")
+	r := &heldRunner{k.runner, make(chan struct{}), make(chan struct{})}
+	k.core.Runner = r
+	k.ends(t, busy)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		k.core.GiveWaiting(ctx)
+	}()
+	<-r.asked
+	cancel()
+	select {
+	case <-done:
+		t.Fatal("it returned while its input is handed over")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(r.may)
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("GiveWaiting does not end")
+	}
+	if got := k.runner.Calls(); !strings.HasSuffix(got, "; deliver a1") {
+		t.Fatalf("the runner got %s", got)
 	}
 }

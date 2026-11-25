@@ -53,7 +53,8 @@ type Scope struct {
 	ShowIn []string
 	// ConversationsAtOnce is how many of the scope's conversations with its
 	// supervisor run a turn at a time (design, section 7.1, "Several at
-	// once"); 0 for any number.
+	// once"). It is 0 in a scope without a supervisor: input waits for no
+	// place there, and what waited before is kept.
 	ConversationsAtOnce int
 }
 
@@ -2262,9 +2263,6 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		return nil
 	}
 	var notInterrupted error
-	if interrupt && waits && running == 0 {
-		interrupt = false // no turn is open: there is nothing to interrupt
-	}
 	if interrupt {
 		// A guarded send names its turn: the runner interrupts only while
 		// that turn runs, checked in the step that interrupts (#457), so a

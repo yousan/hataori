@@ -25,7 +25,7 @@ import (
 const KindInputWaits control.EventKind = "input_waits"
 
 // placesRetry is how long after a failed pass GiveWaiting makes the next one.
-const placesRetry = 30 * time.Second
+var placesRetry = 30 * time.Second
 
 // places tells GiveWaiting that input was stored that waits. Its zero value
 // is ready.
@@ -158,18 +158,19 @@ type waitingInput struct {
 
 // waitingNext returns the conversations of scope that a place could be given
 // to now, in the order they get one: what a person wrote before a wake, then
-// what waits longest. A message that came while its conversation had a turn
-// waits for a place from the end of that turn on, so one with many messages
-// does not hold another's first back.
+// what waits longest. A message waits for a place from the end of the turn
+// that the one before it in its conversation had, so one with many messages
+// does not hold another's first back; a turn that the agent began by itself,
+// or that a person typed at its terminal, was none of them.
 func waitingNext(ctx context.Context, tx *store.Tx, scope string) ([]waitingInput, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT w.id, w.thread_id, s.id, s.state, s.spec != '', w.wake,
-			EXISTS (SELECT 1 FROM waiting_inputs o WHERE o.thread_id = w.thread_id AND o.told = 1),
-			max(w.pos, coalesce((SELECT max(e.pos) FROM events e WHERE e.thread_id = w.thread_id AND e.kind = ?), 0)) AS since
+	rows, err := tx.QueryContext(ctx, `SELECT w.id, w.thread_id, s.id, s.state, s.spec != '', w.wake, w.told,
+			max(w.pos, coalesce((SELECT max(e.pos) FROM events e JOIN turns u ON u.id = json_extract(e.data, '$.turn')
+				WHERE e.thread_id = w.thread_id AND e.kind = ? AND u.started_by = ?), 0)) AS since
 		FROM waiting_inputs w JOIN threads t ON t.id = w.thread_id
 		JOIN sessions s ON s.id = (SELECT max(n.id) FROM sessions n WHERE n.thread_id = t.id)
-		WHERE t.scope = ? AND (s.state = ? OR s.state = ? AND s.set_aside IS NULL)
+		WHERE t.scope = ? AND s.state IN (?, ?)
 		ORDER BY w.wake, since, w.id`,
-		string(session.KindTurnEnded), scope, string(control.Asleep), string(control.Idle))
+		string(session.KindTurnEnded), session.ByCaller, scope, string(control.Asleep), string(control.Idle))
 	if err != nil {
 		return nil, fmt.Errorf("core: waiting inputs: %w", err)
 	}
@@ -196,19 +197,19 @@ func waitingNext(ctx context.Context, tx *store.Tx, scope string) ([]waitingInpu
 // GiveWaiting gives what waits for a place, in every scope, as places become
 // free, until ctx ends; it returns once what it gave was handed over. Each
 // place is for one input. Call it after Recover, which hands over what was
-// given before. Without a limit in any scope and with nothing waiting it
-// returns at once.
+// given before. Without a limit in any scope it returns at once.
 func (c *Core) GiveWaiting(ctx context.Context) {
+	limited := false
+	for _, s := range c.Scopes {
+		limited = limited || s.ConversationsAtOnce > 0
+	}
+	if !limited {
+		return
+	}
 	var hands sync.WaitGroup
 	defer hands.Wait()
 	for {
-		limited, err := c.limited(ctx)
-		if err == nil {
-			if !limited {
-				return
-			}
-			err = c.giveWaiting(ctx, &hands)
-		}
+		err := c.giveWaiting(ctx, &hands)
 		if ctx.Err() != nil {
 			return
 		}
@@ -219,18 +220,6 @@ func (c *Core) GiveWaiting(ctx context.Context) {
 		case <-time.After(placesRetry):
 		}
 	}
-}
-
-// limited reports whether input may come to wait for a place, or does.
-func (c *Core) limited(ctx context.Context) (bool, error) {
-	for _, s := range c.Scopes {
-		if s.ConversationsAtOnce > 0 {
-			return true, nil
-		}
-	}
-	// A limit was taken out of the config.
-	scopes, err := c.waitingScopes(ctx)
-	return len(scopes) > 0, err
 }
 
 // giveWaiting is GiveWaiting until an error ends it.
@@ -274,7 +263,9 @@ func (c *Core) giveWaiting(ctx context.Context, hands *sync.WaitGroup) error {
 	}
 }
 
-// waitingScopes are the scopes of the config in which input waits.
+// waitingScopes are the scopes in which input waits, but those that have no
+// supervisor in the config any more, or left it: no conversation of theirs
+// could be launched, and what waits in them is kept.
 func (c *Core) waitingScopes(ctx context.Context) ([]string, error) {
 	rows, err := c.Store.DB.QueryContext(ctx, `SELECT DISTINCT t.scope FROM waiting_inputs w JOIN threads t ON t.id = w.thread_id ORDER BY t.scope`)
 	if err != nil {
@@ -287,7 +278,7 @@ func (c *Core) waitingScopes(ctx context.Context) ([]string, error) {
 		if err := rows.Scan(&s); err != nil {
 			return nil, fmt.Errorf("core: waiting inputs: %w", err)
 		}
-		if _, ok := c.Scopes[s]; ok { // nothing is given in a scope that left the config
+		if c.Scopes[s].ConversationsAtOnce > 0 {
 			scopes = append(scopes, s)
 		}
 	}
@@ -348,7 +339,7 @@ func (c *Core) giveNext(ctx context.Context, scope string, not []control.ThreadI
 		if len(next) == 0 {
 			return nil
 		}
-		if limit := c.Scopes[scope].ConversationsAtOnce; limit <= 0 || len(taken) < limit {
+		if len(taken) < c.Scopes[scope].ConversationsAtOnce {
 			id = next[0].thread
 			hand, err = c.give(ctx, tx, next[0])
 			return err
@@ -388,10 +379,6 @@ func (c *Core) give(ctx context.Context, tx *store.Tx, w waitingInput) (func() e
 		return nil, fmt.Errorf("core: waiting input: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM waiting_inputs WHERE id = ?`, w.row); err != nil {
-		return nil, fmt.Errorf("core: waiting input: %w", err)
-	}
-	// What is left waits again, from the end of this one's turn.
-	if _, err := tx.ExecContext(ctx, `UPDATE waiting_inputs SET told = 0 WHERE thread_id = ?`, int64(w.thread)); err != nil {
 		return nil, fmt.Errorf("core: waiting input: %w", err)
 	}
 	if w.state == control.Idle {
