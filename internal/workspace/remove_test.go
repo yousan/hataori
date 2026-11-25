@@ -677,13 +677,13 @@ func TestRefuseCommitOnlyARefOutsideRefsNames(t *testing.T) {
 		}
 		wantRefusal(t, x.check(), OtherRef, "")
 	})
-	// Each line of a file directly in the common directory counts, also when
-	// that is in the git directory.
+	// Refs of its own that git does not list, as it lists those of the common
+	// directory, may have names that no ref outside refs/ has.
 	t.Run("common directory", func(t *testing.T) {
 		x := newRemoval(t)
 		dir := filepath.Join(x.clone, ".git")
 		common := filepath.Join(dir, "common")
-		lines := x.git(x.clone, "rev-parse", "HEAD") + "\n" + x.git(x.clone, "commit-tree", "-m", "w", "HEAD^{tree}") + "\n"
+		work := x.git(x.clone, "commit-tree", "-m", "w", "HEAD^{tree}")
 		if err := os.Mkdir(common, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -695,13 +695,13 @@ func TestRefuseCommitOnlyARefOutsideRefsNames(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "commondir"), []byte("common\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := x.check(); err != nil {
+		if got := x.git(x.clone, "rev-parse", "--git-path", "objects"); !strings.HasSuffix(got, "common/objects") {
+			t.Fatal(got)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "packed-refs"), []byte("# pack-refs with: peeled fully-peeled sorted \n"+work+" refs/heads/private\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(common, "NOTES"), []byte(lines), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		wantRefusal(t, x.check(), OtherRef, "")
+		wantRefusal(t, x.check(), Worktree, "")
 	})
 	// A table that is listed and then is not there, as when git has just put
 	// it in another.

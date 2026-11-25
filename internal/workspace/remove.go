@@ -811,10 +811,7 @@ func (c *checker) find() ([]repo, error) {
 		if d.IsDir() && d.Name() == ".git" {
 			gitDirs = append(gitDirs, p)
 			roots = append(roots, p)
-			// Without objects of its own, all it has is looked at.
-			if isGitDir(p) {
-				return c.part(p, nil)
-			}
+			return c.part(p, nil)
 		}
 		return nil
 	})
