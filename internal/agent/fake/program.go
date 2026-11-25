@@ -386,19 +386,6 @@ func (p *program) turn(by, input, script string, agentTurns chan time.Duration) 
 				final = "mcp: " + text
 			}
 			replied = true
-		case "write":
-			if replied {
-				p.say(final, false)
-			}
-			name, text, _ := strings.Cut(arg, " ")
-			final, replied = "wrote "+name, true
-			err := os.MkdirAll(filepath.Dir(name), 0o700)
-			if err == nil {
-				err = os.WriteFile(name, []byte(text+"\n"), 0o600)
-			}
-			if err != nil {
-				final = "write error: " + err.Error()
-			}
 		case "read":
 			if replied {
 				p.say(final, false)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/store"
+	"github.com/yousan/hataori/internal/supervisor"
 	"github.com/yousan/hataori/internal/wire"
 	"github.com/yousan/hataori/internal/workspace"
 )
@@ -45,9 +46,7 @@ func TestSupervisorDirectoryOutlivesItsThreads(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := supervisorThread(t, owner, "c1", control.Idle)
-	if a := sendAndRead(t, owner, first.ID, "w", "write notes/plan.md the plan of #1"); a != "wrote notes/plan.md" {
-		t.Fatalf("the first supervisor's write: %q", a)
-	}
+	writes(t, owner, first.ID, "w", toolScript(t, supervisor.ToolWrite, map[string]any{"path": "notes/plan.md", "text": "the plan of #1\n"}))
 	closeThread(t, r.root, first.ID)
 	owner.Close()
 	stop()

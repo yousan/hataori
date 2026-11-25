@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -116,39 +117,66 @@ func TestSupervisorInstructionsInLayers(t *testing.T) {
 	}
 }
 
-// filesNotices returns the lines in the supervisor's thread that name the
-// user's files a turn changed.
-func (wt *wakeTest) filesNotices(sv control.ThreadInfo) []string {
+// filesNotices returns the lines in the chat thread conv that name the
+// user's files a turn of the supervisor's wrote.
+func (wt *wakeTest) filesNotices(conv surface.Conversation) []string {
 	var out []string
-	conv := surface.Conversation{Channel: sv.Links[0].Channel, Thread: sv.Links[0].Thread}
 	for _, c := range wt.r.driver.Calls(conv) {
-		if c.Op == fakesurface.OpPost && strings.HasPrefix(c.Message.Text, "Changed by the end of this turn") {
+		if c.Op == fakesurface.OpPost && strings.HasPrefix(c.Message.Text, "Changed by ") {
 			out = append(out, c.Message.Text)
 		}
 	}
 	return out
 }
 
-// looked waits until the waker looked at the user's files after the
-// supervisor's turn end at pos, and recorded them.
-func (wt *wakeTest) looked(t *testing.T, pos uint64) {
+// told waits until no write of scope c1's is left whose line was not posted.
+func (wt *wakeTest) told(t *testing.T) {
 	t.Helper()
-	eventually(t, fmt.Sprintf("the files seen after the turn end at %d", pos), 10*time.Second, func() bool {
-		var at int64
-		return wt.db.QueryRow(`SELECT files_pos FROM supervisor_wakes WHERE scope = 'c1'`).Scan(&at) == nil && uint64(at) >= pos
+	eventually(t, "every write to be told", 10*time.Second, func() bool {
+		var n int
+		return wt.db.QueryRow(`SELECT count(*) FROM supervisor_writes WHERE scope = 'c1'`).Scan(&n) == nil && n == 0
 	})
+}
+
+// writes has thread id run script, of calls of the tools of files (toolScript),
+// in a turn of its own. Each call must write.
+func writes(t *testing.T, owner *wire.Client, id control.ThreadID, key string, script ...string) {
+	t.Helper()
+	before := len(threadEvents(t, owner, id, "text"))
+	sendAndRead(t, owner, id, key, strings.Join(script, "\n"))
+	texts := threadEvents(t, owner, id, "text")[before:]
+	for i, e := range texts {
+		if s := e["text"].(string); !strings.HasPrefix(s, "mcp: Written: ") {
+			t.Fatalf("answer %d to %q: %q", i+1, script, s)
+		}
+	}
+	if len(texts) != len(script) {
+		t.Fatalf("%d answers to %q", len(texts), script)
+	}
+}
+
+// toolScript is the fake agent's script that calls tool with args.
+func toolScript(t *testing.T, tool string, args map[string]any) string {
+	t.Helper()
+	b, err := json.Marshal(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return "mcp " + tool + " " + string(b)
 }
 
 // A user's file changed on the host between two wakes is named in the
 // second wake and not in the third, nor in a line of the thread. A turn of
-// the supervisor that changes one gets one line in its thread naming it,
-// once, also when the daemon died after posting it and before recording
-// it; a turn that changes none gets no line.
+// the supervisor that writes some of them gets one line in its thread
+// naming each once, also when the daemon died after posting it and before
+// recording that; a turn that writes none gets no line, whatever changed
+// on the host meanwhile, and neither does a write that did not fit.
 func TestSupervisorUserFileChanges(t *testing.T) {
 	wt := newWakeTest(t)
 	dir := userFiles(t, wt.r.root, map[string]string{"USER.md": "The people here read Japanese.\n"})
 	stop, owner, sv := wt.start(t)
 	defer func() { stop() }()
+	conv := surface.Conversation{Channel: sv.Links[0].Channel, Thread: sv.Links[0].Thread}
 
 	wake := func(n int, key string) string {
 		t.Helper()
@@ -156,7 +184,7 @@ func TestSupervisorUserFileChanges(t *testing.T) {
 		wt.read(t, pos)
 		wt.quiet(t)
 		got := wt.woken(t, owner, sv.ID, n)
-		wt.looked(t, wt.ended(t, sv.ID, n+1))
+		wt.read(t, wt.ended(t, sv.ID, n+1))
 		return got[n-1]
 	}
 	if w := wake(1, "a"); strings.Contains(w, "USER.md") {
@@ -169,15 +197,11 @@ func TestSupervisorUserFileChanges(t *testing.T) {
 	if w := wake(3, "c"); strings.Contains(w, "USER.md") {
 		t.Fatalf("the third wake names USER.md again:\n%s", w)
 	}
-	if n := wt.filesNotices(sv); len(n) != 0 {
-		t.Fatalf("lines for a change no turn of the supervisor made: %q", n)
-	}
 
-	// A turn that changes nothing, then one that changes SOUL.md, after
-	// which the daemon dies, having posted the line and before recording
-	// it. Both turn ends are read again after the restart: the first names
-	// nothing, though SOUL.md differs by then, and the second's line is
-	// posted once.
+	// A turn that writes nothing, then one that writes SOUL.md, after which
+	// the daemon dies, having posted the line and before recording that.
+	// Both turn ends are read again after the restart: the line is posted
+	// once.
 	killed := func(step string) error {
 		if step == "files told" {
 			return errors.New("killed")
@@ -187,34 +211,103 @@ func TestSupervisorUserFileChanges(t *testing.T) {
 	stop()
 	wt.hook.Store(&killed)
 	stop, owner, sv = wt.start(t)
-	turn := func(key, text, want string) {
-		t.Helper()
-		if a := sendAndRead(t, owner, sv.ID, key, text); a != want {
-			t.Fatalf("the supervisor's turn %q: %q", text, a)
-		}
+	if a := sendAndRead(t, owner, sv.ID, "p", "reply nothing yet"); a != "nothing yet" {
+		t.Fatalf("the supervisor's turn: %q", a)
 	}
-	turn("p", "reply nothing yet", "nothing yet")
-	wt.looked(t, wt.ended(t, sv.ID, wt.turns(t, sv.ID)))
-	turn("s", "write SOUL.md Light reports.", "wrote SOUL.md")
-	eventually(t, "the line naming SOUL.md", 10*time.Second, func() bool { return len(wt.filesNotices(sv)) == 1 })
+	wt.read(t, wt.ended(t, sv.ID, wt.turns(t, sv.ID)))
+	writes(t, owner, sv.ID, "s", toolScript(t, supervisor.ToolWrite, map[string]any{"path": "SOUL.md", "text": "Light reports.\n"}))
+	eventually(t, "the line naming SOUL.md", 10*time.Second, func() bool { return len(wt.filesNotices(conv)) == 1 })
+	var left int
+	if err := wt.db.QueryRow(`SELECT count(*) FROM supervisor_writes`).Scan(&left); err != nil || left != 1 {
+		t.Fatalf("%d writes not recorded as told at the kill, %v; want 1", left, err)
+	}
 	stop()
-	// While the daemon is down, USER.md is edited on the host: the line
-	// posted for SOUL.md's turn does not name it, so the next turn's does.
+	// While the daemon is down, USER.md is edited on the host: no turn of the
+	// supervisor's wrote it, and no line names it.
 	os.WriteFile(filepath.Join(dir, "USER.md"), []byte("The people here read Spanish.\n"), 0o600)
 	stop, owner, sv = wt.start(t)
-	// Then a turn that changes nothing, one that changes USER.md, and one
-	// that puts it back as the last wake told it.
-	turn("q", "reply nothing changed", "nothing changed")
-	turn("u", "write USER.md The people here read French.", "wrote USER.md")
-	turn("v", "write USER.md The people here read English.", "wrote USER.md")
-	wt.looked(t, wt.ended(t, sv.ID, wt.turns(t, sv.ID)))
-	time.Sleep(300 * time.Millisecond) // for the outbox to post a line, were there one
-	line := func(name string) string {
-		return fmt.Sprintf("Changed by the end of this turn, in the supervisor's instructions: %s.", name)
+	wt.told(t)
+	if a := sendAndRead(t, owner, sv.ID, "q", "reply nothing written"); a != "nothing written" {
+		t.Fatalf("the supervisor's turn: %q", a)
 	}
-	want := []string{line("SOUL.md"), line("USER.md"), line("USER.md"), line("USER.md")}
-	if n := wt.filesNotices(sv); strings.Join(n, "|") != strings.Join(want, "|") {
-		t.Fatalf("the lines naming the files a turn changed: %q; want %q", n, want)
+	// An edit that does not fit writes nothing; one that does has its line;
+	// a turn that writes several has one line, which names each once and none
+	// that is not one of the user's.
+	if a := sendAndRead(t, owner, sv.ID, "m", toolScript(t, supervisor.ToolEdit, map[string]any{"path": "USER.md", "old": "English", "new": "French"})); !strings.HasPrefix(a, "mcp: Nothing was written: the passage is not in the file. ") || !strings.Contains(a, "read Spanish.") {
+		t.Fatalf("an edit of a passage that is not there: %q", a)
+	}
+	writes(t, owner, sv.ID, "u", toolScript(t, supervisor.ToolEdit, map[string]any{"path": "USER.md", "old": "Spanish", "new": "French"}))
+	var script []string
+	for _, c := range []struct {
+		tool string
+		args map[string]any
+	}{
+		{supervisor.ToolWrite, map[string]any{"path": "notes/plan.md", "text": "a plan\n"}},
+		{supervisor.ToolEdit, map[string]any{"path": "SOUL.md", "old": "Light", "new": "Short"}},
+		{supervisor.ToolWrite, map[string]any{"path": "AGENTS.md", "text": "One issue per thread.\n"}},
+		{supervisor.ToolEdit, map[string]any{"path": "AGENTS.md", "old": "One issue", "new": "Two issues"}},
+	} {
+		script = append(script, toolScript(t, c.tool, c.args))
+	}
+	writes(t, owner, sv.ID, "v", script...)
+	writes(t, owner, sv.ID, "n", toolScript(t, supervisor.ToolWrite, map[string]any{"path": "notes/more.md", "text": "more\n"}))
+	wt.read(t, wt.ended(t, sv.ID, wt.turns(t, sv.ID)))
+	wt.told(t)
+	time.Sleep(300 * time.Millisecond) // for the outbox to post a line, were there one
+	line := func(names string) string {
+		return fmt.Sprintf("Changed by this turn, in the supervisor's instructions: %s.", names)
+	}
+	want := []string{line("SOUL.md"), line("USER.md"), line("AGENTS.md and SOUL.md")}
+	if n := wt.filesNotices(conv); strings.Join(n, "|") != strings.Join(want, "|") {
+		t.Fatalf("the lines naming the files a turn wrote: %q; want %q", n, want)
+	}
+	for name, want := range map[string]string{"SOUL.md": "Short reports.\n", "USER.md": "The people here read French.\n",
+		"AGENTS.md": "Two issues per thread.\n", "notes/plan.md": "a plan\n"} {
+		if b, err := os.ReadFile(filepath.Join(dir, name)); string(b) != want {
+			t.Errorf("%s holds %q, %v; want %q", name, b, err, want)
+		}
+	}
+}
+
+// A turn of a conversation that writes one of the user's files is named in
+// its own chat thread and in the supervisor's own, and in no other
+// conversation's (#868). What a session wrote after its turn's end, as a
+// call that an interrupted turn left running does, is named with the next
+// one's, or when the conversation is closed.
+func TestConversationsUserFileChanges(t *testing.T) {
+	f := newSvTalks(t, "")
+	a, b := f.talk(t, "a"), f.talk(t, "b")
+	writes(t, f.owner, a, "wa", toolScript(t, supervisor.ToolWrite, map[string]any{"path": "AGENTS.md", "text": "One issue per thread.\n"}))
+	writes(t, f.owner, b, "wb", toolScript(t, supervisor.ToolEdit, map[string]any{"path": "AGENTS.md", "old": "One issue", "new": "Two issues"}))
+	f.wt.told(t)
+
+	c := f.talk(t, "c")
+	if out := mcpCall(t, f.tools(t, c), supervisor.ToolWrite, map[string]any{"path": "SOUL.md", "text": "Be brief.\n"}); out.IsError || !strings.HasPrefix(out.Text, "Written: ") {
+		t.Fatalf("the third conversation's write: %+v", out)
+	}
+	f.wt.read(t, f.wt.ended(t, c, 1))
+	time.Sleep(300 * time.Millisecond) // for the outbox to post a line, were there one
+	if n := f.wt.filesNotices(f.chat("c")); len(n) != 0 {
+		t.Fatalf("a line with no turn's end: %q", n)
+	}
+	closeThread(t, f.wt.r.root, c)
+	f.wt.told(t)
+	time.Sleep(300 * time.Millisecond) // for the outbox to post a line, were there one
+
+	const in = "in the supervisor's instructions: "
+	for where, want := range map[surface.Conversation][]string{
+		f.chat("a"): {"Changed by this turn, " + in + "AGENTS.md."},
+		f.chat("b"): {"Changed by this turn, " + in + "AGENTS.md."},
+		f.chat("c"): {"Changed by this turn, " + in + "SOUL.md."},
+		f.conv: {
+			fmt.Sprintf("Changed by a turn of thread #%d, %sAGENTS.md.", a, in),
+			fmt.Sprintf("Changed by a turn of thread #%d, %sAGENTS.md.", b, in),
+			fmt.Sprintf("Changed by a turn of thread #%d, %sSOUL.md.", c, in),
+		},
+	} {
+		if got := f.wt.filesNotices(where); strings.Join(got, "|") != strings.Join(want, "|") {
+			t.Errorf("the lines in %v: %q; want %q", where, got, want)
+		}
 	}
 }
 

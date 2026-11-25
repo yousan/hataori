@@ -1232,8 +1232,9 @@ func (r *waking) delivered(ctx context.Context) error {
 }
 
 // turned names the user's files that a turn of one of the supervisor's
-// threads wrote, at e, which ended it. A thread that is closed in a turn
-// ends no turn, and what it wrote is named at that.
+// threads wrote, at e, which ended it. What its session wrote after its last
+// turn's end, as a call that an interrupted turn left running does, is named
+// when the thread is closed, unless a turn's end came before.
 func (r *waking) turned(ctx context.Context, e control.Event) error {
 	kind, err := r.kind(ctx, e.Thread)
 	if err != nil || !kind.Confined() {
