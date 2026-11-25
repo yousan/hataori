@@ -179,7 +179,9 @@ func TestDashboardTerminalTakesKeys(t *testing.T) {
 }
 
 // After the idle period without a key the attachment ends; the next key
-// on loopback opens it again.
+// on loopback opens it again. A key typed before the page knows of the end
+// goes to the attachment that ended, so the page is asked, not the daemon's
+// log (#807).
 func TestDashboardTerminalAttachesAgainAfterIdle(t *testing.T) {
 	r := attachRoot(t, "1h", "1s")
 	logged := startDaemonLog(t, r.root)
@@ -189,6 +191,15 @@ func TestDashboardTerminalAttachesAgainAfterIdle(t *testing.T) {
 	x := threadOf(t, r.root)
 	b := newBrowser(t)
 	b.call("Page.enable", map[string]any{})
+	// The attachments whose WebSocket's close the page has been given: it
+	// was given the daemon's message of the end before.
+	b.call("Page.addScriptToEvaluateOnNewDocument", map[string]any{"source": `window.__attachClosed = 0;
+		window.WebSocket = class extends WebSocket {
+			constructor(url, ...rest) {
+				super(url, ...rest);
+				if (new URL(url).pathname === '/api/attach') this.addEventListener('close', () => window.__attachClosed++);
+			}
+		};`})
 	b.call("Page.navigate", map[string]any{"url": signinLink(t, r.root)})
 	openThreadTerminal(t, b, x.ID, "ready-for-keys")
 	focusTerminal(b)
@@ -196,6 +207,7 @@ func TestDashboardTerminalAttachesAgainAfterIdle(t *testing.T) {
 	eventually(t, "the idle end", 10*time.Second, func() bool {
 		return strings.Contains(logged(), `msg="dashboard: terminal detached"`) && strings.Contains(logged(), "reason=idle")
 	})
+	b.until("the idle end in the page", `window.__attachClosed === 1`)
 	b.call("Input.insertText", map[string]any{"text": "b"})
 	eventually(t, "a second attachment", 10*time.Second, func() bool { return strings.Count(logged(), `msg="dashboard: terminal attached"`) == 2 })
 }
