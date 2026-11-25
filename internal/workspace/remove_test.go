@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -675,6 +676,35 @@ func TestRefuseCommitOnlyARefOutsideRefsNames(t *testing.T) {
 		}
 		wantRefusal(t, x.check(), OtherRef, "")
 	})
+	// git's list of refs for dumb clients, which is as old as the last gc.
+	t.Run("info/refs", func(t *testing.T) {
+		x := newRemoval(t)
+		old := x.git(x.clone, "commit-tree", "-m", "old", "HEAD^{tree}")
+		x.git(x.clone, "update-ref", "refs/a", old)
+		x.git(x.clone, "update-server-info")
+		x.git(x.clone, "update-ref", "-d", "refs/a")
+		b, err := os.ReadFile(filepath.Join(x.clone, ".git", "info", "refs"))
+		if err != nil || !bytes.HasPrefix(b, []byte(old)) {
+			t.Fatalf("info/refs is %q, %v", b, err)
+		}
+		if err := x.check(); err != nil {
+			t.Fatal(err)
+		}
+		// With that id git finds the ref as it should be, and writes nothing.
+		x.git(x.clone, "update-ref", "info/refs", x.git(x.clone, "commit-tree", "-m", "work", "HEAD^{tree}"))
+		wantRefusal(t, x.check(), OtherRef, "")
+	})
+	// A reflog starts with the null id, and git complains of alternates that
+	// are gone.
+	t.Run("null id", func(t *testing.T) {
+		x := newRemoval(t)
+		if err := os.WriteFile(filepath.Join(x.clone, ".git", "objects", "info", "alternates"), []byte(filepath.Join(x.tmp, "gone")+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := x.check(); err != nil {
+			t.Fatal(err)
+		}
+	})
 	t.Run("behind a link", func(t *testing.T) {
 		x := newRemoval(t)
 		away := filepath.Join(x.tmp, "away")
@@ -704,7 +734,7 @@ func TestRefuseCommitOnlyARefOutsideRefsNames(t *testing.T) {
 }
 
 func TestRefuseCommitOnlyARefOutsideRefsInAReftableNames(t *testing.T) {
-	for _, ref := range []string{"MY_WORK", "heads/foo"} {
+	for _, ref := range []string{"MY_WORK", "heads/foo", "BISECT_HEAD"} {
 		for _, format := range []string{"sha1", "sha256"} {
 			t.Run(ref+" "+format, func(t *testing.T) {
 				x := newRemoval(t)
@@ -729,6 +759,14 @@ func TestRefuseCommitOnlyARefOutsideRefsInAReftableNames(t *testing.T) {
 					t.Fatalf("%s is %s, want %s", ref, got, work)
 				}
 				wantRefusal(t, x.check(), OtherRef, "")
+
+				// A pack that git cannot read it leaves out of its list.
+				p := x.pack(work) + ".idx"
+				os.Chmod(p, 0o600)
+				if err := os.WriteFile(p, nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				wantRefusal(t, x.check(), GitError, "")
 			})
 		}
 	}
@@ -798,6 +836,21 @@ func TestRemovableWithPseudoRefs(t *testing.T) {
 	}
 }
 
+// pack moves an object of the clone to a pack of its own, and returns the
+// pack's path without a suffix.
+func (x *removal) pack(id string) string {
+	x.t.Helper()
+	cmd := exec.Command("git", "pack-objects", "-q", ".git/objects/pack/pack")
+	cmd.Dir, cmd.Env, cmd.Stdin = x.clone, x.env(), strings.NewReader(id+"\n")
+	out, err := cmd.Output()
+	if err != nil {
+		x.t.Fatal(err)
+	}
+	objects := filepath.Join(x.clone, ".git", "objects")
+	os.Remove(filepath.Join(objects, id[:2], id[2:]))
+	return filepath.Join(objects, "pack", "pack-"+strings.TrimSpace(string(out)))
+}
+
 // git says the same of an object it cannot read as of one that is gone.
 func TestRefusePseudoRefWithAnObjectThatCannotBeRead(t *testing.T) {
 	for name, tc := range map[string]struct {
@@ -818,14 +871,7 @@ func TestRefusePseudoRefWithAnObjectThatCannotBeRead(t *testing.T) {
 			id := x.git(x.clone, "commit-tree", "-m", "w", "HEAD^{tree}")
 			p := filepath.Join(x.clone, ".git", "objects", id[:2], id[2:])
 			if tc.suffix != "" {
-				cmd := exec.Command("git", "pack-objects", "-q", ".git/objects/pack/pack")
-				cmd.Dir, cmd.Env, cmd.Stdin = x.clone, x.env(), strings.NewReader(id+"\n")
-				out, err := cmd.Output()
-				if err != nil {
-					t.Fatal(err)
-				}
-				os.Remove(p)
-				p = filepath.Join(x.clone, ".git", "objects", "pack", "pack-"+strings.TrimSpace(string(out))+tc.suffix)
+				p = x.pack(id) + tc.suffix
 			}
 			if err := os.WriteFile(filepath.Join(x.clone, ".git", "FETCH_HEAD"), []byte(id+"\n"), 0o600); err != nil {
 				t.Fatal(err)

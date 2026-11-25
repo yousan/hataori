@@ -5,10 +5,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"index/suffixarray"
 	"io"
 	"io/fs"
 	"maps"
@@ -1418,9 +1418,10 @@ func (c *checker) named(g *reader) ([]string, error) {
 	if err != nil && code != 1 {
 		return nil, err
 	}
-	if f := strings.ToLower(strings.TrimSpace(string(format))); err == nil && f != "files" && f != "reftable" {
+	storage := strings.ToLower(strings.TrimSpace(string(format)))
+	if err == nil && storage != "files" && storage != "reftable" {
 		// In a way, or at a place, that is not known here.
-		return nil, c.unreadable(filepath.Join(dirs[len(dirs)-1], "config"), errors.New("the refs are in "+strconv.Quote(f)))
+		return nil, c.unreadable(filepath.Join(dirs[len(dirs)-1], "config"), errors.New("the refs are in "+strconv.Quote(storage)))
 	}
 	var have []string
 	names := refNames{c: c, skip: map[string]bool{}, seen: map[string]bool{}, left: 10000}
@@ -1438,6 +1439,15 @@ func (c *checker) named(g *reader) ([]string, error) {
 		have = append(have, in...)
 	}
 	ids := names.ids
+	if storage == "reftable" {
+		// Those of its refs git lists, also of what cannot be read.
+		out, _, err := g.run(c.ctx, "for-each-ref", "--include-root-refs", "--format=%(objectname)")
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, strings.Fields(string(out))...)
+	}
+	ids = slices.DeleteFunc(ids, func(id string) bool { return strings.Trim(id, "0") == "" }) // in a reflog: no object
 	if len(ids) == 0 {
 		return have, nil
 	}
@@ -1519,7 +1529,9 @@ func (n *refNames) read(top, dir string, linked bool) error {
 			}
 		case !fi.Mode().IsRegular():
 		case dir != top:
-			in, err = n.c.firstID(p)
+			// What git update-server-info writes for dumb clients is no ref, and
+			// may be old.
+			in, err = n.c.firstID(p, p == filepath.Join(top, "info", "refs"))
 		case e.Name() != "index" && e.Name() != "shallow":
 			// The index is as HEAD is (step 1); shallow says where the history
 			// was cut.
@@ -1533,8 +1545,9 @@ func (n *refNames) read(top, dir string, linked bool) error {
 	return nil
 }
 
-// firstID is the object id that the file p starts with, as that of a ref does.
-func (c *checker) firstID(p string) ([]string, error) {
+// firstID is the object id that the file p starts with, as that of a ref does,
+// but not one before a tab in a list of refs.
+func (c *checker) firstID(p string, list bool) ([]string, error) {
 	f, err := os.Open(p)
 	if err != nil {
 		return nil, err
@@ -1544,7 +1557,7 @@ func (c *checker) firstID(p string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if m := lineID.FindSubmatch(b); m != nil {
+	if m := lineID.FindSubmatch(b); m != nil && !(list && bytes.HasPrefix(b[len(m[1]):], []byte("\t"))) {
 		return []string{strings.ToLower(string(m[1]))}, nil
 	}
 	return nil, nil
@@ -1581,19 +1594,14 @@ func (c *checker) tableIDs(g *reader, dir string) ([]string, error) {
 	if len(tables) == 0 {
 		return nil, nil
 	}
-	starts := make([]uint64, 0, len(tables))
-	for i := 0; i+8 <= len(tables); i++ {
-		starts = append(starts, binary.BigEndian.Uint64(tables[i:]))
-	}
-	slices.Sort(starts)
-	have, err := g.picked(c.ctx, func(id string) bool {
+	index := suffixarray.New(tables)
+	have, errs, err := g.picked(c.ctx, func(id string) bool {
 		b, err := hex.DecodeString(id)
-		if err != nil || len(b) < 8 {
-			return false
-		}
-		_, found := slices.BinarySearch(starts, binary.BigEndian.Uint64(b))
-		return found && bytes.Contains(tables, b)
+		return err == nil && len(b) > 0 && len(index.Lookup(b, 1)) > 0
 	}, "", "cat-file", "--batch-all-objects", "--unordered", "--batch-check=%(objectname)")
+	if err == nil && errs != "" { // git goes on without a pack that it cannot read
+		err = fmt.Errorf("workspace: git cat-file: %s", lastLines(redact(errs), 3, dir))
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -2594,12 +2602,13 @@ func (g reader) listed(ctx context.Context, ids []string, stdin string) (map[str
 	for _, id := range ids {
 		wanted[id] = true
 	}
-	return g.picked(ctx, func(id string) bool { return wanted[id] }, stdin, "rev-list", "--objects", "--no-object-names", "--stdin")
+	found, _, err := g.picked(ctx, func(id string) bool { return wanted[id] }, stdin, "rev-list", "--objects", "--no-object-names", "--stdin")
+	return found, err
 }
 
-// picked are the lines git prints that keep takes. The list may be long, and
-// only some of it is kept.
-func (g reader) picked(ctx context.Context, keep func(string) bool, stdin string, args ...string) (map[string]bool, error) {
+// picked are the lines git prints that keep takes, and what it says on stderr.
+// The list may be long, and only some of it is kept.
+func (g reader) picked(ctx context.Context, keep func(string) bool, stdin string, args ...string) (map[string]bool, string, error) {
 	cmd := gitCommand(ctx, append(append([]string{"-C", g.dir, "-c", "core.fsmonitor=false"}, g.extra...), args...)...)
 	cmd.Env = g.env
 	cmd.Stdin = strings.NewReader(stdin)
@@ -2610,7 +2619,7 @@ func (g reader) picked(ctx context.Context, keep func(string) bool, stdin string
 		err = cmd.Start()
 	}
 	if err != nil {
-		return nil, fmt.Errorf("workspace: git %s: %w", args[0], err)
+		return nil, "", fmt.Errorf("workspace: git %s: %w", args[0], err)
 	}
 	found := map[string]bool{}
 	lines := bufio.NewScanner(stdout)
@@ -2624,7 +2633,7 @@ func (g reader) picked(ctx context.Context, keep func(string) bool, stdin string
 		err = werr
 	}
 	if err != nil {
-		return nil, fmt.Errorf("workspace: git %s: %s", args[0], lastLines(redact(stderr.String()), 3, redactErr(err)))
+		return nil, "", fmt.Errorf("workspace: git %s: %s", args[0], lastLines(redact(stderr.String()), 3, redactErr(err)))
 	}
-	return found, nil
+	return found, stderr.String(), nil
 }
