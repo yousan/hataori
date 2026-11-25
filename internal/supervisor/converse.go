@@ -42,7 +42,9 @@ var ErrNoConversations = errors.New("no conversation with a supervisor starts in
 // bound to the new thread. c.From starts it, so the core decides, as of any
 // start, before a thread, a chat thread or a directory exists: a guest's
 // call makes nothing and gives one log line. A call made before returns its
-// thread. A thread whose session failed to start is returned with the error.
+// thread. A thread whose session failed to start is returned with the error,
+// and so is the thread of another kind whose key c.Key is, with
+// core.ErrKindKey: no conversation is made then.
 //
 // It is for the daemon's own chat front ends; no socket reaches it.
 func (s *Sessions) Converse(ctx context.Context, c Call) (control.ThreadID, error) {

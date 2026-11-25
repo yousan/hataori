@@ -80,10 +80,11 @@ type Runner struct {
 	// fails, the launch fails: a confined session is never started
 	// unconfined, and never with what another launch was given.
 	Confine func(ctx context.Context, l ConfinedLaunch) (Confined, error)
-	// Unconfine, when set, takes back what Confine gave the launches of
-	// session id, such as a token: Shut calls it once the session is closed,
-	// before its agent is stopped. It is called again when Shut is.
-	Unconfine func(id int64)
+	// Unconfine, when set, takes back what Confine gave the launches of a
+	// session of a thread and of those it replaced, such as a token: Shut
+	// calls it once the session is closed, before its agent is stopped. It
+	// is called again when Shut is.
+	Unconfine func(thread control.ThreadID, session int64)
 	// ConfinedConfig is what the loaded config gives a launch, made now, of
 	// a confined session of agent in scope, or false when it has none for
 	// it. Each launch of a confined session takes its model and effort from
@@ -2163,14 +2164,15 @@ func (r *Runner) Shut(ctx context.Context, id int64, reason string, also ...func
 	lv := r.live[id]
 	r.mu.Unlock()
 	apply := func() error {
+		var thread control.ThreadID
 		err := r.Store.Update(ctx, func(tx *store.Tx) error {
 			var (
 				state string
 				newer int
 			)
-			if err := tx.QueryRowContext(ctx, `SELECT s.state,
+			if err := tx.QueryRowContext(ctx, `SELECT s.thread_id, s.state,
 				(SELECT count(*) FROM sessions n WHERE n.thread_id = s.thread_id AND n.id > s.id)
-				FROM sessions s WHERE s.id = ?`, id).Scan(&state, &newer); err != nil {
+				FROM sessions s WHERE s.id = ?`, id).Scan(&thread, &state, &newer); err != nil {
 				return fmt.Errorf("runner: session %d: %w", id, err)
 			}
 			if control.State(state) == control.Closed {
@@ -2208,7 +2210,7 @@ func (r *Runner) Shut(ctx context.Context, id int64, reason string, also ...func
 			return r.Machine.ApplyTx(ctx, tx, id, session.Input{Kind: session.Close, Reason: reason})
 		})
 		if err == nil && r.Unconfine != nil {
-			r.Unconfine(id)
+			r.Unconfine(thread, id)
 		}
 		return err
 	}

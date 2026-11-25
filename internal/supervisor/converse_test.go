@@ -87,9 +87,10 @@ func TestConverseRecordsNoDirectoryForARefusedCall(t *testing.T) {
 	}
 }
 
-// A closed thread's session keeps no token: what Unconfine is told is
-// revoked, once, and no other session's; a launch of it after a reopen
-// binds the same one again.
+// A closed thread's session keeps no token: that of the thread Unconfine is
+// told is revoked, once, and no other thread's, nor a newer session's of it;
+// a launch of it after a reopen binds the same one again. The token of a
+// session that was replaced by one never launched is revoked too.
 func TestUnconfineRevokesTheSessionsToken(t *testing.T) {
 	var log bytes.Buffer
 	s, tokens := layerSessions(t, &log)
@@ -113,12 +114,13 @@ func TestUnconfineRevokesTheSessionsToken(t *testing.T) {
 	}
 	confine(80, newer) // as a resume, with a token of its own
 
-	s.Unconfine(99)
+	s.Unconfine(99, 99)
+	s.Unconfine(newer, 79)
 	if len(tokens.revoked) != 0 {
-		t.Fatalf("a session without a token: revoked %q", tokens.revoked)
+		t.Fatalf("a thread without a token, and an older session of one: revoked %q", tokens.revoked)
 	}
-	s.Unconfine(80)
-	s.Unconfine(80)
+	s.Unconfine(newer, 80)
+	s.Unconfine(newer, 80)
 	if got := fmt.Sprint(tokens.revoked); got != "["+second+"]" {
 		t.Fatalf("revoked %s, want the conversation's token, once", got)
 	}
@@ -127,11 +129,11 @@ func TestUnconfineRevokesTheSessionsToken(t *testing.T) {
 	if len(tokens.bound) != bound+1 || len(tokens.revoked) != 1 {
 		t.Fatalf("its launch after a reopen bound %d, revoked %q", len(tokens.bound)-bound, tokens.revoked)
 	}
-	s.Unconfine(80)
+	s.Unconfine(newer, 81) // it replaced 80, and its own launch failed before it had one
 	if len(tokens.revoked) != 2 || tokens.revoked[1] != second {
 		t.Fatalf("closed again: revoked %q", tokens.revoked)
 	}
-	s.Unconfine(50)
+	s.Unconfine(own, 50)
 	if len(tokens.revoked) != 3 || tokens.revoked[2] != testToken {
 		t.Fatalf("the own thread's: revoked %q", tokens.revoked)
 	}
@@ -173,8 +175,8 @@ func TestTokensAreBoundAndRevokedOneAtATime(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Go(func() { confine(50, own) })
 		wg.Go(func() { confine(80, newer) })
-		wg.Go(func() { s.Unconfine(50) })
-		wg.Go(func() { s.Unconfine(80) })
+		wg.Go(func() { s.Unconfine(own, 50) })
+		wg.Go(func() { s.Unconfine(newer, 80) })
 		wg.Wait()
 	}
 	if tokens.overlap.Load() {
@@ -189,7 +191,7 @@ func TestTokensAreBoundAndRevokedOneAtATime(t *testing.T) {
 	if err := confine(40, own); err == nil || len(recorded.bound) != bound || len(recorded.revoked) != 0 {
 		t.Fatalf("a replaced session: %v, bound %d more, revoked %q; want it refused and nothing bound", err, len(recorded.bound)-bound, recorded.revoked)
 	}
-	if s.Unconfine(50); len(recorded.revoked) != 1 {
+	if s.Unconfine(own, 50); len(recorded.revoked) != 1 {
 		t.Fatalf("the newer session's close revoked %q, want its token", recorded.revoked)
 	}
 }

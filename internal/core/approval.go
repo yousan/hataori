@@ -58,7 +58,10 @@ func (a *api) AskInterrupt(ctx context.Context, id control.ThreadID, key, reason
 		if err != nil {
 			return err
 		}
-		err = tx.QueryRowContext(ctx, `SELECT handle FROM approvals WHERE target = ? AND session_id = ? AND turn_id = ? AND state = 'open' ORDER BY id LIMIT 1`, id, sid, turn).Scan(&handle)
+		// One open request of the thread it is asked in for a turn: that of
+		// another thread is shown and decided there.
+		err = tx.QueryRowContext(ctx, `SELECT handle FROM approvals WHERE asks_in = ? AND target = ? AND session_id = ? AND turn_id = ? AND state = 'open' ORDER BY id LIMIT 1`,
+			a.caller.AsksIn, id, sid, turn).Scan(&handle)
 		if err == nil {
 			return nil
 		}
@@ -163,7 +166,7 @@ func (a *api) answerApproval(ctx context.Context, req control.RequestID, ans con
 		if interrupted {
 			outcome = "ended"
 		} else {
-			sender := a.c.As(control.Caller{From: from, Principal: control.Principal(principal), Scopes: []string{scope}, May: control.OpSend}).(*api)
+			sender := a.c.As(control.Caller{From: from, Principal: control.Principal(principal), Scopes: []string{scope}, May: control.OpSend, OrdinaryOnly: true}).(*api)
 			err := sender.send(ctx, target, "approval:"+string(req), control.Input{Text: marked}, control.Interrupt, &guard)
 			switch {
 			case err == nil && guard.repeated:

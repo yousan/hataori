@@ -272,18 +272,18 @@ func (s *Sessions) bind(session int64, thread control.ThreadID, scope, stateDir 
 	return token, nil
 }
 
-// Unconfine revokes the token of session, whose thread was closed: what
-// still holds it reaches nothing, and its connections end. The token stays
-// in the session's state directory, and a launch of it, after a reopen,
-// binds it again (Confine). It is the runner's Unconfine.
-func (s *Sessions) Unconfine(session int64) {
+// Unconfine revokes the token of thread, whose session was closed: that of
+// the session, or of one it replaced when it was never launched itself.
+// What still holds it reaches nothing, and its connections end. A newer
+// session's token is left. The token stays in the session's state
+// directory, and a launch of it, after a reopen, binds it again (Confine).
+// It is the runner's Unconfine.
+func (s *Sessions) Unconfine(thread control.ThreadID, session int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for thread, i := range s.issued {
-		if i.session == session {
-			delete(s.issued, thread)
-			s.Tokens.Revoke(i.token)
-		}
+	if i, ok := s.issued[thread]; ok && i.session <= session {
+		delete(s.issued, thread)
+		s.Tokens.Revoke(i.token)
 	}
 }
 

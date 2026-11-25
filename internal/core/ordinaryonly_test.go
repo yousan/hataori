@@ -215,6 +215,104 @@ func TestApprovedProposalReachesNoConfinedThread(t *testing.T) {
 	}
 }
 
+// So does an approved request to interrupt one: it is refused, interrupts
+// nothing, and stays open for the person to refuse.
+func TestApprovedInterruptReachesNoConfinedThread(t *testing.T) {
+	ctx := context.Background()
+	k := newKinds(t)
+	k.core.People = people.New([]people.Person{{Name: "sv", IDs: []string{"supervisor:s"}}}, "owner", map[string][]string{"s": {"sv"}})
+	asker := k.start(t, control.KindConversation, "c1")
+	target := k.start(t, control.KindSupervisor, "sv")
+	owner := k.core.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all})
+	if err := owner.Send(ctx, target, "p", control.Input{Text: "a person's"}, control.Refuse); err != nil {
+		t.Fatal(err)
+	}
+	before := k.core.As(control.Caller{From: "supervisor:s", Scopes: []string{"s"}, May: control.OpAsk, AsksIn: asker, Mark: "supervisor"})
+	req, err := before.AskInterrupt(ctx, target, "k", "urgent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls, inputs := k.runner.Calls(), len(eventsOf(t, k.fixture, target, "input"))
+	refusedFor(t, "its approval", target, owner.Answer(ctx, req, control.Answer{Allow: true}))
+	if got := k.runner.Calls(); got != calls || len(eventsOf(t, k.fixture, target, "input")) != inputs {
+		t.Fatalf("the confined thread got it: runner calls %s", got)
+	}
+	if err := owner.Answer(ctx, req, control.Answer{}); err != nil {
+		t.Fatalf("its refusal: %v", err)
+	}
+	if ev := eventsOf(t, k.fixture, asker, "approval_answered"); len(ev) != 1 || !strings.Contains(ev[0], `"outcome":"refused"`) {
+		t.Fatalf("approval_answered: %v; want one that was refused", ev)
+	}
+}
+
+// A request to interrupt a turn is the thread's it is asked in: shown there,
+// with its own reason, and decided there, also when another of the scope's
+// supervisor threads asks for the same turn. The turn is interrupted once
+// (#871).
+func TestInterruptRequestsOfEachThreadAreItsOwn(t *testing.T) {
+	ctx := context.Background()
+	k := newKinds(t)
+	k.core.People = people.New([]people.Person{{Name: "sv", IDs: []string{"supervisor:s"}}}, "owner", map[string][]string{"s": {"sv"}})
+	threads := []control.ThreadID{
+		k.start(t, control.KindSupervisor, "sv"),
+		k.start(t, control.KindConversation, "c1"),
+		k.start(t, control.KindConversation, "c2"),
+	}
+	worker, err := k.owner.Start(ctx, control.StartRequest{Key: "w", Scope: "s", Thread: "w", Input: control.Input{Text: "go"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	k.agentEvent(t, k.session(t, worker), 1, agent.Event{Kind: agent.SessionReady})
+	owner := k.core.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all})
+	if err := owner.Send(ctx, worker, "p", control.Input{Text: "a person's"}, control.Refuse); err != nil {
+		t.Fatal(err)
+	}
+	reason := func(id control.ThreadID) string { return fmt.Sprintf("asked in %d", id) }
+	reqs := map[control.ThreadID]control.RequestID{}
+	for range 2 { // again gives each thread its own one
+		for _, id := range threads {
+			sv := k.core.As(control.Caller{From: "supervisor:s", Scopes: []string{"s"}, May: control.OpAsk | control.OpSend, AsksIn: id, Mark: "supervisor", OrdinaryOnly: true})
+			req, err := sv.AskInterrupt(ctx, worker, "", reason(id))
+			if err != nil || reqs[id] != "" && reqs[id] != req {
+				t.Fatalf("asked in thread %d: %q, %v; its first one is %q", id, req, err, reqs[id])
+			}
+			reqs[id] = req
+		}
+	}
+	for _, id := range threads {
+		d, err := owner.Thread(ctx, id, 0, 0)
+		if err != nil || len(d.Requests) != 1 || d.Requests[0].ID != reqs[id] || !strings.Contains(d.Requests[0].Text, reason(id)) {
+			t.Errorf("thread %d shows %+v, %v; want its own request %q alone", id, d.Requests, err, reqs[id])
+		}
+		if ev := eventsOf(t, k.fixture, id, "approval_asked"); len(ev) != 1 || !strings.Contains(ev[0], reason(id)) {
+			t.Errorf("thread %d: approval_asked %v; want its own one", id, ev)
+		}
+	}
+	for _, want := range []struct {
+		thread  control.ThreadID
+		allow   bool
+		outcome string
+	}{{threads[2], true, "interrupted"}, {threads[1], true, "ended"}, {threads[0], false, "refused"}} {
+		if err := owner.Answer(ctx, reqs[want.thread], control.Answer{Allow: want.allow}); err != nil {
+			t.Fatal(err)
+		}
+		delete(reqs, want.thread)
+		if ev := eventsOf(t, k.fixture, want.thread, "approval_answered"); len(ev) != 1 || !strings.Contains(ev[0], `"outcome":"`+want.outcome+`"`) {
+			t.Errorf("decided in thread %d: approval_answered %v; want one, %s", want.thread, ev, want.outcome)
+		}
+		for _, id := range threads {
+			d, err := owner.Thread(ctx, id, 0, 0)
+			if open := reqs[id] != ""; err != nil || open && (len(d.Requests) != 1 || d.Requests[0].ID != reqs[id]) || !open && len(d.Requests) != 0 {
+				t.Errorf("after the decision in thread %d, thread %d shows %+v, %v; want %q alone if any", want.thread, id, d.Requests, err, reqs[id])
+			}
+		}
+	}
+	calls := k.runner.Calls()
+	if strings.Count(calls, "interrupt") != 1 || strings.Count(calls, reason(threads[2])) != 1 || strings.Contains(calls, reason(threads[1])) {
+		t.Errorf("runner calls %s; want one interrupt, with the reason of the one approved first", calls)
+	}
+}
+
 // The directory of a confined start is asked for after everything that may
 // refuse the start, and once for a key: not for a guest, a person of no
 // scope, a caller without OpStart, a scope that is off, nor for a key that
