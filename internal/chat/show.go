@@ -38,6 +38,11 @@ type reader struct {
 	// sv holds whether each thread looked up is a supervisor's
 	// (FrontEnd.supervisors); made when first needed.
 	sv map[control.ThreadID]svThread
+	// heard is what each supervisor's thread's open turn answers (hear).
+	heard map[control.ThreadID]*heard
+	// toOthers reports whether the text of an input through a link
+	// mentions others only (FrontEnd.toOthers).
+	toOthers func(l *control.LinkRef, text string) bool
 	// held and named are what svPost held back of the event being read,
 	// written with the cursor (holdTx).
 	held  []heldPost
@@ -59,16 +64,18 @@ func (f *FrontEnd) show(ctx context.Context) error {
 	defer cancel() // ends the subscription when reading stops on an error
 	scopes := f.scopeList()
 	r := &reader{
-		api:     f.API(control.Caller{Principal: f.ownerPrincipal(), Scopes: scopes, May: control.OpRead}),
-		first:   map[control.ThreadID]uint64{},
-		session: map[control.ThreadID]int64{},
-		turn:    map[control.ThreadID]string{},
-		by:      map[control.ThreadID]string{},
-		via:     map[control.ThreadID]*control.LinkRef{},
-		quiet:   map[control.ThreadID]*quiet{},
-		gone:    map[control.ThreadID]*RowKey{},
-		known:   map[control.ThreadID]bool{},
-		subs:    map[control.ThreadID]map[string]*subagent{},
+		api:      f.API(control.Caller{Principal: f.ownerPrincipal(), Scopes: scopes, May: control.OpRead}),
+		first:    map[control.ThreadID]uint64{},
+		session:  map[control.ThreadID]int64{},
+		turn:     map[control.ThreadID]string{},
+		by:       map[control.ThreadID]string{},
+		via:      map[control.ThreadID]*control.LinkRef{},
+		quiet:    map[control.ThreadID]*quiet{},
+		gone:     map[control.ThreadID]*RowKey{},
+		known:    map[control.ThreadID]bool{},
+		heard:    map[control.ThreadID]*heard{},
+		toOthers: f.toOthers,
+		subs:     map[control.ThreadID]map[string]*subagent{},
 
 		lamp:      map[control.ThreadID]*lampState{},
 		lampKnown: map[control.ThreadID]bool{},
@@ -155,7 +162,7 @@ func (f *FrontEnd) show(ctx context.Context) error {
 		linked := len(convs) > 0
 		var rows []Row
 		if linked {
-			if rows, err = f.rowsFor(ctx, r, e, convs); err != nil {
+			if rows, err = f.rowsOf(ctx, r, e, convs); err != nil {
 				return err
 			}
 			// A thread seen for the first time since the start: what its
@@ -592,6 +599,7 @@ func (r *reader) turnKey(ctx context.Context, e control.Event) (key, by string, 
 		return k, r.by[e.Thread], nil
 	}
 	err = r.scan(ctx, e.Thread, e.Pos, func(ev control.Event) {
+		r.hear(ev)
 		switch ev.Kind {
 		case "turn_started":
 			var d eventData

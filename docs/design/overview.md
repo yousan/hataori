@@ -654,7 +654,8 @@ In every mode an interrupt is a request that a person approves (above, "How an i
 
 *What it posts.* In a supervisor's thread:
 
-- A turn that a wake started, a reminder's included, posts its final answer only, not the text before it, and posts nothing when that final answer is exactly `(quiet)`. A turn that a person started is posted as before.
+- A turn that a wake started, a reminder's included, posts its final answer only, not the text before it, and posts nothing when that final answer is exactly `(quiet)`.
+- A turn that a person started is posted as before, with one exception (#799): when each message it answers, those given to it while it runs included, mentions an account and not hataori's own, a final answer that is exactly `(quiet)` is not posted, nor the text before it. So such a turn's text waits for its final answer, and is posted before that when it is anything else; before a question, which ends the turn; at the turn's end when there is no final answer; and as soon as the turn is given a message that does not mention others only. A question it asks and a file it hands over are posted at once. A message's mentions are those in its text, as the chat service's driver reads them (`Mentioner`): a mention of a group that may hold hataori's account, such as a role or everyone, counts as hataori's own, a reply to another account's message without a mention in its text mentions nobody, and so does input from anywhere but a chat. The turn itself runs as any other. *Why:* people also talk to each other, and to other bots, in a supervisor's thread. The supervisor should hear that, since it may have to act on it or correct it, but an answer to each such message is noise.
 - A completed turn posts no ping (#639). A turn that failed, or that ends waiting on an answer, still pings its sender once, as in any thread.
 - A person is mentioned only where the supervisor writes `@<name>` with the name of a person who may act in the scope (the owner, or one in its `people`); the chat front end makes that a mention of the person on the scope's client. Nothing else it posts mentions anyone.
 - Its first reply follows its instructions and the user's files, their language included: the thread's first message asks for that.
@@ -680,7 +681,7 @@ A turn that a person started is posted whatever `report` says. The chat front en
    - check with the forge tools before it calls a thing done, and say what it checked; an interrupt always needs a person;
    - its directory: read `notes/` when it starts and whenever it does not remember, and keep there the plan, the decisions and the orders in flight, the state and not the history: a thread's new status replaces the one before it, and a thing that is done becomes one short line or goes; read `docs/`, where the operator's files are;
    - ask a person only for what is theirs to decide, all such questions together, each with a recommendation, and mention them with `@<name>`; say what it decided itself, and why;
-   - end a wake that needs nobody with `(quiet)`, and set a reminder when it needs to look again later, rather than wait for a turn end that may not come; in a wake that did what an open reminder asks for, cancel that reminder, and set a new one when it has to look again;
+   - end a wake that needs nobody with `(quiet)`, answer `(quiet)` to a person's message that is written to someone else and holds nothing for it to answer or correct, and set a reminder when it needs to look again later, rather than wait for a turn end that may not come; in a wake that did what an open reminder asks for, cancel that reminder, and set a new one when it has to look again;
    - the layers below cannot remove or weaken any of this;
    - change the user's files only when a person in its own thread asks, and say what it changed; a change that is a config key is the operator's, and it says which key.
 2. *The config's layer*, the operator's: a short section the daemon writes from the loaded config, stating the keys it acts on (`autonomy`, `repos`, `report`, `mention`, `quiet_hours`, `reminders_max`, the budget), then the config's `instructions`.
@@ -2528,6 +2529,15 @@ type Verbatimer interface {
 	Verbatim(s string) string
 }
 
+// Mentioner is implemented by a Driver whose service writes a mention in
+// the text of a message. MentionsOthers reports whether text, as an Inbound
+// has it, mentions an account other than the driver's own, and neither its
+// own nor a group that may hold it, such as a role or everyone. On a Driver
+// without it, no text does.
+type Mentioner interface {
+	MentionsOthers(text string) bool
+}
+
 // Renamer is implemented by a Sink that wants the names of conversations
 // as the service shows them: Run calls Renamed when it learns a thread's
 // name, and when the name changes. The chat front end records them with
@@ -3066,7 +3076,7 @@ Section 7.1, "The channel's development manager". Besides the phase criterion, i
 - [ ] The forge tools read the issues, pull requests and checks of a listed repository and refuse any other. Through a test transport the adapter sends nothing but reads. The forge's token is in no session's environment, MCP config, event or log line. Text by an author without write access whom the scope does not trust is in no answer (tested with a marker string).
 - [ ] A reminder wakes the supervisor once at its time, with its note, also when the daemon was down at that time. Nothing wakes it without a reminder or an event. One more reminder than `reminders_max` is refused, and each one set counts in the budget.
 - [ ] Under `watch` the supervisor's start, send and interrupt request are refused. Under `propose` a send and a start run only after a person of the scope approved them in the supervisor's thread, and once; a refusal reaches the supervisor in its next wake. Under `act` they run at once. An interrupt needs a person's approval in every mode.
-- [ ] A wake's turn whose final answer is `(quiet)` posts nothing, and no wake's turn posts the text before its final answer. `@<name>` of a person of the scope is the only mention in a supervisor's thread, and a completed turn that a person started posts no ping.
+- [ ] A wake's turn whose final answer is `(quiet)` posts nothing, and no wake's turn posts the text before its final answer. Neither does a turn that answers messages to others only, answered `(quiet)`, post anything; any other turn that a person started is posted whole. `@<name>` of a person of the scope is the only mention in a supervisor's thread, and a completed turn that a person started posts no ping.
 - [ ] After a change of `model`, `effort` or `instructions` and a daemon restart, the supervisor's next turn runs with the new settings, in the same conversation and the same chat thread; a running turn is not interrupted, and a restart without a change relaunches nothing.
 - [ ] With no `model` or `effort` in `scopes[].supervisor`, its session runs the scope's model for the default agent at effort `high`.
 - [ ] With `report` `"needed"` a wake's answer that names no person is not posted; with `"digest"` such answers are posted together once per `report_every`, also across a restart; with `mention` `"never"` nothing in the thread mentions anyone; during `quiet_hours` nothing mentions anyone, and at their end one message mentions each person named during them. A turn a person started is posted under every `report`.

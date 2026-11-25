@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -168,6 +169,28 @@ var _ surface.Verbatimer = (*Driver)(nil)
 // Verbatim returns s marked as verbatim.
 func (d *Driver) Verbatim(s string) string {
 	return "[verbatim]\n" + s + "\n[end of verbatim]"
+}
+
+// Self is the id of the driver's own account.
+const Self = "hataori"
+
+var _ surface.Mentioner = (*Driver)(nil)
+
+// MentionsOthers reads "<@id>" in text as a mention of the account id, as
+// a service with markup does.
+func (d *Driver) MentionsOthers(text string) bool {
+	others := false
+	for _, part := range strings.Split(text, "<@")[1:] {
+		id, _, ok := strings.Cut(part, ">")
+		if !ok {
+			continue
+		}
+		if id == Self {
+			return false
+		}
+		others = true
+	}
+	return others
 }
 
 // SetName makes Name answer name for conv, as a service that shows people
