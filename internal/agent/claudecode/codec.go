@@ -803,8 +803,10 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 		}
 		return Actions{} // a compaction keeps the session id: no news to the core
 	case "UserPromptSubmit":
-		c.tasks.notified(p.Prompt)
 		by, id := c.starter(p.Prompt)
+		if by == agent.ByAgent {
+			c.tasks.notified(p.Prompt)
+		}
 		started := agent.Event{Kind: agent.TurnStarted, StartedBy: by, Input: id}
 		if by == agent.ByTerminal {
 			// The prompt a person typed at the terminal, which no caller
@@ -846,7 +848,7 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 		if p.AgentID == "" && !strings.HasPrefix(p.ToolName, "mcp__") {
 			// Only what the main agent starts with the CLI's own tools:
 			// while a subagent runs, it is counted itself.
-			c.tasks.start(p.ToolResponse)
+			c.tasks.tool(p.ToolName, p.ToolResponse)
 		}
 		return c.events(agent.Event{Kind: agent.ToolEnded, ID: p.ToolUseID, Tool: p.ToolName, Parent: p.AgentID})
 	case "PermissionRequest":
@@ -860,6 +862,7 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 		}
 		return Actions{}
 	case "SubagentStart":
+		c.tasks.resumed(p.AgentID)
 		return c.events(agent.Event{Kind: agent.SubagentStarted, ID: p.AgentID, Tool: p.AgentType})
 	case "SubagentStop":
 		if p.AgentType == "" {

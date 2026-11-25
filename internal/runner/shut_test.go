@@ -64,19 +64,21 @@ func TestShutRefusesAReplacedSession(t *testing.T) {
 	}
 	// Idle, with background tasks left running by a turn that failed just
 	// now, by one that failed longer ago than the background wait, and by
-	// one that was stopped just now.
+	// one that was stopped just now; and one interrupted just now that
+	// nobody stopped, as by a key at the agent's terminal.
 	now := time.Now().UnixMilli()
 	for s, turn := range map[int64]struct {
-		reason  string
-		updated int64
-	}{9: {"api_error", now}, 10: {"api_error", now - session.BackgroundWait.Milliseconds()}, 11: {session.ReasonInterrupted, now}} {
+		reason, stoppedBy string
+		updated           int64
+	}{9: {"api_error", "", now}, 10: {"api_error", "", now - session.BackgroundWait.Milliseconds()},
+		11: {session.ReasonInterrupted, "owner", now}, 12: {session.ReasonInterrupted, "", now}} {
 		for _, q := range []struct {
 			sql  string
 			args []any
 		}{
 			{`INSERT INTO threads (id, scope, key, started_by, state, created_at, updated_at) VALUES (?, 's', ?, 'owner', 'idle', 0, 0)`, []any{s - 1, fmt.Sprint("t", s-1)}},
 			{`INSERT INTO sessions (id, thread_id, agent, state, created_at, updated_at) VALUES (?, ?, 'test', 'idle', 0, ?)`, []any{s, s - 1, turn.updated}},
-			{`INSERT INTO turns (session_id, started_by, started_at, ended_at, status, reason, background) VALUES (?, 'caller', 0, 1, 'failure', ?, 2)`, []any{s, turn.reason}},
+			{`INSERT INTO turns (session_id, started_by, started_at, ended_at, status, reason, background, stopped_by) VALUES (?, 'caller', 0, 1, 'failure', ?, 2, ?)`, []any{s, turn.reason, turn.stoppedBy}},
 		} {
 			if _, err := st.DB.Exec(q.sql, q.args...); err != nil {
 				t.Fatal(err)
@@ -98,8 +100,10 @@ func TestShutRefusesAReplacedSession(t *testing.T) {
 	if err := r.Shut(ctx, 4, "command"); !errors.Is(err, session.ErrRefused) || state("sessions", 4) != "idle" {
 		t.Fatalf("shut of an idle session with background tasks: %v, state %s", err, state("sessions", 4))
 	}
-	if err := r.Shut(ctx, 9, "command"); !errors.Is(err, session.ErrRefused) || state("sessions", 9) != "idle" {
-		t.Fatalf("shut of an idle session whose failed turn left background tasks: %v, state %s", err, state("sessions", 9))
+	for _, s := range []int{9, 12} {
+		if err := r.Shut(ctx, int64(s), "command"); !errors.Is(err, session.ErrRefused) || state("sessions", s) != "idle" {
+			t.Fatalf("shut of idle session %d whose last turn did not complete and left background tasks: %v, state %s", s, err, state("sessions", s))
+		}
 	}
 	for _, s := range []int{10, 11} {
 		if err := r.Shut(ctx, int64(s), "command"); err != nil || state("sessions", s) != "closed" {

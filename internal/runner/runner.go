@@ -192,23 +192,24 @@ func (r *Runner) backgroundWait() time.Duration {
 }
 
 // background returns how many background tasks the session's last turn left
-// running, 0 without a turn, and the turn's reason. The count of a turn that
+// running, 0 without a turn. The count of a turn that
 // completed holds until the next turn ends. That of a turn that failed, was
 // stopped or met a usage limit holds only until the session reported nothing
 // for backgroundWait: whether its tasks still run may never be learned, as
-// when the turn that would say so fails too.
-func (r *Runner) background(ctx context.Context, tx *store.Tx, id int64) (n int, reason string, err error) {
-	var outcome string
+// when the turn that would say so fails too. stopped says that somebody
+// stopped the turn (Stop), and that it ended by that.
+func (r *Runner) background(ctx context.Context, tx *store.Tx, id int64) (n int, stopped bool, err error) {
+	var outcome, reason, by string
 	var updated int64
-	err = tx.QueryRowContext(ctx, `SELECT t.background, t.status, t.reason, s.updated_at FROM turns t
-		JOIN sessions s ON s.id = t.session_id WHERE t.session_id = ? ORDER BY t.id DESC LIMIT 1`, id).Scan(&n, &outcome, &reason, &updated)
+	err = tx.QueryRowContext(ctx, `SELECT t.background, t.status, t.reason, t.stopped_by, s.updated_at FROM turns t
+		JOIN sessions s ON s.id = t.session_id WHERE t.session_id = ? ORDER BY t.id DESC LIMIT 1`, id).Scan(&n, &outcome, &reason, &by, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, "", nil
+		return 0, false, nil
 	}
 	if err == nil && outcome == session.Failure && time.Since(time.UnixMilli(updated)) >= r.backgroundWait() {
 		n = 0
 	}
-	return n, reason, err
+	return n, reason == session.ReasonInterrupted && by != "", err
 }
 
 // usageDrain bounds how long the agent of a session that hataori puts to
@@ -2152,11 +2153,11 @@ func (r *Runner) Shut(ctx context.Context, id int64, reason string, also ...func
 			// As the sleep does: a session whose last turn left background
 			// tasks running is still working, though it is idle. Stopping
 			// its turn is how a person says that this may end too.
-			background, how, err := r.background(ctx, tx, id)
+			background, stopped, err := r.background(ctx, tx, id)
 			if err != nil {
 				return fmt.Errorf("runner: session %d: %w", id, err)
 			}
-			if background > 0 && how != session.ReasonInterrupted && control.State(state) == control.Idle {
+			if background > 0 && !stopped && control.State(state) == control.Idle {
 				return fmt.Errorf("runner: session %d: %d background tasks still run: %w", id, background, session.ErrRefused)
 			}
 			// Input or an answer the core accepted and no turn has reported

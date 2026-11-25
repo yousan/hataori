@@ -45,18 +45,31 @@ func (t tasks) running() int {
 	return n
 }
 
-// start notes a tool's result that says a task was started in the
-// background: a subagent's, or a shell's.
-func (t *tasks) start(response json.RawMessage) {
+// tool notes the result of a tool of the main agent's that says it started a
+// task in the background, a subagent, a shell or a monitor, resumed a
+// subagent that had ended, or stopped a task.
+func (t *tasks) tool(name string, response json.RawMessage) {
 	var r struct {
 		IsAsync bool   `json:"isAsync"`
 		AgentID string `json:"agentId"`
 		Shell   string `json:"backgroundTaskId"`
+		Resumed string `json:"resumedAgentId"`
+		Task    string `json:"taskId"` // a Monitor's; other tools name tasks of other sorts with it
+		Stopped string `json:"task_id"`
 	}
 	json.Unmarshal(response, &r) // a tool whose response is another shape starts none
-	id := r.Shell
-	if r.IsAsync {
+	var id string
+	switch {
+	case name == "TaskStop":
+		t.end(r.Stopped)
+	case name == "Monitor":
+		id = r.Task
+	case r.IsAsync:
 		id = r.AgentID
+	case r.Resumed != "":
+		id = r.Resumed
+	default:
+		id = r.Shell
 	}
 	if id == "" {
 		return
@@ -68,6 +81,15 @@ func (t *tasks) start(response json.RawMessage) {
 		*t = tasks{}
 	}
 	(*t)[id] = true
+}
+
+// resumed notes that the subagent id starts. One whose end was learned runs
+// again: it was resumed with a message. Of any other, only the result of the
+// tool that started it says whether it runs in the background.
+func (t tasks) resumed(id string) {
+	if _, known := t[id]; known {
+		t[id] = true
+	}
 }
 
 // end notes that the task id ended.

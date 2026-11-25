@@ -544,6 +544,50 @@ def interrupt_background(out, work):
     run(out, work, "interrupt_background", steps)
 
 
+def failure_resumed(out, work):
+    t = Tunnel()
+
+    def steps(s):
+        # A turn that fails while a subagent runs that ended once and was
+        # resumed with a message.
+        s.turn("Use the Agent tool, with the model haiku and run_in_background set to true, to start one general-purpose "
+               "subagent with the prompt 'Reply with just: first'. Do not wait for it. Reply with just: started. Later, "
+               "when you are told that it finished, send nothing to it and reply with just: finished")
+        s.wait("Stop", 2, timeout=120)
+        s.turn("Use the SendMessage tool to send that same subagent, by its agent id, this message: 'Run the Bash command "
+               "`python3 -c \\'import time; time.sleep(50)\\'` in the foreground, then reply with just: second'. Do not wait for it, "
+               "and reply with just: sent")
+        s.wait("PreToolUse", where=lambda p: p.get("agent_id"), timeout=120)
+        t.shut()
+        s.typed("Reply with just the word: ok")
+        s.wait("StopFailure", timeout=60)
+        t.reopen()
+        n = len(s.calls("Stop"))
+        s.wait("Stop", n + 1, timeout=240)
+    run(out, work, "failure_resumed", steps, env={"HTTPS_PROXY": t.url, "CLAUDE_CODE_MAX_RETRIES": "1"})
+
+
+def failure_monitor(out, work):
+    t = Tunnel()
+
+    def steps(s):
+        # A turn that fails while a monitor runs; a shell was stopped with
+        # TaskStop before, and the monitor is after.
+        s.turn("Do two things. First use the Monitor tool to watch the command `while sleep 40; do echo tick; done`, with the "
+               "description 'ticks' and persistent set to true. Then use the Bash tool, with run_in_background set to true, to run "
+               "`sleep 300`. Do not wait for either. Reply with just: started")
+        s.turn("Use the TaskStop tool to stop the `sleep 300` shell. Then reply with just: stopped")
+        t.shut()
+        n = len(s.calls("StopFailure"))
+        s.typed("Reply with just the word: ok")
+        s.wait("StopFailure", n + 1, timeout=60)
+        t.reopen()
+        time.sleep(2)
+        s.turn("Use the TaskStop tool to stop the monitor. Then reply with just: done", stops=1)
+        time.sleep(3)
+    run(out, work, "failure_monitor", steps, env={"HTTPS_PROXY": t.url, "CLAUDE_CODE_MAX_RETRIES": "1"})
+
+
 def resume_missing(out, work):
     """`claude --resume` of a conversation the CLI does not have: a new
     random id in a new directory. No request is sent."""
@@ -696,7 +740,7 @@ def main():
         f.write("%s\n%s\n" % (ver, time.strftime("%Y-%m-%d")))
     order = ["plain", "tools", "question", "background", "subagent", "paste", "interrupt", "compact",
              "failure", "trust", "login", "login_terminal", "resume_missing", "clear", "sleep", "subagent_tools", "usage", "paste_tabs",
-             "held_notification", "failure_background", "interrupt_background"]
+             "held_notification", "failure_background", "interrupt_background", "failure_resumed", "failure_monitor"]
     for name in order:
         if want and name not in want and not (name == "plain" and "resume" in want):
             continue

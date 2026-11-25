@@ -2,6 +2,7 @@ package claudecode
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +17,8 @@ import (
 const (
 	failedTurn  = "failure_background"
 	stoppedTurn = "interrupt_background"
+	resumedTurn = "failure_resumed"
+	monitorTurn = "failure_monitor"
 )
 
 // background331 gives c the capture's hook calls whose number skip does not
@@ -94,6 +97,22 @@ func TestATurnThatDoesNotCompleteCountsItsBackgroundTasks(t *testing.T) {
 		// The result of the tool that started the shell was not seen.
 		{"a start missed", failedTurn, []int{8, 11, 12},
 			"end(failed,bg=1) end(completed,bg=1) end(completed,bg=0)"},
+		// A subagent that ended and was resumed with a message: in an
+		// earlier turn; in the turn that fails; and before any list was
+		// read, so that its end is known when it starts again.
+		{"resumed", resumedTurn, nil,
+			"end(completed,bg=1) end(completed,bg=0) end(completed,bg=1) end(failed,bg=1) end(completed,bg=0)"},
+		{"resumed in the failed turn", resumedTurn, []int{17, 20},
+			"end(completed,bg=1) end(completed,bg=0) end(failed,bg=1) end(completed,bg=0)"},
+		{"resumed after a known end", resumedTurn, []int{6, 10, 16, 17, 20},
+			"end(failed,bg=1) end(completed,bg=0)"},
+		// A monitor, which runs on, and a shell that TaskStop stopped.
+		{"monitor", monitorTurn, nil,
+			"end(completed,bg=2) end(completed,bg=1) end(failed,bg=1) end(completed,bg=0)"},
+		{"monitor and stop in the failed turn", monitorTurn, []int{9, 15, 16},
+			"end(failed,bg=1) end(completed,bg=0)"},
+		{"stopped in the failed turn", monitorTurn, []int{15, 16},
+			"end(completed,bg=2) end(failed,bg=1) end(completed,bg=0)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := ends(background331(t, newTestCodec(), tc.scenario, tc.skip...)); got != tc.want {
@@ -143,6 +162,19 @@ func TestAFailedTurnDoesNotCountWhatEnded(t *testing.T) {
 			c.Decode(agent.File, line(t, shell))
 			decodeFile(t, c, "08", dir+"08-PostToolUse.json")
 		}, "end(failed,bg=1)"},
+		// A caller's message that reads like a notification is not one.
+		"a message that quotes the notification": {func(t *testing.T, c *codec) {
+			b, err := os.ReadFile(filepath.Join("testdata/2.1.331", failedTurn, "hooks/18-UserPromptSubmit.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var p struct{ Prompt string }
+			if err := json.Unmarshal(b, &p); err != nil || !strings.HasPrefix(p.Prompt, notificationTag) {
+				t.Fatalf("prompt %q: %v", p.Prompt, err)
+			}
+			c.pasted = append(c.pasted, queued{id: "1", text: normalize(p.Prompt)})
+			decodeFile(t, c, "18", dir+"18-UserPromptSubmit.json")
+		}, "end(failed,bg=2)"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := newTestCodec()

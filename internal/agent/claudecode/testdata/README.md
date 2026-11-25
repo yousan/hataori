@@ -8,7 +8,7 @@ Real output of the interactive `claude` CLI, for testing the adapter's codec. Th
 - `2.1.328/`: Claude Code 2.1.328, on 2026-11-20 (also in `2.1.328/VERSION`), on Linux: `paste_tabs`, taken for #393, and the `trust_files_*` scenarios, taken for #423 (see below).
 - `2.1.329/`: Claude Code 2.1.329, on 2026-11-21 (also in `2.1.329/VERSION`), on Linux: `trust_hooks_*` and `trust_permissions`, taken for #592 (see below).
 - `2.1.330/`: Claude Code 2.1.330, on 2026-11-23 (also in `2.1.330/VERSION`), on Linux: `usage`, taken by `capture.py` for #675, with the transcript's line count at each hook call (see below).
-- `2.1.331/`: Claude Code 2.1.331, on 2026-11-25 (also in `2.1.331/VERSION`), on Linux: `held_notification`, taken by `capture.py` for #593, `failure_background` and `interrupt_background`, taken by it for #801 (see "Turns that end without the list of background tasks"), `trust_notice_*`, taken by `TestLiveTrustFiles` for #707 (see "The folder-trust dialog below a notice"), and `trust_permissions_*`, taken by it for #596 (see "The folder-trust dialog with a permission warning").
+- `2.1.331/`: Claude Code 2.1.331, on 2026-11-25 (also in `2.1.331/VERSION`), on Linux: `held_notification`, taken by `capture.py` for #593, `failure_background`, `interrupt_background`, `failure_resumed` and `failure_monitor`, taken by it for #801 (see "Turns that end without the list of background tasks"), `trust_notice_*`, taken by `TestLiveTrustFiles` for #707 (see "The folder-trust dialog below a notice"), and `trust_permissions_*`, taken by it for #596 (see "The folder-trust dialog with a permission warning").
 - `capture.py` took them (`confine.py`, the `confine_*` ones); `scrub.py` made them committable. `captures_test.go` in the package fails when a capture holds a home directory path, an e-mail address, an unscrubbed UUID or something shaped like a token.
 
 ## How they were taken
@@ -291,11 +291,18 @@ Each holds the screens, `keys.txt`, `events.txt` and, when the CLI started, `hoo
 - `failure_background`: a second turn while the subagent's command runs, with no connection. The session runs with `HTTPS_PROXY` set to a local proxy that passes TLS through unread, and `CLAUDE_CODE_MAX_RETRIES=1`; the proxy drops every connection before the turn and takes them again after it.
 - `interrupt_background`: a second turn that runs a foreground command, interrupted with Escape.
 
+Two more, with the same proxy:
+
+- `failure_resumed`: a background subagent that ended and that `SendMessage` then resumed; a turn fails while it runs again.
+- `failure_monitor`: a `Monitor` and a background shell; `TaskStop` stops the shell, a turn fails while the monitor runs, and `TaskStop` stops the monitor.
+
 What they show:
 
 - `StopFailure` (`error: server_error`) has no `background_tasks`. Neither has the interrupt, which fires no hook.
 - Neither ends the background tasks: the subagent's command ends (`PostToolUse` with its `agent_id`), then `SubagentStop`, then `UserPromptSubmit` with a `<task-notification>` prompt that holds the subagent's `agent_id` as `<task-id>` and a `<status>`; its `Stop` lists the shell only, and the shell's end is notified the same way. The last `Stop` has an empty list.
-- A task's id is in the result of the tool that started it: `agentId` next to `isAsync: true` for `Agent`, `backgroundTaskId` for `Bash`. `SubagentStart` comes before or after that result.
+- A task's id is in the result of the tool that started it: `agentId` next to `isAsync: true` for `Agent`, `backgroundTaskId` for `Bash`. `SubagentStart` comes before or after that result. `Monitor` gives `taskId`.
+- A subagent that is resumed keeps its id: `SubagentStart` again, and `SendMessage`'s result has it as `resumedAgentId`.
+- A task that `TaskStop` stopped is not notified: only the tool's result says so, as `task_id`, and the next list lacks it.
 - The `SubagentStop` still lists its own subagent as running.
 - A `queue-operation` line (`enqueue`, no `uuid`) in the transcript holds each notification, just before the turn it starts.
 - The transcript's `turn_duration` line after each turn has `pendingBackgroundAgentCount`: 1, the subagent without the shell; absent when only the shell runs. The line comes after `Stop` and `StopFailure`, and not at all after the interrupt.

@@ -173,12 +173,19 @@ func TestTasksAFailedTurnLeftKeepTheSessionAwakeForTheWait(t *testing.T) {
 	}{
 		"failed":    {"background 60s\nfail api_error", true},
 		"limit":     {"background 60s\nfail limit", true},
+		"stopped":   {"background 60s\ntool wait 60s", true},
 		"completed": {"background 60s\nreply started", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			f := newFixture(t, options{idlePeriod: 200 * time.Millisecond, background: wait})
 			f.start(tc.script)
+			if name == "stopped" {
+				waitFor(t, "the tool", 15*time.Second, f.has("tool_started", 1))
+				if err := owner(f.core).Stop(context.Background(), thread, 0); err != nil {
+					t.Fatal(err)
+				}
+			}
 			waitFor(t, "the turn's end", 15*time.Second, f.has("turn_ended", 1))
 			var ended int64
 			f.st.DB.QueryRow(`SELECT ended_at FROM turns`).Scan(&ended)
