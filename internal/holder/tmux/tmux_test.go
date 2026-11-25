@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -13,6 +15,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/holder"
@@ -537,19 +541,17 @@ func TestInputToADeadPaneIsRefused(t *testing.T) {
 func (s *server) agentBelow(program string) (holder.Window, string) {
 	s.t.Helper()
 	if _, err := exec.LookPath("bash"); err != nil {
-		s.t.Skip("no bash for job control")
+		s.t.Skip("no bash for exec -a")
 	}
 	out, pidFile := filepath.Join(s.dir, fmt.Sprintf("below%d", s.n)), filepath.Join(s.dir, fmt.Sprintf("pid%d", s.n))
-	script := filepath.Join(s.dir, fmt.Sprintf("shell%d", s.n))
-	for p, text := range map[string]string{
-		script:            fmt.Sprintf("set -m\nstty raw -echo\nbash %[1]s-agent\necho x > %[2]s-back\nexec tee %[2]s-shell > /dev/null\n", script, out),
-		script + "-agent": fmt.Sprintf("echo $$ > %s\n%s > %s\n", pidFile, program, out),
-	} {
-		if err := os.WriteFile(p, []byte(text), 0o600); err != nil {
-			s.t.Fatal(err)
-		}
+	if err := os.WriteFile(out+"-agent", []byte(fmt.Sprintf("echo $$ > %s\n%s > %s\n", pidFile, program, out)), 0o600); err != nil {
+		s.t.Fatal(err)
 	}
-	pane, _ := s.pane("exec bash " + script)
+	self, err := os.Executable()
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	pane, _ := s.pane("stty raw -echo; exec " + quote(self) + " shell " + out)
 	pid, err := strconv.Atoi(strings.TrimSpace(string(waitFile(s.t, pidFile))))
 	if err != nil {
 		s.t.Fatal(err)
@@ -562,6 +564,33 @@ func (s *server) agentBelow(program string) (holder.Window, string) {
 		}
 	}
 	return w, out
+}
+
+// shellMain is the shell of agentBelow. It is not a real one: bash has no job
+// control in a script on macOS that sees the agent stop.
+func shellMain(out string) error {
+	signal.Ignore(syscall.SIGTTOU)
+	c := exec.Command("bash", out+"-agent")
+	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+	c.SysProcAttr = &syscall.SysProcAttr{Foreground: true}
+	if err := c.Start(); err != nil {
+		return err
+	}
+	if _, err := syscall.Wait4(c.Process.Pid, nil, syscall.WUNTRACED, nil); err != nil {
+		return err
+	}
+	if err := unix.IoctlSetPointerInt(0, unix.TIOCSPGRP, syscall.Getpgrp()); err != nil {
+		return err
+	}
+	if err := os.WriteFile(out+"-back", []byte("x"), 0o600); err != nil {
+		return err
+	}
+	f, err := os.Create(out + "-shell")
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(f, os.Stdin)
+	return err
 }
 
 // The agent of a window hataori did not start may run below the pane's own
@@ -833,7 +862,7 @@ func (s *server) runs(pid int, name string) {
 	var err error
 	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
 		var out []byte
-		out, err = exec.Command("ps", "-o", "comm=", "-p", strconv.Itoa(pid)).Output()
+		out, err = exec.Command("ps", "-o", "ucomm=", "-p", strconv.Itoa(pid)).Output()
 		if comm = strings.TrimSpace(string(out)); filepath.Base(comm) == name {
 			return
 		}
