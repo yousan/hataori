@@ -364,7 +364,7 @@ type Event struct {
 
 	Status     EndStatus // TurnEnded
 	Reason     Reason    // TurnEnded when failed; SessionEnded: why, as the agent says or CannotResume, WrongSession, BlockedAtStart
-	Background int       // TurnEnded: background tasks still running
+	Background int       // TurnEnded: background tasks still running, whatever the Status: what the agent listed, or the last count corrected by what it reported since
 	// Trust is, for SessionEnded with BlockedAtStart, every file a start-up
 	// dialog asked to trust, as it named them, when the start was blocked
 	// because the session may not trust some of them. A person may let

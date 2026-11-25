@@ -64,6 +64,7 @@ type codec struct {
 	sent          *sentInput    // input written, not yet reported
 	timeout       time.Duration // for sent; DefaultInputTimeout when zero
 	mcp           mcpState      // the MCP servers input waits for (mcpwait.go)
+	tasks         tasks         // the background tasks that run (background.go)
 
 	// Questions.
 	requests    map[string]*request // by hook call id, while the call waits
@@ -168,16 +169,17 @@ type payload struct {
 	Effort         struct {
 		Level string `json:"level"`
 	} `json:"effort"`
-	Prompt          string          `json:"prompt"`
-	ToolName        string          `json:"tool_name"`
-	ToolInput       json.RawMessage `json:"tool_input"`
-	ToolUseID       string          `json:"tool_use_id"`
-	LastMessage     string          `json:"last_assistant_message"`
-	BackgroundTasks []struct {
-		Status string `json:"status"`
-	} `json:"background_tasks"`
-	Error  string `json:"error"`
-	Reason string `json:"reason"` // SessionEnd
+	Prompt       string          `json:"prompt"`
+	ToolName     string          `json:"tool_name"`
+	ToolInput    json.RawMessage `json:"tool_input"`
+	ToolUseID    string          `json:"tool_use_id"`
+	ToolResponse json.RawMessage `json:"tool_response"`
+	LastMessage  string          `json:"last_assistant_message"`
+	// BackgroundTasks is nil for a hook that does not have the list, as
+	// StopFailure, and empty for one that says no task runs.
+	BackgroundTasks []backgroundTask `json:"background_tasks"`
+	Error           string           `json:"error"`
+	Reason          string           `json:"reason"` // SessionEnd
 	// RateLimits is what the status line handed on (statusLineEvent).
 	RateLimits json.RawMessage `json:"rate_limits"`
 	AgentID    string          `json:"agent_id"`
@@ -361,7 +363,7 @@ func (c *codec) tickInput(now time.Time) Actions {
 	}
 	id := c.sent.id
 	c.sent = nil
-	a := c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered, Input: id})
+	a := c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered, Input: id, Background: c.tasks.running()})
 	return merge(a, c.flush())
 }
 
@@ -387,7 +389,7 @@ func (c *codec) Interrupt() Actions {
 	if !c.running && c.sent == nil && len(c.queue) > 0 {
 		q := c.queue[0]
 		c.queue = c.queue[1:]
-		return c.number(c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted, Input: q.id}))
+		return c.number(c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted, Input: q.id, Background: c.tasks.running()}))
 	}
 	return Actions{Keys: []agent.Part{stopKey}}
 }
@@ -544,7 +546,11 @@ type transcriptLine struct {
 	SessionID   string `json:"sessionId"`
 	PromptID    string `json:"promptId"`
 	IsSidechain bool   `json:"isSidechain"`
-	Message     struct {
+	// Operation and Content are a queue-operation line's: a message the CLI
+	// queued for the agent, such as the notification of a task's end.
+	Operation string          `json:"operation"`
+	Content   json.RawMessage `json:"content"`
+	Message   struct {
 		ID      string          `json:"id"`
 		Model   string          `json:"model"`
 		Content json.RawMessage `json:"content"`
@@ -584,6 +590,13 @@ func (c *codec) decodeTranscript(raw []byte) Actions {
 	}
 	var out Actions
 	switch l.Type {
+	case "queue-operation":
+		// A task that ends while a turn runs is told to the agent within
+		// the turn, and no hook says so.
+		var text string
+		if l.Operation == "enqueue" && json.Unmarshal(l.Content, &text) == nil {
+			c.tasks.notified(text)
+		}
 	case "user":
 		if l.PromptID != "" {
 			c.current = l.PromptID
@@ -720,7 +733,8 @@ func (c *codec) applyText(t *turnText, it textItem) Actions {
 		a := merge(c.withdrawAll(), c.release(t))
 		t.ended, t.interrupted = true, true
 		c.lastEnded = t
-		return merge(a, c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted}))
+		// The interrupt ends the turn, not the background tasks.
+		return merge(a, c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted, Background: c.tasks.running()}))
 	}
 	if t.ended {
 		// The turn's end is reported, with its final answer; text read
@@ -790,6 +804,9 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 		return Actions{} // a compaction keeps the session id: no news to the core
 	case "UserPromptSubmit":
 		by, id := c.starter(p.Prompt)
+		if by == agent.ByAgent {
+			c.tasks.notified(p.Prompt)
+		}
 		started := agent.Event{Kind: agent.TurnStarted, StartedBy: by, Input: id}
 		if by == agent.ByTerminal {
 			// The prompt a person typed at the terminal, which no caller
@@ -799,19 +816,14 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 		return c.events(started)
 	case "Stop":
 		withdrawn := c.withdrawAll()
-		running := 0
-		for _, t := range p.BackgroundTasks {
-			if t.Status == "running" {
-				running++
-			}
-		}
+		running := c.listed(p)
 		return merge(merge(withdrawn, c.end(p.PromptID, p.LastMessage)), c.events(
 			agent.Event{Kind: agent.Text, Text: p.LastMessage, Final: true},
 			agent.Event{Kind: agent.TurnEnded, Status: agent.Completed, Background: running},
 		))
 	case "StopFailure":
 		return merge(merge(c.withdrawAll(), c.end(p.PromptID, "")), c.events(
-			agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: failureReason(p.Error), Text: p.LastMessage}))
+			agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: failureReason(p.Error), Text: p.LastMessage, Background: c.listed(p)}))
 	case "PreToolUse":
 		if p.ToolName == askTool {
 			if !k.Wait {
@@ -833,6 +845,11 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 			}
 			return c.withdrawTool(p.ToolUseID) // answered some other way, or refused
 		}
+		if p.AgentID == "" && !strings.HasPrefix(p.ToolName, "mcp__") {
+			// Only what the main agent starts with the CLI's own tools:
+			// while a subagent runs, it is counted itself.
+			c.tasks.tool(p.ToolName, p.ToolResponse)
+		}
 		return c.events(agent.Event{Kind: agent.ToolEnded, ID: p.ToolUseID, Tool: p.ToolName, Parent: p.AgentID})
 	case "PermissionRequest":
 		if c.spec.Confine != nil && k.Wait {
@@ -845,11 +862,13 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 		}
 		return Actions{}
 	case "SubagentStart":
+		c.tasks.resumed(p.AgentID)
 		return c.events(agent.Event{Kind: agent.SubagentStarted, ID: p.AgentID, Tool: p.AgentType})
 	case "SubagentStop":
 		if p.AgentType == "" {
 			return Actions{} // an agent the CLI runs for itself, such as the compaction summary
 		}
+		c.tasks.end(p.AgentID)
 		return c.events(agent.Event{Kind: agent.SubagentEnded, ID: p.AgentID, Tool: p.AgentType})
 	case "PreCompact":
 		c.compact++
@@ -867,6 +886,15 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 		return merge(c.withdrawAll(), c.events(end))
 	}
 	return c.events(agent.Event{Kind: agent.Unknown, Text: p.Event})
+}
+
+// listed returns how many background tasks run at the end of a turn: what
+// the hook's list says, or, without one, what is known from before.
+func (c *codec) listed(p payload) int {
+	if p.BackgroundTasks == nil {
+		return c.tasks.running()
+	}
+	return c.tasks.list(p.BackgroundTasks)
 }
 
 // abandoned says whether a call comes from the main agent of a turn that
@@ -1004,7 +1032,7 @@ func (c *codec) starter(prompt string) (agent.Starter, string) {
 			return agent.ByCaller, p.id
 		}
 	}
-	if strings.HasPrefix(strings.TrimSpace(prompt), "<task-notification>") {
+	if strings.HasPrefix(strings.TrimSpace(prompt), notificationTag) {
 		return agent.ByAgent, ""
 	}
 	return agent.ByTerminal, ""

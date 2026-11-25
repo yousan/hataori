@@ -175,7 +175,7 @@ type API interface {
 	// closes it: the workspace stays, and a message does not wake it (Send
 	// is ErrClosed). A thread with a turn running, a question open or a
 	// session starting is refused, and so is an idle one whose last turn
-	// left background tasks running, or that has a message or an answer the
+	// left background tasks running and was not stopped, or that has a message or an answer the
 	// core accepted and no turn has reported yet, such as a message held
 	// until the turn that was running ended. A closed thread is not closed
 	// again, but its agent is stopped if it still runs.

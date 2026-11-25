@@ -63,6 +63,9 @@ type Runner struct {
 	InterruptGrace time.Duration // after an interrupt, before the session's processes are stopped; 5s when zero
 	Poll           time.Duration // how often the logs are read; 50ms when zero
 	IdlePeriod     time.Duration // idle this long, a session's agent is stopped; 30 minutes when zero
+	// BackgroundWait is how long the count of a turn that did not complete
+	// holds (background); session.BackgroundWait when zero.
+	BackgroundWait time.Duration
 	// UsageDrain is usageDrain's bound; 2 s when zero.
 	UsageDrain   time.Duration
 	ContextBytes int // the cap on the earlier context a replacing session starts with; 8192 when zero
@@ -179,6 +182,34 @@ func (r *Runner) idlePeriod() time.Duration {
 		return r.IdlePeriod
 	}
 	return 30 * time.Minute
+}
+
+func (r *Runner) backgroundWait() time.Duration {
+	if r.BackgroundWait > 0 {
+		return r.BackgroundWait
+	}
+	return session.BackgroundWait
+}
+
+// background returns how many background tasks the session's last turn left
+// running, 0 without a turn. The count of a turn that
+// completed holds until the next turn ends. That of a turn that failed, was
+// stopped or met a usage limit holds only until the session reported nothing
+// for backgroundWait: whether its tasks still run may never be learned, as
+// when the turn that would say so fails too. stopped says that somebody
+// stopped the turn (Stop), and that it ended by that.
+func (r *Runner) background(ctx context.Context, tx *store.Tx, id int64) (n int, stopped bool, err error) {
+	var outcome, reason, by string
+	var updated int64
+	err = tx.QueryRowContext(ctx, `SELECT t.background, t.status, t.reason, t.stopped_by, s.updated_at FROM turns t
+		JOIN sessions s ON s.id = t.session_id WHERE t.session_id = ? ORDER BY t.id DESC LIMIT 1`, id).Scan(&n, &outcome, &reason, &by, &updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err == nil && outcome == session.Failure && time.Since(time.UnixMilli(updated)) >= r.backgroundWait() {
+		n = 0
+	}
+	return n, reason == session.ReasonInterrupted && by != "", err
 }
 
 // usageDrain bounds how long the agent of a session that hataori puts to
@@ -1928,8 +1959,8 @@ func (r *Runner) exit(lv *live) {
 }
 
 // checkIdle puts the session to sleep when it has been idle for the idle
-// period, with no background task running and no open request, and stops
-// its agent. The session keeps its id, so its next input resumes it.
+// period, with no background task running (background) and no open request,
+// and stops its agent. The session keeps its id, so its next input resumes it.
 func (r *Runner) checkIdle(lv *live) {
 	lv.mu.Lock()
 	defer lv.mu.Unlock()
@@ -1957,9 +1988,9 @@ func (r *Runner) checkIdle(lv *live) {
 		if control.State(state) != control.Idle || time.Since(time.UnixMilli(updated)) < r.idlePeriod() {
 			return nil
 		}
-		var background, open int
-		err := tx.QueryRowContext(ctx, `SELECT background FROM turns WHERE session_id = ? ORDER BY id DESC LIMIT 1`, lv.id).Scan(&background)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		var open int
+		background, _, err := r.background(ctx, tx, lv.id)
+		if err != nil {
 			return err
 		}
 		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM requests WHERE session_id = ? AND state = 'open'`, lv.id).Scan(&open); err != nil {
@@ -2023,9 +2054,8 @@ func (r *Runner) sleep(ctx context.Context, lv *live) (bool, error) {
 		if control.State(state) != control.Idle {
 			return nil
 		}
-		var background int
-		err := tx.QueryRowContext(ctx, `SELECT background FROM turns WHERE session_id = ? ORDER BY id DESC LIMIT 1`, id).Scan(&background)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		background, _, err := r.background(ctx, tx, id)
+		if err != nil {
 			return err
 		}
 		// Input this run's agent was given and no turn has reported yet, as
@@ -2092,8 +2122,8 @@ const shutWait = 15 * time.Second
 // it, and in a transaction that refuses a session that is no longer its
 // thread's newest (one replaced meanwhile; the new session is made in the
 // transaction that stores the old one's failure, so one of the two sees the
-// other), and an idle one whose last turn left background tasks running.
-// Then it stops the
+// other), and an idle one whose last turn left background tasks running and
+// was not stopped. Then it stops the
 // session's host, when one runs, and waits until the host and the runner's
 // following of it have ended. A closed session is only stopped and waited
 // for: a Close repeated after a stop that failed tries again, and a removal
@@ -2121,13 +2151,13 @@ func (r *Runner) Shut(ctx context.Context, id int64, reason string, also ...func
 				return fmt.Errorf("runner: session %d: its thread has a newer session: %w", id, session.ErrRefused)
 			}
 			// As the sleep does: a session whose last turn left background
-			// tasks running is still working, though it is idle.
-			var background int
-			err := tx.QueryRowContext(ctx, `SELECT background FROM turns WHERE session_id = ? ORDER BY id DESC LIMIT 1`, id).Scan(&background)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			// tasks running is still working, though it is idle. Stopping
+			// its turn is how a person says that this may end too.
+			background, stopped, err := r.background(ctx, tx, id)
+			if err != nil {
 				return fmt.Errorf("runner: session %d: %w", id, err)
 			}
-			if background > 0 && control.State(state) == control.Idle {
+			if background > 0 && !stopped && control.State(state) == control.Idle {
 				return fmt.Errorf("runner: session %d: %d background tasks still run: %w", id, background, session.ErrRefused)
 			}
 			// Input or an answer the core accepted and no turn has reported

@@ -20,6 +20,7 @@ import pty
 import select
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -250,12 +251,12 @@ def new_dir(work, name):
     return d
 
 
-def run(out, work, name, steps, args=None, cwd=None):
+def run(out, work, name, steps, args=None, cwd=None, env=None):
     """Start a session, run steps(session), and end it whatever happens."""
     settings = settings_file(work)
     sid = str(uuid.uuid4())
     cwd = cwd or new_dir(work, name)
-    s = Session(out, name, args or claude(settings, "--session-id", sid), cwd, clean_env())
+    s = Session(out, name, args or claude(settings, "--session-id", sid), cwd, clean_env(env))
     try:
         s.wait("SessionStart", timeout=60)
         steps(s)
@@ -421,6 +422,172 @@ def failure(out, work):
     run(out, work, "failure", steps, args=args)
 
 
+class Tunnel:
+    """A local proxy that passes TLS connections through unread, and can be
+    shut and opened again: the way to a real API error in a session that
+    worked before it."""
+
+    def __init__(self):
+        self.up, self.open = True, set()
+        self.lock = threading.Lock()
+        self.sock = socket.create_server(("127.0.0.1", 0))
+        self.url = "http://127.0.0.1:%d" % self.sock.getsockname()[1]
+        threading.Thread(target=self._accept, daemon=True).start()
+
+    def _accept(self):
+        while True:
+            c, _ = self.sock.accept()
+            threading.Thread(target=self._serve, args=(c,), daemon=True).start()
+
+    def _serve(self, c):
+        head = b""
+        while b"\r\n\r\n" not in head:
+            b = c.recv(4096)
+            if not b:
+                return c.close()
+            head += b
+        host, _, port = head.split()[1].decode().rpartition(":")
+        with self.lock:
+            if not self.up:
+                c.close()
+                return
+        try:
+            u = socket.create_connection((host, int(port)), timeout=30)
+        except OSError:
+            return c.close()
+        u.settimeout(None)
+        with self.lock:
+            self.open |= {c, u}
+        c.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
+        threading.Thread(target=self._copy, args=(u, c), daemon=True).start()
+        self._copy(c, u)
+
+    def _copy(self, a, b):
+        try:
+            while True:
+                d = a.recv(65536)
+                if not d:
+                    break
+                b.sendall(d)
+        except OSError:
+            pass
+        with self.lock:
+            self.open -= {a, b}
+        for s in (a, b):
+            try:
+                s.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+    def shut(self):
+        with self.lock:
+            self.up = False
+            for s in self.open:
+                try:
+                    s.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+    def reopen(self):
+        self.up = True
+
+
+# A background subagent and a background shell that outlive the turns.
+OUTLIVE = ("Do two things. First use the Agent tool, with the model haiku and run_in_background set to true, to start one "
+           "general-purpose subagent with this prompt: 'Call the Bash tool exactly once, with run_in_background set to "
+           "false and timeout 300000, to run the command `python3 -c \'import time; time.sleep(%d)\'`, and wait for it. "
+           "Then reply with just: sub-ok'. Then run the command `python3 -c 'import time; time.sleep(%d)'` with the Bash "
+           "tool, with run_in_background set to true. Do not wait for either. Reply with just: started. "
+           "When you are told later that one finished, reply with just: noted")
+
+
+def in_command(s):
+    """Wait until the subagent's own command runs."""
+    s.wait("PreToolUse", where=lambda p: p.get("agent_id") and p.get("tool_name") == "Bash", timeout=120)
+
+
+def failure_background(out, work):
+    t = Tunnel()
+
+    def steps(s):
+        # A turn that fails while a subagent and a shell run; they end
+        # after it.
+        s.turn(OUTLIVE % (60, 90))
+        in_command(s)
+        t.shut()
+        s.typed("Reply with just the word: ok")
+        s.wait("StopFailure", timeout=60)
+        t.reopen()
+        n = len(s.calls("Stop"))
+        s.wait("Stop", n + 2, timeout=240)
+    run(out, work, "failure_background", steps, env={"HTTPS_PROXY": t.url, "CLAUDE_CODE_MAX_RETRIES": "1"})
+
+
+def interrupt_background(out, work):
+    def steps(s):
+        # A turn that is interrupted with Escape while a subagent and a
+        # shell run.
+        s.turn(OUTLIVE % (60, 90))
+        in_command(s)
+        s.typed("Call the Bash tool exactly once with run_in_background set to false and timeout 120000 "
+                "to run the command `python3 -c 'import time; time.sleep(45)'`, and wait for it to finish. "
+                "Do not run it in the background. Then reply: done")
+        s.wait("PreToolUse", where=lambda p: not p.get("agent_id") and "sleep(45)" in json.dumps(p.get("tool_input")),
+               timeout=120)
+        time.sleep(3)
+        n = len(s.calls("Stop"))
+        s.write(b"\x1b")
+        try:
+            s.wait("Stop", n + 2, timeout=150)
+        except TimeoutError as e:
+            print("note:", e, file=sys.stderr)
+    run(out, work, "interrupt_background", steps)
+
+
+def failure_resumed(out, work):
+    t = Tunnel()
+
+    def steps(s):
+        # A turn that fails while a subagent runs that ended once and was
+        # resumed with a message.
+        s.turn("Use the Agent tool, with the model haiku and run_in_background set to true, to start one general-purpose "
+               "subagent with the prompt 'Reply with just: first'. Do not wait for it. Reply with just: started. Later, "
+               "when you are told that it finished, send nothing to it and reply with just: finished")
+        s.wait("Stop", 2, timeout=120)
+        s.turn("Use the SendMessage tool to send that same subagent, by its agent id, this message: 'Run the Bash command "
+               "`python3 -c \\'import time; time.sleep(50)\\'` in the foreground, then reply with just: second'. Do not wait for it, "
+               "and reply with just: sent")
+        s.wait("PreToolUse", where=lambda p: p.get("agent_id"), timeout=120)
+        t.shut()
+        s.typed("Reply with just the word: ok")
+        s.wait("StopFailure", timeout=60)
+        t.reopen()
+        n = len(s.calls("Stop"))
+        s.wait("Stop", n + 1, timeout=240)
+    run(out, work, "failure_resumed", steps, env={"HTTPS_PROXY": t.url, "CLAUDE_CODE_MAX_RETRIES": "1"})
+
+
+def failure_monitor(out, work):
+    t = Tunnel()
+
+    def steps(s):
+        # A turn that fails while a monitor runs; a shell was stopped with
+        # TaskStop before, and the monitor is after.
+        s.turn("Do two things. First use the Monitor tool to watch the command `while sleep 40; do echo tick; done`, with the "
+               "description 'ticks' and persistent set to true. Then use the Bash tool, with run_in_background set to true, to run "
+               "`sleep 300`. Do not wait for either. Reply with just: started")
+        s.turn("Use the TaskStop tool to stop the `sleep 300` shell. Then reply with just: stopped")
+        t.shut()
+        n = len(s.calls("StopFailure"))
+        s.typed("Reply with just the word: ok")
+        s.wait("StopFailure", n + 1, timeout=60)
+        t.reopen()
+        time.sleep(2)
+        s.turn("Use the TaskStop tool to stop the monitor. Then reply with just: done", stops=1)
+        time.sleep(3)
+    run(out, work, "failure_monitor", steps, env={"HTTPS_PROXY": t.url, "CLAUDE_CODE_MAX_RETRIES": "1"})
+
+
 def resume_missing(out, work):
     """`claude --resume` of a conversation the CLI does not have: a new
     random id in a new directory. No request is sent."""
@@ -573,7 +740,7 @@ def main():
         f.write("%s\n%s\n" % (ver, time.strftime("%Y-%m-%d")))
     order = ["plain", "tools", "question", "background", "subagent", "paste", "interrupt", "compact",
              "failure", "trust", "login", "login_terminal", "resume_missing", "clear", "sleep", "subagent_tools", "usage", "paste_tabs",
-             "held_notification"]
+             "held_notification", "failure_background", "interrupt_background", "failure_resumed", "failure_monitor"]
     for name in order:
         if want and name not in want and not (name == "plain" and "resume" in want):
             continue

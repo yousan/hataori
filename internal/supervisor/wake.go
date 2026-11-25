@@ -18,6 +18,7 @@ import (
 
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
+	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
 )
 
@@ -148,7 +149,7 @@ type Ended struct {
 // BackgroundWait is how long after a turn end with background tasks
 // running the waker waits for the thread's next turn before it wakes the
 // supervisor for it (#672).
-const BackgroundWait = time.Hour
+const BackgroundWait = session.BackgroundWait
 
 // Waiting reports whether e, a worker's turn end, waits for the thread's
 // background tasks: it completed with some still running. It wakes nobody;
