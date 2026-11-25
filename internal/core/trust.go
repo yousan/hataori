@@ -44,6 +44,9 @@ func (a *api) Trust(ctx context.Context, id control.ThreadID, blocked int64, fil
 	if err := a.owner(name, scope); err != nil {
 		return err
 	}
+	if err := a.left(name, scope); err != nil {
+		return err
+	}
 	files = slices.Clone(files)
 	slices.Sort(files)
 	if len(files) == 0 || slices.Contains(files, "") {
@@ -101,6 +104,9 @@ func (a *api) StartWithoutSettings(ctx context.Context, id control.ThreadID, blo
 	const name = "StartWithoutSettings"
 	scope, err := a.actThread(ctx, control.OpStart, name, id)
 	if err != nil {
+		return err
+	}
+	if err := a.left(name, scope); err != nil {
 		return err
 	}
 	if a.caller.Propose {

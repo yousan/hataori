@@ -751,6 +751,37 @@ func (a *api) hidden(name, what, which, scope string) {
 	a.c.Log.Warn("control call refused", a.via(attrs...)...)
 }
 
+// left refuses a call that may start an agent or a turn in scope when the
+// scope is no longer in the config: what is there is read, stopped, closed
+// and removed only.
+func (a *api) left(name, scope string) error {
+	if _, ok := a.c.Scopes[scope]; ok {
+		return nil
+	}
+	a.c.Log.Warn("control call refused", a.via("op", name, "principal", string(a.caller.Principal), "scope", scope, "reason", "the scope is not in the config")...)
+	return fmt.Errorf("core: %s in scope %q, which is not in the config: %w", name, scope, ErrDisabled)
+}
+
+// LeftScopes are the scopes that have a thread and are not in the config.
+func (c *Core) LeftScopes(ctx context.Context) ([]string, error) {
+	rows, err := c.Store.DB.QueryContext(ctx, `SELECT DISTINCT scope FROM threads ORDER BY scope`)
+	if err != nil {
+		return nil, fmt.Errorf("core: scopes of threads: %w", err)
+	}
+	defer rows.Close()
+	var left []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, fmt.Errorf("core: scopes of threads: %w", err)
+		}
+		if _, ok := c.Scopes[s]; !ok {
+			left = append(left, s)
+		}
+	}
+	return left, rows.Err()
+}
+
 // actThread is checkThread for a call that gives the agent input, or stops
 // it: act in the thread's scope.
 func (a *api) actThread(ctx context.Context, op control.Ops, name string, id control.ThreadID) (string, error) {
@@ -1700,24 +1731,26 @@ func (c *Core) resume(ctx context.Context, sid int64, f FirstInput) error {
 
 // Recover hands the runner what the core committed and a daemon that died
 // did not hand over: the agent of a started or woken session that was
-// never launched. Input and answers for running agents are handed over by
-// the runner when it reconnects. Call it after the runner has reconnected.
+// never launched; in a scope that left the config, that start fails. Input
+// and answers for running agents are handed over by the runner when it
+// reconnects. Call it after the runner has reconnected.
 func (c *Core) Recover(ctx context.Context) error {
-	rows, err := c.Store.DB.QueryContext(ctx, `SELECT s.id, s.agent, s.model, s.effort, s.first_input, t.id, t.repo, t.confined
+	rows, err := c.Store.DB.QueryContext(ctx, `SELECT s.id, s.agent, s.model, s.effort, s.first_input, t.id, t.repo, t.confined, t.scope
 		FROM sessions s JOIN threads t ON t.id = s.thread_id WHERE s.state = ? AND s.launch IN (1, 2) ORDER BY s.id`, string(control.Creating))
 	if err != nil {
 		return fmt.Errorf("core: recover: %w", err)
 	}
 	type todo struct {
-		l    Launch
-		repo string
-		f    FirstInput
+		l     Launch
+		repo  string
+		scope string
+		f     FirstInput
 	}
 	var found []todo
 	for rows.Next() {
 		var x todo
 		var fi string
-		if err := rows.Scan(&x.l.Session, &x.l.Agent, &x.l.Model, &x.l.Effort, &fi, &x.l.Thread, &x.repo, &x.l.Confined); err != nil {
+		if err := rows.Scan(&x.l.Session, &x.l.Agent, &x.l.Model, &x.l.Effort, &fi, &x.l.Thread, &x.repo, &x.l.Confined, &x.scope); err != nil {
 			rows.Close()
 			return fmt.Errorf("core: recover: %w", err)
 		}
@@ -1729,6 +1762,15 @@ func (c *Core) Recover(ctx context.Context) error {
 	}
 	rows.Close()
 	for _, x := range found {
+		if _, ok := c.Scopes[x.scope]; !ok {
+			// Nothing starts in a scope that left the config: its start
+			// failed, as the thread's reader sees.
+			c.Log.Warn("a start is not made after a restart", "session", x.l.Session, "scope", x.scope, "reason", "the scope is not in the config")
+			if err := c.Machine.Apply(ctx, x.l.Session, session.Input{Kind: session.Exit, Reason: "start: the scope is not in the config"}); err != nil {
+				c.Log.Error("recording a failed start", "session", x.l.Session, "err", err)
+			}
+			continue
+		}
 		in := x.f.Input()
 		if x.f.Wake && x.f.NoInput {
 			if err = c.Runner.Wake(ctx, x.l.Session, x.f.Principal); err != nil {
@@ -1952,6 +1994,9 @@ var errGuardEnded = errors.New("the requested turn ended")
 func (a *api) send(ctx context.Context, id control.ThreadID, key string, in control.Input, busy control.Busy, guard *sendGuard) error {
 	scope, err := a.actThread(ctx, control.OpSend, "Send", id)
 	if err != nil {
+		return err
+	}
+	if err := a.left("Send", scope); err != nil {
 		return err
 	}
 	if err := a.proposalKey("Send", scope, key); err != nil {
@@ -2545,6 +2590,10 @@ func (a *api) AttachTerminal(ctx context.Context, id control.ThreadID) (control.
 	}
 	if owner := a.c.People.Owner(); owner == "" || a.caller.Principal != control.Principal(owner) {
 		return control.Attachment{}, a.refused(name, scope, "only the owner may attach a terminal")
+	}
+	// What is typed there starts turns, as a Send would.
+	if err := a.left(name, scope); err != nil {
+		return control.Attachment{}, err
 	}
 	var (
 		sid    int64

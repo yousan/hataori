@@ -90,7 +90,7 @@ Events are stored, and a reader reads them from a position, possibly long after 
 | Code | Type | - | Meaning |
 |---|---|---|---|
 | `forbidden` | error code | - | the caller may not make this call in this scope |
-| `disabled` | error code | - | the scope is not enabled |
+| `disabled` | error code | - | the scope is not enabled, or it is no longer in the config: nothing starts in it, and its threads are only read, stopped, closed and removed |
 | `busy` | error code | - | a turn is running and the call said to refuse; for `OperateHost`, the pane is being operated already (since 3.11) |
 | `not_found` | error code | - | no such thread or request; also a thread, a request or a conversation's thread of a scope that is not the caller's, which is answered as one that does not exist, with the same message |
 | `closed` | error code | - | the thread is closed or removed: nothing was sent, and a message does not wake it; since 2.3 |
@@ -300,7 +300,7 @@ Result: `Reopened`
 Since 3.17. Makes a thread of a window that a person started ([design, section 4.8](design/overview.md#48-taking-in-a-session-a-person-started)): a tmux pane in which a session reported through hataori's Claude Code plugin, as `HostTerminals` gives it in `reported`. Only the owner's connection on the control socket may call it; every other caller is answered `forbidden`, and the refusal is logged.
 
 Before anything changes it checks:
-- the caller may act in the scope, else `forbidden` (so for a scope that is not configured), and the scope is enabled, else `disabled`;
+- the caller may act in the scope, else `forbidden` (so for a scope that is not configured and has no thread), and the scope is enabled, else `disabled`;
 - a session reported from the window and its process still runs, else `not_found`;
 - that session is interactive, else `refused`;
 - the window is not taken in already, else `refused`;

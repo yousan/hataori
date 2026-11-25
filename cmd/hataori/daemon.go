@@ -255,15 +255,26 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 		}
 	}
 
+	// A thread whose scope is no longer in the config stays reachable to the
+	// owner (section 6.2).
+	left, err := c.LeftScopes(ctx)
+	if err != nil {
+		return err
+	}
+	if len(left) > 0 {
+		lg.Info("scopes with threads are not in the config: nothing starts there; only the owner reaches their threads", "scopes", left)
+	}
+	seen := slices.Concat(keys, left) // dashboardCaller gives a person only the config's
+
 	// The dashboard is a client with a read-only Caller (section 7.2). It
 	// listens before anything else serves, so a config it refuses stops the
 	// daemon with the reason.
 	var dash *dashboard.Server
 	if d := cfg.Dashboard; d != nil {
 		dc := dashboard.Config{HostInput: hostInput, MayOperate: func(person string) bool {
-			return c.MaySignIn(person) && dashboardCaller(cfg.People, keys, cfg.HostTerminals, hostInput, person).May.Has(control.OpHostInput)
+			return c.MaySignIn(person) && dashboardCaller(cfg.People, seen, cfg.HostTerminals, hostInput, person).May.Has(control.OpHostInput)
 		}, MayAct: func(person string) bool {
-			return c.MaySignIn(person) && dashboardCaller(cfg.People, keys, cfg.HostTerminals, hostInput, person).May.Has(control.OpSend)
+			return c.MaySignIn(person) && dashboardCaller(cfg.People, seen, cfg.HostTerminals, hostInput, person).May.Has(control.OpSend)
 		}, AttachHost: attachHost, AttachIdle: cfg.HostInputIdle}
 		if l := d.Local; l != nil {
 			dc.Local = &dashboard.Local{Listen: l.Listen, URL: l.URL, Key: "dashboard."}
@@ -292,7 +303,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 			if !c.MaySignIn(person) {
 				return nil, false
 			}
-			return c.As(dashboardCaller(cfg.People, keys, cfg.HostTerminals, hostInput, person)), true
+			return c.As(dashboardCaller(cfg.People, seen, cfg.HostTerminals, hostInput, person)), true
 		}
 		dash, err = dashboard.Listen(dc, forPerson, lg)
 		if err != nil {
@@ -355,7 +366,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 			defer c.StopHostInput(15 * time.Second) // each end logged and its buffer deleted before the daemon exits
 		}
 	}
-	srv, err := wire.Listen(abs, c.As(control.Caller{Principal: control.Principal(cfg.Owner), Scopes: keys, May: owner}), lg)
+	srv, err := wire.Listen(abs, c.As(control.Caller{Principal: control.Principal(cfg.Owner), Scopes: seen, May: owner}), lg)
 	if err != nil {
 		return err
 	}
@@ -677,8 +688,8 @@ func purgePass(ctx context.Context, rm workspace.Remover, lg *slog.Logger) {
 // purgeEvery, when a test sets it, is the interval of the trash purge.
 var purgeEvery time.Duration
 
-// dashboardCaller is the Caller of a dashboard session of person: the
-// scopes that person may act in, every scope for the owner (section 7.2).
+// dashboardCaller is the Caller of a dashboard session of person: those of
+// scopes that person may act in, every one for the owner (section 7.2).
 // It reads; only the owner's also sends, answers, stops and chooses for a
 // blocked start, as for `hataori attach` (giving a thread input from its
 // tab, decided 2026-11-23). Only the owner reads the host's terminals, and only when the config
