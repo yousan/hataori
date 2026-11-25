@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -297,6 +298,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 		}
 		dc.Root = in.Root // the passkeys, next to the session key
 		dc.Now = dashboardNow
+		dc.Bind = dashboardBind
 		// A session's requests are made as its person, while the core still
 		// lets that person sign in.
 		forPerson := func(person string) (control.API, bool) {
@@ -744,6 +746,9 @@ func (h hostAttachment) Wait() error {
 		}
 	}
 }
+
+// dashboardBind, when a test sets it, opens the dashboard's listeners.
+var dashboardBind func(network, address string) (net.Listener, error)
 
 // dashboardHook, when a test sets it, changes the dashboard's Caller.
 var dashboardHook func(*control.Caller)
