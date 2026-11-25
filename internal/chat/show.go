@@ -321,6 +321,12 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		return []Row{{Event: e.Pos, Conv: conv, Message: surface.Message{Text: reopenedText(d.Workspace, d.Conversation)}}}, nil
 	case "start_chosen":
 		return f.chosenRows(ctx, r, e, conv)
+	case "input_waits":
+		line, err := f.waitsLine(ctx, e, conv.Channel)
+		if err != nil {
+			return nil, err
+		}
+		return []Row{{Event: e.Pos, Conv: conv, Message: surface.Message{Text: line}}}, nil
 	case "session_replaced":
 		line, err := r.replacedLine(ctx, e)
 		if err != nil || line == "" {

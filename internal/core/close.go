@@ -74,8 +74,18 @@ func (a *api) CloseThread(ctx context.Context, id control.ThreadID) error {
 			})
 		}
 	}
+	// What waits for a place is not given to a closed thread.
+	var dropped int64
+	also = append(also, func(tx *store.Tx) (err error) {
+		dropped, err = dropWaiting(ctx, tx, id)
+		return err
+	})
 	if err := a.c.Runner.Shut(ctx, sid, ByCommand, also...); err != nil {
 		return fmt.Errorf("core: close %v (%s): %w", id, state, err)
+	}
+	if dropped > 0 {
+		a.c.Log.Warn("input that waited for a place is dropped: its thread was closed", "thread", int64(id), "inputs", dropped,
+			"principal", string(a.caller.Principal))
 	}
 	if state != control.Closed {
 		a.c.Log.Info("thread closed", "thread", int64(id), "principal", string(a.caller.Principal))

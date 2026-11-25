@@ -101,6 +101,10 @@ var EventKinds = map[EventKind][]Field{
 	// wakes, who reopened it, what became of its directory and whether the
 	// conversation resumes (Reopened). Since 3.31.
 	"reopened": {req("session", Integer), opt("principal", String), req("workspace", String), req("conversation", String)},
+	// input_waits: input of a conversation waits, since as many of the
+	// scope's conversations as may run a turn at a time do: running, by
+	// number. Once per wait. Since 3.39.
+	"input_waits": {req("session", Integer), req("running", Array)},
 	"removal_refused": {req("session", Integer), req("trigger", String), opt("principal", String), req("reason", String),
 		opt("repo", String), opt("kind", String), text("detail", String)},
 	// named: the name the chat service shows for a conversation, a scope's

@@ -606,6 +606,23 @@ func TestSupervisorConversationsConfig(t *testing.T) {
 	}
 }
 
+// conversations_at_once is 3 without the key, and 1 or more (#875).
+func TestSupervisorConversationsAtOnceConfig(t *testing.T) {
+	for sv, want := range map[string]int{`{}`: 3, `{"conversations_at_once": 1}`: 1, `{"conversations_at_once": 12}`: 12,
+		`{"conversations": false}`: 3, `{"conversations_at_once": 0}`: -1, `{"conversations_at_once": -2}`: -1} {
+		c, err := ParseConfig([]byte(`{"owner": "o", "trigger": "!go", "idle": "30m", "scopes": [{"key": "c1", "client": "chat", "supervisor": ` + sv + `}]}`))
+		if want < 0 {
+			if err == nil || !strings.Contains(err.Error(), `"scopes[0].supervisor.conversations_at_once"`) {
+				t.Errorf("%s: %v; want refused", sv, err)
+			}
+			continue
+		}
+		if err != nil || c.Scopes[0].Supervisor.ConversationsAtOnce != want {
+			t.Errorf("%s: %v, want %d", sv, err, want)
+		}
+	}
+}
+
 // reminders_max is 10 without the key, and 0 or more (#649).
 func TestSupervisorRemindersMaxConfig(t *testing.T) {
 	for sv, want := range map[string]int{`{}`: 10, `{"reminders_max": 3}`: 3, `{"reminders_max": 0}`: 0, `{"reminders_max": -1}`: -1} {

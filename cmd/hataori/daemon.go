@@ -213,7 +213,11 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 	scopes := map[string]core.Scope{}
 	var keys []string
 	for _, s := range cfg.Scopes {
-		scopes[s.Key] = core.Scope{Name: s.Name, Enabled: s.Enabled, Owner: s.Client, Agent: s.Agent, Model: s.Model, Effort: s.Effort, ShowIn: s.ShowIn}
+		cs := core.Scope{Name: s.Name, Enabled: s.Enabled, Owner: s.Client, Agent: s.Agent, Model: s.Model, Effort: s.Effort, ShowIn: s.ShowIn}
+		if s.Supervisor != nil {
+			cs.ConversationsAtOnce = s.Supervisor.ConversationsAtOnce
+		}
+		scopes[s.Key] = cs
 		keys = append(keys, s.Key)
 	}
 	sort.Strings(keys)
@@ -560,6 +564,17 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 				w.Run(svCtx)
 			}()
 		}
+	}
+	{
+		// What waits for a conversation's place. It ends, and is waited for,
+		// before the store is closed.
+		giveCtx, giveCancel := context.WithCancel(ctx)
+		giveDone := make(chan struct{})
+		defer func() { giveCancel(); <-giveDone }()
+		go func() {
+			defer close(giveDone)
+			c.GiveWaiting(giveCtx)
+		}()
 	}
 	if age := cfg.Cleanup.RemoveClosedAfter; age > 0 {
 		// It ends, and is waited for, before the store is closed.

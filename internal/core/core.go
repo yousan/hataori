@@ -51,6 +51,10 @@ type Scope struct {
 	// ShowIn lists the "<client>:<channel>" besides the scope's own where
 	// its threads may be linked (design, section 5.2).
 	ShowIn []string
+	// ConversationsAtOnce is how many of the scope's conversations with its
+	// supervisor run a turn at a time (design, section 7.1, "Several at
+	// once"); 0 for any number.
+	ConversationsAtOnce int
 }
 
 // Workspaces makes the working directory of a new thread.
@@ -356,6 +360,7 @@ type Core struct {
 	stateRead func()
 
 	locks   keyedMutex
+	places  places
 	hostOps hostOpSet
 	layouts layouts
 }
@@ -1498,13 +1503,24 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 	var (
 		id        control.ThreadID
 		sessionID int64
+		waits     bool // a conversation that finds no place: it is started by GiveWaiting
 	)
 	errDup := errors.New("the key was accepted before")
 	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
 		now := time.Now().UnixMilli()
+		state, launch := control.Creating, 1
+		if kind == control.KindConversation {
+			var err error
+			if waits, err = a.c.noPlace(ctx, tx, r.Scope); err != nil {
+				return err
+			}
+			if waits {
+				state, launch = control.Asleep, 0
+			}
+		}
 		res, err := tx.ExecContext(ctx,
 			`INSERT INTO threads (scope, key, title, repo, started_by, state, created_at, updated_at, confined, kind, no_project_settings) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			r.Scope, link.Thread, name, r.Repo, string(a.caller.Principal), string(control.Creating), now, now, confined, string(kind), r.Research)
+			r.Scope, link.Thread, name, r.Repo, string(a.caller.Principal), string(state), now, now, confined, string(kind), r.Research)
 		if err != nil {
 			return fmt.Errorf("core: create thread: %w", err)
 		}
@@ -1540,12 +1556,17 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 		r.Input.Via = a.caller.Via
 		// A confined thread's directory is known now, so a daemon that dies
 		// before the launch recovers it in the same one.
-		fi, _ := json.Marshal(FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: r.Key, Text: r.Input.Text, Link: r.Input.Link,
-			Before: r.Input.Before, After: r.Input.After, Via: r.Input.Via, Dir: dir})
+		first := FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: r.Key, Text: r.Input.Text, Link: r.Input.Link,
+			Before: r.Input.Before, After: r.Input.After, Via: r.Input.Via, Dir: dir}
+		kept := first
+		if waits {
+			first = FirstInput{Dir: dir}
+		}
+		fi, _ := json.Marshal(first)
 		res, err = tx.ExecContext(ctx,
 			`INSERT INTO sessions (thread_id, agent, state, model, effort, first_input, launch, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-			thread, chosen, string(control.Creating), model, effort, string(fi), now, now)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			thread, chosen, string(state), model, effort, string(fi), launch, now, now)
 		if err != nil {
 			return fmt.Errorf("core: create session: %w", err)
 		}
@@ -1563,7 +1584,10 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 		}
 		data, _ := json.Marshal(d)
 		_, err = tx.Append(ctx, control.Event{Thread: id, Scope: r.Scope, Time: a.c.now(), Kind: "thread_created", Data: data})
-		return err
+		if err != nil || !waits {
+			return err
+		}
+		return keep(ctx, tx, id, kept, a.caller.NoAnswer)
 	})
 	if errors.Is(err, errDup) { // a concurrent call with the same key won
 		id, _, err := a.c.started(ctx, inboxKey)
@@ -1574,6 +1598,10 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 	}
 	if err != nil {
 		return 0, err
+	}
+	if waits {
+		a.c.places.tell()
+		return id, nil
 	}
 
 	if err := a.c.launch(ctx, Launch{Session: sessionID, Thread: id, Agent: chosen,
@@ -2084,6 +2112,8 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		pending   int64
 		accepted  bool
 		interrupt bool
+		waits     bool          // it waits for a place (GiveWaiting)
+		running   int64         // the turn it waits for the end of, when it interrupts
 		answer    string        // the agent's id of the open question this input answers
 		wake      bool          // the session is asleep: its agent starts again
 		first     FirstInput    // a woken session's input
@@ -2166,37 +2196,30 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 				return fmt.Errorf("core: send to %v: a wake's conversation runs: %w", id, ErrBusy)
 			}
 		}
-		accepted = true
-		if state == control.Asleep {
-			wake = true
-			if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Wake}); err != nil {
+		marked := FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: key, Text: in.Text, Link: in.Link,
+			Before: in.Before, After: in.After, Via: a.caller.Via}
+		if guard == nil {
+			if waits, err = a.c.mustWait(ctx, tx, scope, id, state); err != nil {
 				return err
 			}
-			first = FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: key, Text: in.Text, Wake: true, Link: in.Link,
-				Before: in.Before, After: in.After, Via: a.caller.Via}
-			if a.fresh {
-				// The conversation is set aside for this input's own.
-				if _, err := tx.ExecContext(ctx, `UPDATE sessions SET set_aside = agent_session_id WHERE id = ? AND set_aside IS NULL`, sid); err != nil {
-					return fmt.Errorf("core: wake: %w", err)
-				}
-			} else {
-				if a.c.Preface != nil {
-					var err error
-					if first.Context, err = a.c.Preface(ctx, tx, id); err != nil {
-						return fmt.Errorf("core: wake: %w", err)
-					}
-				}
-				earlier, err := owedAtWake(ctx, tx, sid)
-				if err != nil {
-					return err
-				}
-				first.Context = earlier + first.Context
+			if waits && a.fresh {
+				// The key is not taken: the transaction is rolled back.
+				return fmt.Errorf("core: send to %v: no place is free: %w", id, ErrBusy)
 			}
-			fi, _ := json.Marshal(first)
-			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ?, launch = 1 WHERE id = ?`, string(fi), sid); err != nil {
-				return fmt.Errorf("core: wake: %w", err)
+		}
+		accepted = true
+		if waits {
+			if interrupt {
+				if err := tx.QueryRowContext(ctx, `SELECT coalesce(max(id), 0) FROM turns WHERE session_id = ? AND ended_at IS NULL`, sid).Scan(&running); err != nil {
+					return fmt.Errorf("core: send to %v: %w", id, err)
+				}
 			}
-			return nil
+			return keep(ctx, tx, id, marked, a.caller.NoAnswer)
+		}
+		if state == control.Asleep {
+			wake = true
+			first, err = a.c.wakeTx(ctx, tx, id, sid, marked, a.fresh)
+			return err
 		}
 		if state == control.Waiting && a.caller.NoAnswer {
 			// The key is not taken: the transaction is rolled back.
@@ -2220,21 +2243,14 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 				return err
 			}
 		}
-		if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Send, Principal: a.caller.Principal, From: a.caller.From, Key: key,
-			Text: in.Text, Link: in.Link, Before: in.Before, After: in.After, Via: a.caller.Via}); err != nil {
-			return err
-		}
-		earlier, err := owed(ctx, tx, sid)
-		if err != nil {
-			return err
-		}
-		hand = forAgent(in)
-		pending, err = pend(ctx, tx, sid, "", hand, earlier)
-		hand.Text = earlier + hand.Text
+		pending, hand, err = a.c.sendTx(ctx, tx, sid, marked)
 		return err
 	})
 	if err != nil || !accepted {
 		return err
+	}
+	if waits {
+		a.c.places.tell()
 	}
 	if answer != "" {
 		return a.c.Runner.Answer(ctx, sid, pending, answer, control.Answer{Text: given.Text})
@@ -2246,6 +2262,9 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		return nil
 	}
 	var notInterrupted error
+	if interrupt && waits && running == 0 {
+		interrupt = false // no turn is open: there is nothing to interrupt
+	}
 	if interrupt {
 		// A guarded send names its turn: the runner interrupts only while
 		// that turn runs, checked in the step that interrupts (#457), so a
@@ -2253,12 +2272,15 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		// it, are not interrupted (#493). The input was taken while that
 		// turn ran, and is handed over as any input of a turn that ended
 		// first: it starts the next one, or joins one that started.
-		var turn int64
+		// An input that waits names it too: it may be given before the
+		// interrupt, and it is not its own turn that is interrupted.
+		turn := running
 		if guard != nil {
 			turn = guard.turn
 		}
 		err := a.c.Runner.Interrupt(ctx, sid, turn, session.Stopper{})
 		switch {
+		case waits && errors.Is(err, session.ErrRefused): // the turn ended
 		case guard != nil && errors.Is(err, session.ErrRefused):
 			guard.ended = true
 		case errors.Is(err, control.ErrNotInterrupted):
@@ -2270,7 +2292,60 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 			guard.interrupted = true
 		}
 	}
+	if waits {
+		return notInterrupted
+	}
 	return errors.Join(notInterrupted, a.c.Runner.Deliver(ctx, sid, pending, hand))
+}
+
+// wakeTx wakes session sid of thread id with in, in tx, and returns what
+// resume is given once tx is committed. fresh sets its conversation aside
+// for in's own (AsFresh).
+func (c *Core) wakeTx(ctx context.Context, tx *store.Tx, id control.ThreadID, sid int64, in FirstInput, fresh bool) (FirstInput, error) {
+	in.Wake = true
+	if err := c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Wake}); err != nil {
+		return in, err
+	}
+	if fresh {
+		// The conversation is set aside for this input's own.
+		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET set_aside = agent_session_id WHERE id = ? AND set_aside IS NULL`, sid); err != nil {
+			return in, fmt.Errorf("core: wake: %w", err)
+		}
+	} else {
+		if c.Preface != nil {
+			var err error
+			if in.Context, err = c.Preface(ctx, tx, id); err != nil {
+				return in, fmt.Errorf("core: wake: %w", err)
+			}
+		}
+		earlier, err := owedAtWake(ctx, tx, sid)
+		if err != nil {
+			return in, err
+		}
+		in.Context = earlier + in.Context
+	}
+	fi, _ := json.Marshal(in)
+	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ?, launch = 1 WHERE id = ?`, string(fi), sid); err != nil {
+		return in, fmt.Errorf("core: wake: %w", err)
+	}
+	return in, nil
+}
+
+// sendTx gives session sid the input in, in tx, and returns what Deliver is
+// given once tx is committed.
+func (c *Core) sendTx(ctx context.Context, tx *store.Tx, sid int64, in FirstInput) (pending int64, hand control.Input, err error) {
+	if err := c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Send, Principal: in.Principal, From: in.From, Key: in.Key,
+		Text: in.Text, Link: in.Link, Before: in.Before, After: in.After, Via: in.Via}); err != nil {
+		return 0, hand, err
+	}
+	earlier, err := owed(ctx, tx, sid)
+	if err != nil {
+		return 0, hand, err
+	}
+	hand = forAgent(in.Input())
+	pending, err = pend(ctx, tx, sid, "", hand, earlier)
+	hand.Text = earlier + hand.Text
+	return pending, hand, err
 }
 
 // forAgent is in as the agent gets it: the text the plugins added is in
