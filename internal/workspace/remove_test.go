@@ -676,6 +676,32 @@ func TestRefuseCommitOnlyARefOutsideRefsNames(t *testing.T) {
 		}
 		wantRefusal(t, x.check(), OtherRef, "")
 	})
+	// Each line of a file directly in the common directory counts, also when
+	// that is in the git directory.
+	t.Run("common directory", func(t *testing.T) {
+		x := newRemoval(t)
+		dir := filepath.Join(x.clone, ".git")
+		common := filepath.Join(dir, "common")
+		lines := x.git(x.clone, "rev-parse", "HEAD") + "\n" + x.git(x.clone, "commit-tree", "-m", "w", "HEAD^{tree}") + "\n"
+		if err := os.Mkdir(common, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"objects", "refs", "config", "packed-refs"} {
+			if err := os.Rename(filepath.Join(dir, name), filepath.Join(common, name)); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+		}
+		if err := os.WriteFile(filepath.Join(dir, "commondir"), []byte("common\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := x.check(); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(common, "NOTES"), []byte(lines), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		wantRefusal(t, x.check(), OtherRef, "")
+	})
 	// git's list of refs for dumb clients, which is as old as the last gc.
 	t.Run("info/refs", func(t *testing.T) {
 		x := newRemoval(t)
@@ -811,8 +837,12 @@ func TestRemovableWithPseudoRefs(t *testing.T) {
 	if err := os.Symlink("nothing", filepath.Join(x.clone, ".git", "MY_LINK")); err != nil {
 		t.Fatal(err)
 	}
-	if err := syscall.Mkfifo(filepath.Join(x.clone, ".git", "MY_FIFO"), 0o600); err != nil {
-		t.Fatal(err)
+	for _, p := range []string{"MY_FIFO", "heads/FIFO", "reftable/FIFO"} {
+		p = filepath.Join(x.clone, ".git", p)
+		os.Mkdir(filepath.Dir(p), 0o700)
+		if err := syscall.Mkfifo(p, 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := x.check(); err != nil {
 		t.Fatal(err)

@@ -1397,8 +1397,8 @@ func (c *checker) pseudoRefs(g *reader) ([]string, error) {
 // named are the objects that a line of a file directly in the git directory
 // starts with, as each line of FETCH_HEAD and of any other pseudo-ref does;
 // those that a file in a directory of it starts with, as that of a ref does,
-// which may be outside refs/, where git lists none; and those whose id is in a
-// reftable.
+// which may be outside refs/, where git lists none that is a file; and those
+// whose id is in a reftable.
 // One the repository has no more, as when it was pruned, has nothing to lose.
 func (c *checker) named(g *reader) ([]string, error) {
 	gitDir, err := g.line(c.ctx, "rev-parse", "--absolute-git-dir")
@@ -1427,6 +1427,13 @@ func (c *checker) named(g *reader) ([]string, error) {
 	names := refNames{c: c, skip: map[string]bool{}, seen: map[string]bool{}, left: 10000}
 	for _, name := range stoppedDirs {
 		names.skip[filepath.Join(gitDir, name)] = true // refused in any case
+	}
+	for _, dir := range dirs { // also one that is in the other: each is read as what it is
+		real, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			return nil, c.unreadable(dir, err)
+		}
+		names.seen[real] = true
 	}
 	for _, dir := range dirs {
 		if err := names.read(dir, dir, false); err != nil {
@@ -1489,14 +1496,6 @@ type refNames struct {
 // read adds those of the files in dir, which is the git directory top or is in
 // it. git goes through a directory that is a link as well.
 func (n *refNames) read(top, dir string, linked bool) error {
-	real, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		return n.c.unreadable(dir, err)
-	}
-	if n.seen[real] {
-		return nil
-	}
-	n.seen[real] = true
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return n.c.unreadable(dir, err)
@@ -1524,6 +1523,14 @@ func (n *refNames) read(top, dir string, linked bool) error {
 		var in []string
 		switch {
 		case fi.IsDir():
+			real, err := filepath.EvalSymlinks(p)
+			if err != nil {
+				return n.c.unreadable(p, err)
+			}
+			if n.seen[real] {
+				continue
+			}
+			n.seen[real] = true
 			if err := n.read(top, p, link); err != nil {
 				return err
 			}
@@ -1578,6 +1585,13 @@ func (c *checker) tableIDs(g *reader, dir string) ([]string, error) {
 	var tables []byte
 	for _, e := range entries {
 		p := filepath.Join(dir, e.Name())
+		if fi, err := os.Stat(p); missing(err) {
+			continue // a link to nothing
+		} else if err != nil {
+			return nil, c.unreadable(p, err)
+		} else if !fi.Mode().IsRegular() {
+			continue // no table, and to open it may not end
+		}
 		f, err := os.Open(p)
 		if err != nil {
 			return nil, c.unreadable(p, err)
