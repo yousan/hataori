@@ -44,9 +44,10 @@ func TestWakeSaysTheAgentsUsageWindows(t *testing.T) {
 	at := func(x time.Time) string { return x.Format("2006-01-02 15:04 MST") }
 	windows := fmt.Sprintf("five_hour:300:41:%d seven_day:10080:56:%d", five.Unix(), seven.Unix())
 	line := fmt.Sprintf("Usage windows of fake: five_hour 41%% used, resets %s; seven_day 56%% used, resets %s.", at(five), at(seven))
-	// The report is 10 minutes old when it comes, for an agent that reports
-	// every 5. The wake's clock runs ahead of the real time.
-	old := wake(2, "c1", "b", "limits 600 300 "+windows+"\nreply same")
+	// The report is 10 hours old when it comes, for an agent that reports
+	// every 5 minutes: old by the wake's clock too, which may be ahead of the
+	// real time or, in a run that passed a full hour, behind it.
+	old := wake(2, "c1", "b", "limits 36000 300 "+windows+"\nreply same")
 	var ms int64
 	if err := wt.db.QueryRow(`SELECT at FROM agent_limits WHERE agent = 'fake'`).Scan(&ms); err != nil {
 		t.Fatal(err)
