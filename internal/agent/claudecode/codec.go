@@ -257,13 +257,15 @@ const commandPrefix = "(message) "
 // (testdata/2.1.332/mention_*). --restricted keeps out files outside the
 // session's directory only. Which "@" it takes depends on what is before
 // it, but the CLI first takes out escape sequences and characters that do
-// not show, so every "@" is written so, one in a word too.
+// not show, so every "@" is written so, one in a word too. A text's own
+// "(at)" is not told from it.
 const atSign = "(at)"
 
 // atSignNote tells the agent of a confined session about atSign, so that
-// what it passes on or shows to a person has the "@" again.
-const atSignNote = "In every message you are given, each at sign (@) is written as " + atSign + ", so that a message names no file to your program. " +
-	"Where you quote such a text or pass it on, write @ again."
+// what it passes on, shows to a person or mentions a person with has the
+// "@" again.
+const atSignNote = "In every message you are given, each at sign (@) is written as " + atSign + ", so that your program takes none for a mention. " +
+	"In everything you write, use @ itself: where you quote such a text, where you pass it on, and where you mention a person, also when the message says whom to mention."
 
 // pasteText is what is pasted for text: without the paste markers, and in
 // a confined session, with no "@" and with commandPrefix before a command.

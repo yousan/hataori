@@ -58,7 +58,7 @@ func confinedCodec(t *testing.T) *codec {
 // the adapter pastes every text as the captures' were, and those put nothing
 // there, with --restricted and without it, at a start and at a resume, in a
 // person's message, in a wake's answer and in a reminder's note (#887). The
-// captures of the texts as they are show that each would have: --restricted
+// captures of the texts as they are show what would have been: --restricted
 // keeps out files outside the directory only.
 func TestConfinedInputNamesNothing(t *testing.T) {
 	// What names something, and how often: the cases with content, as the
@@ -96,11 +96,20 @@ func TestConfinedInputNamesNothing(t *testing.T) {
 					t.Errorf("%s: an attachment %q (the first text's: %q)", id, kind, first)
 				}
 			}
-			// The prompt the CLI reports is known as hataori's input. It
-			// takes escape sequences and characters that do not show out of
-			// a paste, so those two are not.
-			if by, _ := c.starter(mc.Prompt); (by == agent.ByCaller) == slices.Contains([]string{"after_escape", "after_invisible"}, mc.Case) {
+			// The prompt the CLI reports is known as hataori's input, also
+			// by the codec after a restart. The CLI takes escape sequences
+			// and characters that do not show out of a paste, so those two
+			// are not known (#916).
+			known := !slices.Contains([]string{"after_escape", "after_invisible"}, mc.Case)
+			if by, _ := c.starter(mc.Prompt); (by == agent.ByCaller) != known {
 				t.Errorf("%s: the prompt %q counts as started by %v", id, mc.Prompt, by)
+			}
+			c = confinedCodec(t)
+			if a, err := c.Input(agent.Input{ID: "in-1", Text: mc.Text, Written: true}); err != nil || len(a.Keys) != 0 {
+				t.Fatalf("%s: after a restart: writes %q, %v", id, a.Keys, err)
+			}
+			if by, _ := c.starter(mc.Prompt); (by == agent.ByCaller) != known {
+				t.Errorf("%s: after a restart: the prompt %q counts as started by %v", id, mc.Prompt, by)
 			}
 		}
 		for what := range took {
