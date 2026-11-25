@@ -771,7 +771,7 @@ var migrations = []Migration{
 			made    INTEGER,                   -- whether it was made, once its session is told so, for one that is not settled by then
 			pos     INTEGER NOT NULL,
 			done    INTEGER NOT NULL DEFAULT 0,
-			name    TEXT NOT NULL DEFAULT '',  -- the user's file that it is
+			name    TEXT NOT NULL DEFAULT '',  -- the user's file that it is, once it is told or done
 			told    INTEGER NOT NULL DEFAULT 0
 		)`,
 	)},

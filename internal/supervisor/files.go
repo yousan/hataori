@@ -568,6 +568,9 @@ func (s *ScopeFiles) write(ctx context.Context, scope string, thread control.Thr
 		as = &cur.access
 	}
 	left, err := s.place(ctx, id, dir, root, &w, next, as)
+	if err == nil {
+		w.name = userFile(root, path)
+	}
 	if left == nil {
 		left = s.finish(ctx, root, id, w, err == nil)
 	}
@@ -741,6 +744,7 @@ type placing struct {
 	version string       // that of the new content
 	there   int          // how many of the directories on the way were there before
 	made    sql.NullBool // what its session was told of it, if anything
+	name    string       // the user's file that was made, "" for none
 }
 
 func (w placing) parts() []string { return strings.Split(w.path, "/") }
@@ -804,30 +808,38 @@ func (s *ScopeFiles) place(ctx context.Context, id int64, dir string, root *os.R
 	if err != nil {
 		return nil, fault("writing the file", err)
 	}
-	// It stays open until it has its place or is removed, so that nothing made
-	// meanwhile gets the inode by which it is known.
-	defer own.Close()
-	// Also where the path no longer leads to it. Nothing has this name once it
-	// was renamed.
-	defer func() {
-		ours, err := isAt(own, parent, w.tmp)
-		if err == nil && !ours {
-			s.Log.Warn(notItsOwn, "path", w.own())
-			return
-		}
-		if err == nil {
-			err = parent.Remove(w.tmp)
-		}
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			left = fault("removing the daemon's own file", err)
-		}
-	}()
 	s.step("made")
-	if err := fill(own, text, as); err != nil {
-		return nil, fault("writing the file", err)
+	if err = fill(own, text, as); err != nil {
+		err = fault("writing the file", err)
+	} else {
+		s.step("written")
+		err = s.name(dir, root, parent, *w, own, as)
 	}
-	s.step("written")
-	return nil, s.name(dir, root, parent, *w, own, as)
+	left = s.drop(own, parent, *w)
+	s.step("dropped")
+	syncDir(parent)
+	return left, err
+}
+
+// drop removes the name that own, the daemon's own file of w, has in parent
+// beside the one that name gave it, or alone: also where the path no longer
+// leads to parent. It then closes own, which stays open until here so that
+// nothing made meanwhile gets the inode by which it is known, and not longer,
+// since nobody can run a file that is open to be written.
+func (s *ScopeFiles) drop(own *os.File, parent *os.Root, w placing) error {
+	defer own.Close()
+	ours, err := isAt(own, parent, w.tmp)
+	if err == nil && !ours {
+		s.Log.Warn(notItsOwn, "path", w.own())
+		return nil
+	}
+	if err == nil {
+		err = parent.Remove(w.tmp)
+	}
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fault("removing the daemon's own file", err)
+	}
+	return nil
 }
 
 // name gives own, which place wrote to parent, the name of the file.
@@ -879,24 +891,18 @@ func (s *ScopeFiles) name(dir string, root, parent *os.Root, w placing, own *os.
 		if err := parent.Rename(w.tmp, parts[last]); err != nil {
 			return fault("putting the file in its place", err)
 		}
-		own.Close() // nobody can run a file that is open to be written
 	}
 	s.step("placed")
-	syncDir(parent)
 	return nil
 }
 
-// isAt reports whether own is what has the name in dir, which it has not any
-// more once it is closed.
+// isAt reports whether own, an open file, is what has the name in dir.
 func isAt(own *os.File, dir *os.Root, name string) (bool, error) {
-	at, err := dir.Lstat(name)
+	st, err := own.Stat()
 	if err != nil {
 		return false, err
 	}
-	st, err := own.Stat()
-	if errors.Is(err, os.ErrClosed) {
-		return false, nil
-	}
+	at, err := dir.Lstat(name)
 	return err == nil && os.SameFile(st, at), err
 }
 
@@ -1000,7 +1006,7 @@ func (s *ScopeFiles) others(ctx context.Context, id int64, w *placing, n int) er
 // for when it is settled.
 func (s *ScopeFiles) amend(ctx context.Context, id int64, w placing) error {
 	err := s.Store.Update(ctx, func(tx *store.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE supervisor_writes SET there = ?, made = ? WHERE id = ?`, w.there, w.made, id)
+		_, err := tx.ExecContext(ctx, `UPDATE supervisor_writes SET there = ?, made = ?, name = ? WHERE id = ?`, w.there, w.made, w.name, id)
 		return err
 	})
 	if err != nil {
@@ -1014,7 +1020,7 @@ func (s *ScopeFiles) amend(ctx context.Context, id int64, w placing) error {
 // when it was not: those that a daemon died in, and any that could not be
 // settled when it was made or refused. The directory must be locked.
 func (s *ScopeFiles) settle(ctx context.Context, dir string, root *os.Root) error {
-	rows, err := s.Store.DB.QueryContext(ctx, `SELECT id, path, tmp, was, version, there, made FROM supervisor_writes WHERE dir = ? AND done = 0 ORDER BY id`, dir)
+	rows, err := s.Store.DB.QueryContext(ctx, `SELECT id, path, tmp, was, version, there, made, name FROM supervisor_writes WHERE dir = ? AND done = 0 ORDER BY id`, dir)
 	if err != nil {
 		return fmt.Errorf("the writes before this one: %w", err)
 	}
@@ -1026,7 +1032,7 @@ func (s *ScopeFiles) settle(ctx context.Context, dir string, root *os.Root) erro
 	var open []write
 	for rows.Next() {
 		var w write
-		if err := rows.Scan(&w.id, &w.path, &w.tmp, &w.was, &w.version, &w.there, &w.made); err != nil {
+		if err := rows.Scan(&w.id, &w.path, &w.tmp, &w.was, &w.version, &w.there, &w.made, &w.name); err != nil {
 			return fmt.Errorf("the writes before this one: %w", err)
 		}
 		open = append(open, w)
@@ -1043,6 +1049,8 @@ func (s *ScopeFiles) settle(ctx context.Context, dir string, root *os.Root) erro
 		}
 		if w.made.Valid {
 			made = w.made.Bool
+		} else if made {
+			w.name = userFile(root, w.path)
 		}
 		if err := s.finish(ctx, root, w.id, w.placing, made); err != nil {
 			return err
@@ -1117,15 +1125,12 @@ func (s *ScopeFiles) ownFile(parent *os.Root, tmp fs.FileInfo, w placing, placed
 // that was written stays recorded until the line that names it was posted
 // (Ended); every other write is forgotten.
 func (s *ScopeFiles) finish(ctx context.Context, root *os.Root, id int64, w placing, made bool) error {
-	name := ""
-	if made {
-		name = userFile(root, w.path)
-	} else {
+	if !made {
 		s.unmake(root, w)
 	}
 	query, args := `DELETE FROM supervisor_writes WHERE id = ?`, []any{id}
-	if name != "" {
-		query, args = `UPDATE supervisor_writes SET done = 1, name = ? WHERE id = ?`, []any{name, id}
+	if w.name != "" {
+		query, args = `UPDATE supervisor_writes SET done = 1, name = ? WHERE id = ?`, []any{w.name, id}
 	}
 	err := s.Store.Update(ctx, func(tx *store.Tx) error {
 		_, err := tx.ExecContext(ctx, query, args...)

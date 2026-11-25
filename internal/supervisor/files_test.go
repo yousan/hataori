@@ -1653,15 +1653,21 @@ func TestFilesMadeIsNamed(t *testing.T) {
 		t.Skip("root writes everywhere")
 	}
 	ctx := context.Background()
-	for _, c := range []struct{ was, keeps string }{{"", "own file"}, {"", "record"}, {"old", "record"}} {
-		t.Run(fmt.Sprintf("%q %s", c.was, c.keeps), func(t *testing.T) {
+	for _, c := range []struct{ path, was, keeps string }{
+		{"AGENTS.md", "", "own file"}, {"AGENTS.md", "", "record"}, {"AGENTS.md", "old", "record"},
+		{"agents.md", "", "own file"}, // one file where case does not count, made so here
+	} {
+		t.Run(fmt.Sprintf("%s %q %s", c.path, c.was, c.keeps), func(t *testing.T) {
 			f := newFilesFixture(t)
 			version := ""
 			if c.was != "" {
-				put(t, f.dir, "AGENTS.md", c.was)
+				put(t, f.dir, c.path, c.was)
 				version = versionOf(c.was)
 			}
 			done := f.at(t, swap{"placed", 1, func(t *testing.T, f *filesFixture) {
+				if err := os.Link(filepath.Join(f.dir, c.path), filepath.Join(f.dir, "AGENTS.md")); err != nil && !errors.Is(err, fs.ErrExist) {
+					t.Error(err)
+				}
 				if c.keeps == "record" {
 					f.sql(t, `CREATE TRIGGER open BEFORE UPDATE OF done ON supervisor_writes BEGIN SELECT RAISE(ABORT, 'open'); END`)
 				} else if err := os.Chmod(f.dir, 0o500); err != nil {
@@ -1669,14 +1675,15 @@ func TestFilesMadeIsNamed(t *testing.T) {
 				}
 			}})
 			t.Cleanup(func() { os.Chmod(f.dir, 0o700) })
-			made(t, f.own, writeOf("AGENTS.md", "new", version))
+			made(t, f.own, writeOf(c.path, "new", version))
 			if !done() || f.recorded(t) != 1 || (len(ownFiles(t, f.dir)) == 1) != (c.keeps == "own file") {
 				t.Fatalf("%d recorded, own files %v", f.recorded(t), ownFiles(t, f.dir))
 			}
 			f.sql(t, `DROP TRIGGER IF EXISTS open`)
 			err := os.Chmod(f.dir, 0o700)
 			if c.was == "" {
-				err = errors.Join(err, os.Remove(filepath.Join(f.dir, "AGENTS.md")))
+				os.Remove(filepath.Join(f.dir, "agents.md"))
+				os.Remove(filepath.Join(f.dir, "AGENTS.md"))
 			} else {
 				put(t, f.dir, "AGENTS.md", c.was)
 			}
@@ -1693,8 +1700,9 @@ func TestFilesMadeIsNamed(t *testing.T) {
 	}
 }
 
-// A file that has its place can be run at once, and what someone puts at the
-// name that the daemon's own file had until then is theirs.
+// What someone puts at the name that the daemon's own file had until it got
+// its place is theirs; and a replaced program can be run before the
+// directory is synced.
 func TestFilesPlaced(t *testing.T) {
 	for _, was := range []string{"", "#!/bin/sh\necho old\n"} {
 		t.Run(fmt.Sprintf("%q", was), func(t *testing.T) {
@@ -1712,14 +1720,19 @@ func TestFilesPlaced(t *testing.T) {
 				case "written":
 					own = ownFiles(t, f.dir)[0]
 				case "placed":
-					if was != "" {
-						if out, err := osexec.Command(at).CombinedOutput(); err != nil || string(out) != "new\n" {
-							t.Errorf("run: %q, %v", out, err)
+					if was == "" {
+						if err := os.Remove(own); err != nil {
+							t.Error(err)
 						}
-					} else if err := os.Remove(own); err != nil {
-						t.Error(err)
 					}
 					put(t, filepath.Dir(own), filepath.Base(own), "a person's")
+				case "dropped":
+					if was == "" {
+						return
+					}
+					if out, err := osexec.Command(at).CombinedOutput(); err != nil || string(out) != "new\n" {
+						t.Errorf("run: %q, %v", out, err)
+					}
 				}
 			}
 			f.log.take()
@@ -1731,6 +1744,23 @@ func TestFilesPlaced(t *testing.T) {
 				t.Error("not logged")
 			}
 		})
+	}
+}
+
+// A rename to another name of the daemon's own file, which someone gave it,
+// does nothing: its own name goes all the same.
+func TestFilesPlacedAlready(t *testing.T) {
+	f := newFilesFixture(t)
+	put(t, f.dir, "plan.md", "old")
+	done := f.at(t, swap{"placing", 1, func(t *testing.T, f *filesFixture) {
+		at := filepath.Join(f.dir, "plan.md")
+		if err := errors.Join(os.Remove(at), os.Link(ownFiles(t, f.dir)[0], at)); err != nil {
+			t.Error(err)
+		}
+	}})
+	made(t, f.own, writeOf("plan.md", "new", versionOf("old")))
+	if own := ownFiles(t, f.dir); !done() || len(own) != 0 || f.recorded(t) != 0 || holds(t, f.dir, "plan.md") != "new" {
+		t.Errorf("own files %v, %d recorded, the file holds %q", own, f.recorded(t), holds(t, f.dir, "plan.md"))
 	}
 }
 
@@ -1773,7 +1803,8 @@ func TestFilesKilled(t *testing.T) {
 		t.Fatalf("not killed: %+v, %v", ans, err)
 	}
 	for i, c := range killedWrites {
-		for _, step := range []string{"made", "written", "placing", "placed"} {
+		for _, step := range []string{"made", "written", "placing", "placed", "dropped"} {
+			placed := step == "placed" || step == "dropped"
 			t.Run(c.name+", "+step, func(t *testing.T) {
 				f := newFilesFixture(t)
 				for name, text := range c.before {
@@ -1789,7 +1820,7 @@ func TestFilesKilled(t *testing.T) {
 				}
 				for name, text := range c.before {
 					want := text
-					if step == "placed" && name == c.r.Path {
+					if placed && name == c.r.Path {
 						want = "new"
 					}
 					if holds(t, f.dir, name) != want {
@@ -1797,8 +1828,8 @@ func TestFilesKilled(t *testing.T) {
 					}
 				}
 				// The process did die in the middle of it.
-				replaced := step == "placed" && c.before[c.r.Path] != ""
-				if own := ownFiles(t, f.dir); len(own) != 1 && !replaced || replaced && len(own) != 0 {
+				gone := step == "dropped" || placed && c.before[c.r.Path] != ""
+				if own := ownFiles(t, f.dir); (len(own) == 0) != gone || len(own) > 1 {
 					t.Fatalf("killed, its own files are %v", own)
 				}
 				if f.recorded(t) != 1 {
@@ -1812,7 +1843,7 @@ func TestFilesKilled(t *testing.T) {
 				if own := ownFiles(t, f.root); len(own) != 0 {
 					t.Fatalf("started again, own files are left: %v", own)
 				}
-				if step != "placed" {
+				if !placed {
 					if after := f.tree(t); after != before {
 						t.Fatalf("started again, there is\n%s\nand was before the write\n%s", after, before)
 					}
@@ -1820,7 +1851,7 @@ func TestFilesKilled(t *testing.T) {
 					t.Fatalf("started again, the file holds %q", holds(t, f.dir, c.r.Path))
 				}
 				want := ""
-				if step == "placed" {
+				if placed {
 					want = c.tells
 				}
 				if err := f.files.Ended(context.Background(), "c1", filesOwn, 1); err != nil {
