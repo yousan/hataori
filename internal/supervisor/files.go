@@ -57,7 +57,8 @@ type ScopeFiles struct {
 	// daemon's own file of a write is there, empty; "written", once it holds
 	// the whole new content and before what is there is looked at for the
 	// last time; "placing", after that and before it takes the file's name;
-	// and "placed", once it has it.
+	// "placed", once it has it; and "dropped", once it has no other name and
+	// before the directory is synced.
 	Hook func(step string)
 
 	locks keyed // of the directories, for their writes
