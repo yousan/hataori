@@ -735,39 +735,50 @@ func (c *checker) refuse(rp repo, reason Reason, detail string) error {
 	return &Refusal{Reason: reason, Repo: rp.rel, Kind: rp.kind, Detail: detail}
 }
 
-// find walks the workspace and returns every repository in it: the
-// workspace's own, each directory below it that has a .git or is a git
-// directory itself (a bare repository), and each git directory under the
-// modules of a repository's git directory, whether checked out or not. A directory it
-// cannot read refuses.
+// find walks the whole workspace, git directories included, and returns
+// every repository in it: the workspace's own, each directory below it that
+// has a .git or is a git directory itself (a bare repository), and each git
+// directory under the modules of another, whether checked out or not. A
+// directory it cannot read refuses.
 func (c *checker) find() ([]repo, error) {
-	var repos []repo
+	var repos, last []repo
+	var gitDirs, roots []string // each before what is in it; those that modules does not add
 	err := filepath.WalkDir(c.top, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return c.unreadable(p, err)
 		}
-		if d.IsDir() && p != c.top && d.Name() != ".git" && isGitDir(p) {
-			rel, _ := filepath.Rel(c.top, p)
-			repos = append(repos, repo{dir: p, gitDir: true, rel: rel, kind: "nested bare repository"})
-			return filepath.SkipDir
-		}
-		if d.Name() != ".git" || p == c.top {
+		if p == c.top {
 			return nil
 		}
 		dir := filepath.Dir(p)
 		rel, _ := filepath.Rel(c.top, dir)
-		rp := repo{dir: dir, rel: rel}
 		switch {
-		case rel == ".":
-			rp.rel = ""
+		case d.Name() == ".git" && rel == ".":
+			repos = append(repos, repo{dir: dir})
+		case d.Name() == ".git" && d.IsDir():
+			repos = append(repos, repo{dir: dir, rel: rel, kind: "nested repository"})
+		case d.Name() == ".git":
+			repos = append(repos, repo{dir: dir, rel: rel, kind: "submodule"})
 		case d.IsDir():
-			rp.kind = "nested repository"
-		default:
-			rp.kind = "submodule"
+			in := enclosing(gitDirs, p)
+			// The branch objects/x of a remote is below refs/remotes/origin
+			// in .git, beside the remote's HEAD.
+			ref := filepath.Base(in) == ".git" && (within(p, filepath.Join(in, "refs")) || within(p, filepath.Join(in, "logs")))
+			if !isGitDir(p) || ref && !hasRefs(p) {
+				return nil
+			}
+			gitDirs = append(gitDirs, p)
+			if in != "" && within(p, filepath.Join(in, "modules")) {
+				return nil
+			}
+			rel, _ := filepath.Rel(c.top, p)
+			last = append(last, repo{dir: p, gitDir: true, rel: rel, kind: "nested bare repository"})
+			roots = append(roots, p)
+			return nil
 		}
-		repos = append(repos, rp)
-		if d.IsDir() {
-			return filepath.SkipDir
+		if d.IsDir() && d.Name() == ".git" {
+			gitDirs = append(gitDirs, p)
+			roots = append(roots, p)
 		}
 		return nil
 	})
@@ -786,29 +797,28 @@ func (c *checker) find() ([]repo, error) {
 	repos[0], repos[topAt] = repos[topAt], repos[0]
 	// The git directories of submodules, with or without a checkout. A
 	// checked-out one is checked twice over, which costs only time.
-	var modules []repo
-	for _, rp := range repos {
-		if rp.gitDir {
-			// A bare repository has none; a git directory that was moved may.
-			if err := c.modules(filepath.Join(rp.dir, "modules"), &modules); err != nil {
-				return nil, err
-			}
-			continue
-		}
-		gitDir := filepath.Join(rp.dir, ".git")
-		if st, err := os.Lstat(gitDir); err != nil {
-			return nil, c.unreadable(gitDir, err)
-		} else if !st.IsDir() {
-			continue // a submodule's .git file: its directory is in the parent's modules
-		}
-		if err := c.modules(filepath.Join(gitDir, "modules"), &modules); err != nil {
+	for _, dir := range roots {
+		if err := c.modules(filepath.Join(dir, "modules"), &last); err != nil {
 			return nil, err
 		}
 	}
-	return append(repos, modules...), nil
+	return append(repos, last...), nil
 }
 
-// modules adds each git directory under dir, and under its own modules.
+// enclosing is the innermost of dirs that p is in, or "".
+func enclosing(dirs []string, p string) string {
+	for i := len(dirs) - 1; i >= 0; i-- {
+		if within(p, dirs[i]) {
+			return dirs[i]
+		}
+	}
+	return ""
+}
+
+// modules adds each git directory under dir, and under its own modules. The
+// others are parts of a submodule's name with a slash, and have directories
+// only: anything else in them refuses, as in a git directory that lost its
+// HEAD or its objects.
 func (c *checker) modules(dir string, out *[]repo) error {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -818,10 +828,10 @@ func (c *checker) modules(dir string, out *[]repo) error {
 		return c.unreadable(dir, err)
 	}
 	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
 		p := filepath.Join(dir, e.Name())
+		if !e.IsDir() {
+			return c.unreadable(p, errors.New("not a submodule's git directory"))
+		}
 		if isGitDir(p) {
 			rel, _ := filepath.Rel(c.top, p)
 			*out = append(*out, repo{dir: p, gitDir: true, rel: rel, kind: "submodule without checkout"})
@@ -837,10 +847,27 @@ func (c *checker) modules(dir string, out *[]repo) error {
 	return nil
 }
 
+// isGitDir reports whether p has what a git directory has: HEAD and objects,
+// and with a link for one of them, which git reads, refs as well. git says
+// whether it is one, and one it does not take refuses.
 func isGitDir(p string) bool {
 	head, err1 := os.Lstat(filepath.Join(p, "HEAD"))
 	objects, err2 := os.Lstat(filepath.Join(p, "objects"))
-	return err1 == nil && err2 == nil && head.Mode().IsRegular() && objects.IsDir()
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	if head.Mode().IsRegular() && objects.IsDir() {
+		return true
+	}
+	link := func(st fs.FileInfo) bool { return st.Mode().Type() == fs.ModeSymlink }
+	return (head.Mode().IsRegular() || link(head)) && (objects.IsDir() || link(objects)) && hasRefs(p)
+}
+
+// hasRefs reports whether p has refs, as every directory that git takes for a
+// git directory has.
+func hasRefs(p string) bool {
+	_, err := os.Lstat(filepath.Join(p, "refs"))
+	return err == nil
 }
 
 func (c *checker) unreadable(p string, err error) error {
