@@ -48,6 +48,11 @@ func (x *reader) hooks(ls ...[]byte) { x.appendTo(filepath.Join(x.lv.dir, host.E
 // step reads what is new and keeps the offsets, as a step that commits.
 func (x *reader) step() []agent.Event {
 	b := x.r.read(x.lv)
+	for _, rd := range b.reads {
+		if rd.path == "" && rd.end != b.offset {
+			x.t.Errorf("the log's range ends at %d and the offset is %d", rd.end, b.offset)
+		}
+	}
 	x.lv.offset = b.offset
 	for p, o := range b.files {
 		x.lv.files[p] = o
@@ -94,44 +99,56 @@ func TestFollowedFileReadBeforeHookCalls(t *testing.T) {
 	}
 }
 
-// whileReading is a codec that calls do, once, before it decodes the first
-// line of a followed file, and again before the second: while the step reads
-// the files.
+// whileReading is a codec that calls do before it decodes a line of a
+// followed file, with how many such lines it was given before: while the
+// step reads the files.
 type whileReading struct {
 	agent.Codec
 	lines int
-	do    []func()
+	do    func(n int)
 }
 
 func (c *whileReading) Decode(src agent.Source, l []byte) agent.Actions {
-	if src == agent.File && c.lines < len(c.do) {
+	if src == agent.File {
 		c.lines++
-		c.do[c.lines-1]()
+		c.do(c.lines - 1)
 	}
 	return c.Codec.Decode(src, l)
 }
 
-// A transcript line and a hook call after it, both written while a step
-// reads the followed files and too late for it to find the line, are not
-// decoded with the call first (#917).
-func TestHookCallWrittenWhileFilesAreRead(t *testing.T) {
+// A hook call and the transcript line ahead of it, both written while a
+// step reads the followed files, are not decoded with the call first, and
+// none is lost (#917). Each line decoded has the next line and its call
+// written, so however often a step looks at the files, one line is too late
+// for it.
+func TestHookCallsWrittenWhileFilesAreRead(t *testing.T) {
+	const n = 20
 	x := newReader(t, fakeTerminalCodec(t))
 	transcript := filepath.Join(x.lv.dir, "transcript.jsonl")
 	x.hooks(hookLine("h1", `{"t":"ready","session":"s","transcript":"`+transcript+`"}`),
 		hookLine("h2", `{"t":"turn","by":"caller"}`))
 	x.step()
 
-	x.lv.codec = &whileReading{Codec: x.lv.codec, do: []func(){
-		func() { x.appendTo(transcript, textLine("two")) },
-		func() {
-			x.appendTo(transcript, textLine("three"))
-			x.hooks(hookLine("h3", `{"t":"end","status":"completed"}`))
-		},
-	}}
-	x.appendTo(transcript, textLine("one"))
-	got := append(x.step(), x.step()...)
-	if fmt.Sprint(texts(got)) != "[one two three]" || len(got) != 4 || got[3].Kind != agent.TurnEnded {
-		t.Fatalf("events %v, texts %q; want three texts, then the end", kinds(got), texts(got))
+	write := func(i int) {
+		if i < n {
+			x.appendTo(transcript, textLine(fmt.Sprint("line ", i)))
+			x.hooks(hookLine(fmt.Sprint("c", i), string(textLine(fmt.Sprint("call ", i)))))
+		}
+	}
+	x.lv.codec = &whileReading{Codec: x.lv.codec, do: func(i int) { write(i + 1) }}
+	write(0)
+	var got []string
+	for range n + 1 {
+		got = append(got, texts(x.step())...)
+	}
+	for i := range n {
+		line, call := slices.Index(got, fmt.Sprint("line ", i)), slices.Index(got, fmt.Sprint("call ", i))
+		if line < 0 || call < line {
+			t.Errorf("line %d is text %d, its call %d: want both, and the line first", i, line, call)
+		}
+	}
+	if len(got) != 2*n {
+		t.Errorf("%d texts, want %d: %q", len(got), 2*n, got)
 	}
 }
 
@@ -182,12 +199,16 @@ func TestQuestionsUsageWhileFilesAreRead(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	x.lv.codec = &whileReading{Codec: x.lv.codec, do: []func(){
-		func() { x.appendTo(transcript, lines[asks-1]) },
-		func() {
+	// A step looks at one followed file twice: the second look finds the
+	// line before the one that asks, and that one is too late for it.
+	x.lv.codec = &whileReading{Codec: x.lv.codec, do: func(n int) {
+		switch n {
+		case 0:
+			x.appendTo(transcript, lines[asks-1])
+		case 1:
 			x.appendTo(transcript, lines[asks])
 			x.hooks(call(4))
-		},
+		}
 	}}
 	x.appendTo(transcript, lines[asks-2])
 	var usage []agent.Event
