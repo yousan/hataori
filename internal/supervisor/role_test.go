@@ -39,7 +39,7 @@ func TestLayerIsFirst(t *testing.T) {
 
 // notTools are the names that hataori's layer quotes and that are no tools.
 var notTools = []string{"AGENTS.md", "SOUL.md", "USER.md", "IDENTITY.md", "notes/", "docs/", "(quiet)", "@<name>",
-	"autonomy", "report", "repos", "propose", "act", "watch", "research"}
+	"autonomy", "report", "repos", "propose", "act", "watch", "research", "state", "all"}
 
 // Every tool that hataori's layer names is in tools/list, and every tool in
 // tools/list is named in it. It quotes each name, and nothing that looks
