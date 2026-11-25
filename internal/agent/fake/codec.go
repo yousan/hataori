@@ -223,7 +223,7 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 	case "text":
 		e := agent.Event{Kind: agent.Text, Text: r.Text, Final: r.Final}
 		if c.terminal && src == agent.File && r.Turn > c.turn {
-			// The runner reads the transcript before the hook calls of one
+			// The runner gives the transcript before the hook calls of one
 			// step, so the text of a turn that no caller started (typed at
 			// the terminal, or the agent's own) can come before the call
 			// that starts it. It belongs to that turn, as the Claude Code

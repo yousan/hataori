@@ -1167,7 +1167,7 @@ func saveRead(ctx context.Context, tx *store.Tx, session int64, b batch) error {
 }
 
 // warm feeds the codec what was read before the stored offsets, in the
-// order the steps read it (session_reads). Lines that no stored range
+// order the steps gave it (session_reads). Lines that no stored range
 // covers, read before ranges were stored, come first: the host's log, then
 // each followed file, each from where the current agent's lines begin in
 // it, as they were replayed then. What is before that is an earlier
@@ -1504,8 +1504,10 @@ func (r *Runner) stepLocked(lv *live) bool {
 // host's log of hook calls and output, then in the files those calls named
 // and anything new in the others. An agent writes a line of its transcript
 // before it reports what follows it, such as a turn's last message before
-// the turn's end, so a line written before a hook call is decoded first
-// even when both are new in one step.
+// the turn's end, so a line written to a followed file before a hook call is
+// decoded first even when both are new in one step. The log is read before
+// the files and decoded after them, so that this holds for what is written
+// meanwhile too.
 func (r *Runner) read(lv *live) batch {
 	b := batch{offset: lv.offset, files: map[string]int64{}}
 	for p, off := range lv.files {
@@ -1531,10 +1533,11 @@ func (r *Runner) read(lv *live) batch {
 			}
 		}
 	}
+	calls, end := newLines(filepath.Join(lv.dir, host.EventsFile), lv.offset)
 	readFiles()
-	if ls, end := newLines(filepath.Join(lv.dir, host.EventsFile), lv.offset); end > lv.offset {
+	if end > lv.offset {
 		b.reads = append(b.reads, readRange{start: lv.offset, end: end})
-		for _, l := range ls {
+		for _, l := range calls {
 			r.decode(lv, &b, source(l), l)
 		}
 		b.offset = end
