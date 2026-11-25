@@ -945,10 +945,12 @@ func TestRefuseRepositoryInAGitDirectory(t *testing.T) {
 	if err := x.check(); err != nil {
 		t.Fatal(err)
 	}
+	x.git(filepath.Join(x.clone, "sub"), "reflog", "expire", "--expire=now", "--all")
+	if err := x.check(); err != nil {
+		t.Fatalf("with empty reflogs: %v", err)
+	}
 	for _, in := range []string{
-		"cache/b", "cache/b/objects", "cache/link", "cache/link/info",
-		".git", ".git/objects/00", ".git/hooks", ".git/modules/sub", ".git/modules/sub/objects",
-		"nested/.git", "nested/.git/logs",
+		"cache/b/objects", "cache/link", ".git", ".git/hooks", ".git/modules/sub", "nested/.git/logs",
 	} {
 		for _, bare := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s bare=%v", in, bare), func(t *testing.T) {
@@ -1001,15 +1003,55 @@ func TestRefuseBrokenRepositoryInRefs(t *testing.T) {
 	}
 }
 
-// A directory with what a git directory has, but for refs that it lacks.
+// A repository is not taken for the refs of a remote by its HEAD.
+func TestRefuseRepositoryInRefs(t *testing.T) {
+	ids := strings.Repeat("0", 40) + " " + strings.Repeat("0", 40) + " "
+	for name, tc := range map[string]struct{ in, head string }{
+		"refs":            {"refs/remotes/.n", "ref: refs/remotes/origin/main\n"},
+		"logs":            {"logs/refs/remotes/n", ids + "\n"},
+		"logs, with link": {"logs/refs/remotes/l", ids + "\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			x := newRemoval(t)
+			n := filepath.Join(x.clone, ".git", filepath.FromSlash(tc.in))
+			x.git(x.tmp, "clone", "-q", "--bare", x.bare, n)
+			x.git(x.clone, "push", "-q", n, x.git(x.clone, "commit-tree", "-m", "w", "HEAD^{tree}")+":refs/heads/wip")
+			x.git(n, "gc", "-q")
+			p := filepath.Join(n, "HEAD")
+			os.Remove(p)
+			if strings.HasSuffix(name, "link") {
+				x.symlink(filepath.Join(x.tmp, "HEAD"), p)
+				p = filepath.Join(x.tmp, "HEAD")
+			}
+			if err := os.WriteFile(p, []byte(tc.head), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := x.check(); err == nil {
+				t.Fatal("the check passed; only that repository has the commit")
+			}
+		})
+	}
+}
+
+// A pipe is not read.
+func TestRefuseFIFOAsHEAD(t *testing.T) {
+	x := newRemoval(t)
+	d := filepath.Join(x.clone, ".git", "logs", "d")
+	os.MkdirAll(filepath.Join(d, "objects"), 0o700)
+	if err := syscall.Mkfifo(filepath.Join(x.tmp, "fifo"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	x.symlink(filepath.Join(x.tmp, "fifo"), filepath.Join(d, "HEAD"))
+	x.r.Timeout = 10 * time.Second
+	wantRefusal(t, x.check(), GitError, "")
+}
+
+// A directory whose HEAD is no file, or objects no directory.
 func TestRemovableWithDirectoriesLikeAGitDirectory(t *testing.T) {
 	x := newRemoval(t)
-	for _, p := range []string{"api/HEAD/f", "api/objects/f", "lists/HEAD", "lists/objects", "links/objects/f"} {
+	for _, p := range []string{"api/HEAD/f", "api/objects/f", "lists/HEAD", "lists/objects"} {
 		os.MkdirAll(filepath.Dir(filepath.Join(x.clone, p)), 0o700)
 		x.write(p, "x\n")
-	}
-	if err := os.Symlink("objects/f", filepath.Join(x.clone, "links", "HEAD")); err != nil {
-		t.Fatal(err)
 	}
 	x.git(x.clone, "add", ".")
 	x.git(x.clone, "commit", "-q", "-m", "more")

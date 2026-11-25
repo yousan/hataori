@@ -767,7 +767,7 @@ func (c *checker) find() ([]repo, error) {
 				return nil
 			}
 			in := enclosing(gitDirs, p)
-			if in != "" && isRemoteRefs(in, p) {
+			if in != "" && c.onlyRefs(in, p) {
 				return nil
 			}
 			gitDirs = append(gitDirs, p)
@@ -850,40 +850,58 @@ func (c *checker) modules(dir string, out *[]repo) error {
 	return nil
 }
 
-// isGitDir reports whether p has what a git directory has: HEAD and objects,
-// and with a link for one of them, which git reads, refs as well. git says
-// whether it is one, and one it does not take refuses.
+// isGitDir reports whether p has what every git directory has: HEAD and
+// objects, either of which may be a link. git says whether it is one, and one
+// it does not take refuses.
 func isGitDir(p string) bool {
 	head, err1 := os.Lstat(filepath.Join(p, "HEAD"))
 	objects, err2 := os.Lstat(filepath.Join(p, "objects"))
-	if err1 != nil || err2 != nil {
+	link := func(st fs.FileInfo) bool { return st.Mode().Type() == fs.ModeSymlink }
+	return err1 == nil && err2 == nil && (head.Mode().IsRegular() || link(head)) && (objects.IsDir() || link(objects))
+}
+
+// onlyRefs reports whether p, in the git directory in, is below its refs or
+// logs and holds nothing but refs or reflogs, as refs/remotes/origin does of a
+// remote that has a branch objects/x, beside the remote's HEAD. No file of it
+// is an object.
+func (c *checker) onlyRefs(in, p string) bool {
+	holds := refFile
+	switch {
+	case within(p, filepath.Join(in, "refs")):
+	case within(p, filepath.Join(in, "logs")):
+		holds = reflogStart
+	default:
 		return false
 	}
-	if head.Mode().IsRegular() && objects.IsDir() {
-		return true
-	}
-	link := func(st fs.FileInfo) bool { return st.Mode().Type() == fs.ModeSymlink }
-	return (head.Mode().IsRegular() || link(head)) && (objects.IsDir() || link(objects)) && hasRefs(p)
+	return filepath.WalkDir(p, func(p string, d fs.DirEntry, err error) error {
+		if err == nil {
+			err = c.ctx.Err()
+		}
+		if err != nil || d.IsDir() {
+			return err
+		}
+		if !d.Type().IsRegular() {
+			return errors.New("neither a ref nor a reflog")
+		}
+		f, err := os.Open(p)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		b, err := io.ReadAll(io.LimitReader(f, 4096))
+		if err == nil && !holds.Match(b) {
+			err = errors.New("neither a ref nor a reflog")
+		}
+		return err
+	}) == nil
 }
 
-// isRemoteRefs reports whether p, in the git directory in, holds the refs of a
-// remote that has a branch objects/x, or their reflogs: these are beside the
-// remote's HEAD.
-func isRemoteRefs(in, p string) bool {
-	head, err := os.ReadFile(filepath.Join(p, "HEAD"))
-	return err == nil && (within(p, filepath.Join(in, "refs", "remotes")) && bytes.HasPrefix(head, []byte("ref: refs/remotes/")) ||
-		within(p, filepath.Join(in, "logs", "refs", "remotes")) && reflogEntry.Match(head))
-}
-
-// reflogEntry is how a reflog starts; the HEAD of a git directory has one id.
-var reflogEntry = regexp.MustCompile(`^[0-9a-f]{40,64} [0-9a-f]{40,64} `)
-
-// hasRefs reports whether p has refs, as every directory that git takes for a
-// git directory has.
-func hasRefs(p string) bool {
-	_, err := os.Lstat(filepath.Join(p, "refs"))
-	return err == nil
-}
+// refFile is all that the file of a ref holds. reflogStart is how a reflog
+// starts, which may be empty.
+var (
+	refFile     = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64}|ref: refs/[^\n]*)\n?$`)
+	reflogStart = regexp.MustCompile(`^($|([0-9a-f]{40} [0-9a-f]{40}|[0-9a-f]{64} [0-9a-f]{64}) )`)
+)
 
 func (c *checker) unreadable(p string, err error) error {
 	rel, rerr := filepath.Rel(c.top, p)
