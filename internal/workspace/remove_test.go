@@ -1721,10 +1721,11 @@ func TestRefuseGitDirectoryWithACommonDirectory(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		"named as an id":   {dir: "n", common: strings.Repeat("a", 40) + "\n", other: named},
-		"empty":            {dir: "n"}, // as a crash leaves it
-		"among the refs":   {dir: ".git/refs/n", common: "../../store"},
-		"named as a ref's": {dir: ".git/refs/n", common: strings.Repeat("a", 40) + "\n", other: named},
+		"named as an id":    {dir: "n", common: strings.Repeat("a", 40) + "\n", other: named},
+		"empty":             {dir: "n"}, // as a crash leaves it
+		"among the refs":    {dir: ".git/refs/n", common: "../../store"},
+		"among the reflogs": {dir: ".git/logs/n", common: strings.Repeat("a", 40) + "\n", other: named},
+		"named as a ref's":  {dir: ".git/refs/n", common: strings.Repeat("a", 40) + "\n", other: named},
 		"objects is a link": {dir: "n", common: "../.git/store", other: func(t *testing.T, x *removal, store, n string) {
 			p := filepath.Join(store, "objects")
 			if err := errors.Join(os.Rename(p, p+"2"), os.Symlink("objects2", p)); err != nil {
@@ -1768,7 +1769,7 @@ func TestRefuseGitDirectoryWithACommonDirectory(t *testing.T) {
 			x.r.Disposable = []string{"n"}
 			wantRefusal(t, x.check(), Worktree, lay.dir)
 			if name == "named as a ref's" {
-				return // a ref like any other
+				return // without objects, a ref like any other
 			}
 			// Both may be back.
 			if err := os.Rename(filepath.Join(store, "objects"), filepath.Join(store, "o")); err != nil {
@@ -1808,7 +1809,11 @@ func TestRefuseRepositoryWithACommonDirectory(t *testing.T) {
 				t.Fatal(err)
 			}
 			x.r.Disposable = []string{"n"}
-			wantRefusal(t, x.check(), Worktree, dir)
+			want := dir
+			if name == "workspace" {
+				want = ""
+			}
+			wantRefusal(t, x.check(), Worktree, want)
 		})
 	}
 }
@@ -1860,6 +1865,8 @@ func TestRemovableWithBranchesNamedAsGitsFiles(t *testing.T) {
 		x.git(x.clone, "push", "-q", "origin", "main:refs/heads/"+name)
 	}
 	x.git(x.clone, "fetch", "-q", "origin", "+refs/heads/*:refs/remotes/origin/*")
+	x.git(x.clone, "update-ref", "refs/HEAD", "main")
+	x.git(x.clone, "update-ref", "refs/commondir", "main")
 	if err := x.check(); err != nil {
 		t.Fatal(err)
 	}

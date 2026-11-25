@@ -742,8 +742,11 @@ func (c *checker) run() error {
 	// that git makes, and nothing here looks at what its HEAD and the refs of
 	// its common directory, which may be a repository only with it, name.
 	if len(c.parts) > 0 {
-		rel, _ := filepath.Rel(c.top, c.parts[0])
-		return &Refusal{Reason: Worktree, Repo: rel, Kind: "git directory", Detail: "with a common directory"}
+		r := &Refusal{Reason: Worktree, Detail: "a git directory with a commondir"}
+		if rel, _ := filepath.Rel(c.top, c.parts[0]); rel != ".git" {
+			r.Repo, r.Kind = rel, "nested bare repository"
+		}
+		return r
 	}
 	for i, rp := range repos {
 		if err := c.commits(readers[i], rp); err != nil {
@@ -787,13 +790,13 @@ func (c *checker) find() ([]repo, error) {
 		case d.IsDir():
 			if !isGitDir(p) {
 				in := enclosing(gitDirs, p)
-				return c.part(p, in != "" && (within(p, filepath.Join(in, "refs")) || within(p, filepath.Join(in, "logs"))))
+				return c.part(p, refsLook(in, p))
 			}
 			in := enclosing(gitDirs, p)
 			if in != "" && c.onlyRefs(in, p) {
 				return nil
 			}
-			if err := c.part(p, false); err != nil {
+			if err := c.part(p, nil); err != nil {
 				return err
 			}
 			gitDirs = append(gitDirs, p)
@@ -808,7 +811,7 @@ func (c *checker) find() ([]repo, error) {
 		if d.IsDir() && d.Name() == ".git" {
 			gitDirs = append(gitDirs, p)
 			roots = append(roots, p)
-			return c.part(p, false)
+			return c.part(p, nil)
 		}
 		return nil
 	})
@@ -887,9 +890,20 @@ func isGitDir(p string) bool {
 	return err1 == nil && err2 == nil && (head.Mode().IsRegular() || link(head)) && (objects.IsDir() || link(objects))
 }
 
+// refsLook is how the files of the directory p look if they are refs or reflogs
+// of the git directory in, or nil where none are.
+func refsLook(in, p string) *regexp.Regexp {
+	for name, look := range map[string]*regexp.Regexp{"refs": refFile, "logs": reflogStart} {
+		if dir := filepath.Join(in, name); in != "" && (p == dir || within(p, dir)) {
+			return look
+		}
+	}
+	return nil
+}
+
 // part adds p to the parts if it is one.
-func (c *checker) part(p string, refs bool) error {
-	part, err := c.isPart(p, refs)
+func (c *checker) part(p string, look *regexp.Regexp) error {
+	part, err := c.isPart(p, look)
 	if part {
 		c.parts = append(c.parts, p)
 	}
@@ -899,9 +913,9 @@ func (c *checker) part(p string, refs bool) error {
 // isPart reports whether p is a git directory whose objects and refs git takes
 // from another, its common directory: with HEAD and a commondir. Objects and
 // refs of its own are not looked at then. The common directory may be gone for
-// now. Where there are refs, a ref or reflog may
-// have either name, and is none unless it leads to objects.
-func (c *checker) isPart(p string, refs bool) (bool, error) {
+// now. Among refs or reflogs, which may have either name, p is none if its
+// commondir has their look and does not lead to objects.
+func (c *checker) isPart(p string, look *regexp.Regexp) (bool, error) {
 	if head, err := os.Lstat(filepath.Join(p, "HEAD")); missing(err) || err == nil && head.IsDir() {
 		return false, nil
 	} else if err != nil {
@@ -922,7 +936,7 @@ func (c *checker) isPart(p string, refs bool) (bool, error) {
 	if err != nil {
 		return false, c.unreadable(file, err)
 	}
-	if !refs || !refFile.Match(b) && !reflogStart.Match(b) {
+	if look == nil || !look.Match(b) {
 		return true, nil
 	}
 	common, _, _ := strings.Cut(strings.TrimRight(string(b), "\r\n"), "\x00")
