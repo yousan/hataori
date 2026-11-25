@@ -1907,13 +1907,50 @@ func (c *checker) processes() error {
 		return c.unreadable(c.top, err)
 	}
 	topID, _ := fileIDOf(st)
-	// Before lsof is asked: what it says is as new as it can be.
+	self, heldFD := strconv.Itoa(os.Getpid()), strconv.Itoa(int(held.Fd()))
+
+	// lsof is asked before and after the workspace is read: before, what a
+	// process uses then is still found where it makes directories and goes on
+	// in them; after, what it says is as new as it can be.
+	before, err := c.lsof()
+	if err != nil {
+		return err
+	}
 	in, err := c.contents()
 	if err != nil {
 		return err
 	}
-	self, heldFD := strconv.Itoa(os.Getpid()), strconv.Itoa(int(held.Fd()))
+	after, err := c.lsof()
+	if err != nil {
+		return err
+	}
+	for _, open := range [][]openFile{before, after} {
+		seen := false
+		for _, f := range open {
+			id, hasID := f.id()
+			if f.name == top || strings.HasPrefix(f.name, top+"/") || strings.HasPrefix(f.name, top+" ") {
+				if f.pid == self && f.fd == heldFD {
+					seen = hasID && id == topID
+					continue
+				}
+				return &Refusal{Reason: InUse, Detail: f.use()}
+			}
+			if !hasID && (f.kind == "REG" || f.kind == "DIR") {
+				return &Refusal{Reason: UnknownUse, Detail: "lsof does not say which file it is that " + f.use()}
+			}
+			if there, ok := in[id]; hasID && ok && there.all() {
+				return &Refusal{Reason: InUse, Detail: f.use() + ", which is " + there.rel}
+			}
+		}
+		if !seen {
+			return &Refusal{Reason: UnknownUse, Detail: "lsof does not report the workspace, which this check holds open"}
+		}
+	}
+	return nil
+}
 
+// lsof is every file that lsof reports.
+func (c *checker) lsof() ([]openFile, error) {
 	args := []string{"-n", "-P", "-w", "-F0pftDin"}
 	if uid := os.Geteuid(); uid != 0 {
 		args = append(args, "-u", strconv.Itoa(uid))
@@ -1926,9 +1963,9 @@ func (c *checker) processes() error {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		return &Refusal{Reason: UnknownUse, Detail: "lsof: " + lastLines(stderr.String(), 3, err.Error())}
+		return nil, &Refusal{Reason: UnknownUse, Detail: "lsof: " + lastLines(stderr.String(), 3, err.Error())}
 	}
-	seen := false
+	var open []openFile
 	pid := ""
 	for _, set := range strings.Split(stdout.String(), "\x00\n") {
 		f := openFile{pid: pid}
@@ -1952,25 +1989,9 @@ func (c *checker) processes() error {
 				f.name = v
 			}
 		}
-		id, hasID := f.id()
-		if f.name == top || strings.HasPrefix(f.name, top+"/") || strings.HasPrefix(f.name, top+" ") {
-			if f.pid == self && f.fd == heldFD {
-				seen = hasID && id == topID
-				continue
-			}
-			return &Refusal{Reason: InUse, Detail: f.use()}
-		}
-		if !hasID && (f.kind == "REG" || f.kind == "DIR") {
-			return &Refusal{Reason: UnknownUse, Detail: "lsof does not say which file it is that " + f.use()}
-		}
-		if there, ok := in[id]; hasID && ok && there.all() {
-			return &Refusal{Reason: InUse, Detail: f.use() + ", which is " + there.rel}
-		}
+		open = append(open, f)
 	}
-	if !seen {
-		return &Refusal{Reason: UnknownUse, Detail: "lsof does not report the workspace, which this check holds open"}
-	}
-	return nil
+	return open, nil
 }
 
 // contents is every file and directory of the workspace, itself included,
@@ -1985,14 +2006,11 @@ func (c *checker) contents() (map[fileID]inside, error) {
 		if err == nil {
 			st, err = d.Info()
 		}
-		rel, _ := filepath.Rel(c.top, p)
-		if errors.Is(err, fs.ErrNotExist) {
-			return &Refusal{Reason: UnknownUse, Detail: rel + " went while the workspace was read"}
-		}
 		if err != nil {
 			return c.unreadable(p, err)
 		}
 		id, links := fileIDOf(st)
+		rel, _ := filepath.Rel(c.top, p)
 		in[id] = inside{rel: rel, dir: d.IsDir(), links: links, names: in[id].names + 1}
 		return nil
 	})

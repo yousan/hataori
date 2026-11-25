@@ -1567,6 +1567,7 @@ func TestRefuseProcessUsingTheWorkspaceThroughABindMount(t *testing.T) {
 		"a file of its repository": {".", "exec 3<$at/.git/HEAD"},
 		"a mount of a directory":   {"cache", "exec 3<$at/deep/f"},
 		"a file with two names":    {".", "exec 3<$at/cache/deep/two"},
+		"directories it makes":     {".", "cd $at/cache; echo there; while :; do mkdir d; cd d; sleep 0.05; done"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			x := newRemoval(t)
