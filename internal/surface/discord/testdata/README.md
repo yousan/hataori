@@ -91,6 +91,18 @@ The bot posted a message (`rest-lamp-post.json`) and reacted to it with the work
 
 Three posts show mentions. `rest-post-notify.json` mentions the bot itself, so that no person is pinged, with `allowed_mentions` `{parse: [], users: [<bot>]}`; the service reports exactly that user in `mentions`. `rest-post-everyone.json` holds `@everyone` and a role mention with `{parse: []}`; the service reports `mention_everyone: false`, no roles and no users. `rest-post-quiet.json` has flag 4096 (suppress notifications) and comes back with it. `scrub.py` keeps names made only of symbols, such as an emoji's.
 
+## Calls (for #869, not taken yet)
+
+`v10/calls/` is not there yet: it needs a person. Until then `calls_test.go` reads messages shaped as Discord's documentation gives them, around the captured message of a person, and `TestCapturedCalls` is skipped. To take it, with the environment above and a server whose bot has a role of its own (it was invited with a permission) and which has one more role:
+
+```sh
+python3 capture.py calls /tmp/raw/calls 60
+python3 capture.py cleanup /tmp/raw/calls
+python3 scrub.py /tmp/scrubbed /tmp/raw/calls && mv /tmp/scrubbed/calls v10/calls
+```
+
+The run says its steps on the terminal, one after another: what the person posts in the channel, word for word. The webhook's step is done with `curl`, as in the person run. Each message is kept as the gateway sends it (`gw-<step>.json`) and as REST reads it (`rest-<step>.json`); of a message that was edited, and of a reply whose post was deleted, the latter only, with the edit itself in `gw-edited-update.json`. Of Guild Create, `gw-guild.json` keeps the channel, and the two roles' `id`, `managed` and `tags`. No other dispatch is kept. A person deletes what they posted; the cleanup run deletes the bot's posts. Its ids are numbered on their own, from `1000000000000000001`.
+
 ## Observed, and worth knowing
 
 - Messages read through REST have no `guild_id`, in a channel as in a direct conversation; only gateway messages say which they are.

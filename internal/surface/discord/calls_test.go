@@ -312,10 +312,14 @@ func TestCapturedCalls(t *testing.T) {
 			}
 		})
 	}
+	s := newSink()
+	deliver(t, testDriver(t, bot, newFakeREST(t), nil), s, "calls/gw-edited-update.json")
+	if len(s.messages) != 0 {
+		t.Errorf("an edit delivered %+v", s.messages)
+	}
 	// A bot's message, read by the account it mentions.
 	p := payload(t, "calls/rest-post-by-bot.json")
 	d := testDriver(t, snowflake.MustParse(id(p["mentions"].([]any)[0].(map[string]any)["id"])), newFakeREST(t), nil)
-	s := newSink()
 	p["guild_id"] = guild["id"]
 	event(t, d, s, "MESSAGE_CREATE", p)
 	if len(s.messages) != 1 || s.messages[0].Call || len(s.messages[0].OwnMentions) != 1 {

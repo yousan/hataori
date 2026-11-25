@@ -17,9 +17,9 @@ import (
 // A call (surface.Inbound.Call) is told from two things that must agree:
 // what the service reports of the message (mentions, mention_roles with the
 // role's tags, referenced_message, type), and where the mention stands in
-// the text. The report alone is not enough: the service reports a mention
-// in a quoted line as any other, and the author a reply pings is in
-// mentions without a mention in the text.
+// the text. The report alone is not enough: it may hold a mention in a
+// quoted line as any other, and the author a reply pings, which the text
+// does not mention.
 
 var _ surface.Mentioner = (*Driver)(nil)
 
