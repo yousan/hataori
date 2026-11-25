@@ -127,14 +127,23 @@ def at_only(text):
 
 def written(text):
     """text as hataori's adapter pastes it into a confined session: without
-    control characters but line breaks and tabs, "(at)" for each "@", and
-    "(message) " before it unless it starts with a letter or a digit (#887,
-    #914). The test of the adapter checks that it does."""
-    text = "".join(c for c in text if c in "\n\r\t" or unicodedata.category(c) != "Cc").replace("@", "(at)")
+    control characters but line feeds and tabs, a carriage return as a line
+    feed, "(at)" for each "@", and "(message) " before it unless it starts
+    with a digit or a letter of the scripts the adapter lists (#887, #914).
+    Python does not tell a character's script, so its name stands in for
+    it; the test of the adapter checks that each paste captured is the
+    adapter's."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = "".join(c for c in text if c in "\n\t" or unicodedata.category(c) != "Cc").replace("@", "(at)")
     first = text.lstrip()
-    if first and not unicodedata.category(first[0]).startswith(("L", "N")):
+    if first and not (unicodedata.category(first[0]) == "Nd" or
+                      unicodedata.category(first[0]).startswith("L") and unicodedata.name(first[0], "").startswith(HEADS)):
         return "(message) " + text
     return text
+
+
+# The names of the letters an input may start with (codec.go, heads).
+HEADS = ("LATIN ", "FULLWIDTH LATIN ", "GREEK ", "CYRILLIC ", "CJK UNIFIED IDEOGRAPH", "HIRAGANA ", "KATAKANA ", "HALFWIDTH KATAKANA ", "HANGUL SYLLABLE ")
 
 
 class API:

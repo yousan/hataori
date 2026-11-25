@@ -156,3 +156,42 @@ func TestHeldInputAcrossARestart(t *testing.T) {
 		t.Fatalf("the message's prompt: %s", summary(a))
 	}
 }
+
+// In a confined session, what a hataori before #914 left in the box across
+// a restart, which this one would not paste as it is, is never submitted,
+// nor is anything pasted after it: its turn and the next input's end "not
+// delivered" until the CLI has taken the box's text. One that this one
+// pastes the same is submitted after the agent's own turn, as ever.
+func TestOlderPasteIsNotSubmittedAfterARestart(t *testing.T) {
+	for text, want := range map[string]int{"\u001b[31m!id": 0, "#x": 0, heldText: 1} {
+		c := (&Adapter{}).NewCodec(agent.Spec{Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
+		for _, f := range []string{"01-SessionStart", "02-UserPromptSubmit", "05-Stop", "07-UserPromptSubmit"} {
+			decodeFile(t, c, f, held+f+".json")
+		}
+		if a, _ := c.Input(agent.Input{ID: "in-7", Text: text, Written: true}); len(a.Keys) != 0 {
+			t.Fatalf("%q: written again: %q", text, a.Keys)
+		}
+		now := quiet(t, c, time.Now(), 2*DefaultInputTimeout, "during the own turn")
+		decodeFile(t, c, "11", held+"11-Stop.json")
+		now, n := enters(t, c, now, 2*time.Second)
+		if n != want {
+			t.Errorf("%q: Enter pressed %d times, want %d", text, n, want)
+		}
+		if want != 0 {
+			continue
+		}
+		if a := c.Tick(now.Add(DefaultInputTimeout)); len(a.Events) != 1 || a.Events[0].Reason != agent.NotDelivered || a.Events[0].Input != "in-7" {
+			t.Fatalf("%q: after the timeout: %+v", text, a.Events)
+		}
+		a, _ := c.Input(agent.Input{ID: "in-8", Text: "list the threads"})
+		if len(a.Keys) != 0 || len(a.Events) != 1 || a.Events[0].Reason != agent.NotDelivered || a.Events[0].Input != "in-8" {
+			t.Fatalf("%q: the next input: keys %q, events %+v", text, a.Keys, a.Events)
+		}
+		// A person at the terminal submitted the box: input is pasted again.
+		decodeFile(t, c, "12", held+"12-UserPromptSubmit.json")
+		decodeFile(t, c, "13", held+"13-Stop.json")
+		if a, _ := c.Input(agent.Input{ID: "in-9", Text: "list the threads"}); len(a.Keys) != 1 || a.Keys[0].Paste != "list the threads" {
+			t.Fatalf("%q: after the box was submitted: keys %q, events %+v", text, a.Keys, a.Events)
+		}
+	}
+}

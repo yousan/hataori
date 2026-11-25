@@ -64,6 +64,7 @@ type codec struct {
 	runningPrompt string        // the prompt id of that turn
 	queue         []queued      // input held until the CLI can take it
 	sent          *sentInput    // input written, not yet reported
+	leftover      bool          // the box may hold what an older hataori pasted (Input): nothing is written until a prompt is submitted
 	timeout       time.Duration // for sent; DefaultInputTimeout when zero
 	mcp           mcpState      // the MCP servers input waits for (mcpwait.go)
 	tasks         tasks         // the background tasks that run (background.go)
@@ -216,13 +217,21 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 		// Nothing is written for it, Enter neither: if the restart came
 		// between the paste and its Enter, it ends "not delivered". Only
 		// when another turn runs meanwhile, which Enter waits for (track),
-		// it is pressed after that turn.
+		// it is pressed after that turn, unless it is a leftover.
 		typed := c.pasteText(in.Text)
 		text := normalize(typed)
 		q := queued{id: in.ID, text: text}
 		if c.spec.Confine != nil {
 			clean := cleanPaste(in.Text)
-			q.older = []string{normalize(bangOrSlash(clean)), normalize(bangOrSlash(strings.ReplaceAll(clean, "@", atSign)))}
+			for _, o := range []string{bangOrSlash(clean), bangOrSlash(strings.ReplaceAll(clean, "@", atSign))} {
+				q.older = append(q.older, normalize(o))
+				// What this hataori would not paste as it is may be in
+				// the box: it is never submitted, nor anything pasted
+				// after it, until the CLI took the box's text (#914).
+				if noCommand(noControls(o)) != o {
+					c.leftover = true
+				}
+			}
 		}
 		c.pasted = append(c.pasted, q)
 		if c.sent == nil {
@@ -295,20 +304,25 @@ func (c *codec) pasteText(text string) string {
 	return noCommand(strings.ReplaceAll(noControls(text), "@", atSign))
 }
 
-// noControls is text without its control characters, line breaks and tabs
-// left: nothing in it starts an escape sequence, which a terminal or the
-// CLI would act on or take out. An invalid byte becomes U+FFFD.
+// noControls is text without its control characters but line feeds and
+// tabs: nothing in it starts an escape sequence, which a terminal or the
+// CLI would act on or take out, and each line break is a line feed, since
+// a carriage return is what Enter sends: in a paste that is not bracketed
+// it would submit the text before it. An invalid byte becomes U+FFFD.
 func noControls(text string) string {
 	return strings.Map(func(r rune) rune {
-		if unicode.Is(unicode.Cc, r) && r != '\n' && r != '\r' && r != '\t' {
+		switch {
+		case r == '\r':
+			return '\n'
+		case unicode.Is(unicode.Cc, r) && r != '\n' && r != '\t':
 			return -1
 		}
 		return r
-	}, text)
+	}, strings.ReplaceAll(text, "\r\n", "\n"))
 }
 
 // noCommand is text with commandPrefix before it unless the first
-// character after its spaces is a letter or a digit that shows. Which
+// character after its spaces is a digit or one of heads' letters. Which
 // characters the CLI takes out of the start, and which starts it reads as a
 // command, are its own, so "!", "/" and anything else are refused.
 func noCommand(text string) string {
@@ -317,11 +331,18 @@ func noCommand(text string) string {
 		return text
 	}
 	r, _ := utf8.DecodeRuneInString(first)
-	if unicode.In(r, unicode.L, unicode.N) && !unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r) {
+	if unicode.Is(unicode.Nd, r) || unicode.Is(unicode.L, r) && unicode.In(r, heads...) {
 		return text
 	}
 	return commandPrefix + text
 }
+
+// heads are the scripts whose letters an input may start with and not get
+// commandPrefix: common ones, each letter of which shows. Of Hangul, only
+// the syllables: its jamo include fillers and letters that take no width.
+var heads = []*unicode.RangeTable{unicode.Latin, unicode.Greek, unicode.Cyrillic, unicode.Han, unicode.Hiragana, unicode.Katakana, hangulSyllables}
+
+var hangulSyllables = &unicode.RangeTable{R16: []unicode.Range16{{Lo: 0xac00, Hi: 0xd7a3, Stride: 1}}}
 
 // bangOrSlash is text with commandPrefix before it if, after spaces and
 // characters such as a zero-width space, it starts with "!" or "/": all a
@@ -350,6 +371,15 @@ func cleanPaste(text string) string {
 // Input is one bracketed paste; Tick presses Enter after it (tickInput).
 // It counts as delivered only when UserPromptSubmit reports the same text.
 func (c *codec) flush() Actions {
+	if c.leftover && c.sent == nil && len(c.queue) > 0 {
+		// Written after the box's text, it would be submitted with it.
+		var a Actions
+		for _, q := range c.queue {
+			a = merge(a, c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered, Input: q.id})))
+		}
+		c.queue = nil
+		return a
+	}
 	if !c.ready || c.running || c.sent != nil || len(c.queue) == 0 || !c.pasteReady() || !c.mcpReady() {
 		return Actions{}
 	}
@@ -510,7 +540,7 @@ func (c *codec) tickInput(now time.Time) Actions {
 	}
 	if now.Sub(c.sent.at) < c.inputTimeout() {
 		switch {
-		case !c.ready || c.sent.unsure || now.Sub(c.sent.at) < pasteSettle:
+		case !c.ready || c.sent.unsure || c.leftover || now.Sub(c.sent.at) < pasteSettle:
 		case !c.sent.pressed:
 			return c.enter(now)
 		case c.stillInBox(now):
@@ -690,7 +720,7 @@ func (c *codec) track(prompt string, a Actions) Actions {
 				}
 			}
 		case agent.SessionEnded:
-			c.ready, c.running = false, false
+			c.ready, c.running, c.leftover = false, false, false
 		}
 	}
 	return c.flush()
@@ -988,6 +1018,8 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 		by, id := c.starter(p.Prompt)
 		if by == agent.ByAgent {
 			c.tasks.notified(p.Prompt)
+		} else {
+			c.leftover = false // the box's text was submitted
 		}
 		started := agent.Event{Kind: agent.TurnStarted, StartedBy: by, Input: id}
 		if by == agent.ByTerminal {

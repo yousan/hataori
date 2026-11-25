@@ -206,6 +206,8 @@ func TestConfinedInputIsNeverACommand(t *testing.T) {
 	for _, text := range []string{"!touch /tmp/x", "/add-dir /", "  \n!ls", "\u200b/model opus", "\u3000!id",
 		"\ufeff/exit", "\u2060!id", "\U000e0021!id", // format characters
 		"\u3164!id", "\u115f/exit", "\uffa0!id", // fillers: letters that do not show
+		"\u1161!id", "\u11a8/exit", "\ud7b0!id", // Hangul jamo that take no width
+		"\u0e01!id",                             // a letter of a script not listed, which shows
 		"\ufe0f!id", "\u034f/exit", "\u0301!id", // marks with nothing before them
 		"\u2800!id", "\ue000!id", "\U000e0100/exit", // a blank symbol, a private use character, a variation selector
 		"！id", "／exit", "#x", "&x", "?", "> x", "[31m!id", "(at)x", "「x」", "😀"} {
@@ -216,7 +218,8 @@ func TestConfinedInputIsNeverACommand(t *testing.T) {
 			t.Errorf("ordinary: %q is pasted as %q", text, got)
 		}
 	}
-	for _, text := range []string{"list the threads", "a / b", "say !", "  two", "3 threads", "スレッドの一覧", "Ünï", "ok\n!id", "hataori: a wake"} {
+	for _, text := range []string{"list the threads", "a / b", "say !", "  two", "3 threads", "スレッドの一覧", "Ünï", "ok\n!id", "hataori: a wake",
+		"Ωmega", "привет", "漢字", "ひらがな", "한국어", "ｶﾀｶﾅ", "Ａbc", "٣ things"} {
 		if got := paste(t, confinedCodec(t), text); got != text {
 			t.Errorf("confined: %q is pasted as %q", text, got)
 		}
@@ -224,9 +227,9 @@ func TestConfinedInputIsNeverACommand(t *testing.T) {
 }
 
 // Nothing in a confined session's input starts an escape sequence or acts
-// as a key: its control characters are taken out, line breaks and tabs
-// left, and what is left is pasted as any text (#914). An ordinary session
-// is pasted them.
+// as a key: its control characters are taken out, line feeds and tabs
+// left, a carriage return, which is Enter, becomes a line feed, and what is
+// left is pasted as any text (#914). An ordinary session is pasted them.
 func TestConfinedInputHasNoControls(t *testing.T) {
 	const esc = "\x1b"
 	for text, want := range map[string]string{
@@ -242,7 +245,10 @@ func TestConfinedInputHasNoControls(t *testing.T) {
 		"\x15!id":                                     commandPrefix + "!id", // Ctrl-U
 		"\x17\x17!id":                                 commandPrefix + "!id", // Ctrl-W
 		"ok" + esc + "[2K!id":                         "ok[2K!id",
-		"a\x00b\x0bc\x0cd\re\n\tf":                    "abcd\re\n\tf",
+		"a\x00b\x0bc\x0cd\re\n\tf":                    "abcd\ne\n\tf",
+		"hello\r!id":                                  "hello\n!id", // Enter, then a command
+		"hello\r\n/add-dir /\r\r":                     "hello\n/add-dir /\n\n",
+		"\r!id":                                       commandPrefix + "\n!id",
 		"\xff!id":                                     commandPrefix + "\ufffd!id", // not UTF-8
 	} {
 		got := paste(t, confinedCodec(t), text)
