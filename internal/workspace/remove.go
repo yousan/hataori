@@ -690,8 +690,9 @@ type checker struct {
 	n    int    // scratch repositories made
 	// noTree is an empty directory, made when it is first needed (emptyTree).
 	noTree string
-	// trees are the work trees find returned.
-	trees map[string]bool
+	// trees and gitDirs are the work trees and the git directories find
+	// returned; the git directory of a work tree is its .git.
+	trees, gitDirs map[string]bool
 }
 
 // repo is a repository found in the workspace.
@@ -707,10 +708,13 @@ func (c *checker) run() error {
 	if err != nil {
 		return err
 	}
-	c.trees = map[string]bool{}
+	c.trees, c.gitDirs = map[string]bool{}, map[string]bool{}
 	for _, rp := range repos {
-		if !rp.gitDir {
+		if rp.gitDir {
+			c.gitDirs[rp.dir] = true
+		} else {
 			c.trees[rp.dir] = true
+			c.gitDirs[filepath.Join(rp.dir, ".git")] = true
 		}
 	}
 	// Every work tree first: a dirty file is the most common reason, and
@@ -1277,7 +1281,7 @@ func (c *checker) commits(g *reader, rp repo) error {
 		// what was pruned it warns.
 		for line := range strings.Lines(errs) {
 			line = strings.TrimSpace(line)
-			if err == nil && strings.HasPrefix(line, "error: ") && !otherLogs(g, logs, line) {
+			if err == nil && strings.HasPrefix(line, "error: ") && !c.otherLogs(g, logs, line) {
 				err = c.refuse(rp, GitError, redact(line))
 			}
 		}
@@ -1637,11 +1641,11 @@ func (c *checker) tableIDs(g *reader, dir string) ([]string, error) {
 	return slices.Sorted(maps.Keys(have)), nil
 }
 
-// otherLogs reports whether the line, which git said, is of a file of a
-// repository in the logs directory: git calls it a bad ref, as no ref has such a
-// name, and that repository is checked itself. Of a reflog that git calls so it
-// leaves out all.
-func otherLogs(g *reader, logs, line string) bool {
+// otherLogs reports whether the line, which git said, is of a file in the git
+// directory of a repository in the logs directory: git calls it a bad ref, as no
+// ref has such a name, and that repository is checked itself. Of a reflog that
+// git calls so it leaves out all.
+func (c *checker) otherLogs(g *reader, logs, line string) bool {
 	p, ok := strings.CutPrefix(line, "error: bad ref for ")
 	if !ok {
 		return false
@@ -1650,7 +1654,7 @@ func otherLogs(g *reader, logs, line string) bool {
 		p = filepath.Join(g.dir, p)
 	}
 	for p = filepath.Dir(p); within(p, logs); p = filepath.Dir(p) {
-		if isGitDir(p) {
+		if c.gitDirs[p] {
 			return true
 		}
 	}

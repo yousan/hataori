@@ -964,16 +964,27 @@ func TestRefuseReflogOfWhatCannotBeRead(t *testing.T) {
 
 // git 2.43 leaves out the whole reflog of a ref whose value no ref may have.
 func TestRefuseReflogOfARefThatIsBad(t *testing.T) {
-	x := newRemoval(t)
-	x.git(x.clone, "checkout", "-q", "-b", "y")
-	x.commit(x.clone, "y")
-	x.git(x.clone, "checkout", "-q", "main")
-	os.Remove(filepath.Join(x.clone, ".git", "logs", "HEAD"))
-	if err := os.WriteFile(filepath.Join(x.clone, ".git", "refs", "heads", "y"), []byte("ref: refs/heads/a..b\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := x.check(); err == nil {
-		t.Fatal("no refusal")
+	for _, like := range []bool{false, true} {
+		t.Run(fmt.Sprintf("like a git directory=%v", like), func(t *testing.T) {
+			x := newRemoval(t)
+			x.git(x.clone, "checkout", "-q", "-b", "y")
+			x.commit(x.clone, "y")
+			x.git(x.clone, "checkout", "-q", "main")
+			os.Remove(filepath.Join(x.clone, ".git", "logs", "HEAD"))
+			heads := filepath.Join(x.clone, ".git", "logs", "refs", "heads")
+			if like { // the reflogs of branches HEAD and objects/x
+				x.write(".git/logs/refs/heads/HEAD", "")
+				if err := os.Mkdir(filepath.Join(heads, "objects"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(x.clone, ".git", "refs", "heads", "y"), []byte("ref: refs/heads/a..b\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := x.check(); err == nil {
+				t.Fatal("no refusal")
+			}
+		})
 	}
 }
 
