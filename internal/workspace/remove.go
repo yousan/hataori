@@ -785,7 +785,8 @@ func (c *checker) find() ([]repo, error) {
 			repos = append(repos, repo{dir: dir, rel: rel, kind: "submodule"})
 		case d.IsDir():
 			if !isGitDir(p) {
-				part, err := c.isPart(p)
+				in := enclosing(gitDirs, p)
+				part, err := c.isPart(p, in != "" && (within(p, filepath.Join(in, "refs")) || within(p, filepath.Join(in, "logs"))))
 				if part {
 					c.parts = append(c.parts, p)
 				}
@@ -887,9 +888,9 @@ func isGitDir(p string) bool {
 
 // isPart reports whether p is a git directory whose objects are in another, its
 // common directory, as git takes it: with HEAD and a commondir. The directory
-// that leads to may be gone for now. A ref or reflog may have either name, and
-// is none where it does not lead to objects.
-func (c *checker) isPart(p string) (bool, error) {
+// that leads to may be gone for now. Where there are refs, a ref or reflog may
+// have either name, and is none unless it leads to objects.
+func (c *checker) isPart(p string, refs bool) (bool, error) {
 	if head, err := os.Lstat(filepath.Join(p, "HEAD")); missing(err) || err == nil && head.IsDir() {
 		return false, nil
 	} else if err != nil {
@@ -910,7 +911,7 @@ func (c *checker) isPart(p string) (bool, error) {
 	if err != nil {
 		return false, c.unreadable(file, err)
 	}
-	if !refFile.Match(b) && !reflogStart.Match(b) {
+	if !refs || !refFile.Match(b) && !reflogStart.Match(b) {
 		return true, nil
 	}
 	common, _, _ := strings.Cut(strings.TrimRight(string(b), "\r\n"), "\x00")

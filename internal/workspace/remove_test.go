@@ -1703,6 +1703,11 @@ func TestRefuseSubmoduleOfAMovedGitDirectory(t *testing.T) {
 // git takes a directory with HEAD and a commondir for a git directory; what it
 // leads to needs no HEAD for that.
 func TestRefuseGitDirectoryWithACommonDirectory(t *testing.T) {
+	named := func(t *testing.T, x *removal, store, n string) {
+		if err := os.Symlink(store, filepath.Join(n, strings.Repeat("a", 40))); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for name, lay := range map[string]struct {
 		dir, common string
 		other       func(t *testing.T, x *removal, store, n string)
@@ -1716,12 +1721,9 @@ func TestRefuseGitDirectoryWithACommonDirectory(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		"named as an id": {dir: "n", other: func(t *testing.T, x *removal, store, n string) {
-			id := strings.Repeat("a", 40)
-			if err := errors.Join(os.Symlink(store, filepath.Join(n, id)), os.WriteFile(filepath.Join(n, "commondir"), []byte(id+"\n"), 0o600)); err != nil {
-				t.Fatal(err)
-			}
-		}},
+		"named as an id":   {dir: "n", common: strings.Repeat("a", 40) + "\n", other: named},
+		"among the refs":   {dir: ".git/refs/n", common: "../../store"},
+		"named as a ref's": {dir: ".git/refs/n", common: strings.Repeat("a", 40) + "\n", other: named},
 		"objects is a link": {dir: "n", common: "../.git/store", other: func(t *testing.T, x *removal, store, n string) {
 			p := filepath.Join(store, "objects")
 			if err := errors.Join(os.Rename(p, p+"2"), os.Symlink("objects2", p)); err != nil {
@@ -1762,8 +1764,8 @@ func TestRefuseGitDirectoryWithACommonDirectory(t *testing.T) {
 			}
 			x.r.Disposable = []string{"n"}
 			wantRefusal(t, x.check(), Worktree, lay.dir)
-			if name == "named as an id" {
-				return
+			if name == "named as a ref's" {
+				return // a ref like any other
 			}
 			// Both may be back.
 			if err := os.Rename(filepath.Join(store, "objects"), filepath.Join(store, "o")); err != nil {
