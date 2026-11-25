@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -736,17 +737,6 @@ func TestRefuseCommitOnlyARefOutsideRefsNames(t *testing.T) {
 		x.git(x.clone, "update-ref", "info/refs", x.git(x.clone, "commit-tree", "-m", "work", "HEAD^{tree}"))
 		wantRefusal(t, x.check(), OtherRef, "")
 	})
-	// A reflog starts with the null id, and git complains of alternates that
-	// are gone.
-	t.Run("null id", func(t *testing.T) {
-		x := newRemoval(t)
-		if err := os.WriteFile(filepath.Join(x.clone, ".git", "objects", "info", "alternates"), []byte(filepath.Join(x.tmp, "gone")+"\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := x.check(); err != nil {
-			t.Fatal(err)
-		}
-	})
 	t.Run("behind a link", func(t *testing.T) {
 		x := newRemoval(t)
 		away := filepath.Join(x.tmp, "away")
@@ -837,6 +827,133 @@ func TestRefuseRefsElsewhere(t *testing.T) {
 		wantRefusal(t, err, Unreadable, "")
 	} else if err == nil { // this git knows no such place
 		t.Fatal("not refused")
+	}
+}
+
+// onlyInAReflog makes a commit that only a reflog of the clone names, in a
+// pack of its own unless it is to be loose. It returns the pack's or the
+// object's file.
+func onlyInAReflog(x *removal, loose bool) string {
+	x.t.Helper()
+	x.git(x.clone, "gc", "-q")
+	packs := func() []string {
+		p, _ := filepath.Glob(filepath.Join(x.clone, ".git/objects/pack/*.pack"))
+		return p
+	}
+	have := packs()
+	x.commit(x.clone, "n")
+	id := x.git(x.clone, "rev-parse", "HEAD")
+	x.git(x.clone, "reset", "-q", "--hard", "HEAD~1")
+	os.Remove(filepath.Join(x.clone, ".git/ORIG_HEAD"))
+	if loose {
+		return filepath.Join(x.clone, ".git/objects", id[:2], id[2:])
+	}
+	x.git(x.clone, "repack", "-q", "-d")
+	for _, p := range packs() {
+		if !slices.Contains(have, p) {
+			return p
+		}
+	}
+	x.t.Fatal("no new pack")
+	return ""
+}
+
+// git takes what it cannot open for missing, and leaves out a commit that only
+// a reflog names.
+func TestRefuseReflogOfWhatCannotBeRead(t *testing.T) {
+	asRoot := os.Getuid() == 0
+	for name, lose := range map[string]func(t *testing.T, x *removal){
+		"index": func(t *testing.T, x *removal) {
+			os.Chmod(strings.TrimSuffix(onlyInAReflog(x, false), ".pack")+".idx", 0)
+		},
+		"pack": func(t *testing.T, x *removal) {
+			os.Chmod(onlyInAReflog(x, false), 0)
+		},
+		"loose": func(t *testing.T, x *removal) {
+			os.Chmod(onlyInAReflog(x, true), 0)
+		},
+		"no index": func(t *testing.T, x *removal) {
+			os.Remove(strings.TrimSuffix(onlyInAReflog(x, false), ".pack") + ".idx")
+		},
+		// On a disk that is not mounted, perhaps.
+		"alternate that is gone": func(t *testing.T, x *removal) {
+			if err := os.WriteFile(filepath.Join(x.clone, ".git", "objects", "info", "alternates"), []byte(filepath.Join(x.tmp, "gone")+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"cut index": func(t *testing.T, x *removal) {
+			idx := strings.TrimSuffix(onlyInAReflog(x, false), ".pack") + ".idx"
+			os.Chmod(idx, 0o600)
+			if err := os.Truncate(idx, 100); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"pack behind a link": func(t *testing.T, x *removal) {
+			pack := onlyInAReflog(x, false)
+			dir, away := filepath.Dir(pack), filepath.Join(x.tmp, "packs")
+			if err := os.Rename(dir, away); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(away, dir); err != nil {
+				t.Fatal(err)
+			}
+			os.Chmod(strings.TrimSuffix(pack, ".pack")+".idx", 0)
+		},
+		"alternate": func(t *testing.T, x *removal) {
+			pack := strings.TrimSuffix(onlyInAReflog(x, false), ".pack")
+			// Two on the way, the second relative.
+			objects := filepath.Join(x.clone, ".git", "objects")
+			one, two := filepath.Join(x.clone, ".git", "one"), filepath.Join(x.tmp, "two")
+			for _, dir := range []string{filepath.Join(one, "info"), filepath.Join(two, "pack")} {
+				if err := os.MkdirAll(dir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for dir, to := range map[string]string{objects: "../one\n", one: "\"" + two + "\"\n"} {
+				if err := os.WriteFile(filepath.Join(dir, "info", "alternates"), []byte(to), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, ext := range []string{".pack", ".idx"} {
+				if err := os.Rename(pack+ext, filepath.Join(two, "pack", filepath.Base(pack)+ext)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			os.Remove(pack + ".rev")
+			wantRefusal(t, x.check(), ReflogOnly, "")
+			os.Chmod(filepath.Join(two, "pack", filepath.Base(pack)+".idx"), 0)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if asRoot && name != "no index" && name != "cut index" && name != "alternate that is gone" {
+				t.Skip("root opens everything")
+			}
+			x := newRemoval(t)
+			lose(t, x)
+			reason := Unreadable
+			if name == "cut index" || name == "alternate that is gone" {
+				reason = GitError
+			}
+			wantRefusal(t, x.check(), reason, "")
+		})
+	}
+}
+
+// What was pruned, and what git left on the way, is nothing to lose.
+func TestRemovableWithReflogOfPruned(t *testing.T) {
+	x := newRemoval(t)
+	pack := onlyInAReflog(x, false)
+	os.Remove(pack)
+	for _, ext := range []string{".idx", ".rev"} {
+		os.Remove(strings.TrimSuffix(pack, ".pack") + ext)
+	}
+	for _, name := range []string{"tmp_pack_a1b2c3", "tmp_idx_a1b2c3", ".tmp-12-pack-" + strings.Repeat("1", 40) + ".pack"} {
+		if err := os.WriteFile(filepath.Join(filepath.Dir(pack), name), []byte("PACK"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := x.check(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -1765,7 +1882,7 @@ func TestRefuseRepositoryInRefs(t *testing.T) {
 // its objects are.
 func TestRefuseRepositoryOfReflogs(t *testing.T) {
 	zero := strings.Repeat("0", 40)
-	for name, want := range map[string]Reason{"commondir": UnpushedRef, "objects/info/alternates": DetachedHEAD} {
+	for name, want := range map[string]Reason{"commondir": UnpushedRef, "objects/info/alternates": GitError} {
 		t.Run(name, func(t *testing.T) {
 			x := newRemoval(t)
 			dir := filepath.Join(x.clone, ".git")

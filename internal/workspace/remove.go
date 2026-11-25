@@ -1240,6 +1240,13 @@ func (c *checker) commits(g *reader, rp repo) error {
 		urls = append(urls, addr)
 	}
 
+	objects, err := g.gitPath(c.ctx, "objects")
+	if err != nil {
+		return err
+	}
+	if err := c.objects(objects, map[string]bool{}); err != nil {
+		return err
+	}
 	tips, scratch, rewritten, err := c.ask(g, rp, urls)
 	if scratch != "" {
 		defer os.RemoveAll(scratch)
@@ -1261,7 +1268,15 @@ func (c *checker) commits(g *reader, rp repo) error {
 		for _, id := range ids {
 			stdin += id + "\n"
 		}
-		out, _, err := local.inputAll(c.ctx, stdin, append([]string{"rev-list", how, "--no-object-names", "--stdin"}, revs...)...)
+		out, errs, err := local.inputAll(c.ctx, stdin, append([]string{"rev-list", how, "--no-object-names", "--stdin"}, revs...)...)
+		// What git cannot read, and that only a reflog names, it leaves out; of
+		// what was pruned it warns. "bad ref" is a file in logs with a name that
+		// no ref has: the files of a repository there.
+		for line := range strings.Lines(errs) {
+			if err == nil && strings.HasPrefix(line, "error: ") && !strings.HasPrefix(line, "error: bad ref for ") {
+				err = c.refuse(rp, GitError, redact(strings.TrimSpace(line)))
+			}
+		}
 		return out, err
 	}
 	unpushed := func(ids []string, revs ...string) (string, error) {
@@ -1464,7 +1479,6 @@ func (c *checker) named(g *reader) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	read := false // each pack can be
 	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
 	if len(lines) != len(ids) {
 		return nil, fmt.Errorf("workspace: git cat-file printed %d lines for %d objects", len(lines), len(ids))
@@ -1474,11 +1488,6 @@ func (c *checker) named(g *reader) ([]string, error) {
 			have = append(have, l)
 		} else if !gone || errs != "" { // git says the same of one it cannot read
 			return nil, fmt.Errorf("workspace: git cat-file: %s: %s", id, lastLines(redact(errs), 3, l))
-		} else if !read {
-			if err := c.readable(filepath.Join(objects, "pack")); err != nil {
-				return nil, err
-			}
-			read = true
 		}
 	}
 	return have, nil
@@ -1620,33 +1629,76 @@ func (c *checker) tableIDs(g *reader, dir string) ([]string, error) {
 	return slices.Sorted(maps.Keys(have)), nil
 }
 
-// readable refuses when a file below dir, which may be a link, cannot be
-// opened. git says nothing of a pack that it cannot.
-func (c *checker) readable(dir string) error {
+// objects refuses when a file in the objects directory dir, or in one that its
+// alternates lead to, cannot be opened, or a pack there has no index: git takes
+// what is in it for missing, and of a pack says nothing. A pack that git has on
+// the way, whose name starts with tmp_pack_ or .tmp-, has nothing that a name
+// is given to before it is in place.
+func (c *checker) objects(dir string, seen map[string]bool) error {
 	dir, err := filepath.EvalSymlinks(dir)
 	if missing(err) {
 		return nil
 	} else if err != nil {
 		return c.unreadable(dir, err)
 	}
-	return filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err == nil {
-			err = c.ctx.Err()
+	if seen[dir] {
+		return nil
+	}
+	seen[dir] = true
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return c.unreadable(dir, err)
+	}
+	for _, e := range entries {
+		if err := c.ctx.Err(); err != nil {
+			return err
 		}
-		if err == nil && !d.IsDir() {
-			var fi fs.FileInfo
-			if fi, err = os.Stat(p); err == nil && fi.Mode().IsRegular() {
-				var f *os.File
-				if f, err = os.Open(p); err == nil {
-					f.Close()
-				}
+		p := filepath.Join(dir, e.Name())
+		fi, err := os.Stat(p)
+		if missing(err) {
+			continue // a link to nothing
+		} else if err != nil {
+			return c.unreadable(p, err)
+		}
+		if fi.IsDir() {
+			if err := c.objects(p, seen); err != nil {
+				return err
 			}
+			continue
 		}
+		if !fi.Mode().IsRegular() {
+			continue
+		}
+		f, err := os.Open(p)
 		if err != nil {
 			return c.unreadable(p, err)
 		}
+		f.Close()
+		pack, ok := strings.CutSuffix(p, ".pack")
+		if ok && filepath.Base(dir) == "pack" && !strings.HasPrefix(e.Name(), ".tmp-") {
+			if _, err := os.Stat(pack + ".idx"); err != nil {
+				return c.unreadable(p, err)
+			}
+		}
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "info", "alternates"))
+	if missing(err) {
 		return nil
-	})
+	} else if err != nil {
+		return c.unreadable(filepath.Join(dir, "info", "alternates"), err)
+	}
+	for _, e := range parseAlternates(string(b)) {
+		if !filepath.IsAbs(e) {
+			e = dir + "/" + e
+		}
+		if fi, err := os.Stat(e); missing(err) || err == nil && !fi.IsDir() {
+			continue // git says so, and goes on without it
+		}
+		if err := c.objects(e, seen); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // lineIDs are the object ids that the lines of the file p start with. Of packed
