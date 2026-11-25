@@ -206,20 +206,17 @@ func spoken(text string) string {
 }
 
 // inlineCode is where the code ends that text, which begins with a
-// backtick, begins with: a run of backticks ends at the next run as long,
-// or, when there is none, a shorter part of it at a run as long as that
-// part. It is 0 when text begins with no code.
+// backtick, begins with: a run of backticks ends at the next run as long.
+// It is 0 when there is none, and a shorter part of the run may begin code.
 func inlineCode(text string) int {
 	ticks := func(s string) int { return len(s) - len(strings.TrimLeft(s, "`")) }
 	run := ticks(text)
-	for want := run; want > 0; want-- {
-		for i := run; i < len(text); {
-			n := ticks(text[i:])
-			if n == want {
-				return i + n
-			}
-			i += max(n, 1)
+	for i := run; i < len(text); {
+		n := ticks(text[i:])
+		if n == run {
+			return i + n
 		}
+		i += max(n, 1)
 	}
 	return 0
 }
@@ -269,9 +266,7 @@ func (d *Driver) roleEvent(t string, payload []byte) error {
 		if err := json.Unmarshal(payload, &r); err != nil {
 			return err
 		}
-		if r.Role.ID != 0 {
-			d.keepRoles(r.Role)
-		}
+		d.keepRoles(r.Role)
 	}
 	return nil
 }
