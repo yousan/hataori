@@ -5,6 +5,7 @@ import (
 	"errors"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -155,8 +156,10 @@ var codeBlock = regexp.MustCompile("^(?is:```(?:[a-z0-9_+.#-]+?\n)?\n*[^\n].*?\n
 const (
 	// white is white space that ends no line.
 	white = `[ \t\v\f\r\p{Z}\x{85}\x{feff}]`
+	// hashes begins a heading or small text.
+	hashes = `-?#{1,3}`
 	// item begins an item of a list, a heading or small text.
-	item = `(?:[*+-]|[0-9]+[.)]|-?#{1,3})` + white
+	item = `(?:[*+-]|[0-9]+[.)]|` + hashes + `)` + white
 )
 
 var (
@@ -165,12 +168,13 @@ var (
 	// text, and the space after the sign.
 	quoteSign = regexp.MustCompile("^((?:" + white + "|" + item + ")*)>(>>)?(" + white + "?)")
 	itemSign  = regexp.MustCompile("^" + white + "*(?:" + item + ")+")
+	heading   = regexp.MustCompile(hashes)
 	indent    = regexp.MustCompile("^" + white + "*")
 	number    = regexp.MustCompile("[0-9]+")
 )
 
-// mostDoubts is how many doubts a text may raise. One that raises more is
-// taken for no one's own words.
+// mostDoubts is how many doubts a text may raise. From where one that raises
+// more raises the first, nothing in it is taken for its author's own words.
 const mostDoubts = 6
 
 // spoken is text with spaces for what its author quoted (a line that begins
@@ -180,7 +184,7 @@ const mostDoubts = 6
 //
 // Where the client may show a text in either of two ways, it is read in both,
 // each doubt taken one way for the whole text, and what is left is what every
-// reading leaves.
+// reading leaves. With more than mostDoubts it is what stands before the first.
 func spoken(text string) string {
 	out := []byte(text)
 	blank := func(from, to int) {
@@ -188,6 +192,9 @@ func spoken(text string) string {
 			out[i] = ' '
 		}
 	}
+	// The text with a line that ends at each "\r", and where items end in both.
+	lines := strings.ReplaceAll(text, "\r", "\n")
+	ends, linesEnds := itemEnds(text), itemEnds(lines)
 	var doubts []string
 	first := len(text)                                // where the first doubt is
 	for taken := 0; taken < 1<<len(doubts); taken++ { // a doubt met on the way is not taken yet
@@ -199,11 +206,11 @@ func spoken(text string) string {
 			first = min(first, at)
 			return taken&(1<<n) != 0
 		}
-		text := text
-		if strings.Contains(text, "\r") && doubt("\r", 0) {
-			text = strings.ReplaceAll(text, "\r", "\n")
+		text, ends := text, ends
+		if at := strings.IndexByte(text, '\r'); at >= 0 && doubt("\r", at) {
+			text, ends = lines, linesEnds
 		}
-		read(text, doubt, blank)
+		read(text, ends, doubt, blank)
 		if len(doubts) > mostDoubts {
 			blank(first, len(text))
 			break
@@ -225,9 +232,10 @@ type part struct {
 //     and ">>> " where a line begins;
 //   - whether what opens code in a heading or in an item of a list opens none
 //     when the code would go on after it, for each way these begin;
+//   - whether items end early, where ends says that they may;
 //   - whether what opens inline code opens none when the code would go on
 //     after its line.
-func read(text string, doubt func(what string, at int) bool, blank func(from, to int)) {
+func read(text string, ends func(i int) (end, early int), doubt func(what string, at int) bool, blank func(from, to int)) {
 	start, block := 0, ""        // where a quote may begin, and whether a block ends there
 	var parts []part             // what i is in, an inner one after its outer one
 	var next [len(fenceMark)]int // where a run of so many backticks is next
@@ -256,11 +264,22 @@ func read(text string, doubt func(what string, at int) bool, blank func(from, to
 				continue
 			}
 			if sign := itemSign.FindString(text[i:]); sign != "" {
-				in := part{block + number.ReplaceAllString(strings.TrimLeft(sign, " \t"), "1"), itemEnd(text, i)}
-				if strings.Contains(sign, "#") {
-					in.end = lineEnd(text, i)
+				form := block + number.ReplaceAllString(strings.TrimLeft(sign, " \t"), "1")
+				end := len(text)
+				if len(parts) > 0 {
+					end = parts[len(parts)-1].end
 				}
-				parts = append(parts, in)
+				if strings.ContainsAny(heading.ReplaceAllString(sign, ""), "*+-.)") {
+					late, early := ends(i)
+					end = min(end, late)
+					if early < end && doubt("\n", i) {
+						end = early
+					}
+					parts = append(parts, part{form, end})
+				}
+				if heading.MatchString(sign) {
+					parts = append(parts, part{form, min(end, lineEnd(text, i))})
+				}
 			}
 		}
 		switch {
@@ -327,21 +346,41 @@ func lineEnd(text string, i int) int {
 	return len(text)
 }
 
-// itemEnd is where the item of a list ends that begins at i: before a line
-// that is not indented, or that begins an item or a heading and is indented
-// no more than it is.
-func itemEnd(text string, i int) int {
-	deep := len(indent.FindString(text[i:]))
-	end := lineEnd(text, i)
-	for end < len(text) {
-		line := text[end+1 : lineEnd(text, end+1)]
-		in := len(indent.FindString(line))
-		if in < len(line) && (in == 0 || in <= deep && itemSign.MatchString(line)) {
-			break
-		}
-		end += 1 + len(line)
+// itemEnds returns a function that tells where the item of a list ends that
+// begins at i in text: before a line with text in it that is not indented, or
+// that begins an item or a heading and is indented no more than it is. early
+// is where it may end before that: before a line that comes after an empty one
+// or whose indentation begins with no space.
+func itemEnds(text string) func(i int) (end, early int) {
+	type line struct {
+		at, deep     int
+		item, mayEnd bool
 	}
-	return end
+	var lines []line // those with text in them
+	empty := false
+	for at := 0; at < len(text); {
+		l := text[at:lineEnd(text, at)]
+		deep := len(indent.FindString(l))
+		if deep < len(l) {
+			lines = append(lines, line{at, deep, itemSign.MatchString(l), empty || l[0] != ' '})
+		}
+		empty = deep == len(l)
+		at += len(l) + 1
+	}
+	return func(i int) (end, early int) {
+		deep := len(indent.FindString(text[i:]))
+		early = len(text)
+		next := sort.Search(len(lines), func(n int) bool { return lines[n].at > i })
+		for _, l := range lines[next:] {
+			if l.deep == 0 || l.deep <= deep && l.item {
+				return l.at - 1, min(early, l.at-1)
+			}
+			if l.mayEnd {
+				early = min(early, l.at-1)
+			}
+		}
+		return len(text), early
+	}
 }
 
 // ticks is where in text the first run of just n backticks begins, or its
