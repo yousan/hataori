@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/yousan/hataori/internal/agent"
@@ -507,9 +508,13 @@ func lineTexts(lines []screenLine) []string {
 
 // A cell is one place of the grid renderScreen draws on.
 type cell struct {
-	r    rune
-	bold bool
+	r     rune
+	marks string // the combining marks drawn on r
+	bold  bool
 }
+
+// blank reports whether nothing shows at c.
+func (c cell) blank() bool { return c.r == ' ' && c.marks == "" }
 
 // renderScreen plays terminal output onto a grid of lines and returns them.
 // It knows only what the CLI uses to draw: text, tab, carriage return, line
@@ -519,8 +524,10 @@ type cell struct {
 // are skipped. The alternate screen (1049, as the CLI's full-screen
 // interface uses it) is a grid of its own. Anything else that could change
 // the screen (a reset, scrolling, inserting or deleting lines or
-// characters) makes ok false: such a screen is not read. The grid has no height: it
-// grows as the cursor goes down, and a cursor position counts from its top.
+// characters) makes ok false: such a screen is not read. A character takes
+// one column and a combining mark none: it goes with the character left of
+// it. The grid has no height: it grows as the cursor goes down, and a
+// cursor position counts from its top.
 func renderScreen(b []byte) (screen []screenLine, ok bool) {
 	var grid, mainGrid [][]cell
 	// The cursor, and whether what is written there is bold; the saved one;
@@ -539,8 +546,28 @@ func renderScreen(b []byte) (screen []screenLine, ok bool) {
 		for len(grid[at.row]) <= at.col {
 			grid[at.row] = append(grid[at.row], cell{r: ' '})
 		}
-		grid[at.row][at.col] = cell{r, at.bold}
+		grid[at.row][at.col] = cell{r: r, bold: at.bold}
 		at.col++
+	}
+	// mark draws r on the character left of the cursor. At the start of a
+	// line there is none, and what is drawn there is the terminal's choice:
+	// not readable.
+	mark := func(r rune) bool {
+		if at.col == 0 {
+			return false
+		}
+		for len(grid) <= at.row {
+			grid = append(grid, nil)
+		}
+		for len(grid[at.row]) < at.col {
+			grid[at.row] = append(grid[at.row], cell{r: ' '})
+		}
+		c := &grid[at.row][at.col-1]
+		if c.blank() {
+			c.bold = at.bold
+		}
+		c.marks += string(r)
+		return true
 	}
 	line := func() []cell {
 		for len(grid) <= at.row {
@@ -745,7 +772,11 @@ func renderScreen(b []byte) (screen []screenLine, ok bool) {
 				}
 				return nil, false
 			}
-			put(r)
+			if !unicode.In(r, unicode.Mn, unicode.Me) {
+				put(r)
+			} else if !mark(r) {
+				return nil, false
+			}
 			i += size
 		}
 	}
@@ -759,7 +790,8 @@ func gridLines(grid [][]cell) []screenLine {
 		inBold, inPlain := false, false
 		for _, c := range l {
 			text.WriteRune(c.r)
-			if c.r != ' ' {
+			text.WriteString(c.marks)
+			if !c.blank() {
 				inBold, inPlain = inBold || c.bold, inPlain || !c.bold
 			}
 		}

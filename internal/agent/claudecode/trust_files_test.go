@@ -239,6 +239,31 @@ func TestTrustDialogWithSeveralWarnings(t *testing.T) {
 	}
 }
 
+// Rules with combining marks (#760), which take no column: the CLI places
+// the words behind them by column, so the quote has all of them as drawn,
+// and a warning sign behind the marks is seen, which no session answers.
+func TestTrustDialogWithCombiningMarks(t *testing.T) {
+	const settings = ".claude/settings.json"
+	const quoted = "> ⚠ This folder pre-approves 4 tool permissions in .claude/settings.json:\n"
+	rules := "> Bash(cafe\u0301 x), Bash(rm" + strings.Repeat("\u0301", 14) + " -rf x), Bash(ls:*), and Bash(git diff:*)\n"
+	trusted := agent.Spec{TrustFiles: []string{settings}}
+	for capture, keys := range map[string]string{"trust_marks_refused": "down", "trust_marks_allowed": "down enter"} {
+		k, events := replayTrustOf(t, "2.1.332", capture, agent.Spec{})
+		if k != "" || len(events) != 1 || events[0].Reason != agent.BlockedAtStart || !slices.Equal(events[0].Trust, []string{settings}) ||
+			!strings.Contains(events[0].Text, quoted+rules+"> These will apply") {
+			t.Errorf("%s: keys %q, events %+v; want one blocked start quoting\n%s", capture, k, events, quoted+rules)
+		}
+		if k, events := replayTrustOf(t, "2.1.332", capture, trusted); k != keys || len(events) != 0 {
+			t.Errorf("%s, trusted: keys %q, events %+v; want %q and no event", capture, k, events, keys)
+		}
+	}
+	for _, spec := range []agent.Spec{{}, trusted, {Confine: &agent.Confinement{}}, {NoProjectSettings: true}} {
+		if keys, events := replayTrustOf(t, "2.1.332", "trust_marks_sign", spec); keys != "" || len(events) != 0 {
+			t.Errorf("the sign, %+v: keys %q, events %+v; want none", spec, keys, events)
+		}
+	}
+}
+
 // inBold is a line of the dialog that the CLI writes in bold.
 func inBold(text string) screenLine { return screenLine{text, bold} }
 

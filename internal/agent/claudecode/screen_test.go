@@ -216,12 +216,33 @@ func TestLineWeight(t *testing.T) {
 		{"x\x1b[1m  \x1b[22my", plain},
 		{"x\x1b[1m y\x1b[22m\x1b[2G\x1b[K", plain}, // erased
 		{"\x1b[1mx\x1b[s\x1b[u", bold},
+		{"x\x1b[1m \u0301", mixed}, // a mark on a blank shows
+		{"\x1b[1mx \x1b[22m\u0301", mixed},
 		{"\x1b[1m\x1b[?1049hx", bold},
 	} {
 		lines, ok := renderScreen([]byte(tc.written))
 		if !ok || len(lines) != 1 || lines[0].weight != tc.want {
 			t.Errorf("%q: %+v %v, want weight %d", tc.written, lines, ok, tc.want)
 		}
+	}
+}
+
+// A combining mark goes with the character left of the cursor, and at the
+// start of a line there is none.
+func TestCombiningMarks(t *testing.T) {
+	for _, tc := range []struct{ written, want string }{
+		{"e\u0301\u0302x\x1b[4Gy", "e\u0301\u0302x y"},
+		{"e\u20ddx\x1b[3Gy", "e\u20ddxy"},
+		{"e\u0301x\x1b[1Gy", "yx"}, // written over
+		{"ab\u0301\x1b[2G\x1b[K", "a"},
+		{"\x1b[3G\u0301x", "  \u0301x"},
+	} {
+		if lines, ok := renderScreen([]byte(tc.written)); !ok || len(lines) != 1 || lines[0].text != tc.want {
+			t.Errorf("%+q: %+q %v, want %+q", tc.written, lineTexts(lines), ok, tc.want)
+		}
+	}
+	if lines, ok := renderScreen([]byte("x\r\n\u0301y")); ok {
+		t.Errorf("at the start of a line: %+q, want it not read", lineTexts(lines))
 	}
 }
 
