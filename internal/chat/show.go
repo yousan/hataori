@@ -173,11 +173,15 @@ func (f *FrontEnd) show(ctx context.Context) error {
 			rows = everyLink(append(append(r.track(e), rows...), r.subagents(e)...), convs)
 			rows = append(rows, f.mirrorRows(e, convs)...)
 			rows = append(rows, f.archiveRows(e, convs)...)
+			wr, err := f.waitsRows(ctx, e, convs)
+			if err != nil {
+				return err
+			}
 			lr, err := f.lampRows(ctx, r, e, convs)
 			if err != nil {
 				return err
 			}
-			rows = append(rows, lr...)
+			rows = append(append(rows, wr...), lr...)
 		}
 		lr, err := f.loginEvent(ctx, e, linked)
 		if err != nil {

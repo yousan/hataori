@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.38**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.39**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -211,6 +211,8 @@ Since 3.18 the input hook points run in the call, before the input is accepted, 
 On a supervisor's connection (a token, since 2.2) `busy` is always taken as 0: a `Send` with 1 or 2 to a running thread is refused with `busy` and logged, nothing is queued and the turn goes on. There, and in `Start`, the daemon puts the line `From the supervisor of this channel:` before the input's text; the `input` event has the text with that line, and the thread's title is made without it. A `Send` that answers an open question is not marked: the agent gets the answer, and the `answer` event its text, as given.
 
 A `Send` to a supervisor's thread whose session answers a wake in a conversation of its own (design, section 7.1) is answered `busy` whatever `busy` says, from when that conversation is started until it has ended and the session sleeps: the input is for the thread's own conversation, which the next `Send` then resumes. An answer to a question that the wake's conversation asked is taken as usual.
+
+Since 3.39, a `Send` to a conversation with the supervisor (`ThreadInfo.kind`) that is idle or asleep waits while as many of its scope's conversations run a turn as may at a time (design, section 7.1, *Several at once*), and one to a conversation that runs a turn waits until that turn ended, where the scope has such a limit; one to a conversation in which input waits goes behind that in any scope. It is accepted then as any is, once and kept across a restart, and its `input` event is written when it is given: in order within the conversation, and to the conversation that waits longest first. An `input_waits` event says when it waits for other conversations. `busy` counts as for any thread: 0 to one that runs a turn is answered `busy`, and 2 interrupts that turn. The answer to an open question never waits, and closing the thread drops what waits.
 
 Since 3.26, on a supervisor's connection whose scope's autonomy is `propose`, a `Send` gives the thread nothing: it is stored as a proposal in the supervisor's own thread and answered `proposed` with the proposal's number, whatever the thread's state but closed or removed (`closed`) or failed (`refused`); the supervisor's own thread is `forbidden`. One to a thread waiting on a question is proposed as the answer to that question. A repeated `key` returns the same proposal. A person decides it with `Answer`; approved, the daemon makes the `Send` then, as the supervisor, marked as its input, with busy 0 and under a key made from the proposal, so that the thread gets it once however often it is approved, also across restarts. A thread that runs a turn then, or waits on a question it was not proposed to answer, is not given it (outcome `busy`); a proposed answer whose question is no longer open is not given (outcome `ended`). Its `input` or `answer` event names `via` `proposal`.
 
@@ -1387,6 +1389,15 @@ Since 3.35. The chat service, or its driver, refused a row of the chat front end
 | `before` | string | optional | text the plugins' `before_prompt_build` handlers added before the input, which the agent got on lines of their own before `text`; absent when none did; since 3.18 |
 | `after` | string | optional | the same, after it; since 3.18 |
 | `via` | string | optional | the way of the daemon's own it came through when it came through no link: `dashboard` for input given in the dashboard; `terminal` for the prompt of a turn typed at the agent's terminal, when the agent reports it, written right after that turn's `turn_started` with the owner as `principal` and no `from` or `link` (since 3.24); `proposal` for the supervisor's input that a person approved as its proposal, with the supervisor as `principal` and `from` (since 3.26); absent for input through a link, from the control socket and from the supervisor's own sends; since 3.23 |
+
+### Event `input_waits`
+
+Since 3.39. Input of a conversation with the supervisor waits for others (`Send`): as many of its scope's conversations run a turn as may at a time. Written once per wait, however much input waits, and not while the conversation runs a turn of its own.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `session` | integer | required | the session |
+| `running` | array | required | the numbers of the threads that run a turn, or start for one |
 
 ### Event `answer`
 

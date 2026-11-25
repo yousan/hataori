@@ -720,6 +720,21 @@ var migrations = []Migration{
 		`ALTER TABLE threads ADD COLUMN kind TEXT NOT NULL DEFAULT 'ordinary'`,
 		`UPDATE threads SET kind = 'supervisor' WHERE confined = 1`,
 	)},
+	// Input of a conversation, accepted, that waits until fewer of its
+	// scope's conversations run a turn (#875): a core.FirstInput. wake is
+	// that nobody wrote it, told that the conversation was told it waits,
+	// pos the newest event's position when it came.
+	{Name: "waiting_inputs", Up: execAll(
+		`CREATE TABLE waiting_inputs (
+			id        INTEGER PRIMARY KEY AUTOINCREMENT,
+			thread_id INTEGER NOT NULL REFERENCES threads(id),
+			input     TEXT NOT NULL,
+			wake      INTEGER NOT NULL,
+			told      INTEGER NOT NULL DEFAULT 0,
+			pos       INTEGER NOT NULL
+		)`,
+		`CREATE INDEX waiting_inputs_thread ON waiting_inputs (thread_id, id)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

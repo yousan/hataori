@@ -166,6 +166,9 @@ type Supervisor struct {
 	// supervisor, "conversations"; true when absent. One that exists goes
 	// on without.
 	Conversations bool
+	// ConversationsAtOnce is how many of its conversations run a turn at a
+	// time, "conversations_at_once"; 3 when absent, at least 1.
+	ConversationsAtOnce int
 	// Repos are the repositories the supervisor works on, "repos": the
 	// only ones its Start may clone. Empty: it starts no thread.
 	Repos []Repo
@@ -290,6 +293,8 @@ const (
 	DefaultLoopCycles = 3
 
 	DefaultRemindersMax = 10
+
+	DefaultConversationsAtOnce = 3
 )
 
 type fileSupervisor struct {
@@ -306,6 +311,7 @@ type fileSupervisor struct {
 	LoopCycles     *int     `json:"loop_cycles"`
 	RemindersMax   *int     `json:"reminders_max"`
 	Conversations  *bool    `json:"conversations"`
+	AtOnce         *int     `json:"conversations_at_once"`
 	Repos          []string `json:"repos"`
 	Autonomy       string   `json:"autonomy"`
 	Report         string   `json:"report"`
@@ -632,7 +638,8 @@ func ParseConfig(data []byte) (*Config, error) {
 				Effort: strings.TrimSpace(sv.Effort), Instructions: strings.TrimSpace(sv.Instructions),
 				Quiet: DefaultQuiet, OutputMax: DefaultOutputMax, ThreadsMax: DefaultThreadsMax,
 				TurnsPerHour: DefaultTurnsPerHour, SendsPerHour: DefaultSendsPerHour, TokensPerDay: DefaultTokensPerDay,
-				LoopCycles: DefaultLoopCycles, RemindersMax: DefaultRemindersMax, Conversations: true, Autonomy: AutonomyPropose}
+				LoopCycles: DefaultLoopCycles, RemindersMax: DefaultRemindersMax, Conversations: true,
+				ConversationsAtOnce: DefaultConversationsAtOnce, Autonomy: AutonomyPropose}
 			switch a := strings.TrimSpace(sv.Autonomy); a {
 			case "":
 			case AutonomyWatch, AutonomyPropose, AutonomyAct:
@@ -656,7 +663,8 @@ func ParseConfig(data []byte) (*Config, error) {
 				name string
 				v    *int
 				to   *int
-			}{{"output_max", sv.OutputMax, &sc.Supervisor.OutputMax}, {"threads_max", sv.ThreadsMax, &sc.Supervisor.ThreadsMax}} {
+			}{{"output_max", sv.OutputMax, &sc.Supervisor.OutputMax}, {"threads_max", sv.ThreadsMax, &sc.Supervisor.ThreadsMax},
+				{"conversations_at_once", sv.AtOnce, &sc.Supervisor.ConversationsAtOnce}} {
 				if n.v == nil {
 					continue
 				}
