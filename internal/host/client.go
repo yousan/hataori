@@ -178,6 +178,7 @@ type StopResult struct {
 	Already bool   // the command had already exited; nothing was sent
 	Signals string // the signals sent, in order, such as "SIGINT,SIGTERM"
 	Status  Status // how the command ended, as recorded
+	Left    string // why processes were left running that may be the command's; "" when none were
 }
 
 // Stop ends the command of the host in stateDir and leaves no process of

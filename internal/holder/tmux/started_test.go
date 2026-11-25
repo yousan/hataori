@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -619,7 +621,443 @@ func TestAPaneAPersonRespawnedIsTheirs(t *testing.T) {
 	})
 }
 
-// The test binary is also `hataori exec` and `hataori pipe`, and agentBelow's shell.
+// A dead agent's children that are left in its group are ended by Stop, or
+// reported where tmux does not tell when the agent ended; also of an agent a
+// person ran again.
+func TestStopEndsWhatADeadAgentLeft(t *testing.T) {
+	for _, again := range []bool{false, true} {
+		t.Run(fmt.Sprintf("again %v", again), func(t *testing.T) {
+			s := newServer(t)
+			h := s.starter()
+			dir := filepath.Join(s.dir, "7")
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			child := filepath.Join(s.dir, "child")
+			w, err := h.Start(t.Context(), dir, holder.Spec{Terminal: true,
+				Argv: []string{"/bin/sh", "-c", "trap '' HUP; sleep 600 & echo $! >> " + child + "; sleep 0.3; exit 3"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			r, _ := parseRef(w)
+			pids := func(n int) (pids []int) {
+				t.Helper()
+				for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+					b, _ := os.ReadFile(child)
+					dead := s.run("display-message", "-p", "-t", r.Pane, "#{pane_dead} #{pane_dead_status}") == "1 3"
+					if f := strings.Fields(string(b)); len(f) == n && dead {
+						for _, x := range f {
+							pid, _ := strconv.Atoi(x)
+							pids = append(pids, pid)
+						}
+						return pids
+					}
+					if time.Now().After(deadline) {
+						t.Fatalf("the agent: children %q, dead %v", b, dead)
+					}
+				}
+			}
+			endLater := func(pid int) {
+				pgid, _ := syscall.Getpgid(pid)
+				t.Cleanup(func() {
+					if now, _ := syscall.Getpgid(pid); pgid > 1 && now == pgid {
+						syscall.Kill(pid, syscall.SIGKILL)
+					}
+				})
+			}
+			left := pids(1)
+			endLater(left[0])
+			if again {
+				s.run("respawn-pane", "-t", r.Pane)
+				left = pids(2)
+				endLater(left[1])
+			}
+			tells := s.run("display-message", "-p", "-t", r.Pane, "#{pane_dead_time}") != ""
+			res, err := h.Stop(t.Context(), w, time.Second, time.Second)
+			if err != nil {
+				t.Fatalf("Stop: %+v %v", res, err)
+			}
+			runs := syscall.Kill(left[len(left)-1], 0) == nil
+			if tells && (runs || res.Left != "" || res.Already || !strings.HasPrefix(res.Signals, "SIGINT")) {
+				t.Errorf("the child runs: %v; Stop: %+v", runs, res)
+			}
+			if !tells && (!runs || res.Left == "" || res.Signals != "") {
+				t.Errorf("the child runs: %v; Stop: %+v", runs, res)
+			}
+			if p := s.panes()[r.Pane]; p != "" {
+				t.Errorf("the pane is still there: %q", p)
+			}
+		})
+	}
+}
+
+// An agent that closed its terminal is dead to tmux, or has no process, as it
+// runs on: Stop ends it.
+func TestStopEndsAnAgentThatClosedItsTerminal(t *testing.T) {
+	s := newServer(t)
+	h := s.starter()
+	dir := filepath.Join(s.dir, "7")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	closed := filepath.Join(s.dir, "closed")
+	w, err := h.Start(t.Context(), dir, holder.Spec{Terminal: true,
+		Argv: []string{"/bin/sh", "-c", "trap '' HUP; sleep 0.3; exec < /dev/null > /dev/null 2>&1; echo $$ > " + closed + "; while :; do sleep 0.05; done"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := 0
+	for deadline := time.Now().Add(10 * time.Second); pid == 0; time.Sleep(10 * time.Millisecond) {
+		b, _ := os.ReadFile(closed)
+		pid, _ = strconv.Atoi(strings.TrimSpace(string(b)))
+		if time.Now().After(deadline) {
+			t.Fatal("the agent did not start")
+		}
+	}
+	t.Cleanup(func() {
+		if ps, err := processes(context.Background()); err == nil && slices.ContainsFunc(ps, func(p member) bool { return p.pid == pid && p.group == pid }) && !groupGone(pid) {
+			syscall.Kill(-pid, syscall.SIGKILL)
+		}
+	})
+	time.Sleep(300 * time.Millisecond) // tmux sees the terminal's end
+	res, err := h.Stop(t.Context(), w, time.Second, time.Second)
+	if err != nil || res.Already || res.Left != "" || res.Signals == "" {
+		t.Errorf("Stop: %+v %v", res, err)
+	}
+	if !groupGone(pid) {
+		t.Error("the agent runs on")
+	}
+}
+
+// The number of the process a pane had may be another group's by now: Stop
+// does not signal that one.
+func TestStopLeavesAnothersGroupAlone(t *testing.T) {
+	const older = 4 * time.Second // times are in whole seconds
+	for _, c := range []struct {
+		name  string
+		argv  []string
+		attr  *syscall.SysProcAttr
+		runs  bool // tmux has not told the pane's end
+		after time.Duration
+		left  bool
+		fails bool
+		early bool // the other comes before the end
+	}{
+		{"in a session of another's", []string{"sleep", "600"}, &syscall.SysProcAttr{Setpgid: true}, false, older, false, false, false},
+		{"in a session of its own", []string{"sleep", "600"}, &syscall.SysProcAttr{Setsid: true}, false, older, false, false, false},
+		{"at once, in a session of its own", []string{"sleep", "600"}, &syscall.SysProcAttr{Setsid: true}, false, 0, false, false, false},
+		{"in a session whose leader ended", []string{"sh", "-c", "sleep 600 & echo $!"}, &syscall.SysProcAttr{Setsid: true}, false, older, true, false, false},
+		{"of which the leader ended, in a session of another's", []string{"sh", "-c", "sleep 600 & echo $!"}, &syscall.SysProcAttr{Setpgid: true}, false, 0, false, false, true},
+		{"before tmux tells the end", []string{"sleep", "600"}, &syscall.SysProcAttr{Setsid: true}, true, 0, false, true, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := newServer(t)
+			h := &Holder{Prefix: "hataori-t-"}
+			w, pane, dir := s.started(h, "exec sleep 600")
+			s.run("set-option", "-p", "-t", pane, "remain-on-exit", "on")
+			end := func() {
+				if !c.runs {
+					syscall.Kill(w.Process, syscall.SIGTERM)
+				}
+				for deadline := time.Now().Add(10 * time.Second); !c.runs && s.run("display-message", "-p", "-t", pane, "#{pane_dead}") != "1"; time.Sleep(10 * time.Millisecond) {
+					if time.Now().After(deadline) {
+						t.Fatal("the pane is not dead")
+					}
+				}
+			}
+			if !c.early {
+				end()
+			}
+			time.Sleep(c.after)
+			other := exec.Command(c.argv[0], c.argv[1:]...)
+			other.SysProcAttr = c.attr
+			out := filepath.Join(s.dir, "other")
+			f, err := os.Create(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			other.Stdout = f
+			if err := other.Start(); err != nil {
+				t.Fatal(err)
+			}
+			pid := other.Process.Pid
+			ended := make(chan struct{})
+			go func() { other.Wait(); close(ended) }()
+			t.Cleanup(func() { other.Process.Kill(); <-ended })
+			if c.argv[0] == "sh" { // its child is what is left
+				<-ended
+				b, _ := os.ReadFile(out)
+				if pid, err = strconv.Atoi(strings.TrimSpace(string(b))); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					if group, _ := syscall.Getpgid(pid); group == other.Process.Pid {
+						syscall.Kill(pid, syscall.SIGKILL)
+					}
+				})
+			}
+			if c.early {
+				end()
+			}
+			s.renumber(h, &w, dir, other.Process.Pid)
+			res, err := h.Stop(t.Context(), w, time.Second, time.Second)
+			if (err != nil) != c.fails || res.Already == c.fails || res.Signals != "" || (res.Left != "") != c.left {
+				t.Errorf("Stop: %+v %v", res, err)
+			}
+			// An agent that may run keeps its pane, with nothing recorded.
+			if _, err := os.Stat(filepath.Join(dir, StatusFile)); c.fails != errors.Is(err, os.ErrNotExist) {
+				t.Errorf("the status file: %v", err)
+			}
+			if _, got := s.panes()[pane]; got != c.fails {
+				t.Errorf("the pane is there: %v", got)
+			}
+			time.Sleep(200 * time.Millisecond)
+			if ps, err := processes(t.Context()); err != nil || !slices.ContainsFunc(ps, func(p member) bool { return p.pid == pid && p.group == other.Process.Pid }) {
+				t.Errorf("the other's process was ended (%v)", err)
+			}
+			select {
+			case <-ended:
+				if pid == other.Process.Pid {
+					t.Error("the other's process was ended")
+				}
+			default:
+			}
+		})
+	}
+}
+
+// renumber makes it as if w's process had had the number pid, which another
+// has now.
+func (s *server) renumber(h *Holder, w *holder.Window, dir string, pid int) {
+	s.t.Helper()
+	agents, others := strconv.Itoa(w.Process), strconv.Itoa(pid)
+	noted := filepath.Join(dir, PidFile)
+	if err := os.WriteFile(noted, []byte(others), 0o600); err != nil {
+		s.t.Fatal(err)
+	}
+	before := time.Now().Add(-10 * time.Second)
+	if err := os.Chtimes(noted, before, before); err != nil {
+		s.t.Fatal(err)
+	}
+	w.Process = pid
+	s.wrap(h, `for a; do shift; set -- "$@" "$(printf %s "$a" | sed 's/,`+others+`}/,`+agents+`}/g')"; done`, agents, others)
+}
+
+// wrap makes h's tmux tell the process to where it is from, after a first
+// command of sh.
+func (s *server) wrap(h *Holder, first, from, to string) {
+	s.t.Helper()
+	h.Tmux = filepath.Join(s.dir, "renumbered")
+	syscall.ForkLock.RLock()
+	err := os.WriteFile(h.Tmux, []byte("#!/bin/sh\n"+first+`
+`+s.tmux+` "$@" | sed 's/\([ ,]\)`+from+`\([ ,]\)/\1`+to+`\2/'
+`), 0o700)
+	syscall.ForkLock.RUnlock()
+	if err != nil {
+		s.t.Fatal(err)
+	}
+}
+
+// closes is a program that closes its terminal once the file kept is there,
+// and runs on.
+const closes = `exec sh -c 'until [ -e kept ]; do sleep 0.05; done; trap "" HUP; exec </dev/null >/dev/null 2>&1; exec sleep 600'`
+
+// child reports whether pid is a child of w's server that leads a group.
+func (s *server) child(w holder.Window, pid int) bool {
+	r, _ := parseRef(w)
+	ps, err := processes(context.Background())
+	return err == nil && slices.ContainsFunc(ps, func(p member) bool { return p.pid == pid && p.parent == r.Server && p.group == pid })
+}
+
+// closed reports whether tmux has seen the end of the pane's terminal: since
+// 3.8, one of which the program runs on is not dead and has no process.
+func (s *server) closed(pane string) bool {
+	s.t.Helper()
+	l := s.run("display-message", "-p", "-t", pane, "#{pane_dead},#{pane_pid}")
+	return l == "0," || strings.HasPrefix(l, "1,")
+}
+
+// seesClose reports whether tmux sees the end of a terminal whose program
+// runs on: not 3.7, and not on macOS (3.8), where it stays a pane that is
+// alive and tells its process.
+func (s *server) seesClose() bool {
+	v, _ := exec.Command(s.tmux, "-V").Output()
+	return runtime.GOOS != "darwin" && !strings.HasPrefix(string(v), "tmux 3.7")
+}
+
+// wait fails the test with what unless ok is true soon.
+func (s *server) wait(what string, ok func() bool) {
+	s.t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); !ok(); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			s.t.Fatal(what)
+		}
+	}
+}
+
+// The number of the process a pane had may be another child's of the same
+// server: of another pane, also one tmux takes for dead, or of a popup. Stop
+// does not signal it, and fails where the agent may have the number still.
+func TestStopLeavesAnotherChildOfTheServerAlone(t *testing.T) {
+	for _, c := range []struct {
+		name         string
+		agent, other string
+		popup        bool
+	}{
+		{"another pane's, the agent ended", "exec sleep 600", "exec sleep 600", false},
+		{"another pane's, the agent's end not read", closes, "exec sleep 600", false},
+		{"a dead pane's, the agent's end not read", closes, closes, false},
+		{"no pane's, the agent ended", "exec sleep 600", "", true},
+		{"no pane's, the agent's end not read", closes, "", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := newServer(t)
+			if c.agent == closes && !s.seesClose() {
+				t.Skip("tmux takes a pane whose terminal is closed for alive, and tells its process")
+			}
+			h := &Holder{Prefix: "hataori-t-"}
+			kept := func(program string) string { return strings.Replace(program, "kept", filepath.Join(s.dir, "kept"), 1) }
+			w, pane, dir := s.started(h, kept(c.agent))
+			s.run("set-option", "-g", "remain-on-exit", "on")
+			s.run("new-window", "-d", "exec sleep 601") // the server stays
+			if err := os.WriteFile(filepath.Join(s.dir, "kept"), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			end := func(pid int) {
+				t.Cleanup(func() {
+					if s.child(w, pid) {
+						syscall.Kill(-pid, syscall.SIGKILL)
+					}
+				})
+			}
+			end(w.Process)
+			if c.agent != closes {
+				syscall.Kill(w.Process, syscall.SIGTERM)
+			}
+			s.wait("the agent's pane is not dead", func() bool { return s.closed(pane) })
+			pid := 0
+			if c.popup {
+				self, err := os.Executable()
+				if err != nil {
+					t.Fatal(err)
+				}
+				out := filepath.Join(s.dir, "other")
+				s.run("run-shell", "-b", "exec "+quote(self)+" leader "+quote(out))
+				s.wait("no other child", func() bool {
+					b, _ := os.ReadFile(out)
+					pid, _ = strconv.Atoi(string(b))
+					return pid > 0
+				})
+			} else {
+				f := strings.Fields(s.run("new-window", "-d", "-P", "-F", "#{pane_id} #{pane_pid}", kept(c.other)))
+				pid, _ = strconv.Atoi(f[1])
+				if c.other == closes {
+					s.wait("the other pane is not dead", func() bool { return s.closed(f[0]) })
+				}
+			}
+			end(pid)
+			if !s.child(w, pid) {
+				t.Fatalf("%d is not a child of the server that leads a group", pid)
+			}
+			// tmux up to 3.2 does not tell that it read a signal's end; 3.8 does
+			// not take a pane for dead whose program's end it has not read.
+			old := !tellsEnds.MatchString(s.run("display-message", "-p", "#{version}"))
+			if c.agent == closes && c.other != "exec sleep 600" && !old {
+				t.Skip("the agent has the number: tmux tells each end it has read")
+			}
+			fails := old && (c.popup || c.other == closes) || s.run("display-message", "-p", "-t", pane, "#{pane_dead}") == "0"
+			s.renumber(h, &w, dir, pid)
+			res, err := h.Stop(t.Context(), w, time.Second, time.Second)
+			if (err != nil) != fails || res.Already == fails || res.Signals != "" || res.Left != "" {
+				t.Errorf("Stop: %+v %v", res, err)
+			}
+			if _, err := os.Stat(filepath.Join(dir, StatusFile)); fails != errors.Is(err, os.ErrNotExist) {
+				t.Errorf("the status file: %v", err)
+			}
+			if _, got := s.panes()[pane]; got != fails {
+				t.Errorf("the pane is there: %v", got)
+			}
+			time.Sleep(200 * time.Millisecond)
+			if !s.child(w, pid) {
+				t.Error("the other's process was ended")
+			}
+		})
+	}
+}
+
+// Stop ends the agent beside a dead pane whose program had the same number,
+// and one tmux takes for alive also without ps, from tmux 3.3 on.
+func TestStopEndsAnAgentTmuxTellsOf(t *testing.T) {
+	for _, c := range []struct {
+		name, agent string
+		stale       bool
+	}{
+		{"without ps", "exec sleep 600", false},
+		{"beside a dead pane", "exec sleep 600", true},
+		{"beside a dead pane, its terminal closed", closes, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := newServer(t)
+			h := &Holder{Prefix: "hataori-t-", Tmux: s.tmux}
+			kept := filepath.Join(s.dir, "kept")
+			w, pane, dir := s.started(h, strings.Replace(c.agent, "kept", kept, 1))
+			t.Cleanup(func() {
+				if !groupGone(w.Process) && s.child(w, w.Process) {
+					syscall.Kill(-w.Process, syscall.SIGKILL)
+				}
+			})
+			if err := os.WriteFile(filepath.Join(dir, PidFile), []byte(strconv.Itoa(w.Process)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			s.run("set-option", "-g", "remain-on-exit", "on")
+			if c.stale {
+				f := strings.Fields(s.run("new-window", "-d", "-P", "-F", "#{pane_id} #{pane_pid}", "exit 3"))
+				s.wait("the other pane is not dead", func() bool {
+					return s.run("display-message", "-p", "-t", f[0], "#{pane_dead} #{pane_dead_status}") == "1 3"
+				})
+				s.wrap(h, "", f[1], strconv.Itoa(w.Process))
+			}
+			if err := os.WriteFile(kept, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if c.agent == closes && s.seesClose() {
+				s.wait("the agent's terminal is not closed", func() bool { return s.closed(pane) })
+			}
+			if !c.stale {
+				if !tellsEnds.MatchString(s.run("display-message", "-p", "#{version}")) {
+					t.Skip("tmux does not tell each end it has read")
+				}
+				t.Setenv("PATH", "/nowhere")
+			}
+			res, err := h.Stop(t.Context(), w, time.Second, time.Second)
+			if err != nil || res.Already || res.Left != "" || res.Signals == "" {
+				t.Errorf("Stop: %+v %v", res, err)
+			}
+			if !groupGone(w.Process) {
+				t.Error("the agent runs on")
+			}
+		})
+	}
+}
+
+// How long a process has run, as ps prints it ([[days-]hours:]minutes:seconds).
+func TestElapsed(t *testing.T) {
+	for s, want := range map[string]time.Duration{"00:07": 7 * time.Second, "21:05": 21*time.Minute + 5*time.Second,
+		"01:02:03": time.Hour + 2*time.Minute + 3*time.Second, "2-03:00:01": 51*time.Hour + time.Second} {
+		if got, ok := elapsed(s); !ok || got != want {
+			t.Errorf("%s: %v %v", s, got, ok)
+		}
+	}
+	for _, s := range []string{"", "-", "7", "x:y", "1-2"} {
+		if got, ok := elapsed(s); ok {
+			t.Errorf("%s: %v", s, got)
+		}
+	}
+}
+
+// The test binary is also `hataori exec` and `hataori pipe`, agentBelow's shell and
+// a process that leads its own session.
 func TestMain(m *testing.M) {
 	if len(os.Args) == 3 {
 		var err error
@@ -630,6 +1068,8 @@ func TestMain(m *testing.M) {
 			err = host.Pipe(os.Args[2], os.Stdin)
 		case "shell":
 			err = shellMain(os.Args[2])
+		case "leader":
+			err = leaderMain(os.Args[2])
 		default:
 			os.Exit(m.Run())
 		}
@@ -640,6 +1080,18 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
+}
+
+// leaderMain leads a session, tells its number in the file out and sleeps.
+func leaderMain(out string) error {
+	if _, err := syscall.Setsid(); err != nil {
+		return err
+	}
+	if err := writePrivate(out, []byte(strconv.Itoa(os.Getpid()))); err != nil {
+		return err
+	}
+	time.Sleep(10 * time.Minute)
+	return nil
 }
 
 // sleeper is an agent that only runs.
