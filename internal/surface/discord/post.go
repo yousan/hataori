@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"syscall"
 	"unicode/utf16"
@@ -452,6 +453,34 @@ func (d *Driver) Verbatim(s string) string {
 		s = strings.ReplaceAll(s, "``", "`\u200b`")
 	}
 	return fenceMark + "\n" + s + "\n" + fenceMark
+}
+
+var _ surface.Mentioner = (*Driver)(nil)
+
+var (
+	// codeText is what Discord shows as code, where nothing is a mention.
+	codeText = regexp.MustCompile("(?s)```.*?```|``.+?``|`[^`]+`")
+	// mentionText is a mention of a user, of a role or of everyone, escaped
+	// or not.
+	mentionText = regexp.MustCompile(`\\?(?:<@(!?|&)(\d+)>|@everyone|@here)`)
+)
+
+// MentionsOthers reports whether text mentions a user other than the bot,
+// and neither the bot nor a role or everyone, which may hold it. One that
+// is escaped or in code mentions nobody, but the bot's own there is taken
+// for one all the same: what is in doubt is the bot's.
+func (d *Driver) MentionsOthers(text string) bool {
+	for _, m := range mentionText.FindAllStringSubmatch(text, -1) {
+		if m[2] == "" || m[1] == "&" || m[2] == d.botID.String() {
+			return false
+		}
+	}
+	for _, m := range mentionText.FindAllString(codeText.ReplaceAllString(text, " "), -1) {
+		if !strings.HasPrefix(m, `\`) {
+			return true
+		}
+	}
+	return false
 }
 
 // Name is the name Discord shows for conv: "#" and the channel's name for

@@ -109,6 +109,15 @@ type Verbatimer interface {
 	Verbatim(s string) string
 }
 
+// Mentioner is implemented by a Driver whose service writes a mention in
+// the text of a message. MentionsOthers reports whether text, as an Inbound
+// has it, mentions an account other than the driver's own, and neither its
+// own nor a group that may hold it, such as a role or everyone. On a Driver
+// without it, no text does.
+type Mentioner interface {
+	MentionsOthers(text string) bool
+}
+
 // Renamer is implemented by a Sink that wants the names of conversations
 // as the service shows them: Run calls Renamed when it learns a thread's
 // name, and when the name changes.

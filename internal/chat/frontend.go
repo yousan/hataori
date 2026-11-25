@@ -72,6 +72,11 @@ type FrontEnd struct {
 	// posts, taken when it checks them. Without it no file is posted.
 	FileDir string
 
+	// Drivers returns the driver of a client, this front end's or another's,
+	// for reading the text of a message given there; nil for one there is
+	// not. Without it only this front end's own messages are read.
+	Drivers func(client string) surface.Driver
+
 	// Instance names the instance in the owner's login message. Relay is
 	// the login relay; nil when the config switched it off, and the
 	// message then has no link and no button.

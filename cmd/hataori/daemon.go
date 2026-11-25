@@ -913,6 +913,7 @@ func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.St
 	}
 	sort.Strings(names)
 	var fronts []*chat.FrontEnd
+	drivers := map[string]surface.Driver{} // filled before any front end runs
 	for _, name := range names {
 		f, ok := surface.Lookup(name)
 		if !ok {
@@ -922,6 +923,7 @@ func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.St
 		if err != nil {
 			return nil, err
 		}
+		drivers[name] = d
 		scopes := map[string]chat.Scope{}
 		for _, s := range cfg.Scopes {
 			if s.Client != name {
@@ -956,6 +958,7 @@ func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.St
 		}
 		fe := &chat.FrontEnd{Name: name, Driver: d, API: c.As, Trigger: cfg.Trigger, People: cfg.People,
 			Scopes: scopes, ShowIn: showIn, ArchiveWhenAsleep: archive, Supervisors: posts, Supervisor: c.LastConfined, Log: lg.With("client", name), Instance: filepath.Base(root),
+			Drivers: func(client string) surface.Driver { return drivers[client] },
 			Outbox:  &chat.Outbox{Store: st, Client: name, Driver: d, Log: lg.With("client", name)},
 			FileDir: filepath.Join(root, "state", "chat", name, "files"),
 			FileRoots: func(ctx context.Context, id control.ThreadID, session int64) ([]string, error) {

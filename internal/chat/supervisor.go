@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -19,7 +20,8 @@ import (
 // A supervisor's thread (design, section 7.1, "What it posts") is a
 // conversation, so the front end posts in it differently from a worker
 // thread: a completed turn pings nobody (#639); a turn that a wake started
-// posts its final answer only, and nothing for "(quiet)"; and a person is
+// posts its final answer only, and nothing for "(quiet)"; neither does a
+// turn that answers messages to others only (#799); and a person is
 // mentioned only where the agent wrote "@<name>" (#651). The front end
 // tells such a thread by its being confined: only a supervisor's thread is
 // started confined, and a thread's confinement never changes.
@@ -52,11 +54,120 @@ func (f *FrontEnd) svThread(ctx context.Context, r *reader, thread control.Threa
 // supervisor's thread, a reminder's included (supervisor.WakeKeyPrefix).
 const wakeKeyPrefix = "hataori-wake-"
 
-// quietAnswer is the final answer of a wake's turn that posts nothing.
+// quietAnswer is the final answer that posts nothing, of a wake's turn and
+// of one that answers messages to others only.
 const quietAnswer = "(quiet)"
 
 // woke reports whether a turn with key was started by a wake.
 func woke(key string) bool { return strings.HasPrefix(key, wakeKeyPrefix) }
+
+// heard is what the open turn of a supervisor's thread answers.
+type heard struct {
+	input bool // it was given one
+	// others is whether each input it was given mentions an account, and
+	// not hataori's own (toOthers).
+	others bool
+	// texts are the texts of it that wait for its final answer, which says
+	// whether they are posted.
+	texts []control.Event
+}
+
+// hear follows e, an event of a supervisor's thread, for r.heard. What it
+// keeps comes from the events alone, so it is the same after a restart.
+func (r *reader) hear(e control.Event) {
+	if !r.sv[e.Thread].sv {
+		return
+	}
+	h := r.heard[e.Thread]
+	switch {
+	case e.Kind == "turn_started":
+		r.heard[e.Thread] = &heard{}
+	case h == nil:
+	case e.Kind == "turn_ended":
+		delete(r.heard, e.Thread)
+	default:
+		var d eventData
+		json.Unmarshal(e.Data, &d)
+		switch {
+		case e.Kind == "input", e.Kind == "answer":
+			h.others = (h.others || !h.input) && r.toOthers != nil && r.toOthers(d.Link, d.Text)
+			h.input = true
+		case e.Kind == "text" && strings.TrimSpace(d.Text) != "":
+			if h.others && !d.Final {
+				h.texts = append(h.texts, e)
+			} else {
+				h.texts = nil // posted with it, or not at all
+			}
+		case e.Kind == "request" && !d.Approval:
+			h.texts = nil // posted before it
+		}
+	}
+}
+
+// toOthers reports whether text, of an input that came through l, mentions
+// an account and not hataori's own there. What came through no link, such
+// as the dashboard's, mentions nobody.
+func (f *FrontEnd) toOthers(l *control.LinkRef, text string) bool {
+	if l == nil {
+		return false
+	}
+	d := f.Driver
+	if l.Client != f.Name {
+		if f.Drivers == nil {
+			return false
+		}
+		d = f.Drivers(l.Client)
+	}
+	m, ok := d.(surface.Mentioner)
+	return ok && m.MentionsOthers(text)
+}
+
+// rowsOf returns the rows of e as rowsFor does, except where it is part of
+// a supervisor's turn that answers messages to others only (#799): what
+// such a turn says before its final answer waits for that, and is posted
+// before it, or neither is when that answer is "(quiet)". A turn that ends
+// without one, as with a question, posts what waited.
+func (f *FrontEnd) rowsOf(ctx context.Context, r *reader, e control.Event, convs []surface.Conversation) ([]Row, error) {
+	sv, err := f.svThread(ctx, r, e.Thread)
+	if err != nil {
+		return nil, err
+	}
+	if !sv.sv {
+		return f.rowsFor(ctx, r, e, convs)
+	}
+	var texts []control.Event
+	switch e.Kind {
+	case "text", "request", "turn_ended":
+		// The turn's earlier events, when this reader has not read them.
+		if _, _, err := r.turnKey(ctx, e); err != nil {
+			return nil, err
+		}
+		if h := r.heard[e.Thread]; h != nil {
+			var d eventData
+			json.Unmarshal(e.Data, &d)
+			if e.Kind == "text" && h.others && (!d.Final || strings.TrimSpace(d.Text) == quietAnswer) {
+				r.hear(e)
+				return nil, nil
+			}
+			if (e.Kind != "text" || strings.TrimSpace(d.Text) != "") && (e.Kind != "request" || !d.Approval) {
+				texts = h.texts
+			}
+		}
+	}
+	r.hear(e)
+	var rows []Row
+	for _, t := range texts {
+		var d eventData
+		json.Unmarshal(t.Data, &d)
+		notify, _, err := f.svPost(ctx, r, t, sv, false, d.Text)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, Row{Event: t.Pos, Conv: convs[0], Message: surface.Message{Text: d.Text, Quiet: len(notify) == 0, Notify: notify}})
+	}
+	own, err := f.rowsFor(ctx, r, e, convs)
+	return append(rows, own...), err
+}
 
 // named returns the names of the people that text names with "@<name>",
 // where name is a person who may act in scope: the owner, or one of the
