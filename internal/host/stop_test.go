@@ -2,6 +2,7 @@ package host
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -132,8 +133,26 @@ func TestStopWhileTheEndIsRecorded(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write(HostPIDFile, strconv.Itoa(os.Getpid())) // a host that runs, with no socket and no status
-	time.AfterFunc(200*time.Millisecond, func() { writeStatus(dir, Status{Exited: true, Stopped: true}) })
+	// A host that runs, with no socket; it records its end once Stop, which
+	// has found none, has looked whether it runs.
+	pid := filepath.Join(dir, HostPIDFile)
+	if err := syscall.Mkfifo(pid, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		f, err := os.OpenFile(pid, os.O_WRONLY, 0) // until Stop reads it
+		if err != nil {
+			return // Stop did not read it
+		}
+		self := strconv.Itoa(os.Getpid())
+		if err := errors.Join(writeFile(pid+".new", self), os.Rename(pid+".new", pid)); err != nil { // for its later reads
+			t.Error(err)
+		}
+		f.WriteString(self)
+		f.Close()
+		time.Sleep(50 * time.Millisecond)
+		writeStatus(dir, Status{Exited: true, Stopped: true})
+	}()
 	r, err := Stop(dir, time.Second, time.Second)
 	if err != nil || !r.Already || !r.Status.Stopped {
 		t.Fatalf("stop as the end is recorded: %+v, %v", r, err)
