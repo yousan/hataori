@@ -25,8 +25,11 @@ var GoldenDir = filepath.Join("testdata", "protocol", Version)
 const sumsFile = "testdata/protocol/SUMS"
 
 var (
-	exampleTime     = time.Date(2026, 1, 2, 3, 4, 5, 678000000, time.UTC)
-	exampleID       = control.ThreadID(7)
+	exampleTime = time.Date(2026, 1, 2, 3, 4, 5, 678000000, time.UTC)
+	exampleID   = control.ThreadID(7)
+	// A text a file holds, and its version.
+	written         = "Plan: then land it\n"
+	exampleVersion  = "527eed0ee7bad274b51cb93299ac76645fdb7be3afa6b1e4589f8ebeb87dc9da"
 	exampleLink     = control.LinkRef{Client: "discord", Channel: "C0123", Thread: "T0456"}
 	exampleAttached = control.LinkRef{Client: "discord", Channel: "C0123", Thread: "T0400"}
 	exampleInfo     = control.ThreadInfo{ID: exampleID, Scope: "C0123", Links: []control.ThreadLink{{LinkRef: exampleLink, Opened: true}, {LinkRef: exampleAttached}}, Title: "Fix the build", Name: "Build fix, take two", Repo: "https://example.com/repo.git",
@@ -134,6 +137,7 @@ func examples(t *testing.T) map[string]any {
 		"Clients":              clientsArgs{},
 		"Forge":                control.ForgeRequest{Repo: "acme/widgets", Read: control.ForgeReadPull, Number: 42},
 		"Remind":               control.RemindRequest{At: &exampleTime, Note: "Has thread 7 ended?"},
+		"Files":                control.FilesRequest{Op: control.FilesWrite, Path: "notes/plan.md", Text: &written, Version: exampleVersion},
 		"AttachTerminal":       attachTerminalArgs{ID: exampleID},
 		"OperateHost":          operateHostArgs{Pane: "%3"},
 		"HostKeys": hostKeysArgs{Keys: []control.HostKey{{Key: "C-c"}, {Text: "make test"}, {Key: "Enter"},
@@ -204,6 +208,7 @@ func examples(t *testing.T) map[string]any {
 				{Kind: "check_run", Name: "test", State: "completed", Conclusion: "success", URL: "https://forge.example.com/acme/widgets/runs/5"},
 				{Kind: "status", Name: "deploy/preview", State: "pending"}}}}},
 		"Remind": control.RemindAnswer{Number: 3, At: exampleTime},
+		"Files":  control.FilesAnswer{File: &control.ScopeFile{Path: "notes/plan.md", Size: 19, Version: exampleVersion}},
 		"Limits": []control.AgentLimits{{Agent: "claude-code", At: exampleTime, Every: 300, Windows: []control.LimitWindow{
 			{Name: "five_hour", Minutes: 300, Used: 4, Resets: &exampleTime},
 			{Name: "seven_day", Minutes: 10080, Used: 21, Resets: &exampleTime}}}},
@@ -217,6 +222,17 @@ func examples(t *testing.T) map[string]any {
 	ex["request-Forge-deployed.json"] = request{ID: 1, Op: "Forge", Args: mustJSON(control.ForgeRequest{Repo: "acme/widgets", Read: control.ForgeReadDeployed, Number: 42})}
 	ex["response-Forge-deployed.json"] = response{ID: 1, Result: mustJSON(control.ForgeAnswer{Repo: "acme/widgets", Deployed: &control.ForgeDeployed{
 		Build: "1f2e3d4c5b6a79880706f5e4d3c2b1a098765432", Pull: 42, Merged: &merged, Commit: "9fceb02d0ae598e95dc970b74767f19372d61af8", In: &in}})}
+	// Files listed, one read, a passage replaced, and a write that did not
+	// fit. Since 3.41.
+	ex["request-Files-list.json"] = request{ID: 1, Op: "Files", Args: mustJSON(control.FilesRequest{Op: control.FilesList})}
+	ex["response-Files-list.json"] = response{ID: 1, Result: mustJSON(control.FilesAnswer{Files: []control.ScopeFile{
+		{Path: "AGENTS.md", Size: 19, Version: exampleVersion}, {Path: "notes/photo.png", Size: 48213}}})}
+	ex["request-Files-read.json"] = request{ID: 1, Op: "Files", Args: mustJSON(control.FilesRequest{Op: control.FilesRead, Path: "notes/plan.md"})}
+	ex["response-Files-read.json"] = response{ID: 1, Result: mustJSON(control.FilesAnswer{File: &control.ScopeFile{Path: "notes/plan.md", Size: 19, Version: exampleVersion, Text: written}})}
+	out := ""
+	ex["request-Files-edit.json"] = request{ID: 1, Op: "Files", Args: mustJSON(control.FilesRequest{Op: control.FilesEdit, Path: "notes/plan.md", Old: "then land it", New: &out})}
+	ex["response-Files-refused.json"] = response{ID: 1, Result: mustJSON(control.FilesAnswer{
+		File: &control.ScopeFile{Path: "notes/plan.md", Size: 19, Version: exampleVersion, Text: written}, Refused: "the file has changed since the version given"})}
 	// A reminder set with a delay, and one cancelled.
 	ex["request-Remind-delay.json"] = request{ID: 1, Op: "Remind", Args: mustJSON(control.RemindRequest{Delay: 7200, Note: "Has thread 7 ended?"})}
 	ex["request-Remind-cancel.json"] = request{ID: 1, Op: "Remind", Args: mustJSON(control.RemindRequest{Cancel: 3})}

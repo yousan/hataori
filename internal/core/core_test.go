@@ -333,6 +333,11 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 			_, err := a.Forge(ctx, control.ForgeRequest{Repo: "acme/widgets", Read: control.ForgeReadIssues})
 			return err
 		},
+		// Nor does the core keep a supervisor's directory (#868).
+		"Files": func(a control.API) error {
+			_, err := a.Files(ctx, control.FilesRequest{Op: control.FilesList})
+			return err
+		},
 		// Only the owner may (trust_test.go); Trusts needs OpRead and no
 		// scope, as Limits does.
 		"Trust":                func(a control.API) error { return a.Trust(ctx, id, sid, []string{".mcp.json"}) },
@@ -359,7 +364,7 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 			if cname == "other scope" && slices.Contains(namesThread, name) {
 				want = ErrNotFound
 			}
-			if name == "Forge" || name == "Remind" {
+			if name == "Forge" || name == "Remind" || name == "Files" {
 				want = control.ErrNotSupported
 			}
 			f.log.Reset()

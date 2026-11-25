@@ -566,6 +566,14 @@ func (c *Client) Remind(ctx context.Context, r control.RemindRequest) (control.R
 	return out, err
 }
 
+// Files is control.API.Files. A daemon before 3.41 answers
+// not_supported, as the core does.
+func (c *Client) Files(ctx context.Context, r control.FilesRequest) (control.FilesAnswer, error) {
+	var out control.FilesAnswer
+	err := c.call(ctx, "Files", r, &out)
+	return out, err
+}
+
 // Forge is control.API.Forge. A daemon before 3.27 answers
 // not_supported, as the core does.
 func (c *Client) Forge(ctx context.Context, r control.ForgeRequest) (control.ForgeAnswer, error) {
