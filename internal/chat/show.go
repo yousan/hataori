@@ -173,11 +173,15 @@ func (f *FrontEnd) show(ctx context.Context) error {
 			rows = everyLink(append(append(r.track(e), rows...), r.subagents(e)...), convs)
 			rows = append(rows, f.mirrorRows(e, convs)...)
 			rows = append(rows, f.archiveRows(e, convs)...)
+			wr, err := f.waitsRows(ctx, e, convs)
+			if err != nil {
+				return err
+			}
 			lr, err := f.lampRows(ctx, r, e, convs)
 			if err != nil {
 				return err
 			}
-			rows = append(rows, lr...)
+			rows = append(append(rows, wr...), lr...)
 		}
 		lr, err := f.loginEvent(ctx, e, linked)
 		if err != nil {
@@ -321,12 +325,6 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		return []Row{{Event: e.Pos, Conv: conv, Message: surface.Message{Text: reopenedText(d.Workspace, d.Conversation)}}}, nil
 	case "start_chosen":
 		return f.chosenRows(ctx, r, e, conv)
-	case "input_waits":
-		line, err := f.waitsLine(ctx, e, conv.Channel)
-		if err != nil {
-			return nil, err
-		}
-		return []Row{{Event: e.Pos, Conv: conv, Message: surface.Message{Text: line}}}, nil
 	case "session_replaced":
 		line, err := r.replacedLine(ctx, e)
 		if err != nil || line == "" {

@@ -10,6 +10,23 @@ import (
 	"github.com/yousan/hataori/internal/surface"
 )
 
+// waitsRows are the lines that an input_waits event gets, one in each of
+// convs, the conversations its thread is shown in.
+func (f *FrontEnd) waitsRows(ctx context.Context, e control.Event, convs []surface.Conversation) ([]Row, error) {
+	if e.Kind != "input_waits" {
+		return nil, nil
+	}
+	var rows []Row
+	for _, conv := range convs {
+		line, err := f.waitsLine(ctx, e, conv.Channel)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, Row{Event: e.Pos, Conv: conv, Message: surface.Message{Text: line}})
+	}
+	return rows, nil
+}
+
 // waitsLine is the line e, an input_waits event, gets in channel: that the
 // conversation waits, and for which threads. One that is shown elsewhere is
 // named by its number alone: who reads this channel may not read that one.

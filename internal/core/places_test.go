@@ -1,10 +1,12 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"strings"
 	"sync"
@@ -23,11 +25,31 @@ import (
 type talks struct {
 	*kinds
 	seq uint64 // of the agents' events
+	log *lockedBuffer
+}
+
+// lockedBuffer is a log that is read while it is written.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
 }
 
 func newTalks(t *testing.T, atOnce int) *talks {
 	t.Helper()
-	k := &talks{newKinds(t), 100}
+	k := &talks{newKinds(t), 100, &lockedBuffer{}}
+	k.core.Log = slog.New(slog.NewTextHandler(k.log, nil))
 	k.core.People = people.New([]people.Person{{Name: "owner", IDs: []string{"chat:U1"}}}, "owner", nil)
 	k.limit(atOnce)
 	return k
@@ -893,6 +915,9 @@ func TestAnotherLimit(t *testing.T) {
 	want(t, "with no supervisor", k.pass(t), "")
 	want(t, "nor told that it waits", k.lines(t, busy), "")
 	want(t, "behind what waits in it", k.got(t, func() { k.say(t, b, "b2") }), "")
+	k.event(t, busy, agent.Event{Kind: agent.TurnStarted, StartedBy: agent.ByAgent})
+	want(t, "in its turn too", k.got(t, func() { k.say(t, busy, "m2") }), "")
+	k.ends(t, busy)
 	k.runs(t, "c")
 	want(t, "nothing waits for it", k.got(t, func() { k.say(t, a, "a2") }), "deliver a2")
 	k.ends(t, a)
@@ -907,6 +932,8 @@ func TestAnotherLimit(t *testing.T) {
 	want(t, "the one whose turn ran", k.pass(t), "deliver m")
 	k.ends(t, busy)
 	want(t, "in order", k.pass(t), "deliver b2")
+	k.ends(t, b)
+	want(t, "in order", k.pass(t), "deliver m2")
 }
 
 // GiveWaiting gives what waits when a place becomes free and when input

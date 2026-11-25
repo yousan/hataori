@@ -161,7 +161,8 @@ type waitingInput struct {
 // what waits longest. A message waits for a place from the end of the turn
 // that the one before it in its conversation had, so one with many messages
 // does not hold another's first back; a turn that the agent began by itself,
-// or that a person typed at its terminal, was none of them.
+// that a person typed at its terminal, or that went on after a question was
+// withdrawn was none of them.
 func waitingNext(ctx context.Context, tx *store.Tx, scope string) ([]waitingInput, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT w.id, w.thread_id, s.id, s.state, s.spec != '', w.wake, w.told,
 			max(w.pos, coalesce((SELECT max(e.pos) FROM events e JOIN turns u ON u.id = json_extract(e.data, '$.turn')
