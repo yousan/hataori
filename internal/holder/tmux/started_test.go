@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1217,6 +1218,81 @@ func (s *server) starter() *Holder {
 		s.t.Fatal(err)
 	}
 	return &Holder{Hataori: p, Prefix: "hataori-t-", Server: []string{"-S", s.sock, "-f", "/dev/null"}}
+}
+
+// tmux prints the window it made cut short, with no error, when its server
+// does not get to run meanwhile. The captures are of a tmux 3.8 with a pause
+// of 150 ms in the variable of their name; the processes' ids are replaced.
+// Such a window is removed and made again, and an agent is never started in
+// one; when every one is cut, the start fails.
+func TestAWindowWhoseAnswerIsCutIsMadeAgain(t *testing.T) {
+	for _, at := range []string{"pane-pid", "version"} {
+		for _, cuts := range []struct{ made, listed int }{{1, 2}, {1, 9}, {9, 2}} {
+			t.Run(fmt.Sprintf("%s %+v", at, cuts), func(t *testing.T) {
+				cut, listing := capture(t, "new-session-cut-"+at+"-3.8.txt"), capture(t, "list-panes-cut-3.8.txt")
+				s := newServer(t)
+				dir := filepath.Join(s.dir, "7")
+				if err := os.Mkdir(dir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				s.run("new-session", "-d", "-s", "theirs", placeholder)
+				before := s.panes()
+				h := s.starter()
+				made, listed := filepath.Join(s.dir, "made"), filepath.Join(s.dir, "listed")
+				h.Tmux = s.script(`case "$*" in *" new-session "*)
+	echo x >> ` + made + `
+	if [ $(wc -l < ` + made + `) -le ` + strconv.Itoa(cuts.made) + ` ]; then
+		` + s.tmux + ` "$@" > /dev/null && exec cat ` + quote(cut) + `
+	fi;;
+*" list-panes -s "*) # after a window was made
+	if [ -e ` + made + ` ] && echo x >> ` + listed + ` && [ $(wc -l < ` + listed + `) -le ` + strconv.Itoa(cuts.listed) + ` ]; then exec cat ` + quote(listing) + `; fi;;
+esac
+exec ` + s.tmux + ` "$@"`)
+				w, err := h.Start(t.Context(), dir, sleeper)
+				after := s.panes()
+				switch {
+				case cuts.listed == 9:
+					// The pane cannot be found: no second one beside it, and
+					// the next start removes it.
+					if err == nil || !strings.Contains(err.Error(), "list-panes printed") || len(after) != len(before)+1 {
+						t.Errorf("a start: %v; the panes after it: %v, before it %v", err, after, before)
+					}
+					h.Tmux = ""
+					if w, err = h.Start(t.Context(), dir, sleeper); err != nil {
+						t.Fatal(err)
+					}
+					after = s.panes()
+				case cuts.made == 9:
+					if b, _ := os.ReadFile(cut); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("printed %q", b)) {
+						t.Errorf("a start: %v", err)
+					}
+					if !maps.Equal(after, before) {
+						t.Errorf("the panes after it: %v, before it %v", after, before)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(after) != len(before)+1 {
+					t.Errorf("the panes after the start: %v, before it %v", after, before)
+				}
+				if l, err := h.Alive(t.Context(), w); err != nil || l.State != holder.Running {
+					t.Errorf("Alive: %+v %v", l, err)
+				}
+			})
+		}
+	}
+}
+
+// capture is the path of a capture.
+func capture(t *testing.T, name string) string {
+	t.Helper()
+	p, err := filepath.Abs(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }
 
 // With windows of a person's left in its session, the next start makes the

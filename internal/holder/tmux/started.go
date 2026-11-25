@@ -96,34 +96,13 @@ func (h *Holder) Start(ctx context.Context, stateDir string, spec holder.Spec) (
 	if rows == 0 {
 		rows = 24
 	}
-	out, err := h.serverCmd(ctx, "new-session", "-d", "-s", h.Prefix+filepath.Base(stateDir),
-		"-x", strconv.Itoa(int(cols)), "-y", strconv.Itoa(int(rows)), "-P", "-F", startFormat, placeholder)
-	if err != nil && strings.Contains(err.Error(), "duplicate session") {
-		// Not beside a run that could not be ended: they would share the
-		// state directory.
-		if left, lerr := h.leftover(ctx, stateDir); lerr != nil || len(left) > 0 {
-			return holder.Window{}, fmt.Errorf("%w, with %d panes of an earlier run (%v)", err, len(left), lerr)
-		}
-		out, err = h.serverCmd(ctx, "new-window", "-d", "-t", "="+h.Prefix+filepath.Base(stateDir)+":",
-			"-P", "-F", startFormat, placeholder)
-	}
+	r, made, version, err := h.makeWindow(ctx, stateDir, "-x", strconv.Itoa(int(cols)), "-y", strconv.Itoa(int(rows)))
 	if err != nil {
 		return holder.Window{}, err
 	}
-	f := strings.SplitN(strings.TrimSuffix(string(out), "\n"), " ", 5)
-	server, made := 0, 0
-	if len(f) == 5 {
-		server, _ = strconv.Atoi(f[1])
-		made, _ = strconv.Atoi(f[2])
-	}
-	if len(f) != 5 || !paneID.MatchString(f[0]) || server <= 0 || made <= 0 {
-		h.clearLeftover(ctx, stateDir)
-		return holder.Window{}, fmt.Errorf("tmux: new-session printed %q", out)
-	}
-	r := ref{Socket: f[4], Server: server, Pane: f[0], Dir: stateDir}
 	// Only here: a server of another version than the tmux program may run,
 	// and one with no session does not tell its version.
-	if err := checkVersion(f[3]); err != nil {
+	if err := checkVersion(version); err != nil {
 		return holder.Window{}, errors.Join(err, h.removePane(ctx, r, pane{pid: made}))
 	}
 	// In one go, and only while the pane is the one made: on a server started
@@ -133,7 +112,8 @@ func (h *Holder) Start(ctx context.Context, stateDir string, spec holder.Spec) (
 	// replaced.
 	onServer, withProcess := fmt.Sprintf("#{==:#{pid},%d}", r.Server), fmt.Sprintf("#{==:#{pane_pid},%d}", made)
 	keep, run := h.setUp(r)
-	if out, err = h.tmux(ctx, r, nil, slices.Concat(ifPane(r.Pane, keep, onServer, withProcess), []string{";"}, ifPane(r.Pane, run, onServer, withProcess))...); err != nil {
+	out, err := h.tmux(ctx, r, nil, slices.Concat(ifPane(r.Pane, keep, onServer, withProcess), []string{";"}, ifPane(r.Pane, run, onServer, withProcess))...)
+	if err != nil {
 		// The respawn may have given it another process. Gone or a person's,
 		// it is left as it is; the next start clears what else is left.
 		if p, ferr := h.findStarted(context.WithoutCancel(ctx), r, made); ferr == nil {
@@ -158,6 +138,51 @@ func (h *Holder) Start(ctx context.Context, stateDir string, spec holder.Spec) (
 	// One that ended already has no process on tmux 3.8: the pane is then
 	// told by what it runs (findStarted), not by its process.
 	return holder.Window{Holder: Name, Ref: string(rb), Owned: true, Process: cmp.Or(p.pid, made)}, nil
+}
+
+// makeTries is how often a window is made, or a listing read, whose answer
+// tmux cut short.
+const makeTries = 3
+
+// makeWindow makes the window Start runs the agent in, with the placeholder
+// in it: its pane, the process tmux made there, and the server's version.
+// size is new-session's options for it.
+//
+// Since tmux 3.7 a format that takes longer than 100 ms, as when the server
+// does not get to run, is printed up to where it was then, without an error.
+// The window is removed then and made again: its process is only known as
+// the one made from what tmux printed as it made it, and a socket that is
+// empty names no server.
+func (h *Holder) makeWindow(ctx context.Context, stateDir string, size ...string) (ref, int, string, error) {
+	name := h.Prefix + filepath.Base(stateDir)
+	print := []string{"-P", "-F", startFormat, placeholder}
+	var cut error
+	for range makeTries {
+		out, err := h.serverCmd(ctx, slices.Concat([]string{"new-session", "-d", "-s", name}, size, print)...)
+		if err != nil && strings.Contains(err.Error(), "duplicate session") {
+			// Not beside a run that could not be ended: they would share the
+			// state directory.
+			if left, lerr := h.leftover(ctx, stateDir); lerr != nil || len(left) > 0 {
+				return ref{}, 0, "", fmt.Errorf("%w, with %d panes of an earlier run (%v)", err, len(left), lerr)
+			}
+			out, err = h.serverCmd(ctx, slices.Concat([]string{"new-window", "-d", "-t", "=" + name + ":"}, print)...)
+		}
+		if err != nil {
+			return ref{}, 0, "", err
+		}
+		// The socket is printed last: with it, the rest is whole.
+		f := strings.SplitN(strings.TrimSuffix(string(out), "\n"), " ", 5)
+		if len(f) == 5 && f[4] != "" && paneID.MatchString(f[0]) {
+			server, _ := strconv.Atoi(f[1])
+			made, _ := strconv.Atoi(f[2])
+			if server > 0 && made > 0 {
+				return ref{Socket: f[4], Server: server, Pane: f[0], Dir: stateDir}, made, f[3], nil
+			}
+		}
+		h.clearLeftover(ctx, stateDir)
+		cut = fmt.Errorf("tmux: new-session printed %q", out)
+	}
+	return ref{}, 0, "", cut
 }
 
 // setUp is the tmux commands that make the pane Start made the agent's: those
@@ -744,22 +769,38 @@ func signalName(s string) string {
 // directory.
 func (h *Holder) leftover(ctx context.Context, stateDir string) (map[string]pane, error) {
 	name := h.Prefix + filepath.Base(stateDir)
-	out, err := h.serverCmd(ctx, "list-panes", "-s", "-t", "="+name+":", "-F", "#{pane_id} #{pane_pid} #{pane_dead} #{pane_start_command}")
-	if err != nil {
-		return nil, err
-	}
 	// The pane Start made runs the placeholder until the respawn, and
-	// `hataori exec <stateDir>` after it.
+	// `hataori exec <stateDir>` after it. A line that does not end with the
+	// pane was cut (makeWindow): tmux escapes a line break of a command. What
+	// it was of is not known, so that no listing without it is taken for one
+	// of all panes.
 	ps := map[string]pane{}
-	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		f := strings.SplitN(l, " ", 4)
-		if len(f) != 4 || !(runsExec(f[3], stateDir) || strings.Trim(f[3], `"`) == placeholder) {
-			continue
+	var cut error
+	for range makeTries {
+		out, err := h.serverCmd(ctx, "list-panes", "-s", "-t", "="+name+":", "-F", "#{pane_id} #{pane_pid} #{pane_dead} #{pane_start_command} #{pane_id}")
+		if err != nil {
+			return nil, err
 		}
-		pid, _ := strconv.Atoi(f[1])
-		ps[f[0]] = pane{pid: pid, dead: f[2] == "1", start: f[3]}
+		clear(ps)
+		cut = nil
+		for _, l := range strings.Split(strings.TrimSuffix(string(out), "\n"), "\n") {
+			f := strings.SplitN(l, " ", 4)
+			start, ended := strings.CutSuffix(f[len(f)-1], " "+f[0])
+			if len(f) != 4 || !ended {
+				cut = fmt.Errorf("tmux: list-panes printed %.200q", l)
+				continue
+			}
+			if !runsExec(start, stateDir) && strings.Trim(start, `"`) != placeholder {
+				continue
+			}
+			pid, _ := strconv.Atoi(f[1])
+			ps[f[0]] = pane{pid: pid, dead: f[2] == "1", start: start}
+		}
+		if cut == nil {
+			break
+		}
 	}
-	return ps, nil
+	return ps, cut
 }
 
 // clearLeftover ends the agent an earlier run left and removes its panes.
