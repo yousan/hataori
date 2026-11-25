@@ -35,19 +35,24 @@ func TestInputThatWaitsSaysForWhich(t *testing.T) {
 	}
 	f.showing(t)
 	f.event(t, id, "input_waits", map[string]any{"running": []control.ThreadID{here, there, 99}})
+	f.event(t, id, "text", map[string]any{"text": "after", "final": true})
 	line := "This waits until another conversation with the supervisor ends its turn. Running: "
-	f.postedUntil(t, id, line+fmt.Sprintf("thread %d ([link to %s/here]), thread %d, thread 99.", here, conv.Channel, there))
+	want := line + fmt.Sprintf("thread %d ([link to %s/here]), thread %d, thread 99.", here, conv.Channel, there)
+	if posts := f.postedUntil(t, id, "after"); texts(posts[1:]) != want+"|after" {
+		t.Errorf("posted %q, want %q once, after the prompt", texts(posts), want)
+	}
 	var also []string
-	waitFor(t, "the line in the other channel", func() bool {
+	waitFor(t, "the text in the other channel", func() bool {
 		also = nil
 		for _, c := range f.driver.Calls(other) {
 			if c.Op == fake.OpPost {
 				also = append(also, c.Message.Text)
 			}
 		}
-		return len(also) > 0
+		return len(also) > 0 && also[len(also)-1] == "after"
 	})
-	if want := line + fmt.Sprintf("thread %d, thread %d ([link to c9/there]), thread 99.", here, there); len(also) != 1 || also[0] != want {
+	want = line + fmt.Sprintf("thread %d, thread %d ([link to c9/there]), thread 99.", here, there)
+	if len(also) != 2 || also[0] != want {
 		t.Errorf("the other channel got %q, want %q once", also, want)
 	}
 }

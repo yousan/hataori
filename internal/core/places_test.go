@@ -245,6 +245,14 @@ func TestACallOverTheLimitStartsWhenAPlaceIsFree(t *testing.T) {
 	if st := k.threadState(t, c); st != control.Asleep {
 		t.Fatalf("it is %s while it waits", st)
 	}
+	var first string
+	var f FirstInput
+	if err := k.core.Store.DB.QueryRow(`SELECT first_input FROM sessions WHERE id = ?`, k.session(t, c)).Scan(&first); err != nil {
+		t.Fatal(err)
+	}
+	if json.Unmarshal([]byte(first), &f); f != (FirstInput{Dir: k.dir}) {
+		t.Fatalf("its session has %+v while its input waits", f)
+	}
 	if n := len(k.eventsOf(t, c, "thread_created")); n != 1 {
 		t.Fatalf("%d thread_created events", n)
 	}
@@ -252,11 +260,10 @@ func TestACallOverTheLimitStartsWhenAPlaceIsFree(t *testing.T) {
 	k.ends(t, b)
 	want(t, "a pass with a place", k.pass(t), "start c")
 	want(t, "another pass", k.pass(t), "")
-	var first string
 	if err := k.core.Store.DB.QueryRow(`SELECT first_input FROM sessions WHERE id = ? AND launch = 1 AND state = 'creating'`, k.session(t, c)).Scan(&first); err != nil {
 		t.Fatal(err)
 	}
-	var f FirstInput
+	f = FirstInput{}
 	json.Unmarshal([]byte(first), &f)
 	if f.Principal != "owner" || f.From != "chat:U1" || f.Key != "c" || f.Text != "c" || f.Dir != k.dir || f.Wake || f.NoInput {
 		t.Fatalf("it starts with %+v", f)
@@ -460,6 +467,34 @@ func TestAnAgentsOwnTurnChangesNoOrder(t *testing.T) {
 			want(t, "then", k.pass(t), "deliver b1")
 			k.ends(t, b)
 			want(t, "behind a's turn of a1", k.pass(t), "deliver a2")
+		})
+	}
+}
+
+// The turn that goes on after a question was withdrawn puts what waits in its
+// conversation behind nobody's; that of an answered one, which a message
+// began, does.
+func TestTheRestOfATurnAfterItsQuestion(t *testing.T) {
+	for what, c := range map[string]struct {
+		resume func(k *talks, a control.ThreadID)
+		first  string
+	}{
+		"withdrawn": {func(k *talks, a control.ThreadID) {
+			k.event(t, a, agent.Event{Kind: agent.RequestWithdrawn, Request: &agent.RequestInfo{ID: "r"}})
+		}, "deliver a2"},
+		"answered": {func(k *talks, a control.ThreadID) { k.say(t, a, "this one") }, "deliver b1"},
+	} {
+		t.Run(what, func(t *testing.T) {
+			k := newTalks(t, 1)
+			b, a := k.idles(t, "b"), k.runs(t, "a")
+			k.say(t, a, "a2")
+			k.event(t, a, agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: "r", Text: "which?"}})
+			busy := k.runs(t, "busy")
+			k.say(t, b, "b1")
+			c.resume(k, a)
+			k.ends(t, a)
+			k.ends(t, busy)
+			want(t, "first", k.pass(t), c.first)
 		})
 	}
 }
