@@ -111,7 +111,7 @@ func TestMirrorTimeout(t *testing.T) {
 	bin := t.TempDir()
 	pidfile := filepath.Join(bin, "fetch-pid")
 	barePID := filepath.Join(bin, "bare-pid")
-	script := "#!/bin/sh\ncase \" $* \" in *' fetch --no-tags -- '*) echo $$ > '" + pidfile + "';; *' clone --bare '*) echo $$ > '" + barePID + "';; esac\nexec '" + real + "' \"$@\"\n"
+	script := "#!/bin/sh\ncase \" $* \" in *' fetch --no-tags '*) echo $$ > '" + pidfile + "';; *' clone --bare '*) echo $$ > '" + barePID + "';; esac\nexec '" + real + "' \"$@\"\n"
 	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
