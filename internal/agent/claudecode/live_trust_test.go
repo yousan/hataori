@@ -86,6 +86,9 @@ func TestLiveTrustFiles(t *testing.T) {
 		// The other wordings: two files, and an MCP config.
 		{"trust_files_both", map[string]string{".claude/settings.json": settings, ".claude/settings.local.json": local},
 			agent.Spec{TrustFiles: []string{".claude/settings.json", ".claude/settings.local.json"}}, true, false},
+		// The note about the environment, alone (#730).
+		{"trust_files_env", map[string]string{".claude/settings.json": `{"env": {"X": "1"}}` + "\n"},
+			agent.Spec{TrustFiles: []string{".claude/settings.json"}}, true, false},
 		{"trust_files_mcp", map[string]string{".mcp.json": `{"mcpServers": {"x": {"type": "stdio", "command": "true"}}}` + "\n"},
 			agent.Spec{}, false, false},
 	} {

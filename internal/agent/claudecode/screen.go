@@ -53,10 +53,19 @@ const trustHeader = "Accessing workspace: %s Quick safety check: Is this a proje
 // "... loads .claude/settings.json and .claude/settings.local.json (runs
 // commands and sets environment variables).", "... loads .mcp.json here or
 // above (MCP servers)." (testdata/2.1.328/trust_*).
-const (
-	loadsPrefix = "Trusting this folder loads "
-	loadsAbove  = " here or above"
-)
+const loadsPrefix = "Trusting this folder loads "
+
+// loadsNotes is what that line is known to say of a file, between its name
+// and the line's full stop (testdata/2.1.328/trust_files_*, 2.1.329/
+// trust_hooks_*, 2.1.332/trust_files_env). Only these are taken off (#730): the dialog's words are
+// joined, so any other text there may as well be something the dialog draws
+// below the line.
+var loadsNotes = []string{
+	" (runs commands and sets environment variables)",
+	" (runs commands)",
+	" (sets environment variables)",
+	" here or above (MCP servers)",
+}
 
 // hooksWarning starts the line 2.1.329 draws above the one naming the
 // files when the project settings declare hooks, followed by the files
@@ -185,8 +194,8 @@ func trustDialog(screen []string, dir string) (cursor, yes int, files []string, 
 	}
 	// The text above the choices: a top rule, then the header.
 	var words []string
-	for _, l := range lines[:start] {
-		if isRule(l) {
+	for i, l := range lines[:start] {
+		if i == 0 && isRule(l) {
 			continue
 		}
 		words = append(words, strings.Fields(l)...)
@@ -291,19 +300,23 @@ func loadedFiles(line string) []string {
 	if !ok {
 		return nil
 	}
-	if i := strings.LastIndex(list, " ("); i >= 0 && strings.HasSuffix(list, ")") {
-		list = list[:i] // what the files do, such as "(runs commands)"
+	for _, note := range loadsNotes {
+		if l, ok := strings.CutSuffix(list, note); ok {
+			list = l
+			break
+		}
 	}
-	return fileList(strings.TrimSuffix(list, loadsAbove))
+	return fileList(list)
 }
 
 // fileList reads "a, b and c" as its files, or nil when it is not of that
-// shape: an empty entry, as in "a,, b", is not.
+// shape: an empty entry, as in "a,, b", is not, and neither is a full stop
+// behind a file, which ends the line the list is in.
 func fileList(list string) []string {
 	var files []string
 	for _, f := range strings.Split(strings.ReplaceAll(list, " and ", ","), ",") {
 		f = strings.TrimSpace(f)
-		if f == "" || strings.ContainsAny(f, " ()") {
+		if f == "" || strings.ContainsAny(f, " ()") || strings.HasSuffix(f, ".") {
 			return nil
 		}
 		files = append(files, f)

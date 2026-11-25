@@ -339,6 +339,84 @@ func testNoticeShapes(t *testing.T, version, capture, known, other string) {
 	}
 }
 
+// The note "(sets environment variables)", alone (2.1.332, #730).
+func TestTrustDialogWithTheEnvironmentNote(t *testing.T) {
+	trusted := agent.Spec{TrustFiles: []string{".claude/settings.json"}}
+	for _, spec := range []agent.Spec{trusted, {Confine: &agent.Confinement{}}} {
+		if keys, events := replayTrustOf(t, "2.1.332", "trust_files_env", spec); keys != "down enter" || len(events) != 0 {
+			t.Errorf("%+v: keys %q events %+v", spec, keys, events)
+		}
+	}
+	keys, events := replayTrustOf(t, "2.1.332", "trust_files_env", agent.Spec{})
+	if keys != "" || len(events) != 1 || !slices.Equal(events[0].Trust, []string{".claude/settings.json"}) ||
+		!strings.Contains(events[0].Text, "\n> Trusting this folder loads .claude/settings.json (sets environment variables).\n") {
+		t.Errorf("refused: keys %q events %+v", keys, events)
+	}
+}
+
+// capturedDialog is the screen of the first chunks of a capture that show
+// the dialog for its workspace, and that workspace's path.
+func capturedDialog(t *testing.T, version, name string) (screen []string, dir string) {
+	t.Helper()
+	dir = "/tmp/capture-work/sessions/" + name
+	chunks, _ := filepath.Glob(filepath.Join("testdata", version, name, "screen-*.raw"))
+	var b []byte
+	for _, p := range chunks {
+		b = append(b, readScreen(t, p)...)
+		if screen, ok := renderScreen(b); ok {
+			if _, _, _, ok := trustDialog(screen, dir); ok {
+				return screen, dir
+			}
+		}
+	}
+	t.Fatalf("no dialog in %s/%s", version, name)
+	return nil, ""
+}
+
+// Text the dialog draws below the line naming the files, as no version does
+// so far, leaves the dialog unanswered, whatever the text and whatever the
+// line says of its files (#730).
+func TestTextBelowTheFileLine(t *testing.T) {
+	for _, tc := range []struct{ version, capture string }{
+		{"2.1.328", "trust_files_refused"}, // no note
+		{"2.1.328", "trust_files_confined"},
+		{"2.1.328", "trust_files_both"},
+		{"2.1.328", "trust_files_mcp"},
+		{"2.1.329", "trust_hooks_refused"},
+		{"2.1.331", "trust_permissions_refused"},
+		{"2.1.332", "trust_files_env"},
+	} {
+		screen, dir := capturedDialog(t, tc.version, tc.capture)
+		guide := slices.IndexFunc(screen, func(l string) bool { return strings.TrimSpace(l) == "Security guide" })
+		for _, text := range []string{
+			" ⚠ This folder pre-approves 1 tool permission in .claude/settings.json: Bash(ls:*).",
+			" ⚠ Something else (it matters).",
+			" (it matters).",
+			" (runs commands).",
+			" (MCP servers).",
+			" here or above (MCP servers).",
+			" It matters.",
+			" It matters",
+			" ────────────────────",
+			" x",
+			" x.",
+			" .",
+			" , x.",
+			" and x.",
+			" and .mcp.json (MCP servers).",
+			" and .mcp.json here or above (MCP servers).",
+			" Trusting this folder loads .claude/settings.json.",
+		} {
+			for _, with := range [][]string{{text}, {"", text}, {text, ""}} {
+				added := slices.Concat(screen[:guide], with, screen[guide:])
+				if _, _, files, ok := trustDialog(added, dir); ok {
+					t.Errorf("%s with %q below the file line: read, files %q", tc.capture, with, files)
+				}
+			}
+		}
+	}
+}
+
 // Only the warning's known shape is read: one that names a file the dialog
 // does not load, or says something else, leaves the dialog unanswered.
 func TestHooksWarningShapes(t *testing.T) {
