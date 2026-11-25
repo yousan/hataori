@@ -145,7 +145,9 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 	}
 	instructions := spec.Instructions
 	if spec.Confine != nil {
-		instructions = strings.TrimSpace(instructions + "\n\n" + atSignNote)
+		// First: what follows may end in a person's file, or in a block of
+		// code that it left open.
+		instructions = strings.TrimSpace(atSignNote + "\n\n" + instructions)
 	}
 	if instructions != "" {
 		files[InstructionsFile] = []byte(instructions)

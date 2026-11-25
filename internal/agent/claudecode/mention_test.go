@@ -120,6 +120,21 @@ func TestConfinedInputNamesNothing(t *testing.T) {
 	}
 }
 
+// An input that a hataori before #887 pasted, its "@" as they are, and that
+// the agent reports after a restart to this one, is known as hataori's.
+func TestInputPastedWithItsAtSignIsKnown(t *testing.T) {
+	for _, mc := range mentionCases(t, "mention_restricted") {
+		c := confinedCodec(t)
+		if _, err := c.Input(agent.Input{ID: "in-1", Text: mc.Text, Written: true}); err != nil {
+			t.Fatal(err)
+		}
+		by, id := c.starter(mc.Prompt)
+		if known := !slices.Contains([]string{"after_escape", "after_invisible"}, mc.Case); (by == agent.ByCaller && id == "in-1" && c.sent == nil) != known {
+			t.Errorf("%s: the prompt %q counts as started by %v, input %q", mc.Case, mc.Prompt, by, id)
+		}
+	}
+}
+
 // What --restricted alone does about a text that is pasted as it is.
 func TestRestrictedTakesMentionsInsideTheDirectory(t *testing.T) {
 	content := map[string][]string{}

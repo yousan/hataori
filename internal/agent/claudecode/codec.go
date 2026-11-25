@@ -1154,7 +1154,13 @@ func denyWrite(path string) []byte {
 // the caller's, and its Input.ID is returned; a task notification is the
 // agent's own, and anything else was typed at the terminal.
 func (c *codec) starter(prompt string) (agent.Starter, string) {
-	text := normalize(unwrapPaste(prompt))
+	text := unwrapPaste(prompt)
+	if c.spec.Confine != nil {
+		// An input may have been pasted before a restart by a hataori that
+		// left its "@" (before #887).
+		text = strings.ReplaceAll(text, "@", atSign)
+	}
+	text = normalize(text)
 	for i, p := range c.pasted {
 		if p.text == text {
 			c.pasted = append(c.pasted[:i], c.pasted[i+1:]...)

@@ -157,8 +157,8 @@ func TestConfinedLaunch(t *testing.T) {
 		}
 		for name := range plain.Files {
 			if name == InstructionsFile {
-				if got, want := string(l.Files[name]), s.Instructions+"\n\n"+atSignNote; got != want {
-					t.Fatalf("instructions %q, want the ordinary ones and the note on the at sign: %q", got, want)
+				if got, want := string(l.Files[name]), atSignNote+"\n\n"+s.Instructions; got != want {
+					t.Fatalf("instructions %q, want the note on the at sign and the ordinary ones: %q", got, want)
 				}
 				continue
 			}
