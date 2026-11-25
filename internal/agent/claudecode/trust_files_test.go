@@ -397,6 +397,7 @@ func TestTextBelowTheFileLine(t *testing.T) {
 			" here or above (MCP servers).",
 			" It matters.",
 			" It matters",
+			" ────────────────────",
 			" x",
 			" x.",
 			" .",

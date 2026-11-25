@@ -56,8 +56,8 @@ const trustHeader = "Accessing workspace: %s Quick safety check: Is this a proje
 const loadsPrefix = "Trusting this folder loads "
 
 // loadsNotes is what that line is known to say of a file, between its name
-// and the line's full stop (testdata/2.1.328/trust_files_*, 2.1.332/
-// trust_files_env). Only these are taken off (#730): the dialog's words are
+// and the line's full stop (testdata/2.1.328/trust_files_*, 2.1.329/
+// trust_hooks_*, 2.1.332/trust_files_env). Only these are taken off (#730): the dialog's words are
 // joined, so any other text there may as well be something the dialog draws
 // below the line.
 var loadsNotes = []string{
@@ -194,8 +194,8 @@ func trustDialog(screen []string, dir string) (cursor, yes int, files []string, 
 	}
 	// The text above the choices: a top rule, then the header.
 	var words []string
-	for _, l := range lines[:start] {
-		if isRule(l) {
+	for i, l := range lines[:start] {
+		if i == 0 && isRule(l) {
 			continue
 		}
 		words = append(words, strings.Fields(l)...)
