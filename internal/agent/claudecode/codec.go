@@ -217,7 +217,11 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 		// it is pressed after that turn.
 		typed := c.pasteText(in.Text)
 		text := normalize(typed)
-		c.pasted = append(c.pasted, queued{id: in.ID, text: text})
+		q := queued{id: in.ID, text: text}
+		if c.spec.Confine != nil {
+			q.older = normalize(noCommand(cleanPaste(in.Text)))
+		}
+		c.pasted = append(c.pasted, q)
 		if c.sent == nil {
 			c.sent = &sentInput{text: text, typed: typed, id: in.ID, pressed: true}
 		}
@@ -227,8 +231,10 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 	return c.number(c.flush()), nil
 }
 
-// queued is an input and its Input.ID.
-type queued struct{ id, text string }
+// queued is an input and its Input.ID. older is set for one that was pasted
+// before a restart into a confined session: what a hataori that left each
+// "@" (before #887) pasted for it.
+type queued struct{ id, text, older string }
 
 // Bracketed paste: what the terminal sends around pasted text. The holder
 // adds them; pasted text must not hold them.
@@ -274,7 +280,11 @@ func (c *codec) pasteText(text string) string {
 	if c.spec.Confine == nil {
 		return text
 	}
-	text = strings.ReplaceAll(text, "@", atSign)
+	return noCommand(strings.ReplaceAll(text, "@", atSign))
+}
+
+// noCommand is text with commandPrefix before it if it would be a command.
+func noCommand(text string) string {
 	// Spaces, and characters such as a zero-width space, which the CLI
 	// dropped before "/add-dir", do not count as the start.
 	first := strings.TrimLeftFunc(text, func(r rune) bool { return unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) })
@@ -1154,17 +1164,11 @@ func denyWrite(path string) []byte {
 // the caller's, and its Input.ID is returned; a task notification is the
 // agent's own, and anything else was typed at the terminal.
 func (c *codec) starter(prompt string) (agent.Starter, string) {
-	text := unwrapPaste(prompt)
-	if c.spec.Confine != nil {
-		// An input may have been pasted before a restart by a hataori that
-		// left its "@" (before #887).
-		text = strings.ReplaceAll(text, "@", atSign)
-	}
-	text = normalize(text)
+	text := normalize(unwrapPaste(prompt))
 	for i, p := range c.pasted {
-		if p.text == text {
+		if p.text == text || p.older != "" && p.older == text {
 			c.pasted = append(c.pasted[:i], c.pasted[i+1:]...)
-			if c.sent != nil && c.sent.text == text {
+			if c.sent != nil && c.sent.text == p.text {
 				c.sent = nil // delivered
 			}
 			return agent.ByCaller, p.id

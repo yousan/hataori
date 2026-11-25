@@ -121,7 +121,8 @@ func TestConfinedInputNamesNothing(t *testing.T) {
 }
 
 // An input that a hataori before #887 pasted, its "@" as they are, and that
-// the agent reports after a restart to this one, is known as hataori's.
+// the agent reports after a restart to this one, is known as hataori's. An
+// input of this one's is not known by such a prompt: a person typed that.
 func TestInputPastedWithItsAtSignIsKnown(t *testing.T) {
 	for _, mc := range mentionCases(t, "mention_restricted") {
 		c := confinedCodec(t)
@@ -130,8 +131,24 @@ func TestInputPastedWithItsAtSignIsKnown(t *testing.T) {
 		}
 		by, id := c.starter(mc.Prompt)
 		if known := !slices.Contains([]string{"after_escape", "after_invisible"}, mc.Case); (by == agent.ByCaller && id == "in-1" && c.sent == nil) != known {
-			t.Errorf("%s: the prompt %q counts as started by %v, input %q", mc.Case, mc.Prompt, by, id)
+			t.Errorf("%s: after a restart: the prompt %q counts as started by %v, input %q", mc.Case, mc.Prompt, by, id)
 		}
+		if !strings.Contains(mc.Prompt, "@") {
+			continue
+		}
+		c = confinedCodec(t)
+		mentionPaste(t, c, mc.Text)
+		if by, _ := c.starter(mc.Prompt); by != agent.ByTerminal || c.sent == nil {
+			t.Errorf("%s: the prompt %q, which was not pasted, counts as started by %v", mc.Case, mc.Prompt, by)
+		}
+	}
+	// One that would be a command was pasted after the prefix before, too.
+	c := confinedCodec(t)
+	if _, err := c.Input(agent.Input{ID: "in-1", Text: "/add-dir @x", Written: true}); err != nil {
+		t.Fatal(err)
+	}
+	if by, id := c.starter(commandPrefix + "/add-dir @x"); by != agent.ByCaller || id != "in-1" {
+		t.Errorf("after a restart: a command with an at sign counts as started by %v, input %q", by, id)
 	}
 }
 
@@ -164,8 +181,19 @@ func TestOrdinaryInputKeepsTheAtSign(t *testing.T) {
 		if mc.Pasted != mc.Text {
 			t.Fatalf("%s: the capture is of %q", mc.Case, mc.Pasted)
 		}
-		if got := mentionPaste(t, started(t), mc.Text); got != mc.Text {
+		c := started(t)
+		if got := mentionPaste(t, c, mc.Text); got != mc.Text {
 			t.Errorf("%s: %q is pasted as %q", mc.Case, mc.Text, got)
+		}
+		restarted := started(t)
+		if _, err := restarted.Input(agent.Input{ID: "in-1", Text: mc.Text, Written: true}); err != nil {
+			t.Fatal(err)
+		}
+		known := !slices.Contains([]string{"after_escape", "after_invisible"}, mc.Case) // #916
+		for what, c := range map[string]*codec{"": c, "after a restart: ": restarted} {
+			if by, _ := c.starter(mc.Prompt); (by == agent.ByCaller) != known {
+				t.Errorf("%s: %sthe prompt %q counts as started by %v", mc.Case, what, mc.Prompt, by)
+			}
 		}
 	}
 }
