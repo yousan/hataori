@@ -342,7 +342,12 @@ func TestLinksOpenedOnUpgrade(t *testing.T) {
 			(6, 'chat', 5, 1, 's', 'attached', '{"message":{"text":"archive"}}', 'pending', 0, 3),
 			(7, 'chat', 6, 1, 's', 'attached', 'no JSON', 'pending', 0, 3),
 			(8, 'two', 7, 1, 'd1', 'x2', '{"op":"archive"}', 'pending', 0, 7),
-			(9, 'chat', 8, 1, 's', 'elsewhere', '{"op":"archive"}', 'pending', 0, 0)`,
+			(9, 'chat', 8, 1, 's', 'elsewhere', '{"op":"archive"}', 'pending', 0, 0),
+			(10, 'chat', 9, 1, 's', 't2', '{"op":"archive"}', 'pending', 0, 0),
+			(11, 'chat', 10, 1, 's', 'attached', '{"op":"archive"}', 'pending', 0, 0),
+			(12, 'chat', 11, 1, 's', 'attached', '{"op":"archive"}', 'pending', 0, 1),
+			(13, 'two', 12, 1, 's', 't1', '{"op":"archive"}', 'pending', 0, 0),
+			(14, 'chat', 13, 1, 'c9', 't1', '{"op":"archive"}', 'pending', 0, 0)`,
 	} {
 		if _, err := s.DB.ExecContext(ctx, q); err != nil {
 			t.Fatal(err)
@@ -353,7 +358,10 @@ func TestLinksOpenedOnUpgrade(t *testing.T) {
 		return dump(t, s.DB, `SELECT id, client, event, part, channel, thread, message, state, created_at, link FROM chat_outbox ORDER BY id`)
 	}
 	want := outbox()
-	want[1] = strings.Replace(want[1], "|pending|", "|dropped|", 1)
+	// Of one that no link counts as opened, whatever link the row names.
+	for _, id := range []int{2, 9, 11, 12, 13, 14} {
+		want[id-1] = strings.Replace(want[id-1], "|pending|", "|dropped|", 1)
+	}
 	s.Close()
 	s, err = open(ctx, path, migrations)
 	if err != nil {

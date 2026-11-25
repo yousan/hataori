@@ -738,14 +738,15 @@ var migrations = []Migration{
 	// Whether the link's client opened its conversation: 1, or 0 for one
 	// that was there before the link (#870). Of the links made before this
 	// step, a thread's first one counts as opened, and no other does: what
-	// opened it was not recorded. An archive written for one that does not
-	// count, and not sent yet, is dropped.
+	// opened it was not recorded. An archive not sent yet is dropped, unless
+	// it is of a conversation that a link counts as opened.
 	{Name: "links.opened", Up: execAll(
 		`ALTER TABLE links ADD COLUMN opened INTEGER NOT NULL DEFAULT 0`,
 		`UPDATE links SET opened = 1 WHERE id IN (SELECT min(id) FROM links GROUP BY thread_id)`,
 		`UPDATE chat_outbox SET state = 'dropped' WHERE state = 'pending'
 			AND CASE WHEN json_valid(message) THEN json_extract(message, '$.op') END = 'archive'
-			AND link IN (SELECT id FROM links WHERE opened = 0)`,
+			AND NOT EXISTS (SELECT 1 FROM links l WHERE l.client = chat_outbox.client AND l.channel = chat_outbox.channel
+				AND l.thread = chat_outbox.thread AND l.opened = 1)`,
 	)},
 }
 
