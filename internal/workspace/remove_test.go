@@ -1581,7 +1581,7 @@ func TestRefuseProcessUsingTheWorkspaceThroughABindMount(t *testing.T) {
 				t.Fatal(err)
 			}
 			at := t.TempDir()
-			cmd := exec.Command("unshare", "-Urm", "sh", "-ec", `at=$1; mount --bind "$2" "$at"; `+tc.script+`; echo there; exec sleep 60`, "sh", at, filepath.Join(x.clone, tc.of))
+			cmd := exec.Command("unshare", "-Urm", "sh", "-ec", `at=$1; mount --bind "$2" "$at"; echo mounted; `+tc.script+`; echo there; exec sleep 60`, "sh", at, filepath.Join(x.clone, tc.of))
 			cmd.Dir = "/"
 			out, err := cmd.StdoutPipe()
 			if err != nil {
@@ -1591,8 +1591,12 @@ func TestRefuseProcessUsingTheWorkspaceThroughABindMount(t *testing.T) {
 				t.Skip(err)
 			}
 			t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
-			if said, _ := bufio.NewReader(out).ReadString('\n'); said != "there\n" {
-				t.Skip("no user namespace here")
+			r := bufio.NewReader(out)
+			if said, _ := r.ReadString('\n'); said != "mounted\n" {
+				t.Skip("no bind mount can be made here")
+			}
+			if said, _ := r.ReadString('\n'); said != "there\n" {
+				t.Fatalf("the process that uses the mount says %q", said)
 			}
 			wantRefusal(t, x.check(), InUse, "")
 		})
@@ -1649,8 +1653,7 @@ func TestRefuseProcessWhoseFilesLsofNamesElsewhere(t *testing.T) {
 	stop = use(filepath.Join(cache, "two"))
 	wantRefusal(t, x.check(), InUse, "")
 	stop()
-	// One of three names is elsewhere: the file may be open under that one,
-	// and it is there without the workspace.
+	// One of three names is elsewhere: the file may be open under that one.
 	link("one", filepath.Join(x.tmp, "three"))
 	stop = use(filepath.Join(x.tmp, "three"))
 	if err := x.check(); err != nil {

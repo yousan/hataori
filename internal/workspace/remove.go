@@ -1981,15 +1981,18 @@ func (c *checker) contents() (map[fileID]inside, error) {
 		if err == nil {
 			err = c.ctx.Err()
 		}
-		if err != nil {
-			return c.unreadable(p, err)
+		var st fs.FileInfo
+		if err == nil {
+			st, err = d.Info()
 		}
-		st, err := d.Info()
+		rel, _ := filepath.Rel(c.top, p)
+		if errors.Is(err, fs.ErrNotExist) {
+			return &Refusal{Reason: UnknownUse, Detail: rel + " went while the workspace was read"}
+		}
 		if err != nil {
 			return c.unreadable(p, err)
 		}
 		id, links := fileIDOf(st)
-		rel, _ := filepath.Rel(c.top, p)
 		in[id] = inside{rel: rel, dir: d.IsDir(), links: links, names: in[id].names + 1}
 		return nil
 	})
@@ -2005,7 +2008,7 @@ type inside struct {
 }
 
 // all is whether the workspace has all its names. A file with one outside, a
-// hard link, may be open under that one, and is there without the workspace.
+// hard link, may be open under that one, as of a package store.
 func (i inside) all() bool { return i.dir || i.names >= i.links }
 
 // openFile is a file that lsof reports, with the fields as it prints them.
