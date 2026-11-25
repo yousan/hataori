@@ -703,6 +703,153 @@ func TestRefusePseudoRefWithAnObjectThatCannotBeRead(t *testing.T) {
 	}
 }
 
+// A ref names more than commits.
+func TestRefuseRefToWhatIsNoCommit(t *testing.T) {
+	tree := func(x *removal) string {
+		x.write("a", "work\n")
+		x.git(x.clone, "add", "a")
+		defer x.git(x.clone, "reset", "-q", "--hard")
+		return x.git(x.clone, "write-tree")
+	}
+	blob := func(x *removal) string {
+		p := filepath.Join(x.tmp, "blob")
+		if err := os.WriteFile(p, []byte("work\n"), 0o600); err != nil {
+			x.t.Fatal(err)
+		}
+		return x.git(x.clone, "hash-object", "-w", p)
+	}
+	for name, tc := range map[string]struct {
+		kind string
+		make func(x *removal)
+	}{
+		"annotated tag": {"tag", func(x *removal) { x.git(x.clone, "tag", "-a", "-m", "notes written here", "v1") }},
+		"tag of a tag": {"tag", func(x *removal) {
+			x.git(x.clone, "tag", "-a", "-m", "pushed", "v1")
+			x.git(x.clone, "push", "-q", "origin", "v1")
+			x.git(x.clone, "tag", "-a", "-m", "notes written here", "v2", "v1")
+		}},
+		"tag of a tree": {"tree", func(x *removal) { x.git(x.clone, "tag", "t", tree(x)) }},
+		"tag of a blob": {"blob", func(x *removal) { x.git(x.clone, "tag", "t", blob(x)) }},
+		"annotated tag of a tree": {"tag", func(x *removal) {
+			x.git(x.clone, "tag", "-a", "-m", "t", "t", tree(x))
+		}},
+		"ref outside refs/tags": {"tree", func(x *removal) { x.git(x.clone, "update-ref", "refs/work", tree(x)) }},
+		"tag in FETCH_HEAD": {"tag", func(x *removal) {
+			x.git(x.clone, "tag", "-a", "-m", "notes written here", "v1")
+			x.git(x.clone, "fetch", "-q", ".", "tag", "v1")
+			x.git(x.clone, "tag", "-d", "v1")
+		}},
+		"tag that only a reflog names": {"tag", func(x *removal) {
+			x.git(x.clone, "config", "core.logAllRefUpdates", "always")
+			x.git(x.clone, "tag", "-a", "-m", "notes written here", "v1")
+			x.git(x.clone, "tag", "-f", "v1", "HEAD")
+		}},
+		"tag moved since it was pushed": {"tag", func(x *removal) {
+			x.git(x.clone, "tag", "-a", "-m", "pushed", "v1")
+			x.git(x.clone, "push", "-q", "origin", "v1")
+			x.git(x.clone, "tag", "-f", "-a", "-m", "notes written here", "v1")
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			x := newRemoval(t)
+			tc.make(x)
+			err := x.check()
+			wantRefusal(t, err, OtherObject, "")
+			if d := err.(*Refusal).Detail; !strings.HasPrefix(d, tc.kind+" ") {
+				t.Fatal(d)
+			}
+		})
+	}
+}
+
+func TestRemovableWithTagsTheRemoteHas(t *testing.T) {
+	x := newRemoval(t)
+	p := filepath.Join(x.tmp, "blob")
+	if err := os.WriteFile(p, []byte("work\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	x.git(x.clone, "tag", "light")
+	x.git(x.clone, "tag", "-a", "-m", "m", "v1")
+	x.git(x.clone, "tag", "-a", "-m", "m", "v2", "v1")
+	x.git(x.clone, "tag", "tree", "HEAD^{tree}")
+	x.git(x.clone, "tag", "blob", x.git(x.clone, "hash-object", "-w", p))
+	x.git(x.clone, "push", "-q", "--tags", "origin")
+	// The remote has the tag by another name, or within another tag.
+	x.git(x.clone, "tag", "alias", "v1")
+	x.git(x.clone, "push", "-q", "origin", ":refs/tags/v1")
+	x.git(x.clone, "fetch", "-q", "--tags", "origin")
+	if err := x.check(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A tree or blob of a commit that the remote has, however old.
+func TestRemovableWithTreesAndBlobsOfCommitsTheRemoteHas(t *testing.T) {
+	x := newRemoval(t)
+	x.git(x.clone, "checkout", "-q", "-b", "side")
+	x.commit(x.clone, "s")
+	x.git(x.clone, "checkout", "-q", "main")
+	x.commit(x.clone, "m")
+	x.git(x.clone, "cherry-pick", "side")
+	if _, err := os.Stat(filepath.Join(x.clone, ".git", "AUTO_MERGE")); err != nil {
+		t.Log("this git leaves no AUTO_MERGE")
+	}
+	x.git(x.clone, "branch", "-q", "-D", "side")
+	x.git(x.clone, "tag", "t", "HEAD~1^{tree}")
+	x.git(x.clone, "tag", "b", "HEAD:m")
+	for _, name := range []string{"n", "o"} {
+		x.commit(x.clone, name)
+	}
+	x.git(x.clone, "rm", "-q", "m")
+	x.git(x.clone, "commit", "-q", "-m", "rm")
+	x.git(x.clone, "push", "-q", "origin", "main")
+	x.git(x.clone, "reflog", "expire", "--expire=now", "--all")
+	if err := x.check(); err != nil {
+		t.Fatal(err)
+	}
+	// The remote is ahead of the clone.
+	other := filepath.Join(x.tmp, "other")
+	x.git(x.tmp, "clone", "-q", x.bare, other)
+	x.commit(other, "p")
+	x.git(other, "push", "-q", "origin", "main")
+	if err := x.check(); err != nil {
+		t.Fatal(err)
+	}
+	blob := filepath.Join(x.tmp, "blob")
+	if err := os.WriteFile(blob, []byte("work\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	id := x.git(x.clone, "hash-object", "-w", blob)
+	x.git(x.clone, "tag", "w", id)
+	wantRefusal(t, x.check(), OtherObject, "")
+	if d := x.check().(*Refusal).Detail; d != "blob "+id {
+		t.Fatal(d)
+	}
+}
+
+func TestRefuseRefToABlobInARepositoryWithNoCommit(t *testing.T) {
+	x := newRemoval(t)
+	dir := filepath.Join(x.clone, ".git", "n")
+	x.git(x.tmp, "init", "-q", "--bare", "-b", "main", dir)
+	blob := filepath.Join(x.tmp, "blob")
+	if err := os.WriteFile(blob, []byte("work\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	x.git(dir, "tag", "w", x.git(dir, "hash-object", "-w", blob))
+	wantRefusal(t, x.check(), OtherObject, filepath.Join(".git", "n"))
+}
+
+// What is on a remote that does not count is on none.
+func TestRefuseTagOnARemoteThatDoesNotCount(t *testing.T) {
+	x := newRemoval(t)
+	other := filepath.Join(x.root, Dir, "c", "s", "other")
+	x.git(x.tmp, "clone", "-q", "--bare", x.bare, other)
+	x.git(x.clone, "remote", "add", "other", other)
+	x.git(x.clone, "tag", "-a", "-m", "m", "v1")
+	x.git(x.clone, "push", "-q", "other", "v1")
+	wantRefusal(t, x.check(), RemoteIsLocal, "")
+}
+
 // The remote-tracking ref says the commit is pushed; the remote no longer
 // has it.
 func TestRefuseCommitTheRemoteNoLongerHas(t *testing.T) {

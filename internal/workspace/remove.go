@@ -61,6 +61,7 @@ const (
 	RemoteGone    Reason = "commit the remote no longer has"
 	OtherRef      Reason = "unpushed commit on a ref"
 	ReflogOnly    Reason = "commit only in a reflog"
+	OtherObject   Reason = "unpushed tag, tree or blob"
 	Stopped       Reason = "stopped rebase, am, cherry-pick or revert"
 	RemoteIsLocal Reason = "remote is another workspace"
 	RemoteInRoot  Reason = "remote under a hataori root"
@@ -1253,12 +1254,17 @@ func (c *checker) commits(g *reader, rp repo) error {
 	local.env = append(append([]string(nil), g.env...), "GIT_ALTERNATE_OBJECT_DIRECTORIES="+filepath.Join(scratch, "objects"))
 	// The ids are given with the remotes' commits: they may be too many for
 	// arguments.
-	unpushed := func(ids []string, revs ...string) (string, error) {
+	list := func(how string, ids []string, revs ...string) (string, error) {
 		stdin := tips
 		for _, id := range ids {
 			stdin += id + "\n"
 		}
-		return local.input(c.ctx, stdin, append([]string{"rev-list", "-n1"}, append(revs, "--stdin")...)...)
+		out, _, err := local.inputAll(c.ctx, stdin, append([]string{"rev-list", how, "--no-object-names", "--stdin"}, revs...)...)
+		return out, err
+	}
+	unpushed := func(ids []string, revs ...string) (string, error) {
+		out, err := list("-n1", ids, revs...)
+		return strings.TrimSpace(out), err
 	}
 	// HEAD and the other pseudo-refs are named: without a reflog, a
 	// detached HEAD or ORIG_HEAD is on no ref.
@@ -1274,12 +1280,40 @@ func (c *checker) commits(g *reader, rp repo) error {
 	if err != nil {
 		return err
 	}
-	first, err := unpushed(named, append(append([]string{"--all", "--reflog"}, pseudo...), autostash...)...)
+	everything := append(append([]string{"--all", "--reflog"}, pseudo...), autostash...)
+	first, err := unpushed(named, everything...)
 	if err != nil {
 		return err
 	}
 	if first == "" {
-		return c.stopped(g, rp)
+		// With no such commit, what is listed is an annotated tag, or a tree
+		// or blob that something names.
+		out, err := list("--objects", named, everything...)
+		if err != nil {
+			return err
+		}
+		objects := strings.Fields(out)
+		if len(objects) > 0 {
+			// git does not know each tree and blob of the remotes' commits here.
+			theirs, err := local.listed(c.ctx, objects, strings.ReplaceAll(tips, "^", ""))
+			if err != nil {
+				return err
+			}
+			objects = slices.DeleteFunc(objects, func(id string) bool { return theirs[id] })
+		}
+		if len(objects) == 0 {
+			return c.stopped(g, rp)
+		}
+		object := objects[0]
+		kind, err := g.line(c.ctx, "cat-file", "-t", object)
+		if err != nil {
+			return err
+		}
+		if skipped != nil {
+			skipped.Detail += "; " + kind + " " + object + " is on no other remote"
+			return skipped
+		}
+		return c.refuse(rp, OtherObject, kind+" "+object)
 	}
 	if skipped != nil {
 		skipped.Detail += "; commit " + first + " is on no other remote"
@@ -1584,9 +1618,9 @@ func (c *checker) emptyTree() (string, error) {
 
 // ask fetches every ref of each remote into a scratch repository of its
 // own, under the instance's state, that borrows the repository's objects
-// so that only what it lacks is downloaded. It returns one "^<commit>"
-// line per commit a remote ref names, and the scratch repository, which
-// the caller removes.
+// so that only what it lacks is downloaded. It returns one "^<object>" line
+// per object a remote ref names, and the scratch repository, which the
+// caller removes.
 func (c *checker) ask(g *reader, rp repo, urls []string) (tips, scratch string, rewritten *Refusal, err error) {
 	objects, err := g.gitPath(c.ctx, "objects")
 	if err != nil {
@@ -1633,19 +1667,13 @@ func (c *checker) ask(g *reader, rp repo, urls []string) (tips, scratch string, 
 			return "", scratch, nil, err
 		}
 	}
-	out, _, err := s.run(c.ctx, "for-each-ref", "--format=%(objectname) %(objecttype) %(*objectname) %(*objecttype)")
+	out, _, err := s.run(c.ctx, "for-each-ref", "--format=%(objectname)")
 	if err != nil {
 		return "", scratch, nil, err
 	}
 	var list strings.Builder
-	for _, l := range strings.Split(string(out), "\n") {
-		f := strings.Fields(l)
-		switch {
-		case len(f) >= 2 && f[1] == "commit":
-			fmt.Fprintf(&list, "^%s\n", f[0])
-		case len(f) == 4 && f[3] == "commit":
-			fmt.Fprintf(&list, "^%s\n", f[2])
-		}
+	for _, id := range strings.Fields(string(out)) {
+		fmt.Fprintf(&list, "^%s\n", id) // of a tag, what it names as well
 	}
 	return list.String(), scratch, rewritten, nil
 }
@@ -2420,16 +2448,6 @@ func lsofName(p string) (name string, ok bool) {
 	return b.String(), true
 }
 
-// input runs git with stdin and returns its output's first line, or "".
-func (g reader) input(ctx context.Context, stdin string, args ...string) (string, error) {
-	out, _, err := g.inputAll(ctx, stdin, args...)
-	if err != nil {
-		return "", err
-	}
-	first, _, _ := strings.Cut(strings.TrimSpace(out), "\n")
-	return first, nil
-}
-
 // inputAll runs git with stdin and returns what it printed.
 func (g reader) inputAll(ctx context.Context, stdin string, args ...string) (out, errs string, err error) {
 	full := append(append([]string{"-C", g.dir, "-c", "core.fsmonitor=false"}, g.extra...), args...)
@@ -2442,4 +2460,41 @@ func (g reader) inputAll(ctx context.Context, stdin string, args ...string) (out
 		return "", "", fmt.Errorf("workspace: git %s: %s", args[0], lastLines(redact(stderr.String()), 3, redactErr(err)))
 	}
 	return stdout.String(), stderr.String(), nil
+}
+
+// listed are those of the ids that what stdin names reaches.
+func (g reader) listed(ctx context.Context, ids []string, stdin string) (map[string]bool, error) {
+	wanted := map[string]bool{}
+	for _, id := range ids {
+		wanted[id] = true
+	}
+	// The list may be long, and only some of it is kept.
+	cmd := gitCommand(ctx, append(append([]string{"-C", g.dir, "-c", "core.fsmonitor=false"}, g.extra...),
+		"rev-list", "--objects", "--no-object-names", "--stdin")...)
+	cmd.Env = g.env
+	cmd.Stdin = strings.NewReader(stdin)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	stdout, err := cmd.StdoutPipe()
+	if err == nil {
+		err = cmd.Start()
+	}
+	if err != nil {
+		return nil, fmt.Errorf("workspace: git rev-list: %w", err)
+	}
+	found := map[string]bool{}
+	lines := bufio.NewScanner(stdout)
+	for lines.Scan() {
+		if id := lines.Text(); wanted[id] {
+			found[id] = true
+		}
+	}
+	err = lines.Err()
+	if werr := cmd.Wait(); err == nil {
+		err = werr
+	}
+	if err != nil {
+		return nil, fmt.Errorf("workspace: git rev-list: %s", lastLines(redact(stderr.String()), 3, redactErr(err)))
+	}
+	return found, nil
 }
