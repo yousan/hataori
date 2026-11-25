@@ -743,7 +743,7 @@ func (c *checker) run() error {
 	// its common directory, which may be a repository only with it, name.
 	if len(c.parts) > 0 {
 		r := &Refusal{Reason: Worktree, Detail: "a git directory with a commondir"}
-		if rel, _ := filepath.Rel(c.top, c.parts[0]); rel != ".git" {
+		if rel, _ := filepath.Rel(c.top, c.parts[0]); rel != ".git" && rel != "." {
 			r.Repo, r.Kind = rel, "nested bare repository"
 		}
 		return r
@@ -776,7 +776,7 @@ func (c *checker) find() ([]repo, error) {
 			return c.unreadable(p, err)
 		}
 		if p == c.top {
-			return nil
+			return c.part(p, nil)
 		}
 		dir := filepath.Dir(p)
 		rel, _ := filepath.Rel(c.top, dir)
@@ -1172,8 +1172,26 @@ func (c *checker) leftover(g *reader, rp repo) error {
 	return c.worktrees(g, rp)
 }
 
-// worktrees refuses a linked worktree, whose files are elsewhere.
+// worktrees refuses a linked worktree, whose files are elsewhere, and a
+// repository with a common directory: find does not see one whose git
+// directory is outside the workspace, behind a .git that is a link or a file.
 func (c *checker) worktrees(g *reader, rp repo) error {
+	var dirs [2]string
+	for i, arg := range []string{"--absolute-git-dir", "--git-common-dir"} {
+		dir, err := g.line(c.ctx, "rev-parse", arg)
+		if err != nil {
+			return err
+		}
+		if !filepath.IsAbs(dir) {
+			dir = filepath.Join(g.dir, dir)
+		}
+		if dirs[i], err = filepath.EvalSymlinks(dir); err != nil {
+			return c.unreadable(dir, err)
+		}
+	}
+	if dirs[0] != dirs[1] {
+		return c.refuse(rp, Worktree, "a git directory with a commondir")
+	}
 	worktrees, err := g.gitPath(c.ctx, "worktrees")
 	if err != nil {
 		return err

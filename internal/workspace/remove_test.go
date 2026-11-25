@@ -1818,6 +1818,68 @@ func TestRefuseRepositoryWithACommonDirectory(t *testing.T) {
 	}
 }
 
+// The git directory may be outside the workspace, and what its common directory
+// has in it.
+func TestRefuseCommonDirectoryOfAGitDirectoryElsewhere(t *testing.T) {
+	for _, name := range []string{"link", "file"} {
+		t.Run(name, func(t *testing.T) {
+			x := newRemoval(t)
+			dir, gd := filepath.Join(x.clone, ".git"), filepath.Join(x.tmp, "gd")
+			work := x.git(x.clone, "commit-tree", "-m", "w", "HEAD^{tree}")
+			x.write(".git/info/exclude", "/store/\n")
+			store := filepath.Join(x.clone, "store")
+			if err := errors.Join(os.Rename(dir, gd), os.Mkdir(store, 0o700)); err != nil {
+				t.Fatal(err)
+			}
+			if name == "link" {
+				if err := os.Symlink(gd, dir); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(dir, []byte("gitdir: "+gd+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			for _, e := range []string{"objects", "refs", "packed-refs", "config", "info"} {
+				if err := os.Rename(filepath.Join(gd, e), filepath.Join(store, e)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(gd, "commondir"), []byte(store+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(gd, "packed-refs"), []byte("# pack-refs with: peeled fully-peeled sorted \n"+work+" refs/heads/private\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got := x.git(x.clone, "cat-file", "-t", work); got != "commit" {
+				t.Fatal(got)
+			}
+			x.r.Disposable = []string{"store"}
+			wantRefusal(t, x.check(), Worktree, "")
+		})
+	}
+}
+
+// The workspace itself may be such a directory, beside its .git.
+func TestRefuseWorkspaceWithACommonDirectory(t *testing.T) {
+	x := newRemoval(t)
+	store := filepath.Join(x.clone, ".git", "store")
+	x.git(x.tmp, "clone", "-q", "--bare", x.bare, store)
+	id := x.git(x.clone, "commit-tree", "-m", "w", "HEAD^{tree}")
+	x.git(x.clone, "push", "-q", store, id+":refs/heads/wip")
+	x.git(x.clone, "checkout", "-q", "--orphan", "none")
+	x.git(x.clone, "rm", "-rfq", ".")
+	x.write(".git/info/exclude", "/HEAD\n/commondir\n")
+	x.write("commondir", ".git/store\n")
+	if err := os.Rename(filepath.Join(store, "HEAD"), filepath.Join(x.clone, "HEAD")); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(filepath.Join(x.clone, ".git", "objects", id[:2], id[2:]))
+	if got := x.git(x.clone, "--git-dir=.", "rev-parse", "wip"); got != id {
+		t.Fatal(got)
+	}
+	x.r.Disposable = []string{"HEAD", "commondir"}
+	wantRefusal(t, x.check(), Worktree, "")
+}
+
 func TestRefuseCommonDirectoryThatIsALinkToNothing(t *testing.T) {
 	x := newRemoval(t)
 	if err := os.Mkdir(filepath.Join(x.clone, ".git", "n"), 0o700); err != nil {
