@@ -40,13 +40,16 @@ import (
 // Tick after pasteSettle; and while the box still shows the text, Enter is
 // pressed again.
 
-// trustHeader is the dialog's text above its choices, with the workspace's
-// path in place of %s, its lines joined by single spaces.
-// The line naming files, if any, comes between %s and "Security guide".
+// trustHeader is the start of the dialog's text, with the workspace's path in
+// place of %s, its lines joined by single spaces. Warnings and the line
+// naming files, if any, come between it and trustGuide, the last line above
+// the choices.
 const trustHeader = "Accessing workspace: %s Quick safety check: Is this a project you created or one you trust? " +
 	"(Like your own code, a well-known open source project, or work from your team). If not, " +
 	"take a moment to review what's in this folder first. " +
-	"Claude Code'll be able to read, edit, and execute files here.%s Security guide"
+	"Claude Code'll be able to read, edit, and execute files here."
+
+const trustGuide = "Security guide"
 
 // The line of the dialog that names the files trusting the folder loads,
 // as 2.1.328 writes it: "Trusting this folder loads .claude/settings.json.",
@@ -57,9 +60,9 @@ const loadsPrefix = "Trusting this folder loads "
 
 // loadsNotes is what that line is known to say of a file, between its name
 // and the line's full stop (testdata/2.1.328/trust_files_*, 2.1.329/
-// trust_hooks_*, 2.1.332/trust_files_env). Only these are taken off (#730): the dialog's words are
-// joined, so any other text there may as well be something the dialog draws
-// below the line.
+// trust_hooks_*, 2.1.332/trust_files_env). Only these are taken off (#730):
+// the dialog's words are joined, so any other text there may as well be
+// something the dialog draws below the line.
 var loadsNotes = []string{
 	" (runs commands and sets environment variables)",
 	" (runs commands)",
@@ -67,25 +70,33 @@ var loadsNotes = []string{
 	" here or above (MCP servers)",
 }
 
-// hooksWarning starts the line 2.1.329 draws above the one naming the
-// files when the project settings declare hooks, followed by the files
-// that declare them: "⚠ This folder configures hooks that can run commands
-// without asking, declared in .claude/settings.json" (#592,
-// testdata/2.1.329/trust_hooks_*). Only this warning and permissionsWarning
-// are known, and only one of them at a time; any other line there leaves
-// the dialog unanswered.
-const hooksWarning = "⚠ This folder configures hooks that can run commands without asking, declared in "
+// The warnings the dialog draws above the line naming the files, in this
+// order, and permissionsEnd below the first two (#592, #596, #752,
+// testdata/2.1.329/trust_hooks_*, 2.1.331/trust_permissions_*, 2.1.332/
+// trust_warnings_*):
+//
+//	⚠ This folder pre-approves 1 tool permission in .claude/settings.json:
+//	  Bash(ls:*)
+//	⚠ This folder adds 1 directory to the workspace in .claude/settings.json:
+//	  /etc
+//	These will apply without asking. Only proceed if you trust this configuration.
+//	⚠ This folder configures hooks that can run commands without asking, declared in .claude/settings.json
+//
+// Each names the files that declare what it warns of. The rules and the
+// directories are the repository's own text, which the codec does not read.
+// The CLI writes a warning in bold, and not the rules, the directories, the
+// sentence and the line naming the files: that tells its next warning from a
+// rule that looks like one. The indent does not: a wrapped rule goes on at
+// the margin. Any other warning or order is a dialog the codec does not know.
+const (
+	hooksWarning   = "⚠ This folder configures hooks that can run commands without asking, declared in "
+	permissionsEnd = "These will apply without asking. Only proceed if you trust this configuration."
+)
 
-// permissionsWarning is the warning 2.1.329 draws in the same place when the
-// project settings allow tools (#596, testdata/2.1.329/trust_permissions,
-// 2.1.331/trust_permissions_*), with the dialog's words joined by single
-// spaces: how many, the files that allow them, the rules, and a sentence.
-// The rules are the repository's own text, which the codec does not read:
-// see permissionsDeclared for what they may not hold.
-var permissionsWarning = regexp.MustCompile(`^⚠ This folder pre-approves (?:1 tool permission|[0-9]+ tool permissions) in ([^:]+): (.+) ` +
-	regexp.QuoteMeta(permissionsEnd) + `$`)
-
-const permissionsEnd = "These will apply without asking. Only proceed if you trust this configuration."
+var (
+	permissionsWarning = regexp.MustCompile(`^⚠ This folder pre-approves (?:1 tool permission|[0-9]+ tool permissions) in ([^:]+):$`)
+	dirsWarning        = regexp.MustCompile(`^⚠ This folder adds (?:1 directory|[0-9]+ directories) to the workspace in ([^:]+):$`)
+)
 
 // fullscreenNotices are the lines 2.1.331 prints above the dialog, before it
 // draws anything, when a start with the full-screen interface did not
@@ -142,11 +153,12 @@ const (
 // the line the cursor is on and the line that says yes, counted among the
 // choices, and the files the dialog says trusting the folder loads, if it
 // names any. ok is false when the screen is anything else.
-func trustDialog(screen []string, dir string) (cursor, yes int, files []string, ok bool) {
-	lines, ok := belowNotice(trimLines(screen))
+func trustDialog(screen []screenLine, dir string) (cursor, yes int, files []string, ok bool) {
+	raw, ok := belowNotice(trimBlank(screen))
 	if !ok {
 		return 0, 0, nil, false
 	}
+	lines := trimLines(lineTexts(raw)) // the same lines: raw has no blank ones at its ends
 	footer := -1
 	for i, l := range lines {
 		if l == trustFooter {
@@ -192,15 +204,13 @@ func trustDialog(screen []string, dir string) (cursor, yes int, files []string, 
 	if yes < 0 || choices[0] == choices[1] {
 		return 0, 0, nil, false
 	}
-	// The text above the choices: a top rule, then the header.
-	var words []string
-	for i, l := range lines[:start] {
-		if i == 0 && isRule(l) {
-			continue
-		}
-		words = append(words, strings.Fields(l)...)
+	// The text above the choices: a top rule, then the header and what it
+	// says of the folder.
+	top := raw[:start]
+	if len(top) > 0 && isRule(lines[0]) {
+		top = top[1:]
 	}
-	files, ok = headerMatches(strings.Join(words, " "), dir)
+	files, ok = dialogFiles(top, dir)
 	if !ok {
 		return 0, 0, nil, false
 	}
@@ -214,53 +224,45 @@ func isRule(line string) bool {
 }
 
 // belowNotice drops one of fullscreenNotices from the top of the screen's
-// trimmed lines. ok is false when anything but the dialog's top rule follows it.
-func belowNotice(lines []string) (below []string, ok bool) {
-	if len(lines) == 0 || !slices.Contains(fullscreenNotices, lines[0]) {
+// lines. ok is false when anything but the dialog's top rule follows it.
+func belowNotice(lines []screenLine) (below []screenLine, ok bool) {
+	if len(lines) == 0 || !slices.Contains(fullscreenNotices, strings.TrimSpace(lines[0].text)) {
 		return lines, true
 	}
-	below = trimLines(lines[1:])
-	return below, len(below) > 0 && isRule(below[0])
+	below = trimBlank(lines[1:])
+	return below, len(below) > 0 && isRule(strings.TrimSpace(below[0].text))
 }
 
-// headerMatches reports whether text is the dialog's header for the
-// workspace dir, and returns the files its line about them names. The path
-// may be wrapped, so it is compared without spaces.
-func headerMatches(text, dir string) ([]string, bool) {
-	parts := strings.Split(trustHeader, "%s")
-	if len(parts) != 3 || dir == "" || !strings.HasPrefix(text, parts[0]) {
+// dialogFiles reads the dialog's lines between its top rule and its
+// choices, and returns the files its line about them names, if any. ok is
+// false when they are not the dialog for the workspace dir.
+func dialogFiles(lines []screenLine, dir string) (files []string, ok bool) {
+	about := 0
+	for i := range lines {
+		if headerMatches(joined(lineTexts(lines[:i+1])), dir) {
+			about = i + 1
+			break
+		}
+	}
+	if about == 0 {
 		return nil, false
 	}
-	path, rest, ok := strings.Cut(text[len(parts[0]):], parts[1])
-	nospace := func(s string) string { return strings.Join(strings.Fields(s), "") }
-	if !ok || nospace(path) != nospace(dir) {
-		return nil, false
-	}
-	loads, ok := strings.CutSuffix(rest, parts[2])
+	passages, ok := passagesOf(lines[about:])
 	if !ok {
 		return nil, false
 	}
-	if loads == "" {
-		return nil, true
+	declared, passages, ok := warnings(passages)
+	if !ok || len(passages) != 1 {
+		return nil, false
 	}
-	loads = strings.TrimPrefix(loads, " ")
-	var declared []string
-	if rest, ok := strings.CutPrefix(loads, hooksWarning); ok {
-		list, line, ok := strings.Cut(rest, " "+loadsPrefix)
-		if !ok {
-			return nil, false
-		}
-		if declared = fileList(list); declared == nil {
-			return nil, false
-		}
-		loads = loadsPrefix + line
+	if passages[0].text == trustGuide {
+		return nil, len(declared) == 0
 	}
-	if strings.HasPrefix(loads, "⚠") {
-		if declared, loads, ok = permissionsDeclared(loads); !ok {
-			return nil, false
-		}
+	line, ok := strings.CutSuffix(passages[0].text, " "+trustGuide)
+	if !ok {
+		return nil, false
 	}
-	files := loadedFiles(loads)
+	files = loadedFiles(line)
 	for _, f := range declared {
 		if !slices.Contains(files, f) {
 			return nil, false // a warning about a file the dialog does not load
@@ -269,24 +271,87 @@ func headerMatches(text, dir string) ([]string, bool) {
 	return files, files != nil
 }
 
-// permissionsDeclared reads the text below the dialog's question as
-// permissionsWarning and the line naming the files: the files the warning
-// names, and that line. The rules may hold anything the repository writes,
-// also a line like the dialog's own. So the line naming the files is the
-// last that looks like it, right below the warning's sentence, and rules
-// that hold a warning sign or that sentence are not read: another warning
-// of the CLI's must not pass for a rule.
-func permissionsDeclared(text string) (declared []string, loads string, ok bool) {
-	i := strings.LastIndex(text, " "+loadsPrefix)
-	if i < 0 {
-		return nil, "", false
+// headerMatches reports whether text is the dialog's header for the
+// workspace dir. The path may be wrapped, so it is compared without spaces.
+func headerMatches(text, dir string) bool {
+	parts := strings.Split(trustHeader, "%s")
+	if len(parts) != 2 || dir == "" {
+		return false
 	}
-	m := permissionsWarning.FindStringSubmatch(text[:i])
-	if m == nil || strings.Contains(m[2], "⚠") || strings.Contains(m[2], permissionsEnd) {
-		return nil, "", false
+	path, ok := strings.CutPrefix(text, parts[0])
+	if !ok {
+		return false
 	}
-	declared = fileList(m[1])
-	return declared, text[i+1:], declared != nil
+	path, ok = strings.CutSuffix(path, parts[1])
+	nospace := func(s string) string { return strings.Join(strings.Fields(s), "") }
+	return ok && nospace(path) == nospace(dir)
+}
+
+// A passage is what stands between two changes of weight below the dialog's
+// header: lines in bold or not, their words joined by single spaces.
+type passage struct {
+	bold bool
+	text string
+}
+
+// passagesOf joins lines into passages. ok is false when a line is bold in part.
+func passagesOf(lines []screenLine) (passages []passage, ok bool) {
+	for _, l := range lines {
+		text := joined([]string{l.text})
+		switch n := len(passages); {
+		case text == "":
+		case l.weight == mixed:
+			return nil, false
+		case n > 0 && passages[n-1].bold == (l.weight == bold):
+			passages[n-1].text += " " + text
+		default:
+			passages = append(passages, passage{l.weight == bold, text})
+		}
+	}
+	return passages, true
+}
+
+// warnings reads the warnings the passages below the dialog's header start
+// with, in the CLI's order: the files they name, and the passages below them.
+// A rule or a directory that holds a warning sign is not read: the dialog
+// quoted to a person is not in bold, and would not tell it from a warning.
+func warnings(passages []passage) (declared []string, below []passage, ok bool) {
+	ended := false // permissionsEnd was read
+	for _, w := range []*regexp.Regexp{permissionsWarning, dirsWarning} {
+		if ended || len(passages) < 2 || !passages[0].bold {
+			continue
+		}
+		m := w.FindStringSubmatch(passages[0].text)
+		if m == nil {
+			continue
+		}
+		files := fileList(m[1])
+		list, rest, found := strings.Cut(passages[1].text, permissionsEnd)
+		if files == nil || strings.TrimSpace(list) == "" || strings.Contains(list, "⚠") {
+			return nil, nil, false
+		}
+		declared, passages, ended = append(declared, files...), passages[2:], found
+		if rest = strings.TrimSpace(rest); rest != "" {
+			passages = append([]passage{{text: rest}}, passages...)
+		}
+	}
+	if ended != (len(declared) > 0) {
+		return nil, nil, false
+	}
+	if len(passages) > 0 && passages[0].bold {
+		list, found := strings.CutPrefix(passages[0].text, hooksWarning)
+		files := fileList(list)
+		if !found || files == nil {
+			return nil, nil, false
+		}
+		declared, passages = append(declared, files...), passages[1:]
+	}
+	return declared, passages, true
+}
+
+// joined joins the words of lines by single spaces.
+func joined(lines []string) string {
+	return strings.Join(strings.Fields(strings.Join(lines, " ")), " ")
 }
 
 // loadedFiles reads the dialog's line about the files trusting the folder
@@ -340,6 +405,17 @@ func trimLines(screen []string) []string {
 	return out
 }
 
+// trimBlank drops the blank lines at the start and the end.
+func trimBlank(lines []screenLine) []screenLine {
+	for len(lines) > 0 && strings.TrimSpace(lines[0].text) == "" {
+		lines = lines[1:]
+	}
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1].text) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
+}
+
 // inertModes are the private modes the CLI sets that change nothing shown:
 // the cursor's visibility and blinking, mouse and focus reports, bracketed
 // paste and theme reports (seen: 25, 1000, 1002, 1003, 1004, 1006, 1016,
@@ -374,6 +450,56 @@ func inertSGR(params string) bool {
 	return true
 }
 
+// boldAfter reports whether text is bold after a graphic rendition, given
+// whether it was before.
+func boldAfter(was bool, params string) bool {
+	ps := strings.Split(params, ";")
+	for i := 0; i < len(ps); i++ {
+		switch ps[i] {
+		case "", "0", "22":
+			was = false
+		case "1":
+			was = true
+		case "38", "48", "58": // as in inertSGR
+			if i+1 < len(ps) && ps[i+1] == "5" {
+				i += 2
+			} else if i+1 < len(ps) && ps[i+1] == "2" {
+				i += 4
+			}
+		}
+	}
+	return was
+}
+
+// A screenLine is a line of the screen, and whether what it shows is bold.
+type screenLine struct {
+	text   string
+	weight weight
+}
+
+type weight int
+
+const (
+	plain weight = iota
+	bold
+	mixed // bold in part
+)
+
+// lineTexts returns the lines' text.
+func lineTexts(lines []screenLine) []string {
+	var out []string
+	for _, l := range lines {
+		out = append(out, l.text)
+	}
+	return out
+}
+
+// A cell is one place of the grid renderScreen draws on.
+type cell struct {
+	r    rune
+	bold bool
+}
+
 // renderScreen plays terminal output onto a grid of lines and returns them.
 // It knows only what the CLI uses to draw: text, tab, carriage return, line
 // feed, backspace, saving and restoring the cursor, and the cursor
@@ -384,26 +510,31 @@ func inertSGR(params string) bool {
 // the screen (a reset, scrolling, inserting or deleting lines or
 // characters) makes ok false: such a screen is not read. The grid has no height: it
 // grows as the cursor goes down, and a cursor position counts from its top.
-func renderScreen(b []byte) (screen []string, ok bool) {
-	var grid, mainGrid [][]rune
-	row, col := 0, 0
-	savedRow, savedCol := 0, 0
-	alt, mainRow, mainCol := false, 0, 0 // on the alternate screen; the main screen and its cursor
-	put := func(r rune) {
-		for len(grid) <= row {
-			grid = append(grid, nil)
-		}
-		for len(grid[row]) <= col {
-			grid[row] = append(grid[row], ' ')
-		}
-		grid[row][col] = r
-		col++
+func renderScreen(b []byte) (screen []screenLine, ok bool) {
+	var grid, mainGrid [][]cell
+	// The cursor, and whether what is written there is bold; the saved one;
+	// and, on the alternate screen, the main screen's.
+	type cursor struct {
+		row, col int
+		bold     bool
 	}
-	line := func() []rune {
-		for len(grid) <= row {
+	var at, saved, main cursor
+	alt := false
+	put := func(r rune) {
+		for len(grid) <= at.row {
 			grid = append(grid, nil)
 		}
-		return grid[row]
+		for len(grid[at.row]) <= at.col {
+			grid[at.row] = append(grid[at.row], cell{r: ' '})
+		}
+		grid[at.row][at.col] = cell{r, at.bold}
+		at.col++
+	}
+	line := func() []cell {
+		for len(grid) <= at.row {
+			grid = append(grid, nil)
+		}
+		return grid[at.row]
 	}
 	for i := 0; i < len(b); {
 		c := b[i]
@@ -438,10 +569,10 @@ func renderScreen(b []byte) (screen []string, ok bool) {
 						case inertModes[m]:
 						case m == altScreen && final == 'h' && !alt:
 							// The cursor saved, a blank screen of its own.
-							alt, mainGrid, mainRow, mainCol = true, grid, row, col
+							alt, mainGrid, main = true, grid, at
 							grid = nil
 						case m == altScreen && final == 'l' && alt:
-							alt, grid, row, col = false, mainGrid, mainRow, mainCol
+							alt, grid, at = false, mainGrid, main
 						default:
 							return nil, false // a clear, or a mode not known
 						}
@@ -472,42 +603,43 @@ func renderScreen(b []byte) (screen []string, ok bool) {
 				if !inertSGR(params) {
 					return nil, false
 				}
+				at.bold = boldAfter(at.bold, params)
 			case 'c', 'n':
 				// queries of the terminal
 			case 'r':
 				if params != "" {
 					return nil, false // a scrolling region
 				}
-				row, col = 0, 0 // resetting the margins homes the cursor
+				at.row, at.col = 0, 0 // resetting the margins homes the cursor
 			case 's':
-				savedRow, savedCol = row, col
+				saved = at
 			case 'u':
-				row, col = savedRow, savedCol
+				at = saved
 			case 'A':
-				row = max(0, row-n(0, 1))
+				at.row = max(0, at.row-n(0, 1))
 			case 'B':
-				row += n(0, 1)
+				at.row += n(0, 1)
 			case 'C':
-				col += n(0, 1)
+				at.col += n(0, 1)
 			case 'D':
-				col = max(0, col-n(0, 1))
+				at.col = max(0, at.col-n(0, 1))
 			case 'G':
-				col = n(0, 1) - 1
+				at.col = n(0, 1) - 1
 			case 'H', 'f':
-				row, col = n(0, 1)-1, n(1, 1)-1
+				at.row, at.col = n(0, 1)-1, n(1, 1)-1
 			case 'K':
 				l := line()
 				switch params {
 				case "", "0":
-					if col < len(l) {
-						grid[row] = l[:col]
+					if at.col < len(l) {
+						grid[at.row] = l[:at.col]
 					}
 				case "1":
-					for k := 0; k <= col && k < len(l); k++ {
-						l[k] = ' '
+					for k := 0; k <= at.col && k < len(l); k++ {
+						l[k] = cell{r: ' '}
 					}
 				case "2":
-					grid[row] = nil
+					grid[at.row] = nil
 				default:
 					return nil, false
 				}
@@ -515,10 +647,10 @@ func renderScreen(b []byte) (screen []string, ok bool) {
 				switch params {
 				case "", "0":
 					l := line()
-					if col < len(l) {
-						grid[row] = l[:col]
+					if at.col < len(l) {
+						grid[at.row] = l[:at.col]
 					}
-					grid = grid[:row+1]
+					grid = grid[:at.row+1]
 				case "2", "3":
 					grid = nil
 				default:
@@ -554,10 +686,10 @@ func renderScreen(b []byte) (screen []string, ok bool) {
 			}
 			switch b[i+1] {
 			case '7':
-				savedRow, savedCol = row, col
+				saved = at
 				i += 2
 			case '8':
-				row, col = savedRow, savedCol
+				at = saved
 				i += 2
 			case '=', '>':
 				i += 2 // keypad modes
@@ -573,16 +705,16 @@ func renderScreen(b []byte) (screen []string, ok bool) {
 				return nil, false // a reset, an index, or anything else
 			}
 		case c == '\r':
-			col = 0
+			at.col = 0
 			i++
 		case c == '\n':
-			row++
+			at.row++
 			i++
 		case c == '\b':
-			col = max(0, col-1)
+			at.col = max(0, at.col-1)
 			i++
 		case c == '\t':
-			col = (col/8 + 1) * 8
+			at.col = (at.col/8 + 1) * 8
 			i++
 		case c == 0x07:
 			i++ // the bell
@@ -603,10 +735,24 @@ func renderScreen(b []byte) (screen []string, ok bool) {
 	return gridLines(grid), true
 }
 
-func gridLines(grid [][]rune) []string {
-	out := make([]string, len(grid))
+func gridLines(grid [][]cell) []screenLine {
+	out := make([]screenLine, len(grid))
 	for i, l := range grid {
-		out[i] = string(l)
+		var text strings.Builder
+		inBold, inPlain := false, false
+		for _, c := range l {
+			text.WriteRune(c.r)
+			if c.r != ' ' {
+				inBold, inPlain = inBold || c.bold, inPlain || !c.bold
+			}
+		}
+		out[i].text = text.String()
+		switch {
+		case inBold && inPlain:
+			out[i].weight = mixed
+		case inBold:
+			out[i].weight = bold
+		}
 	}
 	return out
 }
@@ -701,7 +847,7 @@ func (c *codec) stillInBox(now time.Time) bool {
 		return false
 	}
 	screen, ok := renderScreen(s.seen)
-	return ok && boxHolds(screen, c.sent.typed)
+	return ok && boxHolds(lineTexts(screen), c.sent.typed)
 }
 
 // boxHolds reports whether the screen's input box, the last line that
@@ -767,7 +913,7 @@ func (c *codec) tickScreen(now time.Time) Actions {
 		// Not answered: the start fails now, naming what the dialog loads.
 		s.done = true
 		return c.events(agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart, Trust: files,
-			Text: blockedText(screen)})
+			Text: blockedText(lineTexts(screen))})
 	}
 	s.quiet = time.Time{} // the next key waits for the screen to change and settle again
 	switch {

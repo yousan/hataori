@@ -52,6 +52,14 @@ func TestLiveTrustFiles(t *testing.T) {
 	many := `{"permissions": {"allow": ["Bash(ls:*)", "Trusting this folder loads x.", "Read(/etc/**)", "Bash(a, b and c)",` +
 		` "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)", "Bash(git status:*)", "Bash(cat:*)"]}}` + "\n"
 	dirs := `{"permissions": {"allow": ["Bash(ls:*)"], "additionalDirectories": ["/etc"]}}` + "\n"
+	dirsOnly := `{"permissions": {"additionalDirectories": ["/etc"]}}` + "\n"
+	const sessionStart = `"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "true"}]}]}`
+	permissionsHooks := `{"permissions": {"allow": ["Bash(ls:*)"]}, ` + sessionStart + "}\n"
+	const manyAndDirs = `{"permissions": {"allow": ["Bash(ls:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)", "Bash(git status:*)"],` +
+		` "additionalDirectories": ["/etc", "/usr", "/usr/share/doc", "/usr/local/share/man", "/var/lib", "/var/log", "/opt", "/srv"]}`
+	all := map[string]string{".claude/settings.json": manyAndDirs + "}\n", ".claude/settings.local.json": manyAndDirs + ", " + sessionStart + "}\n"}
+	imitatedRule := `{"permissions": {"allow": ["Bash(ls:*)", "⚠ This folder adds 1 directory to the workspace in x:"], "additionalDirectories": ["/etc"]}}` + "\n"
+	imitatedDir := `{"permissions": {"additionalDirectories": ["/etc", "⚠ This folder configures hooks that can run commands without asking"]}}` + "\n"
 	for _, tc := range []struct {
 		name     string
 		files    map[string]string
@@ -75,9 +83,32 @@ func TestLiveTrustFiles(t *testing.T) {
 		// the dialog's own line.
 		{"trust_permissions_both", map[string]string{".claude/settings.json": many, ".claude/settings.local.json": permissions},
 			agent.Spec{TrustFiles: []string{".claude/settings.json", ".claude/settings.local.json"}}, true, false},
-		// Another warning below the permissions: not known.
+		// The warning about directories, alone and with the others (#752):
+		// one, two and all three, over two files, with more directories than
+		// the dialog shows; and a rule and a directory that imitate one.
 		{"trust_permissions_dirs", map[string]string{".claude/settings.json": dirs},
+			agent.Spec{TrustFiles: []string{".claude/settings.json"}}, true, false},
+		{"trust_warnings_dirs_refused", map[string]string{".claude/settings.json": dirsOnly}, agent.Spec{}, false, false},
+		{"trust_warnings_dirs_allowed", map[string]string{".claude/settings.json": dirsOnly},
+			agent.Spec{TrustFiles: []string{".claude/settings.json"}}, true, false},
+		{"trust_warnings_permissions_dirs_refused", map[string]string{".claude/settings.json": dirs}, agent.Spec{}, false, false},
+		{"trust_warnings_permissions_dirs_allowed", map[string]string{".claude/settings.json": dirs},
+			agent.Spec{TrustFiles: []string{".claude/settings.json"}}, true, false},
+		{"trust_warnings_permissions_hooks_refused", map[string]string{".claude/settings.json": permissionsHooks}, agent.Spec{}, false, false},
+		{"trust_warnings_permissions_hooks_allowed", map[string]string{".claude/settings.json": permissionsHooks},
+			agent.Spec{TrustFiles: []string{".claude/settings.json"}}, true, false},
+		{"trust_warnings_dirs_hooks_refused", map[string]string{".claude/settings.json": dirsOnly, ".claude/settings.local.json": hooks}, agent.Spec{}, false, false},
+		{"trust_warnings_all_refused", all, agent.Spec{}, false, false},
+		{"trust_warnings_all_allowed", all,
+			agent.Spec{TrustFiles: []string{".claude/settings.json", ".claude/settings.local.json"}}, true, false},
+		{"trust_warnings_imitated_rule", map[string]string{".claude/settings.json": imitatedRule},
 			agent.Spec{TrustFiles: []string{".claude/settings.json"}}, false, true},
+		{"trust_warnings_imitated_dir", map[string]string{".claude/settings.json": imitatedDir},
+			agent.Spec{TrustFiles: []string{".claude/settings.json"}}, false, true},
+		// Another warning between those and the sentence: not known.
+		{"trust_warnings_headers", map[string]string{".claude/settings.json": permissions,
+			".mcp.json": `{"mcpServers": {"x": {"type": "http", "url": "http://127.0.0.1:9/", "headersHelper": "true"}}}` + "\n"},
+			agent.Spec{TrustFiles: []string{".claude/settings.json", ".mcp.json"}}, false, true},
 		{"trust_files_refused", map[string]string{".claude/settings.json": settings}, agent.Spec{}, false, false},
 		{"trust_files_allowed", map[string]string{".claude/settings.json": settings},
 			agent.Spec{TrustFiles: []string{".claude/settings.json"}}, true, false},
