@@ -3,9 +3,11 @@ package runner
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
@@ -14,7 +16,8 @@ import (
 // Shut closes a failed session only while it is its thread's newest: one
 // that was replaced, as replace does when the agent cannot resume, is
 // refused, and the thread, whose new session runs, is left as it is. So is
-// an idle session whose last turn left background tasks running, and an
+// an idle session whose last turn left background tasks running, unless the
+// turn was stopped or failed longer ago than the background wait, and an
 // idle session with input or an answer no turn has reported. A closed
 // session is not closed again.
 func TestShutRefusesAReplacedSession(t *testing.T) {
@@ -59,6 +62,27 @@ func TestShutRefusesAReplacedSession(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Idle, with background tasks left running by a turn that failed just
+	// now, by one that failed longer ago than the background wait, and by
+	// one that was stopped just now.
+	now := time.Now().UnixMilli()
+	for s, turn := range map[int64]struct {
+		reason  string
+		updated int64
+	}{9: {"api_error", now}, 10: {"api_error", now - session.BackgroundWait.Milliseconds()}, 11: {session.ReasonInterrupted, now}} {
+		for _, q := range []struct {
+			sql  string
+			args []any
+		}{
+			{`INSERT INTO threads (id, scope, key, started_by, state, created_at, updated_at) VALUES (?, 's', ?, 'owner', 'idle', 0, 0)`, []any{s - 1, fmt.Sprint("t", s-1)}},
+			{`INSERT INTO sessions (id, thread_id, agent, state, created_at, updated_at) VALUES (?, ?, 'test', 'idle', 0, ?)`, []any{s, s - 1, turn.updated}},
+			{`INSERT INTO turns (session_id, started_by, started_at, ended_at, status, reason, background) VALUES (?, 'caller', 0, 1, 'failure', ?, 2)`, []any{s, turn.reason}},
+		} {
+			if _, err := st.DB.Exec(q.sql, q.args...); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	r := &Runner{Store: st, Machine: &session.Machine{Store: st}, Root: root}
 	state := func(table string, id int) string {
 		var s string
@@ -73,6 +97,14 @@ func TestShutRefusesAReplacedSession(t *testing.T) {
 	}
 	if err := r.Shut(ctx, 4, "command"); !errors.Is(err, session.ErrRefused) || state("sessions", 4) != "idle" {
 		t.Fatalf("shut of an idle session with background tasks: %v, state %s", err, state("sessions", 4))
+	}
+	if err := r.Shut(ctx, 9, "command"); !errors.Is(err, session.ErrRefused) || state("sessions", 9) != "idle" {
+		t.Fatalf("shut of an idle session whose failed turn left background tasks: %v, state %s", err, state("sessions", 9))
+	}
+	for _, s := range []int{10, 11} {
+		if err := r.Shut(ctx, int64(s), "command"); err != nil || state("sessions", s) != "closed" {
+			t.Fatalf("shut of session %d: %v, state %s", s, err, state("sessions", s))
+		}
 	}
 	for _, s := range []int{5, 6, 7} {
 		var before int

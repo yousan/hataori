@@ -152,6 +152,7 @@ type options struct {
 	dialog        string                            // the fake's start-up dialog, in the terminal form
 	confines      bool                              // the fake takes confined specs, and the runner gives them no MCP server
 	interrupt     time.Duration                     // the interrupt's grace period; 5s when zero
+	background    time.Duration                     // Runner.BackgroundWait
 }
 
 // build makes an instance's store, core and runner with the fake agent.
@@ -177,7 +178,7 @@ func build(root string, o options, log io.Writer) (*store.Store, *core.Core, *Ru
 	r := &Runner{Store: st, Machine: m, Adapters: map[string]agent.Adapter{"fake": adapter},
 		Host: host.Command{Path: os.Args[0], Args: []string{"role", "host"}}, Root: root, Log: lg,
 		Instructions: o.instructions, StartTimeout: o.startTimeout, InterruptGrace: cmp.Or(o.interrupt, 5*time.Second), Poll: cmp.Or(o.poll, 20*time.Millisecond),
-		IdlePeriod: o.idlePeriod, ContextBytes: o.contextBytes}
+		IdlePeriod: o.idlePeriod, ContextBytes: o.contextBytes, BackgroundWait: o.background}
 	if o.confines {
 		r.Confine = func(context.Context, ConfinedLaunch) (Confined, error) { return Confined{}, nil }
 	}

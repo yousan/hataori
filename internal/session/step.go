@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/control"
@@ -116,6 +117,12 @@ const (
 	// closed or removed to asleep.
 	ReasonReopen = "reopen"
 )
+
+// BackgroundWait is how long background tasks that a turn left running are
+// waited for without news of them: before a supervisor is woken for a turn
+// that completed, and before a session whose last turn did not complete may
+// be put to sleep or closed all the same.
+const BackgroundWait = time.Hour
 
 // Who started a turn.
 const (

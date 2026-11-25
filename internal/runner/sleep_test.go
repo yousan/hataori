@@ -141,12 +141,13 @@ func count(t *testing.T, st *store.Store, table string) int {
 }
 
 // A running turn, an open question and a background task each keep the
-// session awake.
+// session awake, the last one also after a turn that failed.
 func TestBusySessionStaysAwake(t *testing.T) {
 	for name, script := range map[string]string{
 		"running":    "tool wait 5s",
 		"waiting":    "ask which?",
 		"background": "background 5s\nreply started",
+		"failed":     "background 5s\nfail api_error",
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t, options{idlePeriod: 200 * time.Millisecond})
@@ -155,6 +156,47 @@ func TestBusySessionStaysAwake(t *testing.T) {
 			time.Sleep(2500 * time.Millisecond) // two idle checks past the idle period
 			if s := sessionState(t, f.st, 1); s == "asleep" || !agentAlive(t, f.root, 1) {
 				t.Fatalf("state %s, agent alive %v", s, agentAlive(t, f.root, 1))
+			}
+		})
+	}
+}
+
+// A turn that failed, or was stopped, and left background tasks whose end is
+// never learned: they keep the session awake, against the idle period and a
+// Sleep, for the background wait after its last news. Tasks that a completed
+// turn left do so without a bound.
+func TestTasksAFailedTurnLeftKeepTheSessionAwakeForTheWait(t *testing.T) {
+	const wait = 3 * time.Second
+	for name, tc := range map[string]struct {
+		script string
+		asleep bool
+	}{
+		"failed":    {"background 60s\nfail api_error", true},
+		"limit":     {"background 60s\nfail limit", true},
+		"completed": {"background 60s\nreply started", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t, options{idlePeriod: 200 * time.Millisecond, background: wait})
+			f.start(tc.script)
+			waitFor(t, "the turn's end", 15*time.Second, f.has("turn_ended", 1))
+			var ended int64
+			f.st.DB.QueryRow(`SELECT ended_at FROM turns`).Scan(&ended)
+			if slept, err := f.run.Sleep(context.Background(), thread); err != nil || slept {
+				t.Fatalf("Sleep within the wait: %v, %v", slept, err)
+			}
+			if !tc.asleep {
+				time.Sleep(wait + 2500*time.Millisecond) // two idle checks past the wait
+				if s := sessionState(t, f.st, 1); s != "idle" {
+					t.Fatalf("after the wait the session is %s, want idle", s)
+				}
+				return
+			}
+			waitFor(t, "the sleep", wait+15*time.Second, func() bool { return sessionState(t, f.st, 1) == "asleep" })
+			var slept int64
+			f.st.DB.QueryRow(`SELECT updated_at FROM sessions`).Scan(&slept)
+			if d := time.Duration(slept-ended) * time.Millisecond; d < wait {
+				t.Fatalf("asleep %v after the turn's end, want at least %v", d, wait)
 			}
 		})
 	}
