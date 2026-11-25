@@ -429,7 +429,7 @@ func TestSupervisorToolsAcrossRestartAndSleep(t *testing.T) {
 	}
 	listed := func(answer string) {
 		t.Helper()
-		if !strings.HasPrefix(answer, "mcp: 2 threads in this channel:") || !strings.Contains(answer, "#"+strconv.FormatInt(int64(work), 10)+" ") {
+		if !strings.HasPrefix(answer, "mcp: 2 open threads in this channel:") || !strings.Contains(answer, "#"+strconv.FormatInt(int64(work), 10)+" ") {
 			t.Fatalf("list_threads answered %q; want c1's two threads", answer)
 		}
 	}

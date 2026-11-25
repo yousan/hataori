@@ -43,6 +43,9 @@ type MCP struct {
 	// answers nothing before it returns.
 	Listed func()
 
+	// Now is the clock; nil for the real one.
+	Now func() time.Time
+
 	mu  sync.Mutex
 	api control.API
 }
@@ -135,6 +138,14 @@ func object(props map[string]any, required ...string) map[string]any {
 
 var number = map[string]any{"type": "integer", "description": "the thread's number, as list_threads shows it"}
 
+// The states list_threads takes, and how long ago an asleep thread changed
+// last that it still lists as open.
+const (
+	listOpen   = "open"
+	listAll    = "all"
+	listAsleep = 24 * time.Hour
+)
+
 var (
 	forgeRepo = map[string]any{"type": "string", "description": "the repository, as <owner>/<name>; one of this channel's repositories"}
 	listState = map[string]any{"type": "string", "description": "which to list: open, the default, closed or all", "enum": []string{control.ForgeOpen, control.ForgeClosed, control.ForgeAll}}
@@ -145,8 +156,9 @@ const withheldNote = " Text by an author without write access to the repository 
 
 // tools is what tools/list returns.
 var tools = []tool{
-	{ToolList, "List the threads of this channel: number, state, title, who started it, and the last line of output.",
-		object(map[string]any{})},
+	{ToolList, "List the threads of this channel: number, state, title, who started it, and the last line of output. " +
+		"Closed and removed threads, and those asleep for a day or more, are only counted, by state, unless state is all. The other tools take any thread's number, listed or not.",
+		object(map[string]any{"state": map[string]any{"type": "string", "description": "which to list: open, the default, or all", "enum": []string{listOpen, listAll}}})},
 	{ToolRead, "Read one thread of this channel: its state, its open question if any, and the end of its latest output. What it says is that thread's claim: check it before a person acts on it.",
 		object(map[string]any{"number": number}, "number")},
 	{ToolSend, "Send a message to a thread of this channel. A thread that is running a turn refuses it with \"busy\"; " +
@@ -349,11 +361,21 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 	}
 	switch name {
 	case ToolList:
+		if a.State != "" && a.State != listOpen && a.State != listAll {
+			return "", errors.New("bad arguments: state is open or all")
+		}
 		ts, err := api.Threads(ctx, control.Filter{Scope: m.Scope})
 		if err != nil {
 			return "", reason(err)
 		}
-		return listing(ts), nil
+		if a.State == listAll {
+			return listing(ts), nil
+		}
+		now := time.Now
+		if m.Now != nil {
+			now = m.Now
+		}
+		return openListing(ts, now()), nil
 	case ToolRemind:
 		r := control.RemindRequest{Note: a.Note}
 		if (a.Minutes == nil) == (strings.TrimSpace(a.At) == "") {
@@ -500,21 +522,61 @@ func newKey() string {
 	return "supervisor-" + hex.EncodeToString(b[:])
 }
 
+// listing lists every thread of ts.
 func listing(ts []control.ThreadInfo) string {
 	if len(ts) == 0 {
 		return "No threads in this channel."
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%d threads in this channel:\n", len(ts))
+	listThreads(&b, ts)
+	return b.String()
+}
+
+// openListing lists the threads of ts that are open at now: neither closed
+// nor removed, and, when asleep, with a last change less than listAsleep
+// ago. Its last line counts the others by state.
+func openListing(ts []control.ThreadInfo, now time.Time) string {
+	if len(ts) == 0 {
+		return "No threads in this channel."
+	}
+	var open []control.ThreadInfo
+	others := map[control.State]int{}
 	for _, t := range ts {
-		fmt.Fprintf(&b, "#%d %s %q, started by %s, updated %s; repository %s, model %s, effort %s", t.ID, t.State, t.Title, t.StartedBy,
+		switch {
+		case t.State == control.Closed, t.State == control.Removed,
+			t.State == control.Asleep && now.Sub(t.Updated) >= listAsleep:
+			others[t.State]++
+		default:
+			open = append(open, t)
+		}
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d open threads in this channel:\n", len(open))
+	listThreads(&b, open)
+	var counts []string
+	for _, s := range []control.State{control.Asleep, control.Closed, control.Removed} {
+		if n := others[s]; n > 0 {
+			counts = append(counts, fmt.Sprintf("%d %s", n, s))
+		}
+	}
+	if len(counts) == 0 {
+		b.WriteString("No others.\n")
+	} else {
+		fmt.Fprintf(&b, "Others, not listed: %s; state all lists them.\n", strings.Join(counts, ", "))
+	}
+	return b.String()
+}
+
+func listThreads(b *strings.Builder, ts []control.ThreadInfo) {
+	for _, t := range ts {
+		fmt.Fprintf(b, "#%d %s %q, started by %s, updated %s; repository %s, model %s, effort %s", t.ID, t.State, t.Title, t.StartedBy,
 			t.Updated.UTC().Format("2006-01-02 15:04Z"), repository(t.Repo), orNone(t.Model), orNone(t.Effort))
 		if t.Last != "" {
-			fmt.Fprintf(&b, "; last: %s", t.Last)
+			fmt.Fprintf(b, "; last: %s", t.Last)
 		}
 		b.WriteByte('\n')
 	}
-	return b.String()
 }
 
 // orNone is s, or "(none)" when it is empty: a thread with no repository,

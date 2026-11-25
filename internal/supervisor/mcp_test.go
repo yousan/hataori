@@ -10,13 +10,14 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yousan/hataori/internal/control"
 )
 
 // captured is the exchange of Claude Code with `hataori mcp`, taken by
 // testdata/capture.sh.
-const captured = "testdata/claudecode/2.1.331"
+const captured = "testdata/claudecode/2.1.331-list-state"
 
 func lines(t *testing.T, path string) []map[string]any {
 	t.Helper()
@@ -210,6 +211,99 @@ func TestReadThreadIsCapped(t *testing.T) {
 	if text, isErr := call(t, m, ToolRead, `{"number":8}`); !isErr || !strings.HasPrefix(text, "not in this scope") {
 		t.Fatalf("read_thread of a number not in the scope: %q", text)
 	}
+}
+
+// list_threads lists the open threads, counts the others by state, and lists
+// every one with state all (#796).
+func TestListThreadsListsTheOpenOnes(t *testing.T) {
+	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	api := &listAPI{}
+	for i, th := range []struct {
+		state control.State
+		ago   time.Duration
+	}{
+		{control.Running, time.Minute},
+		{control.Idle, 72 * time.Hour},
+		{control.Waiting, 72 * time.Hour},
+		{control.Failed, 72 * time.Hour},
+		{control.Closed, time.Hour},
+		{control.Removed, time.Hour},
+		{control.Asleep, time.Hour},
+		{control.Asleep, 48 * time.Hour},
+	} {
+		api.threads = append(api.threads, control.ThreadInfo{ID: control.ThreadID(i + 1), Scope: "C0123", Title: "Work", State: th.state, Updated: now.Add(-th.ago)})
+	}
+	m := &MCP{Dial: func() (control.API, error) { return api, nil }, Scope: "C0123", OutputMax: 100, Now: func() time.Time { return now }}
+	numbers := func(text string) (ns []string) {
+		for _, l := range strings.Split(text, "\n") {
+			if n, _, ok := strings.Cut(l, " "); ok && strings.HasPrefix(n, "#") {
+				ns = append(ns, n)
+			}
+		}
+		return ns
+	}
+	for _, args := range []string{`{}`, `{"state":"open"}`} {
+		text, isErr := call(t, m, ToolList, args)
+		if isErr || !strings.HasPrefix(text, "5 open threads in this channel:\n") {
+			t.Fatalf("list_threads %s: %s", args, text)
+		}
+		if got, want := numbers(text), []string{"#1", "#2", "#3", "#4", "#7"}; !slices.Equal(got, want) {
+			t.Errorf("list_threads %s lists %v, want %v", args, got, want)
+		}
+		ls := strings.Split(strings.TrimSpace(text), "\n")
+		if got, want := ls[len(ls)-1], "Others, not listed: 1 asleep, 1 closed, 1 removed; state all lists them."; got != want {
+			t.Errorf("list_threads %s ends with %q, want %q", args, got, want)
+		}
+	}
+	text, isErr := call(t, m, ToolList, `{"state":"all"}`)
+	if want := []string{"#1", "#2", "#3", "#4", "#5", "#6", "#7", "#8"}; isErr || !slices.Equal(numbers(text), want) {
+		t.Errorf("list_threads of all:\n%s", text)
+	}
+	if text, isErr := call(t, m, ToolRead, `{"number":8}`); isErr || !strings.HasPrefix(text, "Thread #8: Work\n") {
+		t.Errorf("read_thread of a thread list_threads leaves out: %s", text)
+	}
+	for _, s := range []string{"closed", "OPEN", " "} {
+		if text, isErr := call(t, m, ToolList, `{"state":"`+s+`"}`); !isErr || text != "bad arguments: state is open or all" {
+			t.Errorf("list_threads of state %q: %q, want it refused", s, text)
+		}
+	}
+	// Asleep for exactly a day is not open; a moment less is.
+	for ago, want := range map[time.Duration]string{
+		24 * time.Hour:                 "0 open threads in this channel:\nOthers, not listed: 1 asleep; state all lists them.\n",
+		24*time.Hour - time.Nanosecond: "1 open threads in this channel:\n#1 ",
+	} {
+		api.threads = []control.ThreadInfo{{ID: 1, Scope: "C0123", Title: "Work", State: control.Asleep, Updated: now.Add(-ago)}}
+		if text, _ := call(t, m, ToolList, `{}`); !strings.HasPrefix(text, want) {
+			t.Errorf("list_threads with a thread asleep for %s: %q", ago, text)
+		}
+	}
+}
+
+// listAPI answers Threads and Thread with threads.
+type listAPI struct {
+	control.API
+	threads []control.ThreadInfo
+}
+
+func (l *listAPI) Threads(_ context.Context, flt control.Filter) ([]control.ThreadInfo, error) {
+	if flt.Thread == 0 {
+		return l.threads, nil
+	}
+	for _, t := range l.threads {
+		if t.ID == flt.Thread {
+			return []control.ThreadInfo{t}, nil
+		}
+	}
+	return nil, nil
+}
+
+func (l *listAPI) Thread(_ context.Context, id control.ThreadID, _, _ int) (control.ThreadDetail, error) {
+	for _, t := range l.threads {
+		if t.ID == id {
+			return control.ThreadDetail{ThreadInfo: t}, nil
+		}
+	}
+	return control.ThreadDetail{}, errors.New("no such thread")
 }
 
 // A number below 1 names no thread and is not looked up, and what a lookup
