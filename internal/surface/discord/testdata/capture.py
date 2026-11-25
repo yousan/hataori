@@ -597,7 +597,7 @@ def calls_run(raw, minutes):
         if ev["t"] == "GUILD_CREATE" and d["id"] == here["guild_id"]:
             guild.update(ev)
         elif ev["t"] in ("MESSAGE_CREATE", "MESSAGE_UPDATE") and d.get("channel_id") == ch and (
-                d.get("webhook_id") or d["author"]["id"] == owner):
+                d.get("webhook_id") or d.get("author", {}).get("id") == owner):
             with lock:
                 got.append(ev)
         changed.set()

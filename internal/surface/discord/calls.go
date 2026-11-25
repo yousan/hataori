@@ -105,7 +105,9 @@ func (d *Driver) call(m wireMessage, in *surface.Inbound) {
 
 	mayBeOwn := reply && (own || !known) || m.mentions(d.botID) ||
 		len(m.MentionRoles) > 0 || m.MentionEveryone || d.mayMentionOwn(m.Content)
-	in.OthersOnly = !mayBeOwn && (reply || len(m.Mentions) > 0 && d.MentionsOthers(m.Content))
+	in.OthersOnly = !mayBeOwn && (reply || slices.ContainsFunc(userMentions(m.Content), func(n mention) bool {
+		return !n.role && m.mentions(n.id)
+	}))
 }
 
 // mentions reports whether the service says that m mentions the account id.

@@ -274,7 +274,9 @@ type Inbound struct {
 	// OthersOnly says that the message mentions an account or replies to a
 	// post, and neither is the driver's own or may be: a mention of a group
 	// that may hold the account, such as a role or everyone, and a reply to a
-	// post whose author the service does not report, count as its own.
+	// post whose author the service does not report, count as its own, and so
+	// does a mention of the account in a quote or in code. One of another
+	// account there is none.
 	OthersOnly bool
 	// OwnMentions are the places in Text, in order, that mention the driver's
 	// account or the role the service manages for it, so that they can be
