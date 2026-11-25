@@ -78,12 +78,19 @@ var permissionsWarning = regexp.MustCompile(`^⚠ This folder pre-approves (?:1 
 
 const permissionsEnd = "These will apply without asking. Only proceed if you trust this configuration."
 
-// fullscreenNotice is the line 2.1.331 prints above the dialog, before it
-// draws anything, when its last start with the full-screen interface did
-// not finish and this one uses the other (#707, testdata/2.1.331/
-// trust_notice_*). Only this line is known above the dialog's top rule.
-const fullscreenNotice = "Claude Code's fullscreen renderer didn't finish starting last time on this machine, " +
-	"so this launch is using the classic renderer. It will try fullscreen again next launch; /tui classic keeps the classic renderer."
+// fullscreenNotices are the lines 2.1.331 prints above the dialog, before it
+// draws anything, when a start with the full-screen interface did not
+// finish: after the first that its last start did not and this one uses the
+// other interface (#707, testdata/2.1.331/trust_notice_*), after the second,
+// once, that it turned the interface off (#728, testdata/2.1.332/
+// trust_notice_off_*). One start prints at most one of them. Only these lines
+// are known above the dialog's top rule.
+var fullscreenNotices = []string{
+	"Claude Code's fullscreen renderer didn't finish starting last time on this machine, " +
+		"so this launch is using the classic renderer. It will try fullscreen again next launch; /tui classic keeps the classic renderer.",
+	"Claude Code's fullscreen renderer has repeatedly failed to start on this machine, " +
+		"so it has been turned off here. Run /tui fullscreen to try it again (this also resets after an update).",
+}
 
 const (
 	trustYes    = "Yes, I trust this folder"
@@ -197,10 +204,10 @@ func isRule(line string) bool {
 	return line != "" && strings.Trim(line, "─") == ""
 }
 
-// belowNotice drops fullscreenNotice from the top of the screen's trimmed
-// lines. ok is false when anything but the dialog's top rule follows it.
+// belowNotice drops one of fullscreenNotices from the top of the screen's
+// trimmed lines. ok is false when anything but the dialog's top rule follows it.
 func belowNotice(lines []string) (below []string, ok bool) {
-	if len(lines) == 0 || lines[0] != fullscreenNotice {
+	if len(lines) == 0 || !slices.Contains(fullscreenNotices, lines[0]) {
 		return lines, true
 	}
 	below = trimLines(lines[1:])

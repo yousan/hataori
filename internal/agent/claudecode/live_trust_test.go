@@ -62,6 +62,9 @@ func TestLiveTrustFiles(t *testing.T) {
 		// The notice above the dialog (#707): see interruptedStart.
 		{"trust_notice_allowed", nil, agent.Spec{}, true, false},
 		{"trust_notice_refused", map[string]string{".claude/settings.json": settings}, agent.Spec{}, false, false},
+		// The other one, after a second such start (#728).
+		{"trust_notice_off_allowed", nil, agent.Spec{}, true, false},
+		{"trust_notice_off_refused", map[string]string{".claude/settings.json": settings}, agent.Spec{}, false, false},
 		{"trust_hooks_refused", map[string]string{".claude/settings.json": hooks}, agent.Spec{}, false, false},
 		{"trust_hooks_allowed", map[string]string{".claude/settings.json": hooks},
 			agent.Spec{TrustFiles: []string{".claude/settings.json"}}, true, false},
@@ -123,13 +126,22 @@ func liveTrust(t *testing.T, raw, name string, files map[string]string, spec age
 		os.WriteFile(filepath.Join(dir, p), []byte(body), 0o600)
 	}
 
+	notice := ""
 	if strings.HasPrefix(name, "trust_notice") {
-		interruptedStart(t, work, cfg)
+		notice = fullscreenNotices[0]
+		interruptedStart(t, work, cfg, "fullscreenBootPending")
+	}
+	if strings.HasPrefix(name, "trust_notice_off") {
+		notice = fullscreenNotices[1]
+		// The next start counts the first and uses the other interface; the
+		// one after it tries again, and is interrupted too.
+		interruptedStart(t, work, cfg, "fullscreenBootStrikes")
+		interruptedStart(t, work, cfg, "fullscreenBootPending")
 	}
 
 	// hataori's launch, with the recorder's settings in place of its own.
 	spec.Dir, spec.StateDir, spec.Model = dir, state, "haiku"
-	env := []string{"CLAUDE_CONFIG_DIR=" + cfg}
+	env := []string{"CLAUDE_CONFIG_DIR=" + cfg, "DISABLE_AUTOUPDATER=1"}
 	for _, k := range []string{"PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "SHELL", "TMPDIR"} {
 		if v, ok := os.LookupEnv(k); ok {
 			env = append(env, k+"="+v)
@@ -254,7 +266,7 @@ func liveTrust(t *testing.T, raw, name string, files map[string]string, spec age
 	}
 	os.WriteFile(filepath.Join(out, "keys.txt"), []byte(strings.Join(keys, "\n")+"\n"), 0o600)
 	os.WriteFile(filepath.Join(out, "events.txt"), []byte(strings.Join(events, "\n")+"\n"), 0o600)
-	if strings.HasPrefix(name, "trust_notice") && !strings.HasPrefix(string(drawn), fullscreenNotice) {
+	if !strings.HasPrefix(string(drawn), notice) {
 		t.Fatal("the CLI did not print the notice: the capture is not of it")
 	}
 	if ignored {
@@ -306,9 +318,10 @@ func liveTrust(t *testing.T, raw, name string, files map[string]string, spec age
 // full-screen interface started leaves there, so that the next one prints
 // that its full-screen renderer did not finish starting (#707): with
 // "tui": "fullscreen" in cfg's settings, it starts the CLI in a directory
-// of its own, answers the trust dialog, and kills the CLI as soon as its
-// state names the start ("fullscreenBootPending").
-func interruptedStart(t *testing.T, work, cfg string) {
+// of its own, answers the trust dialog if it comes, and kills the CLI as
+// soon as its state holds until: "fullscreenBootPending" names the start,
+// "fullscreenBootStrikes" counts an interrupted one before it.
+func interruptedStart(t *testing.T, work, cfg, until string) {
 	dir := filepath.Join(work, "killed")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
@@ -316,7 +329,7 @@ func interruptedStart(t *testing.T, work, cfg string) {
 	os.WriteFile(filepath.Join(cfg, "settings.json"), []byte(`{"tui": "fullscreen"}`+"\n"), 0o600)
 	cmd := exec.Command("claude", "--model", "haiku")
 	cmd.Dir = dir
-	cmd.Env = []string{"CLAUDE_CONFIG_DIR=" + cfg, "PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "TERM=xterm-256color", "BROWSER=true"}
+	cmd.Env = []string{"CLAUDE_CONFIG_DIR=" + cfg, "PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "TERM=xterm-256color", "BROWSER=true", "DISABLE_AUTOUPDATER=1"}
 	tty, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
 	if err != nil {
 		t.Fatal(err)
@@ -341,7 +354,7 @@ func interruptedStart(t *testing.T, work, cfg string) {
 	yes := false
 	for i, quiet, was := 0, 0, 0; i < 3000; i++ {
 		time.Sleep(10 * time.Millisecond)
-		if b, _ := os.ReadFile(filepath.Join(cfg, ".claude.json")); strings.Contains(string(b), "fullscreenBootPending") {
+		if b, _ := os.ReadFile(filepath.Join(cfg, ".claude.json")); strings.Contains(string(b), until) {
 			return
 		}
 		mu.Lock()
@@ -356,5 +369,5 @@ func interruptedStart(t *testing.T, work, cfg string) {
 			tty.Write([]byte("\r"))
 		}
 	}
-	t.Fatal("the CLI's state never named the start of its full-screen interface")
+	t.Fatalf("the CLI's state never held %s", until)
 }

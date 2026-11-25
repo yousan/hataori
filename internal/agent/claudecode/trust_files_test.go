@@ -254,38 +254,54 @@ func TestPermissionsWarningShapes(t *testing.T) {
 	}
 }
 
-// The line 2.1.331 prints above the dialog when its last full-screen start
-// did not finish (#707): the dialog below is read as it is without it, and
-// a refused one is quoted without it.
-func TestTrustDialogBelowTheFullscreenNotice(t *testing.T) {
+// The lines the CLI prints above the dialog after a full-screen start that
+// did not finish (#707), and after a second one (#728): the dialog below is
+// read as it is without them, and a refused one is quoted without them.
+func TestTrustDialogBelowAFullscreenNotice(t *testing.T) {
 	trusted := agent.Spec{TrustFiles: []string{".claude/settings.json"}}
-	if keys, events := replayTrustOf(t, "2.1.331", "trust_notice_allowed", agent.Spec{}); keys != "down enter" || len(events) != 0 {
-		t.Fatalf("allowed: keys %q events %+v", keys, events)
-	}
-	keys, events := replayTrustOf(t, "2.1.331", "trust_notice_refused", agent.Spec{})
-	if keys != "" || len(events) != 1 || events[0].Reason != agent.BlockedAtStart ||
-		!slices.Equal(events[0].Trust, []string{".claude/settings.json"}) ||
-		!strings.Contains(events[0].Text, "Claude Code showed:\n> Claude Code'll be able to read") ||
-		strings.Contains(events[0].Text, "fullscreen") {
-		t.Fatalf("refused: keys %q events %+v", keys, events)
-	}
-	// The refused capture ends with the dialog: only the first key goes.
-	if keys, events := replayTrustOf(t, "2.1.331", "trust_notice_refused", trusted); keys != "down" || len(events) != 0 {
-		t.Fatalf("refused capture, trusted: keys %q events %+v", keys, events)
+	for _, tc := range []struct{ version, capture string }{
+		{"2.1.331", "trust_notice"},
+		{"2.1.332", "trust_notice_off"},
+	} {
+		if keys, events := replayTrustOf(t, tc.version, tc.capture+"_allowed", agent.Spec{}); keys != "down enter" || len(events) != 0 {
+			t.Errorf("%s allowed: keys %q events %+v", tc.capture, keys, events)
+		}
+		keys, events := replayTrustOf(t, tc.version, tc.capture+"_refused", agent.Spec{})
+		if keys != "" || len(events) != 1 || events[0].Reason != agent.BlockedAtStart ||
+			!slices.Equal(events[0].Trust, []string{".claude/settings.json"}) ||
+			!strings.Contains(events[0].Text, "Claude Code showed:\n> Claude Code'll be able to read") ||
+			strings.Contains(events[0].Text, "fullscreen") {
+			t.Errorf("%s refused: keys %q events %+v", tc.capture, keys, events)
+		}
+		// The refused capture ends with the dialog: only the first key goes.
+		if keys, events := replayTrustOf(t, tc.version, tc.capture+"_refused", trusted); keys != "down" || len(events) != 0 {
+			t.Errorf("%s refused, trusted: keys %q events %+v", tc.capture, keys, events)
+		}
 	}
 }
 
-// Only that line, once, right above the dialog's top rule: the captured
-// dialog with anything else above the rule, or with a line added below it,
-// is a screen the codec does not know.
+// Only those lines, one of them once, right above the dialog's top rule: the
+// captured dialog with anything else above the rule, or with a line added
+// below it, is a screen the codec does not know.
 func TestNoticeAboveTheTrustDialogShapes(t *testing.T) {
-	const dir = "/tmp/capture-work/sessions/trust_notice_allowed"
+	for i, tc := range []struct{ version, capture string }{
+		{"2.1.331", "trust_notice_allowed"},
+		{"2.1.332", "trust_notice_off_allowed"},
+	} {
+		t.Run(tc.capture, func(t *testing.T) {
+			testNoticeShapes(t, tc.version, tc.capture, fullscreenNotices[i], fullscreenNotices[1-i])
+		})
+	}
+}
+
+func testNoticeShapes(t *testing.T, version, capture, known, other string) {
+	dir := "/tmp/capture-work/sessions/" + capture
 	var b []byte
 	for i := 1; i <= 6; i++ { // the dialog, with the cursor on "No, exit"
-		b = append(b, readScreen(t, fmt.Sprintf("testdata/2.1.331/trust_notice_allowed/screen-%02d.raw", i))...)
+		b = append(b, readScreen(t, fmt.Sprintf("testdata/%s/%s/screen-%02d.raw", version, capture, i))...)
 	}
 	screen, ok := renderScreen(b)
-	if !ok || len(screen) == 0 || strings.TrimSpace(screen[0]) != fullscreenNotice {
+	if !ok || len(screen) == 0 || strings.TrimSpace(screen[0]) != known {
 		t.Fatalf("rendered %v, first line %q", ok, screen[:min(1, len(screen))])
 	}
 	rule := slices.IndexFunc(screen, func(l string) bool { return isRule(strings.TrimSpace(l)) })
@@ -294,8 +310,6 @@ func TestNoticeAboveTheTrustDialogShapes(t *testing.T) {
 		t.Fatalf("rule on line %d, header on %d", rule, header)
 	}
 	notice, dialog := screen[:rule], screen[rule:]
-	const other = "Claude Code's fullscreen renderer has repeatedly failed to start on this machine, so it has been turned off here. " +
-		"Run /tui fullscreen to try it again (this also resets after an update)."
 	for _, tc := range []struct {
 		name   string
 		screen []string
@@ -303,12 +317,15 @@ func TestNoticeAboveTheTrustDialogShapes(t *testing.T) {
 	}{
 		{"as captured", screen, true},
 		{"without the notice", dialog, true},
-		{"another line in its place", slices.Concat([]string{other}, dialog), false},
+		{"the other notice in its place", slices.Concat([]string{other}, dialog), true},
+		{"another line in its place", slices.Concat([]string{"Claude Code's fullscreen renderer is off."}, dialog), false},
 		{"a line above it", slices.Concat([]string{"x"}, screen), false},
 		{"a line between it and the rule", slices.Concat(notice, []string{"x"}, dialog), false},
 		{"the notice twice", slices.Concat(notice, screen), false},
-		{"more on its line", slices.Concat([]string{fullscreenNotice + " x"}, dialog), false},
-		{"only a part of it", slices.Concat([]string{fullscreenNotice[:40]}, dialog), false},
+		{"both notices", slices.Concat([]string{other}, screen), false},
+		{"more on its line", slices.Concat([]string{known + " x"}, dialog), false},
+		{"both on its line", slices.Concat([]string{known + " " + other}, dialog), false},
+		{"only a part of it", slices.Concat([]string{known[:40]}, dialog), false},
 		{"no rule below it", slices.Concat(notice, dialog[1:]), false},
 		{"a line below the rule", slices.Concat(notice, dialog[:1], []string{"x"}, dialog[1:]), false},
 		{"the notice below the rule", slices.Concat(dialog[:1], notice, dialog[1:]), false},

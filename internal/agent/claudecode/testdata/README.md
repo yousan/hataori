@@ -9,6 +9,7 @@ Real output of the interactive `claude` CLI, for testing the adapter's codec. Th
 - `2.1.329/`: Claude Code 2.1.329, on 2026-11-21 (also in `2.1.329/VERSION`), on Linux: `trust_hooks_*` and `trust_permissions`, taken for #592 (see below).
 - `2.1.330/`: Claude Code 2.1.330, on 2026-11-23 (also in `2.1.330/VERSION`), on Linux: `usage`, taken by `capture.py` for #675, with the transcript's line count at each hook call (see below).
 - `2.1.331/`: Claude Code 2.1.331, on 2026-11-25 (also in `2.1.331/VERSION`), on Linux: `held_notification`, taken by `capture.py` for #593, `failure_background`, `interrupt_background`, `failure_resumed` and `failure_monitor`, taken by it for #801 (see "Turns that end without the list of background tasks"), `trust_notice_*`, taken by `TestLiveTrustFiles` for #707 (see "The folder-trust dialog below a notice"), and `trust_permissions_*`, taken by it for #596 (see "The folder-trust dialog with a permission warning").
+- `2.1.332/`: Claude Code 2.1.332, on 2026-11-25 (also in `2.1.332/VERSION`), on Linux: `trust_notice_off_*`, taken by `TestLiveTrustFiles` for #728 (see "The folder-trust dialog below a notice").
 - `capture.py` took them (`confine.py`, the `confine_*` ones); `scrub.py` made them committable. `captures_test.go` in the package fails when a capture holds a home directory path, an e-mail address, an unscrubbed UUID or something shaped like a token.
 
 ## How they were taken
@@ -318,7 +319,7 @@ The CLI prints one line before it draws anything, "Claude Code's fullscreen rend
 | `trust_notice_allowed` | no file | ordinary, no `TrustFiles` | Down, then Enter; `SessionStart` followed |
 | `trust_notice_refused` | `.claude/settings.json` | ordinary, no `TrustFiles` | no key; one `SessionEnded`, `blocked at start`, naming the file, quoting the dialog without the notice. No hook ran. |
 
-After a second such start the CLI prints another line once, "... has repeatedly failed to start on this machine, so it has been turned off here. ..." (seen by hand, not kept). The codec does not know that one.
+After a second such start the CLI prints another line once, "... has repeatedly failed to start on this machine, so it has been turned off here. ...", and uses the other interface from then on. `2.1.332/trust_notice_off_*/` are such starts (taken for #728 with `HATAORI_CAPTURE_ONLY=trust_notice_off`): the test interrupts a start as above, lets the next one count it, interrupts the one after that too, and captures the fourth. 2.1.332 prints at most one of the two lines, and no other line of this kind. The workspaces, the specs and what the codec did are those of the table above.
 
 ## The folder-trust dialog with a permission warning (2.1.331, taken for #596)
 
