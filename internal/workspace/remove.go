@@ -1585,9 +1585,7 @@ func (c *checker) tableIDs(g *reader, dir string) ([]string, error) {
 	var tables []byte
 	for _, e := range entries {
 		p := filepath.Join(dir, e.Name())
-		if fi, err := os.Stat(p); missing(err) {
-			continue // a link to nothing
-		} else if err != nil {
+		if fi, err := os.Stat(p); err != nil { // also of one that git has just put in another
 			return nil, c.unreadable(p, err)
 		} else if !fi.Mode().IsRegular() {
 			continue // no table, and to open it may not end
