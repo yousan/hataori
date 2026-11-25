@@ -13,6 +13,7 @@ import (
 
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
+	"github.com/yousan/hataori/internal/forge"
 	"github.com/yousan/hataori/internal/instance"
 	"github.com/yousan/hataori/internal/runner"
 	"github.com/yousan/hataori/internal/store"
@@ -179,7 +180,7 @@ func TestConfigLayerStatesTheKeys(t *testing.T) {
 	}
 	got := ConfigLayer(Scope{Autonomy: Watch, Repos: []Repo{{Address: "https://user:secret@example.com/o/a"}, {Address: "x", Forge: "o/b"}},
 		Limits: Limits{Turns: 0, Sends: 5, Tokens: 100}, RemindersMax: 4, Report: instance.ReportDigest, ReportEvery: 90 * time.Minute,
-		Mention: instance.MentionNever, QuietHours: &instance.QuietHours{From: 22 * 60, To: 7*60 + 30, Zone: tokyo}, Instructions: "Be kind."})
+		Mention: instance.MentionNever, QuietHours: &instance.QuietHours{From: 22 * 60, To: 7*60 + 30, Zone: tokyo}, Instructions: "Be kind."}, nil)
 	for _, want := range []string{"- autonomy: watch.", "- repos: https://***@example.com/o/a, o/b.", "\n- Budget: turns_per_hour no limit, sends_per_hour 5 (a start counts as a send, and so does setting a reminder), tokens_per_day 100. " +
 		"Once sends_per_hour is used up, your sends, starts and reminders are refused until the hour ends; the other two limits refuse none of them. " +
 		"Once any limit is used up, what would wake you waits until the hour or the day ends, with two exceptions: " +
@@ -194,7 +195,7 @@ func TestConfigLayerStatesTheKeys(t *testing.T) {
 	if strings.Contains(got, "secret") || !strings.HasSuffix(got, "Be kind.") {
 		t.Fatalf("%s", got)
 	}
-	got = ConfigLayer(Scope{})
+	got = ConfigLayer(Scope{}, nil)
 	for _, want := range []string{"- autonomy: propose.", "- repos: none.", "- reminders_max: 0.", "- report: every.", "- mention: named."} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("no %q in:\n%s", want, got)
@@ -202,5 +203,52 @@ func TestConfigLayerStatesTheKeys(t *testing.T) {
 	}
 	if strings.Contains(got, "quiet_hours") || strings.Contains(got, "instructions\n") {
 		t.Fatalf("%s", got)
+	}
+}
+
+// hostForge is a forge that serves the addresses of one host.
+type hostForge struct {
+	forge.Forge
+	host string
+}
+
+func (f hostForge) Serves(address string) (forge.Repo, bool) {
+	rest, ok := strings.CutPrefix(address, "https://"+f.host+"/")
+	if !ok {
+		return forge.Repo{}, false
+	}
+	r, err := forge.ParseRepo(rest)
+	return r, err == nil
+}
+
+// The config's layer names the repos that no forge of the instance serves,
+// for which the forge tools are refused, and the ones that one serves; with
+// none to name it says what it said before (#795).
+func TestConfigLayerNamesUnservedRepos(t *testing.T) {
+	repos := []Repo{{Address: "https://one.example/o/a", Forge: "o/a"}, {Address: "https://two.example/o/b", Forge: "o/b"}}
+	one, two := hostForge{host: "one.example"}, hostForge{host: "two.example"}
+	const all = "- repos: o/a, o/b. The only repositories you may start a thread in, and read on their forge."
+	const refused = ": there the forge tools, `deployed` included, are refused, so do not call them. Say what a thread claims, and that you did not check it"
+	const research = "; when a person needs the check, start a `research` thread for it."
+	for _, tc := range []struct {
+		name     string
+		autonomy string
+		forges   map[string]forge.Forge
+		want     string
+	}{
+		{"none", Act, nil, all + " No forge answers for o/a, o/b" + refused + research},
+		{"one", Act, map[string]forge.Forge{"one": one}, all + " A forge answers for o/a. No forge answers for o/b" + refused + research},
+		{"both", Act, map[string]forge.Forge{"one": one, "two": two}, all},
+		{"none, watch", Watch, nil, all + " No forge answers for o/a, o/b" + refused + "."},
+	} {
+		got := ConfigLayer(Scope{Autonomy: tc.autonomy, Repos: repos}, tc.forges)
+		if !strings.Contains(got, "\n"+tc.want+"\n") {
+			t.Errorf("%s: no line %q in:\n%s", tc.name, tc.want, got)
+		}
+	}
+	// An address with no forge name is served by none.
+	got := ConfigLayer(Scope{Repos: []Repo{{Address: "/srv/a.git"}}}, map[string]forge.Forge{"one": one})
+	if !strings.Contains(got, " No forge answers for /srv/a.git: ") {
+		t.Errorf("an address with no forge name:\n%s", got)
 	}
 }

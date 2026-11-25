@@ -164,7 +164,7 @@ func (s *Sessions) Confine(ctx context.Context, l runner.ConfinedLaunch) (runner
 	s.CopyDocs(ctx, l.Scope, l.Thread)
 	return runner.Confined{
 		MCP:          []agent.MCPServer{{Name: MCPName, Argv: s.mcp(l.Scope), Env: []string{TokenEnv + "=" + token}, Reports: true}},
-		Instructions: Compose(sv, files),
+		Instructions: Compose(sv, s.Forges, files),
 	}, nil
 }
 
@@ -193,7 +193,7 @@ func (s *Sessions) Config(scope, agentName string) (runner.LaunchConfig, bool) {
 	}
 	return runner.LaunchConfig{Model: model, Effort: effort, Parts: map[string]string{
 		"hataori's instructions":    digest(Layer),
-		"the config's instructions": digest(ConfigLayer(sv)),
+		"the config's instructions": digest(ConfigLayer(sv, s.Forges)),
 		"MCP server":                digest(append([]string{MCPName}, s.mcp(scope)...)...),
 	}}, true
 }
