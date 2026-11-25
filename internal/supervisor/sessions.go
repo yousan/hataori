@@ -155,7 +155,7 @@ func (s *Sessions) Confine(ctx context.Context, l runner.ConfinedLaunch) (runner
 	if err != nil {
 		return runner.Confined{}, err
 	}
-	token, err := s.bind(l.Session, l.Thread, l.Scope, l.StateDir, true)
+	token, err := s.bind(ctx, l.Session, l.Thread, l.Scope, l.StateDir, true)
 	if err != nil {
 		return runner.Confined{}, err
 	}
@@ -228,13 +228,24 @@ func (s *Sessions) CopyDocs(ctx context.Context, scope string, thread control.Th
 // scope's supervisor Caller. With issue, a session without a token gets a
 // new one; without, it is left without. The token of an older session of
 // the same thread, as one a session replaced, is revoked, and an older
-// session is bound none once a newer one is. Bindings and revocations go
-// one at a time, so that the token of a thread's newest session, which
-// Unconfine revokes, is the only one of the thread that is bound.
-func (s *Sessions) bind(session int64, thread control.ThreadID, scope, stateDir string, issue bool) (string, error) {
+// session is bound none once a newer one is; nor is a closed session, as
+// one whose start timed out and that was closed before its launch came
+// here. Bindings and revocations go one at a time, so that the token of a
+// thread's newest session, which Unconfine revokes once the session is
+// closed, is the only one of the thread that is bound.
+func (s *Sessions) bind(ctx context.Context, session int64, thread control.ThreadID, scope, stateDir string, issue bool) (string, error) {
 	api := s.API(scope, thread)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Read with the lock held: a session closed after this is unbound by
+	// its Unconfine, which waits for the lock.
+	var state control.State
+	if err := s.Core.Store.DB.QueryRowContext(ctx, `SELECT state FROM sessions WHERE id = ?`, session).Scan(&state); err != nil {
+		return "", fmt.Errorf("supervisor: session %d: %w", session, err)
+	}
+	if state == control.Closed || state == control.Removed {
+		return "", fmt.Errorf("supervisor: session %d of thread %d is %s", session, int64(thread), state)
+	}
 	old, had := s.issued[thread]
 	if had && old.session > session {
 		return "", fmt.Errorf("supervisor: session %d of thread %d: a newer one, %d, has the thread's token", session, int64(thread), old.session)
@@ -348,7 +359,7 @@ func (s *Sessions) Restore(ctx context.Context) error {
 			s.Log.Warn("a confined session of a scope that names no supervisor keeps no tools", "session", l.Session, "scope", l.Scope)
 			continue
 		}
-		if _, err := s.bind(l.Session, l.Thread, l.Scope, runner.StateDir(s.Root, l.Session), false); err != nil {
+		if _, err := s.bind(ctx, l.Session, l.Thread, l.Scope, runner.StateDir(s.Root, l.Session), false); err != nil {
 			s.Log.Error("binding a supervisor's token again", "session", l.Session, "err", err)
 		}
 	}

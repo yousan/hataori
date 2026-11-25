@@ -3,6 +3,7 @@ package supervisor
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -58,11 +59,19 @@ func layerSessions(t *testing.T, log *bytes.Buffer) (*Sessions, *recordingTokens
 		Log: slog.New(slog.NewTextHandler(log, nil))}, tokens
 }
 
-// svThread puts thread 1 of c1 into c's store: the supervisor's own.
+// svThread puts thread 1 of c1 into c's store: the supervisor's own, with
+// session 1.
 func svThread(t *testing.T, c *core.Core) {
 	t.Helper()
 	exec(t, c, `INSERT INTO threads (id, scope, key, started_by, state, confined, kind, workspace, created_at, updated_at)
 		VALUES (1, 'c1', 'k1', 'p', 'idle', 1, 'supervisor', '/root/confined/1', 0, 0)`)
+	sessionOf(t, c, 1, 1)
+}
+
+// sessionOf puts session id of thread, being started, into c's store.
+func sessionOf(t *testing.T, c *core.Core, thread control.ThreadID, id int64) {
+	t.Helper()
+	exec(t, c, fmt.Sprintf(`INSERT INTO sessions (id, thread_id, agent, state, created_at, updated_at) VALUES (%d, %d, 'fake', 'creating', 0, 0)`, id, thread))
 }
 
 // A symbolic link, a directory and a file over 32 KB in place of a user's

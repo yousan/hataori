@@ -95,6 +95,8 @@ func TestUnconfineRevokesTheSessionsToken(t *testing.T) {
 	var log bytes.Buffer
 	s, tokens := layerSessions(t, &log)
 	beside(t, s.Core, control.Idle, control.Idle, control.Idle)
+	sessionOf(t, s.Core, own, 50)
+	sessionOf(t, s.Core, newer, 80)
 	dirs := map[int64]string{}
 	confine := func(session int64, thread control.ThreadID) {
 		t.Helper()
@@ -163,6 +165,9 @@ func TestTokensAreBoundAndRevokedOneAtATime(t *testing.T) {
 	var log bytes.Buffer
 	s, recorded := layerSessions(t, &log)
 	beside(t, s.Core, control.Idle, control.Idle, control.Idle)
+	sessionOf(t, s.Core, own, 40)
+	sessionOf(t, s.Core, own, 50)
+	sessionOf(t, s.Core, newer, 80)
 	dir := t.TempDir()
 	dirs := map[int64]string{40: t.TempDir(), 50: t.TempDir(), 80: t.TempDir()}
 	confine := func(session int64, thread control.ThreadID) error {
@@ -196,6 +201,29 @@ func TestTokensAreBoundAndRevokedOneAtATime(t *testing.T) {
 	}
 }
 
+// A session that was closed while its launch was on the way, as after its
+// start timed out, is bound no token: nothing would revoke it. Once the
+// thread is reopened and woken, its launch binds it.
+func TestAClosedSessionIsBoundNoToken(t *testing.T) {
+	var log bytes.Buffer
+	s, tokens := layerSessions(t, &log)
+	beside(t, s.Core, control.Idle, control.Idle, control.Idle)
+	sessionOf(t, s.Core, newer, 80)
+	state := t.TempDir()
+	for _, c := range []struct {
+		state control.State
+		bound int
+	}{{control.Failed, 1}, {control.Closed, 0}, {control.Removed, 0}, {control.Creating, 1}} {
+		exec(t, s.Core, fmt.Sprintf(`UPDATE sessions SET state = '%s' WHERE id = 80`, c.state))
+		tokens.bound = nil
+		s.Unconfine(newer, 80)
+		_, err := s.Confine(context.Background(), runner.ConfinedLaunch{Scope: "c1", Thread: newer, Session: 80, Dir: t.TempDir(), StateDir: state})
+		if (err == nil) != (c.bound == 1) || len(tokens.bound) != c.bound {
+			t.Errorf("a launch of a session that is %s: %v, bound %d, want %d", c.state, err, len(tokens.bound), c.bound)
+		}
+	}
+}
+
 // A conversation's launch is given the user's files, and tells the
 // supervisor's own thread nothing: its next wake still names what changed
 // since its own session was given them.
@@ -204,6 +232,9 @@ func TestAConversationsLaunchIsNotTheOwnThreads(t *testing.T) {
 	var log bytes.Buffer
 	s, _ := layerSessions(t, &log)
 	beside(t, s.Core, control.Idle, control.Idle, control.Idle)
+	sessionOf(t, s.Core, own, 50)
+	sessionOf(t, s.Core, newer, 80)
+	sessionOf(t, s.Core, lookUp, 90)
 	dir := t.TempDir()
 	write := func(text string) {
 		t.Helper()
