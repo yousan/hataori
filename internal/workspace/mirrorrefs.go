@@ -105,6 +105,8 @@ func (g mirrorRepo) replace(ctx context.Context, repo string) error {
 			updates = append(updates, "update "+r.name+" "+id+" "+r.id)
 		case r.name == oldHead && newHead == "":
 			stays[r.id] = true
+		case g.loggedTag(ctx, r.name):
+			stays[r.id] = true
 		default:
 			dropped = append(dropped, r)
 			if r.name != oldHead {
@@ -314,12 +316,29 @@ func (g mirrorRepo) hold(ctx context.Context, prefix string, ids []string) error
 	return nil
 }
 
-// logged is what the reflogs of refs name: a reflog goes with its ref. A mirror
-// has some when git's config says so.
+// loggedTag reports whether name is a tag that may have a reflog, as with
+// core.logAllRefUpdates=always. The reflog would go with the tag, and git lists
+// no tag objects that one names.
+func (g mirrorRepo) loggedTag(ctx context.Context, name string) bool {
+	if !strings.HasPrefix(name, "refs/tags/") {
+		return false
+	}
+	_, files := os.Stat(filepath.Join(g.dir, "logs", "refs", "tags"))
+	_, tables := os.Stat(filepath.Join(g.dir, "reftable"))
+	if errors.Is(files, os.ErrNotExist) && errors.Is(tables, os.ErrNotExist) {
+		return false
+	}
+	_, err := g.git(ctx, "", "reflog", "exists", name)
+	var exit *exec.ExitError
+	return !errors.As(err, &exit) || exit.ExitCode() != 1
+}
+
+// logged is what the reflogs of those of refs that are branches name: a reflog
+// goes with its ref. A mirror has some when git's config says so.
 func (g mirrorRepo) logged(ctx context.Context, refs []mirrorRef) ([]mirrorRef, error) {
 	names := ""
 	for _, r := range refs {
-		if r.kind == "commit" {
+		if strings.HasPrefix(r.name, "refs/heads/") {
 			names += r.name + "\n"
 		}
 	}

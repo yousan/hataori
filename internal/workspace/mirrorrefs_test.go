@@ -556,6 +556,30 @@ func TestMirrorKeepsWhatAReflogNames(t *testing.T) {
 	x.wantHeld(first, second)
 }
 
+// A tag with a reflog stays, with what only that names.
+func TestMirrorKeepsWhatATagsReflogNames(t *testing.T) {
+	for name, then := range map[string]string{"annotated": "tag -f -a -m two v1 main", "lightweight": "tag -f v1 main"} {
+		t.Run(name, func(t *testing.T) {
+			x := newMirrorFixture(t)
+			tag := x.pushTag("v1", "main")
+			x.pushTag("v2", "main")
+			x.make()
+			x.make()
+			x.git(x.mirror, "config", "core.logAllRefUpdates", "always")
+			// The mirror's first reflog entry is the one that names the tag object.
+			x.git(x.mirror, "update-ref", "refs/tags/v1", "refs/heads/main")
+			x.git(x.mirror, "update-ref", "refs/tags/v1", tag)
+			x.git(x.mirror, append([]string{"-c", "user.name=a", "-c", "user.email=a@example.com"}, strings.Fields(then)...)...)
+			x.deleteUpstream("refs/tags/v1", "refs/tags/v2")
+			x.make()
+			x.wantHeld(tag)
+			if got := x.refs("refs/tags"); len(got) != 1 || !strings.HasSuffix(got[0], " refs/tags/v1") {
+				t.Fatalf("tags: %v", got)
+			}
+		})
+	}
+}
+
 // What changed in the mirror since it was looked at is left.
 func TestMirrorChangesOnlyWhatItSaw(t *testing.T) {
 	x := newMirrorFixture(t)
