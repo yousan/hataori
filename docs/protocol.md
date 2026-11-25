@@ -272,7 +272,7 @@ Result: `LinkRef`
 
 ### Operation `Close`
 
-Since 2.3. Ends the agent process of an idle, asleep or failed thread and closes the thread: its state becomes `closed`, its workspace stays as it is, and a message does not wake it (`Send` answers `closed`). It answers once the agent process has ended. A thread with a turn running, a question open or a session starting is answered `refused`; stop the turn first. So is an idle thread whose last turn left background tasks running, as the idle period does not put one to sleep, and an idle thread with a message or an answer that was accepted and that no turn has reported yet, such as a message sent while a turn ran, which waits for that turn to end: nothing changes, and the message's turn runs; close again once it has. Closing a closed thread does not close it again, but stops its agent if that still runs, as after a stop that failed. A failed session that its thread has already replaced is answered `refused`. Whether the caller may close the thread is checked as for `Stop`: the owner or a person of the thread's scope; anyone else is answered `forbidden`, nothing changes and one log line is written.
+Since 2.3. Ends the agent process of an idle, asleep or failed thread and closes the thread: its state becomes `closed`, its workspace stays as it is, and a message does not wake it (`Send` answers `closed`). It answers once the agent process has ended. A thread with a turn running, a question open or a session starting is answered `refused`; stop the turn first. So is an idle thread whose last turn left background tasks running, as the idle period does not put one to sleep (a turn that was stopped does not hold it open, and one that failed only until the thread's session has had no event for an hour), and an idle thread with a message or an answer that was accepted and that no turn has reported yet, such as a message sent while a turn ran, which waits for that turn to end: nothing changes, and the message's turn runs; close again once it has. Closing a closed thread does not close it again, but stops its agent if that still runs, as after a stop that failed. A failed session that its thread has already replaced is answered `refused`. Whether the caller may close the thread is checked as for `Stop`: the owner or a person of the thread's scope; anyone else is answered `forbidden`, nothing changes and one log line is written.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -1330,7 +1330,7 @@ Exactly one per turn.
 | `from` | string | optional | as in `turn_started`; since 1.6 |
 | `outcome` | string | required | `completion`, `blocked` (on a question) or `failure` |
 | `reason` | string | optional | for a failure: `limit`, `login`, `api_error`, `crashed`, `interrupted`, `not delivered`, ... |
-| `background` | integer | required | background tasks still running; a reader that wants "really finished" waits for 0 |
+| `background` | integer | required | background tasks still running; a reader that wants "really finished" waits for 0. After a failure it is the last count the agent gave, with the starts and ends learned since; it can be too high until a turn completes |
 
 ### Event `post_sent`
 
