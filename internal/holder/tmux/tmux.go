@@ -337,6 +337,10 @@ var ErrTakesNoInput = errors.New("tmux: the window's pane takes no input as it i
 // errNotPasted refuses an Enter whose paste was refused.
 var errNotPasted = errors.New("tmux: the paste before this Enter was not handed over; nothing was sent")
 
+// errNoName refuses input to an agent whose name has nothing that tells it
+// from any other program (unsure).
+var errNoName = errors.New("tmux: the name of the window's foreground process cannot be compared; nothing was sent")
+
 // What the command of Input prints: that every part was handed over, or
 // that none was.
 const (
@@ -482,21 +486,34 @@ func (h *Holder) takes(ctx context.Context, r ref, w holder.Window) ([]string, e
 		}
 		return []string{fmt.Sprintf("#{==:#{pane_pid},%d}", p.pid)}, nil
 	}
-	// The name before the look at what has it.
-	out, nameErr := h.tmux(ctx, r, nil, "list-panes", "-t", r.Pane, "-F", "#{pane_id} #{pane_pid} #{pane_current_command}")
-	p, err := h.foreground(ctx, r, w.Process)
-	if p.dead {
-		return nil, ErrTakesNoInput
+	look := func() (pane, error) {
+		p, err := h.foreground(ctx, r, w.Process)
+		switch {
+		case p.dead:
+			return p, ErrTakesNoInput
+		case err != nil:
+			return p, fmt.Errorf("%w; nothing was sent", err)
+		}
+		return p, nil
 	}
+	// The name between two looks at what has it.
+	if _, err := look(); err != nil {
+		return nil, err
+	}
+	out, nameErr := h.tmux(ctx, r, nil, "list-panes", "-t", r.Pane, "-F", "#{pane_id} #{pane_pid} #{pane_current_command}")
+	p, err := look()
 	if err != nil {
-		return nil, fmt.Errorf("%w; nothing was sent", err)
+		return nil, err
 	}
 	if nameErr != nil {
 		return nil, nameErr
 	}
 	for _, l := range strings.Split(string(out), "\n") {
 		if name, ok := strings.CutPrefix(l, fmt.Sprintf("%s %d ", r.Pane, p.pid)); ok {
-			return []string{fmt.Sprintf("#{==:#{pane_pid},%d}", p.pid), "#{m:" + unsure.ReplaceAllString(name, "*") + ",#{pane_current_command}}"}, nil
+			if name = unsure.ReplaceAllString(name, "*"); name == "*" {
+				return nil, errNoName
+			}
+			return []string{fmt.Sprintf("#{==:#{pane_pid},%d}", p.pid), "#{m:" + name + ",#{pane_current_command}}"}, nil
 		}
 	}
 	return nil, fmt.Errorf("tmux: the pane %s changed as it was looked at: %.200q", r.Pane, out)
@@ -504,9 +521,9 @@ func (h *Holder) takes(ctx context.Context, r ref, w holder.Window) ([]string, e
 
 // unsure is what of a program's name is left out of a comparison: what means
 // something in a tmux format or a pattern, and what tmux prints in another
-// form than it has it: bytes that are not UTF-8 as octal and, to a client
-// without UTF-8, all that is not ASCII as "_".
-var unsure = regexp.MustCompile(`(\\[0-7]{3}|[^a-zA-Z0-9./:+@=-])+`)
+// form than it has it: bytes that are not UTF-8 and control characters as
+// escapes and, to a client without UTF-8, all that is not ASCII as "_".
+var unsure = regexp.MustCompile(`(\\[0-7]{3}|\\[a-z]|[^a-zA-Z0-9./:+@=-])+`)
 
 // handOver is the tmux command that hands the parts over, the pastes from
 // bufs, when the pane takes input (ErrTakesNoInput), conds hold and it is on

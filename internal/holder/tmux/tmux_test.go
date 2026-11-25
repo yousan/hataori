@@ -280,7 +280,12 @@ func (s *server) before(n int, do string) string {
 		fmt.Sprintf("if [ $(wc -l < %s) -eq %d ]; then %s; fi\n", count, n, do) +
 		"exec " + s.tmux + " \"$@\"\n"
 	p := filepath.Join(s.dir, "tmux-before")
-	if err := os.WriteFile(p, []byte(script), 0o700); err != nil {
+	// No fork meanwhile: a child that holds the file open for writing until
+	// it executes keeps the script from being executed (ETXTBSY).
+	syscall.ForkLock.RLock()
+	err := os.WriteFile(p, []byte(script), 0o700)
+	syscall.ForkLock.RUnlock()
+	if err != nil {
 		s.t.Fatal(err)
 	}
 	return p
@@ -556,7 +561,6 @@ func (s *server) agentBelow(program string) (holder.Window, string) {
 			s.t.Fatal((&Holder{}).CheckTakeIn(s.t.Context(), w))
 		}
 	}
-	s.t.Cleanup(func() { syscall.Kill(pid, syscall.SIGKILL) })
 	return w, out
 }
 
@@ -564,7 +568,7 @@ func (s *server) agentBelow(program string) (holder.Window, string) {
 // process, a shell, and have any name.
 func TestInputToAnAgentBelowThePanesProcess(t *testing.T) {
 	s := newServer(t)
-	for _, program := range []string{"exec cat", "exec -a 2.1.331 cat", "exec -a 'a,b}c#d{e' cat", "exec -a '#{pid}' cat", "exec -a '%0 #,}' cat", "exec -a '日本 it' cat", "exec -a '' cat", "exec -a 100% cat"} {
+	for _, program := range []string{"exec cat", "exec -a 2.1.331 cat", "exec -a 'a,b}c#d{e' cat", "exec -a '#{pid}' cat", "exec -a '%0 #,}' cat", "exec -a 'x日本y it' cat", "exec -a '' cat", "exec -a $'cl\\bx' cat", "exec -a 100% cat"} {
 		w, out := s.agentBelow(program)
 		if err := (&Holder{}).Input(t.Context(), w, []agent.Part{{Paste: "x"}, {Key: agent.Enter}}); err != nil {
 			t.Errorf("%s: %v", program, err)
@@ -579,28 +583,37 @@ func TestInputToAnAgentBelowThePanesProcess(t *testing.T) {
 // foreground, and reads nothing of the input.
 func TestInputWhileTheAgentLeavesTheForeground(t *testing.T) {
 	s := newServer(t)
-	for _, signal := range []string{"STOP", "KILL"} {
-		for _, parts := range [][]agent.Part{{{Paste: "never"}, {Key: agent.Enter}}, {{Key: agent.Enter}}} {
-			for n := 1; n <= 6; n++ {
-				w, out := s.agentBelow("exec cat")
-				h := &Holder{Tmux: s.before(n, fmt.Sprintf("kill -%s %d; until [ -s %s-back ]; do sleep 0.02; done", signal, w.Process, out))}
-				err := h.Input(t.Context(), w, parts)
-				if _, left := os.Stat(out + "-back"); left != nil {
-					if err != nil { // fewer commands than n
-						t.Errorf("%s, %q: %v", signal, parts, err)
-					}
-					continue
+	paste := []agent.Part{{Paste: "never"}, {Key: agent.Enter}}
+	for _, c := range []struct {
+		signal, program string
+		parts           []agent.Part
+	}{
+		{"STOP", "exec cat", paste},
+		{"KILL", "exec cat", paste},
+		{"STOP", "exec cat", paste[1:]},
+		{"KILL", "exec cat", paste[1:]},
+		// Nothing of its name is sure to be the same when tmux prints it.
+		{"STOP", "exec -a 日本 cat", paste},
+	} {
+		for n := 1; n <= 6; n++ {
+			w, out := s.agentBelow(c.program)
+			h := &Holder{Tmux: s.before(n, fmt.Sprintf("kill -%s %d; until [ -s %s-back ]; do sleep 0.02; done", c.signal, w.Process, out))}
+			err := h.Input(t.Context(), w, c.parts)
+			if _, left := os.Stat(out + "-back"); left != nil {
+				if err != nil && !errors.Is(err, errNoName) { // fewer commands than n
+					t.Errorf("%s, %q: %v", c.signal, c.parts, err)
 				}
-				if err == nil {
-					t.Errorf("%s before command %d: %q was handed over", signal, n, parts)
-				}
-				time.Sleep(200 * time.Millisecond)
-				if b, _ := os.ReadFile(out + "-shell"); len(b) > 0 {
-					t.Errorf("%s before command %d: the shell read %q", signal, n, b)
-				}
-				if b := s.run("list-buffers", "-F", "#{buffer_name}"); b != "" {
-					t.Errorf("buffers left: %q", b)
-				}
+				continue
+			}
+			if err == nil {
+				t.Errorf("%s before command %d: %q was handed over", c.signal, n, c.parts)
+			}
+			time.Sleep(200 * time.Millisecond)
+			if b, _ := os.ReadFile(out + "-shell"); len(b) > 0 {
+				t.Errorf("%s before command %d: the shell read %q", c.signal, n, b)
+			}
+			if b := s.run("list-buffers", "-F", "#{buffer_name}"); b != "" {
+				t.Errorf("buffers left: %q", b)
 			}
 		}
 	}
