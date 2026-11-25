@@ -235,7 +235,7 @@ type part struct {
 //   - whether items end early, where ends says that they may;
 //   - whether what opens inline code opens none when the code would go on
 //     after its line.
-func read(text string, ends func(i int) (end, early int), doubt func(what string, at int) bool, blank func(from, to int)) {
+func read(text string, ends func(i int, inner bool) (end, early int), doubt func(what string, at int) bool, blank func(from, to int)) {
 	start, block := 0, ""        // where a quote may begin, and whether a block ends there
 	var parts []part             // what i is in, an inner one after its outer one
 	var next [len(fenceMark)]int // where a run of so many backticks is next
@@ -264,13 +264,13 @@ func read(text string, ends func(i int) (end, early int), doubt func(what string
 				continue
 			}
 			if sign := itemSign.FindString(text[i:]); sign != "" {
-				form := block + number.ReplaceAllString(strings.TrimLeft(sign, " \t"), "1")
+				form := block + number.ReplaceAllString(strings.TrimLeft(sign, " "), "1")
 				end := len(text)
 				if len(parts) > 0 {
 					end = parts[len(parts)-1].end
 				}
 				if strings.ContainsAny(heading.ReplaceAllString(sign, ""), "*+-.)") {
-					late, early := ends(i)
+					late, early := ends(i, len(parts) > 0)
 					end = min(end, late)
 					if early < end && doubt("\n", i) {
 						end = early
@@ -278,7 +278,7 @@ func read(text string, ends func(i int) (end, early int), doubt func(what string
 					parts = append(parts, part{form, end})
 				}
 				if heading.MatchString(sign) {
-					parts = append(parts, part{form, min(end, lineEnd(text, i))})
+					parts = append(parts, part{form, lineEnd(text, i)})
 				}
 			}
 		}
@@ -349,9 +349,10 @@ func lineEnd(text string, i int) int {
 // itemEnds returns a function that tells where the item of a list ends that
 // begins at i in text: before a line with text in it that is not indented, or
 // that begins an item or a heading and is indented no more than it is. early
-// is where it may end before that: before a line that comes after an empty one
-// or whose indentation begins with no space.
-func itemEnds(text string) func(i int) (end, early int) {
+// is where it may end before that: before the first line that comes after an
+// empty one (also one of white space), that is indented no more than an item in
+// another (inner), or whose indentation begins with no space.
+func itemEnds(text string) func(i int, inner bool) (end, early int) {
 	type line struct {
 		at, deep     int
 		item, mayEnd bool
@@ -367,7 +368,7 @@ func itemEnds(text string) func(i int) (end, early int) {
 		empty = deep == len(l)
 		at += len(l) + 1
 	}
-	return func(i int) (end, early int) {
+	return func(i int, inner bool) (end, early int) {
 		deep := len(indent.FindString(text[i:]))
 		early = len(text)
 		next := sort.Search(len(lines), func(n int) bool { return lines[n].at > i })
@@ -375,7 +376,7 @@ func itemEnds(text string) func(i int) (end, early int) {
 			if l.deep == 0 || l.deep <= deep && l.item {
 				return l.at - 1, min(early, l.at-1)
 			}
-			if l.mayEnd {
+			if l.mayEnd || inner && l.deep <= deep {
 				early = min(early, l.at-1)
 			}
 		}
