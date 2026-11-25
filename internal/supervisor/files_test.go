@@ -12,6 +12,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -1197,6 +1198,36 @@ func TestFilesTakenBackLater(t *testing.T) {
 	}
 }
 
+// A directory on the way that a person makes in the moment of the write is
+// the person's: a write that fails then does not take it back.
+func TestFilesDirectoryMadeMeanwhile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes everywhere")
+	}
+	for nth, path := range map[int]string{1: "made", 2: "made/deeper"} {
+		t.Run(path, func(t *testing.T) {
+			f := newFilesFixture(t)
+			at := filepath.Join(f.dir, path)
+			done := f.at(t, swap{"making", nth, func(t *testing.T, _ *filesFixture) {
+				if err := os.Mkdir(at, 0o500); err != nil { // nothing can be written in it
+					t.Error(err)
+				}
+			}})
+			t.Cleanup(func() { os.Chmod(at, 0o700) })
+			ans, err := f.own.Files(context.Background(), writeOf("made/deeper/new.md", "x", ""))
+			if err == nil || !done() {
+				t.Fatalf("answered %+v", ans)
+			}
+			if st, err := os.Stat(at); err != nil || !st.IsDir() {
+				t.Fatalf("the person's directory: %v", err)
+			}
+			if n := f.recorded(t); n != 0 {
+				t.Fatalf("%d writes are recorded", n)
+			}
+		})
+	}
+}
+
 // killedAt, in the environment of this test's own process, is the step at
 // which it is killed, the root of its fixture and the request's number.
 const killedAt = "HATAORI_TEST_FILES_KILLED"
@@ -1236,7 +1267,7 @@ func TestFilesKilled(t *testing.T) {
 		t.Fatalf("not killed: %+v, %v", ans, err)
 	}
 	for i, c := range killedWrites {
-		for _, step := range []string{"written", "placing", "placed"} {
+		for _, step := range []string{"made", "written", "placing", "placed"} {
 			t.Run(c.name+", "+step, func(t *testing.T) {
 				f := newFilesFixture(t)
 				for name, text := range c.before {
@@ -1316,11 +1347,20 @@ func TestFilesSweepRemovesItsOwnOnly(t *testing.T) {
 	f := newFilesFixture(t)
 	record := func(dir, path, tmp, was string, there int) {
 		t.Helper()
-		f.sql(t, fmt.Sprintf(`INSERT INTO supervisor_writes (scope, thread, dir, path, tmp, was, version, there, pos) VALUES ('c1', %d, '%s', '%s', '%s', '%s', 'v', %d, 0)`,
-			filesOwn, dir, path, tmp, was, there))
+		f.sql(t, fmt.Sprintf(`INSERT INTO supervisor_writes (scope, thread, dir, path, tmp, was, version, there, pos) VALUES ('c1', %d, '%s', '%s', '%s', '%s', '%s', %d, 0)`,
+			filesOwn, dir, path, tmp, was, versionOf("the daemon's"), there))
 	}
 	put(t, f.dir, "notes/plan.md", "old")
 	put(t, f.dir, "notes/.hataori-1", "the daemon's")
+	put(t, f.dir, "notes/.hataori-7", "the dae")
+	if err := os.Chmod(filepath.Join(f.dir, "notes/.hataori-7"), 0); err != nil { // not whole yet
+		t.Fatal(err)
+	}
+	put(t, f.dir, "notes/.hataori-8", "a person's")
+	put(t, f.dir, "notes/placed.md", "the daemon's, and changed since")
+	if err := os.Link(filepath.Join(f.dir, "notes/placed.md"), filepath.Join(f.dir, "notes/.hataori-9")); err != nil {
+		t.Fatal(err)
+	}
 	put(t, f.dir, "notes/.hataori-2", "not recorded")
 	put(t, f.dir, "notes/.hataori-3/x", "a directory")
 	put(t, f.dir, "notes/mine.md", "no name of the daemon's")
@@ -1337,6 +1377,9 @@ func TestFilesSweepRemovesItsOwnOnly(t *testing.T) {
 	}
 	old := versionOf("old")
 	record(f.dir, "notes/plan.md", ".hataori-1", old, 1)
+	record(f.dir, "notes/plan.md", ".hataori-7", old, 1)
+	record(f.dir, "notes/plan.md", ".hataori-8", old, 1)
+	record(f.dir, "notes/placed.md", ".hataori-9", "", 1)
 	record(f.dir, "notes/plan.md", ".hataori-3", old, 1)
 	record(f.dir, "notes/plan.md", ".hataori-4", old, 1)
 	record(f.dir, "notes/plan.md", "mine.md", old, 1)
@@ -1352,9 +1395,12 @@ func TestFilesSweepRemovesItsOwnOnly(t *testing.T) {
 	}
 	var want []string
 	for _, l := range strings.Split(before, "\n") {
-		if !strings.Contains(l, "/.hataori-1 ") {
+		if !regexp.MustCompile(`/\.hataori-[179] `).MatchString(l) {
 			want = append(want, l)
 		}
+	}
+	if log := f.log.take(); strings.Count(log, "it stays") != 4 || !strings.Contains(log, "notes/.hataori-8") {
+		t.Errorf("logged %s", log)
 	}
 	if after := withoutStore(tree(t, f.root)); after != strings.Join(want, "\n") {
 		t.Fatalf("there is\n%s\nand was\n%s", after, before)

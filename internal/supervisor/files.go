@@ -53,10 +53,11 @@ type ScopeFiles struct {
 	Log   *slog.Logger
 	// Hook, when a test sets it, is called between two steps that something
 	// may come between: "entering" a directory and "opening" a file, once it
-	// was looked at; "written", once a write's new content is whole under the
-	// daemon's own name and before what is there is looked at for the last
-	// time; "placing", after that and before it takes the file's name; and
-	// "placed", once it has it.
+	// was looked at; "making" a directory on the way; "made", once the
+	// daemon's own file of a write is there, empty; "written", once it holds
+	// the whole new content and before what is there is looked at for the
+	// last time; "placing", after that and before it takes the file's name;
+	// and "placed", once it has it.
 	Hook func(step string)
 
 	locks keyed // of the directories, for their writes
@@ -504,7 +505,7 @@ func (s *ScopeFiles) write(ctx context.Context, scope string, thread control.Thr
 	if cur != nil {
 		perm = cur.perm
 	}
-	left, err := s.place(dir, root, w, next, perm)
+	left, err := s.place(dir, root, &w, next, perm)
 	if left == nil {
 		left = s.finish(ctx, root, id, w, err == nil)
 	}
@@ -691,8 +692,10 @@ func (s *ScopeFiles) there(root *os.Root, parts []string) (int, error) {
 
 // place puts text where w says, with perm, whole: it is written beside the
 // file and takes its name only where what stands there is still what w
-// replaces. It leaves no file of the daemon's own, or left says why one.
-func (s *ScopeFiles) place(dir string, root *os.Root, w placing, text string, perm fs.FileMode) (left, err error) {
+// replaces. It leaves no file of the daemon's own, or left says why one. A
+// directory that someone else made on the way meanwhile counts in w as one
+// that was there.
+func (s *ScopeFiles) place(dir string, root *os.Root, w *placing, text string, perm fs.FileMode) (left, err error) {
 	parts := w.parts()
 	last := len(parts) - 1
 	parent, missing, err := s.way(root, parts[:last])
@@ -700,8 +703,11 @@ func (s *ScopeFiles) place(dir string, root *os.Root, w placing, text string, pe
 		return nil, err
 	}
 	defer func() { parent.Close() }()
-	for _, p := range missing {
-		if err := parent.Mkdir(p, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+	for i, p := range missing {
+		s.step("making")
+		if err := parent.Mkdir(p, 0o700); errors.Is(err, fs.ErrExist) {
+			w.there = last - len(missing) + i + 1
+		} else if err != nil {
 			return nil, fault("making a directory on the way", err)
 		}
 		next, err := s.enter(parent, p)
@@ -711,7 +717,7 @@ func (s *ScopeFiles) place(dir string, root *os.Root, w placing, text string, pe
 		parent.Close()
 		parent = next
 	}
-	made, err := writeNew(parent, w.tmp, text, perm)
+	made, err := s.writeNew(parent, w.tmp, text, perm)
 	if made {
 		// Also where the path no longer leads to it. Nothing has this name
 		// once it was renamed.
@@ -725,7 +731,7 @@ func (s *ScopeFiles) place(dir string, root *os.Root, w placing, text string, pe
 		return nil, err
 	}
 	s.step("written")
-	return nil, s.name(dir, root, parent, w, perm)
+	return nil, s.name(dir, root, parent, *w, perm)
 }
 
 // name gives what place wrote to parent the name of the file.
@@ -781,13 +787,18 @@ func (s *ScopeFiles) name(dir string, root, parent *os.Root, w placing, perm fs.
 }
 
 // writeNew makes the file name in dir with text and perm, and syncs it.
-// made: it is there, whole or not.
-func writeNew(dir *os.Root, name, text string, perm fs.FileMode) (made bool, err error) {
-	fh, err := dir.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+// made: it is there, whole or not. Until it is whole nobody may read or
+// write it, which is how ownFile knows it.
+func (s *ScopeFiles) writeNew(dir *os.Root, name, text string, perm fs.FileMode) (made bool, err error) {
+	fh, err := dir.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0)
 	if err != nil {
 		return false, fault("writing the file", err)
 	}
+	s.step("made")
 	_, err = fh.WriteString(text)
+	if err == nil {
+		err = fh.Sync()
+	}
 	if err == nil {
 		err = fh.Chmod(perm)
 	}
@@ -862,7 +873,7 @@ func (s *ScopeFiles) record(ctx context.Context, scope string, thread control.Th
 // when it was not: those that a daemon died in, and any that could not be
 // settled when it was made. The directory must be locked.
 func (s *ScopeFiles) settle(ctx context.Context, dir string, root *os.Root) error {
-	rows, err := s.Store.DB.QueryContext(ctx, `SELECT id, path, tmp, was, there FROM supervisor_writes WHERE dir = ? AND done = 0 ORDER BY id`, dir)
+	rows, err := s.Store.DB.QueryContext(ctx, `SELECT id, path, tmp, was, version, there FROM supervisor_writes WHERE dir = ? AND done = 0 ORDER BY id`, dir)
 	if err != nil {
 		return fmt.Errorf("the writes before this one: %w", err)
 	}
@@ -874,7 +885,7 @@ func (s *ScopeFiles) settle(ctx context.Context, dir string, root *os.Root) erro
 	var open []write
 	for rows.Next() {
 		var w write
-		if err := rows.Scan(&w.id, &w.path, &w.tmp, &w.was, &w.there); err != nil {
+		if err := rows.Scan(&w.id, &w.path, &w.tmp, &w.was, &w.version, &w.there); err != nil {
 			return fmt.Errorf("the writes before this one: %w", err)
 		}
 		open = append(open, w)
@@ -913,14 +924,18 @@ func (s *ScopeFiles) clear(root *os.Root, w placing) (made bool, err error) {
 	}
 	tmp, err := parent.Lstat(w.tmp)
 	switch {
-	case err == nil && strings.HasPrefix(w.tmp, tmpPrefix) && tmp.Mode().IsRegular():
+	case err == nil:
 		at, err := parent.Lstat(parts[last])
 		made := err == nil && os.SameFile(tmp, at)
+		if !s.ownFile(parent, tmp, w, made) {
+			s.Log.Warn("what has the name of the daemon's own file is none of its: it stays", "path", strings.Join(append(parts[:last:last], w.tmp), "/"))
+			break
+		}
 		if err := parent.Remove(w.tmp); err != nil {
 			return false, fault("removing the daemon's own file", err)
 		}
 		return made, nil
-	case err != nil && !errors.Is(err, fs.ErrNotExist):
+	case !errors.Is(err, fs.ErrNotExist):
 		return false, fault("looking at the daemon's own file", err)
 	}
 	cur, err := s.look(parent, parts[last], w.path)
@@ -928,6 +943,20 @@ func (s *ScopeFiles) clear(root *os.Root, w placing) (made bool, err error) {
 		return true, nil // something else is there now
 	}
 	return cur.version() != w.was, nil
+}
+
+// ownFile reports whether tmp, what stands at w's own name in parent, may go
+// because it is the daemon's: a file that nobody may read or write yet, the
+// whole of what w writes, or, placed, a second name of the file.
+func (s *ScopeFiles) ownFile(parent *os.Root, tmp fs.FileInfo, w placing, placed bool) bool {
+	switch {
+	case !strings.HasPrefix(w.tmp, tmpPrefix) || !tmp.Mode().IsRegular():
+		return false
+	case placed || tmp.Mode().Perm() == 0:
+		return true
+	}
+	f, err := s.look(parent, w.tmp, w.tmp)
+	return err == nil && f != nil && f.Version == w.version
 }
 
 // finish records what became of the write id, which clear cleared, and takes
