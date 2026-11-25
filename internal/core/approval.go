@@ -19,6 +19,9 @@ func (a *api) AskInterrupt(ctx context.Context, id control.ThreadID, key, reason
 	if err != nil {
 		return "", err
 	}
+	if err := a.ordinaryOnly(ctx, "AskInterrupt", scope, id); err != nil {
+		return "", err
+	}
 	if a.caller.AsksIn == 0 {
 		return "", a.refused("AskInterrupt", scope, "no approval thread")
 	}
@@ -132,6 +135,9 @@ func (a *api) answerApproval(ctx context.Context, req control.RequestID, ans con
 		return noRequestErr(req)
 	}
 	if err := a.act(control.OpAnswer, "Answer", scope); err != nil {
+		return err
+	}
+	if err := a.ordinaryOnly(ctx, "Answer", scope, thread); err != nil {
 		return err
 	}
 	if string(a.caller.Principal) == principal {

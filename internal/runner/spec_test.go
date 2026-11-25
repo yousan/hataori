@@ -11,6 +11,7 @@ import (
 
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/core"
 )
 
 // specs is the fake adapter with the spec of every codec it makes
@@ -49,7 +50,7 @@ func TestCodecKnowsWhichMCPServersReport(t *testing.T) {
 		return Confined{MCP: []agent.MCPServer{{Name: "tools", Argv: []string{"x"}, Env: []string{"TOKEN=s3cret"}, Reports: true}, {Name: "other", Argv: []string{"y"}}}}, nil
 	}
 	if _, err := f.core.StartConfined(context.Background(), control.Caller{From: ownerFrom, Scopes: []string{"s"}, May: all},
-		control.StartRequest{Key: "k", Scope: "s", Thread: "t", Input: control.Input{Text: "reply confined"}}, control.KindSupervisor, t.TempDir()); err != nil {
+		control.StartRequest{Key: "k", Scope: "s", Thread: "t", Input: control.Input{Text: "reply confined"}}, control.KindSupervisor, core.InDir(t.TempDir())); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, "the turn", 15*time.Second, f.has("turn_ended", 1))
@@ -87,7 +88,7 @@ func TestCodecGetsTheLaunchedSpec(t *testing.T) {
 	f.start("reply hello")
 	waitFor(t, "the first turn", 15*time.Second, f.has("turn_ended", 1))
 	if _, err := f.core.StartConfined(context.Background(), control.Caller{From: ownerFrom, Scopes: []string{"s"}, May: all},
-		control.StartRequest{Key: "k2", Scope: "s", Thread: "t2", Input: control.Input{Text: "reply confined"}}, control.KindSupervisor, t.TempDir()); err != nil {
+		control.StartRequest{Key: "k2", Scope: "s", Thread: "t2", Input: control.Input{Text: "reply confined"}}, control.KindSupervisor, core.InDir(t.TempDir())); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, "the confined turn", 15*time.Second, f.has("turn_ended", 2))

@@ -31,7 +31,7 @@ func newKinds(t *testing.T) *kinds {
 
 func (k *kinds) try(kind control.ThreadKind, key string) (control.ThreadID, error) {
 	return k.core.StartConfined(context.Background(), control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all},
-		control.StartRequest{Key: key, Scope: "s", Thread: key, Input: control.Input{Text: "go"}}, kind, k.dir)
+		control.StartRequest{Key: key, Scope: "s", Thread: key, Input: control.Input{Text: "go"}}, kind, InDir(k.dir))
 }
 
 // start starts a thread of kind whose agent was launched, so that it can be
@@ -167,7 +167,7 @@ func TestOwnThreadsStartAndReopenOneAtATime(t *testing.T) {
 	second := make(chan started, 1)
 	go func() {
 		id, err := k.core.StartConfined(ctx, control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all},
-			control.StartRequest{Key: "sv2", Scope: "s", Input: control.Input{Text: "go"}}, control.KindSupervisor, k.dir)
+			control.StartRequest{Key: "sv2", Scope: "s", Input: control.Input{Text: "go"}}, control.KindSupervisor, InDir(k.dir))
 		second <- started{id, err}
 	}()
 	<-slow.asked // the start has seen no other open

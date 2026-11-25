@@ -566,6 +566,24 @@ func (a *api) refused(name, scope, reason string) error {
 	return fmt.Errorf("core: %s in scope %q: %w", name, scope, ErrForbidden)
 }
 
+// ordinaryOnly refuses a call on thread id of scope, for a caller with
+// OrdinaryOnly, when the thread is a confined one. A thread's kind never
+// changes, so it is not read in the call's own transaction.
+func (a *api) ordinaryOnly(ctx context.Context, name, scope string, id control.ThreadID) error {
+	if !a.caller.OrdinaryOnly {
+		return nil
+	}
+	kind, err := a.c.Kind(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !kind.Confined() {
+		return nil
+	}
+	return fmt.Errorf("%w: thread %d is a %s thread, which takes input from people only",
+		a.refused(name, scope, fmt.Sprintf("thread %d is a %s thread", id, kind)), id, kind)
+}
+
 // marked returns in with the caller's mark, if it has one, as its first
 // line.
 func (a *api) marked(in control.Input) control.Input {
@@ -1315,7 +1333,7 @@ func title(prompt string) string {
 }
 
 func (a *api) Start(ctx context.Context, r control.StartRequest) (control.ThreadID, error) {
-	return a.start(ctx, r, control.KindOrdinary, "")
+	return a.start(ctx, r, control.KindOrdinary, nil)
 }
 
 // ErrKindKey is returned by Start and StartConfined when the key started a
@@ -1326,24 +1344,34 @@ var ErrKindKey = errors.New("the key started a thread of another kind")
 // StartConfined is Start, as caller, for a thread of kind, one of the
 // confined ones, whose sessions all run confined (design, section 7.1):
 // with no shell, file tools only in its own directory and only the MCP
-// servers the runner gives each launch. Its directory is dir, given by
-// Workspaces.Confined instead of a clone, so r.Repo must be empty: several
-// threads may be started in one dir, as a scope's supervisor threads are
-// (design, section 7.1, "Its directory and its notes"). Of the kind
+// servers the runner gives each launch. Its directory is the one dir
+// returns, given by Workspaces.Confined instead of a clone, so r.Repo must be
+// empty: several threads may be started in one, as a scope's supervisor
+// threads are (design, section 7.1, "Its directory and its notes"). dir is
+// asked only for a thread that is started now: not for a caller that may
+// not start it, nor for a key accepted before. Of the kind
 // control.KindSupervisor none starts while another of the scope is open.
 // It is not an operation of the control API: only a client inside the
 // daemon starts such a thread, so no call sets a thread's kind.
-func (c *Core) StartConfined(ctx context.Context, caller control.Caller, r control.StartRequest, kind control.ThreadKind, dir string) (control.ThreadID, error) {
+func (c *Core) StartConfined(ctx context.Context, caller control.Caller, r control.StartRequest, kind control.ThreadKind, dir Dir) (control.ThreadID, error) {
 	if !kind.Confined() {
 		return 0, fmt.Errorf("core: start in %q: a thread of kind %q is not started confined", r.Scope, kind)
 	}
 	if r.Repo != "" {
 		return 0, fmt.Errorf("core: start in %q: a confined thread has no repository", r.Scope)
 	}
-	if dir == "" {
+	if dir == nil {
 		return 0, fmt.Errorf("core: start in %q: a confined thread needs its directory", r.Scope)
 	}
 	return c.As(caller).(*api).start(ctx, r, kind, dir)
+}
+
+// Dir returns the directory a confined thread is started in.
+type Dir func(ctx context.Context) (string, error)
+
+// InDir is the Dir that returns dir.
+func InDir(dir string) Dir {
+	return func(context.Context) (string, error) { return dir, nil }
 }
 
 // ModelOf returns the model and the effort a session of agent in scope is
@@ -1363,8 +1391,9 @@ func (c *Core) ModelOf(scope, agent, model, effort string) (string, string) {
 	return cmp.Or(model, sc.Model, d.Model, model0), cmp.Or(effort, sc.Effort, d.Effort, effort0)
 }
 
-// start is Start, and StartConfined in dir when kind is a confined one.
-func (a *api) start(ctx context.Context, r control.StartRequest, kind control.ThreadKind, dir string) (control.ThreadID, error) {
+// start is Start, and StartConfined in what in returns when kind is a
+// confined one.
+func (a *api) start(ctx context.Context, r control.StartRequest, kind control.ThreadKind, in Dir) (control.ThreadID, error) {
 	confined := kind.Confined()
 	if err := a.act(control.OpStart, "Start", r.Scope); err != nil {
 		return 0, err
@@ -1438,6 +1467,15 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 	var err error
 	if r.Input, err = a.inputHooks(ctx, "Start", 0, r.Scope, r.Input); err != nil {
 		return 0, err
+	}
+	var dir string
+	if confined {
+		if dir, err = in(ctx); err != nil {
+			return 0, err
+		}
+		if dir == "" {
+			return 0, fmt.Errorf("core: start in %q: a confined thread needs its directory", r.Scope)
+		}
 	}
 
 	// The first link: in the scope's own channel, of the scope's owner.
@@ -2018,6 +2056,9 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 	if err := a.proposalKey("Send", scope, key); err != nil {
 		return err
 	}
+	if err := a.ordinaryOnly(ctx, "Send", scope, id); err != nil {
+		return err
+	}
 	if a.caller.Propose {
 		// Nothing is sent: a person decides (Caller.Propose).
 		return a.proposeSend(ctx, scope, id, key, in)
@@ -2323,6 +2364,9 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 		return noRequestErr(req)
 	}
 	if err := a.act(control.OpAnswer, "Answer", scope); err != nil {
+		return err
+	}
+	if err := a.ordinaryOnly(ctx, "Answer", scope, thread); err != nil {
 		return err
 	}
 	if state != session.RequestOpen {

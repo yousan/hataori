@@ -71,7 +71,7 @@ func TestReopenASupervisorThreadOnlyWhenNoOtherIsOpen(t *testing.T) {
 	owner := f.core.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: reopener})
 	start := func(key string) control.ThreadID {
 		id, err := f.core.StartConfined(ctx, control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all},
-			control.StartRequest{Key: key, Scope: "s", Thread: key, Input: control.Input{Text: "go"}}, control.KindSupervisor, dir)
+			control.StartRequest{Key: key, Scope: "s", Thread: key, Input: control.Input{Text: "go"}}, control.KindSupervisor, InDir(dir))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -125,11 +125,11 @@ func TestNoConfinedStartWhileAnotherIsOpen(t *testing.T) {
 	f.core.Workspaces = confinedWorkspaces{}
 	dir := filepath.Join(t.TempDir(), "scope")
 	caller := control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all}
-	first, err := f.core.StartConfined(ctx, caller, control.StartRequest{Key: "sv", Scope: "s", Thread: "sv", Input: control.Input{Text: "go"}}, control.KindSupervisor, dir)
+	first, err := f.core.StartConfined(ctx, caller, control.StartRequest{Key: "sv", Scope: "s", Thread: "sv", Input: control.Input{Text: "go"}}, control.KindSupervisor, InDir(dir))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = f.core.StartConfined(ctx, caller, control.StartRequest{Key: "sv-after", Scope: "s", Thread: "sv2", Input: control.Input{Text: "go"}}, control.KindSupervisor, dir)
+	_, err = f.core.StartConfined(ctx, caller, control.StartRequest{Key: "sv-after", Scope: "s", Thread: "sv2", Input: control.Input{Text: "go"}}, control.KindSupervisor, InDir(dir))
 	if !errors.Is(err, session.ErrRefused) || !strings.Contains(err.Error(), fmt.Sprintf("thread %d", first)) {
 		t.Fatalf("a second confined start: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestNoConfinedStartWhileAnotherIsOpen(t *testing.T) {
 	if err := f.core.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: closer}).CloseThread(ctx, first); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.core.StartConfined(ctx, caller, control.StartRequest{Key: "sv-after", Scope: "s", Thread: "sv2", Input: control.Input{Text: "go"}}, control.KindSupervisor, dir); err != nil {
+	if _, err := f.core.StartConfined(ctx, caller, control.StartRequest{Key: "sv-after", Scope: "s", Thread: "sv2", Input: control.Input{Text: "go"}}, control.KindSupervisor, InDir(dir)); err != nil {
 		t.Fatalf("a confined start once the other is closed: %v", err)
 	}
 }
@@ -155,7 +155,7 @@ func TestReopenMakesAConfinedDirectoryAgain(t *testing.T) {
 	f.core.Workspaces = confinedWorkspaces{}
 	dir := filepath.Join(t.TempDir(), "scope")
 	id, err := f.core.StartConfined(ctx, control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all},
-		control.StartRequest{Key: "sv", Scope: "s", Thread: "sv", Input: control.Input{Text: "go"}}, control.KindSupervisor, dir)
+		control.StartRequest{Key: "sv", Scope: "s", Thread: "sv", Input: control.Input{Text: "go"}}, control.KindSupervisor, InDir(dir))
 	if err != nil {
 		t.Fatal(err)
 	}

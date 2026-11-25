@@ -92,6 +92,9 @@ type Scope struct {
 	// Files are host paths copied into docs/ of its directory before each
 	// launch of its session and before each wake (Docs).
 	Files []string
+	// Conversations lets Converse start conversations with it. One that
+	// exists goes on without.
+	Conversations bool
 }
 
 // Sessions is the supervisors' part of the daemon (design, section 7.1): it
@@ -148,6 +151,10 @@ func (s *Sessions) Confine(ctx context.Context, l runner.ConfinedLaunch) (runner
 	if !ok {
 		return runner.Confined{}, fmt.Errorf("scope %q names no supervisor", l.Scope)
 	}
+	kind, err := s.Core.Kind(ctx, l.Thread)
+	if err != nil {
+		return runner.Confined{}, err
+	}
 	token, err := s.bind(l.Session, l.Thread, l.Scope, l.StateDir, true)
 	if err != nil {
 		return runner.Confined{}, err
@@ -158,8 +165,12 @@ func (s *Sessions) Confine(ctx context.Context, l runner.ConfinedLaunch) (runner
 			s.Log.Warn("a user's file of the supervisor is not given", "scope", l.Scope, "session", l.Session, "file", f.Name, "reason", f.Skipped)
 		}
 	}
-	if err := s.given(ctx, l.Scope, files); err != nil {
-		return runner.Confined{}, err
+	// The own thread's wakes name the files that changed since it was told
+	// them: what a conversation's launch is given, it was not told.
+	if kind == control.KindSupervisor {
+		if err := s.given(ctx, l.Scope, files); err != nil {
+			return runner.Confined{}, err
+		}
 	}
 	s.CopyDocs(ctx, l.Scope, l.Thread)
 	return runner.Confined{
@@ -255,6 +266,25 @@ func (s *Sessions) bind(session int64, thread control.ThreadID, scope, stateDir 
 		s.Tokens.Revoke(old.token)
 	}
 	return token, nil
+}
+
+// Unconfine revokes the token of session, whose thread was closed: what
+// still holds it reaches nothing, and its connections end. The token stays
+// in the session's state directory, and a launch of it, after a reopen,
+// binds it again (Confine). It is the runner's Unconfine.
+func (s *Sessions) Unconfine(session int64) {
+	s.mu.Lock()
+	var token string
+	for thread, i := range s.issued {
+		if i.session == session {
+			token = i.token
+			delete(s.issued, thread)
+		}
+	}
+	s.mu.Unlock()
+	if token != "" {
+		s.Tokens.Revoke(token)
+	}
 }
 
 // API is what the connection of scope's supervisor is bound to: its
@@ -429,7 +459,7 @@ func (s *Sessions) StartOne(ctx context.Context, scope string) (control.ThreadID
 	caller := control.Caller{Principal: s.Owner, Scopes: []string{scope}, May: control.OpRead | control.OpStart}
 	return s.Core.StartConfined(ctx, caller, control.StartRequest{Key: key, Scope: scope,
 		Input: control.Input{Text: FirstInput}, Model: sv.Model, Effort: cmp.Or(sv.Effort, DefaultEffort)},
-		control.KindSupervisor, dir)
+		control.KindSupervisor, core.InDir(dir))
 }
 
 // Dir returns the directory of scope's supervisor threads (design, section

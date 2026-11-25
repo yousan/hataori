@@ -117,7 +117,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 			Autonomy: sv.Autonomy, Trusted: sv.TrustedAuthors,
 			Limits:       supervisor.Limits{Turns: sv.TurnsPerHour, Sends: sv.SendsPerHour, Tokens: sv.TokensPerDay},
 			RemindersMax: sv.RemindersMax, Report: sv.Report, ReportEvery: sv.ReportEvery, Mention: sv.Mention, QuietHours: sv.QuietHours,
-			Files: sv.Files}
+			Files: sv.Files, Conversations: sv.Conversations}
 	}
 	// The forges the supervisors read (design, section 7.1), each made from
 	// its section with its token, read from config/, which stays in it.
@@ -444,7 +444,10 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 	if pluginHook != nil {
 		pluginHook(issuePlugin, srv.Revoke)
 	}
-	r.Confine, r.ConfinedConfig = sv.Confine, sv.Config
+	if sessionsHook != nil {
+		sessionsHook(sv)
+	}
+	r.Confine, r.Unconfine, r.ConfinedConfig = sv.Confine, sv.Unconfine, sv.Config
 	for scope := range supervisors {
 		if name, ok := cfg.People.Resolve(supervisor.ID(scope)); !ok || !cfg.People.May(name, scope) {
 			lg.Warn("the supervisor of a scope is no person of that scope: it may read its threads, but not send or start",
@@ -802,6 +805,10 @@ var runnerHook func(*plugin.Runner)
 // wakerHook, when a test sets it, sees each supervisor's waker before it
 // runs, for a clock of the test's own.
 var wakerHook func(*supervisor.Waker)
+
+// sessionsHook, when a test sets it, is given the daemon's supervisors, so
+// that the test can start a conversation as a chat front end would.
+var sessionsHook func(*supervisor.Sessions)
 
 // handles reports whether one of grants has a handler on one of points:
 // without one, nothing calls the dispatcher, and nothing waits for it.

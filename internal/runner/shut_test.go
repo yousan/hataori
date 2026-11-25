@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -85,7 +86,11 @@ func TestShutRefusesAReplacedSession(t *testing.T) {
 			}
 		}
 	}
-	r := &Runner{Store: st, Machine: &session.Machine{Store: st}, Root: root}
+	// What Confine gave is taken back when the session is closed, and only
+	// then (#871).
+	var unconfined []int64
+	unconfine := func(id int64) { unconfined = append(unconfined, id) }
+	r := &Runner{Store: st, Machine: &session.Machine{Store: st}, Root: root, Unconfine: unconfine}
 	state := func(table string, id int) string {
 		var s string
 		st.DB.QueryRow(`SELECT state FROM `+table+` WHERE id = ?`, id).Scan(&s)
@@ -142,5 +147,8 @@ func TestShutRefusesAReplacedSession(t *testing.T) {
 	st.DB.QueryRow(`SELECT count(*) FROM events`).Scan(&again)
 	if again != events {
 		t.Fatal("a closed session was closed again")
+	}
+	if want := []int64{10, 11, 8, 3, 3}; !slices.Equal(unconfined, want) {
+		t.Fatalf("what Confine gave was taken back from %v, want %v: each session closed, none refused", unconfined, want)
 	}
 }
