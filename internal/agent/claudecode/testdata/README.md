@@ -9,8 +9,8 @@ Real output of the interactive `claude` CLI, for testing the adapter's codec. Th
 - `2.1.329/`: Claude Code 2.1.329, on 2026-11-21 (also in `2.1.329/VERSION`), on Linux: `trust_hooks_*` and `trust_permissions`, taken for #592 (see below).
 - `2.1.330/`: Claude Code 2.1.330, on 2026-11-23 (also in `2.1.330/VERSION`), on Linux: `usage`, taken by `capture.py` for #675, with the transcript's line count at each hook call (see below).
 - `2.1.331/`: Claude Code 2.1.331, on 2026-11-25 (also in `2.1.331/VERSION`), on Linux: `held_notification`, taken by `capture.py` for #593, `failure_background`, `interrupt_background`, `failure_resumed` and `failure_monitor`, taken by it for #801 (see "Turns that end without the list of background tasks"), `trust_notice_*`, taken by `TestLiveTrustFiles` for #707 (see "The folder-trust dialog below a notice"), and `trust_permissions_*`, taken by it for #596 (see "The folder-trust dialog with a permission warning").
-- `2.1.332/`: Claude Code 2.1.332, on 2026-11-25 (also in `2.1.332/VERSION`), on Linux: `trust_notice_off_*`, taken by `TestLiveTrustFiles` for #728 (see "The folder-trust dialog below a notice"), `trust_files_env` and `trust_line_*`, taken by it for #730 and #758 (see "The folder-trust dialog that names files"), `trust_warnings_*`, taken by it for #752, and `trust_marks_*`, taken by it for #760 (see "The folder-trust dialog with several warnings").
-- `capture.py` took them (`confine.py`, the `confine_*` ones); `scrub.py` made them committable. `captures_test.go` in the package fails when a capture holds a home directory path, an e-mail address, an unscrubbed UUID or something shaped like a token.
+- `2.1.332/`: Claude Code 2.1.332, on 2026-11-25 (also in `2.1.332/VERSION`), on Linux: `trust_notice_off_*`, taken by `TestLiveTrustFiles` for #728 (see "The folder-trust dialog below a notice"), `trust_files_env` and `trust_line_*`, taken by it for #730 and #758 (see "The folder-trust dialog that names files"), `trust_warnings_*`, taken by it for #752, and `trust_marks_*`, taken by it for #760 (see "The folder-trust dialog with several warnings"); `mention_*`, taken by `mention.py` for #887 (see "Mentions in a pasted text").
+- `capture.py` took them (`confine.py`, the `confine_*` ones, and `mention.py`, the `mention_*` ones); `scrub.py` made them committable. `captures_test.go` in the package fails when a capture holds a home directory path, an e-mail address, an unscrubbed UUID or something shaped like a token.
 
 ## How they were taken
 
@@ -229,6 +229,34 @@ Notes:
 - The model kept to the prompts except in `confine_mcp_only_shell`: it called `mcp__sv__ping` before answering `no-tool`.
 - Every session also leaves the CLI's own state in the user's configuration: a transcript under `projects/`, its prompts in `history.jsonl`, and a project entry in `~/.claude.json`. A full run of `confine.py` adds about 65 of each, one per session. They are not settings, and the script does not remove them.
 - A person at the terminal could still type commands such as `/add-dir`, `/cd` or `!`. Those were not tried: the confinement is about what the model can do.
+
+## Mentions in a pasted text (2.1.332, taken for #887)
+
+`2.1.332/mention_*/`, by `mention.py RAW_DIR`, then `scrub.py` with the same `TMPDIR`. Unlike the other captures, no model and no login took part: the CLI is the real one, on `capture.py`'s pseudo-terminal, and the API is a server of the script on the loopback interface, which answers `ok` and looks at what the CLI sent. `HOME`, `CLAUDE_CONFIG_DIR`, the files that the texts name and the MCP server are made for the scenario and removed after it. Each dummy holds a word of its own, so a file was put into the conversation exactly when its word is in a request.
+
+Each scenario pastes 26 texts, each a turn of its own, after a start and once more after `--resume`.
+
+| Scenario | Flags | Pasted |
+|---|---|---|
+| `mention_restricted` | a confined launch's | the text |
+| `mention_unrestricted` | the same without `--restricted` | the text |
+| `mention_ordinary` | neither `--restricted` nor `--tools` | the text |
+| `mention_restricted_written`, `mention_unrestricted_written` | as the first two | the text with `(at)` for each `@`, as the adapter pastes it into a confined session |
+
+`outcome.json` has for each text: `session` (`start` or `resume`), `case`, `text`, `pasted`, the `prompt` that `UserPromptSubmit` reported, the kinds of the transcript's `attachments` since the paste, and `content`, the dummies whose word was in a request first after it. The transcripts are not kept.
+
+| Case | `restricted` | `unrestricted` | `ordinary` | the `_written` ones |
+|---|---|---|---|---|
+| `absolute_outside`, `relative_outside` (`../`), `home` (`~/`), `quoted_outside`, `directory_outside`, `link_outside` (a link in the directory) | nothing | the content | the content | nothing |
+| `relative_inside`, `absolute_inside`, `first` and `last` in the text, after `。`, a no-break space, a tab, an escape sequence or a zero-width space, and at the end of a `long` text | the content | the content | the content | nothing |
+| `after_bracket` (`(@`), `after_at` (`@@`), `wide` (`＠`, `﹫`), `in_word` (`user@example.com`) | nothing | nothing | nothing | nothing |
+| `resource` and `second_resource` (`@sv:note://...`) | the content | the content | the content | nothing |
+| `agent` (`@agent-general-purpose`) | an `agent_mention` | an `agent_mention` | an `agent_mention` | nothing |
+| `wake`, `reminder`: a file outside, one inside and a resource, each on a quoted line | the file inside; an `mcp_resource` without its content | both files; an `mcp_resource` without its content | all three | nothing |
+
+- `--append-system-prompt-file` named a file outside, one inside and a resource too: in no scenario was one of them put into the conversation.
+- The prompt reported for `after_escape` and `after_invisible` is without the escape sequence and the zero-width space. The CLI takes them out before it looks for mentions.
+- `agent_mention` puts no file into the conversation; it asks the model to start that agent.
 
 ## Pasted tabs (2.1.328, taken for #393)
 

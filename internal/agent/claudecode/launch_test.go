@@ -118,8 +118,11 @@ func TestConfinedLaunch(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !l.Confined {
-			t.Fatal("the launch does not say it is confined")
+		if !l.Confined || !l.NoMentions {
+			t.Fatalf("the launch does not say it is confined (%t) and takes no input for a mention (%t)", l.Confined, l.NoMentions)
+		}
+		if plain.Confined || plain.NoMentions {
+			t.Fatal("an ordinary launch says it is confined, or takes no input for a mention")
 		}
 		mcp := filepath.Join(s.StateDir, MCPConfigFile)
 		want := append(slices.Clone(plain.Argv), "--restricted", "--strict-mcp-config", "--mcp-config", mcp, "--tools", "Read,Write,Edit,Glob,Grep",
@@ -153,6 +156,12 @@ func TestConfinedLaunch(t *testing.T) {
 			t.Fatalf("MCP config %s", l.Files[MCPConfigFile])
 		}
 		for name := range plain.Files {
+			if name == InstructionsFile {
+				if got, want := string(l.Files[name]), s.Instructions+"\n\n"+atSignNote; got != want {
+					t.Fatalf("instructions %q, want the ordinary ones and the note on the at sign: %q", got, want)
+				}
+				continue
+			}
 			if !bytes.Equal(l.Files[name], plain.Files[name]) {
 				t.Fatalf("file %s differs from the ordinary launch's", name)
 			}
@@ -165,6 +174,15 @@ func TestConfinedLaunch(t *testing.T) {
 	l, err := a.Launch(s)
 	if err != nil || !l.Confined || string(l.Files[MCPConfigFile]) != "{\n  \"mcpServers\": {}\n}" {
 		t.Fatalf("no servers: %v %s", err, l.Files[MCPConfigFile])
+	}
+	// One without instructions still gets the note on the at sign.
+	s.Instructions = ""
+	l, err = a.Launch(s)
+	if err != nil || string(l.Files[InstructionsFile]) != atSignNote {
+		t.Fatalf("no instructions: %v %q", err, l.Files[InstructionsFile])
+	}
+	if file, _ := argAfter(l.Argv, "--append-system-prompt-file"); file != filepath.Join(s.StateDir, InstructionsFile) {
+		t.Fatalf("no instructions: the note is not given: %q", l.Argv)
 	}
 	// One that reports gets the session's socket and what it reports, beside
 	// its own environment; the spec's own list stays as it is.

@@ -251,13 +251,28 @@ var (
 // trims it when it puts an interrupted prompt back in the box.
 const commandPrefix = "(message) "
 
+// atSign is what is pasted for each "@" of an input of a confined session.
+// The CLI takes an "@" for a mention and puts what it names into the
+// conversation: a file, an MCP server's resource, a subagent
+// (testdata/2.1.332/mention_*). --restricted keeps out files outside the
+// session's directory only. Which "@" it takes depends on what is before
+// it, but the CLI first takes out escape sequences and characters that do
+// not show, so every "@" is written so, one in a word too.
+const atSign = "(at)"
+
+// atSignNote tells the agent of a confined session about atSign, so that
+// what it passes on or shows to a person has the "@" again.
+const atSignNote = "In every message you are given, each at sign (@) is written as " + atSign + ", so that a message names no file to your program. " +
+	"Where you quote such a text or pass it on, write @ again."
+
 // pasteText is what is pasted for text: without the paste markers, and in
-// a confined session, with commandPrefix before a command.
+// a confined session, with no "@" and with commandPrefix before a command.
 func (c *codec) pasteText(text string) string {
 	text = cleanPaste(text)
 	if c.spec.Confine == nil {
 		return text
 	}
+	text = strings.ReplaceAll(text, "@", atSign)
 	// Spaces, and characters such as a zero-width space, which the CLI
 	// dropped before "/add-dir", do not count as the start.
 	first := strings.TrimLeftFunc(text, func(r rune) bool { return unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) })

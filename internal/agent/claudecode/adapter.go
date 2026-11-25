@@ -143,8 +143,12 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 	if spec.Effort != "" {
 		argv = append(argv, "--effort", spec.Effort)
 	}
-	if spec.Instructions != "" {
-		files[InstructionsFile] = []byte(spec.Instructions)
+	instructions := spec.Instructions
+	if spec.Confine != nil {
+		instructions = strings.TrimSpace(instructions + "\n\n" + atSignNote)
+	}
+	if instructions != "" {
+		files[InstructionsFile] = []byte(instructions)
 		argv = append(argv, "--append-system-prompt-file", stateFile(spec, InstructionsFile))
 	}
 	l := agent.Launch{Argv: argv, Env: a.env(spec), Terminal: true, Files: files}
@@ -169,6 +173,7 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 			"--tools", ConfinedTools, "--setting-sources", "user")
 		l.Env = append(l.Env, ConfinedEnv...)
 		l.Confined = true
+		l.NoMentions = true // pasteText
 	}
 	return l, nil
 }

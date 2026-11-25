@@ -1,0 +1,670 @@
+[
+ {
+  "session": "start",
+  "case": "none",
+  "text": "Say ok please",
+  "pasted": "Say ok please",
+  "prompt": "Say ok please",
+  "attachments": [
+   "environment",
+   "model",
+   "total_tokens_reminder",
+   "session_context",
+   "date",
+   "prompt_snapshot",
+   "prompt_snapshot"
+  ],
+  "content": []
+ },
+ {
+  "session": "start",
+  "case": "absolute_outside",
+  "text": "Look at @/tmp/capture-work/outside/start-absolute please",
+  "pasted": "Look at @/tmp/capture-work/outside/start-absolute please",
+  "prompt": "Look at @/tmp/capture-work/outside/start-absolute please",
+  "attachments": [
+   "total_tokens_reminder"
+  ],
+  "content": []
+ },
+ {
+  "session": "start",
+  "case": "relative_outside",
+  "text": "Look at @../outside/start-relative please",
+  "pasted": "Look at @../outside/start-relative please",
+  "prompt": "Look at @../outside/start-relative please",
+  "attachments": [
+   "total_tokens_reminder"
+  ],
+  "content": []
+ },
+ {
+  "session": "start",
+  "case": "home",
+  "text": "Look at @~/start-home please",
+  "pasted": "Look at @~/start-home please",
+  "prompt": "Look at @~/start-home please",
+  "attachments": [
+   "total_tokens_reminder"
+  ],
+  "content": []
+ },
+ {
+  "session": "start",
+  "case": "quoted_outside",
+  "text": "Look at @\"/tmp/capture-work/outside/start spaces\" please",
+  "pasted": "Look at @\"/tmp/capture-work/outside/start spaces\" please",
+  "prompt": "Look at @\"/tmp/capture-work/outside/start spaces\" please",
+  "attachments": [
+   "total_tokens_reminder"
+  ],
+  "content": []
+ },
+ {
+  "session": "start",
+  "case": "directory_outside",
+  "text": "Look at @/tmp/capture-work/outside/start-directory please",
+  "pasted": "Look at @/tmp/capture-work/outside/start-directory please",
+  "prompt": "Look at @/tmp/capture-work/outside/start-directory please",
+  "attachments": [
+   "total_tokens_reminder"
+  ],
+  "content": []
+ },
+ {
+  "session": "start",
+  "case": "link_outside",
+  "text": "Look at @start-link please",
+  "pasted": "Look at @start-link please",
+  "prompt": "Look at @start-link please",
+  "attachments": [
+   "total_tokens_reminder"
+  ],
+  "content": []
+ },
+ {
+  "session": "start",
+  "case": "relative_inside",
+  "text": "Look at @start-inside please",
+  "pasted": "Look at @start-inside please",
+  "prompt": "Look at @start-inside please",
+  "attachments": [
+   "file",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "start-inside"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "absolute_inside",
+  "text": "Look at @/tmp/capture-work/cwd/sub/start-deep please",
+  "pasted": "Look at @/tmp/capture-work/cwd/sub/start-deep please",
+  "prompt": "Look at @/tmp/capture-work/cwd/sub/start-deep please",
+  "attachments": [
+   "file",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "start-deep"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "first",
+  "text": "@start-first please",
+  "pasted": "@start-first please",
+  "prompt": "@start-first please",
+  "attachments": [
+   "file",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "start-first"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "last",
+  "text": "Look at @start-last",
+  "pasted": "Look at @start-last",
+  "prompt": "Look at @start-last",
+  "attachments": [
+   "file",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "start-last"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "after_full_stop",
+  "text": "終わりました。@start-stop please",
+  "pasted": "終わりました。@start-stop please",
+  "prompt": "終わりました。@start-stop please",
+  "attachments": [
+   "file",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "start-stop"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "after_no_break_space",
+  "text": "Look at @start-nbsp please",
+  "pasted": "Look at @start-nbsp please",
+  "prompt": "Look at @start-nbsp please",
+  "attachments": [
+   "file",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "start-nbsp"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "after_tab",
+  "text": "Look at\t@start-tab please",
+  "pasted": "Look at\t@start-tab please",
+  "prompt": "Look at    @start-tab please",
+  "attachments": [
+   "file",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "start-tab"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "after_escape",
+  "text": "Look at \u001b[31m@start-escape please",
+  "pasted": "Look at \u001b[31m@start-escape please",
+  "prompt": "Look at @start-escape please",
+  "attachments": [
+   "file",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "start-escape"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "after_invisible",
+  "text": "Look at ​@start-invisible please",
+  "pasted": "Look at ​@start-invisible please",
+  "prompt": "Look at @start-invisible please",
+  "attachments": [
+   "file",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "start-invisible"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "after_bracket",
+  "text": "Look at (@start-bracket) please",
+  "pasted": "Look at (@start-bracket) please",
+  "prompt": "Look at (@start-bracket) please",
+  "attachments": [
+   "total_tokens_reminder"
+  ],
+  "content": []
+ },
+ {
+  "session": "start",
+  "case": "after_at",
+  "text": "Look at @@start-twice please",
+  "pasted": "Look at @@start-twice please",
+  "prompt": "Look at @@start-twice please",
+  "attachments": [
+   "total_tokens_reminder"
+  ],
+  "content": []
+ },
+ {
+  "session": "start",
+  "case": "wide",
+  "text": "Look at ＠start-wide or ﹫start-small please",
+  "pasted": "Look at ＠start-wide or ﹫start-small please",
+  "prompt": "Look at ＠start-wide or ﹫start-small please",
+  "attachments": [
+   "total_tokens_reminder"
+  ],
+  "content": []
+ },
+ {
+  "session": "start",
+  "case": "in_word",
+  "text": "Write to user@example.com about pkg@1.2.3 please",
+  "pasted": "Write to user@example.com about pkg@1.2.3 please",
+  "prompt": "Write to user@example.com about pkg@1.2.3 please",
+  "attachments": [
+   "total_tokens_reminder"
+  ],
+  "content": []
+ },
+ {
+  "session": "start",
+  "case": "resource",
+  "text": "Look at @sv:note://start-resource please",
+  "pasted": "Look at @sv:note://start-resource please",
+  "prompt": "Look at @sv:note://start-resource please",
+  "attachments": [
+   "mcp_resource",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "start-resource"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "second_resource",
+  "text": "Look at @sv:note://start-second please",
+  "pasted": "Look at @sv:note://start-second please",
+  "prompt": "Look at @sv:note://start-second please",
+  "attachments": [
+   "mcp_resource",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "start-second"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "agent",
+  "text": "Ask @agent-general-purpose please",
+  "pasted": "Ask @agent-general-purpose please",
+  "prompt": "Ask @agent-general-purpose please",
+  "attachments": [
+   "agent_mention",
+   "total_tokens_reminder"
+  ],
+  "content": []
+ },
+ {
+  "session": "start",
+  "case": "long",
+  "text": "Look at these lines\nline 0 of them\nline 1 of them\nline 2 of them\nline 3 of them\nline 4 of them\nline 5 of them\nline 6 of them\nline 7 of them\nline 8 of them\nline 9 of them\nline 10 of them\nline 11 of them\nline 12 of them\nline 13 of them\nline 14 of them\nline 15 of them\nline 16 of them\nline 17 of them\nline 18 of them\nline 19 of them\nline 20 of them\nline 21 of them\nline 22 of them\nline 23 of them\nline 24 of them\nline 25 of them\nline 26 of them\nline 27 of them\nline 28 of them\nline 29 of them\nline 30 of them\nline 31 of them\nline 32 of them\nline 33 of them\nline 34 of them\nline 35 of them\nline 36 of them\nline 37 of them\nline 38 of them\nline 39 of them\n@start-long please",
+  "pasted": "Look at these lines\nline 0 of them\nline 1 of them\nline 2 of them\nline 3 of them\nline 4 of them\nline 5 of them\nline 6 of them\nline 7 of them\nline 8 of them\nline 9 of them\nline 10 of them\nline 11 of them\nline 12 of them\nline 13 of them\nline 14 of them\nline 15 of them\nline 16 of them\nline 17 of them\nline 18 of them\nline 19 of them\nline 20 of them\nline 21 of them\nline 22 of them\nline 23 of them\nline 24 of them\nline 25 of them\nline 26 of them\nline 27 of them\nline 28 of them\nline 29 of them\nline 30 of them\nline 31 of them\nline 32 of them\nline 33 of them\nline 34 of them\nline 35 of them\nline 36 of them\nline 37 of them\nline 38 of them\nline 39 of them\n@start-long please",
+  "prompt": "\n\n<pasted_content id=\"a956\">\nLook at these lines\nline 0 of them\nline 1 of them\nline 2 of them\nline 3 of them\nline 4 of them\nline 5 of them\nline 6 of them\nline 7 of them\nline 8 of them\nline 9 of them\nline 10 of them\nline 11 of them\nline 12 of them\nline 13 of them\nline 14 of them\nline 15 of them\nline 16 of them\nline 17 of them\nline 18 of them\nline 19 of them\nline 20 of them\nline 21 of them\nline 22 of them\nline 23 of them\nline 24 of them\nline 25 of them\nline 26 of them\nline 27 of them\nline 28 of them\nline 29 of them\nline 30 of them\nline 31 of them\nline 32 of them\nline 33 of them\nline 34 of them\nline 35 of them\nline 36 of them\nline 37 of them\nline 38 of them\nline 39 of them\n@start-long please\n</pasted_content id=\"a956\">\n",
+  "attachments": [
+   "file",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "start-long"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "wake",
+  "text": "hataori: a turn ended.\n\nThread 7: try it\nEnded: completed. Background tasks: 0.\nLast output:\n> Done, see @/tmp/capture-work/outside/start-wake-outside\n> @start-wake-inside\n> and @sv:note://start-wake-resource please",
+  "pasted": "hataori: a turn ended.\n\nThread 7: try it\nEnded: completed. Background tasks: 0.\nLast output:\n> Done, see @/tmp/capture-work/outside/start-wake-outside\n> @start-wake-inside\n> and @sv:note://start-wake-resource please",
+  "prompt": "\n\n<pasted_content id=\"a956\">\nhataori: a turn ended.\n\nThread 7: try it\nEnded: completed. Background tasks: 0.\nLast output:\n> Done, see @/tmp/capture-work/outside/start-wake-outside\n> @start-wake-inside\n> and @sv:note://start-wake-resource please\n</pasted_content id=\"a956\">\n",
+  "attachments": [
+   "file",
+   "mcp_resource",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "start-wake-inside"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "reminder",
+  "text": "hataori: a reminder is due.\n\nReminder 3, due 2026-11-25 10:00, 1 minute late:\n> look at @/tmp/capture-work/outside/start-note-outside\n> @start-note-inside\n> and @sv:note://start-note-resource please",
+  "pasted": "hataori: a reminder is due.\n\nReminder 3, due 2026-11-25 10:00, 1 minute late:\n> look at @/tmp/capture-work/outside/start-note-outside\n> @start-note-inside\n> and @sv:note://start-note-resource please",
+  "prompt": "\n\n<pasted_content id=\"a956\">\nhataori: a reminder is due.\n\nReminder 3, due 2026-11-25 10:00, 1 minute late:\n> look at @/tmp/capture-work/outside/start-note-outside\n> @start-note-inside\n> and @sv:note://start-note-resource please\n</pasted_content id=\"a956\">\n",
+  "attachments": [
+   "file",
+   "mcp_resource",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "start-note-inside"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "none",
+  "text": "Say ok please",
+  "pasted": "Say ok please",
+  "prompt": "Say ok please",
+  "attachments": [
+   "total_tokens_reminder"
+  ],
+  "content": []
+ },
+ {
+  "session": "resume",
+  "case": "absolute_outside",
+  "text": "Look at @/tmp/capture-work/outside/resume-absolute please",
+  "pasted": "Look at @/tmp/capture-work/outside/resume-absolute please",
+  "prompt": "Look at @/tmp/capture-work/outside/resume-absolute please",
+  "attachments": [
+   "total_tokens_reminder"
+  ],
+  "content": []
+ },
+ {
+  "session": "resume",
+  "case": "relative_outside",
+  "text": "Look at @../outside/resume-relative please",
+  "pasted": "Look at @../outside/resume-relative please",
+  "prompt": "Look at @../outside/resume-relative please",
+  "attachments": [
+   "total_tokens_reminder"
+  ],
+  "content": []
+ },
+ {
+  "session": "resume",
+  "case": "home",
+  "text": "Look at @~/resume-home please",
+  "pasted": "Look at @~/resume-home please",
+  "prompt": "Look at @~/resume-home please",
+  "attachments": [
+   "total_tokens_reminder"
+  ],
+  "content": []
+ },
+ {
+  "session": "resume",
+  "case": "quoted_outside",
+  "text": "Look at @\"/tmp/capture-work/outside/resume spaces\" please",
+  "pasted": "Look at @\"/tmp/capture-work/outside/resume spaces\" please",
+  "prompt": "Look at @\"/tmp/capture-work/outside/resume spaces\" please",
+  "attachments": [
+   "total_tokens_reminder"
+  ],
+  "content": []
+ },
+ {
+  "session": "resume",
+  "case": "directory_outside",
+  "text": "Look at @/tmp/capture-work/outside/resume-directory please",
+  "pasted": "Look at @/tmp/capture-work/outside/resume-directory please",
+  "prompt": "Look at @/tmp/capture-work/outside/resume-directory please",
+  "attachments": [
+   "total_tokens_reminder"
+  ],
+  "content": []
+ },
+ {
+  "session": "resume",
+  "case": "link_outside",
+  "text": "Look at @resume-link please",
+  "pasted": "Look at @resume-link please",
+  "prompt": "Look at @resume-link please",
+  "attachments": [
+   "total_tokens_reminder"
+  ],
+  "content": []
+ },
+ {
+  "session": "resume",
+  "case": "relative_inside",
+  "text": "Look at @resume-inside please",
+  "pasted": "Look at @resume-inside please",
+  "prompt": "Look at @resume-inside please",
+  "attachments": [
+   "file",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "resume-inside"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "absolute_inside",
+  "text": "Look at @/tmp/capture-work/cwd/sub/resume-deep please",
+  "pasted": "Look at @/tmp/capture-work/cwd/sub/resume-deep please",
+  "prompt": "Look at @/tmp/capture-work/cwd/sub/resume-deep please",
+  "attachments": [
+   "file",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "resume-deep"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "first",
+  "text": "@resume-first please",
+  "pasted": "@resume-first please",
+  "prompt": "@resume-first please",
+  "attachments": [
+   "file",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "resume-first"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "last",
+  "text": "Look at @resume-last",
+  "pasted": "Look at @resume-last",
+  "prompt": "Look at @resume-last",
+  "attachments": [
+   "file",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "resume-last"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "after_full_stop",
+  "text": "終わりました。@resume-stop please",
+  "pasted": "終わりました。@resume-stop please",
+  "prompt": "終わりました。@resume-stop please",
+  "attachments": [
+   "file",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "resume-stop"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "after_no_break_space",
+  "text": "Look at @resume-nbsp please",
+  "pasted": "Look at @resume-nbsp please",
+  "prompt": "Look at @resume-nbsp please",
+  "attachments": [
+   "file",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "resume-nbsp"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "after_tab",
+  "text": "Look at\t@resume-tab please",
+  "pasted": "Look at\t@resume-tab please",
+  "prompt": "Look at    @resume-tab please",
+  "attachments": [
+   "file",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "resume-tab"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "after_escape",
+  "text": "Look at \u001b[31m@resume-escape please",
+  "pasted": "Look at \u001b[31m@resume-escape please",
+  "prompt": "Look at @resume-escape please",
+  "attachments": [
+   "file",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "resume-escape"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "after_invisible",
+  "text": "Look at ​@resume-invisible please",
+  "pasted": "Look at ​@resume-invisible please",
+  "prompt": "Look at @resume-invisible please",
+  "attachments": [
+   "file",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "resume-invisible"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "after_bracket",
+  "text": "Look at (@resume-bracket) please",
+  "pasted": "Look at (@resume-bracket) please",
+  "prompt": "Look at (@resume-bracket) please",
+  "attachments": [
+   "total_tokens_reminder"
+  ],
+  "content": []
+ },
+ {
+  "session": "resume",
+  "case": "after_at",
+  "text": "Look at @@resume-twice please",
+  "pasted": "Look at @@resume-twice please",
+  "prompt": "Look at @@resume-twice please",
+  "attachments": [
+   "total_tokens_reminder"
+  ],
+  "content": []
+ },
+ {
+  "session": "resume",
+  "case": "wide",
+  "text": "Look at ＠resume-wide or ﹫resume-small please",
+  "pasted": "Look at ＠resume-wide or ﹫resume-small please",
+  "prompt": "Look at ＠resume-wide or ﹫resume-small please",
+  "attachments": [
+   "total_tokens_reminder"
+  ],
+  "content": []
+ },
+ {
+  "session": "resume",
+  "case": "in_word",
+  "text": "Write to user@example.com about pkg@1.2.3 please",
+  "pasted": "Write to user@example.com about pkg@1.2.3 please",
+  "prompt": "Write to user@example.com about pkg@1.2.3 please",
+  "attachments": [
+   "total_tokens_reminder"
+  ],
+  "content": []
+ },
+ {
+  "session": "resume",
+  "case": "resource",
+  "text": "Look at @sv:note://resume-resource please",
+  "pasted": "Look at @sv:note://resume-resource please",
+  "prompt": "Look at @sv:note://resume-resource please",
+  "attachments": [
+   "mcp_resource",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "resume-resource"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "second_resource",
+  "text": "Look at @sv:note://resume-second please",
+  "pasted": "Look at @sv:note://resume-second please",
+  "prompt": "Look at @sv:note://resume-second please",
+  "attachments": [
+   "mcp_resource",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "resume-second"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "agent",
+  "text": "Ask @agent-general-purpose please",
+  "pasted": "Ask @agent-general-purpose please",
+  "prompt": "Ask @agent-general-purpose please",
+  "attachments": [
+   "agent_mention",
+   "total_tokens_reminder"
+  ],
+  "content": []
+ },
+ {
+  "session": "resume",
+  "case": "long",
+  "text": "Look at these lines\nline 0 of them\nline 1 of them\nline 2 of them\nline 3 of them\nline 4 of them\nline 5 of them\nline 6 of them\nline 7 of them\nline 8 of them\nline 9 of them\nline 10 of them\nline 11 of them\nline 12 of them\nline 13 of them\nline 14 of them\nline 15 of them\nline 16 of them\nline 17 of them\nline 18 of them\nline 19 of them\nline 20 of them\nline 21 of them\nline 22 of them\nline 23 of them\nline 24 of them\nline 25 of them\nline 26 of them\nline 27 of them\nline 28 of them\nline 29 of them\nline 30 of them\nline 31 of them\nline 32 of them\nline 33 of them\nline 34 of them\nline 35 of them\nline 36 of them\nline 37 of them\nline 38 of them\nline 39 of them\n@resume-long please",
+  "pasted": "Look at these lines\nline 0 of them\nline 1 of them\nline 2 of them\nline 3 of them\nline 4 of them\nline 5 of them\nline 6 of them\nline 7 of them\nline 8 of them\nline 9 of them\nline 10 of them\nline 11 of them\nline 12 of them\nline 13 of them\nline 14 of them\nline 15 of them\nline 16 of them\nline 17 of them\nline 18 of them\nline 19 of them\nline 20 of them\nline 21 of them\nline 22 of them\nline 23 of them\nline 24 of them\nline 25 of them\nline 26 of them\nline 27 of them\nline 28 of them\nline 29 of them\nline 30 of them\nline 31 of them\nline 32 of them\nline 33 of them\nline 34 of them\nline 35 of them\nline 36 of them\nline 37 of them\nline 38 of them\nline 39 of them\n@resume-long please",
+  "prompt": "\n\n<pasted_content id=\"a956\">\nLook at these lines\nline 0 of them\nline 1 of them\nline 2 of them\nline 3 of them\nline 4 of them\nline 5 of them\nline 6 of them\nline 7 of them\nline 8 of them\nline 9 of them\nline 10 of them\nline 11 of them\nline 12 of them\nline 13 of them\nline 14 of them\nline 15 of them\nline 16 of them\nline 17 of them\nline 18 of them\nline 19 of them\nline 20 of them\nline 21 of them\nline 22 of them\nline 23 of them\nline 24 of them\nline 25 of them\nline 26 of them\nline 27 of them\nline 28 of them\nline 29 of them\nline 30 of them\nline 31 of them\nline 32 of them\nline 33 of them\nline 34 of them\nline 35 of them\nline 36 of them\nline 37 of them\nline 38 of them\nline 39 of them\n@resume-long please\n</pasted_content id=\"a956\">\n",
+  "attachments": [
+   "file",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "resume-long"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "wake",
+  "text": "hataori: a turn ended.\n\nThread 7: try it\nEnded: completed. Background tasks: 0.\nLast output:\n> Done, see @/tmp/capture-work/outside/resume-wake-outside\n> @resume-wake-inside\n> and @sv:note://resume-wake-resource please",
+  "pasted": "hataori: a turn ended.\n\nThread 7: try it\nEnded: completed. Background tasks: 0.\nLast output:\n> Done, see @/tmp/capture-work/outside/resume-wake-outside\n> @resume-wake-inside\n> and @sv:note://resume-wake-resource please",
+  "prompt": "\n\n<pasted_content id=\"a956\">\nhataori: a turn ended.\n\nThread 7: try it\nEnded: completed. Background tasks: 0.\nLast output:\n> Done, see @/tmp/capture-work/outside/resume-wake-outside\n> @resume-wake-inside\n> and @sv:note://resume-wake-resource please\n</pasted_content id=\"a956\">\n",
+  "attachments": [
+   "file",
+   "mcp_resource",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "resume-wake-inside"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "reminder",
+  "text": "hataori: a reminder is due.\n\nReminder 3, due 2026-11-25 10:00, 1 minute late:\n> look at @/tmp/capture-work/outside/resume-note-outside\n> @resume-note-inside\n> and @sv:note://resume-note-resource please",
+  "pasted": "hataori: a reminder is due.\n\nReminder 3, due 2026-11-25 10:00, 1 minute late:\n> look at @/tmp/capture-work/outside/resume-note-outside\n> @resume-note-inside\n> and @sv:note://resume-note-resource please",
+  "prompt": "\n\n<pasted_content id=\"a956\">\nhataori: a reminder is due.\n\nReminder 3, due 2026-11-25 10:00, 1 minute late:\n> look at @/tmp/capture-work/outside/resume-note-outside\n> @resume-note-inside\n> and @sv:note://resume-note-resource please\n</pasted_content id=\"a956\">\n",
+  "attachments": [
+   "file",
+   "mcp_resource",
+   "total_tokens_reminder"
+  ],
+  "content": [
+   "resume-note-inside"
+  ]
+ }
+]

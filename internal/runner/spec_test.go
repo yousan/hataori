@@ -3,15 +3,19 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
+	"github.com/yousan/hataori/internal/host"
 )
 
 // specs is the fake adapter with the spec of every codec it makes
@@ -70,6 +74,69 @@ func TestCodecKnowsWhichMCPServersReport(t *testing.T) {
 	}
 	if strings.Contains(stored, "s3cret") {
 		t.Errorf("the stored spec has the server's credential: %s", stored)
+	}
+}
+
+// mentions is the fake adapter, whose launch does not say NoMentions while
+// on is set.
+type mentions struct {
+	agent.Adapter
+	on atomic.Bool
+}
+
+func (m *mentions) Launch(s agent.Spec) (agent.Launch, error) {
+	l, err := m.Adapter.Launch(s)
+	l.NoMentions = l.NoMentions && !m.on.Load()
+	return l, err
+}
+
+// A confined session is started, for the first time and again, only by an
+// adapter whose launch says that its agent takes no input for a mention; an
+// ordinary one is started without (#887).
+func TestConfinedNeedsNoMentions(t *testing.T) {
+	const refusal = "its input could name files to it"
+	m := &mentions{}
+	f := newFixture(t, options{confines: true, conversations: t.TempDir(), idlePeriod: 300 * time.Millisecond,
+		wrap: func(a agent.Adapter) agent.Adapter { m.Adapter = a; return m }})
+	confined := func(key string) (control.ThreadID, error) {
+		return f.core.StartConfined(context.Background(), control.Caller{From: ownerFrom, Scopes: []string{"s"}, May: all},
+			control.StartRequest{Key: key, Scope: "s", Thread: "t-" + key, Input: control.Input{Text: "reply confined"}}, t.TempDir())
+	}
+	m.on.Store(true)
+	f.start("reply ordinary")
+	waitFor(t, "the ordinary turn", 15*time.Second, f.has("turn_ended", 1))
+	if _, err := confined("k2"); err == nil || !strings.Contains(err.Error(), refusal) {
+		t.Fatalf("the start: %v, want it refused", err)
+	}
+	for _, name := range []string{host.HostPIDFile, host.PIDFile} {
+		if _, err := os.Stat(filepath.Join(StateDir(f.root, 2), name)); err == nil {
+			t.Errorf("%s exists: a session host or an agent was started", name)
+		}
+	}
+
+	m.on.Store(false)
+	closer := f.core.As(control.Caller{From: ownerFrom, Scopes: []string{"s"}, May: all | control.OpClose})
+	if err := closer.CloseThread(context.Background(), 2); err != nil { // a scope has one confined thread
+		t.Fatal(err)
+	}
+	id, err := confined("k3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the confined turn", 15*time.Second, f.has("turn_ended", 2))
+	waitFor(t, "its sleep", 15*time.Second, func() bool {
+		var state string
+		if err := f.st.DB.QueryRow(`SELECT state FROM sessions WHERE thread_id = ?`, int64(id)).Scan(&state); err != nil {
+			t.Fatal(err)
+		}
+		return state == string(control.Asleep)
+	})
+	m.on.Store(true)
+	if err := owner(f.core).Send(context.Background(), id, "again", control.Input{Text: "reply again"}, control.Refuse); err == nil || !strings.Contains(err.Error(), refusal) {
+		t.Fatalf("the wake: %v, want it refused", err)
+	}
+	if n := counts(t, f.st)["turn_ended"]; n != 2 {
+		t.Errorf("%d turns ended, want 2: the confined session ran again", n)
 	}
 }
 
