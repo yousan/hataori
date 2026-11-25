@@ -70,3 +70,40 @@ func TestBudgetCountsCacheReadsATenth(t *testing.T) {
 		}
 	}
 }
+
+// The line of a wake on the budget: each limit that is on; from three
+// quarters of the day's tokens on the day's end and the open reminders due
+// before it (#794).
+func TestBudgetLine(t *testing.T) {
+	day := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	end := day.AddDate(0, 0, 1)
+	open := []Reminder{{Number: 1, Due: end.Add(-time.Minute)}, {Number: 2, Due: end}, {Number: 3, Due: end.Add(time.Hour)}}
+	u := func(tokens int64) Used {
+		return Used{Now: day.Add(time.Hour), Day: day, Turns: 5, Sends: 3, Tokens: tokens}
+	}
+	warned := func(due string) string {
+		return " 75% or more of the day's tokens are used; the day ends at 2026-01-03 00:00 UTC, and " + due + " due before then."
+	}
+	for _, tc := range []struct {
+		limits Limits
+		used   Used
+		open   []Reminder
+		want   string
+	}{
+		{Limits{12, 20, 1000}, u(749), open, "5 of 12 turns this hour, 3 of 20 sends and starts this hour, 749 of 1000 tokens today."},
+		{Limits{12, 20, 1000}, u(750), open, "5 of 12 turns this hour, 3 of 20 sends and starts this hour, 750 of 1000 tokens today." + warned("1 open reminder is")},
+		{Limits{0, 20, 1000}, u(900), open[1:], "3 of 20 sends and starts this hour, 900 of 1000 tokens today." + warned("0 open reminders are")},
+		{Limits{12, 0, 0}, u(900), open, "5 of 12 turns this hour."},
+		{Limits{0, 0, 7}, u(5), nil, "5 of 7 tokens today."},
+		{Limits{0, 0, 7}, u(6), []Reminder{open[0], open[0]}, "6 of 7 tokens today." + warned("2 open reminders are")},
+		{Limits{}, u(900), open, ""},
+	} {
+		want := tc.want
+		if want != "" {
+			want = "\nBudget used: " + want + "\n"
+		}
+		if got := tc.limits.Line(tc.used, tc.open); got != want {
+			t.Errorf("%+v of %+v: %q, want %q", tc.used, tc.limits, got, want)
+		}
+	}
+}

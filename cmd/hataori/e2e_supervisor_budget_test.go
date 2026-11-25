@@ -186,6 +186,87 @@ func TestBudgetTokensOfTheCache(t *testing.T) {
 	wt.noticed(t, sv, 0)
 }
 
+// Each wake ends with what of the budget is used: the budget's own numbers
+// when the wake is made, and from three quarters of the day's tokens on the
+// day's end with the reminders due before it. A person's message has no
+// such line (#794).
+func TestWakeSaysWhatOfTheBudgetIsUsed(t *testing.T) {
+	record := t.TempDir()
+	wt := newWakeTest(t, budget(50, 20, 1000), recordIn(record))
+	stop, owner, sv := wt.start(t)
+	defer stop()
+	end := time.Date(wakeBase.Year(), wakeBase.Month(), wakeBase.Day()+1, 0, 0, 0, 0, time.Local)
+	for i, at := range []time.Time{wakeBase.Add(40 * time.Minute), wakeBase.Add(48 * time.Hour)} {
+		if a := sendAndRead(t, owner, sv.ID, fmt.Sprint("r", i), fmt.Sprintf(`mcp set_reminder {"at": %q, "note": "look"}`, at.Format(time.RFC3339))); !strings.HasPrefix(a, "mcp: Reminder ") {
+			t.Fatalf("set_reminder: %s", a)
+		}
+	}
+	// 749 tokens of the 1000, in four turns: its first one, the two that
+	// set a reminder, and this one.
+	sendAndRead(t, owner, sv.ID, "u1", "usage 700 9 400 0 0 0\nreply spent")
+	wake := func(n int, key string) string {
+		t.Helper()
+		_, pos := wt.worker(t, owner, "c1", key, "reply "+key)
+		wt.read(t, pos)
+		// The reminders' timer runs beside the quiet period's, so a second at a
+		// time: the first reminder is not due before the wakes are there.
+		eventually(t, fmt.Sprintf("%d wakes", n), 20*time.Second, func() bool {
+			if len(wt.wakes(t, sv.ID)) >= n {
+				return true
+			}
+			if wt.taken(t, sv.ID) < n {
+				wt.clock().advance(time.Second)
+			}
+			return false
+		})
+		return wt.woken(t, owner, sv.ID, n)[n-1]
+	}
+	if got, want := wake(1, "a"), "\nBudget used: 4 of 50 turns this hour, 2 of 20 sends and starts this hour, 749 of 1000 tokens today.\n"; !strings.HasSuffix(got, want) {
+		t.Fatalf("the wake; want its end to be %q:\n%s", want, got)
+	}
+	// One token more: 75%. The wake and this turn make six.
+	sendAndRead(t, owner, sv.ID, "u2", "usage 1 0 0 0 0 0\nreply spent")
+	want := "\nBudget used: 6 of 50 turns this hour, 2 of 20 sends and starts this hour, 750 of 1000 tokens today." +
+		" 75% or more of the day's tokens are used; the day ends at " + end.Format("2006-01-02 15:04 MST") + ", and 1 open reminder is due before then.\n"
+	if got := wake(2, "b"); !strings.HasSuffix(got, want) {
+		t.Fatalf("the wake at 75%%; want its end to be %q:\n%s", want, got)
+	}
+	sendAndRead(t, owner, sv.ID, "p", "reply person")
+	var persons, wakes int
+	for _, s := range starts(t, record) {
+		for _, in := range s.Inputs {
+			switch has := strings.Contains(in, "Budget used:"); {
+			case strings.HasPrefix(in, "hataori: "):
+				wakes++
+				if !has {
+					t.Errorf("a wake without the line:\n%s", in)
+				}
+			default:
+				persons++
+				if has {
+					t.Errorf("a person's message with the line:\n%s", in)
+				}
+			}
+		}
+	}
+	if wakes != 2 || persons < 5 {
+		t.Errorf("the agent was given %d wakes and %d other inputs", wakes, persons)
+	}
+}
+
+// With the hour's turns off, the wake's line has no turns (#794).
+func TestWakeLeavesOutALimitThatIsOff(t *testing.T) {
+	wt := newWakeTest(t, budget(0, 20, 1000))
+	stop, owner, sv := wt.start(t)
+	defer stop()
+	_, pos := wt.worker(t, owner, "c1", "a", "reply a")
+	wt.read(t, pos)
+	wt.quiet(t)
+	if got, want := wt.woken(t, owner, sv.ID, 1)[0], "\nBudget used: 0 of 20 sends and starts this hour, 0 of 1000 tokens today.\n"; !strings.HasSuffix(got, want) {
+		t.Fatalf("the wake; want its end to be %q:\n%s", want, got)
+	}
+}
+
 // At the sends limit, the supervisor's sends and starts are refused at the
 // call, a start counting once; a person is told once; the count holds
 // across a restart; and they work again in the next hour.

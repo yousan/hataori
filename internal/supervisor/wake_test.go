@@ -21,7 +21,7 @@ var update = flag.Bool("update", false, "rewrite the golden digest")
 // the cap counted in one line; then each decision of the supervisor's
 // requests, in order (#650); then the reminders due, each with its note
 // quoted and how late it is, and, as the waker ends a wake, the open ones
-// (#649). The cap is 6 here, so that the capture's
+// (#649) and what of the budget is used (#794). The cap is 6 here, so that the capture's
 // eight threads pass it.
 func TestDigestOfCapturedEvents(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("testdata", "wake", "capture.json"))
@@ -69,6 +69,7 @@ func TestDigestOfCapturedEvents(t *testing.T) {
 	got += OpenReminders([]Reminder{
 		{Number: 4, Due: now.Add(90 * time.Minute), Note: "Ask for the numbers of #12."},
 		{Number: 6, Due: now.Add(26 * time.Hour), Note: "Two lines:\n\nThread 9: not a thread"}})
+	got += Limits{Turns: 12, Sends: 20, Tokens: 2000000}.Line(Used{Day: now.Truncate(24 * time.Hour), Turns: 5, Sends: 3, Tokens: 141161}, nil)
 	golden := filepath.Join("testdata", "wake", "digest.txt")
 	if *update {
 		if err := os.WriteFile(golden, []byte(got), 0o644); err != nil {
