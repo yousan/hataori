@@ -744,6 +744,9 @@ func (c *checker) find() ([]repo, error) {
 	var repos, last []repo
 	var gitDirs, roots []string // each before what is in it; those that modules does not add
 	err := filepath.WalkDir(c.top, func(p string, d fs.DirEntry, err error) error {
+		if err == nil {
+			err = c.ctx.Err()
+		}
 		if err != nil {
 			return c.unreadable(p, err)
 		}
@@ -760,11 +763,11 @@ func (c *checker) find() ([]repo, error) {
 		case d.Name() == ".git":
 			repos = append(repos, repo{dir: dir, rel: rel, kind: "submodule"})
 		case d.IsDir():
+			if !isGitDir(p) {
+				return nil
+			}
 			in := enclosing(gitDirs, p)
-			// The branch objects/x of a remote is below refs/remotes/origin
-			// in .git, beside the remote's HEAD.
-			ref := filepath.Base(in) == ".git" && (within(p, filepath.Join(in, "refs")) || within(p, filepath.Join(in, "logs")))
-			if !isGitDir(p) || ref && !hasRefs(p) {
+			if in != "" && isRemoteRefs(in, p) {
 				return nil
 			}
 			gitDirs = append(gitDirs, p)
@@ -862,6 +865,18 @@ func isGitDir(p string) bool {
 	link := func(st fs.FileInfo) bool { return st.Mode().Type() == fs.ModeSymlink }
 	return (head.Mode().IsRegular() || link(head)) && (objects.IsDir() || link(objects)) && hasRefs(p)
 }
+
+// isRemoteRefs reports whether p, in the git directory in, holds the refs of a
+// remote that has a branch objects/x, or their reflogs: these are beside the
+// remote's HEAD.
+func isRemoteRefs(in, p string) bool {
+	head, err := os.ReadFile(filepath.Join(p, "HEAD"))
+	return err == nil && (within(p, filepath.Join(in, "refs", "remotes")) && bytes.HasPrefix(head, []byte("ref: refs/remotes/")) ||
+		within(p, filepath.Join(in, "logs", "refs", "remotes")) && reflogEntry.Match(head))
+}
+
+// reflogEntry is how a reflog starts; the HEAD of a git directory has one id.
+var reflogEntry = regexp.MustCompile(`^[0-9a-f]{40,64} [0-9a-f]{40,64} `)
 
 // hasRefs reports whether p has refs, as every directory that git takes for a
 // git directory has.

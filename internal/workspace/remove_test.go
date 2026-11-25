@@ -934,9 +934,14 @@ func TestRefuseRepositoryInAGitDirectory(t *testing.T) {
 	x.git(x.clone, "add", ".gitignore")
 	x.git(x.clone, "commit", "-q", "-m", "ignore")
 	x.git(x.clone, "push", "-q")
-	// refs/remotes/origin now has HEAD and objects.
-	x.git(x.clone, "push", "-q", "origin", "main:objects/x")
-	x.git(x.clone, "remote", "set-head", "origin", "main")
+	// refs/remotes/origin of each now has HEAD and objects, and refs.
+	for _, dir := range []string{"", "sub", "cache/b"} {
+		dir = filepath.Join(x.clone, dir)
+		x.git(dir, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
+		x.git(dir, "push", "-q", "-f", "origin", "HEAD:refs/heads/objects/x", "HEAD:refs/heads/refs/x")
+		x.git(dir, "fetch", "-q", "origin")
+		x.git(dir, "remote", "set-head", "origin", "main")
+	}
 	if err := x.check(); err != nil {
 		t.Fatal(err)
 	}
@@ -972,6 +977,26 @@ func TestRefuseRepositoryInAGitDirectory(t *testing.T) {
 				}
 				wantRefusal(t, x.check(), UnpushedRef, rel)
 			})
+		}
+	}
+}
+
+// A git directory that lost its refs is not taken for the refs of a remote.
+func TestRefuseBrokenRepositoryInRefs(t *testing.T) {
+	for _, in := range []string{"refs/archive", "refs/remotes/archive", "logs/archive", "logs/refs/remotes/archive", "hooks/archive"} {
+		x := newRemoval(t)
+		n := filepath.Join(x.clone, ".git", filepath.FromSlash(in))
+		x.git(x.tmp, "clone", "-q", "--bare", x.bare, n)
+		os.RemoveAll(filepath.Join(n, "refs"))
+		if in == "hooks/archive" {
+			if err := os.WriteFile(filepath.Join(n, "HEAD"), []byte("ref: refs/remotes/origin/main\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		err := x.check()
+		wantRefusal(t, err, GitError, "")
+		if d := err.(*Refusal).Detail; !strings.Contains(d, "not a git repository") {
+			t.Fatal(d)
 		}
 	}
 }
