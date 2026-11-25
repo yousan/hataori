@@ -1810,7 +1810,10 @@ func TestRefuseRepositoryWithACommonDirectory(t *testing.T) {
 			}
 			x.r.Disposable = []string{"n"}
 			want := dir
-			if name == "workspace" {
+			switch name {
+			case "nested":
+				want = "n"
+			case "workspace":
 				want = ""
 			}
 			wantRefusal(t, x.check(), Worktree, want)
