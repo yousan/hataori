@@ -320,6 +320,33 @@ func (h *Holder) findStarted(ctx context.Context, r ref, process int) (pane, err
 	return pane{}, fmt.Errorf("tmux: the pane %s changed as it was looked at: %.200q", r.Pane, out)
 }
 
+// reapWait bounds the wait for tmux to reap a process that ended.
+const reapWait = 2 * time.Second
+
+// findEnded is findStarted, and has tmux see how the process of a pane ended
+// that does not tell it. Now and then tmux misses that, and the process stays
+// a zombie until tmux looks at its children again, as after the end of the
+// next one. Since tmux 3.8 the pane is not dead until then, and tells no
+// process.
+func (h *Holder) findEnded(ctx context.Context, r ref, process int) (pane, error) {
+	p, err := h.findStarted(ctx, r, process)
+	for deadline := time.Now().Add(reapWait); err == nil && (p.dead && p.status == "x" && p.signal == "-" || !p.dead && p.pid == 0); {
+		missed := zombie(ctx, cmp.Or(p.pid, execPid(r), process))
+		if missed {
+			if time.Now().After(deadline) {
+				break
+			}
+			h.tmux(ctx, r, nil, ifPane(r.Pane, "run-shell -b -t "+r.Pane+" true", fmt.Sprintf("#{==:#{pid},%d}", r.Server))...)
+			time.Sleep(50 * time.Millisecond)
+		}
+		p, err = h.findStarted(ctx, r, process) // also when tmux saw it since
+		if !missed {
+			break
+		}
+	}
+	return p, err
+}
+
 // runsExec reports whether a pane's start command, as tmux prints it, is
 // `hataori exec <stateDir>`. tmux escapes some characters of it, depending on
 // its version: quotes and backslashes are not compared.
@@ -334,7 +361,7 @@ func runsExec(started, stateDir string) bool {
 // its end was recorded; Gone when the pane or its server went with nothing
 // recorded, as when the server was killed; Unknown when tmux cannot tell.
 func (h *Holder) startedAlive(ctx context.Context, r ref, process int) holder.Liveness {
-	p, err := h.findStarted(ctx, r, process)
+	p, err := h.findEnded(ctx, r, process)
 	switch {
 	case errors.Is(err, errGone):
 		if st, ok := recorded(r); ok {
@@ -357,7 +384,7 @@ func (h *Holder) Record(ctx context.Context, w holder.Window) error {
 	if err != nil || !w.Owned {
 		return holder.ErrNotOwned
 	}
-	p, err := h.findStarted(ctx, r, w.Process)
+	p, err := h.findEnded(ctx, r, w.Process)
 	if errors.Is(err, errGone) {
 		return nil // nothing of it to read or remove: on another server, the same id is another pane
 	}
@@ -499,7 +526,7 @@ func (h *Holder) startedStop(ctx context.Context, r ref, process int, interrupt,
 	// removed; tmux may take a moment to see the end.
 	st := host.Status{Exited: true, Code: -1}
 	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
-		q, err := h.findStarted(ctx, r, started)
+		q, err := h.findEnded(ctx, r, started)
 		if err == nil && q.dead {
 			st = statusOf(q)
 			break
@@ -691,12 +718,38 @@ func execNoted(r ref, pid int) (time.Time, bool) {
 	return fi.ModTime(), true
 }
 
-func groupGone(pgid int) bool { return errors.Is(syscall.Kill(-pgid, 0), syscall.ESRCH) }
+// groupGone reports whether no process of the group runs. One that ended and
+// was not reaped does not; signals still go to it.
+func groupGone(pgid int) bool { return noGroup(pgid) || onlyZombies(pgid) }
+
+func noGroup(pgid int) bool { return errors.Is(syscall.Kill(-pgid, 0), syscall.ESRCH) }
+
+// onlyZombies looks twice: ps reads one process after the other, and may miss
+// one started meanwhile by one that it then reads as ended.
+func onlyZombies(pgid int) bool {
+	for range 2 {
+		ps, err := group(context.Background(), pgid)
+		if err != nil || slices.ContainsFunc(ps, func(p member) bool { return !p.zombie }) {
+			return false
+		}
+		if len(ps) == 0 {
+			return noGroup(pgid) // reaped since
+		}
+	}
+	return true
+}
 
 func waitGone(pgid int, d time.Duration) bool {
+	look := time.Now().Add(100 * time.Millisecond) // mostly it is reaped by then
 	for deadline := time.Now().Add(d); ; time.Sleep(5 * time.Millisecond) {
-		if groupGone(pgid) {
+		if noGroup(pgid) {
 			return true
+		}
+		if now := time.Now(); now.After(look) {
+			if onlyZombies(pgid) {
+				return true
+			}
+			look = time.Now().Add(100 * time.Millisecond)
 		}
 		if !time.Now().Before(deadline) {
 			return false

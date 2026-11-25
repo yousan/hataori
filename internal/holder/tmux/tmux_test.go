@@ -44,24 +44,10 @@ func newServer(t *testing.T) *server {
 		t.Fatal(err)
 	}
 	s := &server{t: t, tmux: prog, dir: dir, sock: filepath.Join(dir, "s")}
-	done := make(chan struct{})
 	t.Cleanup(func() {
-		close(done)
 		exec.Command(prog, "-S", s.sock, "kill-server").Run()
 		os.RemoveAll(dir)
 	})
-	// Now and then a tmux server misses the end of a program, and sees it
-	// with the next one's only.
-	go func() {
-		for {
-			select {
-			case <-done:
-				return
-			case <-time.After(time.Second):
-				exec.Command(prog, "-S", s.sock, "run-shell", "-b", "true").Run()
-			}
-		}
-	}()
 	return s
 }
 
@@ -522,7 +508,7 @@ func TestInputToADeadPaneIsRefused(t *testing.T) {
 	s.pane("exec sleep 600")
 	s.run("set-option", "-g", "remain-on-exit", "on")
 	pane, pid := s.pane("exec true")
-	for deadline := time.Now().Add(10 * time.Second); s.run("display-message", "-p", "-t", pane, "#{pane_dead}") != "1"; time.Sleep(20 * time.Millisecond) {
+	for deadline := time.Now().Add(10 * time.Second); !strings.HasPrefix(s.how(pane), "1"); time.Sleep(20 * time.Millisecond) {
 		if time.Now().After(deadline) {
 			t.Fatal("the pane never died")
 		}
