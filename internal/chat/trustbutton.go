@@ -54,7 +54,7 @@ func blockedChoice(sf startFailed, choice, label string) surface.Choice {
 // files gets what to do next and, when buttons is set and the surface
 // shows buttons, the choices.
 func (f *FrontEnd) failedMessage(sf startFailed, repo string, buttons bool) surface.Message {
-	m := surface.Message{Text: sf.text()}
+	m := surface.Message{Text: f.failedText(sf)}
 	if len(sf.trust) == 0 {
 		return m
 	}

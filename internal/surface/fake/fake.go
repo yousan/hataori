@@ -163,6 +163,13 @@ func (d *Driver) Link(conv surface.Conversation) string {
 	return "[link to " + conv.Channel + "/" + conv.Thread + "]"
 }
 
+var _ surface.Verbatimer = (*Driver)(nil)
+
+// Verbatim returns s marked as verbatim.
+func (d *Driver) Verbatim(s string) string {
+	return "[verbatim]\n" + s + "\n[end of verbatim]"
+}
+
 // SetName makes Name answer name for conv, as a service that shows people
 // that name; "" for none.
 func (d *Driver) SetName(conv surface.Conversation, name string) {

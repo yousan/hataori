@@ -590,21 +590,55 @@ func (f *FrontEnd) failedRow(sf startFailed, conv surface.Conversation, first ui
 	return r
 }
 
-// text says why the session could not start: its reason, and the event's
-// detail when that is text for a person, after the reason on its line, or
-// below it when it has several lines. A detail with control characters
-// other than line breaks is terminal output, such as the screen of a start
-// that timed out: the dashboard shows it, not the chat.
-func (sf startFailed) text() string {
+// failedText says why the session could not start: its reason, and the
+// event's detail when that is text for a person, after the reason on its
+// line, or below it when it has several lines. A detail with control
+// characters other than line breaks is terminal output, such as the screen
+// of a start that timed out: the dashboard shows it, not the chat.
+//
+// What the agent showed may hold text of the repository (#754), so it is
+// shown verbatim: the lines that the detail of a dialog quotes ("> "), and
+// any other detail whole, which is the agent's output.
+func (f *FrontEnd) failedText(sf startFailed) string {
 	t := couldNotStart + sf.reason
 	d := ReadableDetail(sf.detail)
-	switch {
-	case strings.Contains(d, "\n"):
-		t += ".\n" + d
-	case d != "":
-		t += ": " + d
+	if d == "" {
+		return t
 	}
-	return t
+	if len(sf.trust) == 0 {
+		return t + ".\n" + f.verbatim(d)
+	}
+	if !strings.Contains(d, "\n") && !strings.HasPrefix(d, quoteMark) {
+		return t + ": " + d
+	}
+	var out, quoted []string
+	end := func() {
+		if len(quoted) > 0 {
+			out = append(out, f.verbatim(strings.Join(quoted, "\n")))
+			quoted = nil
+		}
+	}
+	for _, l := range strings.Split(d, "\n") {
+		if q, ok := strings.CutPrefix(l, quoteMark); ok {
+			quoted = append(quoted, q)
+			continue
+		}
+		end()
+		out = append(out, l)
+	}
+	end()
+	return t + ".\n" + strings.Join(out, "\n")
+}
+
+// quoteMark begins a line of a detail that quotes what the agent showed.
+const quoteMark = "> "
+
+// verbatim is the text that shows s as its characters on the surface.
+func (f *FrontEnd) verbatim(s string) string {
+	if v, ok := f.Driver.(surface.Verbatimer); ok {
+		return v.Verbatim(s)
+	}
+	return s
 }
 
 // maxDetail bounds the detail a failure message carries.
