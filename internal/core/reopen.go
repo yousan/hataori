@@ -31,6 +31,9 @@ func (a *api) ReopenThread(ctx context.Context, id control.ThreadID) (control.Re
 	if a.c.People == nil || a.caller.Principal == "" || string(a.caller.Principal) != a.c.People.Owner() {
 		return control.Reopened{}, a.refused(name, scope, "only the owner may reopen a thread")
 	}
+	if err := a.left(name, scope); err != nil {
+		return control.Reopened{}, err
+	}
 	return a.c.reopen(ctx, id, scope, a.caller.Principal)
 }
 

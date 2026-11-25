@@ -470,7 +470,7 @@ hataori manages people. The config lists them; each has a name and the ids by wh
 
 - An **id** is `<client>:<id>`: the registered name of the client, a colon, and the service's own id of the author, as the driver reports it. The shape is the same as OpenClaw's `session.identityLinks`. A webhook or another automated poster is listed the same way, under a name of its own (`dispatch` above, with the webhook's id).
 - A **name** is a word without a colon, so a name and an id are never confused. Each name and each id appears once; an id listed under two people is refused at start.
-- `owner` names a person. The owner may act in every scope. A scope's `people` names the others who may act in it. Every name must be listed under `people`.
+- `owner` names a person. The owner may act in every scope; in one that is no longer in the config but has threads, that is to read, stop, close and remove them, and nothing starts there (a start accepted before and not made yet fails). A scope's `people` names the others who may act in it. Every name must be listed under `people`.
 - An id that no person lists is a **guest**. A guest is shown and logged as its `<client>:<id>`. A guest can never start a thread, send input, answer or stop (section 5.1).
 - **Ids are linked to people only in the config, by the operator.** Nothing said in chat links an id to a person or changes who a person is: no command, no message, no answer of the agent. A change takes effect when the daemon restarts with the new config.
 
