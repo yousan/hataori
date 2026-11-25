@@ -1244,7 +1244,7 @@ func (c *checker) commits(g *reader, rp repo) error {
 	if err != nil {
 		return err
 	}
-	if err := c.objects(objects, map[string]bool{}); err != nil {
+	if err := c.objects(objects); err != nil {
 		return err
 	}
 	tips, scratch, rewritten, err := c.ask(g, rp, urls)
@@ -1256,6 +1256,10 @@ func (c *checker) commits(g *reader, rp repo) error {
 	}
 	if skipped == nil {
 		skipped = rewritten
+	}
+	logs, err := g.gitPath(c.ctx, "logs")
+	if err != nil {
+		return err
 	}
 	// The remotes' objects are read from the scratch repository; nothing is
 	// written into this one.
@@ -1270,11 +1274,11 @@ func (c *checker) commits(g *reader, rp repo) error {
 		}
 		out, errs, err := local.inputAll(c.ctx, stdin, append([]string{"rev-list", how, "--no-object-names", "--stdin"}, revs...)...)
 		// What git cannot read, and that only a reflog names, it leaves out; of
-		// what was pruned it warns. "bad ref" is a file in logs with a name that
-		// no ref has: the files of a repository there.
+		// what was pruned it warns.
 		for line := range strings.Lines(errs) {
-			if err == nil && strings.HasPrefix(line, "error: ") && !strings.HasPrefix(line, "error: bad ref for ") {
-				err = c.refuse(rp, GitError, redact(strings.TrimSpace(line)))
+			line = strings.TrimSpace(line)
+			if err == nil && strings.HasPrefix(line, "error: ") && !otherLogs(g, logs, line) {
+				err = c.refuse(rp, GitError, redact(line))
 			}
 		}
 		return out, err
@@ -1295,6 +1299,10 @@ func (c *checker) commits(g *reader, rp repo) error {
 	}
 	named, err := c.named(g)
 	if err != nil {
+		return err
+	}
+	// The remotes may have taken long to answer.
+	if err := c.objects(objects); err != nil {
 		return err
 	}
 	everything := append(append([]string{"--all", "--reflog"}, pseudo...), autostash...)
@@ -1629,37 +1637,94 @@ func (c *checker) tableIDs(g *reader, dir string) ([]string, error) {
 	return slices.Sorted(maps.Keys(have)), nil
 }
 
+// otherLogs reports whether the line, which git said, is of a file of a
+// repository in the logs directory: git calls it a bad ref, as no ref has such a
+// name, and that repository is checked itself. Of a reflog that git calls so it
+// leaves out all.
+func otherLogs(g *reader, logs, line string) bool {
+	p, ok := strings.CutPrefix(line, "error: bad ref for ")
+	if !ok {
+		return false
+	}
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(g.dir, p)
+	}
+	for p = filepath.Dir(p); within(p, logs); p = filepath.Dir(p) {
+		if isGitDir(p) {
+			return true
+		}
+	}
+	return false
+}
+
 // objects refuses when a file in the objects directory dir, or in one that its
 // alternates lead to, cannot be opened, or a pack there has no index: git takes
 // what is in it for missing, and of a pack says nothing. A pack that git has on
 // the way, whose name starts with tmp_pack_ or .tmp-, has nothing that a name
 // is given to before it is in place. What is there is followed through links.
-func (c *checker) objects(dir string, seen map[string]bool) error {
-	real, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		return c.unreadable(dir, err)
-	}
-	if seen[real] {
+func (c *checker) objects(dir string) error {
+	seen, walked := map[string]bool{}, map[string]bool{}
+	var one func(dir string) error
+	one = func(dir string) error {
+		dir, err := c.opened(dir, walked)
+		if err != nil || seen[dir] {
+			return err
+		}
+		seen[dir] = true
+		file := filepath.Join(dir, "info", "alternates")
+		if fi, err := os.Stat(file); missing(err) {
+			return nil
+		} else if err != nil {
+			return c.unreadable(file, err)
+		} else if !fi.Mode().IsRegular() {
+			return c.unreadable(file, errors.New("not a file"))
+		}
+		b, err := os.ReadFile(file)
+		if err != nil {
+			return c.unreadable(file, err)
+		}
+		for _, e := range parseAlternates(string(b)) {
+			if !filepath.IsAbs(e) {
+				e = dir + "/" + e
+			}
+			if fi, err := os.Stat(e); missing(err) || err == nil && !fi.IsDir() {
+				continue // git says so, and goes on without it
+			}
+			if err := one(e); err != nil {
+				return err
+			}
+		}
 		return nil
 	}
-	seen[real] = true
-	dir = real
-	entries, err := os.ReadDir(dir)
+	return one(dir)
+}
+
+// opened opens each file in the directory dir, and returns it without links.
+func (c *checker) opened(dir string, walked map[string]bool) (string, error) {
+	real, err := filepath.EvalSymlinks(dir)
 	if err != nil {
-		return c.unreadable(dir, err)
+		return "", c.unreadable(dir, err)
+	}
+	if walked[real] {
+		return real, nil
+	}
+	walked[real] = true
+	entries, err := os.ReadDir(real)
+	if err != nil {
+		return "", c.unreadable(real, err)
 	}
 	for _, e := range entries {
 		if err := c.ctx.Err(); err != nil {
-			return err
+			return "", err
 		}
-		p := filepath.Join(dir, e.Name())
+		p := filepath.Join(real, e.Name())
 		fi, err := os.Stat(p)
 		if err != nil { // also a link to nothing
-			return c.unreadable(p, err)
+			return "", c.unreadable(p, err)
 		}
 		if fi.IsDir() {
-			if err := c.objects(p, seen); err != nil {
-				return err
+			if _, err := c.opened(p, walked); err != nil {
+				return "", err
 			}
 			continue
 		}
@@ -1668,34 +1733,17 @@ func (c *checker) objects(dir string, seen map[string]bool) error {
 		}
 		f, err := os.Open(p)
 		if err != nil {
-			return c.unreadable(p, err)
+			return "", c.unreadable(p, err)
 		}
 		f.Close()
 		pack, ok := strings.CutSuffix(p, ".pack")
 		if ok && !strings.HasPrefix(e.Name(), ".tmp-") {
 			if _, err := os.Stat(pack + ".idx"); err != nil {
-				return c.unreadable(p, err)
+				return "", c.unreadable(p, err)
 			}
 		}
 	}
-	b, err := os.ReadFile(filepath.Join(dir, "info", "alternates"))
-	if missing(err) {
-		return nil
-	} else if err != nil {
-		return c.unreadable(filepath.Join(dir, "info", "alternates"), err)
-	}
-	for _, e := range parseAlternates(string(b)) {
-		if !filepath.IsAbs(e) {
-			e = dir + "/" + e
-		}
-		if fi, err := os.Stat(e); missing(err) || err == nil && !fi.IsDir() {
-			continue // git says so, and goes on without it
-		}
-		if err := c.objects(e, seen); err != nil {
-			return err
-		}
-	}
-	return nil
+	return real, nil
 }
 
 // lineIDs are the object ids that the lines of the file p start with. Of packed

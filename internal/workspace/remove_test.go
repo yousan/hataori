@@ -892,6 +892,16 @@ func TestRefuseReflogOfWhatCannotBeRead(t *testing.T) {
 				t.Fatal(err)
 			}
 		},
+		"alternates that are a link to nothing": func(t *testing.T, x *removal) {
+			if err := os.Symlink("nothing", filepath.Join(x.clone, ".git", "objects", "info", "alternates")); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"alternates that are no file": func(t *testing.T, x *removal) {
+			if err := os.Mkdir(filepath.Join(x.clone, ".git", "objects", "info", "alternates"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		},
 		"cut index": func(t *testing.T, x *removal) {
 			idx := strings.TrimSuffix(onlyInAReflog(x, false), ".pack") + ".idx"
 			os.Chmod(idx, 0o600)
@@ -949,6 +959,36 @@ func TestRefuseReflogOfWhatCannotBeRead(t *testing.T) {
 			}
 			wantRefusal(t, x.check(), reason, "")
 		})
+	}
+}
+
+// git 2.43 leaves out the whole reflog of a ref whose value no ref may have.
+func TestRefuseReflogOfARefThatIsBad(t *testing.T) {
+	x := newRemoval(t)
+	x.git(x.clone, "checkout", "-q", "-b", "y")
+	x.commit(x.clone, "y")
+	x.git(x.clone, "checkout", "-q", "main")
+	os.Remove(filepath.Join(x.clone, ".git", "logs", "HEAD"))
+	if err := os.WriteFile(filepath.Join(x.clone, ".git", "refs", "heads", "y"), []byte("ref: refs/heads/a..b\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := x.check(); err == nil {
+		t.Fatal("no refusal")
+	}
+}
+
+// git reads no alternates there.
+func TestCheckDoesNotWaitForAlternatesOfPacks(t *testing.T) {
+	x := newRemoval(t)
+	dir := filepath.Join(x.clone, ".git", "objects", "pack", "info")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(dir, "alternates"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := x.check(); err != nil {
+		t.Fatal(err)
 	}
 }
 
