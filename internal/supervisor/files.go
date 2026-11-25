@@ -51,10 +51,12 @@ const (
 type ScopeFiles struct {
 	Store *store.Store
 	Log   *slog.Logger
-	// Hook, when a test sets it, is called at the steps of a write:
-	// "written", once the new content is whole under the daemon's own name
-	// and before what is there is looked at for the last time, and "placed",
-	// once it has the file's name.
+	// Hook, when a test sets it, is called between two steps that something
+	// may come between: "entering" a directory and "opening" a file, once it
+	// was looked at; "written", once a write's new content is whole under the
+	// daemon's own name and before what is there is looked at for the last
+	// time; "placing", after that and before it takes the file's name; and
+	// "placed", once it has it.
 	Hook func(step string)
 
 	locks keyed // of the directories, for their writes
@@ -206,8 +208,14 @@ func (s *ScopeFiles) open(dir string) (*os.Root, error) {
 	return root, nil
 }
 
+func (s *ScopeFiles) step(step string) {
+	if s.Hook != nil {
+		s.Hook(step)
+	}
+}
+
 // enter opens the directory name in root, which must be a directory itself.
-func enter(root *os.Root, name string) (*os.Root, error) {
+func (s *ScopeFiles) enter(root *os.Root, name string) (*os.Root, error) {
 	st, err := root.Lstat(name)
 	if err != nil {
 		return nil, fault("looking at a directory on the way", err)
@@ -215,7 +223,10 @@ func enter(root *os.Root, name string) (*os.Root, error) {
 	if !st.IsDir() {
 		return nil, refusal("a part of the path is a link, or no directory")
 	}
-	sub, err := root.OpenRoot(name)
+	s.step("entering")
+	// As a directory on the way, which must be one: OpenRoot alone would wait
+	// on a pipe, should one have taken its place.
+	sub, err := root.OpenRoot(name + "/.")
 	if err != nil {
 		return nil, fault("opening a directory on the way", err)
 	}
@@ -246,13 +257,13 @@ func fault(what string, err error) error {
 
 // way opens the last directory of parts, names in root, that is there, and
 // returns the names of those after it.
-func way(root *os.Root, parts []string) (*os.Root, []string, error) {
+func (s *ScopeFiles) way(root *os.Root, parts []string) (*os.Root, []string, error) {
 	at, err := root.OpenRoot(".")
 	if err != nil {
 		return nil, nil, fault("opening the directory", err)
 	}
 	for i, p := range parts {
-		next, err := enter(at, p)
+		next, err := s.enter(at, p)
 		if errors.Is(err, fs.ErrNotExist) {
 			return at, parts[i:], nil
 		}
@@ -305,7 +316,7 @@ func versionOf(text string) string {
 
 // look reads what stands at name in dir, at path in the answers: nil when
 // nothing does, and an error for what is not a regular file.
-func look(dir *os.Root, name, path string) (*found, error) {
+func (s *ScopeFiles) look(dir *os.Root, name, path string) (*found, error) {
 	st, err := dir.Lstat(name)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -320,6 +331,7 @@ func look(dir *os.Root, name, path string) (*found, error) {
 	if st.Size() > FileMax {
 		return f, nil
 	}
+	s.step("opening")
 	// Not waiting on a pipe, should one have taken the file's place. os.Root
 	// follows a link that stays in the directory whatever the flags, so what
 	// was opened must be what was looked at.
@@ -371,7 +383,7 @@ func (s *ScopeFiles) list(ctx context.Context, dir string) (control.FilesAnswer,
 				}
 				// One that went meanwhile, or that the daemon may not open,
 				// has no file that a path names.
-				if sub, err := enter(at, e.Name()); err == nil {
+				if sub, err := s.enter(at, e.Name()); err == nil {
 					err = walk(sub, prefix+e.Name()+"/", depth+1)
 					sub.Close()
 					if err != nil {
@@ -380,7 +392,7 @@ func (s *ScopeFiles) list(ctx context.Context, dir string) (control.FilesAnswer,
 				}
 				continue
 			}
-			f, err := look(at, e.Name(), prefix+e.Name())
+			f, err := s.look(at, e.Name(), prefix+e.Name())
 			switch {
 			case err == nil && f != nil:
 				files = append(files, *f.without())
@@ -426,14 +438,14 @@ func (s *ScopeFiles) read(dir string, parts []string) (control.FilesAnswer, erro
 	}
 	defer root.Close()
 	last := len(parts) - 1
-	parent, missing, err := way(root, parts[:last])
+	parent, missing, err := s.way(root, parts[:last])
 	if err != nil {
 		return control.FilesAnswer{}, err
 	}
 	defer parent.Close()
 	var f *found
 	if len(missing) == 0 {
-		if f, err = look(parent, parts[last], strings.Join(parts, "/")); err != nil {
+		if f, err = s.look(parent, parts[last], strings.Join(parts, "/")); err != nil {
 			return control.FilesAnswer{}, err
 		}
 	}
@@ -462,11 +474,7 @@ func (s *ScopeFiles) write(ctx context.Context, scope string, thread control.Thr
 	if err := s.settle(ctx, dir, root); err != nil {
 		return control.FilesAnswer{}, err
 	}
-	// A file system may take names for the same that are not for us.
-	if same(root, parts[0], DocsDir) {
-		return control.FilesAnswer{}, refusal("no write in docs/")
-	}
-	cur, next, why, err := fit(root, parts, r)
+	cur, next, why, err := s.fit(root, parts, r)
 	if err != nil {
 		return control.FilesAnswer{}, err
 	}
@@ -483,25 +491,28 @@ func (s *ScopeFiles) write(ctx context.Context, scope string, thread control.Thr
 	// From here on it is done or taken back, also when the caller is gone.
 	ctx = context.WithoutCancel(ctx)
 	path := strings.Join(parts, "/")
-	w := placing{path: path, tmp: tmpName(), was: cur.version(), version: versionOf(next)}
-	if err := s.record(ctx, scope, thread, dir, w); err != nil {
+	there, err := s.there(root, parts)
+	if err != nil {
+		return control.FilesAnswer{}, err
+	}
+	w := placing{path: path, tmp: tmpName(), was: cur.version(), version: versionOf(next), there: there}
+	id, err := s.record(ctx, scope, thread, dir, w)
+	if err != nil {
 		return control.FilesAnswer{}, err
 	}
 	perm := fs.FileMode(0o600)
 	if cur != nil {
 		perm = cur.perm
 	}
-	made, err := s.place(dir, root, w, next, perm)
-	// It is settled by what is there now, as after a daemon that died; what
-	// is not settled now is by the next write, or at the next start.
-	if err := s.settle(ctx, dir, root); err != nil {
-		s.Log.Error("a supervisor's write is not settled", "scope", scope, "err", err)
+	left, err := s.place(dir, root, w, next, perm)
+	if left == nil {
+		left = s.finish(ctx, root, id, w, err == nil)
 	}
-	if err != nil {
-		unmake(root, parts, made)
+	if left != nil { // the next write does it, or the next start
+		s.Log.Error("a supervisor's write is not settled", "scope", scope, "err", left)
 	}
 	if errors.Is(err, errMeanwhile) {
-		cur, _, _, err := fit(root, parts, r)
+		cur, _, _, err := s.fit(root, parts, r)
 		if err != nil {
 			return control.FilesAnswer{}, err
 		}
@@ -529,15 +540,15 @@ func same(root *os.Root, a, b string) bool {
 
 // fit is what stands at parts in root, what r makes of it, and why r does
 // not fit it; empty when it does.
-func fit(root *os.Root, parts []string, r control.FilesRequest) (cur *found, next, why string, err error) {
+func (s *ScopeFiles) fit(root *os.Root, parts []string, r control.FilesRequest) (cur *found, next, why string, err error) {
 	last := len(parts) - 1
-	parent, missing, err := way(root, parts[:last])
+	parent, missing, err := s.way(root, parts[:last])
 	if err != nil {
 		return nil, "", "", err
 	}
 	defer parent.Close()
 	if len(missing) == 0 {
-		if cur, err = look(parent, parts[last], strings.Join(parts, "/")); err != nil {
+		if cur, err = s.look(parent, parts[last], strings.Join(parts, "/")); err != nil {
 			return nil, "", "", err
 		}
 	}
@@ -579,7 +590,7 @@ func (s *ScopeFiles) allowed(ctx context.Context, root *os.Root, parts []string,
 	}
 	if len(parts) == 1 && len(next) > UserFileMax {
 		for _, name := range UserFiles {
-			if strings.EqualFold(parts[0], name) || same(root, parts[0], name) {
+			if strings.EqualFold(parts[0], name) {
 				return refusal("one of the user's files over 32 KB")
 			}
 		}
@@ -587,22 +598,19 @@ func (s *ScopeFiles) allowed(ctx context.Context, root *os.Root, parts []string,
 	var size int64
 	if cur != nil {
 		size = cur.Size
-		if err := writable(root, parts, cur); err != nil {
+		if err := s.writable(root, parts); err != nil {
 			return err
 		}
 	}
 	return room(ctx, root, cur == nil, int64(len(next))-size)
 }
 
-// writable says that the daemon may not write cur, which stands at parts,
-// though it could put another file in its place.
-func writable(root *os.Root, parts []string, cur *found) error {
+// writable says that the daemon may not write the file at parts, though it
+// could put another in its place.
+func (s *ScopeFiles) writable(root *os.Root, parts []string) error {
 	const why = refusal("a file that the daemon may not write")
-	if cur.perm&0o200 == 0 {
-		return why
-	}
 	last := len(parts) - 1
-	parent, missing, err := way(root, parts[:last])
+	parent, missing, err := s.way(root, parts[:last])
 	if err != nil {
 		return err
 	}
@@ -665,100 +673,119 @@ type placing struct {
 	tmp     string // the daemon's own name for the new content, beside the file
 	was     string // the version of the file it replaces; "" for a new one
 	version string // that of the new content
+	there   int    // how many of the directories on the way were there before
 }
 
 func (w placing) parts() []string { return strings.Split(w.path, "/") }
 
+// there is how many of the directories on the way of parts are in root.
+func (s *ScopeFiles) there(root *os.Root, parts []string) (int, error) {
+	last := len(parts) - 1
+	at, missing, err := s.way(root, parts[:last])
+	if err != nil {
+		return 0, err
+	}
+	at.Close()
+	return last - len(missing), nil
+}
+
 // place puts text where w says, with perm, whole: it is written beside the
 // file and takes its name only where what stands there is still what w
-// replaces. It returns which directories on the way it made, as their
-// places in the path, also when it fails. What it leaves of w's own file is
-// for settle to remove, which tells by it whether the write was made.
-func (s *ScopeFiles) place(dir string, root *os.Root, w placing, text string, perm fs.FileMode) (made []int, err error) {
+// replaces. It leaves no file of the daemon's own, or left says why one.
+func (s *ScopeFiles) place(dir string, root *os.Root, w placing, text string, perm fs.FileMode) (left, err error) {
 	parts := w.parts()
 	last := len(parts) - 1
-	parent, missing, err := way(root, parts[:last])
+	parent, missing, err := s.way(root, parts[:last])
 	if err != nil {
 		return nil, err
 	}
 	defer func() { parent.Close() }()
-	for i, p := range missing {
-		err := parent.Mkdir(p, 0o700)
-		if err != nil && !errors.Is(err, fs.ErrExist) {
-			return made, fault("making a directory on the way", err)
+	for _, p := range missing {
+		if err := parent.Mkdir(p, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+			return nil, fault("making a directory on the way", err)
 		}
-		if err == nil {
-			made = append(made, last-len(missing)+i)
-		}
-		next, err := enter(parent, p)
+		next, err := s.enter(parent, p)
 		if err != nil {
-			return made, err
+			return nil, err
 		}
 		parent.Close()
 		parent = next
 	}
-	if err := writeNew(parent, w.tmp, text, perm); err != nil {
-		return made, err
+	made, err := writeNew(parent, w.tmp, text, perm)
+	if made {
+		// Also where the path no longer leads to it. Nothing has this name
+		// once it was renamed.
+		defer func() {
+			if err := parent.Remove(w.tmp); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				left = fault("removing the daemon's own file", err)
+			}
+		}()
+	}
+	if err != nil {
+		return nil, err
 	}
 	s.step("written")
+	return nil, s.name(dir, root, parent, w, perm)
+}
 
+// name gives what place wrote to parent the name of the file.
+func (s *ScopeFiles) name(dir string, root, parent *os.Root, w placing, perm fs.FileMode) error {
+	parts := w.parts()
+	last := len(parts) - 1
 	// What the path names now is looked up from its beginning again: what
 	// was put in the place of the directory, of one on the way or of the
 	// file since it was looked at is not written to.
 	now, err := openDir(dir)
 	if err != nil {
-		return made, errMeanwhile
+		return errMeanwhile
 	}
 	defer now.Close()
 	if !sameDir(root, now) {
-		return made, errMeanwhile
+		return errMeanwhile
 	}
-	there, missing, err := way(now, parts[:last])
+	there, missing, err := s.way(now, parts[:last])
 	if err != nil {
-		return made, err
+		return err
 	}
 	defer there.Close()
 	if len(missing) > 0 || !sameDir(parent, there) {
-		return made, errMeanwhile
+		return errMeanwhile
 	}
-	cur, err := look(parent, parts[last], w.path)
+	cur, err := s.look(parent, parts[last], w.path)
 	if err != nil {
-		return made, err
+		return err
 	}
 	if w.was == "" {
 		if cur != nil {
-			return made, errMeanwhile
+			return errMeanwhile
 		}
+		s.step("placing")
 		// Only where nothing is.
 		if err := parent.Link(w.tmp, parts[last]); errors.Is(err, fs.ErrExist) {
-			return made, errMeanwhile
+			return errMeanwhile
 		} else if err != nil {
-			return made, fault("putting the file in its place", err)
+			return fault("putting the file in its place", err)
 		}
 	} else {
 		if cur == nil || cur.Version != w.was || cur.perm != perm {
-			return made, errMeanwhile
+			return errMeanwhile
 		}
+		s.step("placing")
 		if err := parent.Rename(w.tmp, parts[last]); err != nil {
-			return made, fault("putting the file in its place", err)
+			return fault("putting the file in its place", err)
 		}
 	}
 	s.step("placed")
 	syncDir(parent)
-	return nil, nil
-}
-
-func (s *ScopeFiles) step(step string) {
-	if s.Hook != nil {
-		s.Hook(step)
-	}
+	return nil
 }
 
 // writeNew makes the file name in dir with text and perm, and syncs it.
-func writeNew(dir *os.Root, name, text string, perm fs.FileMode) error {
+// made: it is there, whole or not.
+func writeNew(dir *os.Root, name, text string, perm fs.FileMode) (made bool, err error) {
 	fh, err := dir.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return fault("writing the file", err)
+		return false, fault("writing the file", err)
 	}
 	_, err = fh.WriteString(text)
 	if err == nil {
@@ -771,9 +798,9 @@ func writeNew(dir *os.Root, name, text string, perm fs.FileMode) error {
 		err = cerr
 	}
 	if err != nil {
-		return fault("writing the file", err)
+		return true, fault("writing the file", err)
 	}
-	return nil
+	return true, nil
 }
 
 // syncDir syncs dir, so that a write that was answered outlives the host.
@@ -795,11 +822,12 @@ func sameDir(a, b *os.Root) bool {
 	return err == nil && os.SameFile(x, y)
 }
 
-// unmake removes the directories that place made on the way of parts, by
-// their places in it, as far as they are empty.
-func unmake(root *os.Root, parts []string, made []int) {
-	for _, i := range slices.Backward(made) {
-		parent, missing, err := way(root, parts[:i])
+// unmake removes the directories on the way of w that were not there before
+// it, as far as they are empty.
+func (s *ScopeFiles) unmake(root *os.Root, w placing) {
+	parts := w.parts()
+	for i := len(parts) - 2; i >= w.there; i-- {
+		parent, missing, err := s.way(root, parts[:i])
 		if err != nil {
 			return
 		}
@@ -814,28 +842,27 @@ func unmake(root *os.Root, parts []string, made []int) {
 	}
 }
 
-// record stores w before anything of it is on the disk. pos is the newest
-// event's position then: the turn it belongs to ends after it.
-func (s *ScopeFiles) record(ctx context.Context, scope string, thread control.ThreadID, dir string, w placing) error {
-	err := s.Store.Update(ctx, func(tx *store.Tx) error {
-		_, err := tx.ExecContext(ctx, `INSERT INTO supervisor_writes (scope, thread, dir, path, tmp, was, version, pos)
-			SELECT ?, ?, ?, ?, ?, ?, ?, coalesce(max(pos), 0) FROM events`, scope, int64(thread), dir, w.path, w.tmp, w.was, w.version)
-		return err
+// record stores w before anything of it is on the disk, and returns its
+// number. pos is the newest event's position then: the turn it belongs to
+// ends after it.
+func (s *ScopeFiles) record(ctx context.Context, scope string, thread control.ThreadID, dir string, w placing) (id int64, err error) {
+	err = s.Store.Update(ctx, func(tx *store.Tx) error {
+		return tx.QueryRowContext(ctx, `INSERT INTO supervisor_writes (scope, thread, dir, path, tmp, was, version, there, pos)
+			SELECT ?, ?, ?, ?, ?, ?, ?, ?, coalesce(max(pos), 0) FROM events RETURNING id`,
+			scope, int64(thread), dir, w.path, w.tmp, w.was, w.version, w.there).Scan(&id)
 	})
 	if err != nil {
-		return fmt.Errorf("recording the write: %w", err)
+		return 0, fmt.Errorf("recording the write: %w", err)
 	}
-	return nil
+	return id, nil
 }
 
 // settle finds out, for each write in dir, opened as root, that is not
-// recorded as done, whether it was made, and removes what is left of it
-// besides: of the write that was just made or failed, and of one that a
-// daemon died in. One of the user's files that was written stays recorded
-// until the line that names it was posted (Ended); every other write is
-// forgotten. The directory must be locked.
+// recorded as done, whether it was made, and takes back what is left of it
+// when it was not: those that a daemon died in, and any that could not be
+// settled when it was made. The directory must be locked.
 func (s *ScopeFiles) settle(ctx context.Context, dir string, root *os.Root) error {
-	rows, err := s.Store.DB.QueryContext(ctx, `SELECT id, path, tmp, was FROM supervisor_writes WHERE dir = ? AND done = 0 ORDER BY id`, dir)
+	rows, err := s.Store.DB.QueryContext(ctx, `SELECT id, path, tmp, was, there FROM supervisor_writes WHERE dir = ? AND done = 0 ORDER BY id`, dir)
 	if err != nil {
 		return fmt.Errorf("the writes before this one: %w", err)
 	}
@@ -847,7 +874,7 @@ func (s *ScopeFiles) settle(ctx context.Context, dir string, root *os.Root) erro
 	var open []write
 	for rows.Next() {
 		var w write
-		if err := rows.Scan(&w.id, &w.path, &w.tmp, &w.was); err != nil {
+		if err := rows.Scan(&w.id, &w.path, &w.tmp, &w.was, &w.there); err != nil {
 			return fmt.Errorf("the writes before this one: %w", err)
 		}
 		open = append(open, w)
@@ -856,38 +883,27 @@ func (s *ScopeFiles) settle(ctx context.Context, dir string, root *os.Root) erro
 		return fmt.Errorf("the writes before this one: %w", err)
 	}
 	for _, w := range open {
-		made, err := settled(root, w.placing)
+		made, err := s.clear(root, w.placing)
 		if err != nil {
 			// Looked at again at the next write and the next start.
 			s.Log.Error("a supervisor's write cannot be settled", "dir", dir, "err", err)
 			continue
 		}
-		name := ""
-		if made {
-			name = userFile(root, w.path)
-		}
-		query, args := `DELETE FROM supervisor_writes WHERE id = ?`, []any{w.id}
-		if name != "" {
-			query, args = `UPDATE supervisor_writes SET done = 1, name = ? WHERE id = ?`, []any{name, w.id}
-		}
-		if err := s.Store.Update(ctx, func(tx *store.Tx) error {
-			_, err := tx.ExecContext(ctx, query, args...)
+		if err := s.finish(ctx, root, w.id, w.placing, made); err != nil {
 			return err
-		}); err != nil {
-			return fmt.Errorf("recording the write: %w", err)
 		}
 	}
 	return nil
 }
 
-// settled reports whether w was made, and removes the daemon's own file of
-// it. That file is gone once w replaced a file, and a second name of the
-// new one once w made it; without it, w was made unless what it was to
-// replace is still there.
-func settled(root *os.Root, w placing) (bool, error) {
+// clear removes the daemon's own file of w, where w's path leads to it, and
+// reports whether w was made, by what is there. That file is gone once w
+// replaced a file, and a second name of the new one once w made it; without
+// it, w was made unless what it was to replace is still there.
+func (s *ScopeFiles) clear(root *os.Root, w placing) (made bool, err error) {
 	parts := w.parts()
 	last := len(parts) - 1
-	parent, missing, err := way(root, parts[:last])
+	parent, missing, err := s.way(root, parts[:last])
 	if err != nil {
 		return false, err
 	}
@@ -907,11 +923,36 @@ func settled(root *os.Root, w placing) (bool, error) {
 	case err != nil && !errors.Is(err, fs.ErrNotExist):
 		return false, fault("looking at the daemon's own file", err)
 	}
-	cur, err := look(parent, parts[last], w.path)
+	cur, err := s.look(parent, parts[last], w.path)
 	if err != nil {
 		return true, nil // something else is there now
 	}
 	return cur.version() != w.was, nil
+}
+
+// finish records what became of the write id, which clear cleared, and takes
+// back the directories of one that was not made. One of the user's files
+// that was written stays recorded until the line that names it was posted
+// (Ended); every other write is forgotten.
+func (s *ScopeFiles) finish(ctx context.Context, root *os.Root, id int64, w placing, made bool) error {
+	name := ""
+	if made {
+		name = userFile(root, w.path)
+	} else {
+		s.unmake(root, w)
+	}
+	query, args := `DELETE FROM supervisor_writes WHERE id = ?`, []any{id}
+	if name != "" {
+		query, args = `UPDATE supervisor_writes SET done = 1, name = ? WHERE id = ?`, []any{name, id}
+	}
+	err := s.Store.Update(ctx, func(tx *store.Tx) error {
+		_, err := tx.ExecContext(ctx, query, args...)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("recording the write: %w", err)
+	}
+	return nil
 }
 
 // userFile is the name of the user's file that path names in root, "" for
