@@ -1700,6 +1700,28 @@ func TestFilesMadeIsNamed(t *testing.T) {
 	}
 }
 
+// The directories of a write that was answered as made stay, also where its
+// file is gone by the time it is settled.
+func TestFilesMadeKeepsItsDirectories(t *testing.T) {
+	f := newFilesFixture(t)
+	f.keepsRecords(t)
+	made(t, f.own, writeOf("notes/deeper/new.md", "new", ""))
+	if n := f.recorded(t); n != 1 {
+		t.Fatalf("%d recorded", n)
+	}
+	f.losesRecords(t)
+	if err := os.Remove(filepath.Join(f.dir, "notes/deeper/new.md")); err != nil {
+		t.Fatal(err)
+	}
+	before := f.tree(t)
+	if err := f.files.Sweep(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n, after := f.recorded(t), f.tree(t); n != 0 || after != before {
+		t.Errorf("%d recorded; there is\n%s\nand was\n%s", n, after, before)
+	}
+}
+
 // What someone puts at the name that the daemon's own file had until it got
 // its place is theirs; and a replaced program can be run before the
 // directory is synced.
