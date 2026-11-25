@@ -449,12 +449,11 @@ func (h *Holder) hand(ctx context.Context, r ref, w holder.Window, parts []agent
 	}
 	// Since 3.7 tmux pastes a buffer's control characters as ^X unless
 	// given -S. An older server refuses -S as it reads the commands, before
-	// it runs any of them, and pastes the buffer as it is.
+	// it runs any of them, and pastes the buffer as it is (noRawFlag).
 	_, old := h.noRawPaste.Load(r.Socket)
 	raw := !old && len(bufs) > 0
 	out, err := h.tmux(cctx, r, nil, handOver(r, conds, parts, bufs, raw)...)
-	var te *tmuxError
-	if raw && errors.As(err, &te) && strings.Contains(te.msg, "unknown flag -S") {
+	if raw && noRawFlag(err) {
 		h.noRawPaste.Store(r.Socket, true)
 		out, err = h.tmux(cctx, r, nil, handOver(r, conds, parts, bufs, false)...)
 	}
@@ -474,6 +473,14 @@ func (h *Holder) hand(ctx context.Context, r ref, w holder.Window, parts []agent
 	default:
 		return fmt.Errorf("tmux: the server answered an input with %.200q", out)
 	}
+}
+
+// noRawFlag reports whether a tmux error says that paste-buffer does not
+// know -S. tmux names the flag since 3.3; before, it answers with the usage
+// of paste-buffer, whose flags have no S, and nothing more inside if-shell.
+func noRawFlag(err error) bool {
+	var te *tmuxError
+	return errors.As(err, &te) && (strings.Contains(te.msg, "unknown flag -S") || strings.HasPrefix(te.msg, "usage: paste-buffer [-dpr] "))
 }
 
 // takes is the tmux condition that what the window's pane runs is what it
@@ -628,19 +635,56 @@ var (
 	ErrNotForeground  = errors.New("tmux: the process that reported is not the window's foreground process")
 )
 
+// The oldest tmux whose windows are held. A pane that is gone, for one,
+// reads as an error on an older one, not as gone.
+const oldestMajor, oldestMinor = 3, 2
+
+// ErrTooOld refuses a window on a server that is older.
+var ErrTooOld = fmt.Errorf("tmux: the server is older than tmux %d.%d, the oldest hataori holds windows of", oldestMajor, oldestMinor)
+
+// "3.2a", "next-3.5", "3.4-rc"; a build with a name of its own, as "master",
+// has no number.
+var versionNumber = regexp.MustCompile(`^(?:next-)?([0-9]+)\.([0-9]+)`)
+
+// checkVersion refuses a version, as the server prints it for #{version},
+// that is older than the oldest whose windows are held. A server so old that
+// it does not know #{version} prints nothing.
+func checkVersion(version string) error {
+	if version == "" {
+		return fmt.Errorf("%w: it prints no version", ErrTooOld)
+	}
+	m := versionNumber.FindStringSubmatch(version)
+	if m == nil {
+		return nil
+	}
+	major, _ := strconv.Atoi(m[1])
+	minor, _ := strconv.Atoi(m[2])
+	if major < oldestMajor || major == oldestMajor && minor < oldestMinor {
+		return fmt.Errorf("%w: it is %s", ErrTooOld, version)
+	}
+	return nil
+}
+
 // CheckTakeIn is the check before a take-in (design, section 4.8): the
 // window exists, the agent's process that reported (w.Process) has the
 // pane's terminal as its terminal, and leads that terminal's foreground
-// process group. An environment is inherited, so a process the session's
-// own shell started names the same pane. nil only when every answer is
-// yes; an error when any is no or cannot be told.
+// process group, and the server is not too old (ErrTooOld). An environment
+// is inherited, so a process the session's own shell started names the same
+// pane. nil only when every answer is yes; an error when any is no or cannot
+// be told.
 func (h *Holder) CheckTakeIn(ctx context.Context, w holder.Window) error {
 	r, err := parseRef(w)
 	if err != nil {
 		return err
 	}
-	_, err = h.foreground(ctx, r, w.Process)
-	return err
+	if _, err := h.foreground(ctx, r, w.Process); err != nil {
+		return err
+	}
+	out, err := h.tmux(ctx, r, nil, "display-message", "-p", "-t", r.Pane, "#{version}")
+	if err != nil {
+		return err
+	}
+	return checkVersion(strings.TrimSpace(string(out)))
 }
 
 // foreground returns the window's pane, with an error when pid does not lead
@@ -688,7 +732,7 @@ func (h *Holder) Alive(ctx context.Context, w holder.Window) (holder.Liveness, e
 	if w.Process <= 0 {
 		return holder.Liveness{State: holder.Unknown}, nil
 	}
-	switch err := h.CheckTakeIn(ctx, w); {
+	switch _, err := h.foreground(ctx, r, w.Process); {
 	case err == nil:
 		return holder.Liveness{State: holder.Running}, nil
 	case errors.Is(err, errNoProcess):

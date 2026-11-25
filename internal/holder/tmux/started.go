@@ -41,6 +41,9 @@ type execSpec struct {
 // prints nothing and waits.
 const placeholder = "exec sleep 86400"
 
+// startFormat is what Start asks tmux to print of the window it made.
+const startFormat = "#{pane_id} #{pid} #{pane_pid} #{version} #{socket_path}"
+
 // Start starts the agent in a tmux window of hataori's own (design, section
 // 4.3, "tmux", steps 2 to 4), once the relay for stateDir listens: a session
 // named Prefix and the state directory's name, on the server Server names
@@ -54,6 +57,9 @@ const placeholder = "exec sleep 86400"
 // A session of that name may be left, with windows a person opened in it
 // beside an earlier run's: the agent's window is then made in it, behind
 // what the person looks at.
+//
+// On a server that is too old (ErrTooOld) the window made is removed again,
+// and the agent is not started.
 func (h *Holder) Start(ctx context.Context, stateDir string, spec holder.Spec) (holder.Window, error) {
 	if h.Hataori == "" {
 		return holder.Window{}, holder.ErrCannotStart
@@ -86,7 +92,7 @@ func (h *Holder) Start(ctx context.Context, stateDir string, spec holder.Spec) (
 		rows = 24
 	}
 	out, err := h.serverCmd(ctx, "new-session", "-d", "-s", h.Prefix+filepath.Base(stateDir),
-		"-x", strconv.Itoa(int(cols)), "-y", strconv.Itoa(int(rows)), "-P", "-F", "#{pane_id} #{pid} #{pane_pid} #{socket_path}", placeholder)
+		"-x", strconv.Itoa(int(cols)), "-y", strconv.Itoa(int(rows)), "-P", "-F", startFormat, placeholder)
 	if err != nil && strings.Contains(err.Error(), "duplicate session") {
 		// Not beside a run that could not be ended: they would share the
 		// state directory.
@@ -94,22 +100,27 @@ func (h *Holder) Start(ctx context.Context, stateDir string, spec holder.Spec) (
 			return holder.Window{}, fmt.Errorf("%w, with %d panes of an earlier run (%v)", err, len(left), lerr)
 		}
 		out, err = h.serverCmd(ctx, "new-window", "-d", "-t", "="+h.Prefix+filepath.Base(stateDir)+":",
-			"-P", "-F", "#{pane_id} #{pid} #{pane_pid} #{socket_path}", placeholder)
+			"-P", "-F", startFormat, placeholder)
 	}
 	if err != nil {
 		return holder.Window{}, err
 	}
-	f := strings.SplitN(strings.TrimSuffix(string(out), "\n"), " ", 4)
+	f := strings.SplitN(strings.TrimSuffix(string(out), "\n"), " ", 5)
 	server, made := 0, 0
-	if len(f) == 4 {
+	if len(f) == 5 {
 		server, _ = strconv.Atoi(f[1])
 		made, _ = strconv.Atoi(f[2])
 	}
-	if len(f) != 4 || !paneID.MatchString(f[0]) || server <= 0 || made <= 0 {
+	if len(f) != 5 || !paneID.MatchString(f[0]) || server <= 0 || made <= 0 {
 		h.clearLeftover(ctx, stateDir)
 		return holder.Window{}, fmt.Errorf("tmux: new-session printed %q", out)
 	}
-	r := ref{Socket: f[3], Server: server, Pane: f[0], Dir: stateDir}
+	r := ref{Socket: f[4], Server: server, Pane: f[0], Dir: stateDir}
+	// Only here: a server of another version than the tmux program may run,
+	// and one with no session does not tell its version.
+	if err := checkVersion(f[3]); err != nil {
+		return holder.Window{}, errors.Join(err, h.removePane(ctx, r, pane{pid: made}))
+	}
 	// In one go, and only while the pane is the one made: on a server started
 	// again meanwhile its id is another's, and a person may have given it a
 	// program of theirs. A person's hook on one of the commands may make tmux

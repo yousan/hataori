@@ -905,8 +905,9 @@ func TestCapsStopAndNothingChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c, ok := <-ch; !ok || !c.Reset || c.Cols != 100 || c.Rows != 30 {
-		t.Fatalf("snapshot %+v, %t", c, ok)
+	size := s.run("display-message", "-p", "-t", pane, "#{pane_width}x#{pane_height}") // not 100x30 on 3.2a
+	if c, ok := <-ch; !ok || !c.Reset || fmt.Sprintf("%dx%d", c.Cols, c.Rows) != size {
+		t.Fatalf("snapshot %+v, %t, of a pane of %s", c, ok, size)
 	}
 	cancel()
 	for range ch {
