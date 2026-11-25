@@ -1889,9 +1889,9 @@ func readGitfile(p string) (string, error) {
 // processes is step 4: no process has a file or its working directory in
 // the workspace. lsof is asked on Linux and on macOS alike; a missing or
 // failing lsof refuses, and so does one that does not report a directory
-// this check holds open: the workspace itself, which shows that the names
-// lsof prints are the ones compared with. Only the processes of the user
-// hataori runs as can be seen, unless it runs as root.
+// this check holds open, the workspace itself: that shows that the names
+// and the inode numbers lsof prints are the ones compared with. Only the
+// processes of the user hataori runs as can be seen, unless it runs as root.
 func (c *checker) processes() error {
 	top, ok := lsofName(c.top)
 	if !ok {
@@ -1902,9 +1902,14 @@ func (c *checker) processes() error {
 		return c.unreadable(c.top, err)
 	}
 	defer held.Close()
+	st, err := held.Stat()
+	if err != nil {
+		return c.unreadable(c.top, err)
+	}
+	topID, _ := fileIDOf(st)
 	self, heldFD := strconv.Itoa(os.Getpid()), strconv.Itoa(int(held.Fd()))
 
-	args := []string{"-n", "-P", "-w", "-F0pfn"}
+	args := []string{"-n", "-P", "-w", "-F0pfDin"}
 	if uid := os.Geteuid(); uid != 0 {
 		args = append(args, "-u", strconv.Itoa(uid))
 	}
@@ -1919,32 +1924,101 @@ func (c *checker) processes() error {
 		return &Refusal{Reason: UnknownUse, Detail: "lsof: " + lastLines(stderr.String(), 3, err.Error())}
 	}
 	seen := false
-	pid, fd := "", ""
-	for _, f := range strings.Split(stdout.String(), "\x00") {
-		f = strings.TrimLeft(f, "\n")
-		if f == "" {
-			continue
-		}
-		switch f[0] {
-		case 'p':
-			pid, fd = f[1:], ""
-		case 'f':
-			fd = f[1:]
-		case 'n':
-			name := f[1:]
-			if name == top || strings.HasPrefix(name, top+"/") || strings.HasPrefix(name, top+" ") {
-				if pid == self && fd == heldFD {
-					seen = true
-					continue
-				}
-				return &Refusal{Reason: InUse, Detail: "process " + pid + " uses " + name}
+	elsewhere := map[fileID]openFile{}
+	pid := ""
+	for _, set := range strings.Split(stdout.String(), "\x00\n") {
+		f := openFile{pid: pid}
+		for _, field := range strings.Split(set, "\x00") {
+			if field == "" {
+				continue
 			}
+			switch v := field[1:]; field[0] {
+			case 'p':
+				pid = v
+				f.pid = v
+			case 'f':
+				f.fd = v
+			case 'D':
+				f.dev = v
+			case 'i':
+				f.ino = v
+			case 'n':
+				f.name = v
+			}
+		}
+		id, hasID := f.id()
+		if f.name == top || strings.HasPrefix(f.name, top+"/") || strings.HasPrefix(f.name, top+" ") {
+			if f.pid == self && f.fd == heldFD {
+				seen = hasID && id == topID
+				continue
+			}
+			return &Refusal{Reason: InUse, Detail: f.use()}
+		}
+		if _, ok := elsewhere[id]; hasID && !ok {
+			elsewhere[id] = f
 		}
 	}
 	if !seen {
 		return &Refusal{Reason: UnknownUse, Detail: "lsof does not report the workspace, which this check holds open"}
 	}
-	return nil
+	return c.mounted(elsewhere)
+}
+
+// mounted refuses a file or directory of the workspace that is open under a
+// path outside it, as through a bind mount. A file with a name outside the
+// workspace too, a hard link, is let go: it may be open under that one, and
+// it is there without the workspace.
+func (c *checker) mounted(elsewhere map[fileID]openFile) error {
+	names := map[fileID]uint64{}
+	return filepath.WalkDir(c.top, func(p string, d fs.DirEntry, err error) error {
+		if err == nil {
+			err = c.ctx.Err()
+		}
+		if err != nil {
+			return c.unreadable(p, err)
+		}
+		st, err := d.Info()
+		if err != nil {
+			return c.unreadable(p, err)
+		}
+		id, links := fileIDOf(st)
+		f, ok := elsewhere[id]
+		if !ok {
+			return nil
+		}
+		names[id]++
+		if !d.IsDir() && names[id] < links {
+			return nil
+		}
+		rel, _ := filepath.Rel(c.top, p)
+		return &Refusal{Reason: InUse, Detail: f.use() + ", which is " + rel}
+	})
+}
+
+// openFile is a file that lsof reports, with the fields as it prints them.
+type openFile struct{ pid, fd, dev, ino, name string }
+
+func (f openFile) use() string { return "process " + f.pid + " uses " + f.name }
+
+// id is the file's identity; ok is false when lsof prints none, as of a
+// socket.
+func (f openFile) id() (id fileID, ok bool) {
+	dev, err1 := strconv.ParseUint(f.dev, 0, 64)
+	ino, err2 := strconv.ParseUint(f.ino, 10, 64)
+	return fileID{uint32(dev), ino}, err1 == nil && err2 == nil
+}
+
+// fileID is which file it is, under whatever path. The device is cut to the
+// 32 bits that macOS has, where its sign says how it is printed.
+type fileID struct {
+	dev uint32
+	ino uint64
+}
+
+// fileIDOf is the identity of a file and the number of its names.
+func fileIDOf(st fs.FileInfo) (id fileID, links uint64) {
+	sys := st.Sys().(*syscall.Stat_t)
+	return fileID{uint32(sys.Dev), sys.Ino}, uint64(sys.Nlink)
 }
 
 // lsofName is how lsof prints the path p in the C locale: a byte that is not

@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -1551,6 +1552,133 @@ func TestRefuseProcessHoldingTheWorkspaceWithTheSameDescriptor(t *testing.T) {
 	}
 	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
 	wantRefusal(t, x.check(), InUse, "")
+}
+
+// A bind mount shows the workspace under another path, also in a mount
+// namespace of its own, as a container has.
+func TestRefuseProcessUsingTheWorkspaceThroughABindMount(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("no bind mounts")
+	}
+	for name, tc := range map[string]struct{ of, script string }{
+		"the workspace":            {".", "cd $at"},
+		"a directory below":        {".", "cd $at/cache/deep"},
+		"a file below":             {".", "exec 3<$at/cache/deep/f"},
+		"a file of its repository": {".", "exec 3<$at/.git/HEAD"},
+		"a mount of a directory":   {"cache", "exec 3<$at/deep/f"},
+		"a file with two names":    {".", "exec 3<$at/cache/deep/two"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			x := newRemoval(t)
+			os.MkdirAll(filepath.Join(x.clone, "cache", "deep"), 0o700)
+			x.r.Disposable = []string{"cache"}
+			x.write("cache/deep/f", "x\n")
+			x.write("cache/deep/one", "x\n")
+			if err := os.Link(filepath.Join(x.clone, "cache/deep/one"), filepath.Join(x.clone, "cache/deep/two")); err != nil {
+				t.Fatal(err)
+			}
+			if err := x.check(); err != nil {
+				t.Fatal(err)
+			}
+			at := t.TempDir()
+			cmd := exec.Command("unshare", "-Urm", "sh", "-ec", `at=$1; mount --bind "$2" "$at"; `+tc.script+`; echo there; exec sleep 60`, "sh", at, filepath.Join(x.clone, tc.of))
+			cmd.Dir = "/"
+			out, err := cmd.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := cmd.Start(); err != nil {
+				t.Skip(err)
+			}
+			t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
+			if said, _ := bufio.NewReader(out).ReadString('\n'); said != "there\n" {
+				t.Skip("no user namespace here")
+			}
+			wantRefusal(t, x.check(), InUse, "")
+		})
+	}
+}
+
+// The same where no bind mount can be made: the real lsof, which names the
+// workspace's directory cache as one elsewhere.
+func TestRefuseProcessWhoseFilesLsofNamesElsewhere(t *testing.T) {
+	lsof, err := exec.LookPath("lsof")
+	if err != nil {
+		t.Fatal(err)
+	}
+	x := newRemoval(t)
+	cache := filepath.Join(x.clone, "cache")
+	os.MkdirAll(cache, 0o700)
+	x.r.Disposable = []string{"cache"}
+	x.write("cache/one", "x\n")
+	link := func(from, to string) {
+		if err := os.Link(filepath.Join(cache, from), to); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bin := filepath.Join(x.tmp, "bin")
+	os.Mkdir(bin, 0o700)
+	script := "#!/bin/sh\n'" + lsof + "' \"$@\" | perl -pe 's#\\0n\\Q" + cache + "\\E#\\0n/elsewhere#g'\n"
+	if err := os.WriteFile(filepath.Join(bin, "lsof"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(filepath.ListSeparator)+os.Getenv("PATH"))
+	if err := x.check(); err != nil {
+		t.Fatalf("clean, pushed, unused: %v", err)
+	}
+	use := func(p string) func() {
+		f, err := os.Open(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return func() { f.Close() }
+	}
+
+	stop := use(cache)
+	wantRefusal(t, x.check(), InUse, "")
+	stop()
+	stop = use(filepath.Join(cache, "one"))
+	err = x.check()
+	wantRefusal(t, err, InUse, "")
+	if d := err.(*Refusal).Detail; !strings.HasSuffix(d, " uses /elsewhere/one, which is cache/one") {
+		t.Fatal(d)
+	}
+	stop()
+	// Two names, both in the workspace.
+	link("one", filepath.Join(cache, "two"))
+	stop = use(filepath.Join(cache, "two"))
+	wantRefusal(t, x.check(), InUse, "")
+	stop()
+	// One of three names is elsewhere: the file may be open under that one,
+	// and it is there without the workspace.
+	link("one", filepath.Join(x.tmp, "three"))
+	stop = use(filepath.Join(x.tmp, "three"))
+	if err := x.check(); err != nil {
+		t.Fatal(err)
+	}
+	stop()
+}
+
+// An lsof whose inode numbers are not those of the files answers only for
+// the paths.
+func TestRefuseWhenLsofsInodesAreOthers(t *testing.T) {
+	lsof, err := exec.LookPath("lsof")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"D", "i"} {
+		t.Run(field, func(t *testing.T) {
+			x := newRemoval(t)
+			bin := filepath.Join(x.tmp, "bin")
+			os.Mkdir(bin, 0o700)
+			script := "#!/bin/sh\n'" + lsof + "' \"$@\" | perl -pe 's#\\0" + field + "[^\\0]*##'\n"
+			if err := os.WriteFile(filepath.Join(bin, "lsof"), []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin+string(filepath.ListSeparator)+os.Getenv("PATH"))
+			wantRefusal(t, x.check(), UnknownUse, "")
+		})
+	}
 }
 
 func TestRefuseWorkspaceWhosePathLsofCannotBeComparedWith(t *testing.T) {
