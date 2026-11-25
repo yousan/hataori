@@ -9,7 +9,7 @@ Real output of the interactive `claude` CLI, for testing the adapter's codec. Th
 - `2.1.329/`: Claude Code 2.1.329, on 2026-11-21 (also in `2.1.329/VERSION`), on Linux: `trust_hooks_*` and `trust_permissions`, taken for #592 (see below).
 - `2.1.330/`: Claude Code 2.1.330, on 2026-11-23 (also in `2.1.330/VERSION`), on Linux: `usage`, taken by `capture.py` for #675, with the transcript's line count at each hook call (see below).
 - `2.1.331/`: Claude Code 2.1.331, on 2026-11-25 (also in `2.1.331/VERSION`), on Linux: `held_notification`, taken by `capture.py` for #593, `failure_background`, `interrupt_background`, `failure_resumed` and `failure_monitor`, taken by it for #801 (see "Turns that end without the list of background tasks"), `trust_notice_*`, taken by `TestLiveTrustFiles` for #707 (see "The folder-trust dialog below a notice"), and `trust_permissions_*`, taken by it for #596 (see "The folder-trust dialog with a permission warning").
-- `2.1.332/`: Claude Code 2.1.332, on 2026-11-25 (also in `2.1.332/VERSION`), on Linux: `trust_notice_off_*`, taken by `TestLiveTrustFiles` for #728 (see "The folder-trust dialog below a notice"), `trust_files_env` and `trust_line_*`, taken by it for #730 and #758 (see "The folder-trust dialog that names files"), and `trust_warnings_*`, taken by it for #752 (see "The folder-trust dialog with several warnings").
+- `2.1.332/`: Claude Code 2.1.332, on 2026-11-25 (also in `2.1.332/VERSION`), on Linux: `trust_notice_off_*`, taken by `TestLiveTrustFiles` for #728 (see "The folder-trust dialog below a notice"), `trust_files_env` and `trust_line_*`, taken by it for #730 and #758 (see "The folder-trust dialog that names files"), `trust_warnings_*`, taken by it for #752, and `trust_marks_*`, taken by it for #760 (see "The folder-trust dialog with several warnings").
 - `capture.py` took them (`confine.py`, the `confine_*` ones); `scrub.py` made them committable. `captures_test.go` in the package fails when a capture holds a home directory path, an e-mail address, an unscrubbed UUID or something shaped like a token.
 
 ## How they were taken
@@ -344,7 +344,7 @@ The rules are on the line below the warning: up to eight, each cut at a width wi
 
 Seen by hand on the same version, not kept: with hooks as well, the hooks warning follows the permission warning's sentence. The codec reads the two together since #752.
 
-## The folder-trust dialog with several warnings (2.1.332, taken for #752)
+## The folder-trust dialog with several warnings (2.1.332, taken for #752 and #760)
 
 `2.1.332/trust_warnings_*/`, taken by `TestLiveTrustFiles` as above with `HATAORI_CAPTURE_ONLY=trust_warnings`, then `scrub.py`. The dialog draws the warnings in this order: permissions, directories, `These will apply without asking. Only proceed if you trust this configuration.` below either or both, hooks. `TrustFiles` in the table names every file of the workspace.
 
@@ -361,3 +361,11 @@ Seen by hand on the same version, not kept: with hooks as well, the hooks warnin
 | `trust_warnings_headers` | `.claude/settings.json` allowing a tool, and `.mcp.json` with a `headersHelper` | ordinary, `TrustFiles` | nothing: `⚠ This folder runs commands to mint HTTP headers (headersHelper), declared in .mcp.json` is a warning the codec does not know |
 
 The CLI writes the lines of a warning that start with ⚠ in bold, also where they wrap, and the rules, the directories, the sentence and the line naming the files not (the same in the captures of 2.1.329 and 2.1.331). It indents the first line of the rules and of the directories; where they wrap they go on at the margin, so the indent does not tell them from the dialog's own lines.
+
+`2.1.332/trust_marks_*/`, taken the same way with `HATAORI_CAPTURE_ONLY=trust_marks`, have rules with combining marks in `.claude/settings.json`, acute accents (U+0301) where the table names no other. The CLI counts no column for them and writes the next word at its column (`\x1b[14G`).
+
+| Capture | Rules | Launch | What the codec did |
+|---|---|---|---|
+| `trust_marks_refused`, `_allowed` | `Bash(café x)` with one accent of its own, `Bash(rm -rf x)` with 14 behind `rm`, `Bash(ls:*)`, `Bash(git diff:*)` | ordinary, without and with `TrustFiles` | as `trust_warnings_dirs_refused` and `_allowed`, the rules quoted as drawn |
+| `trust_marks_emoji` | `Bash(❤️x y)`, `Bash(1️⃣x y)` and `Bash(⌚️x y)`, each with U+FE0F, for which the CLI counts two columns with its character, and `Bash(ls:*)` | ordinary, no `TrustFiles` | as `trust_warnings_dirs_refused`, the rules quoted as drawn |
+| `trust_marks_sign` | `Bash(éé⚠ x)` with two accents of their own, `Bash(ls:*)` | ordinary, `TrustFiles` | nothing: a warning sign in the rules. No key and no event within 15 s. |
