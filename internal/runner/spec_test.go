@@ -100,7 +100,7 @@ func TestConfinedNeedsNoMentions(t *testing.T) {
 		wrap: func(a agent.Adapter) agent.Adapter { m.Adapter = a; return m }})
 	confined := func(key string) (control.ThreadID, error) {
 		return f.core.StartConfined(context.Background(), control.Caller{From: ownerFrom, Scopes: []string{"s"}, May: all},
-			control.StartRequest{Key: key, Scope: "s", Thread: "t-" + key, Input: control.Input{Text: "reply confined"}}, t.TempDir())
+			control.StartRequest{Key: key, Scope: "s", Thread: "t-" + key, Input: control.Input{Text: "reply confined"}}, control.KindSupervisor, t.TempDir())
 	}
 	m.on.Store(true)
 	f.start("reply ordinary")
@@ -116,7 +116,7 @@ func TestConfinedNeedsNoMentions(t *testing.T) {
 
 	m.on.Store(false)
 	closer := f.core.As(control.Caller{From: ownerFrom, Scopes: []string{"s"}, May: all | control.OpClose})
-	if err := closer.CloseThread(context.Background(), 2); err != nil { // a scope has one confined thread
+	if err := closer.CloseThread(context.Background(), 2); err != nil { // a scope has one supervisor thread
 		t.Fatal(err)
 	}
 	id, err := confined("k3")
