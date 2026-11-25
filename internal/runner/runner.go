@@ -1893,15 +1893,9 @@ func (r *Runner) act(lv *live, a agent.Actions) error {
 			in = func() error { return r.tmuxHolder().Input(ctx, hw, a.Keys) }
 		}
 		if lv.taken != nil {
-			in = func() error {
-				// Only to the agent that was taken in: suspended or ended, the
-				// window's foreground is someone's shell, which would run the
-				// text as a command.
-				if err := r.tmuxHolder().CheckTakeIn(ctx, lv.taken.Window); err != nil {
-					return fmt.Errorf("runner: the agent taken in is not the window's foreground process; nothing was sent: %w", err)
-				}
-				return r.tmuxHolder().Input(ctx, lv.taken.Window, a.Keys)
-			}
+			// Only to the agent that was taken in, while it is the window's
+			// foreground process: its holder looks.
+			in = func() error { return r.tmuxHolder().Input(ctx, lv.taken.Window, a.Keys) }
 		}
 		if err := in(); err != nil {
 			r.Log.Error("input", "session", lv.id, "err", err)

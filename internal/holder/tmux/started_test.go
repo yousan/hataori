@@ -264,16 +264,6 @@ func TestThePersonsWindowsInTheSessionStay(t *testing.T) {
 	}
 }
 
-// The process of a window hataori did not start is the agent's, which may run
-// below the pane's own, a shell.
-func TestInputToAnAgentBelowThePanesProcess(t *testing.T) {
-	s := newServer(t)
-	pane := s.run("new-session", "-d", "-P", "-F", "#{pane_id}", "cat; exec cat")
-	if err := (&Holder{}).Input(t.Context(), s.window(pane, os.Getpid()), []agent.Part{{Paste: "x"}, {Key: agent.Enter}}); err != nil {
-		t.Error(err)
-	}
-}
-
 // A person may give the agent's pane a program of their own (respawn-pane):
 // it is theirs then. The agent's window is gone; the program is not typed
 // to, not signalled, and its pane stays, also when that happens right before
@@ -551,7 +541,7 @@ func TestAPaneAPersonRespawnedIsTheirs(t *testing.T) {
 	})
 }
 
-// The test binary is also `hataori exec` and `hataori pipe`.
+// The test binary is also `hataori exec` and `hataori pipe`, and agentBelow's shell.
 func TestMain(m *testing.M) {
 	if len(os.Args) == 3 {
 		var err error
@@ -560,6 +550,8 @@ func TestMain(m *testing.M) {
 			err = ExecMain(os.Args[2])
 		case "pipe":
 			err = host.Pipe(os.Args[2], os.Stdin)
+		case "shell":
+			err = shellMain(os.Args[2])
 		default:
 			os.Exit(m.Run())
 		}

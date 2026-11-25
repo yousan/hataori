@@ -329,11 +329,17 @@ func newBuffer() (string, error) {
 //     ends the whole server, with every window a person has on it;
 //   - its input is off (select-pane -d): tmux would drop the input;
 //   - the panes of its window are synchronized: tmux may type each key into
-//     the other panes too, which are a person's.
-var ErrTakesNoInput = errors.New("tmux: the window's pane takes no input as it is: its program has ended, it is in a mode such as copy mode, its input is off, or the window's panes are synchronized; nothing was sent")
+//     the other panes too, which are a person's;
+//   - its foreground process changed as the input was handed over, in a
+//     window hataori did not start: a shell would run the text as a command.
+var ErrTakesNoInput = errors.New("tmux: the window's pane takes no input as it is: its program has ended, it is in a mode such as copy mode, its input is off, the window's panes are synchronized, or its foreground process changed; nothing was sent")
 
 // errNotPasted refuses an Enter whose paste was refused.
 var errNotPasted = errors.New("tmux: the paste before this Enter was not handed over; nothing was sent")
+
+// errNoName refuses input to an agent whose name has nothing that tells it
+// from any other program (unsure).
+var errNoName = errors.New("tmux: the name of the window's foreground process cannot be compared; nothing was sent")
 
 // What the command of Input prints: that every part was handed over, or
 // that none was.
@@ -352,6 +358,15 @@ const (
 // (ErrTakesNoInput): tmux looks at the pane and takes all the parts in one
 // command, so that a person who scrolls back meanwhile comes before all of
 // them or after. When the input fails, its buffers are deleted.
+//
+// Input to a window hataori did not start goes only to the agent that
+// reported (w.Process), while it is the window's foreground process (as
+// CheckTakeIn): suspended or ended, it left the foreground to someone's
+// shell. That the pane's process and the name of its foreground process are
+// those seen with the agent in the foreground is part of the one command too.
+// tmux tells the name only: another program of the same name, started right
+// after the look, is not told from the agent, and neither is one that reads
+// what tmux has written before the agent did.
 //
 // After an input with a paste that failed, or of which it is not known that
 // it was handed over, an Enter is refused until a paste is handed over: it
@@ -388,7 +403,7 @@ func (h *Holder) Input(ctx context.Context, w holder.Window, parts []agent.Part)
 	if notPasted && enterFirst {
 		return errNotPasted
 	}
-	if err := h.hand(ctx, r, startedProcess(w), parts); err != nil {
+	if err := h.hand(ctx, r, w, parts); err != nil {
 		return err
 	}
 	if pastes {
@@ -398,14 +413,11 @@ func (h *Holder) Input(ctx context.Context, w holder.Window, parts []agent.Part)
 }
 
 // hand hands the parts over, all of them or, with an error, none, unless
-// tmux failed halfway. process is the pane's process, 0 when not known.
-func (h *Holder) hand(ctx context.Context, r ref, process int, parts []agent.Part) (err error) {
-	found, err := h.findStarted(ctx, r, process)
+// tmux failed halfway.
+func (h *Holder) hand(ctx context.Context, r ref, w holder.Window, parts []agent.Part) (err error) {
+	conds, err := h.takes(ctx, r, w)
 	if err != nil {
 		return err
-	}
-	if process > 0 {
-		process = found.pid
 	}
 	// Not cut short by ctx: a tmux client killed halfway does not undo
 	// what it asked of the server, and the buffers must still be deleted.
@@ -440,11 +452,11 @@ func (h *Holder) hand(ctx context.Context, r ref, process int, parts []agent.Par
 	// it runs any of them, and pastes the buffer as it is.
 	_, old := h.noRawPaste.Load(r.Socket)
 	raw := !old && len(bufs) > 0
-	out, err := h.tmux(cctx, r, nil, handOver(r, process, parts, bufs, raw)...)
+	out, err := h.tmux(cctx, r, nil, handOver(r, conds, parts, bufs, raw)...)
 	var te *tmuxError
 	if raw && errors.As(err, &te) && strings.Contains(te.msg, "unknown flag -S") {
 		h.noRawPaste.Store(r.Socket, true)
-		out, err = h.tmux(cctx, r, nil, handOver(r, process, parts, bufs, false)...)
+		out, err = h.tmux(cctx, r, nil, handOver(r, conds, parts, bufs, false)...)
 	}
 	// A hook a person set on these commands may print lines of its own, and
 	// may fail after a part was handed over.
@@ -453,8 +465,8 @@ func (h *Holder) hand(ctx context.Context, r ref, process int, parts []agent.Par
 	case slices.Contains(said, saidHanded):
 		return nil
 	case slices.Contains(said, saidRefused):
-		if _, err := h.findStarted(ctx, r, process); err != nil {
-			return err // gone
+		if _, err := h.takes(ctx, r, w); err != nil {
+			return err // gone, or not the agent's
 		}
 		return ErrTakesNoInput
 	case err != nil:
@@ -464,14 +476,63 @@ func (h *Holder) hand(ctx context.Context, r ref, process int, parts []agent.Par
 	}
 }
 
+// takes is the tmux condition that what the window's pane runs is what it
+// runs now, the window's agent; an error when it does not.
+func (h *Holder) takes(ctx context.Context, r ref, w holder.Window) ([]string, error) {
+	if w.Owned {
+		p, err := h.findStarted(ctx, r, w.Process)
+		if err != nil || w.Process <= 0 {
+			return nil, err
+		}
+		return []string{fmt.Sprintf("#{==:#{pane_pid},%d}", p.pid)}, nil
+	}
+	look := func() (pane, error) {
+		p, err := h.foreground(ctx, r, w.Process)
+		switch {
+		case p.dead:
+			return p, ErrTakesNoInput
+		case err != nil:
+			return p, fmt.Errorf("%w; nothing was sent", err)
+		}
+		return p, nil
+	}
+	// The name between two looks at what has it.
+	if _, err := look(); err != nil {
+		return nil, err
+	}
+	out, nameErr := h.tmux(ctx, r, nil, "list-panes", "-t", r.Pane, "-F", "#{pane_id} #{pane_pid} #{pane_current_command}")
+	p, err := look()
+	if err != nil {
+		return nil, err
+	}
+	if nameErr != nil {
+		return nil, nameErr
+	}
+	for _, l := range strings.Split(string(out), "\n") {
+		if name, ok := strings.CutPrefix(l, fmt.Sprintf("%s %d ", r.Pane, p.pid)); ok {
+			if name = unsure.ReplaceAllString(name, "*"); name == "*" {
+				return nil, errNoName
+			}
+			return []string{fmt.Sprintf("#{==:#{pane_pid},%d}", p.pid), "#{m:" + name + ",#{pane_current_command}}"}, nil
+		}
+	}
+	return nil, fmt.Errorf("tmux: the pane %s changed as it was looked at: %.200q", r.Pane, out)
+}
+
+// unsure is what of a program's name is left out of a comparison: what means
+// something in a tmux format or a pattern, and what tmux prints in another
+// form than it has it: bytes that are not UTF-8 and control characters as
+// escapes and, to a client without UTF-8, all that is not ASCII as "_".
+var unsure = regexp.MustCompile(`(\\[0-7]{3}|\\[a-z]|[^a-zA-Z0-9./:+@=-])+`)
+
 // handOver is the tmux command that hands the parts over, the pastes from
-// bufs, when the pane takes input (ErrTakesNoInput), runs process, when
-// known, and is on the window's own server, and that hands over nothing
-// otherwise. tmux runs the commands of an if-shell -F one right after the other and after its condition: no
-// key of a person and no command of another client comes between them. For
-// a pane that is gone, tmux reads the condition on another pane or on none:
-// the pane's id is part of it.
-func handOver(r ref, process int, parts []agent.Part, bufs []string, raw bool) []string {
+// bufs, when the pane takes input (ErrTakesNoInput), conds hold and it is on
+// the window's own server, and that hands over nothing otherwise. tmux runs
+// the commands of an if-shell -F one right after the other and after its
+// condition: no key of a person and no command of another client comes
+// between them. For a pane that is gone, tmux reads the condition on another
+// pane or on none: the pane's id is part of it.
+func handOver(r ref, conds []string, parts []agent.Part, bufs []string, raw bool) []string {
 	var cmds []string
 	for _, p := range parts {
 		if p.Key != "" {
@@ -485,11 +546,8 @@ func handOver(r ref, process int, parts []agent.Part, bufs []string, raw bool) [
 		cmds, bufs = append(cmds, c), bufs[1:]
 	}
 	cmds = append(cmds, "display-message -p "+saidHanded)
-	conds := []string{fmt.Sprintf("#{==:#{pid},%d}", r.Server), "#{==:#{pane_id}," + r.Pane + "}", "#{==:#{pane_dead},0}", "#{==:#{pane_in_mode},0}", "#{==:#{pane_input_off},0}",
-		"#{||:#{==:#{pane_synchronized},0},#{==:#{window_panes},1}}"}
-	if process > 0 {
-		conds = append(conds, fmt.Sprintf("#{==:#{pane_pid},%d}", process))
-	}
+	conds = append([]string{fmt.Sprintf("#{==:#{pid},%d}", r.Server), "#{==:#{pane_id}," + r.Pane + "}", "#{==:#{pane_dead},0}", "#{==:#{pane_in_mode},0}", "#{==:#{pane_input_off},0}",
+		"#{||:#{==:#{pane_synchronized},0},#{==:#{window_panes},1}}"}, conds...)
 	return []string{"if-shell", "-F", "-t", r.Pane, all(conds...), strings.Join(cmds, " ; "), "display-message -p " + saidRefused}
 }
 
@@ -581,24 +639,31 @@ func (h *Holder) CheckTakeIn(ctx context.Context, w holder.Window) error {
 	if err != nil {
 		return err
 	}
-	if w.Process <= 0 {
-		return errors.New("tmux: the window names no process that reported")
+	_, err = h.foreground(ctx, r, w.Process)
+	return err
+}
+
+// foreground returns the window's pane, with an error when pid does not lead
+// the foreground process group of its terminal, or that cannot be told.
+func (h *Holder) foreground(ctx context.Context, r ref, pid int) (pane, error) {
+	if pid <= 0 {
+		return pane{}, errors.New("tmux: the window names no process that reported")
 	}
 	p, err := h.find(ctx, r)
 	if err != nil {
-		return err
+		return pane{}, err
 	}
-	pr, err := process(ctx, w.Process)
+	pr, err := process(ctx, pid)
 	if err != nil {
-		return err
+		return p, err
 	}
 	if pr.tty == "" || pr.tty != p.tty {
-		return ErrNotItsTerminal
+		return p, ErrNotItsTerminal
 	}
-	if pr.pgid != w.Process || pr.tpgid != pr.pgid {
-		return ErrNotForeground
+	if pr.pgid != pid || pr.tpgid != pr.pgid {
+		return p, ErrNotForeground
 	}
-	return nil
+	return p, nil
 }
 
 // Alive says Gone for a pane that the server no longer lists, and for a
