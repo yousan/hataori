@@ -1071,6 +1071,40 @@ func TestRefuseRepositoryOfReflogs(t *testing.T) {
 	}
 }
 
+// What has the name of no ref, or more in it than a ref, git does not read.
+func TestRefuseRefsThatGitDoesNotRead(t *testing.T) {
+	x := newRemoval(t)
+	git := filepath.Join(x.clone, ".git")
+	id := x.git(x.clone, "commit-tree", "-m", "w", "HEAD^{tree}")
+	ref, log := id+"\n", id+" "+id+" \n"
+	for p, content := range map[string]string{
+		"refs/.n/m": ref, "refs/.n/x/m": ref, "refs/n/.m": ref, "refs/n/m.lock": ref, "refs/n/..m": ref, "refs/n/m.": ref, "refs/n/@{m": ref,
+		"refs/n/m ": ref, "refs/n/m\t": ref, "refs/n/m\\": ref, "logs/.n/m": log, "hooks/n/m": ref,
+		"refs/n/m": "ref: refs/remotes/origin/main\n" + ref,
+	} {
+		d := filepath.Dir(filepath.Join(git, filepath.FromSlash(p)))
+		if err := os.MkdirAll(filepath.Join(d, "objects"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for p, content := range map[string]string{filepath.Join(d, "HEAD"): content, filepath.Join(git, filepath.FromSlash(p)): content} {
+			if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		err := x.check()
+		wantRefusal(t, err, GitError, "")
+		if d := err.(*Refusal).Detail; !strings.Contains(d, "not a git repository") {
+			t.Fatalf("%q: %s", p, d)
+		}
+		for _, d := range []string{"refs/n", "refs/.n", "logs/.n", "hooks/n"} {
+			os.RemoveAll(filepath.Join(git, filepath.FromSlash(d)))
+		}
+	}
+	if err := x.check(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // A pipe is not read.
 func TestRefuseFIFOAsHEAD(t *testing.T) {
 	x := newRemoval(t)

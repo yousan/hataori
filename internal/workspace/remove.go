@@ -15,6 +15,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -863,9 +864,9 @@ func isGitDir(p string) bool {
 // onlyRefs reports whether p, in the git directory in, is below its refs or
 // logs and holds nothing but refs or reflogs, as refs/remotes/origin does of a
 // remote that has a branch objects/x, beside the remote's HEAD. No file of it
-// is an object, nor says where objects are, as commondir and
-// objects/info/alternates do: git takes a line of a reflog for a HEAD, and for
-// a path.
+// is an object, and git reads each: none has a name that no ref may have.
+// Nor does one lead to objects elsewhere, as a commondir does: what it holds is
+// no path that git resolves without a directory of such a name.
 func (c *checker) onlyRefs(in, p string) bool {
 	holds := refFile
 	switch {
@@ -875,15 +876,22 @@ func (c *checker) onlyRefs(in, p string) bool {
 	default:
 		return false
 	}
+	rel, err := filepath.Rel(in, filepath.Dir(p))
+	if err != nil || slices.ContainsFunc(strings.Split(rel, string(filepath.Separator)), noRefName) {
+		return false
+	}
 	return filepath.WalkDir(p, func(p string, d fs.DirEntry, err error) error {
 		if err == nil {
 			err = c.ctx.Err()
 		}
-		if err != nil || d.IsDir() {
+		if err != nil {
 			return err
 		}
-		if !d.Type().IsRegular() || d.Name() == "commondir" || d.Name() == "alternates" {
+		if noRefName(d.Name()) || !d.IsDir() && !d.Type().IsRegular() {
 			return errors.New("neither a ref nor a reflog")
+		}
+		if d.IsDir() {
+			return nil
 		}
 		f, err := os.Open(p)
 		if err != nil {
@@ -896,6 +904,14 @@ func (c *checker) onlyRefs(in, p string) bool {
 		}
 		return err
 	}) == nil
+}
+
+// noRefName reports whether name is no part, between slashes, of the name of a
+// ref that git reads. git allows a little more.
+func noRefName(name string) bool {
+	return strings.HasPrefix(name, ".") || strings.HasSuffix(name, ".") || strings.HasSuffix(name, ".lock") ||
+		strings.Contains(name, "..") || strings.Contains(name, "@{") || strings.ContainsAny(name, " ~^:?*[\\\x7f") ||
+		strings.ContainsFunc(name, func(r rune) bool { return r < ' ' })
 }
 
 // refFile is all that the file of a ref holds. reflogStart is how a reflog
