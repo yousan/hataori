@@ -104,6 +104,8 @@ type Config struct {
 	Root *os.Root
 	// Now is the clock; time.Now when nil. Tests set their own.
 	Now func() time.Time
+	// Bind opens a listener; net.Listen when nil. Tests set their own.
+	Bind func(network, address string) (net.Listener, error)
 	// HostInput is whether the instance's config turns host input on
 	// ("host_input"): without it the operate routes refuse at once. Who may
 	// operate a pane is still the core's decision.
@@ -292,14 +294,18 @@ func Listen(cfg Config, api func(person string) (control.API, bool), log *slog.L
 			return nil, err
 		}
 	}
+	bind := cfg.Bind
+	if bind == nil {
+		bind = net.Listen
+	}
 	var err error
 	if cfg.Local != nil {
-		if s.local, err = listenLocal(*cfg.Local, orDefault(cfg.LocalSessionTTL, DefaultLocalSessionTTL)); err != nil {
+		if s.local, err = listenLocal(*cfg.Local, bind, orDefault(cfg.LocalSessionTTL, DefaultLocalSessionTTL)); err != nil {
 			return nil, err
 		}
 	}
 	if cfg.Web != nil {
-		if s.web, err = listenWeb(*cfg.Web, orDefault(cfg.WebSessionTTL, DefaultWebSessionTTL)); err != nil {
+		if s.web, err = listenWeb(*cfg.Web, bind, orDefault(cfg.WebSessionTTL, DefaultWebSessionTTL)); err != nil {
 			if s.local != nil {
 				s.local.ln.Close()
 			}
@@ -336,7 +342,7 @@ func orDefault(d, def time.Duration) time.Duration {
 }
 
 // listenLocal checks and opens the loopback listener.
-func listenLocal(c Local, ttl time.Duration) (*listener, error) {
+func listenLocal(c Local, bind func(network, address string) (net.Listener, error), ttl time.Duration) (*listener, error) {
 	if c.Key == "" {
 		c.Key = "dashboard."
 	}
@@ -361,7 +367,7 @@ func listenLocal(c Local, ttl time.Duration) (*listener, error) {
 			return nil, configError(c.Key+"url", "%q is not an http address on a loopback name, and the dashboard is served neither with TLS nor behind a reverse proxy", c.URL)
 		}
 	}
-	ln, err := net.Listen("tcp", listen)
+	ln, err := bind("tcp", listen)
 	if err != nil {
 		return nil, fmt.Errorf("dashboard: listen: %w", err)
 	}
@@ -380,7 +386,7 @@ func listenLocal(c Local, ttl time.Duration) (*listener, error) {
 
 // listenWeb checks and opens the web listener: today's rules for a
 // dashboard on an address others reach.
-func listenWeb(c Web, ttl time.Duration) (*listener, error) {
+func listenWeb(c Web, bind func(network, address string) (net.Listener, error), ttl time.Duration) (*listener, error) {
 	if c.Key == "" {
 		c.Key = "dashboard.web."
 	}
@@ -421,7 +427,7 @@ func listenWeb(c Web, ttl time.Duration) (*listener, error) {
 	} else if ip := net.ParseIP(host); host == "" || (ip != nil && ip.IsUnspecified()) {
 		return nil, configError(c.Key+"url", "missing: %q listens on every address, so name the one people open", listen)
 	}
-	ln, err := net.Listen("tcp", listen)
+	ln, err := bind("tcp", listen)
 	if err != nil {
 		return nil, fmt.Errorf("dashboard: listen: %w", err)
 	}

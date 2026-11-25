@@ -289,7 +289,7 @@ func TestSignInForAListenerThatIsNotThere(t *testing.T) {
 // config uses the old form.
 func TestDashboardOldOneListenerConfig(t *testing.T) {
 	root := newRoot(t)
-	listen := freePort(t)
+	listen := heldPort(t)
 	withDashboard(t, root, map[string]any{"listen": listen, "url": "https://dash.example.com", "proxy": "127.0.0.1"})
 	logged := startDaemonLog(t, root)
 	link := signinLink(t, root, "--web")
@@ -310,7 +310,7 @@ func TestDashboardOldOneListenerConfig(t *testing.T) {
 	}
 
 	root = newRoot(t)
-	listen = freePort(t)
+	listen = heldPort(t)
 	_, port, _ := net.SplitHostPort(listen)
 	withDashboard(t, root, map[string]any{"listen": listen, "url": "http://localhost:" + port})
 	logged = startDaemonLog(t, root)

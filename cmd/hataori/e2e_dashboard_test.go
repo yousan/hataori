@@ -16,7 +16,7 @@ import (
 // daemon restart.
 func TestDashboardFollowsTurnsAcrossReconnectAndRestart(t *testing.T) {
 	root := newRoot(t)
-	withDashboard(t, root, map[string]any{"listen": freePort(t)})
+	withDashboard(t, root, map[string]any{"listen": heldPort(t)})
 	stopDaemon := runDaemon(t, root)
 	base, cookie := dashSignIn(t, root)
 	ctx := context.Background()

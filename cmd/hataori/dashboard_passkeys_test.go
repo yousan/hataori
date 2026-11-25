@@ -88,6 +88,7 @@ type passkeyDash struct {
 	root   string
 	web    string // the web listener's address, https://dash.test:port; also its origin
 	listen string // where the web listener listens
+	local  string // where the loopback listener listens
 	hc     *http.Client
 	spki   []byte // the hash of the web listener's certificate's key
 }
@@ -97,10 +98,10 @@ type passkeyDash struct {
 func newPasskeyDash(t *testing.T) *passkeyDash {
 	t.Helper()
 	root := newRoot(t)
-	d := &passkeyDash{t: t, root: root, listen: freePort(t), spki: writeNamedCert(t, root, webName)}
+	d := &passkeyDash{t: t, root: root, listen: heldPort(t), local: heldPort(t), spki: writeNamedCert(t, root, webName)}
 	_, port, _ := net.SplitHostPort(d.listen)
 	d.web = "https://" + webName + ":" + port
-	withDashboard(t, root, map[string]any{"listen": freePort(t),
+	withDashboard(t, root, map[string]any{"listen": d.local,
 		"web": map[string]any{"listen": d.listen, "url": d.web, "tls_cert": "cert.pem", "tls_key": "key.pem"}})
 	// The name resolves to the listener, as a browser's would.
 	d.hc = &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{

@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -96,18 +95,6 @@ func TestDaemonRefusesAnOpenDashboard(t *testing.T) {
 	if code != exitError || !strings.Contains(reason, `"dashboard.listen"`) || !strings.Contains(reason, "not a loopback address") {
 		t.Fatalf("run: exit %d, %q", code, errOut)
 	}
-}
-
-// freePort returns a loopback port that nothing listens on now, so that a
-// dashboard keeps its address across a restart.
-func freePort(t *testing.T) string {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-	return ln.Addr().String()
 }
 
 // runDaemon runs the daemon of root in this process until the returned
@@ -357,7 +344,7 @@ func next(t *testing.T, ch <-chan sseEvent, timeout time.Duration) sseEvent {
 // reaches the stream within 2 seconds of being written.
 func TestDashboardEventStreamResumesAcrossARestart(t *testing.T) {
 	root := newRoot(t)
-	withDashboard(t, root, map[string]any{"listen": freePort(t)})
+	withDashboard(t, root, map[string]any{"listen": heldPort(t)})
 	stop := runDaemon(t, root)
 	base, cookie := dashSignIn(t, root)
 	ctx := context.Background()
