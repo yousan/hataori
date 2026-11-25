@@ -133,3 +133,43 @@ func TestDaemonHostInput(t *testing.T) {
 		t.Errorf("the refusal is not logged:\n%s", l)
 	}
 }
+
+// When the names of hataori's own processes may be incomplete, host input is
+// off: a pane of hataori's own might not be told (#575). The directory of
+// the link the daemon was started through lets it be run, not listed.
+func TestDaemonHostInputWithNamesMissing(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads every directory")
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	as := filepath.Join(dir, "hataori-started-as")
+	if err := os.Symlink(exe, as); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o300); err != nil {
+		t.Fatal(err)
+	}
+	arg := os.Args[0]
+	os.Args[0] = as
+	t.Cleanup(func() { os.Args[0] = arg; os.Chmod(dir, 0o700) })
+	root := newRoot(t)
+	setConfig(t, root, func(cfg map[string]any) { cfg["host_terminals"], cfg["host_input"] = true, true })
+	_, logged := runDaemonLog(t, root)
+	c, err := wire.Dial(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if _, err := c.OperateHost(ctx, "%0"); !errors.Is(err, control.ErrForbidden) {
+		t.Errorf("with names missing: %v", err)
+	}
+	if !strings.Contains(logged(), "host input is off: ") || !strings.Contains(logged(), `reason="host input is off"`) {
+		t.Errorf("not logged:\n%s", logged())
+	}
+}

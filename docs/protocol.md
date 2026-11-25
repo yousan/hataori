@@ -461,7 +461,7 @@ Result: string
 
 Since 3.11. Types into one tmux pane on the host that hataori does not own, by `TmuxPane.pane` as `HostTerminals` lists it. It turns the connection into a stream in both directions (see Connection).
 
-Only the instance's owner may call it, and only when the config's `host_input` is `true` (which needs `host_terminals`); every other call is answered `forbidden`, and each refusal is logged. A pane that `HostTerminals` would not list is answered `not_found`. A pane in which one of hataori's own processes runs, such as `hataori attach`, is answered `forbidden`. A pane that is being operated already is answered `busy`, and the message names the person and since when. Each start and each end is one line in the daemon's log, with the person and the pane (its id, session, window and index), and for the end the reason. What is typed is written to no log, event, database or file, nor how much.
+Only the instance's owner may call it, and only when the config's `host_input` is `true` (which needs `host_terminals`); every other call is answered `forbidden`, and each refusal is logged. A pane that `HostTerminals` would not list is answered `not_found`. A pane in which one of hataori's own processes runs, such as `hataori attach`, is answered `forbidden`; they are told by their names (design, section 7.2). A pane that is being operated already is answered `busy`, and the message names the person and since when. Each start and each end is one line in the daemon's log, with the person and the pane (its id, session, window and index), and for the end the reason. What is typed is written to no log, event, database or file, nor how much.
 
 The operation ends, and the daemon sends its last message, with one of these reasons:
 

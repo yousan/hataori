@@ -243,15 +243,27 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 		coreHook(c)
 	}
 
+	// The names hataori's own processes are told by, whose panes are never
+	// typed into. Names that may be missing turn host input off.
+	var own []string
+	hostInput := cfg.HostInput
+	if cfg.HostTerminals {
+		var err error
+		if own, err = ownNames(exe, os.Args[0]); err != nil && hostInput {
+			lg.Error("host input is off: a pane that runs one of hataori's own processes might not be told from others", "err", err)
+			hostInput = false
+		}
+	}
+
 	// The dashboard is a client with a read-only Caller (section 7.2). It
 	// listens before anything else serves, so a config it refuses stops the
 	// daemon with the reason.
 	var dash *dashboard.Server
 	if d := cfg.Dashboard; d != nil {
-		dc := dashboard.Config{HostInput: cfg.HostInput, MayOperate: func(person string) bool {
-			return c.MaySignIn(person) && dashboardCaller(cfg.People, keys, cfg.HostTerminals, cfg.HostInput, person).May.Has(control.OpHostInput)
+		dc := dashboard.Config{HostInput: hostInput, MayOperate: func(person string) bool {
+			return c.MaySignIn(person) && dashboardCaller(cfg.People, keys, cfg.HostTerminals, hostInput, person).May.Has(control.OpHostInput)
 		}, MayAct: func(person string) bool {
-			return c.MaySignIn(person) && dashboardCaller(cfg.People, keys, cfg.HostTerminals, cfg.HostInput, person).May.Has(control.OpSend)
+			return c.MaySignIn(person) && dashboardCaller(cfg.People, keys, cfg.HostTerminals, hostInput, person).May.Has(control.OpSend)
 		}, AttachHost: attachHost, AttachIdle: cfg.HostInputIdle}
 		if l := d.Local; l != nil {
 			dc.Local = &dashboard.Local{Listen: l.Listen, URL: l.URL, Key: "dashboard."}
@@ -280,7 +292,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 			if !c.MaySignIn(person) {
 				return nil, false
 			}
-			return c.As(dashboardCaller(cfg.People, keys, cfg.HostTerminals, cfg.HostInput, person)), true
+			return c.As(dashboardCaller(cfg.People, keys, cfg.HostTerminals, hostInput, person)), true
 		}
 		dash, err = dashboard.Listen(dc, forPerson, lg)
 		if err != nil {
@@ -299,7 +311,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 	owner := control.OpRead | control.OpStart | control.OpSend | control.OpAnswer | control.OpStop | control.OpSignIn | control.OpAttach |
 		control.OpClose | control.OpRemove | control.OpReopen | control.OpName | control.OpTakeIn | control.OpTrust
 	if cfg.HostTerminals { // off unless the config turns it on; only the owner gets it
-		lister := &hostterm.Lister{Own: filepath.Base(exe)}
+		lister := &hostterm.Lister{Own: own}
 		if hostTermsHook != nil {
 			hostTermsHook(lister)
 		}
@@ -324,7 +336,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 			c.Windows = reports
 		}
 		owner |= control.OpHost
-		if cfg.HostInput { // off unless the config turns it on; only the owner gets it
+		if hostInput { // off unless the config turns it on; only the owner gets it
 			// Each instance's buffers have a name of their own, so that
 			// one daemon's start never deletes another's.
 			lister.Buffers = "hataori-input-" + instanceTag(abs) + "-"

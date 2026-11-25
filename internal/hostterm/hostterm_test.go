@@ -112,10 +112,10 @@ func TestParsePS(t *testing.T) {
 	}
 	// A process of hataori's own name without a terminal counts as owned,
 	// as a session host does before its pid is recorded.
-	if own := ownPIDs(ps, "tmux: server"); !slices.Equal(own, []int{1248395}) {
+	if own := ownPIDs(ps, []string{"tmux: server"}); !slices.Equal(own, []int{1248395}) {
 		t.Errorf("own pids %v", own)
 	}
-	if own := ownPIDs(ps, "sleep"); len(own) != 0 {
+	if own := ownPIDs(ps, []string{"sleep"}); len(own) != 0 {
 		t.Errorf("a process with a terminal counts as owned: %v", own)
 	}
 }

@@ -167,6 +167,43 @@ func hostTerminalsOf(t *testing.T, base string, c dashSession) (int, string, []c
 	return code, body, ts
 }
 
+// The daemon tells hataori's own processes by every name of its binary: those
+// of links next to it and of the link the daemon was started through (#575).
+func TestDaemonKnowsTheNamesOfItsBinary(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := filepath.Join(filepath.Dir(exe), fmt.Sprintf("hataori-next-%d", os.Getpid()))
+	as := filepath.Join(t.TempDir(), "hataori-started-as")
+	for _, link := range []string{next, as} {
+		if err := os.Symlink(exe, link); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Remove(link) })
+	}
+	arg := os.Args[0]
+	os.Args[0] = as
+	t.Cleanup(func() { os.Args[0] = arg })
+	got := make(chan []string, 1)
+	hostTermsHook = func(l *hostterm.Lister) { got <- l.Own }
+	t.Cleanup(func() { hostTermsHook = nil })
+	root := terminalRoot(t)
+	setConfig(t, root, func(cfg map[string]any) { cfg["host_terminals"] = true })
+	runDaemon(t, root)
+	var own []string
+	select {
+	case own = <-got:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no lister")
+	}
+	for _, path := range []string{exe, next, as, "hataori"} { // the last is of a link made later
+		if !slices.Contains(own, filepath.Base(path)) {
+			t.Errorf("the daemon's names %q lack %q", own, filepath.Base(path))
+		}
+	}
+}
+
 // The host terminals route answers the control API's HostTerminals for the
 // owner with the feature on: a real tmux pane and a real terminal outside
 // tmux, and not a session host's terminal; one fixed 403 when the feature
