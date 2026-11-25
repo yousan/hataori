@@ -118,14 +118,14 @@ func TestConfinedLaunch(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !l.Confined || !l.NoMentions {
-			t.Fatalf("the launch does not say it is confined (%t) and takes no input for a mention (%t)", l.Confined, l.NoMentions)
+		if !l.Confined || !l.NoMentions || !l.NoWriteTools {
+			t.Fatalf("the launch does not say it is confined (%t), takes no input for a mention (%t) and leaves no tool that writes (%t)", l.Confined, l.NoMentions, l.NoWriteTools)
 		}
-		if plain.Confined || plain.NoMentions {
-			t.Fatal("an ordinary launch says it is confined, or takes no input for a mention")
+		if plain.Confined || plain.NoMentions || plain.NoWriteTools {
+			t.Fatal("an ordinary launch says it is confined, takes no input for a mention, or leaves no tool that writes")
 		}
 		mcp := filepath.Join(s.StateDir, MCPConfigFile)
-		want := append(slices.Clone(plain.Argv), "--restricted", "--strict-mcp-config", "--mcp-config", mcp, "--tools", "Read,Write,Edit,Glob,Grep",
+		want := append(slices.Clone(plain.Argv), "--restricted", "--strict-mcp-config", "--mcp-config", mcp, "--tools", "Read,Glob,Grep",
 			"--setting-sources", "user")
 		got := slices.Clone(l.Argv)
 		if resume == "" { // two new sessions have two random ids
@@ -228,7 +228,9 @@ func TestConfinedFlagsAreTheCheckedOnes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, line := range []string{`FILE_TOOLS = "` + ConfinedTools + `"`,
+	// Those were taken while the list held the tools that write, too; that a
+	// shorter list confines as it does is TestConfinedHasNoBuiltInToolThatWrites.
+	for _, line := range []string{`FILE_TOOLS = "Read,Write,Edit,Glob,Grep"`,
 		`base = ["--restricted", "--strict-mcp-config", "--mcp-config", mcp_config(work)]`,
 		`return base + ["--tools", FILE_TOOLS]`} {
 		if !bytes.Contains(script, []byte(line)) {
@@ -305,6 +307,104 @@ func TestConfinedFlagsAreTheCheckedOnes(t *testing.T) {
 	}
 	if !ran {
 		t.Errorf("mcp: calls %v; want the server's tool to run", o.Calls)
+	}
+}
+
+// What a confined session can write with, taken from the real CLI with the
+// flags of the launch, at a start and at a resume: the tools of its requests
+// are those that read and its MCP server's, and no call of a built-in tool
+// that writes or starts something reached a tool or changed a file. With the
+// list of before #868 the same calls of Edit and Write did.
+func TestConfinedHasNoBuiltInToolThatWrites(t *testing.T) {
+	script, err := os.ReadFile("testdata/writes.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{`"writes_confined": "` + ConfinedTools + `",`,
+		`"--restricted", "--strict-mcp-config", "--mcp-config", w.mcp, "--setting-sources", "user", "--tools", tools]`} {
+		if !bytes.Contains(script, []byte(line)) {
+			t.Fatalf("writes.py no longer has %s: the captures were taken with other flags than the launch's", line)
+		}
+	}
+	type try struct {
+		Case, Tool string
+		Hooks      []string
+		Results    []struct {
+			Error bool
+			Text  string
+		}
+		Changed []string
+	}
+	type phase struct {
+		Tools [][]string
+		Tries []try
+	}
+	read := func(name string) (flag string, phases map[string]phase) {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join("testdata", "2.1.332", name, "outcome.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var o struct {
+			Start, Resume phase
+			Flag          string
+		}
+		if err := json.Unmarshal(b, &o); err != nil {
+			t.Fatal(err)
+		}
+		return o.Flag, map[string]phase{"start": o.Start, "resume": o.Resume}
+	}
+
+	flag, phases := read("writes_confined")
+	if flag != ConfinedTools {
+		t.Fatalf("taken with --tools %s", flag)
+	}
+	reads := strings.Split(ConfinedTools, ",")
+	slices.Sort(reads)
+	// DeferredToolPlaceholder is no tool: the CLI knows no such one.
+	want := append(slices.Clone(reads), "DeferredToolPlaceholder", "mcp__sv__ping")
+	for name, p := range phases {
+		if len(p.Tools) != 1 || !slices.Equal(p.Tools[0], want) {
+			t.Errorf("%s: the tools of the requests are %v, want always %v", name, p.Tools, want)
+		}
+		if len(p.Tries) < 20 {
+			t.Errorf("%s: %d calls were tried", name, len(p.Tries))
+		}
+		for _, c := range p.Tries {
+			if len(c.Results) != 1 {
+				t.Errorf("%s: %s was answered %d times", name, c.Case, len(c.Results))
+				continue
+			}
+			if slices.Contains(reads, c.Tool) {
+				if c.Results[0].Error || len(c.Changed) != 0 {
+					t.Errorf("%s: %s: %+v", name, c.Case, c)
+				}
+				continue
+			}
+			if !c.Results[0].Error || !strings.Contains(c.Results[0].Text, "No such tool available: "+c.Tool) || len(c.Hooks) != 0 || len(c.Changed) != 0 {
+				t.Errorf("%s: %s got to a tool: %+v", name, c.Case, c)
+			}
+		}
+	}
+	// Each of the tools that the hook into docs/ knows was tried.
+	for tool := range writeTools {
+		if !slices.ContainsFunc(phases["start"].Tries, func(c try) bool { return c.Tool == tool }) {
+			t.Errorf("%s was not tried", tool)
+		}
+	}
+
+	// The calls are such that they write where the tool is there.
+	if flag, phases = read("writes_files"); flag != "Read,Write,Edit,Glob,Grep" {
+		t.Fatalf("the contrast was taken with --tools %s", flag)
+	}
+	for name, p := range phases {
+		wrote := map[string]bool{}
+		for _, c := range p.Tries {
+			wrote[c.Case] = len(c.Changed) == 1
+		}
+		if !wrote["edit"] || !wrote["write_old"] || !wrote["write_new"] {
+			t.Errorf("%s: with the file tools the calls wrote %v", name, wrote)
+		}
 	}
 }
 

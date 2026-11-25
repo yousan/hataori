@@ -312,7 +312,7 @@ func TestAConversationsLaunchIsNotTheOwnThreads(t *testing.T) {
 	}
 	told := func() string {
 		t.Helper()
-		m, err := s.recorded(ctx, "c1", "told")
+		m, err := s.recorded(ctx, "c1")
 		if err != nil {
 			t.Fatal(err)
 		}

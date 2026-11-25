@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.40**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.41**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -570,6 +570,30 @@ Since 3.32. Sets a reminder of the caller's scope, a wake of its supervisor at a
 
 Result: `RemindAnswer`
 
+### Operation `Files`
+
+Since 3.41. Lists, reads or writes files of the directory of the caller's scope's supervisor (design, section 7.1, "No write is lost"). The scope and the thread are the connection's: nothing in the request names them, and no connection reaches another scope's directory. Only the daemon answers it, on a supervisor's token connection, in every autonomy, and it counts as nothing of the budget. Every other connection reaches the core, which answers `not_supported`, as a daemon before 3.41 does.
+
+`path` is relative to the directory, with `/` between its parts, at most 16 of them. A path that is absolute or has a part that is empty, `..`, or starts with a dot, or that holds a character that does not show, is refused. So is one that leads through a link of any kind or to anything that is not a regular file.
+
+- `list` gives the path, the size and the version of every file that such a path names. Of a directory with more than 2000 of them it is `error`.
+- `read` gives one file's text and version.
+- `write` makes a new file with `text`, with the directories on the way, or, with `version`, replaces the file that has that version.
+- `edit` replaces the passage `old`, which must stand exactly once in the file as it is now, with `new`, and needs no version.
+
+A write or an edit that does not fit what is there now changes nothing and is answered with `refused`, which says why, and with `file`, the present content and version: a write of a file that is there without a version or with another one, one with a version where there is no file, an edit where there is no file or whose passage stands there never or more than once, either of a file that `Files` does not read, whose text is not given then, and either of a file that changed while it was written. A write or an edit is also refused, as `error`, and changes nothing: in `docs/`; of a text that is not UTF-8 or of a file that would be over 256 KB, or 32 KB for `AGENTS.md`, `SOUL.md`, `USER.md` and `IDENTITY.md`; of a file that the daemon may not write, or whose owner, group, permissions (one with a set-user-ID, set-group-ID or sticky bit) or access list it cannot keep; where the directory would grow past 20 MB or 500 files besides `docs/`; and any that would change something, of a thread that was closed. The names of `docs/` and of those four are compared without regard to case. The writes of a directory are made one after another, each whole or not at all: a file is replaced by a new one under its name, with the same owner, group, permissions and, on Linux, access list, so another name of the old one keeps the old content. Nothing removes a file. A `read` of a file over 256 KB, or of one that is not UTF-8, is `error`.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `op` | string | required | `list`, `read`, `write` or `edit` |
+| `path` | string | optional | the file's path; for all but `list` |
+| `text` | string | optional | for `write`, the whole text, which may be empty but not absent |
+| `version` | string | optional | for `write`, the version of the file it replaces; absent to make a new one |
+| `old` | string | optional | for `edit`, the passage to replace |
+| `new` | string | optional | for `edit`, what replaces it, which may be empty but not absent |
+
+Result: `FilesAnswer`
+
 ## Requests the daemon sends
 
 Since 3.16. The daemon sends these to a plugin, on a connection made with the plugin's token that is not a stream: the oldest such connection that is still open. A connection that becomes a stream takes none from then on, so a plugin keeps one connection for requests, as the project's client does, and follows events on others. Until the daemon has read a connection's first request, it does not know that the connection will be a stream, and may send a request on it: a client skips such a line, unanswered, on its stream, and the daemon counts the request as failed once the stream starts. A plugin that does not know one answers `not_supported`, as for any request.
@@ -1065,6 +1089,27 @@ The result of `Remind`: the reminder that was set or cancelled. Since 3.32.
 |---|---|---|---|
 | `number` | integer | required | its number, which no other reminder of the instance has |
 | `at` | time | required | when it is due, or was |
+
+### Type `FilesAnswer`
+
+The result of `Files`. Since 3.41.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `files` | [`ScopeFile`] | optional | of `list`: the files, by path, without their texts |
+| `file` | `ScopeFile` | optional | of the others: the file as it is now, with its text for a `read` and beside `refused`; absent when there is none |
+| `refused` | string | optional | of `write` and `edit`: why it did not fit what is there now and changed nothing; absent when it was made |
+
+### Type `ScopeFile`
+
+One file of a supervisor's directory. Since 3.41.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `path` | string | required | its path in the directory |
+| `size` | integer | required | its size in bytes |
+| `version` | string | optional | a hash of its content; absent for a file that `Files` does not read: one over 256 KB, one that is not UTF-8, or one that the daemon may not read |
+| `text` | string | optional | its content, where the answer has it |
 
 ### Type `ForgeDeployed`
 

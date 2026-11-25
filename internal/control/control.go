@@ -374,6 +374,18 @@ type API interface {
 	// client answers it, on a supervisor's token connection; the core answers
 	// ErrNotSupported. Since 3.32.
 	Remind(ctx context.Context, r RemindRequest) (RemindAnswer, error)
+
+	// Files lists, reads, writes or edits files of the directory of the
+	// caller's scope's supervisor (design, section 7.1, "No write is lost").
+	// A write makes a new file, or replaces the one whose version it gives;
+	// an edit replaces a passage that stands exactly once. One that does
+	// not fit what is there now changes nothing and is answered with the
+	// present content and version, as FilesAnswer.Refused; anything else that
+	// is refused is an error, and changes nothing either. Only the
+	// daemon's supervisor client answers it, on a supervisor's token
+	// connection, whose scope and thread count whatever the request says;
+	// the core answers ErrNotSupported. Since 3.41.
+	Files(ctx context.Context, r FilesRequest) (FilesAnswer, error)
 }
 
 // Caller is who is asking. An API value is bound to one Caller,

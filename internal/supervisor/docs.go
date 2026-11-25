@@ -148,10 +148,8 @@ func (d *Docs) Copy(ctx context.Context, dir string, files []string) {
 	}
 }
 
-// openDocs opens docs/ of dir, making it when make is set and it is not
-// there; nil without make when it is not there. dir and docs/ must be
-// directories themselves, not links.
-func openDocs(dir string, make bool) (*os.Root, error) {
+// openDir opens dir, which must be a directory itself, not a link to one.
+func openDir(dir string) (*os.Root, error) {
 	st, err := os.Lstat(dir)
 	if err != nil {
 		return nil, err
@@ -163,10 +161,22 @@ func openDocs(dir string, make bool) (*os.Root, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close()
 	if after, err := root.Stat("."); err != nil || !os.SameFile(st, after) {
+		root.Close()
 		return nil, fmt.Errorf("%s was replaced", dir)
 	}
+	return root, nil
+}
+
+// openDocs opens docs/ of dir, making it when make is set and it is not
+// there; nil without make when it is not there. dir and docs/ must be
+// directories themselves, not links.
+func openDocs(dir string, make bool) (*os.Root, error) {
+	root, err := openDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
 	if make {
 		if err := root.Mkdir(DocsDir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
 			return nil, err

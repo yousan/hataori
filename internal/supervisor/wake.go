@@ -242,17 +242,18 @@ type Waker struct {
 	Budget *Budget
 	// Files, when set, are the user's files of the scope (design, section
 	// 7.1, "Two layers"): each wake names those that changed since the
-	// session was last given or told them, and after each turn of the
-	// supervisor's thread one line there, through Tell, names those that
-	// changed since the last.
+	// session was last given or told them, and after each turn of one of
+	// the supervisor's threads a line there, through Tell, names those that
+	// it wrote, and so does one in the supervisor's own thread.
 	Files Files
-	// Tell posts a line in the supervisor's chat thread id, once per key,
-	// also across restarts: the chat front end's notice.
+	// Tell posts a line in the chat thread of id, one of the supervisor's
+	// threads, once per key, also across restarts: the chat front end's
+	// notice.
 	Tell func(ctx context.Context, id control.ThreadID, key, text string) error
 	// Hook, when a test sets it, is called at the steps of a wake:
 	// "stored", once it is stored and before it is sent, and "sent", once
 	// it was accepted and before its position is stored; and "files told",
-	// once the line naming the files a supervisor's turn changed was
+	// once the lines naming the files that a supervisor's turn wrote were
 	// posted, before that is recorded. An error stops the waker there, as
 	// a daemon killed at that moment.
 	Hook func(step string) error
@@ -374,6 +375,11 @@ func (w *Waker) run(ctx context.Context) error {
 		return err
 	}
 	r.sv = sv
+	if w.Files != nil { // what the last run did not finish
+		if err := r.tellFiles(ctx); err != nil {
+			return err
+		}
+	}
 	if err := r.loadWaiting(ctx); err != nil {
 		return err
 	}
@@ -490,7 +496,7 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 		}
 		r.sv = sv
 	}
-	if e.Thread == r.sv && e.Kind == TurnEnded && r.w.Files != nil {
+	if r.w.Files != nil && (e.Kind == TurnEnded || closed(e)) {
 		if err := r.turned(ctx, e); err != nil {
 			return err
 		}
@@ -817,9 +823,9 @@ func (r *waking) attempt(ctx context.Context) error {
 		return err
 	}
 	if r.sending == nil && r.w.Files != nil {
-		// A wake's files are seen as of when it is made (Files.Told), so it
-		// is made only once the supervisor's last turn end was read, and
-		// what that turn changed was named first (turned).
+		// Made only once the supervisor's last turn end was read, so that the
+		// line that names what that turn wrote comes before the wake
+		// (turned).
 		var last uint64
 		err := r.w.Core.Store.DB.QueryRowContext(ctx, `SELECT coalesce(max(pos), 0) FROM events WHERE thread_id = ? AND kind = ?`,
 			int64(sv), string(TurnEnded)).Scan(&last)
@@ -1225,28 +1231,60 @@ func (r *waking) delivered(ctx context.Context) error {
 	return r.remind(ctx)
 }
 
-// turned posts the line that names the user's files that changed by the
-// end of the supervisor's turn e, once: its key is e's position, so a
-// daemon that died before it recorded them as seen posts nothing more. It
-// looks at the files as they are when it reads e, which is at once unless
-// the daemon was down or behind. A line not posted is an error, and the
-// waker reads e again.
+// turned names the user's files that a turn of one of the supervisor's
+// threads wrote, at e, which ended it. What its session wrote after its last
+// turn's end, as a call that an interrupted turn left running does, is named
+// when the thread is closed, unless a turn's end came before.
 func (r *waking) turned(ctx context.Context, e control.Event) error {
-	names, now, err := r.w.Files.Turned(ctx, r.w.Scope, e.Thread, e.Pos)
+	kind, err := r.kind(ctx, e.Thread)
+	if err != nil || !kind.Confined() {
+		return err
+	}
+	if err := r.w.Files.Ended(ctx, r.w.Scope, e.Thread, e.Pos); err != nil {
+		return err
+	}
+	return r.tellFiles(ctx)
+}
+
+// tellFiles posts the lines that name what the supervisor's turns that
+// ended wrote, each line once: its key is the position of the turn's end and
+// the names, so a daemon that died before it recorded them as posted posts
+// nothing more, unless it found out since that the turn wrote another. A line
+// not posted is an error, and it is tried again. Without a thread of the
+// supervisor's own, only the turn's has one.
+func (r *waking) tellFiles(ctx context.Context) error {
+	turns, err := r.w.Files.Untold(ctx, r.w.Scope)
 	if err != nil {
 		return err
 	}
-	if len(names) > 0 {
+	tell := func(id control.ThreadID, key, text string) error {
 		if r.w.Tell == nil {
-			r.w.Log.Info(FilesNotice(names), "scope", r.w.Scope, "thread", int64(e.Thread))
-		} else if err := r.w.Tell(ctx, e.Thread, FilesKeyPrefix+strconv.FormatUint(e.Pos, 10), FilesNotice(names)); err != nil {
+			r.w.Log.Info(text, "scope", r.w.Scope, "thread", int64(id))
+			return nil
+		}
+		if err := r.w.Tell(ctx, id, key, text); err != nil {
 			return fmt.Errorf("supervisor: the line naming the files a turn changed: %w", err)
+		}
+		return nil
+	}
+	for _, t := range turns {
+		key := fmt.Sprintf("%s%d-%s", FilesKeyPrefix, t.Pos, strings.Join(t.Names, "+"))
+		if err := tell(t.Thread, key, FilesNotice(t.Names)); err != nil {
+			return err
+		}
+		if r.sv != 0 && r.sv != t.Thread {
+			if err := tell(r.sv, key+filesOwnKey, FilesNoticeOf(t.Thread, t.Names)); err != nil {
+				return err
+			}
 		}
 		if err := r.hook("files told"); err != nil {
 			return err
 		}
+		if err := r.w.Files.Named(ctx, r.w.Scope, t); err != nil {
+			return err
+		}
 	}
-	return r.w.Files.Seen(ctx, r.w.Scope, e.Pos, now)
+	return nil
 }
 
 // given returns, for each worker thread that a wake given to the current

@@ -1,0 +1,539 @@
+{
+ "start": {
+  "tools": [
+   [
+    "Glob",
+    "Grep",
+    "Read",
+    "DeferredToolPlaceholder",
+    "mcp__sv__ping"
+   ]
+  ],
+  "tries": [
+   {
+    "case": "read",
+    "tool": "Read",
+    "hooks": [
+     "PreToolUse Read",
+     "PostToolUse Read"
+    ],
+    "results": [
+     {
+      "error": false,
+      "text": "1\tthere\n2\t"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "edit",
+    "tool": "Edit",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: Edit. Edit is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "write_old",
+    "tool": "Write",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: Write. Write is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "write_new",
+    "tool": "Write",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: Write. Write is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "multi_edit",
+    "tool": "MultiEdit",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: MultiEdit</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "notebook_edit",
+    "tool": "NotebookEdit",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: NotebookEdit. NotebookEdit is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "bash",
+    "tool": "Bash",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: Bash. Bash is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "monitor",
+    "tool": "Monitor",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: Monitor. Monitor is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "power_shell",
+    "tool": "PowerShell",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: PowerShell</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "repl",
+    "tool": "REPL",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: REPL</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "agent",
+    "tool": "Agent",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: Agent. Agent is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "task",
+    "tool": "Task",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: Task. Task is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "skill",
+    "tool": "Skill",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: Skill. Skill is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "placeholder",
+    "tool": "DeferredToolPlaceholder",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: DeferredToolPlaceholder</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "tool_search",
+    "tool": "ToolSearch",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: ToolSearch. ToolSearch is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "workflow",
+    "tool": "Workflow",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: Workflow. Workflow is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "enter_worktree",
+    "tool": "EnterWorktree",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: EnterWorktree. EnterWorktree is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "exit_plan_mode",
+    "tool": "ExitPlanMode",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: ExitPlanMode. ExitPlanMode is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "todo_write",
+    "tool": "TodoWrite",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: TodoWrite. TodoWrite is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "task_create",
+    "tool": "TaskCreate",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: TaskCreate. TaskCreate is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "cron_create",
+    "tool": "CronCreate",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: CronCreate. CronCreate is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   }
+  ]
+ },
+ "resume": {
+  "tools": [
+   [
+    "Glob",
+    "Grep",
+    "Read",
+    "DeferredToolPlaceholder",
+    "mcp__sv__ping"
+   ]
+  ],
+  "tries": [
+   {
+    "case": "read",
+    "tool": "Read",
+    "hooks": [
+     "PreToolUse Read",
+     "PostToolUse Read"
+    ],
+    "results": [
+     {
+      "error": false,
+      "text": "1\tthere\n2\t"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "edit",
+    "tool": "Edit",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: Edit. Edit is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "write_old",
+    "tool": "Write",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: Write. Write is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "write_new",
+    "tool": "Write",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: Write. Write is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "multi_edit",
+    "tool": "MultiEdit",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: MultiEdit</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "notebook_edit",
+    "tool": "NotebookEdit",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: NotebookEdit. NotebookEdit is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "bash",
+    "tool": "Bash",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: Bash. Bash is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "monitor",
+    "tool": "Monitor",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: Monitor. Monitor is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "power_shell",
+    "tool": "PowerShell",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: PowerShell</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "repl",
+    "tool": "REPL",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: REPL</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "agent",
+    "tool": "Agent",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: Agent. Agent is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "task",
+    "tool": "Task",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: Task. Task is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "skill",
+    "tool": "Skill",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: Skill. Skill is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "placeholder",
+    "tool": "DeferredToolPlaceholder",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: DeferredToolPlaceholder</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "tool_search",
+    "tool": "ToolSearch",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: ToolSearch. ToolSearch is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "workflow",
+    "tool": "Workflow",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: Workflow. Workflow is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "enter_worktree",
+    "tool": "EnterWorktree",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: EnterWorktree. EnterWorktree is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "exit_plan_mode",
+    "tool": "ExitPlanMode",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: ExitPlanMode. ExitPlanMode is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "todo_write",
+    "tool": "TodoWrite",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: TodoWrite. TodoWrite is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "task_create",
+    "tool": "TaskCreate",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: TaskCreate. TaskCreate is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   },
+   {
+    "case": "cron_create",
+    "tool": "CronCreate",
+    "hooks": [],
+    "results": [
+     {
+      "error": true,
+      "text": "<tool_use_error>Error: No such tool available: CronCreate. CronCreate is disabled for this session, in subagents as well as here.</tool_use_error>"
+     }
+    ],
+    "changed": []
+   }
+  ]
+ },
+ "flag": "Read,Glob,Grep"
+}

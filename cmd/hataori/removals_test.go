@@ -150,10 +150,13 @@ func removalOperations(call *ast.CallExpr, osName string, gitCall bool, slices m
 	case *ast.SelectorExpr:
 		if pkg, ok := fun.X.(*ast.Ident); ok && osName != "" && pkg.Name == osName {
 			name = fun.Sel.Name
-		} else if fun.Sel.Name == "Remove" || fun.Sel.Name == "RemoveAll" {
-			// A method of that name, such as os.Root's: the type is not
-			// known here, so every one is listed.
-			operations = append(operations, "."+fun.Sel.Name)
+		} else {
+			switch fun.Sel.Name {
+			case "Remove", "RemoveAll", "Rmdir", "Unlink", "Unlinkat":
+				// A method of that name, such as os.Root's, or the system
+				// call: the type is not known here, so every one is listed.
+				operations = append(operations, "."+fun.Sel.Name)
+			}
 		}
 	case *ast.Ident:
 		if osName == "." {

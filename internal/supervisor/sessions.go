@@ -121,6 +121,10 @@ type Sessions struct {
 	// Docs copies each scope's files into docs/ of its directory; nil for
 	// none.
 	Docs *Docs
+	// Files answers the sessions' reads and writes of their scope's
+	// directory (control.API.Files), in every autonomy; without it the core
+	// answers them, as for anyone else.
+	Files *ScopeFiles
 	// Build is the running daemon's build, for the deployed read;
 	// version.ReadBuild when nil.
 	Build func() version.Build
@@ -323,6 +327,9 @@ func (s *Sessions) APIOf(scope string, thread control.ThreadID, autonomy string)
 	if autonomy == Watch {
 		api = &watching{API: api, scope: scope, log: s.Log}
 	}
+	if s.Files != nil {
+		api = s.Files.API(api, scope, thread)
+	}
 	return api
 }
 
@@ -349,7 +356,14 @@ func writeToken(file, token string) error {
 // run, as after a daemon restart: their MCP servers connect again with the
 // token they were started with. Call it before the control socket serves.
 // A session of a scope that names no supervisor any more is not bound.
+// Before that, it settles the writes that the daemon before this one died
+// in.
 func (s *Sessions) Restore(ctx context.Context) error {
+	if s.Files != nil {
+		if err := s.Files.Sweep(ctx); err != nil {
+			return err
+		}
+	}
 	live, err := s.Core.LiveConfined(ctx)
 	if err != nil {
 		return err

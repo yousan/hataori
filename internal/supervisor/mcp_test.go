@@ -17,7 +17,7 @@ import (
 
 // captured is the exchange of Claude Code with `hataori mcp`, taken by
 // testdata/capture.sh.
-const captured = "testdata/claudecode/2.1.331-list-state"
+const captured = "testdata/claudecode/2.1.332"
 
 func lines(t *testing.T, path string) []map[string]any {
 	t.Helper()
@@ -118,7 +118,7 @@ func TestClaudeCodeToolsList(t *testing.T) {
 				t.Fatalf("the instructions changed since the capture:\n%v\n%v", got, was)
 			}
 		case "tools/list":
-			current := []string{ToolList, ToolRead, ToolSend, ToolInterrupt, ToolStart, ToolIssues, ToolIssue, ToolPulls, ToolPull, ToolChecks, ToolDeployed, ToolRemind, ToolCancelRemind}
+			current := []string{ToolList, ToolRead, ToolSend, ToolInterrupt, ToolStart, ToolIssues, ToolIssue, ToolPulls, ToolPull, ToolChecks, ToolDeployed, ToolRemind, ToolCancelRemind, ToolFiles, ToolFile, ToolWrite, ToolEdit}
 			if names := toolNames(t, r["result"]); !slices.Equal(names, current) {
 				t.Fatalf("tools/list gives %v, want the current tools %v", names, current)
 			}

@@ -751,6 +751,30 @@ var migrations = []Migration{
 			AND NOT EXISTS (SELECT 1 FROM links l WHERE l.client = chat_outbox.client AND l.channel = chat_outbox.channel
 				AND l.thread = chat_outbox.thread AND l.opened = 1)`,
 	)},
+	// The writes that supervisors' sessions make through the daemon (#868):
+	// each is recorded before anything of it is on the disk, and found out
+	// about afterwards, also by the next daemon (done). One of the user's
+	// files (name) stays until the lines that name it were posted: told is
+	// the position of the event that ended its turn, pos the newest event's
+	// position when it was made.
+	{Name: "supervisor_writes", Up: execAll(
+		`CREATE TABLE supervisor_writes (
+			id      INTEGER PRIMARY KEY AUTOINCREMENT,
+			scope   TEXT NOT NULL,
+			thread  INTEGER NOT NULL,
+			dir     TEXT NOT NULL,
+			path    TEXT NOT NULL,             -- the file's, in dir
+			tmp     TEXT NOT NULL,             -- the daemon's own name for the new content, beside the file
+			was     TEXT NOT NULL,             -- the version it replaces; '' for a new file
+			version TEXT NOT NULL,             -- that of the new content
+			there   INTEGER NOT NULL,          -- how many of the directories on its way were there before, or are another's
+			made    INTEGER,                   -- whether it was made, once its session is told so, for one that is not settled by then
+			pos     INTEGER NOT NULL,
+			done    INTEGER NOT NULL DEFAULT 0,
+			name    TEXT NOT NULL DEFAULT '',  -- the user's file that it is, once it is told or done
+			told    INTEGER NOT NULL DEFAULT 0
+		)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {
