@@ -430,7 +430,7 @@ func TestOperateHostStoresNothingTyped(t *testing.T) {
 	pane := strings.TrimSpace(out)
 
 	f := newFixture(t, fakeOwner{})
-	lister := &hostterm.Lister{Tmux: sock, Own: "hataori-never-runs", Buffers: "hataori-input-coretest-"}
+	lister := &hostterm.Lister{Tmux: sock, Own: []string{"hataori-never-runs"}, Buffers: "hataori-input-coretest-"}
 	f.core.HostTerms, f.core.HostInput = lister, lister
 	ctx := context.Background()
 	f.running(t, "t1") // a thread, so there are events and rows to look in

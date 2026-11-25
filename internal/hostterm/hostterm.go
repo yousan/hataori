@@ -58,10 +58,10 @@ type Lister struct {
 	// Tmux comes before every tmux subcommand, such as "-L", "name" to
 	// reach a server on a socket of its own.
 	Tmux []string
-	// Own is the command name of hataori's own processes. A process of
-	// that name without a terminal, such as a session host that has not
-	// been recorded yet, counts as owned too.
-	Own string
+	// Own are the command names of hataori's own processes (binary.Names). A
+	// process of such a name without a terminal, such as a session host
+	// that has not been recorded yet, counts as owned too.
+	Own []string
 
 	// Buffers starts the name of every tmux buffer an operation of this
 	// instance uses, such as "hataori-input-<instance>-". Only a buffer
@@ -331,21 +331,6 @@ func terminalOf(ps []proc, pid int) (int, string, bool) {
 		pid = p.ppid
 	}
 	return 0, "", false
-}
-
-// ownPIDs are the processes named own that hold no terminal. Linux cuts a
-// command name to 15 bytes.
-func ownPIDs(ps []proc, own string) []int {
-	if own == "" {
-		return nil
-	}
-	var pids []int
-	for _, p := range ps {
-		if p.tty == "" && (p.comm == own || len(p.comm) == 15 && strings.HasPrefix(own, p.comm)) {
-			pids = append(pids, p.pid)
-		}
-	}
-	return pids
 }
 
 // ownedDevices is the set of terminals used by a process in owned or under

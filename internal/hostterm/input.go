@@ -59,17 +59,11 @@ func (l *Lister) NewBuffer() (string, error) {
 	return l.Buffers + hex.EncodeToString(b[:]), nil
 }
 
-// matchesOwn reports whether comm, a command name as ps or tmux reports
-// it, is own. Linux cuts a command name to 15 bytes.
-func matchesOwn(comm, own string) bool {
-	return own != "" && (comm == own || len(comm) == 15 && strings.HasPrefix(own, comm))
-}
-
 // Check looks at one tmux pane as tmux lists it now. p is nil when tmux
 // does not list it. own is true when one of hataori's processes runs
-// there: the command tmux reports for the pane is Own, or, with procs, a
-// process named Own, or one under owned or under a process named Own
-// without a terminal (a session host), holds the pane's terminal.
+// there: the command tmux reports for the pane is one of Own, or, with
+// procs, a process of such a name, or one under owned or under a process of
+// such a name without a terminal (a session host), holds the pane's terminal.
 func (l *Lister) Check(ctx context.Context, pane string, owned []int, procs bool) (p *control.TmuxPane, own bool, err error) {
 	if !paneID.MatchString(pane) {
 		return nil, false, nil

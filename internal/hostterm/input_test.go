@@ -332,7 +332,7 @@ func TestTypingIntoARealPane(t *testing.T) {
 	}
 
 	rec := &recorder{}
-	l := &Lister{Tmux: sock, Own: "hataori-never-runs", Buffers: testBuffers, run: rec.run}
+	l := &Lister{Tmux: sock, Own: []string{"hataori-never-runs"}, Buffers: testBuffers, run: rec.run}
 	ctx := context.Background()
 	for _, p := range panes {
 		if tp, own, err := l.Check(ctx, p, nil, true); err != nil || tp == nil || own {
@@ -411,7 +411,7 @@ func TestCheckFindsHataorisOwn(t *testing.T) {
 		return strings.TrimSpace(out)
 	}
 	fg, bg := pane("0"), pane("1")
-	l := &Lister{Tmux: sock, Own: "sleep"}
+	l := &Lister{Tmux: sock, Own: []string{"sleep"}}
 	ctx := context.Background()
 	waitFor(t, "the panes' commands", func() bool {
 		ps, _ := l.panes(ctx)
@@ -436,7 +436,7 @@ func TestCheckFindsHataorisOwn(t *testing.T) {
 	if p, own, err := l.Check(ctx, "%999", nil, true); err != nil || p != nil || own {
 		t.Errorf("a pane that is not there: %+v %v %v", p, own, err)
 	}
-	other := &Lister{Tmux: sock, Own: "hataori-never-runs"}
+	other := &Lister{Tmux: sock, Own: []string{"hataori-never-runs"}}
 	if p, own, err := other.Check(ctx, bg, nil, true); err != nil || p == nil || own {
 		t.Errorf("a pane hataori does not run in: %+v %v %v", p, own, err)
 	}

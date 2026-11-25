@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/agent"
+	"github.com/yousan/hataori/internal/binary"
 	"github.com/yousan/hataori/internal/chat"
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
@@ -299,7 +301,8 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 	owner := control.OpRead | control.OpStart | control.OpSend | control.OpAnswer | control.OpStop | control.OpSignIn | control.OpAttach |
 		control.OpClose | control.OpRemove | control.OpReopen | control.OpName | control.OpTakeIn | control.OpTrust
 	if cfg.HostTerminals { // off unless the config turns it on; only the owner gets it
-		lister := &hostterm.Lister{Own: filepath.Base(exe)}
+		as, _ := exec.LookPath(os.Args[0]) // what the daemon was started as; a link on some systems only
+		lister := &hostterm.Lister{Own: binary.Names(exe, as)}
 		if hostTermsHook != nil {
 			hostTermsHook(lister)
 		}
