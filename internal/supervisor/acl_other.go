@@ -11,9 +11,4 @@ import (
 // none is.
 func aclOf(*os.File) (string, error) { return "", nil }
 
-func setACL(_ *os.File, acl string) error {
-	if acl != "" {
-		return errors.ErrUnsupported
-	}
-	return nil
-}
+func setACL(*os.File, string) error { return errors.ErrUnsupported }

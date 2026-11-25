@@ -767,7 +767,8 @@ var migrations = []Migration{
 			tmp     TEXT NOT NULL,             -- the daemon's own name for the new content, beside the file
 			was     TEXT NOT NULL,             -- the version it replaces; '' for a new file
 			version TEXT NOT NULL,             -- that of the new content
-			there   INTEGER NOT NULL,          -- how many of the directories on its way were there before
+			there   INTEGER NOT NULL,          -- how many of the directories on its way were there before, or are another's
+			failed  INTEGER NOT NULL DEFAULT 0, -- its session was told that it was not made
 			pos     INTEGER NOT NULL,
 			done    INTEGER NOT NULL DEFAULT 0,
 			name    TEXT NOT NULL DEFAULT '',  -- the user's file that it is

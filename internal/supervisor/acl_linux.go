@@ -24,14 +24,10 @@ func aclOf(fh *os.File) (string, error) {
 	return string(b[:n]), nil
 }
 
-// setACL gives fh acl, or takes the one it has for "".
+// setACL gives fh acl, or takes the one it has for "". It has another now.
 func setACL(fh *os.File, acl string) error {
 	if acl == "" {
-		err := unix.Fremovexattr(int(fh.Fd()), xattrACL)
-		if errors.Is(err, unix.ENODATA) || errors.Is(err, unix.ENOTSUP) {
-			return nil // it has none
-		}
-		return err
+		return unix.Fremovexattr(int(fh.Fd()), xattrACL)
 	}
 	return unix.Fsetxattr(int(fh.Fd()), xattrACL, []byte(acl), 0)
 }

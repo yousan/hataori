@@ -387,7 +387,7 @@ func TestFilesKeepsAccess(t *testing.T) {
 		}
 		before := f.tree(t)
 		w := placing{path: "plan.md", tmp: tmpName(), was: versionOf(holds(t, f.dir, "plan.md")), version: versionOf("other")}
-		if left, err := f.files.place(f.dir, root, &w, "other", &as); err == nil || !strings.HasSuffix(err.Error(), why) || left != nil {
+		if left, err := f.files.place(context.Background(), 0, f.dir, root, &w, "other", &as); err == nil || !strings.HasSuffix(err.Error(), why) || left != nil {
 			t.Errorf("another %s: %v, left %v", name, err, left)
 		}
 		if f.tree(t) != before {
@@ -1389,19 +1389,24 @@ func TestFilesTakenBackLater(t *testing.T) {
 }
 
 // What someone puts in the place of the daemon's own file is neither placed
-// nor removed.
+// nor removed, also where that was removed and its inode is free.
 func TestFilesOwnFileIsAnothers(t *testing.T) {
 	const file, fresh = "notes/plan.md", "notes/new.md"
 	for _, c := range []struct {
 		name, path, step string
+		moved            bool   // and not removed
 		another          bool   // it is put there; else there is none any more
 		there            string // what is at the path then, for the answer
 	}{
-		{"replacing a file", file, "written", true, "base"},
-		{"replacing a file, gone", file, "written", false, "base"},
-		{"a new file", fresh, "written", true, ""},
-		{"a new file, gone", fresh, "written", false, ""},
-		{"a new file, placing", fresh, "placing", true, "another's"},
+		{"replacing a file", file, "written", true, true, "base"},
+		{"replacing a file, removed", file, "written", false, true, "base"},
+		{"replacing a file, gone", file, "written", true, false, "base"},
+		{"replacing a changed file, removed", file, "written", false, true, "another's"},
+		{"a new file", fresh, "written", true, true, ""},
+		{"a new file, removed", fresh, "written", false, true, ""},
+		{"a new file, gone", fresh, "written", true, false, ""},
+		{"a new file, placing", fresh, "placing", true, true, "another's"},
+		{"a new file, placing, removed", fresh, "placing", false, true, "another's"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := newFilesFixture(t)
@@ -1412,10 +1417,15 @@ func TestFilesOwnFileIsAnothers(t *testing.T) {
 				if err := os.Rename(own, own+"-moved"); err != nil {
 					t.Error(err)
 				}
+				if !c.moved {
+					if err := os.Remove(own + "-moved"); err != nil {
+						t.Error(err)
+					}
+				}
 				if c.another {
 					put(t, filepath.Dir(own), filepath.Base(own), "a person's")
 				}
-				if c.step == "placing" {
+				if c.there == "another's" {
 					put(t, f.dir, c.path, c.there)
 				}
 				after = f.tree(t)
@@ -1482,39 +1492,119 @@ func TestFilesDirectoryMadeMeanwhile(t *testing.T) {
 	}
 }
 
-// So it is when the write is settled only later, since the daemon's own file
-// could not be removed.
+// So it is when the write is settled only later, since the daemon died, or its
+// own file or the record of the write could not be removed.
 func TestFilesDirectoryMadeMeanwhileLater(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root writes everywhere")
 	}
-	f := newFilesFixture(t)
-	at, deeper := filepath.Join(f.dir, "made"), filepath.Join(f.dir, "made/deeper")
-	f.files.Hook = func(step string) {
-		switch step {
-		case "making":
-			os.Mkdir(at, 0o700)
-		case "written":
-			put(t, f.dir, "made/deeper/new.md", "a person's")
-			if err := os.Chmod(deeper, 0o500); err != nil {
-				t.Error(err)
+	for _, c := range []struct {
+		keeps, step string
+		nth         int
+	}{
+		{"own file", "making", 1},
+		{"record", "making", 1},
+		{"record", "entering", 3}, // after what was there was recorded, and before it is made
+	} {
+		t.Run(c.keeps+" "+c.step, func(t *testing.T) {
+			f := newFilesFixture(t)
+			put(t, f.dir, "notes/plan.md", "plan")
+			at, deeper := filepath.Join(f.dir, "notes/made"), filepath.Join(f.dir, "notes/made/deeper")
+			n := 0
+			f.files.Hook = func(step string) {
+				if step == c.step {
+					if n++; n == c.nth {
+						if err := os.Mkdir(at, 0o700); err != nil {
+							t.Error(err)
+						}
+					}
+				}
+				switch step {
+				case "made":
+					var there int // for a daemon that dies here
+					if err := f.files.Store.DB.QueryRow(`SELECT there FROM supervisor_writes`).Scan(&there); err != nil || there != 2 {
+						t.Errorf("recorded that %d of the directories were there, %v", there, err)
+					}
+				case "written":
+					put(t, f.dir, "notes/made/deeper/new.md", "a person's")
+					if c.keeps == "record" {
+						f.keepsRecords(t)
+					} else if err := os.Chmod(deeper, 0o500); err != nil {
+						t.Error(err)
+					}
+				}
 			}
-		}
+			t.Cleanup(func() { os.Chmod(deeper, 0o700) })
+			ans := do(t, f.own, writeOf("notes/made/deeper/new.md", "new", ""))
+			if own := ownFiles(t, f.dir); ans.Refused == "" || f.recorded(t) != 1 || (len(own) == 1) != (c.keeps == "own file") {
+				t.Fatalf("answered %+v; own files %v, %d recorded", ans, own, f.recorded(t))
+			}
+			f.files.Hook = nil
+			f.losesRecords(t)
+			if err := errors.Join(os.Chmod(deeper, 0o700), os.Remove(filepath.Join(deeper, "new.md")), f.files.Sweep(context.Background())); err != nil {
+				t.Fatal(err)
+			}
+			if own := f.tree(t); f.recorded(t) != 0 || strings.Contains(own, "deeper") || strings.Contains(own, tmpPrefix) {
+				t.Errorf("%d recorded; there is\n%s", f.recorded(t), own)
+			}
+			if st, err := os.Stat(at); err != nil || !st.IsDir() {
+				t.Errorf("the person's directory: %v", err)
+			}
+		})
 	}
-	t.Cleanup(func() { os.Chmod(deeper, 0o700) })
-	ans := do(t, f.own, writeOf("made/deeper/new.md", "new", ""))
-	if ans.Refused == "" || f.recorded(t) != 1 || len(ownFiles(t, f.dir)) != 1 {
-		t.Fatalf("answered %+v; own files %v, %d recorded", ans, ownFiles(t, f.dir), f.recorded(t))
+}
+
+// keepsRecords has no recorded write forgotten, until losesRecords.
+func (f *filesFixture) keepsRecords(t *testing.T) {
+	t.Helper()
+	f.sql(t, `CREATE TRIGGER keeps BEFORE DELETE ON supervisor_writes BEGIN SELECT RAISE(ABORT, 'kept'); END`)
+}
+
+func (f *filesFixture) losesRecords(t *testing.T) {
+	t.Helper()
+	f.sql(t, `DROP TRIGGER IF EXISTS keeps`)
+}
+
+// A write that was refused is named in no line, also where the daemon's own
+// file or the record of it could not be removed then, so that only what is
+// there would tell later.
+func TestFilesRefusedIsNotNamed(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes everywhere")
 	}
-	f.files.Hook = nil
-	if err := errors.Join(os.Chmod(deeper, 0o700), os.Remove(filepath.Join(deeper, "new.md")), f.files.Sweep(context.Background())); err != nil {
-		t.Fatal(err)
-	}
-	if own := f.tree(t); f.recorded(t) != 0 || strings.Contains(own, "deeper") || strings.Contains(own, tmpPrefix) {
-		t.Errorf("%d recorded; there is\n%s", f.recorded(t), own)
-	}
-	if st, err := os.Stat(at); err != nil || !st.IsDir() {
-		t.Errorf("the person's directory: %v", err)
+	ctx := context.Background()
+	for _, c := range []struct{ was, keeps string }{{"", "own file"}, {"", "record"}, {"old", "own file"}, {"old", "record"}} {
+		t.Run(fmt.Sprintf("%q %s", c.was, c.keeps), func(t *testing.T) {
+			f := newFilesFixture(t)
+			version := ""
+			if c.was != "" {
+				put(t, f.dir, "AGENTS.md", c.was)
+				version = versionOf(c.was)
+			}
+			done := f.at(t, swap{"written", 1, func(t *testing.T, f *filesFixture) {
+				put(t, f.dir, "AGENTS.md", "a person's")
+				if c.keeps == "record" {
+					f.keepsRecords(t)
+				} else if err := os.Chmod(f.dir, 0o500); err != nil {
+					t.Error(err)
+				}
+			}})
+			t.Cleanup(func() { os.Chmod(f.dir, 0o700) })
+			ans := do(t, f.own, writeOf("AGENTS.md", "new", version))
+			if !done() || ans.Refused == "" || f.recorded(t) != 1 {
+				t.Fatalf("answered %+v; %d recorded", ans, f.recorded(t))
+			}
+			f.losesRecords(t)
+			if err := errors.Join(os.Chmod(f.dir, 0o700), f.files.Ended(ctx, "c1", filesOwn, 1), f.files.Sweep(ctx)); err != nil {
+				t.Fatal(err)
+			}
+			if turns, err := f.files.Untold(ctx, "c1"); err != nil || len(turns) != 0 {
+				t.Errorf("to tell: %+v, %v", turns, err)
+			}
+			if own := ownFiles(t, f.dir); f.recorded(t) != 0 || len(own) != 0 || holds(t, f.dir, "AGENTS.md") != "a person's" {
+				t.Errorf("%d recorded, own files %v, the file holds %q", f.recorded(t), own, holds(t, f.dir, "AGENTS.md"))
+			}
+		})
 	}
 }
 
