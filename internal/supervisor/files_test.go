@@ -1755,6 +1755,9 @@ func TestFilesSweepRemovesItsOwnOnly(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(f.dir, "empty"), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	if err := syscall.Mkfifo(filepath.Join(f.dir, "notes/.hataori-0"), 0); err != nil { // closed, but no file
+		t.Fatal(err)
+	}
 	old := versionOf("old")
 	record(f.dir, "notes/plan.md", ".hataori-1", old, 1)
 	record(f.dir, "notes/plan.md", ".hataori-7", old, 1)
@@ -1762,6 +1765,7 @@ func TestFilesSweepRemovesItsOwnOnly(t *testing.T) {
 	record(f.dir, "notes/placed.md", ".hataori-9", "", 1)
 	record(f.dir, "notes/plan.md", ".hataori-3", old, 1)
 	record(f.dir, "notes/plan.md", ".hataori-4", old, 1)
+	record(f.dir, "notes/plan.md", ".hataori-0", old, 1)
 	record(f.dir, "notes/plan.md", "mine.md", old, 1)
 	record(f.dir, "full/new.md", ".hataori-5", "", 0)  // the directory is not empty any more
 	record(f.dir, "file/new.md", ".hataori-5", "", 0)  // a file took its place
@@ -1780,7 +1784,7 @@ func TestFilesSweepRemovesItsOwnOnly(t *testing.T) {
 		}
 	}
 	log := f.log.take()
-	if strings.Count(log, "it stays") != 4 || !strings.Contains(log, "notes/.hataori-8") {
+	if strings.Count(log, "it stays") != 5 || !strings.Contains(log, "notes/.hataori-8") {
 		t.Errorf("logged %s", log)
 	}
 	if strings.Count(log, "may be where it was moved to") != 1 || !strings.Contains(log, "path=gone/deeper/new.md own=.hataori-5") {

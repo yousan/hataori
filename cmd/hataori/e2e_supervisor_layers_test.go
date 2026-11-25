@@ -120,8 +120,12 @@ func TestSupervisorInstructionsInLayers(t *testing.T) {
 // filesNotices returns the lines in the chat thread conv that name the
 // user's files a turn of the supervisor's wrote.
 func (wt *wakeTest) filesNotices(conv surface.Conversation) []string {
+	return filesNotices(wt.r, conv)
+}
+
+func filesNotices(r *chatRoot, conv surface.Conversation) []string {
 	var out []string
-	for _, c := range wt.r.driver.Calls(conv) {
+	for _, c := range r.driver.Calls(conv) {
 		if c.Op == fakesurface.OpPost && strings.HasPrefix(c.Message.Text, "Changed by ") {
 			out = append(out, c.Message.Text)
 		}

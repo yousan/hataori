@@ -13,10 +13,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/store"
 	"github.com/yousan/hataori/internal/supervisor"
+	"github.com/yousan/hataori/internal/surface"
 	"github.com/yousan/hataori/internal/wire"
 	"github.com/yousan/hataori/internal/workspace"
 )
@@ -263,7 +265,7 @@ func TestDaemonsStartRemovesWhatAWriteLeft(t *testing.T) {
 		t.Fatal(err)
 	}
 	const next = "the next plan\n"
-	for name, text := range map[string]string{"notes/" + own: next, "new/er/" + own: "half", "notes/" + person: "a person's\n"} {
+	for name, text := range map[string]string{"notes/" + own: next, "new/er/" + own: "half", "notes/" + person: "a person's\n", "AGENTS.md": next} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -278,16 +280,28 @@ func TestDaemonsStartRemovesWhatAWriteLeft(t *testing.T) {
 	defer db.Close()
 	version := func(text string) string { return fmt.Sprintf("%x", sha256.Sum256([]byte(text))) }
 	for path, w := range map[string]struct {
-		was   string
-		there int
-	}{"notes/plan.md": {version("the plan\n"), 1}, "new/er/file.md": {"", 0}} {
-		if _, err := db.Exec(`INSERT INTO supervisor_writes (scope, thread, dir, path, tmp, was, version, there, pos) VALUES ('c1', ?, ?, ?, ?, ?, ?, ?, 0)`,
-			int64(sv.ID), dir, path, own, w.was, version(next), w.there); err != nil {
+		was         string
+		there, told int
+	}{"notes/plan.md": {version("the plan\n"), 1, 1}, "new/er/file.md": {"", 0, 1}, "AGENTS.md": {"", 0, 1}} { // AGENTS.md has its place
+		if _, err := db.Exec(`INSERT INTO supervisor_writes (scope, thread, dir, path, tmp, was, version, there, pos, told) VALUES ('c1', ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+			int64(sv.ID), dir, path, own, w.was, version(next), w.there, w.told); err != nil {
 			t.Fatal(err)
 		}
 	}
+	if res, err := db.Exec(`UPDATE supervisor_wakes SET pos = (SELECT max(pos) FROM events) WHERE scope = 'c1'`); err != nil {
+		t.Fatal(err)
+	} else if n, _ := res.RowsAffected(); n != 1 {
+		t.Fatalf("the waker's position is recorded %d times", n)
+	}
 	stop = runDaemon(t, r.root)
 	defer stop()
+	// The end of their turn was read before the daemon died, and what was
+	// made is named nevertheless.
+	conv := surface.Conversation{Channel: sv.Links[0].Channel, Thread: sv.Links[0].Thread}
+	eventually(t, "the line of the write that was made", 10*time.Second, func() bool { return len(filesNotices(r, conv)) > 0 })
+	if n := filesNotices(r, conv); len(n) != 1 || n[0] != supervisor.FilesNotice([]string{"AGENTS.md"}) {
+		t.Errorf("the lines after the start: %q", n)
+	}
 	for name, there := range map[string]bool{"notes/" + own: false, "new": false, "notes/" + person: true, "notes/plan.md": true} {
 		if _, err := os.Lstat(filepath.Join(dir, name)); (err == nil) != there {
 			t.Errorf("%s after the start: %v, want it there: %v", name, err, there)
@@ -297,7 +311,7 @@ func TestDaemonsStartRemovesWhatAWriteLeft(t *testing.T) {
 		t.Errorf("the old file holds %q, %v", b, err)
 	}
 	var n int
-	if err := db.QueryRow(`SELECT count(*) FROM supervisor_writes`).Scan(&n); err != nil || n != 0 {
-		t.Errorf("%d writes are recorded after the start, %v", n, err)
-	}
+	eventually(t, "nothing to be recorded", 10*time.Second, func() bool {
+		return db.QueryRow(`SELECT count(*) FROM supervisor_writes`).Scan(&n) == nil && n == 0
+	})
 }
