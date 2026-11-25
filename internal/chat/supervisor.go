@@ -92,6 +92,9 @@ func (r *reader) hear(e control.Event) {
 		case e.Kind == "input", e.Kind == "answer":
 			h.others = (h.others || !h.input) && r.toOthers != nil && r.toOthers(d.Link, d.Text)
 			h.input = true
+			if !h.others {
+				h.texts = nil // posted now
+			}
 		case e.Kind == "text" && strings.TrimSpace(d.Text) != "":
 			if h.others && !d.Final {
 				h.texts = append(h.texts, e)
@@ -135,28 +138,31 @@ func (f *FrontEnd) rowsOf(ctx context.Context, r *reader, e control.Event, convs
 	if !sv.sv {
 		return f.rowsFor(ctx, r, e, convs)
 	}
-	var texts []control.Event
 	switch e.Kind {
-	case "text", "request", "turn_ended":
+	case "input", "answer", "text", "request", "turn_ended":
 		// The turn's earlier events, when this reader has not read them.
 		if _, _, err := r.turnKey(ctx, e); err != nil {
 			return nil, err
 		}
-		if h := r.heard[e.Thread]; h != nil {
-			var d eventData
-			json.Unmarshal(e.Data, &d)
-			if e.Kind == "text" && h.others && (!d.Final || strings.TrimSpace(d.Text) == quietAnswer) {
-				r.hear(e)
-				return nil, nil
-			}
-			if (e.Kind != "text" || strings.TrimSpace(d.Text) != "") && (e.Kind != "request" || !d.Approval) {
-				texts = h.texts
-			}
-		}
+	}
+	h := r.heard[e.Thread]
+	var waited []control.Event
+	if h != nil {
+		waited = h.texts
 	}
 	r.hear(e)
+	if h != nil && h.others && e.Kind == "text" {
+		var d eventData
+		json.Unmarshal(e.Data, &d)
+		if !d.Final || strings.TrimSpace(d.Text) == quietAnswer {
+			return nil, nil
+		}
+	}
+	if r.heard[e.Thread] == h && h != nil && len(h.texts) > 0 {
+		waited = nil // it waits on
+	}
 	var rows []Row
-	for _, t := range texts {
+	for _, t := range waited {
 		var d eventData
 		json.Unmarshal(t.Data, &d)
 		notify, _, err := f.svPost(ctx, r, t, sv, false, d.Text)

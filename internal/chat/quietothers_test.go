@@ -7,6 +7,26 @@ import (
 	"github.com/yousan/hataori/internal/surface/fake"
 )
 
+// What waited for the final answer is posted once the turn is given a
+// message that is not to others only, not with the next thing it says.
+func TestSupervisorTurnPostsWhatWaitedWithAMessageToIt(t *testing.T) {
+	f := newFront(t, workspaces{})
+	id, _ := f.started(t)
+	if _, err := f.fe.Outbox.Store.DB.Exec(`UPDATE threads SET confined = 1 WHERE id = ?`, int64(id)); err != nil {
+		t.Fatal(err)
+	}
+	conv := f.conv(id)
+	link := map[string]any{"client": f.fe.Name, "channel": conv.Channel, "thread": conv.Thread}
+	stop := f.showing(t)
+	turn(f, t, id, 1, "m1")
+	f.event(t, id, "input", map[string]any{"turn": 1, "text": "<@bob> look", "link": link})
+	f.event(t, id, "text", map[string]any{"text": "a", "final": false})
+	stop()
+	f.showing(t)
+	f.event(t, id, "input", map[string]any{"turn": 1, "text": "look", "link": link})
+	f.postedUntil(t, id, "a")
+}
+
 // What a supervisor's thread posts of a turn that answers messages to
 // others only (#799), also when the daemon starts again between any two
 // events of the turn.
@@ -44,6 +64,7 @@ func TestSupervisorTurnThatAnswersMessagesToOthers(t *testing.T) {
 		{"first one that is not", []ev{start, in(plain), say("a"), in(other), say("b"), final("(quiet)"), end("completed")}, "a|b|(quiet)"},
 		{"a question", []ev{start, in(other), say("a"), ask, end("blocked")}, "a|Which?"},
 		{"an approval is no question", []ev{start, in(other), say("a"), allowed, final("(quiet)"), end("completed")}, ""},
+		{"a failure after blank text", []ev{start, in(other), say("a"), final(" "), end("failure")}, "a|" + failureLine("it broke")},
 		{"a failure", []ev{start, in(other), say("a"), end("failure")}, "a|" + failureLine("it broke")},
 		{"the dashboard", []ev{start, {"input", map[string]any{"turn": 1, "text": other}}, say("a"), final("(quiet)"), end("completed")}, "a|(quiet)"},
 		{"another client that reads mentions", []ev{start, elsewhere("other", other), say("a"), final("(quiet)"), end("completed")}, "someone: " + other},
