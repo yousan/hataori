@@ -617,7 +617,14 @@ func TestInputWhileThePaneIsRespawned(t *testing.T) {
 			theirs := filepath.Join(s.dir, fmt.Sprintf("theirs-%s-%d", program, n))
 			h := &Holder{Tmux: s.before(n, fmt.Sprintf("%s -S %s respawn-pane -k -t %s 'stty raw -echo; echo x > %s-ready; exec %s > %s'; until [ -s %s-ready ]; do sleep 0.02; done",
 				s.tmux, s.sock, r.Pane, theirs, program, theirs, theirs))}
-			if err := h.Input(t.Context(), w, []agent.Part{{Paste: "never"}, {Key: agent.Enter}}); err == nil {
+			err := h.Input(t.Context(), w, []agent.Part{{Paste: "never"}, {Key: agent.Enter}})
+			if _, left := os.Stat(theirs + "-ready"); left != nil {
+				if err != nil { // fewer commands than n
+					t.Errorf("%s: %v", program, err)
+				}
+				continue
+			}
+			if err == nil {
 				t.Errorf("%s before command %d: handed over", program, n)
 			}
 			time.Sleep(200 * time.Millisecond)
