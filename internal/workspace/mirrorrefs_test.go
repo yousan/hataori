@@ -565,7 +565,13 @@ func TestMirrorKeepsWhatAReflogNames(t *testing.T) {
 	if err := os.WriteFile(log, []byte(nothing+" "+nothing+" x\n\nx\n"+nothing+" "+last+" x\n"+string(b)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	x.deleteUpstream("refs/heads/gone", "refs/tags/v1", "refs/tags/v2")
+	// What a git that died left of the log of plain/b.
+	x.push("main", "refs/heads/plain")
+	x.git(x.mirror, "-c", "core.logAllRefUpdates=false", "fetch", "-q", "file://"+x.bare, "refs/heads/plain:refs/heads/plain")
+	if err := os.MkdirAll(filepath.Join(x.mirror, "logs", "refs", "heads", "plain"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	x.deleteUpstream("refs/heads/gone", "refs/heads/plain", "refs/tags/v1", "refs/tags/v2")
 	x.push("main", "refs/tags/light")
 	x.make()
 	x.wantSame()

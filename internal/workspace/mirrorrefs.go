@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -333,10 +334,14 @@ func (g mirrorRepo) loggedInTable(ctx context.Context, name string) bool {
 // logged is what the reflogs of refs name: a reflog goes with its ref. A mirror
 // has some when git's config says so.
 func (g mirrorRepo) logged(ctx context.Context, refs []mirrorRef) ([]mirrorRef, error) {
-	ids := ""
+	var ids strings.Builder
+	seen := map[string]bool{}
 	for _, r := range refs {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		b, err := os.ReadFile(filepath.Join(g.dir, "logs", filepath.FromSlash(r.name)))
-		if missing(err) {
+		if missing(err) || errors.Is(err, syscall.EISDIR) {
 			continue
 		} else if err != nil {
 			return nil, err
@@ -345,16 +350,17 @@ func (g mirrorRepo) logged(ctx context.Context, refs []mirrorRef) ([]mirrorRef, 
 			was, rest, _ := strings.Cut(line, " ")
 			is, _, _ := strings.Cut(rest, " ")
 			for _, id := range []string{was, is} {
-				if objectID.MatchString(id) {
-					ids += id + "\n"
+				if !seen[id] && objectID.MatchString(id) {
+					seen[id] = true
+					ids.WriteString(id + "\n")
 				}
 			}
 		}
 	}
-	if ids == "" {
+	if len(seen) == 0 {
 		return nil, nil
 	}
-	out, err := g.git(ctx, ids, "cat-file", "--batch-check=%(objectname) %(objecttype)")
+	out, err := g.git(ctx, ids.String(), "cat-file", "--batch-check=%(objectname) %(objecttype)")
 	if err != nil {
 		return nil, err
 	}
