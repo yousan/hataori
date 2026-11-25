@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -243,7 +244,7 @@ func TestConversationsWriteOneFileAtOnce(t *testing.T) {
 // A daemon that starts removes what the one before it had made for a write
 // that it did not come to the end of, before any session can write again:
 // the file beside the old one, which is whole, and a directory made for a
-// new one. What is not the daemon's stays.
+// new one, with one that nobody may read yet. What is not the daemon's stays.
 func TestDaemonsStartRemovesWhatAWriteLeft(t *testing.T) {
 	r, _ := svRoot(t, true)
 	stop := runDaemon(t, r.root)
@@ -261,19 +262,27 @@ func TestDaemonsStartRemovesWhatAWriteLeft(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "new", "er"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for name, text := range map[string]string{"notes/" + own: "half a pl", "new/er/" + own: "half", "notes/" + person: "a person's\n"} {
+	const next = "the next plan\n"
+	for name, text := range map[string]string{"notes/" + own: next, "new/er/" + own: "half", "notes/" + person: "a person's\n"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o600); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := os.Chmod(filepath.Join(dir, "new/er", own), 0); err != nil {
+		t.Fatal(err)
 	}
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(r.root, store.File)+"?_pragma=busy_timeout(5000)")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	for path, there := range map[string]int{"notes/plan.md": 1, "new/er/file.md": 0} {
-		if _, err := db.Exec(`INSERT INTO supervisor_writes (scope, thread, dir, path, tmp, was, version, there, pos) VALUES ('c1', ?, ?, ?, ?, '', 'v', ?, 0)`,
-			int64(sv.ID), dir, path, own, there); err != nil {
+	version := func(text string) string { return fmt.Sprintf("%x", sha256.Sum256([]byte(text))) }
+	for path, w := range map[string]struct {
+		was   string
+		there int
+	}{"notes/plan.md": {version("the plan\n"), 1}, "new/er/file.md": {"", 0}} {
+		if _, err := db.Exec(`INSERT INTO supervisor_writes (scope, thread, dir, path, tmp, was, version, there, pos) VALUES ('c1', ?, ?, ?, ?, ?, ?, ?, 0)`,
+			int64(sv.ID), dir, path, own, w.was, version(next), w.there); err != nil {
 			t.Fatal(err)
 		}
 	}

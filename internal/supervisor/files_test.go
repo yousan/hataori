@@ -312,7 +312,8 @@ func TestFilesWriteAndRead(t *testing.T) {
 }
 
 // A file that is written keeps its group too. One whose owner or group the
-// daemon cannot keep is not written, and nothing is left of the try.
+// daemon cannot keep, or which runs as another, is not written, and nothing
+// is left of the try.
 func TestFilesKeepsAccess(t *testing.T) {
 	f := newFilesFixture(t)
 	put(t, f.dir, "plan.md", "old")
@@ -354,10 +355,31 @@ func TestFilesKeepsAccess(t *testing.T) {
 		t.Log("in no group but one")
 	}
 
+	const why = "a file whose owner, group, permissions or access list the daemon cannot keep"
+	for name, bit := range map[string]fs.FileMode{"set-user-ID": fs.ModeSetuid, "set-group-ID": fs.ModeSetgid, "sticky": fs.ModeSticky} {
+		at := filepath.Join(f.dir, "run")
+		put(t, f.dir, "run", "old")
+		if err := os.Chmod(at, 0o750|bit); err != nil {
+			t.Logf("%s: %v", name, err) // not on every system
+			continue
+		}
+		st, err := os.Stat(at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.Mode()&bit == 0 {
+			t.Logf("%s: not kept here", name)
+			continue
+		}
+		f.refused(t, f.own, writeOf("run", "new", versionOf("old")), why)
+		f.refused(t, f.own, editOf("run", "old", "new"), why)
+		if now, err := os.Stat(at); err != nil || now.Mode() != st.Mode() {
+			t.Errorf("%s: %v, %v", name, now, err)
+		}
+	}
 	if os.Geteuid() == 0 {
 		return
 	}
-	const why = "a file whose owner, group or access list the daemon cannot keep"
 	for name, as := range map[string]access{"owner": {uid: os.Geteuid() + 1, gid: os.Getegid(), perm: 0o640}, "group": {uid: os.Geteuid(), gid: 1 << 30, perm: 0o640}} {
 		root, err := openDir(f.dir)
 		if err != nil {
@@ -372,6 +394,23 @@ func TestFilesKeepsAccess(t *testing.T) {
 			t.Errorf("another %s: something changed", name)
 		}
 		root.Close()
+	}
+
+	// What cannot be given all of it is open to nobody in between.
+	for name, as := range map[string]access{
+		"owner":       {uid: os.Geteuid() + 1, gid: os.Getegid(), perm: 0o640},
+		"group":       {uid: os.Geteuid(), gid: 1 << 30, perm: 0o640},
+		"access list": {uid: os.Geteuid(), gid: os.Getegid(), perm: 0o640, acl: "none"},
+	} {
+		fh, err := os.OpenFile(filepath.Join(t.TempDir(), "own"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = as.give(fh)
+		if st, serr := fh.Stat(); err == nil || err.Error() != why || serr != nil || st.Mode().Perm() != 0 {
+			t.Errorf("another %s: %v; the file has %v, %v", name, err, st.Mode(), serr)
+		}
+		fh.Close()
 	}
 }
 
@@ -428,9 +467,13 @@ func TestFilesList(t *testing.T) {
 	if ans, err := f.files.list(gone, f.dir); !errors.Is(err, context.Canceled) {
 		t.Errorf("a list for a caller that is gone: %+v, %v", ans, err)
 	}
-	for i := range listMax {
+	for i := range listMax - len(want) {
 		put(t, f.dir, fmt.Sprintf("many/%d", i), "")
 	}
+	if ans := do(t, f.own, control.FilesRequest{Op: control.FilesList}); len(ans.Files) != listMax {
+		t.Errorf("listed %d files", len(ans.Files))
+	}
+	put(t, f.dir, "many/more", "")
 	f.refused(t, f.own, control.FilesRequest{Op: control.FilesList}, "the directory has more than 2000 files")
 }
 
@@ -1345,23 +1388,87 @@ func TestFilesTakenBackLater(t *testing.T) {
 	}
 }
 
+// What someone puts in the place of the daemon's own file is neither placed
+// nor removed.
+func TestFilesOwnFileIsAnothers(t *testing.T) {
+	const file, fresh = "notes/plan.md", "notes/new.md"
+	for _, c := range []struct {
+		name, path, step string
+		another          bool   // it is put there; else there is none any more
+		there            string // what is at the path then, for the answer
+	}{
+		{"replacing a file", file, "written", true, "base"},
+		{"replacing a file, gone", file, "written", false, "base"},
+		{"a new file", fresh, "written", true, ""},
+		{"a new file, gone", fresh, "written", false, ""},
+		{"a new file, placing", fresh, "placing", true, "another's"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFilesFixture(t)
+			put(t, f.dir, file, "base")
+			var own, after string
+			done := f.at(t, swap{c.step, 1, func(t *testing.T, f *filesFixture) {
+				own = ownFiles(t, f.dir)[0]
+				if err := os.Rename(own, own+"-moved"); err != nil {
+					t.Error(err)
+				}
+				if c.another {
+					put(t, filepath.Dir(own), filepath.Base(own), "a person's")
+				}
+				if c.step == "placing" {
+					put(t, f.dir, c.path, c.there)
+				}
+				after = f.tree(t)
+			}})
+			version := ""
+			if c.path == file {
+				version = versionOf("base")
+			}
+			f.log.take()
+			ans := do(t, f.own, writeOf(c.path, "new", version))
+			if !done() || ans.Refused != "the file changed while it was written" || (ans.File == nil) != (c.there == "") || ans.File != nil && ans.File.Text != c.there {
+				t.Fatalf("answered %q with %+v", ans.Refused, ans.File)
+			}
+			if now := f.tree(t); now != after {
+				t.Errorf("there is\n%s\nand was\n%s", now, after)
+			}
+			log := f.log.take()
+			if strings.Contains(log, "it stays") != c.another || c.another && !strings.Contains(log, "path=notes/"+filepath.Base(own)) {
+				t.Errorf("logged %s", log)
+			}
+			if n := f.recorded(t); n != 0 {
+				t.Errorf("%d writes are recorded", n)
+			}
+		})
+	}
+}
+
 // A directory on the way that a person makes in the moment of the write is
 // the person's: a write that fails then does not take it back.
 func TestFilesDirectoryMadeMeanwhile(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root writes everywhere")
 	}
-	for nth, path := range map[int]string{1: "made", 2: "made/deeper"} {
-		t.Run(path, func(t *testing.T) {
+	for _, c := range []struct {
+		step string
+		nth  int
+		path string
+	}{
+		{"making", 1, "notes/made"},
+		{"making", 2, "notes/made/deeper"},
+		{"entering", 3, "notes/made"}, // after what was there was recorded, and before it is made
+	} {
+		t.Run(c.step+" "+c.path, func(t *testing.T) {
 			f := newFilesFixture(t)
-			at := filepath.Join(f.dir, path)
-			done := f.at(t, swap{"making", nth, func(t *testing.T, _ *filesFixture) {
+			put(t, f.dir, "notes/plan.md", "plan")
+			at := filepath.Join(f.dir, c.path)
+			done := f.at(t, swap{c.step, c.nth, func(t *testing.T, _ *filesFixture) {
 				if err := os.Mkdir(at, 0o500); err != nil { // nothing can be written in it
 					t.Error(err)
 				}
 			}})
 			t.Cleanup(func() { os.Chmod(at, 0o700) })
-			ans, err := f.own.Files(context.Background(), writeOf("made/deeper/new.md", "x", ""))
+			ans, err := f.own.Files(context.Background(), writeOf("notes/made/deeper/new.md", "x", ""))
 			if err == nil || !done() {
 				t.Fatalf("answered %+v", ans)
 			}
@@ -1372,6 +1479,42 @@ func TestFilesDirectoryMadeMeanwhile(t *testing.T) {
 				t.Fatalf("%d writes are recorded", n)
 			}
 		})
+	}
+}
+
+// So it is when the write is settled only later, since the daemon's own file
+// could not be removed.
+func TestFilesDirectoryMadeMeanwhileLater(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes everywhere")
+	}
+	f := newFilesFixture(t)
+	at, deeper := filepath.Join(f.dir, "made"), filepath.Join(f.dir, "made/deeper")
+	f.files.Hook = func(step string) {
+		switch step {
+		case "making":
+			os.Mkdir(at, 0o700)
+		case "written":
+			put(t, f.dir, "made/deeper/new.md", "a person's")
+			if err := os.Chmod(deeper, 0o500); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+	t.Cleanup(func() { os.Chmod(deeper, 0o700) })
+	ans := do(t, f.own, writeOf("made/deeper/new.md", "new", ""))
+	if ans.Refused == "" || f.recorded(t) != 1 || len(ownFiles(t, f.dir)) != 1 {
+		t.Fatalf("answered %+v; own files %v, %d recorded", ans, ownFiles(t, f.dir), f.recorded(t))
+	}
+	f.files.Hook = nil
+	if err := errors.Join(os.Chmod(deeper, 0o700), os.Remove(filepath.Join(deeper, "new.md")), f.files.Sweep(context.Background())); err != nil {
+		t.Fatal(err)
+	}
+	if own := f.tree(t); f.recorded(t) != 0 || strings.Contains(own, "deeper") || strings.Contains(own, tmpPrefix) {
+		t.Errorf("%d recorded; there is\n%s", f.recorded(t), own)
+	}
+	if st, err := os.Stat(at); err != nil || !st.IsDir() {
+		t.Errorf("the person's directory: %v", err)
 	}
 }
 
@@ -1581,27 +1724,36 @@ func TestFilesSweepRemovesItsOwnOnly(t *testing.T) {
 
 // Of a write that the daemon died in, with nothing of its own left, only
 // what it was to replace tells whether it was made. It is told of when that
-// is not there any more, whoever changed it.
+// is not there any more, whoever changed it. With its own file left it was
+// not made, where it was to replace one; where it was to make one, and
+// another is there, that one may have taken its place.
 func TestFilesSweepTellsWhenInDoubt(t *testing.T) {
 	const at = "AGENTS.md"
+	person := func(t *testing.T, f *filesFixture) { put(t, f.dir, at, "a person's") }
 	for _, c := range []struct {
 		name, was string
 		there     func(t *testing.T, f *filesFixture)
 		told      bool
+		own       string // "whole" or "half" for its own file; "" for none
 	}{
-		{"what it was to replace", "old", func(t *testing.T, f *filesFixture) { put(t, f.dir, at, "old") }, false},
-		{"what it wrote", "old", func(t *testing.T, f *filesFixture) { put(t, f.dir, at, "new") }, true},
-		{"another text", "old", func(t *testing.T, f *filesFixture) { put(t, f.dir, at, "a person's") }, true},
-		{"nothing any more", "old", func(*testing.T, *filesFixture) {}, true},
-		{"no text", "old", func(t *testing.T, f *filesFixture) { put(t, f.dir, at, "\xff") }, true},
+		{"its own file, and another text", "old", person, false, "whole"},
+		{"its own file, and nothing any more", "old", func(*testing.T, *filesFixture) {}, false, "whole"},
+		{"its own file, and nothing, of a new file", "", func(*testing.T, *filesFixture) {}, false, "whole"},
+		{"its own file, and another's, of a new file", "", person, true, "whole"},
+		{"its own file, not whole, and another's, of a new file", "", person, false, "half"},
+		{"what it was to replace", "old", func(t *testing.T, f *filesFixture) { put(t, f.dir, at, "old") }, false, ""},
+		{"what it wrote", "old", func(t *testing.T, f *filesFixture) { put(t, f.dir, at, "new") }, true, ""},
+		{"another text", "old", person, true, ""},
+		{"nothing any more", "old", func(*testing.T, *filesFixture) {}, true, ""},
+		{"no text", "old", func(t *testing.T, f *filesFixture) { put(t, f.dir, at, "\xff") }, true, ""},
 		{"no file", "old", func(t *testing.T, f *filesFixture) {
 			if err := syscall.Mkfifo(filepath.Join(f.dir, at), 0o600); err != nil {
 				t.Fatal(err)
 			}
-		}, true},
-		{"nothing, of a new file", "", func(*testing.T, *filesFixture) {}, false},
-		{"a new file", "", func(t *testing.T, f *filesFixture) { put(t, f.dir, at, "new") }, true},
-		{"a file, another's", "", func(t *testing.T, f *filesFixture) { put(t, f.dir, at, "a person's") }, true},
+		}, true, ""},
+		{"nothing, of a new file", "", func(*testing.T, *filesFixture) {}, false, ""},
+		{"a new file", "", func(t *testing.T, f *filesFixture) { put(t, f.dir, at, "new") }, true, ""},
+		{"a file, another's", "", person, true, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -1614,6 +1766,14 @@ func TestFilesSweepTellsWhenInDoubt(t *testing.T) {
 			f.sql(t, fmt.Sprintf(`INSERT INTO supervisor_writes (scope, thread, dir, path, tmp, was, version, there, pos) VALUES ('c1', %d, '%s', '%s', '.hataori-1', '%s', '%s', 0, 0)`,
 				filesConv, f.dir, at, was, versionOf("new")))
 			before := f.tree(t)
+			if c.own != "" {
+				put(t, f.dir, ".hataori-1", "new")
+			}
+			if c.own == "half" {
+				if err := os.Chmod(filepath.Join(f.dir, ".hataori-1"), 0); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if err := f.files.Sweep(ctx); err != nil {
 				t.Fatal(err)
 			}
@@ -1683,6 +1843,11 @@ func TestFilesLineOfMore(t *testing.T) {
 		t.Fatalf("%d recorded", n)
 	}
 	tell(nil)
+	made(t, f.conv, writeOf("USER.md", "x", "")) // as one that was not settled before
+	tell(nil, both("USER.md")...)
+	if n := f.recorded(t); n != 0 {
+		t.Fatalf("%d recorded", n)
+	}
 }
 
 // A turn's end names the user's files that its thread wrote before it, once
@@ -1747,31 +1912,39 @@ func TestFilesOfATurn(t *testing.T) {
 	both := fmt.Sprintf("5@5 %s+%s, 8@6 %s, 5@7 %s", first, last, UserFiles[1], UserFiles[1])
 	untold("c1", both)
 	untold("c2", "20@6 "+first)
-	for _, other := range []FilesTurn{{Thread: filesOwn, Pos: 6}, {Thread: filesConv, Pos: 5}, {Thread: filesOther, Pos: 6}} {
-		if err := f.files.Named(ctx, "c1", other); err != nil { // none of these
+	named := func(thread control.ThreadID, pos uint64, names ...string) {
+		t.Helper()
+		if err := f.files.Named(ctx, "c1", FilesTurn{Thread: thread, Pos: pos, Names: names}); err != nil {
 			t.Fatal(err)
 		}
 	}
+	named(filesOwn, 6, UserFiles...) // none of these
+	named(filesConv, 5, UserFiles...)
+	named(filesOther, 6, UserFiles...)
+	named(filesOwn, 5, UserFiles[1])
 	untold("c1", both)
 	untold("c2", "20@6 "+first)
-	if err := f.files.Named(ctx, "c1", FilesTurn{Thread: filesOwn, Pos: 5}); err != nil {
-		t.Fatal(err)
-	}
+	named(filesOwn, 5, last)
+	untold("c1", fmt.Sprintf("5@5 %s, 8@6 %s, 5@7 %s", first, UserFiles[1], UserFiles[1]))
+	named(filesOwn, 5, first)
 	untold("c1", fmt.Sprintf("8@6 %s, 5@7 %s", UserFiles[1], UserFiles[1]))
 	ended("c1", filesOwn, 20)
 	untold("c1", fmt.Sprintf("8@6 %s, 5@7 %s", UserFiles[1], UserFiles[1])) // not again
 	ended("c3", filesOwn, 20)                                               // no such scope
 	untold("c3", "")
-	// A write that is not settled is none yet, and told of once it is.
+	// A write that is not settled is none yet, and told of once it is, with
+	// the turn that made it.
 	f.sql(t, fmt.Sprintf(`INSERT INTO supervisor_writes (scope, thread, dir, path, tmp, was, version, there, pos) VALUES ('c1', %d, '%s', '%s', '.hataori-1', '', '%s', 0, 0)`,
 		filesOwn, f.dir, first, versionOf("1")))
 	ended("c1", filesOwn, 21)
 	untold("c1", fmt.Sprintf("8@6 %s, 5@7 %s", UserFiles[1], UserFiles[1]))
+	named(filesOwn, 21, append([]string{""}, UserFiles...)...)
 	if err := f.files.Sweep(ctx); err != nil {
 		t.Fatal(err)
 	}
+	untold("c1", fmt.Sprintf("8@6 %s, 5@7 %s, 5@21 %s", UserFiles[1], UserFiles[1], first))
 	ended("c1", filesOwn, 22)
-	untold("c1", fmt.Sprintf("8@6 %s, 5@7 %s, 5@22 %s", UserFiles[1], UserFiles[1], first))
+	untold("c1", fmt.Sprintf("8@6 %s, 5@7 %s, 5@21 %s", UserFiles[1], UserFiles[1], first))
 }
 
 // The end of a turn waits for the write that is being made, which is one of

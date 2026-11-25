@@ -25,10 +25,13 @@ func aclOf(fh *os.File) (string, error) {
 }
 
 // setACL gives fh acl, or takes the one it has for "".
-func setACL(fh *os.File, acl string) {
+func setACL(fh *os.File, acl string) error {
 	if acl == "" {
-		unix.Fremovexattr(int(fh.Fd()), xattrACL)
-		return
+		err := unix.Fremovexattr(int(fh.Fd()), xattrACL)
+		if errors.Is(err, unix.ENODATA) || errors.Is(err, unix.ENOTSUP) {
+			return nil // it has none
+		}
+		return err
 	}
-	unix.Fsetxattr(int(fh.Fd()), xattrACL, []byte(acl), 0)
+	return unix.Fsetxattr(int(fh.Fd()), xattrACL, []byte(acl), 0)
 }

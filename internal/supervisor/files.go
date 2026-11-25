@@ -294,8 +294,8 @@ type found struct {
 // is given that one's, whole: a write changes the text and nothing else.
 type access struct {
 	uid, gid int
-	perm     fs.FileMode
-	acl      string // the access control list, where the system has one of it; "" for none
+	perm     fs.FileMode // with the bits that run it as another, which give does not give
+	acl      string      // the access control list, where the system has one of it; "" for none
 }
 
 // accessOf is the access of fh.
@@ -308,23 +308,32 @@ func accessOf(fh *os.File) (access, error) {
 	if err != nil {
 		return access{}, err
 	}
-	a := access{perm: st.Mode().Perm(), acl: acl}
+	a := access{perm: st.Mode() & (fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky), acl: acl}
 	if sys, ok := st.Sys().(*syscall.Stat_t); ok {
 		a.uid, a.gid = int(sys.Uid), int(sys.Gid)
 	}
 	return a, nil
 }
 
-// give gives fh, which the daemon made, the access a, or refuses.
+// give gives fh, which the daemon made and nobody may read or write yet, the
+// access a, or refuses. Its permissions come last: as long as it is another's
+// it stays closed to everyone.
 func (a access) give(fh *os.File) error {
-	// What fails here is seen in what it has then.
-	if now, err := accessOf(fh); err == nil && (now.uid != a.uid || now.gid != a.gid) {
-		fh.Chown(a.uid, a.gid)
+	now, err := accessOf(fh)
+	if err == nil && (now.uid != a.uid || now.gid != a.gid) {
+		err = fh.Chown(a.uid, a.gid)
 	}
-	setACL(fh, a.acl)
-	fh.Chmod(a.perm)
-	if now, err := accessOf(fh); err != nil || now != a {
-		return refusal("a file whose owner, group or access list the daemon cannot keep")
+	if err == nil {
+		err = setACL(fh, a.acl)
+	}
+	if err == nil {
+		err = fh.Chmod(a.perm.Perm())
+	}
+	if err == nil {
+		now, err = accessOf(fh)
+	}
+	if err != nil || now != a {
+		return refusal("a file whose owner, group, permissions or access list the daemon cannot keep")
 	}
 	return nil
 }
@@ -561,6 +570,8 @@ func (s *ScopeFiles) write(ctx context.Context, scope string, thread control.Thr
 	left, err := s.place(dir, root, &w, next, as)
 	if left == nil {
 		left = s.finish(ctx, root, id, w, err == nil)
+	} else {
+		left = errors.Join(left, s.amend(ctx, id, w))
 	}
 	if left != nil { // the next write does it, or the next start
 		s.Log.Error("a supervisor's write is not settled", "scope", scope, "err", left)
@@ -733,6 +744,15 @@ type placing struct {
 
 func (w placing) parts() []string { return strings.Split(w.path, "/") }
 
+// own is the path of the daemon's own file.
+func (w placing) own() string {
+	parts := w.parts()
+	parts[len(parts)-1] = w.tmp
+	return strings.Join(parts, "/")
+}
+
+const notItsOwn = "what has the name of the daemon's own file is none of its: it stays"
+
 // there is how many of the directories on the way of parts are in root.
 func (s *ScopeFiles) there(root *os.Root, parts []string) (int, error) {
 	last := len(parts) - 1
@@ -757,6 +777,7 @@ func (s *ScopeFiles) place(dir string, root *os.Root, w *placing, text string, a
 		return nil, err
 	}
 	defer func() { parent.Close() }()
+	w.there = max(w.there, last-len(missing))
 	for i, p := range missing {
 		s.step("making")
 		if err := parent.Mkdir(p, 0o700); errors.Is(err, fs.ErrExist) {
@@ -772,12 +793,20 @@ func (s *ScopeFiles) place(dir string, root *os.Root, w *placing, text string, a
 		parent.Close()
 		parent = next
 	}
-	made, err := s.writeNew(parent, w.tmp, text, as)
-	if made {
+	own, err := s.writeNew(parent, w.tmp, text, as)
+	if own != nil {
 		// Also where the path no longer leads to it. Nothing has this name
 		// once it was renamed.
 		defer func() {
-			if err := parent.Remove(w.tmp); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			at, err := parent.Lstat(w.tmp)
+			if err == nil && !os.SameFile(own, at) {
+				s.Log.Warn(notItsOwn, "path", w.own())
+				return
+			}
+			if err == nil {
+				err = parent.Remove(w.tmp)
+			}
+			if err != nil && !errors.Is(err, fs.ErrNotExist) {
 				left = fault("removing the daemon's own file", err)
 			}
 		}()
@@ -786,11 +815,11 @@ func (s *ScopeFiles) place(dir string, root *os.Root, w *placing, text string, a
 		return nil, err
 	}
 	s.step("written")
-	return nil, s.name(dir, root, parent, *w, as)
+	return nil, s.name(dir, root, parent, *w, own, as)
 }
 
-// name gives what place wrote to parent the name of the file.
-func (s *ScopeFiles) name(dir string, root, parent *os.Root, w placing, as *access) error {
+// name gives own, which place wrote to parent, the name of the file.
+func (s *ScopeFiles) name(dir string, root, parent *os.Root, w placing, own fs.FileInfo, as *access) error {
 	parts := w.parts()
 	last := len(parts) - 1
 	// What the path names now is looked up from its beginning again: what
@@ -811,6 +840,9 @@ func (s *ScopeFiles) name(dir string, root, parent *os.Root, w placing, as *acce
 	defer there.Close()
 	if len(missing) > 0 || !sameDir(parent, there) {
 		return errMeanwhile
+	}
+	if at, err := parent.Lstat(w.tmp); err != nil || !os.SameFile(own, at) {
+		return errMeanwhile // someone else took it away, or put another there
 	}
 	cur, err := s.look(parent, parts[last], w.path)
 	if err != nil {
@@ -842,16 +874,18 @@ func (s *ScopeFiles) name(dir string, root, parent *os.Root, w placing, as *acce
 }
 
 // writeNew makes the file name in dir with text and the access as, the
-// daemon's own user's only for nil, and syncs it. made: it is there, whole
-// or not. Until it is whole nobody may read or write it, which is how
-// ownFile knows it.
-func (s *ScopeFiles) writeNew(dir *os.Root, name, text string, as *access) (made bool, err error) {
+// daemon's own user's only for nil, and syncs it. own is that file, whole or
+// not; nil for none. Until it is whole nobody may read or write it, which is
+// how ownFile knows it.
+func (s *ScopeFiles) writeNew(dir *os.Root, name, text string, as *access) (own fs.FileInfo, err error) {
 	fh, err := dir.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0)
 	if err != nil {
-		return false, fault("writing the file", err)
+		return nil, fault("writing the file", err)
 	}
 	s.step("made")
-	_, err = fh.WriteString(text)
+	if own, err = fh.Stat(); err == nil {
+		_, err = fh.WriteString(text)
+	}
 	if err == nil {
 		err = fh.Sync()
 	}
@@ -869,9 +903,9 @@ func (s *ScopeFiles) writeNew(dir *os.Root, name, text string, as *access) (made
 		err = cerr
 	}
 	if err != nil {
-		return true, fault("writing the file", err)
+		return own, fault("writing the file", err)
 	}
-	return true, nil
+	return own, nil
 }
 
 // syncDir syncs dir, so that a write that was answered outlives the host.
@@ -939,6 +973,19 @@ func (s *ScopeFiles) record(ctx context.Context, scope string, thread control.Th
 	return id, nil
 }
 
+// amend records what place found of the directories on the way of w, for when
+// the write id, which left something behind, is settled.
+func (s *ScopeFiles) amend(ctx context.Context, id int64, w placing) error {
+	err := s.Store.Update(ctx, func(tx *store.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE supervisor_writes SET there = ? WHERE id = ?`, w.there, id)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("recording the write: %w", err)
+	}
+	return nil
+}
+
 // settle finds out, for each write in dir, opened as root, that is not
 // recorded as done, whether it was made, and takes back what is left of it
 // when it was not: those that a daemon died in, and any that could not be
@@ -982,9 +1029,10 @@ func (s *ScopeFiles) settle(ctx context.Context, dir string, root *os.Root) erro
 // reports whether w was made, by what is there. That file is gone once w
 // replaced a file, and a second name of the new one once w made it; without
 // it, w was made unless what it was to replace is still there. That tells
-// nothing of a write whose file someone changed since: it counts as made,
-// so that one of the user's files is named once too often rather than not
-// at all.
+// nothing of a write whose file someone changed since, and as little does
+// its own file beside another where there was none: it counts as made, so
+// that one of the user's files is named once too often rather than not at
+// all.
 func (s *ScopeFiles) clear(root *os.Root, w placing) (made bool, err error) {
 	parts := w.parts()
 	last := len(parts) - 1
@@ -1004,15 +1052,16 @@ func (s *ScopeFiles) clear(root *os.Root, w placing) (made bool, err error) {
 	switch {
 	case err == nil:
 		at, err := parent.Lstat(parts[last])
-		made := err == nil && os.SameFile(tmp, at)
-		if !s.ownFile(parent, tmp, w, made) {
-			s.Log.Warn("what has the name of the daemon's own file is none of its: it stays", "path", strings.Join(append(parts[:last:last], w.tmp), "/"))
+		placed := err == nil && os.SameFile(tmp, at)
+		if !s.ownFile(parent, tmp, w, placed) {
+			s.Log.Warn(notItsOwn, "path", w.own())
 			break
 		}
 		if err := parent.Remove(w.tmp); err != nil {
 			return false, fault("removing the daemon's own file", err)
 		}
-		return made, nil
+		replaced := w.was == "" && err == nil && tmp.Mode().Perm() != 0
+		return placed || replaced, nil
 	case !errors.Is(err, fs.ErrNotExist):
 		return false, fault("looking at the daemon's own file", err)
 	}
@@ -1116,12 +1165,11 @@ type FilesTurn struct {
 	Thread control.ThreadID
 	Pos    uint64   // of the event that ended it
 	Names  []string // in the order of UserFiles
-	Last   int64    // the number of its last write of them
 }
 
 // Ended has the user's files that thread, a supervisor's of scope, wrote
 // before its turn's end at pos told with that end. A write that is still
-// being made is waited for.
+// being made is waited for; one that is not settled is told of once it is.
 func (s *ScopeFiles) Ended(ctx context.Context, scope string, thread control.ThreadID, pos uint64) error {
 	var dir string
 	err := s.Store.DB.QueryRowContext(ctx, `SELECT dir FROM supervisor_dirs WHERE scope = ?`, scope).Scan(&dir)
@@ -1131,7 +1179,7 @@ func (s *ScopeFiles) Ended(ctx context.Context, scope string, thread control.Thr
 	if err == nil {
 		defer s.locks.lock(dir)()
 		err = s.Store.Update(ctx, func(tx *store.Tx) error {
-			_, err := tx.ExecContext(ctx, `UPDATE supervisor_writes SET told = ?1 WHERE scope = ?2 AND thread = ?3 AND done = 1 AND told = 0 AND pos < ?1`,
+			_, err := tx.ExecContext(ctx, `UPDATE supervisor_writes SET told = ?1 WHERE scope = ?2 AND thread = ?3 AND told = 0 AND pos < ?1`,
 				int64(pos), scope, int64(thread))
 			return err
 		})
@@ -1145,7 +1193,7 @@ func (s *ScopeFiles) Ended(ctx context.Context, scope string, thread control.Thr
 // Untold are the turns of scope's supervisor threads that ended (Ended) and
 // whose files were not said to be named (Named).
 func (s *ScopeFiles) Untold(ctx context.Context, scope string) ([]FilesTurn, error) {
-	rows, err := s.Store.DB.QueryContext(ctx, `SELECT thread, told, name, max(id) FROM supervisor_writes WHERE scope = ? AND told > 0 GROUP BY told, thread, name ORDER BY told, thread`, scope)
+	rows, err := s.Store.DB.QueryContext(ctx, `SELECT DISTINCT thread, told, name FROM supervisor_writes WHERE scope = ? AND done = 1 AND told > 0 ORDER BY told, thread`, scope)
 	if err != nil {
 		return nil, fmt.Errorf("supervisor: the user's files that a turn wrote: %w", err)
 	}
@@ -1153,10 +1201,10 @@ func (s *ScopeFiles) Untold(ctx context.Context, scope string) ([]FilesTurn, err
 	var turns []FilesTurn
 	for rows.Next() {
 		var (
-			thread, pos, id int64
-			name            string
+			thread, pos int64
+			name        string
 		)
-		if err := rows.Scan(&thread, &pos, &name, &id); err != nil {
+		if err := rows.Scan(&thread, &pos, &name); err != nil {
 			return nil, fmt.Errorf("supervisor: the user's files that a turn wrote: %w", err)
 		}
 		t := FilesTurn{Thread: control.ThreadID(thread), Pos: uint64(pos)}
@@ -1164,7 +1212,7 @@ func (s *ScopeFiles) Untold(ctx context.Context, scope string) ([]FilesTurn, err
 			turns = append(turns, t)
 		}
 		last := &turns[len(turns)-1]
-		last.Names, last.Last = append(last.Names, name), max(last.Last, id)
+		last.Names = append(last.Names, name)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("supervisor: the user's files that a turn wrote: %w", err)
@@ -1177,11 +1225,17 @@ func (s *ScopeFiles) Untold(ctx context.Context, scope string) ([]FilesTurn, err
 	return turns, nil
 }
 
-// Named forgets what t's turn wrote: the lines that name it were posted.
+// Named forgets what t names of its turn: the lines that name it were posted.
 func (s *ScopeFiles) Named(ctx context.Context, scope string, t FilesTurn) error {
 	err := s.Store.Update(ctx, func(tx *store.Tx) error {
-		_, err := tx.ExecContext(ctx, `DELETE FROM supervisor_writes WHERE scope = ? AND thread = ? AND told = ?`, scope, int64(t.Thread), int64(t.Pos))
-		return err
+		for _, name := range t.Names {
+			_, err := tx.ExecContext(ctx, `DELETE FROM supervisor_writes WHERE scope = ? AND thread = ? AND told = ? AND done = 1 AND name = ?`,
+				scope, int64(t.Thread), int64(t.Pos), name)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("supervisor: the user's files that a turn wrote: %w", err)
