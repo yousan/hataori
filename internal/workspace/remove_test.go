@@ -1033,9 +1033,10 @@ func TestRefuseRepositoryInRefs(t *testing.T) {
 	}
 }
 
-// A repository whose files are all lines of a reflog, one of which says where
+// A repository whose files all start as a reflog does, one of which says where
 // its objects are.
 func TestRefuseRepositoryOfReflogs(t *testing.T) {
+	zero := strings.Repeat("0", 40)
 	for name, want := range map[string]Reason{"commondir": UnpushedRef, "objects/info/alternates": DetachedHEAD} {
 		t.Run(name, func(t *testing.T) {
 			x := newRemoval(t)
@@ -1045,29 +1046,54 @@ func TestRefuseRepositoryOfReflogs(t *testing.T) {
 			id := x.git(x.clone, "commit-tree", "-m", "w", "HEAD^{tree}")
 			x.git(x.clone, "push", "-q", store, id+":refs/heads/wip")
 			os.Remove(filepath.Join(store, "HEAD")) // nothing but objects to look at
-			zero := strings.Repeat("0", 40)
 			line := id + " " + zero + " x"
 			file := filepath.Join(n, filepath.FromSlash(name))
-			for _, d := range []string{filepath.Dir(file), filepath.Join(n, "objects", line), filepath.Join(n, "refs"), filepath.Join(n, line)} {
-				if err := os.MkdirAll(d, 0o700); err != nil {
+			to := line + "\n../../../store/objects" // from n/objects
+			if name == "commondir" {
+				to = line + "/../../../store" // from n
+				if err := os.MkdirAll(filepath.Join(n, line), 0o700); err != nil {
 					t.Fatal(err)
 				}
 			}
-			to := line + "/../../../store" // from n
-			if name != "commondir" {
-				to = line + "/../../../../store/objects" // from n/objects
+			for _, d := range []string{filepath.Dir(file), filepath.Join(n, "objects"), filepath.Join(n, "refs")} {
+				if err := os.MkdirAll(d, 0o700); err != nil {
+					t.Fatal(err)
+				}
 			}
 			for p, content := range map[string]string{filepath.Join(n, "HEAD"): line + "\n", file: to + "\n"} {
 				if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if got := x.git(n, "rev-parse", "HEAD^{commit}"); got != id {
+			if got := x.git(n, "rev-parse", "HEAD^{commit}"); !strings.HasSuffix(got, id) {
 				t.Fatalf("the repository is at %s, not at %s", got, id)
 			}
 			os.Remove(filepath.Join(dir, "objects", id[:2], id[2:]))
 			wantRefusal(t, x.check(), want, filepath.Join(".git", "logs", "n"))
 		})
+	}
+}
+
+// The refs of a git directory that has them elsewhere, or in no files.
+func TestRefuseFilesInRefsThatGitDoesNotUse(t *testing.T) {
+	for _, name := range []string{"reftable", "commondir"} {
+		x := newRemoval(t)
+		n := filepath.Join(x.clone, ".git", "n")
+		x.git(x.tmp, "clone", "-q", "--bare", x.bare, n)
+		d := filepath.Join(n, "refs", "n")
+		os.MkdirAll(filepath.Join(d, "objects"), 0o700)
+		os.MkdirAll(filepath.Join(n, name), 0o700)
+		if err := os.WriteFile(filepath.Join(d, "HEAD"), []byte("ref: refs/heads/main\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		c := &checker{ctx: context.Background(), top: x.clone}
+		if c.onlyRefs(n, d) {
+			t.Fatalf("with a %s", name)
+		}
+		os.Remove(filepath.Join(n, name))
+		if !c.onlyRefs(n, d) {
+			t.Fatalf("with no %s", name)
+		}
 	}
 }
 
@@ -1081,6 +1107,7 @@ func TestRefuseRefsThatGitDoesNotRead(t *testing.T) {
 		"refs/.n/m": ref, "refs/.n/x/m": ref, "refs/n/.m": ref, "refs/n/m.lock": ref, "refs/n/..m": ref, "refs/n/m.": ref, "refs/n/@{m": ref,
 		"refs/n/m ": ref, "refs/n/m\t": ref, "refs/n/m\\": ref, "logs/.n/m": log, "hooks/n/m": ref,
 		"refs/n/m": "ref: refs/remotes/origin/main\n" + ref,
+		"refs/n/l": "ref: refs/" + strings.Repeat("l", 4096) + "\n" + ref, "refs/n/commondir": ref, "refs/n/objects/info/alternates": ref,
 	} {
 		d := filepath.Dir(filepath.Join(git, filepath.FromSlash(p)))
 		if err := os.MkdirAll(filepath.Join(d, "objects"), 0o700); err != nil {

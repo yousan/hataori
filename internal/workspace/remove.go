@@ -864,10 +864,15 @@ func isGitDir(p string) bool {
 // onlyRefs reports whether p, in the git directory in, is below its refs or
 // logs and holds nothing but refs or reflogs, as refs/remotes/origin does of a
 // remote that has a branch objects/x, beside the remote's HEAD. No file of it
-// is an object, and git reads each: none has a name that no ref may have.
-// Nor does one lead to objects elsewhere, as a commondir does: what it holds is
-// no path that git resolves without a directory of such a name.
+// is an object, or says where objects are, and git reads each as a ref or
+// reflog of in: none has a name that no ref may have, and in has its refs in
+// files, and is no worktree's, whose refs are elsewhere.
 func (c *checker) onlyRefs(in, p string) bool {
+	for _, name := range []string{"reftable", "commondir"} {
+		if _, err := os.Lstat(filepath.Join(in, name)); !errors.Is(err, fs.ErrNotExist) {
+			return false
+		}
+	}
 	holds := refFile
 	switch {
 	case within(p, filepath.Join(in, "refs")):
@@ -887,7 +892,7 @@ func (c *checker) onlyRefs(in, p string) bool {
 		if err != nil {
 			return err
 		}
-		if noRefName(d.Name()) || !d.IsDir() && !d.Type().IsRegular() {
+		if noRefName(d.Name()) || d.Name() == "commondir" || d.Name() == "alternates" || !d.IsDir() && !d.Type().IsRegular() {
 			return errors.New("neither a ref nor a reflog")
 		}
 		if d.IsDir() {
@@ -917,7 +922,7 @@ func noRefName(name string) bool {
 // refFile is all that the file of a ref holds. reflogStart is how a reflog
 // starts, which may be empty.
 var (
-	refFile     = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64}|ref: refs/[^\n]*)\n?$`)
+	refFile     = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64}|ref: refs/[^\n]{0,999})\n?$`)
 	reflogStart = regexp.MustCompile(`^($|([0-9a-f]{40} [0-9a-f]{40}|[0-9a-f]{64} [0-9a-f]{64}) )`)
 )
 
