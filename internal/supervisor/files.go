@@ -140,9 +140,6 @@ func (s *ScopeFiles) dir(ctx context.Context, scope string, thread control.Threa
 	if err != nil {
 		return "", fmt.Errorf("the supervisor's directory: %w", err)
 	}
-	if thread == 0 {
-		return dir, nil // a test's token, of no thread
-	}
 	var own string
 	err = s.Store.DB.QueryRowContext(ctx, `SELECT workspace FROM threads WHERE id = ? AND scope = ?`, int64(thread), scope).Scan(&own)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
