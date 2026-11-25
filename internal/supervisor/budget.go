@@ -30,7 +30,7 @@ type Used struct {
 	Day    time.Time // the start of the current day, in the zone
 	Turns  int       // turn_started events of the scope's supervisor threads this hour
 	Sends  int       // sends and starts of the supervisor's caller this hour
-	Tokens int64     // tokens of the scope's supervisor threads today
+	Tokens int64     // tokens of the scope's supervisor threads today, weighted
 }
 
 // Budget bounds what one scope's supervisor costs. It counts from the
@@ -45,9 +45,10 @@ type Used struct {
 //     and each proposal it made (proposal_made), once: the events of the
 //     call its approval made name the Via of a proposal, and are left out;
 //     and each reminder it set (#649);
-//   - tokens: from the usage events of the scope's supervisor threads, by
-//     the rule of a thread's Tokens.Today: each report adds what it raises
-//     its turn's total by, counted in the day it came.
+//   - tokens: from the usage events of the scope's supervisor threads: each
+//     report adds what it raises its turn's total by, counted in the day it
+//     came, as a thread's Tokens.Today; but a token read from the cache
+//     counts a tenth (cacheReadPart).
 //
 // Hours and days are those of the clock in Zone. Used up is any limit
 // reached; then the waker is held until the windows of every limit
@@ -135,6 +136,14 @@ func (b *Budget) Used(ctx context.Context) (Used, error) {
 	return u, nil
 }
 
+// cacheReadPart is how many tokens read from the cache count as one token
+// in the budget, for every agent. A cache read is what a provider charges
+// least for, about a tenth of an input token's price; it is nearly all of a
+// turn that makes many requests, since each of them reads the conversation
+// again. Counted in full it would use up the day's tokens with the turn's
+// cheapest part.
+const cacheReadPart = 10
+
 // tokens counts the tokens of the scope's supervisor threads in the day
 // that starts at day: the usage events of each turn that reported in it,
 // in order, each adding what raises the turn's highest total so far, when
@@ -169,7 +178,7 @@ func (b *Budget) tokens(ctx context.Context, day time.Time) (int64, error) {
 			CacheWrite int64 `json:"cache_write"`
 		}
 		json.Unmarshal(data, &c) // the store checked it against the schema
-		total := c.Input + c.Output + c.CacheRead + c.CacheWrite
+		total := c.Input + c.CacheWrite + c.Output + c.CacheRead/cacheReadPart
 		before := highest[turn]
 		if total > before {
 			highest[turn] = total
