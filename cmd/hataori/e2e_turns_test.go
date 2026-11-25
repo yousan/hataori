@@ -254,6 +254,12 @@ func TestLoginOutageWithTheFakes(t *testing.T) {
 		}
 		return false
 	})
+	// The outage is of the login the adapter names for a session with no
+	// directory of its own.
+	var dir string
+	if err := r.db(t).QueryRow(`SELECT config_dir FROM login_outages`).Scan(&dir); err != nil || dir != configDir {
+		t.Fatalf("the outage's directory %q (%v), want %q", dir, err, configDir)
+	}
 	r.driver.InjectDirect(e2eOwner, code)
 	for _, th := range []surface.Conversation{a, b} {
 		r.posted(t, th, "The agent is logged in again. Send your last message again to go on.")

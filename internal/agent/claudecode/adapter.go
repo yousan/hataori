@@ -241,12 +241,16 @@ var _ agent.LoginDirs = (*Adapter)(nil)
 // Observed with 2.1.331 on Linux: the CLI reads the same login from
 // ~/.claude whether or not CLAUDE_CONFIG_DIR names it. On macOS, where it
 // keeps the login in the keychain, that was not observed, so there the two
-// are told apart: a login in one is never taken for one in the other.
+// are told apart, and so are two spellings of one directory: a login in one
+// is never taken for one in the other.
 func (a *Adapter) LoginDir(spec agent.Spec) string {
 	if spec.ConfigDir == "" {
 		return ""
 	}
-	dir := filepath.Clean(spec.ConfigDir)
+	clean := filepath.Clean
+	if runtime.GOOS == "darwin" {
+		clean = func(p string) string { return p }
+	}
 	var home, own string
 	for _, kv := range a.baseEnv() {
 		if v, ok := strings.CutPrefix(kv, "HOME="); ok {
@@ -259,10 +263,10 @@ func (a *Adapter) LoginDir(spec agent.Spec) string {
 	if own == "" && home != "" && runtime.GOOS != "darwin" {
 		own = filepath.Join(home, ".claude")
 	}
-	if own != "" && filepath.Clean(own) == dir {
+	if own != "" && clean(own) == clean(spec.ConfigDir) {
 		return ""
 	}
-	return dir
+	return clean(spec.ConfigDir)
 }
 
 // baseEnv is the environment without the hooks' variable: the fixed list,

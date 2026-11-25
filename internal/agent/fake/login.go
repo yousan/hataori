@@ -57,10 +57,17 @@ func loggedIn(configDir string) bool {
 	return err == nil
 }
 
+var _ agent.LoginDirs = (*Adapter)(nil)
+
+// LoginDir returns the directory that holds the file of the login.
+func (a *Adapter) LoginDir(spec agent.Spec) string {
+	return cmp.Or(spec.ConfigDir, a.c.ConfigDir)
+}
+
 // LoginLaunch runs the fake's login command on pipes, with the config
 // directory sessions use.
 func (a *Adapter) LoginLaunch(spec agent.Spec) (agent.Launch, error) {
-	dir := cmp.Or(spec.ConfigDir, a.c.ConfigDir)
+	dir := a.LoginDir(spec)
 	if dir == "" {
 		return agent.Launch{}, errors.New(Name + ": no config directory to log in to")
 	}

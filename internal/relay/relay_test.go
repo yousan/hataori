@@ -630,6 +630,35 @@ func TestLoginInTheConfigDirOfTheSession(t *testing.T) {
 	}
 }
 
+// A flow asked for with no outage is for the login's open one; one asked for
+// an outage that has closed does not start, since nothing would show its link
+// or end it.
+func TestStartForAnOutageThatClosed(t *testing.T) {
+	f := newFixture(t, fake.Login{Code: goodCode}, 0)
+	f.turn(agent.Failed, agent.Login)
+	first := f.next("the link")
+	// A button from before outages had a login of their own names none.
+	if err := f.relay.Start(context.Background(), "chat:owner", "fake", 0); err != nil {
+		t.Fatal(err)
+	}
+	if u := f.next("the end of the replaced one"); u.Done != Stopped {
+		t.Fatalf("replaced: %+v", u)
+	}
+	if u := f.next("the new link"); u.Link == "" || u.Outage != first.Outage {
+		t.Fatalf("new link %+v, want one for outage %d", u, first.Outage)
+	}
+	f.turn(agent.Completed, "") // someone logged in at the host
+	if u := f.next("the end"); u.Done != Restored {
+		t.Fatalf("result: %+v", u)
+	}
+	if err := f.relay.Start(context.Background(), "chat:owner", "fake", first.Outage); !errors.Is(err, ErrBack) {
+		t.Fatalf("start for an outage that closed: %v, want %v", err, ErrBack)
+	}
+	if n := f.flowCount(); n != 0 {
+		t.Fatalf("%d flows run, want none", n)
+	}
+}
+
 // A login that comes back by itself ends its own flow only.
 func TestOutageClosedElsewhereOfOneDir(t *testing.T) {
 	f := newFixture(t, fake.Login{Code: goodCode}, 0)

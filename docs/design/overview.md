@@ -303,7 +303,7 @@ When an agent's login runs out, every turn fails until someone logs in on the ho
 
 1. The command prints a sign-in link. hataori puts the link into the owner's direct message, with the time until which a code is accepted.
 2. The owner opens the link, signs in, and replies in the direct message with the code the page shows.
-3. hataori writes that reply to the login command and reports the result in the direct message. When several logins wait for a code, it is passed only as a reply to the message of one of them, and goes to that one. Success is the command ending cleanly and the CLI's own status check, in the same config directory, saying it is logged in. On success each stopped thread gets one line: the login is back, send your message again.
+3. hataori writes that reply to the login command and reports the result in the direct message. When several logins wait for a code, it is passed only as a reply to the message of one of them, or to a result of it, and goes to that one. Success is the command ending cleanly and the CLI's own status check, in the same config directory, saying it is logged in. On success each stopped thread gets one line: the login is back, send your message again.
 4. If no code arrives in time, the command is stopped and the message says so. A button on the message starts a fresh login at any time, also after a restart.
 
 The rules:

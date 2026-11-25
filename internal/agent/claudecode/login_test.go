@@ -74,19 +74,20 @@ esac
 // The directory that the daemon's sessions use anyway is no login of its own.
 func TestLoginDir(t *testing.T) {
 	const home = "/home/user"
-	byDefault := "" // of a CLAUDE_CONFIG_DIR that is not set
+	// Of a CLAUDE_CONFIG_DIR that is not set, and of other spellings.
+	byDefault, ownSlash, workSlash := "", "", home+"/.claude-work"
 	if runtime.GOOS == "darwin" {
-		byDefault = home + "/.claude"
+		byDefault, ownSlash, workSlash = home+"/.claude", "/srv/claude-config/", home+"/.claude-work/"
 	}
 	for _, c := range []struct{ own, dir, want string }{
 		{"", "", ""},
 		{"/srv/claude-config", "", ""},
 		{"/srv/claude-config", "/srv/claude-config", ""},
-		{"/srv/claude-config", "/srv/claude-config/", ""},
+		{"/srv/claude-config", "/srv/claude-config/", ownSlash},
 		{"/srv/claude-config", home + "/.claude", home + "/.claude"},
 		{"", home + "/.claude", byDefault},
 		{"", home + "/.claude-work", home + "/.claude-work"},
-		{"", home + "/.claude-work/", home + "/.claude-work"},
+		{"", home + "/.claude-work/", workSlash},
 	} {
 		a := newAdapter(t, "")
 		a.environ = func() []string {
@@ -99,6 +100,14 @@ func TestLoginDir(t *testing.T) {
 		if got := agent.LoginDir(a, agent.Spec{ConfigDir: c.dir}); got != c.want {
 			t.Errorf("CLAUDE_CONFIG_DIR %q, session's %q: login of %q, want %q", c.own, c.dir, got, c.want)
 		}
+	}
+}
+
+// A relative directory is another one here than where the session ran.
+func TestLoginOfARelativeConfigDirIsRefused(t *testing.T) {
+	a := newAdapter(t, "")
+	if l, err := a.LoginLaunch(agent.Spec{ConfigDir: ".claude-work"}); err == nil || !strings.Contains(err.Error(), "not an absolute path") {
+		t.Fatalf("login launch %+v, %v", l, err)
 	}
 }
 

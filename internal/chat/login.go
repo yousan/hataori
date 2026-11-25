@@ -41,6 +41,7 @@ const maxListed = 15
 type logins struct {
 	mu    sync.Mutex
 	flows map[loginKey]*loginFlow // what the relay last said
+	about map[string]int64        // by the place of a message about a login (msgPlace): its outage
 	dirty chan struct{}
 }
 
@@ -85,7 +86,7 @@ type loginFlow struct {
 
 func (f *FrontEnd) loginState() *logins {
 	f.loginOnce.Do(func() {
-		f.login = &logins{flows: map[loginKey]*loginFlow{}, dirty: make(chan struct{}, 1)}
+		f.login = &logins{flows: map[loginKey]*loginFlow{}, about: map[string]int64{}, dirty: make(chan struct{}, 1)}
 	})
 	return f.login
 }
@@ -163,24 +164,41 @@ func (f *FrontEnd) postDirect(ctx context.Context, text string) {
 }
 
 // postLogin posts text in the owner's direct conversation, as a reply to the
-// outage's message when it has one: it says which login it is about.
+// outage's message when it has one: it says which login it is about. A code
+// that replies to it is for that login too.
 func (f *FrontEnd) postLogin(ctx context.Context, text string, outage int64) {
 	m := surface.Message{Text: text}
 	os, err := outages(ctx, f.Outbox.Store.DB, f.Name, `AND outage = ?`, outage)
 	if err == nil && len(os) == 1 && os[0].dm.ID != "" {
 		m.ReplyTo = &os[0].dm
 	}
-	f.postOwner(ctx, m)
+	ref, err := f.postOwner(ctx, m)
+	if err != nil && m.ReplyTo != nil { // the outage's message may be gone
+		m.ReplyTo = nil
+		ref, err = f.postOwner(ctx, m)
+	}
+	if err != nil || outage == 0 {
+		return
+	}
+	l := f.loginState()
+	l.mu.Lock()
+	l.about[msgPlace(ref)] = outage
+	l.mu.Unlock()
 }
 
-func (f *FrontEnd) postOwner(ctx context.Context, m surface.Message) {
+// msgPlace identifies a message by what a reply to it names.
+func msgPlace(ref surface.MessageRef) string { return ref.Conv.Channel + "\x00" + ref.ID }
+
+func (f *FrontEnd) postOwner(ctx context.Context, m surface.Message) (surface.MessageRef, error) {
 	conv, err := f.ownerConv(ctx)
+	var ref surface.MessageRef
 	if err == nil {
-		_, err = f.Driver.Post(ctx, conv, "", m)
+		ref, err = f.Driver.Post(ctx, conv, "", m)
 	}
 	if err != nil {
 		f.Log.Warn("chat: the owner could not be reached", "err", err)
 	}
+	return ref, err
 }
 
 // direct handles a direct message: from the owner, a code for the relay.
@@ -192,8 +210,14 @@ func (f *FrontEnd) direct(in surface.Inbound) {
 		return
 	}
 	waiting := f.waitingLogins()
-	var answered int64 // the outage whose message the code replies to
+	// The outage whose message, or a message about whose login, the code
+	// replies to.
+	var answered int64
 	if in.ReplyTo != nil {
+		l := f.loginState()
+		l.mu.Lock()
+		answered = l.about[msgPlace(*in.ReplyTo)]
+		l.mu.Unlock()
 		os, err := outages(f.context(), f.Outbox.Store.DB, f.Name, `AND dm_channel = ? AND dm_ref = ?`, in.ReplyTo.Conv.Channel, in.ReplyTo.ID)
 		if err != nil {
 			f.Log.Error("chat: reading login outages", "err", err)

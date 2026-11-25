@@ -39,6 +39,7 @@ var (
 	ErrForbidden  = errors.New("relay: only the owner may log the agent in")
 	ErrNoLogin    = errors.New("relay: the agent cannot be logged in from here")
 	ErrNotWaiting = errors.New("relay: not waiting for a code")
+	ErrBack       = errors.New("relay: the agent is logged in again")
 	ErrNotACode   = errors.New("relay: a code is one word without spaces")
 )
 
@@ -168,7 +169,7 @@ func (r *Relay) Run(ctx context.Context) error {
 		switch e.Kind {
 		case session.KindLoginLost:
 			if !r.Off && r.Notify != nil {
-				if err := r.start(ctx, l, d.Outage); err != nil && !errors.Is(err, ErrNoLogin) {
+				if err := r.start(ctx, l, d.Outage); err != nil && !errors.Is(err, ErrNoLogin) && !errors.Is(err, ErrBack) {
 					r.Log.Error("login relay", "agent", d.Agent, "err", err)
 				}
 			}
@@ -211,7 +212,8 @@ func (r *Relay) account(ctx context.Context, agentName string, outage int64) (se
 
 // Start starts a new login flow for the login whose outage it is (the
 // agent's own for 0), for from, the "<client>:<id>" of who asks, ending any
-// flow of that login that runs. It is the owner's way to try again.
+// flow of that login that runs. It is the owner's way to try again. ErrBack
+// means that the login is out no more.
 func (r *Relay) Start(ctx context.Context, from, agentName string, outage int64) error {
 	if !r.isOwner(from) {
 		r.Log.Warn("login relay refused", "op", "start", "from", from)
@@ -267,7 +269,8 @@ func (r *Relay) Code(ctx context.Context, from, agentName string, outage int64, 
 	return nil
 }
 
-// start starts a flow for the login: for its open outage, else for outage.
+// start starts a flow for the login: for its open outage, and for none when
+// outage is 0 and none is open.
 func (r *Relay) start(ctx context.Context, account session.Login, outage int64) error {
 	r.startMu.Lock()
 	defer r.startMu.Unlock()
@@ -282,6 +285,19 @@ func (r *Relay) start(ctx context.Context, account session.Login, outage int64) 
 	}
 	if len(l.Argv) == 0 || l.Terminal {
 		return fmt.Errorf("relay: %s: the login command must run on pipes", account.Agent)
+	}
+	var since uint64
+	if err := r.Store.DB.QueryRowContext(ctx, `SELECT coalesce(max(pos), 0) FROM events`).Scan(&since); err != nil {
+		return err
+	}
+	open, err := session.OpenOutage(ctx, r.Store.DB, account)
+	if err != nil {
+		return err
+	}
+	if open == 0 && outage != 0 {
+		// It closed meanwhile: nobody is shown a link for it, and nothing
+		// would end the flow.
+		return ErrBack
 	}
 	r.end(account, Stopped)
 
@@ -312,22 +328,7 @@ func (r *Relay) start(ctx context.Context, account session.Login, outage int64) 
 	cmd.Stdout, cmd.Stderr = pw, pw // the refusal may come on either
 	_, codeErr := lf.LoginCode("")
 	f := &flow{noCode: errors.Is(codeErr, agent.ErrNoCodeBack), account: account, login: lf, adapter: ad, cmd: cmd, stdin: stdin, exited: make(chan struct{}),
-		read: make(chan struct{}), expires: time.Now().Add(r.timeout())}
-	if err := r.Store.DB.QueryRowContext(ctx, `SELECT coalesce(max(pos), 0) FROM events`).Scan(&f.since); err != nil {
-		if guardWrite != nil {
-			guardWrite.Close()
-		}
-		return err
-	}
-	if f.outage, err = session.OpenOutage(ctx, r.Store.DB, account); err != nil {
-		if guardWrite != nil {
-			guardWrite.Close()
-		}
-		return err
-	}
-	if f.outage == 0 {
-		f.outage = outage
-	}
+		read: make(chan struct{}), expires: time.Now().Add(r.timeout()), outage: open, since: since}
 	// The command is started and waited for by one goroutine that keeps its
 	// OS thread: the kernel sends the parent-death signal when the thread
 	// that started the command ends, so it must live as long as the command.

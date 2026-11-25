@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -482,6 +483,19 @@ func TestTwoLoginsOfOneAgent(t *testing.T) {
 	if last.Text != "The code was refused: Invalid code." || last.ReplyTo == nil || *last.ReplyTo != refs[1] {
 		t.Fatalf("refusal %+v", last)
 	}
+	// A code that replies to that is for the same login.
+	answer(posts[len(posts)-1].Ref, "CODE-2B")
+	if _, codes := r.got(); len(codes) != 3 || codes[2] != by+" agent#2 CODE-2B" {
+		t.Fatalf("codes %v", codes)
+	}
+	// It is said without the reply when the login's message is gone.
+	f.driver.Fail(fake.OpPost, 1, errors.New("unknown message"))
+	f.fe.LoginUpdate(relay.Update{Agent: "agent", Outage: 2, Refused: "Invalid code again."})
+	posts, _ = f.dmPosts()
+	last = posts[len(posts)-1].Message
+	if last.Text != "The code was refused: Invalid code again." || last.ReplyTo != nil {
+		t.Fatalf("refusal with the login's message gone %+v", last)
+	}
 
 	// One is back: the other still waits, and takes a bare code again, but
 	// not the code that answers the one that is back.
@@ -497,11 +511,27 @@ func TestTwoLoginsOfOneAgent(t *testing.T) {
 		t.Fatalf("a code for a login that is back: %q", got)
 	}
 	f.fe.Message(f.driver.InjectDirect(owner, "CODE-4"))
-	if _, codes := r.got(); len(codes) != 3 || codes[2] != by+" agent#1 CODE-4" {
+	if _, codes := r.got(); len(codes) != 4 || codes[3] != by+" agent#1 CODE-4" {
 		t.Fatalf("codes %v", codes)
 	}
 
 	// How the other's flow ends is stored for it only.
 	f.fe.LoginUpdate(relay.Update{Agent: "agent", Outage: 1, Done: relay.Expired})
 	waitAlerts("the expiry", func() bool { return strings.Contains(ms[0].Text, "expired") })
+	f.lostIn(t, b, 3, "/home/alice/.agent_third")
+	waitFor(t, "the third alert", func() bool { refs, ms = alerts(); return len(ms) == 3 })
+	f.fe.LoginUpdate(relay.Update{Agent: "agent", Outage: 3, Link: link + "&third", Expires: expires})
+	f.fe.LoginUpdate(relay.Update{Agent: "agent", Outage: 3, Done: relay.Failed, Detail: "no"})
+	for id, want := range map[int]string{1: string(relay.Expired), 3: string(relay.Failed)} {
+		var ended string
+		if err := f.fe.Outbox.Store.DB.QueryRow(`SELECT ended FROM chat_logins WHERE outage = ?`, id).Scan(&ended); err != nil || ended != want {
+			t.Errorf("the end stored for outage %d: %q (%v), want %q", id, ended, err, want)
+		}
+	}
+	// A flow ended by a login elsewhere waits for nothing any more.
+	f.fe.LoginUpdate(relay.Update{Agent: "agent", Outage: 3, Link: link + "&fourth", Expires: expires})
+	f.fe.LoginUpdate(relay.Update{Agent: "agent", Outage: 3, Done: relay.Restored})
+	if l := f.fe.loginState(); l.flows[loginKey{"agent", 3}] != nil {
+		t.Error("the flow of a login that is back is kept")
+	}
 }
