@@ -1742,8 +1742,10 @@ func (c *checker) opened(dir string, walked map[string]bool) (string, error) {
 		f.Close()
 		pack, ok := strings.CutSuffix(p, ".pack")
 		if ok && !strings.HasPrefix(e.Name(), ".tmp-") {
-			if _, err := os.Stat(pack + ".idx"); err != nil {
+			if fi, err := os.Stat(pack + ".idx"); err != nil {
 				return "", c.unreadable(p, err)
+			} else if !fi.Mode().IsRegular() {
+				return "", c.unreadable(p, errors.New("its index is not a file"))
 			}
 		}
 	}

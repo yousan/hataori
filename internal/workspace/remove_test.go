@@ -886,6 +886,19 @@ func TestRefuseReflogOfWhatCannotBeRead(t *testing.T) {
 		"no index": func(t *testing.T, x *removal) {
 			os.Remove(strings.TrimSuffix(onlyInAReflog(x, false), ".pack") + ".idx")
 		},
+		"index that is no file": func(t *testing.T, x *removal) {
+			idx := strings.TrimSuffix(onlyInAReflog(x, false), ".pack") + ".idx"
+			os.Remove(idx)
+			l, err := net.Listen("unix", filepath.Join(x.tmp, "l"))
+			if err != nil {
+				t.Skip(err) // a path too long for a socket
+			}
+			l.(*net.UnixListener).SetUnlinkOnClose(false)
+			l.Close()
+			if err := os.Rename(filepath.Join(x.tmp, "l"), idx); err != nil {
+				t.Fatal(err)
+			}
+		},
 		// On a disk that is not mounted, perhaps.
 		"alternate that is gone": func(t *testing.T, x *removal) {
 			if err := os.WriteFile(filepath.Join(x.clone, ".git", "objects", "info", "alternates"), []byte(filepath.Join(x.tmp, "gone")+"\n"), 0o600); err != nil {
