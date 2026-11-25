@@ -212,6 +212,12 @@ func noPanes(err error) bool {
 	return errors.As(err, &te) && (strings.Contains(te.msg, "no current target") || strings.Contains(te.msg, "no sessions"))
 }
 
+// noPane reports whether err says that the server does not have the pane id.
+func noPane(err error, id string) bool {
+	var te *tmuxError
+	return errors.As(err, &te) && te.msg == "can't find pane: "+id
+}
+
 // pane is what list-panes says of the window's pane.
 type pane struct {
 	tty           string
@@ -290,9 +296,10 @@ func (h *Holder) find(ctx context.Context, r ref) (pane, error) {
 		return pane{}, fmt.Errorf("tmux: list-panes listed no pane: %.200q", out)
 	}
 	// display-message on a pane that has gone exits 0 with its fields
-	// empty; on one that is there it prints the pane's id.
+	// empty, and up to tmux 3.1 says that it cannot find it; on one that is
+	// there it prints the pane's id.
 	out, err = h.tmux(ctx, r, nil, "display-message", "-p", "-t", r.Pane, "#{pane_id}")
-	if err != nil {
+	if err != nil && !noPane(err, r.Pane) {
 		return pane{}, err
 	}
 	if got := strings.TrimSpace(string(out)); got != "" {

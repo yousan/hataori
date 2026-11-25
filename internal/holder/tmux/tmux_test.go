@@ -1018,6 +1018,24 @@ func TestAlive(t *testing.T) {
 	}
 	_ = other
 
+	// How tmux 3.0a and 3.1c say it (testdata, 3.1c), and another failure.
+	says, err := os.ReadFile("testdata/display-message-gone-3.1c.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		says string
+		want holder.State
+	}{{strings.ReplaceAll(strings.TrimSpace(string(says)), "%0", pane), holder.Gone}, {"lost server", holder.Unknown}, {"can't find pane: " + pane + "0", holder.Unknown}} {
+		fails := filepath.Join(s.dir, "fails-tmux")
+		syscall.ForkLock.RLock()
+		os.WriteFile(fails, []byte("#!/bin/sh\ncase \"$*\" in *display-message*) echo \""+c.says+"\" >&2; exit 1;; esac\nexec "+s.tmux+" \"$@\"\n"), 0o700)
+		syscall.ForkLock.RUnlock()
+		if st := state2(t, &Holder{Tmux: fails}, w); st != c.want {
+			t.Errorf("display-message says %q: %v, not %v", c.says, st, c.want)
+		}
+	}
+
 	fake := filepath.Join(s.dir, "fake-tmux")
 	os.WriteFile(fake, []byte("#!/bin/sh\necho 'lost the connection' >&2\nexit 1\n"), 0o700)
 	if st := state2(t, &Holder{Tmux: fake}, s.window(other, pid)); st != holder.Unknown {
