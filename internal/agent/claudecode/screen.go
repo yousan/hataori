@@ -509,12 +509,12 @@ func lineTexts(lines []screenLine) []string {
 // A cell is one place of the grid renderScreen draws on.
 type cell struct {
 	r     rune
-	marks string // the combining marks drawn on r
+	marks []rune // the combining marks drawn on r
 	bold  bool
 }
 
 // blank reports whether nothing shows at c.
-func (c cell) blank() bool { return c.r == ' ' && c.marks == "" }
+func (c cell) blank() bool { return c.r == ' ' && len(c.marks) == 0 }
 
 // renderScreen plays terminal output onto a grid of lines and returns them.
 // It knows only what the CLI uses to draw: text, tab, carriage return, line
@@ -566,7 +566,7 @@ func renderScreen(b []byte) (screen []screenLine, ok bool) {
 		if c.blank() {
 			c.bold = at.bold
 		}
-		c.marks += string(r)
+		c.marks = append(c.marks, r)
 		return true
 	}
 	line := func() []cell {
@@ -772,7 +772,9 @@ func renderScreen(b []byte) (screen []screenLine, ok bool) {
 				}
 				return nil, false
 			}
-			if !unicode.In(r, unicode.Mn, unicode.Me) {
+			// U+FE0F is a mark too, but makes a character an emoji of two
+			// columns: it stands for the second.
+			if r == '\ufe0f' || !unicode.In(r, unicode.Mn, unicode.Me) {
 				put(r)
 			} else if !mark(r) {
 				return nil, false
@@ -790,7 +792,7 @@ func gridLines(grid [][]cell) []screenLine {
 		inBold, inPlain := false, false
 		for _, c := range l {
 			text.WriteRune(c.r)
-			text.WriteString(c.marks)
+			text.WriteString(string(c.marks))
 			if !c.blank() {
 				inBold, inPlain = inBold || c.bold, inPlain || !c.bold
 			}

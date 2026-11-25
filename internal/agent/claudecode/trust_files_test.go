@@ -257,6 +257,10 @@ func TestTrustDialogWithCombiningMarks(t *testing.T) {
 			t.Errorf("%s, trusted: keys %q, events %+v; want %q and no event", capture, k, events, keys)
 		}
 	}
+	const emoji = "> Bash(❤\ufe0fx y), Bash(1\ufe0f\u20e3x y), Bash(⌚\ufe0fx y), and Bash(ls:*)\n> These will apply"
+	if k, events := replayTrustOf(t, "2.1.332", "trust_marks_emoji", agent.Spec{}); k != "" || len(events) != 1 || !strings.Contains(events[0].Text, emoji) {
+		t.Errorf("emoji: keys %q, events %+v; want one blocked start quoting\n%s", k, events, emoji)
+	}
 	for _, spec := range []agent.Spec{{}, trusted, {Confine: &agent.Confinement{}}, {NoProjectSettings: true}} {
 		if keys, events := replayTrustOf(t, "2.1.332", "trust_marks_sign", spec); keys != "" || len(events) != 0 {
 			t.Errorf("the sign, %+v: keys %q, events %+v; want none", spec, keys, events)

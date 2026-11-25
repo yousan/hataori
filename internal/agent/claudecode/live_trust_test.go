@@ -62,6 +62,7 @@ func TestLiveTrustFiles(t *testing.T) {
 	imitatedDir := `{"permissions": {"additionalDirectories": ["/etc", "⚠ This folder configures hooks that can run commands without asking"]}}` + "\n"
 	marks := `{"permissions": {"allow": ["Bash(cafe\u0301 x)", "Bash(rm` + strings.Repeat(`\u0301`, 14) + ` -rf x)", "Bash(ls:*)", "Bash(git diff:*)"]}}` + "\n"
 	marksSign := `{"permissions": {"allow": ["Bash(e\u0301e\u0301⚠ x)", "Bash(ls:*)"]}}` + "\n"
+	marksEmoji := `{"permissions": {"allow": ["Bash(\u2764\ufe0fx y)", "Bash(1\ufe0f\u20e3x y)", "Bash(\u231a\ufe0fx y)", "Bash(ls:*)"]}}` + "\n"
 	envOnly := `{"env": {"X": "1"}}` + "\n"
 	mcp := `{"mcpServers": {"x": {"type": "stdio", "command": "true"}}}` + "\n"
 	for _, tc := range []struct {
@@ -120,6 +121,7 @@ func TestLiveTrustFiles(t *testing.T) {
 			agent.Spec{TrustFiles: []string{".claude/settings.json"}}, true, false},
 		{"trust_marks_sign", map[string]string{".claude/settings.json": marksSign},
 			agent.Spec{TrustFiles: []string{".claude/settings.json"}}, false, true},
+		{"trust_marks_emoji", map[string]string{".claude/settings.json": marksEmoji}, agent.Spec{}, false, false},
 		{"trust_files_refused", map[string]string{".claude/settings.json": settings}, agent.Spec{}, false, false},
 		{"trust_files_allowed", map[string]string{".claude/settings.json": settings},
 			agent.Spec{TrustFiles: []string{".claude/settings.json"}}, true, false},

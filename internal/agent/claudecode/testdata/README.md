@@ -362,9 +362,10 @@ Seen by hand on the same version, not kept: with hooks as well, the hooks warnin
 
 The CLI writes the lines of a warning that start with ⚠ in bold, also where they wrap, and the rules, the directories, the sentence and the line naming the files not (the same in the captures of 2.1.329 and 2.1.331). It indents the first line of the rules and of the directories; where they wrap they go on at the margin, so the indent does not tell them from the dialog's own lines.
 
-`2.1.332/trust_marks_*/`, taken the same way with `HATAORI_CAPTURE_ONLY=trust_marks`, have rules with combining acute accents (U+0301) in `.claude/settings.json`. The CLI counts no column for them and writes the next word at its column (`\x1b[14G`).
+`2.1.332/trust_marks_*/`, taken the same way with `HATAORI_CAPTURE_ONLY=trust_marks`, have rules with combining marks in `.claude/settings.json`, acute accents (U+0301) where the table names no other. The CLI counts no column for them and writes the next word at its column (`\x1b[14G`).
 
 | Capture | Rules | Launch | What the codec did |
 |---|---|---|---|
 | `trust_marks_refused`, `_allowed` | `Bash(café x)` with one accent of its own, `Bash(rm -rf x)` with 14 behind `rm`, `Bash(ls:*)`, `Bash(git diff:*)` | ordinary, without and with `TrustFiles` | as `trust_warnings_dirs_refused` and `_allowed`, the rules quoted as drawn |
+| `trust_marks_emoji` | `Bash(❤️x y)`, `Bash(1️⃣x y)` and `Bash(⌚️x y)`, each with U+FE0F, for which the CLI counts two columns with its character, and `Bash(ls:*)` | ordinary, no `TrustFiles` | as `trust_warnings_dirs_refused`, the rules quoted as drawn |
 | `trust_marks_sign` | `Bash(éé⚠ x)` with two accents of their own, `Bash(ls:*)` | ordinary, `TrustFiles` | nothing: a warning sign in the rules. No key and no event within 15 s. |
