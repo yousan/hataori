@@ -702,6 +702,22 @@ func TestRefuseCommitOnlyARefOutsideRefsNames(t *testing.T) {
 		}
 		wantRefusal(t, x.check(), OtherRef, "")
 	})
+	// A table that is listed and then is not there, as when git has just put
+	// it in another.
+	t.Run("table that is gone", func(t *testing.T) {
+		x := newRemoval(t)
+		dir := filepath.Join(x.clone, ".git", "reftable")
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := x.check(); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("nothing", filepath.Join(dir, "a.ref")); err != nil {
+			t.Fatal(err)
+		}
+		wantRefusal(t, x.check(), Unreadable, "")
+	})
 	// git's list of refs for dumb clients, which is as old as the last gc.
 	t.Run("info/refs", func(t *testing.T) {
 		x := newRemoval(t)
