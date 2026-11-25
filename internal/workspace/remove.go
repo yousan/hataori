@@ -1907,9 +1907,14 @@ func (c *checker) processes() error {
 		return c.unreadable(c.top, err)
 	}
 	topID, _ := fileIDOf(st)
+	// Before lsof is asked: what it says is as new as it can be.
+	in, err := c.contents()
+	if err != nil {
+		return err
+	}
 	self, heldFD := strconv.Itoa(os.Getpid()), strconv.Itoa(int(held.Fd()))
 
-	args := []string{"-n", "-P", "-w", "-F0pfDin"}
+	args := []string{"-n", "-P", "-w", "-F0pftDin"}
 	if uid := os.Geteuid(); uid != 0 {
 		args = append(args, "-u", strconv.Itoa(uid))
 	}
@@ -1924,7 +1929,6 @@ func (c *checker) processes() error {
 		return &Refusal{Reason: UnknownUse, Detail: "lsof: " + lastLines(stderr.String(), 3, err.Error())}
 	}
 	seen := false
-	elsewhere := map[fileID]openFile{}
 	pid := ""
 	for _, set := range strings.Split(stdout.String(), "\x00\n") {
 		f := openFile{pid: pid}
@@ -1938,6 +1942,8 @@ func (c *checker) processes() error {
 				f.pid = v
 			case 'f':
 				f.fd = v
+			case 't':
+				f.kind = v
 			case 'D':
 				f.dev = v
 			case 'i':
@@ -1954,23 +1960,24 @@ func (c *checker) processes() error {
 			}
 			return &Refusal{Reason: InUse, Detail: f.use()}
 		}
-		if _, ok := elsewhere[id]; hasID && !ok {
-			elsewhere[id] = f
+		if !hasID && (f.kind == "REG" || f.kind == "DIR") {
+			return &Refusal{Reason: UnknownUse, Detail: "lsof does not say which file it is that " + f.use()}
+		}
+		if there, ok := in[id]; hasID && ok && there.all() {
+			return &Refusal{Reason: InUse, Detail: f.use() + ", which is " + there.rel}
 		}
 	}
 	if !seen {
 		return &Refusal{Reason: UnknownUse, Detail: "lsof does not report the workspace, which this check holds open"}
 	}
-	return c.mounted(elsewhere)
+	return nil
 }
 
-// mounted refuses a file or directory of the workspace that is open under a
-// path outside it, as through a bind mount. A file with a name outside the
-// workspace too, a hard link, is let go: it may be open under that one, and
-// it is there without the workspace.
-func (c *checker) mounted(elsewhere map[fileID]openFile) error {
-	names := map[fileID]uint64{}
-	return filepath.WalkDir(c.top, func(p string, d fs.DirEntry, err error) error {
+// contents is every file and directory of the workspace, itself included,
+// by what it is whatever its path, as through a bind mount.
+func (c *checker) contents() (map[fileID]inside, error) {
+	in := map[fileID]inside{}
+	err := filepath.WalkDir(c.top, func(p string, d fs.DirEntry, err error) error {
 		if err == nil {
 			err = c.ctx.Err()
 		}
@@ -1982,21 +1989,27 @@ func (c *checker) mounted(elsewhere map[fileID]openFile) error {
 			return c.unreadable(p, err)
 		}
 		id, links := fileIDOf(st)
-		f, ok := elsewhere[id]
-		if !ok {
-			return nil
-		}
-		names[id]++
-		if !d.IsDir() && names[id] < links {
-			return nil
-		}
 		rel, _ := filepath.Rel(c.top, p)
-		return &Refusal{Reason: InUse, Detail: f.use() + ", which is " + rel}
+		in[id] = inside{rel: rel, dir: d.IsDir(), links: links, names: in[id].names + 1}
+		return nil
 	})
+	return in, err
 }
 
+// inside is a file or directory of the workspace: one of its names, how many
+// of them the workspace has, and how many there are.
+type inside struct {
+	rel          string
+	dir          bool
+	names, links uint64
+}
+
+// all is whether the workspace has all its names. A file with one outside, a
+// hard link, may be open under that one, and is there without the workspace.
+func (i inside) all() bool { return i.dir || i.names >= i.links }
+
 // openFile is a file that lsof reports, with the fields as it prints them.
-type openFile struct{ pid, fd, dev, ino, name string }
+type openFile struct{ pid, fd, kind, dev, ino, name string }
 
 func (f openFile) use() string { return "process " + f.pid + " uses " + f.name }
 

@@ -1659,25 +1659,36 @@ func TestRefuseProcessWhoseFilesLsofNamesElsewhere(t *testing.T) {
 	stop()
 }
 
-// An lsof whose inode numbers are not those of the files answers only for
-// the paths.
-func TestRefuseWhenLsofsInodesAreOthers(t *testing.T) {
+// An lsof that does not say which files they are answers only for the paths.
+func TestRefuseWhenLsofDoesNotSayWhichFileItIs(t *testing.T) {
 	lsof, err := exec.LookPath("lsof")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, field := range []string{"D", "i"} {
-		t.Run(field, func(t *testing.T) {
-			x := newRemoval(t)
-			bin := filepath.Join(x.tmp, "bin")
-			os.Mkdir(bin, 0o700)
-			script := "#!/bin/sh\n'" + lsof + "' \"$@\" | perl -pe 's#\\0" + field + "[^\\0]*##'\n"
-			if err := os.WriteFile(filepath.Join(bin, "lsof"), []byte(script), 0o700); err != nil {
-				t.Fatal(err)
-			}
-			t.Setenv("PATH", bin+string(filepath.ListSeparator)+os.Getenv("PATH"))
-			wantRefusal(t, x.check(), UnknownUse, "")
-		})
+		for name, edit := range map[string]string{
+			"none":                 `#\0` + field + `[^\0]*##`,
+			"none for a file":      `#\0` + field + `[^\0]*(?=[^\n]*\0n[^\0]*/outside\0)##`,
+			"that of another file": `#\0` + field + `[^\0]*#\0` + field + `1#`,
+		} {
+			t.Run(field+": "+name, func(t *testing.T) {
+				x := newRemoval(t)
+				outside := filepath.Join(x.tmp, "outside")
+				f, err := os.Create(outside)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer f.Close()
+				bin := filepath.Join(x.tmp, "bin")
+				os.Mkdir(bin, 0o700)
+				script := "#!/bin/sh\n'" + lsof + "' \"$@\" | perl -pe 's" + edit + "'\n"
+				if err := os.WriteFile(filepath.Join(bin, "lsof"), []byte(script), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("PATH", bin+string(filepath.ListSeparator)+os.Getenv("PATH"))
+				wantRefusal(t, x.check(), UnknownUse, "")
+			})
+		}
 	}
 }
 
