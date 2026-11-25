@@ -1663,6 +1663,44 @@ func TestRefuseProcessWhoseFilesLsofNamesElsewhere(t *testing.T) {
 	stop()
 }
 
+// lsof is asked before and after the workspace is read, and what it reports
+// once refuses.
+func TestRefuseUseThatLsofReportsOnce(t *testing.T) {
+	lsof, err := exec.LookPath("lsof")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, elsewhere := range []bool{false, true} {
+		for _, call := range []string{"1", "2"} {
+			t.Run(fmt.Sprintf("in call %s elsewhere=%v", call, elsewhere), func(t *testing.T) {
+				x := newRemoval(t)
+				cache := filepath.Join(x.clone, "cache")
+				os.MkdirAll(cache, 0o700)
+				x.r.Disposable = []string{"cache"}
+				f, err := os.Open(cache)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer f.Close()
+				to := cache
+				if elsewhere {
+					to = "/elsewhere"
+				}
+				bin := filepath.Join(x.tmp, "bin")
+				os.Mkdir(bin, 0o700)
+				script := "#!/bin/sh\necho >>'" + x.tmp + "/calls'; n=$(($(wc -l <'" + x.tmp + "/calls')))\n" +
+					"[ $n = " + call + " ] && with=1 || with=0\n" +
+					"'" + lsof + "' \"$@\" | perl -pe 's#\\0n\\Q" + cache + "\\E#\\0n" + to + "# and !'$with' and $_ = \"\"'\n"
+				if err := os.WriteFile(filepath.Join(bin, "lsof"), []byte(script), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("PATH", bin+string(filepath.ListSeparator)+os.Getenv("PATH"))
+				wantRefusal(t, x.check(), InUse, "")
+			})
+		}
+	}
+}
+
 // An lsof that does not say which files they are answers only for the paths.
 func TestRefuseWhenLsofDoesNotSayWhichFileItIs(t *testing.T) {
 	lsof, err := exec.LookPath("lsof")
