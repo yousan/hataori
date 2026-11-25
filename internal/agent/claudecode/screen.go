@@ -82,7 +82,7 @@ const permissionsEnd = "These will apply without asking. Only proceed if you tru
 // draws anything, when a start with the full-screen interface did not
 // finish: after the first that its last start did not and this one uses the
 // other interface (#707, testdata/2.1.331/trust_notice_*), after the second,
-// once, that it turned the interface off (#728, testdata/2.1.332/
+// that it turned the interface off (#728, testdata/2.1.332/
 // trust_notice_off_*). One start prints at most one of them. Only these lines
 // are known above the dialog's top rule.
 var fullscreenNotices = []string{

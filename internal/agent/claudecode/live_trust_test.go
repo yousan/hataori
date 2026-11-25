@@ -141,6 +141,8 @@ func liveTrust(t *testing.T, raw, name string, files map[string]string, spec age
 
 	// hataori's launch, with the recorder's settings in place of its own.
 	spec.Dir, spec.StateDir, spec.Model = dir, state, "haiku"
+	// No update: it would change the installed CLI, and a new version counts
+	// the interrupted starts anew.
 	env := []string{"CLAUDE_CONFIG_DIR=" + cfg, "DISABLE_AUTOUPDATER=1"}
 	for _, k := range []string{"PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "SHELL", "TMPDIR"} {
 		if v, ok := os.LookupEnv(k); ok {
@@ -314,13 +316,13 @@ func liveTrust(t *testing.T, raw, name string, files map[string]string, spec age
 	}
 }
 
-// interruptedStart leaves in cfg what a CLI killed right after its
-// full-screen interface started leaves there, so that the next one prints
-// that its full-screen renderer did not finish starting (#707): with
-// "tui": "fullscreen" in cfg's settings, it starts the CLI in a directory
-// of its own, answers the trust dialog if it comes, and kills the CLI as
-// soon as its state holds until: "fullscreenBootPending" names the start,
-// "fullscreenBootStrikes" counts an interrupted one before it.
+// interruptedStart starts the CLI in a directory of its own with
+// "tui": "fullscreen" in cfg's settings, answers the trust dialog if it
+// comes, and kills the CLI as soon as its state holds until. Killed at
+// "fullscreenBootPending", which names the start from the moment its
+// full-screen interface began, it leaves a start that did not finish, and
+// the next one prints so (#707). That next one counts it, and is killed at
+// "fullscreenBootStrikes".
 func interruptedStart(t *testing.T, work, cfg, until string) {
 	dir := filepath.Join(work, "killed")
 	if err := os.MkdirAll(dir, 0o700); err != nil {

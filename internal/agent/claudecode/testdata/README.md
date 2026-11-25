@@ -308,9 +308,9 @@ What they show:
 - A `queue-operation` line (`enqueue`, no `uuid`) in the transcript holds each notification, just before the turn it starts.
 - The transcript's `turn_duration` line after each turn has `pendingBackgroundAgentCount`: 1, the subagent without the shell; absent when only the shell runs. The line comes after `Stop` and `StopFailure`, and not at all after the interrupt.
 
-## The folder-trust dialog below a notice (2.1.331, taken for #707)
+## The folder-trust dialog below a notice (2.1.331 and 2.1.332, taken for #707 and #728)
 
-`2.1.331/trust_notice_*/`, taken by `TestLiveTrustFiles` as above with `HATAORI_CAPTURE_ONLY=trust_notice`, then `scrub.py`.
+`2.1.331/trust_notice_*/`, taken by `TestLiveTrustFiles` as above with `HATAORI_CAPTURE_ONLY=trust_notice` (which takes the `trust_notice_off_*` below too), then `scrub.py`.
 
 The CLI prints one line before it draws anything, "Claude Code's fullscreen renderer didn't finish starting last time on this machine, ...", when an earlier start with its full-screen interface did not get far enough. Its state (`.claude.json`) names such a start under `fullscreenBootPending`, by process, from the moment the interface starts until it has run for a while; the next start that finds the named process gone counts a strike (`fullscreenBootStrikes`), prints the line and uses the other interface. So the test (`interruptedStart`) sets `"tui": "fullscreen"` in the throwaway `CLAUDE_CONFIG_DIR`, starts the CLI once in a directory of its own, answers its dialog, and kills it as soon as the state names the start. The capture is the next start, in another new directory.
 
@@ -319,7 +319,7 @@ The CLI prints one line before it draws anything, "Claude Code's fullscreen rend
 | `trust_notice_allowed` | no file | ordinary, no `TrustFiles` | Down, then Enter; `SessionStart` followed |
 | `trust_notice_refused` | `.claude/settings.json` | ordinary, no `TrustFiles` | no key; one `SessionEnded`, `blocked at start`, naming the file, quoting the dialog without the notice. No hook ran. |
 
-After a second such start the CLI prints another line once, "... has repeatedly failed to start on this machine, so it has been turned off here. ...", and uses the other interface from then on. `2.1.332/trust_notice_off_*/` are such starts (taken for #728 with `HATAORI_CAPTURE_ONLY=trust_notice_off`): the test interrupts a start as above, lets the next one count it, interrupts the one after that too, and captures the fourth. 2.1.332 prints at most one of the two lines, and no other line of this kind. The workspaces, the specs and what the codec did are those of the table above.
+After a second such start the CLI prints another line once, "... has repeatedly failed to start on this machine, so it has been turned off here. ...", and uses the other interface from then on, until `/tui fullscreen` or an update. `2.1.332/trust_notice_off_*/` are such starts (taken for #728 with `HATAORI_CAPTURE_ONLY=trust_notice_off`): the test interrupts a start as above, lets the next one count it, interrupts the one after that too, and captures the fourth. 2.1.332 prints at most one of the two lines, and no other line of this kind. The workspaces, the specs and what the codec did are those of the table above.
 
 ## The folder-trust dialog with a permission warning (2.1.331, taken for #596)
 
