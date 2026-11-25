@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -14,25 +13,34 @@ import (
 	"github.com/yousan/hataori/internal/wire"
 )
 
-// holdThreadReads makes the page's reads of a thread (/api/thread) wait,
-// so that it does not learn meanwhile that a request closed, and returns
-// what lets them, and the ones held, go on.
+// threadReadsScript lets holdThreadReads keep the answers to the page's
+// reads of a thread (/api/thread). They are kept in the page, not the
+// requests in the browser (Fetch.enable): that holds only the reads the
+// page makes later, and one made before may be answered after what the
+// page is not to learn of happened.
+const threadReadsScript = `{
+	const real = window.fetch;
+	const kept = [];
+	let keep = false;
+	window.holdThreadReads = () => { keep = true; };
+	window.releaseThreadReads = () => { keep = false; for (const go of kept.splice(0)) go(); };
+	window.fetch = async (...args) => {
+		const r = await real(...args);
+		if (keep && new URL(r.url).pathname === '/api/thread') await new Promise(go => kept.push(go));
+		return r;
+	};
+}`
+
+// holdThreadReads keeps from the page, loaded with threadReadsScript, the
+// answer to every read of a thread that it has not got yet, so that it does
+// not learn meanwhile that a request closed, and returns what gives it the
+// answers.
 func holdThreadReads(b *browser) func() {
 	b.t.Helper()
-	from := len(b.events)
-	b.call("Fetch.enable", map[string]any{"patterns": []map[string]any{{"urlPattern": "*/api/thread?*", "requestStage": "Request"}}})
+	b.eval(`window.holdThreadReads()`, nil)
 	return func() {
 		b.t.Helper()
-		b.eval(`1`, nil)
-		b.call("Fetch.disable", map[string]any{})
-		for _, e := range b.events[from:] {
-			var p struct {
-				RequestID string `json:"requestId"`
-			}
-			if e.Method == "Fetch.requestPaused" && json.Unmarshal(e.Params, &p) == nil {
-				b.send("Fetch.continueRequest", map[string]any{"requestId": p.RequestID}) // gone already when the disable let it go
-			}
-		}
+		b.eval(`window.releaseThreadReads()`, nil)
 	}
 }
 
@@ -66,6 +74,7 @@ func TestDashboardAnswersAQuestion(t *testing.T) {
 	defer c.Close()
 	b := newBrowser(t)
 	b.call("Page.enable", map[string]any{})
+	b.call("Page.addScriptToEvaluateOnNewDocument", map[string]any{"source": threadReadsScript})
 	b.call("Page.navigate", map[string]any{"url": signinLink(t, r.root)})
 	openThread(t, b, x.ID)
 
@@ -107,8 +116,8 @@ func TestDashboardAnswersAQuestion(t *testing.T) {
 	if err != nil || len(d.Requests) != 1 {
 		t.Fatalf("the open question: %+v %v", d.Requests, err)
 	}
-	// The page does not learn of the answer before the press: its reads
-	// of the thread wait until the press is made.
+	// The page does not learn of the answer before the press: it gets the
+	// answers to its reads of the thread once the press is made.
 	release := holdThreadReads(b)
 	if err := c.Answer(context.Background(), d.Requests[0].ID, control.Answer{Choices: []string{"right"}}); err != nil {
 		t.Fatal(err)
