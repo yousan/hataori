@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -28,6 +29,9 @@ const (
 	// StatusFile is how the agent ended, recorded from #{pane_dead_status}
 	// before the pane goes.
 	StatusFile = "tmux-status.json"
+	// PidFile is the process id of the agent, as `hataori exec` had it: a
+	// dead pane tells none since tmux 3.8.
+	PidFile = "tmux-pid"
 )
 
 // execSpec is what ExecFile holds.
@@ -79,6 +83,7 @@ func (h *Holder) Start(ctx context.Context, stateDir string, spec holder.Spec) (
 	// goes, before anything of this run is written.
 	h.clearLeftover(ctx, stateDir)
 	os.Remove(filepath.Join(stateDir, StatusFile)) // an earlier run's
+	os.Remove(filepath.Join(stateDir, PidFile))
 	// The log of this run starts empty, at position 0, before the pipe
 	// writes to it: a reader never takes an earlier run's for this one's.
 	if err := host.ResetPipe(stateDir); err != nil {
@@ -143,7 +148,10 @@ func (h *Holder) Start(ctx context.Context, stateDir string, spec holder.Spec) (
 		return holder.Window{}, fmt.Errorf("%w: the pane %s is no longer the one made for the agent; it was left as it is", errGone, r.Pane)
 	}
 	if err != nil {
-		h.startedStop(context.WithoutCancel(ctx), r, made, time.Second, time.Second)
+		res, _ := h.startedStop(context.WithoutCancel(ctx), r, made, time.Second, time.Second)
+		if res.Left != "" {
+			err = fmt.Errorf("%w; %s", err, res.Left)
+		}
 		return holder.Window{}, err
 	}
 	rb, _ := json.Marshal(r)
@@ -393,7 +401,9 @@ const killWait = 10 * time.Second
 // interrupt, then SIGKILL after terminate, stopping as soon as no process of
 // the group is left. It records how the agent ended, from
 // #{pane_dead_status}, and removes the pane. process is the pane's process
-// as Start found it, 0 when not known.
+// as Start found it, 0 when not known. The group is signalled only when it
+// is told to be the agent's (agentsGroup); where that cannot be told while
+// the agent may run, Stop fails and leaves everything as it is.
 func (h *Holder) startedStop(ctx context.Context, r ref, process int, interrupt, terminate time.Duration) (holder.StopResult, error) {
 	var res holder.StopResult
 	p, err := h.findStarted(ctx, r, process)
@@ -407,12 +417,22 @@ func (h *Holder) startedStop(ctx context.Context, r ref, process int, interrupt,
 	if err != nil {
 		return res, err
 	}
-	pgid := p.pid
+	pgid := cmp.Or(p.pid, execPid(r), process)
 	started := cmp.Or(pgid, process)
 	var sent []string
 	// The group, whenever a process of it is left: also after the pane's
 	// own process ended, leaving children.
-	if pgid > 1 && !groupGone(pgid) {
+	left := pgid > 1 && !groupGone(pgid)
+	if left {
+		left, err = h.agentsGroup(ctx, r, pgid)
+		if errors.Is(err, errLeft) {
+			res.Left, err = err.Error(), nil
+		}
+		if err != nil {
+			return res, err
+		}
+	}
+	if left {
 		for _, s := range []struct {
 			sig   syscall.Signal
 			name  string
@@ -463,6 +483,172 @@ func (h *Holder) startedStop(ctx context.Context, r ref, process int, interrupt,
 	return res, h.removePane(ctx, r, q)
 }
 
+// errLeft is why a group of which some may be the agent's is left running:
+// the agent itself has ended.
+var errLeft = errors.New("processes are left that cannot be told to be the agent's")
+
+// agentsGroup reports whether the group pgid, the number of the process the
+// pane has or had, is the agent's. The number is another's once no process
+// has it, as its own, its group's or its session's. The agent has it while
+// it is the pane's process, or a child of the server whose end the server has
+// not read; when another process has it, the agent's group is gone. A process
+// of the agent's group is in the session the agent led, and one that ran
+// before the agent ended has kept the number since. An error when it cannot
+// be told, and the group is left alone then: errLeft once the agent itself
+// has ended.
+func (h *Holder) agentsGroup(ctx context.Context, r ref, pgid int) (bool, error) {
+	cannot := func(ended bool, why string) (bool, error) {
+		if !ended {
+			return false, fmt.Errorf("tmux: the group %d cannot be told to be the agent's, which may run: %s", pgid, why)
+		}
+		return false, fmt.Errorf("tmux: group %d: %w: %s", pgid, errLeft, why)
+	}
+	for deadline := time.Now().Add(deadWait); ; time.Sleep(20 * time.Millisecond) {
+		end, err := h.endOf(ctx, r, pgid)
+		if err != nil {
+			return false, err
+		}
+		pane := !end.dead && !end.read && end.pid == pgid // the pane's process, as tmux has just told
+		ps, err := processes(ctx)
+		if err != nil && pane && end.tells {
+			return true, nil
+		}
+		if err != nil {
+			return cannot(end.read, err.Error())
+		}
+		if i := slices.IndexFunc(ps, func(p member) bool { return p.pid == pgid }); i >= 0 {
+			child := ps[i].parent == r.Server && !end.read
+			switch {
+			case child && pane:
+				return true, nil
+			case child && !end.others && end.tells && (end.pid == pgid || execPid(r) == pgid):
+				return true, nil
+			case child && !end.others:
+				// The server may have read the end of a program that a
+				// signal ended, and the number be another child's, such as a
+				// popup's: not of one that ran when the agent noted it.
+				noted, ok := execNoted(r, pgid)
+				if ok && !ps[i].started.After(noted.Add(seconds)) {
+					return true, nil
+				}
+				return cannot(false, "the process of that number may be another")
+			case !end.dead && !end.read:
+				return cannot(false, "the process of that number is not the pane's")
+			}
+			return false, nil // it has the agent's number
+		}
+		own := false
+		for _, p := range ps {
+			if p.group != pgid {
+				continue
+			}
+			sid, err := unix.Getsid(p.pid)
+			if err != nil {
+				continue // it ended
+			}
+			if sid != pgid {
+				return false, nil
+			}
+			own = true
+			if !end.at.IsZero() && !p.started.After(end.at.Add(seconds)) {
+				return true, nil
+			}
+		}
+		late := time.Now().After(deadline)
+		switch {
+		case !own && groupGone(pgid):
+			return false, nil
+		case late && syscall.Kill(pgid, 0) != syscall.ESRCH: // and ps does not list it
+			return cannot(end.read, "a process has that number, and ps does not tell of it")
+		case late && !own:
+			return cannot(true, "ps does not tell of them")
+		case own && !end.at.IsZero():
+			return cannot(true, "they were started after it ended")
+		case own && end.dead && !end.tells:
+			return cannot(true, "tmux does not tell when it ended, as up to 3.2")
+		case late:
+			return cannot(true, "tmux has not told that it ended")
+		}
+	}
+}
+
+// deadWait is how long tmux may take to tell that a program it has read the
+// end of has ended: it first writes the pane's output to its pipe.
+const deadWait = 2 * time.Second
+
+// seconds is how much later than it was a process's start seems beside
+// another time: both are in whole seconds.
+const seconds = 2 * time.Second
+
+// paneEnd is what tmux tells of how the program of a pane ended.
+type paneEnd struct {
+	pid    int
+	dead   bool
+	read   bool      // tmux has read the process's end: its number may be another's
+	at     time.Time // when, in whole seconds; zero when not told
+	others bool      // another pane runs a process of the number
+	tells  bool      // the server tells of every end it has read, as from 3.3 on; before, not of one by a signal
+}
+
+// tellsEnds is the version of a server that tells of every end it has read.
+var tellsEnds = regexp.MustCompile(`^(3\.([3-9]|[1-9][0-9])|[4-9])`)
+
+// endOf is the paneEnd of r's pane, whose process had the number pid.
+func (h *Holder) endOf(ctx context.Context, r ref, pid int) (paneEnd, error) {
+	out, err := h.tmux(ctx, r, nil, "list-panes", "-a", "-F", "#{pid},#{pane_id},#{pane_pid},#{pane_dead},#{pane_dead_time},#{pane_dead_status}#{pane_dead_signal},#{version}")
+	if err != nil {
+		return paneEnd{}, err
+	}
+	var e paneEnd
+	found := false
+	for _, l := range strings.Split(string(out), "\n") {
+		f := strings.Split(l, ",")
+		if len(f) != 7 || f[0] != strconv.Itoa(r.Server) {
+			continue
+		}
+		n, _ := strconv.Atoi(f[2])
+		dead, read, tells := f[3] == "1", f[4] != "" || f[5] != "", tellsEnds.MatchString(f[6])
+		if f[1] != r.Pane {
+			e.others = e.others || n == pid && !read && (!dead || tells)
+			continue
+		}
+		found, e.pid, e.dead, e.read, e.tells = true, n, dead, read, tells
+		if at, err := strconv.ParseInt(f[4], 10, 64); err == nil {
+			e.at = time.Unix(at, 0)
+		}
+	}
+	if !found {
+		// The listing may have left it out: find looks it up by its id.
+		if _, err := h.find(ctx, r); !errors.Is(err, errGone) {
+			return paneEnd{}, fmt.Errorf("tmux: the pane %s changed as it was looked at: %v", r.Pane, err)
+		}
+		return paneEnd{dead: true}, nil // and tells nothing more
+	}
+	return e, nil
+}
+
+// execPid is the process id PidFile holds, 0 when there is none.
+func execPid(r ref) int {
+	if r.Dir == "" {
+		return 0
+	}
+	b, _ := os.ReadFile(filepath.Join(r.Dir, PidFile))
+	n, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	return n
+}
+
+// execNoted is when `hataori exec` noted pid as the agent's process.
+func execNoted(r ref, pid int) (time.Time, bool) {
+	if execPid(r) != pid {
+		return time.Time{}, false
+	}
+	fi, err := os.Stat(filepath.Join(r.Dir, PidFile))
+	if err != nil {
+		return time.Time{}, false
+	}
+	return fi.ModTime(), true
+}
+
 func groupGone(pgid int) bool { return errors.Is(syscall.Kill(-pgid, 0), syscall.ESRCH) }
 
 func waitGone(pgid int, d time.Duration) bool {
@@ -504,6 +690,9 @@ func ExecMain(stateDir string) error {
 	var s execSpec
 	if err := json.Unmarshal(b, &s); err != nil || len(s.Argv) == 0 {
 		return fmt.Errorf("tmux: %s: not an agent to execute", ExecFile)
+	}
+	if err := writePrivate(filepath.Join(stateDir, PidFile), []byte(strconv.Itoa(os.Getpid()))); err != nil {
+		return err
 	}
 	argv0, err := host.LookPath(s.Argv[0], s.Env, s.Dir)
 	if err != nil {

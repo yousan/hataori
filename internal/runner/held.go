@@ -52,7 +52,9 @@ func (r *Runner) startHeld(ctx context.Context, dir string, hs holder.Spec) (hol
 			return w, nil
 		}
 		if r.alive(dir).State == holder.Running {
-			if _, err := r.tmuxHolder().Stop(ctx, w, time.Second, time.Second); err != nil {
+			res, err := r.tmuxHolder().Stop(ctx, w, time.Second, time.Second)
+			r.warnLeft(dir, res)
+			if err != nil {
 				return holder.Window{}, fmt.Errorf("runner: a window of an earlier run still runs: %w", err)
 			}
 		}
@@ -76,11 +78,19 @@ func (r *Runner) startHeld(ctx context.Context, dir string, hs holder.Spec) (hol
 	}
 	b, _ := json.Marshal(w)
 	if err := writeAtomic(filepath.Join(dir, HeldFile), b); err != nil {
-		r.tmuxHolder().Stop(context.WithoutCancel(ctx), w, time.Second, time.Second)
+		res, _ := r.tmuxHolder().Stop(context.WithoutCancel(ctx), w, time.Second, time.Second)
+		r.warnLeft(dir, res)
 		host.Stop(dir, time.Second, time.Second)
 		return holder.Window{}, err
 	}
 	return w, nil
+}
+
+// warnLeft logs the processes a stop of the window of dir left.
+func (r *Runner) warnLeft(dir string, res holder.StopResult) {
+	if res.Left != "" {
+		r.Log.Warn("processes that may be the agent's are left", "dir", dir, "why", res.Left)
+	}
 }
 
 // endHeld lets the window w of a held session go once its agent has ended:

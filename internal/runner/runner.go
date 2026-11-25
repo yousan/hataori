@@ -502,6 +502,7 @@ func (r *Runner) stop(dir string, interrupt, terminate time.Duration) (holder.St
 		defer unlock()
 		res, err := r.tmuxHolder().Stop(ctx, w, interrupt, terminate)
 		r.heldSeen.Delete(dir)
+		r.warnLeft(dir, res)
 		if err != nil {
 			return res, err
 		}

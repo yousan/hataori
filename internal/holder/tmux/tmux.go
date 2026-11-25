@@ -629,6 +629,70 @@ func process(ctx context.Context, pid int) (proc, error) {
 	return p, nil
 }
 
+// member is a process as ps lists it, and when it was started, in whole
+// seconds.
+type member struct {
+	pid, parent, group int
+	started            time.Time
+}
+
+// processes is every process there is.
+func processes(ctx context.Context) ([]member, error) {
+	ctx, cancel := context.WithTimeout(ctx, cmdTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "ps", "-A", "-o", "pid=", "-o", "ppid=", "-o", "pgid=", "-o", "etime=").Output()
+	now := time.Now() // after ps has looked: no process seems older than it is
+	if err != nil {
+		return nil, fmt.Errorf("tmux: ps: %w", err)
+	}
+	var ms []member
+	for _, l := range strings.Split(string(out), "\n") {
+		f := strings.Fields(l)
+		if len(f) == 0 {
+			continue
+		}
+		var m member
+		ok := len(f) == 4
+		for i, to := range []*int{&m.pid, &m.parent, &m.group} {
+			if ok {
+				n, err := strconv.Atoi(f[i])
+				*to, ok = n, err == nil
+			}
+		}
+		if !ok {
+			return nil, fmt.Errorf("tmux: ps: %q", l)
+		}
+		m.started = now // when ps does not tell, as it may of one that ended
+		if ran, ok := elapsed(f[3]); ok {
+			m.started = now.Add(-ran)
+		}
+		ms = append(ms, m)
+	}
+	return ms, nil
+}
+
+// elapsed reads ps's etime, [[days-]hours:]minutes:seconds.
+func elapsed(s string) (time.Duration, bool) {
+	days, rest, ok := strings.Cut(s, "-")
+	if !ok {
+		days, rest = "0", s
+	}
+	n, err := strconv.Atoi(days)
+	f := strings.Split(rest, ":")
+	if err != nil || len(f) < 2 || len(f) > 3 {
+		return 0, false
+	}
+	t := 0
+	for _, x := range f {
+		v, err := strconv.Atoi(x)
+		if err != nil {
+			return 0, false
+		}
+		t = t*60 + v
+	}
+	return time.Duration(n)*24*time.Hour + time.Duration(t)*time.Second, true
+}
+
 // The reasons the take-in check refuses a window.
 var (
 	ErrNotItsTerminal = errors.New("tmux: the process that reported does not run on the window's terminal")
