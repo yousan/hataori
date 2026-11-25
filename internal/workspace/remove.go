@@ -1633,18 +1633,17 @@ func (c *checker) tableIDs(g *reader, dir string) ([]string, error) {
 // alternates lead to, cannot be opened, or a pack there has no index: git takes
 // what is in it for missing, and of a pack says nothing. A pack that git has on
 // the way, whose name starts with tmp_pack_ or .tmp-, has nothing that a name
-// is given to before it is in place.
+// is given to before it is in place. What is there is followed through links.
 func (c *checker) objects(dir string, seen map[string]bool) error {
-	dir, err := filepath.EvalSymlinks(dir)
-	if missing(err) {
-		return nil
-	} else if err != nil {
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
 		return c.unreadable(dir, err)
 	}
-	if seen[dir] {
+	if seen[real] {
 		return nil
 	}
-	seen[dir] = true
+	seen[real] = true
+	dir = real
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return c.unreadable(dir, err)
@@ -1655,9 +1654,7 @@ func (c *checker) objects(dir string, seen map[string]bool) error {
 		}
 		p := filepath.Join(dir, e.Name())
 		fi, err := os.Stat(p)
-		if missing(err) {
-			continue // a link to nothing
-		} else if err != nil {
+		if err != nil { // also a link to nothing
 			return c.unreadable(p, err)
 		}
 		if fi.IsDir() {
@@ -1675,7 +1672,7 @@ func (c *checker) objects(dir string, seen map[string]bool) error {
 		}
 		f.Close()
 		pack, ok := strings.CutSuffix(p, ".pack")
-		if ok && filepath.Base(dir) == "pack" && !strings.HasPrefix(e.Name(), ".tmp-") {
+		if ok && !strings.HasPrefix(e.Name(), ".tmp-") {
 			if _, err := os.Stat(pack + ".idx"); err != nil {
 				return c.unreadable(p, err)
 			}

@@ -862,6 +862,17 @@ func onlyInAReflog(x *removal, loose bool) string {
 // a reflog names.
 func TestRefuseReflogOfWhatCannotBeRead(t *testing.T) {
 	asRoot := os.Getuid() == 0
+	linked := func(t *testing.T, x *removal) string {
+		pack := onlyInAReflog(x, false)
+		dir, away := filepath.Dir(pack), filepath.Join(x.tmp, "packs")
+		if err := os.Rename(dir, away); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(away, dir); err != nil {
+			t.Fatal(err)
+		}
+		return pack
+	}
 	for name, lose := range map[string]func(t *testing.T, x *removal){
 		"index": func(t *testing.T, x *removal) {
 			os.Chmod(strings.TrimSuffix(onlyInAReflog(x, false), ".pack")+".idx", 0)
@@ -889,15 +900,17 @@ func TestRefuseReflogOfWhatCannotBeRead(t *testing.T) {
 			}
 		},
 		"pack behind a link": func(t *testing.T, x *removal) {
+			os.Chmod(strings.TrimSuffix(linked(t, x), ".pack")+".idx", 0)
+		},
+		"no index behind a link": func(t *testing.T, x *removal) {
+			os.Remove(strings.TrimSuffix(linked(t, x), ".pack") + ".idx")
+		},
+		"pack that is a link to nothing": func(t *testing.T, x *removal) {
 			pack := onlyInAReflog(x, false)
-			dir, away := filepath.Dir(pack), filepath.Join(x.tmp, "packs")
-			if err := os.Rename(dir, away); err != nil {
+			os.Remove(pack)
+			if err := os.Symlink("nothing", pack); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Symlink(away, dir); err != nil {
-				t.Fatal(err)
-			}
-			os.Chmod(strings.TrimSuffix(pack, ".pack")+".idx", 0)
 		},
 		"alternate": func(t *testing.T, x *removal) {
 			pack := strings.TrimSuffix(onlyInAReflog(x, false), ".pack")
@@ -925,7 +938,7 @@ func TestRefuseReflogOfWhatCannotBeRead(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if asRoot && name != "no index" && name != "cut index" && name != "alternate that is gone" {
+			if asRoot && slices.Contains([]string{"index", "pack", "loose", "pack behind a link", "alternate"}, name) {
 				t.Skip("root opens everything")
 			}
 			x := newRemoval(t)
