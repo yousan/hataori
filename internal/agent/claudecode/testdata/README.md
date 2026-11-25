@@ -9,7 +9,7 @@ Real output of the interactive `claude` CLI, for testing the adapter's codec. Th
 - `2.1.329/`: Claude Code 2.1.329, on 2026-11-21 (also in `2.1.329/VERSION`), on Linux: `trust_hooks_*` and `trust_permissions`, taken for #592 (see below).
 - `2.1.330/`: Claude Code 2.1.330, on 2026-11-23 (also in `2.1.330/VERSION`), on Linux: `usage`, taken by `capture.py` for #675, with the transcript's line count at each hook call (see below).
 - `2.1.331/`: Claude Code 2.1.331, on 2026-11-25 (also in `2.1.331/VERSION`), on Linux: `held_notification`, taken by `capture.py` for #593, `failure_background`, `interrupt_background`, `failure_resumed` and `failure_monitor`, taken by it for #801 (see "Turns that end without the list of background tasks"), `trust_notice_*`, taken by `TestLiveTrustFiles` for #707 (see "The folder-trust dialog below a notice"), and `trust_permissions_*`, taken by it for #596 (see "The folder-trust dialog with a permission warning").
-- `2.1.332/`: Claude Code 2.1.332, on 2026-11-25 (also in `2.1.332/VERSION`), on Linux: `trust_notice_off_*`, taken by `TestLiveTrustFiles` for #728 (see "The folder-trust dialog below a notice"), and `trust_files_env`, taken by it for #730 (see "The folder-trust dialog that names files").
+- `2.1.332/`: Claude Code 2.1.332, on 2026-11-25 (also in `2.1.332/VERSION`), on Linux: `trust_notice_off_*`, taken by `TestLiveTrustFiles` for #728 (see "The folder-trust dialog below a notice"), `trust_files_env`, taken by it for #730 (see "The folder-trust dialog that names files"), and `trust_warnings_*`, taken by it for #752 (see "The folder-trust dialog with several warnings").
 - `capture.py` took them (`confine.py`, the `confine_*` ones); `scrub.py` made them committable. `captures_test.go` in the package fails when a capture holds a home directory path, an e-mail address, an unscrubbed UUID or something shaped like a token.
 
 ## How they were taken
@@ -330,8 +330,26 @@ After a second such start the CLI prints another line once, "... has repeatedly 
 | `trust_permissions_refused` | `.claude/settings.json` allowing `Bash(ls:*)` | ordinary, no `TrustFiles` | no key; one `SessionEnded`, `blocked at start`, naming the file, with the warning, the rule and its sentence quoted. No hook ran. |
 | `trust_permissions_allowed` | the same | ordinary, `TrustFiles: [".claude/settings.json"]` | Down, then Enter; `SessionStart` followed |
 | `trust_permissions_both` | both settings files, with ten rules, one of them `Trusting this folder loads x.` | ordinary, `TrustFiles` naming both | Down, then Enter; `SessionStart` followed |
-| `trust_permissions_dirs` | `.claude/settings.json` allowing a tool and naming `additionalDirectories` | ordinary, `TrustFiles: [".claude/settings.json"]` | nothing: a second warning stands between the rules and the sentence, which the codec does not know. No key and no event within 15 s. |
+| `trust_permissions_dirs` | `.claude/settings.json` allowing a tool and naming `additionalDirectories` | ordinary, `TrustFiles: [".claude/settings.json"]` | nothing, as the codec of that time did not know a second warning between the rules and the sentence: no key and no event within 15 s. It reads it since #752. |
 
 The rules are on the line below the warning: up to eight, each cut at a width with `…`, then `, and N more`. Their text is the repository's. The warning counts every rule of every file; a rule written twice is shown once. On a short terminal the dialog is drawn without its blank lines.
 
-Seen by hand on the same version, not kept: with hooks as well, the hooks warning follows the permission warning's sentence. The codec reads either warning alone, not the two together.
+Seen by hand on the same version, not kept: with hooks as well, the hooks warning follows the permission warning's sentence. The codec reads the two together since #752.
+
+## The folder-trust dialog with several warnings (2.1.332, taken for #752)
+
+`2.1.332/trust_warnings_*/`, taken by `TestLiveTrustFiles` as above with `HATAORI_CAPTURE_ONLY=trust_warnings`, then `scrub.py`. The dialog draws the warnings in this order: permissions, directories, `These will apply without asking. Only proceed if you trust this configuration.` below either or both, hooks. `TrustFiles` in the table names every file of the workspace.
+
+| Scenario | Workspace | Spec | What the codec did |
+|---|---|---|---|
+| `trust_warnings_dirs_refused` | `.claude/settings.json` adding `/etc` with `additionalDirectories` | ordinary, no `TrustFiles` | no key; one `SessionEnded`, `blocked at start`, naming the file, with the warning, the directory and the sentence quoted. No hook ran. |
+| `trust_warnings_dirs_allowed` | the same | ordinary, `TrustFiles` | Down, then Enter; `SessionStart` followed |
+| `trust_warnings_permissions_dirs_refused`, `_allowed` | `.claude/settings.json` allowing `Bash(ls:*)` and adding `/etc` | as above | as above, both warnings quoted |
+| `trust_warnings_permissions_hooks_refused`, `_allowed` | `.claude/settings.json` allowing `Bash(ls:*)` and declaring a `SessionStart` hook | as above | as above, both warnings quoted |
+| `trust_warnings_dirs_hooks_refused` | `.claude/settings.json` adding `/etc`, `.claude/settings.local.json` declaring a hook | ordinary, no `TrustFiles` | as above, both files named, both warnings quoted |
+| `trust_warnings_all_refused`, `_allowed` | both files allowing five tools and adding eight directories, the second declaring a hook too | as above | as above, both files named, all three warnings quoted |
+| `trust_warnings_imitated_rule` | `.claude/settings.json` adding `/etc` and allowing a tool and a rule with the text of the directories' warning | ordinary, `TrustFiles` | nothing: a warning sign in the rules. No key and no event within 15 s. |
+| `trust_warnings_imitated_dir` | `.claude/settings.json` adding `/etc` and a directory with the text of the hooks' warning | ordinary, `TrustFiles` | nothing, as above |
+| `trust_warnings_headers` | `.claude/settings.json` allowing a tool, and `.mcp.json` with a `headersHelper` | ordinary, `TrustFiles` | nothing: `⚠ This folder runs commands to mint HTTP headers (headersHelper), declared in .mcp.json` is a warning the codec does not know |
+
+The CLI writes the lines of a warning that start with ⚠ in bold, also where they wrap, and the rules, the directories, the sentence and the line naming the files not (the same in the captures of 2.1.329 and 2.1.331). It indents the first line of the rules and of the directories; where they wrap they go on at the margin, so the indent does not tell them from the dialog's own lines.

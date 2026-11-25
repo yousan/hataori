@@ -151,10 +151,6 @@ func TestTrustDialogWithThePermissionsWarning(t *testing.T) {
 		{"2.1.331", "trust_permissions_both", trust(".claude/settings.json", ".claude/settings.local.json"), "down enter", nil, ""},
 		{"2.1.331", "trust_permissions_both", trust(".claude/settings.json", "x"), "", []string{".claude/settings.json", ".claude/settings.local.json"}, both},
 		{"2.1.331", "trust_permissions_both", agent.Spec{}, "", []string{".claude/settings.json", ".claude/settings.local.json"}, both},
-		// Another warning between the rules and the sentence: not known.
-		{"2.1.331", "trust_permissions_dirs", trust(".claude/settings.json"), "", nil, ""},
-		{"2.1.331", "trust_permissions_dirs", agent.Spec{}, "", nil, ""},
-		{"2.1.331", "trust_permissions_dirs", agent.Spec{Confine: &agent.Confinement{}}, "", nil, ""},
 	} {
 		keys, events := replayTrustOf(t, tc.version, tc.capture, tc.spec)
 		if keys != tc.keys {
@@ -173,8 +169,81 @@ func TestTrustDialogWithThePermissionsWarning(t *testing.T) {
 	}
 }
 
-// Only the permissions warning's known shape is read, whatever its rules
-// say: the captured dialog with its rules or another line changed.
+// Several warnings in one dialog (#752): all that are there are quoted and
+// every file is named when one of them is not trusted, and the dialog is
+// answered when all are.
+func TestTrustDialogWithSeveralWarnings(t *testing.T) {
+	const (
+		settings = ".claude/settings.json"
+		local    = ".claude/settings.local.json"
+		rule     = "> ⚠ This folder pre-approves 1 tool permission in .claude/settings.json:\n> Bash(ls:*)\n"
+		dir      = "> ⚠ This folder adds 1 directory to the workspace in .claude/settings.json:\n> /etc\n"
+		end      = "> These will apply without asking. Only proceed if you trust this configuration.\n"
+		hooksIn  = "> ⚠ This folder configures hooks that can run commands without asking, declared\n> in "
+		loads    = "> Trusting this folder loads .claude/settings.json"
+		runs     = " (runs commands).\n"
+		all      = "> ⚠ This folder pre-approves 10 tool permissions in .claude/settings.json and\n> .claude/settings.local.json:\n" +
+			"> Bash(ls:*), Bash(git diff:*), Bash(git log:*), Bash(git show:*), and\n> Bash(git status:*)\n" +
+			"> ⚠ This folder adds 16 directories to the workspace in .claude/settings.json\n> and .claude/settings.local.json:\n" +
+			"> /etc, /usr, /usr/share/doc, /usr/local/share/man, /var/lib, /var/log, and 2\n> more\n" + end +
+			hooksIn + local + "\n" + loads + " and\n> " + local + runs
+	)
+	one, both := []string{settings}, []string{settings, local}
+	for _, tc := range []struct {
+		version, capture string
+		files            []string
+		quoted           string
+		answered         bool // the capture goes on below the dialog
+	}{
+		{"2.1.331", "trust_permissions_dirs", one, rule + dir + end + loads + ".\n", false},
+		{"2.1.332", "trust_warnings_dirs_refused", one, dir + end + loads + ".\n", false},
+		{"2.1.332", "trust_warnings_dirs_allowed", one, dir + end + loads + ".\n", true},
+		{"2.1.332", "trust_warnings_permissions_dirs_refused", one, rule + dir + end + loads + ".\n", false},
+		{"2.1.332", "trust_warnings_permissions_dirs_allowed", one, rule + dir + end + loads + ".\n", true},
+		{"2.1.332", "trust_warnings_permissions_hooks_refused", one, rule + end + hooksIn + settings + "\n" + loads + runs, false},
+		{"2.1.332", "trust_warnings_permissions_hooks_allowed", one, rule + end + hooksIn + settings + "\n" + loads + runs, true},
+		{"2.1.332", "trust_warnings_dirs_hooks_refused", both, dir + end + hooksIn + local + "\n" + loads + " and\n> " + local + runs, false},
+		{"2.1.332", "trust_warnings_all_refused", both, all, false},
+		{"2.1.332", "trust_warnings_all_allowed", both, all, true},
+	} {
+		specs := []agent.Spec{{}}
+		for i := range tc.files { // all but one trusted
+			specs = append(specs, agent.Spec{TrustFiles: slices.Delete(slices.Clone(tc.files), i, i+1)})
+		}
+		for _, spec := range specs {
+			keys, events := replayTrustOf(t, tc.version, tc.capture, spec)
+			if keys != "" || len(events) != 1 || events[0].Kind != agent.SessionEnded || events[0].Reason != agent.BlockedAtStart ||
+				!slices.Equal(events[0].Trust, tc.files) || !strings.Contains(events[0].Text, "files here.\n"+tc.quoted+"> Security guide\n") {
+				t.Errorf("%s, trusting %q: keys %q, events %+v; want one blocked start naming %q and quoting\n%s",
+					tc.capture, spec.TrustFiles, keys, events, tc.files, tc.quoted)
+			}
+		}
+		want := "down"
+		if tc.answered {
+			want = "down enter"
+		}
+		for _, spec := range []agent.Spec{{TrustFiles: tc.files}, {Confine: &agent.Confinement{}}, {NoProjectSettings: true}} {
+			if keys, events := replayTrustOf(t, tc.version, tc.capture, spec); keys != want || len(events) != 0 {
+				t.Errorf("%s, %+v: keys %q, events %+v; want %q and no event", tc.capture, spec, keys, events, want)
+			}
+		}
+	}
+	// A rule and a directory that imitate a warning, and a warning the codec
+	// does not know below the rules.
+	for _, capture := range []string{"trust_warnings_imitated_rule", "trust_warnings_imitated_dir", "trust_warnings_headers"} {
+		for _, spec := range []agent.Spec{{}, {TrustFiles: []string{settings, local, ".mcp.json"}}, {Confine: &agent.Confinement{}}, {NoProjectSettings: true}} {
+			if keys, events := replayTrustOf(t, "2.1.332", capture, spec); keys != "" || len(events) != 0 {
+				t.Errorf("%s, %+v: keys %q, events %+v; want none", capture, spec, keys, events)
+			}
+		}
+	}
+}
+
+// inBold is a line of the dialog that the CLI writes in bold.
+func inBold(text string) screenLine { return screenLine{text, bold} }
+
+// Only the known warnings in their order are read, whatever the rules say:
+// the captured dialog with its rules or another line changed.
 func TestPermissionsWarningShapes(t *testing.T) {
 	const dir = "/tmp/capture-work/sessions/trust_permissions_refused"
 	var b []byte
@@ -185,61 +254,98 @@ func TestPermissionsWarningShapes(t *testing.T) {
 	if !ok {
 		t.Fatal("not rendered")
 	}
-	const (
-		head  = " ⚠ This folder pre-approves 1 tool permission in .claude/settings.json:"
-		rule  = "   Bash(ls:*)"
-		end   = " These will apply without asking. Only proceed if you trust this configuration."
-		loads = " Trusting this folder loads .claude/settings.json."
-		hooks = " ⚠ This folder configures hooks that can run commands without asking, declared in .claude/settings.json"
+	var (
+		head  = inBold(" ⚠ This folder pre-approves 1 tool permission in .claude/settings.json:")
+		rule  = screenLine{text: "   Bash(ls:*)"}
+		dirs  = inBold(" ⚠ This folder adds 1 directory to the workspace in .claude/settings.json:")
+		etc   = screenLine{text: "   /etc"}
+		end   = screenLine{text: " These will apply without asking. Only proceed if you trust this configuration."}
+		hooks = inBold(" ⚠ This folder configures hooks that can run commands without asking, declared in .claude/settings.json")
+		other = inBold(" ⚠ This folder runs commands to mint HTTP headers (headersHelper), declared in .mcp.json")
+		loads = screenLine{text: " Trusting this folder loads .claude/settings.json."}
 	)
-	for _, l := range []string{head, rule, end, loads} {
+	for _, l := range []screenLine{head, rule, end, loads} {
 		if !slices.Contains(captured, l) {
-			t.Fatalf("the captured dialog has no line %q:\n%s", l, strings.Join(captured, "\n"))
+			t.Fatalf("the captured dialog has no line %+v:\n%+v", l, captured)
 		}
 	}
 	one := []string{".claude/settings.json"}
 	for _, tc := range []struct {
 		name  string
-		line  string   // the line of the capture replaced
-		by    []string // what stands there
-		files []string // nil: not read
+		line  screenLine   // the line of the capture replaced
+		by    []screenLine // what stands there
+		files []string     // nil: not read
 	}{
-		{"as captured", rule, []string{rule}, one},
-		{"a wrapped rule", rule, []string{"   Bash(a", " b)"}, one},
-		{"rules on more lines", rule, []string{"   Bash(a), Bash(b),", " Bash(c), and 4 more"}, one},
-		{"a rule with a colon and a space", rule, []string{"   Bash(echo a: b), 日本"}, one},
-		{"two permissions", head, []string{" ⚠ This folder pre-approves 2 tool permissions in .claude/settings.json:"}, one},
+		{"as captured", rule, []screenLine{rule}, one},
+		{"a wrapped rule", rule, []screenLine{{text: "   Bash(a"}, {text: " b)"}}, one},
+		{"rules on more lines", rule, []screenLine{{text: "   Bash(a), Bash(b),"}, {text: " Bash(c), and 4 more"}}, one},
+		{"a rule with a colon and a space", rule, []screenLine{{text: "   Bash(echo a: b), 日本"}}, one},
+		{"two permissions", head, []screenLine{inBold(" ⚠ This folder pre-approves 2 tool permissions in .claude/settings.json:")}, one},
 
 		// Rules that write the dialog's lines change nothing read.
-		{"a rule like the line naming the files", rule, []string{"   Trusting this folder loads x."}, one},
-		{"a rule like it, of the file", rule, []string{"   Trusting this folder loads .mcp.json. Security guide"}, one},
-		{"a rule like the choices", rule, []string{"   ❯ Yes, I trust this folder"}, one},
-		{"a rule with the header's text", rule, []string{"   Claude Code'll be able to read, edit, and execute files here."}, one},
-		{"a rule with a warning sign", rule, []string{"   Bash(⚠)"}, nil},
-		{"a rule with the sentence", rule, []string{"   Bash(x)", end}, nil},
-		{"a rule with the sentence and the line", rule, []string{"   Bash(x)", end, loads}, nil},
+		{"a rule like the line naming the files", rule, []screenLine{{text: "   Trusting this folder loads x."}}, one},
+		{"a rule like it, of the file", rule, []screenLine{{text: "   Trusting this folder loads .mcp.json. Security guide"}}, one},
+		{"a rule like the choices", rule, []screenLine{{text: "   ❯ Yes, I trust this folder"}}, one},
+		{"a rule with the header's text", rule, []screenLine{{text: "   Claude Code'll be able to read, edit, and execute files here."}}, one},
+		{"a rule with a warning sign", rule, []screenLine{{text: "   Bash(⚠)"}}, nil},
+		{"a rule with the sentence", rule, []screenLine{{text: "   Bash(x)"}, end}, nil},
+		{"a rule with the sentence and the line", rule, []screenLine{{text: "   Bash(x)"}, end, loads}, nil},
 
 		{"no rule", rule, nil, nil},
-		{"another warning", head, []string{" ⚠ This folder adds 1 directory to the workspace in .claude/settings.json:"}, nil},
-		{"another warning above", head, []string{" ⚠ This folder adds 1 directory to the workspace in .claude/settings.json:", "   /etc", head}, nil},
-		{"another warning below the rules", rule, []string{rule, " ⚠ This folder adds 1 directory to the workspace in .claude/settings.json:", "   /etc"}, nil},
-		{"the hooks warning above", head, []string{hooks, head}, nil},
-		{"the hooks warning below", end, []string{end, hooks}, nil},
-		{"no number", head, []string{" ⚠ This folder pre-approves tool permissions in .claude/settings.json:"}, nil},
-		{"1 permissions", head, []string{" ⚠ This folder pre-approves 1 tool permission or more in .claude/settings.json:"}, nil},
-		{"a file the dialog does not load", head, []string{" ⚠ This folder pre-approves 1 tool permission in .claude/settings.local.json:"}, nil},
-		{"no file", head, []string{" ⚠ This folder pre-approves 1 tool permission in :"}, nil},
-		{"an empty entry", head, []string{" ⚠ This folder pre-approves 1 tool permission in .claude/settings.json,,:"}, nil},
-		{"words for a file", head, []string{" ⚠ This folder pre-approves 1 tool permission in some other place:"}, nil},
-		{"another sentence", end, []string{" These will apply."}, nil},
+
+		// The warnings in the CLI's order are read, in another they are not.
+		{"directories alone", head, []screenLine{dirs}, one},
+		{"directories below", rule, []screenLine{rule, dirs, etc}, one},
+		{"hooks below", end, []screenLine{end, hooks}, one},
+		{"directories and hooks below", end, []screenLine{dirs, etc, end, hooks}, one},
+		{"directories on more lines", rule, []screenLine{rule, dirs, {text: "   /etc, /usr,"}, {text: " /opt, and 2 more"}}, one},
+		{"directories above", head, []screenLine{dirs, etc, head}, nil},
+		{"permissions twice", head, []screenLine{head, rule, head}, nil},
+		{"directories twice", rule, []screenLine{rule, dirs, etc, dirs, etc}, nil},
+		{"directories below the sentence", end, []screenLine{end, dirs, etc}, nil},
+		{"directories and a sentence below the sentence", end, []screenLine{end, dirs, etc, end}, nil},
+		{"no directory", rule, []screenLine{rule, dirs}, nil},
+		{"hooks above", head, []screenLine{hooks, head}, nil},
+		{"hooks twice", end, []screenLine{end, hooks, hooks}, nil},
+		{"hooks above the sentence", end, []screenLine{hooks, end}, nil},
+		{"hooks below the line naming the files", loads, []screenLine{loads, hooks}, nil},
+		{"another warning above", head, []screenLine{other, head}, nil},
+		{"another warning below the rules", rule, []screenLine{rule, other}, nil},
+		{"another warning below the directories", rule, []screenLine{rule, dirs, etc, other}, nil},
+		{"another warning below the sentence", end, []screenLine{end, other}, nil},
+		{"another warning above the hooks", end, []screenLine{end, other, hooks}, nil},
+		{"another warning below the hooks", end, []screenLine{end, hooks, other}, nil},
+
+		// A rule or a directory that imitates a warning is not in bold.
+		{"a rule like the directories", rule, []screenLine{{text: "   Bash(x),"}, {text: dirs.text}, {text: " Bash(y)"}}, nil},
+		{"a rule like the hooks", rule, []screenLine{{text: "   Bash(x),"}, {text: hooks.text}}, nil},
+		{"a rule like the directories, above them", rule, []screenLine{{text: dirs.text}, dirs, etc}, nil},
+		{"a directory like the hooks", rule, []screenLine{rule, dirs, {text: "   /etc,"}, {text: hooks.text}}, nil},
+		{"directories not in bold", rule, []screenLine{rule, {text: dirs.text}, etc}, nil},
+		{"hooks not in bold", end, []screenLine{end, {text: hooks.text}}, nil},
+		{"hooks in bold in part", end, []screenLine{end, {hooks.text, mixed}}, nil},
+		{"permissions not in bold", head, []screenLine{{text: head.text}}, nil},
+		{"a rule in bold in part", rule, []screenLine{{rule.text, mixed}}, nil},
+		{"the rules in bold", rule, []screenLine{inBold(rule.text)}, nil},
+		{"the sentence in bold", end, []screenLine{inBold(end.text)}, nil},
+		{"the line naming the files in bold", loads, []screenLine{inBold(loads.text)}, nil},
+
+		{"no number", head, []screenLine{inBold(" ⚠ This folder pre-approves tool permissions in .claude/settings.json:")}, nil},
+		{"1 permissions", head, []screenLine{inBold(" ⚠ This folder pre-approves 1 tool permission or more in .claude/settings.json:")}, nil},
+		{"a file the dialog does not load", head, []screenLine{inBold(" ⚠ This folder pre-approves 1 tool permission in .claude/settings.local.json:")}, nil},
+		{"no file", head, []screenLine{inBold(" ⚠ This folder pre-approves 1 tool permission in :")}, nil},
+		{"an empty entry", head, []screenLine{inBold(" ⚠ This folder pre-approves 1 tool permission in .claude/settings.json,,:")}, nil},
+		{"words for a file", head, []screenLine{inBold(" ⚠ This folder pre-approves 1 tool permission in some other place:")}, nil},
+		{"another sentence", end, []screenLine{{text: " These will apply."}}, nil},
 		{"no sentence", end, nil, nil},
-		{"more behind the sentence", end, []string{end, " And more."}, nil},
-		{"text above the warning", head, []string{" x", head}, nil},
+		{"no sentence above the hooks", end, []screenLine{hooks}, nil},
+		{"more behind the sentence", end, []screenLine{end, {text: " And more."}}, nil},
+		{"text above the warning", head, []screenLine{{text: " x"}, head}, nil},
 		{"no line naming the files", loads, nil, nil},
-		{"a line below it", loads, []string{loads, " x"}, nil},
-		{"a file more", loads, []string{" Trusting this folder loads .claude/settings.json and .mcp.json."}, []string{".claude/settings.json", ".mcp.json"}},
+		{"a line below it", loads, []screenLine{loads, {text: " x"}}, nil},
+		{"a file more", loads, []screenLine{{text: " Trusting this folder loads .claude/settings.json and .mcp.json."}}, []string{".claude/settings.json", ".mcp.json"}},
 	} {
-		var screen []string
+		var screen []screenLine
 		for _, l := range captured {
 			if l == tc.line {
 				screen = append(screen, tc.by...)
@@ -301,36 +407,36 @@ func testNoticeShapes(t *testing.T, version, capture, known, other string) {
 		b = append(b, readScreen(t, fmt.Sprintf("testdata/%s/%s/screen-%02d.raw", version, capture, i))...)
 	}
 	screen, ok := renderScreen(b)
-	if !ok || len(screen) == 0 || strings.TrimSpace(screen[0]) != known {
-		t.Fatalf("rendered %v, first line %q", ok, screen[:min(1, len(screen))])
+	if !ok || len(screen) == 0 || strings.TrimSpace(screen[0].text) != known {
+		t.Fatalf("rendered %v, first line %+v", ok, screen[:min(1, len(screen))])
 	}
-	rule := slices.IndexFunc(screen, func(l string) bool { return isRule(strings.TrimSpace(l)) })
-	header := slices.IndexFunc(screen, func(l string) bool { return strings.TrimSpace(l) == "Accessing workspace:" })
+	rule := slices.IndexFunc(screen, func(l screenLine) bool { return isRule(strings.TrimSpace(l.text)) })
+	header := slices.IndexFunc(screen, func(l screenLine) bool { return strings.TrimSpace(l.text) == "Accessing workspace:" })
 	if rule < 1 || header != rule+1 {
 		t.Fatalf("rule on line %d, header on %d", rule, header)
 	}
 	notice, dialog := screen[:rule], screen[rule:]
 	for _, tc := range []struct {
 		name   string
-		screen []string
+		screen []screenLine
 		ok     bool
 	}{
 		{"as captured", screen, true},
 		{"without the notice", dialog, true},
-		{"the other notice in its place", slices.Concat([]string{other}, dialog), true},
-		{"another line in its place", slices.Concat([]string{"Claude Code's fullscreen renderer is off."}, dialog), false},
-		{"a line above it", slices.Concat([]string{"x"}, screen), false},
-		{"a line between it and the rule", slices.Concat(notice, []string{"x"}, dialog), false},
+		{"the other notice in its place", slices.Concat([]screenLine{{text: other}}, dialog), true},
+		{"another line in its place", slices.Concat([]screenLine{{text: "Claude Code's fullscreen renderer is off."}}, dialog), false},
+		{"a line above it", slices.Concat([]screenLine{{text: "x"}}, screen), false},
+		{"a line between it and the rule", slices.Concat(notice, []screenLine{{text: "x"}}, dialog), false},
 		{"the notice twice", slices.Concat(notice, screen), false},
-		{"both notices", slices.Concat([]string{other}, screen), false},
-		{"more on its line", slices.Concat([]string{known + " x"}, dialog), false},
-		{"both on its line", slices.Concat([]string{known + " " + other}, dialog), false},
-		{"only a part of it", slices.Concat([]string{known[:40]}, dialog), false},
+		{"both notices", slices.Concat([]screenLine{{text: other}}, screen), false},
+		{"more on its line", slices.Concat([]screenLine{{text: known + " x"}}, dialog), false},
+		{"both on its line", slices.Concat([]screenLine{{text: known + " " + other}}, dialog), false},
+		{"only a part of it", slices.Concat([]screenLine{{text: known[:40]}}, dialog), false},
 		{"no rule below it", slices.Concat(notice, dialog[1:]), false},
-		{"a line below the rule", slices.Concat(notice, dialog[:1], []string{"x"}, dialog[1:]), false},
+		{"a line below the rule", slices.Concat(notice, dialog[:1], []screenLine{{text: "x"}}, dialog[1:]), false},
 		{"the notice below the rule", slices.Concat(dialog[:1], notice, dialog[1:]), false},
 		{"the notice on both sides of the rule", slices.Concat(notice, dialog[:1], notice, dialog[1:]), false},
-		{"a line below the header", slices.Concat(notice, dialog[:2], []string{"x"}, dialog[2:]), false},
+		{"a line below the header", slices.Concat(notice, dialog[:2], []screenLine{{text: "x"}}, dialog[2:]), false},
 	} {
 		cursor, yes, files, ok := trustDialog(tc.screen, dir)
 		if ok != tc.ok || (ok && (cursor != 0 || yes != 1 || len(files) != 0)) {
@@ -356,7 +462,7 @@ func TestTrustDialogWithTheEnvironmentNote(t *testing.T) {
 
 // capturedDialog is the screen of the first chunks of a capture that show
 // the dialog for its workspace, and that workspace's path.
-func capturedDialog(t *testing.T, version, name string) (screen []string, dir string) {
+func capturedDialog(t *testing.T, version, name string) (screen []screenLine, dir string) {
 	t.Helper()
 	dir = "/tmp/capture-work/sessions/" + name
 	chunks, _ := filepath.Glob(filepath.Join("testdata", version, name, "screen-*.raw"))
@@ -387,7 +493,7 @@ func TestTextBelowTheFileLine(t *testing.T) {
 		{"2.1.332", "trust_files_env"},
 	} {
 		screen, dir := capturedDialog(t, tc.version, tc.capture)
-		guide := slices.IndexFunc(screen, func(l string) bool { return strings.TrimSpace(l) == "Security guide" })
+		guide := slices.IndexFunc(screen, func(l screenLine) bool { return strings.TrimSpace(l.text) == "Security guide" })
 		for _, text := range []string{
 			" ⚠ This folder pre-approves 1 tool permission in .claude/settings.json: Bash(ls:*).",
 			" ⚠ Something else (it matters).",
@@ -407,10 +513,10 @@ func TestTextBelowTheFileLine(t *testing.T) {
 			" and .mcp.json here or above (MCP servers).",
 			" Trusting this folder loads .claude/settings.json.",
 		} {
-			for _, with := range [][]string{{text}, {"", text}, {text, ""}} {
+			for _, with := range [][]screenLine{{{text: text}}, {inBold(text)}, {{}, {text: text}}, {{text: text}, {}}} {
 				added := slices.Concat(screen[:guide], with, screen[guide:])
 				if _, _, files, ok := trustDialog(added, dir); ok {
-					t.Errorf("%s with %q below the file line: read, files %q", tc.capture, with, files)
+					t.Errorf("%s with %+v below the file line: read, files %q", tc.capture, with, files)
 				}
 			}
 		}
@@ -418,30 +524,36 @@ func TestTextBelowTheFileLine(t *testing.T) {
 }
 
 // Only the warning's known shape is read: one that names a file the dialog
-// does not load, or says something else, leaves the dialog unanswered.
+// does not load, or says something else, leaves the dialog unanswered. The
+// captured dialog with its warning and the line naming the files changed.
 func TestHooksWarningShapes(t *testing.T) {
-	dir := "/w"
-	head := "Accessing workspace: /w Quick safety check: Is this a project you created or one you trust? " +
-		"(Like your own code, a well-known open source project, or work from your team). If not, " +
-		"take a moment to review what's in this folder first. Claude Code'll be able to read, edit, and execute files here. "
-	tail := " Security guide"
+	captured, dir := capturedDialog(t, "2.1.329", "trust_hooks_refused")
+	first := slices.IndexFunc(captured, func(l screenLine) bool { return strings.HasPrefix(l.text, " ⚠") })
+	guide := slices.IndexFunc(captured, func(l screenLine) bool { return strings.TrimSpace(l.text) == trustGuide })
+	if first < 0 || guide < first || captured[first].weight != bold {
+		t.Fatalf("the captured dialog has no warning: %+v", captured)
+	}
 	for _, tc := range []struct {
-		middle string
-		files  []string
-		ok     bool
+		warning, loads string
+		files          []string // nil: not read
 	}{
-		{hooksWarning + ".claude/settings.json Trusting this folder loads .claude/settings.json (runs commands).", []string{".claude/settings.json"}, true},
-		{hooksWarning + ".claude/settings.local.json Trusting this folder loads .claude/settings.json (runs commands).", nil, false},
-		{"⚠ This folder configures something else in .claude/settings.json Trusting this folder loads .claude/settings.json.", nil, false},
-		{hooksWarning + ".claude/settings.json", nil, false},
-		{hooksWarning + ".claude/settings.json,, Trusting this folder loads .claude/settings.json (runs commands).", nil, false},
-		{hooksWarning + ".claude/settings.json and .claude/settings.local.json Trusting this folder loads .claude/settings.json and .claude/settings.local.json (runs commands).",
-			[]string{".claude/settings.json", ".claude/settings.local.json"}, true},
+		{hooksWarning + ".claude/settings.json", ".claude/settings.json (runs commands).", []string{".claude/settings.json"}},
+		{hooksWarning + ".claude/settings.local.json", ".claude/settings.json (runs commands).", nil},
+		{"⚠ This folder configures something else in .claude/settings.json", ".claude/settings.json.", nil},
+		{hooksWarning + ".claude/settings.json Trusting this folder loads", ".claude/settings.json.", nil},
+		{hooksWarning + ".claude/settings.json,,", ".claude/settings.json (runs commands).", nil},
+		{hooksWarning + ".claude/settings.json and .claude/settings.local.json", ".claude/settings.json and .claude/settings.local.json (runs commands).",
+			[]string{".claude/settings.json", ".claude/settings.local.json"}},
 	} {
-		files, ok := headerMatches(head+tc.middle+tail, dir)
-		if ok != tc.ok || !slices.Equal(files, tc.files) {
-			t.Errorf("%q: %q %v, want %q %v", tc.middle, files, ok, tc.files, tc.ok)
+		screen := slices.Concat(captured[:first], []screenLine{inBold(" " + tc.warning), {}, {text: " " + loadsPrefix + tc.loads}, {}}, captured[guide:])
+		_, _, files, ok := trustDialog(screen, dir)
+		if ok != (tc.files != nil) || !slices.Equal(files, tc.files) {
+			t.Errorf("%q %q: %q %v, want %q", tc.warning, tc.loads, files, ok, tc.files)
 		}
+	}
+	noLine := slices.Concat(captured[:first], []screenLine{inBold(" " + hooksWarning + ".claude/settings.json"), {}}, captured[guide:])
+	if _, _, files, ok := trustDialog(noLine, dir); ok {
+		t.Errorf("no line naming the files: read, files %q", files)
 	}
 }
 
