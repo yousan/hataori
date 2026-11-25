@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/forge"
 	"github.com/yousan/hataori/internal/instance"
 	"github.com/yousan/hataori/internal/store"
 )
@@ -132,8 +133,9 @@ func notGiven(fi fs.FileInfo) string {
 
 // ConfigLayer is the config's layer of sv: the keys of
 // scopes[].supervisor that the daemon acts on, as the loaded config sets
-// them, then the config's instructions.
-func ConfigLayer(sv Scope) string {
+// them, then the config's instructions. forges are those of the instance,
+// by which it says what of repos the forge tools are refused for (#795).
+func ConfigLayer(sv Scope, forges map[string]forge.Forge) string {
 	var b strings.Builder
 	b.WriteString("# The config's layer\n\nThe operator's settings for this channel, from hataori's config. The daemon enforces them; only the operator changes them.\n\n")
 	autonomy := sv.Autonomy
@@ -152,11 +154,29 @@ func ConfigLayer(sv Scope) string {
 	if len(sv.Repos) == 0 {
 		b.WriteString("- repos: none. You start no thread, and read no forge.\n")
 	} else {
-		var names []string
+		var names, served, unserved []string
 		for _, r := range sv.Repos {
-			names = append(names, cmp.Or(r.Forge, repository(r.Address)))
+			name := cmp.Or(r.Forge, repository(r.Address))
+			names = append(names, name)
+			if _, _, ok := forgeOf(forges, r); ok {
+				served = append(served, name)
+			} else {
+				unserved = append(unserved, name)
+			}
 		}
-		fmt.Fprintf(&b, "- repos: %s. The only repositories you may start a thread in, and read on their forge.\n", strings.Join(names, ", "))
+		fmt.Fprintf(&b, "- repos: %s. The only repositories you may start a thread in, and read on their forge.", strings.Join(names, ", "))
+		if len(unserved) > 0 { // Reads refuses these, whatever is said here
+			if len(served) > 0 {
+				fmt.Fprintf(&b, " A forge answers for %s.", strings.Join(served, ", "))
+			}
+			fmt.Fprintf(&b, " No forge answers for %s: there the forge tools, `%s` included, are refused, so do not call them. "+
+				"Say what a thread claims, and that you did not check it", strings.Join(unserved, ", "), ToolDeployed)
+			if autonomy != Watch {
+				b.WriteString("; when a person needs the check, start a `research` thread for it")
+			}
+			b.WriteString(".")
+		}
+		b.WriteString("\n")
 	}
 	// What Budget's API refuses and its Admit holds.
 	fmt.Fprintf(&b, "- Budget: turns_per_hour %s, sends_per_hour %s (a start counts as a send, and so does setting a reminder), tokens_per_day %s. "+
@@ -219,11 +239,11 @@ func limit(n int64) string {
 	return strconv.FormatInt(n, 10)
 }
 
-// Compose is the instructions of one launch of sv's session: hataori's
-// layer, the config's layer, then each of the user's files that is given,
+// Compose is the instructions of one launch of sv's session, in an
+// instance with forges: hataori's layer, the config's layer, then each of the user's files that is given,
 // under a heading with its name, in the order of files.
-func Compose(sv Scope, files []UserFile) string {
-	parts := []string{Layer, ConfigLayer(sv)}
+func Compose(sv Scope, forges map[string]forge.Forge, files []UserFile) string {
+	parts := []string{Layer, ConfigLayer(sv, forges)}
 	var user []string
 	for _, f := range files {
 		if f.Given {

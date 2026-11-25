@@ -72,7 +72,7 @@ func (b *reader) Forge(ctx context.Context, r control.ForgeRequest) (control.For
 		return control.ForgeAnswer{}, fmt.Errorf("the supervisor of scope %q reads a forge only for a repository its scope lists under supervisor.repos, "+
 			"by the address listed there or by its forge name, and this is not one: %w", b.scope, control.ErrForbidden)
 	}
-	f, repo, ok := b.forgeOf(e)
+	f, repo, ok := forgeOf(b.forges, e)
 	if !ok {
 		b.refused("Forge", "the repository has no forge name, or no forge of the instance serves it")
 		return control.ForgeAnswer{}, fmt.Errorf("the supervisor of scope %q cannot read this repository on a forge: "+
@@ -249,20 +249,21 @@ func (b *reader) deployed(ctx context.Context, f forge.Forge, repo forge.Repo, r
 	return d, nil
 }
 
-// forgeOf returns the forge that serves e's address, and the repository
-// there, trying the forges by name: none for an entry with no forge name.
-func (b *reader) forgeOf(e Repo) (forge.Forge, forge.Repo, bool) {
+// forgeOf returns the forge of forges that serves e's address, and the
+// repository there, trying them by name: none for an entry with no forge
+// name.
+func forgeOf(forges map[string]forge.Forge, e Repo) (forge.Forge, forge.Repo, bool) {
 	if e.Forge == "" {
 		return nil, forge.Repo{}, false
 	}
-	names := make([]string, 0, len(b.forges))
-	for n := range b.forges {
+	names := make([]string, 0, len(forges))
+	for n := range forges {
 		names = append(names, n)
 	}
 	sort.Strings(names)
 	for _, n := range names {
-		if r, ok := b.forges[n].Serves(e.Address); ok {
-			return b.forges[n], r, true
+		if r, ok := forges[n].Serves(e.Address); ok {
+			return forges[n], r, true
 		}
 	}
 	return nil, forge.Repo{}, false

@@ -105,7 +105,7 @@ func TestSupervisorInstructionsInLayers(t *testing.T) {
 			sv := supervisorThread(t, owner, "c1", control.Idle)
 			got := instructionsOf(t, r.root, sv.ID)
 			if !strings.HasPrefix(got, supervisor.Layer+"\n\n"+supervisor.ConfigLayer(supervisor.Scope{Instructions: "Route the channel's work.",
-				Limits: supervisor.Limits{Turns: 12, Sends: 20, Tokens: 2_000_000}, RemindersMax: 10})) {
+				Limits: supervisor.Limits{Turns: 12, Sends: 20, Tokens: 2_000_000}, RemindersMax: 10}, nil)) {
 				t.Fatalf("the instructions do not start with hataori's layer and the config's:\n%s", got)
 			}
 			if c.files == nil && strings.Contains(got, "# The user's files") {
@@ -215,5 +215,46 @@ func TestSupervisorUserFileChanges(t *testing.T) {
 	want := []string{line("SOUL.md"), line("USER.md"), line("USER.md"), line("USER.md")}
 	if n := wt.filesNotices(sv); strings.Join(n, "|") != strings.Join(want, "|") {
 		t.Fatalf("the lines naming the files a turn changed: %q; want %q", n, want)
+	}
+}
+
+// A repository that no forge serves is named as such in the instructions of
+// the launches, and no longer in the next launch's after a forge was added
+// to the config and the daemon restarted; until then a read of it is
+// refused (#795).
+func TestSupervisorLayerNamesUnservedRepos(t *testing.T) {
+	fillFakeForge()
+	wt := newWakeTest(t, func(cfg map[string]any) {
+		cfg["scopes"].([]map[string]any)[0]["supervisor"].(map[string]any)["repos"] = []string{forgeAddress}
+	})
+	const unserved = "No forge answers for acme/widgets"
+	stop, owner, sv := wt.start(t)
+	if got := instructionsOf(t, wt.r.root, sv.ID); !strings.Contains(got, unserved) {
+		t.Fatalf("no forge serves the repository, and the instructions do not say so:\n%s", got)
+	}
+	const read = `mcp list_issues {"repo": "acme/widgets"}`
+	if a := sendAndRead(t, owner, sv.ID, "r1", read); !strings.Contains(a, "no forge of this instance (forges) serves it") {
+		t.Fatalf("list_issues of it: %s", a)
+	}
+	owner.Close()
+	stop()
+
+	if err := os.WriteFile(filepath.Join(wt.r.root, "config", "forge-token"), []byte(fakeForgeToken+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	changeConfig(t, wt.r.root, func(cfg map[string]any) {
+		cfg["forges"] = map[string]any{fakeForgeName: map[string]any{"token_file": "forge-token"}}
+	})
+	stop, owner, sv = wt.start(t)
+	defer stop()
+	_, pos := wt.worker(t, owner, "c1", "a", "reply a")
+	wt.read(t, pos)
+	wt.quiet(t)
+	wt.woken(t, owner, sv.ID, 1) // a launch of its own
+	if got := instructionsOf(t, wt.r.root, sv.ID); strings.Contains(got, unserved) || !strings.Contains(got, "- repos: acme/widgets. The only repositories you may start a thread in, and read on their forge.\n") {
+		t.Fatalf("a forge serves the repository; the next launch's instructions:\n%s", got)
+	}
+	if a := sendAndRead(t, owner, sv.ID, "r2", read); !strings.Contains(a, "Issues of acme/widgets") {
+		t.Fatalf("list_issues of it, once served: %s", a)
 	}
 }
