@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/yousan/hataori/internal/agent"
@@ -90,6 +91,115 @@ func TestFollowedFileReadBeforeHookCalls(t *testing.T) {
 	got := kinds(x.step())
 	if len(got) != 2 || got[0] != agent.Text || got[1] != agent.TurnEnded {
 		t.Fatalf("events %v, want the text, then the end", got)
+	}
+}
+
+// whileReading is a codec that calls do, once, before it decodes the first
+// line of a followed file, and again before the second: while the step reads
+// the files.
+type whileReading struct {
+	agent.Codec
+	lines int
+	do    []func()
+}
+
+func (c *whileReading) Decode(src agent.Source, l []byte) agent.Actions {
+	if src == agent.File && c.lines < len(c.do) {
+		c.lines++
+		c.do[c.lines-1]()
+	}
+	return c.Codec.Decode(src, l)
+}
+
+// A transcript line and a hook call after it, both written while a step
+// reads the followed files and too late for it to find the line, are not
+// decoded with the call first (#917).
+func TestHookCallWrittenWhileFilesAreRead(t *testing.T) {
+	x := newReader(t, fakeTerminalCodec(t))
+	transcript := filepath.Join(x.lv.dir, "transcript.jsonl")
+	x.hooks(hookLine("h1", `{"t":"ready","session":"s","transcript":"`+transcript+`"}`),
+		hookLine("h2", `{"t":"turn","by":"caller"}`))
+	x.step()
+
+	x.lv.codec = &whileReading{Codec: x.lv.codec, do: []func(){
+		func() { x.appendTo(transcript, textLine("two")) },
+		func() {
+			x.appendTo(transcript, textLine("three"))
+			x.hooks(hookLine("h3", `{"t":"end","status":"completed"}`))
+		},
+	}}
+	x.appendTo(transcript, textLine("one"))
+	got := append(x.step(), x.step()...)
+	if fmt.Sprint(texts(got)) != "[one two three]" || len(got) != 4 || got[3].Kind != agent.TurnEnded {
+		t.Fatalf("events %v, texts %q; want three texts, then the end", kinds(got), texts(got))
+	}
+}
+
+// The same with a Claude Code capture of a question: the line of the message
+// that asks and the PostToolUse call, which comes once the question is
+// answered. The message's tokens are the asking turn's, which has ended.
+func TestQuestionsUsageWhileFilesAreRead(t *testing.T) {
+	const capture = "../agent/claudecode/testdata/2.1.322/question"
+	hookFiles, _ := filepath.Glob(filepath.Join(capture, "hooks", "*.json"))
+	raw, err := os.ReadFile(filepath.Join(capture, "transcript.jsonl"))
+	if err != nil || len(hookFiles) != 6 {
+		t.Fatal(err, len(hookFiles))
+	}
+	call := func(n int) []byte { // 1 SessionStart, 2 UserPromptSubmit, 3 PreToolUse, 4 PostToolUse
+		b, err := os.ReadFile(hookFiles[n-1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var one bytes.Buffer
+		if err := json.Compact(&one, b); err != nil {
+			t.Fatal(err)
+		}
+		return []byte(fmt.Sprintf(`{"hook":"c%d","wait":%v,"at":0,"payload":%s}`, n, n == 3, one.Bytes()))
+	}
+	lines := bytes.Split(bytes.TrimSpace(raw), []byte("\n"))
+	asks := slices.IndexFunc(lines, func(l []byte) bool {
+		var tl struct{ Type string }
+		json.Unmarshal(l, &tl)
+		return tl.Type == "assistant"
+	})
+	if asks < 3 {
+		t.Fatalf("the line that asks is line %d", asks)
+	}
+
+	ad, err := claudecode.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	x := newReader(t, ad.NewCodec(agent.Spec{}))
+	transcript := filepath.Join(x.lv.dir, "transcript.jsonl")
+	x.hooks(call(1), call(2), call(3))
+	x.appendTo(transcript, lines[:asks-2]...)
+	x.lv.files[transcript] = 0
+	x.step()
+	// Not the file the capture's calls name: the step would look once more.
+	x.lv.files = map[string]int64{transcript: x.lv.files[transcript]}
+	if _, err := x.lv.codec.Answer(agent.Answer{Request: "c3", Text: "Red"}); err != nil {
+		t.Fatal(err)
+	}
+
+	x.lv.codec = &whileReading{Codec: x.lv.codec, do: []func(){
+		func() { x.appendTo(transcript, lines[asks-1]) },
+		func() {
+			x.appendTo(transcript, lines[asks])
+			x.hooks(call(4))
+		},
+	}}
+	x.appendTo(transcript, lines[asks-2])
+	var usage []agent.Event
+	for _, e := range append(x.step(), x.step()...) {
+		if e.Kind == agent.Usage {
+			usage = append(usage, e)
+		}
+	}
+	// By hand from the capture.
+	want := agent.UsageCount{Model: "claude-haiku-5-5", Input: 2, Output: 125, CacheRead: 29163, CacheWrite: 5144}
+	if len(usage) != 1 || *usage[0].Usage != want || !usage[0].Late {
+		t.Fatalf("usage %+v, want one of %+v, Late", usage, want)
 	}
 }
 
