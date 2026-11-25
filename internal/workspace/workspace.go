@@ -1,7 +1,8 @@
 // Package workspace makes the working directory of a thread: a clone of one
 // repository, at a path of its own that nothing else uses.
 //
-// This package never resets a workspace or a mirror in place. A workspace
+// This package never resets a workspace in place. A mirror's branches and tags
+// follow its remote's, and what they no longer reach is kept in it. A workspace
 // is removed only by Remover, which first proves that nothing in it exists
 // nowhere else (design, section 4.6) and then renames it into trash/.
 // Besides trash entries past their retention, it removes only temporary

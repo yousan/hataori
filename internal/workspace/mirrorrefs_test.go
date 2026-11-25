@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/yousan/hataori/internal/control"
 )
@@ -74,9 +76,9 @@ func (x *mirrorFixture) deleteUpstream(refs ...string) {
 }
 
 // refs are the refs of the mirror below prefix, each as "<id> <name>".
-func (x *mirrorFixture) refs(prefix string) []string {
+func (x *mirrorFixture) refs(prefixes ...string) []string {
 	x.t.Helper()
-	out := x.git(x.mirror, "for-each-ref", "--format=%(objectname) %(refname)", prefix)
+	out := x.git(x.mirror, append([]string{"for-each-ref", "--format=%(objectname) %(refname)"}, prefixes...)...)
 	if out == "" {
 		return nil
 	}
@@ -232,6 +234,19 @@ func TestMirrorKeepsOnlyWhatIsNotReached(t *testing.T) {
 	x.make()
 	x.wantSame()
 	x.wantKept(upper, amended, plain, moved, tagOfGone, lone)
+	// One that a commit has is not, however old the commit.
+	x.git(x.work, "read-tree", "main")
+	x.git(x.work, "update-index", "--add", "--cacheinfo", "100644,"+lone+",more")
+	other := x.git(x.work, "write-tree")
+	x.git(x.work, "read-tree", "main")
+	older := x.git(x.work, "commit-tree", "-p", next, "-m", "another tree", other)
+	next = x.push(older, "refs/heads/main")
+	x.git(x.work, "push", "-q", "origin", other+":refs/tags/old-tree", next+"^{tree}:refs/tags/new-tree", blob+":refs/tags/old-blob")
+	x.make()
+	x.deleteUpstream("refs/tags/old-tree", "refs/tags/new-tree", "refs/tags/old-blob")
+	x.make()
+	x.wantSame()
+	x.wantKept(upper, amended, plain, moved, tagOfGone, lone)
 	// What comes back upstream and goes again is kept already.
 	x.git(x.work, "push", "-q", "origin", upper+":refs/heads/again")
 	x.make()
@@ -294,11 +309,15 @@ func TestMirrorDropsNothingItCannotKeep(t *testing.T) {
 		"no ref can be made": func(x *mirrorFixture, id string) {
 			x.git(x.mirror, "update-ref", strings.TrimSuffix(keptRefs, "/"), "refs/heads/main")
 		},
-		"another object has its name": func(x *mirrorFixture, id string) {
-			x.git(x.mirror, "update-ref", keptRefs+id, "refs/heads/main")
+		"git makes none": func(x *mirrorFixture, id string) {
+			x.wrapGit(`case " $* " in *' update-ref '*)
+				in=$(cat); case "$in" in *'create refs/hataori/'*) exit 0;; esac
+				printf '%s\n' "$in" | "$real" "$@"; exit;;
+			esac`)
 		},
-		"a symbolic ref has its name": func(x *mirrorFixture, id string) {
-			x.git(x.mirror, "symbolic-ref", keptRefs+id, "refs/heads/gone")
+		"the gc cannot be told": func(x *mirrorFixture, id string) {
+			x.git(x.mirror, "config", "--unset-all", "gc.pruneExpire")
+			os.WriteFile(filepath.Join(x.mirror, "config.lock"), nil, 0o600)
 		},
 		"the refs cannot be hidden": func(x *mirrorFixture, id string) {
 			x.git(x.mirror, "config", "--unset-all", "transfer.hideRefs")
@@ -308,16 +327,20 @@ func TestMirrorDropsNothingItCannotKeep(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			x := newMirrorFixture(t)
 			gone := x.push("main", "refs/heads/gone")
+			x.push("main", "refs/heads/moved")
 			x.make()
 			x.make()
+			// With this a fetch that is not told otherwise moves a branch anywhere.
+			x.git(x.mirror, "config", "fetch.showForcedUpdates", "false")
 			block(x, gone)
-			old := x.refs("refs/heads/gone")
+			old := x.refs("refs/heads/gone", "refs/heads/moved")
 			had := x.refs(keptRefs)
 			x.deleteUpstream("refs/heads/gone")
+			x.push("main", "refs/heads/moved")
 			added := x.push("main", "refs/heads/added")
 			x.make()
-			if got := x.refs("refs/heads/gone"); !slices.Equal(got, old) {
-				t.Fatalf("dropped: %v", got)
+			if got := x.refs("refs/heads/gone", "refs/heads/moved"); !slices.Equal(got, old) {
+				t.Fatalf("dropped: %v, want %v", got, old)
 			}
 			if got := x.refs(keptRefs); !slices.Equal(got, had) {
 				t.Fatalf("kept refs changed: %v, they were %v", got, had)
@@ -329,7 +352,80 @@ func TestMirrorDropsNothingItCannotKeep(t *testing.T) {
 	}
 }
 
-// Upstream moves on between what the mirror fetched and what it drops.
+// The name of a kept or fetched ref cannot be had, as when a git that died
+// left it locked: the object gets another.
+func TestMirrorKeepsByAnotherName(t *testing.T) {
+	for name, block := range map[string]func(x *mirrorFixture, ref string){
+		"locked": func(x *mirrorFixture, ref string) {
+			p := filepath.Join(x.mirror, ref+".lock")
+			if err := errors.Join(os.MkdirAll(filepath.Dir(p), 0o700), os.WriteFile(p, nil, 0o600)); err != nil {
+				x.t.Fatal(err)
+			}
+		},
+		"of another object": func(x *mirrorFixture, ref string) { x.git(x.mirror, "update-ref", ref, "refs/heads/main") },
+		"symbolic":          func(x *mirrorFixture, ref string) { x.git(x.mirror, "symbolic-ref", ref, "refs/heads/gone") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			x := newMirrorFixture(t)
+			gone := x.push("main", "refs/heads/gone")
+			old := x.push("main", "refs/heads/amended")
+			x.make()
+			x.deleteUpstream("refs/heads/gone")
+			amended := x.push("main", "refs/heads/amended")
+			block(x, keptRefs+gone)
+			block(x, fetchedRefs+amended)
+			had := x.refs(ownRefs)
+			x.make()
+			if name == "of another object" {
+				for _, l := range had {
+					if strings.Contains(l, keptRefs) && !slices.Contains(x.refs(ownRefs), l) {
+						t.Fatalf("%s is gone or names another: %v", l, x.refs(ownRefs))
+					}
+				}
+			}
+			x.wantHeld(gone, old)
+			if got := strings.Join(x.refs("refs/heads/"), "\n"); strings.Contains(got, "gone") || !strings.Contains(got, amended) {
+				t.Fatal(got)
+			}
+			n := 0
+			for _, l := range x.refs(keptRefs) {
+				if strings.HasPrefix(l, gone) || strings.HasPrefix(l, old) {
+					n++
+				}
+			}
+			if n != 2 {
+				t.Fatal(x.refs(keptRefs))
+			}
+		})
+	}
+}
+
+// A git that died left packed-refs locked: the update ends, and a later one
+// does what it could not.
+func TestMirrorPackedRefsLocked(t *testing.T) {
+	x := newMirrorFixture(t)
+	ids := x.drop()
+	for i := range 20 {
+		x.git(x.mirror, "update-ref", fmt.Sprint("refs/heads/many", i), "main")
+	}
+	lock := filepath.Join(x.mirror, "packed-refs.lock")
+	if err := os.WriteFile(lock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	x.make()
+	if d := time.Since(start); d > 20*time.Second {
+		t.Fatal(d)
+	}
+	os.Remove(lock)
+	x.wantHeld(ids...)
+	x.make()
+	x.wantSame()
+	x.wantHeld(ids...)
+}
+
+// Upstream moves on during an update. When that is after what the mirror
+// fetched and before it looks what upstream has, nothing is dropped.
 func TestMirrorUpstreamMovesMeanwhile(t *testing.T) {
 	x := newMirrorFixture(t)
 	ids := x.drop()
@@ -337,7 +433,10 @@ func TestMirrorUpstreamMovesMeanwhile(t *testing.T) {
 	x.make()
 	for call := 1; call <= 12; call++ {
 		next := x.push("main")
-		restore := x.wrapGit(fmt.Sprintf("[ $n -eq %d ] && { \"$real\" -C '%s' push -q -f origin %s:refs/heads/main %s:refs/heads/amended :refs/heads/second >/dev/null 2>&1; }", call, x.work, next, next))
+		move := func(id string) string {
+			return fmt.Sprintf("\"$real\" -C '%s' push -q -f origin %s:refs/heads/main %s:refs/heads/amended >/dev/null 2>&1", x.work, id, id)
+		}
+		restore := x.wrapGit(fmt.Sprintf("[ $n -eq %d ] && { %s; }", call, strings.Replace(move(next), " >", " :refs/heads/second >", 1)))
 		before := x.git(x.mirror, "for-each-ref", "--format=%(objectname)")
 		mirrorRepo{dir: x.mirror, env: x.m.gitEnv()}.update(context.Background(), "file://"+x.bare)
 		restore()
@@ -345,6 +444,57 @@ func TestMirrorUpstreamMovesMeanwhile(t *testing.T) {
 		x.push("main", "refs/heads/second")
 		x.make()
 		x.wantSame()
+		x.deleteUpstream("refs/heads/second")
+		next = x.push("main")
+		old := x.refs("refs/heads/")
+		restore = x.wrapGit(`case " $* " in *' ls-remote '*) [ -e "$bin/first" ] || { : > "$bin/first"; ` + move(next) + `; };; esac`)
+		mirrorRepo{dir: x.mirror, env: x.m.gitEnv()}.update(context.Background(), "file://"+x.bare)
+		restore()
+		if got := x.refs("refs/heads/"); !slices.Equal(got, old) {
+			t.Fatalf("dropped:\n%s\nit was\n%s", strings.Join(got, "\n"), strings.Join(old, "\n"))
+		}
+		x.push("main", "refs/heads/second")
+		x.make()
+		x.wantSame()
+	}
+}
+
+// A gc of the mirror drops no object, however old.
+func TestMirrorGCDropsNothing(t *testing.T) {
+	x := newMirrorFixture(t)
+	x.make()
+	x.make()
+	old := time.Now().AddDate(-2, 0, 0)
+	x.push("main", "refs/heads/x")
+	id := x.git(x.mirror, "commit-tree", "-m", "no ref names it", "main^{tree}")
+	p := filepath.Join(x.mirror, "objects", id[:2], id[2:])
+	if err := os.Chtimes(p, old, old); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		x.git(x.mirror, "gc", "-q")
+		x.git(x.mirror, "cat-file", "-e", id)
+	}
+}
+
+// git fetches from a shallow upstream with no word of failure where it does
+// not take a branch: one that upstream has is not deleted.
+func TestMirrorOfShallowUpstream(t *testing.T) {
+	x := newMirrorFixture(t)
+	x.push(x.push("main"), "refs/heads/x")
+	full := filepath.Join(x.tmp, "full.git")
+	if err := os.Rename(x.bare, full); err != nil {
+		t.Fatal(err)
+	}
+	x.git(x.tmp, "clone", "-q", "--bare", "--depth=1", "--no-single-branch", "file://"+full, x.bare)
+	x.make()
+	old := x.refs("refs/heads/x")
+	x.git(x.work, "remote", "set-url", "origin", full)
+	x.push(x.push("origin/main"), "refs/heads/x")
+	x.git(x.bare, "fetch", "-q", "--depth=1", "file://"+full, "+refs/heads/x:refs/heads/x")
+	x.make()
+	if got := x.refs("refs/heads/x"); len(got) != 1 || len(old) != 1 {
+		t.Fatalf("x is %v, it was %v", got, old)
 	}
 }
 
@@ -448,6 +598,48 @@ func TestMirrorBranchBecomesDirectory(t *testing.T) {
 	x.wantKept(a, below)
 }
 
+// The same with the branch that HEAD names, both ways.
+func TestMirrorDefaultBranchBecomesDirectory(t *testing.T) {
+	x := newMirrorFixture(t)
+	x.push("main", "refs/heads/main")
+	x.make()
+	var kept []string
+	for _, b := range [][2]string{{"main", "main/v2"}, {"main/v2", "main"}} {
+		kept = append(kept, x.git(x.bare, "rev-parse", "HEAD"))
+		x.git(x.bare, "update-ref", "-d", "refs/heads/"+b[0])
+		x.push("main", "refs/heads/"+b[1])
+		x.git(x.bare, "symbolic-ref", "HEAD", "refs/heads/"+b[1])
+		dir := x.make()
+		x.wantSame()
+		x.wantKept(kept...)
+		if got := x.git(dir, "symbolic-ref", "HEAD"); got != "refs/heads/"+b[1] {
+			t.Fatal(got)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "a")); err != nil {
+			t.Fatal(err)
+		}
+		if err := x.r.Check(context.Background(), dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// What an update that died fetched stays as long as nothing else holds it.
+func TestMirrorFetchedRefsLeft(t *testing.T) {
+	x := newMirrorFixture(t)
+	x.make()
+	gone := x.push("main", "refs/heads/gone")
+	merged := x.push("main", "refs/heads/merged")
+	x.git(x.mirror, "fetch", "-q", "--no-tags", x.bare, "refs/heads/gone:"+fetchedRefs+gone, "refs/heads/merged:"+fetchedRefs+merged)
+	x.push(merged, "refs/heads/main")
+	x.deleteUpstream("refs/heads/gone", "refs/heads/merged")
+	x.make()
+	if got := x.refs(fetchedRefs); len(got) != 1 || !strings.HasPrefix(got[0], gone) {
+		t.Fatal(got)
+	}
+	x.wantHeld(gone, merged)
+}
+
 // A mirror from before hataori pruned: with what upstream deleted long ago,
 // and with nothing hidden.
 func TestMirrorFromBefore(t *testing.T) {
@@ -506,24 +698,6 @@ func TestMirrorDefaultBranchGone(t *testing.T) {
 	x.wantSame()
 }
 
-// git says that it made the kept refs, and did not.
-func TestMirrorReadsBackWhatItKept(t *testing.T) {
-	x := newMirrorFixture(t)
-	gone := x.push("main", "refs/heads/gone")
-	x.make()
-	old := x.refs("refs/heads/gone")
-	x.deleteUpstream("refs/heads/gone")
-	restore := x.wrapGit(`case " $* " in *' update-ref '*) [ -e "$bin/first" ] || { : > "$bin/first"; exit 0; };; esac`)
-	x.make()
-	restore()
-	if got := x.refs("refs/heads/gone"); !slices.Equal(got, old) {
-		t.Fatalf("dropped: %v", got)
-	}
-	x.make()
-	x.wantSame()
-	x.wantKept(gone)
-}
-
 // A deleted branch was merged, and the branch that has it now cannot be
 // moved: what was fetched of that stays until it can.
 func TestMirrorBranchCannotBeMoved(t *testing.T) {
@@ -540,11 +714,17 @@ func TestMirrorBranchCannotBeMoved(t *testing.T) {
 	if got := x.refs("refs/heads/merged"); got != nil {
 		t.Fatalf("still there: %v", got)
 	}
-	x.wantKept(next)
-	x.wantHeld(merged)
+	x.wantKept()
+	if got := x.refs(fetchedRefs); len(got) != 1 || !strings.HasPrefix(got[0], next) {
+		t.Fatal(got)
+	}
 	os.Remove(lock)
+	x.wantHeld(merged)
+	x.make()
+	x.wantSame()
 	x.push("main", "refs/heads/main")
 	x.make()
 	x.wantSame()
+	x.wantKept(next)
 	x.wantHeld(merged)
 }
