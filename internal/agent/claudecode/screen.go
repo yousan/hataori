@@ -920,20 +920,27 @@ func (c *codec) tickScreen(now time.Time) Actions {
 		return c.events(agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart, Trust: files,
 			Text: blockedText(lineTexts(screen))})
 	}
+	// A key that was not handed over is pressed on a later Tick.
+	quiet, moved, from, mark := s.quiet, s.moved, s.from, s.mark
+	failed := func(nothing bool) {
+		if nothing && c.watch {
+			s.quiet, s.moved, s.from, s.mark, s.done = quiet, moved, from, mark, false
+		}
+	}
 	s.quiet = time.Time{} // the next key waits for the screen to change and settle again
 	switch {
 	case cursor == yes:
 		s.done, s.mark = true, len(s.seen)
-		return Actions{Keys: []agent.Part{keyEnter}}
+		return c.press(keyEnter, failed)
 	case s.moved >= 2: // two choices: never more than one move is needed
 		s.done = true
 		return Actions{}
 	case cursor < yes:
 		s.moved, s.from = s.moved+1, cursor
-		return Actions{Keys: []agent.Part{keyDown}}
+		return c.press(keyDown, failed)
 	default:
 		s.moved, s.from = s.moved+1, cursor
-		return Actions{Keys: []agent.Part{keyUp}}
+		return c.press(keyUp, failed)
 	}
 }
 

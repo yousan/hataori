@@ -128,7 +128,7 @@ func (h *Host) Input(ctx context.Context, w Window, parts []agent.Part) error {
 	for i, p := range parts {
 		b, err := Encode(p)
 		if err != nil {
-			return err
+			return &NotSent{Err: err}
 		}
 		bs[i] = b
 	}
@@ -147,7 +147,7 @@ func (h *Host) Write(ctx context.Context, w Window, bs [][]byte) error {
 	c, err := host.DialContext(dctx, w.Ref)
 	cancel()
 	if err != nil {
-		return err
+		return &NotSent{Err: err}
 	}
 	defer c.Close()
 	var errs []error

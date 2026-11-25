@@ -33,7 +33,8 @@ type Holder interface {
 	// Input hands the parts to the terminal in order and returns once all
 	// of them were handed over. It refuses the whole input, handing over
 	// nothing, when it cannot encode one of them. Text never goes on a
-	// command line.
+	// command line. A *NotSent in its error says that nothing was handed
+	// over; with any other error, some of it may have been.
 	Input(ctx context.Context, w Window, parts []agent.Part) error
 
 	// Screen streams the terminal from a position: raw output when
@@ -107,6 +108,18 @@ type Liveness struct {
 // Ended reports whether the agent is definitely not running: it exited, or
 // its holder is gone.
 func (l Liveness) Ended() bool { return l.State == Exited || l.State == Gone }
+
+// NotSent is why Input handed over nothing.
+type NotSent struct {
+	Err error
+	// Refused: the window takes no input as it is, such as while a person
+	// has scrolled back in it, so the same input may be taken later. A
+	// window that a person started may refuse for any reason.
+	Refused bool
+}
+
+func (e *NotSent) Error() string { return e.Err.Error() + "; nothing was sent" }
+func (e *NotSent) Unwrap() error { return e.Err }
 
 // ErrCannotStart is returned by Start of a holder whose Caps has no
 // CanStart.

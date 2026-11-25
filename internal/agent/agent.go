@@ -154,6 +154,16 @@ type Actions struct {
 	// whichever call produced it: the caller records them as written before
 	// it hands them over.
 	Inputs []string
+	// KeysFailed, if set, is called at once when Keys could not be handed
+	// over, before any other call of the codec: nothing of them reached the
+	// terminal (nothing), or part of them may have. The codec then does not
+	// go on as if it had pressed them, and what it does about the input is
+	// its own (design, section 4.3).
+	KeysFailed func(nothing bool)
+	// NotInterrupted, from Interrupt only, says that the agent has nothing
+	// that the interrupt could stop yet, such as input whose last key was not
+	// handed over: what it holds stays, and the turn is not stopped.
+	NotInterrupted bool
 	// WatchScreen, from Open only, asks for the terminal's output (Source
 	// Screen) until the codec says StopScreen: for what no hook reports,
 	// such as a start-up dialog, or whether the agent reads keys yet.
@@ -348,9 +358,10 @@ const (
 	APIError       Reason = "api_error"
 	Crashed        Reason = "crashed"
 	BlockedAtStart Reason = "blocked at start"
-	NotDelivered   Reason = "not delivered"           // input the agent never reported receiving
-	CannotResume   Reason = "cannot resume"           // SessionEnded: the agent no longer has the conversation
-	WrongSession   Reason = "resumed another session" // SessionEnded: a resume reported another session id
+	NotDelivered   Reason = "not delivered"            // input the agent never reported receiving
+	NotTaken       Reason = "the window took no input" // input of which nothing could be handed over
+	CannotResume   Reason = "cannot resume"            // SessionEnded: the agent no longer has the conversation
+	WrongSession   Reason = "resumed another session"  // SessionEnded: a resume reported another session id
 )
 
 // Event is one thing the agent did. Seq orders the events of one session.
@@ -367,7 +378,7 @@ type Event struct {
 	Final bool   // Text: the turn's final answer
 
 	StartedBy Starter // TurnStarted
-	Input     string  // TurnStarted, InputTaken: the Input.ID of the input this turn reports; TurnEnded with NotDelivered: of the input never reported; TurnEnded with Interrupted: of the input that is not written any more; "" when none or not known
+	Input     string  // TurnStarted, InputTaken: the Input.ID of the input this turn reports; TurnEnded with NotDelivered or NotTaken: of the input never reported; TurnEnded with Interrupted: of the input that is not written any more; "" when none or not known
 
 	Tool string // ToolStarted, ToolEnded: the tool's name or label; SubagentStarted, SubagentEnded: the subagent's name or type
 	ID   string // ToolStarted, ToolEnded, SubagentStarted, SubagentEnded: pairs start and end

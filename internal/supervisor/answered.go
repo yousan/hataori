@@ -47,7 +47,7 @@ func Answered(ctx context.Context, tx *store.Tx, id control.ThreadID) (string, e
 	}
 	var since int64
 	if err := tx.QueryRowContext(ctx, `SELECT coalesce(max(t.id), 0) FROM turns t JOIN sessions s ON s.id = t.session_id
-		WHERE s.thread_id = ? AND t.aside = 0 AND coalesce(t.reason, '') != ?`, int64(id), string(agent.NotDelivered)).Scan(&since); err != nil {
+		WHERE s.thread_id = ? AND t.aside = 0 AND coalesce(t.reason, '') NOT IN (?, ?)`, int64(id), string(agent.NotDelivered), string(agent.NotTaken)).Scan(&since); err != nil {
 		return fail(err)
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT t.id, t.started_at, coalesce(t.status, ''), coalesce(t.reason, '') FROM turns t

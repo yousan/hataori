@@ -253,8 +253,12 @@ func TestInputToAPaneInAModeIsRefused(t *testing.T) {
 			if err := h.Input(t.Context(), w, []agent.Part{{Paste: "x"}}); !errors.Is(err, ErrTakesNoInput) {
 				t.Errorf("a paste was refused with %v", err)
 			}
-			if err := h.Input(t.Context(), w, []agent.Part{{Key: agent.Escape}}); !errors.Is(err, ErrTakesNoInput) {
+			err := h.Input(t.Context(), w, []agent.Part{{Key: agent.Escape}})
+			if !errors.Is(err, ErrTakesNoInput) {
 				t.Errorf("Escape was refused with %v", err)
+			}
+			if no := notSent(err); no == nil || !no.Refused {
+				t.Errorf("the refusal is %#v, want one that says nothing was sent, and refused", err)
 			}
 			if b := s.run("list-buffers", "-F", "#{buffer_name}"); b != "" {
 				t.Errorf("buffers left: %q", b)
@@ -701,6 +705,47 @@ func TestInputBesideAPersonsHooks(t *testing.T) {
 	}
 	if got := waitBytes(t, out, len(want)); got != want {
 		t.Errorf("the pane read %q, want %q", got, want)
+	}
+}
+
+// notSent is the *holder.NotSent of err, if any.
+func notSent(err error) *holder.NotSent {
+	var no *holder.NotSent
+	errors.As(err, &no)
+	return no
+}
+
+// An input's error says whether nothing of it was handed over, and whether
+// the window refused it as it is (#741).
+func TestWhatAFailedInputHandedOver(t *testing.T) {
+	s := newServer(t)
+	w, _ := s.reader()
+	r, _ := parseRef(w)
+	in := []agent.Part{{Paste: "x"}, {Key: agent.Enter}}
+
+	h := &Holder{}
+	if no := notSent(h.Input(t.Context(), w, []agent.Part{{Key: "no such key"}})); no == nil {
+		t.Errorf("a key with no name: %+v", no)
+	}
+	// The client killed after it asked the server: not known.
+	killed := filepath.Join(s.dir, "killed-tmux")
+	syscall.ForkLock.RLock() // as in before
+	err := os.WriteFile(killed, []byte(fmt.Sprintf("#!/bin/sh\ncase \"$*\" in *if-shell*) kill -9 $$;; esac\nexec %s \"$@\"\n", s.tmux)), 0o700)
+	syscall.ForkLock.RUnlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Tmux = killed
+	if err := h.Input(t.Context(), w, in); err == nil || notSent(err) != nil {
+		t.Errorf("a client killed at the hand-over: %v", err)
+	}
+	// The next Enter is refused, the paste not being known handed over.
+	if no := notSent(h.Input(t.Context(), w, in[1:])); no == nil || !no.Refused {
+		t.Errorf("the Enter after it: %+v", no)
+	}
+	s.run("kill-pane", "-t", r.Pane)
+	if no := notSent((&Holder{}).Input(t.Context(), w, in)); no == nil {
+		t.Error("a pane that is gone: not known that nothing was sent")
 	}
 }
 

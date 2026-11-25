@@ -46,6 +46,9 @@ var (
 	// ErrReopenRefused: a ReopenThread that changed nothing, for the reason
 	// its *ReopenRefused gives. Since 3.31.
 	ErrReopenRefused = errors.New("reopen refused")
+	// ErrNotInterrupted: the agent's window did not take the interrupt of a
+	// Stop or a Send, such as while a person has scrolled back in it.
+	ErrNotInterrupted = errors.New("the agent's window did not take the interrupt; the turn goes on")
 )
 
 // ReopenRefused is why a ReopenThread was refused: a sentence for a

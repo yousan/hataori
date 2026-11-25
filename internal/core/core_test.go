@@ -596,6 +596,17 @@ func TestSendWhileRunning(t *testing.T) {
 	if inputs() != before+2 {
 		t.Fatalf("%d input events, want %d", inputs(), before+2)
 	}
+
+	// The window did not take the interrupt: the send says so, and the input,
+	// which was taken, is delivered all the same (#741).
+	calls = f.runner.Calls()
+	f.runner.interruptErr = fmt.Errorf("the fake's: %w", control.ErrNotInterrupted)
+	if err := f.owner.Send(ctx, id, "m4", control.Input{Text: "d"}, control.Interrupt); !errors.Is(err, control.ErrNotInterrupted) {
+		t.Fatalf("an interrupt that was not taken: %v", err)
+	}
+	if got := strings.TrimPrefix(f.runner.Calls(), calls+"; "); got != "deliver d" {
+		t.Fatalf("runner calls: %q", got)
+	}
 }
 
 func TestThreadDetail(t *testing.T) {

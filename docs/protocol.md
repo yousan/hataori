@@ -219,7 +219,7 @@ Since 3.26, on a supervisor's connection whose scope's autonomy is `propose`, a 
 | `id` | integer | required | the thread's number; since 3.0, before it a `{scope, key}` object |
 | `key` | string | required | makes the call safe to repeat: a key accepted before is ignored |
 | `input` | `Input` | required | the input |
-| `busy` | integer | required | when a turn is running: 0 refuse (`busy`), 1 deliver into the turn, 2 interrupt it and then send |
+| `busy` | integer | required | when a turn is running: 0 refuse (`busy`), 1 deliver into the turn, 2 interrupt it and then send; an interrupt that the agent's window does not take answers with an error, and the input waits for the turn's end |
 
 Result: none
 
@@ -1329,7 +1329,7 @@ Exactly one per turn.
 | `principal` | string | optional | as in `turn_started` |
 | `from` | string | optional | as in `turn_started`; since 1.6 |
 | `outcome` | string | required | `completion`, `blocked` (on a question) or `failure` |
-| `reason` | string | optional | for a failure: `limit`, `login`, `api_error`, `crashed`, `interrupted`, `not delivered`, ... |
+| `reason` | string | optional | for a failure: `limit`, `login`, `api_error`, `crashed`, `interrupted`, `not delivered`, `the window took no input`, ... |
 | `background` | integer | required | background tasks still running; a reader that wants "really finished" waits for 0. After a failure it is the last count the agent gave, with the starts and ends learned since, an estimate until a turn completes |
 | `subagents` | array | optional | the ids of the subagents among the `background` tasks, as in their `subagent_started`; absent for none, or when the agent does not tell. A reader that follows the subagents takes an open one that is not named here as ended with the turn, except where `outcome` is `blocked`: that end says nothing of them; since 3.37 |
 
@@ -1400,7 +1400,7 @@ Since 3.35. The chat service, or its driver, refused a row of the chat front end
 
 ### Event `stop`
 
-Since 3.23. A `Stop` interrupted the thread's running turn. It is written in the step that sends the interrupt, before it, so it comes before that turn's `turn_ended`: once per `Stop` that interrupted a turn, and none for a `Stop` while no turn runs or one that names a turn which is not the running one (`refused`). An interrupt that no `Stop` asked for, such as a `Send` with busy 2 or an approved `AskInterrupt`, writes none. A `turn_ended` with the reason `interrupted` that follows names nobody; the person who stopped it is here.
+Since 3.23. A `Stop` interrupted the thread's running turn. It is written in the step that sends the interrupt, before it, so it comes before that turn's `turn_ended`: once per `Stop` that interrupted a turn, or tried to: a `Stop` whose interrupt the agent's window did not take answers with an error, and the turn goes on. There is none for a `Stop` while no turn runs or one that names a turn which is not the running one (`refused`). An interrupt that no `Stop` asked for, such as a `Send` with busy 2 or an approved `AskInterrupt`, writes none. A `turn_ended` with the reason `interrupted` that follows names nobody; the person who stopped it is here.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|

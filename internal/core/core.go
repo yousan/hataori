@@ -2188,6 +2188,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		}
 		return nil
 	}
+	var notInterrupted error
 	if interrupt {
 		// A guarded send names its turn: the runner interrupts only while
 		// that turn runs, checked in the step that interrupts (#457), so a
@@ -2203,13 +2204,16 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		switch {
 		case guard != nil && errors.Is(err, session.ErrRefused):
 			guard.ended = true
+		case errors.Is(err, control.ErrNotInterrupted):
+			// The input was taken: it waits for the end of the turn.
+			notInterrupted = fmt.Errorf("core: send to %v: the input was taken and waits for the end of the turn; the interrupt: %w", id, err)
 		case err != nil:
 			return fmt.Errorf("core: send to %v: interrupt: %w", id, err)
 		case guard != nil:
 			guard.interrupted = true
 		}
 	}
-	return a.c.Runner.Deliver(ctx, sid, pending, hand)
+	return errors.Join(notInterrupted, a.c.Runner.Deliver(ctx, sid, pending, hand))
 }
 
 // forAgent is in as the agent gets it: the text the plugins added is in

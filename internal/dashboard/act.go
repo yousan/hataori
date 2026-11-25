@@ -379,6 +379,8 @@ func actStatus(err error) (int, string) {
 		return http.StatusConflict, "the thread is closed"
 	case errors.Is(err, hsession.ErrRefused):
 		return http.StatusConflict, "that turn is no longer running: nothing was stopped"
+	case errors.Is(err, control.ErrNotInterrupted):
+		return http.StatusConflict, "the agent's window did not take the interrupt: the turn goes on"
 	case errors.Is(err, core.ErrBusy):
 		return http.StatusConflict, "a turn is running"
 	case errors.As(err, &stopped):
