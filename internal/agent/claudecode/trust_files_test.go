@@ -460,6 +460,97 @@ func TestTrustDialogWithTheEnvironmentNote(t *testing.T) {
 	}
 }
 
+// The line about the files with three of them, and with notes behind files
+// that are not the last (2.1.332, #758): every file is read, so the start is
+// refused naming them all, or answered when all are trusted.
+func TestTrustDialogWithALongerFileLine(t *testing.T) {
+	const settings, local, mcp = ".claude/settings.json", ".claude/settings.local.json", ".mcp.json"
+	for _, tc := range []struct {
+		capture string
+		files   []string
+		quote   string // "" in a capture that was answered
+	}{
+		{"trust_line_three_refused", []string{settings, local, mcp},
+			"> Trusting this folder loads .claude/settings.json, .claude/settings.local.json,\n> and .mcp.json here or above (MCP servers).\n"},
+		{"trust_line_three_allowed", []string{settings, local, mcp}, ""},
+		{"trust_line_three_notes", []string{settings, local, mcp},
+			"> Trusting this folder loads .claude/settings.json (sets environment variables),\n" +
+				"> .claude/settings.local.json (runs commands and sets environment variables),\n> and .mcp.json here or above (MCP servers).\n"},
+		{"trust_line_note_first_refused", []string{settings, mcp},
+			"> Trusting this folder loads .claude/settings.json (sets environment variables)\n> and .mcp.json here or above (MCP servers).\n"},
+		{"trust_line_note_first_allowed", []string{settings, local}, ""},
+		{"trust_line_notes_hooks", []string{settings, local}, ""},
+	} {
+		keys, events := replayTrustOf(t, "2.1.332", tc.capture, agent.Spec{})
+		if keys != "" || len(events) != 1 || !slices.Equal(events[0].Trust, tc.files) || !strings.Contains(events[0].Text, tc.quote) {
+			t.Errorf("%s, nothing trusted: keys %q events %+v", tc.capture, keys, events)
+		}
+		for i := range tc.files {
+			most := slices.Delete(slices.Clone(tc.files), i, i+1)
+			if keys, events := replayTrustOf(t, "2.1.332", tc.capture, agent.Spec{TrustFiles: most}); keys != "" || len(events) != 1 {
+				t.Errorf("%s, without %s: keys %q events %+v", tc.capture, tc.files[i], keys, events)
+			}
+		}
+		want := "down enter"
+		if tc.quote != "" {
+			want = "down" // the capture ends at the refusal
+		}
+		for _, spec := range []agent.Spec{{TrustFiles: tc.files}, {Confine: &agent.Confinement{}}} {
+			if keys, events := replayTrustOf(t, "2.1.332", tc.capture, spec); keys != want || len(events) != 0 {
+				t.Errorf("%s, %+v: keys %q events %+v", tc.capture, spec, keys, events)
+			}
+		}
+	}
+}
+
+// Only a list as the CLI writes one is read, with at most one of the known
+// notes right behind each file (#758, #730). The captured dialog with its
+// line about the files changed.
+func TestFileLineShapes(t *testing.T) {
+	captured, dir := capturedDialog(t, "2.1.332", "trust_line_three_refused")
+	line := slices.IndexFunc(captured, func(l screenLine) bool { return strings.HasPrefix(l.text, " "+loadsPrefix) })
+	guide := slices.IndexFunc(captured, func(l screenLine) bool { return strings.TrimSpace(l.text) == trustGuide })
+	for _, tc := range []struct {
+		list string
+		want []string // nil: not read
+	}{
+		{"a", []string{"a"}},
+		{"a and b", []string{"a", "b"}},
+		{"a, b, and c", []string{"a", "b", "c"}},
+		{"a (runs commands), b here or above (MCP servers), and c (sets environment variables)", []string{"a", "b", "c"}},
+		{"a (runs commands and sets environment variables) and b", []string{"a", "b"}},
+		{"a (runs commands) (sets environment variables)", nil},
+		{"a (runs commands) (runs commands) and b", nil},
+		{"a (runs commands) here or above (MCP servers) and b", nil},
+		{"a and b (runs commands) (sets environment variables)", nil},
+		{"a (it matters) and b", nil},
+		{"a (runs commands and b", nil},
+		{"a(runs commands) and b", nil},
+		{"(runs commands) and b", nil},
+		{"a  and b (runs commands). c", nil},
+		{"a. and b", nil},
+		{"a, b", nil},
+		{"a, and b", nil},
+		{"a, b and c", nil},
+		{"a and b and c", nil},
+		{"a and b, and c", nil},
+		{"a,b, and c", nil},
+		{"a,, and c", nil},
+		{"a, b, c, and d", nil},
+		{"a, b, and 2 more", nil},
+		{"a, b, and", nil},
+		{"and", []string{"and"}},
+		{"and b", nil},
+		{"", nil},
+	} {
+		changed := slices.Concat(captured[:line], []screenLine{{text: " " + loadsPrefix + tc.list + "."}}, captured[guide:])
+		_, _, files, ok := trustDialog(changed, dir)
+		if ok != (tc.want != nil) || !slices.Equal(files, tc.want) {
+			t.Errorf("%q: files %q, ok %t; want %q", tc.list, files, ok, tc.want)
+		}
+	}
+}
+
 // capturedDialog is the screen of the first chunks of a capture that show
 // the dialog for its workspace, and that workspace's path.
 func capturedDialog(t *testing.T, version, name string) (screen []screenLine, dir string) {
@@ -491,6 +582,8 @@ func TestTextBelowTheFileLine(t *testing.T) {
 		{"2.1.329", "trust_hooks_refused"},
 		{"2.1.331", "trust_permissions_refused"},
 		{"2.1.332", "trust_files_env"},
+		{"2.1.332", "trust_line_three_refused"},
+		{"2.1.332", "trust_line_three_notes"},
 	} {
 		screen, dir := capturedDialog(t, tc.version, tc.capture)
 		guide := slices.IndexFunc(screen, func(l screenLine) bool { return strings.TrimSpace(l.text) == "Security guide" })
@@ -509,6 +602,7 @@ func TestTextBelowTheFileLine(t *testing.T) {
 			" .",
 			" , x.",
 			" and x.",
+			" , and x.",
 			" and .mcp.json (MCP servers).",
 			" and .mcp.json here or above (MCP servers).",
 			" Trusting this folder loads .claude/settings.json.",
