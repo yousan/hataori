@@ -12,7 +12,7 @@ import (
 func TestSupervisorTurnPostsWhatWaitedWithAMessageToIt(t *testing.T) {
 	f := newFront(t, workspaces{})
 	id, _ := f.started(t)
-	if _, err := f.fe.Outbox.Store.DB.Exec(`UPDATE threads SET confined = 1 WHERE id = ?`, int64(id)); err != nil {
+	if _, err := f.fe.Outbox.Store.DB.Exec(`UPDATE threads SET confined = 1, kind = 'supervisor' WHERE id = ?`, int64(id)); err != nil {
 		t.Fatal(err)
 	}
 	conv := f.conv(id)
@@ -87,7 +87,7 @@ func TestSupervisorTurnThatAnswersMessagesToOthers(t *testing.T) {
 					}
 				})
 				id, _ := f.started(t)
-				if _, err := f.fe.Outbox.Store.DB.Exec(`UPDATE threads SET confined = 1 WHERE id = ?`, int64(id)); err != nil {
+				if _, err := f.fe.Outbox.Store.DB.Exec(`UPDATE threads SET confined = 1, kind = 'supervisor' WHERE id = ?`, int64(id)); err != nil {
 					t.Fatal(err)
 				}
 				conv := f.conv(id)

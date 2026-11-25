@@ -191,7 +191,7 @@ func (a *api) TakeIn(ctx context.Context, req control.TakeInRequest) (control.Th
 		}
 		sessionID, _ = res.LastInsertId()
 		data, _ := json.Marshal(map[string]any{"thread": thread, "session": sessionID, "repo": "",
-			"principal": string(a.caller.Principal), "model": rep.Model, "effort": ""})
+			"principal": string(a.caller.Principal), "model": rep.Model, "effort": "", "kind": string(control.KindOrdinary)})
 		_, err = tx.Append(ctx, control.Event{Thread: id, Scope: req.Scope, Time: a.c.now(), Kind: "thread_created", Data: data})
 		return err
 	})

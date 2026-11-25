@@ -317,19 +317,19 @@ type wake struct {
 type waking struct {
 	w       *Waker
 	api     control.API
-	pos     uint64                             // stored: the events up to here are handled
-	read    uint64                             // the last event read
-	ended   map[control.ThreadID]control.Event // folded: each thread's last turn end, or its failed start
-	before  map[control.ThreadID]control.Event // the turn end a failed start in ended came after, not given yet
-	decided []control.Event                    // folded: the decisions of its requests, in order
-	sending *wake                              // stored, not known to be accepted
-	sv      control.ThreadID                   // the supervisor's thread, as last looked up
-	own     map[control.ThreadID]bool          // whether a thread is a supervisor's, as asked
-	quiet   <-chan time.Time                   // the quiet period, while it runs
-	retry   <-chan time.Time                   // a send to try again after an error
-	later   <-chan time.Time                   // a step towards the end of a gate's hold
-	until   time.Time                          // the end of a gate's hold; zero for none
-	held    bool                               // waits for the supervisor's thread to change
+	pos     uint64                                  // stored: the events up to here are handled
+	read    uint64                                  // the last event read
+	ended   map[control.ThreadID]control.Event      // folded: each thread's last turn end, or its failed start
+	before  map[control.ThreadID]control.Event      // the turn end a failed start in ended came after, not given yet
+	decided []control.Event                         // folded: the decisions of its requests, in order
+	sending *wake                                   // stored, not known to be accepted
+	sv      control.ThreadID                        // the supervisor's thread, as last looked up
+	kinds   map[control.ThreadID]control.ThreadKind // of each thread, as asked
+	quiet   <-chan time.Time                        // the quiet period, while it runs
+	retry   <-chan time.Time                        // a send to try again after an error
+	later   <-chan time.Time                        // a step towards the end of a gate's hold
+	until   time.Time                               // the end of a gate's hold; zero for none
+	held    bool                                    // waits for the supervisor's thread to change
 	// waiting holds each worker thread whose last turn end waits for its
 	// background tasks (Waiting), until the thread starts a turn or
 	// BackgroundWait has passed; then stale holds it, folded like a turn
@@ -358,7 +358,7 @@ func (w *Waker) run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	caller := control.Caller{Principal: w.Owner, Scopes: []string{w.Scope}, May: control.OpRead | control.OpSend, NoAnswer: true}
-	r := &waking{w: w, ended: map[control.ThreadID]control.Event{}, before: map[control.ThreadID]control.Event{}, own: map[control.ThreadID]bool{},
+	r := &waking{w: w, ended: map[control.ThreadID]control.Event{}, before: map[control.ThreadID]control.Event{}, kinds: map[control.ThreadID]control.ThreadKind{},
 		waiting: map[control.ThreadID]control.Event{}, stale: map[control.ThreadID]control.Event{}, asks: map[control.ThreadID]bool{},
 		api: w.Core.As(caller)}
 	if w.Sleep != nil {
@@ -369,7 +369,7 @@ func (w *Waker) run(ctx context.Context) error {
 	}
 	r.read = r.pos
 	w.read.Store(r.read)
-	sv, _, err := w.Core.LastConfined(ctx, w.Scope)
+	sv, _, err := w.Core.SupervisorThread(ctx, w.Scope)
 	if err != nil {
 		return err
 	}
@@ -469,10 +469,10 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 		return nil
 	}
 	if e.Kind == ApprovalAnswered || e.Kind == ProposalAnswered {
-		// A person decided one of the supervisor's requests, in a supervisor's
-		// thread: it wakes the supervisor, whose own thread it is.
-		own, err := r.isOwn(ctx, e.Thread)
-		if err != nil || !Decides(e, own) {
+		// A person decided one of the supervisor's requests, in one of its
+		// own threads: it wakes the supervisor.
+		kind, err := r.kind(ctx, e.Thread)
+		if err != nil || !Decides(e, kind == control.KindSupervisor) {
 			return err
 		}
 		r.decided = append(r.decided, e)
@@ -484,7 +484,7 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 	if e.Kind == TurnEnded || e.Kind == "state" && reopened(e) {
 		// The supervisor's thread may be new since it was looked up, or an
 		// older one a person reopened (core's ReopenThread).
-		sv, _, err := r.w.Core.LastConfined(ctx, r.w.Scope)
+		sv, _, err := r.w.Core.SupervisorThread(ctx, r.w.Scope)
 		if err != nil {
 			return err
 		}
@@ -522,11 +522,13 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 		return nil
 	}
 	// A supervisor's thread of the scope other than the current one, as
-	// one a person closed and the daemon replaced, wakes nothing either.
-	own, err := r.isOwn(ctx, e.Thread)
+	// one a person closed and the daemon replaced, or a conversation,
+	// wakes nothing either.
+	kind, err := r.kind(ctx, e.Thread)
 	if err != nil {
 		return err
 	}
+	own := kind.Confined()
 	if !own {
 		// Given already, by a wake that went past a hold: the waker's
 		// position is still before it.
@@ -574,20 +576,17 @@ func (r *waking) free() bool {
 	return false
 }
 
-// isOwn reports whether thread id is a supervisor's thread, as asked once.
-func (r *waking) isOwn(ctx context.Context, id control.ThreadID) (bool, error) {
-	if id == r.sv {
-		return true, nil
-	}
-	own, ok := r.own[id]
+// kind returns the kind of thread id, which never changes, as asked once.
+func (r *waking) kind(ctx context.Context, id control.ThreadID) (control.ThreadKind, error) {
+	kind, ok := r.kinds[id]
 	if !ok {
 		var err error
-		if own, err = r.w.Core.Confined(ctx, id); err != nil {
-			return false, err
+		if kind, err = r.w.Core.Kind(ctx, id); err != nil {
+			return "", err
 		}
-		r.own[id] = own
+		r.kinds[id] = kind
 	}
-	return own, nil
+	return kind, nil
 }
 
 // empty reports whether nothing is folded.
@@ -641,8 +640,8 @@ func (r *waking) stands(ctx context.Context, e control.Event) (bool, error) {
 // quiet period, and no hourly limit holds it. A turn end of the thread that
 // was not given yet goes with it.
 func (r *waking) failed(ctx context.Context, e control.Event) error {
-	own, err := r.isOwn(ctx, e.Thread)
-	if err != nil || own {
+	kind, err := r.kind(ctx, e.Thread)
+	if err != nil || kind.Confined() {
 		return err
 	}
 	if to, err := r.wokenTo(ctx, e.Thread); err != nil || e.Pos <= to {
@@ -729,11 +728,11 @@ func (r *waking) background() {
 func (r *waking) loadWaiting(ctx context.Context) error {
 	db := r.w.Core.Store.DB
 	rows, err := db.QueryContext(ctx, `SELECT e.pos, e.thread_id, e.time, e.data FROM events e JOIN threads t ON t.id = e.thread_id
-		WHERE t.scope = ? AND t.confined = 0 AND t.state != ? AND e.kind = 'turn_ended' AND e.pos <= ?
+		WHERE t.scope = ? AND t.kind = ? AND t.state != ? AND e.kind = 'turn_ended' AND e.pos <= ?
 		AND e.pos > (SELECT since FROM supervisor_wakes WHERE scope = ?)
 		AND e.pos = (SELECT max(pos) FROM events WHERE thread_id = e.thread_id AND kind = 'turn_ended')
 		AND NOT EXISTS (SELECT 1 FROM events s WHERE s.thread_id = e.thread_id AND s.kind = 'turn_started' AND s.pos > e.pos)`,
-		r.w.Scope, string(control.Closed), int64(r.pos), r.w.Scope)
+		r.w.Scope, string(control.KindOrdinary), string(control.Closed), int64(r.pos), r.w.Scope)
 	if err != nil {
 		return fmt.Errorf("supervisor: threads waiting on background tasks: %w", err)
 	}
@@ -781,15 +780,15 @@ func (r *waking) loadWaiting(ctx context.Context) error {
 	return nil
 }
 
-// toldStale reports whether a wake after e, given to a supervisor thread
-// of the scope or stored to be sent, gives e's thread as stale.
+// toldStale reports whether a wake after e, given to a supervisor's own
+// thread of the scope or stored to be sent, gives e's thread as stale.
 func (r *waking) toldStale(ctx context.Context, e control.Event) (bool, error) {
 	if r.sending != nil && staleIn(r.sending.text, e.Thread) {
 		return true, nil
 	}
 	rows, err := r.w.Core.Store.DB.QueryContext(ctx, `SELECT json_extract(data, '$.text') FROM events WHERE kind = 'input' AND pos > ?
-		AND thread_id IN (SELECT id FROM threads WHERE scope = ? AND confined = 1)
-		AND substr(json_extract(data, '$.text'), 1, 9) = 'hataori: '`, int64(e.Pos), r.w.Scope)
+		AND thread_id IN (SELECT id FROM threads WHERE scope = ? AND kind = ?)
+		AND substr(json_extract(data, '$.text'), 1, 9) = 'hataori: '`, int64(e.Pos), r.w.Scope, string(control.KindSupervisor))
 	if err != nil {
 		return false, fmt.Errorf("supervisor: threads waiting on background tasks: %w", err)
 	}
@@ -958,7 +957,7 @@ func (r *waking) toSleep(ctx context.Context, sv control.ThreadID) (bool, error)
 	if r.w.Sleep == nil {
 		return true, nil
 	}
-	now, state, err := r.w.Core.LastConfined(ctx, r.w.Scope)
+	now, state, err := r.w.Core.SupervisorThread(ctx, r.w.Scope)
 	if err != nil || now != sv || state != control.Idle {
 		return err == nil, err
 	}
@@ -987,7 +986,7 @@ func (r *waking) toSleep(ctx context.Context, sv control.ThreadID) (bool, error)
 // to either. In each case the wake waits for the thread's next turn end
 // or change of state.
 func (r *waking) ready(ctx context.Context) (control.ThreadID, bool, error) {
-	sv, state, err := r.w.Core.LastConfined(ctx, r.w.Scope)
+	sv, state, err := r.w.Core.SupervisorThread(ctx, r.w.Scope)
 	if err != nil {
 		return 0, false, err
 	}
@@ -1459,7 +1458,7 @@ func (r *waking) hold() bool {
 
 // Decides reports whether e is a person's decision of one of the
 // supervisor's requests that wakes it: an approval_answered or a
-// proposal_answered of a supervisor's thread of the scope (own).
+// proposal_answered of a supervisor's own thread of the scope (own).
 func Decides(e control.Event, own bool) bool {
 	return own && e.Thread != 0 && (e.Kind == ApprovalAnswered || e.Kind == ProposalAnswered)
 }

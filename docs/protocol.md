@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.37**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.38**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -287,7 +287,7 @@ Since 3.31. Takes a closed or removed thread back to `asleep`, so that its next 
 - A closed thread whose directory is in place keeps it (`kept`). A removed thread's directory is taken back from `trash/` to its place while it is there (`restored`), with its unpushed work and its recorded conversation; when the trash pass deleted it, or a closed thread's directory is gone, it is made again at its place (`remade`): a new clone of the thread's repository, or an empty directory for a thread started confined. Neither ever replaces anything: when the place of a removed thread's directory is taken by something else, the call is answered `reopen_refused` and nothing changes.
 - The next message resumes the recorded conversation (`resume`). It starts a new one in the directory (`new`) when the directory was made again, or when the session never recorded its conversation; the agent's first prompt then says that the chat thread holds the earlier exchange, and gives its last part. A conversation the agent no longer has when it is resumed is replaced as at any wake: a `session_replaced` event, and a new session in the same directory.
 
-It writes a `state` event to `asleep` with reason `reopen`, then a `reopened` event. It is answered `reopen_refused`, and changes nothing, for a thread that is neither closed nor removed, a thread whose agent was never started, a removed thread that was taken in from a person's window (`TakeIn`), a thread whose directory cannot be put back, and a thread started confined (a supervisor's) while another confined thread of its scope is neither closed nor removed: the message names that one. Only the owner may reopen: the caller needs the `Reopen` permission, which the owner's connection on the control socket has and a chat front end gives the caller it makes for a press of its Reopen button, and its person must be the owner; any other caller is answered `forbidden`, nothing changes and one log line is written.
+It writes a `state` event to `asleep` with reason `reopen`, then a `reopened` event. It is answered `reopen_refused`, and changes nothing, for a thread that is neither closed nor removed, a thread whose agent was never started, a removed thread that was taken in from a person's window (`TakeIn`), a thread whose directory cannot be put back, a supervisor's own thread (`ThreadInfo.kind`) while another own thread of its scope is neither closed nor removed, which the message names, and a look-up's thread, always. Only the owner may reopen: the caller needs the `Reopen` permission, which the owner's connection on the control socket has and a chat front end gives the caller it makes for a press of its Reopen button, and its person must be the owner; any other caller is answered `forbidden`, nothing changes and one log line is written.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -748,6 +748,7 @@ One file the owner let through with `Trust`; since 3.28.
 | `tokens` | `TokenCount` | optional | the thread's tokens; absent until the agent reports usage; since 1.8 |
 | `terminal` | string | optional | the terminal device the agent of its current session runs in, as its session host opened it, such as `/dev/pts/3` or `/dev/ttys003`; absent for a session on pipes, while the thread is asleep, closed, removed or failed, once the agent's command has exited, while its session host does not answer within a second, and for a session host started before 1.12 until the session's next start; not text; since 1.12 |
 | `confined` | boolean | optional | it was started confined, as a scope's supervisor thread is: its directory is the scope's, not a workspace with a repository, so `Workspace` has nothing to read there and fails; since 3.36 |
+| `kind` | string | optional | what it is to its scope, set at its start and never changed ([design section 5.1](design/overview.md#51-the-control-api)): `ordinary`; `supervisor`, a supervisor's own thread, which its wakes go to and of which a scope has one open at a time; `conversation`, one with the supervisor beside its own thread; or `lookup`, which answers one question for it and is never reopened. No operation sets it: `Start` always starts an `ordinary` thread. Always given since 3.38 |
 
 ### Type `ThreadDetail`
 
@@ -775,6 +776,7 @@ The fields of `ThreadInfo`, and:
 | `tokens` | `TokenCount` | optional | as in `ThreadInfo` |
 | `terminal` | string | optional | as in `ThreadInfo` |
 | `confined` | boolean | optional | as in `ThreadInfo` |
+| `kind` | string | optional | as in `ThreadInfo` |
 | `requests` | [`Request`] | required | the open questions and approvals; open approvals asked here are listed whatever the thread state, and since 3.26 so are the open proposals shown here, and the approved ones whose outcome is not stored yet, as approvals with the choices Approve and Refuse; may be `null` |
 | `recent` | string | required | the end of its last output, at most the bytes asked for: its `text` events in order, each a whole message of the agent, with a blank line (`\n\n`) between two of them, also between two turns; cut at the start of a character, and with no part of a blank line left at the cut. Before 3.12 the messages were joined with nothing between them, and the cut could fall inside a character |
 | `events` | [`Event`] | optional | its last events, as many as `events` asked for, newest last, each as `Events` delivers it; since 1.5 |
@@ -1292,6 +1294,7 @@ The `data` of each event kind. Integers are the instance's own numbers for threa
 | `effort` | string | required | the effort asked for, or the scope's default |
 | `via` | string | optional | as in `input`: `proposal` for the thread of a supervisor's proposal that a person approved; since 3.26 |
 | `research` | boolean | optional | `true` for a thread started as research (`Start`): its launches leave its repository's settings out; absent otherwise; since 3.34 |
+| `kind` | string | optional | what the thread is, as `ThreadInfo.kind`; always given since 3.38 |
 
 ### Event `state`
 

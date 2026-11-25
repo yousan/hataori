@@ -339,7 +339,7 @@ func (a *api) answerProposal(ctx context.Context, req control.RequestID, ans con
 		}
 		var id control.ThreadID
 		id, err = sender.start(ctx, control.StartRequest{Key: key, Scope: scope, Repo: call.Repo, Agent: call.Agent,
-			Model: call.Model, Effort: call.Effort, Input: control.Input{Text: call.Text}, Research: call.Research}, "")
+			Model: call.Model, Effort: call.Effort, Input: control.Input{Text: call.Text}, Research: call.Research}, control.KindOrdinary, "")
 		if id != 0 {
 			// The thread is made; a launch that failed is the thread's own
 			// failure, which its events show.

@@ -54,9 +54,9 @@ type FrontEnd struct {
 	// scope's supervisor, by scope, of any client: a link here may show
 	// another client's scope (#657).
 	Supervisors map[string]Posts
-	// Supervisor returns the thread that is a scope's supervisor's now, 0
-	// when it has none: what a message in an earlier supervisor's closed
-	// thread names (core.Core.LastConfined). Nil: no thread is named.
+	// Supervisor returns a scope's supervisor's own thread, 0 when it has
+	// none: what a message in an earlier one that is closed names
+	// (core.Core.SupervisorThread). Nil: no thread is named.
 	Supervisor func(ctx context.Context, scope string) (control.ThreadID, control.State, error)
 	Log        *slog.Logger
 

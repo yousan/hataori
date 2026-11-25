@@ -48,6 +48,7 @@ type reopenRow struct {
 	agentID  string
 	started  bool // the session's agent was launched at least once
 	confined bool
+	kind     control.ThreadKind
 	foreign  bool
 }
 
@@ -58,26 +59,26 @@ func (c *Core) reopenRow(ctx context.Context, q querier, id control.ThreadID) (r
 		return r, err
 	}
 	r.session, r.state = sid, state
-	err = q.QueryRowContext(ctx, `SELECT t.workspace, t.repo, t.trash, t.reopen_placed, t.confined, t.foreign_workspace, s.agent_session_id, s.spec != ''
+	err = q.QueryRowContext(ctx, `SELECT t.workspace, t.repo, t.trash, t.reopen_placed, t.confined, t.kind, t.foreign_workspace, s.agent_session_id, s.spec != ''
 		FROM threads t JOIN sessions s ON s.id = ? WHERE t.id = ?`, sid, int64(id)).
-		Scan(&r.dir, &r.repo, &r.trash, &r.placed, &r.confined, &r.foreign, &r.agentID, &r.started)
+		Scan(&r.dir, &r.repo, &r.trash, &r.placed, &r.confined, &r.kind, &r.foreign, &r.agentID, &r.started)
 	if err != nil {
 		return r, fmt.Errorf("core: thread %d: %w", id, err)
 	}
 	return r, nil
 }
 
-// openConfined returns another thread of scope that was started confined
-// and is neither closed nor removed; 0 when there is none.
-func openConfined(ctx context.Context, q querier, scope string, id control.ThreadID) (control.ThreadID, error) {
+// openSupervisor returns another supervisor's own thread of scope that is
+// neither closed nor removed; 0 when there is none.
+func openSupervisor(ctx context.Context, q querier, scope string, id control.ThreadID) (control.ThreadID, error) {
 	var other int64
-	err := q.QueryRowContext(ctx, `SELECT id FROM threads WHERE scope = ? AND confined = 1 AND id != ? AND state NOT IN (?, ?)
-		ORDER BY id DESC LIMIT 1`, scope, int64(id), string(control.Closed), string(control.Removed)).Scan(&other)
+	err := q.QueryRowContext(ctx, `SELECT id FROM threads WHERE scope = ? AND kind = ? AND id != ? AND state NOT IN (?, ?)
+		ORDER BY id DESC LIMIT 1`, scope, string(control.KindSupervisor), int64(id), string(control.Closed), string(control.Removed)).Scan(&other)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
 	if err != nil {
-		return 0, fmt.Errorf("core: confined threads of %q: %w", scope, err)
+		return 0, fmt.Errorf("core: the supervisor's own threads of %q: %w", scope, err)
 	}
 	return control.ThreadID(other), nil
 }
@@ -87,10 +88,10 @@ func openConfined(ctx context.Context, q querier, scope string, id control.Threa
 // refusal changes nothing and writes one log line.
 func (c *Core) reopen(ctx context.Context, id control.ThreadID, scope string, principal control.Principal) (control.Reopened, error) {
 	defer c.locks.lock(threadLock(id))()
-	// Taken last, after the thread's, as a confined Start takes it after
-	// its key's: no confined thread of the scope starts while this one is
-	// looked at and reopened.
-	defer c.locks.lock(confinedLock(scope))()
+	// Taken last, after the thread's, as the start of a supervisor's own
+	// thread takes it after its key's: none of the scope starts while this
+	// one is looked at and reopened.
+	defer c.locks.lock(supervisorLock(scope))()
 	refuse := func(reason string, attrs ...any) (control.Reopened, error) {
 		c.Log.Warn("reopen refused", append([]any{"thread", int64(id), "principal", string(principal), "reason", reason}, attrs...)...)
 		return control.Reopened{}, fmt.Errorf("core: reopen %v: %w", id, &control.ReopenRefused{Reason: reason})
@@ -107,10 +108,13 @@ func (c *Core) reopen(ctx context.Context, id control.ThreadID, scope string, pr
 		// with the removal.
 		return refuse("it was taken in from a person's window and removed: take the window in again")
 	}
-	if r.confined {
-		// A scope's supervisor threads share one directory, and one of them
-		// is open at a time (design, section 7.1).
-		other, err := openConfined(ctx, c.Store.DB, scope, id)
+	switch r.kind {
+	case control.KindLookup:
+		return refuse("it answered its one question: a look-up's thread is never reopened")
+	case control.KindSupervisor:
+		// One of a scope's supervisor's own threads is open at a time
+		// (design, section 7.1).
+		other, err := openSupervisor(ctx, c.Store.DB, scope, id)
 		if err != nil {
 			return control.Reopened{}, err
 		}
@@ -156,8 +160,8 @@ func (c *Core) reopen(ctx context.Context, id control.ThreadID, scope string, pr
 		if now.session != r.session || now.state != r.state {
 			return &control.ReopenRefused{Reason: "the thread changed meanwhile"}
 		}
-		if r.confined {
-			if other, err := openConfined(ctx, tx, scope, id); err != nil || other != 0 {
+		if r.kind == control.KindSupervisor {
+			if other, err := openSupervisor(ctx, tx, scope, id); err != nil || other != 0 {
 				if err != nil {
 					return err
 				}
@@ -300,6 +304,6 @@ func (c *Core) recordPlaced(ctx context.Context, id control.ThreadID, how string
 	}
 }
 
-// confinedLock is the key that serializes a confined Start and a reopen of
-// a confined thread in one scope.
-func confinedLock(scope string) string { return "confined:" + scope }
+// supervisorLock is the key that serializes the start and a reopen of a
+// supervisor's own thread in one scope.
+func supervisorLock(scope string) string { return "supervisor:" + scope }

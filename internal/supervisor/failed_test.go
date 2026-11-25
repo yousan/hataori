@@ -63,7 +63,7 @@ And 1 more thread; list_threads and read_thread show it.
 func TestLoopGuardPassesAFailedStart(t *testing.T) {
 	c := remindStore(t)
 	for _, q := range []string{
-		`INSERT INTO threads (id, scope, key, started_by, state, confined, created_at, updated_at) VALUES (1, 'c1', 'sv', 'p', 'idle', 1, 0, 0), (2, 'c1', 'w', 'p', 'failed', 0, 0, 0)`,
+		`INSERT INTO threads (id, scope, key, started_by, state, confined, kind, created_at, updated_at) VALUES (1, 'c1', 'sv', 'p', 'idle', 1, 'supervisor', 0, 0), (2, 'c1', 'w', 'p', 'failed', 0, 'ordinary', 0, 0)`,
 		`INSERT INTO events (pos, scope, thread, thread_id, time, kind, data) VALUES
 			(10, 'c1', '', 2, 0, 'turn_started', '{"by":"caller","from":"supervisor:c1","key":"s","session":2,"turn":5}'),
 			(11, 'c1', '', 2, 0, 'turn_ended', '{"by":"caller","from":"supervisor:c1","outcome":"completion","background":0,"session":2,"turn":5}'),
@@ -100,7 +100,7 @@ func TestReasonOfAFailedStart(t *testing.T) {
 func TestBudgetOfFailedStarts(t *testing.T) {
 	c := remindStore(t)
 	db := c.Store.DB
-	if _, err := db.Exec(`INSERT INTO threads (id, scope, key, started_by, state, confined, created_at, updated_at) VALUES (1, 'c1', 'sv', 'p', 'idle', 1, 0, 0)`); err != nil {
+	if _, err := db.Exec(`INSERT INTO threads (id, scope, key, started_by, state, confined, kind, created_at, updated_at) VALUES (1, 'c1', 'sv', 'p', 'idle', 1, 'supervisor', 0, 0)`); err != nil {
 		t.Fatal(err)
 	}
 	now := at{}.Now()

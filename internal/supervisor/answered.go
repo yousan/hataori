@@ -23,8 +23,8 @@ const answerMax = 200
 // for it (design, section 7.1, "What it posts").
 const quietAnswer = "(quiet)"
 
-// Answered is what a person's input that resumes the conversation of
-// supervisor thread id is given before it (core.Core.Preface): one line per
+// Answered is what a person's input that resumes the conversation of the
+// supervisor's own thread id is given before it (core.Core.Preface): one line per
 // wake that the thread answered in a conversation of its own since that
 // conversation's last turn, oldest first, each saying when the wake came,
 // the threads it named, and how its answer began, or that it gave none or
@@ -32,17 +32,17 @@ const quietAnswer = "(quiet)"
 // with the turn (turns.aside). A last turn whose input was never delivered
 // does not count: the conversation never got the lines it was given with.
 // It is read in the Send's transaction, so a later input, or the same one
-// given again after a restart, finds the lines it should. An ordinary
-// thread gets nothing.
+// given again after a restart, finds the lines it should. A thread of any
+// other kind, which no wake goes to, gets nothing.
 func Answered(ctx context.Context, tx *store.Tx, id control.ThreadID) (string, error) {
 	fail := func(err error) (string, error) {
 		return "", fmt.Errorf("supervisor: the wakes answered: %w", err)
 	}
-	var confined bool
-	if err := tx.QueryRowContext(ctx, `SELECT confined FROM threads WHERE id = ?`, int64(id)).Scan(&confined); err != nil {
+	var kind control.ThreadKind
+	if err := tx.QueryRowContext(ctx, `SELECT kind FROM threads WHERE id = ?`, int64(id)).Scan(&kind); err != nil {
 		return fail(err)
 	}
-	if !confined {
+	if kind != control.KindSupervisor {
 		return "", nil
 	}
 	var since int64

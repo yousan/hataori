@@ -133,7 +133,7 @@ func (g *LoopGuard) Count(ctx context.Context, w control.ThreadID) (int, uint64,
 }
 
 // supervisorReset returns the position of the last thing a person did in
-// a supervisor thread of the scope, reading on from the events read
+// a supervisor's own thread of the scope, reading on from the events read
 // before: turns hataori started there have their first input left out.
 func (g *LoopGuard) supervisorReset(ctx context.Context) (uint64, error) {
 	g.mu.Lock()
@@ -142,8 +142,8 @@ func (g *LoopGuard) supervisorReset(ctx context.Context) (uint64, error) {
 		g.skip = map[turnRef]bool{}
 	}
 	rows, err := g.Core.Store.DB.QueryContext(ctx, `SELECT pos, kind, data FROM events
-		WHERE thread_id IN (SELECT id FROM threads WHERE scope = ? AND confined = 1) AND pos > ?
-		AND kind IN ('turn_started', 'input', 'answer', 'approval_answered', 'proposal_answered') ORDER BY pos`, g.Scope, int64(g.scanned))
+		WHERE thread_id IN (SELECT id FROM threads WHERE scope = ? AND kind = ?) AND pos > ?
+		AND kind IN ('turn_started', 'input', 'answer', 'approval_answered', 'proposal_answered') ORDER BY pos`, g.Scope, string(control.KindSupervisor), int64(g.scanned))
 	if err != nil {
 		return 0, fmt.Errorf("supervisor: loop guard: %w", err)
 	}
@@ -219,8 +219,8 @@ func (g *LoopGuard) count(ctx context.Context, w control.ThreadID, svReset, acce
 	}
 	// The wakes since the first of them, by the last position each covers.
 	rows, err := db.QueryContext(ctx, `SELECT json_extract(data, '$.key') FROM events WHERE kind = 'turn_started' AND pos > ?
-		AND thread_id IN (SELECT id FROM threads WHERE scope = ? AND confined = 1)
-		AND substr(json_extract(data, '$.key'), 1, ?) = ?`, int64(ends[0]), g.Scope, len(WakeKeyPrefix), WakeKeyPrefix)
+		AND thread_id IN (SELECT id FROM threads WHERE scope = ? AND kind = ?)
+		AND substr(json_extract(data, '$.key'), 1, ?) = ?`, int64(ends[0]), g.Scope, string(control.KindSupervisor), len(WakeKeyPrefix), WakeKeyPrefix)
 	if err != nil {
 		return 0, 0, fmt.Errorf("supervisor: loop guard: %w", err)
 	}
@@ -316,7 +316,7 @@ func (g *LoopGuard) tell(ctx context.Context, w control.ThreadID, n int, reset u
 	if done {
 		return // by this run; the notice's key keeps it once across runs
 	}
-	sv, _, err := g.Core.LastConfined(ctx, g.Scope)
+	sv, _, err := g.Core.SupervisorThread(ctx, g.Scope)
 	if err == nil && sv != 0 && g.Tell != nil {
 		err = g.Tell(ctx, sv, key, LoopNotice(w, n))
 	}

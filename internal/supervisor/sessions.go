@@ -369,7 +369,7 @@ var ErrNoChat = errors.New("the scope's client has no chat front end in this dae
 
 // final reports whether a Start refused with err would be refused again.
 func final(err error) bool {
-	return errors.Is(err, control.ErrForbidden) || errors.Is(err, core.ErrDisabled) || errors.Is(err, core.ErrConfinedKey) ||
+	return errors.Is(err, control.ErrForbidden) || errors.Is(err, core.ErrDisabled) || errors.Is(err, core.ErrKindKey) ||
 		errors.Is(err, ErrNoChat) || stoppedByPlugin(err) ||
 		errors.Is(err, control.ErrUnknownEffort) || errors.Is(err, context.Canceled)
 }
@@ -392,9 +392,9 @@ func ErrText(err error) string {
 	return err.Error()
 }
 
-// StartOne starts the supervisor thread of scope, or returns the one it
-// has: the scope's newest confined thread, unless a person closed or
-// removed it, which a new one then replaces. One that failed is kept, and
+// StartOne starts the supervisor's own thread of scope, or returns the one
+// it has (core.Core.SupervisorThread), unless a person closed or removed
+// it, which a new one then replaces. One that failed is kept, and
 // logged: closing it is how a person asks for a new one. A thread whose
 // session failed to start is returned with the error.
 func (s *Sessions) StartOne(ctx context.Context, scope string) (control.ThreadID, error) {
@@ -408,7 +408,7 @@ func (s *Sessions) StartOne(ctx context.Context, scope string) (control.ThreadID
 	if err != nil {
 		return 0, err
 	}
-	last, state, err := s.Core.LastConfined(ctx, scope)
+	last, state, err := s.Core.SupervisorThread(ctx, scope)
 	if err != nil {
 		return 0, err
 	}
@@ -428,13 +428,14 @@ func (s *Sessions) StartOne(ctx context.Context, scope string) (control.ThreadID
 	}
 	caller := control.Caller{Principal: s.Owner, Scopes: []string{scope}, May: control.OpRead | control.OpStart}
 	return s.Core.StartConfined(ctx, caller, control.StartRequest{Key: key, Scope: scope,
-		Input: control.Input{Text: FirstInput}, Model: sv.Model, Effort: cmp.Or(sv.Effort, DefaultEffort)}, dir)
+		Input: control.Input{Text: FirstInput}, Model: sv.Model, Effort: cmp.Or(sv.Effort, DefaultEffort)},
+		control.KindSupervisor, dir)
 }
 
 // Dir returns the directory of scope's supervisor threads (design, section
 // 7.1, "Its directory and its notes"), recorded in the store the first time
-// it is asked for: the directory of the scope's newest supervisor thread
-// that has one, so that what it holds carries on, else a new one in
+// it is asked for: the directory of the newest of the supervisor's own
+// threads of the scope that has one, so that what it holds carries on, else a new one in
 // <root>/confined/ named from the scope's key (workspace.ScopePath). Every
 // supervisor thread of the scope started from then on starts in it; nothing
 // here makes, empties or removes it.
@@ -448,8 +449,8 @@ func (s *Sessions) Dir(ctx context.Context, scope string) (string, error) {
 	if !errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("supervisor: the directory of %q: %w", scope, err)
 	}
-	err = db.QueryRowContext(ctx, `SELECT workspace FROM threads WHERE scope = ? AND confined = 1 AND workspace != ''
-		ORDER BY id DESC LIMIT 1`, scope).Scan(&dir)
+	err = db.QueryRowContext(ctx, `SELECT workspace FROM threads WHERE scope = ? AND kind = ? AND workspace != ''
+		ORDER BY id DESC LIMIT 1`, scope, string(control.KindSupervisor)).Scan(&dir)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		dir = workspace.ScopePath(s.Root, scope)

@@ -53,7 +53,7 @@ func TestBudgetCountsCacheReadsATenth(t *testing.T) {
 	} {
 		c := remindStore(t)
 		db := c.Store.DB
-		if _, err := db.Exec(`INSERT INTO threads (id, scope, key, started_by, state, confined, created_at, updated_at) VALUES (1, 'c1', 'sv', 'p', 'idle', 1, 0, 0)`); err != nil {
+		if _, err := db.Exec(`INSERT INTO threads (id, scope, key, started_by, state, confined, kind, created_at, updated_at) VALUES (1, 'c1', 'sv', 'p', 'idle', 1, 'supervisor', 0, 0)`); err != nil {
 			t.Fatal(err)
 		}
 		now := at(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))

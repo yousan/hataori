@@ -204,8 +204,9 @@ type API interface {
 	// new conversation. A path that something else took is never
 	// overwritten: the call is refused. So is a thread that is neither
 	// closed nor removed, one whose agent was never started, a removed
-	// thread taken in from a person's window, and a thread started confined while another confined thread
-	// of its scope is open (the reason names it). Each refusal is a
+	// thread taken in from a person's window, a supervisor's own thread
+	// while another own thread of its scope is open (the reason names it),
+	// and a look-up's thread. Each refusal is a
 	// *ReopenRefused and changes nothing. A reopen writes a state event
 	// (reason "reopen") and a reopened event. It needs OpReopen and the
 	// owner: the owner's connection on the control socket, and a chat
@@ -678,6 +679,32 @@ const (
 	Failed   State = "failed"
 )
 
+// ThreadKind is what a thread is to its scope (design, section 5.1): set at
+// its start by the code that starts it, never by a call's content, and
+// never changed. Every kind but KindOrdinary is a supervisor's, and
+// confined (Confined).
+type ThreadKind string
+
+// The thread kinds, since 3.38.
+const (
+	KindOrdinary ThreadKind = "ordinary"
+	// KindSupervisor is a scope's supervisor's own thread, which its wakes
+	// go to: one of a scope is open at a time.
+	KindSupervisor ThreadKind = "supervisor"
+	// KindConversation is a conversation with a scope's supervisor; several
+	// of a scope may be open at a time.
+	KindConversation ThreadKind = "conversation"
+	// KindLookup answers one question for a scope's supervisor and is never
+	// reopened.
+	KindLookup ThreadKind = "lookup"
+)
+
+// Confined reports whether k is a kind whose threads are started confined:
+// any known kind but KindOrdinary.
+func (k ThreadKind) Confined() bool {
+	return k == KindSupervisor || k == KindConversation || k == KindLookup
+}
+
 // ScopeInfo is one line of Scopes. Name is empty when no name is known.
 type ScopeInfo struct {
 	Key  string `json:"key"`
@@ -755,6 +782,9 @@ type ThreadInfo struct {
 	// thread is: its directory is the scope's, not a workspace with a
 	// repository, so Workspace has nothing to read there. Since 3.36.
 	Confined bool `json:"confined,omitempty"`
+	// Kind is what the thread is to its scope; empty from a daemon of
+	// before 3.38.
+	Kind ThreadKind `json:"kind,omitempty"`
 }
 
 // Attachment is the result of AttachTerminal.

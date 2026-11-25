@@ -28,7 +28,7 @@ type Used struct {
 	Now    time.Time // when it was counted
 	Hour   time.Time // the start of the current hour, in the zone
 	Day    time.Time // the start of the current day, in the zone
-	Turns  int       // turn_started events of the scope's supervisor threads this hour
+	Turns  int       // turn_started events of the scope's supervisor's own threads this hour
 	Sends  int       // sends and starts of the supervisor's caller this hour
 	Tokens int64     // tokens of the scope's supervisor threads today, weighted
 }
@@ -36,8 +36,8 @@ type Used struct {
 // Budget bounds what one scope's supervisor costs. It counts from the
 // event log, so a restart keeps the counts:
 //
-//   - turns: the turn_started events of the scope's supervisor threads in
-//     the current hour, whoever started the turn;
+//   - turns: the turn_started events of the scope's supervisor's own
+//     threads in the current hour, whoever started the turn;
 //   - sends and starts: the input and answer events whose from is the
 //     supervisor's id, in the current hour, each send's and each start's
 //     (its first input); and a thread_created of its own whose thread has
@@ -45,7 +45,8 @@ type Used struct {
 //     and each proposal it made (proposal_made), once: the events of the
 //     call its approval made name the Via of a proposal, and are left out;
 //     and each reminder it set (#649);
-//   - tokens: from the usage events of the scope's supervisor threads: each
+//   - tokens: from the usage events of all the scope's supervisor threads,
+//     its conversations and look-ups included: each
 //     report adds what it raises its turn's total by, counted in the day it
 //     came, as a thread's Tokens.Today; but a token read from the cache
 //     counts a tenth (cacheReadPart).
@@ -104,7 +105,8 @@ func (b *Budget) Used(ctx context.Context) (Used, error) {
 	db := b.Core.Store.DB
 	hourMs, nextHourMs := u.Hour.UnixMilli(), u.Hour.Add(time.Hour).UnixMilli()
 	err := db.QueryRowContext(ctx, `SELECT count(*) FROM events WHERE kind = 'turn_started' AND time >= ? AND time < ?
-		AND thread_id IN (SELECT id FROM threads WHERE scope = ? AND confined = 1)`, hourMs, nextHourMs, b.Scope).Scan(&u.Turns)
+		AND thread_id IN (SELECT id FROM threads WHERE scope = ? AND kind = ?)`,
+		hourMs, nextHourMs, b.Scope, string(control.KindSupervisor)).Scan(&u.Turns)
 	if err != nil {
 		return u, fmt.Errorf("supervisor: budget: turns: %w", err)
 	}
@@ -152,11 +154,11 @@ func (b *Budget) tokens(ctx context.Context, day time.Time) (int64, error) {
 	dayMs := day.UnixMilli()
 	nextMs := time.Date(day.Year(), day.Month(), day.Day()+1, 0, 0, 0, 0, day.Location()).UnixMilli()
 	rows, err := b.Core.Store.DB.QueryContext(ctx, `
-		WITH sv AS (SELECT id FROM threads WHERE scope = ? AND confined = 1),
+		WITH sv AS (SELECT id FROM threads WHERE scope = ? AND kind != ?),
 		u AS (SELECT pos, time, data, json_extract(data, '$.turn') AS turn FROM events
 			WHERE kind = 'usage' AND thread_id IN (SELECT id FROM sv))
 		SELECT time, turn, data FROM u WHERE turn IS NOT NULL AND turn IN (SELECT turn FROM u WHERE time >= ? AND time < ?)
-		ORDER BY pos`, b.Scope, dayMs, nextMs)
+		ORDER BY pos`, b.Scope, string(control.KindOrdinary), dayMs, nextMs)
 	if err != nil {
 		return 0, fmt.Errorf("supervisor: budget: tokens: %w", err)
 	}
@@ -321,7 +323,7 @@ func Notice(what []string, until time.Time, hourly, refused bool, refusedUntil t
 func (b *Budget) tell(ctx context.Context, u Used, what, kinds []string, until time.Time) {
 	refused := b.Limits.Sends > 0 && u.Sends >= b.Limits.Sends
 	text := Notice(what, until, !slices.Contains(kinds, "tokens"), refused, u.Hour.Add(time.Hour))
-	sv, _, err := b.Core.LastConfined(ctx, b.Scope)
+	sv, _, err := b.Core.SupervisorThread(ctx, b.Scope)
 	if err == nil && sv != 0 && b.Tell != nil {
 		err = b.Tell(ctx, sv, NoticeKeyPrefix+until.UTC().Format(time.RFC3339)+"-"+strings.Join(kinds, "+"), text)
 	}
