@@ -1889,9 +1889,9 @@ func readGitfile(p string) (string, error) {
 // processes is step 4: no process has a file or its working directory in
 // the workspace. lsof is asked on Linux and on macOS alike; a missing or
 // failing lsof refuses, and so does one that does not report a directory
-// this check holds open: the workspace itself, which shows that the names
-// lsof prints are the ones compared with. Only the processes of the user
-// hataori runs as can be seen, unless it runs as root.
+// this check holds open, the workspace itself: that shows that the names
+// and the inode numbers lsof prints are the ones compared with. Only the
+// processes of the user hataori runs as can be seen, unless it runs as root.
 func (c *checker) processes() error {
 	top, ok := lsofName(c.top)
 	if !ok {
@@ -1902,9 +1902,56 @@ func (c *checker) processes() error {
 		return c.unreadable(c.top, err)
 	}
 	defer held.Close()
+	st, err := held.Stat()
+	if err != nil {
+		return c.unreadable(c.top, err)
+	}
+	topID, _ := fileIDOf(st)
 	self, heldFD := strconv.Itoa(os.Getpid()), strconv.Itoa(int(held.Fd()))
 
-	args := []string{"-n", "-P", "-w", "-F0pfn"}
+	// lsof is asked before and after the workspace is read: before, what a
+	// process uses then is still found where it makes directories and goes on
+	// in them; after, what it says is as new as it can be.
+	before, err := c.lsof()
+	if err != nil {
+		return err
+	}
+	in, err := c.contents()
+	if err != nil {
+		return err
+	}
+	after, err := c.lsof()
+	if err != nil {
+		return err
+	}
+	for _, open := range [][]openFile{before, after} {
+		seen := false
+		for _, f := range open {
+			id, hasID := f.id()
+			if f.name == top || strings.HasPrefix(f.name, top+"/") || strings.HasPrefix(f.name, top+" ") {
+				if f.pid == self && f.fd == heldFD {
+					seen = hasID && id == topID
+					continue
+				}
+				return &Refusal{Reason: InUse, Detail: f.use()}
+			}
+			if !hasID && (f.kind == "REG" || f.kind == "DIR") {
+				return &Refusal{Reason: UnknownUse, Detail: "lsof does not say which file it is that " + f.use()}
+			}
+			if there, ok := in[id]; hasID && ok && there.all() {
+				return &Refusal{Reason: InUse, Detail: f.use() + ", which is " + there.rel}
+			}
+		}
+		if !seen {
+			return &Refusal{Reason: UnknownUse, Detail: "lsof does not report the workspace, which this check holds open"}
+		}
+	}
+	return nil
+}
+
+// lsof is every file that lsof reports.
+func (c *checker) lsof() ([]openFile, error) {
+	args := []string{"-n", "-P", "-w", "-F0pftDin"}
 	if uid := os.Geteuid(); uid != 0 {
 		args = append(args, "-u", strconv.Itoa(uid))
 	}
@@ -1916,35 +1963,96 @@ func (c *checker) processes() error {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		return &Refusal{Reason: UnknownUse, Detail: "lsof: " + lastLines(stderr.String(), 3, err.Error())}
+		return nil, &Refusal{Reason: UnknownUse, Detail: "lsof: " + lastLines(stderr.String(), 3, err.Error())}
 	}
-	seen := false
-	pid, fd := "", ""
-	for _, f := range strings.Split(stdout.String(), "\x00") {
-		f = strings.TrimLeft(f, "\n")
-		if f == "" {
-			continue
-		}
-		switch f[0] {
-		case 'p':
-			pid, fd = f[1:], ""
-		case 'f':
-			fd = f[1:]
-		case 'n':
-			name := f[1:]
-			if name == top || strings.HasPrefix(name, top+"/") || strings.HasPrefix(name, top+" ") {
-				if pid == self && fd == heldFD {
-					seen = true
-					continue
-				}
-				return &Refusal{Reason: InUse, Detail: "process " + pid + " uses " + name}
+	var open []openFile
+	pid := ""
+	for _, set := range strings.Split(stdout.String(), "\x00\n") {
+		f := openFile{pid: pid}
+		for _, field := range strings.Split(set, "\x00") {
+			if field == "" {
+				continue
+			}
+			switch v := field[1:]; field[0] {
+			case 'p':
+				pid = v
+				f.pid = v
+			case 'f':
+				f.fd = v
+			case 't':
+				f.kind = v
+			case 'D':
+				f.dev = v
+			case 'i':
+				f.ino = v
+			case 'n':
+				f.name = v
 			}
 		}
+		open = append(open, f)
 	}
-	if !seen {
-		return &Refusal{Reason: UnknownUse, Detail: "lsof does not report the workspace, which this check holds open"}
-	}
-	return nil
+	return open, nil
+}
+
+// contents is every file and directory of the workspace, itself included,
+// by what it is whatever its path, as through a bind mount.
+func (c *checker) contents() (map[fileID]inside, error) {
+	in := map[fileID]inside{}
+	err := filepath.WalkDir(c.top, func(p string, d fs.DirEntry, err error) error {
+		if err == nil {
+			err = c.ctx.Err()
+		}
+		var st fs.FileInfo
+		if err == nil {
+			st, err = d.Info()
+		}
+		if err != nil {
+			return c.unreadable(p, err)
+		}
+		id, links := fileIDOf(st)
+		rel, _ := filepath.Rel(c.top, p)
+		in[id] = inside{rel: rel, dir: d.IsDir(), links: links, names: in[id].names + 1}
+		return nil
+	})
+	return in, err
+}
+
+// inside is a file or directory of the workspace: one of its names, how many
+// of them the workspace has, and how many there are.
+type inside struct {
+	rel          string
+	dir          bool
+	names, links uint64
+}
+
+// all is whether the workspace has all its names. A file with one outside, a
+// hard link, may be open under that one, as of a package store.
+func (i inside) all() bool { return i.dir || i.names >= i.links }
+
+// openFile is a file that lsof reports, with the fields as it prints them.
+type openFile struct{ pid, fd, kind, dev, ino, name string }
+
+func (f openFile) use() string { return "process " + f.pid + " uses " + f.name }
+
+// id is the file's identity; ok is false when lsof prints none, as of a
+// socket.
+func (f openFile) id() (id fileID, ok bool) {
+	dev, err1 := strconv.ParseUint(f.dev, 0, 64)
+	ino, err2 := strconv.ParseUint(f.ino, 10, 64)
+	return fileID{uint32(dev), ino}, err1 == nil && err2 == nil
+}
+
+// fileID is which file it is, under whatever path. The device is cut to the
+// 32 bits that macOS has, where its sign says how it is printed.
+type fileID struct {
+	dev uint32
+	ino uint64
+}
+
+// fileIDOf is the identity of a file and the number of its names.
+func fileIDOf(st fs.FileInfo) (id fileID, links uint64) {
+	sys := st.Sys().(*syscall.Stat_t)
+	return fileID{uint32(sys.Dev), sys.Ino}, uint64(sys.Nlink)
 }
 
 // lsofName is how lsof prints the path p in the C locale: a byte that is not
