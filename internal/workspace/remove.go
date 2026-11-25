@@ -1041,12 +1041,16 @@ func (c *checker) files(g *reader, rp repo) error {
 	if err != nil {
 		return err
 	}
-	for _, name := range strings.Split(string(out), "\x00") {
+	ignored := strings.Split(string(out), "\x00")
+	for _, name := range ignored {
 		if name != "" && !c.disposable(name) {
 			return c.refuse(rp, Ignored, name)
 		}
 	}
 
+	if err := c.otherCase(g, rp, ignored); err != nil {
+		return err
+	}
 	if err := c.gitlinks(g, rp); err != nil {
 		return err
 	}
@@ -1088,6 +1092,52 @@ func (c *checker) worktrees(g *reader, rp repo) error {
 		return c.refuse(rp, Worktree, entries[0].Name())
 	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return c.unreadable(worktrees, err)
+	}
+	return nil
+}
+
+// otherCase refuses what git, with core.ignorecase, takes for a tracked file
+// whose name differs only in case, or for a .git, and reports nowhere. What
+// is the tracked file, as on a file system that ignores case, is let go.
+func (c *checker) otherCase(g *reader, rp repo, ignored []string) error {
+	set, err := g.line(c.ctx, "config", "--type=bool", "--default=false", "--get", "core.ignorecase")
+	if err != nil || set == "false" {
+		return err
+	}
+	known := map[string]bool{"": true}
+	for _, name := range ignored {
+		known[name] = true
+	}
+	exact := *g
+	exact.extra = slices.Clip(g.extra)
+	exact.set("core.ignorecase", "false")
+	out, _, err := exact.run(c.ctx, "ls-files", "-z", "--others")
+	if err != nil {
+		return err
+	}
+	others := strings.Split(string(out), "\x00")
+	if others = slices.DeleteFunc(others, func(name string) bool { return known[name] }); len(others) == 0 {
+		return nil
+	}
+	if out, _, err = g.run(c.ctx, "ls-files", "-z"); err != nil {
+		return err
+	}
+	tracked := map[string][]string{}
+	for _, name := range strings.Split(string(out), "\x00") {
+		tracked[strings.ToLower(name)] = append(tracked[strings.ToLower(name)], name)
+	}
+	for _, name := range others {
+		p := filepath.Join(rp.dir, name)
+		st, err := os.Lstat(p)
+		if err != nil {
+			return c.unreadable(p, err)
+		}
+		if !slices.ContainsFunc(tracked[strings.ToLower(strings.TrimSuffix(name, "/"))], func(name string) bool {
+			is, err := os.Lstat(filepath.Join(rp.dir, name))
+			return err == nil && os.SameFile(st, is)
+		}) {
+			return c.refuse(rp, Untracked, name)
+		}
 	}
 	return nil
 }

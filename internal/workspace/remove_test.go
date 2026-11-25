@@ -574,6 +574,63 @@ func (x *removal) withSubmodule() string {
 	return filepath.Join(x.clone, "sub")
 }
 
+// With core.ignorecase, git takes these for what is tracked, or for a .git.
+func TestRefuseUntrackedFileThatDiffersInCase(t *testing.T) {
+	x := newRemoval(t)
+	x.withSubmodule()
+	x.r.Disposable = []string{"cache"}
+	x.write(".gitignore", "cache\n")
+	os.MkdirAll(filepath.Join(x.clone, "d"), 0o700)
+	x.write("d/f", "x\n")
+	x.write("d/CACHE", "tracked\n")
+	x.git(x.clone, "add", "-f", ".")
+	x.git(x.clone, "commit", "-q", "-m", "more")
+	x.git(x.clone, "push", "-q")
+	x.write("cache", "x\n")
+	_, err := os.Lstat(filepath.Join(x.clone, "D"))
+	folds := err == nil
+	x.git(x.clone, "config", "core.ignorecase", "true")
+	if err := x.check(); err != nil {
+		t.Fatalf("clean and pushed: %v", err)
+	}
+	if folds {
+		// git finds each under its own name.
+		for _, p := range []string{"a", "d"} {
+			p = filepath.Join(x.clone, p)
+			for _, to := range []string{p + "x", filepath.Join(x.clone, strings.ToUpper(filepath.Base(p)))} {
+				if err := os.Rename(p, to); err != nil {
+					t.Fatal(err)
+				}
+				p = to
+			}
+			if err := x.check(); err != nil {
+				t.Fatalf("clean, pushed and renamed to %s: %v", p, err)
+			}
+		}
+		return
+	}
+	for _, tc := range []struct{ p, at string }{
+		{"A", "A"}, {"D/f", "D/f"}, {"d/F", "d/F"}, {"d/.GIT/notes", "d/.GIT/notes"}, {".GIT", ".GIT"}, {"SUB/notes.txt", "SUB/notes.txt"},
+		{"d/Cache", "d/Cache"}, {"sub/.Git/notes", ".Git/notes"},
+	} {
+		t.Run(tc.p, func(t *testing.T) {
+			os.MkdirAll(filepath.Dir(filepath.Join(x.clone, tc.p)), 0o700)
+			x.write(tc.p, "work that is committed nowhere\n")
+			defer os.RemoveAll(filepath.Join(x.clone, tc.p))
+			repo := ""
+			if strings.HasPrefix(tc.p, "sub/") {
+				repo = "sub"
+				x.git(filepath.Join(x.clone, "sub"), "config", "core.ignorecase", "true")
+			}
+			err := x.check()
+			wantRefusal(t, err, Untracked, repo)
+			if err.(*Refusal).Detail != tc.at {
+				t.Fatalf("the refusal names %q", err.(*Refusal).Detail)
+			}
+		})
+	}
+}
+
 // withoutCheckout are the ways git removes the checkout of the submodule at
 // sub and keeps its git directory. After git rm, core.worktree names a
 // directory that is gone, and git runs nothing there; after the others it is
