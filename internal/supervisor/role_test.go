@@ -84,7 +84,7 @@ func TestLayerNamesTheTools(t *testing.T) {
 
 // What the layer says of a wake's lines is what a wake's lines are.
 func TestLayerNamesTheWakesLines(t *testing.T) {
-	for _, want := range []string{"A wake's line \"" + budgetUsed + "\""} {
+	for _, want := range []string{"A wake's line \"" + budgetUsed + "\"", "A wake's line \"" + usageWindows + "\""} {
 		if !strings.Contains(Layer, want) {
 			t.Errorf("hataori's layer does not say %s", want)
 		}

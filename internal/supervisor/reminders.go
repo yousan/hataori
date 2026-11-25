@@ -353,6 +353,14 @@ func late(d time.Duration) string {
 	if d < time.Minute {
 		return "on time"
 	}
+	return span(d) + " late"
+}
+
+// span is a length of time in words, to the minute.
+func span(d time.Duration) string {
+	if d < time.Minute {
+		return "less than a minute"
+	}
 	count := func(n int64, unit string) string {
 		if n == 1 {
 			return "1 " + unit
@@ -370,7 +378,7 @@ func late(d time.Duration) string {
 	if minutes > 0 {
 		parts = append(parts, count(minutes, "minute"))
 	}
-	return strings.Join(parts, " ") + " late"
+	return strings.Join(parts, " ")
 }
 
 // DueReminders is the part of a wake that gives the reminders due, at now:

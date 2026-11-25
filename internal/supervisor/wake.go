@@ -1174,6 +1174,17 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 		}
 		w.text += r.w.Budget.Limits.Line(u, open)
 	}
+	limits, err := r.api.Limits(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(limits) > 0 {
+		used, err := agentsUsed(ctx, r.w.Core, r.w.Scope, now.Add(-usedWithin))
+		if err != nil {
+			return nil, false, err
+		}
+		w.text += UsageWindows(limits, used, now)
+	}
 	return w, true, nil
 }
 
