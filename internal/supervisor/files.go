@@ -572,10 +572,8 @@ func (s *ScopeFiles) write(ctx context.Context, scope string, thread control.Thr
 		left = s.finish(ctx, root, id, w, err == nil)
 	}
 	if left != nil { // the next write does it, or the next start
-		if err != nil {
-			w.failed = true
-			left = errors.Join(left, s.amend(ctx, id, w))
-		}
+		w.made = sql.NullBool{Bool: err == nil, Valid: true}
+		left = errors.Join(left, s.amend(ctx, id, w))
 		s.Log.Error("a supervisor's write is not settled", "scope", scope, "err", left)
 	}
 	if errors.Is(err, errMeanwhile) {
@@ -738,11 +736,11 @@ func room(ctx context.Context, root *os.Root, more bool, grown int64) error {
 // placing is a write as supervisor_writes records it before it is made.
 type placing struct {
 	path    string
-	tmp     string // the daemon's own name for the new content, beside the file
-	was     string // the version of the file it replaces; "" for a new one
-	version string // that of the new content
-	there   int    // how many of the directories on the way were there before
-	failed  bool   // its session was told that it was not made
+	tmp     string       // the daemon's own name for the new content, beside the file
+	was     string       // the version of the file it replaces; "" for a new one
+	version string       // that of the new content
+	there   int          // how many of the directories on the way were there before
+	made    sql.NullBool // what its session was told of it, if anything
 }
 
 func (w placing) parts() []string { return strings.Split(w.path, "/") }
@@ -778,6 +776,7 @@ func (s *ScopeFiles) place(ctx context.Context, id int64, dir string, root *os.R
 	last := len(parts) - 1
 	parent, missing, err := s.way(root, parts[:last])
 	if err != nil {
+		w.there = last // it made none
 		return nil, err
 	}
 	defer func() { parent.Close() }()
@@ -805,8 +804,8 @@ func (s *ScopeFiles) place(ctx context.Context, id int64, dir string, root *os.R
 	if err != nil {
 		return nil, fault("writing the file", err)
 	}
-	// It stays open to the end, so that nothing made meanwhile gets the inode
-	// by which it is known.
+	// It stays open until it has its place or is removed, so that nothing made
+	// meanwhile gets the inode by which it is known.
 	defer own.Close()
 	// Also where the path no longer leads to it. Nothing has this name once it
 	// was renamed.
@@ -880,19 +879,24 @@ func (s *ScopeFiles) name(dir string, root, parent *os.Root, w placing, own *os.
 		if err := parent.Rename(w.tmp, parts[last]); err != nil {
 			return fault("putting the file in its place", err)
 		}
+		own.Close() // nobody can run a file that is open to be written
 	}
 	s.step("placed")
 	syncDir(parent)
 	return nil
 }
 
-// isAt reports whether own, an open file, is what has the name in dir.
+// isAt reports whether own is what has the name in dir, which it has not any
+// more once it is closed.
 func isAt(own *os.File, dir *os.Root, name string) (bool, error) {
-	st, err := own.Stat()
+	at, err := dir.Lstat(name)
 	if err != nil {
 		return false, err
 	}
-	at, err := dir.Lstat(name)
+	st, err := own.Stat()
+	if errors.Is(err, os.ErrClosed) {
+		return false, nil
+	}
 	return err == nil && os.SameFile(st, at), err
 }
 
@@ -996,7 +1000,7 @@ func (s *ScopeFiles) others(ctx context.Context, id int64, w *placing, n int) er
 // for when it is settled.
 func (s *ScopeFiles) amend(ctx context.Context, id int64, w placing) error {
 	err := s.Store.Update(ctx, func(tx *store.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE supervisor_writes SET there = ?, failed = ? WHERE id = ?`, w.there, w.failed, id)
+		_, err := tx.ExecContext(ctx, `UPDATE supervisor_writes SET there = ?, made = ? WHERE id = ?`, w.there, w.made, id)
 		return err
 	})
 	if err != nil {
@@ -1010,7 +1014,7 @@ func (s *ScopeFiles) amend(ctx context.Context, id int64, w placing) error {
 // when it was not: those that a daemon died in, and any that could not be
 // settled when it was made or refused. The directory must be locked.
 func (s *ScopeFiles) settle(ctx context.Context, dir string, root *os.Root) error {
-	rows, err := s.Store.DB.QueryContext(ctx, `SELECT id, path, tmp, was, version, there, failed FROM supervisor_writes WHERE dir = ? AND done = 0 ORDER BY id`, dir)
+	rows, err := s.Store.DB.QueryContext(ctx, `SELECT id, path, tmp, was, version, there, made FROM supervisor_writes WHERE dir = ? AND done = 0 ORDER BY id`, dir)
 	if err != nil {
 		return fmt.Errorf("the writes before this one: %w", err)
 	}
@@ -1022,7 +1026,7 @@ func (s *ScopeFiles) settle(ctx context.Context, dir string, root *os.Root) erro
 	var open []write
 	for rows.Next() {
 		var w write
-		if err := rows.Scan(&w.id, &w.path, &w.tmp, &w.was, &w.version, &w.there, &w.failed); err != nil {
+		if err := rows.Scan(&w.id, &w.path, &w.tmp, &w.was, &w.version, &w.there, &w.made); err != nil {
 			return fmt.Errorf("the writes before this one: %w", err)
 		}
 		open = append(open, w)
@@ -1037,7 +1041,10 @@ func (s *ScopeFiles) settle(ctx context.Context, dir string, root *os.Root) erro
 			s.Log.Error("a supervisor's write cannot be settled", "dir", dir, "err", err)
 			continue
 		}
-		if err := s.finish(ctx, root, w.id, w.placing, made && !w.failed); err != nil {
+		if w.made.Valid {
+			made = w.made.Bool
+		}
+		if err := s.finish(ctx, root, w.id, w.placing, made); err != nil {
 			return err
 		}
 	}
