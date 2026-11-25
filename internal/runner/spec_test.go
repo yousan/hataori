@@ -100,7 +100,7 @@ func TestConfinedNeedsNoMentions(t *testing.T) {
 		wrap: func(a agent.Adapter) agent.Adapter { m.Adapter = a; return m }})
 	confined := func(key string) (control.ThreadID, error) {
 		return f.core.StartConfined(context.Background(), control.Caller{From: ownerFrom, Scopes: []string{"s"}, May: all},
-			control.StartRequest{Key: key, Scope: "s", Thread: "t-" + key, Input: control.Input{Text: "reply confined"}}, control.KindSupervisor, t.TempDir())
+			control.StartRequest{Key: key, Scope: "s", Thread: "t-" + key, Input: control.Input{Text: "reply confined"}}, control.KindSupervisor, core.InDir(t.TempDir()))
 	}
 	m.on.Store(true)
 	f.start("reply ordinary")
