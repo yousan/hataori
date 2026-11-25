@@ -431,44 +431,43 @@ const altScreen = "1049"
 // title (0, 1, 2), a link around text (8), and a query (7501, seen).
 var inertOSC = map[string]bool{"0": true, "1": true, "2": true, "8": true, "7501": true}
 
-// inertSGR reports whether a graphic rendition leaves the text readable:
-// colours and weights do, concealing it (8) does not.
-func inertSGR(params string) bool {
+// rendition reads a graphic rendition: whether text is bold after it, given
+// whether it was before. ok is false for one that may leave the text
+// unreadable or its weight unclear: concealing (8) does, and 21, which ends
+// bold on some terminals; colours and the other weights do not.
+func rendition(was bool, params string) (bold, ok bool) {
 	ps := strings.Split(params, ";")
 	for i := 0; i < len(ps); i++ {
-		switch ps[i] {
-		case "8":
-			return false
-		case "38", "48", "58": // an extended colour: its arguments follow
+		first, _, parts := strings.Cut(ps[i], ":")
+		n, err := strconv.Atoi(first)
+		if first == "" {
+			n, err = 0, nil
+		}
+		if err != nil {
+			return false, false
+		}
+		switch n {
+		case 8, 21:
+			return false, false
+		case 38, 48, 58: // an extended colour: its arguments follow
+			if parts {
+				break // in the same parameter
+			}
 			if i+1 < len(ps) && ps[i+1] == "5" {
 				i += 2
 			} else if i+1 < len(ps) && ps[i+1] == "2" {
 				i += 4
+			} else {
+				return false, false // which arguments follow is not clear
 			}
+		case 0, 1, 22:
+			if parts {
+				return false, false
+			}
+			was = n == 1
 		}
 	}
-	return true
-}
-
-// boldAfter reports whether text is bold after a graphic rendition, given
-// whether it was before.
-func boldAfter(was bool, params string) bool {
-	ps := strings.Split(params, ";")
-	for i := 0; i < len(ps); i++ {
-		switch ps[i] {
-		case "", "0", "22":
-			was = false
-		case "1":
-			was = true
-		case "38", "48", "58": // as in inertSGR
-			if i+1 < len(ps) && ps[i+1] == "5" {
-				i += 2
-			} else if i+1 < len(ps) && ps[i+1] == "2" {
-				i += 4
-			}
-		}
-	}
-	return was
+	return was, true
 }
 
 // A screenLine is a line of the screen, and whether what it shows is bold.
@@ -513,7 +512,8 @@ type cell struct {
 func renderScreen(b []byte) (screen []screenLine, ok bool) {
 	var grid, mainGrid [][]cell
 	// The cursor, and whether what is written there is bold; the saved one;
-	// and, on the alternate screen, the main screen's.
+	// and, on the alternate screen, the main screen's. Where a saved cursor
+	// comes back in another weight, terminals differ: not readable.
 	type cursor struct {
 		row, col int
 		bold     bool
@@ -571,7 +571,7 @@ func renderScreen(b []byte) (screen []screenLine, ok bool) {
 							// The cursor saved, a blank screen of its own.
 							alt, mainGrid, main = true, grid, at
 							grid = nil
-						case m == altScreen && final == 'l' && alt:
+						case m == altScreen && final == 'l' && alt && at.bold == main.bold:
 							alt, grid, at = false, mainGrid, main
 						default:
 							return nil, false // a clear, or a mode not known
@@ -600,10 +600,9 @@ func renderScreen(b []byte) (screen []screenLine, ok bool) {
 			}
 			switch final {
 			case 'm':
-				if !inertSGR(params) {
+				if at.bold, ok = rendition(at.bold, params); !ok {
 					return nil, false
 				}
-				at.bold = boldAfter(at.bold, params)
 			case 'c', 'n':
 				// queries of the terminal
 			case 'r':
@@ -614,6 +613,9 @@ func renderScreen(b []byte) (screen []screenLine, ok bool) {
 			case 's':
 				saved = at
 			case 'u':
+				if saved.bold != at.bold {
+					return nil, false // whether the weight comes back is the terminal's choice
+				}
 				at = saved
 			case 'A':
 				at.row = max(0, at.row-n(0, 1))
@@ -689,6 +691,9 @@ func renderScreen(b []byte) (screen []screenLine, ok bool) {
 				saved = at
 				i += 2
 			case '8':
+				if saved.bold != at.bold {
+					return nil, false
+				}
 				at = saved
 				i += 2
 			case '=', '>':

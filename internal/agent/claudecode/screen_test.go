@@ -175,6 +175,14 @@ func TestUnreadableScreenGetsNoKey(t *testing.T) {
 		{"an inline image", "\x1b]1337;File=inline=1:AAAA\x07"},
 		{"line drawing characters", "\x1b(0"},
 		{"synchronized output", "\x1b[?2026h"},
+		{"concealed text, written with zeros", "\x1b[008m"},
+		{"an end of bold on some terminals only", "\x1b[1m\x1b[21m"},
+		{"bold with a part", "\x1b[1:2m"},
+		{"a colour of no known kind", "\x1b[38;1m"},
+		{"a rendition that is no number", "\x1b[ m"},
+		{"a position restored in another weight", "\x1b[1m\x1b[s\x1b[22m\x1b[u"},
+		{"a cursor restored in another weight", "\x1b7\x1b[1m\x1b8"},
+		{"the alternate screen left in another weight", "\x1b[?1049h\x1b[1m\x1b[?1049l"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := screenCodec(trustDir)
@@ -182,6 +190,38 @@ func TestUnreadableScreenGetsNoKey(t *testing.T) {
 				t.Fatalf("keys %q after %s", got, tc.name)
 			}
 		})
+	}
+}
+
+// The weight of what a line shows, as the sequences that set it say.
+func TestLineWeight(t *testing.T) {
+	for _, tc := range []struct {
+		written string
+		want    weight
+	}{
+		{"x", plain},
+		{"\x1b[1mx y\x1b[22m", bold},
+		{"\x1b[1mx\x1b[0my", mixed},
+		{"\x1b[1m\x1b[mx", plain},
+		{"\x1b[01m\x1b[022mx", plain},
+		{"\x1b[01mx", bold},
+		{"\x1b[1;38;5;22mx", bold},
+		{"\x1b[1;38;2;0;22;0mx", bold},
+		{"\x1b[38;5;1mx", plain},
+		{"\x1b[48;2;1;1;1mx", plain},
+		{"\x1b[38:2::1:22:0mx", plain},
+		{"\x1b[38;5;220m\x1b[1mx\x1b[39m y", bold},
+		{"\x1b[1mx\rx", bold},
+		{"\x1b[1mx\x1b[22m\ry", plain}, // written over
+		{"x\x1b[1m  \x1b[22my", plain},
+		{"x\x1b[1m y\x1b[22m\x1b[2G\x1b[K", plain}, // erased
+		{"\x1b[1mx\x1b[s\x1b[u", bold},
+		{"\x1b[1m\x1b[?1049hx", bold},
+	} {
+		lines, ok := renderScreen([]byte(tc.written))
+		if !ok || len(lines) != 1 || lines[0].weight != tc.want {
+			t.Errorf("%q: %+v %v, want weight %d", tc.written, lines, ok, tc.want)
+		}
 	}
 }
 
