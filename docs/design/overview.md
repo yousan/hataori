@@ -519,7 +519,7 @@ One database file. A schema version table and forward-only migrations (c-lord ha
 
 | Table | Holds |
 |---|---|
-| `threads` | number (`id`), scope, kind (section 5.1), title, who started it, state, workspace path |
+| `threads` | number (`id`), scope, kind (section 5.1), title, who started it, its home, whether it carries a mark (section 7.1), state, workspace path |
 | `links` | thread number, client, channel, conversation thread, who made it, when, whether its client opened the conversation, from when on its messages are input, and the last one that was; unique per conversation |
 | `workspaces` | path, remote, state |
 | `sessions` | agent name, agent session id, state, model, host pid, log offset, last sequence, whether its conversation was given outside text (section 7.1) |
@@ -531,7 +531,8 @@ One database file. A schema version table and forward-only migrations (c-lord ha
 | `requests` | open questions and approvals, their message, their answer |
 | `bindings` | channel to repository, and per-thread overrides |
 | `settings` | model and other choices per scope |
-| `stored_scopes` | a channel the config does not list, made a scope by the owner's call: client, channel, key, when (section 7.1) |
+| `stored_scopes` | a channel the config does not list, made a scope by the owner's call: client, channel, key, when; unique by client and channel, and by key (section 7.1) |
+| `marked_files` | a file that a marked conversation wrote in its scope's directory: scope, path, hash of each content, by which thread, where the content from before is kept, when and by whom released or put back (section 7.1) |
 
 **Moving to thread numbers.** One forward migration, in one transaction, recorded so it runs once. Part of it needs the config (which client owns each scope), so it runs when the daemon starts, after the schema migrations and before anything reads a thread.
 
@@ -670,7 +671,7 @@ In every mode an interrupt is a request that a person approves (above, "How an i
 - A turn that a wake started, a reminder's included, posts its final answer only, not the text before it, and posts nothing when that final answer is exactly `(quiet)`.
 - A turn that a person started is posted as before, with one exception (#799): when each message it answers, those given to it while it runs included, mentions an account and not hataori's own, a final answer that is exactly `(quiet)` is not posted, nor the text before it. So such a turn's text waits for its final answer, and is posted before that when it is anything else; before a question, which ends the turn; at the turn's end when there is no final answer; and as soon as the turn is given a message that does not mention others only. A question it asks and a file it hands over are posted at once. A message's mentions are those in its text, as the chat service's driver reads them (`Mentioner`): a mention of a group that may hold hataori's account, such as a role or everyone, counts as hataori's own, a reply to another account's message without a mention in its text mentions nobody, and so does input from anywhere but a chat. The turn itself runs as any other. *Why:* people also talk to each other, and to other bots, in a supervisor's thread. The supervisor should hear that, since it may have to act on it or correct it, but an answer to each such message is noise.
 - A completed turn posts no ping (#639). A turn that failed, or that ends waiting on an answer, still pings its sender once, as in any thread.
-- A person is mentioned only where the supervisor writes `@<name>` with the name of a person who may act in the scope (the owner, or one in its `people`); the chat front end makes that a mention of the person on the scope's client. Nothing else it posts mentions anyone.
+- A person is mentioned only where the supervisor writes `@<name>` with the name of a person who may act in the scope (the owner, or one in its `people`); the chat front end makes that a mention of the person on the scope's client. Nothing else it posts mentions anyone, and with #857 a marked conversation mentions only the person it answered last, and a link is posted as code (below, *Posts*).
 - Its first reply follows its instructions and the user's files, their language included: the thread's first message asks for that.
 
 What the daemon does with a wake's answer and with `@<name>` is the operator's to set, as keys of `scopes[].supervisor`, since a file can only ask (below, *Two layers*):
@@ -712,7 +713,7 @@ How (#656). The runner's `Confine` composes the instructions of every launch, re
 
 *Tuning by conversation.* When a person in the supervisor's thread asks it to change how it responds ("lighter reports from now on"), it edits the user's files in its directory and says what it changed; the daemon's line names the file as well. A person may ask for it in a conversation as well, but not in one that was given outside text (below, *Text by others*): it says so, and the person asks elsewhere. The config's keys are changed by the operator only. The supervisor has no tool that changes the config, and when it is asked for such a change it says which key it is and that it is the operator's.
 
-*Why:* the user's preferences change in conversation and differ per channel, so they are files the supervisor keeps itself. The rules that keep the work safe must not move with them, so they are hataori's or the operator's, and the daemon enforces every one it can. A stranger's text that talked the supervisor into rewriting a file would change its prose, not what it may do, and the daemon's line would show it; a session that hataori gave such text changes none of these files (#857).
+*Why:* the user's preferences change in conversation and differ per channel, so they are files the supervisor keeps itself. The rules that keep the work safe must not move with them, so they are hataori's or the operator's, and the daemon enforces every one it can. A stranger's text that talked the supervisor into rewriting a file would change its prose, not what it may do, and the daemon's line would show it; a conversation that hataori gave such text changes none of these files (#857).
 
 The first message of its thread asks it to read its notes, its files and its docs, and to say in one line that it is ready, in the language its files or its instructions ask for. The MCP server's own `instructions` and its tools' descriptions say the same as hataori's layer, shorter.
 
