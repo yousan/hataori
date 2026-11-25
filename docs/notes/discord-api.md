@@ -198,7 +198,7 @@ The role of a bot ([role object](https://discord.com/developers/docs/topics/perm
 **unverified**, until a capture checks them (`testdata/README.md`, "Calls"):
 
 - whether `mentions` and `mention_roles` list a mention that stands in a quote or in code. The driver does not rely on it: a mention is the message's own only when the service lists it and the text has it outside quotes and code.
-- which texts Discord's client shows as a quote or as code; the documentation does not say. The driver leaves out what it may show so: a line that begins with `>`, with or without a space after it or before it; all that follows `>>>`; code between backticks and in blocks, also a block left open. It errs to "no call".
+- which texts Discord's client shows as a quote or as code; the documentation does not say. The driver leaves out what it may show so: a line that begins with `>`, with or without a space after it or before it, also in a list or a heading; all that follows `>>>`; code between backticks and in blocks, also a block left open, and also one that opens on a line that may be a quote. It errs to "no call". It does not tell a backtick in a link or in bold text from one that opens code.
 - whether a reply's ping is in `mentions` when the mention is switched off in the client. The driver does not read the ping: it goes by the replied-to post's author.
 
 ## Where the answers came from

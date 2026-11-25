@@ -270,8 +270,8 @@ func (d *Driver) dispatch(ctx context.Context, t string, payload io.Reader, sink
 			return err
 		}
 		if t == "GUILD_CREATE" {
-			// Before the layout: a server whose channels are known has its
-			// roles known.
+			// Before the layout: a server whose channels are known has those
+			// of its roles known that could be read.
 			if err := d.roleEvent(t, b); err != nil {
 				d.log.Warn("discord: a server's roles skipped", "err", err)
 			}

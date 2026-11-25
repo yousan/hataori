@@ -101,7 +101,7 @@ python3 capture.py cleanup /tmp/raw/calls
 python3 scrub.py /tmp/scrubbed /tmp/raw/calls && mv /tmp/scrubbed/calls v10/calls
 ```
 
-The run says its steps on the terminal, one after another: what the person posts in the channel, word for word. The webhook's step is done with `curl`, as in the person run. Each message is kept as the gateway sends it (`gw-<step>.json`) and as REST reads it (`rest-<step>.json`); of a message that was edited, and of a reply whose post was deleted, the latter only, with the edit itself in `gw-edited-update.json`. Of Guild Create, `gw-guild.json` keeps the channel, and the two roles' `id`, `managed` and `tags`. No other dispatch is kept. A person deletes what they posted; the cleanup run deletes the bot's posts. Its ids are numbered on their own, from `1000000000000000001`.
+The run says its steps on the terminal, one after another: what the person posts in the channel, word for word. A message that is another is not kept, and the run goes on waiting. The webhook's step is done with `curl`, as in the person run. Each message is kept as the gateway sends it (`gw-<step>.json`) and as REST reads it (`rest-<step>.json`); of a message that was edited, and of a reply whose post was deleted, the latter only, with the edit itself in `gw-edited-update.json`. Of Guild Create, `gw-guild.json` keeps the channel, and the two roles' `id`, `managed` and `tags`. No other dispatch is kept. A person deletes what they posted; the cleanup run deletes the bot's posts. Its ids are numbered on their own, from `1000000000000000001`.
 
 ## Observed, and worth knowing
 

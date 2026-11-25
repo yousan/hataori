@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/disgoorg/snowflake/v2"
 
@@ -157,51 +156,80 @@ func userMentions(text string) []mention {
 // fence straight after the first one is in the block.
 var codeBlock = regexp.MustCompile("^(?is:```(?:[a-z0-9_+.#-]+?\n)?\n*[^\n].*?\n*```)")
 
+var (
+	// quoteLine is how a line of a quote begins.
+	quoteLine = regexp.MustCompile("^ *> ")
+	// maybeQuote is how a line begins that may be one of a quote: with other
+	// spaces before the sign or none after it, or in a list or a heading.
+	maybeQuote = regexp.MustCompile(`^(?:[\t\v\f\p{Z}\x{85}]|(?:[*+-]|[0-9]+[.)]|-?#{1,3})[\t\v\f\p{Z}\x{85}])*>(?:>>)?`)
+)
+
+// Where in a line spoken reads.
+const (
+	inLine = iota
+	afterBlock
+	lineStart
+)
+
 // spoken is text with spaces for what its author quoted (a line that begins
 // with ">", and everything from one that begins with ">>>"), for code (also
 // a block left open) and for escaped characters. What is left stands at the
-// byte it stood at.
+// byte it stood at. A line that may be a quote is none of what is left, and
+// the text after it is read both ways: code that opens in a quote ends with
+// the quote, and any other runs on.
 func spoken(text string) string {
+	text = strings.ReplaceAll(text, "\r", "\n")
 	out := []byte(text)
 	blank := func(from, to int) {
 		for i := from; i < to; i++ {
 			out[i] = ' '
 		}
 	}
-	for i, start := 0, true; i < len(text); {
-		if start {
-			start = false
-			rest := strings.TrimLeftFunc(text[i:], func(r rune) bool { return r != '\n' && unicode.IsSpace(r) })
-			if strings.HasPrefix(rest, ">") {
+	read := map[int]bool{} // the starts read from
+	for todo := []int{0}; len(todo) > 0; {
+		i, at := todo[len(todo)-1], lineStart
+		todo = todo[:len(todo)-1]
+		for i < len(text) {
+			if at != inLine {
+				if read[i] {
+					break
+				}
+				read[i] = true
+				sign := maybeQuote.FindString(text[i:])
+				if sign != "" {
+					end, toEnd := len(text), strings.HasSuffix(sign, ">>>")
+					if n := strings.IndexByte(text[i:], '\n'); n >= 0 && !toEnd {
+						end = i + n
+						todo = append(todo, end+1)
+					}
+					blank(i, end)
+					if toEnd || at == lineStart && quoteLine.MatchString(text[i:]) {
+						break
+					}
+				}
+				at = inLine
+			}
+			switch {
+			case text[i] == '\n':
+				at = lineStart
+				i++
+			case text[i] == '\\' && i+1 < len(text) && strings.IndexByte("\\`<", text[i+1]) >= 0:
+				blank(i, i+2)
+				i += 2
+			case strings.HasPrefix(text[i:], fenceMark):
 				end := len(text)
-				if n := strings.IndexByte(text[i:], '\n'); n >= 0 && !strings.HasPrefix(rest, ">>>") {
-					end = i + n
+				if block := codeBlock.FindString(text[i:]); block != "" {
+					end = i + len(block)
 				}
 				blank(i, end)
-				i = end
-				continue
+				i, at = end, afterBlock
+			case text[i] == '`':
+				end := i + inlineCode(text[i:])
+				blank(i, end)
+				i = max(end, i+1)
+			default:
+				i++
 			}
-		}
-		switch {
-		case text[i] == '\n':
-			start = true
-			i++
-		case text[i] == '\\' && i+1 < len(text) && strings.IndexByte("\\`<@>*_~|", text[i+1]) >= 0:
-			blank(i, i+2)
-			i += 2
-		case strings.HasPrefix(text[i:], fenceMark):
-			end := len(text)
-			if block := codeBlock.FindString(text[i:]); block != "" {
-				end = i + len(block)
-			}
-			blank(i, end)
-			i, start = end, true
-		case text[i] == '`':
-			end := i + inlineCode(text[i:])
-			blank(i, end)
-			i = max(end, i+1)
-		default:
-			i++
 		}
 	}
 	return string(out)
@@ -232,13 +260,11 @@ type wireRole struct {
 	} `json:"tags"`
 }
 
-// keepRoles keeps which of roles are managed for the bot.
-func (d *Driver) keepRoles(roles ...wireRole) {
+// keepRole keeps whether r is managed for the bot.
+func (d *Driver) keepRole(r wireRole) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	for _, r := range roles {
-		d.roles[r.ID] = r.Managed && r.Tags.BotID == d.botID
-	}
+	d.roles[r.ID] = r.Managed && r.Tags.BotID == d.botID
 }
 
 func (d *Driver) ownRole(id snowflake.ID) bool {
@@ -255,12 +281,21 @@ func (d *Driver) roleEvent(t string, payload []byte) error {
 	switch t {
 	case "GUILD_CREATE":
 		var g struct {
-			Roles []wireRole `json:"roles"`
+			Roles []json.RawMessage `json:"roles"`
 		}
 		if err := json.Unmarshal(payload, &g); err != nil {
 			return err
 		}
-		d.keepRoles(g.Roles...)
+		var bad []error
+		for _, b := range g.Roles {
+			var r wireRole
+			if err := json.Unmarshal(b, &r); err != nil {
+				bad = append(bad, err)
+				continue
+			}
+			d.keepRole(r)
+		}
+		return errors.Join(bad...)
 	case "GUILD_ROLE_CREATE", "GUILD_ROLE_UPDATE":
 		var r struct {
 			Role wireRole `json:"role"`
@@ -268,7 +303,7 @@ func (d *Driver) roleEvent(t string, payload []byte) error {
 		if err := json.Unmarshal(payload, &r); err != nil {
 			return err
 		}
-		d.keepRoles(r.Role)
+		d.keepRole(r.Role)
 	}
 	return nil
 }

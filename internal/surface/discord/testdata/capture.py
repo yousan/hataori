@@ -583,7 +583,8 @@ ROLE_FIELDS = ("id", "managed", "tags")
 
 def calls_run(raw, minutes):
     """Say the steps one after another, and keep each message as the gateway sends it and as
-    REST reads it. No other dispatch is kept."""
+    REST reads it. A message that is not word for word what the step asks for is not kept, and
+    no other dispatch is."""
     ch, owner = os.environ["HATAORI_DISCORD_CHANNEL"], os.environ["HATAORI_DISCORD_OWNER"]
     st, me = rest(None, None, "GET", "/users/@me")
     raw.save("rest-me", {"source": "rest", "request": {"method": "GET", "path": "/users/@me"}, "status": st,
@@ -612,6 +613,7 @@ def calls_run(raw, minutes):
                     ev = got.pop(0)
                     if ok(ev):
                         return ev
+                    print("   a message that is not this step's is left out", file=sys.stderr)
             changed.wait(1)
             changed.clear()
         raise RuntimeError(f"{what}: not done")
@@ -635,6 +637,8 @@ def calls_run(raw, minutes):
         while not guild and time.time() < end and not gw.closed.is_set():
             changed.wait(1)
             changed.clear()
+        if not guild:
+            raise RuntimeError("the server's Guild Create did not come")
         roles = guild["d"]["roles"]
         own = [r["id"] for r in roles if r.get("tags", {}).get("bot_id") == me["id"]]
         others = [r["id"] for r in roles if not r["managed"] and r["id"] != here["guild_id"]]
@@ -651,21 +655,31 @@ def calls_run(raw, minutes):
         # A message of a bot that mentions another account. It pings the person.
         post("post-by-bot", f"<@{owner}> a post of a bot", allowed_mentions={"users": [owner]})
 
-        def created(ev):
-            return ev["t"] == "MESSAGE_CREATE" and not ev["d"].get("webhook_id")
+        def content(ev):
+            return ev["d"].get("content", "").strip().replace("<@!", "<@")
 
-        def step(name, do, ok=created):
+        def says(text, webhook=False):
+            return "post exactly this:\n" + text, lambda ev: (
+                ev["t"] == "MESSAGE_CREATE" and bool(ev["d"].get("webhook_id")) == webhook
+                and ev["d"]["type"] == 0 and content(ev) == text)
+
+        def replies(how, to):
+            """A reply to the post whose id to gives."""
+            return how + ": [hataori test] yes", lambda ev: (
+                ev["t"] == "MESSAGE_CREATE" and ev["d"]["type"] == 19 and content(ev) == "[hataori test] yes"
+                and ev["d"]["message_reference"].get("message_id") == to())
+
+        def step(name, do, ok):
             print(f"\n== {name}: {do}", file=sys.stderr)
-            return wait(name, ok)
+            ev = kept[name] = wait(name, ok)
+            return ev
 
-        def says(text):
-            return "post exactly this:\n" + text
-
-        for name, do in (
+        kept = {}
+        for name, (do, ok) in (
                 ("mention", says(f"{at} [hataori test] hello")),
                 ("mention-role", says(f"{role} [hataori test] hello")),
-                ("reply", "reply to the bot's post \"reply to this one\", with the mention on: [hataori test] yes"),
-                ("reply-silent", "reply to the same post with the mention off: [hataori test] yes"),
+                ("reply", replies("reply to the bot's post \"reply to this one\", with the mention on", lambda: target["id"])),
+                ("reply-silent", replies("reply to the same post with the mention off", lambda: target["id"])),
                 ("quoted-and-not", says(f"> {at} [hataori test] a\n{at} b")),
                 ("quoted", says(f"> {at} [hataori test] a\nb")),
                 ("quoted-lines", says(f"[hataori test] a\n>>> b\n{at} c")),
@@ -676,18 +690,21 @@ def calls_run(raw, minutes):
                 ("here", says("@here [hataori test] hello")),
                 ("other-role", says(f"{other} [hataori test] hello")),
                 ("other", says(f"<@{owner}> [hataori test] hello")),
-                ("reply-other", "reply to your own message of the step before: [hataori test] yes"),
-                ("forward", "forward your message of the step \"mention\" to this channel")):
-            keep(name, step(name, do))
-        keep("webhook", step("webhook", f"post with a webhook of this channel: {at} [hataori test] hello",
-                             lambda ev: ev["t"] == "MESSAGE_CREATE" and ev["d"].get("webhook_id")))
-        ev = step("edited", "post: [hataori test] hello")
-        mid = ev["d"]["id"]
-        ev = step("edited", f"edit that message to exactly this:\n{at} [hataori test] hello",
-                  lambda ev: ev["t"] == "MESSAGE_UPDATE" and ev["d"]["id"] == mid and ev["d"].get("edited_timestamp"))
+                ("reply-other", replies("reply to your own message of the step before", lambda: kept["other"]["d"]["id"])),
+                ("forward", ("forward your message of the step \"mention\" to this channel", lambda ev: (
+                    ev["t"] == "MESSAGE_CREATE" and ev["d"].get("message_reference", {}).get("message_id") == kept["mention"]["d"]["id"]
+                    and not ev["d"].get("content")))),
+                ("webhook", says(f"{at} [hataori test] a webhook", webhook=True))):
+            if name == "webhook":
+                do = do.replace("post", "post with a webhook of this channel", 1)
+            keep(name, step(name, do, ok))
+        ev = step("edited", *says("[hataori test] to edit"))
+        mid, text = ev["d"]["id"], f"{at} [hataori test] hello"
+        ev = step("edited", f"edit that message to exactly this:\n{text}",
+                  lambda ev: ev["t"] == "MESSAGE_UPDATE" and ev["d"]["id"] == mid and ev["d"].get("edited_timestamp") and content(ev) == text)
         raw.save("gw-edited-update", {"source": "gateway", **ev})
         read("edited", ev["d"])
-        ev = step("reply-deleted", "reply to the bot's post \"reply to this one\" once more: [hataori test] yes")
+        ev = step("reply-deleted", *replies("reply to the bot's post \"reply to this one\" once more", lambda: target["id"]))
         rest(None, None, "DELETE", f"/channels/{ch}/messages/{target['id']}")
         time.sleep(2)
         read("reply-deleted", ev["d"])

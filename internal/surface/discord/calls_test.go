@@ -115,6 +115,12 @@ func TestCalls(t *testing.T) {
 		{"after an escaped backslash", says(`\\` + at), true, false, []string{at}},
 		{"after a greater-than sign in a line", says("a > b " + at), true, false, []string{at}},
 		{"in other letters", says("é日 " + at + " 日"), true, false, []string{at}},
+		{"after an arrow", says("-> " + at), true, false, []string{at}},
+		{"after a number and a greater-than sign", says("1 > " + at), true, false, []string{at}},
+		{"after a line that may be a quote", says(">a `b`\n" + at), true, false, []string{at}},
+		{"after many lines that may be quotes", says(strings.Repeat(">\n", 500) + at), true, false, []string{at}},
+		{"after a line that may be a quote, with a fence", says(">```\n" + at), false, false, nil},
+		{"after the end of a line of two characters", says("> a\r\n" + at), true, false, []string{at}},
 
 		{"in a quote", says("> " + at), false, false, nil},
 		{"in a quote without a space", says(">" + at), false, false, nil},
@@ -122,6 +128,14 @@ func TestCalls(t *testing.T) {
 		{"in a quote after another line", says("hello\n> " + at + "\nhello"), false, false, nil},
 		{"in a quote of many lines", says("hello\n>>> a\n\n" + at), false, false, nil},
 		{"in a quote after a block of code", says("```a```> " + at), false, false, nil},
+		{"in a quote in a list", says("- > " + at), false, false, nil},
+		{"in a quote in a list of stars", says("* > " + at), false, false, nil},
+		{"in a quote in a list of numbers", says("a\n 10. > " + at), false, false, nil},
+		{"in a quote in a list in a list", says("- - > " + at), false, false, nil},
+		{"in a quote of many lines in a list", says("- >>> a\n" + at), false, false, nil},
+		{"in a quote in a heading", says("## > " + at), false, false, nil},
+		{"in a quote in a small line", says("-# > " + at), false, false, nil},
+		{"in a quote after another end of a line", says("a\r> " + at), false, false, nil},
 		{"in code", says("`" + at + "`"), false, false, nil},
 		{"in code of two backticks", says("`` ` " + at + "``"), false, false, nil},
 		{"in code over two lines", says("`a\n" + at + "`"), false, false, nil},
@@ -130,7 +144,17 @@ func TestCalls(t *testing.T) {
 		{"in a block of code in a language", says("```go\n" + at + "\n```"), false, false, nil},
 		{"in a block that begins with a fence", says("```\n```\n" + at + "\n```"), false, false, nil},
 		{"in a block in a language that begins with a fence", says("```go\n```\n" + at + "\n```"), false, false, nil},
+		{"in a block in a language of other letters", says("```C++\n```\n" + at + "\n```"), false, false, nil},
+		{"in a block in a language, with other ends of lines", says("```go\r\n```\r\n" + at + "\r\n```"), false, false, nil},
+		{"in a block that a line opens which may be a quote", says(">```\n" + at + "\n```"), false, false, nil},
+		{"in a block in a language that such a line opens", says("\t> ```go\n" + at + "\n```"), false, false, nil},
+		{"in a block that such a line opens after text", says(">_<```\n" + at + "```"), false, false, nil},
+		{"in a block that such a line opens in a list", says("- > ```\n" + at + "\n```"), false, false, nil},
+		{"in a block that such a line opens after a block", says("```a```> ```\n" + at + "\n```"), false, false, nil},
+		{"in code that such a line opens", says(">`a\n" + at + "`"), false, false, nil},
+		{"in a block when one of two such lines is a quote", says(">```\n>```\n" + at + "\n```"), false, false, nil},
 		{"in a block left open", says("hello\n```\n" + at), false, false, nil},
+		{"after a block of nothing", says("```\n\n```" + at), false, false, nil},
 		{"in a block left open after a closed one", says("```a``` ```" + at), false, false, nil},
 		{"after six backticks", says("``````" + at), false, false, nil},
 		{"escaped", says(`\` + at), false, false, nil},
@@ -169,6 +193,7 @@ func TestCalls(t *testing.T) {
 		{"another, in a quote", fields{"content": "> <@" + another + "> a\nb", "mentions": users(another)}, false, false, nil},
 		{"another, in a quote of many lines", fields{"content": "a\n>>> <@" + another + ">", "mentions": users(another)}, false, false, nil},
 		{"another, in a quote and outside", fields{"content": "> <@" + another + ">\n<@" + another + "> b", "mentions": users(another)}, false, true, nil},
+		{"another, in a block that a line opens which may be a quote", fields{"content": ">```\n<@" + another + ">\n```", "mentions": users(another)}, false, false, nil},
 		{"another, in a block left open", fields{"content": "a ```<@" + another + ">", "mentions": users(another)}, false, false, nil},
 		{"one the service tells of in a quote, and one it does not outside", fields{"content": "> <@" + another + ">\n<@1000000000000000952>", "mentions": users(another)}, false, false, nil},
 		{"another and the bot in a quote", fields{"content": "<@" + another + ">\n> " + at, "mentions": users(another, bot)}, false, false, nil},
@@ -364,6 +389,7 @@ func TestTheManagedRoleIsLearned(t *testing.T) {
 		"Guild Create":      {"GUILD_CREATE", fields{"id": p["guild_id"], "roles": guildRoles(bot)}, true},
 		"Guild Role Create": {"GUILD_ROLE_CREATE", fields{"guild_id": p["guild_id"], "role": role}, true},
 		"Guild Role Update": {"GUILD_ROLE_UPDATE", fields{"guild_id": p["guild_id"], "role": role}, true},
+		"one of two":        {"GUILD_CREATE", fields{"id": p["guild_id"], "roles": append([]any{fields{"id": []any{}}}, guildRoles(bot)...)}, true},
 		"another's role":    {"GUILD_ROLE_CREATE", fields{"guild_id": p["guild_id"], "role": fields{"id": ownRole, "managed": true, "tags": fields{"bot_id": another}}}, false},
 		"no role":           {"GUILD_ROLE_UPDATE", fields{"guild_id": p["guild_id"]}, false},
 		"not a list":        {"GUILD_CREATE", fields{"id": p["guild_id"], "roles": "none"}, false},
@@ -433,6 +459,7 @@ func TestACatchUpWaitsForTheRoles(t *testing.T) {
 			d.session = time.Now().Add(-2 * rolesWithin)
 		}, nil, false, false, false},
 		{"an edited message", func(d *Driver, s *sink) { d.newSession(nil) }, fields{"edited_timestamp": "2026-11-17T02:36:03.612000+00:00"}, false, false, false},
+		{"a notice", func(d *Driver, s *sink) { d.newSession(nil) }, fields{"type": 6}, false, false, false},
 		{"a webhook's", func(d *Driver, s *sink) { d.newSession(nil) }, fields{"webhook_id": "1000000000000000951"}, false, false, false},
 		{"a quoted mention", func(d *Driver, s *sink) { d.newSession(nil) }, fields{"content": "> <@&" + ownRole + ">"}, false, false, false},
 		{"not told by the service", func(d *Driver, s *sink) { d.newSession(nil) }, fields{"mention_roles": []any{}}, false, false, false},
@@ -464,5 +491,68 @@ func TestACatchUpWaitsForTheRoles(t *testing.T) {
 				t.Fatalf("%+v, %v; want a call: %v", got, err, c.call)
 			}
 		})
+	}
+}
+
+// catchingUp is a sink that catches up as soon as a session is ready, as the
+// front end does.
+type catchingUp struct {
+	*sink
+	since func()
+}
+
+func (c catchingUp) Connected() { c.since() }
+
+// Run begins the wait with each session: a catch-up that the session's start
+// makes waits for the roles that come in it, also when those of the session
+// before are known.
+func TestASessionBeginsTheWaitForItsRoles(t *testing.T) {
+	r := newFakeREST(t)
+	r.serve(t, "GET /users/@me", "bot/rest-users-me.json")
+	m := roleCall(t, ownRole)
+	ch := id(m["channel_id"])
+	r.serveJSON(t, "GET /channels/"+ch+"/messages", 200, []any{m})
+	g := newFakeGateway(t, payload(t, "bot/gw-01-READY.json"))
+	d := testDriver(t, botID(t), r, g)
+	d.setDirect(snowflake.MustParse(ch), false)
+	got := make(chan error, 8)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- d.Run(ctx, catchingUp{newSink(), func() {
+			_, err := d.Since(ctx, surface.Conversation{Channel: ch}, "")
+			got <- err
+		}})
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	for _, session := range []string{"the first", "another"} {
+		if session == "another" {
+			g.mu.Lock()
+			g.refuseResume = true
+			g.mu.Unlock()
+			g.drop()
+		}
+		select {
+		case err := <-got:
+			if !errors.Is(err, errRoles) {
+				t.Errorf("%s: %v, want to wait for the roles", session, err)
+			}
+		case <-time.After(20 * time.Second):
+			t.Fatalf("%s: no session", session)
+		}
+		// The roles of this session come, without the bot's: they are known
+		// for the rest of it.
+		g.event("GUILD_CREATE", fields{"id": m["guild_id"], "roles": []any{}, "threads": []any{},
+			"channels": []any{fields{"id": ch, "guild_id": m["guild_id"], "type": 0, "position": 0, "name": "c", "flags": 0}}})
+		for start := time.Now(); ; time.Sleep(10 * time.Millisecond) {
+			if _, err := d.Since(ctx, surface.Conversation{Channel: ch}, ""); err == nil {
+				break
+			} else if time.Since(start) > 15*time.Second {
+				t.Fatalf("%s: %v", session, err)
+			}
+		}
 	}
 }
