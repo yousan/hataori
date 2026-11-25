@@ -185,12 +185,21 @@ func TestConversationsWakeNothing(t *testing.T) {
 	decided := func(pos uint64, id control.ThreadID, kind control.EventKind) control.Event {
 		return control.Event{Pos: pos, Scope: "c1", Thread: id, Kind: kind, Data: []byte(`{"outcome":"approved"}`)}
 	}
+	// As if each failed to start and the supervisor's id had started it.
+	for i, id := range []int{older, worker, newer, lookUp} {
+		exec(t, c, fmt.Sprintf(`INSERT INTO events (pos, scope, thread, thread_id, time, kind, data) VALUES (%d, 'c1', '', %d, 0, 'thread_created',
+			'{"from":"supervisor:c1","principal":"sv","repo":"","session":3,"thread":%d,"model":"","effort":""}')`, 10+i, id, id),
+			fmt.Sprintf(`UPDATE threads SET state = 'failed' WHERE id = %d`, id))
+	}
+	failed := func(pos uint64, id control.ThreadID) control.Event {
+		return control.Event{Pos: pos, Scope: "c1", Thread: id, Kind: "state", Data: []byte(`{"from":"creating","to":"failed","reason":"no"}`)}
+	}
 	for i, id := range []control.ThreadID{older, newer, lookUp} {
 		pos := uint64(10 * (i + 2))
 		waits := turnEnd(pos+1, id)
 		waits.Data = bytes.Replace(waits.Data, []byte(`"background":0`), []byte(`"background":1`), 1)
 		for _, e := range []control.Event{turnEnd(pos, id), waits,
-			{Pos: pos + 2, Scope: "c1", Thread: id, Kind: "state", Data: []byte(`{"from":"creating","to":"failed","reason":"no"}`)},
+			failed(pos+2, id),
 			decided(pos+3, id, ApprovalAnswered), decided(pos+4, id, ProposalAnswered)} {
 			if err := r.event(ctx, e); err != nil {
 				t.Fatal(err)
@@ -202,6 +211,9 @@ func TestConversationsWakeNothing(t *testing.T) {
 	}
 	if err := r.event(ctx, decided(60, own, ProposalAnswered)); err != nil || len(r.decided) != 1 {
 		t.Fatalf("a decision in the own thread: %v, %v", r.decided, err)
+	}
+	if err := r.event(ctx, failed(61, worker)); err != nil || len(r.ended) != 1 {
+		t.Fatalf("a worker's failed start: %v, %v", r.ended, err)
 	}
 
 	// Found again at a start: neither waits for its background tasks.
