@@ -124,19 +124,20 @@ func TestBudgetTurns(t *testing.T) {
 	}
 }
 
-// At the token limit, counted from the agent's usage as Tokens.Today
-// counts it, no supervisor turn starts until the next day.
+// At the token limit, counted from the agent's usage with a tenth of what
+// it read from the cache, no supervisor turn starts until the next day.
 func TestBudgetTokens(t *testing.T) {
 	wt := newWakeTest(t, budget(0, 0, 1000))
 	nextDay := time.Date(wakeBase.Year(), wakeBase.Month(), wakeBase.Day()+1, 0, 0, 0, 0, time.Local)
 	stop, owner, sv := wt.start(t)
 	defer stop()
-	// One turn reports twice: totals of 600, then 800, which adds 800.
-	sendAndRead(t, owner, sv.ID, "u1", "usage 400 100 50 50 0 0\nusage 600 100 50 50 0 0\nreply spent")
+	// One turn reports twice: 600 as the budget counts, then 800, which
+	// adds 800.
+	sendAndRead(t, owner, sv.ID, "u1", "usage 400 100 500 50 0 0\nusage 600 100 500 50 0 0\nreply spent")
 	sendAndRead(t, owner, sv.ID, "u2", "usage 500 0 0 0 0 0\nreply spent")
 	th, err := owner.Thread(context.Background(), sv.ID, 0, 0)
-	if err != nil || th.Tokens == nil || th.Tokens.Today != 1300 {
-		t.Fatalf("the supervisor's tokens today %+v, %v; want 1300", th.Tokens, err)
+	if err != nil || th.Tokens == nil || th.Tokens.Today != 1750 {
+		t.Fatalf("the supervisor's tokens today %+v, %v; want 1750", th.Tokens, err)
 	}
 	_, pos := wt.worker(t, owner, "c1", "a", "reply a")
 	wt.held(t, pos)
@@ -165,6 +166,24 @@ func TestBudgetTokens(t *testing.T) {
 	wt.clock().advance(time.Minute)
 	wt.woken(t, owner, sv.ID, 1)
 	wt.noticed(t, sv, 1)
+}
+
+// What a turn reads from the cache counts a tenth: a wake that the thread's
+// tokens today would hold is made (#793).
+func TestBudgetTokensOfTheCache(t *testing.T) {
+	wt := newWakeTest(t, budget(0, 0, 1000))
+	stop, owner, sv := wt.start(t)
+	defer stop()
+	sendAndRead(t, owner, sv.ID, "u", "usage 10 30 1000 20 0 0\nreply spent")
+	th, err := owner.Thread(context.Background(), sv.ID, 0, 0)
+	if err != nil || th.Tokens == nil || th.Tokens.Today != 1060 {
+		t.Fatalf("the supervisor's tokens today %+v, %v; want 1060", th.Tokens, err)
+	}
+	_, pos := wt.worker(t, owner, "c1", "a", "reply a")
+	wt.read(t, pos)
+	wt.quiet(t)
+	wt.woken(t, owner, sv.ID, 1)
+	wt.noticed(t, sv, 0)
 }
 
 // At the sends limit, the supervisor's sends and starts are refused at the
