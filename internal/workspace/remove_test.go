@@ -513,6 +513,196 @@ func TestRefuseCommitOnlyAtORIG_HEAD(t *testing.T) {
 	wantRefusal(t, x.check(), OtherRef, "")
 }
 
+// FETCH_HEAD names a commit on each of its lines, and any name at the top of
+// the git directory may be a ref's.
+func TestRefuseCommitOnlyAnotherPseudoRefNames(t *testing.T) {
+	lone := func(x *removal) string {
+		return x.git(x.clone, "commit-tree", "-m", "w", "HEAD^{tree}")
+	}
+	for name, make := range map[string]func(x *removal){
+		"FETCH_HEAD": func(x *removal) {
+			other := filepath.Join(x.tmp, "other")
+			x.git(x.tmp, "clone", "-q", x.bare, other)
+			x.commit(other, "n")
+			x.git(x.clone, "fetch", "-q", other, "main")
+			os.RemoveAll(other)
+		},
+		"a later line of FETCH_HEAD": func(x *removal) {
+			other := filepath.Join(x.tmp, "other")
+			x.git(x.tmp, "clone", "-q", x.bare, other)
+			x.git(other, "checkout", "-q", "-b", "n")
+			x.commit(other, "n")
+			x.git(x.clone, "fetch", "-q", other, "main", "n")
+			os.RemoveAll(other)
+			if b, err := os.ReadFile(filepath.Join(x.clone, ".git", "FETCH_HEAD")); err != nil || strings.Count(string(b), "\n") != 2 {
+				x.t.Fatalf("%s %v", b, err)
+			}
+		},
+		"a tag in FETCH_HEAD": func(x *removal) {
+			other := filepath.Join(x.tmp, "other")
+			x.git(x.tmp, "clone", "-q", x.bare, other)
+			x.commit(other, "n")
+			x.git(other, "tag", "-a", "-m", "n", "n")
+			x.git(x.clone, "fetch", "-q", "--no-tags", other, "tag", "n")
+			x.git(x.clone, "update-ref", "-d", "refs/tags/n")
+			os.RemoveAll(other)
+		},
+		"BISECT_HEAD": func(x *removal) {
+			x.git(x.clone, "config", "core.logAllRefUpdates", "false")
+			x.git(x.clone, "update-ref", "BISECT_HEAD", lone(x))
+		},
+		"a name git does not use": func(x *removal) {
+			x.git(x.clone, "config", "core.logAllRefUpdates", "false")
+			x.git(x.clone, "update-ref", "MY_WORK", lone(x))
+		},
+		"a link": func(x *removal) {
+			p := filepath.Join(x.tmp, "elsewhere")
+			if err := os.WriteFile(p, []byte(lone(x)+"\n"), 0o600); err != nil {
+				x.t.Fatal(err)
+			}
+			if err := os.Symlink(p, filepath.Join(x.clone, ".git", "MY_WORK")); err != nil {
+				x.t.Fatal(err)
+			}
+		},
+		"after a long line, with no newline": func(x *removal) {
+			b := strings.Repeat("x", 10000) + "\n" + lone(x)
+			if err := os.WriteFile(filepath.Join(x.clone, ".git", "MY_WORK"), []byte(b), 0o600); err != nil {
+				x.t.Fatal(err)
+			}
+		},
+		"in upper case": func(x *removal) {
+			b := strings.ToUpper(lone(x)) + "\n"
+			if err := os.WriteFile(filepath.Join(x.clone, ".git", "MY_WORK"), []byte(b), 0o600); err != nil {
+				x.t.Fatal(err)
+			}
+		},
+		"a file that cannot be read": func(x *removal) {
+			if os.Geteuid() == 0 {
+				x.t.Skip("root reads every file")
+			}
+			if err := os.WriteFile(filepath.Join(x.clone, ".git", "MY_WORK"), nil, 0); err != nil {
+				x.t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			x := newRemoval(t)
+			make(x)
+			reason := OtherRef
+			if name == "a file that cannot be read" {
+				reason = Unreadable
+			}
+			wantRefusal(t, x.check(), reason, "")
+		})
+	}
+}
+
+func TestRefuseCommitOnlyAPseudoRefOfASHA256RepositoryNames(t *testing.T) {
+	x := newRemoval(t)
+	dir := filepath.Join(x.clone, ".git", "n")
+	x.git(x.tmp, "init", "-q", "--bare", "--object-format=sha256", dir)
+	if err := x.check(); err != nil {
+		t.Fatal(err)
+	}
+	x.git(dir, "update-ref", "MY_WORK", x.git(dir, "commit-tree", "-m", "w", x.git(dir, "mktree")))
+	wantRefusal(t, x.check(), OtherRef, filepath.Join(".git", "n"))
+}
+
+func TestRefuseCommitOnlyAPseudoRefInAReftableNames(t *testing.T) {
+	x := newRemoval(t)
+	cmd := exec.Command("git", "refs", "migrate", "--ref-format=reftable")
+	cmd.Dir, cmd.Env = x.clone, x.env()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("git has no reftable: %s", out)
+	}
+	x.git(x.clone, "config", "core.logAllRefUpdates", "false")
+	if err := x.check(); err != nil {
+		t.Fatal(err)
+	}
+	x.git(x.clone, "update-ref", "BISECT_HEAD", x.git(x.clone, "commit-tree", "-m", "w", "HEAD^{tree}"))
+	wantRefusal(t, x.check(), OtherRef, "")
+}
+
+// A fetch from the remote, and what is gone already, are nothing to lose.
+func TestRemovableWithPseudoRefs(t *testing.T) {
+	x := newRemoval(t)
+	other := filepath.Join(x.tmp, "other")
+	x.git(x.tmp, "clone", "-q", x.bare, other)
+	x.git(other, "checkout", "-q", "-b", "n")
+	x.commit(other, "n")
+	x.git(other, "tag", "-a", "-m", "n", "n")
+	x.git(other, "push", "-q", "origin", "refs/heads/n", "refs/tags/n")
+	x.git(x.clone, "fetch", "-q", "--tags", "origin")
+	if err := os.Symlink("nothing", filepath.Join(x.clone, ".git", "MY_LINK")); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(x.clone, ".git", "MY_FIFO"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := x.check(); err != nil {
+		t.Fatal(err)
+	}
+	// Where the history was cut is no name.
+	shallow := filepath.Join(x.clone, ".git", "shallow")
+	if err := os.WriteFile(shallow, []byte(x.git(x.clone, "commit-tree", "-m", "w", "HEAD^{tree}")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := x.check(); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(shallow)
+	// Pruned, and not one of this repository's ids.
+	gone := strings.Repeat("1", 40) + "\tbranch 'n' of elsewhere\n" + strings.Repeat("2", 64) + "\n"
+	if err := os.WriteFile(filepath.Join(x.clone, ".git", "FETCH_HEAD"), []byte(gone), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := x.check(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// git says the same of an object it cannot read as of one that is gone.
+func TestRefusePseudoRefWithAnObjectThatCannotBeRead(t *testing.T) {
+	for name, tc := range map[string]struct {
+		suffix string
+		breaks func(p string) error
+		want   Reason
+	}{
+		"a loose object":       {"", func(p string) error { return os.WriteFile(p, []byte("junk\n"), 0o600) }, GitError},
+		"an index of no index": {".idx", func(p string) error { return os.WriteFile(p, []byte("junk\n"), 0o600) }, GitError},
+		"a pack of mode 000":   {".pack", func(p string) error { return os.Chmod(p, 0) }, Unreadable},
+		"an index of mode 000": {".idx", func(p string) error { return os.Chmod(p, 0) }, Unreadable},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if tc.want == Unreadable && os.Geteuid() == 0 {
+				t.Skip("root reads every file")
+			}
+			x := newRemoval(t)
+			id := x.git(x.clone, "commit-tree", "-m", "w", "HEAD^{tree}")
+			p := filepath.Join(x.clone, ".git", "objects", id[:2], id[2:])
+			if tc.suffix != "" {
+				cmd := exec.Command("git", "pack-objects", "-q", ".git/objects/pack/pack")
+				cmd.Dir, cmd.Env, cmd.Stdin = x.clone, x.env(), strings.NewReader(id+"\n")
+				out, err := cmd.Output()
+				if err != nil {
+					t.Fatal(err)
+				}
+				os.Remove(p)
+				p = filepath.Join(x.clone, ".git", "objects", "pack", "pack-"+strings.TrimSpace(string(out))+tc.suffix)
+			}
+			if err := os.WriteFile(filepath.Join(x.clone, ".git", "FETCH_HEAD"), []byte(id+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			wantRefusal(t, x.check(), OtherRef, "")
+			os.Chmod(p, 0o600)
+			if err := tc.breaks(p); err != nil {
+				t.Fatal(err)
+			}
+			wantRefusal(t, x.check(), tc.want, "")
+		})
+	}
+}
+
 // The remote-tracking ref says the commit is pushed; the remote no longer
 // has it.
 func TestRefuseCommitTheRemoteNoLongerHas(t *testing.T) {
