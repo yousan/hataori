@@ -2,6 +2,7 @@ package session
 
 import (
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/yousan/hataori/internal/agent"
@@ -132,6 +133,23 @@ func TestSubagentNameAndToolParentReachTheEvents(t *testing.T) {
 	}
 	if o := agentOut(agent.Event{Kind: agent.ToolStarted, ID: "t2", Tool: "Read"}); o.Data["parent"] != nil {
 		t.Fatalf("tool_started of the agent's own tool %v", o.Data)
+	}
+}
+
+// A chat front end closes the subagents that a turn's end does not list.
+func TestATurnsEndListsTheSubagentsThatStillRun(t *testing.T) {
+	for _, st := range []agent.EndStatus{agent.Completed, agent.Interrupted, agent.Failed} {
+		for _, ids := range [][]string{{"s1", "s2"}, nil} {
+			r, err := Step(Snapshot{State: control.Running, Turn: &OpenTurn{By: ByCaller}}, Input{Kind: AgentEvent,
+				Agent: agent.Event{Kind: agent.TurnEnded, Status: st, Background: 3, Subagents: ids}})
+			if err != nil || len(r.Out) == 0 || r.Out[0].Kind != KindTurnEnded {
+				t.Fatalf("status %v: result %+v, error %v", st, r, err)
+			}
+			got, _ := r.Out[0].Data["subagents"].([]string)
+			if _, set := r.Out[0].Data["subagents"]; !slices.Equal(got, ids) || set != (len(ids) > 0) {
+				t.Errorf("status %v: turn_ended %v, want the subagents %v", st, r.Out[0].Data, ids)
+			}
+		}
 	}
 }
 

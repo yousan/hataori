@@ -3,6 +3,7 @@ package chat
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -14,21 +15,46 @@ import (
 // subagent is a subagent that has started and not ended.
 type subagent struct {
 	pos   uint64 // its start event
+	of    int64  // the session it runs in
 	name  string
 	since time.Time
 	tools int // tool calls started in it
 }
 
 // subagents follows e for the subagent lines and returns the lines it
-// gives: one when a subagent starts, one when it ends, and one for each
-// subagent still running when its turn ends. A subagent's own text is
-// never posted.
+// gives: one when a subagent starts and one when it ends. A subagent whose
+// end is not reported is closed when a turn ends that does not say it still
+// runs, or when its session's agent is stopped. A turn that ends on a
+// question closes none: the agent goes on once it is answered. A subagent's
+// own text is never posted.
 func (r *reader) subagents(e control.Event) []Row {
-	var d struct{ ID, Name, Parent string }
+	var d struct {
+		Session          int64
+		ID, Name, Parent string
+		Outcome          string
+		Subagents        []string // those that still run
+		To               control.State
+	}
 	json.Unmarshal(e.Data, &d)
 	open := r.subs[e.Thread]
 	line := func(part int, text string) Row {
 		return Row{Event: e.Pos, Part: part, Conv: r.conv(e.Thread), Message: surface.Message{Text: text, Quiet: true}}
+	}
+	// closed ends the session's subagents that e does not say still run.
+	closed := func(how string) []Row {
+		var left []*subagent
+		for id, s := range open {
+			if s.of == d.Session && !slices.Contains(d.Subagents, id) {
+				left = append(left, s)
+				delete(open, id)
+			}
+		}
+		sort.Slice(left, func(i, j int) bool { return left[i].pos < left[j].pos })
+		var rows []Row
+		for i, s := range left {
+			rows = append(rows, line(10+i, endLine(s, e.Time, how)))
+		}
+		return rows
 	}
 	switch e.Kind {
 	case "subagent_started":
@@ -40,7 +66,7 @@ func (r *reader) subagents(e control.Event) []Row {
 		if name == "" {
 			name = d.ID
 		}
-		open[d.ID] = &subagent{pos: e.Pos, name: name, since: e.Time}
+		open[d.ID] = &subagent{pos: e.Pos, of: d.Session, name: name, since: e.Time}
 		return []Row{line(0, "Subagent "+name+" started.")}
 	case "tool_started":
 		if s := open[d.Parent]; d.Parent != "" && s != nil {
@@ -49,24 +75,21 @@ func (r *reader) subagents(e control.Event) []Row {
 	case "subagent_ended":
 		s := open[d.ID]
 		if s == nil {
-			// Closed with its turn already, or never started: its one end
+			// Closed already, or never started: its one end
 			// line is posted, or cannot say how long it ran.
 			return nil
 		}
 		delete(open, d.ID)
 		return []Row{line(0, endLine(s, e.Time, ""))}
 	case "turn_ended":
-		var left []*subagent
-		for _, s := range open {
-			left = append(left, s)
+		if d.Outcome != "blocked" {
+			return closed(" with its turn")
 		}
-		sort.Slice(left, func(i, j int) bool { return left[i].pos < left[j].pos })
-		var rows []Row
-		for i, s := range left {
-			rows = append(rows, line(10+i, endLine(s, e.Time, " with its turn")))
+	case "state":
+		switch d.To {
+		case control.Asleep, control.Closed, control.Removed, control.Failed:
+			return closed(" with its agent")
 		}
-		delete(r.subs, e.Thread)
-		return rows
 	}
 	return nil
 }

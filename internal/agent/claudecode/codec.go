@@ -363,7 +363,7 @@ func (c *codec) tickInput(now time.Time) Actions {
 	}
 	id := c.sent.id
 	c.sent = nil
-	a := c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered, Input: id, Background: c.tasks.running()})
+	a := c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered, Input: id}))
 	return merge(a, c.flush())
 }
 
@@ -389,7 +389,7 @@ func (c *codec) Interrupt() Actions {
 	if !c.running && c.sent == nil && len(c.queue) > 0 {
 		q := c.queue[0]
 		c.queue = c.queue[1:]
-		return c.number(c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted, Input: q.id, Background: c.tasks.running()}))
+		return c.number(c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted, Input: q.id})))
 	}
 	return Actions{Keys: []agent.Part{stopKey}}
 }
@@ -734,7 +734,7 @@ func (c *codec) applyText(t *turnText, it textItem) Actions {
 		t.ended, t.interrupted = true, true
 		c.lastEnded = t
 		// The interrupt ends the turn, not the background tasks.
-		return merge(a, c.events(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted, Background: c.tasks.running()}))
+		return merge(a, c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted})))
 	}
 	if t.ended {
 		// The turn's end is reported, with its final answer; text read
@@ -816,14 +816,15 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 		return c.events(started)
 	case "Stop":
 		withdrawn := c.withdrawAll()
-		running := c.listed(p)
+		c.listed(p)
 		return merge(merge(withdrawn, c.end(p.PromptID, p.LastMessage)), c.events(
 			agent.Event{Kind: agent.Text, Text: p.LastMessage, Final: true},
-			agent.Event{Kind: agent.TurnEnded, Status: agent.Completed, Background: running},
+			c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Completed}),
 		))
 	case "StopFailure":
+		c.listed(p)
 		return merge(merge(c.withdrawAll(), c.end(p.PromptID, "")), c.events(
-			agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: failureReason(p.Error), Text: p.LastMessage, Background: c.listed(p)}))
+			c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: failureReason(p.Error), Text: p.LastMessage})))
 	case "PreToolUse":
 		if p.ToolName == askTool {
 			if !k.Wait {
@@ -888,13 +889,12 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 	return c.events(agent.Event{Kind: agent.Unknown, Text: p.Event})
 }
 
-// listed returns how many background tasks run at the end of a turn: what
-// the hook's list says, or, without one, what is known from before.
-func (c *codec) listed(p payload) int {
-	if p.BackgroundTasks == nil {
-		return c.tasks.running()
+// listed takes the background tasks that run at the end of a turn from the
+// hook's list. Without one, what is known from before stays.
+func (c *codec) listed(p payload) {
+	if p.BackgroundTasks != nil {
+		c.tasks.list(p.BackgroundTasks)
 	}
-	return c.tasks.list(p.BackgroundTasks)
 }
 
 // abandoned says whether a call comes from the main agent of a turn that

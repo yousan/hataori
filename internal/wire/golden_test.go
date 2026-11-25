@@ -45,7 +45,7 @@ var eventData = map[control.EventKind]string{
 	"thread_created":    `{"effort":"high","from":"discord:W1","model":"opus","principal":"dispatch","repo":"https://example.com/repo.git","research":true,"session":3,"thread":7,"via":"proposal"}`,
 	"state":             `{"detail":"the folder-trust dialog names .mcp.json","from":"creating","reason":"blocked at start","session":3,"to":"failed","trust":[".mcp.json"]}`,
 	"turn_started":      `{"by":"caller","from":"discord:W1","key":"M0789","principal":"dispatch","session":3,"turn":12}`,
-	"turn_ended":        `{"background":0,"by":"caller","from":"discord:W1","outcome":"failure","principal":"dispatch","reason":"limit","session":3,"turn":12}`,
+	"turn_ended":        `{"background":1,"by":"caller","from":"discord:W1","outcome":"failure","principal":"dispatch","reason":"limit","session":3,"subagents":["agent_1"],"turn":12}`,
 	"post_sent":         `{"event":41,"link":{"channel":"C0123","client":"discord","thread":"T0456"},"message":"M0999","part":0,"text":"All tests pass."}`,
 	"post_cancelled":    `{"edit":true,"event":41,"failed":true,"link":{"channel":"C0123","client":"discord","thread":"T0456"},"part":0,"plugin":"secret-scan","reason":"it did not answer within 5s"}`,
 	"post_refused":      `{"event":41,"link":{"channel":"C0123","client":"discord","thread":"T0456"},"message":"M0999","part":0,"reason":"discord: post: 403 Missing Access (code 50001)"}`,
