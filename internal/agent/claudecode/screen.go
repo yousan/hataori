@@ -58,16 +58,39 @@ const trustGuide = "Security guide"
 // above (MCP servers)." (testdata/2.1.328/trust_*).
 const loadsPrefix = "Trusting this folder loads "
 
-// loadsNotes is what that line is known to say of a file, between its name
-// and the line's full stop (testdata/2.1.328/trust_files_*, 2.1.329/
-// trust_hooks_*, 2.1.332/trust_files_env). Only these are taken off (#730):
-// the dialog's words are joined, so any other text there may as well be
-// something the dialog draws below the line.
+// loadsNotes is what that line is known to say of a file, right behind its
+// name (testdata/2.1.328/trust_files_*, 2.1.329/trust_hooks_*, 2.1.332/
+// trust_files_env, trust_line_*). Only these are read (#730): the dialog's
+// words are joined, so any other text there may as well be something the
+// dialog draws below the line.
 var loadsNotes = []string{
 	" (runs commands and sets environment variables)",
 	" (runs commands)",
 	" (sets environment variables)",
 	" here or above (MCP servers)",
+}
+
+// A list of files as the CLI writes one, "a", "a and b" or "a, b, and c", in
+// a warning and, with at most one of loadsNotes behind each file, in the line
+// about them (#758, testdata/2.1.332/trust_line_*). A name does not end with
+// a full stop: that ends the line.
+var (
+	warningList = listOf("")
+	loadsList   = listOf("(?:" + strings.Join(quoted(loadsNotes), "|") + ")?")
+)
+
+// listOf is the shape of a list of files with note behind each name.
+func listOf(note string) *regexp.Regexp {
+	file := "([^ ,()]*[^ ,().])" + note
+	return regexp.MustCompile("^" + file + "(?:(?:, " + file + ",)? and " + file + ")?$")
+}
+
+func quoted(texts []string) []string {
+	var out []string
+	for _, t := range texts {
+		out = append(out, regexp.QuoteMeta(t))
+	}
+	return out
 }
 
 // The warnings the dialog draws above the line naming the files, in this
@@ -325,7 +348,7 @@ func warnings(passages []passage) (declared []string, below []passage, ok bool) 
 		if m == nil {
 			continue
 		}
-		files := fileList(m[1])
+		files := fileList(warningList, m[1])
 		list, rest, found := strings.Cut(passages[1].text, permissionsEnd)
 		if files == nil || strings.TrimSpace(list) == "" || strings.Contains(list, "⚠") {
 			return nil, nil, false
@@ -340,7 +363,7 @@ func warnings(passages []passage) (declared []string, below []passage, ok bool) 
 	}
 	if len(passages) > 0 && passages[0].bold {
 		list, found := strings.CutPrefix(passages[0].text, hooksWarning)
-		files := fileList(list)
+		files := fileList(warningList, list)
 		if !found || files == nil {
 			return nil, nil, false
 		}
@@ -365,28 +388,17 @@ func loadedFiles(line string) []string {
 	if !ok {
 		return nil
 	}
-	for _, note := range loadsNotes {
-		if l, ok := strings.CutSuffix(list, note); ok {
-			list = l
-			break
-		}
-	}
-	return fileList(list)
+	return fileList(loadsList, list)
 }
 
-// fileList reads "a, b and c" as its files, or nil when it is not of that
-// shape: an empty entry, as in "a,, b", is not, and neither is a full stop
-// behind a file, which ends the line the list is in.
-func fileList(list string) []string {
-	var files []string
-	for _, f := range strings.Split(strings.ReplaceAll(list, " and ", ","), ",") {
-		f = strings.TrimSpace(f)
-		if f == "" || strings.ContainsAny(f, " ()") || strings.HasSuffix(f, ".") {
-			return nil
-		}
-		files = append(files, f)
+// fileList reads a list as of one of the shapes above as its files, or nil
+// when it is not of that shape.
+func fileList(shape *regexp.Regexp, list string) []string {
+	m := shape.FindStringSubmatch(list)
+	if m == nil {
+		return nil
 	}
-	return files
+	return slices.DeleteFunc(m[1:], func(f string) bool { return f == "" })
 }
 
 // trimLines trims the spaces around each line and drops the blank lines

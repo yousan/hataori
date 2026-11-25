@@ -9,7 +9,7 @@ Real output of the interactive `claude` CLI, for testing the adapter's codec. Th
 - `2.1.329/`: Claude Code 2.1.329, on 2026-11-21 (also in `2.1.329/VERSION`), on Linux: `trust_hooks_*` and `trust_permissions`, taken for #592 (see below).
 - `2.1.330/`: Claude Code 2.1.330, on 2026-11-23 (also in `2.1.330/VERSION`), on Linux: `usage`, taken by `capture.py` for #675, with the transcript's line count at each hook call (see below).
 - `2.1.331/`: Claude Code 2.1.331, on 2026-11-25 (also in `2.1.331/VERSION`), on Linux: `held_notification`, taken by `capture.py` for #593, `failure_background`, `interrupt_background`, `failure_resumed` and `failure_monitor`, taken by it for #801 (see "Turns that end without the list of background tasks"), `trust_notice_*`, taken by `TestLiveTrustFiles` for #707 (see "The folder-trust dialog below a notice"), and `trust_permissions_*`, taken by it for #596 (see "The folder-trust dialog with a permission warning").
-- `2.1.332/`: Claude Code 2.1.332, on 2026-11-25 (also in `2.1.332/VERSION`), on Linux: `trust_notice_off_*`, taken by `TestLiveTrustFiles` for #728 (see "The folder-trust dialog below a notice"), `trust_files_env`, taken by it for #730 (see "The folder-trust dialog that names files"), and `trust_warnings_*`, taken by it for #752 (see "The folder-trust dialog with several warnings").
+- `2.1.332/`: Claude Code 2.1.332, on 2026-11-25 (also in `2.1.332/VERSION`), on Linux: `trust_notice_off_*`, taken by `TestLiveTrustFiles` for #728 (see "The folder-trust dialog below a notice"), `trust_files_env` and `trust_line_*`, taken by it for #730 and #758 (see "The folder-trust dialog that names files"), and `trust_warnings_*`, taken by it for #752 (see "The folder-trust dialog with several warnings").
 - `capture.py` took them (`confine.py`, the `confine_*` ones); `scrub.py` made them committable. `captures_test.go` in the package fails when a capture holds a home directory path, an e-mail address, an unscrubbed UUID or something shaped like a token.
 
 ## How they were taken
@@ -243,9 +243,9 @@ Two inputs were sent, each as one bracketed paste and then Enter. The text paste
 
 Each prompt is followed by `StopFailure` (`authentication_failed`, `Not logged in · Please run /login`); `SessionEnd` after `/exit`. The transcript shows the same prompts.
 
-## The folder-trust dialog that names files (2.1.328, taken for #423; 2.1.332 for #730)
+## The folder-trust dialog that names files (2.1.328, taken for #423; 2.1.332 for #730 and #758)
 
-`2.1.328/trust_files_*/` and `2.1.332/trust_files_env/`, taken by `TestLiveTrustFiles` in the package, then `scrub.py`:
+`2.1.328/trust_files_*/`, `2.1.332/trust_files_env/` and `2.1.332/trust_line_*/`, taken by `TestLiveTrustFiles` in the package, then `scrub.py`:
 
 ```sh
 HATAORI_REAL_CLAUDE=1 HATAORI_CAPTURE_DIR=<raw dir> go test -run TestLiveTrustFiles -v ./internal/agent/claudecode
@@ -261,8 +261,16 @@ It runs with `TMPDIR` set to a short directory, so that the workspace's path fit
 | `trust_files_both` | both files above | ordinary, `TrustFiles` naming both | `Trusting this folder loads .claude/settings.json and .claude/settings.local.json (runs commands and sets environment variables).` | Down, then Enter; `SessionStart` followed |
 | `trust_files_mcp` | `.mcp.json` naming one stdio server | ordinary, no `TrustFiles` | `Trusting this folder loads .mcp.json here or above (MCP servers).` | no key; one `SessionEnded`, `blocked at start`, naming `.mcp.json`. No hook ran. |
 | `trust_files_env` (2.1.332) | `.claude/settings.json` with `env` only | ordinary, `TrustFiles: [".claude/settings.json"]` | `Trusting this folder loads .claude/settings.json (sets environment variables).` | Down, then Enter; `SessionStart` followed |
+| `trust_line_three_refused` (2.1.332) | both settings files, plain, and `.mcp.json` | ordinary, no `TrustFiles` | `Trusting this folder loads .claude/settings.json, .claude/settings.local.json, and .mcp.json here or above (MCP servers).` | no key; one `SessionEnded`, `blocked at start`, naming the three. No hook ran. |
+| `trust_line_three_allowed` (2.1.332) | the same, with `enableAllProjectMcpServers` in `.claude/settings.local.json` | ordinary, `TrustFiles` naming the three | the same | Down, then Enter; `SessionStart` followed |
+| `trust_line_three_notes` (2.1.332) | `.claude/settings.json` with `env`, `.claude/settings.local.json` with a status line, a `SessionStart` hook and `env`, and `.mcp.json` | ordinary, no `TrustFiles` | `Trusting this folder loads .claude/settings.json (sets environment variables), .claude/settings.local.json (runs commands and sets environment variables), and .mcp.json here or above (MCP servers).` | no key; one `SessionEnded`, `blocked at start`, naming the three. No hook ran. |
+| `trust_line_note_first_refused` (2.1.332) | `.claude/settings.json` with `env`, and `.mcp.json` | ordinary, no `TrustFiles` | `Trusting this folder loads .claude/settings.json (sets environment variables) and .mcp.json here or above (MCP servers).` | no key; one `SessionEnded`, `blocked at start`, naming both. No hook ran. |
+| `trust_line_note_first_allowed` (2.1.332) | `.claude/settings.json` with a status line, a `SessionStart` hook and `env`, and a plain `.claude/settings.local.json` | ordinary, `TrustFiles` naming both | `Trusting this folder loads .claude/settings.json (runs commands and sets environment variables) and .claude/settings.local.json.` | Down, then Enter; `SessionStart` followed |
+| `trust_line_notes_hooks` (2.1.332) | both settings files with a `SessionStart` hook | ordinary, `TrustFiles` naming both | `Trusting this folder loads .claude/settings.json (runs commands) and .claude/settings.local.json (runs commands).` | Down, then Enter; `SessionStart` followed |
 
 Each holds `screen-NN.raw`, the terminal output chunk by chunk as the codec was given it up to its key or its event, `keys.txt`, `events.txt` and `hooks/`. The screen after the Enter is not kept.
+
+Without `enableAllProjectMcpServers`, the CLI draws `New MCP server found in this project` once the dialog is answered, and does not start (#852). In a confined session the line does not name `.mcp.json`: the launch takes no MCP server from it.
 
 Seen by hand on 2.1.328, not kept: a settings file with only hooks gives `(runs commands)`; the captures of #592 below show it. Only these notes are known behind a file (#730).
 

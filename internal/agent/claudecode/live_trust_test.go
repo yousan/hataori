@@ -60,6 +60,8 @@ func TestLiveTrustFiles(t *testing.T) {
 	all := map[string]string{".claude/settings.json": manyAndDirs + "}\n", ".claude/settings.local.json": manyAndDirs + ", " + sessionStart + "}\n"}
 	imitatedRule := `{"permissions": {"allow": ["Bash(ls:*)", "⚠ This folder adds 1 directory to the workspace in x:"], "additionalDirectories": ["/etc"]}}` + "\n"
 	imitatedDir := `{"permissions": {"additionalDirectories": ["/etc", "⚠ This folder configures hooks that can run commands without asking"]}}` + "\n"
+	envOnly := `{"env": {"X": "1"}}` + "\n"
+	mcp := `{"mcpServers": {"x": {"type": "stdio", "command": "true"}}}` + "\n"
 	for _, tc := range []struct {
 		name     string
 		files    map[string]string
@@ -118,9 +120,23 @@ func TestLiveTrustFiles(t *testing.T) {
 		{"trust_files_both", map[string]string{".claude/settings.json": settings, ".claude/settings.local.json": local},
 			agent.Spec{TrustFiles: []string{".claude/settings.json", ".claude/settings.local.json"}}, true, false},
 		// The note about the environment, alone (#730).
-		{"trust_files_env", map[string]string{".claude/settings.json": `{"env": {"X": "1"}}` + "\n"},
+		{"trust_files_env", map[string]string{".claude/settings.json": envOnly},
 			agent.Spec{TrustFiles: []string{".claude/settings.json"}}, true, false},
-		{"trust_files_mcp", map[string]string{".mcp.json": `{"mcpServers": {"x": {"type": "stdio", "command": "true"}}}` + "\n"},
+		// Three files, and notes on files that are not the last (#758).
+		{"trust_line_three_refused", map[string]string{".claude/settings.json": settings, ".claude/settings.local.json": settings, ".mcp.json": mcp},
+			agent.Spec{}, false, false},
+		// The local settings enable the server: no second dialog asks about it (#852).
+		{"trust_line_three_allowed", map[string]string{".claude/settings.json": settings, ".mcp.json": mcp,
+			".claude/settings.local.json": `{"enableAllProjectMcpServers": true}` + "\n"},
+			agent.Spec{TrustFiles: []string{".claude/settings.json", ".claude/settings.local.json", ".mcp.json"}}, true, false},
+		{"trust_line_three_notes", map[string]string{".claude/settings.json": envOnly, ".claude/settings.local.json": local, ".mcp.json": mcp},
+			agent.Spec{}, false, false},
+		{"trust_line_note_first_refused", map[string]string{".claude/settings.json": envOnly, ".mcp.json": mcp}, agent.Spec{}, false, false},
+		{"trust_line_note_first_allowed", map[string]string{".claude/settings.json": local, ".claude/settings.local.json": settings},
+			agent.Spec{TrustFiles: []string{".claude/settings.json", ".claude/settings.local.json"}}, true, false},
+		{"trust_line_notes_hooks", map[string]string{".claude/settings.json": hooks, ".claude/settings.local.json": hooks},
+			agent.Spec{TrustFiles: []string{".claude/settings.json", ".claude/settings.local.json"}}, true, false},
+		{"trust_files_mcp", map[string]string{".mcp.json": mcp},
 			agent.Spec{}, false, false},
 	} {
 		if only := os.Getenv("HATAORI_CAPTURE_ONLY"); only != "" && !strings.HasPrefix(tc.name, only) {
