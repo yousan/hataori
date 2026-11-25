@@ -1700,6 +1700,97 @@ func TestRefuseSubmoduleOfAMovedGitDirectory(t *testing.T) {
 	wantRefusal(t, x.check(), UnpushedRef, filepath.Join("cache", "sub.git", "modules", "inner"))
 }
 
+// git takes a directory with HEAD and a commondir for a git directory; what it
+// leads to needs no HEAD for that.
+func TestRefuseGitDirectoryWithACommonDirectory(t *testing.T) {
+	for name, lay := range map[string]struct {
+		dir, common string
+		other       func(t *testing.T, x *removal, store, n string)
+	}{
+		"in the git directory": {dir: filepath.Join(".git", "n"), common: "../store\n"},
+		"in the work tree":     {dir: "n", common: "../.git/store\r\n"},
+		"absolute":             {dir: "n", common: "/"},
+		"commondir is a link": {dir: "n", common: "../.git/store", other: func(t *testing.T, x *removal, store, n string) {
+			p := filepath.Join(n, "commondir")
+			if err := errors.Join(os.Rename(p, filepath.Join(n, "x")), os.Symlink("x", p)); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		"objects is a link": {dir: "n", common: "../.git/store", other: func(t *testing.T, x *removal, store, n string) {
+			p := filepath.Join(store, "objects")
+			if err := errors.Join(os.Rename(p, p+"2"), os.Symlink("objects2", p)); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			x := newRemoval(t)
+			store, n := filepath.Join(x.clone, ".git", "store"), filepath.Join(x.clone, lay.dir)
+			x.git(x.tmp, "clone", "-q", "--bare", x.bare, store)
+			id := x.git(x.clone, "commit-tree", "-m", "w", "HEAD^{tree}")
+			x.git(x.clone, "push", "-q", store, id+":refs/heads/wip")
+			if lay.dir == "n" {
+				x.write(".gitignore", "n\n")
+				x.git(x.clone, "add", ".gitignore")
+				x.git(x.clone, "commit", "-q", "-m", "i")
+				x.git(x.clone, "push", "-q", "origin", "main")
+			}
+			if err := os.MkdirAll(n, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(filepath.Join(store, "HEAD"), filepath.Join(n, "HEAD")); err != nil {
+				t.Fatal(err)
+			}
+			if lay.common == "/" {
+				lay.common = store
+			}
+			if err := os.WriteFile(filepath.Join(n, "commondir"), []byte(lay.common), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if lay.other != nil {
+				lay.other(t, x, store, n)
+			}
+			os.Remove(filepath.Join(x.clone, ".git", "objects", id[:2], id[2:]))
+			if got := x.git(n, "--git-dir=.", "rev-parse", "wip"); got != id {
+				t.Fatal(got)
+			}
+			x.r.Disposable = []string{"n"}
+			wantRefusal(t, x.check(), Worktree, lay.dir)
+		})
+	}
+}
+
+// The git directory of a linked worktree, moved, beside its repository: no one
+// else looks at its HEAD.
+func TestRefuseMovedGitDirectoryOfALinkedWorktree(t *testing.T) {
+	x := newRemoval(t)
+	tree := filepath.Join(x.tmp, "tree")
+	x.git(x.clone, "worktree", "add", "-q", "--detach", tree)
+	x.commit(tree, "w")
+	x.git(x.clone, "config", "core.logAllRefUpdates", "false")
+	from, to := filepath.Join(x.clone, ".git", "worktrees"), filepath.Join(x.clone, ".git", "n")
+	if err := os.Rename(filepath.Join(from, "tree"), to); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(to, "commondir"), []byte("..\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(from)
+	wantRefusal(t, x.check(), Worktree, filepath.Join(".git", "n"))
+}
+
+// Branches may be named as the files of a git directory are.
+func TestRemovableWithBranchesNamedAsGitsFiles(t *testing.T) {
+	x := newRemoval(t)
+	for _, name := range []string{"HEAD", "commondir", "deep/HEAD", "deep/commondir", "dir/HEAD", "dir/commondir/x"} {
+		x.git(x.clone, "push", "-q", "origin", "main:refs/heads/"+name)
+	}
+	x.git(x.clone, "fetch", "-q", "origin", "+refs/heads/*:refs/remotes/origin/*")
+	if err := x.check(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // A linked worktree of a bare repository is elsewhere, and needs it.
 func TestRefuseLinkedWorktreeOfANestedBareRepository(t *testing.T) {
 	x := newRemoval(t)

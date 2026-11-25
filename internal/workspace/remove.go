@@ -690,6 +690,9 @@ type checker struct {
 	n    int    // scratch repositories made
 	// noTree is an empty directory, made when it is first needed (emptyTree).
 	noTree string
+	// parts are the git directories find found that have no objects of their
+	// own: those of linked worktrees, and what is left of one.
+	parts []string
 	// trees and gitDirs are the work trees and the git directories find
 	// returned; the git directory of a work tree is its .git.
 	trees, gitDirs map[string]bool
@@ -734,6 +737,13 @@ func (c *checker) run() error {
 			return err
 		}
 	}
+	// Those of a repository's linked worktrees refused above. No other is one
+	// that git makes, and nothing here looks at what its HEAD and the refs of
+	// its common directory, which may be a repository only with it, name.
+	if len(c.parts) > 0 {
+		rel, _ := filepath.Rel(c.top, c.parts[0])
+		return &Refusal{Reason: Worktree, Repo: rel, Kind: "git directory", Detail: "with a common directory"}
+	}
 	for i, rp := range repos {
 		if err := c.commits(readers[i], rp); err != nil {
 			return err
@@ -775,7 +785,11 @@ func (c *checker) find() ([]repo, error) {
 			repos = append(repos, repo{dir: dir, rel: rel, kind: "submodule"})
 		case d.IsDir():
 			if !isGitDir(p) {
-				return nil
+				part, err := c.isPart(p)
+				if part {
+					c.parts = append(c.parts, p)
+				}
+				return err
 			}
 			in := enclosing(gitDirs, p)
 			if in != "" && c.onlyRefs(in, p) {
@@ -869,6 +883,38 @@ func isGitDir(p string) bool {
 	objects, err2 := os.Lstat(filepath.Join(p, "objects"))
 	link := func(st fs.FileInfo) bool { return st.Mode().Type() == fs.ModeSymlink }
 	return err1 == nil && err2 == nil && (head.Mode().IsRegular() || link(head)) && (objects.IsDir() || link(objects))
+}
+
+// isPart reports whether p is a git directory whose objects are in another, its
+// common directory, as git takes it: with HEAD and a commondir, which leads to
+// a directory with objects. A ref may have either name.
+func (c *checker) isPart(p string) (bool, error) {
+	if head, err := os.Lstat(filepath.Join(p, "HEAD")); missing(err) || err == nil && head.IsDir() {
+		return false, nil
+	} else if err != nil {
+		return false, c.unreadable(filepath.Join(p, "HEAD"), err)
+	}
+	file := filepath.Join(p, "commondir")
+	if fi, err := os.Stat(file); missing(err) || err == nil && !fi.Mode().IsRegular() {
+		return false, nil
+	} else if err != nil {
+		return false, c.unreadable(file, err)
+	}
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return false, c.unreadable(file, err)
+	}
+	common, _, _ := strings.Cut(strings.TrimRight(string(b), "\r\n"), "\x00")
+	if !filepath.IsAbs(common) {
+		common = p + "/" + common
+	}
+	_, err = os.Stat(common + "/objects")
+	if missing(err) || errors.Is(err, syscall.ENAMETOOLONG) {
+		return false, nil
+	} else if err != nil {
+		return false, c.unreadable(common+"/objects", err)
+	}
+	return true, nil
 }
 
 // onlyRefs reports whether p, in the git directory in, is below its refs or
