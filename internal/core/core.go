@@ -2591,6 +2591,10 @@ func (a *api) AttachTerminal(ctx context.Context, id control.ThreadID) (control.
 	if owner := a.c.People.Owner(); owner == "" || a.caller.Principal != control.Principal(owner) {
 		return control.Attachment{}, a.refused(name, scope, "only the owner may attach a terminal")
 	}
+	// What is typed there starts turns, as a Send would.
+	if err := a.left(name, scope); err != nil {
+		return control.Attachment{}, err
+	}
 	var (
 		sid    int64
 		number = int64(id)
@@ -2620,9 +2624,6 @@ func (a *api) AttachTerminal(ctx context.Context, id control.ThreadID) (control.
 			// this answer and the terminal reaching its host, which then
 			// reports it attached.
 			_, err := tx.ExecContext(ctx, `UPDATE sessions SET updated_at = max(updated_at, ?) WHERE id = ?`, a.c.now().UnixMilli(), sid)
-			return err
-		}
-		if err := a.left(name, scope); err != nil { // an asleep thread's agent would start
 			return err
 		}
 		// A thread reopened with no conversation to resume is told what it

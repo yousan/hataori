@@ -12,8 +12,8 @@ import (
 
 // The owner reaches the threads of a scope that left the config: they are
 // listed, read, stopped, closed and removed. Nothing starts in it: a send,
-// a reopen, a choice for a blocked start and an attach that would wake the
-// agent are refused as disabled, logged once each, and change nothing (#565).
+// a reopen, a choice for a blocked start and an attached terminal, where a
+// person would type, are refused as disabled, logged once each, and change nothing (#565).
 func TestNothingStartsInAScopeThatLeftTheConfig(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, fakeOwner{key: "new"})
@@ -53,6 +53,7 @@ func TestNothingStartsInAScopeThatLeftTheConfig(t *testing.T) {
 		"trust":                      func() error { return owner.Trust(ctx, blocked, blockedSid, []string{".mcp.json"}) },
 		"start without settings":     func() error { return owner.StartWithoutSettings(ctx, blocked, blockedSid) },
 		"attach to an asleep thread": func() error { _, err := owner.AttachTerminal(ctx, asleep); return err },
+		"attach to an idle thread":   func() error { _, err := owner.AttachTerminal(ctx, idle); return err },
 	} {
 		events, threads, calls := count(t, f.core.Store, "events"), count(t, f.core.Store, "threads"), f.runner.Calls()
 		f.log.Reset()
@@ -76,8 +77,8 @@ func TestNothingStartsInAScopeThatLeftTheConfig(t *testing.T) {
 	if d, err := owner.Thread(ctx, idle, 0, 0); err != nil || d.Scope != "s" {
 		t.Fatalf("thread: %+v, %v", d, err)
 	}
-	if _, err := owner.AttachTerminal(ctx, idle); err != nil {
-		t.Fatalf("attach to a thread whose agent runs: %v", err)
+	if _, err := owner.Terminal(ctx, idle, "", 0); err != nil {
+		t.Fatalf("terminal: %v", err)
 	}
 	if err := owner.Stop(ctx, running, 0); err != nil {
 		t.Fatalf("stop: %v", err)
