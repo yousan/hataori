@@ -100,9 +100,9 @@ const (
 // ConfinedTools are the built-in tools a confined session keeps: those that
 // read files, which --restricted confines to the working directory. The
 // flags of Launch are the ones checked against Claude Code 2.1.327 with the
-// file tools that write too; that this shorter list leaves no tool that
-// writes was checked against 2.1.332 (design, Appendix B, "Confining a
-// supervisor session").
+// file tools that write too (design, Appendix B, "Confining a supervisor
+// session"); that this shorter list leaves no tool that writes was checked
+// against 2.1.332 (there, "No built-in tool that writes").
 const ConfinedTools = "Read,Glob,Grep"
 
 // ConfinedEnv is added to a confined session's environment, so that what
