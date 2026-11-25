@@ -866,15 +866,13 @@ func isGitDir(p string) bool {
 // remote that has a branch objects/x, beside the remote's HEAD. No file of it
 // is an object, or says where objects are, and git reads each as a ref or
 // reflog of in: none has a name that no ref may have, and in has its refs in
-// files, and is no worktree's, whose refs are elsewhere. Below a bare in with
-// a link for HEAD or objects nothing is taken for refs.
+// files, and is no worktree's, whose refs are elsewhere. In one with a link for
+// HEAD or objects nothing is taken for refs.
 func (c *checker) onlyRefs(in, p string) bool {
-	if filepath.Base(in) != ".git" {
-		head, err1 := os.Lstat(filepath.Join(in, "HEAD"))
-		objects, err2 := os.Lstat(filepath.Join(in, "objects"))
-		if err1 != nil || err2 != nil || !head.Mode().IsRegular() || !objects.IsDir() {
-			return false
-		}
+	head, err1 := os.Lstat(filepath.Join(in, "HEAD"))
+	objects, err2 := os.Lstat(filepath.Join(in, "objects"))
+	if err1 != nil || err2 != nil || !head.Mode().IsRegular() || !objects.IsDir() {
+		return false
 	}
 	for _, name := range []string{"reftable", "commondir"} {
 		if _, err := os.Lstat(filepath.Join(in, name)); !errors.Is(err, fs.ErrNotExist) {

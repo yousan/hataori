@@ -1077,9 +1077,9 @@ func TestRefuseRepositoryOfReflogs(t *testing.T) {
 // The refs of a git directory that has them elsewhere, or in no files, or that
 // has a link for HEAD or objects.
 func TestRefuseFilesInRefsThatGitDoesNotUse(t *testing.T) {
-	for _, name := range []string{"reftable", "commondir"} {
+	for name, n := range map[string]string{"reftable": "n", "commondir": filepath.Join("modules", "s", ".git")} {
 		x := newRemoval(t)
-		n := filepath.Join(x.clone, ".git", "n")
+		n := filepath.Join(x.clone, ".git", n)
 		x.git(x.tmp, "clone", "-q", "--bare", x.bare, n)
 		d := filepath.Join(n, "refs", "n")
 		os.MkdirAll(filepath.Join(d, "objects"), 0o700)
