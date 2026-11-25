@@ -886,8 +886,9 @@ func isGitDir(p string) bool {
 }
 
 // isPart reports whether p is a git directory whose objects are in another, its
-// common directory, as git takes it: with HEAD and a commondir, which leads to
-// a directory with objects. A ref may have either name.
+// common directory, as git takes it: with HEAD and a commondir. The directory
+// that leads to may be gone for now. A ref or reflog may have either name, and
+// is none where it does not lead to objects.
 func (c *checker) isPart(p string) (bool, error) {
 	if head, err := os.Lstat(filepath.Join(p, "HEAD")); missing(err) || err == nil && head.IsDir() {
 		return false, nil
@@ -895,14 +896,22 @@ func (c *checker) isPart(p string) (bool, error) {
 		return false, c.unreadable(filepath.Join(p, "HEAD"), err)
 	}
 	file := filepath.Join(p, "commondir")
-	if fi, err := os.Stat(file); missing(err) || err == nil && !fi.Mode().IsRegular() {
+	if fi, err := os.Lstat(file); missing(err) || err == nil && fi.IsDir() {
 		return false, nil
 	} else if err != nil {
 		return false, c.unreadable(file, err)
 	}
+	if fi, err := os.Stat(file); err != nil {
+		return false, c.unreadable(file, err)
+	} else if !fi.Mode().IsRegular() {
+		return false, c.unreadable(file, errors.New("not a file"))
+	}
 	b, err := os.ReadFile(file)
 	if err != nil {
 		return false, c.unreadable(file, err)
+	}
+	if !refFile.Match(b) && !reflogStart.Match(b) {
+		return true, nil
 	}
 	common, _, _ := strings.Cut(strings.TrimRight(string(b), "\r\n"), "\x00")
 	if !filepath.IsAbs(common) {

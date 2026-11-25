@@ -1716,6 +1716,12 @@ func TestRefuseGitDirectoryWithACommonDirectory(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
+		"named as an id": {dir: "n", other: func(t *testing.T, x *removal, store, n string) {
+			id := strings.Repeat("a", 40)
+			if err := errors.Join(os.Symlink(store, filepath.Join(n, id)), os.WriteFile(filepath.Join(n, "commondir"), []byte(id+"\n"), 0o600)); err != nil {
+				t.Fatal(err)
+			}
+		}},
 		"objects is a link": {dir: "n", common: "../.git/store", other: func(t *testing.T, x *removal, store, n string) {
 			p := filepath.Join(store, "objects")
 			if err := errors.Join(os.Rename(p, p+"2"), os.Symlink("objects2", p)); err != nil {
@@ -1756,8 +1762,32 @@ func TestRefuseGitDirectoryWithACommonDirectory(t *testing.T) {
 			}
 			x.r.Disposable = []string{"n"}
 			wantRefusal(t, x.check(), Worktree, lay.dir)
+			if name == "named as an id" {
+				return
+			}
+			// Both may be back.
+			if err := os.Rename(filepath.Join(store, "objects"), filepath.Join(store, "o")); err != nil {
+				t.Fatal(err)
+			}
+			wantRefusal(t, x.check(), Worktree, lay.dir)
+			if err := os.Rename(store, filepath.Join(x.tmp, "gone")); err != nil {
+				t.Fatal(err)
+			}
+			wantRefusal(t, x.check(), Worktree, lay.dir)
 		})
 	}
+}
+
+func TestRefuseCommonDirectoryThatIsALinkToNothing(t *testing.T) {
+	x := newRemoval(t)
+	if err := os.Mkdir(filepath.Join(x.clone, ".git", "n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	x.write(".git/n/HEAD", "ref: refs/heads/main\n")
+	if err := os.Symlink("nothing", filepath.Join(x.clone, ".git", "n", "commondir")); err != nil {
+		t.Fatal(err)
+	}
+	wantRefusal(t, x.check(), Unreadable, "")
 }
 
 // The git directory of a linked worktree, moved, beside its repository: no one
