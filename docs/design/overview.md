@@ -267,7 +267,7 @@ Questions and approvals are rows too: the agent's request id, the question, the 
 **Turn-end events** are what a managing agent depends on most, so their rules are fixed here:
 
 - Every turn produces exactly one end event, whoever started it. In the first deployment's c-lord log, 175 of 298 recent completions were turns the agent started by itself after a background task.
-- The event says who started the turn, how it ended (`completion`, `blocked` on a question, `failure` with a reason) and how many background tasks are still running. A reader that wants "really finished" waits for an end event with none running. c-lord instead held the event back for up to an hour, and the held state had bugs of its own (c-lord#1249, c-lord#1296). For Claude Code the count comes from the `Stop` hook's list of background tasks, which holds background subagents like background commands. A turn that failed or was interrupted reports no such list, and its tasks go on running: its count is the last list, with the starts and the ends reported since (#801). It is an estimate until the next list: an end that nothing reports makes it too high, and a start that nothing reports, as of a shell that a subagent started, too low.
+- The event says who started the turn, how it ended (`completion`, `blocked` on a question, `failure` with a reason) and how many background tasks are still running. A reader that wants "really finished" waits for an end event with none running. c-lord instead held the event back for up to an hour, and the held state had bugs of its own (c-lord#1249, c-lord#1296). For Claude Code the count comes from the `Stop` hook's list of background tasks, which holds background subagents like background commands. A turn that failed or was interrupted reports no such list, and its tasks go on running: its count is the last list, with the starts and the ends reported since (#801). It is an estimate until the next list: an end that nothing reports makes it too high, and a start that nothing reports, as of a shell that a subagent started, too low. Where the agent tells them apart, the event also names the subagents among those tasks, so that the chat does not say of one that it ended with the turn (#802).
 - Events are read from a position (`hataori events --after <n>`), not only tailed, so a reader that restarts loses none.
 
 ### 4.5 Sleep, wake, restart
@@ -2844,7 +2844,8 @@ type Event struct {
 	// Choices, and Multi when several choices may be chosen at once, since
 	// #257), the subagent a tool runs in (Parent),
 	// the files handed over with their caption (File, More, Caption),
-	// the end status and reason, the background tasks still running,
+	// the end status and reason, the background tasks still running (with the
+	// ids of the subagents among them, #802),
 	// the tokens of the turn so far and the context use (Usage; with Late
 	// for the counts of the turn that ended last, read after its end, which
 	// the core counts toward that turn, #675), the

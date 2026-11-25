@@ -122,6 +122,48 @@ func TestATurnThatDoesNotCompleteCountsItsBackgroundTasks(t *testing.T) {
 	}
 }
 
+// A turn's end names the subagents that still run, by the ids their starts
+// gave, not the shells and monitors: from the list of a Stop, and without one
+// from what is known (#802).
+func TestATurnsEndNamesTheSubagentsThatRun(t *testing.T) {
+	for _, tc := range []struct {
+		name, scenario string
+		skip           []int
+		want           string
+	}{
+		{"failed", failedTurn, nil, "[a] [a] [] []"},
+		{"interrupted", stoppedTurn, nil, "[a] [a] [] []"},
+		{"started in the failed turn", failedTurn, []int{11, 12}, "[a] [] []"},
+		{"resumed", resumedTurn, nil, "[a] [] [a] [a] []"},
+		{"resumed in the failed turn", resumedTurn, []int{17, 20}, "[a] [] [a] []"},
+		{"resumed after a known end", resumedTurn, []int{6, 10, 16, 17, 20}, "[a] []"},
+		{"monitor", monitorTurn, nil, "[] [] [] []"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ids := map[string]bool{}
+			var got []string
+			for _, e := range background331(t, newTestCodec(), tc.scenario, tc.skip...) {
+				switch e.Kind {
+				case agent.SubagentStarted:
+					ids[e.ID] = true
+				case agent.TurnEnded:
+					named := ""
+					for _, id := range e.Subagents {
+						if !ids[id] {
+							t.Errorf("a turn's end names %s, which no start gave", id)
+						}
+						named += "a" // each capture has one subagent
+					}
+					got = append(got, "["+named+"]")
+				}
+			}
+			if s := strings.Join(got, " "); s != tc.want {
+				t.Errorf("got %s, want %s", s, tc.want)
+			}
+		})
+	}
+}
+
 // What ended between the last list and the failure is not counted: a
 // subagent by its SubagentStop, a shell by its notification, be it the
 // prompt of a turn of the agent's own or the transcript's line of it.

@@ -190,6 +190,7 @@ type Ended struct {
 	Outcome    string // Completion, Blocked or Failure
 	Reason     string
 	Background int
+	Subagents  []string // those of the background tasks that are subagents
 }
 
 // ErrRefused is returned by Step for an input that is not allowed in a state.
@@ -221,6 +222,9 @@ func Step(s Snapshot, in Input) (Result, error) {
 		}
 		if e.Reason != "" {
 			d["reason"] = e.Reason
+		}
+		if len(e.Subagents) > 0 {
+			d["subagents"] = slices.Clone(e.Subagents)
 		}
 		r.Out = append(r.Out, Out{Kind: KindTurnEnded, Data: d})
 	}
@@ -379,7 +383,7 @@ func stepAgent(s Snapshot, e agent.Event, typist control.Principal, r *Result,
 		if s.State != control.Running || s.Turn == nil {
 			return false
 		}
-		ended := Ended{Outcome: Completion, Background: e.Background}
+		ended := Ended{Outcome: Completion, Background: e.Background, Subagents: e.Subagents}
 		switch e.Status {
 		case agent.Interrupted:
 			ended.Outcome, ended.Reason = Failure, ReasonInterrupted

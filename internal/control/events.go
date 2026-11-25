@@ -54,8 +54,10 @@ var EventKinds = map[EventKind][]Field{
 	"state": {req("session", Integer), req("from", String), req("to", String), opt("reason", String), text("detail", String),
 		text("trust", Array)},
 	"turn_started": {req("session", Integer), req("turn", Integer), req("by", String), opt("principal", String), opt("from", String), opt("key", String)},
+	// turn_ended: subagents are the ids of those of its background tasks that
+	// are subagents. Since 3.37.
 	"turn_ended": {req("session", Integer), req("turn", Integer), req("by", String), opt("principal", String), opt("from", String),
-		req("outcome", String), opt("reason", String), req("background", Integer)},
+		req("outcome", String), opt("reason", String), req("background", Integer), opt("subagents", Array)},
 	// The chat front end's (#352): a row of its outbox was posted, or a
 	// plugin's message_sending handler cancelled it.
 	"post_sent": {req("link", Object), req("event", Integer), req("part", Integer), req("message", String), text("text", String)},

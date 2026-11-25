@@ -2,47 +2,60 @@ package claudecode
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
+
+	"github.com/yousan/hataori/internal/agent"
 )
 
 // backgroundTask is one task of the background_tasks list, which a Stop
 // carries and a StopFailure does not. A subagent's id is its agent_id.
 type backgroundTask struct {
 	ID     string `json:"id"`
+	Type   string `json:"type"`
 	Status string `json:"status"`
 }
 
-// tasks is what the codec knows of the session's background tasks, by the
-// CLI's task id: true while a task runs, false once its end was learned.
-// The end is kept until the next list, because the report of a task's start
-// may be read after it. It is what a turn's end that comes without a list
-// counts: a failed turn's, and an interrupted one's, neither of which ends
-// the tasks.
-type tasks map[string]bool
+// subagentTask is the type of a subagent in that list.
+const subagentTask = "subagent"
 
-// list takes a list the CLI gave, which names every task that runs, and
-// returns how many do.
-func (t *tasks) list(l []backgroundTask) int {
-	*t = tasks{}
-	n := 0
-	for _, b := range l {
-		if b.Status == "running" {
-			(*t)[b.ID] = true
-			n++
-		}
-	}
-	return n
+// task is what is known of one background task.
+type task struct {
+	running  bool // false once its end was learned
+	subagent bool // and not a shell or a monitor
 }
 
-// running is the number of tasks that run, as far as is known.
-func (t tasks) running() int {
-	n := 0
-	for _, r := range t {
-		if r {
-			n++
+// tasks is what the codec knows of the session's background tasks, by the
+// CLI's task id. An end is kept until the next list, because the report of
+// a task's start may be read after it. It is what a turn's end that comes
+// without a list counts: a failed turn's, and an interrupted one's, neither
+// of which ends the tasks.
+type tasks map[string]task
+
+// list takes a list the CLI gave, which names every task that runs.
+func (t *tasks) list(l []backgroundTask) {
+	*t = tasks{}
+	for _, b := range l {
+		if b.Status == "running" {
+			(*t)[b.ID] = task{running: true, subagent: b.Type == subagentTask}
 		}
 	}
-	return n
+}
+
+// at returns the turn's end e with the tasks that run then, as far as is
+// known: how many, and the subagents among them.
+func (t tasks) at(e agent.Event) agent.Event {
+	e.Background, e.Subagents = 0, nil
+	for id, b := range t {
+		if b.running {
+			e.Background++
+			if b.subagent {
+				e.Subagents = append(e.Subagents, id)
+			}
+		}
+	}
+	sort.Strings(e.Subagents)
+	return e
 }
 
 // tool notes the result of a tool of the main agent's that says it started a
@@ -59,15 +72,16 @@ func (t *tasks) tool(name string, response json.RawMessage) {
 	}
 	json.Unmarshal(response, &r) // a tool whose response is another shape starts none
 	var id string
+	b := task{running: true}
 	switch {
 	case name == "TaskStop":
 		t.end(r.Stopped)
 	case name == "Monitor":
 		id = r.Task
 	case r.IsAsync:
-		id = r.AgentID
+		id, b.subagent = r.AgentID, true
 	case r.Resumed != "":
-		id = r.Resumed
+		id, b.subagent = r.Resumed, true
 	default:
 		id = r.Shell
 	}
@@ -80,7 +94,7 @@ func (t *tasks) tool(name string, response json.RawMessage) {
 	if *t == nil {
 		*t = tasks{}
 	}
-	(*t)[id] = true
+	(*t)[id] = b
 }
 
 // resumed notes that the subagent id starts. One whose end was learned runs
@@ -88,7 +102,7 @@ func (t *tasks) tool(name string, response json.RawMessage) {
 // tool that started it says whether it runs in the background.
 func (t tasks) resumed(id string) {
 	if _, known := t[id]; known {
-		t[id] = true
+		t[id] = task{running: true, subagent: true}
 	}
 }
 
@@ -100,7 +114,7 @@ func (t *tasks) end(id string) {
 	if *t == nil {
 		*t = tasks{}
 	}
-	(*t)[id] = false
+	(*t)[id] = task{}
 }
 
 // notificationTag begins the prompt of the turn the CLI starts when a
