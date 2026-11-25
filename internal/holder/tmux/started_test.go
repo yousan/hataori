@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1217,6 +1218,59 @@ func (s *server) starter() *Holder {
 		s.t.Fatal(err)
 	}
 	return &Holder{Hataori: p, Prefix: "hataori-t-", Server: []string{"-S", s.sock, "-f", "/dev/null"}}
+}
+
+// tmux prints the window it made cut short, with no error, when its server
+// does not get to run meanwhile. The captures are of a tmux 3.8 with a pause
+// of 150 ms in the variable of their name; the processes' ids are replaced.
+// Such a window is removed and made again, and an agent is never started in
+// one; when every one is cut, the start fails.
+func TestAWindowWhoseAnswerIsCutIsMadeAgain(t *testing.T) {
+	for _, at := range []string{"pane-pid", "version"} {
+		for _, always := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s always %v", at, always), func(t *testing.T) {
+				cut, err := filepath.Abs("testdata/new-session-cut-" + at + "-3.8.txt")
+				if err != nil {
+					t.Fatal(err)
+				}
+				s := newServer(t)
+				dir := filepath.Join(s.dir, "7")
+				if err := os.Mkdir(dir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				s.run("new-session", "-d", "-s", "theirs", placeholder)
+				before := s.panes()
+				h := s.starter()
+				made := filepath.Join(s.dir, "made")
+				h.Tmux = s.script(`case "$*" in *" new-session "*)
+	echo x >> ` + made + `
+	if [ $(wc -l < ` + made + `) -eq 1 ] || ` + strconv.FormatBool(always) + `; then
+		` + s.tmux + ` "$@" > /dev/null && exec cat ` + quote(cut) + `
+	fi;; esac
+exec ` + s.tmux + ` "$@"`)
+				w, err := h.Start(t.Context(), dir, sleeper)
+				after := s.panes()
+				if always {
+					if b, _ := os.ReadFile(cut); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("printed %q", b)) {
+						t.Errorf("a start: %v", err)
+					}
+					if !maps.Equal(after, before) {
+						t.Errorf("the panes after it: %v, before it %v", after, before)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(after) != len(before)+1 {
+					t.Errorf("the panes after the start: %v, before it %v", after, before)
+				}
+				if l, err := h.Alive(t.Context(), w); err != nil || l.State != holder.Running {
+					t.Errorf("Alive: %+v %v", l, err)
+				}
+			})
+		}
+	}
 }
 
 // With windows of a person's left in its session, the next start makes the
