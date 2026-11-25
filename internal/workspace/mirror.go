@@ -112,8 +112,7 @@ func (m Maker) mirror(ctx context.Context, repo string) (string, func()) {
 			}
 		}
 	} else if usable() {
-		_ = run("--git-dir", mirror, "fetch", "--no-tags", "--", repo,
-			"+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*")
+		mirrorRepo{dir: mirror, env: m.gitEnv(), lock: lock}.update(bounded, repo)
 	}
 	// The fetch deadline may have expired. Inspect locally using the caller's context.
 	cmd := gitCommand(ctx, "--git-dir", mirror, "rev-parse", "--is-bare-repository")
