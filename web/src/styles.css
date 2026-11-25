@@ -646,15 +646,19 @@ body {
   flex-direction: column;
 }
 
+/* The tools stand beside the tabs while the tabs keep room for the widest
+   tab, which is 240px; else they take a line of their own above the tabs,
+   which stay next to the pane they open. */
 .tabbar {
   display: flex;
+  flex-wrap: wrap-reverse;
   align-items: stretch;
   border-bottom: 1px solid var(--line);
   background: var(--bar);
 }
 
 .tabs {
-  flex: 1;
+  flex: 1 1 260px;
   min-width: 0;
   display: flex;
   overflow-x: auto;
@@ -726,9 +730,12 @@ body {
 
 .tools {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 4px;
-  padding: 0 8px;
+  margin-left: auto;
+  padding: 2px 8px;
 }
 
 .tools button {
@@ -797,6 +804,30 @@ body {
   margin-left: 6px;
   font-size: 12px;
   color: var(--muted);
+}
+
+/* In a tab bar too narrow for all the tools, the counts give way first,
+   the one of the terminals before the other. 140px is room for the choice
+   itself; the line breaks only when that does not fit. */
+.tools .show {
+  flex: 1 1 140px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.tools .show button {
+  flex: none;
+}
+
+.tools .hidden-count,
+.tools .hidden-terminals {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tools .hidden-terminals {
+  flex-shrink: 1000;
 }
 
 .narrow-show {
