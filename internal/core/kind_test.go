@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/control"
@@ -132,6 +133,77 @@ func TestOneOwnThreadOpenBesideConversations(t *testing.T) {
 	if _, err := k.owner.ReopenThread(ctx, own); err != nil { // with both conversations open
 		t.Fatal(err)
 	}
+}
+
+// slowOwner opens chat threads, the ones of the key slow only once go is
+// closed.
+type slowOwner struct {
+	slow       string
+	asked, goo chan struct{}
+}
+
+func (o *slowOwner) NewThread(_ context.Context, scope, key, _ string) (control.LinkRef, error) {
+	if key == o.slow {
+		close(o.asked)
+		<-o.goo
+	}
+	return control.LinkRef{Client: "chat", Channel: scope, Thread: "of " + key}, nil
+}
+
+// An own thread's reopen waits for the start of another of the scope, and is
+// refused then: not both are open. A conversation's start waits for neither.
+func TestOwnThreadsStartAndReopenOneAtATime(t *testing.T) {
+	ctx := context.Background()
+	k := newKinds(t)
+	own := k.start(t, control.KindSupervisor, "sv")
+	k.close(t, own)
+
+	slow := &slowOwner{slow: "sv2", asked: make(chan struct{}), goo: make(chan struct{})}
+	k.core.Owners["chat"] = slow
+	type started struct {
+		id  control.ThreadID
+		err error
+	}
+	second := make(chan started, 1)
+	go func() {
+		id, err := k.core.StartConfined(ctx, control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all},
+			control.StartRequest{Key: "sv2", Scope: "s", Input: control.Input{Text: "go"}}, control.KindSupervisor, k.dir)
+		second <- started{id, err}
+	}()
+	<-slow.asked // the start has seen no other open
+	reopened := make(chan error, 1)
+	go func() {
+		_, err := k.owner.ReopenThread(ctx, own)
+		reopened <- err
+	}()
+	conversation := make(chan error, 1)
+	go func() {
+		_, err := k.try(control.KindConversation, "c1")
+		conversation <- err
+	}()
+	select {
+	case err := <-conversation:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a conversation's start waits for an own thread's")
+	}
+	select {
+	case err := <-reopened:
+		t.Fatalf("reopened while another own thread started: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(slow.goo)
+	st := <-second
+	if st.err != nil {
+		t.Fatal(st.err)
+	}
+	var refusal *control.ReopenRefused
+	if err := <-reopened; !errors.As(err, &refusal) || !strings.Contains(refusal.Reason, fmt.Sprintf("thread %d", st.id)) {
+		t.Fatalf("the reopen after the start: %v", err)
+	}
+	k.supervisor(t, st.id, control.Creating, "after both")
 }
 
 // A thread keeps the kind it was started with: a key that started one of

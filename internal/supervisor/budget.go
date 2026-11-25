@@ -37,7 +37,8 @@ type Used struct {
 // event log, so a restart keeps the counts:
 //
 //   - turns: the turn_started events of the scope's supervisor's own
-//     threads in the current hour, whoever started the turn;
+//     threads in the current hour, whoever started the turn; no wake goes
+//     to another confined thread of the scope;
 //   - sends and starts: the input and answer events whose from is the
 //     supervisor's id, in the current hour, each send's and each start's
 //     (its first input); and a thread_created of its own whose thread has

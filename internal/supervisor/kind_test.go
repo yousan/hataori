@@ -248,8 +248,8 @@ func TestConversationsWakeNothing(t *testing.T) {
 }
 
 // The turns of the own thread count in the budget, whoever started them,
-// and a conversation's and a look-up's do not; the tokens of all of them
-// do, and an ordinary thread's neither.
+// and a conversation's and a look-up's, to which no wake goes, do not; the
+// tokens of all of them do, and an ordinary thread's neither.
 func TestBudgetOfConversations(t *testing.T) {
 	c := remindStore(t)
 	beside(t, c, control.Idle, control.Closed, control.Idle)
@@ -268,7 +268,7 @@ func TestBudgetOfConversations(t *testing.T) {
 
 // What a person does in the own thread resets the loop guard's count, and
 // what one does in a conversation or a look-up does not; only the own
-// thread's wakes are cycles.
+// thread's wakes are cycles: no wake goes to another.
 func TestLoopGuardCountsInTheOwnThread(t *testing.T) {
 	ctx := context.Background()
 	for name, tc := range map[string]struct {
