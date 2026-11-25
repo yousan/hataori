@@ -7,9 +7,9 @@ import (
 
 type plainAdapter struct{}
 
-func (plainAdapter) Probe(context.Context) (Health, error) { return Health{}, nil }
-func (plainAdapter) Launch(Spec) (Launch, error)           { return Launch{}, nil }
-func (plainAdapter) NewCodec(Spec) Codec                   { return nil }
+func (plainAdapter) Probe(context.Context, Spec) (Health, error) { return Health{}, nil }
+func (plainAdapter) Launch(Spec) (Launch, error)                 { return Launch{}, nil }
+func (plainAdapter) NewCodec(Spec) Codec                         { return nil }
 
 // An adapter without a login flow is still an Adapter, and the core finds
 // out by a type assertion.

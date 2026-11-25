@@ -705,6 +705,14 @@ var migrations = []Migration{
 		`ALTER TABLE sessions ADD COLUMN context TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE pending_inputs ADD COLUMN context TEXT NOT NULL DEFAULT ''`,
 	)},
+	// The configuration directory whose login is out, '' for the one of a
+	// session with no directory of its own (agent.LoginDir): an outage is
+	// one of an agent and a directory (#568).
+	{Name: "login_outages.config_dir", Up: execAll(
+		`ALTER TABLE login_outages ADD COLUMN config_dir TEXT NOT NULL DEFAULT ''`,
+		`DROP INDEX login_outages_open`,
+		`CREATE UNIQUE INDEX login_outages_open ON login_outages (agent, config_dir) WHERE closed_at IS NULL`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

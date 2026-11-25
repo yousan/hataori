@@ -117,8 +117,13 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 	return agent.Launch{Argv: []string{a.command, "app-server", "-c", "projects={" + tomlString(spec.Dir) + "={trust_level=\"trusted\"}}"}, Env: a.env()}, nil
 }
 
+var _ agent.LoginDirs = (*Adapter)(nil)
+
+// LoginDir is always "": every session runs with the daemon's CODEX_HOME.
+func (a *Adapter) LoginDir(agent.Spec) string { return "" }
+
 // Probe runs only --version and login status, which read and change nothing.
-func (a *Adapter) Probe(ctx context.Context) (agent.Health, error) {
+func (a *Adapter) Probe(ctx context.Context, _ agent.Spec) (agent.Health, error) {
 	var h agent.Health
 	out, _, err := a.run(ctx, "--version")
 	if err != nil {

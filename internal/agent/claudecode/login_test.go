@@ -3,11 +3,13 @@ package claudecode
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -24,6 +26,89 @@ func configDir(env []string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// The login command and the status check of a session that was taken in run
+// with its configuration directory.
+func TestLoginUsesTheConfigDirOfASessionTakenIn(t *testing.T) {
+	a := newAdapter(t, "")
+	a.environ = func() []string {
+		return []string{"PATH=" + os.Getenv("PATH"), "HOME=/home/user", "CLAUDE_CONFIG_DIR=/srv/claude-config"}
+	}
+	s := spec(t)
+	s.ConfigDir = "/home/user/.claude-work"
+	session, _ := a.Launch(s)
+	login, err := a.LoginLaunch(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sd, _ := configDir(session.Env)
+	ld, _ := configDir(login.Env)
+	if sd != s.ConfigDir {
+		t.Fatalf("the session's config dir is %q, want %q", sd, s.ConfigDir)
+	}
+	if ld != sd {
+		t.Fatalf("the session that is logged out uses %q, but the login command logs in %q", sd, ld)
+	}
+
+	// A stand-in CLI that is logged in in one directory only.
+	cli := filepath.Join(t.TempDir(), "claude")
+	script := `#!/bin/sh
+case "$1" in
+--version) echo "2.1.331 (Claude Code)" ;;
+auth) if [ "$CLAUDE_CONFIG_DIR" = /home/user/.claude-work ]; then echo '{"loggedIn": true}'; else echo '{"loggedIn": false}'; exit 1; fi ;;
+esac
+`
+	if err := os.WriteFile(cli, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a.command = cli
+	for dir, want := range map[string]bool{"": false, s.ConfigDir: true} {
+		h, err := a.Probe(context.Background(), agent.Spec{ConfigDir: dir})
+		if err != nil || h.LoggedIn != want {
+			t.Errorf("logged in with the directory %q: %v (%v), want %v", dir, h.LoggedIn, err, want)
+		}
+	}
+}
+
+// The directory that the daemon's sessions use anyway is no login of its own.
+func TestLoginDir(t *testing.T) {
+	const home = "/home/user"
+	// Of a CLAUDE_CONFIG_DIR that is not set, and of other spellings.
+	byDefault, ownSlash, workSlash := "", "", home+"/.claude-work"
+	if runtime.GOOS == "darwin" {
+		byDefault, ownSlash, workSlash = home+"/.claude", "/srv/claude-config/", home+"/.claude-work/"
+	}
+	for _, c := range []struct{ own, dir, want string }{
+		{"", "", ""},
+		{"/srv/claude-config", "", ""},
+		{"/srv/claude-config", "/srv/claude-config", ""},
+		{"/srv/claude-config", "/srv/claude-config/", ownSlash},
+		{"/srv/claude-config", home + "/.claude", home + "/.claude"},
+		{"", home + "/.claude", byDefault},
+		{"", home + "/.claude-work", home + "/.claude-work"},
+		{"", home + "/.claude-work/", workSlash},
+	} {
+		a := newAdapter(t, "")
+		a.environ = func() []string {
+			env := []string{"PATH=/usr/bin", "HOME=" + home}
+			if c.own != "" {
+				env = append(env, "CLAUDE_CONFIG_DIR="+c.own)
+			}
+			return env
+		}
+		if got := agent.LoginDir(a, agent.Spec{ConfigDir: c.dir}); got != c.want {
+			t.Errorf("CLAUDE_CONFIG_DIR %q, session's %q: login of %q, want %q", c.own, c.dir, got, c.want)
+		}
+	}
+}
+
+// A relative directory is another one here than where the session ran.
+func TestLoginOfARelativeConfigDirIsRefused(t *testing.T) {
+	a := newAdapter(t, "")
+	if l, err := a.LoginLaunch(agent.Spec{ConfigDir: ".claude-work"}); err == nil || !strings.Contains(err.Error(), "not an absolute path") {
+		t.Fatalf("login launch %+v, %v", l, err)
+	}
 }
 
 func TestLoginLaunchUsesTheSessionsConfigDir(t *testing.T) {

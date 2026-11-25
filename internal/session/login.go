@@ -21,23 +21,80 @@ const (
 	KindLoginRestored control.EventKind = "login_restored"
 )
 
-// recordLogin keeps the login outage of an agent: a turn that fails with
-// reason login opens it (or joins the open one), and a turn of the same
-// agent that ends without a failure closes it. It runs in the transaction
-// of the turn's end.
-func recordLogin(ctx context.Context, tx *store.Tx, agentName string, thread int64, id control.ThreadID, e Ended) error {
-	var outage int64
-	err := tx.QueryRowContext(ctx, `SELECT id FROM login_outages WHERE agent = ? AND closed_at IS NULL`, agentName).Scan(&outage)
-	open := err == nil
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("session: login outage: %w", err)
+// Login is one login of an agent: the one in a configuration directory, ""
+// for the one of a session with no directory of its own (agent.LoginDir).
+// Sessions of one login are logged out, and back, together.
+type Login struct {
+	Agent string
+	Dir   string
+}
+
+// row is the part of a database or a transaction that reads one row.
+type row interface {
+	QueryRowContext(ctx context.Context, q string, args ...any) *sql.Row
+}
+
+// OutageLogin returns the login whose outage is id; ok is false when there
+// is no such outage.
+func OutageLogin(ctx context.Context, q row, id int64) (l Login, ok bool, err error) {
+	err = q.QueryRowContext(ctx, `SELECT agent, config_dir FROM login_outages WHERE id = ?`, id).Scan(&l.Agent, &l.Dir)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Login{}, false, nil
 	}
+	if err != nil {
+		return Login{}, false, fmt.Errorf("session: login outage: %w", err)
+	}
+	return l, true, nil
+}
+
+// OpenOutage returns the open outage of the login; 0 when there is none.
+func OpenOutage(ctx context.Context, q row, l Login) (int64, error) {
+	var id int64
+	err := q.QueryRowContext(ctx, `SELECT id FROM login_outages WHERE agent = ? AND config_dir = ? AND closed_at IS NULL`,
+		l.Agent, l.Dir).Scan(&id)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("session: login outage: %w", err)
+	}
+	return id, nil
+}
+
+// login is the login of a session of the agent.
+func (m *Machine) login(ctx context.Context, tx *store.Tx, agentName string, sessionID int64) (Login, error) {
+	var stored string
+	if err := tx.QueryRowContext(ctx, `SELECT spec FROM sessions WHERE id = ?`, sessionID).Scan(&stored); err != nil {
+		return Login{}, fmt.Errorf("session: login: %w", err)
+	}
+	// '' before the session's first launch. A spec that cannot be read is
+	// one without a directory: the turn's end is kept whatever it is.
+	var s struct{ Spec struct{ ConfigDir string } }
+	json.Unmarshal([]byte(stored), &s)
+	dir := s.Spec.ConfigDir
+	if m.LoginDir != nil {
+		dir = m.LoginDir(agentName, agent.Spec{ConfigDir: dir})
+	}
+	return Login{Agent: agentName, Dir: dir}, nil
+}
+
+// recordLogin keeps the login outage of a session's login: a turn that fails
+// with reason login opens it (or joins the open one), and a turn of the same
+// login that ends without a failure closes it. It runs in the transaction
+// of the turn's end.
+func (m *Machine) recordLogin(ctx context.Context, tx *store.Tx, agentName string, sessionID, thread int64, id control.ThreadID, e Ended) error {
+	l, err := m.login(ctx, tx, agentName, sessionID)
+	if err != nil {
+		return err
+	}
+	outage, err := OpenOutage(ctx, tx, l)
+	if err != nil {
+		return err
+	}
+	open := outage != 0
 	now := time.Now().UnixMilli()
 
 	switch {
 	case e.Outcome == Failure && e.Reason == string(agent.Login):
 		if !open {
-			res, err := tx.ExecContext(ctx, `INSERT INTO login_outages (agent, opened_at) VALUES (?, ?)`, agentName, now)
+			res, err := tx.ExecContext(ctx, `INSERT INTO login_outages (agent, config_dir, opened_at) VALUES (?, ?, ?)`, l.Agent, l.Dir, now)
 			if err != nil {
 				return fmt.Errorf("session: open login outage: %w", err)
 			}
@@ -57,18 +114,14 @@ func recordLogin(ctx context.Context, tx *store.Tx, agentName string, thread int
 	return nil
 }
 
-// CloseLoginOutage closes the agent's open login outage, if there is one,
-// and writes login_restored on the first thread it stopped. It reports
-// whether an outage was open. The login relay calls it once a login of its
-// own has succeeded.
-func CloseLoginOutage(ctx context.Context, tx *store.Tx, agentName string) (bool, error) {
-	var outage int64
-	err := tx.QueryRowContext(ctx, `SELECT id FROM login_outages WHERE agent = ? AND closed_at IS NULL`, agentName).Scan(&outage)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("session: login outage: %w", err)
+// CloseLoginOutage closes the login's open outage, if there is one, and
+// writes login_restored on the first thread it stopped. It reports whether an
+// outage was open. The login relay calls it once a login of its own has
+// succeeded.
+func CloseLoginOutage(ctx context.Context, tx *store.Tx, l Login) (bool, error) {
+	outage, err := OpenOutage(ctx, tx, l)
+	if err != nil || outage == 0 {
+		return false, err
 	}
 	var id control.ThreadID
 	err = tx.QueryRowContext(ctx, `SELECT thread_id FROM login_outage_threads
@@ -76,7 +129,7 @@ func CloseLoginOutage(ctx context.Context, tx *store.Tx, agentName string) (bool
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, fmt.Errorf("session: login outage: %w", err)
 	}
-	return true, closeOutage(ctx, tx, agentName, outage, id, time.Now().UnixMilli())
+	return true, closeOutage(ctx, tx, l.Agent, outage, id, time.Now().UnixMilli())
 }
 
 // closeOutage closes an open outage and writes login_restored on id.

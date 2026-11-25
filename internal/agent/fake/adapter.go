@@ -112,8 +112,8 @@ func New(settings []byte) (agent.Adapter, error) {
 
 // Probe reports the fake installed, and logged in unless it has a config
 // directory whose login has not succeeded.
-func (a *Adapter) Probe(context.Context) (agent.Health, error) {
-	h := agent.Health{Installed: true, LoggedIn: loggedIn(a.c.ConfigDir), Version: "fake"}
+func (a *Adapter) Probe(_ context.Context, spec agent.Spec) (agent.Health, error) {
+	h := agent.Health{Installed: true, LoggedIn: loggedIn(cmp.Or(spec.ConfigDir, a.c.ConfigDir)), Version: "fake"}
 	if !h.LoggedIn {
 		h.Detail = "not logged in"
 	}

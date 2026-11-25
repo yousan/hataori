@@ -3,6 +3,8 @@ package claudecode
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"unicode"
@@ -19,9 +21,14 @@ var _ agent.LoginFlow = (*Adapter)(nil)
 
 // LoginLaunch returns `claude auth login` on pipes, with the environment a
 // session for the same spec gets, so it logs in the same config directory.
-// BROWSER is set so that nothing opens a browser on the host.
+// A directory that is not an absolute path is refused. BROWSER is set so that
+// nothing opens a browser on the host.
 func (a *Adapter) LoginLaunch(spec agent.Spec) (agent.Launch, error) {
-	return agent.Launch{Argv: []string{a.command, "auth", "login"}, Env: append(a.baseEnv(), "BROWSER=true")}, nil
+	if spec.ConfigDir != "" && !filepath.IsAbs(spec.ConfigDir) {
+		// It is another directory here than where the session ran.
+		return agent.Launch{}, fmt.Errorf("%s: the configuration directory %q of the session is not an absolute path: log in on the host", Name, spec.ConfigDir)
+	}
+	return agent.Launch{Argv: []string{a.command, "auth", "login"}, Env: append(a.loginEnv(spec), "BROWSER=true")}, nil
 }
 
 var (

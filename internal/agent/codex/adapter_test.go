@@ -124,18 +124,18 @@ func TestCodexProbe(t *testing.T) {
 	}
 	write(fmt.Sprintf("cat \"%s\"; cat \"%s\" >&2; exit %d", stdout, stderr, captured.ExitCode))
 	a := &Adapter{command: script, environ: os.Environ}
-	h, err := a.Probe(context.Background())
+	h, err := a.Probe(context.Background(), agent.Spec{})
 	if err != nil || !h.Installed || !h.LoggedIn || h.Version != "0.163.0" {
 		t.Fatalf("logged-in probe: got %+v, error %v; want installed, logged in, version 0.163.0", h, err)
 	}
 	// No logged-out capture exists; this output comes from Codex's source.
 	write("echo 'Not logged in' >&2; exit 1")
-	h, err = a.Probe(context.Background())
+	h, err = a.Probe(context.Background(), agent.Spec{})
 	if err != nil || !h.Installed || h.LoggedIn || h.Detail != "Not logged in" {
 		t.Fatalf("logged-out probe: got %+v, error %v; want installed, logged out, detail Not logged in", h, err)
 	}
 	write("exit 1")
-	h, err = a.Probe(context.Background())
+	h, err = a.Probe(context.Background(), agent.Spec{})
 	if err != nil || !h.Installed || h.LoggedIn || h.Detail != "not logged in" {
 		t.Fatalf("silent probe: got %+v, error %v; want installed, logged out, detail not logged in", h, err)
 	}
@@ -160,7 +160,7 @@ func TestCodexProbe(t *testing.T) {
 				t.Fatal(err)
 			}
 			a.environ = func() []string { return tc.env }
-			h, err := a.Probe(context.Background())
+			h, err := a.Probe(context.Background(), agent.Spec{})
 			if err != nil || !h.Installed || !h.LoggedIn {
 				t.Fatalf("probe: got %+v, %v; want installed and logged in", h, err)
 			}
@@ -188,7 +188,7 @@ func TestCodexProbe(t *testing.T) {
 		})
 	}
 	a.command = script + "-missing"
-	h, err = a.Probe(context.Background())
+	h, err = a.Probe(context.Background(), agent.Spec{})
 	if err != nil || h.Installed || h.Detail == "" {
 		t.Fatalf("missing command: got %+v, error %v; want not installed with detail", h, err)
 	}

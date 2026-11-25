@@ -16,7 +16,7 @@ import (
 // Adapter is one coding agent.
 type Adapter interface {
 	// Probe reports whether the agent is installed and logged in.
-	Probe(ctx context.Context) (Health, error)
+	Probe(ctx context.Context, spec Spec) (Health, error)
 
 	// Launch returns how to start the agent for spec: a new session,
 	// or a resumed one when spec.ResumeID is set.
@@ -43,6 +43,27 @@ type LoginFlow interface {
 	// LoginCode returns the bytes that hand a code to the login command.
 	// A flow that takes no code back returns ErrNoCodeBack for every code, including empty.
 	LoginCode(code string) ([]byte, error)
+}
+
+// LoginDirs is implemented by an adapter that can tell whether a session's
+// own configuration directory (Spec.ConfigDir) is the one its other sessions
+// have anyway.
+type LoginDirs interface {
+	// LoginDir returns the configuration directory that holds the login of a
+	// session started from spec, "" for the one of a session with no
+	// directory of its own.
+	LoginDir(spec Spec) string
+}
+
+// LoginDir returns the configuration directory that holds the login of a
+// session of adapter a started from spec, "" for the one of a session with
+// no directory of its own: sessions with the same one are logged in and out
+// together.
+func LoginDir(a Adapter, spec Spec) string {
+	if l, ok := a.(LoginDirs); ok {
+		return l.LoginDir(spec)
+	}
+	return spec.ConfigDir
 }
 
 // LoginStep is what a line of the login command means: a link to show

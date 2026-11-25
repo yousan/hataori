@@ -60,7 +60,7 @@ func daemonRole(root string) int {
 				}
 			}
 		}, Guard: []string{os.Args[0], "role", "guard"}}
-	if err := r.Start(context.Background(), "chat:owner", "fake"); err != nil {
+	if err := r.Start(context.Background(), "chat:owner", "fake", 0); err != nil {
 		return 1
 	}
 	select {
@@ -71,7 +71,7 @@ func daemonRole(root string) int {
 	// This makes the losing order usual; correctness does not depend on it.
 	time.Sleep(200 * time.Millisecond)
 	r.mu.Lock()
-	pid := r.flows["fake"].cmd.Process.Pid
+	pid := r.flows[session.Login{Agent: "fake"}].cmd.Process.Pid
 	r.mu.Unlock()
 	os.Stdout.WriteString(itoa(pid) + "\n")
 	select {}
@@ -139,13 +139,19 @@ func newFixtureWith(t *testing.T, l fake.Login, timeout time.Duration, set func(
 // turn runs one turn of the thread that ends as given.
 func (f *fixture) turn(status agent.EndStatus, reason agent.Reason) {
 	f.t.Helper()
+	f.turnOf(1, status, reason)
+}
+
+// turnOf is turn of session id.
+func (f *fixture) turnOf(id int64, status agent.EndStatus, reason agent.Reason) {
+	f.t.Helper()
 	f.seq++
 	ctx := context.Background()
-	if err := f.m.Apply(ctx, 1, session.Input{Kind: session.Send, Key: "m", Text: "go"}); err != nil {
+	if err := f.m.Apply(ctx, id, session.Input{Kind: session.Send, Key: "m", Text: "go"}); err != nil {
 		f.t.Fatal(err)
 	}
 	f.seq++
-	if err := f.m.Apply(ctx, 1, session.Input{Kind: session.AgentEvent, Agent: agent.Event{Seq: f.seq, Kind: agent.TurnEnded, Status: status, Reason: reason}}); err != nil {
+	if err := f.m.Apply(ctx, id, session.Input{Kind: session.AgentEvent, Agent: agent.Event{Seq: f.seq, Kind: agent.TurnEnded, Status: status, Reason: reason}}); err != nil {
 		f.t.Fatal(err)
 	}
 }
@@ -164,9 +170,15 @@ func (f *fixture) next(what string) Update {
 // code hands code in as soon as the command asks for one.
 func (f *fixture) code(code string) {
 	f.t.Helper()
+	f.codeFor(0, code)
+}
+
+// codeFor is code for the login of an outage.
+func (f *fixture) codeFor(outage int64, code string) {
+	f.t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		err := f.relay.Code("chat:owner", "fake", code)
+		err := f.relay.Code(context.Background(), "chat:owner", "fake", outage, code)
 		if err == nil {
 			return
 		}
@@ -187,14 +199,20 @@ func (f *fixture) loginEvents(kind control.EventKind) int {
 func (f *fixture) running() bool {
 	f.relay.mu.Lock()
 	defer f.relay.mu.Unlock()
-	fl := f.relay.flows["fake"]
+	fl := f.relay.flows[session.Login{Agent: "fake"}]
 	return fl != nil && syscall.Kill(-fl.cmd.Process.Pid, 0) == nil
+}
+
+func (f *fixture) flowCount() int {
+	f.relay.mu.Lock()
+	defer f.relay.mu.Unlock()
+	return len(f.relay.flows)
 }
 
 func (f *fixture) pgid() int {
 	f.relay.mu.Lock()
 	defer f.relay.mu.Unlock()
-	return f.relay.flows["fake"].cmd.Process.Pid
+	return f.relay.flows[session.Login{Agent: "fake"}].cmd.Process.Pid
 }
 
 func TestLoginThroughTheRelay(t *testing.T) {
@@ -267,7 +285,7 @@ func TestCodeOnlyWhenAskedAndOneWord(t *testing.T) {
 	f.turn(agent.Failed, agent.Login)
 	f.next("the link")
 	for _, c := range []string{"two words", "", "tab\there", "line\nbreak"} {
-		if err := f.relay.Code("chat:owner", "fake", c); !errors.Is(err, ErrNotACode) {
+		if err := f.relay.Code(context.Background(), "chat:owner", "fake", 0, c); !errors.Is(err, ErrNotACode) {
 			t.Errorf("code %q: %v", c, err)
 		}
 	}
@@ -280,23 +298,23 @@ func TestCodeOnlyWhenAskedAndOneWord(t *testing.T) {
 	g := newFixture(t, fake.Login{Code: goodCode, NoLink: true}, 0)
 	g.turn(agent.Failed, agent.Login)
 	time.Sleep(200 * time.Millisecond)
-	if err := g.relay.Code("chat:owner", "fake", goodCode); !errors.Is(err, ErrNotWaiting) {
+	if err := g.relay.Code(context.Background(), "chat:owner", "fake", 0, goodCode); !errors.Is(err, ErrNotWaiting) {
 		t.Fatalf("a code before the command asked: %v", err)
 	}
 	// Nor does an agent without a flow.
-	if err := g.relay.Code("chat:owner", "other", goodCode); !errors.Is(err, ErrNotWaiting) {
+	if err := g.relay.Code(context.Background(), "chat:owner", "other", 0, goodCode); !errors.Is(err, ErrNotWaiting) {
 		t.Fatalf("a code for no flow: %v", err)
 	}
 }
 
 func TestOnlyTheOwner(t *testing.T) {
 	f := newFixture(t, fake.Login{Code: goodCode}, 0)
-	if err := f.relay.Start(context.Background(), "chat:mallory", "fake"); !errors.Is(err, ErrForbidden) {
+	if err := f.relay.Start(context.Background(), "chat:mallory", "fake", 0); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("start by another: %v", err)
 	}
 	f.turn(agent.Failed, agent.Login)
 	f.next("the link")
-	if err := f.relay.Code("chat:mallory", "fake", goodCode); !errors.Is(err, ErrForbidden) {
+	if err := f.relay.Code(context.Background(), "chat:mallory", "fake", 0, goodCode); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("code by another: %v", err)
 	}
 }
@@ -312,7 +330,7 @@ func TestTimeLimit(t *testing.T) {
 	if err := syscall.Kill(-pgid, 0); !errors.Is(err, syscall.ESRCH) {
 		t.Fatalf("a process of the login command remains: %v", err)
 	}
-	if err := f.relay.Start(context.Background(), "chat:owner", "fake"); err != nil {
+	if err := f.relay.Start(context.Background(), "chat:owner", "fake", 0); err != nil {
 		t.Fatal(err)
 	}
 	if again := f.next("a new link").Link; again == "" || again == first {
@@ -369,7 +387,7 @@ func TestConcurrentStarts(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 4 {
 		wg.Add(1)
-		go func() { defer wg.Done(); f.relay.Start(context.Background(), "chat:owner", "fake") }()
+		go func() { defer wg.Done(); f.relay.Start(context.Background(), "chat:owner", "fake", 0) }()
 	}
 	wg.Wait()
 	n := 0
@@ -499,7 +517,7 @@ func TestDeviceLogin(t *testing.T) {
 			if first.Link == "" || !first.NoCode || first.ShowCode != "" {
 				t.Fatalf("first: %+v", first)
 			}
-			if err := f.relay.Code("chat:owner", "fake", "anything"); !errors.Is(err, ErrNotWaiting) {
+			if err := f.relay.Code(context.Background(), "chat:owner", "fake", 0, "anything"); !errors.Is(err, ErrNotWaiting) {
 				t.Fatalf("Code: %v", err)
 			}
 			second := f.next("code")
@@ -518,5 +536,154 @@ func TestDeviceLogin(t *testing.T) {
 				t.Fatalf("end: %+v", end)
 			}
 		})
+	}
+}
+
+// addSession adds a thread with an idle session of the agent that has a
+// configuration directory of its own, as one taken in has.
+func (f *fixture) addSession(id int64, dir string) {
+	f.t.Helper()
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		f.t.Fatal(err)
+	}
+	spec, _ := json.Marshal(map[string]any{"agent": "fake", "spec": agent.Spec{ConfigDir: dir}})
+	for _, q := range []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO threads (id, scope, key, started_by, state, created_at, updated_at) VALUES (?, 's', ?, 'p', 'idle', 0, 0)`, []any{id, "k" + itoa(int(id))}},
+		{`INSERT INTO sessions (id, thread_id, agent, state, spec, created_at, updated_at) VALUES (?, ?, 'fake', 'idle', ?, 0, 0)`, []any{id, id, string(spec)}},
+	} {
+		if _, err := f.st.DB.Exec(q.sql, q.args...); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+}
+
+// openOutages returns the configuration directories whose login is out.
+func (f *fixture) openOutages() []string {
+	f.t.Helper()
+	rows, err := f.st.DB.Query(`SELECT config_dir FROM login_outages WHERE closed_at IS NULL ORDER BY id`)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var d string
+		rows.Scan(&d)
+		out = append(out, d)
+	}
+	return out
+}
+
+// The relay logs in where the session is logged out: in the configuration
+// directory of a session taken in, and nowhere else.
+func TestLoginInTheConfigDirOfTheSession(t *testing.T) {
+	f := newFixture(t, fake.Login{Code: goodCode}, 0)
+	own, work := filepath.Join(f.root, "agent-config"), filepath.Join(f.root, "work")
+	f.addSession(2, work)
+	in := func(dir string) bool {
+		_, err := os.Stat(filepath.Join(dir, fake.LoggedInFile))
+		return err == nil
+	}
+	f.turnOf(2, agent.Failed, agent.Login)
+	w := f.next("the link of the one taken in")
+	if w.Link == "" || w.Outage == 0 {
+		t.Fatalf("first update: %+v", w)
+	}
+	f.turn(agent.Failed, agent.Login)
+	o := f.next("the link of the other")
+	if o.Link == "" || o.Outage == 0 || o.Outage == w.Outage {
+		t.Fatalf("second update: %+v, after %+v", o, w)
+	}
+	// Both commands run: the second start ended no flow of another login.
+	if n := f.flowCount(); n != 2 {
+		t.Fatalf("%d flows run, want 2", n)
+	}
+	f.codeFor(w.Outage, goodCode)
+	if u := f.next("the first result"); u.Done != LoggedIn || u.Outage != w.Outage {
+		t.Fatalf("result: %+v", u)
+	}
+	if !in(work) || in(own) {
+		t.Fatalf("logged in: in the session's directory %v, in the daemon's %v", in(work), in(own))
+	}
+	if got := f.openOutages(); len(got) != 1 || got[0] != "" {
+		t.Fatalf("open outages of %q, want the daemon's only", got)
+	}
+	// The other goes on, and a new link for it is in its directory.
+	if err := f.relay.Start(context.Background(), "chat:owner", "fake", o.Outage); err != nil {
+		t.Fatal(err)
+	}
+	if u := f.next("the end of the replaced one"); u.Done != Stopped || u.Outage != o.Outage {
+		t.Fatalf("replaced: %+v", u)
+	}
+	if u := f.next("the new link"); u.Link == "" || u.Outage != o.Outage {
+		t.Fatalf("new link: %+v", u)
+	}
+	f.codeFor(o.Outage, goodCode)
+	if u := f.next("the second result"); u.Done != LoggedIn || u.Outage != o.Outage {
+		t.Fatalf("result: %+v", u)
+	}
+	if !in(own) || len(f.openOutages()) != 0 {
+		t.Fatalf("logged in in the daemon's directory %v, open outages %q", in(own), f.openOutages())
+	}
+}
+
+// A flow asked for with no outage is for the login's open one; one asked for
+// an outage that has closed does not start, since nothing would show its link
+// or end it.
+func TestStartForAnOutageThatClosed(t *testing.T) {
+	f := newFixture(t, fake.Login{Code: goodCode}, 0)
+	f.turn(agent.Failed, agent.Login)
+	first := f.next("the link")
+	// A button from before outages had a login of their own names none.
+	if err := f.relay.Start(context.Background(), "chat:owner", "fake", 0); err != nil {
+		t.Fatal(err)
+	}
+	if u := f.next("the end of the replaced one"); u.Done != Stopped {
+		t.Fatalf("replaced: %+v", u)
+	}
+	if u := f.next("the new link"); u.Link == "" || u.Outage != first.Outage {
+		t.Fatalf("new link %+v, want one for outage %d", u, first.Outage)
+	}
+	f.turn(agent.Completed, "") // someone logged in at the host
+	if u := f.next("the end"); u.Done != Restored {
+		t.Fatalf("result: %+v", u)
+	}
+	if err := f.relay.Start(context.Background(), "chat:owner", "fake", first.Outage); !errors.Is(err, ErrBack) {
+		t.Fatalf("start for an outage that closed: %v, want %v", err, ErrBack)
+	}
+	if n := f.flowCount(); n != 0 {
+		t.Fatalf("%d flows run, want none", n)
+	}
+	// Nor does it replace the flow of a later outage.
+	f.turn(agent.Failed, agent.Login)
+	if u := f.next("the link of the later outage"); u.Link == "" || u.Outage == first.Outage {
+		t.Fatalf("link %+v", u)
+	}
+	if err := f.relay.Start(context.Background(), "chat:owner", "fake", first.Outage); !errors.Is(err, ErrBack) {
+		t.Fatalf("start for the earlier outage: %v, want %v", err, ErrBack)
+	}
+	if n := f.flowCount(); n != 1 {
+		t.Fatalf("%d flows run, want the later outage's", n)
+	}
+}
+
+// A login that comes back by itself ends its own flow only.
+func TestOutageClosedElsewhereOfOneDir(t *testing.T) {
+	f := newFixture(t, fake.Login{Code: goodCode}, 0)
+	f.addSession(2, filepath.Join(f.root, "work"))
+	f.turn(agent.Failed, agent.Login)
+	o := f.next("the first link")
+	f.turnOf(2, agent.Failed, agent.Login)
+	w := f.next("the second link")
+	f.turn(agent.Completed, "") // someone logged in at the host
+	if u := f.next("the end"); u.Done != Restored || u.Outage != o.Outage {
+		t.Fatalf("result: %+v, want the end of outage %d", u, o.Outage)
+	}
+	f.codeFor(w.Outage, goodCode)
+	if u := f.next("the result"); u.Done != LoggedIn || u.Outage != w.Outage {
+		t.Fatalf("result: %+v", u)
 	}
 }

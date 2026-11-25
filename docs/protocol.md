@@ -1563,7 +1563,7 @@ What the agent reports about the tokens of the running turn. Each count is the t
 
 ### Event `login_lost`
 
-A turn failed with reason `login`, and a login outage of the agent opened.
+A turn failed with reason `login`, and a login outage of the agent opened. An agent has one for each of its logins that is out: sessions with configuration directories of their own have other logins.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|

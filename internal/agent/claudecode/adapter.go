@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -217,6 +218,12 @@ func stateFile(spec agent.Spec, name string) string {
 // env builds the CLI's environment from the fixed list, the config's
 // pass_env, a terminal type and where the hooks find the host.
 func (a *Adapter) env(spec agent.Spec) []string {
+	return append(a.loginEnv(spec), host.HookEnv(spec.StateDir))
+}
+
+// loginEnv is baseEnv with the configuration directory of a session started
+// from spec, which holds its login.
+func (a *Adapter) loginEnv(spec agent.Spec) []string {
 	env := a.baseEnv()
 	if spec.ConfigDir != "" {
 		// The configuration directory the session ran with, such as the one
@@ -224,7 +231,42 @@ func (a *Adapter) env(spec agent.Spec) []string {
 		env = slices.DeleteFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "CLAUDE_CONFIG_DIR=") })
 		env = append(env, "CLAUDE_CONFIG_DIR="+spec.ConfigDir)
 	}
-	return append(env, host.HookEnv(spec.StateDir))
+	return env
+}
+
+var _ agent.LoginDirs = (*Adapter)(nil)
+
+// LoginDir is spec's configuration directory, and "" when that is the one
+// baseEnv has: CLAUDE_CONFIG_DIR, or .claude under HOME when it is not set.
+// Observed with 2.1.331 on Linux: the CLI reads the same login from
+// ~/.claude whether or not CLAUDE_CONFIG_DIR names it. On macOS, where it
+// keeps the login in the keychain, that was not observed, so there the two
+// are told apart, and so are two spellings of one directory: a login in one
+// is never taken for one in the other.
+func (a *Adapter) LoginDir(spec agent.Spec) string {
+	if spec.ConfigDir == "" {
+		return ""
+	}
+	clean := filepath.Clean
+	if runtime.GOOS == "darwin" {
+		clean = func(p string) string { return p }
+	}
+	var home, own string
+	for _, kv := range a.baseEnv() {
+		if v, ok := strings.CutPrefix(kv, "HOME="); ok {
+			home = v
+		}
+		if v, ok := strings.CutPrefix(kv, "CLAUDE_CONFIG_DIR="); ok {
+			own = v
+		}
+	}
+	if own == "" && home != "" && runtime.GOOS != "darwin" {
+		own = filepath.Join(home, ".claude")
+	}
+	if own != "" && clean(own) == clean(spec.ConfigDir) {
+		return ""
+	}
+	return clean(spec.ConfigDir)
 }
 
 // baseEnv is the environment without the hooks' variable: the fixed list,
@@ -252,18 +294,18 @@ func newUUID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
-// Probe reports the installed version and whether the CLI is logged in. It
-// runs only `--version` and `auth status`, which read and change nothing.
-func (a *Adapter) Probe(ctx context.Context) (agent.Health, error) {
+// Probe reports the installed version and whether the CLI is logged in, in
+// the configuration directory of a session started from spec. It runs only `--version` and `auth status`, which read and change nothing.
+func (a *Adapter) Probe(ctx context.Context, spec agent.Spec) (agent.Health, error) {
 	var h agent.Health
-	out, err := a.run(ctx, "--version")
+	out, err := a.run(ctx, spec, "--version")
 	if err != nil {
 		h.Detail = "not installed: " + err.Error()
 		return h, nil
 	}
 	h.Installed = true
 	h.Version, _, _ = strings.Cut(strings.TrimSpace(string(out)), " ")
-	out, err = a.run(ctx, "auth", "status")
+	out, err = a.run(ctx, spec, "auth", "status")
 	loggedIn, jerr := ParseStatus(out)
 	if jerr != nil {
 		if err == nil {
@@ -279,11 +321,11 @@ func (a *Adapter) Probe(ctx context.Context) (agent.Health, error) {
 	return h, nil
 }
 
-func (a *Adapter) run(ctx context.Context, args ...string) ([]byte, error) {
+func (a *Adapter) run(ctx context.Context, spec agent.Spec, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, a.command, args...)
-	cmd.Env = a.baseEnv()
+	cmd.Env = a.loginEnv(spec)
 	cmd.Dir = os.TempDir()
 	return cmd.Output()
 }
