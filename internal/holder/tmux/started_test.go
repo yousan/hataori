@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -442,7 +443,7 @@ func TestAPaneAPersonRespawnedIsTheirs(t *testing.T) {
 	t.Run("before, and it ended", func(t *testing.T) {
 		s, h, w, pane, _ := newPane(t)
 		s.run("respawn-pane", "-k", "-t", pane, "exec true")
-		for deadline := time.Now().Add(10 * time.Second); s.run("display-message", "-p", "-t", pane, "#{pane_dead}") != "1" && time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		for deadline := time.Now().Add(10 * time.Second); !strings.HasPrefix(s.how(pane), "1") && time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
 		}
 		if l, err := h.Alive(context.Background(), w); err != nil || l.State != holder.Gone {
 			t.Errorf("Alive: %+v %v", l, err)
@@ -520,7 +521,7 @@ func TestAPaneAPersonRespawnedIsTheirs(t *testing.T) {
 	// The agent may have ended before.
 	ended := func(s *server, pane string) {
 		s.run("send-keys", "-t", pane, "C-c")
-		for deadline := time.Now().Add(10 * time.Second); s.run("display-message", "-p", "-t", pane, "#{pane_dead}") != "1" && time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		for deadline := time.Now().Add(10 * time.Second); !strings.HasPrefix(s.how(pane), "1") && time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
 		}
 	}
 	for _, dead := range []bool{false, true} {
@@ -646,7 +647,7 @@ func TestStopEndsWhatADeadAgentLeft(t *testing.T) {
 				t.Helper()
 				for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
 					b, _ := os.ReadFile(child)
-					dead := s.run("display-message", "-p", "-t", r.Pane, "#{pane_dead} #{pane_dead_status}") == "1 3"
+					dead := s.how(r.Pane) == "1 3"
 					if f := strings.Fields(string(b)); len(f) == n && dead {
 						for _, x := range f {
 							pid, _ := strconv.Atoi(x)
@@ -679,7 +680,8 @@ func TestStopEndsWhatADeadAgentLeft(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Stop: %+v %v", res, err)
 			}
-			runs := syscall.Kill(left[len(left)-1], 0) == nil
+			last := left[len(left)-1]
+			runs := !zombie(t.Context(), last) && syscall.Kill(last, 0) == nil // in this order: a zombie may be reaped in between
 			if tells && (runs || res.Left != "" || res.Already || !strings.HasPrefix(res.Signals, "SIGINT")) {
 				t.Errorf("the child runs: %v; Stop: %+v", runs, res)
 			}
@@ -930,9 +932,10 @@ func TestStopLeavesAnotherChildOfTheServerAlone(t *testing.T) {
 			}
 			end(w.Process)
 			if c.agent != closes {
-				syscall.Kill(w.Process, syscall.SIGTERM)
+				s.ended(w, pane) // as tmux has read its end, its number may be another's
+			} else {
+				s.wait("the agent's pane is not dead", func() bool { return s.closed(pane) })
 			}
-			s.wait("the agent's pane is not dead", func() bool { return s.closed(pane) })
 			pid := 0
 			if c.popup {
 				self, err := os.Executable()
@@ -1010,9 +1013,7 @@ func TestStopEndsAnAgentTmuxTellsOf(t *testing.T) {
 			s.run("set-option", "-g", "remain-on-exit", "on")
 			if c.stale {
 				f := strings.Fields(s.run("new-window", "-d", "-P", "-F", "#{pane_id} #{pane_pid}", "exit 3"))
-				s.wait("the other pane is not dead", func() bool {
-					return s.run("display-message", "-p", "-t", f[0], "#{pane_dead} #{pane_dead_status}") == "1 3"
-				})
+				s.wait("the other pane is not dead", func() bool { return s.how(f[0]) == "1 3" })
 				s.wrap(h, "", f[1], strconv.Itoa(w.Process))
 			}
 			if err := os.WriteFile(kept, nil, 0o600); err != nil {
@@ -1038,6 +1039,131 @@ func TestStopEndsAnAgentTmuxTellsOf(t *testing.T) {
 	}
 }
 
+// A process that ended and that its parent does not reap stays in the agent's
+// group, and signals still go to it. Stop does not count it, and counts what
+// runs.
+func TestStopBesideAnUnreapedProcess(t *testing.T) {
+	s := newServer(t)
+	h := s.starter()
+	dir := filepath.Join(s.dir, "7")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	made := filepath.Join(s.dir, "made")
+	w, err := h.Start(t.Context(), dir, holder.Spec{Terminal: true, Argv: []string{"/bin/sh", "-c", h.Hataori + " unreaped " + made + " & exec sleep 600"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		ps, err := group(t.Context(), w.Process)
+		if _, serr := os.Stat(made); serr == nil && err == nil && slices.ContainsFunc(ps, func(p member) bool { return p.zombie }) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no zombie in the group: %v %v", ps, err)
+		}
+	}
+	if groupGone(w.Process) {
+		t.Error("the group is taken for gone while its agent runs")
+	}
+	res, err := h.Stop(t.Context(), w, time.Second, time.Second)
+	if err != nil || res.Signals != "SIGINT" || res.Status.Signal != syscall.SIGINT.String() && s.tellsSignals() {
+		t.Errorf("Stop: %+v %v", res, err)
+	}
+	if got := s.panes(); len(got) != 0 {
+		t.Errorf("panes left: %v", got)
+	}
+}
+
+// unreaped starts a process in its own group as it was, does not reap it, and
+// stays, in another group, until the file made is removed.
+func unreaped(made string) error {
+	signal.Ignore(syscall.SIGHUP, syscall.SIGINT)
+	pgid := syscall.Getpgrp()
+	if err := syscall.Setpgid(0, 0); err != nil {
+		return err
+	}
+	c := exec.Command("/bin/sh", "-c", ":") // there is no PATH here
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: pgid}
+	if err := c.Start(); err != nil {
+		return err
+	}
+	if err := os.WriteFile(made, nil, 0o600); err != nil {
+		return err
+	}
+	for {
+		if _, err := os.Stat(made); err != nil {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// A dead pane whose process tmux did not reap does not tell how it ended
+// until tmux looks at its children again: Stop, Record and Alive have it
+// look.
+func TestHowAnUnreapedAgentEnded(t *testing.T) {
+	for _, how := range []string{"Stop", "Record", "Alive"} {
+		t.Run(how, func(t *testing.T) {
+			s := newServer(t)
+			h := &Holder{Prefix: "hataori-t-"}
+			end := filepath.Join(s.dir, "end")
+			w, pane, dir := s.started(h, "exec sh -c 'until [ -e "+end+" ]; do sleep 0.02; done; exit 3'")
+			if err := os.WriteFile(end, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			s.ended(holder.Window{}, pane)
+			// As if the pane's process were this one, not reaped, and tmux had
+			// not looked yet.
+			c := exec.Command("true")
+			c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			if err := c.Start(); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { c.Wait() })
+			w.Process = c.Process.Pid
+			missed := strconv.Itoa(w.Process) + " 1"
+			if s.run("display-message", "-p", "-t", pane, "#{pane_pid}") == "" { // since tmux 3.8
+				missed = "- 0"
+			}
+			if how != "Alive" { // without the file it is the process of the window
+				if err := os.WriteFile(filepath.Join(dir, PidFile), []byte(strconv.Itoa(w.Process)), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			looked := filepath.Join(s.dir, "looked")
+			h.Tmux = filepath.Join(s.dir, "late-tmux")
+			syscall.ForkLock.RLock()
+			err := os.WriteFile(h.Tmux, []byte(fmt.Sprintf(`#!/bin/sh
+case "$*" in *run-shell*) touch %[1]s;; esac
+if [ -e %[1]s ]; then exec %[2]s "$@"; fi
+%[2]s "$@" | sed 's/ [0-9-]* 1 x[0-9]* [^ ]* / %[3]s x - /'
+`, looked, s.tmux, missed)), 0o700)
+			syscall.ForkLock.RUnlock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var st *host.Status
+			switch how {
+			case "Stop":
+				res, serr := h.Stop(t.Context(), w, time.Second, time.Second)
+				st, err = &res.Status, serr
+			case "Record":
+				err = h.Record(t.Context(), w)
+				got, _ := recorded(ref{Dir: dir})
+				st = &got
+			default:
+				var l holder.Liveness
+				l, err = h.Alive(t.Context(), w)
+				st = l.Status
+			}
+			if err != nil || st == nil || st.Code != 3 {
+				t.Errorf("%+v %v", st, err)
+			}
+		})
+	}
+}
+
 // How long a process has run, as ps prints it ([[days-]hours:]minutes:seconds).
 func TestElapsed(t *testing.T) {
 	for s, want := range map[string]time.Duration{"00:07": 7 * time.Second, "21:05": 21*time.Minute + 5*time.Second,
@@ -1053,14 +1179,37 @@ func TestElapsed(t *testing.T) {
 	}
 }
 
+// tellsSignals reports whether tmux tells the signal that ended a program:
+// up to 3.2 it does not.
+func (s *server) tellsSignals() bool {
+	s.t.Helper()
+	out, err := exec.Command(s.tmux, "-V").Output()
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	return !regexp.MustCompile(`^tmux 3\.[0-2]`).Match(out)
+}
+
+// how is whether the pane's program ended, and its status or signal. tmux may
+// miss that: it looks again after the end of another child.
+func (s *server) how(pane string) string {
+	s.t.Helper()
+	pid, said, _ := strings.Cut(s.run("display-message", "-p", "-t", pane, "#{pane_pid},#{pane_dead} #{pane_dead_status}#{pane_dead_signal}"), ",")
+	if said = strings.TrimSpace(said); said == "1" || said == "0" && pid == "" { // the latter since 3.8
+		s.run("run-shell", "-b", "true")
+	}
+	return said
+}
+
 // ended makes the pane's program end and waits until tmux has seen it.
 func (s *server) ended(w holder.Window, pane string) {
 	s.t.Helper()
-	syscall.Kill(w.Process, syscall.SIGTERM)
-	// tmux up to 3.2 does not tell the signal.
-	old := regexp.MustCompile(`^3\.[0-2]`).MatchString(s.run("display-message", "-p", "#{version}"))
+	if w.Process > 0 {
+		syscall.Kill(w.Process, syscall.SIGTERM)
+	}
+	old := !s.tellsSignals()
 	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
-		dead, how, _ := strings.Cut(s.run("display-message", "-p", "-t", pane, "#{pane_dead} #{pane_dead_status}#{pane_dead_signal}"), " ")
+		dead, how, _ := strings.Cut(s.how(pane), " ")
 		if dead == "1" && (how != "" || old) {
 			return
 		}
@@ -1169,14 +1318,48 @@ func TestADeadPaneOfAnyStateDirectoryGoes(t *testing.T) {
 	}
 }
 
-// The test binary is also `hataori exec` and `hataori pipe`, agentBelow's shell and
-// a process that leads its own session.
+// A zombie as ps prints it, also one whose other threads run.
+func TestIsZombie(t *testing.T) {
+	for stat, want := range map[string]bool{"Z": true, "Z+": true, "ZN": true, "Zs": true, "Zl": false, "Zsl+": false, "S": false, "Ss+": false, "": false} {
+		if got := isZombie(stat); got != want {
+			t.Errorf("%q: %v", stat, got)
+		}
+	}
+}
+
+// A listing of ps may miss a process that one it lists as ended started
+// meanwhile: the group is gone when two in a row have nothing that runs.
+func TestAGroupIsGoneWhenTwoLooksSaySo(t *testing.T) {
+	dir := t.TempDir()
+	again := filepath.Join(dir, "again")
+	syscall.ForkLock.RLock()
+	err := os.WriteFile(filepath.Join(dir, "ps"), []byte("#!/bin/sh\necho '71 1 71 00:01 Z'\nif [ -e "+again+" ]; then echo '70 1 71 00:00 S'; fi\n: > "+again+"\n"), 0o700)
+	syscall.ForkLock.RUnlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	if ps, err := group(t.Context(), 71); err != nil || len(ps) != 1 || !ps[0].zombie {
+		t.Fatalf("the first look: %+v %v", ps, err)
+	}
+	if err := os.Remove(again); err != nil {
+		t.Fatal(err)
+	}
+	if onlyZombies(71) {
+		t.Error("the process that the first look missed runs")
+	}
+}
+
+// The test binary is also `hataori exec` and `hataori pipe`, agentBelow's shell,
+// unreaped and a process that leads its own session.
 func TestMain(m *testing.M) {
 	if len(os.Args) == 3 {
 		var err error
 		switch os.Args[1] {
 		case "exec":
 			err = ExecMain(os.Args[2])
+		case "unreaped":
+			err = unreaped(os.Args[2])
 		case "pipe":
 			err = host.Pipe(os.Args[2], os.Stdin)
 		case "shell":

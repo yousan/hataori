@@ -651,13 +651,14 @@ func process(ctx context.Context, pid int) (proc, error) {
 type member struct {
 	pid, parent, group int
 	started            time.Time
+	zombie             bool
 }
 
 // processes is every process there is.
 func processes(ctx context.Context) ([]member, error) {
 	ctx, cancel := context.WithTimeout(ctx, cmdTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "ps", "-A", "-o", "pid=", "-o", "ppid=", "-o", "pgid=", "-o", "etime=").Output()
+	out, err := exec.CommandContext(ctx, "ps", "-A", "-o", "pid=", "-o", "ppid=", "-o", "pgid=", "-o", "etime=", "-o", "stat=").Output()
 	now := time.Now() // after ps has looked: no process seems older than it is
 	if err != nil {
 		return nil, fmt.Errorf("tmux: ps: %w", err)
@@ -669,7 +670,7 @@ func processes(ctx context.Context) ([]member, error) {
 			continue
 		}
 		var m member
-		ok := len(f) == 4
+		ok := len(f) == 5
 		for i, to := range []*int{&m.pid, &m.parent, &m.group} {
 			if ok {
 				n, err := strconv.Atoi(f[i])
@@ -683,9 +684,32 @@ func processes(ctx context.Context) ([]member, error) {
 		if ran, ok := elapsed(f[3]); ok {
 			m.started = now.Add(-ran)
 		}
+		m.zombie = isZombie(f[4])
 		ms = append(ms, m)
 	}
 	return ms, nil
+}
+
+// group is the processes of the process group pgid.
+func group(ctx context.Context, pgid int) ([]member, error) {
+	ps, err := processes(ctx)
+	return slices.DeleteFunc(ps, func(p member) bool { return p.group != pgid }), err
+}
+
+// isZombie reads ps's stat: the process ended, with all its threads ("l").
+func isZombie(stat string) bool {
+	return strings.HasPrefix(stat, "Z") && !strings.Contains(stat, "l")
+}
+
+// zombie reports whether the process pid ended and was not reaped.
+func zombie(ctx context.Context, pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(ctx, cmdTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+	return err == nil && isZombie(strings.TrimSpace(string(out)))
 }
 
 // elapsed reads ps's etime, [[days-]hours:]minutes:seconds.
