@@ -1,6 +1,9 @@
 package claudecode
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -159,11 +162,13 @@ func TestHeldInputAcrossARestart(t *testing.T) {
 
 // In a confined session, what a hataori before #914 left in the box across
 // a restart, which this one would not paste as it is, is never submitted,
-// nor is anything pasted after it: its turn and the next input's end "not
-// delivered" until the CLI has taken the box's text. One that this one
-// pastes the same is submitted after the agent's own turn, as ever.
+// nor is anything pasted after it, until the CLI has taken the box's text:
+// the next input ends "not delivered", and the one in the box does not end,
+// so that it is written again after another restart. One that this one
+// pastes the same, or that the older one pasted after the prefix, is
+// submitted after the agent's own turn, as ever.
 func TestOlderPasteIsNotSubmittedAfterARestart(t *testing.T) {
-	for text, want := range map[string]int{"\u001b[31m!id": 0, "#x": 0, heldText: 1} {
+	for text, want := range map[string]int{"\u001b[31m!id": 0, "#x": 0, heldText: 1, "/add-dir x": 1} {
 		c := (&Adapter{}).NewCodec(agent.Spec{Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
 		for _, f := range []string{"01-SessionStart", "02-UserPromptSubmit", "05-Stop", "07-UserPromptSubmit"} {
 			decodeFile(t, c, f, held+f+".json")
@@ -180,18 +185,50 @@ func TestOlderPasteIsNotSubmittedAfterARestart(t *testing.T) {
 		if want != 0 {
 			continue
 		}
-		if a := c.Tick(now.Add(DefaultInputTimeout)); len(a.Events) != 1 || a.Events[0].Reason != agent.NotDelivered || a.Events[0].Input != "in-7" {
-			t.Fatalf("%q: after the timeout: %+v", text, a.Events)
-		}
+		now = quiet(t, c, now, 2*DefaultInputTimeout, "after the own turn")
 		a, _ := c.Input(agent.Input{ID: "in-8", Text: "list the threads"})
 		if len(a.Keys) != 0 || len(a.Events) != 1 || a.Events[0].Reason != agent.NotDelivered || a.Events[0].Input != "in-8" {
 			t.Fatalf("%q: the next input: keys %q, events %+v", text, a.Keys, a.Events)
 		}
-		// A person at the terminal submitted the box: input is pasted again.
+		now = quiet(t, c, now, 2*DefaultInputTimeout, "after the next input")
+		// A person at the terminal submitted the box: the input that was
+		// not in it ends as ever, and input is pasted again.
 		decodeFile(t, c, "12", held+"12-UserPromptSubmit.json")
 		decodeFile(t, c, "13", held+"13-Stop.json")
+		var ended []agent.Event
+		for end := now.Add(2 * DefaultInputTimeout); now.Before(end); now = now.Add(100 * time.Millisecond) {
+			ended = append(ended, c.Tick(now).Events...)
+		}
+		if len(ended) != 1 || ended[0].Reason != agent.NotDelivered || ended[0].Input != "in-7" {
+			t.Fatalf("%q: after the box was submitted: %+v", text, ended)
+		}
 		if a, _ := c.Input(agent.Input{ID: "in-9", Text: "list the threads"}); len(a.Keys) != 1 || a.Keys[0].Paste != "list the threads" {
 			t.Fatalf("%q: after the box was submitted: keys %q, events %+v", text, a.Keys, a.Events)
 		}
 	}
+}
+
+// A task notification that starts a turn does not take the box's text, also
+// when it is the text of the input that may be there: nothing is pasted
+// after it, nor at the end of the notification's turn.
+func TestNotificationDoesNotTakeAnOlderPaste(t *testing.T) {
+	var p payload
+	b, err := os.ReadFile(filepath.Join("testdata/2.1.322", held+"07-UserPromptSubmit.json"))
+	if err != nil || json.Unmarshal(b, &p) != nil || !notification(p.Prompt) {
+		t.Fatalf("the notification's prompt: %v", err)
+	}
+	c := (&Adapter{}).NewCodec(agent.Spec{Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
+	for _, f := range []string{"01-SessionStart", "02-UserPromptSubmit", "05-Stop"} {
+		decodeFile(t, c, f, held+f+".json")
+	}
+	if a, _ := c.Input(agent.Input{ID: "in-7", Text: p.Prompt, Written: true}); len(a.Keys) != 0 {
+		t.Fatalf("written again: %q", a.Keys)
+	}
+	decodeFile(t, c, "07", held+"07-UserPromptSubmit.json")
+	decodeFile(t, c, "11", held+"11-Stop.json")
+	a, _ := c.Input(agent.Input{ID: "in-8", Text: "list the threads"})
+	if len(a.Keys) != 0 || len(a.Events) != 1 || a.Events[0].Reason != agent.NotDelivered {
+		t.Fatalf("the next input: keys %q, events %+v", a.Keys, a.Events)
+	}
+	quiet(t, c, time.Now(), 2*DefaultInputTimeout, "after it")
 }

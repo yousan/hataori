@@ -64,7 +64,7 @@ type codec struct {
 	runningPrompt string        // the prompt id of that turn
 	queue         []queued      // input held until the CLI can take it
 	sent          *sentInput    // input written, not yet reported
-	leftover      bool          // the box may hold what an older hataori pasted (Input): nothing is written until a prompt is submitted
+	leftover      bool          // the box may hold what an older hataori pasted (Input): nothing is written, and no input ends, until a prompt is submitted
 	timeout       time.Duration // for sent; DefaultInputTimeout when zero
 	mcp           mcpState      // the MCP servers input waits for (mcpwait.go)
 	tasks         tasks         // the background tasks that run (background.go)
@@ -227,8 +227,10 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 				q.older = append(q.older, normalize(o))
 				// What this hataori would not paste as it is may be in
 				// the box: it is never submitted, nor anything pasted
-				// after it, until the CLI took the box's text (#914).
-				if noCommand(noControls(o)) != o {
+				// after it, until the CLI took the box's text (#914). The
+				// input does not end meanwhile, so that it is written
+				// again after another restart, and this is kept.
+				if !pastedAsIs(o) {
 					c.leftover = true
 				}
 			}
@@ -355,6 +357,13 @@ func bangOrSlash(text string) string {
 	return text
 }
 
+// pastedAsIs reports whether this hataori would paste text as it is into a
+// confined session, or after commandPrefix, which an older one put before
+// "!" and "/".
+func pastedAsIs(text string) bool {
+	return noControls(text) == text && (strings.HasPrefix(text, commandPrefix) || noCommand(text) == text)
+}
+
 // cleanPaste removes the bracketed-paste markers from text, so that text
 // cannot end the paste early and have the rest read as keys.
 func cleanPaste(text string) string {
@@ -371,7 +380,7 @@ func cleanPaste(text string) string {
 // Input is one bracketed paste; Tick presses Enter after it (tickInput).
 // It counts as delivered only when UserPromptSubmit reports the same text.
 func (c *codec) flush() Actions {
-	if c.leftover && c.sent == nil && len(c.queue) > 0 {
+	if c.leftover && len(c.queue) > 0 {
 		// Written after the box's text, it would be submitted with it.
 		var a Actions
 		for _, q := range c.queue {
@@ -507,6 +516,9 @@ func (c *codec) Tick(now time.Time) Actions {
 // Enter and the timeout wait for its end, so that the timeout never ends
 // it. The text stays in the CLI's input box meanwhile (2.1.331,
 // testdata/2.1.331/held_notification).
+//
+// While the box may hold what an older hataori pasted (Input), neither
+// Enter nor the timeout comes.
 func (c *codec) tickInput(now time.Time) Actions {
 	if c.sent == nil {
 		return merge(c.holdPaste(now), c.flush())
@@ -538,7 +550,7 @@ func (c *codec) tickInput(now time.Time) Actions {
 		c.sent.at = now // not before the paste: it is handed over before the next Tick
 		return Actions{}
 	}
-	if now.Sub(c.sent.at) < c.inputTimeout() {
+	if c.leftover || now.Sub(c.sent.at) < c.inputTimeout() {
 		switch {
 		case !c.ready || c.sent.unsure || c.leftover || now.Sub(c.sent.at) < pasteSettle:
 		case !c.sent.pressed:
@@ -1018,8 +1030,11 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 		by, id := c.starter(p.Prompt)
 		if by == agent.ByAgent {
 			c.tasks.notified(p.Prompt)
-		} else {
-			c.leftover = false // the box's text was submitted
+		}
+		if !notification(p.Prompt) {
+			// The box's text was submitted. A notification starts a turn
+			// with it still there, also one that is the text of an input.
+			c.leftover = false
 		}
 		started := agent.Event{Kind: agent.TurnStarted, StartedBy: by, Input: id}
 		if by == agent.ByTerminal {
@@ -1246,10 +1261,15 @@ func (c *codec) starter(prompt string) (agent.Starter, string) {
 			return agent.ByCaller, p.id
 		}
 	}
-	if strings.HasPrefix(strings.TrimSpace(prompt), notificationTag) {
+	if notification(prompt) {
 		return agent.ByAgent, ""
 	}
 	return agent.ByTerminal, ""
+}
+
+// notification reports whether prompt is a task notification's.
+func notification(prompt string) bool {
+	return strings.HasPrefix(strings.TrimSpace(prompt), notificationTag)
 }
 
 // unwrapPaste returns the text inside the <pasted_content> tag the CLI
