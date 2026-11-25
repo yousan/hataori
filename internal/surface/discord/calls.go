@@ -165,7 +165,7 @@ var (
 	// text, and the space after the sign.
 	quoteSign = regexp.MustCompile("^((?:" + white + "|" + item + ")*)>(>>)?(" + white + "?)")
 	itemSign  = regexp.MustCompile("^" + white + "*(?:" + item + ")+")
-	indented  = regexp.MustCompile("^" + white)
+	indent    = regexp.MustCompile("^" + white + "*")
 	number    = regexp.MustCompile("[0-9]+")
 )
 
@@ -189,50 +189,64 @@ func spoken(text string) string {
 		}
 	}
 	var doubts []string
+	first := len(text)                                // where the first doubt is
 	for taken := 0; taken < 1<<len(doubts); taken++ { // a doubt met on the way is not taken yet
-		doubt := func(what string) bool {
+		doubt := func(what string, at int) bool {
 			n := slices.Index(doubts, what)
 			if n < 0 {
 				n, doubts = len(doubts), append(doubts, what)
 			}
+			first = min(first, at)
 			return taken&(1<<n) != 0
 		}
 		text := text
-		if strings.Contains(text, "\r") && doubt("\r") {
+		if strings.Contains(text, "\r") && doubt("\r", 0) {
 			text = strings.ReplaceAll(text, "\r", "\n")
 		}
 		read(text, doubt, blank)
 		if len(doubts) > mostDoubts {
-			return strings.Repeat(" ", len(text))
+			blank(first, len(text))
+			break
 		}
 	}
 	return string(out)
 }
 
+// part is a heading or an item of a list: how it begins, and where it ends.
+type part struct {
+	sign string
+	end  int
+}
+
 // read calls blank with each part of text that is quoted, in code or
-// escaped. doubt reports whether a doubt is taken in this reading:
+// escaped. doubt reports whether a doubt that a place in text raises is taken
+// in this reading:
 //   - whether lines that begin in one way are quotes, for each way but "> "
 //     and ">>> " where a line begins;
-//   - whether code ends at the latest with the heading or with the item of a
-//     list that it opens in;
-//   - whether inline code ends at the latest before a line that begins as one
-//     of a quote does.
-func read(text string, doubt func(string) bool, blank func(from, to int)) {
-	var quotes []int // the lines that begin as one of a quote does
-	for i := 0; i < len(text); i = lineEnd(text, i) + 1 {
-		if _, _, ok := quote(text[i:]); ok {
-			quotes = append(quotes, i)
-		}
-	}
+//   - whether what opens code in a heading or in an item of a list opens none
+//     when the code would go on after it, for each way these begin;
+//   - whether what opens inline code opens none when the code would go on
+//     after its line.
+func read(text string, doubt func(what string, at int) bool, blank func(from, to int)) {
 	start, block := 0, ""        // where a quote may begin, and whether a block ends there
-	in, inEnd := "", 0           // an item or a heading, and its end
+	var parts []part             // what i is in, an inner one after its outer one
 	var next [len(fenceMark)]int // where a run of so many backticks is next
+	whole := true                // no fence was taken to open no block
 	for i := 0; i < len(text); {
-		for len(quotes) > 0 && quotes[0] <= i {
-			quotes = quotes[1:]
+		for len(parts) > 0 && parts[len(parts)-1].end <= i {
+			parts = parts[:len(parts)-1]
+		}
+		// beyond reports whether code from i to end opens in a part that it
+		// does not end in, and is none for that.
+		beyond := func(end int) bool {
+			if len(parts) == 0 {
+				return false
+			}
+			in := parts[len(parts)-1]
+			return in.end < end && doubt(in.sign, i)
 		}
 		if i == start {
-			if form, toEnd, ok := quote(text[i:]); ok && (block+form == "" || doubt(block+form)) {
+			if form, toEnd, ok := quote(text[i:]); ok && (block+form == "" || doubt(block+form, i)) {
 				end := len(text)
 				if !toEnd {
 					end = lineEnd(text, i)
@@ -241,13 +255,12 @@ func read(text string, doubt func(string) bool, blank func(from, to int)) {
 				i, start, block = end+1, end+1, ""
 				continue
 			}
-			if block == "" {
-				if sign := itemSign.FindString(text[i:]); sign != "" {
-					in, inEnd = "#", lineEnd(text, i)
-					if !strings.Contains(sign, in) {
-						in, inEnd = "-", itemEnd(text, i)
-					}
+			if sign := itemSign.FindString(text[i:]); sign != "" {
+				in := part{block + number.ReplaceAllString(strings.TrimLeft(sign, " \t"), "1"), itemEnd(text, i)}
+				if strings.Contains(sign, "#") {
+					in.end = lineEnd(text, i)
 				}
+				parts = append(parts, in)
 			}
 		}
 		switch {
@@ -258,23 +271,26 @@ func read(text string, doubt func(string) bool, blank func(from, to int)) {
 			blank(i, i+2)
 			i += 2
 		case strings.HasPrefix(text[i:], fenceMark):
-			end := len(text)
-			if code := codeBlock.FindString(text[i:]); code != "" {
-				end = i + len(code)
+			code := codeBlock.FindString(text[i:])
+			switch {
+			case code == "" && whole: // left open
+				blank(i, len(text))
+				return
+			case code == "" || beyond(i+len(code)):
+				whole = false
+				i++ // a shorter part of the run may begin code
+			default:
+				blank(i, i+len(code))
+				i += len(code)
+				start, block = i, fenceMark
 			}
-			if i < inEnd && inEnd < end && doubt(in) {
-				end = inEnd
-			}
-			blank(i, end)
-			i, start, block = end, end, fenceMark
 		case text[i] == '`':
 			run := len(text[i:]) - len(strings.TrimLeft(text[i:], "`"))
 			if next[run] < i+run {
 				next[run] = i + run + ticks(text[i+run:], run)
 			}
 			end := next[run]
-			if end == len(text) || i < inEnd && inEnd < end && doubt(in) ||
-				len(quotes) > 0 && quotes[0] < end && doubt("`") {
+			if end == len(text) || beyond(end) || lineEnd(text, i) < end && doubt("`", i) {
 				i++ // a shorter part of the run may begin code
 				continue
 			}
@@ -312,11 +328,18 @@ func lineEnd(text string, i int) int {
 }
 
 // itemEnd is where the item of a list ends that begins at i: before a line
-// that is not indented, or begins an item itself.
+// that is not indented, or that begins an item or a heading and is indented
+// no more than it is.
 func itemEnd(text string, i int) int {
+	deep := len(indent.FindString(text[i:]))
 	end := lineEnd(text, i)
-	for end < len(text) && indented.MatchString(text[end+1:]) && !itemSign.MatchString(text[end+1:]) {
-		end = lineEnd(text, end+1)
+	for end < len(text) {
+		line := text[end+1 : lineEnd(text, end+1)]
+		in := len(indent.FindString(line))
+		if in < len(line) && (in == 0 || in <= deep && itemSign.MatchString(line)) {
+			break
+		}
+		end += 1 + len(line)
 	}
 	return end
 }
