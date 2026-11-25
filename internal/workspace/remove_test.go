@@ -1790,23 +1790,32 @@ func TestRefuseCommonDirectoryThatIsALinkToNothing(t *testing.T) {
 	wantRefusal(t, x.check(), Unreadable, "")
 }
 
-// The git directory of a linked worktree, moved, beside its repository: no one
-// else looks at its HEAD.
+// The HEAD of the git directory of a linked worktree that was moved may alone
+// name a commit of the repository.
 func TestRefuseMovedGitDirectoryOfALinkedWorktree(t *testing.T) {
-	x := newRemoval(t)
-	tree := filepath.Join(x.tmp, "tree")
-	x.git(x.clone, "worktree", "add", "-q", "--detach", tree)
-	x.commit(tree, "w")
-	x.git(x.clone, "config", "core.logAllRefUpdates", "false")
-	from, to := filepath.Join(x.clone, ".git", "worktrees"), filepath.Join(x.clone, ".git", "n")
-	if err := os.Rename(filepath.Join(from, "tree"), to); err != nil {
-		t.Fatal(err)
+	for name, common := range map[string]string{"as it was": "", "to the repository": "../.git\n"} {
+		t.Run(name, func(t *testing.T) {
+			x := newRemoval(t)
+			x.write(".gitignore", "n\n")
+			x.git(x.clone, "add", ".gitignore")
+			x.git(x.clone, "commit", "-q", "-m", "i")
+			x.git(x.clone, "push", "-q", "origin", "main")
+			tree := filepath.Join(x.tmp, "tree")
+			x.git(x.clone, "worktree", "add", "-q", "--detach", tree)
+			x.commit(tree, "w")
+			from, to := filepath.Join(x.clone, ".git", "worktrees"), filepath.Join(x.clone, "n")
+			if err := errors.Join(os.Rename(filepath.Join(from, "tree"), to), os.Remove(from)); err != nil {
+				t.Fatal(err)
+			}
+			if common != "" {
+				if err := os.WriteFile(filepath.Join(to, "commondir"), []byte(common), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			x.r.Disposable = []string{"n"}
+			wantRefusal(t, x.check(), Worktree, "n")
+		})
 	}
-	if err := os.WriteFile(filepath.Join(to, "commondir"), []byte("..\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	os.Remove(from)
-	wantRefusal(t, x.check(), Worktree, filepath.Join(".git", "n"))
 }
 
 // Branches may be named as the files of a git directory are.
