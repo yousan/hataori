@@ -49,10 +49,33 @@ func TestNames(t *testing.T) {
 		{"started as nothing known", file, []string{"", filepath.Join(other, "agent"), filepath.Join(bin, "dangling")}, []string{"hard", "hataori", "hataori-2"}},
 		{"gone", filepath.Join(bin, "gone"), nil, []string{"gone"}},
 	} {
-		got := Names(c.exe, c.others...)
+		got, err := Names(c.exe, c.others...)
+		if (err != nil) != (c.what == "gone") {
+			t.Errorf("%s: %v", c.what, err)
+		}
 		slices.Sort(got)
 		if !slices.Equal(got, c.want) {
 			t.Errorf("%s: %q, want %q", c.what, got, c.want)
 		}
+	}
+}
+
+// Names says when names may be missing: a directory may let files in it be
+// run and not be listed.
+func TestNamesOfAnUnreadableDirectory(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads every directory")
+	}
+	dir := t.TempDir()
+	file := filepath.Join(dir, "hataori-2")
+	if err := os.WriteFile(file, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o300); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+	if names, err := Names(file); err == nil || !slices.Equal(names, []string{"hataori-2"}) {
+		t.Errorf("%q, %v", names, err)
 	}
 }

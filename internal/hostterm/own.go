@@ -1,15 +1,19 @@
 package hostterm
 
 import (
+	"path"
 	"slices"
 	"strings"
 )
 
 // matchesOwn reports whether comm, a command name as ps or tmux reports
-// it, is one of own. Linux cuts a command name to 15 bytes.
+// it, is one of own. Linux cuts a command name to 15 bytes; tmux reports a
+// command started by a relative path as that path; and a file system may
+// find a file under its name in another case.
 func matchesOwn(comm string, own []string) bool {
+	base := path.Base(comm)
 	return slices.ContainsFunc(own, func(name string) bool {
-		return name != "" && (comm == name || len(comm) == 15 && strings.HasPrefix(name, comm))
+		return strings.EqualFold(base, name) || len(comm) == 15 && strings.HasPrefix(name, comm)
 	})
 }
 

@@ -2,6 +2,7 @@
 package binary
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,13 +13,15 @@ import (
 // or any link to it. The names are those on the way from exe, and from each
 // of others that leads to the same file, to that file, and every other name
 // of the file in a directory on the way: a version's binary and the link to
-// it are next to each other (design, section 6.1).
-func Names(exe string, others ...string) []string {
+// it are next to each other (design, section 6.1). The error says that names
+// may be missing: exe or a directory on the way cannot be read.
+func Names(exe string, others ...string) ([]string, error) {
 	names := []string{filepath.Base(exe)}
 	file, err := os.Stat(exe)
 	if err != nil {
-		return names
+		return names, err
 	}
+	var errs []error
 	add := func(name string) {
 		if !slices.Contains(names, name) {
 			names = append(names, name)
@@ -33,7 +36,11 @@ func Names(exe string, others ...string) []string {
 			add(filepath.Base(p))
 			if dir := filepath.Dir(p); !seen[dir] {
 				seen[dir] = true
-				for _, name := range namesIn(dir, file) {
+				found, err := namesIn(dir, file)
+				if err != nil {
+					errs = append(errs, err)
+				}
+				for _, name := range found {
 					add(name)
 				}
 			}
@@ -46,6 +53,7 @@ func Names(exe string, others ...string) []string {
 				// of what a linked directory leads to.
 				dir, err := filepath.EvalSymlinks(filepath.Dir(p))
 				if err != nil {
+					errs = append(errs, err)
 					break
 				}
 				to = filepath.Join(dir, to)
@@ -53,7 +61,7 @@ func Names(exe string, others ...string) []string {
 			p = to
 		}
 	}
-	return names
+	return names, errors.Join(errs...)
 }
 
 // maxLinks bounds the links followed from one path to the file.
@@ -66,13 +74,13 @@ func sameFile(path string, file os.FileInfo) bool {
 }
 
 // namesIn are the names of file in dir.
-func namesIn(dir string, file os.FileInfo) []string {
-	entries, _ := os.ReadDir(dir)
+func namesIn(dir string, file os.FileInfo) ([]string, error) {
+	entries, err := os.ReadDir(dir)
 	var names []string
 	for _, e := range entries {
 		if !e.IsDir() && sameFile(filepath.Join(dir, e.Name()), file) {
 			names = append(names, e.Name())
 		}
 	}
-	return names
+	return names, err
 }

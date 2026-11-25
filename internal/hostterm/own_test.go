@@ -64,11 +64,11 @@ func TestCheckFindsHataoriUnderEachOfItsNames(t *testing.T) {
 	if err := os.Symlink(filepath.Base(version), link); err != nil {
 		t.Fatal(err)
 	}
-	for i, started := range []string{link, version} {
-		t.Run(filepath.Base(started), func(t *testing.T) {
+	for i, started := range []string{link, version, "./hataori"} {
+		t.Run(fmt.Sprint(i, filepath.Base(started)), func(t *testing.T) {
 			said := filepath.Join(bin, fmt.Sprintf("said%d", i))
 			name := fmt.Sprintf("own%d", i)
-			if _, err := tmux("new-session", "-d", "-s", name,
+			if _, err := tmux("new-session", "-d", "-s", name, "-c", bin,
 				fmt.Sprintf("exec env HOSTTERM_STANDIN='%s' '%s' -test.run '^TestStandIn$'", said, started)); err != nil {
 				t.Fatal(err)
 			}
@@ -96,7 +96,11 @@ func TestCheckFindsHataoriUnderEachOfItsNames(t *testing.T) {
 			// What a daemon may take for its own path, however it was started:
 			// os.Executable() follows the link on Linux and not on macOS.
 			for _, own := range []string{string(exe), link, version} {
-				l := &Lister{Tmux: sock, Own: binary.Names(own)}
+				names, err := binary.Names(own)
+				if err != nil {
+					t.Fatal(err)
+				}
+				l := &Lister{Tmux: sock, Own: names}
 				for _, procs := range []bool{true, false} {
 					if p, isOwn, err := l.Check(ctx, pane, nil, procs); err != nil || p == nil || !isOwn {
 						t.Errorf("the daemon is %s, the pane's command %q, with the process table %v: Check %+v %v %v", own, command, procs, p, isOwn, err)
@@ -104,5 +108,18 @@ func TestCheckFindsHataoriUnderEachOfItsNames(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestMatchesOwn(t *testing.T) {
+	own := []string{"hataori", "hataori-0123456789ab", ""}
+	for comm, want := range map[string]bool{
+		"hataori": true, "hataori-0123456789ab": true, "hataori-0123456": true, // Linux's 15 bytes
+		"./hataori": true, "bin/hataori": true, "HATAORI": true,
+		"": false, "hat": false, "hataori-01234567": false, "hataorid": false, "hataori/sh": false,
+	} {
+		if got := matchesOwn(comm, own); got != want {
+			t.Errorf("%q: %v", comm, got)
+		}
 	}
 }

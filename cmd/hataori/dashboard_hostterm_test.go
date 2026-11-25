@@ -191,8 +191,13 @@ func TestDaemonKnowsTheNamesOfItsBinary(t *testing.T) {
 	root := terminalRoot(t)
 	setConfig(t, root, func(cfg map[string]any) { cfg["host_terminals"] = true })
 	runDaemon(t, root)
-	own := <-got
-	for _, path := range []string{exe, next, as} {
+	var own []string
+	select {
+	case own = <-got:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no lister")
+	}
+	for _, path := range []string{exe, next, as, "hataori"} { // the last is of a link made later
 		if !slices.Contains(own, filepath.Base(path)) {
 			t.Errorf("the daemon's names %q lack %q", own, filepath.Base(path))
 		}
