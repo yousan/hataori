@@ -122,7 +122,8 @@ func TestConfinedInputNamesNothing(t *testing.T) {
 
 // An input that a hataori before #887 pasted, its "@" as they are, and that
 // the agent reports after a restart to this one, is known as hataori's. An
-// input of this one's is not known by such a prompt: a person typed that.
+// input that this one pasted since its start is not known by such a prompt: a
+// person typed that.
 func TestInputPastedWithItsAtSignIsKnown(t *testing.T) {
 	for _, mc := range mentionCases(t, "mention_restricted") {
 		c := confinedCodec(t)

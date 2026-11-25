@@ -233,7 +233,9 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 
 // queued is an input and its Input.ID. older is set for one that was pasted
 // before a restart into a confined session: what a hataori that left each
-// "@" (before #887) pasted for it.
+// "@" (before #887) pasted for it. Which hataori pasted it is not recorded,
+// so a person who types just that meanwhile counts as the input, as a person
+// who types just what is pasted always does.
 type queued struct{ id, text, older string }
 
 // Bracketed paste: what the terminal sends around pasted text. The holder
