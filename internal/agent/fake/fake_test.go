@@ -382,6 +382,39 @@ func TestInterrupt(t *testing.T) {
 	})
 }
 
+// A signal that ends a tool's process does not end the tool: the program
+// may be about to get the same signal, and must not go on to end its turn.
+func TestASignalledToolTakesItsTime(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "sleep"), []byte("#!/bin/sh\nkill -TERM $$\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	forms(t, func(t *testing.T, terminal bool) {
+		s := start(t, adapter(t, terminal), agent.Spec{})
+		s.until("ready", s.has(agent.SessionReady))
+		before := time.Now()
+		s.send("tool signalled 2s\nreply late")
+		s.until("the tool's end", s.has(agent.ToolEnded))
+		if d := time.Since(before); d < 2*time.Second {
+			t.Fatalf("the tool ended after %v, when its process got the signal", d)
+		}
+		s.until("the turn's end", s.has(agent.TurnEnded))
+
+		s = start(t, adapter(t, terminal), agent.Spec{})
+		s.until("ready", s.has(agent.SessionReady))
+		s.send("tool signalled 60s\nreply never")
+		s.until("the tool", s.has(agent.ToolStarted))
+		s.do(s.codec.Interrupt())
+		s.until("the interrupted end", s.has(agent.TurnEnded))
+		for _, e := range s.events {
+			if e.Kind == agent.TurnEnded && e.Status != agent.Interrupted {
+				t.Fatal(s.after())
+			}
+		}
+	})
+}
+
 // A question can name choices: they reach the codec's request in order,
 // and an answer of a choice is the reply. A question without " -- " has
 // none.

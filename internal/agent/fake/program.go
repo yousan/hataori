@@ -651,20 +651,35 @@ func (p *program) interrupted(end map[string]any) {
 
 // runTool runs a child process for d, so that stopping a session has a
 // process of the group to end. It returns false when interrupted.
+//
+// A signal to the group reaches the child and the program one after the
+// other, so the child may end of it first. An agent would tell its model
+// next and get the signal long before its turn ended; the program takes the
+// rest of d for that, else it could report the turn as completed (#845).
 func (p *program) runTool(d time.Duration) bool {
 	cmd := exec.Command("sleep", fmt.Sprintf("%.3f", d.Seconds()))
 	if err := cmd.Start(); err != nil {
 		time.Sleep(d)
 		return true
 	}
+	rest := time.NewTimer(d)
+	defer rest.Stop()
 	done := make(chan struct{})
 	go func() { cmd.Wait(); close(done) }()
 	select {
 	case <-done:
-		return true
 	case <-p.interrupts:
 		cmd.Process.Kill()
 		<-done
+		return false
+	}
+	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); !ok || !ws.Signaled() {
+		return true
+	}
+	select {
+	case <-rest.C:
+		return true
+	case <-p.interrupts:
 		return false
 	}
 }
