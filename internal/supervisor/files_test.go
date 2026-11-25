@@ -1909,8 +1909,10 @@ func TestFilesSweepRemovesItsOwnOnly(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.Mkdir(filepath.Join(f.dir, "empty"), 0o700); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"empty", "begun"} {
+		if err := os.Mkdir(filepath.Join(f.dir, name), 0o700); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := syscall.Mkfifo(filepath.Join(f.dir, "notes/.hataori-0"), 0); err != nil { // closed, but no file
 		t.Fatal(err)
@@ -1924,9 +1926,10 @@ func TestFilesSweepRemovesItsOwnOnly(t *testing.T) {
 	record(f.dir, "notes/plan.md", ".hataori-4", old, 1)
 	record(f.dir, "notes/plan.md", ".hataori-0", old, 1)
 	record(f.dir, "notes/plan.md", "mine.md", old, 1)
-	record(f.dir, "full/new.md", ".hataori-5", "", 0)  // the directory is not empty any more
-	record(f.dir, "file/new.md", ".hataori-5", "", 0)  // a file took its place
-	record(f.dir, "empty/new.md", ".hataori-5", "", 1) // it was there before
+	record(f.dir, "full/new.md", ".hataori-5", "", 0)         // the directory is not empty any more
+	record(f.dir, "file/new.md", ".hataori-5", "", 0)         // a file took its place
+	record(f.dir, "empty/new.md", ".hataori-5", "", 1)        // it was there before
+	record(f.dir, "begun/deeper/new.md", ".hataori-5", "", 0) // only the first was made
 	record(f.dir, "gone/deeper/new.md", ".hataori-5", "", 0)
 	record(f.dir, "out/new.md", ".hataori-6", "", 0)
 	record(filepath.Join(f.root, "gone"), "plan.md", ".hataori-1", old, 0)
@@ -1936,7 +1939,7 @@ func TestFilesSweepRemovesItsOwnOnly(t *testing.T) {
 	}
 	var want []string
 	for _, l := range strings.Split(before, "\n") {
-		if !regexp.MustCompile(`/\.hataori-[179] `).MatchString(l) {
+		if !regexp.MustCompile(`/\.hataori-[179] |/begun `).MatchString(l) {
 			want = append(want, l)
 		}
 	}
@@ -1944,7 +1947,7 @@ func TestFilesSweepRemovesItsOwnOnly(t *testing.T) {
 	if strings.Count(log, "it stays") != 5 || !strings.Contains(log, "notes/.hataori-8") {
 		t.Errorf("logged %s", log)
 	}
-	if strings.Count(log, "may be where it was moved to") != 1 || !strings.Contains(log, "path=gone/deeper/new.md own=.hataori-5") {
+	if strings.Count(log, "may be where it was moved to") != 2 || !strings.Contains(log, "path=gone/deeper/new.md own=.hataori-5") {
 		t.Errorf("logged of a directory that is not there: %s", log)
 	}
 	if strings.Count(log, "cannot be settled") != 3 || !strings.Contains(log, `level=ERROR msg="a supervisor's writes cannot be settled" dir=`+filepath.Join(f.root, "gone")) {
@@ -1985,9 +1988,10 @@ func TestFilesSweepTellsWhenInDoubt(t *testing.T) {
 		name, was string
 		there     func(t *testing.T, f *filesFixture)
 		told      bool
-		own       string // "whole" or "half" for its own file; "" for none
+		own       string // "whole" or "half" for its own file, "linked" for another name of what is there; "" for none
 	}{
 		{"its own file, and another text", "old", person, false, "whole"},
+		{"its own file, which is what is there", "old", func(t *testing.T, f *filesFixture) { put(t, f.dir, at, "new") }, true, "linked"},
 		{"its own file, and nothing any more", "old", func(*testing.T, *filesFixture) {}, false, "whole"},
 		{"its own file, and nothing, of a new file", "", func(*testing.T, *filesFixture) {}, false, "whole"},
 		{"its own file, and another's, of a new file", "", person, true, "whole"},
@@ -2017,7 +2021,11 @@ func TestFilesSweepTellsWhenInDoubt(t *testing.T) {
 			f.sql(t, fmt.Sprintf(`INSERT INTO supervisor_writes (scope, thread, dir, path, tmp, was, version, there, pos) VALUES ('c1', %d, '%s', '%s', '.hataori-1', '%s', '%s', 0, 0)`,
 				filesConv, f.dir, at, was, versionOf("new")))
 			before := f.tree(t)
-			if c.own != "" {
+			if c.own == "linked" {
+				if err := os.Link(filepath.Join(f.dir, at), filepath.Join(f.dir, ".hataori-1")); err != nil {
+					t.Fatal(err)
+				}
+			} else if c.own != "" {
 				put(t, f.dir, ".hataori-1", "new")
 			}
 			if c.own == "half" {
