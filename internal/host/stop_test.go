@@ -2,6 +2,7 @@ package host
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -119,5 +120,53 @@ func TestStopFindsNoSocketFile(t *testing.T) {
 	// reporting success.
 	if _, err := Stop(filepath.Join(t.TempDir(), "none"), time.Second, time.Second); err == nil {
 		t.Fatal("Stop without a host succeeded")
+	}
+}
+
+// A host that ends removes its socket and then records the end. A Stop that
+// falls between the two finds neither, and still answers with the end.
+func TestStopWhileTheEndIsRecorded(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, s string) {
+		t.Helper()
+		if err := writeFile(filepath.Join(dir, name), s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A host that runs, with no socket; it records its end once Stop, which
+	// has found none, has looked whether it runs.
+	pid := filepath.Join(dir, HostPIDFile)
+	if err := syscall.Mkfifo(pid, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		f, err := os.OpenFile(pid, os.O_WRONLY, 0) // until Stop reads it
+		if err != nil {
+			return // Stop did not read it
+		}
+		self := strconv.Itoa(os.Getpid())
+		if err := errors.Join(writeFile(pid+".new", self), os.Rename(pid+".new", pid)); err != nil { // for its later reads
+			t.Error(err)
+		}
+		f.WriteString(self)
+		f.Close()
+		time.Sleep(50 * time.Millisecond)
+		writeStatus(dir, Status{Exited: true, Stopped: true})
+	}()
+	r, err := Stop(dir, time.Second, time.Second)
+	if err != nil || !r.Already || !r.Status.Stopped {
+		t.Fatalf("stop as the end is recorded: %+v, %v", r, err)
+	}
+
+	// One that went without recording its end records none any more.
+	gone := exec.Command(os.Args[0], "role", "exit", "0")
+	if err := gone.Run(); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(filepath.Join(dir, StatusFile))
+	write(HostPIDFile, strconv.Itoa(gone.Process.Pid))
+	from := time.Now()
+	if _, err := Stop(dir, time.Second, time.Second); err == nil || time.Since(from) > endingWait/2 {
+		t.Fatalf("stop with a host that is gone: %v after %v, want an error at once", err, time.Since(from))
 	}
 }

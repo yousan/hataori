@@ -2,6 +2,7 @@ package host
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -186,7 +188,7 @@ type StopResult struct {
 // Relay.
 func Stop(stateDir string, interrupt, terminate time.Duration) (StopResult, error) {
 	var r StopResult
-	c, err := Dial(stateDir)
+	c, err := dialOrEnd(stateDir)
 	if err == nil {
 		resp, cerr := c.call(request{Op: "stop", Interrupt: interrupt, Terminate: terminate})
 		c.Close()
@@ -208,6 +210,41 @@ func Stop(stateDir string, interrupt, terminate time.Duration) (StopResult, erro
 	}
 	r.Status, _, err = ReadStatus(stateDir)
 	return r, err
+}
+
+// endingWait bounds how long a Stop that finds no socket waits for a host
+// that runs: one that ends removes its socket and then records the end.
+const endingWait = 5 * time.Second
+
+// dialOrEnd is Dial for a Stop. It returns Dial's error once the end of the
+// command is recorded, or no host runs that could still record it. A host
+// between removing its socket and recording the end is waited for, and so is
+// one that is starting and does not listen yet.
+func dialOrEnd(stateDir string) (*Client, error) {
+	deadline := time.Now().Add(endingWait)
+	for {
+		runs := hostRuns(stateDir) // before the status is read: it records the end before it goes
+		c, err := Dial(stateDir)
+		if err == nil || !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ECONNREFUSED) {
+			return c, err
+		}
+		if _, ok, _ := ReadStatus(stateDir); ok || !runs || time.Now().After(deadline) {
+			return nil, err
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// hostRuns reports whether the process that recorded itself as the host of
+// stateDir exists. It does not take the host's lock, which could make a host
+// that is starting give up.
+func hostRuns(stateDir string) bool {
+	b, err := os.ReadFile(filepath.Join(stateDir, HostPIDFile))
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(string(bytes.TrimSpace(b)))
+	return err == nil && pid > 1 && !errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
 }
 
 // isGoneError reports whether err means the host closed the connection
