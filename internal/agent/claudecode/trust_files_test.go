@@ -525,6 +525,7 @@ func TestFileLineShapes(t *testing.T) {
 		{"a and b (runs commands) (sets environment variables)", nil},
 		{"a (it matters) and b", nil},
 		{"a (runs commands and b", nil},
+		{"a(b)", nil},
 		{"a(runs commands) and b", nil},
 		{"(runs commands) and b", nil},
 		{"a  and b (runs commands). c", nil},
@@ -636,6 +637,7 @@ func TestHooksWarningShapes(t *testing.T) {
 		{"⚠ This folder configures something else in .claude/settings.json", ".claude/settings.json.", nil},
 		{hooksWarning + ".claude/settings.json Trusting this folder loads", ".claude/settings.json.", nil},
 		{hooksWarning + ".claude/settings.json,,", ".claude/settings.json (runs commands).", nil},
+		{hooksWarning + ".claude/settings.json (runs commands)", ".claude/settings.json (runs commands).", nil},
 		{hooksWarning + ".claude/settings.json and .claude/settings.local.json", ".claude/settings.json and .claude/settings.local.json (runs commands).",
 			[]string{".claude/settings.json", ".claude/settings.local.json"}},
 	} {
