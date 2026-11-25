@@ -690,6 +690,10 @@ type checker struct {
 	n    int    // scratch repositories made
 	// noTree is an empty directory, made when it is first needed (emptyTree).
 	noTree string
+	// parts are the git directories find found that have a common directory:
+	// those of linked worktrees, what is left of one, and repositories with a
+	// commondir.
+	parts []string
 	// trees and gitDirs are the work trees and the git directories find
 	// returned; the git directory of a work tree is its .git.
 	trees, gitDirs map[string]bool
@@ -734,6 +738,16 @@ func (c *checker) run() error {
 			return err
 		}
 	}
+	// Those of a repository's linked worktrees refused above. No other is one
+	// that git makes, and nothing here looks at what its HEAD and the refs of
+	// its common directory, which may be a repository only with it, name.
+	if len(c.parts) > 0 {
+		r := &Refusal{Reason: Worktree, Detail: "a git directory with a commondir"}
+		if rel, _ := filepath.Rel(c.top, c.parts[0]); rel != ".git" && rel != "." {
+			r.Repo, r.Kind = rel, "nested bare repository"
+		}
+		return r
+	}
 	for i, rp := range repos {
 		if err := c.commits(readers[i], rp); err != nil {
 			return err
@@ -762,7 +776,7 @@ func (c *checker) find() ([]repo, error) {
 			return c.unreadable(p, err)
 		}
 		if p == c.top {
-			return nil
+			return c.part(p, nil)
 		}
 		dir := filepath.Dir(p)
 		rel, _ := filepath.Rel(c.top, dir)
@@ -775,11 +789,15 @@ func (c *checker) find() ([]repo, error) {
 			repos = append(repos, repo{dir: dir, rel: rel, kind: "submodule"})
 		case d.IsDir():
 			if !isGitDir(p) {
-				return nil
+				in := enclosing(gitDirs, p)
+				return c.part(p, refsLook(in, p))
 			}
 			in := enclosing(gitDirs, p)
 			if in != "" && c.onlyRefs(in, p) {
 				return nil
+			}
+			if err := c.part(p, nil); err != nil {
+				return err
 			}
 			gitDirs = append(gitDirs, p)
 			if in != "" && within(p, filepath.Join(in, "modules")) {
@@ -793,6 +811,7 @@ func (c *checker) find() ([]repo, error) {
 		if d.IsDir() && d.Name() == ".git" {
 			gitDirs = append(gitDirs, p)
 			roots = append(roots, p)
+			return c.part(p, nil)
 		}
 		return nil
 	})
@@ -869,6 +888,68 @@ func isGitDir(p string) bool {
 	objects, err2 := os.Lstat(filepath.Join(p, "objects"))
 	link := func(st fs.FileInfo) bool { return st.Mode().Type() == fs.ModeSymlink }
 	return err1 == nil && err2 == nil && (head.Mode().IsRegular() || link(head)) && (objects.IsDir() || link(objects))
+}
+
+// refsLook is how the files of the directory p look if they are refs or reflogs
+// of the git directory in, or nil where none are.
+func refsLook(in, p string) *regexp.Regexp {
+	for name, look := range map[string]*regexp.Regexp{"refs": refFile, "logs": reflogStart} {
+		if dir := filepath.Join(in, name); in != "" && (p == dir || within(p, dir)) {
+			return look
+		}
+	}
+	return nil
+}
+
+// part adds p to the parts if it is one.
+func (c *checker) part(p string, look *regexp.Regexp) error {
+	part, err := c.isPart(p, look)
+	if part {
+		c.parts = append(c.parts, p)
+	}
+	return err
+}
+
+// isPart reports whether p is a git directory whose objects and refs git takes
+// from another, its common directory: with HEAD and a commondir. Objects and
+// refs of its own are not looked at then. The common directory may be gone for
+// now. Among refs or reflogs, which may have either name, p is none if its
+// commondir has their look and does not lead to objects.
+func (c *checker) isPart(p string, look *regexp.Regexp) (bool, error) {
+	if head, err := os.Lstat(filepath.Join(p, "HEAD")); missing(err) || err == nil && head.IsDir() {
+		return false, nil
+	} else if err != nil {
+		return false, c.unreadable(filepath.Join(p, "HEAD"), err)
+	}
+	file := filepath.Join(p, "commondir")
+	if fi, err := os.Lstat(file); missing(err) || err == nil && fi.IsDir() {
+		return false, nil
+	} else if err != nil {
+		return false, c.unreadable(file, err)
+	}
+	if fi, err := os.Stat(file); err != nil {
+		return false, c.unreadable(file, err)
+	} else if !fi.Mode().IsRegular() {
+		return false, c.unreadable(file, errors.New("not a file"))
+	}
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return false, c.unreadable(file, err)
+	}
+	if look == nil || !look.Match(b) {
+		return true, nil
+	}
+	common, _, _ := strings.Cut(strings.TrimRight(string(b), "\r\n"), "\x00")
+	if !filepath.IsAbs(common) {
+		common = p + "/" + common
+	}
+	_, err = os.Stat(common + "/objects")
+	if missing(err) || errors.Is(err, syscall.ENAMETOOLONG) {
+		return false, nil
+	} else if err != nil {
+		return false, c.unreadable(common+"/objects", err)
+	}
+	return true, nil
 }
 
 // onlyRefs reports whether p, in the git directory in, is below its refs or
@@ -1091,8 +1172,26 @@ func (c *checker) leftover(g *reader, rp repo) error {
 	return c.worktrees(g, rp)
 }
 
-// worktrees refuses a linked worktree, whose files are elsewhere.
+// worktrees refuses a linked worktree, whose files are elsewhere, and a
+// repository with a common directory: find does not see one whose git
+// directory is outside the workspace, behind a .git that is a link or a file.
 func (c *checker) worktrees(g *reader, rp repo) error {
+	var dirs [2]string
+	for i, arg := range []string{"--absolute-git-dir", "--git-common-dir"} {
+		dir, err := g.line(c.ctx, "rev-parse", arg)
+		if err != nil {
+			return err
+		}
+		if !filepath.IsAbs(dir) {
+			dir = filepath.Join(g.dir, dir)
+		}
+		if dirs[i], err = filepath.EvalSymlinks(dir); err != nil {
+			return c.unreadable(dir, err)
+		}
+	}
+	if dirs[0] != dirs[1] {
+		return c.refuse(rp, Worktree, "a git directory with a commondir")
+	}
 	worktrees, err := g.gitPath(c.ctx, "worktrees")
 	if err != nil {
 		return err
