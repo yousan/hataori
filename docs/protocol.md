@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.39**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.40**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -636,6 +636,17 @@ Where a thread is shown: one conversation of one client; since 3.0. A thread has
 | `channel` | string | required | opaque; for chat, a channel |
 | `thread` | string | required | opaque; for chat, the chat thread |
 
+### Type `ThreadLink`
+
+A link of a thread: a `LinkRef`, and who opened the conversation; since 3.40. Until then the links of a thread were a `LinkRef` each.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `client` | string | required | as in `LinkRef` |
+| `channel` | string | required | as in `LinkRef` |
+| `thread` | string | required | as in `LinkRef` |
+| `opened` | boolean | optional | the client opened the conversation; absent for one that was there before the link, as one that a `Link` or a `Start` named. Nothing archives, renames or closes such a conversation ([design section 5.2](design/overview.md#52-chat-front-end-and-surface-driver)). Of the links made before 3.40, the first of each thread has it and no other |
+
 ### Type `Filter`
 
 A field left empty matches everything the caller may see. A `thread`, or the thread of a `link`, in a scope the caller may not see is read as a thread that does not exist: the answer is the same, and does not name that scope.
@@ -732,7 +743,7 @@ One file the owner let through with `Trust`; since 3.28.
 |---|---|---|---|
 | `id` | integer | required | the thread's number, unique in the instance; since 3.0, before it a `{scope, key}` object beside `number` |
 | `scope` | string | required | the scope it belongs to; since 3.0 |
-| `links` | [`LinkRef`] | required | where it is shown, the first link first; empty for a thread from before 3.0 whose scope is no longer in the config; since 3.0 |
+| `links` | [`ThreadLink`] | required | where it is shown, the first link first; empty for a thread from before 3.0 whose scope is no longer in the config; since 3.0 |
 | `title` | string | optional | from the first line of the first prompt; text; absent for a caller that may not read text, and when it is empty; optional since 2.0, required before |
 | `name` | string | optional | the chat thread's own name as the chat service shows it, of the thread's first link (`SetName`), which follows a rename; text; absent for a caller that may not read text, and when none is known; since 3.7 |
 | `repo` | string | required | the repository of its workspace |
@@ -760,7 +771,7 @@ The fields of `ThreadInfo`, and:
 |---|---|---|---|
 | `id` | integer | required | as in `ThreadInfo` |
 | `scope` | string | required | as in `ThreadInfo` |
-| `links` | [`LinkRef`] | required | as in `ThreadInfo` |
+| `links` | [`ThreadLink`] | required | as in `ThreadInfo` |
 | `title` | string | optional | as in `ThreadInfo` |
 | `name` | string | optional | as in `ThreadInfo` |
 | `repo` | string | required | as in `ThreadInfo` |

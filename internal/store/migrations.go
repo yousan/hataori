@@ -735,6 +735,18 @@ var migrations = []Migration{
 		)`,
 		`CREATE INDEX waiting_inputs_thread ON waiting_inputs (thread_id, id)`,
 	)},
+	// Whether the link's client opened its conversation: 1, or 0 for one
+	// that was there before the link (#870). Of the links made before this
+	// step, a thread's first one counts as opened, and no other does: what
+	// opened it was not recorded. An archive written for one that does not
+	// count, and not sent yet, is dropped.
+	{Name: "links.opened", Up: execAll(
+		`ALTER TABLE links ADD COLUMN opened INTEGER NOT NULL DEFAULT 0`,
+		`UPDATE links SET opened = 1 WHERE id IN (SELECT min(id) FROM links GROUP BY thread_id)`,
+		`UPDATE chat_outbox SET state = 'dropped' WHERE state = 'pending'
+			AND CASE WHEN json_valid(message) THEN json_extract(message, '$.op') END = 'archive'
+			AND link IN (SELECT id FROM links WHERE opened = 0)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

@@ -25,14 +25,15 @@ var GoldenDir = filepath.Join("testdata", "protocol", Version)
 const sumsFile = "testdata/protocol/SUMS"
 
 var (
-	exampleTime = time.Date(2026, 1, 2, 3, 4, 5, 678000000, time.UTC)
-	exampleID   = control.ThreadID(7)
-	exampleLink = control.LinkRef{Client: "discord", Channel: "C0123", Thread: "T0456"}
-	exampleInfo = control.ThreadInfo{ID: exampleID, Scope: "C0123", Links: []control.LinkRef{exampleLink}, Title: "Fix the build", Name: "Build fix, take two", Repo: "https://example.com/repo.git",
+	exampleTime     = time.Date(2026, 1, 2, 3, 4, 5, 678000000, time.UTC)
+	exampleID       = control.ThreadID(7)
+	exampleLink     = control.LinkRef{Client: "discord", Channel: "C0123", Thread: "T0456"}
+	exampleAttached = control.LinkRef{Client: "discord", Channel: "C0123", Thread: "T0400"}
+	exampleInfo     = control.ThreadInfo{ID: exampleID, Scope: "C0123", Links: []control.ThreadLink{{LinkRef: exampleLink, Opened: true}, {LinkRef: exampleAttached}}, Title: "Fix the build", Name: "Build fix, take two", Repo: "https://example.com/repo.git",
 		State: control.Running, StartedBy: "webhook:W1", Created: exampleTime, Updated: exampleTime,
 		Agent: "claude-code", Model: "opus", Effort: "high", Turns: 12, Last: "Running the tests...", Background: 1,
 		Context: &control.Context{Used: 45000, Size: 200000}, Tokens: &control.TokenCount{Turn: 2450, Today: 98000}, Terminal: "/dev/pts/3", Kind: control.KindOrdinary}
-	exampleConfined = control.ThreadInfo{ID: 2, Scope: "C0123", Links: []control.LinkRef{{Client: "discord", Channel: "C0123", Thread: "T0455"}}, Title: "Supervisor of this channel",
+	exampleConfined = control.ThreadInfo{ID: 2, Scope: "C0123", Links: []control.ThreadLink{{LinkRef: control.LinkRef{Client: "discord", Channel: "C0123", Thread: "T0455"}, Opened: true}}, Title: "Supervisor of this channel",
 		State: control.Idle, StartedBy: "owner", Created: exampleTime, Updated: exampleTime, Confined: true, Kind: control.KindSupervisor}
 )
 

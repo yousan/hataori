@@ -172,7 +172,11 @@ func (f *FrontEnd) show(ctx context.Context) error {
 			}
 			rows = everyLink(append(append(r.track(e), rows...), r.subagents(e)...), convs)
 			rows = append(rows, f.mirrorRows(e, convs)...)
-			rows = append(rows, f.archiveRows(e, convs)...)
+			ar, err := f.archiveRows(ctx, e, convs)
+			if err != nil {
+				return err
+			}
+			rows = append(rows, ar...)
 			wr, err := f.waitsRows(ctx, e, convs)
 			if err != nil {
 				return err

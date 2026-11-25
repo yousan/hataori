@@ -18,10 +18,15 @@ export interface LinkRef {
   thread: string;
 }
 
+// ThreadLink is a link of a thread, and whether its client opened the conversation (protocol 3.40).
+export interface ThreadLink extends LinkRef {
+  opened?: boolean;
+}
+
 export interface ThreadInfo {
   id: ThreadID;
   scope: string;
-  links: LinkRef[];
+  links: ThreadLink[];
   title?: string; // left out when empty, and for a caller that may not read text (protocol 2.0)
   name?: string; // the chat thread's own name, following a rename; text, so left out the same way (protocol 3.7)
   repo: string;

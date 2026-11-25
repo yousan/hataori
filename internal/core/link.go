@@ -44,7 +44,8 @@ func (a *api) Link(ctx context.Context, id control.ThreadID, l control.LinkRef) 
 	defer a.c.locks.lock("link:" + l.Client + "\x00" + l.Channel)()
 	db := a.c.Store.DB
 	// A conversation that was there before: what was written in it until
-	// now was written with no link, and is no input (since).
+	// now was written with no link, and is no input (since). Its client did
+	// not open it for this link (opened).
 	there := l.Thread != ""
 	if there {
 		var other int64
@@ -99,8 +100,8 @@ func (a *api) Link(ctx context.Context, id control.ThreadID, l control.LinkRef) 
 	if !there {
 		since = 0
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO links (thread_id, client, channel, thread, made_by, created_at, since) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		int64(id), l.Client, l.Channel, l.Thread, string(a.caller.Principal), now, since); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO links (thread_id, client, channel, thread, made_by, created_at, since, opened) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		int64(id), l.Client, l.Channel, l.Thread, string(a.caller.Principal), now, since, !there); err != nil {
 		return control.LinkRef{}, fmt.Errorf("core: link thread %d: %w", id, err)
 	}
 	a.c.Log.Info("thread linked", "thread", int64(id), "client", l.Client, "channel", l.Channel, "conversation", l.Thread,

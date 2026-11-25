@@ -177,7 +177,7 @@ func (a *api) TakeIn(ctx context.Context, req control.TakeInRequest) (control.Th
 			}
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO links (thread_id, client, channel, thread, made_by, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		if _, err := tx.ExecContext(ctx, `INSERT INTO links (thread_id, client, channel, thread, made_by, created_at, opened) VALUES (?, ?, ?, ?, ?, ?, 1)`,
 			thread, link.Client, link.Channel, link.Thread, string(a.caller.Principal), now); err != nil {
 			return fmt.Errorf("core: create thread: link %s %s %s: %w", link.Client, link.Channel, link.Thread, err)
 		}

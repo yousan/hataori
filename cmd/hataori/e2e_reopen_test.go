@@ -443,20 +443,36 @@ func TestReopenARemovedThreadAfterThePurge(t *testing.T) {
 
 // A chat thread archived while its thread was closed is open again after
 // a reopen, also in a scope that does not archive: there the chat service
-// archived it.
+// archived it. So is one that was there before its link, which only the
+// chat service archives (#870).
 func TestReopenUnarchivesTheChatThread(t *testing.T) {
 	for _, on := range []bool{true, false} {
 		r := newReopenRoot(t, func(cfg map[string]any) {
 			cfg["scopes"].([]map[string]any)[0]["archive_when_asleep"] = on
 		})
-		th, num, _ := r.closed(t, 0, "first")
+		th, _, _ := r.idleThread(t, 0, "first")
+		there := surface.Conversation{Channel: c1.Channel, Thread: "was-there"}
+		r.attachThere(t, th, there)
+		num := numberOf(t, r.root, th)
+		if code, _, errOut := cli(t, "close", "--root", r.root, num); code != 0 {
+			t.Fatalf("hataori close: %d %q", code, errOut)
+		}
+		byService := []surface.Conversation{there}
 		if on {
 			eventually(t, "the chat thread archived", r.within(10*time.Second), func() bool { return r.driver.Archived(th) })
-		} else if err := r.driver.SetThread(t.Context(), th, surface.ThreadMeta{Archived: true}); err != nil { // as the service does
-			t.Fatal(err)
+		} else {
+			byService = append(byService, th)
+		}
+		for _, conv := range byService {
+			if r.driver.Archived(conv) {
+				t.Fatalf("option %v: %v is archived by the close", on, conv)
+			}
+			if err := r.driver.SetThread(t.Context(), conv, surface.ThreadMeta{Archived: true}); err != nil { // as the service does
+				t.Fatal(err)
+			}
 		}
 		r.reopen(t, num)
-		eventually(t, "the chat thread open again", r.within(10*time.Second), func() bool { return !r.driver.Archived(th) })
+		eventually(t, "the chat threads open again", r.within(10*time.Second), func() bool { return !r.driver.Archived(th) && !r.driver.Archived(there) })
 	}
 }
 

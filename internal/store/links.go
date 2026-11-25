@@ -125,7 +125,7 @@ func linkThreads(ctx context.Context, tx *sql.Tx, clients map[string]string, sin
 			unlinked = append(unlinked, fmt.Sprintf("store: thread %d gets no link: its scope %q is not in the config", t.id, t.scope))
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO links (thread_id, client, channel, thread, made_by, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		if _, err := tx.ExecContext(ctx, `INSERT INTO links (thread_id, client, channel, thread, made_by, created_at, opened) VALUES (?, ?, ?, ?, ?, ?, 1)`,
 			t.id, client, t.scope, t.key, t.startedBy, t.created); err != nil {
 			return nil, fmt.Errorf("thread %d: %w", t.id, err)
 		}

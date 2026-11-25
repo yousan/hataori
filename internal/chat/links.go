@@ -134,12 +134,24 @@ func (f *FrontEnd) convOf(ctx context.Context, id control.ThreadID) (surface.Con
 // no such link here. It reads the links as they
 // are now, so a link made since, by any client, is seen at once.
 func (f *FrontEnd) convsOf(ctx context.Context, id control.ThreadID) ([]surface.Conversation, error) {
+	return f.linkedConvs(ctx, id, "")
+}
+
+// openedConvsOf returns those of convsOf that this front end's client
+// opened: the only ones hataori archives, renames or closes (design,
+// section 5.2, "A link says who opened its conversation").
+func (f *FrontEnd) openedConvsOf(ctx context.Context, id control.ThreadID) ([]surface.Conversation, error) {
+	return f.linkedConvs(ctx, id, " AND l.opened = 1")
+}
+
+// linkedConvs is convsOf, of the links that meet the condition and too.
+func (f *FrontEnd) linkedConvs(ctx context.Context, id control.ThreadID, and string) ([]surface.Conversation, error) {
 	scopes := f.scopeList()
 	if len(scopes) == 0 {
 		return nil, nil
 	}
 	q := `SELECT l.channel, l.thread, t.scope FROM links l JOIN threads t ON t.id = l.thread_id
-		WHERE l.thread_id = ? AND l.client = ? AND t.scope IN (?` + strings.Repeat(", ?", len(scopes)-1) + `) ORDER BY l.id`
+		WHERE l.thread_id = ? AND l.client = ? AND t.scope IN (?` + strings.Repeat(", ?", len(scopes)-1) + `)` + and + ` ORDER BY l.id`
 	args := []any{int64(id), f.Name}
 	for _, sc := range scopes {
 		args = append(args, sc)

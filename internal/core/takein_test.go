@@ -113,7 +113,7 @@ func TestTakeInMakesTheThread(t *testing.T) {
 		t.Fatalf("thread %q %q %v %q, session %q %q", scope, workspace, foreign, title, agentName, sid)
 	}
 	var links int
-	f.core.Store.DB.QueryRow(`SELECT count(*) FROM links WHERE thread_id = ? AND client = 'chat' AND channel = 's' AND thread = 'took'`, int64(id)).Scan(&links)
+	f.core.Store.DB.QueryRow(`SELECT count(*) FROM links WHERE thread_id = ? AND client = 'chat' AND channel = 's' AND thread = 'took' AND opened = 1`, int64(id)).Scan(&links)
 	if links != 1 || f.runner.Calls() != "take in sess-1" {
 		t.Fatalf("%d first links; runner: %s", links, f.runner.Calls())
 	}

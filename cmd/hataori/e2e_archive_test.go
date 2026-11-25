@@ -151,6 +151,89 @@ func TestArchiveWhenClosed(t *testing.T) {
 	eventually(t, "the chat thread archived", r.within(10*time.Second), func() bool { return r.driver.Archived(th) })
 }
 
+// attachThere has the owner use /attach for th's thread in the chat thread
+// there, which was there before, and waits for the link.
+func (r *chatRoot) attachThere(t *testing.T, th, there surface.Conversation) {
+	t.Helper()
+	num := numberOf(t, r.root, th)
+	r.driver.InjectCommand(there, fakesurface.Person(e2eOwner), "attach", surface.Arg{Name: "number", Value: num})
+	eventually(t, "the link of the chat thread that was there", r.within(10*time.Second), func() bool {
+		n := 0
+		r.db(t).QueryRow(`SELECT count(*) FROM links WHERE thread_id = ? AND channel = ? AND thread = ?`, num, there.Channel, there.Thread).Scan(&n)
+		return n == 1
+	})
+}
+
+// leftAlone checks that the driver was never asked to set anything of the
+// chat thread there (its archived flag or its title), and that nothing
+// waits to ask it.
+func (r *chatRoot) leftAlone(t *testing.T, there surface.Conversation) {
+	t.Helper()
+	var rows int
+	if err := r.db(t).QueryRow(`SELECT count(*) FROM chat_outbox WHERE channel = ? AND thread = ?
+		AND json_extract(message, '$.op') IN ('archive', 'unarchive')`, there.Channel, there.Thread).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if calls := r.setThreads(there); rows != 0 || len(calls) != 0 {
+		t.Fatalf("the chat thread that was there: set-thread calls %v and %d outbox rows, want none", calls, rows)
+	}
+}
+
+// The criteria of #870: with the option on, a thread shown in the chat
+// thread that was opened for it and in one that was there, where /attach
+// was used, has the first archived when it goes asleep and when it is
+// closed, and un-archived when it is woken, also after a restart. The
+// second is left as it is, all the way to the thread's removal.
+func TestArchiveLeavesAChatThreadThatWasThere(t *testing.T) {
+	r := archiveRoot(t, true, "1s")
+	stop := runDaemon(t, r.root)
+	r.connected(t)
+	r.driver.Inject(c1, fakesurface.Webhook(e2eHook), "!go repo:"+bareRepo(t)+" reply a")
+	th := r.thread(t, 0)
+	r.posted(t, th, "a")
+	there := surface.Conversation{Channel: c1.Channel, Thread: "was-there"}
+	r.attachThere(t, th, there)
+	num := numberOf(t, r.root, th)
+	r.asleepAndArchived(t, th)
+	r.leftAlone(t, there)
+
+	// Woken in the chat thread that was there: the other one, which nobody
+	// wrote in, is un-archived first.
+	r.driver.Inject(there, fakesurface.Person(e2eOwner), "reply b")
+	r.posted(t, there, "b")
+	r.unarchivedFirst(t, th, "b")
+	r.asleepAndArchived(t, th)
+	r.leftAlone(t, there)
+
+	stop()
+	stop = runDaemon(t, r.root)
+	defer stop()
+	r.connected(t)
+	r.driver.Inject(there, fakesurface.Person(e2eOwner), "reply c")
+	r.posted(t, there, "c")
+	r.unarchivedFirst(t, th, "c")
+	r.asleepAndArchived(t, th)
+	r.leftAlone(t, there)
+
+	// Closed, and removed. A close of an asleep thread archives again.
+	n := len(r.setThreads(th))
+	for _, verb := range []string{"close", "remove"} {
+		if code, _, errOut := cli(t, verb, "--root", r.root, num); code != 0 {
+			t.Fatalf("%s: %d %s", verb, code, errOut)
+		}
+	}
+	eventually(t, "the chat thread archived by the close", r.within(10*time.Second), func() bool {
+		s := r.setThreads(th)
+		return len(s) > n && s[len(s)-1]
+	})
+	eventually(t, "the outbox to be empty", r.within(10*time.Second), func() bool {
+		n := -1
+		r.db(t).QueryRow(`SELECT count(*) FROM chat_outbox WHERE state = 'pending'`).Scan(&n)
+		return n == 0 && r.state(t, th) == string(control.Removed)
+	})
+	r.leftAlone(t, there)
+}
+
 // With the option off (the default), and with the option on but a driver
 // that cannot set a thread's flags, an asleep thread's chat thread is left
 // open.

@@ -310,6 +310,61 @@ func TestLinksSinceOnUpgrade(t *testing.T) {
 		[]string{"t1|0|", "t2|0|", "attached|30|", "attached too|40|", "opened|50|"})
 }
 
+// Of the links made before links.opened, a thread's first one counts as
+// opened by its client and no other one does, whichever client's it is. An
+// archive of a chat thread that does not count, which was written and not
+// sent yet, is dropped; no other row of the outbox changes (#870).
+func TestLinksOpenedOnUpgrade(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "db")
+	step := slices.IndexFunc(migrations, func(m Migration) bool { return m.Name == "links.opened" })
+	if step < 0 {
+		t.Fatal("no step links.opened")
+	}
+	s, err := open(ctx, path, migrations[:step])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO threads (id, scope, key, started_by, state, created_at, updated_at) VALUES (1, 's', 't1', 'owner', 'idle', 0, 0),
+			(2, 's', 't2', 'owner', 'closed', 0, 0), (3, 's', 't3', 'owner', 'removed', 0, 0), (4, 's', 't4', 'owner', 'idle', 0, 0)`,
+		// The links' times and since say nothing of which was first; thread
+		// 3's first link is of another client, and thread 4 has none.
+		`INSERT INTO links (id, thread_id, client, channel, thread, created_at, since) VALUES (1, 1, 'chat', 's', 't1', 90, 0), (2, 2, 'chat', 's', 't2', 80, 80),
+			(3, 1, 'chat', 's', 'attached', 30, 30), (4, 2, 'chat', 's', 'attached too', 40, 40), (5, 1, 'chat', 'c9', 'opened', 50, 0),
+			(6, 1, 'two', 'd1', 'x1', 60, 0), (7, 3, 'two', 'd1', 'x2', 70, 0), (8, 3, 'chat', 's', 't3', 75, 0)`,
+		`INSERT INTO chat_outbox (id, client, event, part, channel, thread, message, state, created_at, link) VALUES
+			(1, 'chat', 1, 1, 's', 't1', '{"op":"archive"}', 'pending', 0, 1),
+			(2, 'chat', 1, 1, 's', 'attached', '{"op":"archive"}', 'pending', 0, 3),
+			(3, 'chat', 2, 1, 's', 'attached', '{"op":"unarchive"}', 'pending', 0, 3),
+			(4, 'chat', 3, 1, 's', 'attached', '{"op":"archive"}', 'sent', 0, 3),
+			(5, 'chat', 4, 1, 's', 'attached', '{"op":"archive"}', 'dropped', 0, 3),
+			(6, 'chat', 5, 1, 's', 'attached', '{"message":{"text":"archive"}}', 'pending', 0, 3),
+			(7, 'chat', 6, 1, 's', 'attached', 'no JSON', 'pending', 0, 3),
+			(8, 'two', 7, 1, 'd1', 'x2', '{"op":"archive"}', 'pending', 0, 7),
+			(9, 'chat', 8, 1, 's', 'elsewhere', '{"op":"archive"}', 'pending', 0, 0)`,
+	} {
+		if _, err := s.DB.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	outbox := func() []string {
+		t.Helper()
+		return dump(t, s.DB, `SELECT id, client, event, part, channel, thread, message, state, created_at, link FROM chat_outbox ORDER BY id`)
+	}
+	want := outbox()
+	want[1] = strings.Replace(want[1], "|pending|", "|dropped|", 1)
+	s.Close()
+	s, err = open(ctx, path, migrations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	sameRows(t, "links", dump(t, s.DB, `SELECT thread, opened FROM links ORDER BY id`),
+		[]string{"t1|1|", "t2|1|", "attached|0|", "attached too|0|", "opened|0|", "x1|0|", "x2|1|", "t3|0|"})
+	sameRows(t, "the outbox", outbox(), want)
+}
+
 // Of the threads from before threads.kind, those started confined are their
 // scope's supervisor's own and the others ordinary; nothing else of any row
 // changes (#867).
