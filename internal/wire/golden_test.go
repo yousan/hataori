@@ -31,9 +31,9 @@ var (
 	exampleInfo = control.ThreadInfo{ID: exampleID, Scope: "C0123", Links: []control.LinkRef{exampleLink}, Title: "Fix the build", Name: "Build fix, take two", Repo: "https://example.com/repo.git",
 		State: control.Running, StartedBy: "webhook:W1", Created: exampleTime, Updated: exampleTime,
 		Agent: "claude-code", Model: "opus", Effort: "high", Turns: 12, Last: "Running the tests...", Background: 1,
-		Context: &control.Context{Used: 45000, Size: 200000}, Tokens: &control.TokenCount{Turn: 2450, Today: 98000}, Terminal: "/dev/pts/3"}
+		Context: &control.Context{Used: 45000, Size: 200000}, Tokens: &control.TokenCount{Turn: 2450, Today: 98000}, Terminal: "/dev/pts/3", Kind: control.KindOrdinary}
 	exampleConfined = control.ThreadInfo{ID: 2, Scope: "C0123", Links: []control.LinkRef{{Client: "discord", Channel: "C0123", Thread: "T0455"}}, Title: "Supervisor of this channel",
-		State: control.Idle, StartedBy: "owner", Created: exampleTime, Updated: exampleTime, Confined: true}
+		State: control.Idle, StartedBy: "owner", Created: exampleTime, Updated: exampleTime, Confined: true, Kind: control.KindSupervisor}
 )
 
 // eventData is an example of every event kind's data.
@@ -42,7 +42,7 @@ var eventData = map[control.EventKind]string{
 	"approval_answered": `{"request":"approval-1","allow":true,"outcome":"interrupted","target":8,"principal":"alice","from":"discord:W1","link":{"client":"discord","channel":"C0123","thread":"T0456"},"via":"dashboard"}`,
 	"proposal_made":     `{"action":"send","agent":"claude-code","effort":"high","from":"supervisor:C0123","model":"opus","number":3,"principal":"sv1","question":"request-1","repo":"https://example.com/repo.git","research":true,"request":"proposal-1","target":8,"text":"Run the tests."}`,
 	"proposal_answered": `{"action":"send","allow":true,"from":"discord:W1","link":{"client":"discord","channel":"C0123","thread":"T0456"},"number":3,"outcome":"failed","principal":"alice","reason":"not allowed","request":"proposal-1","target":8,"via":"dashboard"}`,
-	"thread_created":    `{"effort":"high","from":"discord:W1","model":"opus","principal":"dispatch","repo":"https://example.com/repo.git","research":true,"session":3,"thread":7,"via":"proposal"}`,
+	"thread_created":    `{"effort":"high","from":"discord:W1","kind":"ordinary","model":"opus","principal":"dispatch","repo":"https://example.com/repo.git","research":true,"session":3,"thread":7,"via":"proposal"}`,
 	"state":             `{"detail":"the folder-trust dialog names .mcp.json","from":"creating","reason":"blocked at start","session":3,"to":"failed","trust":[".mcp.json"]}`,
 	"turn_started":      `{"by":"caller","from":"discord:W1","key":"M0789","principal":"dispatch","session":3,"turn":12}`,
 	"turn_ended":        `{"background":1,"by":"caller","from":"discord:W1","outcome":"failure","principal":"dispatch","reason":"limit","session":3,"subagents":["agent_1"],"turn":12}`,

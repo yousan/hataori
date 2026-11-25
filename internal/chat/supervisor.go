@@ -23,8 +23,8 @@ import (
 // posts its final answer only, and nothing for "(quiet)"; neither does a
 // turn that answers messages to others only (#799); and a person is
 // mentioned only where the agent wrote "@<name>" (#651). The front end
-// tells such a thread by its being confined: only a supervisor's thread is
-// started confined, and a thread's confinement never changes.
+// tells such a thread by its kind, which never changes: the supervisor's
+// own, a conversation or a look-up (control.ThreadKind).
 
 // svThread is what the front end looked up about a thread.
 type svThread struct {
@@ -38,11 +38,15 @@ func (f *FrontEnd) svThread(ctx context.Context, r *reader, thread control.Threa
 	if t, ok := r.sv[thread]; ok {
 		return t, nil
 	}
-	var t svThread
-	err := f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT confined, scope FROM threads WHERE id = ?`, int64(thread)).Scan(&t.sv, &t.scope)
+	var (
+		t    svThread
+		kind control.ThreadKind
+	)
+	err := f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT kind, scope FROM threads WHERE id = ?`, int64(thread)).Scan(&kind, &t.scope)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return svThread{}, fmt.Errorf("chat: whether thread %d is a supervisor's: %w", thread, err)
 	}
+	t.sv = kind.Confined()
 	if r.sv == nil {
 		r.sv = map[control.ThreadID]svThread{}
 	}

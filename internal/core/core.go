@@ -1018,7 +1018,7 @@ func cut(s string, n int) string {
 	return s[:n]
 }
 
-const threadSelect = `SELECT id, scope, title, repo, started_by, state, created_at, updated_at, confined FROM threads`
+const threadSelect = `SELECT id, scope, title, repo, started_by, state, created_at, updated_at, confined, kind FROM threads`
 
 func scanThread(row interface{ Scan(...any) error }) (control.ThreadInfo, error) {
 	var (
@@ -1026,7 +1026,7 @@ func scanThread(row interface{ Scan(...any) error }) (control.ThreadInfo, error)
 		by, state  string
 		created, u int64
 	)
-	if err := row.Scan(&t.ID, &t.Scope, &t.Title, &t.Repo, &by, &state, &created, &u, &t.Confined); err != nil {
+	if err := row.Scan(&t.ID, &t.Scope, &t.Title, &t.Repo, &by, &state, &created, &u, &t.Confined, &t.Kind); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return t, fmt.Errorf("core: thread: %w", ErrNotFound)
 		}
@@ -1315,30 +1315,35 @@ func title(prompt string) string {
 }
 
 func (a *api) Start(ctx context.Context, r control.StartRequest) (control.ThreadID, error) {
-	return a.start(ctx, r, "")
+	return a.start(ctx, r, control.KindOrdinary, "")
 }
 
-// ErrConfinedKey is returned by Start and StartConfined when the key
-// started a thread before that is confined while the call's is not, or the
-// other way round: the thread the key names is not the one asked for.
-var ErrConfinedKey = errors.New("the key started a thread that differs in confinement")
+// ErrKindKey is returned by Start and StartConfined when the key started a
+// thread before that is of another kind than the call's: the thread the
+// key names is not the one asked for.
+var ErrKindKey = errors.New("the key started a thread of another kind")
 
-// StartConfined is Start, as caller, for a thread whose sessions all run
-// confined (design, section 7.1): with no shell, file tools only in its own
-// directory and only the MCP servers the runner gives each launch. Its
-// directory is dir, given by Workspaces.Confined instead of a clone, so
-// r.Repo must be empty: several threads may be started in one dir, one
-// after another, as a scope's supervisor threads are (design, section 7.1,
-// "Its directory and its notes"). It is not an operation of the control
-// API: only a client inside the daemon starts such a thread.
-func (c *Core) StartConfined(ctx context.Context, caller control.Caller, r control.StartRequest, dir string) (control.ThreadID, error) {
+// StartConfined is Start, as caller, for a thread of kind, one of the
+// confined ones, whose sessions all run confined (design, section 7.1):
+// with no shell, file tools only in its own directory and only the MCP
+// servers the runner gives each launch. Its directory is dir, given by
+// Workspaces.Confined instead of a clone, so r.Repo must be empty: several
+// threads may be started in one dir, as a scope's supervisor threads are
+// (design, section 7.1, "Its directory and its notes"). Of the kind
+// control.KindSupervisor none starts while another of the scope is open.
+// It is not an operation of the control API: only a client inside the
+// daemon starts such a thread, so no call sets a thread's kind.
+func (c *Core) StartConfined(ctx context.Context, caller control.Caller, r control.StartRequest, kind control.ThreadKind, dir string) (control.ThreadID, error) {
+	if !kind.Confined() {
+		return 0, fmt.Errorf("core: start in %q: a thread of kind %q is not started confined", r.Scope, kind)
+	}
 	if r.Repo != "" {
 		return 0, fmt.Errorf("core: start in %q: a confined thread has no repository", r.Scope)
 	}
 	if dir == "" {
 		return 0, fmt.Errorf("core: start in %q: a confined thread needs its directory", r.Scope)
 	}
-	return c.As(caller).(*api).start(ctx, r, dir)
+	return c.As(caller).(*api).start(ctx, r, kind, dir)
 }
 
 // ModelOf returns the model and the effort a session of agent in scope is
@@ -1358,9 +1363,9 @@ func (c *Core) ModelOf(scope, agent, model, effort string) (string, string) {
 	return cmp.Or(model, sc.Model, d.Model, model0), cmp.Or(effort, sc.Effort, d.Effort, effort0)
 }
 
-// start is Start, and StartConfined in dir when dir is set.
-func (a *api) start(ctx context.Context, r control.StartRequest, dir string) (control.ThreadID, error) {
-	confined := dir != ""
+// start is Start, and StartConfined in dir when kind is a confined one.
+func (a *api) start(ctx context.Context, r control.StartRequest, kind control.ThreadKind, dir string) (control.ThreadID, error) {
+	confined := kind.Confined()
 	if err := a.act(control.OpStart, "Start", r.Scope); err != nil {
 		return 0, err
 	}
@@ -1412,20 +1417,20 @@ func (a *api) start(ctx context.Context, r control.StartRequest, dir string) (co
 		if err != nil {
 			return id, err
 		}
-		return id, a.c.sameConfinement(ctx, id, confined)
+		return id, a.c.sameKind(ctx, id, kind)
 	}
-	if confined {
-		// A scope's confined threads share its directory, and one is open
-		// at a time: none starts while another is open, or is being
-		// reopened (ReopenThread takes the same lock).
-		defer a.c.locks.lock(confinedLock(r.Scope))()
-		other, err := openConfined(ctx, a.c.Store.DB, r.Scope, 0)
+	if kind == control.KindSupervisor {
+		// A scope's supervisor has one own thread open at a time: none
+		// starts while another is open, or is being reopened (ReopenThread
+		// takes the same lock).
+		defer a.c.locks.lock(supervisorLock(r.Scope))()
+		other, err := openSupervisor(ctx, a.c.Store.DB, r.Scope, 0)
 		if err != nil {
 			return 0, err
 		}
 		if other != 0 {
-			a.c.Log.Warn("start refused", "scope", r.Scope, "reason", "another confined thread of the scope is open", "open", int64(other))
-			return 0, fmt.Errorf("core: start in %q: thread %d, a confined thread of the scope, is open: %w", r.Scope, other, session.ErrRefused)
+			a.c.Log.Warn("start refused", "scope", r.Scope, "reason", "another supervisor's own thread of the scope is open", "open", int64(other))
+			return 0, fmt.Errorf("core: start in %q: thread %d, a supervisor's own thread of the scope, is open: %w", r.Scope, other, session.ErrRefused)
 		}
 	}
 	// Before anything is made: a stopped input opens no chat thread and
@@ -1460,8 +1465,8 @@ func (a *api) start(ctx context.Context, r control.StartRequest, dir string) (co
 	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
 		now := time.Now().UnixMilli()
 		res, err := tx.ExecContext(ctx,
-			`INSERT INTO threads (scope, key, title, repo, started_by, state, created_at, updated_at, confined, no_project_settings) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			r.Scope, link.Thread, name, r.Repo, string(a.caller.Principal), string(control.Creating), now, now, confined, r.Research)
+			`INSERT INTO threads (scope, key, title, repo, started_by, state, created_at, updated_at, confined, kind, no_project_settings) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			r.Scope, link.Thread, name, r.Repo, string(a.caller.Principal), string(control.Creating), now, now, confined, string(kind), r.Research)
 		if err != nil {
 			return fmt.Errorf("core: create thread: %w", err)
 		}
@@ -1508,7 +1513,7 @@ func (a *api) start(ctx context.Context, r control.StartRequest, dir string) (co
 		}
 		sessionID, _ = res.LastInsertId()
 		d := map[string]any{"thread": thread, "session": sessionID, "repo": r.Repo,
-			"principal": string(a.caller.Principal), "model": model, "effort": effort}
+			"principal": string(a.caller.Principal), "model": model, "effort": effort, "kind": string(kind)}
 		if a.caller.From != "" {
 			d["from"] = a.caller.From
 		}
@@ -1527,7 +1532,7 @@ func (a *api) start(ctx context.Context, r control.StartRequest, dir string) (co
 		if err != nil {
 			return id, err
 		}
-		return id, a.c.sameConfinement(ctx, id, confined)
+		return id, a.c.sameKind(ctx, id, kind)
 	}
 	if err != nil {
 		return 0, err
@@ -1569,26 +1574,37 @@ func (c *Core) LiveConfined(ctx context.Context) ([]ConfinedSession, error) {
 	return out, rows.Err()
 }
 
-// LastConfined returns the newest thread of scope that was started
-// confined and is neither closed nor removed, and its state; else the
-// newest one, closed or removed; 0 when there is none. A scope has one
-// such thread open at a time, so the open one is its supervisor's also
-// when it is an older one that was reopened (ReopenThread).
-func (c *Core) LastConfined(ctx context.Context, scope string) (control.ThreadID, control.State, error) {
+// SupervisorThread returns the supervisor's own thread of scope, and its
+// state: the one that is neither closed nor removed, of which a scope has
+// one at a time; else the newest one, closed or removed; 0 when there is
+// none. The open one is the scope's also when it is an older one that was
+// reopened (ReopenThread). A conversation or a look-up is never taken for
+// it.
+func (c *Core) SupervisorThread(ctx context.Context, scope string) (control.ThreadID, control.State, error) {
 	var (
 		id    int64
 		state string
 	)
-	err := c.Store.DB.QueryRowContext(ctx, `SELECT id, state FROM threads WHERE scope = ? AND confined = 1
+	err := c.Store.DB.QueryRowContext(ctx, `SELECT id, state FROM threads WHERE scope = ? AND kind = ?
 		ORDER BY state IN (?, ?), id DESC LIMIT 1`,
-		scope, string(control.Closed), string(control.Removed)).Scan(&id, &state)
+		scope, string(control.KindSupervisor), string(control.Closed), string(control.Removed)).Scan(&id, &state)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, "", nil
 	}
 	if err != nil {
-		return 0, "", fmt.Errorf("core: confined threads of %q: %w", scope, err)
+		return 0, "", fmt.Errorf("core: the supervisor's own thread of %q: %w", scope, err)
 	}
 	return control.ThreadID(id), control.State(state), nil
+}
+
+// Kind returns the kind of thread id.
+func (c *Core) Kind(ctx context.Context, id control.ThreadID) (control.ThreadKind, error) {
+	var kind control.ThreadKind
+	err := c.Store.DB.QueryRowContext(ctx, `SELECT kind FROM threads WHERE id = ?`, int64(id)).Scan(&kind)
+	if err != nil {
+		return "", fmt.Errorf("core: thread %d: %w", id, err)
+	}
+	return kind, nil
 }
 
 // Confined reports whether thread id was started confined, as a
@@ -1643,17 +1659,17 @@ func (c *Core) StartMade(ctx context.Context, scope, key string, asksIn control.
 	return id, proposed, err
 }
 
-// sameConfinement refuses a key that started a thread before whose
-// confinement is not the one asked for now: an ordinary Start never
-// returns a confined thread, and StartConfined never an ordinary one.
-func (c *Core) sameConfinement(ctx context.Context, id control.ThreadID, confined bool) error {
-	var was bool
-	if err := c.Store.DB.QueryRowContext(ctx, `SELECT confined FROM threads WHERE id = ?`, int64(id)).Scan(&was); err != nil {
-		return fmt.Errorf("core: thread %d: %w", id, err)
+// sameKind refuses a key that started a thread before whose kind is not
+// the one asked for now: an ordinary Start never returns a supervisor's
+// thread, and StartConfined never a thread of another kind.
+func (c *Core) sameKind(ctx context.Context, id control.ThreadID, kind control.ThreadKind) error {
+	was, err := c.Kind(ctx, id)
+	if err != nil {
+		return err
 	}
-	if was != confined {
-		c.Log.Warn("start refused", "thread", int64(id), "reason", ErrConfinedKey.Error())
-		return fmt.Errorf("core: start: thread %d: %w", id, ErrConfinedKey)
+	if was != kind {
+		c.Log.Warn("start refused", "thread", int64(id), "reason", ErrKindKey.Error())
+		return fmt.Errorf("core: start: thread %d: %w", id, ErrKindKey)
 	}
 	return nil
 }

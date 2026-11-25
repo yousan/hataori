@@ -11,9 +11,9 @@ import (
 func TestStartedBy(t *testing.T) {
 	c := remindStore(t)
 	for _, q := range []string{
-		`INSERT INTO threads (id, scope, key, started_by, state, confined, created_at, updated_at) VALUES
-			(1, 'c1', 'sv1', 'p', 'idle', 1, 0, 0), (2, 'c1', 'sv2', 'p', 'closed', 1, 0, 0), (3, 'c2', 'sv', 'p', 'idle', 1, 0, 0),
-			(4, 'c1', 'w', 'p', 'failed', 0, 0, 0)`,
+		`INSERT INTO threads (id, scope, key, started_by, state, confined, kind, created_at, updated_at) VALUES
+			(1, 'c1', 'sv1', 'p', 'idle', 1, 'supervisor', 0, 0), (2, 'c1', 'sv2', 'p', 'closed', 1, 'supervisor', 0, 0), (3, 'c2', 'sv', 'p', 'idle', 1, 'supervisor', 0, 0),
+			(4, 'c1', 'w', 'p', 'failed', 0, 'ordinary', 0, 0)`,
 		// #1 is closed at 20, when #2 takes over; #2 is closed at 40, and #1
 		// reopened at 50.
 		`INSERT INTO events (pos, scope, thread, thread_id, time, kind, data) VALUES

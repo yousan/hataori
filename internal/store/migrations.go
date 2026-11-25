@@ -713,6 +713,13 @@ var migrations = []Migration{
 		`DROP INDEX login_outages_open`,
 		`CREATE UNIQUE INDEX login_outages_open ON login_outages (agent, config_dir) WHERE closed_at IS NULL`,
 	)},
+	// What a thread is to its scope (control.ThreadKind), set at its start
+	// and never changed. A thread started confined before was its scope's
+	// supervisor's own: nothing else was (#867).
+	{Name: "threads.kind", Up: execAll(
+		`ALTER TABLE threads ADD COLUMN kind TEXT NOT NULL DEFAULT 'ordinary'`,
+		`UPDATE threads SET kind = 'supervisor' WHERE confined = 1`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

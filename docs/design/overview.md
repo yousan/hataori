@@ -428,7 +428,7 @@ The driver's calls are: run and deliver inbound messages, button presses and com
 
 The driver splits long text, picks buttons or a menu, and maps a status to whatever the surface has (a reaction, an edit). Its limits let the front end avoid asking for what a surface cannot do.
 
-**A message in a replaced supervisor's closed thread** (#667) gets the closed line followed by one line that names the scope's current supervisor thread, by its number and, where it has a conversation on that client, by a link to it that the service shows (`surface.Linker`; on a service without one, the number only). The current thread is looked up when the message comes in (`core.Core.LastConfined`; with #857 by its kind), so after several replacements every old thread names the live one; while none is open, as between closing one and the daemon's next start, none is named. The owner's Reopen button (section 5.1) is offered there as in any closed thread. Other closed threads get the closed line as before.
+**A message in a replaced supervisor's closed thread** (#667) gets the closed line followed by one line that names the scope's current supervisor thread, by its number and, where it has a conversation on that client, by a link to it that the service shows (`surface.Linker`; on a service without one, the number only). The current thread is looked up when the message comes in (`core.Core.SupervisorThread`, by its kind), so after several replacements every old thread names the live one; while none is open, as between closing one and the daemon's next start, none is named. The owner's Reopen button (section 5.1) is offered there as in any closed thread. Other closed threads get the closed line as before.
 
 **A message in a thread that failed at its start** (#708) reaches no agent: the core refuses it, before any plugin's input hook runs. Its author, when they may send there, gets one reply: that nothing was sent, why the thread could not start, in the words of its "could not start" message (section 3.5), and what to do next. For a start that files blocked, that is the choices of that message, as buttons of the reply too, which the choice made takes away from both; for any other, to start the work in a new thread. A message that got the reply is never sent later, also when a choice starts the thread again and the message is delivered again.
 
@@ -1834,9 +1834,9 @@ type API interface {
 	// the directory and whether the conversation resumes. A refusal is a
 	// *ReopenRefused (ErrReopenRefused) and changes nothing: a thread not
 	// closed or removed, a removed thread taken in from a window, a place
-	// taken by something else, and a confined thread while another of its
-	// scope is open, which the reason names. It needs OpReopen and the
-	// owner. On the wire it is the operation Reopen. Since protocol 3.31.
+	// taken by something else, a supervisor's own thread (ThreadInfo.Kind)
+	// while another own thread of its scope is open, which the reason names,
+	// and a look-up's thread. It needs OpReopen and the owner. On the wire it is the operation Reopen. Since protocol 3.31.
 	ReopenThread(ctx context.Context, id ThreadID) (Reopened, error)
 
 	// Link shows the thread in one more conversation and returns its link.
@@ -2330,15 +2330,19 @@ type HookResult struct {
 // (#569).
 
 // Not operations of the control API, for a client inside the daemon (#270):
-// core.Core.StartConfined(ctx, caller, r, dir) is Start for a thread whose
-// sessions all run confined (agent.Spec.Confine), in dir, which
-// core.Workspaces.Confined gives instead of a clone: made empty when it is
-// not there, used as it is when it is, never emptied, moved or written to
-// (#645). Several threads may be started in one dir, one after another, as
-// a scope's supervisor threads are; r.Repo must be empty. The core refuses
+// core.Core.StartConfined(ctx, caller, r, kind, dir) is Start for a thread
+// of kind (ThreadKind), one of the confined ones, whose sessions all run
+// confined (agent.Spec.Confine), in dir, which core.Workspaces.Confined
+// gives instead of a clone: made empty when it is not there, used as it is
+// when it is, never emptied, moved or written to (#645). Several threads
+// may be started in one dir, as a scope's supervisor threads are; r.Repo
+// must be empty. Of the kind supervisor none starts while another of the
+// scope is neither closed nor removed: the refusal names that one
+// (#867). core.Core.SupervisorThread(ctx, scope) is that one, else the
+// newest of its own threads. The core refuses
 // RemoveThread of such a thread before its Remover is asked
-// (core.ConfinedDir). A Start key that started a thread of the other kind is refused
-// (core.ErrConfinedKey). core.Core.LiveConfined lists the sessions of such
+// (core.ConfinedDir). A Start key that started a thread of another kind is refused
+// (core.ErrKindKey). core.Core.LiveConfined lists the sessions of such
 // threads whose agent may run.
 
 // Fields of ThreadInfo, and so of ThreadDetail, besides its id, number,
@@ -2356,7 +2360,24 @@ type ThreadInfo struct {
 	Context    *Context    // the last context use reported; absent until one is
 	Tokens     *TokenCount // absent until the agent reports usage
 	Terminal   string      // the terminal its current session's agent runs in, such as /dev/pts/3; absent on pipes and with no process
+	Confined   bool        // started confined; since protocol 3.36
+	Kind       ThreadKind  // what it is to its scope (section 5.1); since protocol 3.38 (#867)
 }
+
+// ThreadKind is set at a thread's start, by the code that starts it, and
+// never changes. No operation takes one: Start, TakeIn and an approved
+// proposal start KindOrdinary, and StartConfined the others. The
+// thread_created event gives it as kind.
+type ThreadKind string
+
+const (
+	KindOrdinary     ThreadKind = "ordinary"
+	KindSupervisor   ThreadKind = "supervisor"   // a supervisor's own thread; one of a scope open at a time
+	KindConversation ThreadKind = "conversation" // with a scope's supervisor; several of a scope may be open
+	KindLookup       ThreadKind = "lookup"       // one question of a scope's supervisor; never reopened
+)
+
+func (k ThreadKind) Confined() bool // any of them but KindOrdinary
 
 type Context struct{ Used, Size int64 } // tokens
 // Tokens are input, output, cache reads and writes together. Today counts
@@ -2572,6 +2593,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `Reopen`, with `Ops` gaining `OpReopen`, `Reopened`, the `reopened` event, the `state` reason `reopen` and the `reopen_refused` error code (section 5.1, #670) | minor: a new operation, event kind, error code and value of a reason; 3.31 |
 | `ThreadDetail.FailedStart` and the `start_chosen` event: a start that failed before its first turn, and what was chosen for one that files blocked (section 7.2, #680) | minor: a new optional field and a new event kind; 3.33 |
 | `ThreadDetail.Refused` with `RefusedPost`, and the `post_refused` event: a post the chat service refused for good (#569) | minor: a new optional field and a new event kind; 3.35 |
+| `ThreadInfo.Kind`, with `ThreadKind`, and `kind` in `thread_created`: what a thread is to its scope (section 5.1, #867) | minor: new optional fields; 3.38 |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 
 Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event. In protocol 1.9: `Terminal`, which turns its connection into a stream as `Events` does. In protocol 1.12: `ThreadInfo.terminal`, the terminal device its session host opened, for the tree's filter, the status bar and the details panel (#285); `HostTerminals` still leaves these terminals out.

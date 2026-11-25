@@ -24,7 +24,7 @@ func TestLaunchRecordsWhatItWasGiven(t *testing.T) {
 		return LaunchConfig{Model: model, Effort: effort, Parts: map[string]string{"a part": part}}, scope == "s" && agent == "fake"
 	}
 	if _, err := f.core.StartConfined(context.Background(), control.Caller{From: ownerFrom, Scopes: []string{"s"}, May: all},
-		control.StartRequest{Key: "k", Scope: "s", Thread: "t", Input: control.Input{Text: "reply hello"}}, t.TempDir()); err != nil {
+		control.StartRequest{Key: "k", Scope: "s", Thread: "t", Input: control.Input{Text: "reply hello"}}, control.KindSupervisor, t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, "the turn", 15*time.Second, f.has("turn_ended", 1))
@@ -115,7 +115,7 @@ func reconnectStale(t *testing.T, request bool) {
 	}
 	f.run.ConfinedConfig = config("m-1")
 	if _, err := f.core.StartConfined(context.Background(), control.Caller{From: ownerFrom, Scopes: []string{"s"}, May: all},
-		control.StartRequest{Key: "k", Scope: "s", Thread: "t", Input: control.Input{Text: "reply hello"}}, t.TempDir()); err != nil {
+		control.StartRequest{Key: "k", Scope: "s", Thread: "t", Input: control.Input{Text: "reply hello"}}, control.KindSupervisor, t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, "the turn", 15*time.Second, f.has("turn_ended", 1))

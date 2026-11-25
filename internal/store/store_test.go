@@ -309,3 +309,61 @@ func TestLinksSinceOnUpgrade(t *testing.T) {
 	sameRows(t, "links", dump(t, s.DB, `SELECT thread, since FROM links ORDER BY id`),
 		[]string{"t1|0|", "t2|0|", "attached|30|", "attached too|40|", "opened|50|"})
 }
+
+// Of the threads from before threads.kind, those started confined are their
+// scope's supervisor's own and the others ordinary; nothing else of any row
+// changes (#867).
+func TestThreadKindsOnUpgrade(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "db")
+	step := slices.IndexFunc(migrations, func(m Migration) bool { return m.Name == "threads.kind" })
+	if step < 0 {
+		t.Fatal("no step threads.kind")
+	}
+	s, err := open(ctx, path, migrations[:step])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO threads (id, scope, key, title, repo, started_by, state, created_at, updated_at, confined, workspace) VALUES
+			(1, 's', 't1', 'a', 'r', 'owner', 'idle', 1, 2, 0, 'd1'), (2, 's', 't2', 'b', '', 'owner', 'closed', 3, 4, 1, 'd2'),
+			(3, 's', 't3', 'c', '', 'owner', 'asleep', 5, 6, 1, 'd2'), (4, 'o', 't4', 'd', 'r', 'owner', 'removed', 7, 8, 0, ''),
+			(5, 'o', 't5', 'e', '', 'owner', 'removed', 9, 10, 1, '')`,
+		`INSERT INTO sessions (id, thread_id, agent, state, created_at, updated_at) VALUES (1, 3, 'a', 'asleep', 0, 0)`,
+		`INSERT INTO events (pos, scope, thread, thread_id, time, kind, data) VALUES (7, 's', 't3', 3, 0, 'thread_created', '{"session":1}')`,
+	} {
+		if _, err := s.DB.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Every row of every table, without the column that is added.
+	all := func() map[string][]string {
+		t.Helper()
+		out := map[string][]string{}
+		for _, table := range dump(t, s.DB, `SELECT name FROM sqlite_master WHERE type = 'table' AND name != 'schema_version'`) {
+			table = strings.TrimSuffix(table, "|")
+			cols := dump(t, s.DB, `SELECT '"' || name || '"' FROM pragma_table_info('`+table+`') WHERE '`+table+`.' || name != 'threads.kind'`)
+			for i := range cols {
+				cols[i] = strings.TrimSuffix(cols[i], "|")
+			}
+			out[table] = append(cols, dump(t, s.DB, `SELECT `+strings.Join(cols, ", ")+` FROM "`+table+`" ORDER BY rowid`)...)
+		}
+		return out
+	}
+	before := all()
+	s.Close()
+	s, err = open(ctx, path, migrations[:step+1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	sameRows(t, "the kinds", dump(t, s.DB, `SELECT id, kind FROM threads ORDER BY id`),
+		[]string{"1|ordinary|", "2|supervisor|", "3|supervisor|", "4|ordinary|", "5|supervisor|"})
+	after := all()
+	for table, rows := range after {
+		sameRows(t, table, rows, before[table])
+	}
+	if len(after) != len(before) {
+		t.Fatalf("%d tables, %d before", len(after), len(before))
+	}
+}

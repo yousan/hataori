@@ -436,7 +436,7 @@ func TestRemoveNeverRemovesAConfinedThreadsDirectory(t *testing.T) {
 	f.core.Remover = rm
 	dir := filepath.Join(t.TempDir(), "scope")
 	id, err := f.core.StartConfined(ctx, control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all},
-		control.StartRequest{Key: "sv", Scope: "s", Thread: "sv", Input: control.Input{Text: "go"}}, dir)
+		control.StartRequest{Key: "sv", Scope: "s", Thread: "sv", Input: control.Input{Text: "go"}}, control.KindSupervisor, dir)
 	if err != nil {
 		t.Fatal(err)
 	}

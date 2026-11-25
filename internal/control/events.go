@@ -49,8 +49,10 @@ var EventKinds = map[EventKind][]Field{
 	"proposal_answered": {req("request", String), req("number", Integer), req("action", String), req("allow", Boolean),
 		req("outcome", String), opt("target", Integer), opt("reason", String), opt("principal", String), opt("from", String),
 		opt("link", Object), opt("via", String)},
+	// thread_created: kind is the thread's ThreadKind. Since 3.38.
 	"thread_created": {req("thread", Integer), req("session", Integer), req("repo", String),
-		req("principal", String), opt("from", String), req("model", String), req("effort", String), opt("via", String), opt("research", Boolean)},
+		req("principal", String), opt("from", String), req("model", String), req("effort", String), opt("via", String), opt("research", Boolean),
+		opt("kind", String)},
 	"state": {req("session", Integer), req("from", String), req("to", String), opt("reason", String), text("detail", String),
 		text("trust", Array)},
 	"turn_started": {req("session", Integer), req("turn", Integer), req("by", String), opt("principal", String), opt("from", String), opt("key", String)},

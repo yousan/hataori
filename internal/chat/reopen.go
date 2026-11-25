@@ -103,19 +103,19 @@ func (f *FrontEnd) closedReply(ctx context.Context, in surface.Inbound, t contro
 }
 
 // closedText is what a message in the closed thread t gets in conv:
-// ClosedLine, and, when t was a supervisor's thread and its scope's
-// supervisor has another, open one now, one line that names that one (#667). It
-// is looked up for each message, so a chain of replacements names the live
-// one.
+// ClosedLine, and, when t was a supervisor's own thread and its scope's
+// supervisor has another, open one now, one line that names that one
+// (#667). It is looked up for each message, so a chain of replacements
+// names the live one. A conversation was replaced by none.
 func (f *FrontEnd) closedText(ctx context.Context, conv surface.Conversation, t control.ThreadInfo) (string, error) {
 	if f.Supervisor == nil {
 		return ClosedLine, nil
 	}
-	var confined bool
-	if err := f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT confined FROM threads WHERE id = ?`, int64(t.ID)).Scan(&confined); err != nil {
+	var kind control.ThreadKind
+	if err := f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT kind FROM threads WHERE id = ?`, int64(t.ID)).Scan(&kind); err != nil {
 		return "", fmt.Errorf("chat: whether thread %d is a supervisor's: %w", t.ID, err)
 	}
-	if !confined {
+	if kind != control.KindSupervisor {
 		return ClosedLine, nil
 	}
 	now, state, err := f.Supervisor(ctx, t.Scope)
