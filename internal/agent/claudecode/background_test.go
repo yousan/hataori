@@ -109,8 +109,8 @@ func TestATurnThatDoesNotCompleteCountsItsBackgroundTasks(t *testing.T) {
 		// A monitor, which runs on, and a shell that TaskStop stopped.
 		{"monitor", monitorTurn, nil,
 			"end(completed,bg=2) end(completed,bg=1) end(failed,bg=1) end(completed,bg=0)"},
-		{"monitor and stop in the failed turn", monitorTurn, []int{9, 15, 16},
-			"end(failed,bg=1) end(completed,bg=0)"},
+		{"monitor and shell started in the failed turn", monitorTurn, []int{9, 14, 15, 16},
+			"end(failed,bg=2) end(completed,bg=0)"},
 		{"stopped in the failed turn", monitorTurn, []int{15, 16},
 			"end(completed,bg=2) end(failed,bg=1) end(completed,bg=0)"},
 	} {
