@@ -397,9 +397,9 @@ func (s *ScopeFiles) list(ctx context.Context, dir string) (control.FilesAnswer,
 			switch {
 			case err == nil && f != nil:
 				files = append(files, *f.without())
-			case err == nil || errors.As(err, new(refusal)):
-				continue // gone, or not a regular file
-			default: // it cannot be read
+			case err == nil:
+				continue // gone
+			default: // it cannot be read, or is not a regular file
 				if st, err := at.Lstat(e.Name()); err == nil && st.Mode().IsRegular() {
 					files = append(files, control.ScopeFile{Path: prefix + e.Name(), Size: st.Size()})
 				}

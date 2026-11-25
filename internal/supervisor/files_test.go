@@ -461,6 +461,10 @@ func TestFilesCallsRefused(t *testing.T) {
 	for _, op := range []string{"", "delete", "List", "append"} {
 		f.refused(t, f.own, control.FilesRequest{Op: op, Path: "plan.md", Text: &text, Version: versionOf("text"), Old: "text", New: &text}, "no such operation on files")
 	}
+	f.log.take()
+	if _, err := f.own.Files(context.Background(), control.FilesRequest{Op: "from the model", Path: "plan.md"}); err == nil || strings.Contains(f.log.take(), "from the model") {
+		t.Errorf("answered %v, or logged the operation's name", err)
+	}
 	for _, path := range []string{"gone.md", "gone/gone.md"} {
 		f.refused(t, f.own, readOf(path), "there is no such file")
 	}
@@ -479,10 +483,12 @@ func TestFilesCallsRefused(t *testing.T) {
 	}
 	const not = "this session does not work in the channel's supervisor's directory"
 	f.sql(t, `INSERT INTO threads (id, scope, key, started_by, state, confined, kind, workspace, created_at, updated_at) VALUES
-		(30, 'c1', 'k30', 'p', 'running', 1, 'conversation', '/elsewhere', 0, 0), (31, 'c1', 'k31', 'p', 'running', 1, 'conversation', '', 0, 0)`)
+		(30, 'c1', 'k30', 'p', 'running', 1, 'conversation', '/elsewhere', 0, 0), (31, 'c1', 'k31', 'p', 'running', 1, 'conversation', '', 0, 0),
+		(32, 'c2', 'k32', 'p', 'running', 1, 'conversation', '`+f.dir+`', 0, 0)`)
 	all(f.files.API(nil, "c1", 30), not)         // it works elsewhere
 	all(f.files.API(nil, "c1", 31), not)         // nowhere yet
 	all(f.files.API(nil, "c1", filesOther), not) // a thread of another scope
+	all(f.files.API(nil, "c1", 32), not)         // one that works here
 	all(f.files.API(nil, "c1", 99), not)         // no thread
 	all(f.files.API(nil, "c3", filesOwn), "the channel's supervisor has no directory yet")
 
@@ -1156,6 +1162,20 @@ func TestFilesSwappedWhileRead(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// A file that grows over the limit while it is opened is not read.
+func TestFilesGrowsWhileRead(t *testing.T) {
+	f := newFilesFixture(t)
+	put(t, f.dir, "plan.md", "base")
+	done := f.at(t, swap{"opening", 1, func(t *testing.T, _ *filesFixture) {
+		if err := os.Truncate(filepath.Join(f.dir, "plan.md"), FileMax+1); err != nil {
+			t.Error(err)
+		}
+	}})
+	if ans, err := f.own.Files(context.Background(), readOf("plan.md")); err == nil || !strings.HasSuffix(err.Error(), "the file is over 256 KB, or not UTF-8") || !done() {
+		t.Fatalf("answered %+v, %v", ans, err)
 	}
 }
 
