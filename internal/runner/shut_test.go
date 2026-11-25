@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
+	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
 )
@@ -85,7 +87,15 @@ func TestShutRefusesAReplacedSession(t *testing.T) {
 			}
 		}
 	}
-	r := &Runner{Store: st, Machine: &session.Machine{Store: st}, Root: root}
+	// What Confine gave is taken back when the session is closed, and only
+	// then (#871).
+	type closed struct {
+		thread  control.ThreadID
+		session int64
+	}
+	var unconfined []closed
+	unconfine := func(thread control.ThreadID, id int64) { unconfined = append(unconfined, closed{thread, id}) }
+	r := &Runner{Store: st, Machine: &session.Machine{Store: st}, Root: root, Unconfine: unconfine}
 	state := func(table string, id int) string {
 		var s string
 		st.DB.QueryRow(`SELECT state FROM `+table+` WHERE id = ?`, id).Scan(&s)
@@ -142,5 +152,8 @@ func TestShutRefusesAReplacedSession(t *testing.T) {
 	st.DB.QueryRow(`SELECT count(*) FROM events`).Scan(&again)
 	if again != events {
 		t.Fatal("a closed session was closed again")
+	}
+	if want := []closed{{9, 10}, {10, 11}, {7, 8}, {2, 3}, {2, 3}}; !slices.Equal(unconfined, want) {
+		t.Fatalf("what Confine gave was taken back from thread and session %v, want %v: each one closed, none refused", unconfined, want)
 	}
 }

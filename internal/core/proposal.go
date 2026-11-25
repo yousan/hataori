@@ -221,6 +221,9 @@ func (a *api) answerProposal(ctx context.Context, req control.RequestID, ans con
 	if err := a.act(control.OpAnswer, "Answer", scope); err != nil {
 		return err
 	}
+	if err := a.ordinaryOnly(ctx, "Answer", scope, thread); err != nil {
+		return err
+	}
 	if string(a.caller.Principal) == principal {
 		return a.refused("Answer", scope, "the one who proposed it may not decide it")
 	}
@@ -323,9 +326,10 @@ func (a *api) answerProposal(ctx context.Context, req control.RequestID, ans con
 		return err
 	}
 	// As the one who proposed it, whose person must still be allowed in the
-	// scope; marked as its input; never into a running turn.
+	// scope; marked as its input; never into a running turn, and to an
+	// ordinary thread only.
 	sender := a.c.As(control.Caller{From: from, Principal: control.Principal(principal), Scopes: []string{scope},
-		May: control.OpStart | control.OpSend, RefuseBusy: true, NoAnswer: question == "", Mark: mark,
+		May: control.OpStart | control.OpSend, RefuseBusy: true, NoAnswer: question == "", OrdinaryOnly: true, Mark: mark,
 		Via: control.ViaProposal, Research: call.Research}).(*api)
 	switch action {
 	case "send":
@@ -339,7 +343,7 @@ func (a *api) answerProposal(ctx context.Context, req control.RequestID, ans con
 		}
 		var id control.ThreadID
 		id, err = sender.start(ctx, control.StartRequest{Key: key, Scope: scope, Repo: call.Repo, Agent: call.Agent,
-			Model: call.Model, Effort: call.Effort, Input: control.Input{Text: call.Text}, Research: call.Research}, control.KindOrdinary, "")
+			Model: call.Model, Effort: call.Effort, Input: control.Input{Text: call.Text}, Research: call.Research}, control.KindOrdinary, nil)
 		if id != 0 {
 			// The thread is made; a launch that failed is the thread's own
 			// failure, which its events show.

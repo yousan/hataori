@@ -3,6 +3,7 @@ package supervisor
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -20,8 +21,11 @@ import (
 )
 
 // recordingTokens is a Tokens that gives one token and records what each
-// binding binds it to.
-type recordingTokens struct{ bound []control.API }
+// binding binds it to, and what is revoked.
+type recordingTokens struct {
+	bound   []control.API
+	revoked []string
+}
 
 const testToken = "0123456789012345678901234567890123456789012" // tokenLen
 
@@ -35,7 +39,7 @@ func (r *recordingTokens) Restore(token string, api control.API) error {
 	return nil
 }
 
-func (r *recordingTokens) Revoke(string) {}
+func (r *recordingTokens) Revoke(token string) { r.revoked = append(r.revoked, token) }
 
 // layerSessions is a Sessions of scope c1, whose supervisor proposes and
 // may start in one repository, on a store of its own, logging to log.
@@ -55,6 +59,21 @@ func layerSessions(t *testing.T, log *bytes.Buffer) (*Sessions, *recordingTokens
 		Log: slog.New(slog.NewTextHandler(log, nil))}, tokens
 }
 
+// svThread puts thread 1 of c1 into c's store: the supervisor's own, with
+// session 1.
+func svThread(t *testing.T, c *core.Core) {
+	t.Helper()
+	exec(t, c, `INSERT INTO threads (id, scope, key, started_by, state, confined, kind, workspace, created_at, updated_at)
+		VALUES (1, 'c1', 'k1', 'p', 'idle', 1, 'supervisor', '/root/confined/1', 0, 0)`)
+	sessionOf(t, c, 1, 1)
+}
+
+// sessionOf puts session id of thread, being started, into c's store.
+func sessionOf(t *testing.T, c *core.Core, thread control.ThreadID, id int64) {
+	t.Helper()
+	exec(t, c, fmt.Sprintf(`INSERT INTO sessions (id, thread_id, agent, state, created_at, updated_at) VALUES (%d, %d, 'fake', 'creating', 0, 0)`, id, thread))
+}
+
 // A symbolic link, a directory and a file over 32 KB in place of a user's
 // file are each skipped with one log line, and the launch goes on with the
 // others; an import in AGENTS.md is given as text, and the file it names
@@ -62,6 +81,7 @@ func layerSessions(t *testing.T, log *bytes.Buffer) (*Sessions, *recordingTokens
 func TestUserFilesSkippedAndNotFollowed(t *testing.T) {
 	var log bytes.Buffer
 	s, _ := layerSessions(t, &log)
+	svThread(t, s.Core)
 	parent := t.TempDir()
 	dir := filepath.Join(parent, "scope")
 	os.Mkdir(dir, 0o700)
@@ -130,6 +150,7 @@ func TestUserFileLimit(t *testing.T) {
 func TestUserFilesGrantNothing(t *testing.T) {
 	var log bytes.Buffer
 	s, tokens := layerSessions(t, &log)
+	svThread(t, s.Core)
 	dir, state := t.TempDir(), t.TempDir()
 	launch := runner.ConfinedLaunch{Session: 1, Thread: 1, Scope: "c1", StateDir: state, Dir: dir}
 	without, err := s.Confine(context.Background(), launch)

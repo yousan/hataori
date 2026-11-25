@@ -1803,9 +1803,10 @@ type API interface {
 	// that ended first. An approval approved again after an answer that failed
 	// is decided again the same way, without taking the reason again. A
 	// repeated key returns the original request; an empty key makes no
-	// repeat check. An open request for the same running turn is returned
-	// instead of a second one. The caller's AsksIn thread cannot be the
-	// target (ErrForbidden). Since protocol 3.10.
+	// repeat check. An open request for the same running turn, asked in the
+	// same thread, is returned instead of a second one. The caller's AsksIn
+	// thread cannot be the target, nor for a caller with OrdinaryOnly any
+	// confined thread (ErrForbidden). Since protocol 3.10.
 	AskInterrupt(ctx context.Context, id ThreadID, key string, reason string) (RequestID, error)
 	// Stop interrupts the thread's running turn. A turn other than 0 names
 	// it by turn_started's number, checked in the step that interrupts: when
@@ -2170,6 +2171,13 @@ type Caller struct {
 	// transaction that would take the input. The supervisor's waker has it
 	// (section 7.1, #441).
 	NoAnswer bool
+	// OrdinaryOnly refuses, with ErrForbidden, the caller's input to a
+	// confined thread, whichever it is, its own included (ThreadKind): its
+	// Send, whether it runs or is a proposal, its AskInterrupt of one, and
+	// its Answer of a request shown in one. A supervisor's caller has it
+	// (section 7.1), and the call an approved proposal or interrupt request
+	// makes.
+	OrdinaryOnly bool
 	// Research lets the caller's Start ask for a thread that only reads
 	// (StartRequest.Research), for a thread of its own making and never for
 	// one that exists. The daemon sets it for a supervisor's caller
@@ -2235,7 +2243,7 @@ type Limit struct {
 // issued for. wire.Server.Revoke forgets a token and closes its
 // connections. supervisor.Caller(scope, thread, autonomy) is a supervisor's Caller: From
 // "supervisor:<scope>", Scopes [scope], OpRead|OpStart|OpSend|OpAsk, AsksIn thread, RefuseBusy,
-// and the Mark of section 7.1; under the scope's autonomy (#650) "watch"
+// OrdinaryOnly, and the Mark of section 7.1; under the scope's autonomy (#650) "watch"
 // it has OpRead only, under "propose", the default, Propose, and under
 // "act" neither. The daemon binds a "watch" token to an API that also
 // refuses Start, Send and AskInterrupt with a reason naming the mode. plugin.Grant.Caller() is a plugin's Caller

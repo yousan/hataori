@@ -42,10 +42,11 @@ const (
 // Caller is the caller a supervisor's connection is bound to: the scope's
 // threads only; reading, and as autonomy allows, starting, sending and
 // asking a person to approve an interrupt; a send never goes into or
-// interrupts a running turn; and every input marked. Under Watch it reads
-// only; under Propose its starts and sends are proposals shown in thread
-// (control.Caller.Propose); under Act they run. Any other autonomy, as
-// none, is Propose. The daemon chooses it, never the client.
+// interrupts a running turn; neither it nor an interrupt is for a confined
+// thread, thread itself included; and every input marked. Under Watch it
+// reads only; under Propose its starts and sends are proposals shown in
+// thread (control.Caller.Propose); under Act they run. Any other autonomy,
+// as none, is Propose. The daemon chooses it, never the client.
 func Caller(scope string, thread control.ThreadID, autonomy string) control.Caller {
 	c := control.Caller{
 		From:       ID(scope),
@@ -53,8 +54,11 @@ func Caller(scope string, thread control.ThreadID, autonomy string) control.Call
 		Scopes:     []string{scope},
 		May:        control.OpRead | control.OpStart | control.OpSend | control.OpAsk,
 		RefuseBusy: true,
-		Mark:       Mark,
-		Research:   true, // of its own starts only (#681)
+		// Whatever the autonomy: no conversation orders another, or the
+		// supervisor's own thread, and neither answers for a person (#871).
+		OrdinaryOnly: true,
+		Mark:         Mark,
+		Research:     true, // of its own starts only (#681)
 	}
 	switch autonomy {
 	case Watch:

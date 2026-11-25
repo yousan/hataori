@@ -589,6 +589,23 @@ func TestSupervisorFilesConfig(t *testing.T) {
 	}
 }
 
+// conversations is true without the key, and true or false (#871).
+func TestSupervisorConversationsConfig(t *testing.T) {
+	for sv, want := range map[string]string{`{}`: "true", `{"conversations": true}`: "true", `{"conversations": false}`: "false",
+		`{"conversations": null}`: "refused", `{"conversations": "no"}`: "refused", `{"conversations": 0}`: "refused"} {
+		c, err := ParseConfig([]byte(`{"owner": "o", "trigger": "!go", "idle": "30m", "scopes": [{"key": "c1", "client": "chat", "supervisor": ` + sv + `}]}`))
+		if want == "refused" {
+			if err == nil || !strings.Contains(err.Error(), "conversations") {
+				t.Errorf("%s: %v; want refused, naming the key", sv, err)
+			}
+			continue
+		}
+		if err != nil || fmt.Sprint(c.Scopes[0].Supervisor.Conversations) != want {
+			t.Errorf("%s: %v, want %s", sv, err, want)
+		}
+	}
+}
+
 // reminders_max is 10 without the key, and 0 or more (#649).
 func TestSupervisorRemindersMaxConfig(t *testing.T) {
 	for sv, want := range map[string]int{`{}`: 10, `{"reminders_max": 3}`: 3, `{"reminders_max": 0}`: 0, `{"reminders_max": -1}`: -1} {

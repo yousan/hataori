@@ -40,7 +40,7 @@ func TestConversationsBesideTheSupervisorsThread(t *testing.T) {
 	talk := func(key string) control.ThreadID {
 		t.Helper()
 		id, err := running.Load().StartConfined(ctx, control.Caller{Principal: "boss", Scopes: []string{"c1"}, May: control.OpRead | control.OpStart},
-			control.StartRequest{Key: key, Scope: "c1", Thread: "t-" + key, Input: control.Input{Text: "reply hello"}}, control.KindConversation, dir)
+			control.StartRequest{Key: key, Scope: "c1", Thread: "t-" + key, Input: control.Input{Text: "reply hello"}}, control.KindConversation, core.InDir(dir))
 		if err != nil {
 			t.Fatal(err)
 		}

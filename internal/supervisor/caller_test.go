@@ -29,7 +29,7 @@ func TestCallerOfEachAutonomy(t *testing.T) {
 		if got.May != c.may || got.Propose != c.propose {
 			t.Errorf("autonomy %q: may %b, propose %v; want %b, %v", c.autonomy, got.May, got.Propose, c.may, c.propose)
 		}
-		if got.May.Has(control.OpAnswer) || !got.RefuseBusy || got.Mark != Mark || got.AsksIn != 7 || got.From != ID("c1") {
+		if got.May.Has(control.OpAnswer) || !got.RefuseBusy || !got.OrdinaryOnly || got.Mark != Mark || got.AsksIn != 7 || got.From != ID("c1") {
 			t.Errorf("autonomy %q: %+v", c.autonomy, got)
 		}
 	}
