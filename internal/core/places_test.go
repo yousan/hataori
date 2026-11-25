@@ -795,10 +795,16 @@ func TestAnotherLimit(t *testing.T) {
 	k.ends(t, a)
 	want(t, "with one again", k.pass(t), "")
 	k.limit(0)
+	want(t, "behind what waits in it", k.got(t, func() { k.say(t, b, "b2") }), "")
 	want(t, "with none", k.pass(t), "deliver b1")
+	want(t, "behind what waits", k.got(t, func() { k.say(t, busy, "m2") }), "")
 	want(t, "while its turn runs", k.pass(t), "")
 	k.ends(t, busy)
 	want(t, "after it", k.pass(t), "deliver m")
+	k.ends(t, busy)
+	want(t, "after that", k.pass(t), "deliver m2")
+	k.ends(t, b)
+	want(t, "after the other's", k.pass(t), "deliver b2")
 }
 
 // GiveWaiting gives what waits when a place becomes free and when input
