@@ -209,12 +209,57 @@ func (l Limits) over(u Used) (what, kinds []string, until time.Time) {
 	}
 	if l.Tokens > 0 && u.Tokens >= l.Tokens {
 		what, kinds = append(what, fmt.Sprintf("%d of %d tokens today", u.Tokens, l.Tokens)), append(kinds, "tokens")
-		end(time.Date(u.Day.Year(), u.Day.Month(), u.Day.Day()+1, 0, 0, 0, 0, u.Day.Location()))
+		end(u.dayEnd())
 	}
 	if !until.After(u.Now) {
 		return nil, nil, time.Time{}
 	}
 	return what, kinds, until
+}
+
+// dayEnd is when the day of u ends.
+func (u Used) dayEnd() time.Time {
+	return time.Date(u.Day.Year(), u.Day.Month(), u.Day.Day()+1, 0, 0, 0, 0, u.Day.Location())
+}
+
+// budgetUsed starts the line of a wake that says what of the budget is
+// used.
+const budgetUsed = "Budget used:"
+
+// Line is the part of a wake that says what of the budget is used (#794):
+// each limit that is on, with what u used of it; "" when none is. From
+// three quarters of the day's tokens on it says so, with when the day ends
+// and how many of the reminders open are due before then.
+func (l Limits) Line(u Used, open []Reminder) string {
+	var parts []string
+	if l.Turns > 0 {
+		parts = append(parts, fmt.Sprintf("%d of %d turns this hour", u.Turns, l.Turns))
+	}
+	if l.Sends > 0 {
+		parts = append(parts, fmt.Sprintf("%d of %d sends and starts this hour", u.Sends, l.Sends))
+	}
+	if l.Tokens > 0 {
+		parts = append(parts, fmt.Sprintf("%d of %d tokens today", u.Tokens, l.Tokens))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	s := "\n" + budgetUsed + " " + strings.Join(parts, ", ") + "."
+	if l.Tokens > 0 && u.Tokens >= l.Tokens-l.Tokens/4 { // no overflow, and a quarter rounded down
+		end := u.dayEnd()
+		n := 0
+		for _, o := range open {
+			if o.Due.Before(end) {
+				n++
+			}
+		}
+		due := fmt.Sprintf("%d open reminders are", n)
+		if n == 1 {
+			due = "1 open reminder is"
+		}
+		s += fmt.Sprintf(" 75%% or more of the day's tokens are used; the day ends at %s, and %s due before then.", dueTime(end), due)
+	}
+	return s + "\n"
 }
 
 // Admit holds a wake while the budget is used up, until the windows of

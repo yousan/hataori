@@ -82,6 +82,15 @@ func TestLayerNamesTheTools(t *testing.T) {
 	}
 }
 
+// What the layer says of a wake's lines is what a wake's lines are.
+func TestLayerNamesTheWakesLines(t *testing.T) {
+	for _, want := range []string{"A wake's line \"" + budgetUsed + "\""} {
+		if !strings.Contains(Layer, want) {
+			t.Errorf("hataori's layer does not say %s", want)
+		}
+	}
+}
+
 // The first message of the thread asks for its notes, its files and its
 // docs, and for the ready line in the language of the user's files or the
 // instructions.

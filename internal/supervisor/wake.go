@@ -237,6 +237,9 @@ type Waker struct {
 	Gates []Gate
 	Clock Clock // nil for the real clock
 	Log   *slog.Logger
+	// Budget, when set, is the scope's budget: each wake ends with what of
+	// it is used (#794). It holds wakes as one of the Gates.
+	Budget *Budget
 	// Files, when set, are the user's files of the scope (design, section
 	// 7.1, "Two layers"): each wake names those that changed since the
 	// session was last given or told them, and after each turn of the
@@ -1164,6 +1167,13 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 		}
 	}
 	w.text += OpenReminders(open)
+	if r.w.Budget != nil {
+		u, err := r.w.Budget.Used(ctx)
+		if err != nil {
+			return nil, false, err
+		}
+		w.text += r.w.Budget.Limits.Line(u, open)
+	}
 	return w, true, nil
 }
 

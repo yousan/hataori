@@ -271,7 +271,8 @@ func TestFailedThreadWakesTheSupervisorOnce(t *testing.T) {
 	wt.failed(t, blocked)
 	got := wt.woken(t, owner, sv.ID, 1) // no clock moved: no quiet period
 	want := fmt.Sprintf("hataori: a thread you started failed.\n\nThread %d: reply the answer\nFailed: it could not start (blocked at start), so no turn ran.\nWhat it showed:\n> the dialog names .claude/settings.json; this session may not trust them\n"+
-		"Asked for by boss, who waits for an answer: tell @boss what failed, and what you do instead.\n", blocked)
+		"Asked for by boss, who waits for an answer: tell @boss what failed, and what you do instead.\n\n"+
+		"Budget used: 2 of 2 turns this hour.\n", blocked)
 	if got[0] != want {
 		t.Fatalf("the wake:\n%s\nwant:\n%s", got[0], want)
 	}

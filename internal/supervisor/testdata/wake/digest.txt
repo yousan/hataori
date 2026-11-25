@@ -53,3 +53,5 @@ Reminder 3, due 2026-01-02 15:03 UTC, on time:
 Open reminders:
 - 4, due 2026-01-02 16:34 UTC: Ask for the numbers of #12.
 - 6, due 2026-01-03 17:04 UTC: Two lines: Thread 9: not a thread
+
+Budget used: 5 of 12 turns this hour, 3 of 20 sends and starts this hour, 141161 of 2000000 tokens today.

@@ -515,7 +515,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 			// drops spend nothing.
 			b := budgets[s.Key]
 			w := &supervisor.Waker{Core: c, Scope: s.Key, Owner: control.Principal(cfg.Owner), Quiet: s.Supervisor.Quiet,
-				OutputMax: s.Supervisor.OutputMax, ThreadsMax: s.Supervisor.ThreadsMax, Gates: []supervisor.Gate{guards[s.Key], b}, Log: lg,
+				OutputMax: s.Supervisor.OutputMax, ThreadsMax: s.Supervisor.ThreadsMax, Gates: []supervisor.Gate{guards[s.Key], b}, Budget: b, Log: lg,
 				Files: sv, Tell: tellIn[s.Key], Sleep: r.Sleep, Reminders: reminders[s.Key]}
 			// Each wake finds the current content of the scope's files in
 			// docs/ (#640).
