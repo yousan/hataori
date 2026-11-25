@@ -375,6 +375,9 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 	if run.Confine != nil && !launch.NoWriteTools {
 		return agent.Spec{}, fmt.Errorf("runner: the agent %q cannot start a confined session: its own tools could write files; it was not started", agentName)
 	}
+	if run.Confine != nil && !launch.NoCommands {
+		return agent.Spec{}, fmt.Errorf("runner: the agent %q cannot start a confined session: its input could be taken for a command; it was not started", agentName)
+	}
 	if run.NoProjectSettings && run.Confine == nil && !launch.NoProjectSettings {
 		return agent.Spec{}, fmt.Errorf("runner: the agent %q cannot start without the repository's settings; it was not started", agentName)
 	}

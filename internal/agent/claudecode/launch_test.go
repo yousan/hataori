@@ -118,11 +118,12 @@ func TestConfinedLaunch(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !l.Confined || !l.NoMentions || !l.NoWriteTools {
-			t.Fatalf("the launch does not say it is confined (%t), takes no input for a mention (%t) and leaves no tool that writes (%t)", l.Confined, l.NoMentions, l.NoWriteTools)
+		if !l.Confined || !l.NoMentions || !l.NoWriteTools || !l.NoCommands {
+			t.Fatalf("the launch does not say it is confined (%t), takes no input for a mention (%t), leaves no tool that writes (%t) and takes no input for a command (%t)",
+				l.Confined, l.NoMentions, l.NoWriteTools, l.NoCommands)
 		}
-		if plain.Confined || plain.NoMentions || plain.NoWriteTools {
-			t.Fatal("an ordinary launch says it is confined, takes no input for a mention, or leaves no tool that writes")
+		if plain.Confined || plain.NoMentions || plain.NoWriteTools || plain.NoCommands {
+			t.Fatal("an ordinary launch says it is confined, takes no input for a mention, leaves no tool that writes, or takes no input for a command")
 		}
 		mcp := filepath.Join(s.StateDir, MCPConfigFile)
 		want := append(slices.Clone(plain.Argv), "--restricted", "--strict-mcp-config", "--mcp-config", mcp, "--tools", "Read,Glob,Grep",

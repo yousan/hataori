@@ -179,6 +179,7 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 		l.Confined = true
 		l.NoMentions = true   // pasteText
 		l.NoWriteTools = true // ConfinedTools
+		l.NoCommands = true   // pasteText
 	}
 	return l, nil
 }

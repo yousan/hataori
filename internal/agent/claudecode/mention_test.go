@@ -73,7 +73,7 @@ func TestConfinedInputNamesNothing(t *testing.T) {
 			t.Errorf("%s: the capture shows nothing that was put into the conversation, so its other form shows nothing", want)
 		}
 	}
-	for _, name := range []string{"mention_restricted_written", "mention_unrestricted_written"} {
+	for _, name := range []string{"mention_restricted_pasted", "mention_unrestricted_pasted"} {
 		seen := map[string]int{}
 		// What the session's first text, which names nothing, brings with it
 		// is no mention.
@@ -97,10 +97,10 @@ func TestConfinedInputNamesNothing(t *testing.T) {
 				}
 			}
 			// The prompt the CLI reports is known as hataori's input, also
-			// by the codec after a restart. The CLI takes escape sequences
-			// and characters that do not show out of a paste, so those two
-			// are not known (#916).
-			known := !slices.Contains([]string{"after_escape", "after_invisible"}, mc.Case)
+			// by the codec after a restart. The CLI takes characters that do
+			// not show out of a paste, so that one is not known (#916); an
+			// escape sequence is not pasted (#914).
+			known := mc.Case != "after_invisible"
 			if by, _ := c.starter(mc.Prompt); (by == agent.ByCaller) != known {
 				t.Errorf("%s: the prompt %q counts as started by %v", id, mc.Prompt, by)
 			}
@@ -120,10 +120,10 @@ func TestConfinedInputNamesNothing(t *testing.T) {
 	}
 }
 
-// An input that a hataori before #887 pasted, its "@" as they are, and that
-// the agent reports after a restart to this one, is known as hataori's. An
-// input that this one pasted since its start is not known by such a prompt: a
-// person typed that.
+// An input that a hataori before #887 pasted, its "@" as they are, or one
+// before #914, and that the agent reports after a restart to this one, is
+// known as hataori's. An input that this one pasted since its start is not
+// known by such a prompt: a person typed that.
 func TestInputPastedWithItsAtSignIsKnown(t *testing.T) {
 	for _, mc := range mentionCases(t, "mention_restricted") {
 		c := confinedCodec(t)
@@ -141,6 +141,20 @@ func TestInputPastedWithItsAtSignIsKnown(t *testing.T) {
 		mentionPaste(t, c, mc.Text)
 		if by, _ := c.starter(mc.Prompt); by != agent.ByTerminal || c.sent == nil {
 			t.Errorf("%s: the prompt %q, which was not pasted, counts as started by %v", mc.Case, mc.Prompt, by)
+		}
+	}
+	// One that a hataori from #887 to #914 pasted, with "(at)" for each "@"
+	// and with control characters, is known too.
+	for _, name := range []string{"mention_restricted_written", "mention_unrestricted_written"} {
+		for _, mc := range mentionCases(t, name) {
+			c := confinedCodec(t)
+			if _, err := c.Input(agent.Input{ID: "in-1", Text: mc.Text, Written: true}); err != nil {
+				t.Fatal(err)
+			}
+			by, id := c.starter(mc.Prompt)
+			if known := !slices.Contains([]string{"after_escape", "after_invisible"}, mc.Case); (by == agent.ByCaller && id == "in-1" && c.sent == nil) != known {
+				t.Errorf("%s %s %s: after a restart: the prompt %q counts as started by %v, input %q", name, mc.Session, mc.Case, mc.Prompt, by, id)
+			}
 		}
 	}
 	// One that would be a command was pasted after the prefix before, too.

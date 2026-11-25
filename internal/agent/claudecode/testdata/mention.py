@@ -33,6 +33,7 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -117,10 +118,23 @@ RESOURCES = ["resource", "second", "wake-resource", "note-resource"]
 INSTRUCTIONS = "Be brief. About @{out}/instructions-outside and @instructions-inside and @sv:note://instructions-resource\n"
 
 
-def written(text):
-    """text as hataori's adapter pastes it into a confined session: the
-    test of the adapter checks that it does."""
+def at_only(text):
+    """text as hataori's adapter pasted it into a confined session from #887
+    to #914: with "(at)" for each "@" (and "(message) " before a "!" or "/",
+    of which the texts start with none)."""
     return text.replace("@", "(at)")
+
+
+def written(text):
+    """text as hataori's adapter pastes it into a confined session: without
+    control characters but line breaks and tabs, "(at)" for each "@", and
+    "(message) " before it unless it starts with a letter or a digit (#887,
+    #914). The test of the adapter checks that it does."""
+    text = "".join(c for c in text if c in "\n\r\t" or unicodedata.category(c) != "Cc").replace("@", "(at)")
+    first = text.lstrip()
+    if first and not unicodedata.category(first[0]).startswith(("L", "N")):
+        return "(message) " + text
+    return text
 
 
 class API:
@@ -274,6 +288,7 @@ def words(sent):
 
 
 def scenario(out, name, confined, restricted, rewrite):
+    """rewrite, if not None, makes the text that is pasted."""
     w, api, sid, cases = World(), API(), str(uuid.uuid4()), []
     sessions = os.path.join(w.top, "sessions")
     known = set()
@@ -287,7 +302,7 @@ def scenario(out, name, confined, restricted, rewrite):
                 _, pos = attachments(s.transcript(), 0)
                 for case, template in TEXTS:
                     text = w.fill(template, phase)
-                    paste = written(text) if rewrite else text
+                    paste = rewrite(text) if rewrite else text
                     stops, prompts, sent = len(s.calls("Stop")), len(s.calls("UserPromptSubmit")), len(api.sent)
                     s.pasted(paste)
                     s.wait("Stop", stops + 1, timeout=60)
@@ -313,12 +328,14 @@ def scenario(out, name, confined, restricted, rewrite):
         f.write("\n")
 
 
-SCENARIOS = {  # name: confined, --restricted, pasted as the adapter writes it
-    "mention_restricted": (True, True, False),
-    "mention_unrestricted": (True, False, False),
-    "mention_ordinary": (False, False, False),
-    "mention_restricted_written": (True, True, True),
-    "mention_unrestricted_written": (True, False, True),
+SCENARIOS = {  # name: confined, --restricted, what is pasted for a text
+    "mention_restricted": (True, True, None),
+    "mention_unrestricted": (True, False, None),
+    "mention_ordinary": (False, False, None),
+    "mention_restricted_written": (True, True, at_only),
+    "mention_unrestricted_written": (True, False, at_only),
+    "mention_restricted_pasted": (True, True, written),
+    "mention_unrestricted_pasted": (True, False, written),
 }
 
 

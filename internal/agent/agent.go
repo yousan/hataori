@@ -106,6 +106,12 @@ type Launch struct {
 	// writes, it writes with the tools of the spec's MCP servers. A confined
 	// spec whose launch does not say so is never started either.
 	NoWriteTools bool
+	// NoCommands says that the agent takes nothing that the session is given
+	// as input, whoever wrote it, for one of its own commands, such as a
+	// shell command or a command that changes what the session may do: the
+	// session's input is always a prompt. A confined spec whose launch does
+	// not say so is never started either.
+	NoCommands bool
 	// NoProjectSettings says the launch leaves the project's settings out,
 	// as Spec.NoProjectSettings asks. Unless it is confined, such a spec is
 	// never started without it either.

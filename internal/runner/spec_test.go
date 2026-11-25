@@ -106,6 +106,12 @@ func TestConfinedNeedsNoWriteTools(t *testing.T) {
 	needs(t, "its own tools could write files", func(l *agent.Launch) { l.NoWriteTools = false })
 }
 
+// And only by one whose launch says that its agent takes no input for one
+// of its commands (#914).
+func TestConfinedNeedsNoCommands(t *testing.T) {
+	needs(t, "its input could be taken for a command", func(l *agent.Launch) { l.NoCommands = false })
+}
+
 func needs(t *testing.T, refusal string, drop func(*agent.Launch)) {
 	t.Helper()
 	m := &unsafely{drop: drop}

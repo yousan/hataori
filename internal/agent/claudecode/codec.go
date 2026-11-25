@@ -3,12 +3,14 @@ package claudecode
 import (
 	"encoding/json"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/yousan/hataori/internal/agent"
 )
@@ -219,7 +221,8 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 		text := normalize(typed)
 		q := queued{id: in.ID, text: text}
 		if c.spec.Confine != nil {
-			q.older = normalize(noCommand(cleanPaste(in.Text)))
+			clean := cleanPaste(in.Text)
+			q.older = []string{normalize(bangOrSlash(clean)), normalize(bangOrSlash(strings.ReplaceAll(clean, "@", atSign)))}
 		}
 		c.pasted = append(c.pasted, q)
 		if c.sent == nil {
@@ -232,11 +235,15 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 }
 
 // queued is an input and its Input.ID. older is set for one that was pasted
-// before a restart into a confined session: what a hataori that left each
-// "@" (before #887) pasted for it. Which hataori pasted it is not recorded,
-// so a person who types just that meanwhile counts as the input, as a person
-// who types just what is pasted always does.
-type queued struct{ id, text, older string }
+// before a restart into a confined session: what earlier hataoris pasted for
+// it, one that left each "@" (before #887) and one that applied only
+// bangOrSlash (before #914). Which hataori pasted it is not recorded, so a
+// person who types just that meanwhile counts as the input, as a person who
+// types just what is pasted always does.
+type queued struct {
+	id, text string
+	older    []string
+}
 
 // Bracketed paste: what the terminal sends around pasted text. The holder
 // adds them; pasted text must not hold them.
@@ -252,11 +259,13 @@ var (
 )
 
 // commandPrefix goes before an input of a confined session that the CLI
-// would read as one of its commands: one that starts with "!" (its shell
-// mode runs the rest, also under --restricted) or "/" (its own commands,
-// such as /add-dir, which widens the directories the file tools may use).
-// The CLI takes the input as a prompt then. A space would not do: the CLI
-// trims it when it puts an interrupted prompt back in the box.
+// could read as one of its commands (noCommand). It reads one that starts
+// with "!" as its shell mode, which runs the rest, also under --restricted,
+// and one that starts with "/" as one of its own commands, such as
+// /add-dir, which widens the directories the file tools may use; and it
+// first takes out of the start what it does not show, such as an escape
+// sequence. The CLI takes the input as a prompt then. A space would not do:
+// the CLI trims it when it puts an interrupted prompt back in the box.
 const commandPrefix = "(message) "
 
 // atSign is what is pasted for each "@" of an input of a confined session.
@@ -276,19 +285,48 @@ const atSignNote = "In every message you are given, each at sign (@) is written 
 	"In everything you write, use @ itself: where you quote such a text, where you pass it on, and where you mention a person, also when the message says whom to mention."
 
 // pasteText is what is pasted for text: without the paste markers, and in
-// a confined session, with no "@" and with commandPrefix before a command.
+// a confined session, without control characters, with no "@" and with
+// commandPrefix before anything that could be a command.
 func (c *codec) pasteText(text string) string {
 	text = cleanPaste(text)
 	if c.spec.Confine == nil {
 		return text
 	}
-	return noCommand(strings.ReplaceAll(text, "@", atSign))
+	return noCommand(strings.ReplaceAll(noControls(text), "@", atSign))
 }
 
-// noCommand is text with commandPrefix before it if it would be a command.
+// noControls is text without its control characters, line breaks and tabs
+// left: nothing in it starts an escape sequence, which a terminal or the
+// CLI would act on or take out. An invalid byte becomes U+FFFD.
+func noControls(text string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.Cc, r) && r != '\n' && r != '\r' && r != '\t' {
+			return -1
+		}
+		return r
+	}, text)
+}
+
+// noCommand is text with commandPrefix before it unless the first
+// character after its spaces is a letter or a digit that shows. Which
+// characters the CLI takes out of the start, and which starts it reads as a
+// command, are its own, so "!", "/" and anything else are refused.
 func noCommand(text string) string {
-	// Spaces, and characters such as a zero-width space, which the CLI
-	// dropped before "/add-dir", do not count as the start.
+	first := strings.TrimLeftFunc(text, unicode.IsSpace)
+	if first == "" {
+		return text
+	}
+	r, _ := utf8.DecodeRuneInString(first)
+	if unicode.In(r, unicode.L, unicode.N) && !unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r) {
+		return text
+	}
+	return commandPrefix + text
+}
+
+// bangOrSlash is text with commandPrefix before it if, after spaces and
+// characters such as a zero-width space, it starts with "!" or "/": all a
+// hataori before #914 refused.
+func bangOrSlash(text string) string {
 	first := strings.TrimLeftFunc(text, func(r rune) bool { return unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) })
 	if strings.HasPrefix(first, "!") || strings.HasPrefix(first, "/") {
 		return commandPrefix + text
@@ -1168,7 +1206,7 @@ func denyWrite(path string) []byte {
 func (c *codec) starter(prompt string) (agent.Starter, string) {
 	text := normalize(unwrapPaste(prompt))
 	for i, p := range c.pasted {
-		if p.text == text || p.older != "" && p.older == text {
+		if p.text == text || slices.Contains(p.older, text) {
 			c.pasted = append(c.pasted[:i], c.pasted[i+1:]...)
 			if c.sent != nil && c.sent.text == p.text {
 				c.sent = nil // delivered
