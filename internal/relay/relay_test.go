@@ -657,6 +657,17 @@ func TestStartForAnOutageThatClosed(t *testing.T) {
 	if n := f.flowCount(); n != 0 {
 		t.Fatalf("%d flows run, want none", n)
 	}
+	// Nor does it replace the flow of a later outage.
+	f.turn(agent.Failed, agent.Login)
+	if u := f.next("the link of the later outage"); u.Link == "" || u.Outage == first.Outage {
+		t.Fatalf("link %+v", u)
+	}
+	if err := f.relay.Start(context.Background(), "chat:owner", "fake", first.Outage); !errors.Is(err, ErrBack) {
+		t.Fatalf("start for the earlier outage: %v, want %v", err, ErrBack)
+	}
+	if n := f.flowCount(); n != 1 {
+		t.Fatalf("%d flows run, want the later outage's", n)
+	}
 }
 
 // A login that comes back by itself ends its own flow only.

@@ -39,7 +39,7 @@ var (
 	ErrForbidden  = errors.New("relay: only the owner may log the agent in")
 	ErrNoLogin    = errors.New("relay: the agent cannot be logged in from here")
 	ErrNotWaiting = errors.New("relay: not waiting for a code")
-	ErrBack       = errors.New("relay: the agent is logged in again")
+	ErrBack       = errors.New("relay: that login is back")
 	ErrNotACode   = errors.New("relay: a code is one word without spaces")
 )
 
@@ -213,7 +213,7 @@ func (r *Relay) account(ctx context.Context, agentName string, outage int64) (se
 // Start starts a new login flow for the login whose outage it is (the
 // agent's own for 0), for from, the "<client>:<id>" of who asks, ending any
 // flow of that login that runs. It is the owner's way to try again. ErrBack
-// means that the login is out no more.
+// means that the outage has closed.
 func (r *Relay) Start(ctx context.Context, from, agentName string, outage int64) error {
 	if !r.isOwner(from) {
 		r.Log.Warn("login relay refused", "op", "start", "from", from)
@@ -269,8 +269,8 @@ func (r *Relay) Code(ctx context.Context, from, agentName string, outage int64, 
 	return nil
 }
 
-// start starts a flow for the login: for its open outage, and for none when
-// outage is 0 and none is open.
+// start starts a flow for the login and its open outage, which must be outage
+// unless that is 0.
 func (r *Relay) start(ctx context.Context, account session.Login, outage int64) error {
 	r.startMu.Lock()
 	defer r.startMu.Unlock()
@@ -294,9 +294,9 @@ func (r *Relay) start(ctx context.Context, account session.Login, outage int64) 
 	if err != nil {
 		return err
 	}
-	if open == 0 && outage != 0 {
-		// It closed meanwhile: nobody is shown a link for it, and nothing
-		// would end the flow.
+	if outage != 0 && outage != open {
+		// It closed: nothing shows a link for it or ends its flow, and the
+		// flow of a later outage of the login is not replaced.
 		return ErrBack
 	}
 	r.end(account, Stopped)
