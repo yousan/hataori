@@ -38,6 +38,7 @@ export interface ThreadInfo {
   context?: { used: number; size: number };
   tokens?: { turn: number; today: number };
   terminal?: string;
+  confined?: boolean; // a supervisor's thread: its directory holds no repository (protocol 3.36)
 }
 
 export interface Request {

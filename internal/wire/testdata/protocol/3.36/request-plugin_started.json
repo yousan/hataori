@@ -1,0 +1,1 @@
+{"id":1,"op":"plugin_started","args":{"plugin":"secret-scan","scopes":["C0123"],"operations":["Threads"],"events":["turn_ended"],"hooks":[{"point":"message_sending","priority":100,"timeout":5000,"on_failure":"block"}],"conversation":true}}

@@ -1,13 +1,22 @@
-// useWorkspaces reads the workspace of each thread from the server: when
-// the thread first shows, when its state, turns or last change move, when
-// it is selected, and, while the table or the details panel is shown,
-// every minute, since a person may change a workspace by hand. Each read runs git on the host, so at most a few run
-// at once, and of a thread's reads only the newest answer counts.
+// useWorkspaces reads the workspace of each thread that has one to read
+// (noWorkspace) from the server: when the thread first shows, when its
+// state, turns or last change move, when it is selected, and, while the
+// table or the details panel is shown, every minute, since a person may
+// change a workspace by hand. Each read runs git on the host, so at most a
+// few run at once, and of a thread's reads only the newest answer counts.
 
 import { useEffect, useRef, useState } from "react";
 import { type ThreadInfo, type WorkspaceState, workspace } from "./api";
 
 export type Workspace = WorkspaceState | "unreadable";
+
+// noWorkspace says why the server has no workspace of x to read: x is a
+// supervisor's thread, whose directory holds no repository, or x was
+// removed. Null when there is one.
+export function noWorkspace(x: ThreadInfo): "supervisor" | "removed" | null {
+  if (x.confined) return "supervisor";
+  return x.state === "removed" ? "removed" : null;
+}
 
 const refreshEvery = 60000;
 const atOnce = 4;
@@ -29,7 +38,10 @@ export function useWorkspaces(threads: ThreadInfo[] | null, shown: boolean, sele
   // pump starts queued reads while fewer than atOnce run.
   const pump = useRef(() => {
     while (running.current < atOnce && queue.current.length > 0) {
-      const x = queue.current.shift()!;
+      const queued = queue.current.shift()!;
+      // It may have been removed, or be listed no more, since it was queued.
+      const x = latest.current.find((y) => y.id === queued.id);
+      if (!x || noWorkspace(x)) continue;
       const n = ++seq.current;
       asked.current.set(x.id, n);
       running.current++;
@@ -38,8 +50,9 @@ export function useWorkspaces(threads: ThreadInfo[] | null, shown: boolean, sele
         .catch((): Workspace => "unreadable")
         .then((w) => {
           running.current--;
-          // An older read, or one of a thread that is no longer listed, is dropped.
-          const still = latest.current.some((y) => y.id === x.id);
+          // An older read, or one of a thread that has none any more or is
+          // no longer listed, is dropped.
+          const still = latest.current.some((y) => y.id === x.id && !noWorkspace(y));
           if (asked.current.get(x.id) === n && still) {
             setStates((m) => new Map(m).set(x.id, w));
           }
@@ -48,18 +61,20 @@ export function useWorkspaces(threads: ThreadInfo[] | null, shown: boolean, sele
     }
   }).current;
   const ask = (x: ThreadInfo) => {
+    if (noWorkspace(x)) return;
     queue.current = [...queue.current.filter((y) => y.id !== x.id), x];
     pump();
   };
 
   useEffect(() => {
-    const listed = new Set((threads ?? []).map((x) => x.id));
+    const listed = new Set((threads ?? []).filter((x) => !noWorkspace(x)).map((x) => x.id));
     for (const n of read.current.keys()) if (!listed.has(n)) read.current.delete(n);
     setStates((m) => {
       if ([...m.keys()].every((n) => listed.has(n))) return m;
       return new Map([...m].filter(([n]) => listed.has(n)));
     });
     for (const x of threads ?? []) {
+      if (!listed.has(x.id)) continue;
       const m = moment(x);
       if (read.current.get(x.id) !== m) {
         read.current.set(x.id, m);

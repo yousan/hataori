@@ -3,7 +3,7 @@ import { lang, t } from "./catalog";
 import { displayTitle, fullTitle, scopeName, stateName } from "./format";
 import type { Attention } from "./live";
 import { eventLine, useThreadEvents } from "./threadEvents";
-import type { Workspace } from "./workspaces";
+import { noWorkspace, type Workspace } from "./workspaces";
 
 const numbers = new Intl.NumberFormat(lang);
 const dash = () => t("table.none");
@@ -98,6 +98,7 @@ interface Props {
 export function Details({ x, attention, workspace, subscribe, opens, scopes, layout, withWaiting = true }: Props) {
   if (!x) return <p className="empty">{t("details.none")}</p>;
   const ws = workspace && workspace !== "unreadable" ? workspace : undefined;
+  const none = noWorkspace(x);
   const pct = x.context && x.context.size > 0 ? Math.round((100 * x.context.used) / x.context.size) : null;
   const n = (v: number | undefined) => (v === undefined ? dash() : numbers.format(v));
   return (
@@ -141,12 +142,21 @@ export function Details({ x, attention, workspace, subscribe, opens, scopes, lay
       </section>
       <section data-block="workspace">
         <h3>{t("details.workspace")}</h3>
+        {none && (
+          <p className="empty" data-field="noWorkspace" data-why={none}>
+            {t(none === "supervisor" ? "details.noRepo" : "details.threadRemoved")}
+          </p>
+        )}
         <dl>
-          <Field name="repo" label={t("details.repo")} value={x.repo || dash()} />
-          <Field name="branch" label={t("details.branch")} value={ws?.branch || dash()} />
-          <Field name="lines" label={t("details.lines")} value={ws ? t("details.linesValue", { added: ws.added, removed: ws.removed }) : dash()} />
-          <Field name="uncommitted" label={t("details.uncommitted")} value={ws ? numbers.format(ws.uncommitted) : dash()} />
-          <Field name="unpushed" label={t("details.unpushed")} value={ws ? numbers.format(ws.unpushed) : dash()} />
+          {none !== "supervisor" && <Field name="repo" label={t("details.repo")} value={x.repo || dash()} />}
+          {!none && (
+            <>
+              <Field name="branch" label={t("details.branch")} value={ws?.branch || dash()} />
+              <Field name="lines" label={t("details.lines")} value={ws ? t("details.linesValue", { added: ws.added, removed: ws.removed }) : dash()} />
+              <Field name="uncommitted" label={t("details.uncommitted")} value={ws ? numbers.format(ws.uncommitted) : dash()} />
+              <Field name="unpushed" label={t("details.unpushed")} value={ws ? numbers.format(ws.unpushed) : dash()} />
+            </>
+          )}
           <Field name="terminal" label={t("details.terminal")} value={x.terminal || dash()} />
         </dl>
       </section>

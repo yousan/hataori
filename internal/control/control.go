@@ -748,6 +748,10 @@ type ThreadInfo struct {
 	// runs in, such as /dev/pts/3; absent on pipes and while no process
 	// runs.
 	Terminal string `json:"terminal,omitempty"`
+	// Confined: the thread was started confined, as a scope's supervisor
+	// thread is: its directory is the scope's, not a workspace with a
+	// repository, so Workspace has nothing to read there. Since 3.36.
+	Confined bool `json:"confined,omitempty"`
 }
 
 // Attachment is the result of AttachTerminal.

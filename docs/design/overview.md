@@ -742,7 +742,7 @@ Not in the dashboard: diffs, boards of cards, a browser inside the page. Other t
 | a thread's conversation, read back to its first input | new operation `ThreadEvents`: events before a position, with a limit (#336) |
 | agent, model, effort, number of turns, last line, background tasks | new optional fields of `ThreadInfo` |
 | tokens this turn and today, context use | new optional fields of the `usage` event, which the core sums into `ThreadInfo` |
-| branch, lines added and removed against the branch point, uncommitted files, unpushed commits | new operation `Workspace` |
+| branch, lines added and removed against the branch point, uncommitted files, unpushed commits | new operation `Workspace`; not asked for a supervisor's thread (`ThreadInfo.confined`), which has no repository, nor for a removed thread: the details panel says so instead (#687) |
 | the live terminal of a session | new operation `Terminal`, a read-only stream from the session host |
 | terminals hataori does not own | new operations `HostTerminals` and `HostScreen` |
 | typing into a tmux pane on the host | new operation `OperateHost` |
