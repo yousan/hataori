@@ -105,8 +105,11 @@ func (g mirrorRepo) replace(ctx context.Context, repo string) error {
 			updates = append(updates, "update "+r.name+" "+id+" "+r.id)
 		case r.name == oldHead && newHead == "":
 			stays[r.id] = true
-		case g.loggedTag(ctx, r.name):
+		case g.loggedInTable(ctx, r.name):
 			stays[r.id] = true
+			if r.name == oldHead {
+				newHead = ""
+			}
 		default:
 			dropped = append(dropped, r)
 			if r.name != oldHead {
@@ -316,16 +319,10 @@ func (g mirrorRepo) hold(ctx context.Context, prefix string, ids []string) error
 	return nil
 }
 
-// loggedTag reports whether name is a tag that may have a reflog, as with
-// core.logAllRefUpdates=always. The reflog would go with the tag, and git lists
-// no tag objects that one names.
-func (g mirrorRepo) loggedTag(ctx context.Context, name string) bool {
-	if !strings.HasPrefix(name, "refs/tags/") {
-		return false
-	}
-	_, files := os.Stat(filepath.Join(g.dir, "logs", "refs", "tags"))
-	_, tables := os.Stat(filepath.Join(g.dir, "reftable"))
-	if errors.Is(files, os.ErrNotExist) && errors.Is(tables, os.ErrNotExist) {
+// loggedInTable reports whether the ref may have a reflog that is in no file.
+// It would go with the ref, and git tells not all that it names.
+func (g mirrorRepo) loggedInTable(ctx context.Context, name string) bool {
+	if _, err := os.Stat(filepath.Join(g.dir, "reftable")); errors.Is(err, os.ErrNotExist) {
 		return false
 	}
 	_, err := g.git(ctx, "", "reflog", "exists", name)
@@ -333,25 +330,39 @@ func (g mirrorRepo) loggedTag(ctx context.Context, name string) bool {
 	return !errors.As(err, &exit) || exit.ExitCode() != 1
 }
 
-// logged is what the reflogs of those of refs that are branches name: a reflog
-// goes with its ref. A mirror has some when git's config says so.
+// logged is what the reflogs of refs name: a reflog goes with its ref. A mirror
+// has some when git's config says so.
 func (g mirrorRepo) logged(ctx context.Context, refs []mirrorRef) ([]mirrorRef, error) {
-	names := ""
+	ids := ""
 	for _, r := range refs {
-		if strings.HasPrefix(r.name, "refs/heads/") {
-			names += r.name + "\n"
+		b, err := os.ReadFile(filepath.Join(g.dir, "logs", filepath.FromSlash(r.name)))
+		if missing(err) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		for line := range strings.Lines(string(b)) {
+			was, rest, _ := strings.Cut(line, " ")
+			is, _, _ := strings.Cut(rest, " ")
+			for _, id := range []string{was, is} {
+				if objectID.MatchString(id) {
+					ids += id + "\n"
+				}
+			}
 		}
 	}
-	if names == "" {
+	if ids == "" {
 		return nil, nil
 	}
-	out, err := g.git(ctx, names, "rev-list", "-g", "--stdin")
+	out, err := g.git(ctx, ids, "cat-file", "--batch-check=%(objectname) %(objecttype)")
 	if err != nil {
 		return nil, err
 	}
 	var logged []mirrorRef
-	for _, id := range strings.Fields(out) {
-		logged = append(logged, mirrorRef{id: id, kind: "commit"})
+	for line := range strings.Lines(out) {
+		if id, kind, ok := strings.Cut(strings.TrimSpace(line), " "); ok && kind != "missing" {
+			logged = append(logged, mirrorRef{id: id, kind: kind})
+		}
 	}
 	return logged, nil
 }

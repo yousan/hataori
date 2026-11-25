@@ -538,46 +538,60 @@ func TestMirrorKeepsWhatReplacedParentsReach(t *testing.T) {
 	x.wantKept(gone, grafted)
 }
 
-// A branch's reflog, of a mirror that has reflogs, goes with the branch.
+// The reflog of a branch or tag, of a mirror that has reflogs, goes with it.
 func TestMirrorKeepsWhatAReflogNames(t *testing.T) {
 	x := newMirrorFixture(t)
 	first := x.push("main", "refs/heads/gone")
+	tag := x.pushTag("v1", "main")
+	x.pushTag("v2", "main")
 	x.make()
 	x.make()
-	x.git(x.mirror, "config", "core.logAllRefUpdates", "true")
-	x.git(x.mirror, "update-ref", "-m", "as a fetch did", "refs/heads/gone", "refs/heads/main")
-	x.git(x.mirror, "update-ref", "-m", "as a fetch did", "refs/heads/gone", first)
-	second := x.push("main", "refs/heads/gone")
-	x.git(x.mirror, "fetch", "-q", "file://"+x.bare, "+refs/heads/gone:refs/heads/gone")
-	x.deleteUpstream("refs/heads/gone")
+	x.git(x.mirror, "config", "core.logAllRefUpdates", "always")
+	second, third := x.push("main", "refs/heads/gone"), ""
+	for _, id := range []*string{&second, &third} {
+		*id = x.push("main", "refs/heads/gone")
+		x.git(x.mirror, "fetch", "-q", "file://"+x.bare, "+refs/heads/gone:refs/heads/gone")
+	}
+	x.git(x.mirror, "update-ref", "refs/tags/v1", "refs/heads/main")
+	x.git(x.mirror, "update-ref", "refs/tags/v1", "refs/tags/v2")
+	log := filepath.Join(x.mirror, "logs", "refs", "heads", "gone")
+	b, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What is gone already, what is no id, and what no later entry comes after.
+	nothing := strings.Repeat("12", 20)
+	last := x.git(x.mirror, "commit-tree", "-m", "last", "refs/heads/main^{tree}")
+	if err := os.WriteFile(log, []byte(nothing+" "+nothing+" x\n\nx\n"+nothing+" "+last+" x\n"+string(b)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	x.deleteUpstream("refs/heads/gone", "refs/tags/v1", "refs/tags/v2")
 	x.push("main", "refs/tags/light")
 	x.make()
 	x.wantSame()
-	x.wantHeld(first, second)
+	x.wantHeld(first, second, third, last, tag)
 }
 
-// A tag with a reflog stays, with what only that names.
-func TestMirrorKeepsWhatATagsReflogNames(t *testing.T) {
-	for name, then := range map[string]string{"annotated": "tag -f -a -m two v1 main", "lightweight": "tag -f v1 main"} {
-		t.Run(name, func(t *testing.T) {
-			x := newMirrorFixture(t)
-			tag := x.pushTag("v1", "main")
-			x.pushTag("v2", "main")
-			x.make()
-			x.make()
-			x.git(x.mirror, "config", "core.logAllRefUpdates", "always")
-			// The mirror's first reflog entry is the one that names the tag object.
-			x.git(x.mirror, "update-ref", "refs/tags/v1", "refs/heads/main")
-			x.git(x.mirror, "update-ref", "refs/tags/v1", tag)
-			x.git(x.mirror, append([]string{"-c", "user.name=a", "-c", "user.email=a@example.com"}, strings.Fields(then)...)...)
-			x.deleteUpstream("refs/tags/v1", "refs/tags/v2")
-			x.make()
-			x.wantHeld(tag)
-			if got := x.refs("refs/tags"); len(got) != 1 || !strings.HasSuffix(got[0], " refs/tags/v1") {
-				t.Fatalf("tags: %v", got)
-			}
-		})
+// In a mirror with a reftable, a ref that has a reflog stays.
+func TestMirrorKeepsRefsWithReflogsInAReftable(t *testing.T) {
+	x := newMirrorFixture(t)
+	first := x.push("main", "refs/heads/gone")
+	x.push("main", "refs/heads/plain")
+	x.make()
+	x.make()
+	if out, err := exec.Command("git", "-C", x.mirror, "refs", "migrate", "--ref-format=reftable").CombinedOutput(); err != nil {
+		t.Skipf("this git makes no reftable: %.60s", out)
 	}
+	x.git(x.mirror, "config", "core.logAllRefUpdates", "true")
+	x.push("main", "refs/heads/gone")
+	x.git(x.mirror, "fetch", "-q", "file://"+x.bare, "+refs/heads/gone:refs/heads/gone")
+	x.git(x.mirror, "symbolic-ref", "HEAD", "refs/heads/gone")
+	x.deleteUpstream("refs/heads/gone", "refs/heads/plain")
+	x.make()
+	if got := x.refs("refs/heads/gone", "refs/heads/plain"); len(got) != 1 || !strings.HasSuffix(got[0], "/gone") {
+		t.Fatalf("left: %v", got)
+	}
+	x.wantHeld(first)
 }
 
 // What changed in the mirror since it was looked at is left.
