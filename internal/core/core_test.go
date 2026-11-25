@@ -551,7 +551,7 @@ func TestStartAsksTheOwner(t *testing.T) {
 	// The owner's link is the thread's first, stored with it.
 	ts, err := f.owner.Threads(ctx, control.Filter{Link: &control.LinkRef{Client: "chat", Channel: "s", Thread: "from-owner"}})
 	if err != nil || len(ts) != 1 || ts[0].ID != id || ts[0].Scope != "s" ||
-		!reflect.DeepEqual(ts[0].Links, []control.LinkRef{{Client: "chat", Channel: "s", Thread: "from-owner"}}) {
+		!reflect.DeepEqual(ts[0].Links, []control.ThreadLink{{LinkRef: control.LinkRef{Client: "chat", Channel: "s", Thread: "from-owner"}, Opened: true}}) {
 		t.Fatalf("the thread by its link: %+v, %v", ts, err)
 	}
 	if ts, err := f.owner.Threads(ctx, control.Filter{Link: &control.LinkRef{Client: "chat", Channel: "s", Thread: "other"}}); err != nil || len(ts) != 0 {

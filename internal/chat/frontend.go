@@ -47,8 +47,9 @@ type FrontEnd struct {
 	ShowIn map[string][]string
 	// ArchiveWhenAsleep holds the scopes, of any client, whose threads'
 	// chat threads are archived when the thread goes asleep or is closed,
-	// and un-archived when it is woken (archiveRows): also a chat thread
-	// of this client that shows another client's scope.
+	// and un-archived when it is woken (archiveRows): those that the client
+	// opened, also a chat thread of this client that shows another client's
+	// scope.
 	ArchiveWhenAsleep map[string]bool
 	// Supervisors is what the front end does with the posts of each
 	// scope's supervisor, by scope, of any client: a link here may show

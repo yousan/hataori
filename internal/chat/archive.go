@@ -16,24 +16,26 @@ const threadPart = 1 << 28
 // of a scope in ArchiveWhenAsleep when it goes asleep or is closed, and
 // un-archive them when it is woken: whatever woke it, a message in the chat
 // thread (which the service has un-archived by itself), the dashboard or
-// `hataori attach`. The rows of the wake come before what the woken thread
-// posts, since they are the state event's. A driver that cannot set a
-// thread's flags (Limits.SetThread) gets none, and its threads stay open.
+// `hataori attach`. Only of those that the client opened: one that was
+// there before its link is left as it is (#870). The rows of the wake come
+// before what the woken thread posts, since they are the state event's. A
+// driver that cannot set a thread's flags (Limits.SetThread) gets none, and
+// its threads stay open.
 //
-// A reopen un-archives them in every scope, whatever archived them: this
-// front end while the thread slept or was closed, or the chat service for
-// inactivity.
-func (f *FrontEnd) archiveRows(e control.Event, convs []surface.Conversation) []Row {
+// A reopen un-archives them all, convs, in every scope, whoever opened them
+// and whatever archived them: this front end while the thread slept or was
+// closed, or the chat service for inactivity.
+func (f *FrontEnd) archiveRows(ctx context.Context, e control.Event, convs []surface.Conversation) ([]Row, error) {
 	if e.Kind != "state" || !f.Driver.Limits().SetThread {
-		return nil
+		return nil, nil
 	}
 	var d struct{ From, To control.State }
 	if json.Unmarshal(e.Data, &d) != nil {
-		return nil
+		return nil, nil
 	}
 	reopened := (d.From == control.Closed || d.From == control.Removed) && d.To == control.Asleep
 	if !reopened && !f.ArchiveWhenAsleep[e.Scope] {
-		return nil
+		return nil, nil
 	}
 	var op Op
 	switch {
@@ -44,7 +46,13 @@ func (f *FrontEnd) archiveRows(e control.Event, convs []surface.Conversation) []
 	case d.From == control.Asleep:
 		op = Unarchive
 	default:
-		return nil
+		return nil, nil
+	}
+	if !reopened {
+		var err error
+		if convs, err = f.openedConvsOf(ctx, e.Thread); err != nil {
+			return nil, err
+		}
 	}
 	var rows []Row
 	for _, conv := range convs {
@@ -52,7 +60,7 @@ func (f *FrontEnd) archiveRows(e control.Event, convs []surface.Conversation) []
 			rows = append(rows, Row{Event: e.Pos, Part: threadPart, Conv: conv, Op: op})
 		}
 	}
-	return rows
+	return rows, nil
 }
 
 // archive archives or un-archives the chat thread conv, once: a failure is

@@ -437,18 +437,18 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 }
 
 type line struct {
-	Thread   control.ThreadID  `json:"thread"` // the thread's number
-	Scope    string            `json:"scope"`
-	Links    []control.LinkRef `json:"links"`
-	State    string            `json:"state"`
-	Title    string            `json:"title"`
-	Repo     string            `json:"repo"`
-	Updated  time.Time         `json:"updated"`
-	Agent    string            `json:"agent,omitempty"`
-	Model    string            `json:"model,omitempty"`
-	Effort   string            `json:"effort,omitempty"`
-	Turns    int               `json:"turns"`
-	Requests int               `json:"requests,omitempty"` // open questions, for thread
+	Thread   control.ThreadID     `json:"thread"` // the thread's number
+	Scope    string               `json:"scope"`
+	Links    []control.ThreadLink `json:"links"`
+	State    string               `json:"state"`
+	Title    string               `json:"title"`
+	Repo     string               `json:"repo"`
+	Updated  time.Time            `json:"updated"`
+	Agent    string               `json:"agent,omitempty"`
+	Model    string               `json:"model,omitempty"`
+	Effort   string               `json:"effort,omitempty"`
+	Turns    int                  `json:"turns"`
+	Requests int                  `json:"requests,omitempty"` // open questions, for thread
 	// Cancelled are the posts a plugin cancelled, for thread (#352).
 	Cancelled []control.CancelledPost `json:"cancelled,omitempty"`
 	// Refused are the posts the chat service refused, for thread (#569).

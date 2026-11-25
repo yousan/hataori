@@ -2486,8 +2486,16 @@ type LinkRef struct {
 	Thread  string
 }
 
+// ThreadLink is a link of a thread: where it is shown, and who opened the
+// conversation there. Since protocol 3.40; before it, a link was its
+// LinkRef.
+type ThreadLink struct {
+	LinkRef
+	Opened bool // the client opened the conversation; without it, it was there before the link or counts as that (a link made before 3.40, but its thread's first one), and is not hataori's to archive, rename or close
+}
+
 // Filter gains Link: Threads with a Link returns the thread linked there,
-// or none. Input and Answer gain Link, the conversation they came through (since protocol 3.6); the core keeps it only when it is a link of the thread, and the `input` and `answer` events name it with the person, so that every other link shows them as `<person>: <text>`. ThreadInfo gains Scope and Links; Event carries Thread (the
+// or none. Input and Answer gain Link, the conversation they came through (since protocol 3.6); the core keeps it only when it is a link of the thread, and the `input` and `answer` events name it with the person, so that every other link shows them as `<person>: <text>`. ThreadInfo gains Scope and Links, a ThreadLink each; Event carries Thread (the
 // number) and Scope.
 
 // ScopeOwner is the client that gives a scope its threads. The core asks
@@ -2625,6 +2633,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `ThreadDetail.Refused` with `RefusedPost`, and the `post_refused` event: a post the chat service refused for good (#569) | minor: a new optional field and a new event kind; 3.35 |
 | `ThreadInfo.Kind`, with `ThreadKind`, and `kind` in `thread_created`: what a thread is to its scope (section 5.1, #867) | minor: new optional fields; 3.38 |
 | The `input_waits` event, and a `Send` to a conversation with the supervisor that waits for its place (section 7.1, *Several at once*, #875) | minor: a new event kind; 3.39 |
+| `ThreadInfo.Links` of `ThreadLink`, a `LinkRef` with `opened`: whether the client opened the conversation (section 5.2, #870) | minor: a new optional field; 3.40 |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 
 Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event. In protocol 1.9: `Terminal`, which turns its connection into a stream as `Events` does. In protocol 1.12: `ThreadInfo.terminal`, the terminal device its session host opened, for the tree's filter, the status bar and the details panel (#285); `HostTerminals` still leaves these terminals out.
@@ -2664,11 +2673,11 @@ type Driver interface {
 	SetStatus(ctx context.Context, ref MessageRef, s Status) error // lamp on a message
 	// SetThread sets a thread's title ("" leaves it) and archived flag. It
 	// is optional (Limits.SetThread). Archiving never locks the thread and
-	// deletes nothing. The chat front end archives the chat threads of a
-	// scope with archive_when_asleep when a thread goes asleep or is
-	// closed, after what it posted there, and un-archives them when the
-	// thread is woken, before what it posts; a driver without the call
-	// keeps them open (#636).
+	// deletes nothing. The chat front end archives the chat threads it
+	// opened, of a scope with archive_when_asleep, when a thread goes
+	// asleep or is closed, after what it posted there, and un-archives
+	// them when the thread is woken, before what it posts; a driver
+	// without the call keeps them open (#636, #870).
 	SetThread(ctx context.Context, conv Conversation, t ThreadMeta) error
 
 	Limits() Limits // message length, choices and files per message, file size, which optional calls work, whether commands work

@@ -188,6 +188,8 @@ func TestLinkThreadsOnTheReleasedDatabase(t *testing.T) {
 		"1|1|fake-surface|c1|thread2|fake-surface/hook-1|1795059777753|",
 		"2|2|fake-surface|c1|thread8|fake-surface/hook-1|1795059778008|",
 	})
+	// The conversation each thread had was opened for it (#870).
+	sameRows(t, "who opened the links' conversations", dump(t, s.DB, `SELECT id, opened FROM links ORDER BY id`), []string{"1|1|", "2|1|"})
 	sameRows(t, "workspace paths", dump(t, s.DB, `SELECT id, workspace FROM threads ORDER BY id`), []string{
 		"1|" + dirs[1] + "|", "2|" + dirs[2] + "|", "3|" + dirs[3] + "|",
 	})

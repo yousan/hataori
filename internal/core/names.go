@@ -114,7 +114,7 @@ func (c *Core) nameScope(ctx context.Context, l control.LinkRef) (string, contro
 
 // linkName is the name the chat service shows for the chat thread of the
 // first of links, "" when none is known.
-func (c *Core) linkName(ctx context.Context, links []control.LinkRef) (string, error) {
+func (c *Core) linkName(ctx context.Context, links []control.ThreadLink) (string, error) {
 	if len(links) == 0 || links[0].Thread == "" {
 		return "", nil
 	}

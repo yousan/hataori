@@ -962,7 +962,8 @@ func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.St
 			}
 		}
 		// The scopes, of every client, whose chat threads are archived
-		// while asleep: a link here may show another client's scope.
+		// while asleep, where the client opened them: a link here may show
+		// another client's scope.
 		archive := map[string]bool{}
 		for _, s := range cfg.Scopes {
 			if s.ArchiveWhenAsleep {

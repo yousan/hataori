@@ -125,9 +125,9 @@ type Scope struct {
 	// Supervisor is the scope's supervisor (design, section 7.1); nil when
 	// the scope names none.
 	Supervisor *Supervisor
-	// ArchiveWhenAsleep archives the chat thread of each of the scope's
-	// threads when the thread goes asleep or is closed, where the chat
-	// service can archive (surface.Limits.SetThread).
+	// ArchiveWhenAsleep archives the chat threads that hataori opened for
+	// the scope's threads when the thread goes asleep or is closed, where
+	// the chat service can archive (surface.Limits.SetThread).
 	ArchiveWhenAsleep bool
 }
 

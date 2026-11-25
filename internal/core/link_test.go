@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 
@@ -28,7 +30,11 @@ func links(t *testing.T, f *fixture, id control.ThreadID) []control.LinkRef {
 	if err != nil || len(ts) != 1 {
 		t.Fatalf("thread %d: %v, %v", id, ts, err)
 	}
-	return ts[0].Links
+	var out []control.LinkRef
+	for _, l := range ts[0].Links {
+		out = append(out, l.LinkRef)
+	}
+	return out
 }
 
 // A link is made in the scope's own channel or in one its show_in names,
@@ -168,10 +174,11 @@ func TestFirstInputLinkOnlyFromItsClient(t *testing.T) {
 	}
 }
 
-// A conversation the client opened for the thread is input from its start.
-// One that was there before, which a Link or a Start names, is from when
-// the link was made.
-func TestLinkCountsFromWhenItWasMadeInAConversationThatWasThere(t *testing.T) {
+// A conversation the client opened for the thread is input from its start,
+// and its link says that the client opened it. One that was there before,
+// which a Link or a Start names, is input from when the link was made, and
+// its link says nothing (#870).
+func TestLinkToAConversationThatWasThere(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, fakeOwner{key: "opened"})
 	f.core.Owners["two"] = &clientOwner{name: "two"}
@@ -185,10 +192,29 @@ func TestLinkCountsFromWhenItWasMadeInAConversationThatWasThere(t *testing.T) {
 	if _, err := f.owner.Start(ctx, control.StartRequest{Key: "k2", Scope: "s", Repo: "r", Input: control.Input{Text: "x"}}); err != nil {
 		t.Fatal(err)
 	}
-	for _, l := range []control.LinkRef{{Client: "chat", Channel: "s", Thread: "attached"}, {Client: "two", Channel: "d1"}} {
+	// A second Link there returns the link that is there, as it was made.
+	for _, l := range []control.LinkRef{{Client: "chat", Channel: "s", Thread: "attached"}, {Client: "two", Channel: "d1"},
+		{Client: "two", Channel: "d1"}, {Client: "two", Channel: "d1", Thread: "opened-1"}} {
 		if _, err := f.owner.Link(ctx, named, l); err != nil {
 			t.Fatal(err)
 		}
+	}
+	told := map[string]bool{}
+	ts, err := f.owner.Threads(ctx, control.Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, th := range ts {
+		d, err := f.owner.Thread(ctx, th.ID, 0, 0)
+		if err != nil || !slices.Equal(d.Links, th.Links) {
+			t.Errorf("thread %d: links %+v, %v, in the list %+v", th.ID, d.Links, err, th.Links)
+		}
+		for _, l := range th.Links {
+			told[l.Thread] = l.Opened
+		}
+	}
+	if want := map[string]bool{"named": false, "opened": true, "attached": false, "opened-1": true}; !maps.Equal(told, want) {
+		t.Errorf("the links say who opened their conversations: %v, want %v", told, want)
 	}
 	for thread, there := range map[string]bool{"named": true, "opened": false, "attached": true, "opened-1": false} {
 		var made, since int64

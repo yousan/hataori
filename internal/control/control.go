@@ -579,6 +579,18 @@ type LinkRef struct {
 	Thread  string `json:"thread"`  // opaque; for chat, the service's thread
 }
 
+// ThreadLink is a link of a thread: where it is shown, and who opened the
+// conversation there. Since 3.40; before it, a link was its LinkRef.
+type ThreadLink struct {
+	LinkRef
+	// Opened: the client opened the conversation, for this thread. Without
+	// it the conversation was there before the link, or counts as that (a
+	// link made before 3.40 that is not its thread's first one), and is not
+	// hataori's to archive, rename or close. A daemon before 3.40 says it of
+	// no link.
+	Opened bool `json:"opened,omitempty"`
+}
+
 // TakeInRequest is the argument of API.TakeIn. Since 3.17.
 type TakeInRequest struct {
 	Window string `json:"window"` // the window, as HostTerminal.Reported.Window names it
@@ -757,10 +769,10 @@ type LayoutThread struct {
 
 // ThreadInfo is one line of Threads.
 type ThreadInfo struct {
-	ID    ThreadID  `json:"id"`              // the thread's number; since 3.0, it replaces number
-	Scope string    `json:"scope"`           // the scope the thread belongs to; since 3.0
-	Links []LinkRef `json:"links"`           // where it is shown, the first link first; since 3.0
-	Title string    `json:"title,omitempty"` // text: absent for a caller that may not read text, since 2.0
+	ID    ThreadID     `json:"id"`              // the thread's number; since 3.0, it replaces number
+	Scope string       `json:"scope"`           // the scope the thread belongs to; since 3.0
+	Links []ThreadLink `json:"links"`           // where it is shown, the first link first; since 3.0
+	Title string       `json:"title,omitempty"` // text: absent for a caller that may not read text, since 2.0
 	// Name is the chat thread's own name as the chat service shows it, of
 	// the thread's first link (SetName), which follows a rename; text,
 	// absent for a caller that may not read text, and when none is known.

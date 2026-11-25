@@ -168,7 +168,7 @@ func TestConversationIsStartedByAPerson(t *testing.T) {
 	f.wt.ended(t, id, 1)
 	d, err := f.owner.Thread(ctx, id, 0, 0)
 	if err != nil || d.Kind != control.KindConversation || d.Title != "reply hello" || len(d.Links) != 1 ||
-		d.Links[0] != (control.LinkRef{Client: fakeSurface, Channel: "c1", Thread: "t-key-of-the-refused"}) {
+		d.Links[0] != (control.ThreadLink{LinkRef: control.LinkRef{Client: fakeSurface, Channel: "c1", Thread: "t-key-of-the-refused"}}) {
 		t.Fatalf("the conversation: %+v %v", d, err)
 	}
 	if in := threadEvents(t, f.owner, id, "input"); len(in) != 1 || in[0]["principal"] != "ann" || in[0]["from"] != people.Join(fakeSurface, svCaller) {
@@ -206,7 +206,7 @@ func TestConversationIsStartedByAPerson(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.wt.ended(t, inChannel, 1)
-	if d, err := f.owner.Thread(ctx, inChannel, 0, 0); err != nil || len(d.Links) != 1 || d.Links[0].Thread == "" || f.wt.r.openedIn("c1") != opened+1 {
+	if d, err := f.owner.Thread(ctx, inChannel, 0, 0); err != nil || len(d.Links) != 1 || d.Links[0].Thread == "" || !d.Links[0].Opened || f.wt.r.openedIn("c1") != opened+1 {
 		t.Fatalf("a call in the channel: %+v %v, %d chat threads opened", d, err, f.wt.r.openedIn("c1")-opened)
 	}
 

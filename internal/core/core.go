@@ -966,16 +966,16 @@ func (a *api) summary(ctx context.Context, t *control.ThreadInfo) (int64, error)
 }
 
 // links returns the thread's links, the first one first; never nil.
-func (c *Core) links(ctx context.Context, id control.ThreadID) ([]control.LinkRef, error) {
-	rows, err := c.Store.DB.QueryContext(ctx, `SELECT client, channel, thread FROM links WHERE thread_id = ? ORDER BY id`, int64(id))
+func (c *Core) links(ctx context.Context, id control.ThreadID) ([]control.ThreadLink, error) {
+	rows, err := c.Store.DB.QueryContext(ctx, `SELECT client, channel, thread, opened FROM links WHERE thread_id = ? ORDER BY id`, int64(id))
 	if err != nil {
 		return nil, fmt.Errorf("core: links of thread %d: %w", id, err)
 	}
 	defer rows.Close()
-	out := []control.LinkRef{}
+	out := []control.ThreadLink{}
 	for rows.Next() {
-		var l control.LinkRef
-		if err := rows.Scan(&l.Client, &l.Channel, &l.Thread); err != nil {
+		var l control.ThreadLink
+		if err := rows.Scan(&l.Client, &l.Channel, &l.Thread, &l.Opened); err != nil {
 			return nil, fmt.Errorf("core: links of thread %d: %w", id, err)
 		}
 		out = append(out, l)
@@ -1537,13 +1537,15 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 		}
 		// The first link, with the thread. A conversation links to one
 		// thread at most, so a second thread in it is refused here.
-		// What was written before in one the caller named is no input.
+		// What was written before in one the caller named is no input, and
+		// the owner did not open it.
+		there := r.Thread != ""
 		var since int64
-		if r.Thread != "" {
+		if there {
 			since = now
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO links (thread_id, client, channel, thread, made_by, created_at, since) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			thread, link.Client, link.Channel, link.Thread, string(a.caller.Principal), now, since); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO links (thread_id, client, channel, thread, made_by, created_at, since, opened) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			thread, link.Client, link.Channel, link.Thread, string(a.caller.Principal), now, since, !there); err != nil {
 			return fmt.Errorf("core: create thread: link %s %s %s: %w", link.Client, link.Channel, link.Thread, err)
 		}
 		// The first input came through the first link when the client that
