@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/yousan/hataori/internal/control"
@@ -33,7 +35,7 @@ func (m *MCP) file(ctx context.Context, op string, raw json.RawMessage) (string,
 		Old     string  `json:"old"`
 		New     *string `json:"new"`
 	}
-	if !utf8.Valid(raw) { // encoding/json would change it
+	if !utf8.Valid(raw) || halfRune(raw) { // encoding/json would change it
 		return "", errors.New("bad arguments: not UTF-8")
 	}
 	if len(raw) > 0 && string(raw) != "null" {
@@ -84,6 +86,32 @@ func (m *MCP) file(ctx context.Context, op string, raw json.RawMessage) (string,
 	}
 	// Without the version: the rest of the file may be another's, unread.
 	return fmt.Sprintf("Written: %s (%d bytes). To write the whole file, read it first.", ans.File.Path, ans.File.Size), nil
+}
+
+// halfRune reports whether a string of raw, JSON, has one half of a
+// character that is escaped as two.
+func halfRune(raw []byte) bool {
+	unit := func(i int) (rune, bool) { // the \u escape that begins at i
+		if len(raw) < i+6 || raw[i] != '\\' || raw[i+1] != 'u' {
+			return 0, false
+		}
+		n, err := strconv.ParseUint(string(raw[i+2:i+6]), 16, 16)
+		return rune(n), err == nil
+	}
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '\\' {
+			continue
+		}
+		if r, ok := unit(i); ok && utf16.IsSurrogate(r) {
+			next, ok := unit(i + 6)
+			if !ok || utf16.DecodeRune(r, next) == utf8.RuneError {
+				return true
+			}
+			i += 10
+		}
+		i++ // what it escapes
+	}
+	return false
 }
 
 // filesText is the list of fs.

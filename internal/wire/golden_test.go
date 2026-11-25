@@ -232,7 +232,7 @@ func examples(t *testing.T) map[string]any {
 	out := ""
 	ex["request-Files-edit.json"] = request{ID: 1, Op: "Files", Args: mustJSON(control.FilesRequest{Op: control.FilesEdit, Path: "notes/plan.md", Old: "then land it", New: &out})}
 	ex["response-Files-refused.json"] = response{ID: 1, Result: mustJSON(control.FilesAnswer{
-		File: &control.ScopeFile{Path: "notes/plan.md", Size: 19, Version: exampleVersion, Text: written}, Refused: "the file has changed since the version given"})}
+		File: &control.ScopeFile{Path: "notes/plan.md", Size: 19, Version: exampleVersion, Text: written}, Refused: "the file has changed since that version"})}
 	// A reminder set with a delay, and one cancelled.
 	ex["request-Remind-delay.json"] = request{ID: 1, Op: "Remind", Args: mustJSON(control.RemindRequest{Delay: 7200, Note: "Has thread 7 ended?"})}
 	ex["request-Remind-cancel.json"] = request{ID: 1, Op: "Remind", Args: mustJSON(control.RemindRequest{Cancel: 3})}

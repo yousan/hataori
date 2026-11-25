@@ -581,7 +581,7 @@ Since 3.41. Lists, reads or writes files of the directory of the caller's scope'
 - `write` makes a new file with `text`, with the directories on the way, or, with `version`, replaces the file that has that version.
 - `edit` replaces the passage `old`, which must stand exactly once in the file as it is now, with `new`, and needs no version.
 
-A write or an edit that does not fit what is there now changes nothing and is answered with `refused`, which says why, and with `file`, the present content and version: a write of a file that is there without a version or with another one, one with a version where there is no file, and an edit whose passage stands there never or more than once. A write or an edit is also refused, as `error`, and changes nothing: in `docs/`; of a text that is not UTF-8 or of a file that would be over 256 KB, or 32 KB for `AGENTS.md`, `SOUL.md`, `USER.md` and `IDENTITY.md`; of a file that the daemon may not write; and where the directory would grow past 20 MB or 500 files besides `docs/`. The names of `docs/` and of those four are compared without regard to case. The writes of a directory are made one after another, each whole or not at all: a file is replaced by a new one under its name, so another name of the old one keeps the old content. Nothing removes a file. A `read` of a file over 256 KB, or of one that is not UTF-8, is `error`.
+A write or an edit that does not fit what is there now changes nothing and is answered with `refused`, which says why, and with `file`, the present content and version: a write of a file that is there without a version or with another one, one with a version where there is no file, an edit where there is no file or whose passage stands there never or more than once, either of a file that `Files` does not read, whose text is not given then, and either of a file that changed while it was written. A write or an edit is also refused, as `error`, and changes nothing: in `docs/`; of a text that is not UTF-8 or of a file that would be over 256 KB, or 32 KB for `AGENTS.md`, `SOUL.md`, `USER.md` and `IDENTITY.md`; of a file that the daemon may not write, or whose owner, group or access list it cannot keep; where the directory would grow past 20 MB or 500 files besides `docs/`; and of a thread that was closed. The names of `docs/` and of those four are compared without regard to case. The writes of a directory are made one after another, each whole or not at all: a file is replaced by a new one under its name, with the same owner, group, permissions and, on Linux, access list, so another name of the old one keeps the old content. Nothing removes a file. A `read` of a file over 256 KB, or of one that is not UTF-8, is `error`.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -1108,7 +1108,7 @@ One file of a supervisor's directory. Since 3.41.
 |---|---|---|---|
 | `path` | string | required | its path in the directory |
 | `size` | integer | required | its size in bytes |
-| `version` | string | optional | a hash of its content; absent for a file that `Files` does not read: one over 256 KB, or one that is not UTF-8 |
+| `version` | string | optional | a hash of its content; absent for a file that `Files` does not read: one over 256 KB, one that is not UTF-8, or one that the daemon may not read |
 | `text` | string | optional | its content, where the answer has it |
 
 ### Type `ForgeDeployed`

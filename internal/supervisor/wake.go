@@ -1247,9 +1247,11 @@ func (r *waking) turned(ctx context.Context, e control.Event) error {
 }
 
 // tellFiles posts the lines that name what the supervisor's turns that
-// ended wrote, each line once: its key is the position of the turn's end,
-// so a daemon that died before it recorded them as posted posts nothing
-// more. A line not posted is an error, and it is tried again.
+// ended wrote, each line once: its key is the position of the turn's end and
+// the turn's last write, so a daemon that died before it recorded them as
+// posted posts nothing more, unless it found out since that the turn wrote
+// more. A line not posted is an error, and it is tried again. Without a
+// thread of the supervisor's own, only the turn's has one.
 func (r *waking) tellFiles(ctx context.Context) error {
 	turns, err := r.w.Files.Untold(ctx, r.w.Scope)
 	if err != nil {
@@ -1266,7 +1268,7 @@ func (r *waking) tellFiles(ctx context.Context) error {
 		return nil
 	}
 	for _, t := range turns {
-		key := FilesKeyPrefix + strconv.FormatUint(t.Pos, 10)
+		key := fmt.Sprintf("%s%d-%d", FilesKeyPrefix, t.Pos, t.Last)
 		if err := tell(t.Thread, key, FilesNotice(t.Names)); err != nil {
 			return err
 		}

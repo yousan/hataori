@@ -311,6 +311,70 @@ func TestFilesWriteAndRead(t *testing.T) {
 	}
 }
 
+// A file that is written keeps its group too. One whose owner or group the
+// daemon cannot keep is not written, and nothing is left of the try.
+func TestFilesKeepsAccess(t *testing.T) {
+	f := newFilesFixture(t)
+	put(t, f.dir, "plan.md", "old")
+	group := func() int {
+		t.Helper()
+		st, err := os.Stat(filepath.Join(f.dir, "plan.md"))
+		if err != nil || st.Mode().Perm() != 0o640 {
+			t.Fatalf("%v, %v", st, err)
+		}
+		return int(st.Sys().(*syscall.Stat_t).Gid)
+	}
+	groups, err := os.Getgroups()
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept := false
+	for _, gid := range groups {
+		if gid == os.Getegid() {
+			continue
+		}
+		if err := os.Chown(filepath.Join(f.dir, "plan.md"), -1, gid); err != nil {
+			continue
+		}
+		if err := os.Chmod(filepath.Join(f.dir, "plan.md"), 0o640); err != nil {
+			t.Fatal(err)
+		}
+		made(t, f.own, writeOf("plan.md", "new", versionOf("old")))
+		if group() != gid {
+			t.Fatalf("written, the file has group %d, had %d", group(), gid)
+		}
+		made(t, f.own, editOf("plan.md", "new", "newer"))
+		if group() != gid {
+			t.Fatalf("edited, the file has group %d, had %d", group(), gid)
+		}
+		kept = true
+		break
+	}
+	if !kept {
+		t.Log("in no group but one")
+	}
+
+	if os.Geteuid() == 0 {
+		return
+	}
+	const why = "a file whose owner, group or access list the daemon cannot keep"
+	for name, as := range map[string]access{"owner": {uid: os.Geteuid() + 1, gid: os.Getegid(), perm: 0o640}, "group": {uid: os.Geteuid(), gid: 1 << 30, perm: 0o640}} {
+		root, err := openDir(f.dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before := f.tree(t)
+		w := placing{path: "plan.md", tmp: tmpName(), was: versionOf(holds(t, f.dir, "plan.md")), version: versionOf("other")}
+		if left, err := f.files.place(f.dir, root, &w, "other", &as); err == nil || !strings.HasSuffix(err.Error(), why) || left != nil {
+			t.Errorf("another %s: %v, left %v", name, err, left)
+		}
+		if f.tree(t) != before {
+			t.Errorf("another %s: something changed", name)
+		}
+		root.Close()
+	}
+}
+
 // The list has every file that a path names, with the version of each that
 // can be read, and nothing else; docs/ can be read.
 func TestFilesList(t *testing.T) {
@@ -359,6 +423,11 @@ func TestFilesList(t *testing.T) {
 			t.Fatalf("listed %+v", ans.Files)
 		}
 	}
+	gone, cancel := context.WithCancel(context.Background())
+	cancel()
+	if ans, err := f.files.list(gone, f.dir); !errors.Is(err, context.Canceled) {
+		t.Errorf("a list for a caller that is gone: %+v, %v", ans, err)
+	}
 	for i := range listMax {
 		put(t, f.dir, fmt.Sprintf("many/%d", i), "")
 	}
@@ -394,20 +463,12 @@ func TestFilesPathsRefused(t *testing.T) {
 	if err := syscall.Mkfifo(filepath.Join(f.dir, "pipe"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// A socket's path is short on every system: bound by a relative name.
-	sock, err := os.MkdirTemp("", "s")
+	t.Chdir(f.dir) // a socket's path is short on every system
+	l, err := net.Listen("unix", "sock")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(sock)
-	if l, err := net.Listen("unix", filepath.Join(sock, "s")); err != nil {
-		t.Fatal(err)
-	} else {
-		defer l.Close()
-		if err := os.Link(filepath.Join(sock, "s"), filepath.Join(f.dir, "sock")); err != nil {
-			t.Logf("no socket in the directory: %v", err)
-		}
-	}
+	defer l.Close()
 	for _, c := range []struct{ path, why string }{
 		{"", "no path"},
 		{"a\xff.md", "a path that is not UTF-8"},
@@ -421,8 +482,9 @@ func TestFilesPathsRefused(t *testing.T) {
 		{".claude/settings.json", dot}, {"notes/.new/secret.md", dot}, {tmpPrefix + "0", dot},
 		{"a\x00b", hidden}, {"a\nb", hidden}, {"a\tb", hidden}, {"a\x7fb", hidden}, {"a\u200bb", hidden}, {"a\u00adb", hidden}, {"a\u202eb", hidden},
 		{"a\u00a0b", hidden}, {"a\u3000b", hidden}, {"a\ufe0fb", hidden}, {"a\U000e0100b", hidden}, {"a\u3164b", hidden}, {"a\u034fb", hidden}, {"a\u2800b", hidden},
+		{"a\U0001d159b", hidden}, {"a\U00013441b", hidden}, {"a\U00013442b", hidden}, {"a\U00016fe4b", hidden},
 		{" plan.md", hidden}, {"plan.md ", hidden}, {"notes /secret.md", hidden}, {"notes/ secret.md", hidden}, {"\u200b/secret.md", hidden},
-		{"notes", regular}, {"pipe", regular}, {"file-link", regular}, {"out-file-link", regular}, {"gone-link", regular}, {"dir-link", regular}, {"out-link", regular}, {"notes/self", regular},
+		{"notes", regular}, {"pipe", regular}, {"sock", regular}, {"file-link", regular}, {"out-file-link", regular}, {"gone-link", regular}, {"dir-link", regular}, {"out-link", regular}, {"notes/self", regular},
 		{"dir-link/secret.md", link}, {"out-link/secret.md", link}, {"out-link/sub/secret.md", link}, {"out-link/new/secret.md", link}, {"other-link/secret.md", link},
 		{"docs-link/secret.md", link}, {"notes/self/secret.md", link}, {"gone-link/secret.md", link}, {"plan.md/secret.md", link}, {"plan.md/new/secret.md", link}, {"pipe/secret.md", link},
 	} {
@@ -431,10 +493,6 @@ func TestFilesPathsRefused(t *testing.T) {
 		f.refused(t, f.own, writeOf(c.path, "changed", versionOf(secret)), c.why)
 		f.refused(t, f.own, editOf(c.path, secret, "changed"), c.why)
 	}
-	if _, err := os.Lstat(filepath.Join(f.dir, "sock")); err == nil {
-		f.refused(t, f.own, readOf("sock"), regular)
-		f.refused(t, f.own, writeOf("sock", "changed", ""), regular)
-	}
 	// docs/ and what is named as it where case does not count, as a file, and
 	// in a directory that would have to be made. ſ is another case of s.
 	for _, path := range []string{"docs/secret.md", "docs/new.md", "docs/new/new.md", "docs", "DOCS/secret.md", "Docs/new.md", "dOcS/new/new.md", "DOCS", "doc\u017f/new.md"} {
@@ -442,6 +500,14 @@ func TestFilesPathsRefused(t *testing.T) {
 		f.refused(t, f.own, writeOf(path, "changed", versionOf(secret)), docs)
 		f.refused(t, f.own, editOf(path, secret, "changed"), docs)
 	}
+	// Another name that the disk knows it by, here of a file.
+	other := newFilesFixture(t)
+	put(t, other.dir, "docs", secret)
+	if err := os.Link(filepath.Join(other.dir, "docs"), filepath.Join(other.dir, "other")); err != nil {
+		t.Fatal(err)
+	}
+	other.refused(t, other.own, writeOf("other", "changed", versionOf(secret)), docs)
+	other.refused(t, other.own, editOf("other", secret, "changed"), docs)
 	// They are no names of it, and the longest path is one.
 	for _, path := range []string{"notes/docs/new.md", "docs.md", "adocs/new.md", "a b/c d.md", "日本語/メモ.md", "e\u0301.md", "a...b", strings.Repeat("a/", pathParts-1) + "secret.md"} {
 		made(t, f.own, writeOf(path, "text", ""))
@@ -491,6 +557,40 @@ func TestFilesCallsRefused(t *testing.T) {
 	all(f.files.API(nil, "c1", 32), not)         // one that works here
 	all(f.files.API(nil, "c1", 99), not)         // no thread
 	all(f.files.API(nil, "c3", filesOwn), "the channel's supervisor has no directory yet")
+
+	// A thread that is closed writes nothing, and one that is closed while
+	// its call waits for another's write does not either.
+	const ended = "the thread of this session is closed"
+	state := func(s control.State) {
+		t.Helper()
+		f.sql(t, fmt.Sprintf(`UPDATE threads SET state = '%s' WHERE id = %d`, s, filesConv))
+	}
+	for _, s := range []control.State{control.Closed, control.Removed} {
+		state(s)
+		f.refused(t, f.conv, writeOf("plan.md", "changed", versionOf("text")), ended)
+		f.refused(t, f.conv, editOf("plan.md", "text", "changed"), ended)
+		f.refused(t, f.conv, writeOf("new.md", "new", ""), ended)
+		f.refused(t, f.conv, writeOf("new/new.md", "new", ""), ended)
+	}
+	for _, s := range []control.State{control.Creating, control.Idle, control.Asleep, control.Failed} {
+		state(s)
+		v := made(t, f.conv, writeOf("plan.md", "by one that is "+string(s), versionOf("text")))
+		made(t, f.conv, writeOf("plan.md", "text", v))
+	}
+	state(control.Running)
+	before := f.tree(t)
+	release := f.files.locks.lock(f.dir)
+	waited := make(chan error, 1)
+	go func() {
+		_, err := f.conv.Files(context.Background(), writeOf("plan.md", "changed", versionOf("text")))
+		waited <- err
+	}()
+	time.Sleep(200 * time.Millisecond) // for it to wait
+	state(control.Closed)
+	release()
+	if err := <-waited; err == nil || !strings.HasSuffix(err.Error(), ended) || f.tree(t) != before || f.recorded(t) != 0 {
+		t.Errorf("closed while it waited: %v; %d recorded", err, f.recorded(t))
+	}
 
 	const cannot = "the channel's supervisor's directory cannot be opened"
 	closed := func(what string, put func(at string) error) {
@@ -653,6 +753,7 @@ func TestFilesLimits(t *testing.T) {
 		}
 		made(t, f.own, writeOf("notes/"+name, large, "")) // not the user's
 	}
+	made(t, f.own, writeOf(UserFiles[0]+"/large.md", large, "")) // nor is one in a directory named so
 
 	if os.Geteuid() == 0 {
 		return
@@ -689,6 +790,7 @@ func TestFilesBytesOfTheDirectory(t *testing.T) {
 	const why = "more than 20 MB in the directory"
 	f := newFilesFixture(t)
 	sized(t, f.dir, "docs/large", dirBytes)
+	sized(t, f.dir, "DOCS/larger", dirBytes) // where case counts, a second one
 	sized(t, f.dir, "notes/.large", dirBytes-100)
 	made(t, f.own, writeOf("a.md", strings.Repeat("a", 100), ""))
 	f.refused(t, f.own, writeOf("b.md", "b", ""), why)
@@ -713,7 +815,7 @@ func TestFilesNumberInTheDirectory(t *testing.T) {
 		put(t, f.dir, fmt.Sprintf("docs/%d", i), "")
 	}
 	for i := range 248 {
-		put(t, f.dir, fmt.Sprintf("notes/%d/x", i), "")
+		put(t, f.dir, fmt.Sprintf("notes/docs/%d/x", i), "")
 		put(t, f.dir, fmt.Sprintf(".hidden/%d", i), "")
 	}
 	if err := os.Symlink(f.outside, filepath.Join(f.dir, "link")); err != nil {
@@ -732,6 +834,30 @@ func TestFilesNumberInTheDirectory(t *testing.T) {
 	}
 	made(t, f.own, writeOf("new/500.md", "", ""))
 	f.refused(t, f.own, writeOf("501.md", "", ""), why)
+
+	root, err := openDir(f.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	gone, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := room(gone, root, false, 1); !errors.Is(err, context.Canceled) {
+		t.Errorf("counted for a caller that is gone: %v", err)
+	}
+	if os.Geteuid() == 0 {
+		return
+	}
+	// What the daemon may not read counts as nothing, and keeps no one from
+	// writing.
+	closed := filepath.Join(f.dir, ".hidden")
+	if err := os.Chmod(closed, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(closed, 0o700) })
+	if ans, err := f.own.Files(context.Background(), writeOf("501.md", "x", "")); err != nil || ans.Refused != "" {
+		t.Errorf("beside a directory that the daemon may not read: %+v, %v", ans, err)
+	}
 }
 
 // atOnce runs the calls at the same moment, in as many sessions, and returns
@@ -1054,6 +1180,7 @@ func TestFilesSwappedMeanwhile(t *testing.T) {
 		{name: "made directory, a link inside, entering", path: "made/new.md", at: swap{"entering", 1, replace("made", inDir)}, err: onTheWay},
 		{name: "the directory, a link outside", path: file, at: swap{"written", 1, replace("", outDir)}, there: "base"},
 		{name: "the directory, a link to another scope's", path: file, at: swap{"written", 1, replace("", linkTo(func(f *filesFixture) string { return f.dir2 }))}, there: "base"},
+		{name: "the directory, a link to itself", path: file, at: swap{"written", 1, replace("", linkTo(func(f *filesFixture) string { return f.dir + "-moved" }))}, there: "base"},
 		{name: "the directory, another", path: file, at: swap{"written", 1, replace("", dir)}, there: "base"},
 		{name: "the directory, gone", path: file, at: swap{"written", 1, replace("", func(*filesFixture, string) error { return nil })}, there: "base"},
 	} {
@@ -1360,8 +1487,8 @@ func TestFilesKilled(t *testing.T) {
 }
 
 // At a start, only the daemon's own file goes, by its recorded name, where
-// it is a file; and what is recorded of a directory that is gone is
-// forgotten.
+// it is a file. What is recorded of a scope's directory that is not there
+// stays recorded, and is settled at a start that finds it.
 func TestFilesSweepRemovesItsOwnOnly(t *testing.T) {
 	ctx := context.Background()
 	f := newFilesFixture(t)
@@ -1383,7 +1510,7 @@ func TestFilesSweepRemovesItsOwnOnly(t *testing.T) {
 	}
 	put(t, f.dir, "notes/.hataori-2", "not recorded")
 	put(t, f.dir, "notes/.hataori-3/x", "a directory")
-	put(t, f.dir, "notes/mine.md", "no name of the daemon's")
+	put(t, f.dir, "notes/mine.md", "the daemon's") // the text, but no name of the daemon's
 	put(t, f.dir, "full/new.md-beside", "a person's")
 	put(t, f.dir, "file", "a person's")
 	put(t, f.outside, ".hataori-6", "outside")
@@ -1419,17 +1546,143 @@ func TestFilesSweepRemovesItsOwnOnly(t *testing.T) {
 			want = append(want, l)
 		}
 	}
-	if log := f.log.take(); strings.Count(log, "it stays") != 4 || !strings.Contains(log, "notes/.hataori-8") {
+	log := f.log.take()
+	if strings.Count(log, "it stays") != 4 || !strings.Contains(log, "notes/.hataori-8") {
 		t.Errorf("logged %s", log)
+	}
+	if strings.Count(log, "may be where it was moved to") != 1 || !strings.Contains(log, "path=gone/deeper/new.md own=.hataori-5") {
+		t.Errorf("logged of a directory that is not there: %s", log)
+	}
+	if strings.Count(log, "cannot be settled") != 3 || !strings.Contains(log, `level=ERROR msg="a supervisor's writes cannot be settled" dir=`+filepath.Join(f.root, "gone")) {
+		t.Errorf("logged of what cannot be settled: %s", log)
 	}
 	if after := withoutStore(tree(t, f.root)); after != strings.Join(want, "\n") {
 		t.Fatalf("there is\n%s\nand was\n%s", after, before)
 	}
 	// What lies behind a link cannot be looked at: it stays recorded.
-	var left string
-	if err := f.files.Store.DB.QueryRow(`SELECT coalesce(group_concat(path), '') FROM supervisor_writes`).Scan(&left); err != nil || left != "file/new.md,out/new.md" {
-		t.Fatalf("recorded: %s, %v", left, err)
+	left := func(want string) {
+		t.Helper()
+		var left string
+		if err := f.files.Store.DB.QueryRow(`SELECT coalesce(group_concat(path ORDER BY id), '') FROM supervisor_writes`).Scan(&left); err != nil || left != want {
+			t.Fatalf("recorded: %s, %v, want %s", left, err, want)
+		}
 	}
+	left("file/new.md,out/new.md,plan.md")
+	put(t, f.root, "gone/plan.md", "old")
+	put(t, f.root, "gone/.hataori-1", "the daemon's")
+	if err := f.files.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if own := ownFiles(t, filepath.Join(f.root, "gone")); len(own) != 0 || holds(t, f.root, "gone/plan.md") != "old" {
+		t.Fatalf("its directory is there again: own files %v, plan.md holds %q", own, holds(t, f.root, "gone/plan.md"))
+	}
+	left("file/new.md,out/new.md")
+}
+
+// Of a write that the daemon died in, with nothing of its own left, only
+// what it was to replace tells whether it was made. It is told of when that
+// is not there any more, whoever changed it.
+func TestFilesSweepTellsWhenInDoubt(t *testing.T) {
+	const at = "AGENTS.md"
+	for _, c := range []struct {
+		name, was string
+		there     func(t *testing.T, f *filesFixture)
+		told      bool
+	}{
+		{"what it was to replace", "old", func(t *testing.T, f *filesFixture) { put(t, f.dir, at, "old") }, false},
+		{"what it wrote", "old", func(t *testing.T, f *filesFixture) { put(t, f.dir, at, "new") }, true},
+		{"another text", "old", func(t *testing.T, f *filesFixture) { put(t, f.dir, at, "a person's") }, true},
+		{"nothing any more", "old", func(*testing.T, *filesFixture) {}, true},
+		{"no text", "old", func(t *testing.T, f *filesFixture) { put(t, f.dir, at, "\xff") }, true},
+		{"no file", "old", func(t *testing.T, f *filesFixture) {
+			if err := syscall.Mkfifo(filepath.Join(f.dir, at), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}, true},
+		{"nothing, of a new file", "", func(*testing.T, *filesFixture) {}, false},
+		{"a new file", "", func(t *testing.T, f *filesFixture) { put(t, f.dir, at, "new") }, true},
+		{"a file, another's", "", func(t *testing.T, f *filesFixture) { put(t, f.dir, at, "a person's") }, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := context.Background()
+			f := newFilesFixture(t)
+			c.there(t, f)
+			was := ""
+			if c.was != "" {
+				was = versionOf(c.was)
+			}
+			f.sql(t, fmt.Sprintf(`INSERT INTO supervisor_writes (scope, thread, dir, path, tmp, was, version, there, pos) VALUES ('c1', %d, '%s', '%s', '.hataori-1', '%s', '%s', 0, 0)`,
+				filesConv, f.dir, at, was, versionOf("new")))
+			before := f.tree(t)
+			if err := f.files.Sweep(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.files.Ended(ctx, "c1", filesConv, 1); err != nil {
+				t.Fatal(err)
+			}
+			turns, err := f.files.Untold(ctx, "c1")
+			if err != nil || (len(turns) == 1) != c.told || c.told && !slices.Equal(turns[0].Names, []string{at}) {
+				t.Errorf("to tell: %+v, %v", turns, err)
+			}
+			if n := f.recorded(t); n != len(turns) || f.tree(t) != before {
+				t.Errorf("%d recorded; there is\n%s\nand was\n%s", n, f.tree(t), before)
+			}
+		})
+	}
+}
+
+// A turn whose lines were posted, but not recorded as that, before it was
+// known all that it wrote has lines that name all of it then; and what is
+// recorded as told has no more.
+func TestFilesLineOfMore(t *testing.T) {
+	ctx := context.Background()
+	f := newFilesFixture(t)
+	posted := map[string]bool{}
+	var lines []string
+	died := errors.New("died")
+	var dies error = died
+	r := &waking{sv: filesOwn, w: &Waker{Scope: "c1", Files: &Sessions{Files: f.files},
+		Tell: func(_ context.Context, id control.ThreadID, key, text string) error {
+			if k := fmt.Sprint(id, " ", key); !posted[k] { // as core posts a key once in a thread
+				posted[k] = true
+				lines = append(lines, fmt.Sprintf("%d: %s", id, text))
+			}
+			return nil
+		},
+		Hook: func(string) error { return dies },
+	}}
+	tell := func(want error, more ...string) {
+		t.Helper()
+		lines = nil
+		if err := f.files.Ended(ctx, "c1", filesConv, 3); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.tellFiles(ctx); (err == nil) != (want == nil) {
+			t.Fatalf("told: %v, want %v", err, want)
+		}
+		if !slices.Equal(lines, more) {
+			t.Fatalf("posted %q, want %q", lines, more)
+		}
+	}
+	both := func(names ...string) []string {
+		return []string{fmt.Sprintf("%d: %s", filesConv, FilesNotice(names)), fmt.Sprintf("%d: %s", filesOwn, FilesNoticeOf(filesConv, names))}
+	}
+	made(t, f.conv, writeOf("AGENTS.md", "x", ""))
+	tell(died, both("AGENTS.md")...)
+	tell(died)
+	put(t, f.dir, "SOUL.md", "x")
+	f.sql(t, fmt.Sprintf(`INSERT INTO supervisor_writes (scope, thread, dir, path, tmp, was, version, there, pos) VALUES ('c1', %d, '%s', 'SOUL.md', '.hataori-1', '', '%s', 0, 0)`,
+		filesConv, f.dir, versionOf("x")))
+	if err := f.files.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tell(died, both("AGENTS.md", "SOUL.md")...)
+	dies = nil
+	tell(nil)
+	if n := f.recorded(t); n != 0 {
+		t.Fatalf("%d recorded", n)
+	}
+	tell(nil)
 }
 
 // A turn's end names the user's files that its thread wrote before it, once
@@ -1509,6 +1762,16 @@ func TestFilesOfATurn(t *testing.T) {
 	untold("c1", fmt.Sprintf("8@6 %s, 5@7 %s", UserFiles[1], UserFiles[1])) // not again
 	ended("c3", filesOwn, 20)                                               // no such scope
 	untold("c3", "")
+	// A write that is not settled is none yet, and told of once it is.
+	f.sql(t, fmt.Sprintf(`INSERT INTO supervisor_writes (scope, thread, dir, path, tmp, was, version, there, pos) VALUES ('c1', %d, '%s', '%s', '.hataori-1', '', '%s', 0, 0)`,
+		filesOwn, f.dir, first, versionOf("1")))
+	ended("c1", filesOwn, 21)
+	untold("c1", fmt.Sprintf("8@6 %s, 5@7 %s", UserFiles[1], UserFiles[1]))
+	if err := f.files.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ended("c1", filesOwn, 22)
+	untold("c1", fmt.Sprintf("8@6 %s, 5@7 %s, 5@22 %s", UserFiles[1], UserFiles[1], first))
 }
 
 // The end of a turn waits for the write that is being made, which is one of

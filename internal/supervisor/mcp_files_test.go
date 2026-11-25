@@ -98,6 +98,12 @@ func TestFileToolsRefuse(t *testing.T) {
 		{ToolEdit, `{"path":"plan.md","old":"","new":"y"}`, edit},
 		{ToolEdit, `{"path":"plan.md","old":"x"}`, edit},
 		{ToolWrite, "{\"path\":\"plan.md\",\"text\":\"a\xffb\"}", "bad arguments: not UTF-8"},
+		{ToolWrite, `{"path":"plan.md","text":"a\ud83d"}`, "bad arguments: not UTF-8"},
+		{ToolWrite, `{"path":"plan.md","text":"a\ud83d\u0041"}`, "bad arguments: not UTF-8"},
+		{ToolWrite, `{"path":"plan.md","text":"a\ud83d\\udc49"}`, "bad arguments: not UTF-8"},
+		{ToolWrite, `{"path":"plan.md","text":"a\ud83d\ud83d\udc49"}`, "bad arguments: not UTF-8"},
+		{ToolWrite, `{"path":"plan.md","text":"\udc49\ud83d"}`, "bad arguments: not UTF-8"},
+		{ToolEdit, `{"path":"plan.md","old":"x","new":"\uDC49 "}`, "bad arguments: not UTF-8"},
 		{ToolWrite, `{"path":"plan.md","text":7}`, "bad arguments: json"},
 		{ToolWrite, `{"path":["plan.md"],"text":"x"}`, "bad arguments: json"},
 	} {
@@ -110,6 +116,12 @@ func TestFileToolsRefuse(t *testing.T) {
 		if !strings.HasPrefix(got, c.want) || len(api.asked) != 0 {
 			t.Errorf("%s %s: answered %q and asked %+v, want %q", c.tool, c.args, got, api.asked, c.want)
 		}
+	}
+	// What is escaped whole is taken as it is.
+	api := &filesAPI{ans: control.FilesAnswer{File: &control.ScopeFile{Path: "plan.md"}}}
+	m := &MCP{Dial: func() (control.API, error) { return api, nil }, Scope: "C0123"}
+	if got, isErr := call(t, m, ToolWrite, `{"path":"plan.md","text":"\ud83d\udc49 \uD83D\uDC49 \\ud83d \u3042 \\\" \ufffd"}`); isErr || len(api.asked) != 1 || *api.asked[0].Text != "👉 👉 \\ud83d あ \\\" \ufffd" {
+		t.Errorf("answered %q, asked %+v", got, api.asked)
 	}
 	for _, c := range []struct {
 		err  error
@@ -124,7 +136,7 @@ func TestFileToolsRefuse(t *testing.T) {
 			t.Errorf("refused with %v: answered %v %q", c.err, isErr, got)
 		}
 	}
-	m := &MCP{Dial: func() (control.API, error) { return &filesAPI{}, nil }, Scope: "C0123"}
+	m = &MCP{Dial: func() (control.API, error) { return &filesAPI{}, nil }, Scope: "C0123"}
 	if got, isErr := call(t, m, ToolWrite, `{"path":"plan.md","text":"x"}`); !isErr {
 		t.Errorf("an answer that is none: %q", got)
 	}

@@ -398,8 +398,9 @@ var _ Files = (*Sessions)(nil)
 
 // FilesKeyPrefix starts the key of the line that names the user's files a
 // supervisor's turn changed; the rest is the position of the event that
-// ended it. The line about a conversation's turn in the supervisor's own
-// thread has filesOwnKey after it.
+// ended it and the number of its last write (FilesTurn). The line about a
+// conversation's turn in the supervisor's own thread has filesOwnKey after
+// it.
 const (
 	FilesKeyPrefix = "hataori-files-"
 	filesOwnKey    = "-own"
