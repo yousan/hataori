@@ -15,6 +15,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -735,39 +736,53 @@ func (c *checker) refuse(rp repo, reason Reason, detail string) error {
 	return &Refusal{Reason: reason, Repo: rp.rel, Kind: rp.kind, Detail: detail}
 }
 
-// find walks the workspace and returns every repository in it: the
-// workspace's own, each directory below it that has a .git or is a git
-// directory itself (a bare repository), and each git directory under the
-// modules of a repository's git directory, whether checked out or not. A directory it
-// cannot read refuses.
+// find walks the whole workspace, git directories included, and returns
+// every repository in it: the workspace's own, each directory below it that
+// has a .git or is a git directory itself (a bare repository), and each git
+// directory under the modules of another, whether checked out or not. A
+// directory it cannot read refuses.
 func (c *checker) find() ([]repo, error) {
-	var repos []repo
+	var repos, last []repo
+	var gitDirs, roots []string // each before what is in it; those that modules does not add
 	err := filepath.WalkDir(c.top, func(p string, d fs.DirEntry, err error) error {
+		if err == nil {
+			err = c.ctx.Err()
+		}
 		if err != nil {
 			return c.unreadable(p, err)
 		}
-		if d.IsDir() && p != c.top && d.Name() != ".git" && isGitDir(p) {
-			rel, _ := filepath.Rel(c.top, p)
-			repos = append(repos, repo{dir: p, gitDir: true, rel: rel, kind: "nested bare repository"})
-			return filepath.SkipDir
-		}
-		if d.Name() != ".git" || p == c.top {
+		if p == c.top {
 			return nil
 		}
 		dir := filepath.Dir(p)
 		rel, _ := filepath.Rel(c.top, dir)
-		rp := repo{dir: dir, rel: rel}
 		switch {
-		case rel == ".":
-			rp.rel = ""
+		case d.Name() == ".git" && rel == ".":
+			repos = append(repos, repo{dir: dir})
+		case d.Name() == ".git" && d.IsDir():
+			repos = append(repos, repo{dir: dir, rel: rel, kind: "nested repository"})
+		case d.Name() == ".git":
+			repos = append(repos, repo{dir: dir, rel: rel, kind: "submodule"})
 		case d.IsDir():
-			rp.kind = "nested repository"
-		default:
-			rp.kind = "submodule"
+			if !isGitDir(p) {
+				return nil
+			}
+			in := enclosing(gitDirs, p)
+			if in != "" && c.onlyRefs(in, p) {
+				return nil
+			}
+			gitDirs = append(gitDirs, p)
+			if in != "" && within(p, filepath.Join(in, "modules")) {
+				return nil
+			}
+			rel, _ := filepath.Rel(c.top, p)
+			last = append(last, repo{dir: p, gitDir: true, rel: rel, kind: "nested bare repository"})
+			roots = append(roots, p)
+			return nil
 		}
-		repos = append(repos, rp)
-		if d.IsDir() {
-			return filepath.SkipDir
+		if d.IsDir() && d.Name() == ".git" {
+			gitDirs = append(gitDirs, p)
+			roots = append(roots, p)
 		}
 		return nil
 	})
@@ -786,29 +801,28 @@ func (c *checker) find() ([]repo, error) {
 	repos[0], repos[topAt] = repos[topAt], repos[0]
 	// The git directories of submodules, with or without a checkout. A
 	// checked-out one is checked twice over, which costs only time.
-	var modules []repo
-	for _, rp := range repos {
-		if rp.gitDir {
-			// A bare repository has none; a git directory that was moved may.
-			if err := c.modules(filepath.Join(rp.dir, "modules"), &modules); err != nil {
-				return nil, err
-			}
-			continue
-		}
-		gitDir := filepath.Join(rp.dir, ".git")
-		if st, err := os.Lstat(gitDir); err != nil {
-			return nil, c.unreadable(gitDir, err)
-		} else if !st.IsDir() {
-			continue // a submodule's .git file: its directory is in the parent's modules
-		}
-		if err := c.modules(filepath.Join(gitDir, "modules"), &modules); err != nil {
+	for _, dir := range roots {
+		if err := c.modules(filepath.Join(dir, "modules"), &last); err != nil {
 			return nil, err
 		}
 	}
-	return append(repos, modules...), nil
+	return append(repos, last...), nil
 }
 
-// modules adds each git directory under dir, and under its own modules.
+// enclosing is the innermost of dirs that p is in, or "".
+func enclosing(dirs []string, p string) string {
+	for i := len(dirs) - 1; i >= 0; i-- {
+		if within(p, dirs[i]) {
+			return dirs[i]
+		}
+	}
+	return ""
+}
+
+// modules adds each git directory under dir, and under its own modules. The
+// others are parts of a submodule's name with a slash, and have directories
+// only: anything else in them refuses, as in a git directory that lost its
+// HEAD or its objects.
 func (c *checker) modules(dir string, out *[]repo) error {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -818,10 +832,10 @@ func (c *checker) modules(dir string, out *[]repo) error {
 		return c.unreadable(dir, err)
 	}
 	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
 		p := filepath.Join(dir, e.Name())
+		if !e.IsDir() {
+			return c.unreadable(p, errors.New("not a submodule's git directory"))
+		}
 		if isGitDir(p) {
 			rel, _ := filepath.Rel(c.top, p)
 			*out = append(*out, repo{dir: p, gitDir: true, rel: rel, kind: "submodule without checkout"})
@@ -837,11 +851,86 @@ func (c *checker) modules(dir string, out *[]repo) error {
 	return nil
 }
 
+// isGitDir reports whether p has what every git directory has: HEAD and
+// objects, either of which may be a link. git says whether it is one, and one
+// it does not take refuses.
 func isGitDir(p string) bool {
 	head, err1 := os.Lstat(filepath.Join(p, "HEAD"))
 	objects, err2 := os.Lstat(filepath.Join(p, "objects"))
-	return err1 == nil && err2 == nil && head.Mode().IsRegular() && objects.IsDir()
+	link := func(st fs.FileInfo) bool { return st.Mode().Type() == fs.ModeSymlink }
+	return err1 == nil && err2 == nil && (head.Mode().IsRegular() || link(head)) && (objects.IsDir() || link(objects))
 }
+
+// onlyRefs reports whether p, in the git directory in, is below its refs or
+// logs and holds nothing but refs or reflogs, as refs/remotes/origin does of a
+// remote that has a branch objects/x, beside the remote's HEAD. No file of it
+// is an object, or says where objects are, and git reads each as a ref or
+// reflog of in: none has a name that no ref may have, and in has its refs in
+// files, and is no worktree's, whose refs are elsewhere. In one with a link for
+// HEAD or objects nothing is taken for refs.
+func (c *checker) onlyRefs(in, p string) bool {
+	head, err1 := os.Lstat(filepath.Join(in, "HEAD"))
+	objects, err2 := os.Lstat(filepath.Join(in, "objects"))
+	if err1 != nil || err2 != nil || !head.Mode().IsRegular() || !objects.IsDir() {
+		return false
+	}
+	for _, name := range []string{"reftable", "commondir"} {
+		if _, err := os.Lstat(filepath.Join(in, name)); !errors.Is(err, fs.ErrNotExist) {
+			return false
+		}
+	}
+	holds := refFile
+	switch {
+	case within(p, filepath.Join(in, "refs")):
+	case within(p, filepath.Join(in, "logs")):
+		holds = reflogStart
+	default:
+		return false
+	}
+	rel, err := filepath.Rel(in, filepath.Dir(p))
+	if err != nil || slices.ContainsFunc(strings.Split(rel, string(filepath.Separator)), noRefName) {
+		return false
+	}
+	return filepath.WalkDir(p, func(p string, d fs.DirEntry, err error) error {
+		if err == nil {
+			err = c.ctx.Err()
+		}
+		if err != nil {
+			return err
+		}
+		if noRefName(d.Name()) || strings.EqualFold(d.Name(), "commondir") || strings.EqualFold(d.Name(), "alternates") || !d.IsDir() && !d.Type().IsRegular() {
+			return errors.New("neither a ref nor a reflog")
+		}
+		if d.IsDir() {
+			return nil
+		}
+		f, err := os.Open(p)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		b, err := io.ReadAll(io.LimitReader(f, 4096))
+		if err == nil && !holds.Match(b) {
+			err = errors.New("neither a ref nor a reflog")
+		}
+		return err
+	}) == nil
+}
+
+// noRefName reports whether name is no part, between slashes, of the name of a
+// ref that git reads. git allows a little more.
+func noRefName(name string) bool {
+	return strings.HasPrefix(name, ".") || strings.HasSuffix(name, ".") || strings.HasSuffix(name, ".lock") ||
+		strings.Contains(name, "..") || strings.Contains(name, "@{") || strings.ContainsAny(name, " ~^:?*[\\\x7f") ||
+		strings.ContainsFunc(name, func(r rune) bool { return r < ' ' })
+}
+
+// refFile is all that the file of a ref holds. reflogStart is how a reflog
+// starts, which may be empty.
+var (
+	refFile     = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64}|ref: refs/[^\n]{0,999})\n?$`)
+	reflogStart = regexp.MustCompile(`^($|([0-9a-f]{40} [0-9a-f]{40}|[0-9a-f]{64} [0-9a-f]{64}) )`)
+)
 
 func (c *checker) unreadable(p string, err error) error {
 	rel, rerr := filepath.Rel(c.top, p)

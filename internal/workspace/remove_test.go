@@ -568,6 +568,120 @@ func TestRefuseWhatASubmoduleWithoutCheckoutHolds(t *testing.T) {
 	}
 }
 
+// linkedGitDir are git directories that git reads with a link for what is a
+// file or a directory in others.
+var linkedGitDir = map[string]func(t *testing.T, dir string){
+	"HEAD": func(t *testing.T, dir string) { // as core.preferSymlinkRefs makes it
+		head := filepath.Join(dir, "HEAD")
+		b, err := os.ReadFile(head)
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.Remove(head)
+		if err := os.Symlink(strings.TrimSpace(strings.TrimPrefix(string(b), "ref: ")), head); err != nil {
+			t.Fatal(err)
+		}
+	},
+	"objects": func(t *testing.T, dir string) {
+		if err := os.Rename(filepath.Join(dir, "objects"), filepath.Join(dir, "objects.d")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("objects.d", filepath.Join(dir, "objects")); err != nil {
+			t.Fatal(err)
+		}
+	},
+}
+
+func TestRefuseASubmoduleWithoutCheckoutWithALink(t *testing.T) {
+	for what, link := range linkedGitDir {
+		for how, remove := range withoutCheckout {
+			for holds, hold := range map[Reason]func(x *removal, sub string){
+				UnpushedRef: func(x *removal, sub string) {
+					x.git(sub, "checkout", "-q", "-b", "wip")
+					x.commit(sub, "t")
+					x.git(sub, "checkout", "-q", "main")
+				},
+				Stash: func(x *removal, sub string) {
+					x.write("sub/s", "work that is committed nowhere\n")
+					x.git(sub, "stash", "-q")
+				},
+				"": func(*removal, string) {},
+			} {
+				t.Run(fmt.Sprintf("%s after %s: %s", what, how, holds), func(t *testing.T) {
+					x := newRemoval(t)
+					hold(x, x.withSubmodule())
+					remove(x)
+					link(t, filepath.Join(x.clone, ".git", "modules", "sub"))
+					if holds != "" {
+						wantRefusal(t, x.check(), holds, filepath.Join(".git", "modules", "sub"))
+					} else if err := x.check(); err != nil {
+						t.Fatal(err)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestRefuseANestedBareRepositoryWithALink(t *testing.T) {
+	for what, link := range linkedGitDir {
+		t.Run(what, func(t *testing.T) {
+			x := newRemoval(t)
+			x.r.Disposable = []string{"cache"}
+			os.Mkdir(filepath.Join(x.clone, "cache"), 0o700)
+			bare := filepath.Join(x.clone, "cache", "b.git")
+			x.git(x.tmp, "clone", "-q", "--bare", x.bare, bare)
+			link(t, bare)
+			if err := x.check(); err != nil {
+				t.Fatalf("pushed bare repository: %v", err)
+			}
+			x.commit(x.clone, "b")
+			x.git(x.clone, "push", "-q", bare, "main:wip")
+			x.git(x.clone, "reset", "-q", "--hard", "origin/main")
+			x.git(x.clone, "reflog", "expire", "--expire=now", "--all")
+			x.git(x.clone, "update-ref", "-d", "ORIG_HEAD")
+			wantRefusal(t, x.check(), UnpushedRef, filepath.Join("cache", "b.git"))
+		})
+	}
+}
+
+// What is under modules and is neither a git directory nor a directory on
+// the way to one cannot be told.
+func TestRefuseWhatIsNoGitDirectoryUnderModules(t *testing.T) {
+	for name, change := range map[string]func(dir string) error{
+		"lost its HEAD":    func(dir string) error { return os.Remove(filepath.Join(dir, "HEAD")) },
+		"lost its objects": func(dir string) error { return os.Rename(filepath.Join(dir, "objects"), filepath.Join(dir, "o")) },
+		"HEAD a directory": func(dir string) error {
+			return errors.Join(os.Remove(filepath.Join(dir, "HEAD")), os.Mkdir(filepath.Join(dir, "HEAD"), 0o700))
+		},
+		"a file":        func(dir string) error { return os.WriteFile(filepath.Join(dir, "..", "notes"), nil, 0o600) },
+		"a file deeper": func(dir string) error { return os.WriteFile(filepath.Join(dir, "..", "a", "notes"), nil, 0o600) },
+		"a link": func(dir string) error {
+			return errors.Join(os.Rename(dir, filepath.Join(dir, "..", "..", "sub.git")), os.Symlink("../sub.git", dir))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			x := newRemoval(t)
+			x.withSubmodule()
+			withoutCheckout["deinit"](x)
+			dir := filepath.Join(x.clone, ".git", "modules", "sub")
+			if err := os.MkdirAll(filepath.Join(dir, "..", "a", "b"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := x.check(); err != nil {
+				t.Fatalf("empty directories: %v", err)
+			}
+			if err := change(dir); err != nil {
+				t.Fatal(err)
+			}
+			var ref *Refusal
+			if err := x.check(); !errors.As(err, &ref) || ref.Reason != Unreadable && ref.Reason != GitError {
+				t.Fatalf("got %v", err)
+			}
+		})
+	}
+}
+
 // git rm leaves the index and core.worktree: git did not empty this one.
 func TestRefuseEveryFileRemovedInASubmoduleRemovedWithGitRm(t *testing.T) {
 	x := newRemoval(t)
@@ -804,6 +918,263 @@ func TestRefuseNestedBareRepository(t *testing.T) {
 	x.commit(work, "o")
 	x.git(work, "push", "-q", own, "main") // own.git has no remote
 	wantRefusal(t, x.check(), UnpushedRef, filepath.Join("cache", "own.git"))
+}
+
+// A repository is found wherever it is, also in the git directory of another.
+func TestRefuseRepositoryInAGitDirectory(t *testing.T) {
+	x := newRemoval(t)
+	x.withSubmodule()
+	x.r.Disposable = []string{"cache", "nested"}
+	for _, b := range []string{"b", "link"} {
+		x.git(x.tmp, "clone", "-q", "--bare", x.bare, filepath.Join(x.clone, "cache", b))
+	}
+	linkedGitDir["objects"](t, filepath.Join(x.clone, "cache", "link"))
+	x.git(x.tmp, "clone", "-q", x.bare, filepath.Join(x.clone, "nested"))
+	x.write(".gitignore", "cache\nnested\n")
+	x.git(x.clone, "add", ".gitignore")
+	x.git(x.clone, "commit", "-q", "-m", "ignore")
+	x.git(x.clone, "push", "-q")
+	// refs/remotes/origin of each now has HEAD and objects, and refs.
+	for _, dir := range []string{"", "sub", "cache/b"} {
+		dir = filepath.Join(x.clone, dir)
+		x.git(dir, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
+		x.git(dir, "push", "-q", "-f", "origin", "HEAD:refs/heads/objects/x", "HEAD:refs/heads/refs/x")
+		x.git(dir, "fetch", "-q", "origin")
+		x.git(dir, "remote", "set-head", "origin", "main")
+	}
+	if err := x.check(); err != nil {
+		t.Fatal(err)
+	}
+	x.git(filepath.Join(x.clone, "sub"), "reflog", "expire", "--expire=now", "--all")
+	if err := x.check(); err != nil {
+		t.Fatalf("with empty reflogs: %v", err)
+	}
+	for _, in := range []string{
+		"cache/b/objects", "cache/link", ".git", ".git/hooks", ".git/modules/sub", "nested/.git/logs",
+	} {
+		for _, bare := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s bare=%v", in, bare), func(t *testing.T) {
+				rel := filepath.Join(filepath.FromSlash(in), "n")
+				n := filepath.Join(x.clone, rel)
+				defer os.RemoveAll(n)
+				work := n
+				if bare {
+					work = filepath.Join(t.TempDir(), "w")
+					x.git(x.tmp, "clone", "-q", "--bare", x.bare, n)
+				}
+				x.git(x.tmp, "clone", "-q", x.bare, work)
+				if err := x.check(); err != nil {
+					t.Fatalf("clean and pushed: %v", err)
+				}
+				if !bare {
+					if err := os.WriteFile(filepath.Join(n, "new"), nil, 0o600); err != nil {
+						t.Fatal(err)
+					}
+					wantRefusal(t, x.check(), Untracked, rel)
+					os.Remove(filepath.Join(n, "new"))
+				}
+				x.commit(work, "work")
+				if bare {
+					x.git(work, "push", "-q", n, "HEAD:wip")
+				}
+				wantRefusal(t, x.check(), UnpushedRef, rel)
+			})
+		}
+	}
+}
+
+// A git directory that lost its refs is not taken for the refs of a remote.
+func TestRefuseBrokenRepositoryInRefs(t *testing.T) {
+	for _, in := range []string{"refs/archive", "refs/remotes/archive", "logs/archive", "logs/refs/remotes/archive", "hooks/archive"} {
+		x := newRemoval(t)
+		n := filepath.Join(x.clone, ".git", filepath.FromSlash(in))
+		x.git(x.tmp, "clone", "-q", "--bare", x.bare, n)
+		os.RemoveAll(filepath.Join(n, "refs"))
+		if in == "hooks/archive" {
+			if err := os.WriteFile(filepath.Join(n, "HEAD"), []byte("ref: refs/remotes/origin/main\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		err := x.check()
+		wantRefusal(t, err, GitError, "")
+		if d := err.(*Refusal).Detail; !strings.Contains(d, "not a git repository") {
+			t.Fatal(d)
+		}
+	}
+}
+
+// A repository is not taken for the refs of a remote by its HEAD.
+func TestRefuseRepositoryInRefs(t *testing.T) {
+	ids := strings.Repeat("0", 40) + " " + strings.Repeat("0", 40) + " "
+	for name, tc := range map[string]struct{ in, head string }{
+		"refs":            {"refs/remotes/.n", "ref: refs/remotes/origin/main\n"},
+		"logs":            {"logs/refs/remotes/n", ids + "\n"},
+		"logs, with link": {"logs/refs/remotes/l", ids + "\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			x := newRemoval(t)
+			n := filepath.Join(x.clone, ".git", filepath.FromSlash(tc.in))
+			x.git(x.tmp, "clone", "-q", "--bare", x.bare, n)
+			x.git(x.clone, "push", "-q", n, x.git(x.clone, "commit-tree", "-m", "w", "HEAD^{tree}")+":refs/heads/wip")
+			x.git(n, "gc", "-q")
+			p := filepath.Join(n, "HEAD")
+			os.Remove(p)
+			if strings.HasSuffix(name, "link") {
+				x.symlink(filepath.Join(x.tmp, "HEAD"), p)
+				p = filepath.Join(x.tmp, "HEAD")
+			}
+			if err := os.WriteFile(p, []byte(tc.head), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := x.check(); err == nil {
+				t.Fatal("the check passed; only that repository has the commit")
+			}
+		})
+	}
+}
+
+// A repository whose files all start as a reflog does, one of which says where
+// its objects are.
+func TestRefuseRepositoryOfReflogs(t *testing.T) {
+	zero := strings.Repeat("0", 40)
+	for name, want := range map[string]Reason{"commondir": UnpushedRef, "objects/info/alternates": DetachedHEAD} {
+		t.Run(name, func(t *testing.T) {
+			x := newRemoval(t)
+			dir := filepath.Join(x.clone, ".git")
+			store, n := filepath.Join(dir, "store"), filepath.Join(dir, "logs", "n")
+			x.git(x.tmp, "clone", "-q", "--bare", x.bare, store)
+			id := x.git(x.clone, "commit-tree", "-m", "w", "HEAD^{tree}")
+			x.git(x.clone, "push", "-q", store, id+":refs/heads/wip")
+			os.Remove(filepath.Join(store, "HEAD")) // nothing but objects to look at
+			line := id + " " + zero + " x"
+			file := filepath.Join(n, filepath.FromSlash(name))
+			to := line + "\n../../../store/objects" // from n/objects
+			if name == "commondir" {
+				to = line + "/../../../store" // from n
+				if err := os.MkdirAll(filepath.Join(n, line), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, d := range []string{filepath.Dir(file), filepath.Join(n, "objects"), filepath.Join(n, "refs")} {
+				if err := os.MkdirAll(d, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for p, content := range map[string]string{filepath.Join(n, "HEAD"): line + "\n", file: to + "\n"} {
+				if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := x.git(n, "rev-parse", "HEAD^{commit}"); !strings.HasSuffix(got, id) {
+				t.Fatalf("the repository is at %s, not at %s", got, id)
+			}
+			os.Remove(filepath.Join(dir, "objects", id[:2], id[2:]))
+			wantRefusal(t, x.check(), want, filepath.Join(".git", "logs", "n"))
+		})
+	}
+}
+
+// The refs of a git directory that has them elsewhere, or in no files, or that
+// has a link for HEAD or objects.
+func TestRefuseFilesInRefsThatGitDoesNotUse(t *testing.T) {
+	for name, n := range map[string]string{"reftable": "n", "commondir": filepath.Join("modules", "s", ".git")} {
+		x := newRemoval(t)
+		n := filepath.Join(x.clone, ".git", n)
+		x.git(x.tmp, "clone", "-q", "--bare", x.bare, n)
+		d := filepath.Join(n, "refs", "n")
+		os.MkdirAll(filepath.Join(d, "objects"), 0o700)
+		os.MkdirAll(filepath.Join(n, name), 0o700)
+		if err := os.WriteFile(filepath.Join(d, "HEAD"), []byte("ref: refs/heads/main\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		c := &checker{ctx: context.Background(), top: x.clone}
+		if c.onlyRefs(n, d) {
+			t.Fatalf("with a %s", name)
+		}
+		os.Remove(filepath.Join(n, name))
+		if !c.onlyRefs(n, d) {
+			t.Fatalf("with no %s", name)
+		}
+		for _, name := range []string{"HEAD", "objects"} {
+			if err := os.Rename(filepath.Join(n, name), filepath.Join(x.tmp, name)); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(x.tmp, name), filepath.Join(n, name)); err != nil {
+				t.Fatal(err)
+			}
+			if c.onlyRefs(n, d) {
+				t.Fatalf("with a link for %s", name)
+			}
+			os.Remove(filepath.Join(n, name))
+			if err := os.Rename(filepath.Join(x.tmp, name), filepath.Join(n, name)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+// What has the name of no ref, or more in it than a ref, git does not read.
+func TestRefuseRefsThatGitDoesNotRead(t *testing.T) {
+	x := newRemoval(t)
+	git := filepath.Join(x.clone, ".git")
+	id := x.git(x.clone, "commit-tree", "-m", "w", "HEAD^{tree}")
+	ref, log := id+"\n", id+" "+id+" \n"
+	for p, content := range map[string]string{
+		"refs/.n/m": ref, "refs/.n/x/m": ref, "refs/n/.m": ref, "refs/n/m.lock": ref, "refs/n/..m": ref, "refs/n/m.": ref, "refs/n/@{m": ref,
+		"refs/n/m ": ref, "refs/n/m\t": ref, "refs/n/m\\": ref, "logs/.n/m": log, "hooks/n/m": ref,
+		"refs/n/m": "ref: refs/remotes/origin/main\n" + ref,
+		"refs/n/l": "ref: refs/" + strings.Repeat("l", 4096) + "\n" + ref, "refs/n/commondir": ref, "refs/n/objects/info/alternates": ref,
+		"refs/n/Commondir": ref, "refs/n/objects/info/Alternates": ref,
+	} {
+		d := filepath.Dir(filepath.Join(git, filepath.FromSlash(p)))
+		if err := os.MkdirAll(filepath.Join(d, "objects"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for p, content := range map[string]string{filepath.Join(d, "HEAD"): content, filepath.Join(git, filepath.FromSlash(p)): content} {
+			if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		err := x.check()
+		wantRefusal(t, err, GitError, "")
+		if d := err.(*Refusal).Detail; !strings.Contains(d, "not a git repository") {
+			t.Fatalf("%q: %s", p, d)
+		}
+		for _, d := range []string{"refs/n", "refs/.n", "logs/.n", "hooks/n"} {
+			os.RemoveAll(filepath.Join(git, filepath.FromSlash(d)))
+		}
+	}
+	if err := x.check(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A pipe is not read.
+func TestRefuseFIFOAsHEAD(t *testing.T) {
+	x := newRemoval(t)
+	d := filepath.Join(x.clone, ".git", "logs", "d")
+	os.MkdirAll(filepath.Join(d, "objects"), 0o700)
+	if err := syscall.Mkfifo(filepath.Join(x.tmp, "fifo"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	x.symlink(filepath.Join(x.tmp, "fifo"), filepath.Join(d, "HEAD"))
+	x.r.Timeout = 10 * time.Second
+	wantRefusal(t, x.check(), GitError, "")
+}
+
+// A directory whose HEAD is no file, or objects no directory.
+func TestRemovableWithDirectoriesLikeAGitDirectory(t *testing.T) {
+	x := newRemoval(t)
+	for _, p := range []string{"api/HEAD/f", "api/objects/f", "lists/HEAD", "lists/objects"} {
+		os.MkdirAll(filepath.Dir(filepath.Join(x.clone, p)), 0o700)
+		x.write(p, "x\n")
+	}
+	x.git(x.clone, "add", ".")
+	x.git(x.clone, "commit", "-q", "-m", "more")
+	x.git(x.clone, "push", "-q")
+	if err := x.check(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestRefuseRemoteThatIsAnotherWorkspace(t *testing.T) {
