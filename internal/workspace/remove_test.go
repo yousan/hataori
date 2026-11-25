@@ -2131,7 +2131,7 @@ func TestRefuseRepositoryInRefs(t *testing.T) {
 // its objects are.
 func TestRefuseRepositoryOfReflogs(t *testing.T) {
 	zero := strings.Repeat("0", 40)
-	for name, want := range map[string]Reason{"commondir": UnpushedRef, "objects/info/alternates": GitError} {
+	for name, want := range map[string]Reason{"commondir": Worktree, "objects/info/alternates": GitError} {
 		t.Run(name, func(t *testing.T) {
 			x := newRemoval(t)
 			dir := filepath.Join(x.clone, ".git")
