@@ -1722,6 +1722,7 @@ func TestRefuseGitDirectoryWithACommonDirectory(t *testing.T) {
 			}
 		}},
 		"named as an id":   {dir: "n", common: strings.Repeat("a", 40) + "\n", other: named},
+		"empty":            {dir: "n"}, // as a crash leaves it
 		"among the refs":   {dir: ".git/refs/n", common: "../../store"},
 		"named as a ref's": {dir: ".git/refs/n", common: strings.Repeat("a", 40) + "\n", other: named},
 		"objects is a link": {dir: "n", common: "../.git/store", other: func(t *testing.T, x *removal, store, n string) {
@@ -1759,8 +1760,10 @@ func TestRefuseGitDirectoryWithACommonDirectory(t *testing.T) {
 				lay.other(t, x, store, n)
 			}
 			os.Remove(filepath.Join(x.clone, ".git", "objects", id[:2], id[2:]))
-			if got := x.git(n, "--git-dir=.", "rev-parse", "wip"); got != id {
-				t.Fatal(got)
+			if lay.common != "" {
+				if got := x.git(n, "--git-dir=.", "rev-parse", "wip"); got != id {
+					t.Fatal(got)
+				}
 			}
 			x.r.Disposable = []string{"n"}
 			wantRefusal(t, x.check(), Worktree, lay.dir)
@@ -1776,6 +1779,36 @@ func TestRefuseGitDirectoryWithACommonDirectory(t *testing.T) {
 				t.Fatal(err)
 			}
 			wantRefusal(t, x.check(), Worktree, lay.dir)
+		})
+	}
+}
+
+// With a commondir, git does not look at the objects and refs of a repository.
+func TestRefuseRepositoryWithACommonDirectory(t *testing.T) {
+	for name, dir := range map[string]string{
+		"bare":      filepath.Join(".git", "n"),
+		"submodule": filepath.Join(".git", "modules", "n"),
+		"nested":    filepath.Join("n", ".git"),
+		"workspace": ".git",
+	} {
+		t.Run(name, func(t *testing.T) {
+			x := newRemoval(t)
+			other, n := filepath.Join(x.tmp, "other.git"), filepath.Join(x.clone, dir)
+			x.git(x.tmp, "clone", "-q", "--bare", x.bare, other)
+			x.write(".git/info/exclude", "/n/\n")
+			switch name {
+			case "nested":
+				x.git(x.tmp, "clone", "-q", x.bare, filepath.Dir(n))
+			case "workspace":
+			default:
+				x.git(x.tmp, "clone", "-q", "--bare", x.bare, n)
+			}
+			x.git(n, "--git-dir=.", "update-ref", "refs/heads/wip", x.git(n, "--git-dir=.", "commit-tree", "-m", "w", "HEAD^{tree}"))
+			if err := os.WriteFile(filepath.Join(n, "commondir"), []byte(other+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			x.r.Disposable = []string{"n"}
+			wantRefusal(t, x.check(), Worktree, dir)
 		})
 	}
 }

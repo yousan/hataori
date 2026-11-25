@@ -690,8 +690,9 @@ type checker struct {
 	n    int    // scratch repositories made
 	// noTree is an empty directory, made when it is first needed (emptyTree).
 	noTree string
-	// parts are the git directories find found that have no objects of their
-	// own: those of linked worktrees, and what is left of one.
+	// parts are the git directories find found that have a common directory:
+	// those of linked worktrees, what is left of one, and repositories with a
+	// commondir.
 	parts []string
 	// trees and gitDirs are the work trees and the git directories find
 	// returned; the git directory of a work tree is its .git.
@@ -786,15 +787,14 @@ func (c *checker) find() ([]repo, error) {
 		case d.IsDir():
 			if !isGitDir(p) {
 				in := enclosing(gitDirs, p)
-				part, err := c.isPart(p, in != "" && (within(p, filepath.Join(in, "refs")) || within(p, filepath.Join(in, "logs"))))
-				if part {
-					c.parts = append(c.parts, p)
-				}
-				return err
+				return c.part(p, in != "" && (within(p, filepath.Join(in, "refs")) || within(p, filepath.Join(in, "logs"))))
 			}
 			in := enclosing(gitDirs, p)
 			if in != "" && c.onlyRefs(in, p) {
 				return nil
+			}
+			if err := c.part(p, false); err != nil {
+				return err
 			}
 			gitDirs = append(gitDirs, p)
 			if in != "" && within(p, filepath.Join(in, "modules")) {
@@ -808,6 +808,7 @@ func (c *checker) find() ([]repo, error) {
 		if d.IsDir() && d.Name() == ".git" {
 			gitDirs = append(gitDirs, p)
 			roots = append(roots, p)
+			return c.part(p, false)
 		}
 		return nil
 	})
@@ -886,9 +887,19 @@ func isGitDir(p string) bool {
 	return err1 == nil && err2 == nil && (head.Mode().IsRegular() || link(head)) && (objects.IsDir() || link(objects))
 }
 
-// isPart reports whether p is a git directory whose objects are in another, its
-// common directory, as git takes it: with HEAD and a commondir. The directory
-// that leads to may be gone for now. Where there are refs, a ref or reflog may
+// part adds p to the parts if it is one.
+func (c *checker) part(p string, refs bool) error {
+	part, err := c.isPart(p, refs)
+	if part {
+		c.parts = append(c.parts, p)
+	}
+	return err
+}
+
+// isPart reports whether p is a git directory whose objects and refs git takes
+// from another, its common directory: with HEAD and a commondir. Objects and
+// refs of its own are not looked at then. The common directory may be gone for
+// now. Where there are refs, a ref or reflog may
 // have either name, and is none unless it leads to objects.
 func (c *checker) isPart(p string, refs bool) (bool, error) {
 	if head, err := os.Lstat(filepath.Join(p, "HEAD")); missing(err) || err == nil && head.IsDir() {
