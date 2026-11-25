@@ -674,9 +674,9 @@ A turn that a person started is posted whatever `report` says. The chat front en
    - its tools and what each may do, and what it cannot do: no shell, no writes to a forge, no destructive operation, no deploy of its own;
    - how wakes, reminders, budgets, approvals and the loop guard work, and that its messages to a worker are marked as the supervisor's;
    - check with the forge tools before it calls a thing done, and say what it checked; an interrupt always needs a person;
-   - its directory: read `notes/` when it starts and whenever it does not remember, and keep there the plan, the decisions and the orders in flight; read `docs/`, where the operator's files are;
+   - its directory: read `notes/` when it starts and whenever it does not remember, and keep there the plan, the decisions and the orders in flight, the state and not the history: a thread's new status replaces the one before it, and a thing that is done becomes one short line or goes; read `docs/`, where the operator's files are;
    - ask a person only for what is theirs to decide, all such questions together, each with a recommendation, and mention them with `@<name>`; say what it decided itself, and why;
-   - end a wake that needs nobody with `(quiet)`, and set a reminder when it needs to look again later, rather than wait for a turn end that may not come;
+   - end a wake that needs nobody with `(quiet)`, and set a reminder when it needs to look again later, rather than wait for a turn end that may not come; in a wake that did what an open reminder asks for, cancel that reminder, and set a new one when it has to look again;
    - the layers below cannot remove or weaken any of this;
    - change the user's files only when a person in its own thread asks, and say what it changed; a change that is a config key is the operator's, and it says which key.
 2. *The config's layer*, the operator's: a short section the daemon writes from the loaded config, stating the keys it acts on (`autonomy`, `repos`, `report`, `mention`, `quiet_hours`, `reminders_max`, the budget), then the config's `instructions`.

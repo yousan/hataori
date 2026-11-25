@@ -14,6 +14,7 @@ import (
 	"github.com/yousan/hataori/internal/agent/claudecode"
 	"github.com/yousan/hataori/internal/supervisor"
 	"github.com/yousan/hataori/internal/surface"
+	fakesurface "github.com/yousan/hataori/internal/surface/fake"
 	"github.com/yousan/hataori/internal/workspace"
 )
 
@@ -224,7 +225,108 @@ func TestRealClaudeCodeManager(t *testing.T) {
 			t.Errorf("the report's first line does not answer the question")
 		}
 	})
-	t.Run("7 the user's settings file unchanged", func(t *testing.T) {
+	// started is a worker's thread and its number, once its turn ended.
+	started := func(t *testing.T, n int, prompt string) (surface.Conversation, string) {
+		t.Helper()
+		p.in(c1, "!go repo:"+repo+" "+prompt)
+		w := p.thread(t, n)
+		eventually(t, "the worker's turn", p.within(4*time.Minute), func() bool { return len(p.turnsEnded(t, w)) >= 1 })
+		return w, numberOf(t, p.root, w)
+	}
+	// settled waits until the supervisor runs no turn and nothing wakes it.
+	settled := func(t *testing.T) {
+		t.Helper()
+		quiet, n := time.Now(), -1
+		eventually(t, "the supervisor's rest", p.within(8*time.Minute), func() bool {
+			time.Sleep(time.Second)
+			if b, e := len(p.list(t, "turn_started", sv)), len(p.turnsEnded(t, sv)); b != e || e != n {
+				quiet, n = time.Now(), e
+			}
+			return time.Since(quiet) > 15*time.Second
+		})
+	}
+	// threads is how many threads were opened.
+	threads := func() (n int) {
+		for _, c := range p.driver.Calls(c1) {
+			if c.Op == fakesurface.OpOpenThread {
+				n++
+			}
+		}
+		return n
+	}
+	t.Run("7 a wake that did what an open reminder asks for cancels it", func(t *testing.T) {
+		w, no := started(t, threads(), "Reply with just these words: part 1 of 3 is done")
+		settled(t)
+		ask(t, "スレッド #"+no+" は3段階の作業をしている。進みを追って。ターン終了の通知が来ないこともあるので、30分後に #"+no+" を見るリマインダーを自分で設定しておいて。")
+		open := map[int64]string{}
+		rows, err := p.db(t).Query(`SELECT id, note FROM supervisor_reminders WHERE state = 'open'`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for rows.Next() {
+			var id int64
+			var note string
+			rows.Scan(&id, &note)
+			open[id] = note
+			t.Logf("reminder %d, open: %s", id, note)
+		}
+		rows.Close()
+		if len(open) == 0 {
+			t.Fatal("it set no reminder")
+		}
+		n := len(p.turnsEnded(t, sv))
+		p.in(w, "Reply with just these words: part 2 of 3 is done")
+		ends(n + 1)
+		t.Logf("the wake's answer: %s", last())
+		for id := range open {
+			var state string
+			p.db(t).QueryRow(`SELECT state FROM supervisor_reminders WHERE id = ?`, id).Scan(&state)
+			if t.Logf("reminder %d after the wake: %s", id, state); state == "open" {
+				t.Errorf("the wake left reminder %d open", id)
+			}
+		}
+		var now int
+		p.db(t).QueryRow(`SELECT count(*) FROM supervisor_reminders WHERE state = 'open'`).Scan(&now)
+		t.Logf("open after the wake: %d", now)
+	})
+	t.Run("8 after three wakes about two threads, the notes hold one status of each", func(t *testing.T) {
+		said := func(w string) string { return "Reply with just these words: now on part " + w + " of the job" }
+		// Plain words, so that a note cannot keep an earlier one shortened.
+		// What the threads start with is not a status: the notes keep what
+		// was asked.
+		parts := [2][3]string{{"tamarind", "basalt", "lichen"}, {"saffron", "quartz", "juniper"}}
+		a, na := started(t, threads(), "Reply with just these words: ready to begin")
+		b, nb := started(t, threads(), "Reply with just these words: ready to begin")
+		settled(t)
+		ask(t, "スレッド #"+na+" と #"+nb+" の進みを追って、どのパートをしているかを notes/ に書いておいて。指示は送らなくていい。")
+		wakes := len(p.turnsEnded(t, sv))
+		for k := 1; k <= 3; k++ {
+			n := len(p.turnsEnded(t, sv))
+			p.in(a, said(parts[0][k-1]))
+			p.in(b, said(parts[1][k-1]))
+			eventually(t, "the workers' turns", p.within(4*time.Minute), func() bool {
+				return len(p.turnsEnded(t, a)) > k && len(p.turnsEnded(t, b)) > k
+			})
+			ends(n + 1)
+			settled(t)
+		}
+		t.Logf("wakes after the order: %d", len(p.turnsEnded(t, sv))-wakes)
+		notes := ""
+		fs, _ := filepath.Glob(filepath.Join(dir, "notes", "*"))
+		for _, f := range fs {
+			s := file(filepath.Join("notes", filepath.Base(f)))
+			notes += s
+			t.Logf("notes/%s is now:\n%s", filepath.Base(f), s)
+		}
+		for i, no := range []string{na, nb} {
+			for k, w := range parts[i] {
+				if has := strings.Contains(strings.ToLower(notes), w); has != (k == 2) {
+					t.Errorf("the notes have status %d of thread #%s: %v", k+1, no, has)
+				}
+			}
+		}
+	})
+	t.Run("9 the user's settings file unchanged", func(t *testing.T) {
 		if after := userSettings(t); after != settingsBefore {
 			t.Fatalf("the user's settings file changed: %s, now %s", settingsBefore, after)
 		}
