@@ -598,7 +598,7 @@ def calls_run(raw, minutes):
         if ev["t"] == "GUILD_CREATE" and d["id"] == here["guild_id"]:
             guild.update(ev)
         elif ev["t"] in ("MESSAGE_CREATE", "MESSAGE_UPDATE") and d.get("channel_id") == ch and (
-                d.get("webhook_id") or d.get("author", {}).get("id") == owner):
+                ev["t"] == "MESSAGE_UPDATE" or d.get("webhook_id") or d.get("author", {}).get("id") == owner):
             with lock:
                 got.append(ev)
         changed.set()
@@ -663,11 +663,12 @@ def calls_run(raw, minutes):
                 ev["t"] == "MESSAGE_CREATE" and bool(ev["d"].get("webhook_id")) == webhook
                 and ev["d"]["type"] == 0 and content(ev) == text)
 
-        def replies(how, to):
-            """A reply to the post whose id to gives."""
+        def replies(how, to, pings=None):
+            """A reply to the post whose id to gives. pings is whether it must mention the bot."""
             return how + ": [hataori test] yes", lambda ev: (
                 ev["t"] == "MESSAGE_CREATE" and ev["d"]["type"] == 19 and content(ev) == "[hataori test] yes"
-                and ev["d"]["message_reference"].get("message_id") == to())
+                and ev["d"]["message_reference"].get("message_id") == to()
+                and pings in (None, any(u["id"] == me["id"] for u in ev["d"]["mentions"])))
 
         def step(name, do, ok):
             print(f"\n== {name}: {do}", file=sys.stderr)
@@ -678,8 +679,8 @@ def calls_run(raw, minutes):
         for name, (do, ok) in (
                 ("mention", says(f"{at} [hataori test] hello")),
                 ("mention-role", says(f"{role} [hataori test] hello")),
-                ("reply", replies("reply to the bot's post \"reply to this one\", with the mention on", lambda: target["id"])),
-                ("reply-silent", replies("reply to the same post with the mention off", lambda: target["id"])),
+                ("reply", replies("reply to the bot's post \"reply to this one\", with the mention on", lambda: target["id"], True)),
+                ("reply-silent", replies("reply to the same post with the mention off", lambda: target["id"], False)),
                 ("quoted-and-not", says(f"> {at} [hataori test] a\n{at} b")),
                 ("quoted", says(f"> {at} [hataori test] a\nb")),
                 ("quoted-lines", says(f"[hataori test] a\n>>> b\n{at} c")),
@@ -701,7 +702,8 @@ def calls_run(raw, minutes):
         ev = step("edited", *says("[hataori test] to edit"))
         mid, text = ev["d"]["id"], f"{at} [hataori test] hello"
         ev = step("edited", f"edit that message to exactly this:\n{text}",
-                  lambda ev: ev["t"] == "MESSAGE_UPDATE" and ev["d"]["id"] == mid and ev["d"].get("edited_timestamp") and content(ev) == text)
+                  lambda ev: ev["t"] == "MESSAGE_UPDATE" and ev["d"]["id"] == mid and ev["d"].get("edited_timestamp")
+                  and ("content" not in ev["d"] or content(ev) == text))
         raw.save("gw-edited-update", {"source": "gateway", **ev})
         read("edited", ev["d"])
         ev = step("reply-deleted", *replies("reply to the bot's post \"reply to this one\" once more", lambda: target["id"]))
