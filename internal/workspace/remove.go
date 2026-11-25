@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -1250,8 +1251,14 @@ func (c *checker) commits(g *reader, rp repo) error {
 	// written into this one.
 	local := *g
 	local.env = append(append([]string(nil), g.env...), "GIT_ALTERNATE_OBJECT_DIRECTORIES="+filepath.Join(scratch, "objects"))
-	unpushed := func(revs ...string) (string, error) {
-		return local.input(c.ctx, tips, append([]string{"rev-list", "-n1"}, append(revs, "--stdin")...)...)
+	// The ids are given with the remotes' commits: they may be too many for
+	// arguments.
+	unpushed := func(ids []string, revs ...string) (string, error) {
+		stdin := tips
+		for _, id := range ids {
+			stdin += id + "\n"
+		}
+		return local.input(c.ctx, stdin, append([]string{"rev-list", "-n1"}, append(revs, "--stdin")...)...)
 	}
 	// HEAD and the other pseudo-refs are named: without a reflog, a
 	// detached HEAD or ORIG_HEAD is on no ref.
@@ -1263,7 +1270,11 @@ func (c *checker) commits(g *reader, rp repo) error {
 	if err != nil {
 		return err
 	}
-	first, err := unpushed(append(append([]string{"--all", "--reflog"}, pseudo...), autostash...)...)
+	named, err := c.named(g)
+	if err != nil {
+		return err
+	}
+	first, err := unpushed(named, append(append([]string{"--all", "--reflog"}, pseudo...), autostash...)...)
 	if err != nil {
 		return err
 	}
@@ -1283,12 +1294,13 @@ func (c *checker) commits(g *reader, rp repo) error {
 	places := []struct {
 		reason Reason
 		revs   []string
+		ids    []string
 	}{
-		{UnpushedRef, []string{"--branches"}},
-		{DetachedHEAD, nil},
-		{Stash, append(stash, autostash...)},
-		{RemoteGone, []string{"--remotes"}},
-		{OtherRef, append([]string{"--all"}, pseudo...)},
+		{UnpushedRef, []string{"--branches"}, nil},
+		{DetachedHEAD, nil, nil},
+		{Stash, append(stash, autostash...), nil},
+		{RemoteGone, []string{"--remotes"}, nil},
+		{OtherRef, append([]string{"--all"}, pseudo...), named},
 	}
 	if len(pseudo) > 0 && pseudo[0] == "HEAD" {
 		places[1].revs = []string{"HEAD"}
@@ -1297,7 +1309,7 @@ func (c *checker) commits(g *reader, rp repo) error {
 		if len(p.revs) == 0 {
 			continue
 		}
-		commit, err := unpushed(p.revs...)
+		commit, err := unpushed(p.ids, p.revs...)
 		if err != nil {
 			return err
 		}
@@ -1342,6 +1354,152 @@ func (c *checker) pseudoRefs(g *reader) ([]string, error) {
 	}
 	return refs, nil
 }
+
+// named are the objects that a line of a file directly in the git directory
+// starts with, as each line of FETCH_HEAD and of any other pseudo-ref does,
+// and those of the pseudo-refs git lists of a repository that keeps its refs
+// elsewhere.
+// One the repository has no more, as when it was pruned, has nothing to lose.
+func (c *checker) named(g *reader) ([]string, error) {
+	gitDir, err := g.line(c.ctx, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return nil, err
+	}
+	objects, err := g.gitPath(c.ctx, "objects") // in the common directory
+	if err != nil {
+		return nil, err
+	}
+	dirs := []string{gitDir}
+	if common := filepath.Dir(objects); common != gitDir {
+		dirs = append(dirs, common)
+	}
+	var ids []string
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return nil, c.unreadable(dir, err)
+		}
+		for _, e := range entries {
+			// --all reads packed-refs; the index is as HEAD is (step 1); shallow
+			// says where the history was cut.
+			if e.IsDir() || e.Name() == "packed-refs" || e.Name() == "index" || e.Name() == "shallow" {
+				continue
+			}
+			p := filepath.Join(dir, e.Name())
+			if fi, err := os.Stat(p); missing(err) {
+				continue // a link to nothing
+			} else if err != nil {
+				return nil, c.unreadable(p, err)
+			} else if !fi.Mode().IsRegular() {
+				continue
+			}
+			in, err := c.lineIDs(p)
+			if err != nil {
+				return nil, c.unreadable(p, err)
+			}
+			ids = append(ids, in...)
+		}
+	}
+	// Exit 1: not set, and the refs are files.
+	format, code, err := g.run(c.ctx, "config", "--get", "extensions.refStorage")
+	if err != nil && code != 1 {
+		return nil, err
+	}
+	if f := strings.TrimSpace(string(format)); err == nil && f != "files" {
+		out, _, err := g.run(c.ctx, "for-each-ref", "--include-root-refs", "--format=%(objectname)")
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, strings.Fields(string(out))...)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	slices.Sort(ids)
+	ids = slices.Compact(ids)
+	out, errs, err := g.inputAll(c.ctx, strings.Join(ids, "\n")+"\n", "cat-file", "--batch-check=%(objectname)")
+	if err != nil {
+		return nil, err
+	}
+	var have []string
+	read := false // each pack can be
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	if len(lines) != len(ids) {
+		return nil, fmt.Errorf("workspace: git cat-file printed %d lines for %d objects", len(lines), len(ids))
+	}
+	for _, l := range lines {
+		if id, gone := strings.CutSuffix(l, " missing"); !gone && objectID.MatchString(l) {
+			have = append(have, l)
+		} else if !gone || errs != "" { // git says the same of one it cannot read
+			return nil, fmt.Errorf("workspace: git cat-file: %s: %s", id, lastLines(redact(errs), 3, l))
+		} else if !read {
+			if err := c.readable(filepath.Join(objects, "pack")); err != nil {
+				return nil, err
+			}
+			read = true
+		}
+	}
+	return have, nil
+}
+
+// readable refuses when a file below dir, which may be a link, cannot be
+// opened. git says nothing of a pack that it cannot.
+func (c *checker) readable(dir string) error {
+	dir, err := filepath.EvalSymlinks(dir)
+	if missing(err) {
+		return nil
+	} else if err != nil {
+		return c.unreadable(dir, err)
+	}
+	return filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err == nil {
+			err = c.ctx.Err()
+		}
+		if err == nil && !d.IsDir() {
+			var fi fs.FileInfo
+			if fi, err = os.Stat(p); err == nil && fi.Mode().IsRegular() {
+				var f *os.File
+				if f, err = os.Open(p); err == nil {
+					f.Close()
+				}
+			}
+		}
+		if err != nil {
+			return c.unreadable(p, err)
+		}
+		return nil
+	})
+}
+
+// lineIDs are the object ids that the lines of the file p start with.
+func (c *checker) lineIDs(p string) ([]string, error) {
+	f, err := os.Open(p)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var ids []string
+	r := bufio.NewReader(f)
+	for start := true; ; {
+		if err := c.ctx.Err(); err != nil {
+			return nil, err
+		}
+		s, err := r.ReadSlice('\n') // a long line in parts
+		if m := lineID.FindSubmatch(s); start && m != nil {
+			ids = append(ids, strings.ToLower(string(m[1])))
+		}
+		switch start = err == nil; err {
+		case nil, bufio.ErrBufferFull:
+		case io.EOF:
+			return ids, nil
+		default:
+			return nil, err
+		}
+	}
+}
+
+// lineID is a full object id at the start of a line.
+var lineID = regexp.MustCompile(`^([0-9a-fA-F]{64}|[0-9a-fA-F]{40})(?:[^0-9a-fA-F]|$)`)
 
 // stashCommits are the commits of every stash entry.
 func (c *checker) stashCommits(g *reader) ([]string, error) {
@@ -2264,6 +2422,16 @@ func lsofName(p string) (name string, ok bool) {
 
 // input runs git with stdin and returns its output's first line, or "".
 func (g reader) input(ctx context.Context, stdin string, args ...string) (string, error) {
+	out, _, err := g.inputAll(ctx, stdin, args...)
+	if err != nil {
+		return "", err
+	}
+	first, _, _ := strings.Cut(strings.TrimSpace(out), "\n")
+	return first, nil
+}
+
+// inputAll runs git with stdin and returns what it printed.
+func (g reader) inputAll(ctx context.Context, stdin string, args ...string) (out, errs string, err error) {
 	full := append(append([]string{"-C", g.dir, "-c", "core.fsmonitor=false"}, g.extra...), args...)
 	cmd := gitCommand(ctx, full...)
 	cmd.Env = g.env
@@ -2271,8 +2439,7 @@ func (g reader) input(ctx context.Context, stdin string, args ...string) (string
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("workspace: git %s: %s", args[0], lastLines(redact(stderr.String()), 3, redactErr(err)))
+		return "", "", fmt.Errorf("workspace: git %s: %s", args[0], lastLines(redact(stderr.String()), 3, redactErr(err)))
 	}
-	first, _, _ := strings.Cut(strings.TrimSpace(stdout.String()), "\n")
-	return first, nil
+	return stdout.String(), stderr.String(), nil
 }
