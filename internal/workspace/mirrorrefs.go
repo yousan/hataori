@@ -33,7 +33,14 @@ const (
 type mirrorRepo struct {
 	dir string
 	env []string
+	// lock is the lock. A git that changes refs has it as well: when hataori
+	// dies meanwhile the next update comes after that git.
+	lock *os.File
 }
+
+// refsAtOnce is how many refs one git changes: what it did stays when a large
+// update is stopped, and the next goes on from there.
+const refsAtOnce = 200
 
 // update makes the mirror's branches and tags those of repo. What one that
 // repo deleted or moved named stays in the mirror, by a kept ref when the
@@ -56,8 +63,8 @@ func (g mirrorRepo) update(ctx context.Context, repo string) {
 // replace does what the fetch could not: it deletes the branches and tags that
 // repo has no more, and moves those that it moved elsewhere. At each point
 // every object that a ref of the mirror named before is reachable from its
-// refs. When repo has something that was not fetched, as when it moved since,
-// nothing is dropped.
+// refs. When repo has something that was not fetched, or has not what it had at
+// the fetch, nothing is dropped.
 func (g mirrorRepo) replace(ctx context.Context, repo string) error {
 	out, err := g.git(ctx, "", "ls-remote", "--heads", "--tags", "--", repo)
 	if err != nil {
@@ -122,10 +129,21 @@ func (g mirrorRepo) replace(ctx context.Context, repo string) error {
 		}
 	}
 	if len(dropped) > 0 {
+		then, err := os.ReadFile(filepath.Join(g.dir, "FETCH_HEAD"))
+		if err != nil {
+			return err
+		}
+		if !maps.Equal(fetchHead(string(then)), want) {
+			return errors.New("workspace: the remote moved while its mirror was updated")
+		}
 		if err := g.hold(ctx, fetchedRefs, fetched); err != nil {
 			return err
 		}
-		lost, err := g.lost(ctx, dropped, slices.Collect(maps.Keys(stays)))
+		logged, err := g.logged(ctx, dropped)
+		if err != nil {
+			return err
+		}
+		lost, err := g.lost(ctx, slices.Concat(dropped, logged), slices.Collect(maps.Keys(stays)))
 		if err != nil {
 			return err
 		}
@@ -149,6 +167,25 @@ func (g mirrorRepo) replace(ctx context.Context, repo string) error {
 		g.moveHead(ctx, oldHead, newHead, refs)
 	}
 	return nil
+}
+
+// fetchHead are the branches and tags that a FETCH_HEAD lists, with their ids.
+func fetchHead(s string) map[string]string {
+	refs := map[string]string{}
+	for _, line := range strings.Split(s, "\n") {
+		f := strings.SplitN(line, "\t", 3)
+		if len(f) != 3 {
+			continue
+		}
+		for kind, prefix := range map[string]string{"branch '": "refs/heads/", "tag '": "refs/tags/"} {
+			name, ok := strings.CutPrefix(f[2], kind)
+			// No name of a ref has a space in it.
+			if name, _, quoted := strings.Cut(name, "' of "); ok && quoted {
+				refs[prefix+name] = f[0]
+			}
+		}
+	}
+	return refs
 }
 
 // inTheWay reports whether a ref of want is one that cannot be made where name
@@ -261,7 +298,9 @@ func (g mirrorRepo) hold(ctx context.Context, prefix string, ids []string) error
 		if len(lines) == 0 {
 			return nil
 		}
-		_ = g.updateRefs(ctx, lines)
+		for some := range slices.Chunk(lines, refsAtOnce) {
+			_ = g.updateRefs(ctx, some)
+		}
 	}
 	have, err := held()
 	if err != nil {
@@ -273,6 +312,29 @@ func (g mirrorRepo) hold(ctx context.Context, prefix string, ids []string) error
 		}
 	}
 	return nil
+}
+
+// logged is what the reflogs of refs name: a reflog goes with its ref. A mirror
+// has some when git's config says so.
+func (g mirrorRepo) logged(ctx context.Context, refs []mirrorRef) ([]mirrorRef, error) {
+	names := ""
+	for _, r := range refs {
+		if r.kind == "commit" {
+			names += r.name + "\n"
+		}
+	}
+	if names == "" {
+		return nil, nil
+	}
+	out, err := g.git(ctx, names, "rev-list", "-g", "--stdin")
+	if err != nil {
+		return nil, err
+	}
+	var logged []mirrorRef
+	for _, id := range strings.Fields(out) {
+		logged = append(logged, mirrorRef{id: id, kind: "commit"})
+	}
+	return logged, nil
 }
 
 // lost are the ids of those of refs that left does not reach, without commits
@@ -395,21 +457,29 @@ func (g mirrorRepo) clear(ctx context.Context) {
 // can be made, as long as that does not take long: git waits for a lock that
 // one that died left.
 func (g mirrorRepo) change(ctx context.Context, lines []string) {
-	if len(lines) == 0 || g.updateRefs(ctx, lines) == nil || len(lines) == 1 {
-		return
-	}
-	end := time.Now().Add(5 * time.Second)
-	for _, line := range lines {
-		if time.Now().After(end) {
+	var end time.Time
+	for some := range slices.Chunk(lines, refsAtOnce) {
+		if !end.IsZero() && time.Now().After(end) {
 			return
 		}
-		_ = g.updateRefs(ctx, []string{line})
+		if g.updateRefs(ctx, some) == nil {
+			continue
+		}
+		if end.IsZero() {
+			end = time.Now().Add(5 * time.Second)
+		}
+		for _, line := range some {
+			if len(some) == 1 || time.Now().After(end) {
+				break
+			}
+			_ = g.updateRefs(ctx, []string{line})
+		}
 	}
 }
 
 func (g mirrorRepo) updateRefs(ctx context.Context, lines []string) error {
 	// A dying git commits what it read: no line may be half there.
-	_, err := g.git(ctx, "start\n"+strings.Join(lines, "\n")+"\nprepare\ncommit\n", "-c", "core.fsync=all", "update-ref", "--no-deref", "--stdin")
+	_, err := g.git(ctx, "start\n"+strings.Join(lines, "\n")+"\nprepare\ncommit\n", "update-ref", "--no-deref", "--stdin")
 	return err
 }
 
@@ -445,13 +515,20 @@ func (g mirrorRepo) refs(ctx context.Context) ([]mirrorRef, error) {
 
 // git runs git in the mirror and returns what it printed.
 func (g mirrorRepo) git(ctx context.Context, stdin string, args ...string) (string, error) {
-	cmd := gitCommand(ctx, append([]string{"--git-dir", g.dir}, args...)...)
+	// The gc that a fetch starts drops nothing, whatever the environment says;
+	// what git did is there after a power failure.
+	cmd := gitCommand(ctx, append([]string{"--git-dir", g.dir, "-c", "gc.pruneExpire=never", "-c", "core.fsync=all"}, args...)...)
 	cmd.Env = append(slices.Clip(g.env), "GIT_NO_REPLACE_OBJECTS=1", "GIT_GRAFT_FILE="+os.DevNull, "LC_ALL=C")
+	if args[0] == "update-ref" && g.lock != nil {
+		cmd.ExtraFiles = []*os.File{g.lock}
+	}
 	cmd.Stdin = strings.NewReader(stdin)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	// Stderr goes nowhere: what the transport started may hold it open after
+	// git ended, and then git would count as failed.
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("workspace: the mirror: git %s: %s (%w)", args[0], lastLines(redact(stderr.String()), 3, ""), err)
+		return "", fmt.Errorf("workspace: the mirror: git %s: %w", args[0], err)
 	}
 	return stdout.String(), nil
 }
