@@ -64,7 +64,7 @@ type codec struct {
 	runningPrompt string        // the prompt id of that turn
 	queue         []queued      // input held until the CLI can take it
 	sent          *sentInput    // input written, not yet reported
-	leftover      []string      // the inputs whose older paste may be in the box (Input): nothing is written, and no input ends, until one's prompt is reported or the session ends
+	leftover      []string      // the inputs whose older paste may be in the box (Input): nothing is written, and they do not end, until one's prompt is reported or the session ends
 	timeout       time.Duration // for sent; DefaultInputTimeout when zero
 	mcp           mcpState      // the MCP servers input waits for (mcpwait.go)
 	tasks         tasks         // the background tasks that run (background.go)
@@ -1031,10 +1031,9 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 		if by == agent.ByAgent {
 			c.tasks.notified(p.Prompt)
 		}
-		if by == agent.ByCaller && slices.Contains(c.leftover, id) && !notification(p.Prompt) {
+		if by == agent.ByCaller && slices.Contains(c.leftover, id) {
 			// The box's text was submitted. Another prompt may have been
-			// before the paste, and a notification starts a turn with the
-			// box as it is, also one that is the text of an input.
+			// before the paste.
 			c.leftover = nil
 		}
 		started := agent.Event{Kind: agent.TurnStarted, StartedBy: by, Input: id}
@@ -1254,6 +1253,11 @@ func denyWrite(path string) []byte {
 func (c *codec) starter(prompt string) (agent.Starter, string) {
 	text := normalize(unwrapPaste(prompt))
 	for i, p := range c.pasted {
+		if notification(prompt) && slices.Contains(c.leftover, p.id) {
+			// A notification starts a turn with the box as it is, also
+			// one that is the text of the input that may be in it.
+			continue
+		}
 		if p.text == text || slices.Contains(p.older, text) {
 			c.pasted = append(c.pasted[:i], c.pasted[i+1:]...)
 			if c.sent != nil && c.sent.text == p.text {

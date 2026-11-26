@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -169,63 +170,63 @@ func TestHeldInputAcrossARestart(t *testing.T) {
 // the same, or that the older one pasted after the prefix, is submitted
 // after the agent's own turn, as ever.
 func TestOlderPasteIsNotSubmittedAfterARestart(t *testing.T) {
-	for text, want := range map[string]int{"\u001b[31m!id": 0, "#x": 0, heldText: 1, "/add-dir x": 1} {
+	for _, tc := range []struct {
+		text  string
+		enter int  // Enters after the agent's own turn
+		own   bool // the capture's next prompt, 12, is the input's own
+	}{
+		{"\u001b[31m!id", 0, false},
+		{"#x", 0, false},
+		{heldText + "\r", 0, true}, // an older paste with a carriage return
+		{heldText, 1, true},
+		{"/add-dir x", 1, false},
+	} {
 		c := (&Adapter{}).NewCodec(agent.Spec{Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
 		for _, f := range []string{"01-SessionStart", "02-UserPromptSubmit", "05-Stop", "07-UserPromptSubmit"} {
 			decodeFile(t, c, f, held+f+".json")
 		}
-		if a, _ := c.Input(agent.Input{ID: "in-7", Text: text, Written: true}); len(a.Keys) != 0 {
-			t.Fatalf("%q: written again: %q", text, a.Keys)
+		if a, _ := c.Input(agent.Input{ID: "in-7", Text: tc.text, Written: true}); len(a.Keys) != 0 {
+			t.Fatalf("%q: written again: %q", tc.text, a.Keys)
 		}
 		now := quiet(t, c, time.Now(), 2*DefaultInputTimeout, "during the own turn")
 		decodeFile(t, c, "11", held+"11-Stop.json")
 		now, n := enters(t, c, now, 2*time.Second)
-		if n != want {
-			t.Errorf("%q: Enter pressed %d times, want %d", text, n, want)
+		if n != tc.enter {
+			t.Errorf("%q: Enter pressed %d times, want %d", tc.text, n, tc.enter)
 		}
-		if want != 0 {
+		if tc.enter != 0 {
 			continue
 		}
 		now = quiet(t, c, now, 2*DefaultInputTimeout, "after the own turn")
 		a, _ := c.Input(agent.Input{ID: "in-8", Text: "list the threads"})
 		if len(a.Keys) != 0 || len(a.Events) != 1 || a.Events[0].Reason != agent.NotDelivered || a.Events[0].Input != "in-8" {
-			t.Fatalf("%q: the next input: keys %q, events %+v", text, a.Keys, a.Events)
+			t.Fatalf("%q: the next input: keys %q, events %+v", tc.text, a.Keys, a.Events)
 		}
 		now = quiet(t, c, now, 2*DefaultInputTimeout, "after the next input")
-		decodeFile(t, c, "12", held+"12-UserPromptSubmit.json")
+		a = decodeFile(t, c, "12", held+"12-UserPromptSubmit.json")
 		decodeFile(t, c, "13", held+"13-Stop.json")
-		now = quiet(t, c, now, 2*DefaultInputTimeout, "after another prompt")
+		if tc.own {
+			// The box was submitted: input is pasted again.
+			if summary(a) != "turn(caller)" || a.Events[0].Input != "in-7" {
+				t.Fatalf("%q: its prompt: %s", tc.text, summary(a))
+			}
+			if a, _ := c.Input(agent.Input{ID: "in-9", Text: "list the threads"}); len(a.Keys) != 1 || a.Keys[0].Paste != "list the threads" {
+				t.Fatalf("%q: after the box was submitted: keys %q, events %+v", tc.text, a.Keys, a.Events)
+			}
+			continue
+		}
+		quiet(t, c, now, 2*DefaultInputTimeout, "after another prompt")
 		a, _ = c.Input(agent.Input{ID: "in-9", Text: "list the threads"})
 		if len(a.Keys) != 0 || len(a.Events) != 1 || a.Events[0].Reason != agent.NotDelivered {
-			t.Fatalf("%q: after another prompt: keys %q, events %+v", text, a.Keys, a.Events)
-		}
-		// The box was submitted: input is pasted again.
-		if a := prompted(t, c, text); summary(a) != "turn(caller)" || a.Events[0].Input != "in-7" {
-			t.Fatalf("%q: its prompt: %s", text, summary(a))
-		}
-		decodeFile(t, c, "15", held+"13-Stop.json")
-		if a, _ := c.Input(agent.Input{ID: "in-10", Text: "list the threads"}); len(a.Keys) != 1 || a.Keys[0].Paste != "list the threads" {
-			t.Fatalf("%q: after the box was submitted: keys %q, events %+v", text, a.Keys, a.Events)
+			t.Fatalf("%q: after another prompt: keys %q, events %+v", tc.text, a.Keys, a.Events)
 		}
 	}
-}
-
-// prompted is what c does with the capture's UserPromptSubmit of prompt.
-func prompted(t *testing.T, c *codec, prompt string) Actions {
-	t.Helper()
-	b, err := os.ReadFile(filepath.Join("testdata/2.1.322", held+"12-UserPromptSubmit.json"))
-	var p map[string]any
-	if err != nil || json.Unmarshal(b, &p) != nil {
-		t.Fatalf("the prompt: %v", err)
-	}
-	p["prompt"] = prompt
-	b, _ = json.Marshal(p)
-	return c.Decode(agent.Hook, envelope("14", held+"14-UserPromptSubmit.json", b))
 }
 
 // A task notification that starts a turn does not take the box's text, also
-// when it is the text of the input that may be there: nothing is pasted
-// after it, nor at the end of the notification's turn.
+// when it is the text of the input that may be there: the turn is the
+// agent's, the input does not end, and nothing is pasted after it, nor at
+// the end of the notification's turn.
 func TestNotificationDoesNotTakeAnOlderPaste(t *testing.T) {
 	var p payload
 	b, err := os.ReadFile(filepath.Join("testdata/2.1.322", held+"07-UserPromptSubmit.json"))
@@ -239,7 +240,9 @@ func TestNotificationDoesNotTakeAnOlderPaste(t *testing.T) {
 	if a, _ := c.Input(agent.Input{ID: "in-7", Text: p.Prompt, Written: true}); len(a.Keys) != 0 {
 		t.Fatalf("written again: %q", a.Keys)
 	}
-	decodeFile(t, c, "07", held+"07-UserPromptSubmit.json")
+	if a := decodeFile(t, c, "07", held+"07-UserPromptSubmit.json"); !strings.HasPrefix(summary(a), "turn(agent)") || a.Events[0].Input != "" {
+		t.Fatalf("the notification: %s, input %q", summary(a), a.Events[0].Input)
+	}
 	decodeFile(t, c, "11", held+"11-Stop.json")
 	a, _ := c.Input(agent.Input{ID: "in-8", Text: "list the threads"})
 	if len(a.Keys) != 0 || len(a.Events) != 1 || a.Events[0].Reason != agent.NotDelivered {
