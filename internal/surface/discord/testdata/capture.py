@@ -658,10 +658,10 @@ def calls_run(raw, minutes):
         def content(ev):
             return ev["d"].get("content", "").strip().replace("<@!", "<@")
 
-        def says(text, webhook=False):
+        def says(text, webhook=False, also=()):
             return "post exactly this:\n" + text, lambda ev: (
                 ev["t"] == "MESSAGE_CREATE" and bool(ev["d"].get("webhook_id")) == webhook
-                and ev["d"]["type"] == 0 and content(ev) == text)
+                and ev["d"]["type"] == 0 and content(ev) in (text, *also))
 
         def replies(how, to, pings=None):
             """A reply to the post whose id to gives. pings is whether it must mention the bot."""
@@ -683,7 +683,8 @@ def calls_run(raw, minutes):
                 ("reply-silent", replies("reply to the same post with the mention off", lambda: target["id"], False)),
                 ("quoted-and-not", says(f"> {at} [hataori test] a\n{at} b")),
                 ("quoted", says(f"> {at} [hataori test] a\nb")),
-                ("quoted-lines", says(f"[hataori test] a\n>>> b\n{at} c")),
+                # The desktop client sends ">>> " as "> " on each line.
+                ("quoted-lines", says(f"[hataori test] a\n>>> b\n{at} c", also=(f"[hataori test] a\n> b\n> {at} c",))),
                 ("in-code", says(f"[hataori test] `{at}`")),
                 ("in-block", says(f"[hataori test]\n```go\n{at}\n```")),
                 ("in-open-block", says(f"[hataori test]\n```\n{at}")),
@@ -694,7 +695,11 @@ def calls_run(raw, minutes):
                 ("reply-other", replies("reply to your own message of the step before", lambda: kept["other"]["d"]["id"])),
                 ("forward", ("forward your message of the step \"mention\" to this channel", lambda ev: (
                     ev["t"] == "MESSAGE_CREATE" and (ev["d"].get("message_reference") or {}).get("type") == 1
-                    and ev["d"]["message_reference"]["message_id"] == kept["mention"]["d"]["id"]))),
+                    # The client offers no forward into the message's own channel: a forward of
+                    # the same text from another channel stands for it.
+                    and (ev["d"]["message_reference"]["message_id"] == kept["mention"]["d"]["id"]
+                         or any((m.get("message") or {}).get("content", "").strip() == f"{at} [hataori test] hello"
+                                for m in ev["d"].get("message_snapshots") or []))))),
                 ("webhook", says(f"{at} [hataori test] a webhook", webhook=True))):
             if name == "webhook":
                 do = do.replace("post", "post with a webhook of this channel", 1)

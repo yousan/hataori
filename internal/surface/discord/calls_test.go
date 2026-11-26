@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -431,9 +430,6 @@ func TestNoCallInTheCaptures(t *testing.T) {
 // What capture.py's calls run recorded: each of a person's messages, as the
 // gateway sent it and as REST read it.
 func TestCapturedCalls(t *testing.T) {
-	if _, err := os.Stat("testdata/v10/calls"); errors.Is(err, os.ErrNotExist) {
-		t.Skip("not captured yet (#869)")
-	}
 	bot := snowflake.MustParse(id(payload(t, "calls/rest-me.json")["id"]))
 	guild := payload(t, "calls/gw-guild.json")
 	for _, c := range []struct {

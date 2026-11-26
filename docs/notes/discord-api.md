@@ -195,12 +195,16 @@ From the [message object](https://discord.com/developers/docs/resources/message#
 
 The role of a bot ([role object](https://discord.com/developers/docs/topics/permissions#role-object), **docs**): `managed`, "whether this role is managed by an integration", and `tags.bot_id`, "the id of the bot this role belongs to". The roles come with the gateway's Guild Create, and one at a time with Guild Role Create and Guild Role Update, all with the `GUILDS` intent; no REST request is needed.
 
-**unverified**, until a capture checks them (`testdata/README.md`, "Calls"):
+**checked** by the capture of 2026-11-26 (`testdata/README.md`, "Calls"):
 
-- whether `mentions` and `mention_roles` list a mention that stands in a quote or in code. The driver does not rely on it: a mention is the message's own only when the service lists it and the text has it outside quotes and code.
+- `mentions` lists a mention that stands in a quote, and one in a code block left open; it does not list one in inline code or in a closed code block. The driver does not rely on it: a mention is the message's own only when the service lists it and the text has it outside quotes and code.
+- A reply's ping is in `mentions` when the mention is on in the client, and not when it is off. The driver does not read the ping: it goes by the replied-to post's author. Read after that post was deleted, the reply has `referenced_message: null`, and `mentions` still lists the post's author.
+- Discord's desktop client sends a quote begun with `>>> ` as `> ` at the start of each line.
+
+**unverified**, until a capture checks it:
+
 - which texts Discord's client shows as a quote or as code; the documentation does not say. The driver leaves out what it may show so: a line that begins with `>`, with or without white space around it; a line that begins with `>` and white space in a list or a heading (`- >50%` is none); all that follows `>>>`, under the same rule; code between backticks and in blocks, also a block left open; a character after a backslash where that hides code or a mention. Whether a line is a quote decides how far code goes, and so do the end of a line, of a heading and of a list's item. What is in doubt is therefore taken both ways, each for the whole text, and only what is left every time counts: each way to begin a quote other than `> ` and `>>> ` at the start of a line; whether code opens in a heading or an item that it would go on after, for each way to begin these; each of those ways once more right after a block (there, `> ` and `>>> ` are one way); whether an item ends before the first line that comes after an empty one (also one of white space), that is indented no more than an item in another, or whose indentation begins with no space; whether inline code opens that would go on after its line; whether a `\r` ends a line. From where a text with more than six such doubts raises the first, nothing is left. That errs to "no call": also for a mention that has a backtick after it on its line, after a list with an indented block that holds an empty line.
   Not taken both ways, so that it can err either way: a block goes over lines that begin with `>`; inline code over several lines goes over all that stands between, or none does; a backtick in a link, a spoiler or bold text opens code as any other; the indentation of an item is not taken off a block in it; where an item may end early at more than one line, the later ones are not read.
-- whether a reply's ping is in `mentions` when the mention is switched off in the client. The driver does not read the ping: it goes by the replied-to post's author.
 
 ## Where the answers came from
 
