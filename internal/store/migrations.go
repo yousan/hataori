@@ -785,6 +785,13 @@ var migrations = []Migration{
 	{Name: "pending_inputs.written_text", Up: execAll(
 		`ALTER TABLE pending_inputs ADD COLUMN written_text TEXT`,
 	)},
+	// A restored chat link must not replay events produced while it was
+	// unserved, even if its client's event cursor never saw that scope.
+	// Zero preserves existing links; the front end sets the boundary when
+	// settling a revoked or restored link (#1036).
+	{Name: "links.output_after", Up: execAll(
+		`ALTER TABLE links ADD COLUMN output_after INTEGER NOT NULL DEFAULT 0`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

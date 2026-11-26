@@ -276,7 +276,9 @@ func TestNothingIsPostedInAChannelRemovedFromShowIn(t *testing.T) {
 	f.event(t, id, "input", map[string]any{"text": "typed elsewhere", "principal": "owner", "via": "web", "turn": 9})
 	f.event(t, id, "text", map[string]any{"text": "secret answer", "final": true})
 	waitFor(t, "the answer in the scope's own channel", func() bool { return posts(f.driver, th, "secret answer") == 1 })
-	f.settled(t, th, shown)
+	// Only a served conversation can receive a marker: the revoked link
+	// refuses event-backed outbox writes too.
+	f.settled(t, th)
 	for _, text := range []string{"secret answer", "owner: typed elsewhere"} {
 		if n := posts(f.driver, shown, text); n != 0 {
 			t.Errorf("%q was posted %d time(s) in a channel no longer in show_in: %q", text, n, postsIn(f.driver, shown))
