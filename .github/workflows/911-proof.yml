@@ -1,0 +1,49 @@
+name: Pane disappearance regression proof
+on:
+  pull_request:
+    paths:
+      - cmd/hataori/dashboard_operate_test.go
+      - .github/workflows/911-proof.yml
+permissions:
+  contents: read
+jobs:
+  delayed-pane:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: install tmux
+        run: command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
+      - name: compare delayed pane disappearance before and after the fix
+        env:
+          PROBE_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          python3 - <<'PYPROBE'
+          import os, pathlib, subprocess
+          p = pathlib.Path('cmd/hataori/dashboard_operate_test.go')
+          fixed = p.read_text()
+          baseline = subprocess.check_output(['git', 'show', os.environ['PROBE_BASE'] + ':' + str(p)], text=True)
+          needle = '\tr.tmux("new-window", "-d", "-t", "work:", "exec sleep 600")'
+          def delayed(source):
+              assert needle in source
+              return source.replace(needle, '\ttime.Sleep(2500 * time.Millisecond)\n' + needle, 1)
+          try:
+              for name, source, pattern in [
+                  ('baseline', baseline, '^TestDashboardOperateOnTheLoopbackListener$'),
+                  ('fixed', fixed, '^TestDashboardOperate(OnTheLoopbackListener|EndsWhenThePaneGoes)$'),
+              ]:
+                  p.write_text(delayed(source))
+                  result = subprocess.run(['go', 'test', './cmd/hataori', '-count=1', '-timeout=3m', '-run', pattern], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                  print(name, 'exit', result.returncode, flush=True)
+                  print(result.stdout, flush=True)
+                  if name == 'baseline':
+                      assert result.returncode != 0 and 'after the pane went' in result.stdout and 'Ended:idle' in result.stdout
+                  else:
+                      assert result.returncode == 0
+          finally:
+              p.write_text(fixed)
+          PYPROBE
