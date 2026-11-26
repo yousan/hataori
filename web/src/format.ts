@@ -30,7 +30,9 @@ export function mark(x: ThreadInfo): string {
 // config's, else its channel's as the chat service shows it), else its
 // key. The tree's nodes and the All threads table's groups both use it.
 export function scopeLabel(key: string, scopes: readonly ScopeInfo[] | null): string {
-  return scopes?.find((s) => s.key === key)?.name || key;
+  const scope = scopes?.find((s) => s.key === key);
+  const name = scope?.name || key;
+  return scope?.unlisted ? t("scope.unlisted", { name }) : name;
 }
 
 // scopeName is a scope's name as the tree shows it: its name from Scopes

@@ -788,6 +788,7 @@ var migrations = []Migration{
 	// Scope keys are never freed. Seed claims from retained history too, so
 	// a removed config entry cannot acquire a new stored identity (#892).
 	{Name: "stored_scopes", Up: execAll(
+		`ALTER TABLE supervisor_wakes ADD COLUMN dropped INTEGER NOT NULL DEFAULT 0`,
 		`CREATE TABLE scope_keys (key TEXT PRIMARY KEY)`,
 		`INSERT OR IGNORE INTO scope_keys SELECT DISTINCT scope FROM threads`,
 		`INSERT OR IGNORE INTO scope_keys SELECT scope FROM supervisor_dirs`,

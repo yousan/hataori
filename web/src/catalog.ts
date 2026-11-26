@@ -6,6 +6,7 @@
 // values in braces, such as {n}; t fills them in.
 
 const en = {
+  "scope.unlisted": "{name} (not listed)",
   "app.title": "hataori dashboard",
   "app.readOnly": "read-only",
   "app.signedOut": "Not signed in, or the session has ended. Open a new sign-in link.",
@@ -376,6 +377,7 @@ export type Key = keyof typeof en;
 export type Catalog = { readonly [K in Key]: string };
 
 const ja: Catalog = {
+  "scope.unlisted": "{name}（設定に未記載）",
   "app.title": "hataori ダッシュボード",
   "app.readOnly": "読み取り専用",
   "app.signedOut": "サインインしていないか、セッションが終了しました。新しいサインインリンクを開いてください。",

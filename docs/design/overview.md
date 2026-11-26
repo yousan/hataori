@@ -2305,6 +2305,10 @@ type WorkspaceState struct {
 // Caller is who is asking. An API value is bound to one Caller,
 // and the core checks every call against it.
 type Caller struct {
+ // StartUnlisted is set only on the host command-line connection: ordinary
+ // starts in a stored, unlisted scope. No socket request sets it; chat,
+ // dashboard, plugin and approved-proposal callers do not get it (#892).
+ StartUnlisted bool
 	// AsksIn is where approvals the caller asks for are shown and answered.
 	// The daemon sets it when it binds the caller; zero: it cannot ask.
 	AsksIn ThreadID
@@ -2793,6 +2797,34 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 
 Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event. In protocol 1.9: `Terminal`, which turns its connection into a stream as `Events` does. In protocol 1.12: `ThreadInfo.terminal`, the terminal device its session host opened, for the tree's filter, the status bar and the details panel (#285); `HostTerminals` still leaves these terminals out.
+
+### Stored channel scopes (#892)
+
+The store retains `(client, channel, key, created_at)` identities, unique by key
+and by client/channel. Keys used by configuration, retained thread/event history,
+or a supervisor directory are permanently reserved. A directory collision or
+uncertain directory check never changes the existing directory. The internal
+`instance.KeepScope` helper reserves identity only; the ingress policy that calls
+it belongs to #893. At startup `Config.RestoreStoredScopes` rejects a configured
+stored key belonging to another client, naming both, and restores unlisted scopes
+with fixed owner-only/watch policy. Configured policies, including disabled ones,
+win without changing the stored identity or directory. No code decodes a key.
+
+```go
+// Scopes reports stored policies as unlisted. This does not grant access.
+type ScopeInfo struct {
+ Key string `json:"key"`
+ Name string `json:"name,omitempty"`
+ Unlisted bool `json:"unlisted,omitempty"` // since protocol 3.43
+}
+```
+
+An unlisted scope permits conversations but no own supervisor thread and no
+ordinary starts except those of `Caller.StartUnlisted`. It has no people beyond
+the owner, no repositories or forge, and budgets of 6 turns and 5 sends per hour,
+500,000 tokens per day and 3 reminders. A wake without a conversation home is
+consumed with one log line; it never falls back to an own thread from a previously
+configured policy. Conversation-home routing is the separate #877 change.
 
 ### Surface driver
 

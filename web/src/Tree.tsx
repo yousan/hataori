@@ -429,7 +429,7 @@ export function Tree(props: Props) {
       <Node
         key={c.key}
         node={c.key}
-        label={scopes?.find((s) => s.key === c.scope)?.name || c.name || c.scope}
+        label={scopes?.find((s) => s.key === c.scope)?.unlisted ? label(c.scope) : scopes?.find((s) => s.key === c.scope)?.name || c.name || c.scope}
         count={c.threads.length}
         open={open(c.key, c.items.length + c.archived.length > 0)}
         onFold={fold}

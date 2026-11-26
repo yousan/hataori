@@ -557,3 +557,36 @@ A thread can be shown in more than one chat conversation, on one chat service or
 - The channel must be the scope's own or listed in the scope's `show_in`. The person must be the owner or one of the scope's `people`, as for posting into the thread.
 - Attaching a thread where it is shown already changes nothing. A chat thread that shows one hataori thread is not linked to another.
 - A refused attach links nothing, opens nothing and writes one log line.
+
+## Stored scopes for unlisted channels
+
+A stored scope (#892) keeps its client, channel, opaque key and creation time in
+the database. The key is the channel's exact id, and is never decoded as another
+scope or directory. All configured keys are permanently claimed, including keys
+with no threads. Retained history and supervisor directories reserve their keys
+too. A key collision, an existing directory or an uncertain directory check makes
+no scope and logs one line; existing files and threads are untouched.
+
+When an unlisted stored scope's client is still configured, startup restores its
+fixed policy: only the instance owner, no repositories or forge, `watch`, its own
+shared supervisor directory, 6 turns and 5 sends per hour, 500,000 tokens per day,
+and 3 open reminders. Other supervisor settings use their normal defaults. It has
+conversations but no own supervisor thread. A wake without a home is dropped and
+logged once; an old own thread is never used as a fallback. There is no new
+configuration key or automatic scope-creation trigger in this step; #893 adds the
+owner-call trigger and its switch.
+
+Listing that key in `scopes` applies the configured people, autonomy and other
+settings, without changing its key, threads, directory or stored identity. Removing
+it restores the fixed policy. `enabled: false` disables the configured scope as
+usual. Listing its key for a different client refuses startup and names both
+clients. Removing its client leaves its threads under the existing removed-scope
+rules until the client is configured again.
+
+Orders and ordinary starts in an unlisted stored scope are refused, including
+starts approved from earlier proposals. The host's local command-line connection
+retains its ordinary-start permission; dashboard, chat and plugin connections do
+not receive it. Bots and webhooks supply no input to an unlisted scope, even if an
+id appears in the people configuration. The dashboard labels the stored policy
+as not listed (`Scopes.unlisted`, protocol 3.43). An unlisted channel with no
+stored scope behaves as before.

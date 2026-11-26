@@ -735,7 +735,7 @@ func (r *waking) loadWaiting(ctx context.Context) error {
 	db := r.w.Core.Store.DB
 	rows, err := db.QueryContext(ctx, `SELECT e.pos, e.thread_id, e.time, e.data FROM events e JOIN threads t ON t.id = e.thread_id
 		WHERE t.scope = ? AND t.kind = ? AND t.state != ? AND e.kind = 'turn_ended' AND e.pos <= ?
-		AND e.pos > (SELECT since FROM supervisor_wakes WHERE scope = ?)
+		AND e.pos > (SELECT max(since,dropped) FROM supervisor_wakes WHERE scope = ?)
 		AND e.pos = (SELECT max(pos) FROM events WHERE thread_id = e.thread_id AND kind = 'turn_ended')
 		AND NOT EXISTS (SELECT 1 FROM events s WHERE s.thread_id = e.thread_id AND s.kind = 'turn_started' AND s.pos > e.pos)`,
 		r.w.Scope, string(control.KindOrdinary), string(control.Closed), int64(r.pos), r.w.Scope)
@@ -817,6 +817,11 @@ func (r *waking) attempt(ctx context.Context) error {
 	if r.sending == nil && r.empty() {
 		r.held = false
 		return nil
+	}
+	// Unlisted scopes have no own-thread fallback. Until a wake has a
+	// conversation home (#877), there is nowhere to deliver it.
+	if r.w.Core.Scopes[r.w.Scope].Unlisted {
+		return r.dropWithoutHome(ctx)
 	}
 	sv, ready, err := r.ready(ctx)
 	if err != nil || !ready {

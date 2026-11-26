@@ -275,6 +275,9 @@ func (f *FrontEnd) waitingLogins() []loginKey {
 // link". A press that
 // does nothing writes one log line.
 func (f *FrontEnd) Choice(s surface.Selection) {
+	if f.Scopes[s.Ref.Conv.Channel].Unlisted && s.Author.Kind != surface.Person {
+		return
+	}
 	if rest, ok := strings.CutPrefix(s.Token, askToken); ok {
 		f.press(s, rest)
 		return

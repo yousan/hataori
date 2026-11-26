@@ -42,12 +42,13 @@ var (
 
 // Scope is what the core needs to know about one scope.
 type Scope struct {
-	Name    string // the config's name for it; wins over its channel's name
-	Enabled bool
-	Agent   string // the registered name of the agent of new threads; empty for Core.Agent
-	Owner   string // the name of the client that gives the scope its threads
-	Model   string // default model
-	Effort  string // default effort
+	Unlisted bool   // stored policy; ordinary starts require a host command-line caller
+	Name     string // the config's name for it; wins over its channel's name
+	Enabled  bool
+	Agent    string // the registered name of the agent of new threads; empty for Core.Agent
+	Owner    string // the name of the client that gives the scope its threads
+	Model    string // default model
+	Effort   string // default effort
 	// ShowIn lists the "<client>:<channel>" besides the scope's own where
 	// its threads may be linked (design, section 5.2).
 	ShowIn []string
@@ -1420,6 +1421,12 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 	if !ok || !sc.Enabled {
 		a.c.Log.Warn("start refused", "scope", r.Scope, "reason", "scope is not enabled")
 		return 0, fmt.Errorf("core: start in %q: %w", r.Scope, ErrDisabled)
+	}
+	if sc.Unlisted && kind == control.KindSupervisor {
+		return 0, a.refused("Start", r.Scope, "the scope has conversations only")
+	}
+	if sc.Unlisted && !confined && !a.caller.StartUnlisted {
+		return 0, a.refused("Start", r.Scope, "ordinary starts require a configured scope")
 	}
 	chosen := cmp.Or(r.Agent, sc.Agent, a.c.Agent)
 	if confined {

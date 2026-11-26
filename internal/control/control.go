@@ -394,6 +394,9 @@ type API interface {
 // Start, Send, Answer, Stop, Close and Remove are refused unless the
 // Principal is the owner or one of the people of the thread's scope.
 type Caller struct {
+	// StartUnlisted permits ordinary starts in a stored, unlisted scope.
+	// Set only on the host command-line connection; never accepted on the wire.
+	StartUnlisted bool
 	// AsksIn is where approval requests are shown. The daemon sets it when
 	// binding the caller; zero forbids asking.
 	AsksIn ThreadID
@@ -740,8 +743,9 @@ func (k ThreadKind) Confined() bool {
 
 // ScopeInfo is one line of Scopes. Name is empty when no name is known.
 type ScopeInfo struct {
-	Key  string `json:"key"`
-	Name string `json:"name,omitempty"`
+	Unlisted bool   `json:"unlisted,omitempty"` // stored policy, absent from config; since 3.43
+	Key      string `json:"key"`
+	Name     string `json:"name,omitempty"`
 }
 
 // ChatLayout is one chat client's layout (Layout). Since 3.21.

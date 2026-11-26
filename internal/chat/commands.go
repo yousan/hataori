@@ -93,6 +93,9 @@ func (f *FrontEnd) Command(c surface.Command) {
 // command handles a command, given as a command or in words after the
 // trigger. A bot account's is no one's request.
 func (f *FrontEnd) command(ctx context.Context, c surface.Command) error {
+	if f.Scopes[c.Conv.Channel].Unlisted && c.Author.Kind != surface.Person {
+		return nil
+	}
 	if c.Author.Kind == surface.Bot {
 		return nil
 	}
@@ -256,7 +259,7 @@ func (f *FrontEnd) newThread(ctx context.Context, c surface.Command) error {
 		Model: strings.TrimSpace(argOf(c, "model")), Effort: strings.TrimSpace(argOf(c, "effort"))}
 	sc, known := f.Scopes[channel]
 	switch {
-	case !known || !sc.Enabled:
+	case !known || !sc.Enabled || sc.Unlisted:
 		f.ignored(c, "the scope is not enabled")
 		return nil
 	case o.Repo == "" || o.Prompt == "":

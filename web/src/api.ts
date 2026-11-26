@@ -119,6 +119,7 @@ async function get<T>(path: string): Promise<T> {
 // by: the config's, else its channel's as the chat service shows it; absent
 // when none is known (protocol 3.5).
 export interface ScopeInfo {
+  unlisted?: boolean; // stored scope absent from configuration (3.43)
   key: string;
   name?: string;
 }
