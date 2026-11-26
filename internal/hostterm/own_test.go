@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/binary"
+	"slices"
 )
 
 // TestStandIn is the program the tests below run in a pane, in place of a
@@ -121,5 +122,66 @@ func TestMatchesOwn(t *testing.T) {
 		if got := matchesOwn(comm, own); got != want {
 			t.Errorf("%q: %v", comm, got)
 		}
+	}
+}
+
+// Adapt the captured process table to a container: the daemon is PID 1,
+// the person's tmux server is its adopted child, and a separate session
+// host owns an agent terminal. This tests ownership, not ps parsing.
+func TestPIDOneDoesNotOwnAdoptedTerminals(t *testing.T) {
+	ps := parsePS(readTestdata(t, "ps-linux-procps-ng-4.0.4.txt"))
+	ps[0].comm = "hataori"
+	ps[1].ppid = 1
+	ps[4].comm, ps[4].tty, ps[4].ppid = "hataori", "", 1
+	own := []string{"hataori"}
+	pids := ownPIDs(ps, own)
+	if !slices.Equal(pids, []int{1248409}) {
+		t.Fatalf("own PIDs: %v", pids)
+	}
+	for _, recorded := range [][]int{nil, {1248409}} {
+		hidden := ownedDevices(ps, slices.Concat(recorded, pids))
+		if hidden["/dev/pts/62"] || hidden["/dev/pts/63"] {
+			t.Errorf("adopted tmux terminals hidden: %v", hidden)
+		}
+		if !hidden["/dev/pts/64"] {
+			t.Errorf("session host's agent terminal exposed: %v", hidden)
+		}
+	}
+}
+
+// Exercise both entry points with captured output adapted to the same
+// topology. No tmux server or process-table command runs in this test.
+func TestPIDOneListsAndChecksPane(t *testing.T) {
+	ps := strings.ReplaceAll(string(readTestdata(t, "ps-linux-procps-ng-4.0.4.txt")), "systemd", "hataori")
+	ps = strings.ReplaceAll(ps, "1248395    2146", "1248395       1")
+	ps = strings.ReplaceAll(ps, "1248409 1248395 1248409 1248409 pts/64   sh", "1248409       1 1248409      -1 ?        hataori")
+	panes := readTestdata(t, "list-panes-tmux-3.4.txt")
+	l := &Lister{Own: []string{"hataori"}, run: func(_ context.Context, _ []byte, name string, args ...string) ([]byte, error) {
+		if name == "ps" {
+			return []byte(ps), nil
+		}
+		if name == "tmux" && args[0] == "list-panes" {
+			return panes, nil
+		}
+		return nil, fmt.Errorf("unexpected command %s %v", name, args)
+	}}
+	list, err := l.List(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 || list[0].Tmux.Pane != "%0" || list[1].Tmux.Pane != "%1" {
+		t.Fatalf("listed: %+v", list)
+	}
+	for pane, wantOwn := range map[string]bool{"%0": false, "%2": true} {
+		p, own, err := l.Check(context.Background(), pane, nil, true)
+		if err != nil || p == nil || own != wantOwn {
+			t.Errorf("Check(%s): %v %v %v", pane, p, own, err)
+		}
+	}
+	// An attach still refuses input even though its terminal is not under
+	// a session host in the process tree.
+	ps = strings.ReplaceAll(ps, "pts/63   sh", "pts/63   hataori")
+	if p, own, err := l.Check(context.Background(), "%1", nil, true); err != nil || p == nil || !own {
+		t.Fatalf("attach: %v %v %v", p, own, err)
 	}
 }
