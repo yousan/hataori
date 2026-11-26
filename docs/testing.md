@@ -31,6 +31,22 @@ Every acceptance criterion of phase 1 ([design, section 8](design/overview.md#ph
 | No core package imports a driver, an agent adapter or a client, or contains the name of a surface or an agent (checked in CI) | `cmd/hataori`: `TestAdaptersOnlyUnderCmd`; `internal/chat`: `TestNoSurfaceOrAgentNames`; and the fakes stay out of the binary: e2e `TestTheBinaryHasNoFakes` | |
 | For one week, every order the deployment's manager sends runs on hataori and none on c-lord | | yes: it is the deployment itself |
 
+## Supervisor acceptance criteria (#275)
+
+These end-to-end tests run the daemon with a fake chat surface and fake
+agents. Time-sensitive cases advance the waker's clock; none needs a real
+agent CLI or tmux. `TestSupervisorTwoWorkersIdleThenSingleAndBurst` keeps
+the same two workers in one scope for the idle, single-turn and burst
+checks. The other tests below also cover restart and approval boundaries.
+
+| Criterion | Tests in `cmd/hataori` |
+|---|---|
+| An idle scope gives its supervisor no input for an hour | `TestSupervisorTwoWorkersIdleThenSingleAndBurst`, `TestWakeNotByItsOwnThreadOtherScopesOrAnIdleHour` |
+| One turn end starts one supervisor turn; ten within the quiet period start one | `TestSupervisorTwoWorkersIdleThenSingleAndBurst`; `TestWakeOncePerTurnEndAndPerBurst` also covers ten distinct workers |
+| A supervisor cannot send into a busy worker; interruption waits for a person's approval | `TestSupervisorSendIsRefusedWhenBusyAndMarked`, `TestInterruptAsksAPerson`, `TestInterruptApproved`, `TestInterruptRefused` |
+| At the budget limit no supervisor turn starts, and a person is told once | `TestBudgetTurns` (including a restart and release in the next hour) |
+| The loop guard stops a two-worker ping-pong at the configured count | `TestLoopGuard` (including restart, unaffected workers and reset by a person) |
+
 # Testing against the real agent CLIs
 
 `go test ./...` never runs a real agent CLI. It uses captures of real output under each adapter's `testdata/`, and fake binaries. The checks below run the installed CLI on purpose, and only when asked for.
