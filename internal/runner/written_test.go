@@ -149,7 +149,7 @@ func TestWrittenInputSaysWhichRunnerWroteIt(t *testing.T) {
 		c.got = map[string]agent.Input{}
 	}
 	check("before", map[string]bool{firstInputID: true, "10": true, "12": true})
-	if err := r.markWritten(lv, []string{firstInputID, "11"}); err != nil {
+	if err := r.markWritten(lv, []string{firstInputID, "11"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	check("after this runner wrote two", map[string]bool{firstInputID: false, "10": true, "11": false, "12": true})
@@ -172,5 +172,56 @@ func TestWrittenInputSaysWhichRunnerWroteIt(t *testing.T) {
 	rows.Close()
 	if !slices.Equal(left, []int64{11}) {
 		t.Errorf("after a new agent started, rows %v are left, want only the one not written", left)
+	}
+}
+
+// Text is committed with the written marker before the host is contacted.
+// Both the initial input and later inputs return it unchanged on reconnect;
+// an absent entry and an explicitly empty paste remain distinguishable.
+func TestWrittenTextSurvivesReconnect(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "state"), 0o700)
+	st, err := store.Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	for _, q := range []string{
+		`INSERT INTO threads (id, scope, key, started_by, state, created_at, updated_at) VALUES (1, 's', 't1', 'owner', 'running', 0, 0)`,
+		`INSERT INTO sessions (id, thread_id, agent, state, created_at, updated_at, first_input) VALUES (1, 1, 'test', 'running', 0, 0, '{"text":"@one","sent":true}')`,
+		`INSERT INTO pending_inputs (id, session_id, request, data) VALUES (10, 1, '', '{"text":"@two"}'), (11, 1, '', '{"text":""}'), (12, 1, '', '{"text":"old"}')`,
+	} {
+		if _, err := st.DB.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := &Runner{Store: st, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	c := &handed{got: map[string]agent.Input{}}
+	lv := &live{id: 1, dir: filepath.Join(root, "no-host"), codec: c}
+	texts := map[string]string{firstInputID: "(at)one", "10": "(at)two", "11": ""}
+	// No host exists: act returns at the dial, after the durable write.
+	if err := r.act(lv, agent.Actions{Write: [][]byte{[]byte("input")}, Inputs: []string{firstInputID, "10", "11", "12"}, InputText: texts}); err == nil {
+		t.Fatal("expected the absent host to be unreachable")
+	}
+	r.handOverWritten(lv)
+	for id, want := range texts {
+		in := c.got[id]
+		if !in.Written || in.WrittenText == nil || *in.WrittenText != want {
+			t.Errorf("reconnected input %s: %+v, want saved text %q", id, in, want)
+		}
+	}
+	if in, ok := c.got["12"]; !ok || !in.Written || in.WrittenText != nil {
+		t.Errorf("input with no recorded text: %+v (%v)", in, ok)
+	}
+	r.unmarkWritten(lv, []string{firstInputID, "10", "11"})
+	if err := r.markWritten(lv, []string{firstInputID, "10", "11"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	c.got = map[string]agent.Input{}
+	r.handOverWritten(lv)
+	for id := range texts {
+		if in, ok := c.got[id]; !ok || in.WrittenText != nil {
+			t.Errorf("rewritten input %s kept its old text: %+v (%v)", id, in, ok)
+		}
 	}
 }

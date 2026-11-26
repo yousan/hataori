@@ -101,10 +101,21 @@ func newTakeRigWith(t *testing.T, root string, inShell bool, extra string) *take
 		t.Fatal(err)
 	}
 	g.dir = dir
+	// The person's agent is not hataori. Give the stand-in an independent
+	// executable name so host-terminal ownership does not mistake it for
+	// an attach command just because both use this test binary.
+	agentBin := filepath.Join(t.TempDir(), "person-agent")
+	binary, err := os.ReadFile(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(agentBin, binary, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	transcript := filepath.Join(t.TempDir(), "transcript.jsonl")
 	q := func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 	agent := fmt.Sprintf("%s fake --terminal --window %s --session sess-person --model m-person --transcript %s --hook %s %s",
-		q(os.Args[0]), q(root), q(transcript), q(os.Args[0]), extra)
+		q(agentBin), q(root), q(transcript), q(os.Args[0]), extra)
 	g.agent = "exec " + agent
 	if !inShell {
 		g.tmux(t, "new-session", "-d", "-s", "work", "-x", "100", "-y", "30", "-c", dir, "exec "+agent)
