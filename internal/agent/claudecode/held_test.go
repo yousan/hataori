@@ -393,6 +393,56 @@ func TestClearEndsTheHeldInputs(t *testing.T) {
 	}
 }
 
+// When the session ends while a turn of the agent runs, the inputs that
+// were pasted and not reported end after that turn, so that their ends do
+// not end it as not delivered (#914).
+func TestClearDuringATurnEndsTheInputsAfterIt(t *testing.T) {
+	c := (&Adapter{}).NewCodec(agent.Spec{Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
+	decodeFile(t, c, "01", held+"01-SessionStart.json")
+	if a, _ := c.Input(agent.Input{ID: "in-7", Text: "#x", Written: true, Earlier: true}); len(a.Keys) != 0 {
+		t.Fatalf("written again: %q", a.Keys)
+	}
+	heldTurnEnds(t, c, time.Now(), 2*DefaultInputTimeout, "while held")
+	if a := decodeFile(t, c, "12", held+"12-UserPromptSubmit.json"); !slices.ContainsFunc(a.Events, func(e agent.Event) bool { return e.Kind == agent.TurnStarted }) {
+		t.Fatalf("no turn started: %+v", a.Events)
+	}
+	for _, e := range decodeFile(t, c, "14", held+"14-SessionEnd.json").Events {
+		if e.Kind == agent.TurnEnded {
+			t.Fatalf("at the session's end, while a turn runs: %+v", e)
+		}
+	}
+	var ended []string
+	for _, e := range decodeFile(t, c, "13", held+"13-Stop.json").Events {
+		if e.Kind == agent.TurnEnded {
+			ended = append(ended, e.Input+" "+string(e.Reason))
+		}
+	}
+	if len(ended) != 2 || ended[0] == "in-7 "+string(agent.NotDelivered) || ended[1] != "in-7 "+string(agent.NotDelivered) {
+		t.Fatalf("at the turn's end: ended %q; want the turn's end, then the input's", ended)
+	}
+	if by, id := c.starter("#x"); by == agent.ByCaller {
+		t.Errorf("the prompt counts as input %q, which ended", id)
+	}
+}
+
+// Without a held input, the session's end leaves a written input waiting for
+// its report, as before (#914).
+func TestClearKeepsAnInputWithoutAHold(t *testing.T) {
+	c := (&Adapter{}).NewCodec(agent.Spec{Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
+	decodeFile(t, c, "01", "clear/hooks/01-SessionStart.json")
+	if a, _ := c.Input(agent.Input{ID: "in-6", Text: "list the threads", Written: true}); len(a.Keys) != 0 {
+		t.Fatalf("written again: %q", a.Keys)
+	}
+	for _, e := range decodeFile(t, c, "04", "clear/hooks/04-SessionEnd.json").Events {
+		if e.Kind == agent.TurnEnded {
+			t.Fatalf("at the session's end: %+v", e)
+		}
+	}
+	if c.sent == nil || c.sent.id != "in-6" {
+		t.Fatalf("waited for: %+v; want in-6", c.sent)
+	}
+}
+
 // A task notification that starts a turn does not take the box's text, also
 // when it is the text of the input that may be there: the turn is the
 // agent's, the input does not end, also when the turn it was to start ends

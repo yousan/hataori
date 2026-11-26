@@ -66,6 +66,7 @@ type codec struct {
 	queue         []queued      // input held until the CLI can take it
 	sent          *sentInput    // input written, not yet reported
 	leftover      []string      // the inputs whose older paste may be in the box (Input): nothing is written, and they do not end, until each one's prompt is reported or the session ends
+	unended       []string      // the inputs the session's end left, which end after the turn that ran then (track)
 	timeout       time.Duration // for sent; DefaultInputTimeout when zero
 	mcp           mcpState      // the MCP servers input waits for (mcpwait.go)
 	tasks         tasks         // the background tasks that run (background.go)
@@ -575,6 +576,17 @@ func (c *codec) tickInput(now time.Time) Actions {
 	return c.unsent(agent.NotDelivered)
 }
 
+// endUnended ends the inputs the session's end left (track) as not
+// delivered.
+func (c *codec) endUnended() Actions {
+	var a Actions
+	for _, id := range c.unended {
+		a = merge(a, c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered, Input: id})))
+	}
+	c.unended = nil
+	return a
+}
+
 // tickHeld waits without Enter for the report of c.sent while the box may
 // hold what an older hataori pasted. After the input timeout the turn that
 // it was to start ends as failed, "not delivered", as any; but an input that
@@ -765,22 +777,28 @@ func (c *codec) track(prompt string, a Actions) Actions {
 					// nothing (2.1.331, also with a suggested prompt shown).
 					c.sent.at, c.sent.since, c.sent.pressed, c.sent.owed = time.Time{}, time.Time{}, false, false
 				}
+				ended = merge(ended, c.endUnended())
 			}
 		case agent.SessionEnded:
+			running := c.running
 			c.ready, c.running = false, false
 			if len(c.leftover) > 0 {
 				// What was pasted and not reported went with the box's text
 				// and its conversation, since a prompt is reported before the
 				// session ends: each such input ends as not delivered, naming
 				// it, so that the caller does not keep it, and is not known
-				// by a later prompt. They end in the order of the pastes, so
-				// the one waited for, which is the first written (c.sent),
-				// ends first, since the turn that runs is the one it was to
-				// start; a held input is among them (#914).
+				// by a later prompt; a held input is among them (#914). An
+				// input's end ends the turn that runs, whatever it names: if
+				// the agent's turn runs, they end after it; else at once, in
+				// the order of the pastes, so that the one waited for, the
+				// first written (c.sent), whose turn it is, ends first.
 				for _, q := range c.pasted {
-					ended = merge(ended, c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered, Input: q.id})))
+					c.unended = append(c.unended, q.id)
 				}
 				c.sent, c.pasted, c.leftover = nil, nil, nil
+				if !running {
+					ended = merge(ended, c.endUnended())
+				}
 			}
 		}
 	}
