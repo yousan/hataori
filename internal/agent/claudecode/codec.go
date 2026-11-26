@@ -64,7 +64,7 @@ type codec struct {
 	runningPrompt string        // the prompt id of that turn
 	queue         []queued      // input held until the CLI can take it
 	sent          *sentInput    // input written, not yet reported
-	leftover      bool          // the box may hold what an older hataori pasted (Input): nothing is written, and no input ends, until a prompt is submitted
+	leftover      []string      // the inputs whose older paste may be in the box (Input): nothing is written, and no input ends, until one's prompt is reported or the session ends
 	timeout       time.Duration // for sent; DefaultInputTimeout when zero
 	mcp           mcpState      // the MCP servers input waits for (mcpwait.go)
 	tasks         tasks         // the background tasks that run (background.go)
@@ -227,11 +227,11 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 				q.older = append(q.older, normalize(o))
 				// What this hataori would not paste as it is may be in
 				// the box: it is never submitted, nor anything pasted
-				// after it, until the CLI took the box's text (#914). The
-				// input does not end meanwhile, so that it is written
-				// again after another restart, and this is kept.
-				if !pastedAsIs(o) {
-					c.leftover = true
+				// after it, until the CLI reports it as a prompt or the
+				// session ends (#914). The input does not end meanwhile,
+				// so that it is written again after another restart.
+				if !pastedAsIs(o) && !slices.Contains(c.leftover, in.ID) {
+					c.leftover = append(c.leftover, in.ID)
 				}
 			}
 		}
@@ -380,7 +380,7 @@ func cleanPaste(text string) string {
 // Input is one bracketed paste; Tick presses Enter after it (tickInput).
 // It counts as delivered only when UserPromptSubmit reports the same text.
 func (c *codec) flush() Actions {
-	if c.leftover && len(c.queue) > 0 {
+	if len(c.leftover) > 0 && len(c.queue) > 0 {
 		// Written after the box's text, it would be submitted with it.
 		var a Actions
 		for _, q := range c.queue {
@@ -523,7 +523,7 @@ func (c *codec) tickInput(now time.Time) Actions {
 	if c.sent == nil {
 		return merge(c.holdPaste(now), c.flush())
 	}
-	if c.running {
+	if c.running || len(c.leftover) > 0 {
 		return Actions{}
 	}
 	switch s := c.sent; {
@@ -550,9 +550,9 @@ func (c *codec) tickInput(now time.Time) Actions {
 		c.sent.at = now // not before the paste: it is handed over before the next Tick
 		return Actions{}
 	}
-	if c.leftover || now.Sub(c.sent.at) < c.inputTimeout() {
+	if now.Sub(c.sent.at) < c.inputTimeout() {
 		switch {
-		case !c.ready || c.sent.unsure || c.leftover || now.Sub(c.sent.at) < pasteSettle:
+		case !c.ready || c.sent.unsure || now.Sub(c.sent.at) < pasteSettle:
 		case !c.sent.pressed:
 			return c.enter(now)
 		case c.stillInBox(now):
@@ -732,7 +732,7 @@ func (c *codec) track(prompt string, a Actions) Actions {
 				}
 			}
 		case agent.SessionEnded:
-			c.ready, c.running, c.leftover = false, false, false
+			c.ready, c.running, c.leftover = false, false, nil
 		}
 	}
 	return c.flush()
@@ -1031,10 +1031,11 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 		if by == agent.ByAgent {
 			c.tasks.notified(p.Prompt)
 		}
-		if !notification(p.Prompt) {
-			// The box's text was submitted. A notification starts a turn
-			// with it still there, also one that is the text of an input.
-			c.leftover = false
+		if by == agent.ByCaller && slices.Contains(c.leftover, id) && !notification(p.Prompt) {
+			// The box's text was submitted. Another prompt may have been
+			// before the paste, and a notification starts a turn with the
+			// box as it is, also one that is the text of an input.
+			c.leftover = nil
 		}
 		started := agent.Event{Kind: agent.TurnStarted, StartedBy: by, Input: id}
 		if by == agent.ByTerminal {

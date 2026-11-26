@@ -207,7 +207,8 @@ func TestConfinedInputIsNeverACommand(t *testing.T) {
 		"\ufeff/exit", "\u2060!id", "\U000e0021!id", // format characters
 		"\u3164!id", "\u115f/exit", "\uffa0!id", // fillers: letters that do not show
 		"\u1161!id", "\u11a8/exit", "\ud7b0!id", // Hangul jamo that take no width
-		"\u0e01!id",                             // a letter of a script not listed, which shows
+		"\u0e01!id",                // a letter of a script not listed, which shows
+		"\u0483!id", "\u2de0/exit", // marks of a script listed
 		"\ufe0f!id", "\u034f/exit", "\u0301!id", // marks with nothing before them
 		"\u2800!id", "\ue000!id", "\U000e0100/exit", // a blank symbol, a private use character, a variation selector
 		"！id", "／exit", "#x", "&x", "?", "> x", "[31m!id", "(at)x", "「x」", "😀"} {
