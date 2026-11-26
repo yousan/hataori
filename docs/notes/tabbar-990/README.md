@@ -51,3 +51,7 @@ list keeps its existing text controls.
 - Fresh independent Codex review found no functional issues. Its screenshot
   review caught a synthetic thread number behind the tab menu; the menu image
   excludes the background pane before capture.
+
+The menu also consumes a focus request immediately when re-selecting the
+active tab; a real-pointer regression then selects a tree row and checks that
+focus stays in the tree. Fresh Codex review confirmed this follow-up fix.

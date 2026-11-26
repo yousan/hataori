@@ -251,5 +251,11 @@ func TestDashboardCompactTabBar(t *testing.T) {
 		click(`[data-tool=tree]`)
 		b.until("outside closes menu", `!document.querySelector('.tab-menu')`)
 		click(`[data-tool=tree]`)
+		// Re-selecting the active tab must consume its focus request now,
+		// rather than stealing focus from the person's next tree selection.
+		click(`[data-tool=tab-list]`)
+		click(`.tab-menu [aria-checked=true]`)
+		click(fmt.Sprintf(`.tree [data-thread="%d"]`, rig.full))
+		b.until("tree selection keeps focus", fmt.Sprintf(`document.querySelector('.tab.active')?.dataset.tab === 'thread:%d' && !!document.activeElement?.closest('.tree')`, rig.full))
 	}
 }

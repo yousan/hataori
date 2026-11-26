@@ -268,7 +268,7 @@ export function TabBar(props: Props) {
             const name = tabName(k, x, device === null ? undefined : host(device));
             return <button key={k} type="button" role="menuitemradio" aria-checked={k === active} tabIndex={-1} title={name} onClick={() => {
               setListed(false);
-              focusing.current = true;
+              focusing.current = k !== active;
               onView(k);
               // Choosing the already active tab does not change active.
               if (k === active) bar.current?.querySelector<HTMLElement>('.tab-main[aria-selected="true"]')?.focus();
