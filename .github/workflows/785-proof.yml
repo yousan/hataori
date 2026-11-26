@@ -1,0 +1,45 @@
+name: Concurrent leftover fixture regression proof
+on:
+  pull_request:
+    paths:
+      - internal/plugin/run_test.go
+      - .github/workflows/785-proof.yml
+permissions:
+  contents: read
+jobs:
+  concurrent-fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: compare twelve concurrent test binaries
+        env:
+          PROBE_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          python3 - <<'PYPROBE'
+          import os, pathlib, subprocess, tempfile
+          p = pathlib.Path('internal/plugin/run_test.go')
+          fixed = p.read_text()
+          baseline = subprocess.check_output(['git', 'show', os.environ['PROBE_BASE'] + ':' + str(p)], text=True)
+          try:
+              with tempfile.TemporaryDirectory() as tmp:
+                  for name, source in [('baseline', baseline), ('fixed', fixed)]:
+                      p.write_text(source)
+                      binary = str(pathlib.Path(tmp) / name)
+                      subprocess.run(['go', 'test', '-c', '-o', binary, './internal/plugin'], check=True)
+                      runs = [subprocess.Popen([binary, '-test.run=^TestLeftovers($|TriedAgain$)', '-test.count=1', '-test.timeout=2m'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) for _ in range(12)]
+                      failures = 0
+                      for i, proc in enumerate(runs):
+                          output, _ = proc.communicate()
+                          if proc.returncode:
+                              failures += 1
+                              print(name, i, 'exit', proc.returncode, output, flush=True)
+                      print(name, 'failed binaries', failures, 'of', len(runs), flush=True)
+                      assert failures > 0 if name == 'baseline' else failures == 0
+          finally:
+              p.write_text(fixed)
+          PYPROBE
