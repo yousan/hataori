@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -131,7 +130,7 @@ func TestTheReplyInABlockedThreadOffersTheChoices(t *testing.T) {
 			}
 			return edit != ""
 		})
-		if !strings.HasPrefix(edit, FailedLine+" "+couldNotStart) || !strings.HasSuffix(edit, "\nStarted without this repository's settings by hook.") {
+		if edit != "Started without this repository's settings by hook." {
 			t.Fatalf("the reply reads %q", edit)
 		}
 		if n := len(f.runner.all()); n != 2 {
