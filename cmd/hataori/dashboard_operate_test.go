@@ -218,8 +218,16 @@ func TestDashboardOperateOnTheLoopbackListener(t *testing.T) {
 		t.Errorf("closed with %d %q", code, why)
 	}
 
-	// The pane goes: the WebSocket closes with that reason.
-	c = r.dial(t, base)
+	r.noMarkerLogged(t)
+}
+
+// Pane disappearance has its own idle period: slow tmux commands must
+// not race the short idle-expiry check above.
+func TestDashboardOperateEndsWhenThePaneGoes(t *testing.T) {
+	r := newOperateRig(t, "5m")
+	base := r.localBase(t)
+	s := r.localSession(t)
+	c := r.dial(t, base)
 	c.WriteJSON(map[string]any{"session": s, "pane": r.pane})
 	if m := readOp(t, c); m.Started == nil {
 		t.Fatalf("not started: %+v", m)
