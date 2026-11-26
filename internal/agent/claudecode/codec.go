@@ -775,13 +775,13 @@ func (c *codec) track(prompt string, a Actions) Actions {
 				// it, so that the caller does not keep it, and is not known
 				// by a later prompt; a held input is among them (#914). An
 				// input's end ends the turn that runs, whatever it names, so
-				// they end in the order of the pastes: the one waited for,
-				// the first written (c.sent), whose turn it is, ends first. A
-				// turn of the agent that runs then (typed at the terminal, a
-				// task notification's) ends with the first, as not
-				// delivered, since the session's end ended it. They end now,
-				// not after such a turn: what the codec keeps is lost at a
-				// restart, which would hold them again.
+				// they end in the order of the pastes: the first pasted ends
+				// first, which is the one waited for (c.sent), if any, whose
+				// turn it is. Any other turn that runs then (one typed at the
+				// terminal, say) ends with the first, as not delivered, since
+				// the session's end ended it. They end now, not after such a
+				// turn: what the codec keeps is lost at a restart, which
+				// would hold them again.
 				for _, q := range c.pasted {
 					ended = merge(ended, c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered, Input: q.id})))
 				}
