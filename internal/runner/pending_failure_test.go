@@ -53,6 +53,19 @@ func TestPendingFailureOwnsOnlyItsInput(t *testing.T) {
 				r := &Runner{Store: st, Machine: &session.Machine{Store: st}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 				lv := &live{id: 1}
 				b := batch{events: []agent.Event{{Kind: agent.TurnEnded, Status: agent.Failed, Reason: reason, Input: "42"}}}
+				if _, err := st.DB.Exec(`CREATE TRIGGER fail_read BEFORE UPDATE OF log_offset ON sessions BEGIN SELECT RAISE(ABORT, 'test rollback'); END`); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := r.commit(lv, b); err == nil {
+					t.Fatal("commit succeeded past the injected failure")
+				}
+				var left, logged int
+				if err := st.DB.QueryRow(`SELECT (SELECT count(*) FROM pending_inputs), (SELECT count(*) FROM events)`).Scan(&left, &logged); err != nil || left != 1 || logged != 0 {
+					t.Fatalf("rollback: pending %d, events %d: %v", left, logged, err)
+				}
+				if _, err := st.DB.Exec(`DROP TRIGGER fail_read`); err != nil {
+					t.Fatal(err)
+				}
 				if _, err := r.commit(lv, b); err != nil {
 					t.Fatal(err)
 				}
