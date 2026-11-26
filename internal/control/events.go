@@ -37,7 +37,7 @@ func text(name string, t FieldType) Field {
 // of its data. docs/protocol.md describes the same, field by field, and a
 // test keeps the two equal. The store refuses an event that does not match.
 var EventKinds = map[EventKind][]Field{
-	"approval_asked": {req("request", String), req("action", String), req("target", Integer), req("turn", Integer), text("reason", String), opt("principal", String), opt("from", String)},
+	"approval_asked": {req("request", String), req("action", String), req("target", Integer), req("turn", Integer), text("reason", String), opt("principal", String), opt("from", String), opt("outside", Array)},
 	"approval_answered": {req("request", String), req("allow", Boolean), req("outcome", String), req("target", Integer), opt("principal", String), opt("from", String), opt("link", Object),
 		opt("via", String)},
 	// proposal_made: a caller with Propose proposed a send or a start
@@ -45,7 +45,7 @@ var EventKinds = map[EventKind][]Field{
 	// person decided it, and what came of it. Since 3.26.
 	"proposal_made": {req("request", String), req("number", Integer), req("action", String), opt("target", Integer),
 		opt("question", String), opt("repo", String), opt("agent", String), opt("model", String), opt("effort", String),
-		text("text", String), opt("principal", String), opt("from", String), opt("research", Boolean)},
+		text("text", String), opt("principal", String), opt("from", String), opt("research", Boolean), opt("outside", Array)},
 	"proposal_answered": {req("request", String), req("number", Integer), req("action", String), req("allow", Boolean),
 		req("outcome", String), opt("target", Integer), opt("reason", String), opt("principal", String), opt("from", String),
 		opt("link", Object), opt("via", String)},

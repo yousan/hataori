@@ -41,18 +41,23 @@ func (r *Runner) Earlier(ctx context.Context, q interface {
 func (r *Runner) earlier(ctx context.Context, q interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }, thread control.ThreadID) (string, error) {
-	rows, err := q.QueryContext(ctx, `SELECT kind, data FROM events WHERE thread_id = ?
-		AND (kind IN ('input', 'answer') OR (kind = 'text' AND json_extract(data, '$.final'))) ORDER BY pos DESC`, int64(thread))
+	rows, err := q.QueryContext(ctx, `SELECT kind, data, (SELECT confined FROM threads WHERE id = events.thread_id) FROM events WHERE thread_id = ?
+		AND (kind IN ('input', 'answer') OR (kind = 'text' AND json_extract(data, '$.final')))
+		AND NOT EXISTS (SELECT 1 FROM turns u WHERE u.aside = 1 AND u.id =
+			(SELECT json_extract(st.data, '$.turn') FROM events st WHERE st.thread_id = events.thread_id
+			 AND st.kind = 'turn_started' AND st.pos <= events.pos ORDER BY st.pos DESC LIMIT 1))
+		ORDER BY pos DESC`, int64(thread))
 	if err != nil {
 		return "", fmt.Errorf("runner: %w", err)
 	}
 	max := r.contextBytes()
 	var lines []string
 	n := 0
+	confined := false
 	for n < max && rows.Next() {
 		var kind string
 		var data []byte
-		if err := rows.Scan(&kind, &data); err != nil {
+		if err := rows.Scan(&kind, &data, &confined); err != nil {
 			rows.Close()
 			return "", fmt.Errorf("runner: %w", err)
 		}
@@ -77,7 +82,19 @@ func (r *Runner) earlier(ctx context.Context, q interface {
 		return "", fmt.Errorf("runner: %w", err)
 	}
 	slices.Reverse(lines)
-	return markContext(strings.Join(lines, ""), max), nil
+	text := strings.Join(lines, "")
+	if !confined {
+		return markContext(text, max), nil
+	}
+	// Quote every line, including alternative line separators. No line of
+	// the old exchange can masquerade as the daemon's enclosing context.
+	text = strings.TrimSuffix(strings.TrimPrefix(markContext(text, max), contextStart), contextEnd)
+	if text == "" {
+		return "", nil
+	}
+	text = strings.NewReplacer("\r\n", "\n", "\r", "\n", "\u0085", "\n", "\u2028", "\n", "\u2029", "\n").Replace(text)
+	text = "> " + strings.ReplaceAll(strings.TrimSuffix(text, "\n"), "\n", "\n> ") + "\n"
+	return contextStart + text + contextEnd, nil
 }
 
 // markContext keeps the last max bytes of s, starting at a whole

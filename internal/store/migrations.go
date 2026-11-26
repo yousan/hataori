@@ -785,6 +785,21 @@ var migrations = []Migration{
 	{Name: "pending_inputs.written_text", Up: execAll(
 		`ALTER TABLE pending_inputs ADD COLUMN written_text TEXT`,
 	)},
+	// A conversation is the thread's own (key ''), or one own-thread
+	// wake's (its key). Agent conversation IDs are deliberately not used:
+	// none is known at first input, and a replacement must keep the mark.
+	{Name: "conversation_marks", Up: execAll(
+		`CREATE TABLE conversation_marks (
+			thread_id INTEGER NOT NULL REFERENCES threads(id),
+			key TEXT NOT NULL,
+			source TEXT NOT NULL,
+			PRIMARY KEY (thread_id, key, source)
+		)`,
+		`ALTER TABLE sessions ADD COLUMN outside_key TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE sessions ADD COLUMN tool_key TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE turns ADD COLUMN outside TEXT NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE supervisor_reminders ADD COLUMN outside TEXT NOT NULL DEFAULT '[]'`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

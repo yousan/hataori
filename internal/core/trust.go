@@ -109,7 +109,11 @@ func (a *api) StartWithoutSettings(ctx context.Context, id control.ThreadID, blo
 	if err := a.left(name, scope); err != nil {
 		return err
 	}
-	if a.caller.Propose {
+	propose, err := a.outsideProposal(ctx)
+	if err != nil {
+		return err
+	}
+	if propose {
 		// A caller whose starts are proposals starts nothing itself, and
 		// this choice is not one a proposal carries: a person makes it.
 		return a.refused(name, scope, "the caller's starts are proposals")
@@ -117,6 +121,9 @@ func (a *api) StartWithoutSettings(ctx context.Context, id control.ThreadID, blo
 	defer a.c.locks.lock(threadLock(id))()
 	var l Launch
 	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
+		if err := a.outsideCheck(ctx, tx); err != nil {
+			return err
+		}
 		sid, state, err := a.c.current(ctx, tx, id)
 		if err != nil {
 			return err
@@ -137,6 +144,9 @@ func (a *api) StartWithoutSettings(ctx context.Context, id control.ThreadID, blo
 		}
 		return a.startChosen(ctx, tx, id, scope, sid, pos, control.StartWithoutSettings, l.Session, now)
 	})
+	if errors.Is(err, errOutsideChanged) {
+		return a.refused(name, scope, "the caller's starts are proposals")
+	}
 	if err != nil {
 		return err
 	}
@@ -320,8 +330,8 @@ func (c *Core) again(ctx context.Context, tx *store.Tx, id control.ThreadID, sco
 		dir = workspace.String
 	}
 	first := FirstInput{Principal: old.Principal, From: old.From, Key: old.Key, Text: old.Text, Link: old.Link,
-		Before: old.Before, After: old.After, Via: old.Via, Context: old.Context, Dir: dir, NoInput: old.NoInput}
-	if old.Wake {
+		Before: old.Before, After: old.After, Via: old.Via, Context: old.Context, Dir: dir, NoInput: old.NoInput, ConversationKey: old.ConversationKey}
+	if old.Wake && old.ConversationKey == "" {
 		// A woken session's agent would have resumed the conversation; the
 		// new one gets it before the input, as a session that replaces one
 		// that cannot resume does.
@@ -335,8 +345,9 @@ func (c *Core) again(ctx context.Context, tx *store.Tx, id control.ThreadID, sco
 	}
 	fb, _ := json.Marshal(first)
 	now := at.UnixMilli()
-	res, err := tx.ExecContext(ctx, `INSERT INTO sessions (thread_id, agent, state, model, effort, first_input, launch, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`, int64(id), l.Agent, string(control.Creating), l.Model, l.Effort, string(fb), now, now)
+	res, err := tx.ExecContext(ctx, `INSERT INTO sessions (thread_id, agent, state, model, effort, first_input, launch, created_at, updated_at, outside_key, set_aside)
+		VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, CASE WHEN ? != '' THEN (SELECT agent_session_id FROM sessions WHERE id = ?) END)`,
+		int64(id), l.Agent, string(control.Creating), l.Model, l.Effort, string(fb), now, now, first.ConversationKey, first.ConversationKey, sid)
 	if err != nil {
 		return l, err
 	}

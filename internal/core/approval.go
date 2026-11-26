@@ -77,7 +77,11 @@ func (a *api) AskInterrupt(ctx context.Context, id control.ThreadID, key, reason
 		if err != nil {
 			return err
 		}
-		data, _ := json.Marshal(map[string]any{"request": handle, "action": "interrupt", "target": id, "turn": turn, "reason": reason, "principal": a.caller.Principal, "from": a.caller.From})
+		d := map[string]any{"request": handle, "action": "interrupt", "target": id, "turn": turn, "reason": reason, "principal": a.caller.Principal, "from": a.caller.From}
+		if err := a.requestMarks(ctx, tx, a.caller.AsksIn, d); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(d)
 		_, err = tx.Append(ctx, control.Event{Thread: a.caller.AsksIn, Kind: "approval_asked", Data: data})
 		return err
 	})

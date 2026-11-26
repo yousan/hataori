@@ -236,6 +236,11 @@ type FirstInput struct {
 	// event keeps them beside it.
 	Before string `json:"before,omitempty"`
 	After  string `json:"after,omitempty"`
+	// Outside is daemon-only provenance, retained in queued first inputs.
+	Outside []control.OutsideText `json:"outside,omitempty"`
+	// ConversationKey is empty for the thread's conversation; each fresh
+	// wake retains its key even after a failed launch restores set_aside.
+	ConversationKey string `json:"conversation_key,omitempty"`
 	// Placed is the workspace a Make was about to put in place, until Dir
 	// records what it returned.
 	Placed *Placement `json:"placed,omitempty"`
@@ -604,7 +609,7 @@ func (a *api) marked(in control.Input) control.Input {
 // Input is the first input as Start or Send gave it: its text, link, the
 // text the plugins added, and the caller's Via.
 func (f FirstInput) Input() control.Input {
-	return control.Input{Text: f.Text, Link: f.Link, Before: f.Before, After: f.After, Via: f.Via}
+	return control.Input{Text: f.Text, Link: f.Link, Before: f.Before, After: f.After, Via: f.Via, Outside: f.Outside}
 }
 
 // The input hook points, in the order they run (design, section 7.3).
@@ -908,6 +913,9 @@ const terminalsTimeout = time.Second
 // output unless the caller may not read text. It returns the current
 // session, 0 for none; terminals fills the terminal.
 func (a *api) summary(ctx context.Context, t *control.ThreadInfo) (int64, error) {
+	if err := a.markSummary(ctx, t); err != nil {
+		return 0, err
+	}
 	db := a.c.Store.DB
 	var sid int64
 	err := db.QueryRowContext(ctx, `SELECT s.id, s.agent, s.model, s.effort,
@@ -1439,7 +1447,11 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 		return 0, fmt.Errorf("core: start in %q: effort %q: %w", r.Scope, r.Effort, control.ErrUnknownEffort)
 	}
 	model, effort := a.c.ModelOf(r.Scope, chosen, r.Model, r.Effort)
-	if a.caller.Propose && !confined {
+	propose, err := a.outsideProposal(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if propose && !confined {
 		// Nothing starts: a person decides (Caller.Propose).
 		p := r
 		p.Input = given
@@ -1472,7 +1484,6 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 	}
 	// Before anything is made: a stopped input opens no chat thread and
 	// no workspace. A key accepted before, above, runs no hook again.
-	var err error
 	if r.Input, err = a.inputHooks(ctx, "Start", 0, r.Scope, r.Input); err != nil {
 		return 0, err
 	}
@@ -1510,6 +1521,11 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 	)
 	errDup := errors.New("the key was accepted before")
 	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
+		if !confined {
+			if err := a.outsideCheck(ctx, tx); err != nil {
+				return err
+			}
+		}
 		now := time.Now().UnixMilli()
 		state, launch := control.Creating, 1
 		if kind == control.KindConversation {
@@ -1576,6 +1592,9 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 			return fmt.Errorf("core: create session: %w", err)
 		}
 		sessionID, _ = res.LastInsertId()
+		if _, err := inputMark(ctx, tx, id, sessionID, r.Input.Outside); err != nil {
+			return err
+		}
 		d := map[string]any{"thread": thread, "session": sessionID, "repo": r.Repo,
 			"principal": string(a.caller.Principal), "model": model, "effort": effort, "kind": string(kind)}
 		if a.caller.From != "" {
@@ -1594,6 +1613,11 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 		}
 		return keep(ctx, tx, id, kept, a.caller.NoAnswer)
 	})
+	if errors.Is(err, errOutsideChanged) {
+		p := r
+		p.Input = given
+		return 0, a.proposeStart(ctx, p, chosen, model, effort)
+	}
 	if errors.Is(err, errDup) { // a concurrent call with the same key won
 		id, _, err := a.c.started(ctx, inboxKey)
 		if err != nil {
@@ -1753,8 +1777,11 @@ func (c *Core) launch(ctx context.Context, l Launch, repo string) error {
 	record := func(f FirstInput) error {
 		f.Principal, f.From, f.Key, f.Text, f.Context, f.Link = l.Principal, l.From, l.Key, l.Input.Text, l.Context, l.Input.Link
 		f.Before, f.After, f.Via = l.Input.Before, l.Input.After, l.Input.Via
-		fi, _ := json.Marshal(f)
 		return c.Store.Update(ctx, func(tx *store.Tx) error {
+			if err := tx.QueryRowContext(ctx, `SELECT outside_key FROM sessions WHERE id = ?`, l.Session).Scan(&f.ConversationKey); err != nil {
+				return err
+			}
+			fi, _ := json.Marshal(f)
 			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, string(fi), l.Session); err != nil {
 				return err
 			}
@@ -2094,7 +2121,11 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 	if err := a.ordinaryOnly(ctx, "Send", scope, id); err != nil {
 		return err
 	}
-	if a.caller.Propose {
+	propose, err := a.outsideProposal(ctx)
+	if err != nil {
+		return err
+	}
+	if propose {
 		// Nothing is sent: a person decides (Caller.Propose).
 		return a.proposeSend(ctx, scope, id, key, in)
 	}
@@ -2130,6 +2161,9 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 	// The state is read in the write transaction, so it cannot change
 	// between the Busy decision and the input.
 	take := func(tx *store.Tx) error {
+		if err := a.outsideCheck(ctx, tx); err != nil {
+			return err
+		}
 		accepted, interrupt, waits, wake = false, false, false, false
 		pending, running, answer = 0, 0, ""
 		var state control.State
@@ -2219,7 +2253,12 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 			return errPromptBuild
 		}
 		marked := FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: key, Text: in.Text, Link: in.Link,
-			Before: in.Before, After: in.After, Via: a.caller.Via}
+			Before: in.Before, After: in.After, Via: a.caller.Via, Outside: in.Outside}
+		if !a.fresh {
+			if _, err := inputMark(ctx, tx, id, sid, in.Outside); err != nil {
+				return err
+			}
+		}
 		if guard == nil {
 			if waits, err = a.c.mustWait(ctx, tx, scope, id, state); err != nil {
 				return err
@@ -2268,6 +2307,9 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		if in, err = a.runInputHooks(ctx, "Send", id, scope, in, PointBeforePromptBuild); err != nil {
 			return err
 		}
+	}
+	if errors.Is(err, errOutsideChanged) {
+		return a.proposeSend(ctx, scope, id, key, given)
 	}
 	if err != nil || !accepted {
 		return err
@@ -2327,8 +2369,9 @@ func (c *Core) wakeTx(ctx context.Context, tx *store.Tx, id control.ThreadID, si
 		return in, err
 	}
 	if fresh {
+		in.ConversationKey = in.Key
 		// The conversation is set aside for this input's own.
-		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET set_aside = agent_session_id WHERE id = ? AND set_aside IS NULL`, sid); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET set_aside = agent_session_id, outside_key = ? WHERE id = ? AND set_aside IS NULL`, in.Key, sid); err != nil {
 			return in, fmt.Errorf("core: wake: %w", err)
 		}
 	} else {
@@ -2344,6 +2387,11 @@ func (c *Core) wakeTx(ctx context.Context, tx *store.Tx, id control.ThreadID, si
 		}
 		in.Context = earlier + in.Context
 	}
+	line, err := inputMark(ctx, tx, id, sid, in.Outside)
+	if err != nil {
+		return in, err
+	}
+	in.Context = line + in.Context
 	fi, _ := json.Marshal(in)
 	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ?, launch = 1 WHERE id = ?`, string(fi), sid); err != nil {
 		return in, fmt.Errorf("core: wake: %w", err)
@@ -2366,6 +2414,15 @@ func (c *Core) sendTx(ctx context.Context, tx *store.Tx, sid int64, in FirstInpu
 	if err != nil {
 		return 0, hand, err
 	}
+	var thread control.ThreadID
+	if err := tx.QueryRowContext(ctx, `SELECT thread_id FROM sessions WHERE id = ?`, sid).Scan(&thread); err != nil {
+		return 0, hand, err
+	}
+	line, err := inputMark(ctx, tx, thread, sid, in.Outside)
+	if err != nil {
+		return 0, hand, err
+	}
+	earlier = line + earlier
 	hand = forAgent(in.Input())
 	origin := &session.InputOrigin{Principal: in.Principal, From: in.From, Key: in.Key, Via: in.Via, Text: in.Text}
 	if control.State(state) == control.Idle {

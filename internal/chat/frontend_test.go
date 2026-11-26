@@ -161,7 +161,7 @@ func newFront(t *testing.T, ws workspaces, opts ...func(*FrontEnd)) *front {
 	d := fake.New()
 	r := &starts{}
 	fe := &FrontEnd{Name: "chat", Driver: d, Trigger: "!go", People: testPeople(), Log: lg,
-		Outbox: &Outbox{Store: st, Client: "chat", Driver: d, Log: lg, Retry: 5 * time.Millisecond},
+		Outbox: &Outbox{Store: st, Client: "chat", Driver: d, People: testPeople(), Log: lg, Retry: 5 * time.Millisecond},
 		Scopes: map[string]Scope{channel: {Enabled: true}, "off": {}}}
 	c := &core.Core{Store: st, Machine: &session.Machine{Store: st}, Log: lg, Agent: "agent", Runner: r, Workspaces: ws,
 		People: testPeople(),

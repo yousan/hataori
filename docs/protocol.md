@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.42**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.43**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -786,6 +786,17 @@ One file the owner let through with `Trust`; since 3.28.
 | `terminal` | string | optional | the terminal device the agent of its current session runs in, as its session host opened it, such as `/dev/pts/3` or `/dev/ttys003`; absent for a session on pipes, while the thread is asleep, closed, removed or failed, once the agent's command has exited, while its session host does not answer within a second, and for a session host started before 1.12 until the session's next start; not text; since 1.12 |
 | `confined` | boolean | optional | it was started confined, as a scope's supervisor thread is: its directory is the scope's, not a workspace with a repository, so `Workspace` has nothing to read there and fails; since 3.36 |
 | `kind` | string | optional | what it is to its scope, set at its start and never changed ([design section 5.1](design/overview.md#51-the-control-api)): `ordinary`; `supervisor`, a supervisor's own thread, which its wakes go to and of which a scope has one open at a time; `conversation`, one with the supervisor beside its own thread; or `lookup`, which answers one question for it and is never reopened. No operation sets it: `Start` always starts an `ordinary` thread. Always given since 3.38 |
+| `outside` | [`OutsideText`] | optional | sources permanently marking the current logical conversation; absent when unmarked; since 3.43 |
+| `last_outside` | [`OutsideText`] | optional | sources marking the last turn, retained when its wake conversation has ended; absent when unmarked; since 3.43 |
+
+### Type `OutsideText`
+
+Since 3.43. Provenance supplied by the daemon, never by a socket argument. A logical conversation is the thread's own, or a supervisor's own-thread wake identified by its key, independent of the agent's conversation ID. No operation clears a mark.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `kind` | string | required | the kind of outside source: for example message, file, lookup or turn |
+| `id` | string | required | the source's identifier, without its text |
 
 ### Type `ThreadDetail`
 
@@ -814,6 +825,8 @@ The fields of `ThreadInfo`, and:
 | `terminal` | string | optional | as in `ThreadInfo` |
 | `confined` | boolean | optional | as in `ThreadInfo` |
 | `kind` | string | optional | as in `ThreadInfo` |
+| `outside` | [`OutsideText`] | optional | as in `ThreadInfo` |
+| `last_outside` | [`OutsideText`] | optional | as in `ThreadInfo` |
 | `requests` | [`Request`] | required | the open questions and approvals; open approvals asked here are listed whatever the thread state, and since 3.26 so are the open proposals shown here, and the approved ones whose outcome is not stored yet, as approvals with the choices Approve and Refuse; may be `null` |
 | `recent` | string | required | the end of its last output, at most the bytes asked for: its `text` events in order, each a whole message of the agent, with a blank line (`\n\n`) between two of them, also between two turns; cut at the start of a character, and with no part of a blank line left at the cut. Before 3.12 the messages were joined with nothing between them, and the cut could fall inside a character |
 | `events` | [`Event`] | optional | its last events, as many as `events` asked for, newest last, each as `Events` delivers it; since 1.5 |
@@ -1549,6 +1562,7 @@ An interrupt approval request in the asker's thread, since 3.10.
 | `reason` | string | optional | the reason, text |
 | `principal` | string | optional | the person who asked |
 | `from` | string | optional | the `<client>:<id>` it came from, as in `thread_created` |
+| `outside` | array | optional | the proposing conversation's outside-text sources (`OutsideText`), shown with the request in every autonomy; since 3.43 |
 
 ### Event `approval_answered`
 
@@ -1584,6 +1598,7 @@ A supervisor's `Start` or `Send`, stored as a proposal in its own thread instead
 | `principal` | string | optional | the supervisor's person |
 | `from` | string | optional | the supervisor's id, as in `thread_created` |
 | `research` | boolean | optional | for `start`, `true` when the thread would be started as research (`Start`): without its repository's settings; absent otherwise; since 3.34 |
+| `outside` | array | optional | the proposing conversation's outside-text sources (`OutsideText`), shown with the request in every autonomy; since 3.43 |
 
 ### Event `proposal_answered`
 

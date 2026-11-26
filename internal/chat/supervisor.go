@@ -317,6 +317,10 @@ type namedPost struct {
 func (f *FrontEnd) svPost(ctx context.Context, r *reader, e control.Event, sv svThread, answer bool, text string) ([]string, bool, error) {
 	p := f.postsOf(sv.scope)
 	names := f.named(sv.scope, text)
+	var err error
+	if names, err = f.outsideNames(ctx, e, names); err != nil {
+		return nil, false, err
+	}
 	if answer && len(names) == 0 {
 		switch p.Report {
 		case "needed":
@@ -337,6 +341,57 @@ func (f *FrontEnd) svPost(ctx context.Context, r *reader, e control.Event, sv sv
 		return nil, true, nil
 	}
 	return f.ids(names), true, nil
+}
+
+// outsideNames uses the event's turn, not whichever conversation happens
+// to run when an outbox is rebuilt after a restart. A wake's closed mark
+// therefore still restricts its post, without restricting the next wake.
+func (f *FrontEnd) outsideNames(ctx context.Context, e control.Event, names []string) ([]string, error) {
+	person, marked, err := outsidePerson(ctx, f.Outbox.Store.DB, e.Thread, e.Pos)
+	if err != nil {
+		return nil, err
+	}
+	if !marked {
+		return names, nil
+	}
+	if slices.Contains(names, person) {
+		return []string{person}, nil
+	}
+	return nil, nil
+}
+
+// outsidePerson is also checked when a stored post is actually delivered:
+// a turn may have become marked while that post waited for a retry.
+func outsidePerson(ctx context.Context, q interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, thread control.ThreadID, pos uint64) (string, bool, error) {
+	var raw string
+	err := q.QueryRowContext(ctx, `SELECT u.outside FROM turns u JOIN sessions s ON s.id = u.session_id
+  WHERE s.thread_id = ? AND u.id = (SELECT json_extract(data, '$.turn') FROM events
+  WHERE thread_id = ? AND kind = 'turn_started' AND pos <= ? ORDER BY pos DESC LIMIT 1)`, int64(thread), int64(thread), pos).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	var marks []control.OutsideText
+	if err := json.Unmarshal([]byte(raw), &marks); err != nil {
+		return "", false, err
+	}
+	if len(marks) == 0 {
+		return "", false, nil
+	}
+	var person string
+	err = q.QueryRowContext(ctx, `SELECT json_extract(e.data, '$.principal') FROM events e
+  WHERE e.thread_id = ? AND e.pos <= ? AND e.kind IN ('input', 'answer')
+  AND coalesce(json_extract(e.data, '$.principal'), '') != ''
+  AND (e.kind = 'answer' OR EXISTS (SELECT 1 FROM turns u WHERE u.id = json_extract(e.data, '$.turn')
+   AND substr(u.trigger, 1, 8) != 'hataori-')) ORDER BY e.pos DESC LIMIT 1`, int64(thread), pos).Scan(&person)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", true, nil
+	}
+	return person, true, err
 }
 
 // quietNow reports whether no post of supervisor thread sv may mention
@@ -574,7 +629,13 @@ func (f *FrontEnd) dueQuietEnds(ctx context.Context, tx *store.Tx, now int64) ([
 			n = fmt.Sprintf("%d times", times)
 		}
 		parts[i] = append(parts[i], fmt.Sprintf("@%s %s", name, n))
-		names[i] = append(names[i], name)
+		person, marked, err := outsidePerson(ctx, tx, control.ThreadID(k.thread), uint64(pos))
+		if err != nil {
+			return nil, err
+		}
+		if !marked || person == name {
+			names[i] = append(names[i], name)
+		}
 	}
 	for i := range out {
 		out[i].text = "Quiet hours are over. Named during them: " + strings.Join(parts[i], ", ") + "."

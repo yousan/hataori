@@ -170,7 +170,8 @@ func TestUserFilesGrantNothing(t *testing.T) {
 	if len(tokens.bound) != 2 || !reflect.DeepEqual(tokens.bound[0], tokens.bound[1]) {
 		t.Fatalf("the token is bound to %#v with SOUL.md, and to %#v without", tokens.bound[1], tokens.bound[0])
 	}
-	if !reflect.DeepEqual(tokens.bound[1], s.APIOf("c1", 1, Propose)) {
+	key := "" // a bound launch keeps this identity during shutdown too
+	if !reflect.DeepEqual(tokens.bound[1], s.apiOf("c1", 1, Propose, &key)) {
 		t.Fatalf("the token is not bound to the supervisor's caller under propose")
 	}
 	if !reflect.DeepEqual(without.MCP, with.MCP) {

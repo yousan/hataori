@@ -2381,6 +2381,10 @@ type Caller struct {
 	// or failed. Set by the daemon when it binds the caller. Since protocol
 	// 3.26.
 	Propose bool
+	// These are daemon-owned policy, never socket arguments (#881).
+	ProposeOutside bool // marked Start/Send are proposals, under act too; rechecked at acceptance
+	ConversationKey *string // tools keep their launch's logical conversation during shutdown; nil: current
+	OutsideSends int // marked proposals/reminders per hour; zero: no policy, negative: none
 	// Mark is a line the core puts before the text of every input of the
 	// caller's Start and Send, except a Send that answers an open question;
 	// the title is made without it. Set by the
@@ -2530,6 +2534,15 @@ type HookResult struct {
 // (core.ErrKindKey). core.Core.LiveConfined lists the sessions of such
 // threads whose agent may run.
 
+// OutsideText is daemon-owned provenance, never the source text (#881).
+// Input.Outside ([]OutsideText, json:"-") may be set only inside the daemon:
+// the input's transaction calls store.MarkConversation before delivery.
+// It is not an API operation, and a socket or a session tool cannot set it.
+type OutsideText struct {
+	Kind string // message, file, lookup, turn, ...
+	ID string
+}
+
 // Fields of ThreadInfo, and so of ThreadDetail, besides its id, number,
 // repository, state, who started it and when (section 7.2).
 type ThreadInfo struct {
@@ -2547,6 +2560,8 @@ type ThreadInfo struct {
 	Terminal   string      // the terminal its current session's agent runs in, such as /dev/pts/3; absent on pipes and with no process
 	Confined   bool        // started confined; since protocol 3.36
 	Kind       ThreadKind  // what it is to its scope (section 5.1); since protocol 3.38 (#867)
+	Outside []OutsideText // the current conversation's sources; optional; since 3.43
+	LastOutside []OutsideText // the last turn's sources, even after its wake ended; optional; since 3.43
 }
 
 // ThreadKind is set at a thread's start, by the code that starts it, and

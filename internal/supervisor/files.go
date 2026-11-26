@@ -66,15 +66,21 @@ type ScopeFiles struct {
 
 // API returns api with Files answered for thread, a supervisor's of scope:
 // in their directory, whatever a request says.
-func (s *ScopeFiles) API(api control.API, scope string, thread control.ThreadID) control.API {
-	return &filing{API: api, files: s, scope: scope, thread: thread}
+func (s *ScopeFiles) API(api control.API, scope string, thread control.ThreadID, autonomy ...string) control.API {
+	mode := Propose
+	if len(autonomy) != 0 {
+		mode = autonomy[0]
+	}
+	return &filing{API: api, files: s, scope: scope, thread: thread, autonomy: mode}
 }
 
 type filing struct {
 	control.API
-	files  *ScopeFiles
-	scope  string
-	thread control.ThreadID
+	files    *ScopeFiles
+	scope    string
+	thread   control.ThreadID
+	autonomy string
+	key      *string
 }
 
 // A refusal is why a call is refused. It quotes neither the path nor
@@ -90,7 +96,7 @@ const errClosed = refusal("the thread of this session is closed")
 
 // Files is part of control.API.
 func (f *filing) Files(ctx context.Context, r control.FilesRequest) (control.FilesAnswer, error) {
-	ans, err := f.files.do(ctx, f.scope, f.thread, r)
+	ans, err := f.files.do(ctx, f.scope, f.thread, f.autonomy, f.key, r)
 	op := r.Op
 	if !slices.Contains([]string{control.FilesList, control.FilesRead, control.FilesWrite, control.FilesEdit}, op) {
 		op = "unknown"
@@ -105,7 +111,7 @@ func (f *filing) Files(ctx context.Context, r control.FilesRequest) (control.Fil
 	return ans, nil
 }
 
-func (s *ScopeFiles) do(ctx context.Context, scope string, thread control.ThreadID, r control.FilesRequest) (control.FilesAnswer, error) {
+func (s *ScopeFiles) do(ctx context.Context, scope string, thread control.ThreadID, autonomy string, key *string, r control.FilesRequest) (control.FilesAnswer, error) {
 	dir, err := s.dir(ctx, scope, thread)
 	if err != nil {
 		return control.FilesAnswer{}, err
@@ -132,7 +138,7 @@ func (s *ScopeFiles) do(ctx context.Context, scope string, thread control.Thread
 	default:
 		return control.FilesAnswer{}, refusal("no such operation on files")
 	}
-	return s.write(ctx, scope, thread, dir, parts, r)
+	return s.write(ctx, scope, thread, autonomy, key, dir, parts, r)
 }
 
 // dir is the directory of scope's supervisor threads, for thread, which
@@ -518,7 +524,7 @@ func (s *ScopeFiles) read(dir string, parts []string) (control.FilesAnswer, erro
 }
 
 // write makes r's write or edit of the file at parts in dir.
-func (s *ScopeFiles) write(ctx context.Context, scope string, thread control.ThreadID, dir string, parts []string, r control.FilesRequest) (control.FilesAnswer, error) {
+func (s *ScopeFiles) write(ctx context.Context, scope string, thread control.ThreadID, autonomy string, key *string, dir string, parts []string, r control.FilesRequest) (control.FilesAnswer, error) {
 	if strings.EqualFold(parts[0], DocsDir) {
 		return control.FilesAnswer{}, refusal("no write in docs/")
 	}
@@ -528,6 +534,9 @@ func (s *ScopeFiles) write(ctx context.Context, scope string, thread control.Thr
 		return control.FilesAnswer{}, err
 	}
 	defer root.Close()
+	if err := writeMark(ctx, s.Store.DB, thread, key, autonomy, root, parts); err != nil {
+		return control.FilesAnswer{}, err
+	}
 	// Also where the disk knows it by another name, such as one with a dot
 	// after it.
 	if same(root, parts[0], DocsDir) {
@@ -560,7 +569,9 @@ func (s *ScopeFiles) write(ctx context.Context, scope string, thread control.Thr
 		return control.FilesAnswer{}, err
 	}
 	w := placing{path: path, tmp: tmpName(), was: cur.version(), version: versionOf(next), there: there}
-	id, err := s.record(ctx, scope, thread, dir, w)
+	id, err := s.record(ctx, scope, thread, dir, w, func(tx *store.Tx) error {
+		return writeMark(ctx, tx, thread, key, autonomy, root, parts)
+	})
 	if err != nil {
 		return control.FilesAnswer{}, err
 	}
@@ -971,8 +982,11 @@ func (s *ScopeFiles) unmake(root *os.Root, w placing) {
 // number. pos is the newest event's position then: the turn it belongs to
 // ends after it. A call that waited until its thread was closed is refused:
 // what it wrote would be named nowhere.
-func (s *ScopeFiles) record(ctx context.Context, scope string, thread control.ThreadID, dir string, w placing) (id int64, err error) {
+func (s *ScopeFiles) record(ctx context.Context, scope string, thread control.ThreadID, dir string, w placing, check func(*store.Tx) error) (id int64, err error) {
 	err = s.Store.Update(ctx, func(tx *store.Tx) error {
+		if err := check(tx); err != nil {
+			return err
+		}
 		var state string
 		if err := tx.QueryRowContext(ctx, `SELECT state FROM threads WHERE id = ?`, int64(thread)).Scan(&state); err != nil {
 			return err

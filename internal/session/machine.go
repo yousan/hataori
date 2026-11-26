@@ -155,7 +155,7 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 			// A conversation set aside for one input's own (sessions.set_aside)
 			// is the session's again: the next wake resumes it.
 			if aside.Valid {
-				if _, err := tx.ExecContext(ctx, `UPDATE sessions SET agent_session_id = set_aside, set_aside = NULL WHERE id = ?`,
+				if _, err := tx.ExecContext(ctx, `UPDATE sessions SET agent_session_id = set_aside, set_aside = NULL, outside_key = '' WHERE id = ?`,
 					sessionID); err != nil {
 					return err
 				}
@@ -187,10 +187,15 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 	}
 	endedTurn := turnID
 	if r.Start != nil {
+		marks, err := store.CurrentMarks(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		outside, _ := json.Marshal(marks)
 		// Whether it runs in the conversation set aside's place is known
 		// from before: r.State may have ended that conversation.
-		res, err := tx.ExecContext(ctx, `INSERT INTO turns (session_id, started_by, principal, from_id, trigger, started_at, aside) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			sessionID, r.Start.By, string(r.Start.Principal), r.Start.From, r.Key, now, aside.Valid)
+		res, err := tx.ExecContext(ctx, `INSERT INTO turns (session_id, started_by, principal, from_id, trigger, started_at, aside, outside) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			sessionID, r.Start.By, string(r.Start.Principal), r.Start.From, r.Key, now, aside.Valid, string(outside))
 		if err != nil {
 			return err
 		}

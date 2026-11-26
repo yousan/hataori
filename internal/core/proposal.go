@@ -141,6 +141,18 @@ func (a *api) propose(ctx context.Context, action, key string, call proposalCall
 			}
 		}
 		d := map[string]any{"action": action, "text": call.Text, "principal": string(a.caller.Principal), "from": a.caller.From}
+		if err := a.requestMarks(ctx, tx, a.caller.AsksIn, d); err != nil {
+			return err
+		}
+		if d["outside"] != nil {
+			var scope string
+			if err := tx.QueryRowContext(ctx, `SELECT scope FROM threads WHERE id = ?`, int64(a.caller.AsksIn)).Scan(&scope); err != nil {
+				return err
+			}
+			if err := store.OutsideQuota(ctx, tx, scope, a.c.now(), a.caller.OutsideSends); err != nil {
+				return err
+			}
+		}
 		target, question, err := what(tx, d)
 		if err != nil {
 			return err

@@ -56,9 +56,11 @@ func Caller(scope string, thread control.ThreadID, autonomy string) control.Call
 		RefuseBusy: true,
 		// Whatever the autonomy: no conversation orders another, or the
 		// supervisor's own thread, and neither answers for a person (#871).
-		OrdinaryOnly: true,
-		Mark:         Mark,
-		Research:     true, // of its own starts only (#681)
+		OrdinaryOnly:   true,
+		Mark:           Mark,
+		Research:       true, // of its own starts only (#681)
+		ProposeOutside: true,
+		OutsideSends:   instance.DefaultSendsPerHour / 2, // Sessions applies this scope's limit
 	}
 	switch autonomy {
 	case Watch:

@@ -238,7 +238,6 @@ func (s *Sessions) CopyDocs(ctx context.Context, scope string, thread control.Th
 // thread's newest session, which Unconfine revokes once the session is
 // closed, is the only one of the thread that is bound.
 func (s *Sessions) bind(ctx context.Context, session int64, thread control.ThreadID, scope, stateDir string, issue bool) (string, error) {
-	api := s.API(scope, thread)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Read with the lock held: a session closed after this is unbound by
@@ -250,6 +249,16 @@ func (s *Sessions) bind(ctx context.Context, session int64, thread control.Threa
 	if state == control.Closed || state == control.Removed {
 		return "", fmt.Errorf("supervisor: session %d of thread %d is %s", session, int64(thread), state)
 	}
+	if issue {
+		if _, err := s.Core.Store.DB.ExecContext(ctx, `UPDATE sessions SET tool_key = outside_key WHERE id = ?`, session); err != nil {
+			return "", err
+		}
+	}
+	var key string
+	if err := s.Core.Store.DB.QueryRowContext(ctx, `SELECT tool_key FROM sessions WHERE id = ?`, session).Scan(&key); err != nil {
+		return "", err
+	}
+	api := s.apiOf(scope, thread, s.Scopes[scope].Autonomy, &key)
 	old, had := s.issued[thread]
 	if had && old.session > session {
 		return "", fmt.Errorf("supervisor: session %d of thread %d: a newer one, %d, has the thread's token", session, int64(thread), old.session)
@@ -314,9 +323,23 @@ func (s *Sessions) API(scope string, thread control.ThreadID) control.API {
 
 // APIOf is API with autonomy instead of the scope's.
 func (s *Sessions) APIOf(scope string, thread control.ThreadID, autonomy string) control.API {
-	api := s.Core.As(Caller(scope, thread, autonomy))
+	return s.apiOf(scope, thread, autonomy, nil)
+}
+
+func (s *Sessions) apiOf(scope string, thread control.ThreadID, autonomy string, key *string) control.API {
+	caller := Caller(scope, thread, autonomy)
+	caller.ConversationKey = key
+	sends := s.Scopes[scope].Limits.Sends
+	if sends == 0 {
+		sends = instance.DefaultSendsPerHour
+	}
+	caller.OutsideSends = sends / 2
+	if caller.OutsideSends == 0 {
+		caller.OutsideSends = -1
+	}
+	api := s.Core.As(caller)
 	if m := s.Reminders[scope]; m != nil {
-		api = m.API(api)
+		api = &reminding{API: api, m: m, origin: reminderOrigin{thread: thread, key: key, limit: caller.OutsideSends}}
 	}
 	if b := s.Budgets[scope]; b != nil {
 		api = b.API(api)
@@ -328,7 +351,9 @@ func (s *Sessions) APIOf(scope string, thread control.ThreadID, autonomy string)
 		api = &watching{API: api, scope: scope, log: s.Log}
 	}
 	if s.Files != nil {
-		api = s.Files.API(api, scope, thread)
+		f := s.Files.API(api, scope, thread, s.Scopes[scope].Autonomy).(*filing)
+		f.key = key
+		api = f
 	}
 	return api
 }

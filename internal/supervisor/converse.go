@@ -30,6 +30,8 @@ type Call struct {
 	// taken out by the front end, which alone knows how its service writes
 	// one. Its first line is the thread's title.
 	Text string
+	// Outside is daemon-owned provenance for the context given with Text.
+	Outside []control.OutsideText
 }
 
 // ErrNoConversations is returned by Converse for a scope in which none
@@ -63,6 +65,6 @@ func (s *Sessions) Converse(ctx context.Context, c Call) (control.ThreadID, erro
 	caller := control.Caller{From: c.From, Scopes: []string{c.Scope}, May: control.OpRead | control.OpStart}
 	dir := func(ctx context.Context) (string, error) { return s.Dir(ctx, c.Scope) }
 	return s.Core.StartConfined(ctx, caller, control.StartRequest{Key: c.Key, Scope: c.Scope, Thread: c.Thread,
-		Input: control.Input{Text: c.Text}, Model: sv.Model, Effort: cmp.Or(sv.Effort, DefaultEffort)},
+		Input: control.Input{Text: c.Text, Outside: c.Outside}, Model: sv.Model, Effort: cmp.Or(sv.Effort, DefaultEffort)},
 		control.KindConversation, core.Dir(dir))
 }

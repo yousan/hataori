@@ -37,14 +37,14 @@ var (
 		Agent: "claude-code", Model: "opus", Effort: "high", Turns: 12, Last: "Running the tests...", Background: 1,
 		Context: &control.Context{Used: 45000, Size: 200000}, Tokens: &control.TokenCount{Turn: 2450, Today: 98000}, Terminal: "/dev/pts/3", Kind: control.KindOrdinary}
 	exampleConfined = control.ThreadInfo{ID: 2, Scope: "C0123", Links: []control.ThreadLink{{LinkRef: control.LinkRef{Client: "discord", Channel: "C0123", Thread: "T0455"}, Opened: true}}, Title: "Supervisor of this channel",
-		State: control.Idle, StartedBy: "owner", Created: exampleTime, Updated: exampleTime, Confined: true, Kind: control.KindSupervisor}
+		State: control.Idle, StartedBy: "owner", Created: exampleTime, Updated: exampleTime, Confined: true, Kind: control.KindSupervisor, Outside: []control.OutsideText{{Kind: "message", ID: "message-outside"}}, LastOutside: []control.OutsideText{{Kind: "file", ID: "file-outside"}}}
 )
 
 // eventData is an example of every event kind's data.
 var eventData = map[control.EventKind]string{
-	"approval_asked":    `{"request":"approval-1","action":"interrupt","target":8,"turn":12,"reason":"urgent","principal":"sv1","from":"supervisor:C0123"}`,
+	"approval_asked":    `{"request":"approval-1","action":"interrupt","target":8,"turn":12,"reason":"urgent","principal":"sv1","from":"supervisor:C0123","outside":[{"kind":"message","id":"message-outside"}]}`,
 	"approval_answered": `{"request":"approval-1","allow":true,"outcome":"interrupted","target":8,"principal":"alice","from":"discord:W1","link":{"client":"discord","channel":"C0123","thread":"T0456"},"via":"dashboard"}`,
-	"proposal_made":     `{"action":"send","agent":"claude-code","effort":"high","from":"supervisor:C0123","model":"opus","number":3,"principal":"sv1","question":"request-1","repo":"https://example.com/repo.git","research":true,"request":"proposal-1","target":8,"text":"Run the tests."}`,
+	"proposal_made":     `{"action":"send","agent":"claude-code","effort":"high","from":"supervisor:C0123","model":"opus","number":3,"principal":"sv1","question":"request-1","repo":"https://example.com/repo.git","research":true,"request":"proposal-1","target":8,"text":"Run the tests.","outside":[{"kind":"file","id":"file-outside"}]}`,
 	"proposal_answered": `{"action":"send","allow":true,"from":"discord:W1","link":{"client":"discord","channel":"C0123","thread":"T0456"},"number":3,"outcome":"failed","principal":"alice","reason":"not allowed","request":"proposal-1","target":8,"via":"dashboard"}`,
 	"thread_created":    `{"effort":"high","from":"discord:W1","kind":"ordinary","model":"opus","principal":"dispatch","repo":"https://example.com/repo.git","research":true,"session":3,"thread":7,"via":"proposal"}`,
 	"state":             `{"detail":"the folder-trust dialog names .mcp.json","from":"creating","reason":"blocked at start","session":3,"to":"failed","trust":[".mcp.json"]}`,
