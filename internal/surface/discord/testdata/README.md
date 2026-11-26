@@ -103,7 +103,7 @@ python3 scrub.py /tmp/scrubbed /tmp/raw/calls && mv /tmp/scrubbed/calls v10/call
 
 The run says its steps on the terminal, one after another: what the person posts in the channel, word for word. A message that is another is not kept, and the run goes on waiting. The webhook's step is done with `curl`, as in the person run. Each message is kept as the gateway sends it (`gw-<step>.json`) and as REST reads it (`rest-<step>.json`); of a message that was edited, and of a reply whose post was deleted, the latter only, with the edit itself in `gw-edited-update.json`. Of Guild Create, `gw-guild.json` keeps the channel, and the two roles' `id`, `managed` and `tags`. No other dispatch is kept. A person deletes what they posted; the cleanup run deletes the bot's posts. Its ids are numbered on their own, from `1000000000000000001`.
 
-Two steps take another message than the one first asked for. Discord's desktop client sends a quote begun with `>>> ` as `> ` at the start of each line, so `quoted-lines` holds that. The client offers no forward into the message's own channel, so `forward` is the same text forwarded from another channel of the server.
+Two steps take another message than the one first asked for. The person typed the quote of `quoted-lines` begun with `>>> ` in Discord's desktop client, and it came with `> ` at the start of each line; the payload holds only what came. The client offers no forward into the message's own channel, so `forward` is the same text forwarded from another channel of the server.
 
 What the service reported:
 

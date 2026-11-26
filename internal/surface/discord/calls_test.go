@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -428,56 +429,105 @@ func TestNoCallInTheCaptures(t *testing.T) {
 }
 
 // What capture.py's calls run recorded: each of a person's messages, as the
-// gateway sent it and as REST read it.
+// gateway sent it and as REST read it. Where the service lists no mention
+// of the account, the message is read once more as if it did, so that the
+// driver's own reading is what keeps it from being a call.
 func TestCapturedCalls(t *testing.T) {
 	bot := snowflake.MustParse(id(payload(t, "calls/rest-me.json")["id"]))
 	guild := payload(t, "calls/gw-guild.json")
+	var role string
+	for _, r := range guild["roles"].([]any) {
+		if r := r.(map[string]any); r["managed"] == true {
+			role = id(r["id"])
+		}
+	}
+	names := strings.NewReplacer("{bot}", "<@"+bot.String()+">", "{role}", "<@&"+role+">")
+	mention := regexp.MustCompile(`^<@&?\d+>$`)
 	for _, c := range []struct {
 		name         string
 		call, others bool
-		restOnly     bool // the edit and the deletion that make the case come after the message
+		own          []string // each own mention and the rest of its line
+		restOnly     bool     // the edit and the deletion that make the case come after the message
+		listed       bool     // read again with the account in mentions
+		listedOwn    []string // own mentions then
 	}{
-		{"mention", true, false, false},
-		{"mention-role", true, false, false},
-		{"reply", true, false, false},
-		{"reply-silent", true, false, false},
-		{"quoted-and-not", true, false, false},
-		{"quoted", false, false, false},
-		{"quoted-lines", false, false, false},
-		{"in-code", false, false, false},
-		{"in-block", false, false, false},
-		{"in-open-block", false, false, false},
-		{"everyone", false, false, false},
-		{"here", false, false, false},
-		{"other-role", false, false, false},
-		{"webhook", false, false, false},
-		{"forward", false, false, false},
-		{"edited", false, false, true},
-		{"reply-deleted", false, false, true},
-		{"reply-other", false, true, false},
-		{"other", false, true, false},
+		{"mention", true, false, []string{"{bot} [hataori test] hello"}, false, false, nil},
+		{"mention-role", true, false, []string{"{role} [hataori test] hello"}, false, false, nil},
+		{"reply", true, false, nil, false, false, nil},
+		{"reply-silent", true, false, nil, false, false, nil},
+		{"quoted-and-not", true, false, []string{"{bot} b"}, false, false, nil},
+		{"quoted", false, false, nil, false, false, nil},
+		{"quoted-lines", false, false, nil, false, false, nil},
+		{"in-code", false, false, nil, false, true, nil},
+		{"in-block", false, false, nil, false, true, nil},
+		{"in-open-block", false, false, nil, false, false, nil},
+		{"everyone", false, false, nil, false, false, nil},
+		{"here", false, false, nil, false, false, nil},
+		{"other-role", false, false, nil, false, false, nil},
+		{"webhook", false, false, nil, false, true, []string{"{bot} [hataori test] a webhook"}},
+		{"forward", false, false, nil, false, false, nil},
+		{"edited", false, false, []string{"{bot} [hataori test] hello"}, true, false, nil},
+		{"reply-deleted", false, false, nil, true, false, nil},
+		{"reply-other", false, true, nil, false, false, nil},
+		{"other", false, true, nil, false, false, nil},
 	} {
-		t.Run(c.name, func(t *testing.T) {
-			r, s := newFakeREST(t), newSink()
-			d := testDriver(t, bot, r, nil)
-			event(t, d, s, "GUILD_CREATE", guild)
-			p := payload(t, "calls/rest-"+c.name+".json")
-			r.serveJSON(t, "GET /channels/"+id(p["channel_id"])+"/messages", 200, []any{p})
-			d.setDirect(snowflake.MustParse(id(p["channel_id"])), false)
-			got, err := d.Since(context.Background(), surface.Conversation{Channel: id(p["channel_id"])}, "")
-			if err != nil || len(got) != 1 {
-				t.Fatalf("%+v, %v", got, err)
+		for _, listed := range []bool{false, true} {
+			if listed && !c.listed {
+				continue
 			}
-			if !c.restOnly {
-				deliver(t, d, s, "calls/gw-"+c.name+".json")
-				got = append(got, s.messages...)
+			name := c.name
+			if listed {
+				name += ", listed"
 			}
-			for _, in := range got {
-				if in.Call != c.call || in.OthersOnly != c.others {
-					t.Errorf("call %v, to others only %v: %+v", in.Call, in.OthersOnly, in)
+			t.Run(name, func(t *testing.T) {
+				r, s := newFakeREST(t), newSink()
+				d := testDriver(t, bot, r, nil)
+				event(t, d, s, "GUILD_CREATE", guild)
+				p := payload(t, "calls/rest-"+c.name+".json")
+				if listed {
+					p["mentions"] = users(bot.String())
 				}
-			}
-		})
+				r.serveJSON(t, "GET /channels/"+id(p["channel_id"])+"/messages", 200, []any{p})
+				d.setDirect(snowflake.MustParse(id(p["channel_id"])), false)
+				got, err := d.Since(context.Background(), surface.Conversation{Channel: id(p["channel_id"])}, "")
+				if err != nil || len(got) != 1 {
+					t.Fatalf("%+v, %v", got, err)
+				}
+				if !c.restOnly {
+					g := capture(t, "calls/gw-"+c.name+".json")
+					if listed {
+						g["d"].(map[string]any)["mentions"] = users(bot.String())
+					}
+					event(t, d, s, g["t"].(string), g["d"])
+					if len(s.messages) != 1 {
+						t.Fatalf("the gateway's message delivered %d", len(s.messages))
+					}
+					got = append(got, s.messages...)
+				}
+				var want []string
+				own := c.own
+				if listed {
+					own = c.listedOwn
+				}
+				for _, o := range own {
+					want = append(want, names.Replace(o))
+				}
+				for _, in := range got {
+					var own []string
+					for _, m := range in.OwnMentions {
+						if !mention.MatchString(in.Text[m.Start:m.End]) {
+							t.Errorf("own mention %q", in.Text[m.Start:m.End])
+						}
+						line, _, _ := strings.Cut(in.Text[m.Start:], "\n")
+						own = append(own, line)
+					}
+					if in.Call != c.call || in.OthersOnly != c.others || !reflect.DeepEqual(own, want) {
+						t.Errorf("call %v, to others only %v, own mentions %q; want %v, %v, %q\n%q",
+							in.Call, in.OthersOnly, own, c.call, c.others, want, in.Text)
+					}
+				}
+			})
+		}
 	}
 	s := newSink()
 	deliver(t, testDriver(t, bot, newFakeREST(t), nil), s, "calls/gw-edited-update.json")
