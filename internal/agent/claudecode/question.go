@@ -92,7 +92,7 @@ func (c *codec) question(k call, p payload) Actions {
 		}
 		info.Multi = qs.Questions[0].MultiSelect
 	}
-	return c.events(agent.Event{Kind: agent.Request, Request: info})
+	return c.events(c.tasks.at(agent.Event{Kind: agent.Request, Request: info}))
 }
 
 // render shows the questions as text, the way phase 1 asks them in chat.

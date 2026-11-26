@@ -28,8 +28,8 @@ type task struct {
 // tasks is what the codec knows of the session's background tasks, by the
 // CLI's task id. An end is kept until the next list, because the report of
 // a task's start may be read after it. It is what a turn's end that comes
-// without a list counts: a failed turn's, and an interrupted one's, neither
-// of which ends the tasks.
+// without a list counts: a failed, interrupted or blocked turn's, none of
+// which ends the tasks.
 type tasks map[string]task
 
 // list takes a list the CLI gave, which names every task that runs.
@@ -42,8 +42,8 @@ func (t *tasks) list(l []backgroundTask) {
 	}
 }
 
-// at returns the turn's end e with the tasks that run then, as far as is
-// known: how many, and the subagents among them.
+// at returns the turn's end or request e with the tasks that run then, as
+// far as is known: how many, and the subagents among them.
 func (t tasks) at(e agent.Event) agent.Event {
 	e.Background, e.Subagents = 0, nil
 	for id, b := range t {
