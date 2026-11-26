@@ -55,7 +55,11 @@ func mirrorLocked(ctx context.Context, dir string) (bool, error) {
 		}
 	}
 	var found bool
-	err := filepath.WalkDir(filepath.Join(dir, "refs"), func(path string, entry fs.DirEntry, err error) error {
+	refs := filepath.Join(dir, "refs")
+	err := filepath.WalkDir(refs, func(path string, entry fs.DirEntry, err error) error {
+		if path == refs && errors.Is(err, os.ErrNotExist) {
+			return nil // a mirror may have no loose refs, as with reftable
+		}
 		if err != nil {
 			return err
 		}

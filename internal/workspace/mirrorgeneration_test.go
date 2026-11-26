@@ -23,6 +23,21 @@ func selectedMirror(t *testing.T, x *mirrorFixture) string {
 	return dir
 }
 
+// A mirror without loose refs has no loose-ref lock. Reftable repositories
+// must not have their updates refused for lacking this directory.
+func TestMirrorLockScanWithoutLooseRefs(t *testing.T) {
+	dir := t.TempDir()
+	if locked, err := mirrorLocked(context.Background(), dir); err != nil || locked {
+		t.Fatalf("no loose refs: locked %v, error %v", locked, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.lock"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if locked, err := mirrorLocked(context.Background(), dir); err != nil || !locked {
+		t.Fatalf("root lock without loose refs: locked %v, error %v", locked, err)
+	}
+}
+
 // Recovery must not guess whether a lock is stale. It selects a completed
 // independent generation and leaves the old pathname and its work intact.
 func TestMirrorRecoversWithoutRemovingGitLocks(t *testing.T) {
