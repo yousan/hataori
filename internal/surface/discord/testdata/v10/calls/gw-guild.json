@@ -1,0 +1,35 @@
+{
+ "d": {
+  "channels": [
+   {
+    "flags": 0,
+    "guild_id": "1000000000000000005",
+    "id": "1000000000000000006",
+    "name": "name-4",
+    "position": 0,
+    "type": 0
+   }
+  ],
+  "id": "1000000000000000005",
+  "roles": [
+   {
+    "id": "1000000000000000008",
+    "managed": true,
+    "tags": {
+     "bot_id": "1000000000000000004"
+    }
+   },
+   {
+    "id": "1000000000000000009",
+    "managed": false,
+    "tags": {}
+   }
+  ],
+  "threads": []
+ },
+ "op": 0,
+ "s": 4,
+ "source": "gateway",
+ "t": "GUILD_CREATE",
+ "trimmed": true
+}

@@ -3,6 +3,7 @@ package host
 import (
 	"bytes"
 	"net"
+	"os/signal"
 	"strconv"
 	"strings"
 	"syscall"
@@ -34,19 +35,24 @@ func TestHostLogRecordsWhy(t *testing.T) {
 		})
 		c.Close()
 
-		pid, err := strconv.Atoi(strings.TrimSpace(string(read(t, dir, HostPIDFile))))
-		if err != nil {
-			t.Fatal(err)
-		}
-		syscall.Kill(pid, syscall.SIGHUP) // the host this test started
-		waitFor(t, "the signal recorded", func() bool { return bytes.Contains(read(t, dir, HostLog), []byte("ended by signal hangup")) })
-		// Then it ends as it would have: nothing listens any more.
-		waitFor(t, "the host's end", func() bool {
-			c, err := net.Dial("unix", SocketPath(dir))
-			if err == nil {
-				c.Close()
+		t.Run("signal", func(t *testing.T) {
+			if signal.Ignored(syscall.SIGHUP) {
+				t.Skip("SIGHUP is inherited as ignored; the host will not receive it")
 			}
-			return err != nil
+			pid, err := strconv.Atoi(strings.TrimSpace(string(read(t, dir, HostPIDFile))))
+			if err != nil {
+				t.Fatal(err)
+			}
+			syscall.Kill(pid, syscall.SIGHUP) // the host this test started
+			waitFor(t, "the signal recorded", func() bool { return bytes.Contains(read(t, dir, HostLog), []byte("ended by signal hangup")) })
+			// Then it ends as it would have: nothing listens any more.
+			waitFor(t, "the host's end", func() bool {
+				c, err := net.Dial("unix", SocketPath(dir))
+				if err == nil {
+					c.Close()
+				}
+				return err != nil
+			})
 		})
 	})
 }

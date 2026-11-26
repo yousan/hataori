@@ -66,7 +66,10 @@ func (d *Driver) Since(ctx context.Context, conv surface.Conversation, cursor st
 			if m.Author.ID == d.botID && m.WebhookID == 0 {
 				continue
 			}
-			out = append(out, m.inbound(conv, direct))
+			if d.awaitsRoles(m, conv, direct) {
+				return nil, errRoles
+			}
+			out = append(out, d.inbound(m, conv, direct))
 		}
 		if first && len(page) == 0 && cursor != "" {
 			// Without Read Message History the service answers an empty page,
