@@ -1,0 +1,105 @@
+{
+ "body": {
+  "attachments": [],
+  "author": {
+   "accent_color": null,
+   "avatar": "00000000000000000000000000000002",
+   "avatar_decoration_data": null,
+   "banner": null,
+   "banner_color": null,
+   "clan": {
+    "badge": "00000000000000000000000000000001",
+    "identity_enabled": true,
+    "identity_guild_id": "1000000000000000002",
+    "tag": "TAG"
+   },
+   "collectibles": null,
+   "discriminator": "0",
+   "display_name_styles": null,
+   "flags": 0,
+   "global_name": "name-3",
+   "id": "1000000000000000001",
+   "primary_guild": {
+    "badge": "00000000000000000000000000000001",
+    "identity_enabled": true,
+    "identity_guild_id": "1000000000000000002",
+    "tag": "TAG"
+   },
+   "public_flags": 0,
+   "username": "name-2"
+  },
+  "channel_id": "1000000000000000006",
+  "components": [],
+  "content": "",
+  "edited_timestamp": null,
+  "embeds": [],
+  "flags": 16384,
+  "id": "1000000000000000045",
+  "mention_everyone": false,
+  "mention_roles": [],
+  "mentions": [],
+  "message_reference": {
+   "channel_id": "1000000000000000007",
+   "guild_id": "1000000000000000005",
+   "message_id": "1000000000000000043",
+   "type": 1
+  },
+  "message_snapshots": [
+   {
+    "message": {
+     "attachments": [],
+     "components": [],
+     "content": "<@1000000000000000004> [hataori test] hello",
+     "edited_timestamp": null,
+     "embeds": [],
+     "flags": 0,
+     "mention_roles": [],
+     "mentions": [
+      {
+       "accent_color": null,
+       "avatar": null,
+       "avatar_decoration_data": null,
+       "banner": null,
+       "banner_color": null,
+       "bot": true,
+       "clan": null,
+       "collectibles": null,
+       "discriminator": "0000",
+       "display_name_styles": null,
+       "flags": 0,
+       "global_name": null,
+       "id": "1000000000000000004",
+       "primary_guild": null,
+       "public_flags": 0,
+       "username": "name-1"
+      }
+     ],
+     "timestamp": "2026-11-26T14:05:03.319000+00:00",
+     "type": 0
+    }
+   }
+  ],
+  "pinned": false,
+  "timestamp": "2026-11-26T14:05:18.856000+00:00",
+  "tts": false,
+  "type": 0
+ },
+ "date": "2026-11-26T14:05:19Z",
+ "headers": {
+  "content-type": "application/json",
+  "via": "1.1 google",
+  "x-ratelimit-bucket": "00000000000000000000000000000003",
+  "x-ratelimit-limit": "5",
+  "x-ratelimit-remaining": "4",
+  "x-ratelimit-reset": "1795701920.314",
+  "x-ratelimit-reset-after": "1.000"
+ },
+ "request": {
+  "body": null,
+  "files": [],
+  "method": "GET",
+  "path": "/channels/1000000000000000006/messages/1000000000000000045"
+ },
+ "source": "rest",
+ "status": 200
+}

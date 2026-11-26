@@ -15,12 +15,14 @@ usage:
                                  then remove the buttons and the menu by editing
   capture.py lamps RAW_DIR       reactions set, read and removed on a bot message, a rejected one, and posts
                                  that mention the bot itself, @everyone and a role (no gateway connection)
+  capture.py calls RAW_DIR MIN   what is a call and what is not: say one step after another on the terminal,
+                                 wait up to MIN minutes for the person to do them all (README)
   capture.py cleanup RAW_DIR     delete what the bot posted in the runs above
 
 Environment:
   HATAORI_DISCORD_TOKEN_FILE  file holding the bot token (read at run time, never printed)
   HATAORI_DISCORD_CHANNEL     the test channel's id
-  HATAORI_DISCORD_OWNER       the owner's user id (person run only)
+  HATAORI_DISCORD_OWNER       the owner's user id (person, lookups and calls runs only)
 
 RAW_DIR receives one JSON file per capture:
   rest-<name>.json   {"source": "rest", "request", "status", "headers", "body"}
@@ -102,8 +104,8 @@ def rest(raw, name, method, path, body=None, files=None):
 class Gateway:
     """A minimal gateway client: JSON encoding, no compression, one connection."""
 
-    def __init__(self, raw, on_dispatch=None):
-        self.raw, self.on_dispatch = raw, on_dispatch
+    def __init__(self, raw, on_dispatch=None, keep=True):
+        self.raw, self.on_dispatch, self.keep = raw, on_dispatch, keep
         self.seq, self.n, self.ready = None, 0, threading.Event()
         self.closed = threading.Event()
         self.send_lock = threading.Lock()
@@ -196,7 +198,8 @@ class Gateway:
                                                              "device": "hataori-capture"}}})
                 elif ev["op"] == 0:
                     self.n += 1
-                    self.raw.save(f"gw-{self.n:02d}-{ev['t']}", {"source": "gateway", **ev})
+                    if self.keep:
+                        self.raw.save(f"gw-{self.n:02d}-{ev['t']}", {"source": "gateway", **ev})
                     print(f"gateway: {ev['t']}", file=sys.stderr)
                     if ev["t"] == "READY":
                         self.ready.set()
@@ -573,6 +576,148 @@ def lamps_run(raw):
     raw.note("messages", [ch, p["id"]])
 
 
+# What the calls run keeps of a server: what the driver reads to learn the role that is
+# managed for the bot. The names of the roles and the members are not among them.
+ROLE_FIELDS = ("id", "managed", "tags")
+
+
+def calls_run(raw, minutes):
+    """Say the steps one after another, and keep each message as the gateway sends it and as
+    REST reads it. A message that is not word for word what the step asks for is not kept, and
+    no other dispatch is."""
+    ch, owner = os.environ["HATAORI_DISCORD_CHANNEL"], os.environ["HATAORI_DISCORD_OWNER"]
+    st, me = rest(None, None, "GET", "/users/@me")
+    raw.save("rest-me", {"source": "rest", "request": {"method": "GET", "path": "/users/@me"}, "status": st,
+                         "body": {"id": me["id"]}, "trimmed": ["id"]})
+    st, here = rest(None, None, "GET", f"/channels/{ch}")
+    guild, got = {}, []
+    changed, lock = threading.Event(), threading.Lock()
+
+    def on_dispatch(ev):
+        d = ev["d"]
+        if ev["t"] == "GUILD_CREATE" and d["id"] == here["guild_id"]:
+            guild.update(ev)
+        elif ev["t"] in ("MESSAGE_CREATE", "MESSAGE_UPDATE") and d.get("channel_id") == ch and (
+                ev["t"] == "MESSAGE_UPDATE" or d.get("webhook_id") or d.get("author", {}).get("id") == owner):
+            with lock:
+                got.append(ev)
+        changed.set()
+
+    end = time.time() + 60 * minutes
+
+    def wait(what, ok):
+        """The next dispatch that ok takes; those before it are another step's, and left out."""
+        while time.time() < end and not gw.closed.is_set():
+            with lock:
+                while got:
+                    ev = got.pop(0)
+                    if ok(ev):
+                        return ev
+                    print("   a message that is not this step's is left out", file=sys.stderr)
+            changed.wait(1)
+            changed.clear()
+        raise RuntimeError(f"{what}: not done")
+
+    def keep(name, ev):
+        raw.save("gw-" + name, {"source": "gateway", **ev})
+        read(name, ev["d"])
+
+    def read(name, m):
+        rest(raw, name, "GET", f"/channels/{ch}/messages/{m['id']}")
+
+    def post(name, text, **more):
+        st, m = rest(raw, name, "POST", f"/channels/{ch}/messages",
+                     {"content": "[hataori test] " + text, "allowed_mentions": {"parse": []}, **more})
+        raw.note("messages", [ch, m["id"]])
+        return m
+
+    gw = Gateway(raw, on_dispatch, keep=False)
+    gw.connect()
+    try:
+        while not guild and time.time() < end and not gw.closed.is_set():
+            changed.wait(1)
+            changed.clear()
+        if not guild:
+            raise RuntimeError("the server's Guild Create did not come")
+        roles = guild["d"]["roles"]
+        own = [r["id"] for r in roles if r.get("tags", {}).get("bot_id") == me["id"]]
+        others = [r["id"] for r in roles if not r["managed"] and r["id"] != here["guild_id"]]
+        if not own or not others:
+            raise RuntimeError("the server needs the bot's own role (invite it with a permission) and one more role")
+        fields = ("id", "guild_id", "type", "position", "name", "flags")
+        raw.save("gw-guild", {"source": "gateway", **{k: guild[k] for k in ("op", "t", "s")}, "trimmed": True, "d": {
+            "id": here["guild_id"], "threads": [],
+            "channels": [{k: here[k] for k in fields if k in here}],
+            "roles": [{k: r[k] for k in ROLE_FIELDS if k in r} for r in roles if r["id"] in (own[0], others[0])]}})
+
+        at, role, other = f"<@{me['id']}>", f"<@&{own[0]}>", f"<@&{others[0]}>"
+        target = post("target", "reply to this one")
+        # A message of a bot that mentions another account. It pings the person.
+        post("post-by-bot", f"<@{owner}> a post of a bot", allowed_mentions={"users": [owner]})
+
+        def content(ev):
+            return ev["d"].get("content", "").strip().replace("<@!", "<@")
+
+        def says(text, webhook=False, also=()):
+            return "post exactly this:\n" + text, lambda ev: (
+                ev["t"] == "MESSAGE_CREATE" and bool(ev["d"].get("webhook_id")) == webhook
+                and ev["d"]["type"] == 0 and content(ev) in (text, *also))
+
+        def replies(how, to, pings=None):
+            """A reply to the post whose id to gives. pings is whether it must mention the bot."""
+            return how + ": [hataori test] yes", lambda ev: (
+                ev["t"] == "MESSAGE_CREATE" and ev["d"]["type"] == 19 and content(ev) == "[hataori test] yes"
+                and ev["d"]["message_reference"].get("message_id") == to()
+                and pings in (None, any(u["id"] == me["id"] for u in ev["d"]["mentions"])))
+
+        def step(name, do, ok):
+            print(f"\n== {name}: {do}", file=sys.stderr)
+            ev = kept[name] = wait(name, ok)
+            return ev
+
+        kept = {}
+        for name, (do, ok) in (
+                ("mention", says(f"{at} [hataori test] hello")),
+                ("mention-role", says(f"{role} [hataori test] hello")),
+                ("reply", replies("reply to the bot's post \"reply to this one\", with the mention on", lambda: target["id"], True)),
+                ("reply-silent", replies("reply to the same post with the mention off", lambda: target["id"], False)),
+                ("quoted-and-not", says(f"> {at} [hataori test] a\n{at} b")),
+                ("quoted", says(f"> {at} [hataori test] a\nb")),
+                # The same quote with "> " on each quoted line is taken as well.
+                ("quoted-lines", says(f"[hataori test] a\n>>> b\n{at} c", also=(f"[hataori test] a\n> b\n> {at} c",))),
+                ("in-code", says(f"[hataori test] `{at}`")),
+                ("in-block", says(f"[hataori test]\n```go\n{at}\n```")),
+                ("in-open-block", says(f"[hataori test]\n```\n{at}")),
+                ("everyone", says("@everyone [hataori test] hello")),
+                ("here", says("@here [hataori test] hello")),
+                ("other-role", says(f"{other} [hataori test] hello")),
+                ("other", says(f"<@{owner}> [hataori test] hello")),
+                ("reply-other", replies("reply to your own message of the step before", lambda: kept["other"]["d"]["id"])),
+                ("forward", ("forward your message of the step \"mention\" to this channel", lambda ev: (
+                    ev["t"] == "MESSAGE_CREATE" and (ev["d"].get("message_reference") or {}).get("type") == 1
+                    # A forward of the same text from another channel is taken as well.
+                    and (ev["d"]["message_reference"]["message_id"] == kept["mention"]["d"]["id"]
+                         or any((m.get("message") or {}).get("content", "").strip() == f"{at} [hataori test] hello"
+                                for m in ev["d"].get("message_snapshots") or []))))),
+                ("webhook", says(f"{at} [hataori test] a webhook", webhook=True))):
+            if name == "webhook":
+                do = do.replace("post", "post with a webhook of this channel", 1)
+            keep(name, step(name, do, ok))
+        ev = step("edited", *says("[hataori test] to edit"))
+        mid, text = ev["d"]["id"], f"{at} [hataori test] hello"
+        ev = step("edited", f"edit that message to exactly this:\n{text}",
+                  lambda ev: ev["t"] == "MESSAGE_UPDATE" and ev["d"]["id"] == mid and ev["d"].get("edited_timestamp")
+                  and ("content" not in ev["d"] or content(ev) == text))
+        raw.save("gw-edited-update", {"source": "gateway", **ev})
+        read("edited", ev["d"])
+        ev = step("reply-deleted", *replies("reply to the bot's post \"reply to this one\" once more", lambda: target["id"]))
+        rest(None, None, "DELETE", f"/channels/{ch}/messages/{target['id']}")
+        time.sleep(2)
+        read("reply-deleted", ev["d"])
+    finally:
+        gw.close()
+
+
 def cleanup(raw):
     for conv, mid in raw.created["messages"]:
         st, _ = rest(None, None, "DELETE", f"/channels/{conv}/messages/{mid}")
@@ -591,4 +736,5 @@ if __name__ == "__main__":
     {"bot": lambda: bot_run(raw), "person": lambda: person_run(raw, float(sys.argv[3])),
      "second": lambda: second_run(raw), "lookups": lambda: lookups(raw), "pages": lambda: pages_run(raw), "rethread": lambda: rethread_run(raw),
      "commands": lambda: commands_run(raw, float(sys.argv[3])),
-     "choices": lambda: choices_run(raw, float(sys.argv[3])), "lamps": lambda: lamps_run(raw), "cleanup": lambda: cleanup(raw)}[cmd]()
+     "choices": lambda: choices_run(raw, float(sys.argv[3])), "lamps": lambda: lamps_run(raw),
+     "calls": lambda: calls_run(raw, float(sys.argv[3])), "cleanup": lambda: cleanup(raw)}[cmd]()
