@@ -263,6 +263,10 @@ type Spec struct {
 	// must run with one other than the daemon's: the one the window of a
 	// session taken in used, for its resume under hataori's own host.
 	ConfigDir string `json:",omitempty"`
+	// ConfigDirDefault records that ConfigDir was the agent's default under
+	// its original home, rather than an explicit configuration override.
+	// It survives resuming a session after its taken-in window has closed.
+	ConfigDirDefault bool `json:",omitempty"`
 }
 
 // Confinement is what a confined session may use besides its file tools.

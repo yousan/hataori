@@ -44,17 +44,18 @@ type Report struct {
 	// Server is the tmux server, as TMUX names it: its socket's path and
 	// its process id, joined by a comma. Pane ids start again at %0 on a
 	// new server, so the pane alone does not name a window.
-	Server      string `json:"server"`
-	Pane        string `json:"pane"`   // the tmux pane's id, such as %3
-	Device      string `json:"device"` // the terminal of the agent's process
-	PID         int    `json:"pid"`    // the agent's process: the hook's nearest ancestor with a terminal
-	Agent       string `json:"agent"`  // the adapter's name
-	Session     string `json:"session"`
-	Dir         string `json:"dir"`
-	ConfigDir   string `json:"config_dir,omitempty"` // the agent's configuration directory, when one was set
-	Event       string `json:"event"`                // the hook event's name
-	Model       string `json:"model,omitempty"`
-	Interactive bool   `json:"interactive"` // a session a person types into, not one run for a single prompt
+	Server           string `json:"server"`
+	Pane             string `json:"pane"`   // the tmux pane's id, such as %3
+	Device           string `json:"device"` // the terminal of the agent's process
+	PID              int    `json:"pid"`    // the agent's process: the hook's nearest ancestor with a terminal
+	Agent            string `json:"agent"`  // the adapter's name
+	Session          string `json:"session"`
+	Dir              string `json:"dir"`
+	ConfigDir        string `json:"config_dir,omitempty"`         // the agent's configuration directory
+	ConfigDirDefault bool   `json:"config_dir_default,omitempty"` // the default under the original home, not an override
+	Event            string `json:"event"`                        // the hook event's name
+	Model            string `json:"model,omitempty"`
+	Interactive      bool   `json:"interactive"` // a session a person types into, not one run for a single prompt
 
 	at time.Time // when the daemon took it
 }
