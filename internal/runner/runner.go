@@ -434,8 +434,9 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 	// launch = 2: the host is being started. Until it is recorded as
 	// started, a daemon that comes back launches the session again, and
 	// keeps the host it finds running instead of starting another.
-	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET spec = ?, first_input = ?, model = ?, effort = ?, launch = 2 WHERE id = ?`,
-		string(sb), string(fb), model, effort, id); err != nil {
+	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET spec = ?, first_input = ?, model = ?, effort = ?, launch = 2,
+		context = CASE WHEN set_aside IS NULL AND ? != '' THEN ? ELSE context END WHERE id = ?`,
+		string(sb), string(fb), model, effort, first.Context, first.Context, id); err != nil {
 		return agent.Spec{}, fmt.Errorf("runner: %w", err)
 	}
 	r.at("before host start")
@@ -698,7 +699,7 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 		// A new conversation is told what the thread said before with its
 		// first input, and this wake has none.
 		return fmt.Errorf("runner: session %d has no conversation to resume; a message starts a new one", id)
-	case resumeID == "":
+	case resumeID == "" && launching != 2:
 		// No conversation to resume: a reopen found none recorded, or made
 		// the thread's directory again (core's ReopenThread). A new one
 		// starts in the directory, told what the thread said before, as a
@@ -1780,6 +1781,13 @@ func (r *Runner) firstInputStep(ctx context.Context, tx *store.Tx, lv *live, b b
 	case f.Sent && notDelivered(b.events, firstInputID):
 		// The agent never reported it, or it was stopped before it was
 		// written; its turn failed, as the events say.
+		// Older launches may have kept the owed context only in this
+		// first input. Preserve it before discarding an undelivered call.
+		if f.Context != "" {
+			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET context = ? WHERE id = ? AND set_aside IS NULL`, f.Context, lv.id); err != nil {
+				return err
+			}
+		}
 		f = firstInput{}
 	case f.Sent && lv.resend:
 		// The daemon died between starting the turn and a report of it:
