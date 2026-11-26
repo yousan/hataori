@@ -31,19 +31,22 @@ const neverSince int64 = math.MaxInt64
 // loses its pending outbox rows: they were written while the channel was
 // listed, and must not be posted there now. What is written in its chat
 // thread meanwhile is no input, also when it is caught up on later: a link
-// served again is so since this start. One log line names the links that
+// served again is so since this start. Its output resumes after the latest
+// event at settlement, even when this client never read the revoked scope.
+// One log line names the links that
 // are not served, the first maxListed of them. Run calls it before the
 // outbox is sent and the driver connects.
 func (f *FrontEnd) settleLinks(ctx context.Context) error {
 	type link struct {
-		id     int64
-		since  int64
-		served bool
+		id          int64
+		since       int64
+		outputAfter int64
+		served      bool
 	}
 	var names []string
 	dropped := int64(0)
 	err := f.Outbox.Store.Update(ctx, func(tx *store.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT l.id, l.channel, l.thread, l.since, t.id, t.scope FROM links l
+		rows, err := tx.QueryContext(ctx, `SELECT l.id, l.channel, l.thread, l.since, l.output_after, t.id, t.scope FROM links l
 			JOIN threads t ON t.id = l.thread_id WHERE l.client = ? ORDER BY l.id`, f.Name)
 		if err != nil {
 			return err
@@ -54,7 +57,7 @@ func (f *FrontEnd) settleLinks(ctx context.Context) error {
 			var l link
 			var id int64
 			var channel, thread, scope string
-			if err := rows.Scan(&l.id, &channel, &thread, &l.since, &id, &scope); err != nil {
+			if err := rows.Scan(&l.id, &channel, &thread, &l.since, &l.outputAfter, &id, &scope); err != nil {
 				return err
 			}
 			l.served = f.serves(channel, scope)
@@ -67,16 +70,26 @@ func (f *FrontEnd) settleLinks(ctx context.Context) error {
 			return err
 		}
 		rows.Close()
+		var latest int64
+		if err := tx.QueryRowContext(ctx, `SELECT coalesce(max(pos), 0) FROM events`).Scan(&latest); err != nil {
+			return err
+		}
 		for _, l := range links {
 			since := l.since
+			outputAfter := l.outputAfter
 			switch {
 			case !l.served:
 				since = neverSince
+				outputAfter = neverSince
 			case l.since == neverSince:
 				since = f.inboundState().started()
+				// The cursor may have stopped before this scope left the
+				// client's show_in. Keep its old output out of this link
+				// without advancing past another link's pending events.
+				outputAfter = latest
 			}
-			if since != l.since {
-				if _, err := tx.ExecContext(ctx, `UPDATE links SET since = ? WHERE id = ?`, since, l.id); err != nil {
+			if since != l.since || outputAfter != l.outputAfter {
+				if _, err := tx.ExecContext(ctx, `UPDATE links SET since = ?, output_after = ? WHERE id = ?`, since, outputAfter, l.id); err != nil {
 					return err
 				}
 			}

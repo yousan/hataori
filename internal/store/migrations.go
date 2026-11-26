@@ -785,6 +785,28 @@ var migrations = []Migration{
 	{Name: "pending_inputs.written_text", Up: execAll(
 		`ALTER TABLE pending_inputs ADD COLUMN written_text TEXT`,
 	)},
+	// A restored chat link must not replay events produced while it was
+	// unserved, even if its client's event cursor never saw that scope.
+	// Zero preserves existing links; the front end sets the boundary when
+	// settling a revoked or restored link (#1036).
+	{Name: "links.output_after", Up: execAll(
+		`ALTER TABLE links ADD COLUMN output_after INTEGER NOT NULL DEFAULT 0`,
+		// Keep each naming event separately so a restored link can omit
+		// earlier names/counts before a quiet-hours summary is rendered.
+		// Existing rollups all precede any new restoration boundary.
+		`CREATE TABLE chat_named_events (
+			client TEXT NOT NULL,
+			thread INTEGER NOT NULL,
+			end_at INTEGER NOT NULL,
+			name   TEXT NOT NULL,
+			times  INTEGER NOT NULL,
+			pos    INTEGER NOT NULL,
+			PRIMARY KEY (client, thread, end_at, name, pos)
+		)`,
+		`INSERT INTO chat_named_events SELECT client, thread, end_at, name, times, pos FROM chat_named`,
+		`DROP TABLE chat_named`,
+		`ALTER TABLE chat_named_events RENAME TO chat_named`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

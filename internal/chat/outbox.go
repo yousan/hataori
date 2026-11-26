@@ -213,12 +213,17 @@ func (o *Outbox) WriteTx(ctx context.Context, tx *store.Tx, rows ...Row) error {
 			return fmt.Errorf("chat: outbox: %w", err)
 		}
 		// link: the link of the conversation, or 0 (design, section 5.2).
+		// Enforce its output boundary here so delayed rows and progress
+		// keyed by older events obey it too. Event 0 is a fresh notice,
+		// not output replayed from the event log.
 		_, err = tx.ExecContext(ctx, `INSERT INTO chat_outbox
-			(client, event, part, channel, thread, message, decoration, created_at, link) VALUES (?, ?, ?, ?, ?, ?, ?, ?,
-			coalesce((SELECT id FROM links WHERE client = ? AND channel = ? AND thread = ?), 0))
+			(client, event, part, channel, thread, message, decoration, created_at, link) SELECT ?, ?, ?, ?, ?, ?, ?, ?,
+			coalesce((SELECT id FROM links WHERE client = ? AND channel = ? AND thread = ?), 0)
+			WHERE ? = 0 OR NOT EXISTS (SELECT 1 FROM links WHERE client = ? AND channel = ? AND thread = ? AND output_after >= ?)
 			ON CONFLICT (client, event, link, part) DO NOTHING`,
 			o.Client, r.Event, r.Part, r.Conv.Channel, r.Conv.Thread, string(msg), r.Decoration, now,
-			o.Client, r.Conv.Channel, r.Conv.Thread)
+			o.Client, r.Conv.Channel, r.Conv.Thread,
+			r.Event, o.Client, r.Conv.Channel, r.Conv.Thread, r.Event)
 		if err != nil {
 			return fmt.Errorf("chat: outbox: write %s: %w", r.Key(), err)
 		}
