@@ -10,6 +10,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	golang.org/x/sys v0.50.0
 	golang.org/x/term v0.48.0
+	golang.org/x/text v0.42.0
 	modernc.org/sqlite v1.62.0
 )
 
