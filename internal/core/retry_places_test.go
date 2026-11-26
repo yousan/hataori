@@ -125,3 +125,31 @@ func TestRetryWithoutAConversationWait(t *testing.T) {
 		}
 	}
 }
+
+// A message already waiting in the failed conversation follows its retried
+// first input, without moving that retry ahead of other conversations.
+func TestConversationRetryPrecedesItsFollowUps(t *testing.T) {
+	for _, choice := range []string{"trust", "without settings"} {
+		t.Run(choice, func(t *testing.T) {
+			k := newTalks(t, 1)
+			busy := k.runs(t, "busy")
+			id := k.call(t, "retry")
+			k.say(t, id, "follow-up")
+			k.ends(t, busy)
+			want(t, "initial admission", k.pass(t), "start retry")
+			sid := k.session(t, id)
+			k.event(t, id, agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart, Trust: []string{"settings.json"}})
+			// Even with a free place, the failed conversation's follow-up
+			// must not move its retry ahead of another conversation.
+			older := k.call(t, "older")
+			retryChoice(t, k, id, sid, choice)
+			want(t, "other conversation first", k.pass(t), "")
+			k.ready(t, older)
+			k.ends(t, older)
+			want(t, "original input is first", k.pass(t), "start retry")
+			k.ready(t, id)
+			k.ends(t, id)
+			want(t, "follow-up is retained", k.pass(t), "deliver follow-up")
+		})
+	}
+}
