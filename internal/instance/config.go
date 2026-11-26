@@ -47,6 +47,9 @@ type Config struct {
 	// agent no longer has (section 4.5). "context_bytes"; 8192 when absent.
 	ContextBytes int
 	Scopes       []Scope
+	// Repositories sets the environment of launches in each repository's
+	// workspaces. Addresses are matched exactly as in an order.
+	Repositories []Repository
 	// LoginRelay is whether a login outage starts the agent's login
 	// command for the owner (section 4.7); "login_relay": false switches it
 	// off, and the alert stays.
@@ -103,6 +106,12 @@ const (
 
 // AgentDefaults are the model and effort keys read from an adapter section.
 type AgentDefaults struct{ Model, Effort string }
+
+// Repository is one entry of the top-level "repositories" list.
+type Repository struct {
+	URL string            `json:"url"`
+	Env map[string]string `json:"env"`
+}
 
 // Scope is the config of one scope.
 type Scope struct {
@@ -422,6 +431,8 @@ type fileConfig struct {
 	Drivers    map[string]json.RawMessage `json:"drivers"`
 	Adapters   map[string]json.RawMessage `json:"adapters"`
 	Plugins    []json.RawMessage          `json:"plugins"`
+
+	Repositories []Repository `json:"repositories"`
 }
 
 type fileTerminalSize struct {
@@ -598,6 +609,9 @@ func ParseConfig(data []byte) (*Config, error) {
 	}
 
 	if c.Cleanup, err = cleanup(f.Cleanup); err != nil {
+		return nil, err
+	}
+	if c.Repositories, err = repositories(f.Repositories); err != nil {
 		return nil, err
 	}
 

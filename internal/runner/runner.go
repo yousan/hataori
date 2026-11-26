@@ -98,6 +98,10 @@ type Runner struct {
 	// repo: the config's, and those the owner trusted from a blocked start
 	// (core.Core.TrustedFiles). It is called at every launch; nil gives none.
 	TrustFiles func(ctx context.Context, scope, repo string) []string
+	// RepositoryEnv is the loaded config's environment by repository address,
+	// matched exactly. Each launch applies it after the adapter's environment;
+	// running sessions keep theirs. Threads without a clone get none.
+	RepositoryEnv map[string]map[string]string
 	// Tmux holds the tmux windows people started that were taken in
 	// (TakeIn); a tmux.Holder running "tmux" from PATH when nil.
 	Tmux *tmux.Holder
@@ -366,6 +370,9 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 	launch, err := ad.Launch(run)
 	if err != nil {
 		return agent.Spec{}, fmt.Errorf("runner: %w", err)
+	}
+	if repo != "" && !confined {
+		launch.Env = repositoryEnv(launch.Env, r.RepositoryEnv[repo])
 	}
 	if run.Confine != nil && !launch.Confined {
 		return agent.Spec{}, fmt.Errorf("runner: the agent %q cannot start a confined session; it was not started", agentName)
