@@ -785,6 +785,11 @@ var migrations = []Migration{
 	{Name: "pending_inputs.written_text", Up: execAll(
 		`ALTER TABLE pending_inputs ADD COLUMN written_text TEXT`,
 	)},
+	// The attach API precedes the terminal reaching its host. Protect that
+	// preparation for the idle period, also across daemon reconnects (#826).
+	{Name: "sessions.attach_requested_at", Up: execAll(
+		`ALTER TABLE sessions ADD COLUMN attach_requested_at INTEGER NOT NULL DEFAULT 0`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {
