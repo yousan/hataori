@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -96,14 +97,27 @@ func TestAttachmentPIDsRefuseUnknownIdentities(t *testing.T) {
 		"invalid PID":      {Attached: 1, AttachPIDs: []int{0}, AttachPIDsKnown: true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
-			l, err := net.Listen("unix", SocketPath(dir))
+			// Force the short-socket fallback on every platform, including
+			// Linux, where the test root would otherwise fit in a Unix path.
+			dir := filepath.Join(t.TempDir(), strings.Repeat("long-", 24))
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			socket := SocketPath(dir)
+			socketDir := filepath.Dir(socket)
+			if socketDir == dir {
+				t.Fatal("fixture did not use the short-socket fallback")
+			}
+			if err := os.Mkdir(socketDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.Remove(socketDir) }) // only our empty socket directory
+			l, err := net.Listen("unix", socket)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer l.Close()
 			done := make(chan struct{})
-			defer func() { <-done }()
+			defer func() { l.Close(); <-done }()
 			go func() {
 				defer close(done)
 				c, err := l.Accept()
