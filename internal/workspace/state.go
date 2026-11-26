@@ -55,6 +55,9 @@ func (m Maker) state(ctx context.Context, dir string) (control.WorkspaceState, e
 		// git looks for the repository in dir only, never in a directory above.
 		"GIT_CEILING_DIRECTORIES="+filepath.Dir(abs),
 		"LC_ALL=C")}
+	// diff refreshes the index (and runs post-index-change) even with
+	// optional locks off when only a tracked file's cached times differ.
+	g.set("diff.autoRefreshIndex", "false")
 
 	top, err := g.line(ctx, "rev-parse", "--show-toplevel")
 	if err != nil {
