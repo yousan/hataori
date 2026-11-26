@@ -33,7 +33,7 @@ const quietAnswer = "(quiet)"
 // does not count: the conversation never got the lines it was given with.
 // It is read in the Send's transaction, so a later input, or the same one
 // given again after a restart, finds the lines it should. A thread of any
-// other kind, which no wake goes to, gets nothing.
+// other kind gets nothing: a conversation wake already shares its exchange.
 func Answered(ctx context.Context, tx *store.Tx, id control.ThreadID) (string, error) {
 	fail := func(err error) (string, error) {
 		return "", fmt.Errorf("supervisor: the wakes answered: %w", err)

@@ -52,6 +52,7 @@ func WakeKey(sv control.ThreadID, to uint64, only ...control.ThreadID) string {
 // WakeOnly returns the threads that a wake's key says are all it gave; nil
 // for a wake that covers every turn end up to its position.
 func WakeOnly(key string) []control.ThreadID {
+	key, _, _ = strings.Cut(key, "~")
 	rest, _ := strings.CutPrefix(key, WakeKeyPrefix)
 	parts := strings.SplitN(rest, "-", 3)
 	if len(parts) < 3 {
@@ -71,6 +72,7 @@ func WakeOnly(key string) []control.ThreadID {
 // ParseWakeKey returns the position a wake's key covers and the thread it
 // names; a key from before WakeKey named no thread, and has 0.
 func ParseWakeKey(key string) (to uint64, sv control.ThreadID, ok bool) {
+	key, _, _ = strings.Cut(key, "~")
 	rest, found := strings.CutPrefix(key, WakeKeyPrefix)
 	if !found {
 		return 0, 0, false
@@ -110,9 +112,9 @@ func keyFor(stored string, sv control.ThreadID, sentTo func(key string) (control
 		}
 	}
 	if reminders := WakeReminders(stored); reminders != nil {
-		return ReminderKey(sv, to, reminders...), nil
+		return readerKey(ReminderKey(sv, to, reminders...), stored), nil
 	}
-	return WakeKey(sv, to, WakeOnly(stored)...), nil
+	return readerKey(WakeKey(sv, to, WakeOnly(stored)...), stored), nil
 }
 
 // TurnEnded is the event kind that wakes a supervisor.
@@ -266,7 +268,7 @@ type Waker struct {
 	Reminders *Reminders
 	// Sleep, when set, puts the supervisor's thread to sleep now, if it is
 	// idle with nothing running and no person at its terminal, and reports
-	// whether it did (runner.Runner.Sleep). With it, each wake is given to
+	// whether it did (runner.Runner.Sleep). With it, each own-thread wake is given to
 	// a conversation of its own (core.Core.AsFresh, #676): an idle thread
 	// is put to sleep first, and the wake starts its agent in a new
 	// conversation, which ends with the wake's turn; a person's next
@@ -275,7 +277,8 @@ type Waker struct {
 	// the thread's conversation.
 	Sleep func(ctx context.Context, thread control.ThreadID) (bool, error)
 
-	read atomic.Uint64
+	target control.ThreadID // zero: the own thread; otherwise this conversation
+	read   atomic.Uint64
 }
 
 // Read returns the position of the last event the waker read.
@@ -287,6 +290,25 @@ type errHook struct{ error }
 // Run wakes the supervisor until ctx ends. A failure to read events or
 // the store is logged, and reading starts again from the stored position.
 func (w *Waker) Run(ctx context.Context) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if w.target == 0 {
+		done := make(chan struct{})
+		defer func() { cancel(); <-done }()
+		go func() {
+			defer close(done)
+			for ctx.Err() == nil {
+				if err := w.homes(ctx); err != nil && ctx.Err() == nil {
+					w.Log.Error("supervisor conversation wakers; retrying", "scope", w.Scope, "err", err)
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(time.Second):
+				}
+			}
+		}()
+	}
 	for ctx.Err() == nil {
 		err := w.run(ctx)
 		var h errHook
@@ -306,6 +328,7 @@ func (w *Waker) Run(ctx context.Context) {
 
 // wake is a digest being sent: it covers the events up to to.
 type wake struct {
+	fallback  bool // an accepted home input was dropped before it started a turn
 	to        uint64
 	key, text string
 	threads   []Ended            // what the gates admitted; nil for a wake stored by an earlier run
@@ -362,7 +385,7 @@ func (w *Waker) run(ctx context.Context) error {
 	r := &waking{w: w, ended: map[control.ThreadID]control.Event{}, before: map[control.ThreadID]control.Event{}, kinds: map[control.ThreadID]control.ThreadKind{},
 		waiting: map[control.ThreadID]control.Event{}, stale: map[control.ThreadID]control.Event{}, asks: map[control.ThreadID]bool{},
 		api: w.Core.As(caller)}
-	if w.Sleep != nil {
+	if w.Sleep != nil && w.target == 0 {
 		r.api = w.Core.AsFresh(caller)
 	}
 	if err := r.load(ctx); err != nil {
@@ -370,12 +393,12 @@ func (w *Waker) run(ctx context.Context) error {
 	}
 	r.read = r.pos
 	w.read.Store(r.read)
-	sv, _, err := w.Core.SupervisorThread(ctx, w.Scope)
+	sv, _, err := r.destination(ctx)
 	if err != nil {
 		return err
 	}
 	r.sv = sv
-	if w.Files != nil { // what the last run did not finish
+	if w.Files != nil && w.target == 0 { // what the last run did not finish
 		if err := r.tellFiles(ctx); err != nil {
 			return err
 		}
@@ -474,7 +497,22 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 		// and accepted before the subscription reached it.
 		return nil
 	}
+	if e.Kind == TurnEnded || failedStart(e) {
+		kind, err := r.kind(ctx, e.Thread)
+		if err != nil {
+			return err
+		}
+		if !kind.Confined() {
+			home, err := r.w.homeOf(ctx, e)
+			if err != nil || home != r.w.target {
+				return err
+			}
+		}
+	}
 	if e.Kind == ApprovalAnswered || e.Kind == ProposalAnswered {
+		if r.w.target != 0 {
+			return nil
+		}
 		// A person decided one of the supervisor's requests, in one of its
 		// own threads: it wakes the supervisor.
 		kind, err := r.kind(ctx, e.Thread)
@@ -490,13 +528,13 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 	if e.Kind == TurnEnded || e.Kind == "state" && reopened(e) {
 		// The supervisor's thread may be new since it was looked up, or an
 		// older one a person reopened (core's ReopenThread).
-		sv, _, err := r.w.Core.SupervisorThread(ctx, r.w.Scope)
+		sv, _, err := r.destination(ctx)
 		if err != nil {
 			return err
 		}
 		r.sv = sv
 	}
-	if r.w.Files != nil && (e.Kind == TurnEnded || closed(e)) {
+	if r.w.Files != nil && r.w.target == 0 && (e.Kind == TurnEnded || closed(e)) {
 		if err := r.turned(ctx, e); err != nil {
 			return err
 		}
@@ -506,7 +544,7 @@ func (r *waking) event(ctx context.Context, e control.Event) error {
 			return err
 		}
 	}
-	if e.Thread == r.sv {
+	if e.Thread == r.sv || e.Thread == r.w.target {
 		// Its own turns never wake it, but end what holds a wake.
 		if r.held && r.quiet == nil && r.free() && (e.Kind == TurnEnded || e.Kind == "state") {
 			return r.attempt(ctx)
@@ -767,6 +805,13 @@ func (r *waking) loadWaiting(ctx context.Context) error {
 	}
 	now := r.w.clock().Now()
 	for _, e := range found {
+		home, err := r.w.homeOf(ctx, e)
+		if err != nil {
+			return err
+		}
+		if home != r.w.target {
+			continue
+		}
 		r.asks[e.Thread] = asked[e.Thread]
 		if due := e.Time.Add(BackgroundWait); due.After(now) {
 			r.waiting[e.Thread] = e
@@ -792,19 +837,23 @@ func (r *waking) toldStale(ctx context.Context, e control.Event) (bool, error) {
 	if r.sending != nil && staleIn(r.sending.text, e.Thread) {
 		return true, nil
 	}
-	rows, err := r.w.Core.Store.DB.QueryContext(ctx, `SELECT json_extract(data, '$.text') FROM events WHERE kind = 'input' AND pos > ?
-		AND thread_id IN (SELECT id FROM threads WHERE scope = ? AND kind = ?)
-		AND substr(json_extract(data, '$.text'), 1, 9) = 'hataori: '`, int64(e.Pos), r.w.Scope, string(control.KindSupervisor))
+	rows, err := r.w.Core.Store.DB.QueryContext(ctx, `SELECT json_extract(data, '$.text'),
+		(SELECT json_extract(s.data, '$.key') FROM events s WHERE s.thread_id = events.thread_id AND s.kind = 'turn_started'
+		AND json_extract(s.data, '$.session') = json_extract(events.data, '$.session')
+		AND json_extract(s.data, '$.turn') = json_extract(events.data, '$.turn') LIMIT 1)
+		FROM events WHERE kind = 'input' AND pos > ?
+		AND thread_id IN (SELECT id FROM threads WHERE scope = ? AND (kind = 'supervisor' OR kind = 'conversation' AND id = ?))
+		AND substr(json_extract(data, '$.text'), 1, 9) = 'hataori: '`, int64(e.Pos), r.w.Scope, int64(r.w.target))
 	if err != nil {
 		return false, fmt.Errorf("supervisor: threads waiting on background tasks: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var text sql.NullString
-		if err := rows.Scan(&text); err != nil {
+		var text, key sql.NullString
+		if err := rows.Scan(&text, &key); err != nil {
 			return false, fmt.Errorf("supervisor: threads waiting on background tasks: %w", err)
 		}
-		if staleIn(text.String, e.Thread) {
+		if sameReader(key.String, r.w.target) && staleIn(text.String, e.Thread) {
 			return true, nil
 		}
 	}
@@ -817,6 +866,18 @@ func (r *waking) attempt(ctx context.Context) error {
 	if r.sending == nil && r.empty() {
 		r.held = false
 		return nil
+	}
+	if r.w.target != 0 && r.sending != nil {
+		// The home may have closed after taking the wake, before its cursor
+		// was committed. A fallback must not give that accepted wake again.
+		if delivered, waiting, err := r.accepted(ctx); err != nil {
+			return err
+		} else if delivered {
+			return r.next(ctx)
+		} else if waiting {
+			r.held = true
+			return nil
+		}
 	}
 	sv, ready, err := r.ready(ctx)
 	if err != nil || !ready {
@@ -889,7 +950,11 @@ func (r *waking) attempt(ctx context.Context) error {
 	if r.w.Before != nil {
 		r.w.Before(ctx, sv)
 	}
-	err = r.api.Send(ctx, sv, r.sending.key, control.Input{Text: r.sending.text}, control.Refuse)
+	api := r.api
+	if sv != r.w.target && r.w.Sleep != nil {
+		api = r.w.Core.AsFresh(control.Caller{Principal: r.w.Owner, Scopes: []string{r.w.Scope}, May: control.OpRead | control.OpSend, NoAnswer: true})
+	}
+	err = api.Send(ctx, sv, r.sending.key, control.Input{Text: r.sending.text}, control.Refuse)
 	switch {
 	case err == nil:
 		if err := r.hook("sent"); err != nil {
@@ -906,6 +971,14 @@ func (r *waking) attempt(ctx context.Context) error {
 				if err := t.Woken(ctx, r.w.Scope, r.sending.to, r.sending.threads); err != nil {
 					r.w.Log.Error("supervisor waker: a gate on a wake", "scope", r.w.Scope, "err", err)
 				}
+			}
+		}
+		if r.w.target != 0 {
+			if delivered, _, err := r.accepted(ctx); err != nil {
+				return err
+			} else if !delivered {
+				r.held = true
+				return nil
 			}
 		}
 		return r.next(ctx)
@@ -960,10 +1033,10 @@ func (r *waking) hook(step string) error {
 // is made then, with what came since. A wake the thread took already, which
 // the Send only ignores, puts nothing to sleep.
 func (r *waking) toSleep(ctx context.Context, sv control.ThreadID) (bool, error) {
-	if r.w.Sleep == nil {
+	if r.w.Sleep == nil || sv == r.w.target {
 		return true, nil
 	}
-	now, state, err := r.w.Core.SupervisorThread(ctx, r.w.Scope)
+	now, state, err := r.destination(ctx)
 	if err != nil || now != sv || state != control.Idle {
 		return err == nil, err
 	}
@@ -992,7 +1065,7 @@ func (r *waking) toSleep(ctx context.Context, sv control.ThreadID) (bool, error)
 // to either. In each case the wake waits for the thread's next turn end
 // or change of state.
 func (r *waking) ready(ctx context.Context) (control.ThreadID, bool, error) {
-	sv, state, err := r.w.Core.SupervisorThread(ctx, r.w.Scope)
+	sv, state, err := r.destination(ctx)
 	if err != nil {
 		return 0, false, err
 	}
@@ -1190,6 +1263,9 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 		}
 		w.text += UsageWindows(limits, used, now)
 	}
+	if r.w.target != 0 {
+		w.key += "~" + strconv.FormatInt(int64(r.w.target), 10)
+	}
 	return w, true, nil
 }
 
@@ -1218,6 +1294,13 @@ func (r *waking) delivered(ctx context.Context) error {
 	}
 	upTo := func(tx *store.Tx) error {
 		for _, id := range only {
+			if r.w.target != 0 {
+				if _, err := tx.ExecContext(ctx, `INSERT INTO supervisor_conversation_given (scope, home, thread, upto) VALUES (?, ?, ?, ?)
+					ON CONFLICT (scope, home, thread) DO UPDATE SET upto = max(upto, excluded.upto)`, r.w.Scope, int64(r.w.target), int64(id), int64(w.to)); err != nil {
+					return err
+				}
+				continue
+			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO supervisor_given (scope, thread, upto) VALUES (?, ?, ?)
 				ON CONFLICT (scope, thread) DO UPDATE SET upto = max(upto, excluded.upto)`, r.w.Scope, int64(id), int64(w.to)); err != nil {
 				return err
@@ -1337,6 +1420,9 @@ func (r *waking) given(ctx context.Context) (map[control.ThreadID]uint64, error)
 			rows.Close()
 			return nil, fmt.Errorf("supervisor: the output given: %w", err)
 		}
+		if !sameReader(key.String, r.w.target) {
+			continue
+		}
 		if to, _, ok := ParseWakeKey(key.String); ok && to >= uint64(start) {
 			covers[turn] = to
 		}
@@ -1405,7 +1491,11 @@ const outputSep = "\n\n"
 // last max bytes at the start of a character.
 func (r *waking) output(ctx context.Context, id control.ThreadID, from, to uint64, max int) (string, error) {
 	rows, err := r.w.Core.Store.DB.QueryContext(ctx, `SELECT json_extract(data, '$.text') FROM events
-		WHERE thread_id = ? AND kind = 'text' AND pos > ? AND pos <= ? ORDER BY pos DESC`, int64(id), int64(from), int64(to))
+		WHERE thread_id = ? AND kind = 'text' AND pos > ? AND pos <= ?
+		AND coalesce((SELECT CASE WHEN origin.kind = 'conversation' THEN h.home ELSE 0 END
+			FROM thread_homes h JOIN threads origin ON origin.id = h.home
+			WHERE h.thread = events.thread_id AND h.after < events.pos ORDER BY h.after DESC LIMIT 1), 0) = ?
+		ORDER BY pos DESC`, int64(id), int64(from), int64(to), int64(r.w.target))
 	if err != nil {
 		return "", fmt.Errorf("supervisor: a thread's output: %w", err)
 	}
@@ -1584,8 +1674,20 @@ func (r *waking) load(ctx context.Context) error {
 		scope      = r.w.Scope
 		selectWake = `SELECT pos, send_to, send_key, send_text, send_files FROM supervisor_wakes WHERE scope = ?`
 	)
-	err := db.QueryRowContext(ctx, selectWake, scope).Scan(&pos, &to, &key, &text, &files)
-	if errors.Is(err, sql.ErrNoRows) {
+	args := []any{scope}
+	if r.w.target != 0 {
+		if err := r.w.Core.Store.Update(ctx, func(tx *store.Tx) error {
+			_, err := tx.ExecContext(ctx, `INSERT INTO supervisor_conversation_wakes (scope, thread, pos, since)
+				SELECT scope, ?, since, since FROM supervisor_wakes WHERE scope = ? ON CONFLICT DO NOTHING`, int64(r.w.target), scope)
+			return err
+		}); err != nil {
+			return err
+		}
+		selectWake = `SELECT pos, send_to, send_key, send_text, send_files FROM supervisor_conversation_wakes WHERE scope = ? AND thread = ?`
+		args = append(args, int64(r.w.target))
+	}
+	err := db.QueryRowContext(ctx, selectWake, args...).Scan(&pos, &to, &key, &text, &files)
+	if errors.Is(err, sql.ErrNoRows) && r.w.target == 0 {
 		if err = Begin(ctx, r.w.Core, scope); err == nil {
 			err = db.QueryRowContext(ctx, selectWake, scope).Scan(&pos, &to, &key, &text, &files)
 		}
@@ -1634,8 +1736,13 @@ func (r *waking) store(ctx context.Context, also ...func(*store.Tx) error) error
 		}
 	}
 	err := r.w.Core.Store.Update(ctx, func(tx *store.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE supervisor_wakes SET pos = ?, send_to = ?, send_key = ?, send_text = ?, send_files = ? WHERE scope = ?`,
-			int64(r.pos), to, key, text, files, r.w.Scope)
+		query := `UPDATE supervisor_wakes SET pos = ?, send_to = ?, send_key = ?, send_text = ?, send_files = ? WHERE scope = ?`
+		args := []any{int64(r.pos), to, key, text, files, r.w.Scope}
+		if r.w.target != 0 {
+			query = `UPDATE supervisor_conversation_wakes SET pos = ?, send_to = ?, send_key = ?, send_text = ?, send_files = ? WHERE scope = ? AND thread = ?`
+			args = append(args, int64(r.w.target))
+		}
+		_, err := tx.ExecContext(ctx, query, args...)
 		if err != nil {
 			return err
 		}
@@ -1645,10 +1752,10 @@ func (r *waking) store(ctx context.Context, also ...func(*store.Tx) error) error
 			}
 		}
 		// A cleared mark is needed only while its turn end may be read again.
-		if _, err := tx.ExecContext(ctx, `DELETE FROM supervisor_asked WHERE scope = ? AND woken <= ?`, r.w.Scope, int64(r.pos)); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM supervisor_asked WHERE scope = ? AND woken <= (SELECT min(pos) FROM (SELECT pos FROM supervisor_wakes WHERE scope = ? UNION ALL SELECT pos FROM supervisor_conversation_wakes WHERE scope = ?))`, r.w.Scope, r.w.Scope, r.w.Scope); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `DELETE FROM supervisor_given WHERE scope = ? AND upto <= ?`, r.w.Scope, int64(r.pos))
+		_, err = tx.ExecContext(ctx, `DELETE FROM supervisor_given WHERE scope = ? AND upto <= (SELECT min(pos) FROM (SELECT pos FROM supervisor_wakes WHERE scope = ? UNION ALL SELECT pos FROM supervisor_conversation_wakes WHERE scope = ?))`, r.w.Scope, r.w.Scope, r.w.Scope)
 		return err
 	})
 	if err != nil {

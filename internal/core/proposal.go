@@ -330,7 +330,7 @@ func (a *api) answerProposal(ctx context.Context, req control.RequestID, ans con
 	// ordinary thread only.
 	sender := a.c.As(control.Caller{From: from, Principal: control.Principal(principal), Scopes: []string{scope},
 		May: control.OpStart | control.OpSend, RefuseBusy: true, NoAnswer: question == "", OrdinaryOnly: true, Mark: mark,
-		Via: control.ViaProposal, Research: call.Research}).(*api)
+		Via: control.ViaProposal, Research: call.Research, AsksIn: thread}).(*api)
 	switch action {
 	case "send":
 		err = sender.send(ctx, control.ThreadID(target.Int64), key, control.Input{Text: call.Text}, control.Refuse,

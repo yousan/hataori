@@ -166,7 +166,7 @@ func (a *api) answerApproval(ctx context.Context, req control.RequestID, ans con
 		if interrupted {
 			outcome = "ended"
 		} else {
-			sender := a.c.As(control.Caller{From: from, Principal: control.Principal(principal), Scopes: []string{scope}, May: control.OpSend, OrdinaryOnly: true}).(*api)
+			sender := a.c.As(control.Caller{From: from, Principal: control.Principal(principal), Scopes: []string{scope}, May: control.OpSend, OrdinaryOnly: true, AsksIn: thread}).(*api)
 			err := sender.send(ctx, target, "approval:"+string(req), control.Input{Text: marked}, control.Interrupt, &guard)
 			switch {
 			case err == nil && guard.repeated:

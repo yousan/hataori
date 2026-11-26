@@ -449,7 +449,7 @@ func (c *Core) As(caller control.Caller) control.API {
 // failed or closed, so the next Send resumes it. The runner puts the
 // session to sleep when that conversation's turn ends. A thread that is
 // not asleep is ErrAwake, and the Send takes nothing. It is no operation
-// of the control API: the supervisor's waker gives each wake to a
+// of the control API: the supervisor's waker gives each own-thread wake to a
 // conversation of its own (design, section 7.1, #676).
 func (c *Core) AsFresh(caller control.Caller) control.API {
 	a := c.As(caller).(*api)
@@ -1529,6 +1529,9 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 		}
 		thread, _ := res.LastInsertId()
 		id = control.ThreadID(thread)
+		if err := a.home(ctx, tx, id, r.Scope); err != nil {
+			return err
+		}
 		ref, _ := json.Marshal(id)
 		ok, err := tx.Accept(ctx, inboxKey, ref)
 		if err != nil {
@@ -2228,6 +2231,9 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 				// The key is not taken: the transaction is rolled back.
 				return fmt.Errorf("core: send to %v: no place is free: %w", id, ErrBusy)
 			}
+		}
+		if err := a.home(ctx, tx, id, scope); err != nil {
+			return err
 		}
 		accepted = true
 		if waits {
