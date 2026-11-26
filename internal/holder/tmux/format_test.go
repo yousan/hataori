@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -22,6 +23,30 @@ func TestCutFormatsLeaveOwnershipUnknown(t *testing.T) {
 			w, _, _ := s.started(h, "exec sleep 600")
 			r, _ := parseRef(w)
 			cut := capture(t, "list-panes-cut-3.8.txt")
+			// Capture process ids are normalized to those of this test's pane.
+			b, readErr := os.ReadFile(cut)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			b = []byte(strings.ReplaceAll(strings.ReplaceAll(string(b), "%0", r.Pane), "4343", strconv.Itoa(w.Process)))
+			if where == "pane" {
+				// Cut the captured paneFormat listing just before its final variable.
+				// The old parser accepted this as a complete row with an empty name.
+				for _, line := range strings.Split(captured(t, "list-panes-dead-3.8.txt"), "\n") {
+					if strings.Contains(line, " %0 ") {
+						line = strings.ReplaceAll(strings.ReplaceAll(line, "4242", strconv.Itoa(r.Server)), "%0", r.Pane)
+						b = []byte(line[:strings.LastIndex(line, " ")+1] + "\n")
+						break
+					}
+				}
+			}
+			if where == "missing" {
+				b = []byte("\n")
+			} // cut before the first expansion
+			cut = filepath.Join(s.dir, "cut-output")
+			if err := os.WriteFile(cut, b, 0o600); err != nil {
+				t.Fatal(err)
+			}
 			match := map[string]string{
 				"pane": "*\" list-panes -a \"*", "start": "*pane_start_command*",
 				"name": "*pane_current_command*", "end": "*pane_dead_time*",
