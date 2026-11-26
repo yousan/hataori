@@ -127,11 +127,18 @@ func (l *Lister) List(ctx context.Context, owned []int) ([]control.HostTerminal,
 	}
 	procs := parsePS(out)
 	hidden := ownedDevices(procs, slices.Concat(owned, ownPIDs(procs, l.Own)))
+	// An attach has its own terminal rather than being below a session
+	// host. Hide it by the same name check used when refusing input.
+	for _, p := range procs {
+		if p.tty != "" && matchesOwn(p.comm, l.Own) {
+			hidden[p.tty] = true
+		}
+	}
 	list := []control.HostTerminal{} // an empty list, not null, on the wire
 	inTmux := map[string]bool{}
 	for _, p := range panes {
 		inTmux[p.Device] = true
-		if !hidden[p.Device] {
+		if !hidden[p.Device] && !matchesOwn(p.Process, l.Own) {
 			list = append(list, p)
 		}
 	}

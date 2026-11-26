@@ -18,10 +18,12 @@ func matchesOwn(comm string, own []string) bool {
 }
 
 // ownPIDs are the processes with one of the names own that hold no terminal.
+// PID 1 also adopts unrelated orphans, so its descendants are not ours.
+// Session hosts are still found individually, including before they are recorded.
 func ownPIDs(ps []proc, own []string) []int {
 	var pids []int
 	for _, p := range ps {
-		if p.tty == "" && matchesOwn(p.comm, own) {
+		if p.pid != 1 && p.tty == "" && matchesOwn(p.comm, own) {
 			pids = append(pids, p.pid)
 		}
 	}
