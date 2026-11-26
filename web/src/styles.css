@@ -1698,8 +1698,33 @@ a.chat-link:hover {
   padding: 4px 6px;
 }
 
-.box-send {
+.box-send,
+.answers-row button,
+.answers-field button {
   font: inherit;
+  min-height: 28px;
+  max-width: 100%;
+  padding: 4px 10px;
+  color: var(--fg);
+  background: var(--bar);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.box-send:disabled,
+.answers-row button:disabled,
+.answers-field button:disabled {
+  opacity: .5;
+  cursor: default;
+}
+
+.box-send:focus-visible,
+.answers-row button:focus-visible,
+.answers-field button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .box-note,
@@ -1730,11 +1755,6 @@ a.chat-link:hover {
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
-}
-
-.answers-row button,
-.answers-field button {
-  font: inherit;
 }
 
 .answers-check {
