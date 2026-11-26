@@ -587,6 +587,9 @@ func TestScreenStreamWhileOperated(t *testing.T) {
 	for {
 		sc, v := a.reads()
 		if v >= 5 {
+			if sc != 1 {
+				t.Fatalf("operated stream read without the cursor: %d screen reads", sc-1)
+			}
 			break
 		}
 		if time.Now().After(deadline) {
