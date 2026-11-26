@@ -787,6 +787,23 @@ func (c *checker) find() ([]repo, error) {
 			repos = append(repos, repo{dir: dir, rel: rel, kind: "nested repository"})
 		case d.Name() == ".git":
 			repos = append(repos, repo{dir: dir, rel: rel, kind: "submodule"})
+		case d.Type()&fs.ModeSymlink != 0:
+			st, err := os.Stat(p)
+			if missing(err) {
+				return nil
+			} else if err != nil {
+				return c.unreadable(p, err)
+			}
+			if !st.IsDir() {
+				return nil
+			}
+			// A Git directory outside the walk may take its objects or
+			// refs from inside it. Do not traverse links; refuse the Git
+			// directory, including one with only HEAD and commondir.
+			if isGitDir(p) {
+				return c.unreadable(p, errors.New("symbolic link to a git directory"))
+			}
+			return c.part(p, nil)
 		case d.IsDir():
 			if !isGitDir(p) {
 				in := enclosing(gitDirs, p)
