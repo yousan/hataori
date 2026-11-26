@@ -39,12 +39,18 @@ func TestOnlyAClosedOwnThreadNamesTheCurrentOne(t *testing.T) {
 			if named {
 				want += "\n" + supervisorNow(99, "")
 			}
-			waitFor(t, "the closed line", func() bool {
-				posts := postsIn(f.driver, conv)
-				return len(posts) > 0 && strings.HasPrefix(posts[len(posts)-1], ClosedLine)
-			})
-			posts := postsIn(f.driver, conv)
-			if got := posts[len(posts)-1]; got != want {
+			// A pending prompt may be posted after the notice. Find the
+			// notice among the posts instead of requiring it to be last.
+			closed := func() string {
+				for _, post := range postsIn(f.driver, conv) {
+					if strings.HasPrefix(post, ClosedLine) {
+						return post
+					}
+				}
+				return ""
+			}
+			waitFor(t, "the closed line", func() bool { return closed() != "" })
+			if got := closed(); got != want {
 				t.Fatalf("posted %q, want %q", got, want)
 			}
 		})
