@@ -12,6 +12,7 @@ import (
 
 	"github.com/yousan/hataori/internal/agent/fake"
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/store"
 	"github.com/yousan/hataori/internal/surface"
 	fakesurface "github.com/yousan/hataori/internal/surface/fake"
@@ -188,7 +189,7 @@ func (r *chatRoot) leftAlone(t *testing.T, there surface.Conversation) {
 // second is left as it is, all the way to the thread's removal.
 func TestArchiveLeavesAChatThreadThatWasThere(t *testing.T) {
 	r := archiveRoot(t, true, "1s")
-	stop := runDaemon(t, r.root)
+	stop, logged := runDaemonLog(t, r.root)
 	r.connected(t)
 	r.driver.Inject(c1, fakesurface.Webhook(e2eHook), "!go repo:"+bareRepo(t)+" reply a")
 	th := r.thread(t, 0)
@@ -219,7 +220,7 @@ func TestArchiveLeavesAChatThreadThatWasThere(t *testing.T) {
 	if _, err := db.Exec(`UPDATE links SET since = 1 WHERE thread_id = ? AND opened = 1`, num); err != nil {
 		t.Fatal(err)
 	}
-	stop = runDaemon(t, r.root)
+	stop, logged = runDaemonLog(t, r.root)
 	defer stop()
 	r.connected(t)
 	r.driver.Inject(there, fakesurface.Person(e2eOwner), "reply c")
@@ -232,6 +233,16 @@ func TestArchiveLeavesAChatThreadThatWasThere(t *testing.T) {
 	n := len(r.setThreads(th))
 	for _, verb := range []string{"close", "remove"} {
 		if code, _, errOut := cli(t, verb, "--root", r.root, num); code != 0 {
+			t.Logf("the daemon logged:\n%s", logged())
+			dirs, _ := filepath.Glob(filepath.Join(r.root, "state", "sessions", "*"))
+			for _, dir := range dirs {
+				for _, name := range []string{host.StatusFile, host.HostLog} {
+					b, err := os.ReadFile(filepath.Join(dir, name))
+					t.Logf("session %s %s (read: %v):\n%s", filepath.Base(dir), name, err, b)
+				}
+				_, err := os.Stat(host.SocketPath(dir))
+				t.Logf("session %s socket stat: %v", filepath.Base(dir), err)
+			}
 			t.Fatalf("%s: %d %s", verb, code, errOut)
 		}
 	}

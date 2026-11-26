@@ -165,9 +165,13 @@ func Run(stateDir string) (err error) {
 	waitErr := h.cmd.Wait()
 	close(h.done)
 	hl.printf("the command ended: %v", h.cmd.ProcessState)
-	// A stop in progress ends the rest of the group first. While the output
-	// drains, a stop can still end what the command left behind.
-	h.stops.Wait()
+	// A stop in progress ends the rest of the group first. Registration
+	// stays open while output drains, so a WaitGroup cannot be waited on
+	// here: another stop may Add as its last Done releases the wait. Wait
+	// only for group signaling; finishRequests waits for the replies once
+	// registration is closed. A later stop can still end descendants.
+	h.stopOne.Lock()
+	h.stopOne.Unlock()
 	drained := make(chan struct{})
 	go func() { readers.Wait(); close(drained) }()
 	// With the group gone every writer is closed, so the readers end; the
