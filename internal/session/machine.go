@@ -96,6 +96,20 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 	}
 
 	r, err := Step(snap, in)
+	inputFailure := false
+	if in.Kind == AgentEvent {
+		failure, failureErr := pendingFailure(ctx, tx, sessionID, turnID, in.Agent)
+		if failureErr != nil {
+			return failureErr
+		}
+		if failure != nil {
+			inputFailure = true
+			r, err = Result{State: snap.State}, nil
+			if failure.Kind != "" {
+				r.Out = []Out{*failure}
+			}
+		}
+	}
 	if err != nil {
 		return err
 	}
@@ -118,25 +132,27 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 	at := clock()
 	now := at.UnixMilli()
 
-	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET state = ?, updated_at = ? WHERE id = ?`,
-		string(r.State), now, sessionID); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE threads SET state = ?, updated_at = ? WHERE id = ?`,
-		string(r.State), now, thread); err != nil {
-		return err
-	}
-	switch r.State {
-	case control.Asleep, control.Failed, control.Closed:
-		// A conversation set aside for one input's own (sessions.set_aside)
-		// is the session's again: the next wake resumes it.
-		if aside.Valid {
-			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET agent_session_id = set_aside, set_aside = NULL WHERE id = ?`,
-				sessionID); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM session_files WHERE session_id = ? AND aside = 1`, sessionID); err != nil {
-				return err
+	if !inputFailure {
+		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET state = ?, updated_at = ? WHERE id = ?`,
+			string(r.State), now, sessionID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE threads SET state = ?, updated_at = ? WHERE id = ?`,
+			string(r.State), now, thread); err != nil {
+			return err
+		}
+		switch r.State {
+		case control.Asleep, control.Failed, control.Closed:
+			// A conversation set aside for one input's own (sessions.set_aside)
+			// is the session's again: the next wake resumes it.
+			if aside.Valid {
+				if _, err := tx.ExecContext(ctx, `UPDATE sessions SET agent_session_id = set_aside, set_aside = NULL WHERE id = ?`,
+					sessionID); err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(ctx, `DELETE FROM session_files WHERE session_id = ? AND aside = 1`, sessionID); err != nil {
+					return err
+				}
 			}
 		}
 	}

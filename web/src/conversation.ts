@@ -8,6 +8,7 @@ import type { Event } from "./api";
 export const conversationKinds: ReadonlySet<string> = new Set([
   "turn_started",
   "input",
+  "input_failed",
   "request",
   "answer",
   "text",
@@ -21,6 +22,7 @@ export const conversationKinds: ReadonlySet<string> = new Set([
 // from the caller (protocol 2.0): the page says so instead.
 export type Entry =
   | { kind: "turn_started"; pos: number; time: string; by: string; who?: string }
+  | { kind: "input_failed"; pos: number; time: string; who?: string; text?: string; reason: string }
   | { kind: "input"; pos: number; time: string; who?: string; text?: string }
   | { kind: "request"; pos: number; time: string; approval: boolean; text?: string; choices?: string[] }
   | { kind: "answer"; pos: number; time: string; who?: string; text?: string }
@@ -51,6 +53,9 @@ export function entries(events: readonly Event[]): Entry[] {
     switch (e.kind) {
       case "turn_started":
         out.push({ kind: "turn_started", ...base, by: str(d.by) ?? "", who: who(d) });
+        break;
+      case "input_failed":
+        out.push({ kind: "input_failed", ...base, who: who(d), text: str(d.text), reason: str(d.reason) ?? "" });
         break;
       case "input":
         out.push({ kind: "input", ...base, who: who(d), text: str(d.text) });

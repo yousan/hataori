@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.41**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.42**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -1445,6 +1445,22 @@ Since 3.35. The chat service, or its driver, refused a row of the chat front end
 | `before` | string | optional | text the plugins' `before_prompt_build` handlers added before the input, which the agent got on lines of their own before `text`; absent when none did; since 3.18 |
 | `after` | string | optional | the same, after it; since 3.18 |
 | `via` | string | optional | the way of the daemon's own it came through when it came through no link: `dashboard` for input given in the dashboard; `terminal` for the prompt of a turn typed at the agent's terminal, when the agent reports it, written right after that turn's `turn_started` with the owner as `principal` and no `from` or `link` (since 3.24); `proposal` for the supervisor's input that a person approved as its proposal, with the supervisor as `principal` and `from` (since 3.26); absent for input through a link, from the control socket and from the supervisor's own sends; since 3.23 |
+
+### Event `input_failed`
+
+Since 3.42. An accepted input did not reach the agent. It ends no running turn: a held message may fail while another turn runs. Written with removal of its pending input. An input that started its own still-running turn ends that turn with `turn_ended` instead. Old pending inputs without caller metadata may omit the caller fields.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `session` | integer | required | the session |
+| `input` | string | required | the pending input's id within the session |
+| `reason` | string | required | why: `not delivered`, `the window took no input` or `interrupted` |
+| `text` | string | optional | the accepted input; text; older pending rows may include plugin additions |
+| `key` | string | optional | the accepted call's key, as in `turn_started` |
+| `principal` | string | optional | the person who gave it |
+| `from` | string | optional | the caller's source, as in `input` |
+| `link` | object | optional | the link it came through, as in `input` |
+| `via` | string | optional | the way it came through, as in `input` |
 
 ### Event `input_waits`
 

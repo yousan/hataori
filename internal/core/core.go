@@ -2336,6 +2336,10 @@ func (c *Core) wakeTx(ctx context.Context, tx *store.Tx, id control.ThreadID, si
 // sendTx gives session sid the input in, in tx, and returns what Deliver is
 // given once tx is committed.
 func (c *Core) sendTx(ctx context.Context, tx *store.Tx, sid int64, in FirstInput) (pending int64, hand control.Input, err error) {
+	var state string
+	if err := tx.QueryRowContext(ctx, `SELECT state FROM sessions WHERE id = ?`, sid).Scan(&state); err != nil {
+		return 0, hand, err
+	}
 	if err := c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Send, Principal: in.Principal, From: in.From, Key: in.Key,
 		Text: in.Text, Link: in.Link, Before: in.Before, After: in.After, Via: in.Via}); err != nil {
 		return 0, hand, err
@@ -2345,7 +2349,13 @@ func (c *Core) sendTx(ctx context.Context, tx *store.Tx, sid int64, in FirstInpu
 		return 0, hand, err
 	}
 	hand = forAgent(in.Input())
-	pending, err = pend(ctx, tx, sid, "", hand, earlier)
+	origin := &session.InputOrigin{Principal: in.Principal, From: in.From, Key: in.Key, Via: in.Via, Text: in.Text}
+	if control.State(state) == control.Idle {
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM turns WHERE session_id = ? AND ended_at IS NULL`, sid).Scan(&origin.Turn); err != nil {
+			return 0, hand, err
+		}
+	}
+	pending, err = pend(ctx, tx, sid, "", session.PendingInput{Input: hand, Origin: origin}, earlier)
 	hand.Text = earlier + hand.Text
 	return pending, hand, err
 }
