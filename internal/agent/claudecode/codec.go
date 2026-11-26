@@ -3,6 +3,7 @@ package claudecode
 import (
 	"encoding/json"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -1031,11 +1032,10 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 		if by == agent.ByAgent {
 			c.tasks.notified(p.Prompt)
 		}
-		if by == agent.ByCaller && slices.Contains(c.leftover, id) {
-			// The box's text was submitted. Another prompt may have been
-			// before the paste.
-			c.leftover = nil
-		}
+		// The box's text was submitted, if the prompt is of an input that
+		// was held. Another prompt, also another held input's, may have been
+		// before the paste: the others stay held.
+		c.leftover = slices.DeleteFunc(c.leftover, func(h string) bool { return h == id })
 		started := agent.Event{Kind: agent.TurnStarted, StartedBy: by, Input: id}
 		if by == agent.ByTerminal {
 			// The prompt a person typed at the terminal, which no caller
@@ -1253,12 +1253,15 @@ func denyWrite(path string) []byte {
 func (c *codec) starter(prompt string) (agent.Starter, string) {
 	text := normalize(unwrapPaste(prompt))
 	for i, p := range c.pasted {
-		if notification(prompt) && slices.Contains(c.leftover, p.id) {
+		held := slices.Contains(c.leftover, p.id)
+		if held && notification(prompt) {
 			// A notification starts a turn with the box as it is, also
 			// one that is the text of the input that may be in it.
 			continue
 		}
-		if p.text == text || slices.Contains(p.older, text) {
+		// One that may be in the box is known also by what the CLI
+		// reports of it, since nothing else releases it.
+		if p.text == text || slices.Contains(p.older, text) || held && p.shows(text) {
 			c.pasted = append(c.pasted[:i], c.pasted[i+1:]...)
 			if c.sent != nil && c.sent.text == p.text {
 				c.sent = nil // delivered
@@ -1300,6 +1303,27 @@ func unwrapPaste(prompt string) string {
 // with CRLF as LF, and each tab as four spaces. The CLI's input box turns a
 // pasted tab into exactly four spaces, not spaces up to the next tab stop
 // (2.1.328, testdata/2.1.328/paste_tabs).
+// shown is text as the CLI reports a paste of it in a prompt: without the
+// escape sequences that start with ESC [ and without the characters that do
+// not show (Unicode's Cf), which it takes out (testdata, mention_*).
+func shown(text string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, controlSequence.ReplaceAllString(text, ""))
+}
+
+var controlSequence = regexp.MustCompile("\x1b\\[[0-?]*[ -/]*[@-~]") // ESC [, parameters, intermediates and a final byte
+
+// shows reports whether prompt, normalized, is what the CLI reports of a
+// paste of q's text, or of a text an older hataori pasted for it.
+func (q queued) shows(prompt string) bool {
+	p := normalize(shown(prompt))
+	return slices.ContainsFunc(append([]string{q.text}, q.older...), func(t string) bool { return normalize(shown(t)) == p })
+}
+
 func normalize(s string) string {
 	s = strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\t", "    ")
 	return strings.TrimSpace(s)

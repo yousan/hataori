@@ -223,6 +223,61 @@ func TestOlderPasteIsNotSubmittedAfterARestart(t *testing.T) {
 	}
 }
 
+// Of two inputs that may be in the box after a restart, the prompt of one
+// releases that one only: nothing is pasted while the other may be there.
+func TestOnlyItsOwnPromptReleasesAnInput(t *testing.T) {
+	c := (&Adapter{}).NewCodec(agent.Spec{Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
+	for _, f := range []string{"01-SessionStart", "02-UserPromptSubmit", "05-Stop", "07-UserPromptSubmit"} {
+		decodeFile(t, c, f, held+f+".json")
+	}
+	for _, in := range []agent.Input{{ID: "in-6", Text: heldText + "\r"}, {ID: "in-7", Text: "#x"}} {
+		in.Written = true
+		if a, _ := c.Input(in); len(a.Keys) != 0 {
+			t.Fatalf("%s: written again: %q", in.ID, a.Keys)
+		}
+	}
+	decodeFile(t, c, "11", held+"11-Stop.json")
+	if a := decodeFile(t, c, "12", held+"12-UserPromptSubmit.json"); summary(a) != "turn(caller)" || a.Events[0].Input != "in-6" {
+		t.Fatalf("the prompt: %s", summary(a))
+	}
+	decodeFile(t, c, "13", held+"13-Stop.json")
+	a, _ := c.Input(agent.Input{ID: "in-8", Text: "list the threads"})
+	if len(a.Keys) != 0 || len(a.Events) != 1 || a.Events[0].Reason != agent.NotDelivered || a.Events[0].Input != "in-8" {
+		t.Fatalf("the next input: keys %q, events %+v", a.Keys, a.Events)
+	}
+	quiet(t, c, time.Now(), 2*DefaultInputTimeout, "after it")
+}
+
+// The end of the session releases what may be in the box: after a /clear in
+// the window, which was submitted from it, input is pasted again.
+func TestClearReleasesAnOlderPaste(t *testing.T) {
+	c := (&Adapter{}).NewCodec(agent.Spec{Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
+	decodeFile(t, c, "01", "clear/hooks/01-SessionStart.json")
+	if a, _ := c.Input(agent.Input{ID: "in-7", Text: "#x", Written: true}); len(a.Keys) != 0 {
+		t.Fatalf("written again: %q", a.Keys)
+	}
+	if a, _ := c.Input(agent.Input{ID: "in-8", Text: "list the threads"}); len(a.Keys) != 0 || len(a.Events) != 1 || a.Events[0].Reason != agent.NotDelivered {
+		t.Fatalf("while held: keys %q, events %+v", a.Keys, a.Events)
+	}
+	decodeFile(t, c, "04", "clear/hooks/04-SessionEnd.json")
+	decodeFile(t, c, "05", "clear/hooks/05-SessionStart.json")
+	c.Input(agent.Input{ID: "in-9", Text: "list the threads"})
+	// The one that was held waits for its report as any written input, and
+	// ends "not delivered"; then the next is pasted.
+	var keys []agent.Part
+	var ended []string
+	for now, end := time.Now(), time.Now().Add(2*DefaultInputTimeout); now.Before(end) && len(keys) == 0; now = now.Add(100 * time.Millisecond) {
+		a := c.Tick(now)
+		keys = a.Keys
+		for _, e := range a.Events {
+			ended = append(ended, e.Input+" "+string(e.Reason))
+		}
+	}
+	if len(keys) == 0 || keys[0].Paste != "list the threads" || len(ended) != 1 || ended[0] != "in-7 "+string(agent.NotDelivered) {
+		t.Fatalf("after the clear: keys %q, ended %q", keys, ended)
+	}
+}
+
 // A task notification that starts a turn does not take the box's text, also
 // when it is the text of the input that may be there: the turn is the
 // agent's, the input does not end, and nothing is pasted after it, nor at

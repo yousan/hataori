@@ -122,8 +122,10 @@ func TestConfinedInputNamesNothing(t *testing.T) {
 
 // An input that a hataori before #887 pasted, its "@" as they are, or one
 // before #914, and that the agent reports after a restart to this one, is
-// known as hataori's. An input that this one pasted since its start is not
-// known by such a prompt: a person typed that.
+// known as hataori's, and so is one with an escape sequence, which this one
+// holds (#914), by what the CLI took out of it; one with a character that
+// does not show is not (#916). An input that this one pasted since its start
+// is not known by such a prompt: a person typed that.
 func TestInputPastedWithItsAtSignIsKnown(t *testing.T) {
 	for _, mc := range mentionCases(t, "mention_restricted") {
 		c := confinedCodec(t)
@@ -131,7 +133,7 @@ func TestInputPastedWithItsAtSignIsKnown(t *testing.T) {
 			t.Fatal(err)
 		}
 		by, id := c.starter(mc.Prompt)
-		if known := !slices.Contains([]string{"after_escape", "after_invisible"}, mc.Case); (by == agent.ByCaller && id == "in-1" && c.sent == nil) != known {
+		if known := mc.Case != "after_invisible"; (by == agent.ByCaller && id == "in-1" && c.sent == nil) != known {
 			t.Errorf("%s: after a restart: the prompt %q counts as started by %v, input %q", mc.Case, mc.Prompt, by, id)
 		}
 		if !strings.Contains(mc.Prompt, "@") {
@@ -152,7 +154,7 @@ func TestInputPastedWithItsAtSignIsKnown(t *testing.T) {
 				t.Fatal(err)
 			}
 			by, id := c.starter(mc.Prompt)
-			if known := !slices.Contains([]string{"after_escape", "after_invisible"}, mc.Case); (by == agent.ByCaller && id == "in-1" && c.sent == nil) != known {
+			if known := mc.Case != "after_invisible"; (by == agent.ByCaller && id == "in-1" && c.sent == nil) != known {
 				t.Errorf("%s %s %s: after a restart: the prompt %q counts as started by %v, input %q", name, mc.Session, mc.Case, mc.Prompt, by, id)
 			}
 		}
@@ -164,6 +166,20 @@ func TestInputPastedWithItsAtSignIsKnown(t *testing.T) {
 	}
 	if by, id := c.starter(commandPrefix + "/add-dir @x"); by != agent.ByCaller || id != "in-1" {
 		t.Errorf("after a restart: a command with an at sign counts as started by %v, input %q", by, id)
+	}
+}
+
+// What the CLI reports of a paste is the paste without the escape sequences
+// that start with ESC [ and without the characters that do not show (shown),
+// in a person's message, in a long one and in a wake's or a reminder's.
+func TestPromptShowsThePaste(t *testing.T) {
+	for _, name := range []string{"mention_ordinary", "mention_restricted", "mention_restricted_pasted", "mention_restricted_written",
+		"mention_unrestricted", "mention_unrestricted_pasted", "mention_unrestricted_written"} {
+		for _, mc := range mentionCases(t, name) {
+			if got, want := normalize(shown(mc.Pasted)), normalize(unwrapPaste(mc.Prompt)); got != want {
+				t.Errorf("%s %s %s: %q shows as %q; the CLI reported %q", name, mc.Session, mc.Case, mc.Pasted, got, want)
+			}
+		}
 	}
 }
 
