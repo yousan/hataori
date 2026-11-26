@@ -296,7 +296,7 @@ func (g reader) line(ctx context.Context, args ...string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	s := strings.TrimSpace(string(out))
+	s := strings.TrimSuffix(string(out), "\n")
 	if s == "" || strings.Contains(s, "\n") {
 		return "", fmt.Errorf("workspace: git %s printed %q", args[0], s)
 	}
