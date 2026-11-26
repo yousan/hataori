@@ -785,6 +785,13 @@ var migrations = []Migration{
 	{Name: "pending_inputs.written_text", Up: execAll(
 		`ALTER TABLE pending_inputs ADD COLUMN written_text TEXT`,
 	)},
+	// Only turns after this id belong to the session's current agent
+	// process. A daemon reconnect keeps it; a new agent launch advances it.
+	// Zero keeps existing sessions' background counts until their next
+	// launch, without changing the historical turns (#810).
+	{Name: "sessions.agent_after_turn", Up: execAll(
+		`ALTER TABLE sessions ADD COLUMN agent_after_turn INTEGER NOT NULL DEFAULT 0`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {
