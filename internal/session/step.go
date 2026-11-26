@@ -406,7 +406,7 @@ func stepAgent(s Snapshot, in Input, r *Result,
 			return false
 		}
 		r.Out = append(r.Out, agentOut(e))
-		end(Ended{Outcome: Blocked})
+		end(Ended{Outcome: Blocked, Background: e.Background, Subagents: e.Subagents})
 		to(control.Waiting, "")
 	case agent.RequestWithdrawn:
 		if s.State != control.Waiting {
