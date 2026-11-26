@@ -768,18 +768,25 @@ func (c *codec) track(prompt string, a Actions) Actions {
 			}
 		case agent.SessionEnded:
 			c.ready, c.running = false, false
-			// What may have been in the box went with its conversation: a
-			// held input whose report is not waited for any more (c.sent
-			// is) ends as not delivered, so that the caller does not keep
-			// it, and is not known by a later prompt (#914).
-			for _, id := range c.leftover {
-				if c.sent != nil && c.sent.id == id {
-					continue
+			if len(c.leftover) > 0 {
+				// What was pasted while an input was held got no Enter, and
+				// went with the box's text and its conversation: each such
+				// input ends as not delivered, naming it, so that the caller
+				// does not keep it, and is not known by a later prompt. The
+				// one waited for ends first, since the turn that runs is the
+				// one it was to start (#914).
+				ids := slices.Clone(c.leftover)
+				if c.sent != nil {
+					id := c.sent.id
+					ids = append([]string{id}, slices.DeleteFunc(ids, func(h string) bool { return h == id })...)
+					c.sent = nil
 				}
-				c.pasted = slices.DeleteFunc(c.pasted, func(q queued) bool { return q.id == id })
-				ended = merge(ended, c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered, Input: id})))
+				for _, id := range ids {
+					c.pasted = slices.DeleteFunc(c.pasted, func(q queued) bool { return q.id == id })
+					ended = merge(ended, c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered, Input: id})))
+				}
+				c.leftover = nil
 			}
-			c.leftover = nil
 		}
 	}
 	return merge(ended, c.flush())

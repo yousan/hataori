@@ -315,8 +315,7 @@ func TestOwnInputBeforeAnOlderPasteEnds(t *testing.T) {
 
 // The end of the session releases what may be in the box: after a /clear in
 // the window, which was submitted from it, input is pasted again. The input
-// held, whose report is waited for, does not end with the session, but after
-// the input timeout.
+// held, which got no Enter, ends with the session as not delivered.
 func TestClearReleasesAnOlderPaste(t *testing.T) {
 	c := (&Adapter{}).NewCodec(agent.Spec{Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
 	decodeFile(t, c, "01", "clear/hooks/01-SessionStart.json")
@@ -326,57 +325,68 @@ func TestClearReleasesAnOlderPaste(t *testing.T) {
 	if a, _ := c.Input(agent.Input{ID: "in-8", Text: "list the threads"}); len(a.Keys) != 0 || len(a.Events) != 1 || a.Events[0].Reason != agent.NotDelivered {
 		t.Fatalf("while held: keys %q, events %+v", a.Keys, a.Events)
 	}
+	var ended []string
 	for _, e := range decodeFile(t, c, "04", "clear/hooks/04-SessionEnd.json").Events {
 		if e.Kind == agent.TurnEnded {
-			t.Fatalf("at the session's end: %+v; want the input to wait for its report", e)
-		}
-	}
-	decodeFile(t, c, "05", "clear/hooks/05-SessionStart.json")
-	c.Input(agent.Input{ID: "in-9", Text: "list the threads"})
-	// The one that was held waits for its report as any written input, and
-	// ends "not delivered"; then the next is pasted.
-	var keys []agent.Part
-	var ended []string
-	for now, end := time.Now(), time.Now().Add(2*DefaultInputTimeout); now.Before(end) && len(keys) == 0; now = now.Add(100 * time.Millisecond) {
-		a := c.Tick(now)
-		keys = a.Keys
-		for _, e := range a.Events {
 			ended = append(ended, e.Input+" "+string(e.Reason))
 		}
 	}
-	if len(keys) == 0 || keys[0].Paste != "list the threads" || len(ended) != 1 || ended[0] != "in-7 "+string(agent.NotDelivered) {
-		t.Fatalf("after the clear: keys %q, ended %q", keys, ended)
+	if !slices.Equal(ended, []string{"in-7 " + string(agent.NotDelivered)}) {
+		t.Fatalf("at the session's end: ended %q, want the held input", ended)
+	}
+	decodeFile(t, c, "05", "clear/hooks/05-SessionStart.json")
+	if a, _ := c.Input(agent.Input{ID: "in-9", Text: "list the threads"}); len(a.Keys) == 0 || a.Keys[0].Paste != "list the threads" || len(a.Events) != 0 {
+		t.Fatalf("after the clear: keys %q, events %+v; want the next input pasted", a.Keys, a.Events)
 	}
 }
 
-// The end of the session ends each input it releases whose report is not
-// waited for any more as not delivered, naming it, so that the caller does
-// not keep it: one whose turn ended after the input timeout, and one held
-// after it. A later prompt the same as what an older hataori pasted for it
-// is not taken for it (#914).
+// The end of the session ends each input that was pasted while one was held
+// as not delivered, naming it, so that the caller does not keep it: the one
+// waited for first, whose turn runs, whether it is held or this hataori's,
+// then each held one, also after the turn ended after the input timeout. A
+// later prompt the same as what was pasted for it is not taken for it, and
+// no turn ends after (#914).
 func TestClearEndsTheHeldInputs(t *testing.T) {
-	c := (&Adapter{}).NewCodec(agent.Spec{Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
-	decodeFile(t, c, "01", "clear/hooks/01-SessionStart.json")
-	for _, in := range []agent.Input{{ID: "in-6", Text: "#x"}, {ID: "in-7", Text: "&y"}} {
-		in.Written, in.Earlier = true, true
-		if a, _ := c.Input(in); len(a.Keys) != 0 {
-			t.Fatalf("%s: written again: %q", in.ID, a.Keys)
+	for _, tc := range []struct {
+		name         string
+		first        agent.Input
+		turnTimedOut bool
+	}{
+		{"held, its turn ended", agent.Input{ID: "in-6", Text: "#x", Earlier: true}, true},
+		{"held, waited for", agent.Input{ID: "in-6", Text: "#x", Earlier: true}, false},
+		{"this hataori's, waited for", agent.Input{ID: "in-6", Text: "#x"}, false},
+	} {
+		c := (&Adapter{}).NewCodec(agent.Spec{Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
+		decodeFile(t, c, "01", "clear/hooks/01-SessionStart.json")
+		for _, in := range []agent.Input{tc.first, {ID: "in-7", Text: "&y", Earlier: true}} {
+			in.Written = true
+			if a, _ := c.Input(in); len(a.Keys) != 0 || len(a.Events) != 0 {
+				t.Fatalf("%s: %s: keys %q, events %+v", tc.name, in.ID, a.Keys, a.Events)
+			}
 		}
-	}
-	heldTurnEnds(t, c, time.Now(), 2*DefaultInputTimeout, "while held")
-	var ended []string
-	for _, e := range decodeFile(t, c, "04", "clear/hooks/04-SessionEnd.json").Events {
-		if e.Kind == agent.TurnEnded {
-			ended = append(ended, e.Input+" "+string(e.Reason))
+		now := time.Now()
+		if tc.turnTimedOut {
+			now = heldTurnEnds(t, c, now, 2*DefaultInputTimeout, tc.name)
 		}
-	}
-	if want := []string{"in-6 " + string(agent.NotDelivered), "in-7 " + string(agent.NotDelivered)}; !slices.Equal(ended, want) {
-		t.Fatalf("at the session's end: ended %q, want %q", ended, want)
-	}
-	decodeFile(t, c, "05", "clear/hooks/05-SessionStart.json")
-	for _, prompt := range []string{"#x", "&y"} {
-		if by, id := c.starter(prompt); by == agent.ByCaller {
-			t.Errorf("the prompt %q counts as input %q, which ended", prompt, id)
+		var ended []string
+		for _, e := range decodeFile(t, c, "04", "clear/hooks/04-SessionEnd.json").Events {
+			if e.Kind == agent.TurnEnded {
+				ended = append(ended, e.Input+" "+string(e.Reason))
+			}
+		}
+		if want := []string{"in-6 " + string(agent.NotDelivered), "in-7 " + string(agent.NotDelivered)}; !slices.Equal(ended, want) {
+			t.Fatalf("%s: at the session's end: ended %q, want %q", tc.name, ended, want)
+		}
+		decodeFile(t, c, "05", "clear/hooks/05-SessionStart.json")
+		for _, prompt := range []string{"#x", "&y"} {
+			if by, id := c.starter(prompt); by == agent.ByCaller {
+				t.Errorf("%s: the prompt %q counts as input %q, which ended", tc.name, prompt, id)
+			}
+		}
+		for end := now.Add(2 * DefaultInputTimeout); now.Before(end); now = now.Add(100 * time.Millisecond) {
+			if a := c.Tick(now); len(a.Events) != 0 {
+				t.Fatalf("%s: after the session's end: %+v", tc.name, a.Events)
+			}
 		}
 	}
 }
