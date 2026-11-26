@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yousan/hataori/internal/approvaltext"
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
@@ -125,6 +126,9 @@ func (a *api) proposeSend(ctx context.Context, scope string, id control.ThreadID
 // of action.
 func (a *api) propose(ctx context.Context, action, key string, call proposalCall,
 	what func(tx *store.Tx, d map[string]any) (control.ThreadID, string, error)) error {
+	if err := approvaltext.Validate(call.Text); err != nil {
+		return fmt.Errorf("core: proposal text: %w", err)
+	}
 	var askKey any
 	if key != "" {
 		askKey = action + ":" + key
@@ -144,6 +148,13 @@ func (a *api) propose(ctx context.Context, action, key string, call proposalCall
 		target, question, err := what(tx, d)
 		if err != nil {
 			return err
+		}
+		for _, name := range []string{"repo", "agent", "model", "effort"} {
+			if text, ok := d[name].(string); ok {
+				if err := approvaltext.Validate(text); err != nil {
+					return fmt.Errorf("core: proposal %s: %w", name, err)
+				}
+			}
 		}
 		for k, v := range d {
 			if s, ok := v.(string); ok && s == "" && k != "text" {

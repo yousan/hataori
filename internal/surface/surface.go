@@ -55,7 +55,10 @@ type Driver interface {
 	OpenDirect(ctx context.Context, who string) (Conversation, error)
 	// Post posts m. key makes the post safe to repeat where the service
 	// supports it. A post that fails with ErrRefused is given up; with any
-	// other error it is posted again later. When a post that became several
+	// other error it is posted again later. When split into several posts,
+	// all text is retained and Verbatim blocks remain literal in every part;
+	// only the last part has Choices, and its reference is returned on success.
+	// When a post that became several
 	// messages failed after the first, the first is returned with the error.
 	Post(ctx context.Context, conv Conversation, key string, m Message) (MessageRef, error)
 	// Edit replaces a posted message.

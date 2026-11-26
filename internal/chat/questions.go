@@ -45,6 +45,19 @@ func (f *FrontEnd) questionMessage(request, text string, choices []string, multi
 	return m
 }
 
+// confirmationMessage shows exactly the stored text, with its target and
+// other metadata outside it. Drivers split long posts and put choices only
+// on the last part. Lookup and release requests use this same presentation.
+func (f *FrontEnd) confirmationMessage(request, heading, text string) surface.Message {
+	choices := []string{"Approve", "Refuse"}
+	m := f.questionMessage(request, "", choices, false)
+	m.Text = heading + "\n" + f.verbatim(text)
+	if !f.withButtons(choices, false) {
+		m.Text += "\nThis chat service shows no buttons, so this cannot be approved here."
+	}
+	return m
+}
+
 // questionDone returns the row that edits the question with request id,
 // shown with choices, once e answered or withdrew it: the question stays,
 // its choices go, and a line says how it ended. A question shown as text

@@ -268,7 +268,7 @@ func proposalText(d eventData) string {
 	if len(with) > 0 {
 		what += " (" + strings.Join(with, ", ") + ")"
 	}
-	return strings.TrimSpace(fmt.Sprintf("Proposal %d of the supervisor: %s?\n%s", d.Number, what, d.Text))
+	return what + "?"
 }
 
 // proposalDone is the line that says how a proposal was decided, and what
@@ -387,12 +387,7 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		}
 		return row(m), nil
 	case "approval_asked":
-		text := strings.TrimSpace(fmt.Sprintf("Interrupt thread %d? %s", d.Target, d.Reason))
-		choices := []string{"Approve", "Refuse"}
-		if !f.withButtons(choices, false) {
-			return row(surface.Message{Text: text + "\nThis chat service shows no buttons, so this cannot be approved here."}), nil
-		}
-		return row(f.questionMessage(d.Request, text, choices, false)), nil
+		return row(f.confirmationMessage(d.Request, fmt.Sprintf("Interrupt thread %d?", d.Target), d.Reason)), nil
 	case "approval_answered":
 		var text string
 		switch d.Outcome {
@@ -405,12 +400,7 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		}
 		return row(surface.Message{Text: text}), nil
 	case "proposal_made":
-		text := proposalText(d)
-		choices := []string{"Approve", "Refuse"}
-		if !f.withButtons(choices, false) {
-			return row(surface.Message{Text: text + "\nThis chat service shows no buttons, so this cannot be approved here."}), nil
-		}
-		return row(f.questionMessage(d.Request, text, choices, false)), nil
+		return row(f.confirmationMessage(d.Request, fmt.Sprintf("Proposal %d of the supervisor:\n", d.Number)+f.verbatim(proposalText(d)), d.Text)), nil
 	case "proposal_answered":
 		return row(surface.Message{Text: proposalDone(d)}), nil
 	case "thread_created":

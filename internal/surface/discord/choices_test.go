@@ -252,3 +252,58 @@ func TestSplitPostReturnsChoicesMessage(t *testing.T) {
 		t.Fatalf("returned %s, not the message with the buttons", ref.ID)
 	}
 }
+
+// REST replies are real captures. Every sent part must keep the payload in
+// code, retain all original text, and expose approval buttons only at the end.
+func TestVerbatimApprovalsKeepWholeTextAndLastButtons(t *testing.T) {
+	for i, text := range []string{
+		"[label](https://example.com/path)", "||spoiler||", "# heading", "<@123> @everyone",
+		"```sh\necho text\n```", "````\n```\n````", strings.Repeat("x", 10_000),
+		strings.Repeat("👩🏽‍💻\ttext\n", 1000),
+	} {
+		t.Run(fmt.Sprint(i), func(t *testing.T) {
+			r := newFakeREST(t)
+			conv, key := postKey(t)
+			r.serve(t, key, "choices/rest-post-buttons.json")
+			d := testDriver(t, botID(t), r, nil)
+			if _, err := d.Post(context.Background(), conv, "verbatim-approval", surface.Message{Text: d.Verbatim(text), Choices: choicesN(2)}); err != nil {
+				t.Fatal(err)
+			}
+			reqs := r.requests(key)
+			remaining := strings.TrimSuffix(strings.TrimPrefix(d.Verbatim(text), "```\n"), "\n```")
+			for n, req := range reqs {
+				body, _ := content(t, req)
+				shown := body["content"].(string)
+				if length(shown) > maxText || !strings.HasPrefix(shown, "```\n") || !strings.HasSuffix(shown, "```") || strings.Count(shown, "```") != 2 {
+					t.Fatalf("part %d escaped its code block: %q", n, shown)
+				}
+				got := 0
+				if body["components"] != nil {
+					got = len(buttonTokens(t, body))
+				}
+				if (n == len(reqs)-1) != (got == 2) || (n != len(reqs)-1 && got != 0) {
+					t.Fatalf("part %d has %d buttons", n, got)
+				}
+				piece := strings.TrimPrefix(shown, "```\n")
+				if n == len(reqs)-1 {
+					piece = strings.TrimSuffix(piece, "\n```")
+				} else {
+					piece = strings.TrimSuffix(piece, "```")
+					if !strings.HasPrefix(remaining, piece) {
+						piece = strings.TrimSuffix(piece, "\n")
+					}
+				}
+				if !strings.HasPrefix(remaining, piece) {
+					t.Fatalf("part %d changed or lost original text", n)
+				}
+				remaining = strings.TrimPrefix(remaining, piece)
+			}
+			if remaining != "" {
+				t.Fatalf("lost %d bytes of payload", len(remaining))
+			}
+			if len(text) >= 10_000 && len(reqs) < 2 {
+				t.Fatal("long approval was not split")
+			}
+		})
+	}
+}
