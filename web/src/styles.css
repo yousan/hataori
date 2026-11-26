@@ -1482,6 +1482,17 @@ body {
   flex-wrap: wrap;
 }
 
+.shell.narrow button,
+.shell.narrow summary {
+  min-width: 44px;
+  min-height: 44px;
+  touch-action: manipulation;
+}
+
+.shell.narrow summary {
+  padding-block: 12px;
+}
+
 .shell.narrow .status-item,
 .shell.narrow .status-right,
 .shell.narrow .clients,
