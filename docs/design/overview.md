@@ -2661,6 +2661,13 @@ type ScopeOwner interface {
 	NewThread(ctx context.Context, scope, key, title string) (LinkRef, error)
 }
 
+// LinkChecker is a client's check before a confined thread is linked to an
+// existing chat thread. Unknown privacy is refused; a conversation opened
+// by the client is exempt. In-process only: no new socket request (#872).
+type LinkChecker interface {
+	CheckLink(ctx context.Context, l LinkRef, kind ThreadKind) error
+}
+
 // Connection is implemented by a ScopeOwner that connects to a chat
 // service. A chat front end is not connected from its start until its
 // driver says it is, while the driver reconnects by itself, and while it
@@ -2845,6 +2852,13 @@ type Driver interface {
 // finds it.
 type Factory func(config *os.Root, settings []byte) (Driver, error)
 
+// ThreadPrivacy asks the service whether an existing thread is private;
+// a missing implementation, an error or an unknown type counts as private
+// for a confined link (#872). The parent must match conv.Channel.
+type ThreadPrivacy interface {
+	PrivateThread(ctx context.Context, conv Conversation) (bool, error)
+}
+
 // Namer is implemented by a Driver that can tell the name the service shows
 // people for a conversation, such as "#general" for a Discord channel; ""
 // for none. The chat front end asks it for each scope's channel after each
@@ -2982,6 +2996,11 @@ type Inbound struct {
 	// conversation, one that forwards another and one that was edited are no
 	// call. A driver that cannot tell reports none.
 	Call bool
+	// RejectedCall says an automated author addressed this account with a
+	// mention or reply. It is evidence for a refusal log only, never input.
+	// Unlike Call, it may recognize the account's literal mention when the
+	// service omits webhook mention metadata. Quotes and code do not count.
+	RejectedCall bool
 	// OthersOnly says that the message mentions an account or replies to a
 	// post, and neither is the driver's own or may be: a mention of a group
 	// that may hold the account, such as a role or everyone, and a reply to a

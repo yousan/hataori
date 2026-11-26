@@ -307,3 +307,5 @@ func TestThreadsGiveTheirKind(t *testing.T) {
 	f.core.Store.DB.QueryRow(`SELECT max(id) FROM threads`).Scan(&last)
 	ordinary(f, control.ThreadID(last), "an approved proposal")
 }
+
+func (*slowOwner) CheckLink(context.Context, control.LinkRef, control.ThreadKind) error { return nil }

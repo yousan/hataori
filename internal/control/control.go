@@ -1009,6 +1009,14 @@ type ScopeOwner interface {
 	NewThread(ctx context.Context, scope, key, title string) (LinkRef, error)
 }
 
+// LinkChecker is a client's check before a confined thread is linked to an
+// existing chat thread. The core refuses when the client cannot check. A
+// conversation the client opens itself needs no check. This is in-process
+// only; it adds no operation to the control socket.
+type LinkChecker interface {
+	CheckLink(ctx context.Context, l LinkRef, kind ThreadKind) error
+}
+
 // Connection is implemented by a ScopeOwner that connects to a chat
 // service, so that a reader can tell when it is not connected (Clients).
 type Connection interface {

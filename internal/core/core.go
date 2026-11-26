@@ -1349,6 +1349,20 @@ func (a *api) Start(ctx context.Context, r control.StartRequest) (control.Thread
 // key names is not the one asked for.
 var ErrKindKey = errors.New("the key started a thread of another kind")
 
+// CheckConversationCall authorizes a chat call before its client reads the
+// service or records the message. StartConfined checks again when starting.
+func (c *Core) CheckConversationCall(caller control.Caller, scope string) error {
+	a := c.As(caller).(*api)
+	if err := a.act(control.OpStart, "Start", scope); err != nil {
+		return err
+	}
+	if sc, ok := c.Scopes[scope]; !ok || !sc.Enabled {
+		c.Log.Warn("start refused", "scope", scope, "reason", "scope is not enabled")
+		return ErrDisabled
+	}
+	return nil
+}
+
 // StartConfined is Start, as caller, for a thread of kind, one of the
 // confined ones, whose sessions all run confined (design, section 7.1):
 // with no shell, file tools only in its own directory and only the MCP
@@ -1468,6 +1482,11 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 		if other != 0 {
 			a.c.Log.Warn("start refused", "scope", r.Scope, "reason", "another supervisor's own thread of the scope is open", "open", int64(other))
 			return 0, fmt.Errorf("core: start in %q: thread %d, a supervisor's own thread of the scope, is open: %w", r.Scope, other, session.ErrRefused)
+		}
+	}
+	if confined && r.Thread != "" {
+		if err := a.c.checkConfinedLink(ctx, control.LinkRef{Client: sc.Owner, Channel: r.Scope, Thread: r.Thread}, kind); err != nil {
+			return 0, err
 		}
 	}
 	// Before anything is made: a stopped input opens no chat thread and

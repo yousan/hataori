@@ -507,7 +507,7 @@ func TestSupervisorReachesNoThreadOfItsOwn(t *testing.T) {
 					t.Errorf("a person's send to thread %d: %q", id, got)
 				}
 			}
-			f.wt.r.driver.Inject(f.chat("a"), fakesurface.Person(svCaller), "reply in the chat")
+			f.wt.r.driver.InjectWith(f.chat("a"), fakesurface.Person(svCaller), "reply in the chat", func(in *surface.Inbound) { in.Call = true })
 			f.wt.r.postedWith(t, f.chat("a"), "in the chat")
 		})
 	}

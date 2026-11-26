@@ -497,6 +497,13 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 		// (#352), and writes post_sent when a plugin may read it.
 		postSent := slices.ContainsFunc(grants, func(g plugin.Grant) bool { return slices.Contains(g.Events, "post_sent") })
 		for _, fe := range fronts {
+			fe.CheckCall = sv.CheckCall
+			fe.Retry = func(ctx context.Context, scope string, id control.ThreadID, key, from string, in control.Input) error {
+				return c.RetryConversation(ctx, control.Caller{From: from, Scopes: []string{scope}, May: control.OpRead | control.OpStart}, id, key, in)
+			}
+			fe.Converse = func(ctx context.Context, scope, thread, key, from, text string) (control.ThreadID, error) {
+				return sv.Converse(ctx, supervisor.Call{Scope: scope, Thread: thread, Key: key, From: from, Text: text})
+			}
 			tells[fe.Name] = fe.Notice
 			if handles(grants, chat.PointMessageSending) {
 				fe.Outbox.Hooks = hooks

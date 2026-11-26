@@ -990,3 +990,9 @@ func TestOnlyThePeopleOfTheScopeAct(t *testing.T) {
 		t.Fatalf("the scope owner was asked for %d threads, want 1", owner.n)
 	}
 }
+
+func (fakeOwner) CheckLink(context.Context, control.LinkRef, control.ThreadKind) error { return nil }
+
+func (*countingOwner) CheckLink(context.Context, control.LinkRef, control.ThreadKind) error {
+	return nil
+}

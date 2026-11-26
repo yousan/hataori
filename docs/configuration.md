@@ -529,6 +529,14 @@ as private. Messages ignored because they have no required call are not saved,
 logged or passed to plugins. Calls currently carry only their own text, without
 files, earlier messages or the message replied to.
 
+A call after a conversation fails to start retries it under the same thread
+number. The new call becomes the replacement session's first input; a failed
+resume also keeps the earlier discussion. This works through secondary links
+and when the retry waits for a conversation slot. A plain message in a failed
+conversation gets the existing failure explanation only where hataori opened
+the chat thread. In an existing chat thread whose conversation is closed,
+only a call gets the closed-thread reply.
+
 ## Orders
 
 An order is a message in an enabled channel (not in a thread):

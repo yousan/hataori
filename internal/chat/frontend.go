@@ -55,6 +55,12 @@ type FrontEnd struct {
 	// scope's supervisor, by scope, of any client: a link here may show
 	// another client's scope (#657).
 	Supervisors map[string]Posts
+	// CheckCall authorizes before the front end asks the service or stores a call.
+	CheckCall func(scope, from string) error
+	// Converse starts or retries a conversation as the message's author.
+	Converse func(ctx context.Context, scope, thread, key, from, text string) (control.ThreadID, error)
+	// Retry keeps the resolved thread and scope, including through a show_in link.
+	Retry func(ctx context.Context, scope string, id control.ThreadID, key, from string, in control.Input) error
 	// Supervisor returns a scope's supervisor's own thread, 0 when it has
 	// none: what a message in an earlier one that is closed names
 	// (core.Core.SupervisorThread). Nil: no thread is named.
@@ -260,10 +266,13 @@ func (f *FrontEnd) handle(in surface.Inbound) error {
 			return err
 		}
 		text = in.Text
+		if in.Call {
+			text = stripOwnMentions(in)
+		}
 	}
 	o, ok := parseTrigger(f.Trigger, text)
 	if !ok {
-		return nil
+		return f.call(in)
 	}
 	o = f.newWords(o)
 	if arg, ok := attachArg(o); ok && !f.Driver.Limits().Commands {
@@ -312,6 +321,7 @@ func (f *FrontEnd) handle(in surface.Inbound) error {
 type request struct {
 	author surface.Author
 	conv   surface.Conversation // where it was asked; its channel is the scope
+	thread string               // an unlinked chat thread an order-call reuses; otherwise open one
 	key    string               // the Start's key, under which chat_triggers keeps it
 	reply  *surface.MessageRef  // what an answer replies to
 }
@@ -399,9 +409,9 @@ func (f *FrontEnd) start(ctx context.Context, r request, o order, n int64) (cont
 	if err := f.rememberSender(ctx, r.key, s); err != nil {
 		return 0, err
 	}
-	// No thread is named: once the core allows the Start, it asks this
-	// front end for one (NewThread), which opens it from the trigger.
-	id, startErr := api.Start(ctx, control.StartRequest{Key: r.key, Scope: channel, Repo: o.Repo,
+	// In the channel, the core asks this front end to open a chat thread
+	// on the trigger. An existing unlinked chat thread is linked in place.
+	id, startErr := api.Start(ctx, control.StartRequest{Key: r.key, Scope: channel, Thread: r.thread, Repo: o.Repo,
 		Agent: o.Agent, Model: o.Model, Effort: o.Effort, Input: control.Input{Text: o.Prompt}})
 	switch {
 	case errors.Is(startErr, control.ErrForbidden), errors.Is(startErr, control.ErrUnknownAgent):
@@ -694,6 +704,9 @@ func readableDetail(detail string, dialog bool) (text string, cut bool) {
 // hataori does not know gets nothing.
 func (f *FrontEnd) followUp(in surface.Inbound) error {
 	if in.Author.Kind == surface.Bot {
+		if in.Call || in.RejectedCall {
+			return f.refuseCall(in, "the author is a bot account")
+		}
 		return nil // the front end's own posts come back this way
 	}
 	ctx := f.context()
@@ -708,8 +721,45 @@ func (f *FrontEnd) followUp(in surface.Inbound) error {
 		return err // not known yet whether it is one of ours: try again
 	}
 	if !ok {
-		return nil // not a hataori thread
+		return f.call(in)
 	}
+	if t.Kind == control.KindConversation {
+		if in.Author.Kind != surface.Person {
+			return f.refuseCall(in, "the author is not a person")
+		}
+		var first int
+		if err := f.Outbox.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM inbox WHERE key = ? OR key = ?`,
+			"start:"+t.Scope+"\x00"+in.Ref.ID, "retry:"+t.Scope+"\x00"+in.Ref.ID).Scan(&first); err != nil {
+			return err
+		}
+		if first > 0 {
+			return nil
+		}
+		opened := f.openedHere(t, conv)
+		// An opened failed conversation retains #708 for a plain message.
+		if in.OthersOnly {
+			return nil
+		}
+		if !in.Call && !opened {
+			return nil
+		}
+		if f.CheckCall != nil {
+			if err := f.CheckCall(t.Scope, f.from(in.Author)); err != nil {
+				return nil
+			}
+		}
+		if err := f.CheckLink(ctx, control.LinkRef{Client: f.Name, Channel: conv.Channel, Thread: conv.Thread}, t.Kind); err != nil {
+			if errors.Is(err, control.ErrForbidden) {
+				return f.privateCall(in, t.Scope)
+			}
+			return err
+		}
+		if in.Call && t.State == control.Failed {
+			return f.retryCall(in, t)
+		}
+		in.Text = stripOwnMentions(in)
+	}
+
 	id := t.ID
 	if done, err := f.failedAnswered(ctx, in); done || err != nil {
 		return err // it was said not to be sent, so it is not, also when a choice started the thread again since

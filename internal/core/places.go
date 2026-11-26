@@ -404,6 +404,6 @@ func (c *Core) give(ctx context.Context, tx *store.Tx, w waitingInput) (func() e
 		return nil, fmt.Errorf("core: start: %w", err)
 	}
 	l := Launch{Session: w.session, Thread: w.thread, Agent: agent, Model: model, Effort: effort,
-		Principal: in.Principal, From: in.From, Key: in.Key, Input: in.Input(), Confined: true, Dir: in.Dir}
+		Principal: in.Principal, From: in.From, Key: in.Key, Input: in.Input(), Confined: true, Dir: in.Dir, Context: in.Context}
 	return func() error { return c.launch(ctx, l, "") }, nil
 }

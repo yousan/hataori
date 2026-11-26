@@ -108,6 +108,12 @@ func (d *Driver) call(m wireMessage, in *surface.Inbound) {
 	reply := m.Type == typeReply
 	own, known := m.toPostOf(d.botID)
 	in.Call = m.mayCall(in.Direct) && (len(in.OwnMentions) > 0 || own)
+	// Automated authors never call. A literal mention is sufficient to
+	// log their refusal, even when webhook metadata omits the mention;
+	// this signal can grant no input, link, fetch or post.
+	in.RejectedCall = !m.byPerson() && !in.Direct && m.Edited == nil && !m.forwards() && (own || slices.ContainsFunc(mentions, func(n mention) bool {
+		return !n.role && n.id == d.botID || n.role && d.ownRole(n.id)
+	}))
 
 	mayBeOwn := reply && (own || !known) || m.mentions(d.botID) ||
 		len(m.MentionRoles) > 0 || m.MentionEveryone || d.mayMentionOwn(m.Content)

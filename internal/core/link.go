@@ -62,6 +62,15 @@ func (a *api) Link(ctx context.Context, id control.ThreadID, l control.LinkRef) 
 		case !errors.Is(err, sql.ErrNoRows):
 			return control.LinkRef{}, fmt.Errorf("core: link thread %d: %w", id, err)
 		}
+		kind, err := a.c.Kind(ctx, id)
+		if err != nil {
+			return control.LinkRef{}, err
+		}
+		if kind.Confined() {
+			if err := a.c.checkConfinedLink(ctx, l, kind); err != nil {
+				return control.LinkRef{}, err
+			}
+		}
 	} else {
 		// A conversation of the thread in that channel already: it is shown
 		// there, and nothing is opened.
@@ -129,4 +138,19 @@ func (c *Core) ownLink(ctx context.Context, q querier, id control.ThreadID, l *c
 		return nil, nil
 	}
 	return l, nil
+}
+
+// checkConfinedLink asks the receiving client before accepting a confined
+// thread's link. An absent checker or an uncertain answer fails closed.
+func (c *Core) checkConfinedLink(ctx context.Context, l control.LinkRef, kind control.ThreadKind) error {
+	checker, ok := c.Owners[l.Client].(control.LinkChecker)
+	if !ok {
+		c.Log.Warn("link refused", "client", l.Client, "channel", l.Channel, "reason", "the client cannot check thread privacy")
+		return fmt.Errorf("core: the client cannot check thread privacy: %w", control.ErrForbidden)
+	}
+	err := checker.CheckLink(ctx, l, kind)
+	if err != nil {
+		c.Log.Warn("link refused", "client", l.Client, "channel", l.Channel, "reason", "the client did not allow a confined link")
+	}
+	return err
 }

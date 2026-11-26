@@ -226,3 +226,5 @@ func TestLinkToAConversationThatWasThere(t *testing.T) {
 		}
 	}
 }
+
+func (*clientOwner) CheckLink(context.Context, control.LinkRef, control.ThreadKind) error { return nil }

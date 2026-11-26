@@ -85,6 +85,13 @@ type Identified interface {
 	CheckIdentity(ctx context.Context) error
 }
 
+// ThreadPrivacy is implemented by a Driver that can determine whether an
+// existing thread is private. An error means it cannot tell; a caller must
+// treat that as private. The parent channel must match conv.Channel.
+type ThreadPrivacy interface {
+	PrivateThread(ctx context.Context, conv Conversation) (bool, error)
+}
+
 // Namer is implemented by a Driver that can tell the name the service shows
 // people for a conversation, such as "#general" for a channel. A
 // conversation the service gives no name, such as a direct one, has "".
@@ -271,6 +278,11 @@ type Inbound struct {
 	// conversation, one that forwards another and one that was edited are no
 	// call. A driver that cannot tell reports none.
 	Call bool
+	// RejectedCall says an automated author addressed this account with a
+	// mention or reply. It is evidence for a refusal log only, never input.
+	// Unlike Call, it may recognize the account's literal mention when the
+	// service omits webhook mention metadata. Quotes and code do not count.
+	RejectedCall bool
 	// OthersOnly says that the message mentions an account or replies to a
 	// post, and neither is the driver's own or may be: a mention of a group
 	// that may hold the account, such as a role or everyone, and a reply to a
