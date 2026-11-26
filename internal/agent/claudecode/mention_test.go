@@ -99,10 +99,7 @@ func TestConfinedInputNamesNothing(t *testing.T) {
 			// The prompt the CLI reports is known as hataori's input, also
 			// by the codec after a restart. The CLI takes characters that do
 			// not show out of a paste, so that one is not known (#916); an
-			// escape sequence is not pasted (#914). After a restart, one with
-			// an escape sequence is not known by this paste either: an older
-			// hataori pasted the sequence, and this paste, without it, can be
-			// another input's.
+			// escape sequence is not pasted (#914).
 			known := mc.Case != "after_invisible"
 			if by, _ := c.starter(mc.Prompt); (by == agent.ByCaller) != known {
 				t.Errorf("%s: the prompt %q counts as started by %v", id, mc.Prompt, by)
@@ -111,7 +108,7 @@ func TestConfinedInputNamesNothing(t *testing.T) {
 			if a, err := c.Input(agent.Input{ID: "in-1", Text: mc.Text, Written: true}); err != nil || len(a.Keys) != 0 {
 				t.Fatalf("%s: after a restart: writes %q, %v", id, a.Keys, err)
 			}
-			if by, _ := c.starter(mc.Prompt); (by == agent.ByCaller) != (known && mc.Case != "after_escape") {
+			if by, _ := c.starter(mc.Prompt); (by == agent.ByCaller) != known {
 				t.Errorf("%s: after a restart: the prompt %q counts as started by %v", id, mc.Prompt, by)
 			}
 		}
@@ -132,7 +129,7 @@ func TestConfinedInputNamesNothing(t *testing.T) {
 func TestInputPastedWithItsAtSignIsKnown(t *testing.T) {
 	for _, mc := range mentionCases(t, "mention_restricted") {
 		c := confinedCodec(t)
-		if _, err := c.Input(agent.Input{ID: "in-1", Text: mc.Text, Written: true}); err != nil {
+		if _, err := c.Input(agent.Input{ID: "in-1", Text: mc.Text, Written: true, Earlier: true}); err != nil {
 			t.Fatal(err)
 		}
 		by, id := c.starter(mc.Prompt)
@@ -153,7 +150,7 @@ func TestInputPastedWithItsAtSignIsKnown(t *testing.T) {
 	for _, name := range []string{"mention_restricted_written", "mention_unrestricted_written"} {
 		for _, mc := range mentionCases(t, name) {
 			c := confinedCodec(t)
-			if _, err := c.Input(agent.Input{ID: "in-1", Text: mc.Text, Written: true}); err != nil {
+			if _, err := c.Input(agent.Input{ID: "in-1", Text: mc.Text, Written: true, Earlier: true}); err != nil {
 				t.Fatal(err)
 			}
 			by, id := c.starter(mc.Prompt)
@@ -164,7 +161,7 @@ func TestInputPastedWithItsAtSignIsKnown(t *testing.T) {
 	}
 	// One that would be a command was pasted after the prefix before, too.
 	c := confinedCodec(t)
-	if _, err := c.Input(agent.Input{ID: "in-1", Text: "/add-dir @x", Written: true}); err != nil {
+	if _, err := c.Input(agent.Input{ID: "in-1", Text: "/add-dir @x", Written: true, Earlier: true}); err != nil {
 		t.Fatal(err)
 	}
 	if by, id := c.starter(commandPrefix + "/add-dir @x"); by != agent.ByCaller || id != "in-1" {
@@ -199,7 +196,7 @@ func TestHeldInputIsNotKnownByAnotherPaste(t *testing.T) {
 			}
 			n++
 			c := confinedCodec(t)
-			if _, err := c.Input(agent.Input{ID: "in-1", Text: "\u200b" + mc.Text, Written: true}); err != nil || len(c.leftover) != 1 {
+			if _, err := c.Input(agent.Input{ID: "in-1", Text: "\u200b" + mc.Text, Written: true, Earlier: true}); err != nil || len(c.leftover) != 1 {
 				t.Fatalf("%s %s: held %q, %v", name, mc.Session, c.leftover, err)
 			}
 			if by, id := c.starter(mc.Prompt); by == agent.ByCaller {

@@ -169,25 +169,29 @@ func TestHeldInputAcrossARestart(t *testing.T) {
 // have been before the paste, does not release it, nor does the prompt of
 // what this one pastes for it if that took a control character out. One
 // that this one pastes the same, or that the older one pasted after the
-// prefix, is submitted after the agent's own turn, as ever.
+// prefix, is submitted after the agent's own turn, as ever, and so is any
+// that this one pasted (Input.Earlier).
 func TestOlderPasteIsNotSubmittedAfterARestart(t *testing.T) {
 	for _, tc := range []struct {
-		text  string
-		enter int  // Enters after the agent's own turn
-		own   bool // the capture's next prompt, 12, is the input's own
+		text    string
+		enter   int  // Enters after the agent's own turn
+		own     bool // the capture's next prompt, 12, is the input's own
+		current bool // this hataori pasted it
 	}{
-		{"\u001b[31m!id", 0, false},
-		{"#x", 0, false},
-		{heldText + "\r", 0, true},      // an older paste with a carriage return
-		{"\u0007" + heldText, 0, false}, // which this one pastes as the next prompt's text
-		{heldText, 1, true},
-		{"/add-dir x", 1, false},
+		{"\u001b[31m!id", 0, false, false},
+		{"#x", 0, false, false},
+		{heldText + "\r", 0, true, false},      // an older paste with a carriage return
+		{"\u0007" + heldText, 0, false, false}, // which this one pastes as the next prompt's text
+		{heldText, 1, true, false},
+		{"/add-dir x", 1, false, false},
+		{"\u001b[31m!id", 1, false, true},
+		{"#x", 1, false, true},
 	} {
 		c := (&Adapter{}).NewCodec(agent.Spec{Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
 		for _, f := range []string{"01-SessionStart", "02-UserPromptSubmit", "05-Stop", "07-UserPromptSubmit"} {
 			decodeFile(t, c, f, held+f+".json")
 		}
-		if a, _ := c.Input(agent.Input{ID: "in-7", Text: tc.text, Written: true}); len(a.Keys) != 0 {
+		if a, _ := c.Input(agent.Input{ID: "in-7", Text: tc.text, Written: true, Earlier: !tc.current}); len(a.Keys) != 0 {
 			t.Fatalf("%q: written again: %q", tc.text, a.Keys)
 		}
 		now := quiet(t, c, time.Now(), 2*DefaultInputTimeout, "during the own turn")
@@ -233,7 +237,7 @@ func TestOnlyItsOwnPromptReleasesAnInput(t *testing.T) {
 		decodeFile(t, c, f, held+f+".json")
 	}
 	for _, in := range []agent.Input{{ID: "in-6", Text: heldText + "\r"}, {ID: "in-7", Text: "#x"}} {
-		in.Written = true
+		in.Written, in.Earlier = true, true
 		if a, _ := c.Input(in); len(a.Keys) != 0 {
 			t.Fatalf("%s: written again: %q", in.ID, a.Keys)
 		}
@@ -255,7 +259,7 @@ func TestOnlyItsOwnPromptReleasesAnInput(t *testing.T) {
 func TestClearReleasesAnOlderPaste(t *testing.T) {
 	c := (&Adapter{}).NewCodec(agent.Spec{Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
 	decodeFile(t, c, "01", "clear/hooks/01-SessionStart.json")
-	if a, _ := c.Input(agent.Input{ID: "in-7", Text: "#x", Written: true}); len(a.Keys) != 0 {
+	if a, _ := c.Input(agent.Input{ID: "in-7", Text: "#x", Written: true, Earlier: true}); len(a.Keys) != 0 {
 		t.Fatalf("written again: %q", a.Keys)
 	}
 	if a, _ := c.Input(agent.Input{ID: "in-8", Text: "list the threads"}); len(a.Keys) != 0 || len(a.Events) != 1 || a.Events[0].Reason != agent.NotDelivered {
@@ -294,7 +298,7 @@ func TestNotificationDoesNotTakeAnOlderPaste(t *testing.T) {
 	for _, f := range []string{"01-SessionStart", "02-UserPromptSubmit", "05-Stop"} {
 		decodeFile(t, c, f, held+f+".json")
 	}
-	if a, _ := c.Input(agent.Input{ID: "in-7", Text: p.Prompt, Written: true}); len(a.Keys) != 0 {
+	if a, _ := c.Input(agent.Input{ID: "in-7", Text: p.Prompt, Written: true, Earlier: true}); len(a.Keys) != 0 {
 		t.Fatalf("written again: %q", a.Keys)
 	}
 	if a := decodeFile(t, c, "07", held+"07-UserPromptSubmit.json"); !strings.HasPrefix(summary(a), "turn(agent)") || a.Events[0].Input != "" {
@@ -306,4 +310,25 @@ func TestNotificationDoesNotTakeAnOlderPaste(t *testing.T) {
 		t.Fatalf("the next input: keys %q, events %+v", a.Keys, a.Events)
 	}
 	quiet(t, c, time.Now(), 2*DefaultInputTimeout, "after it")
+}
+
+// An input without an ID that may be in the box is not released by a
+// prompt that is no input's, which has no ID either.
+func TestHeldInputWithoutAnIDIsNotReleasedByAnotherPrompt(t *testing.T) {
+	c := (&Adapter{}).NewCodec(agent.Spec{Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
+	for _, f := range []string{"01-SessionStart", "02-UserPromptSubmit", "05-Stop", "07-UserPromptSubmit"} {
+		decodeFile(t, c, f, held+f+".json")
+	}
+	if a, _ := c.Input(agent.Input{Text: "#x", Written: true, Earlier: true}); len(a.Keys) != 0 {
+		t.Fatalf("written again: %q", a.Keys)
+	}
+	decodeFile(t, c, "11", held+"11-Stop.json")
+	if a := decodeFile(t, c, "12", held+"12-UserPromptSubmit.json"); summary(a) != "turn(terminal)" {
+		t.Fatalf("the prompt: %s", summary(a))
+	}
+	decodeFile(t, c, "13", held+"13-Stop.json")
+	a, _ := c.Input(agent.Input{ID: "in-8", Text: "list the threads"})
+	if len(a.Keys) != 0 || len(a.Events) != 1 || a.Events[0].Reason != agent.NotDelivered || a.Events[0].Input != "in-8" {
+		t.Fatalf("the next input: keys %q, events %+v", a.Keys, a.Events)
+	}
 }

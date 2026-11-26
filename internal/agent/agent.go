@@ -309,6 +309,10 @@ type Input struct {
 	// restarted, and its report has not been read. The codec records it as
 	// written and waiting for its report, and never writes its text again.
 	Written bool
+	// Earlier says, with Written, that a caller from before this field
+	// wrote it, with the codec it had then: that codec may have written it
+	// otherwise than this one does.
+	Earlier bool
 }
 
 // Answer answers a Request event.

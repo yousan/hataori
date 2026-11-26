@@ -1043,22 +1043,22 @@ func (r *Runner) handOverWritten(lv *live) {
 	r.Store.DB.QueryRow(`SELECT first_input FROM sessions WHERE id = ?`, lv.id).Scan(&fi)
 	var f firstInput
 	if fi != "" && json.Unmarshal([]byte(fi), &f) == nil && f.Sent && f.Written {
-		r.do(lv, r.inputActions(lv, agent.Input{ID: firstInputID, Text: f.Context + f.Input().ForAgent(), Written: true}))
+		r.do(lv, r.inputActions(lv, agent.Input{ID: firstInputID, Text: f.Context + f.Input().ForAgent(), Written: true, Earlier: !f.Current}))
 		lv.resend = false
 	}
-	rows, err := r.Store.DB.Query(`SELECT id, data, context FROM pending_inputs
-		WHERE session_id = ? AND request = '' AND written = 1 ORDER BY id`, lv.id)
+	rows, err := r.Store.DB.Query(`SELECT id, data, context, written FROM pending_inputs
+		WHERE session_id = ? AND request = '' AND written != 0 ORDER BY id`, lv.id)
 	if err != nil {
 		r.Log.Error("written input", "session", lv.id, "err", err)
 		return
 	}
 	var ins []agent.Input
 	for rows.Next() {
-		var id int64
+		var id, written int64
 		var data, earlier string
 		var in control.Input
-		if rows.Scan(&id, &data, &earlier) == nil && json.Unmarshal([]byte(data), &in) == nil {
-			ins = append(ins, agent.Input{ID: strconv.FormatInt(id, 10), Text: earlier + in.Text, Written: true})
+		if rows.Scan(&id, &data, &earlier, &written) == nil && json.Unmarshal([]byte(data), &in) == nil {
+			ins = append(ins, agent.Input{ID: strconv.FormatInt(id, 10), Text: earlier + in.Text, Written: true, Earlier: written != writtenNow})
 		}
 	}
 	rows.Close()
@@ -1083,6 +1083,10 @@ func (r *Runner) markWritten(lv *live, ids []string) error { return r.setWritten
 
 func (r *Runner) unmarkWritten(lv *live, ids []string) { r.setWritten(lv, ids, false) }
 
+// writtenNow is pending_inputs.written of an input that this runner wrote.
+// 1 is of one that a runner from before it wrote: agent.Input.Earlier.
+const writtenNow = 2
+
 func (r *Runner) setWritten(lv *live, ids []string, written bool) error {
 	err := r.Store.Update(context.Background(), func(tx *store.Tx) error {
 		ctx := context.Background()
@@ -1096,7 +1100,7 @@ func (r *Runner) setWritten(lv *live, ids []string, written bool) error {
 				if fi == "" || json.Unmarshal([]byte(fi), &f) != nil {
 					continue
 				}
-				f.Written = written
+				f.Written, f.Current = written, written
 				b, _ := json.Marshal(f)
 				if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, string(b), lv.id); err != nil {
 					return err
@@ -1107,7 +1111,11 @@ func (r *Runner) setWritten(lv *live, ids []string, written bool) error {
 			if err != nil {
 				continue // not one of ours
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE pending_inputs SET written = ? WHERE id = ? AND session_id = ?`, written, row, lv.id); err != nil {
+			mark := 0
+			if written {
+				mark = writtenNow
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE pending_inputs SET written = ? WHERE id = ? AND session_id = ?`, mark, row, lv.id); err != nil {
 				return err
 			}
 		}

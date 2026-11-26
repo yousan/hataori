@@ -218,6 +218,7 @@ type FirstInput struct {
 	Text      string            `json:"text"`
 	Sent      bool              `json:"sent,omitempty"`     // the turn was started for it, and it was handed to the codec
 	Written   bool              `json:"written,omitempty"`  // it was written to the agent; see agent.Input.Written
+	Current   bool              `json:"current,omitempty"`  // Written was set by a runner that sets this; else it is agent.Input.Earlier
 	Wake      bool              `json:"wake,omitempty"`     // the session was asleep: its agent resumes
 	NoInput   bool              `json:"no_input,omitempty"` // woken with no input, as for an attach: the agent is only started
 	Dir       string            `json:"dir,omitempty"`      // the workspace, once it is made; a confined thread's from its start

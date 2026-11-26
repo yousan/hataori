@@ -65,7 +65,7 @@ type codec struct {
 	runningPrompt string        // the prompt id of that turn
 	queue         []queued      // input held until the CLI can take it
 	sent          *sentInput    // input written, not yet reported
-	leftover      []string      // the inputs whose older paste may be in the box (Input): nothing is written, and they do not end, until one's prompt is reported or the session ends
+	leftover      []string      // the inputs whose older paste may be in the box (Input): nothing is written, and they do not end, until each one's prompt is reported or the session ends
 	timeout       time.Duration // for sent; DefaultInputTimeout when zero
 	mcp           mcpState      // the MCP servers input waits for (mcpwait.go)
 	tasks         tasks         // the background tasks that run (background.go)
@@ -218,11 +218,12 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 		// Nothing is written for it, Enter neither: if the restart came
 		// between the paste and its Enter, it ends "not delivered". Only
 		// when another turn runs meanwhile, which Enter waits for (track),
-		// it is pressed after that turn, unless it is a leftover.
+		// it is pressed after that turn, unless it is a leftover, which
+		// does not end.
 		typed := c.pasteText(in.Text)
 		text := normalize(typed)
 		q := queued{id: in.ID, text: text}
-		if c.spec.Confine != nil {
+		if c.spec.Confine != nil && in.Earlier {
 			clean := cleanPaste(in.Text)
 			q.controls = noControls(clean) != clean
 			for _, o := range []string{bangOrSlash(clean), bangOrSlash(strings.ReplaceAll(clean, "@", atSign))} {
@@ -247,12 +248,12 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 	return c.number(c.flush()), nil
 }
 
-// queued is an input and its Input.ID. older is set for one that was pasted
-// before a restart into a confined session: what earlier hataoris pasted for
-// it, one that left each "@" (before #887) and one that applied only
-// bangOrSlash (before #914). Which hataori pasted it is not recorded, so a
-// person who types just that meanwhile counts as the input, as a person who
-// types just what is pasted always does.
+// queued is an input and its Input.ID. older is set for one that an earlier
+// hataori pasted before a restart into a confined session (Input.Earlier):
+// what earlier hataoris pasted for it, one that left each "@" (before #887)
+// and one that applied only bangOrSlash (before #914). Which of them pasted
+// it is not recorded, so a person who types just that meanwhile counts as
+// the input, as a person who types just what is pasted always does.
 type queued struct {
 	id, text string
 	older    []string
@@ -1041,7 +1042,9 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 		// The box's text was submitted, if the prompt is of an input that
 		// was held. Another prompt, also another held input's, may have been
 		// before the paste: the others stay held.
-		c.leftover = slices.DeleteFunc(c.leftover, func(h string) bool { return h == id })
+		if by == agent.ByCaller {
+			c.leftover = slices.DeleteFunc(c.leftover, func(h string) bool { return h == id })
+		}
 		started := agent.Event{Kind: agent.TurnStarted, StartedBy: by, Input: id}
 		if by == agent.ByTerminal {
 			// The prompt a person typed at the terminal, which no caller
