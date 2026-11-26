@@ -15,6 +15,7 @@ func TestImagePathLinesAreText(t *testing.T) {
 			{"Look at this\n/tmp/example.png", "Look at this\n" + commandPrefix + "/tmp/example.png"},
 			{"Look at this\n  '/tmp/with spaces.JPEG'  \nthen answer", "Look at this\n" + commandPrefix + "  '/tmp/with spaces.JPEG'  \nthen answer"},
 			{"Look at these\n/tmp/one.gif /tmp/two.webp", "Look at these\n" + commandPrefix + "/tmp/one.gif /tmp/two.webp"},
+			{"Look at these\n/one.png /tmp/two.webp", "Look at these\n" + commandPrefix + "/one.png /tmp/two.webp"},
 			{"Look at this\n/tmp/escaped.p\\ng", "Look at this\n" + commandPrefix + "/tmp/escaped.p\\ng"},
 		} {
 			got := c.pasteText(tt.text)

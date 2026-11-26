@@ -57,7 +57,7 @@ def no_images(text):
         next_path = PATH_SEPARATOR.search(first)
         if next_path:
             head = first[:next_path.start()].strip("\"'")
-            if head.startswith("/") and "/" not in head[1:]:
+            if head.startswith("/") and "/" not in head[1:] and not IMAGE_END.search(head.replace("\\", "")):
                 continue
         if not first.startswith((PREFIX, "> ")) and IMAGE_END.search(first.replace("\\", "")):
             lines[i] = PREFIX + line

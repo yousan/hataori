@@ -342,7 +342,7 @@ func noImagePaths(text string) string {
 		}
 		if next := imagePathSeparator.FindStringIndex(first); next != nil {
 			head := strings.Trim(first[:next[0]], `"'`)
-			if strings.HasPrefix(head, "/") && !strings.Contains(head[1:], "/") {
+			if strings.HasPrefix(head, "/") && !strings.Contains(head[1:], "/") && !imagePathEnd.MatchString(strings.ReplaceAll(head, "\\", "")) {
 				continue // a slash command before a path is not a path list
 			}
 		}
