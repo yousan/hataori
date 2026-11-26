@@ -96,6 +96,18 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 	}
 
 	r, err := Step(snap, in)
+	if in.Kind == AgentEvent {
+		failure, failureErr := pendingFailure(ctx, tx, sessionID, turnID, in.Agent)
+		if failureErr != nil {
+			return failureErr
+		}
+		if failure != nil {
+			r, err = Result{State: snap.State}, nil
+			if failure.Kind != "" {
+				r.Out = []Out{*failure}
+			}
+		}
+	}
 	if err != nil {
 		return err
 	}
