@@ -319,6 +319,18 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 	if err != nil {
 		return agent.Spec{}, err
 	}
+	if confined {
+		if err := r.Store.DB.QueryRowContext(ctx, `SELECT outside_key FROM sessions WHERE id = ?`, id).Scan(&first.ConversationKey); err != nil {
+			return agent.Spec{}, err
+		}
+		marks, err := store.CurrentMarks(ctx, r.Store.DB, thread)
+		if err != nil {
+			return agent.Spec{}, err
+		}
+		if line := store.OutsideLine(marks); line != "" && !strings.HasPrefix(first.Context, line+"\n") {
+			first.Context = line + "\n" + first.Context
+		}
+	}
 	if confined && spec.Confine == nil {
 		spec.Confine = &agent.Confinement{}
 	}
@@ -2410,20 +2422,25 @@ func (r *Runner) replaceTx(ctx context.Context, tx *store.Tx, lv *live) (*replac
 	}
 	// What the new session's agent gets before the input: the thread's
 	// earlier conversation, as this transaction sees it.
-	earlier, err := r.earlier(ctx, tx, l.Thread)
-	if err != nil {
-		r.Log.Error("the thread's earlier context", "session", lv.id, "err", err) // the new session starts without it
+	earlier := old.Context
+	if old.ConversationKey == "" {
+		var err error
+		earlier, err = r.earlier(ctx, tx, l.Thread)
+		if err != nil {
+			r.Log.Error("the thread's earlier context", "session", lv.id, "err", err) // the new session starts without it
+		}
 	}
 	// The input the old session was woken for, as a new session's first
 	// input: not sent, not written, and in the old session's workspace. One
 	// woken with no input, as for an attach, is replaced by one started with
 	// none (#528).
 	first := firstInput{Principal: old.Principal, From: old.From, Key: old.Key, Text: old.Text, Link: old.Link,
-		Before: old.Before, After: old.After, Via: old.Via, Context: earlier, Dir: lv.spec.Dir, NoInput: old.NoInput}
+		Before: old.Before, After: old.After, Via: old.Via, Context: earlier, Dir: lv.spec.Dir, NoInput: old.NoInput, ConversationKey: old.ConversationKey}
 	fb, _ := json.Marshal(first)
 	now := time.Now().UnixMilli()
-	res, err := tx.ExecContext(ctx, `INSERT INTO sessions (thread_id, agent, state, model, effort, first_input, launch, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`, tid, l.Agent, string(control.Creating), l.Model, l.Effort, string(fb), now, now)
+	res, err := tx.ExecContext(ctx, `INSERT INTO sessions (thread_id, agent, state, model, effort, first_input, launch, created_at, updated_at, outside_key, set_aside)
+		VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, CASE WHEN ? != '' THEN (SELECT agent_session_id FROM sessions WHERE id = ?) END)`,
+		tid, l.Agent, string(control.Creating), l.Model, l.Effort, string(fb), now, now, first.ConversationKey, first.ConversationKey, lv.id)
 	if err != nil {
 		return nil, err
 	}

@@ -447,6 +447,17 @@ type Caller struct {
 	// the effort the proposal showed. The daemon sets it when it binds the
 	// caller; zero AsksIn refuses every Start and Send. Since protocol 3.26.
 	Propose bool
+	// ProposeOutside also requires proposals while the conversation in
+	// AsksIn has outside text. Checked at every call, never cached with a
+	// token. This is daemon-owned policy, not a socket argument.
+	ProposeOutside bool
+	// ConversationKey binds tools to the logical conversation of their
+	// launch, including while its finished agent drains late reports. Nil
+	// is the current conversation. It is never supplied on the socket.
+	ConversationKey *string
+	// OutsideSends bounds marked proposals in an hour; zero leaves this
+	// policy off and a negative value permits none. Daemon-owned.
+	OutsideSends int
 	// OrdinaryOnly refuses, with ErrForbidden, the caller's input to a
 	// confined thread, whichever it is, its own included (ThreadKind): its
 	// Send, whether it runs or is a proposal, its AskInterrupt of one, and
@@ -635,6 +646,10 @@ type StartRequest struct {
 // Input is what a client gives an agent.
 type Input struct {
 	Text string `json:"text"`
+	// Outside is set only inside the daemon by the part giving outside
+	// text. It is committed with the input, before any agent sees it. No
+	// socket client or session tool can supply it.
+	Outside []OutsideText `json:"-"`
 	// Link is the conversation the input came through, a link of the
 	// thread; absent for input from outside chat. The core keeps it only
 	// when it is one of the thread's links, and the input event names it,
@@ -818,6 +833,11 @@ type ThreadInfo struct {
 	// Kind is what the thread is to its scope; empty from a daemon of
 	// before 3.38.
 	Kind ThreadKind `json:"kind,omitempty"`
+	// Outside identifies the current conversation's permanent mark.
+	// LastOutside keeps the last turn's mark when its conversation ended.
+	// Since protocol 3.43.
+	Outside     []OutsideText `json:"outside,omitempty"`
+	LastOutside []OutsideText `json:"last_outside,omitempty"`
 }
 
 // Attachment is the result of AttachTerminal.

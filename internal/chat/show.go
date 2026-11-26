@@ -236,13 +236,14 @@ type eventData struct {
 	Request string `json:"request"`
 	Multi   bool   `json:"multi"` // request: several choices at once, since 3.8
 	// proposal_made, proposal_answered: since 3.26
-	Number   int64  `json:"number"`
-	Action   string `json:"action"`
-	Repo     string `json:"repo"`
-	Model    string `json:"model"`
-	Effort   string `json:"effort"`
-	Question string `json:"question"`
-	Research bool   `json:"research"` // proposal_made: since 3.34
+	Number   int64                 `json:"number"`
+	Action   string                `json:"action"`
+	Repo     string                `json:"repo"`
+	Model    string                `json:"model"`
+	Effort   string                `json:"effort"`
+	Question string                `json:"question"`
+	Research bool                  `json:"research"` // proposal_made: since 3.34
+	Outside  []control.OutsideText `json:"outside"`  // since 3.43
 }
 
 // proposalText is how a supervisor's proposal is put to a person: what it
@@ -268,7 +269,11 @@ func proposalText(d eventData) string {
 	if len(with) > 0 {
 		what += " (" + strings.Join(with, ", ") + ")"
 	}
-	return strings.TrimSpace(fmt.Sprintf("Proposal %d of the supervisor: %s?\n%s", d.Number, what, d.Text))
+	text := strings.TrimSpace(fmt.Sprintf("Proposal %d of the supervisor: %s?\n%s", d.Number, what, d.Text))
+	if line := store.OutsideLine(d.Outside); line != "" {
+		text = line + "\n" + text
+	}
+	return text
 }
 
 // proposalDone is the line that says how a proposal was decided, and what
@@ -388,6 +393,9 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		return row(m), nil
 	case "approval_asked":
 		text := strings.TrimSpace(fmt.Sprintf("Interrupt thread %d? %s", d.Target, d.Reason))
+		if line := store.OutsideLine(d.Outside); line != "" {
+			text = line + "\n" + text
+		}
 		choices := []string{"Approve", "Refuse"}
 		if !f.withButtons(choices, false) {
 			return row(surface.Message{Text: text + "\nThis chat service shows no buttons, so this cannot be approved here."}), nil

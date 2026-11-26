@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/people"
 	"github.com/yousan/hataori/internal/store"
 	"github.com/yousan/hataori/internal/surface"
 )
@@ -83,6 +84,9 @@ type Outbox struct {
 	Store  *store.Store
 	Client string // the front end's name; rows of other clients are not touched
 	Driver surface.Driver
+	// People maps the last person a marked turn answered to mention IDs.
+	// Without it such a post mentions nobody, including on retry.
+	People *people.Directory
 	Log    *slog.Logger
 	// MaxFailures is how many failed posts drop a decoration (default 3).
 	MaxFailures int
@@ -494,6 +498,9 @@ func (o *Outbox) send(ctx context.Context, conv surface.Conversation, r pending)
 		return out
 	}
 	m.Text = text
+	if m.Notify, err = o.outsideNotify(ctx, r.event, m.Notify); err != nil {
+		return stuck
+	}
 	ref, err := o.Driver.Post(ctx, conv, k, m)
 	if err == nil {
 		return o.sent(ctx, r, ref, m.Text)
@@ -575,6 +582,9 @@ func (o *Outbox) change(ctx context.Context, conv surface.Conversation, r pendin
 		}
 	}
 	if meta.Op == Edit {
+		if m.Notify, err = o.outsideNotify(ctx, r.event, m.Notify); err != nil {
+			return stuck
+		}
 		err = o.Driver.Edit(ctx, to, m)
 	} else {
 		err = o.Driver.Delete(ctx, to)
@@ -592,6 +602,36 @@ func (o *Outbox) change(ctx context.Context, conv surface.Conversation, r pendin
 	}
 	o.Log.Warn("chat outbox: "+string(meta.Op)+" failed", "key", k, "decoration", r.decoration, "err", err)
 	return o.record(ctx, failedPost, r.id, `UPDATE chat_outbox SET failures = failures + 1 WHERE id = ?`, r.id)
+}
+
+func (o *Outbox) outsideNotify(ctx context.Context, event uint64, ids []string) ([]string, error) {
+	if len(ids) == 0 {
+		return ids, nil
+	}
+	var thread control.ThreadID
+	var kind control.ThreadKind
+	err := o.Store.DB.QueryRowContext(ctx, `SELECT e.thread_id, t.kind FROM events e JOIN threads t ON t.id = e.thread_id WHERE e.pos = ?`, event).Scan(&thread, &kind)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && !kind.Confined() {
+		return ids, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	person, marked, err := outsidePerson(ctx, o.Store.DB, thread, event)
+	if err != nil || !marked {
+		return ids, err
+	}
+	var allowed []string
+	if o.People != nil {
+		allowed = o.People.IDs(person, o.Client)
+	}
+	var out []string
+	for _, id := range ids {
+		if slices.Contains(allowed, id) {
+			out = append(out, id)
+		}
+	}
+	return out, nil
 }
 
 // lamp shows a status on a message. A later lamp on the same message, in

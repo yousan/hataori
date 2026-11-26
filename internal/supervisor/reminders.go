@@ -3,6 +3,7 @@ package supervisor
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -68,7 +69,11 @@ func (m *Reminders) now() time.Time {
 // cannot be cancelled, and counts as open until it was, since a wake that
 // is dropped gives it back.
 func (m *Reminders) Remind(ctx context.Context, r control.RemindRequest) (control.RemindAnswer, error) {
-	a, err := m.remind(ctx, r)
+	return m.remindFrom(ctx, r)
+}
+
+func (m *Reminders) remindFrom(ctx context.Context, r control.RemindRequest, origin ...reminderOrigin) (control.RemindAnswer, error) {
+	a, err := m.remind(ctx, r, origin...)
 	if err != nil {
 		m.Log.Warn("control call refused", "op", "Remind", "scope", m.Scope, "reason", err.Error())
 		return control.RemindAnswer{}, err
@@ -80,7 +85,7 @@ func (m *Reminders) Remind(ctx context.Context, r control.RemindRequest) (contro
 	return a, nil
 }
 
-func (m *Reminders) remind(ctx context.Context, r control.RemindRequest) (control.RemindAnswer, error) {
+func (m *Reminders) remind(ctx context.Context, r control.RemindRequest, origin ...reminderOrigin) (control.RemindAnswer, error) {
 	given := 0
 	for _, is := range []bool{r.At != nil, r.Delay != 0, r.Cancel != 0} {
 		if is {
@@ -132,8 +137,21 @@ func (m *Reminders) remind(ctx context.Context, r control.RemindRequest) (contro
 		if open >= m.Max {
 			return fmt.Errorf("remind: %d reminders are open already, and reminders_max is %d: cancel one first", open, m.Max)
 		}
-		res, err := tx.ExecContext(ctx, `INSERT INTO supervisor_reminders (scope, due, note, made, state) VALUES (?, ?, ?, ?, ?)`,
-			m.Scope, ms, r.Note, now.UnixMilli(), reminderOpen)
+		var marks []control.OutsideText
+		if len(origin) != 0 && origin[0].thread != 0 {
+			var err error
+			if marks, err = store.BoundMarks(ctx, tx, origin[0].thread, origin[0].key); err != nil {
+				return err
+			}
+			if len(marks) != 0 {
+				if err := store.OutsideQuota(ctx, tx, m.Scope, now, origin[0].limit); err != nil {
+					return err
+				}
+			}
+		}
+		outside, _ := json.Marshal(marks)
+		res, err := tx.ExecContext(ctx, `INSERT INTO supervisor_reminders (scope, due, note, made, state, outside) VALUES (?, ?, ?, ?, ?, ?)`,
+			m.Scope, ms, r.Note, now.UnixMilli(), reminderOpen, string(outside))
 		if err != nil {
 			return err
 		}
@@ -209,15 +227,24 @@ func remindersSet(ctx context.Context, c *core.Core, scope string, from, to time
 }
 
 // API is api, the supervisor's caller, with the scope's reminders.
-func (m *Reminders) API(api control.API) control.API { return &reminding{API: api, m: m} }
+func (m *Reminders) API(api control.API) control.API {
+	return &reminding{API: api, m: m}
+}
+
+type reminderOrigin struct {
+	thread control.ThreadID
+	key    *string
+	limit  int
+}
 
 type reminding struct {
 	control.API
-	m *Reminders
+	m      *Reminders
+	origin reminderOrigin
 }
 
 func (a *reminding) Remind(ctx context.Context, r control.RemindRequest) (control.RemindAnswer, error) {
-	return a.m.Remind(ctx, r)
+	return a.m.remindFrom(ctx, r, a.origin)
 }
 
 // remind reads which reminders are due, and sets the timer for the next

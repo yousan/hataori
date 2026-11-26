@@ -250,7 +250,7 @@ func TestACallOverTheLimitStartsWhenAPlaceIsFree(t *testing.T) {
 	if err := k.core.Store.DB.QueryRow(`SELECT first_input FROM sessions WHERE id = ?`, k.session(t, c)).Scan(&first); err != nil {
 		t.Fatal(err)
 	}
-	if json.Unmarshal([]byte(first), &f); f != (FirstInput{Dir: k.dir}) {
+	if json.Unmarshal([]byte(first), &f); !reflect.DeepEqual(f, FirstInput{Dir: k.dir}) {
 		t.Fatalf("its session has %+v while its input waits", f)
 	}
 	if n := len(k.eventsOf(t, c, "thread_created")); n != 1 {
