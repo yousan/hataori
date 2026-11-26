@@ -2078,6 +2078,8 @@ type sendGuard struct {
 
 var errGuardEnded = errors.New("the requested turn ended")
 
+var errPromptBuild = errors.New("ordinary input still needs prompt-build hooks")
+
 func (a *api) send(ctx context.Context, id control.ThreadID, key string, in control.Input, busy control.Busy, guard *sendGuard) error {
 	scope, err := a.actThread(ctx, control.OpSend, "Send", id)
 	if err != nil {
@@ -2109,7 +2111,8 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		// transaction that takes it see the same.
 		defer a.c.locks.lock("send:" + scope + "\x00" + key)()
 	}
-	if in, err = a.sendHooks(ctx, id, scope, key, in, guard); err != nil {
+	var needsBuild bool
+	if in, needsBuild, err = a.sendHooks(ctx, id, scope, key, in, guard); err != nil {
 		return err
 	}
 	var (
@@ -2126,7 +2129,9 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 	)
 	// The state is read in the write transaction, so it cannot change
 	// between the Busy decision and the input.
-	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
+	take := func(tx *store.Tx) error {
+		accepted, interrupt, waits, wake = false, false, false, false
+		pending, running, answer = 0, 0, ""
 		var state control.State
 		var err error
 		sid, state, err = a.c.current(ctx, tx, id)
@@ -2201,6 +2206,18 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 				return fmt.Errorf("core: send to %v: a wake's conversation runs: %w", id, ErrBusy)
 			}
 		}
+		var question string
+		if state == control.Waiting && !a.caller.NoAnswer {
+			err := tx.QueryRowContext(ctx, `SELECT request FROM requests WHERE session_id = ? AND state = 'open' ORDER BY id DESC LIMIT 1`, sid).Scan(&question)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("core: request: %w", err)
+			}
+		}
+		if needsBuild && question == "" {
+			// Roll back the key and run the missing point outside the write
+			// transaction before accepting this as ordinary input.
+			return errPromptBuild
+		}
 		marked := FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: key, Text: in.Text, Link: in.Link,
 			Before: in.Before, After: in.After, Via: a.caller.Via}
 		if guard == nil {
@@ -2230,27 +2247,28 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 			// The key is not taken: the transaction is rolled back.
 			return fmt.Errorf("core: send to %v: waiting on a question: %w", id, ErrBusy)
 		}
-		if state == control.Waiting {
-			// The input is the answer to the open question.
-			var req string
-			err := tx.QueryRowContext(ctx, `SELECT request FROM requests WHERE session_id = ? AND state = 'open'
-				ORDER BY id DESC LIMIT 1`, sid).Scan(&req)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return fmt.Errorf("core: request: %w", err)
-			}
-			if err == nil {
-				answer = req
-				if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal, From: a.caller.From,
-					Key: key, Text: given.Text, Request: req, Link: in.Link, Via: a.caller.Via}); err != nil {
-					return err
-				}
-				pending, err = pend(ctx, tx, sid, req, control.Answer{Text: given.Text}, "")
+		if question != "" {
+			answer = question
+			if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal, From: a.caller.From,
+				Key: key, Text: given.Text, Request: question, Link: in.Link, Via: a.caller.Via}); err != nil {
 				return err
 			}
+			pending, err = pend(ctx, tx, sid, question, control.Answer{Text: given.Text}, "")
+			return err
 		}
 		pending, hand, err = a.c.sendTx(ctx, tx, sid, marked)
 		return err
-	})
+	}
+	for {
+		err = a.c.Store.Update(ctx, take)
+		if !errors.Is(err, errPromptBuild) {
+			break
+		}
+		needsBuild = false
+		if in, err = a.runInputHooks(ctx, "Send", id, scope, in, PointBeforePromptBuild); err != nil {
+			return err
+		}
+	}
 	if err != nil || !accepted {
 		return err
 	}
@@ -2376,19 +2394,20 @@ func forAgent(in control.Input) control.Input {
 // thread be reopened or started again in between. Only a Send that guard
 // ties to the running turn is left to it in a closed or removed thread:
 // that turn is over.
-// The caller holds the key's lock.
-func (a *api) sendHooks(ctx context.Context, id control.ThreadID, scope, key string, in control.Input, guard *sendGuard) (control.Input, error) {
+// The boolean says prompt-build is still owed if this becomes ordinary
+// input. The caller holds the key's lock.
+func (a *api) sendHooks(ctx context.Context, id control.ThreadID, scope, key string, in control.Input, guard *sendGuard) (control.Input, bool, error) {
 	in.Before, in.After = "", ""
 	if a.c.Hooks == nil {
-		return in, nil
+		return in, false, nil
 	}
 	if key != "" {
 		var n int
 		if err := a.c.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM inbox WHERE key = ?`, "send:"+scope+"\x00"+key).Scan(&n); err != nil {
-			return in, fmt.Errorf("core: send key: %w", err)
+			return in, false, fmt.Errorf("core: send key: %w", err)
 		}
 		if n > 0 {
-			return in, nil
+			return in, false, nil
 		}
 	}
 	sid, state, err := a.c.current(ctx, a.c.Store.DB, id)
@@ -2397,26 +2416,28 @@ func (a *api) sendHooks(ctx context.Context, id control.ThreadID, scope, key str
 	}
 	if err == nil && (state == control.Closed || state == control.Removed) {
 		if guard != nil && !guard.proposal {
-			return in, nil
+			return in, false, nil
 		}
-		return in, fmt.Errorf("core: send to %v: %w", id, ErrClosed)
+		return in, false, fmt.Errorf("core: send to %v: %w", id, ErrClosed)
 	}
 	if err == nil && state == control.Failed {
-		return in, fmt.Errorf("core: send to %v: the thread is failed: %w", id, session.ErrRefused)
+		return in, false, fmt.Errorf("core: send to %v: the thread is failed: %w", id, session.ErrRefused)
 	}
 	if err == nil && state == control.Waiting && !a.caller.NoAnswer {
 		var open int
 		if err := a.c.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM requests WHERE session_id = ? AND state = 'open'`, sid).Scan(&open); err != nil {
-			return in, fmt.Errorf("core: request: %w", err)
+			return in, false, fmt.Errorf("core: request: %w", err)
 		}
 		if open > 0 {
 			// It is the answer to the open question, which reaches the agent as
-			// given: only the gate runs. Should the question close before the
-			// input is taken, it goes as input without added text.
-			return a.runInputHooks(ctx, "Send", id, scope, in, PointBeforeAgentRun)
+			// given: only the gate runs. If it becomes ordinary input, the
+			// transaction requests the missing prompt-build point.
+			in, err := a.runInputHooks(ctx, "Send", id, scope, in, PointBeforeAgentRun)
+			return in, true, err
 		}
 	}
-	return a.inputHooks(ctx, "Send", id, scope, in)
+	in, err = a.inputHooks(ctx, "Send", id, scope, in)
+	return in, false, err
 }
 
 func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Answer) error {
