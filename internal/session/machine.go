@@ -95,6 +95,15 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 		return fmt.Errorf("session: load turn: %w", err)
 	}
 
+	if in.Kind == AgentEvent && in.Agent.Kind == agent.TurnStarted && in.Agent.StartedBy == agent.ByCaller && snap.State == control.Idle {
+		origin, err := pendingOrigin(ctx, tx, sessionID, in.Agent.Input)
+		if err != nil {
+			return err
+		}
+		if origin != nil {
+			in.Principal, in.From, in.Key = origin.Principal, origin.From, origin.Key
+		}
+	}
 	r, err := Step(snap, in)
 	inputFailure := false
 	if in.Kind == AgentEvent {

@@ -54,3 +54,18 @@ func TestPendingFailureEndsItsOwnTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestIndependentAndTypedTurnAttributionStaysTheSame(t *testing.T) {
+	for _, tc := range []struct {
+		by   agent.Starter
+		want string
+	}{{agent.ByAgent, ByAgent}, {agent.ByTerminal, ByTerminal}} {
+		m, sid := newMachine(t, control.Idle)
+		m.Typist = "typist"
+		feed(t, m, sid, ag(agent.Event{Kind: agent.TurnStarted, StartedBy: tc.by, Input: "42", Text: "typed"}))
+		var by, principal, from, key string
+		if err := m.Store.DB.QueryRow(`SELECT started_by, principal, from_id, trigger FROM turns`).Scan(&by, &principal, &from, &key); err != nil || by != tc.want || principal != "" || from != "" || key != "" {
+			t.Fatalf("%v turn %q/%q/%q/%q: %v", tc.by, by, principal, from, key, err)
+		}
+	}
+}
