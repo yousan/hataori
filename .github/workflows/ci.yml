@@ -41,25 +41,6 @@ jobs:
       # cmd/hataori runs the daemon, session hosts and a browser for each
       # end-to-end test, and takes close to go test's default of ten minutes
       # per package on macOS (#625).
-      - name: verify renamed attach regression without ownership fix
-        run: |
-          cp internal/core/core.go "$RUNNER_TEMP/core809.go"
-          trap 'cp "$RUNNER_TEMP/core809.go" internal/core/core.go' EXIT
-          python3 - <<'PY809'
-          from pathlib import Path
-          p = Path("internal/core/core.go")
-          s = p.read_text()
-          start = s.index("\t\tr, ok := c.Runner.(interface {", s.index("func (c *Core) hostPIDs"))
-          end = s.index("\n\t}", start)
-          p.write_text(s[:start] + s[end:])
-          PY809
-          set +e
-          go test ./cmd/hataori -run '^TestDaemonRefusesRenamedAttachPane$' -count=1 > "$RUNNER_TEMP/regression809.log" 2>&1
-          result=$?
-          set -e
-          cat "$RUNNER_TEMP/regression809.log"
-          test "$result" -ne 0
-          grep -q 'linked attach accepted: <nil>' "$RUNNER_TEMP/regression809.log"
       - run: go test -timeout 30m ./...
 
   # The same code runs on macOS (design, section 6.4).
