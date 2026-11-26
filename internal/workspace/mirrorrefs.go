@@ -48,6 +48,7 @@ const refsAtOnce = 200
 // refs left do not reach it. When that cannot be done nothing is dropped: the
 // mirror gets only what can be added to it.
 func (g mirrorRepo) update(ctx context.Context, repo string) {
+	g.clearPacks(ctx)
 	guarded := g.guard(ctx)
 	// Without "+" and --prune: no ref is deleted, and none is moved to what
 	// does not reach its old place. One that it cannot move or make is an

@@ -321,3 +321,54 @@ func TestOrdinaryInputKeepsTheAtSign(t *testing.T) {
 		}
 	}
 }
+
+// The saved paste, rather than today's transformation, tells a restarted
+// codec which captured prompt belongs to the caller. In particular a
+// terminal's original @ text must not claim a saved (at) input (#932).
+func TestRestartRecognisesOnlyTheRecordedPaste(t *testing.T) {
+	for _, name := range []string{"mention_restricted", "mention_restricted_written", "mention_restricted_pasted"} {
+		for _, mc := range mentionCases(t, name) {
+			if !strings.Contains(mc.Prompt, "@") && !strings.Contains(mc.Prompt, atSign) {
+				continue
+			}
+			t.Run(name+"/"+mc.Session+"/"+mc.Case, func(t *testing.T) {
+				paste := mc.Pasted
+				if paste == "" {
+					paste = mc.Text // the oldest captures pasted the text as is
+				}
+				c := confinedCodec(t)
+				// Even if Earlier is true, recorded text is authoritative.
+				a, err := c.Input(agent.Input{ID: "saved", Text: mc.Text, Written: true, WrittenText: &paste, Earlier: true})
+				if err != nil || len(a.Keys) != 0 {
+					t.Fatalf("reconnect: %v, %v", a, err)
+				}
+				if strings.Contains(paste, atSign) {
+					wrong := strings.ReplaceAll(mc.Prompt, atSign, "@")
+					if by, id := c.starter(wrong); by != agent.ByTerminal || id != "" {
+						t.Fatalf("original @ text claimed saved input: %v, %q", by, id)
+					}
+				}
+				// The unrelated invisible-character mismatch belongs to #916.
+				if normalize(paste) != normalize(unwrapPaste(mc.Prompt)) {
+					return
+				}
+				if by, id := c.starter(mc.Prompt); by != agent.ByCaller || id != "saved" {
+					t.Fatalf("recorded paste lost its input: %v, %q", by, id)
+				}
+			})
+		}
+	}
+}
+
+func TestPasteRecordsItsActualText(t *testing.T) {
+	for _, mc := range mentionCases(t, "mention_restricted_pasted") {
+		c := confinedCodec(t)
+		a, err := c.Input(agent.Input{ID: "saved", Text: mc.Text})
+		if err != nil || len(a.Keys) != 1 || a.Keys[0].Key != "" {
+			t.Fatalf("paste: %v, %v", a, err)
+		}
+		if text, ok := a.InputText["saved"]; !ok || text != a.Keys[0].Paste || text != mc.Pasted {
+			t.Errorf("%s: recorded %q (%v), keys %q, captured %q", mc.Case, text, ok, a.Keys[0].Paste, mc.Pasted)
+		}
+	}
+}
