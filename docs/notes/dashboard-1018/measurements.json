@@ -10,8 +10,8 @@
     "answer": null,
     "dialog": {
       "width": 512,
-      "height": 174.578125,
-      "scrollWidth": 1966,
+      "height": 258.5625,
+      "scrollWidth": 510,
       "clientWidth": 510
     },
     "tableTitle": {
@@ -174,8 +174,8 @@
     "answer": null,
     "dialog": {
       "width": 512,
-      "height": 174.578125,
-      "scrollWidth": 632,
+      "height": 191.375,
+      "scrollWidth": 510,
       "clientWidth": 510
     },
     "tableTitle": {
@@ -338,8 +338,8 @@
     "answer": null,
     "dialog": {
       "width": 512,
-      "height": 174.578125,
-      "scrollWidth": 1966,
+      "height": 258.5625,
+      "scrollWidth": 510,
       "clientWidth": 510
     },
     "tableTitle": {
@@ -502,8 +502,8 @@
     "answer": null,
     "dialog": {
       "width": 512,
-      "height": 174.578125,
-      "scrollWidth": 632,
+      "height": 191.375,
+      "scrollWidth": 510,
       "clientWidth": 510
     },
     "tableTitle": {
