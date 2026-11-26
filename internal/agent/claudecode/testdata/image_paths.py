@@ -30,6 +30,7 @@ from mention import API, KEY, environ, written
 
 PREFIX = "(message) "
 IMAGE_END = re.compile(r"\.(png|jpe?g|gif|webp)[\"']?$", re.I)
+PATH_SEPARATOR = re.compile(r" [\"']?(?:/|[A-Za-z]:\\)")
 TEXTS = [
     ("whole_inside", "{cwd}/{p}-whole.png"),
     ("line_inside", "Look at this\n{cwd}/{p}-line.png\nthen answer"),
@@ -49,6 +50,15 @@ def no_images(text):
     lines = text.split("\n")
     for i, line in enumerate(lines):
         first = line.strip()
+        path = first.strip("\"'")
+        absolute = path.startswith(("/", "\\")) or len(path) > 2 and path[1] == ":"
+        if not absolute and ("/" in path or "\\" in path):
+            continue
+        next_path = PATH_SEPARATOR.search(first)
+        if next_path:
+            head = first[:next_path.start()].strip("\"'")
+            if head.startswith("/") and "/" not in head[1:]:
+                continue
         if not first.startswith((PREFIX, "> ")) and IMAGE_END.search(first.replace("\\", "")):
             lines[i] = PREFIX + line
     return "\n".join(lines)
@@ -114,13 +124,17 @@ def images(sent, known):
             for child in value:
                 visit(child)
     most = []
+    requests = 0
     for body in sent:
         found = []
         messages = json.loads(body).get("messages", [])
         if messages and messages[-1].get("role") == "user":
+            requests += 1
             visit(messages[-1].get("content"))
             if len(found) > len(most):
                 most = found
+    if requests == 0:
+        raise RuntimeError("no request carrying the latest user message reached the API")
     return sorted(most)
 
 

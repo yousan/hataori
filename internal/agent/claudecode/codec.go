@@ -314,6 +314,9 @@ const atSignNote = "In every message you are given, each at sign (@) is written 
 func (c *codec) pasteText(text string) string {
 	text = cleanPaste(text)
 	if c.spec.Confine == nil {
+		if strings.HasPrefix(strings.TrimLeftFunc(text, unicode.IsSpace), "!") {
+			return text // the CLI keeps image paths in shell mode as text
+		}
 		return noImagePaths(text)
 	}
 	return noImagePaths(noCommand(strings.ReplaceAll(noControls(text), "@", atSign)))
@@ -332,6 +335,17 @@ func noImagePaths(text string) string {
 		if strings.HasPrefix(first, commandPrefix) || strings.HasPrefix(first, "> ") {
 			continue
 		}
+		path := strings.Trim(first, `"'`)
+		absolute := strings.HasPrefix(path, "/") || strings.HasPrefix(path, `\`) || len(path) > 2 && path[1] == ':'
+		if !absolute && strings.ContainsAny(path, `/\`) {
+			continue // words before a path already keep it from attaching
+		}
+		if next := imagePathSeparator.FindStringIndex(first); next != nil {
+			head := strings.Trim(first[:next[0]], `"'`)
+			if strings.HasPrefix(head, "/") && !strings.Contains(head[1:], "/") {
+				continue // a slash command before a path is not a path list
+			}
+		}
 		if imagePathEnd.MatchString(strings.ReplaceAll(first, "\\", "")) {
 			lines[i] = commandPrefix + line
 		}
@@ -340,6 +354,7 @@ func noImagePaths(text string) string {
 }
 
 var imagePathEnd = regexp.MustCompile(`(?i)\.(png|jpe?g|gif|webp)["']?$`)
+var imagePathSeparator = regexp.MustCompile(` ["']?(?:/|[A-Za-z]:\\)`)
 
 // noControls is text without its control characters but line feeds and
 // tabs: nothing in it starts an escape sequence, which a terminal or the

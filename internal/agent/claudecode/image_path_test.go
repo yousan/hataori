@@ -25,7 +25,7 @@ func TestImagePathLinesAreText(t *testing.T) {
 				t.Errorf("confined=%v: pasting twice changes %q into %q", confine != nil, got, twice)
 			}
 		}
-		for _, text := range []string{"Say ok", "Look at /tmp/example.png please", "/help", "Text\n> /tmp/example.png"} {
+		for _, text := range []string{"Say ok", "Look at /tmp/example.png please", "Look at /tmp/example.png", "/help", "/review /tmp/example.png", "Text\n> /tmp/example.png"} {
 			want := text
 			if confine != nil {
 				want = noCommand(text)
@@ -33,6 +33,15 @@ func TestImagePathLinesAreText(t *testing.T) {
 			if got := c.pasteText(text); got != want {
 				t.Errorf("confined=%v: %q pasted as %q, want %q", confine != nil, text, got, want)
 			}
+		}
+	}
+}
+
+func TestOrdinaryShellKeepsImagePaths(t *testing.T) {
+	c := (&Adapter{}).NewCodec(agent.Spec{}).(*codec)
+	for _, text := range []string{"!cat /tmp/example.png", "!cat example.png", "!cat\n/tmp/example.png"} {
+		if got := c.pasteText(text); got != text {
+			t.Errorf("shell command %q pasted as %q", text, got)
 		}
 	}
 }
