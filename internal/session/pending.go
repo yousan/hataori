@@ -32,6 +32,29 @@ type InputOrigin struct {
 
 const KindInputFailed control.EventKind = "input_failed"
 
+// pendingOrigin finds the accepted caller of the input the agent reported.
+// First inputs and legacy pending rows have no origin here; an initial
+// caller turn is already recorded before its input is handed over.
+func pendingOrigin(ctx context.Context, tx *store.Tx, sid int64, input string) (*InputOrigin, error) {
+	row, err := strconv.ParseInt(input, 10, 64)
+	if err != nil {
+		return nil, nil
+	}
+	var data string
+	err = tx.QueryRowContext(ctx, `SELECT data FROM pending_inputs WHERE id = ? AND session_id = ? AND request = ''`, row, sid).Scan(&data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var p PendingInput
+	if err := json.Unmarshal([]byte(data), &p); err != nil {
+		return nil, err
+	}
+	return p.Origin, nil
+}
+
 // pendingFailure recognizes an input that never reached the agent. Only
 // the turn started for that input may be ended by its failure. A held
 // input instead has an event of its own, leaving any other turn alone.
