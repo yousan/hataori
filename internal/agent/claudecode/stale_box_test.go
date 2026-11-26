@@ -55,7 +55,7 @@ func TestAnUnconfirmedPasteBlocksTheNextMessage(t *testing.T) {
 				}
 				ended = append(ended, a.Events...)
 			}
-			if len(ended) != 1 || ended[0].Kind != agent.TurnEnded || ended[0].Reason != agent.NotDelivered || ended[0].Input != "" {
+			if len(ended) != 1 || ended[0].Kind != agent.TurnEnded || ended[0].Reason != agent.NotDelivered || ended[0].Input != "old" || !ended[0].RetainInput {
 				t.Errorf("old turn: %+v; want failed turn with input retained for another reconnect", ended)
 			}
 			for _, codec := range []*codec{c, started(t)} {
@@ -77,8 +77,8 @@ func TestAnUnconfirmedPasteBlocksTheNextMessage(t *testing.T) {
 				if a := codec.Interrupt(); len(a.Keys) > 0 || !a.NotInterrupted {
 					t.Fatalf("idle Stop modified the editor: %+v", a)
 				}
-				if !slices.Contains(codec.leftover, "old") {
-					t.Fatalf("unconfirmed paste forgotten: %q", codec.leftover)
+				if !slices.Contains(codec.unconfirmed, "old") {
+					t.Fatalf("unconfirmed paste forgotten: %q", codec.unconfirmed)
 				}
 			}
 		})
@@ -113,5 +113,26 @@ func TestAReconnectedPasteWaitsThroughOtherTurns(t *testing.T) {
 	decodeFile(t, c, "13", held+"13-Stop.json")
 	if a, _ := c.Input(agent.Input{ID: "after", Text: "alone"}); len(a.Keys) != 1 || a.Keys[0].Paste != "alone" {
 		t.Fatalf("after confirmed prompt: %+v", a)
+	}
+}
+
+// A lost connection while handing over Enter must not turn a captured
+// stale box into permission to press it again over a person's next text.
+func TestAnUncertainEnterNeverRetriesFromTheScreen(t *testing.T) {
+	c := firstStart(t)
+	c.Decode(agent.Screen, readScreen(t, firstEnter+"screen-after.raw"))
+	w := &handing{}
+	w.input(t, c, "old", firstText)
+	w.cut = true
+	_, now := w.tick(c, time.Now(), 2*time.Second)
+	w.cut = false
+	evs, _ := w.tick(c, now, 2*DefaultInputTimeout)
+	w.want(t, firstText)
+	if len(evs) != 1 || evs[0].Input != "old" || !evs[0].RetainInput {
+		t.Fatalf("unconfirmed Enter: %+v", evs)
+	}
+	a, _ := c.Input(agent.Input{ID: "next", Text: "separate"})
+	if len(a.Keys) > 0 || len(a.Events) != 1 || a.Events[0].Reason != agent.NotDelivered {
+		t.Fatalf("next message: %+v", a)
 	}
 }
