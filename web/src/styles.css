@@ -156,7 +156,7 @@ body {
 }
 
 .tree {
-  width: 320px;
+  width: clamp(180px, 24vw, 320px);
   flex: none;
   display: flex;
   flex-direction: column;
@@ -167,6 +167,7 @@ body {
 
 .tree-top {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 8px;
   border-bottom: 1px solid var(--line);
@@ -174,6 +175,7 @@ body {
 
 .filter {
   flex: 1;
+  flex-basis: 120px;
   min-width: 0;
   font: inherit;
   color: var(--fg);
@@ -185,6 +187,7 @@ body {
 
 .density {
   display: flex;
+  flex: none;
 }
 
 .density button {
@@ -467,6 +470,8 @@ body {
 
 .status {
   display: flex;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
   justify-content: space-between;
   gap: 12px;
   padding: 3px 12px;
@@ -478,10 +483,16 @@ body {
 .status-item,
 .status-right {
   display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
   gap: 10px;
   align-items: center;
-  white-space: nowrap;
-  overflow: hidden;
+  white-space: normal;
+  overflow: visible;
+}
+
+.status-right {
+  justify-content: flex-end;
 }
 
 .state-text {
@@ -498,6 +509,12 @@ body {
 
 .limits {
   gap: 12px;
+}
+
+.limits,
+.limit,
+.clients {
+  flex-wrap: wrap;
 }
 
 .limit-agent {
@@ -954,7 +971,7 @@ body {
 }
 
 .details {
-  width: 300px;
+  width: clamp(200px, 26vw, 300px);
   flex: none;
   border-left: 1px solid var(--line);
   background: var(--bar);
@@ -1346,7 +1363,8 @@ body {
 
 .field dt {
   flex: none;
-  width: 120px;
+  width: min(120px, 44%);
+  overflow-wrap: anywhere;
   color: var(--muted);
 }
 

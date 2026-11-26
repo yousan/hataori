@@ -1,0 +1,3270 @@
+[
+  {
+    "name": "long-status",
+    "width": 1440,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "shell": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "bar": {
+      "width": 820,
+      "height": 34,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "pane": {
+      "width": 820,
+      "height": 741.015625,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "status": {
+      "width": 1440,
+      "height": 124.984375,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "running",
+    "width": 1440,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "shell": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "bar": {
+      "width": 820,
+      "height": 34,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "pane": {
+      "width": 820,
+      "height": 840.203125,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "status": {
+      "width": 1440,
+      "height": 25.796875,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "long-status",
+    "width": 1440,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "shell": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "bar": {
+      "width": 820,
+      "height": 34,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "pane": {
+      "width": 820,
+      "height": 741.015625,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "status": {
+      "width": 1440,
+      "height": 124.984375,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "running",
+    "width": 1440,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "shell": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "bar": {
+      "width": 820,
+      "height": 34,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "pane": {
+      "width": 820,
+      "height": 840.203125,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "status": {
+      "width": 1440,
+      "height": 25.796875,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "long-status",
+    "width": 390,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [
+      {
+        "font": "13px"
+      }
+    ],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "shell": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "bar": null,
+    "pane": null,
+    "status": {
+      "width": 390,
+      "height": 202.171875,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "controls": [
+      {
+        "class": "narrow-back",
+        "height": 28.1875,
+        "width": 119.4375
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "box-send",
+        "height": 46.375,
+        "width": 48.75
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "running",
+    "width": 390,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [
+      {
+        "font": "13px"
+      }
+    ],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "shell": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "bar": null,
+    "pane": null,
+    "status": {
+      "width": 390,
+      "height": 81.390625,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "controls": [
+      {
+        "class": "narrow-back",
+        "height": 28.1875,
+        "width": 119.4375
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "box-send",
+        "height": 46.375,
+        "width": 48.75
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "long-status",
+    "width": 390,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [
+      {
+        "font": "13px"
+      }
+    ],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "shell": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "bar": null,
+    "pane": null,
+    "status": {
+      "width": 390,
+      "height": 202.171875,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "controls": [
+      {
+        "class": "narrow-back",
+        "height": 28.1875,
+        "width": 119.4375
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "box-send",
+        "height": 46.375,
+        "width": 48.75
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "running",
+    "width": 390,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [
+      {
+        "font": "13px"
+      }
+    ],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "shell": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "bar": null,
+    "pane": null,
+    "status": {
+      "width": 390,
+      "height": 81.390625,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "controls": [
+      {
+        "class": "narrow-back",
+        "height": 28.1875,
+        "width": 119.4375
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "box-send",
+        "height": 46.375,
+        "width": 48.75
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "long-status",
+    "width": 721,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 721,
+      "height": 900,
+      "scrollWidth": 721,
+      "clientWidth": 721
+    },
+    "shell": {
+      "width": 721,
+      "height": 900,
+      "scrollWidth": 721,
+      "clientWidth": 721
+    },
+    "bar": {
+      "width": 341,
+      "height": 34,
+      "scrollWidth": 341,
+      "clientWidth": 341
+    },
+    "pane": {
+      "width": 341,
+      "height": 724.21875,
+      "scrollWidth": 341,
+      "clientWidth": 341
+    },
+    "status": {
+      "width": 721,
+      "height": 141.78125,
+      "scrollWidth": 721,
+      "clientWidth": 721
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "running",
+    "width": 721,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 721,
+      "height": 900,
+      "scrollWidth": 721,
+      "clientWidth": 721
+    },
+    "shell": {
+      "width": 721,
+      "height": 900,
+      "scrollWidth": 721,
+      "clientWidth": 721
+    },
+    "bar": {
+      "width": 341,
+      "height": 34,
+      "scrollWidth": 341,
+      "clientWidth": 341
+    },
+    "pane": {
+      "width": 341,
+      "height": 811.40625,
+      "scrollWidth": 341,
+      "clientWidth": 341
+    },
+    "status": {
+      "width": 721,
+      "height": 54.59375,
+      "scrollWidth": 721,
+      "clientWidth": 721
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "long-status",
+    "width": 721,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 721,
+      "height": 900,
+      "scrollWidth": 721,
+      "clientWidth": 721
+    },
+    "shell": {
+      "width": 721,
+      "height": 900,
+      "scrollWidth": 721,
+      "clientWidth": 721
+    },
+    "bar": {
+      "width": 341,
+      "height": 34,
+      "scrollWidth": 341,
+      "clientWidth": 341
+    },
+    "pane": {
+      "width": 341,
+      "height": 724.21875,
+      "scrollWidth": 341,
+      "clientWidth": 341
+    },
+    "status": {
+      "width": 721,
+      "height": 141.78125,
+      "scrollWidth": 721,
+      "clientWidth": 721
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "running",
+    "width": 721,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 721,
+      "height": 900,
+      "scrollWidth": 721,
+      "clientWidth": 721
+    },
+    "shell": {
+      "width": 721,
+      "height": 900,
+      "scrollWidth": 721,
+      "clientWidth": 721
+    },
+    "bar": {
+      "width": 341,
+      "height": 34,
+      "scrollWidth": 341,
+      "clientWidth": 341
+    },
+    "pane": {
+      "width": 341,
+      "height": 811.40625,
+      "scrollWidth": 341,
+      "clientWidth": 341
+    },
+    "status": {
+      "width": 721,
+      "height": 54.59375,
+      "scrollWidth": 721,
+      "clientWidth": 721
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "long-status",
+    "width": 800,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 800,
+      "height": 900,
+      "scrollWidth": 800,
+      "clientWidth": 800
+    },
+    "shell": {
+      "width": 800,
+      "height": 900,
+      "scrollWidth": 800,
+      "clientWidth": 800
+    },
+    "bar": {
+      "width": 400,
+      "height": 34,
+      "scrollWidth": 400,
+      "clientWidth": 400
+    },
+    "pane": {
+      "width": 400,
+      "height": 724.21875,
+      "scrollWidth": 400,
+      "clientWidth": 400
+    },
+    "status": {
+      "width": 800,
+      "height": 141.78125,
+      "scrollWidth": 800,
+      "clientWidth": 800
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "running",
+    "width": 800,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 800,
+      "height": 900,
+      "scrollWidth": 800,
+      "clientWidth": 800
+    },
+    "shell": {
+      "width": 800,
+      "height": 900,
+      "scrollWidth": 800,
+      "clientWidth": 800
+    },
+    "bar": {
+      "width": 400,
+      "height": 34,
+      "scrollWidth": 400,
+      "clientWidth": 400
+    },
+    "pane": {
+      "width": 400,
+      "height": 811.40625,
+      "scrollWidth": 400,
+      "clientWidth": 400
+    },
+    "status": {
+      "width": 800,
+      "height": 54.59375,
+      "scrollWidth": 800,
+      "clientWidth": 800
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "long-status",
+    "width": 800,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 800,
+      "height": 900,
+      "scrollWidth": 800,
+      "clientWidth": 800
+    },
+    "shell": {
+      "width": 800,
+      "height": 900,
+      "scrollWidth": 800,
+      "clientWidth": 800
+    },
+    "bar": {
+      "width": 400,
+      "height": 34,
+      "scrollWidth": 400,
+      "clientWidth": 400
+    },
+    "pane": {
+      "width": 400,
+      "height": 724.21875,
+      "scrollWidth": 400,
+      "clientWidth": 400
+    },
+    "status": {
+      "width": 800,
+      "height": 141.78125,
+      "scrollWidth": 800,
+      "clientWidth": 800
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "running",
+    "width": 800,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 800,
+      "height": 900,
+      "scrollWidth": 800,
+      "clientWidth": 800
+    },
+    "shell": {
+      "width": 800,
+      "height": 900,
+      "scrollWidth": 800,
+      "clientWidth": 800
+    },
+    "bar": {
+      "width": 400,
+      "height": 34,
+      "scrollWidth": 400,
+      "clientWidth": 400
+    },
+    "pane": {
+      "width": 400,
+      "height": 811.40625,
+      "scrollWidth": 400,
+      "clientWidth": 400
+    },
+    "status": {
+      "width": 800,
+      "height": 54.59375,
+      "scrollWidth": 800,
+      "clientWidth": 800
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "long-status",
+    "width": 1024,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1024,
+      "height": 900,
+      "scrollWidth": 1024,
+      "clientWidth": 1024
+    },
+    "shell": {
+      "width": 1024,
+      "height": 900,
+      "scrollWidth": 1024,
+      "clientWidth": 1024
+    },
+    "bar": {
+      "width": 512.015625,
+      "height": 34,
+      "scrollWidth": 512,
+      "clientWidth": 512
+    },
+    "pane": {
+      "width": 512.015625,
+      "height": 741.015625,
+      "scrollWidth": 512,
+      "clientWidth": 512
+    },
+    "status": {
+      "width": 1024,
+      "height": 124.984375,
+      "scrollWidth": 1024,
+      "clientWidth": 1024
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "running",
+    "width": 1024,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1024,
+      "height": 900,
+      "scrollWidth": 1024,
+      "clientWidth": 1024
+    },
+    "shell": {
+      "width": 1024,
+      "height": 900,
+      "scrollWidth": 1024,
+      "clientWidth": 1024
+    },
+    "bar": {
+      "width": 512.015625,
+      "height": 34,
+      "scrollWidth": 512,
+      "clientWidth": 512
+    },
+    "pane": {
+      "width": 512.015625,
+      "height": 840.203125,
+      "scrollWidth": 512,
+      "clientWidth": 512
+    },
+    "status": {
+      "width": 1024,
+      "height": 25.796875,
+      "scrollWidth": 1024,
+      "clientWidth": 1024
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "long-status",
+    "width": 1024,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1024,
+      "height": 900,
+      "scrollWidth": 1024,
+      "clientWidth": 1024
+    },
+    "shell": {
+      "width": 1024,
+      "height": 900,
+      "scrollWidth": 1024,
+      "clientWidth": 1024
+    },
+    "bar": {
+      "width": 512.015625,
+      "height": 34,
+      "scrollWidth": 512,
+      "clientWidth": 512
+    },
+    "pane": {
+      "width": 512.015625,
+      "height": 741.015625,
+      "scrollWidth": 512,
+      "clientWidth": 512
+    },
+    "status": {
+      "width": 1024,
+      "height": 124.984375,
+      "scrollWidth": 1024,
+      "clientWidth": 1024
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "running",
+    "width": 1024,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1024,
+      "height": 900,
+      "scrollWidth": 1024,
+      "clientWidth": 1024
+    },
+    "shell": {
+      "width": 1024,
+      "height": 900,
+      "scrollWidth": 1024,
+      "clientWidth": 1024
+    },
+    "bar": {
+      "width": 512.015625,
+      "height": 34,
+      "scrollWidth": 512,
+      "clientWidth": 512
+    },
+    "pane": {
+      "width": 512.015625,
+      "height": 840.203125,
+      "scrollWidth": 512,
+      "clientWidth": 512
+    },
+    "status": {
+      "width": 1024,
+      "height": 25.796875,
+      "scrollWidth": 1024,
+      "clientWidth": 1024
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "long-status",
+    "width": 1100,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1100,
+      "height": 900,
+      "scrollWidth": 1100,
+      "clientWidth": 1100
+    },
+    "shell": {
+      "width": 1100,
+      "height": 900,
+      "scrollWidth": 1100,
+      "clientWidth": 1100
+    },
+    "bar": {
+      "width": 550,
+      "height": 34,
+      "scrollWidth": 550,
+      "clientWidth": 550
+    },
+    "pane": {
+      "width": 550,
+      "height": 741.015625,
+      "scrollWidth": 550,
+      "clientWidth": 550
+    },
+    "status": {
+      "width": 1100,
+      "height": 124.984375,
+      "scrollWidth": 1100,
+      "clientWidth": 1100
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "running",
+    "width": 1100,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1100,
+      "height": 900,
+      "scrollWidth": 1100,
+      "clientWidth": 1100
+    },
+    "shell": {
+      "width": 1100,
+      "height": 900,
+      "scrollWidth": 1100,
+      "clientWidth": 1100
+    },
+    "bar": {
+      "width": 550,
+      "height": 34,
+      "scrollWidth": 550,
+      "clientWidth": 550
+    },
+    "pane": {
+      "width": 550,
+      "height": 840.203125,
+      "scrollWidth": 550,
+      "clientWidth": 550
+    },
+    "status": {
+      "width": 1100,
+      "height": 25.796875,
+      "scrollWidth": 1100,
+      "clientWidth": 1100
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "long-status",
+    "width": 1100,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1100,
+      "height": 900,
+      "scrollWidth": 1100,
+      "clientWidth": 1100
+    },
+    "shell": {
+      "width": 1100,
+      "height": 900,
+      "scrollWidth": 1100,
+      "clientWidth": 1100
+    },
+    "bar": {
+      "width": 550,
+      "height": 34,
+      "scrollWidth": 550,
+      "clientWidth": 550
+    },
+    "pane": {
+      "width": 550,
+      "height": 741.015625,
+      "scrollWidth": 550,
+      "clientWidth": 550
+    },
+    "status": {
+      "width": 1100,
+      "height": 124.984375,
+      "scrollWidth": 1100,
+      "clientWidth": 1100
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "running",
+    "width": 1100,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1100,
+      "height": 900,
+      "scrollWidth": 1100,
+      "clientWidth": 1100
+    },
+    "shell": {
+      "width": 1100,
+      "height": 900,
+      "scrollWidth": 1100,
+      "clientWidth": 1100
+    },
+    "bar": {
+      "width": 550,
+      "height": 34,
+      "scrollWidth": 550,
+      "clientWidth": 550
+    },
+    "pane": {
+      "width": 550,
+      "height": 840.203125,
+      "scrollWidth": 550,
+      "clientWidth": 550
+    },
+    "status": {
+      "width": 1100,
+      "height": 25.796875,
+      "scrollWidth": 1100,
+      "clientWidth": 1100
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "long-status",
+    "width": 1101,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1101,
+      "height": 900,
+      "scrollWidth": 1101,
+      "clientWidth": 1101
+    },
+    "shell": {
+      "width": 1101,
+      "height": 900,
+      "scrollWidth": 1101,
+      "clientWidth": 1101
+    },
+    "bar": {
+      "width": 550.515625,
+      "height": 34,
+      "scrollWidth": 551,
+      "clientWidth": 551
+    },
+    "pane": {
+      "width": 550.515625,
+      "height": 741.015625,
+      "scrollWidth": 551,
+      "clientWidth": 551
+    },
+    "status": {
+      "width": 1101,
+      "height": 124.984375,
+      "scrollWidth": 1101,
+      "clientWidth": 1101
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "running",
+    "width": 1101,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1101,
+      "height": 900,
+      "scrollWidth": 1101,
+      "clientWidth": 1101
+    },
+    "shell": {
+      "width": 1101,
+      "height": 900,
+      "scrollWidth": 1101,
+      "clientWidth": 1101
+    },
+    "bar": {
+      "width": 550.515625,
+      "height": 34,
+      "scrollWidth": 551,
+      "clientWidth": 551
+    },
+    "pane": {
+      "width": 550.515625,
+      "height": 840.203125,
+      "scrollWidth": 551,
+      "clientWidth": 551
+    },
+    "status": {
+      "width": 1101,
+      "height": 25.796875,
+      "scrollWidth": 1101,
+      "clientWidth": 1101
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "long-status",
+    "width": 1101,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1101,
+      "height": 900,
+      "scrollWidth": 1101,
+      "clientWidth": 1101
+    },
+    "shell": {
+      "width": 1101,
+      "height": 900,
+      "scrollWidth": 1101,
+      "clientWidth": 1101
+    },
+    "bar": {
+      "width": 550.515625,
+      "height": 34,
+      "scrollWidth": 551,
+      "clientWidth": 551
+    },
+    "pane": {
+      "width": 550.515625,
+      "height": 741.015625,
+      "scrollWidth": 551,
+      "clientWidth": 551
+    },
+    "status": {
+      "width": 1101,
+      "height": 124.984375,
+      "scrollWidth": 1101,
+      "clientWidth": 1101
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "running",
+    "width": 1101,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1101,
+      "height": 900,
+      "scrollWidth": 1101,
+      "clientWidth": 1101
+    },
+    "shell": {
+      "width": 1101,
+      "height": 900,
+      "scrollWidth": 1101,
+      "clientWidth": 1101
+    },
+    "bar": {
+      "width": 550.515625,
+      "height": 34,
+      "scrollWidth": 551,
+      "clientWidth": 551
+    },
+    "pane": {
+      "width": 550.515625,
+      "height": 840.203125,
+      "scrollWidth": 551,
+      "clientWidth": 551
+    },
+    "status": {
+      "width": 1101,
+      "height": 25.796875,
+      "scrollWidth": 1101,
+      "clientWidth": 1101
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "stop-button",
+        "height": 22.1875,
+        "width": 110.234375
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  }
+]
