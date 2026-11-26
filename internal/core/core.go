@@ -2392,7 +2392,7 @@ func forAgent(in control.Input) control.Input {
 // closed, removed or failed: its Send is refused here, and not left to the
 // transaction, which would take the input without its hooks should the
 // thread be reopened or started again in between. Only a Send that guard
-// ties to the running turn is left to it in a closed or removed thread:
+// ties to the running turn is left to it in a closed, removed or failed thread:
 // that turn is over.
 // The boolean says prompt-build is still owed if this becomes ordinary
 // input. The caller holds the key's lock.
@@ -2414,7 +2414,8 @@ func (a *api) sendHooks(ctx context.Context, id control.ThreadID, scope, key str
 	if a.c.stateRead != nil {
 		a.c.stateRead()
 	}
-	if err == nil && (state == control.Closed || state == control.Removed) {
+	guardedFailure := state == control.Failed && guard != nil && !guard.proposal
+	if err == nil && (state == control.Closed || state == control.Removed || guardedFailure) {
 		if guard != nil && !guard.proposal {
 			return in, false, nil
 		}
