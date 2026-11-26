@@ -44,8 +44,13 @@ func TestIdleStatusLineCannotReplaceNewerLimits(t *testing.T) {
 	}
 	machine := &session.Machine{Store: st}
 	api := (&core.Core{Store: st}).As(control.Caller{May: control.OpRead})
-	dir := t.TempDir()
-	t.Cleanup(func() { killGroups(dir) })
+	// Exercise the host's short socket path even on systems whose temporary
+	// directory is short; macOS temporary directories can already need it.
+	dir := filepath.Join(t.TempDir(), strings.Repeat("deep/", 20))
+	t.Cleanup(func() {
+		host.Stop(dir, time.Second, time.Second)
+		killGroups(dir)
+	})
 	if _, err := host.Start(host.Command{Path: os.Args[0], Args: []string{"role", "host"}}, dir,
 		host.Spec{Argv: []string{os.Args[0], "role", "idle"}, Env: []string{}}); err != nil {
 		t.Fatal(err)
@@ -76,7 +81,7 @@ func TestIdleStatusLineCannotReplaceNewerLimits(t *testing.T) {
 	// the latter is part of hataori's own envelope, not agent output.
 	push := func(sid int64, in []byte, when time.Time, wantCalls int) {
 		t.Helper()
-		handOn(filepath.Join(dir, host.SocketFile), filepath.Join(dir, fmt.Sprintf("last-%d", sid)), in, when)
+		handOn(host.SocketPath(dir), filepath.Join(dir, fmt.Sprintf("last-%d", sid)), in, when)
 		log, err := os.ReadFile(filepath.Join(dir, host.EventsFile))
 		if err != nil {
 			t.Fatal(err)
