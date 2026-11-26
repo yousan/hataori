@@ -314,7 +314,9 @@ func TestOwnInputBeforeAnOlderPasteEnds(t *testing.T) {
 }
 
 // The end of the session releases what may be in the box: after a /clear in
-// the window, which was submitted from it, input is pasted again.
+// the window, which was submitted from it, input is pasted again. The input
+// held, whose report is waited for, does not end with the session, but after
+// the input timeout.
 func TestClearReleasesAnOlderPaste(t *testing.T) {
 	c := (&Adapter{}).NewCodec(agent.Spec{Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
 	decodeFile(t, c, "01", "clear/hooks/01-SessionStart.json")
@@ -324,7 +326,11 @@ func TestClearReleasesAnOlderPaste(t *testing.T) {
 	if a, _ := c.Input(agent.Input{ID: "in-8", Text: "list the threads"}); len(a.Keys) != 0 || len(a.Events) != 1 || a.Events[0].Reason != agent.NotDelivered {
 		t.Fatalf("while held: keys %q, events %+v", a.Keys, a.Events)
 	}
-	decodeFile(t, c, "04", "clear/hooks/04-SessionEnd.json")
+	for _, e := range decodeFile(t, c, "04", "clear/hooks/04-SessionEnd.json").Events {
+		if e.Kind == agent.TurnEnded {
+			t.Fatalf("at the session's end: %+v; want the input to wait for its report", e)
+		}
+	}
 	decodeFile(t, c, "05", "clear/hooks/05-SessionStart.json")
 	c.Input(agent.Input{ID: "in-9", Text: "list the threads"})
 	// The one that was held waits for its report as any written input, and
@@ -340,6 +346,38 @@ func TestClearReleasesAnOlderPaste(t *testing.T) {
 	}
 	if len(keys) == 0 || keys[0].Paste != "list the threads" || len(ended) != 1 || ended[0] != "in-7 "+string(agent.NotDelivered) {
 		t.Fatalf("after the clear: keys %q, ended %q", keys, ended)
+	}
+}
+
+// The end of the session ends each input it releases whose report is not
+// waited for any more as not delivered, naming it, so that the caller does
+// not keep it: one whose turn ended after the input timeout, and one held
+// after it. A later prompt the same as what an older hataori pasted for it
+// is not taken for it (#914).
+func TestClearEndsTheHeldInputs(t *testing.T) {
+	c := (&Adapter{}).NewCodec(agent.Spec{Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
+	decodeFile(t, c, "01", "clear/hooks/01-SessionStart.json")
+	for _, in := range []agent.Input{{ID: "in-6", Text: "#x"}, {ID: "in-7", Text: "&y"}} {
+		in.Written, in.Earlier = true, true
+		if a, _ := c.Input(in); len(a.Keys) != 0 {
+			t.Fatalf("%s: written again: %q", in.ID, a.Keys)
+		}
+	}
+	heldTurnEnds(t, c, time.Now(), 2*DefaultInputTimeout, "while held")
+	var ended []string
+	for _, e := range decodeFile(t, c, "04", "clear/hooks/04-SessionEnd.json").Events {
+		if e.Kind == agent.TurnEnded {
+			ended = append(ended, e.Input+" "+string(e.Reason))
+		}
+	}
+	if want := []string{"in-6 " + string(agent.NotDelivered), "in-7 " + string(agent.NotDelivered)}; !slices.Equal(ended, want) {
+		t.Fatalf("at the session's end: ended %q, want %q", ended, want)
+	}
+	decodeFile(t, c, "05", "clear/hooks/05-SessionStart.json")
+	for _, prompt := range []string{"#x", "&y"} {
+		if by, id := c.starter(prompt); by == agent.ByCaller {
+			t.Errorf("the prompt %q counts as input %q, which ended", prompt, id)
+		}
 	}
 }
 

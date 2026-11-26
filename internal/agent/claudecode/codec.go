@@ -233,7 +233,7 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 				// session ends (#914). The input does not end meanwhile,
 				// also when the turn it was to start does (tickHeld), so
 				// that it is handed to the codec again after another
-				// restart.
+				// restart; the session's end ends it (track).
 				if !pastedAsIs(o) && !slices.Contains(c.leftover, in.ID) {
 					c.leftover = append(c.leftover, in.ID)
 				}
@@ -748,6 +748,7 @@ func (c *codec) decode(src agent.Source, line []byte) Actions {
 // prompt is the prompt the events belong to; the end of another prompt's
 // turn (an interrupt line read late) does not end the running one.
 func (c *codec) track(prompt string, a Actions) Actions {
+	var ended Actions
 	for _, e := range a.Events {
 		switch e.Kind {
 		case agent.SessionReady:
@@ -766,10 +767,22 @@ func (c *codec) track(prompt string, a Actions) Actions {
 				}
 			}
 		case agent.SessionEnded:
-			c.ready, c.running, c.leftover = false, false, nil
+			c.ready, c.running = false, false
+			// What may have been in the box went with its conversation: a
+			// held input whose report is not waited for any more (c.sent
+			// is) ends as not delivered, so that the caller does not keep
+			// it, and is not known by a later prompt (#914).
+			for _, id := range c.leftover {
+				if c.sent != nil && c.sent.id == id {
+					continue
+				}
+				c.pasted = slices.DeleteFunc(c.pasted, func(q queued) bool { return q.id == id })
+				ended = merge(ended, c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered, Input: id})))
+			}
+			c.leftover = nil
 		}
 	}
-	return c.flush()
+	return merge(ended, c.flush())
 }
 
 func merge(a, b Actions) Actions {
