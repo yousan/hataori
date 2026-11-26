@@ -231,7 +231,8 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 				// the box: it is never submitted, nor anything pasted
 				// after it, until the CLI reports it as a prompt or the
 				// session ends (#914). The input does not end meanwhile,
-				// so that it is handed to the codec again after another
+				// also when the turn it was to start does (tickHeld), so
+				// that it is handed to the codec again after another
 				// restart.
 				if !pastedAsIs(o) && !slices.Contains(c.leftover, in.ID) {
 					c.leftover = append(c.leftover, in.ID)
@@ -523,14 +524,17 @@ func (c *codec) Tick(now time.Time) Actions {
 // it. The text stays in the CLI's input box meanwhile (2.1.331,
 // testdata/2.1.331/held_notification).
 //
-// While the box may hold what an older hataori pasted (Input), neither
-// Enter nor the timeout comes.
+// While the box may hold what an older hataori pasted (Input), no Enter
+// comes (tickHeld).
 func (c *codec) tickInput(now time.Time) Actions {
 	if c.sent == nil {
 		return merge(c.holdPaste(now), c.flush())
 	}
-	if c.running || len(c.leftover) > 0 {
+	if c.running {
 		return Actions{}
+	}
+	if len(c.leftover) > 0 {
+		return c.tickHeld(now)
 	}
 	switch s := c.sent; {
 	case s.refused:
@@ -569,6 +573,30 @@ func (c *codec) tickInput(now time.Time) Actions {
 	}
 	c.forget(c.sent.text)
 	return c.unsent(agent.NotDelivered)
+}
+
+// tickHeld waits without Enter for the report of c.sent while the box may
+// hold what an older hataori pasted. After the input timeout the turn that
+// it was to start ends as failed, "not delivered", as any; but an input that
+// is held does not end: that turn's end names no input, so that the caller
+// keeps it, and the codec still holds it (#914).
+func (c *codec) tickHeld(now time.Time) Actions {
+	if c.sent.at.IsZero() {
+		c.sent.at = now
+		return Actions{}
+	}
+	if now.Sub(c.sent.at) < c.inputTimeout() {
+		return Actions{}
+	}
+	id := c.sent.id
+	if slices.Contains(c.leftover, id) {
+		id = "" // still known by its prompt (c.pasted)
+	} else {
+		c.forget(c.sent.text)
+	}
+	c.sent = nil
+	a := c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered, Input: id}))
+	return merge(a, c.flush())
 }
 
 // unsent ends the turn of c.sent, which the CLI did not get, and writes the

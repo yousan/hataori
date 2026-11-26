@@ -45,6 +45,25 @@ func quiet(t *testing.T, c *codec, now time.Time, d time.Duration, when string) 
 	return now
 }
 
+// heldTurnEnds ticks every 100 ms for d, and fails at any key, and unless
+// the turn that a held input was to start ends once, "not delivered",
+// naming no input, so that the input does not end.
+func heldTurnEnds(t *testing.T, c *codec, now time.Time, d time.Duration, when string) time.Time {
+	t.Helper()
+	var evs []agent.Event
+	for end := now.Add(d); now.Before(end); now = now.Add(100 * time.Millisecond) {
+		a := c.Tick(now)
+		if len(a.Keys) != 0 {
+			t.Fatalf("%s: keys %q", when, a.Keys)
+		}
+		evs = append(evs, a.Events...)
+	}
+	if len(evs) != 1 || evs[0].Kind != agent.TurnEnded || evs[0].Status != agent.Failed || evs[0].Reason != agent.NotDelivered || evs[0].Input != "" {
+		t.Fatalf("%s: events %+v; want the turn's end, not delivered, naming no input", when, evs)
+	}
+	return now
+}
+
 // enters ticks every 100 ms for d, fails at any event, and returns how
 // often Enter was pressed.
 func enters(t *testing.T, c *codec, now time.Time, d time.Duration) (time.Time, int) {
@@ -164,6 +183,7 @@ func TestHeldInputAcrossARestart(t *testing.T) {
 // In a confined session, what a hataori before #914 left in the box across
 // a restart, which this one would not paste as it is, is never submitted,
 // nor is anything pasted after it, until the CLI reports it as a prompt: the
+// turn it was to start ends after the input timeout, naming no input, the
 // next input ends "not delivered", and the one in the box does not end, so
 // that it is handed to the codec again after another restart. Another
 // prompt, which may have been before the paste, does not release it, nor
@@ -204,7 +224,7 @@ func TestOlderPasteIsNotSubmittedAfterARestart(t *testing.T) {
 		if tc.enter != 0 {
 			continue
 		}
-		now = quiet(t, c, now, 2*DefaultInputTimeout, "after the own turn")
+		now = heldTurnEnds(t, c, now, 2*DefaultInputTimeout, "after the own turn")
 		a, _ := c.Input(agent.Input{ID: "in-8", Text: "list the threads"})
 		if len(a.Keys) != 0 || len(a.Events) != 1 || a.Events[0].Reason != agent.NotDelivered || a.Events[0].Input != "in-8" {
 			t.Fatalf("%q: the next input: keys %q, events %+v", tc.text, a.Keys, a.Events)
@@ -287,8 +307,9 @@ func TestClearReleasesAnOlderPaste(t *testing.T) {
 
 // A task notification that starts a turn does not take the box's text, also
 // when it is the text of the input that may be there: the turn is the
-// agent's, the input does not end, and nothing is pasted after it, nor at
-// the end of the notification's turn.
+// agent's, the input does not end, also when the turn it was to start ends
+// after the input timeout, and nothing is pasted after it, nor at the end of
+// the notification's turn.
 func TestNotificationDoesNotTakeAnOlderPaste(t *testing.T) {
 	var p payload
 	b, err := os.ReadFile(filepath.Join("testdata/2.1.322", held+"07-UserPromptSubmit.json"))
@@ -310,7 +331,8 @@ func TestNotificationDoesNotTakeAnOlderPaste(t *testing.T) {
 	if len(a.Keys) != 0 || len(a.Events) != 1 || a.Events[0].Reason != agent.NotDelivered {
 		t.Fatalf("the next input: keys %q, events %+v", a.Keys, a.Events)
 	}
-	quiet(t, c, time.Now(), 2*DefaultInputTimeout, "after it")
+	now := heldTurnEnds(t, c, time.Now(), 2*DefaultInputTimeout, "after it")
+	quiet(t, c, now, 2*DefaultInputTimeout, "after the turn's end")
 }
 
 // An input without an ID that may be in the box is not released by a
