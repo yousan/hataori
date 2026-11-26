@@ -430,8 +430,8 @@ type Event struct {
 
 	Status     EndStatus // TurnEnded
 	Reason     Reason    // TurnEnded when failed; SessionEnded: why, as the agent says or CannotResume, WrongSession, BlockedAtStart
-	Background int       // TurnEnded: background tasks still running, whatever the Status: what the agent listed, or the last count corrected by what it reported since
-	// Subagents are, for TurnEnded, the subagents among the Background tasks,
+	Background int       // TurnEnded, Request: background tasks still running, whatever the Status: what the agent listed, or the last count corrected by what it reported since
+	// Subagents are, for TurnEnded and Request, the subagents among the Background tasks,
 	// by the ids of their SubagentStarted.
 	Subagents []string
 	// Trust is, for SessionEnded with BlockedAtStart, every file a start-up

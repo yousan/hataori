@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/yousan/hataori/internal/agent"
@@ -131,6 +133,51 @@ func TestOneEndEventPerTurn(t *testing.T) {
 		}
 		if _, ok := got[i]["reason"]; ok != (w["reason"] != nil) {
 			t.Errorf("end event %d: reason = %v", i, got[i]["reason"])
+		}
+	}
+}
+
+// Both questions and approvals end the current turn while its background
+// tasks keep running. The event and the turn row must retain the count.
+func TestBlockedTurnKeepsBackgroundTasks(t *testing.T) {
+	for _, approval := range []bool{false, true} {
+		for _, tc := range []struct {
+			name       string
+			background int
+			subagents  []string
+		}{
+			{"none", 0, nil},
+			{"shell", 1, nil},
+			{"shell and subagents", 3, []string{"s1", "s2"}},
+		} {
+			t.Run(fmt.Sprintf("approval=%t/%s", approval, tc.name), func(t *testing.T) {
+				m, id := newMachine(t, control.Idle)
+				feed(t, m, id,
+					Input{Kind: Send, Principal: "p", Key: "m1"},
+					ag(agent.Event{Kind: agent.Request, Background: tc.background, Subagents: tc.subagents,
+						Request: &agent.RequestInfo{ID: "r1", Text: "continue?", Approval: approval}}),
+				)
+				got := ended(t, m)
+				if len(got) != 1 || got[0]["outcome"] != Blocked || got[0]["background"] != float64(tc.background) {
+					t.Fatalf("blocked end: %v", got)
+				}
+				var ids []any
+				for _, id := range tc.subagents {
+					ids = append(ids, id)
+				}
+				if v, set := got[0]["subagents"]; set != (len(ids) > 0) || set && !reflect.DeepEqual(v, ids) {
+					t.Errorf("subagents %v, want %v", v, ids)
+				}
+				var state, status string
+				var background int
+				if err := m.Store.DB.QueryRow(`SELECT s.state, t.status, t.background FROM sessions s JOIN turns t ON t.session_id = s.id WHERE s.id = ?`, id).
+					Scan(&state, &status, &background); err != nil {
+					t.Fatal(err)
+				}
+				if state != string(control.Waiting) || status != Blocked || background != tc.background {
+					t.Errorf("stored state %s, outcome %s, background %d", state, status, background)
+				}
+			})
 		}
 	}
 }
