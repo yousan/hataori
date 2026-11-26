@@ -162,6 +162,11 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 	if err := st.LinkThreads(ctx, scopeClients, lg); err != nil {
 		return err
 	}
+	// Input revocation depends only on the loaded config, even if a
+	// destination's driver is absent or can never verify its identity.
+	if err := revokeUnservedInputs(ctx, st, cfg); err != nil {
+		return err
+	}
 
 	exe, err := os.Executable()
 	if err != nil {
