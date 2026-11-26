@@ -212,16 +212,17 @@ type Launch struct {
 // the session, and sets sessions.launch; the runner clears launch when it
 // launches the agent, and keeps the input until a turn reports its id.
 type FirstInput struct {
-	Principal control.Principal `json:"principal"`
-	From      string            `json:"from,omitempty"`
-	Key       string            `json:"key"`
-	Text      string            `json:"text"`
-	Sent      bool              `json:"sent,omitempty"`     // the turn was started for it, and it was handed to the codec
-	Written   bool              `json:"written,omitempty"`  // it was written to the agent; see agent.Input.Written
-	Current   bool              `json:"current,omitempty"`  // Written was set by a runner that sets this; else it is agent.Input.Earlier
-	Wake      bool              `json:"wake,omitempty"`     // the session was asleep: its agent resumes
-	NoInput   bool              `json:"no_input,omitempty"` // woken with no input, as for an attach: the agent is only started
-	Dir       string            `json:"dir,omitempty"`      // the workspace, once it is made; a confined thread's from its start
+	Principal   control.Principal `json:"principal"`
+	From        string            `json:"from,omitempty"`
+	Key         string            `json:"key"`
+	Text        string            `json:"text"`
+	Sent        bool              `json:"sent,omitempty"`         // the turn was started for it, and it was handed to the codec
+	Written     bool              `json:"written,omitempty"`      // it was written to the agent; see agent.Input.Written
+	WrittenText *string           `json:"written_text,omitempty"` // text recorded by the codec when written; nil for older inputs
+	Current     bool              `json:"current,omitempty"`      // Written was set by a runner that sets this; else it is agent.Input.Earlier
+	Wake        bool              `json:"wake,omitempty"`         // the session was asleep: its agent resumes
+	NoInput     bool              `json:"no_input,omitempty"`     // woken with no input, as for an attach: the agent is only started
+	Dir         string            `json:"dir,omitempty"`          // the workspace, once it is made; a confined thread's from its start
 	// Link is the link the input came through, if any (design, section 5.2).
 	Link *control.LinkRef `json:"link,omitempty"`
 	// Via is the way of the daemon's own the input came through
@@ -2335,6 +2336,10 @@ func (c *Core) wakeTx(ctx context.Context, tx *store.Tx, id control.ThreadID, si
 // sendTx gives session sid the input in, in tx, and returns what Deliver is
 // given once tx is committed.
 func (c *Core) sendTx(ctx context.Context, tx *store.Tx, sid int64, in FirstInput) (pending int64, hand control.Input, err error) {
+	var state string
+	if err := tx.QueryRowContext(ctx, `SELECT state FROM sessions WHERE id = ?`, sid).Scan(&state); err != nil {
+		return 0, hand, err
+	}
 	if err := c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Send, Principal: in.Principal, From: in.From, Key: in.Key,
 		Text: in.Text, Link: in.Link, Before: in.Before, After: in.After, Via: in.Via}); err != nil {
 		return 0, hand, err
@@ -2344,7 +2349,13 @@ func (c *Core) sendTx(ctx context.Context, tx *store.Tx, sid int64, in FirstInpu
 		return 0, hand, err
 	}
 	hand = forAgent(in.Input())
-	pending, err = pend(ctx, tx, sid, "", hand, earlier)
+	origin := &session.InputOrigin{Principal: in.Principal, From: in.From, Key: in.Key, Via: in.Via, Text: in.Text}
+	if control.State(state) == control.Idle {
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM turns WHERE session_id = ? AND ended_at IS NULL`, sid).Scan(&origin.Turn); err != nil {
+			return 0, hand, err
+		}
+	}
+	pending, err = pend(ctx, tx, sid, "", session.PendingInput{Input: hand, Origin: origin}, earlier)
 	hand.Text = earlier + hand.Text
 	return pending, hand, err
 }

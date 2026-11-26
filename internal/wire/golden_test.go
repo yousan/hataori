@@ -55,6 +55,7 @@ var eventData = map[control.EventKind]string{
 	"post_refused":      `{"event":41,"link":{"channel":"C0123","client":"discord","thread":"T0456"},"message":"M0999","part":0,"reason":"discord: post: 403 Missing Access (code 50001)"}`,
 	"input":             `{"after":"Say which tests failed.","before":"Answer in English.","from":"discord:W1","link":{"channel":"C0123","client":"discord","thread":"T0456"},"principal":"dispatch","session":3,"text":"Run the tests.","turn":12,"via":"dashboard"}`,
 	"input_waits":       `{"running":[12,15],"session":3}`,
+	"input_failed":      `{"from":"discord:W1","input":"42","key":"M0789","link":{"channel":"C0123","client":"discord","thread":"T0456"},"principal":"dispatch","reason":"not delivered","session":3,"text":"Run the tests.","via":"dashboard"}`,
 	"answer":            `{"from":"discord:W1","link":{"channel":"C0123","client":"discord","thread":"T0456"},"principal":"dispatch","request":"3:toolu_2","session":3,"text":"blue","turn":13,"via":"dashboard"}`,
 	"stop":              `{"from":"discord:W1","principal":"alice","session":3,"turn":12,"via":"dashboard"}`,
 	"text":              `{"final":true,"session":3,"text":"All tests pass."}`,
