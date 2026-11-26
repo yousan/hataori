@@ -26,7 +26,9 @@ dialogs, filtering, split panes, the tab menu and hidden panels.
 | 9 | [#1022](https://github.com/yousan/hataori/issues/1022) | `web/src/styles.css:1701` | Send, Answer and approval buttons only inherit their font. They use browser-default borders and fills beside explicitly styled Type/Stop/view controls. |
 | 10 | [#1023](https://github.com/yousan/hataori/issues/1023) | `web/src/styles.css:190` | Density, Active/All, view choices and outlined actions have no intentional hover treatment, while toolbar icons do. Keyboard feedback also varies between controls. |
 
-The baseline is PR #992: keep its 34 px desktop tab strip and existing actions.
+The design reference is PR #992: keep its 34 px desktop tab strip and existing actions.
+The dashboard baseline is commit `56d7d853`; subsequent main changes through
+`562e241` did not change the dashboard sources or build.
 For each finding, use one issue/branch/PR and before/after captures at both widths.
 Render two variants before layout or visual hierarchy changes; spacing-only changes
 need measurements and captures. API and action behavior are outside this pass.
@@ -55,3 +57,59 @@ have merged. Each issue rechecks open PRs and remote branches before source edit
 
 Reference: [Web Interface Guidelines](https://github.com/vercel-labs/web-interface-guidelines/blob/main/command.md).
 The findings above are based on this app’s source and measured synthetic captures.
+
+## Fix pull requests and completion gate
+
+Each finding was implemented in its own branch and PR, with before/after captures
+at both widths, a regression check that fails on the baseline, and a fresh Codex
+review. These links track the live merge/CI state; a prepared implementation is not
+a completed issue. Require green CI on the exact head, including macOS, then merge,
+confirm issue closure, and require green CI on the exact main merge commit.
+
+| Finding | Pull request |
+| --- | --- |
+| [#1014](https://github.com/yousan/hataori/issues/1014) | [#1026](https://github.com/yousan/hataori/pull/1026) |
+| [#1015](https://github.com/yousan/hataori/issues/1015) | [#1027](https://github.com/yousan/hataori/pull/1027) |
+| [#1016](https://github.com/yousan/hataori/issues/1016) | [#1028](https://github.com/yousan/hataori/pull/1028) |
+| [#1017](https://github.com/yousan/hataori/issues/1017) | [#1029](https://github.com/yousan/hataori/pull/1029) |
+| [#1018](https://github.com/yousan/hataori/issues/1018) | [#1032](https://github.com/yousan/hataori/pull/1032) |
+| [#1019](https://github.com/yousan/hataori/issues/1019) | [#1035](https://github.com/yousan/hataori/pull/1035) |
+| [#1020](https://github.com/yousan/hataori/issues/1020) | [#1039](https://github.com/yousan/hataori/pull/1039) |
+| [#1021](https://github.com/yousan/hataori/issues/1021) | [#1042](https://github.com/yousan/hataori/pull/1042) |
+| [#1022](https://github.com/yousan/hataori/issues/1022) | [#1047](https://github.com/yousan/hataori/pull/1047) |
+| [#1023](https://github.com/yousan/hataori/issues/1023) | [#1050](https://github.com/yousan/hataori/pull/1050) |
+
+## Supplemental listener and integration checks
+
+The [HTTPS gallery](https-gallery.md) adds the web listener's Type/Operate controls,
+the floating Type prompt, and the richer passkey dialog. It uses a fresh test-only
+certificate, not any installation certificate. The phone has no terminal Type
+prompt in the existing app; its unchanged layout is captured separately.
+
+The [combined preview](integration-gallery.md) applies all ten source patches to an
+isolated checkout of main and rebuilds it. This is local compatibility evidence,
+not a merged branch or a replacement for each PR's head CI. Sixty English captures
+cover 1440/800/390 px in both themes; six Japanese phone captures cover filter,
+list and question. The browser checks confirm 44 px phone targets, 16 px phone and
+13 px desktop editable text, title/center width, wrapping, button styling,
+reachable desktop tools, and actual pointer/keyboard feedback. All checks pass.
+A separate fresh Codex review of the combined source found no actionable issue.
+
+Combining #1017 and #1022 needs one source conflict resolved: keep the shared
+button styling from #1022 and the `.answers-row button, .answers-check` containment
+rule from #1017. Generated assets must be rebuilt after each main integration.
+The other source patches combined cleanly. Do not carry the combined preview into
+one finding's PR.
+
+The runner now supports `CAPTURE_BUILD_ROOT`, `VERIFY_CASE`, `CAPTURE_INTERACTION`
+and `CAPTURE_SUFFIX` for focused regression evidence. `CAPTURE_HTTPS_DIR` may point
+to a newly generated temporary directory containing only a disposable `key.pem`
+and `cert.pem`. It never needs an installation config, socket or data directory.
+Use `VERIFY_CASE=integration` only against the rebuilt combined source, or the
+individual finding keys against each PR's rebuilt source. The ephemeral test
+server and browser are closed by the runner itself.
+
+Final independent documentation/image review found and corrected an HTTP-only
+runner timeout: the HTTPS Type prompt is now skipped on HTTP. The focused HTTP
+reproduction check passes; follow-up review confirmed the correction. No remaining
+findings or private content were reported.
