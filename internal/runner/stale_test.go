@@ -60,7 +60,7 @@ func TestLaunchRecordsWhatItWasGiven(t *testing.T) {
 	}
 	for i, p := range []string{"y", "z", "another effort"} {
 		if _, err := f.st.DB.Exec(`INSERT OR REPLACE INTO pending_inputs (id, session_id, request, data, written)
-			VALUES (20, 1, '', '{"text":"one"}', ?), (21, 1, '', '{"text":"two"}', 0)`, 1+i%2); err != nil {
+			VALUES (20, 1, '', '{"text":"one"}', ?), (21, 1, '', '{"text":"two"}', 0), (22, 1, 'q-1', '{"text":"yes"}', 1)`, 1+i%2); err != nil {
 			t.Fatal(err)
 		}
 		killSessions(f.root)
@@ -75,9 +75,9 @@ func TestLaunchRecordsWhatItWasGiven(t *testing.T) {
 		if s, column = stored(); s.Config == nil || s.Config.Parts["a part"] != p || column != "m-1-reported" {
 			t.Fatalf("stored %+v, model %q; want the part %q, and the model the agent reported", s, column, p)
 		}
-		var n, w int64
-		if err := f.st.DB.QueryRow(`SELECT (SELECT count(*) FROM pending_inputs WHERE id = 20), (SELECT written FROM pending_inputs WHERE id = 21)`).Scan(&n, &w); err != nil || n != 0 || w != 0 {
-			t.Fatalf("%s: %d rows written before, the other written %d, %v; want none, and 0", p, n, w, err)
+		var n, w, a int64
+		if err := f.st.DB.QueryRow(`SELECT (SELECT count(*) FROM pending_inputs WHERE id = 20), (SELECT written FROM pending_inputs WHERE id = 21), (SELECT count(*) FROM pending_inputs WHERE id = 22)`).Scan(&n, &w, &a); err != nil || n != 0 || w != 0 || a != 1 {
+			t.Fatalf("%s: %d rows written before, the other written %d, %d answers, %v; want none, 0 and the answer", p, n, w, a, err)
 		}
 		var e string
 		if err := f.st.DB.QueryRow(`SELECT effort FROM sessions WHERE id = 1`).Scan(&e); err != nil || e != effort {
