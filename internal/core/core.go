@@ -2823,7 +2823,9 @@ func (a *api) AttachTerminal(ctx context.Context, id control.ThreadID) (control.
 			// check also writes in: the session is not put to sleep between
 			// this answer and the terminal reaching its host, which then
 			// reports it attached.
-			_, err := tx.ExecContext(ctx, `UPDATE sessions SET updated_at = max(updated_at, ?) WHERE id = ?`, a.c.now().UnixMilli(), sid)
+			at := a.c.now().UnixMilli()
+			_, err := tx.ExecContext(ctx, `UPDATE sessions SET updated_at = max(updated_at, ?),
+				attach_requested_at = max(attach_requested_at, ?) WHERE id = ?`, at, at, sid)
 			return err
 		}
 		// A thread reopened with no conversation to resume is told what it
@@ -2842,7 +2844,8 @@ func (a *api) AttachTerminal(ctx context.Context, id control.ThreadID) (control.
 			return err
 		}
 		fi, _ := json.Marshal(FirstInput{Principal: a.caller.Principal, Wake: true, NoInput: true})
-		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ?, launch = 1 WHERE id = ?`, string(fi), sid); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ?, launch = 1,
+			attach_requested_at = max(attach_requested_at, ?) WHERE id = ?`, string(fi), a.c.now().UnixMilli(), sid); err != nil {
 			return fmt.Errorf("core: wake: %w", err)
 		}
 		return nil

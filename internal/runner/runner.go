@@ -63,6 +63,9 @@ type Runner struct {
 	InterruptGrace time.Duration // after an interrupt, before the session's processes are stopped; 5s when zero
 	Poll           time.Duration // how often the logs are read; 50ms when zero
 	IdlePeriod     time.Duration // idle this long, a session's agent is stopped; 30 minutes when zero
+	// MaxResidentAgents sleeps the oldest eligible idle agents above this
+	// count. Zero leaves the count unlimited; protected sessions may exceed it.
+	MaxResidentAgents int
 	// BackgroundWait is how long the count of a turn that did not complete
 	// holds (background); session.BackgroundWait when zero.
 	BackgroundWait time.Duration
@@ -108,6 +111,9 @@ type Runner struct {
 
 	mu   sync.Mutex
 	live map[int64]*live
+
+	residentMu sync.Mutex // one cap check at a time, outside any live's lock
+	residentAt time.Time  // last cap check, under residentMu
 
 	startedMu sync.Mutex
 	started   map[int64]bool // the sessions Start started in this process (claim)
@@ -1425,6 +1431,10 @@ func (r *Runner) Close() {
 			lv.client.Close()
 		}
 	}
+	// Followers cannot start another cap pass now. Its snapshot may still
+	// hold these lives, so finish it before the caller closes the store.
+	r.residentMu.Lock()
+	r.residentMu.Unlock()
 }
 
 func (r *Runner) get(id int64) (*live, error) {
@@ -1480,6 +1490,7 @@ func (r *Runner) loop(lv *live) {
 			r.do(lv, lv.codec.Tick(time.Now()))
 			lv.mu.Unlock()
 			r.checkIdle(lv)
+			r.checkResidentCap()
 		}
 		if lv.taken != nil && time.Since(lastWindow) >= windowCheck {
 			lastWindow = time.Now()
@@ -2178,7 +2189,15 @@ func (r *Runner) Sleep(ctx context.Context, thread control.ThreadID) (bool, erro
 
 // sleep is Sleep of lv, with lv.mu held.
 func (r *Runner) sleep(ctx context.Context, lv *live) (bool, error) {
+	return r.sleepIfIdleAt(ctx, lv, 0)
+}
+
+// sleepIfIdleAt is sleep with a cap candidate's idle timestamp, or zero
+// for an explicit sleep. A candidate that has had activity since selection
+// is left alone, including an attach racing with the host's attached check.
+func (r *Runner) sleepIfIdleAt(ctx context.Context, lv *live, idleAt int64) (bool, error) {
 	id := lv.id
+	checkedAt := time.Now().UnixMilli()
 	if lv.asleep || lv.failed || lv.taken != nil || r.attached(lv) {
 		return false, nil
 	}
@@ -2186,10 +2205,14 @@ func (r *Runner) sleep(ctx context.Context, lv *live) (bool, error) {
 	err := r.Store.Update(ctx, func(tx *store.Tx) error {
 		slept = false
 		var state string
-		if err := tx.QueryRowContext(ctx, `SELECT state FROM sessions WHERE id = ?`, id).Scan(&state); err != nil {
+		var updated, attachRequested int64
+		if err := tx.QueryRowContext(ctx, `SELECT state, updated_at, attach_requested_at FROM sessions WHERE id = ?`, id).Scan(&state, &updated, &attachRequested); err != nil {
 			return err
 		}
-		if control.State(state) != control.Idle {
+		if control.State(state) != control.Idle || idleAt != 0 && (updated != idleAt || updated >= checkedAt) {
+			return nil
+		}
+		if attachRequested > 0 && time.Since(time.UnixMilli(attachRequested)) < r.idlePeriod() {
 			return nil
 		}
 		background, _, err := r.background(ctx, tx, id)

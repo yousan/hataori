@@ -99,9 +99,15 @@ func TestAttachTerminalWakesWithoutInput(t *testing.T) {
 		t.Fatalf("state %s, want creating until the agent reports it is ready", f.state(t, sid))
 	}
 	var fi string
-	f.core.Store.DB.QueryRow(`SELECT first_input FROM sessions WHERE id = ?`, sid).Scan(&fi)
+	var attachRequested int64
+	if err := f.core.Store.DB.QueryRow(`SELECT first_input, attach_requested_at FROM sessions WHERE id = ?`, sid).Scan(&fi, &attachRequested); err != nil {
+		t.Fatal(err)
+	}
 	if fi != `{"principal":"owner","key":"","text":"","wake":true,"no_input":true}` {
 		t.Fatalf("first input %s", fi)
+	}
+	if attachRequested <= 0 {
+		t.Fatal("wake lost the terminal attach reservation")
 	}
 }
 
@@ -120,9 +126,14 @@ func TestAttachTerminalRestartsTheIdlePeriod(t *testing.T) {
 	if _, err := owner.AttachTerminal(ctx, id); err != nil {
 		t.Fatal(err)
 	}
-	var updated int64
-	f.core.Store.DB.QueryRow(`SELECT updated_at FROM sessions WHERE id = ?`, sid).Scan(&updated)
+	var updated, attachRequested int64
+	if err := f.core.Store.DB.QueryRow(`SELECT updated_at, attach_requested_at FROM sessions WHERE id = ?`, sid).Scan(&updated, &attachRequested); err != nil {
+		t.Fatal(err)
+	}
 	if updated <= 1 || f.state(t, sid) != control.Idle {
 		t.Fatalf("after the attach: updated_at %d, state %s; want the idle period started again", updated, f.state(t, sid))
+	}
+	if attachRequested != updated {
+		t.Fatalf("attach reservation %d, updated %d", attachRequested, updated)
 	}
 }

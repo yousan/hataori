@@ -42,6 +42,9 @@ type Config struct {
 	Idle    time.Duration // idle period before a session is put to sleep
 	Model   string        // default model of a scope without one; empty for the agent's own default
 	Effort  string        // default effort of a scope without one; empty for the agent's own default
+	// MaxResidentAgents is "max_resident_agents": zero or absent leaves
+	// the managed agent count unlimited. Protected sessions may exceed it.
+	MaxResidentAgents int
 	// ContextBytes caps, in bytes, the thread's earlier inputs and final
 	// answers given to a session that replaces one whose conversation the
 	// agent no longer has (section 4.5). "context_bytes"; 8192 when absent.
@@ -406,6 +409,7 @@ type fileConfig struct {
 	People     *[]filePerson              `json:"people"`
 	Trigger    string                     `json:"trigger"`
 	Idle       string                     `json:"idle"`
+	Resident   int                        `json:"max_resident_agents"`
 	Model      string                     `json:"model"`
 	Effort     string                     `json:"effort"`
 	Context    *int                       `json:"context_bytes"`
@@ -545,6 +549,10 @@ func ParseConfig(data []byte) (*Config, error) {
 		return nil, fmt.Errorf("config: key %q: %q is not a positive duration such as \"30m\"", "idle", idle)
 	}
 	c.Idle = d
+	if f.Resident < 0 {
+		return nil, fmt.Errorf("config: key %q: %d is not a non-negative process count", "max_resident_agents", f.Resident)
+	}
+	c.MaxResidentAgents = f.Resident
 	if c.HostInput && !c.HostTerminals {
 		return nil, fmt.Errorf("config: key %q is true, which needs key %q to be true as well", "host_input", "host_terminals")
 	}

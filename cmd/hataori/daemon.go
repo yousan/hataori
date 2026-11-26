@@ -174,7 +174,8 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 		LoginDir: func(name string, spec agent.Spec) string { return agent.LoginDir(adapters[name], spec) }}
 	r := &runner.Runner{Store: st, Machine: m, Adapters: adapters,
 		Host: host.Command{Path: exe, Args: []string{"host"}}, Root: abs, Log: lg, IdlePeriod: cfg.Idle,
-		ContextBytes: cfg.ContextBytes, Cols: uint16(cfg.TerminalCols), Rows: uint16(cfg.TerminalRows)}
+		MaxResidentAgents: cfg.MaxResidentAgents,
+		ContextBytes:      cfg.ContextBytes, Cols: uint16(cfg.TerminalCols), Rows: uint16(cfg.TerminalRows)}
 	defer r.Close()
 	// The tmux windows hataori starts, with the "holder" key, are in tmux
 	// sessions named after the instance, so that two never meet; and those
