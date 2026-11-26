@@ -785,6 +785,21 @@ var migrations = []Migration{
 	{Name: "pending_inputs.written_text", Up: execAll(
 		`ALTER TABLE pending_inputs ADD COLUMN written_text TEXT`,
 	)},
+	// Scope keys are never freed. Seed claims from retained history too, so
+	// a removed config entry cannot acquire a new stored identity (#892).
+	{Name: "stored_scopes", Up: execAll(
+		`CREATE TABLE scope_keys (key TEXT PRIMARY KEY)`,
+		`INSERT OR IGNORE INTO scope_keys SELECT DISTINCT scope FROM threads`,
+		`INSERT OR IGNORE INTO scope_keys SELECT scope FROM supervisor_dirs`,
+		`INSERT OR IGNORE INTO scope_keys SELECT DISTINCT scope FROM events WHERE scope != ''`,
+		`CREATE TABLE stored_scopes (
+   key TEXT PRIMARY KEY REFERENCES scope_keys(key),
+   client TEXT NOT NULL,
+   channel TEXT NOT NULL,
+   created_at INTEGER NOT NULL,
+   UNIQUE (client, channel)
+  )`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {
