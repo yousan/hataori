@@ -1985,6 +1985,17 @@ a.chat-link:hover {
   padding: 0;
 }
 
+.tree.narrow-list .row,
+.tree.narrow-list .row > .box {
+  min-height: 44px;
+}
+
+.tree.narrow-list .row[data-thread] > .box {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
 .node-body .row > .box {
   padding-left: 22px;
 }
