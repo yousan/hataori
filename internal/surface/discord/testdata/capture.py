@@ -17,6 +17,7 @@ usage:
                                  that mention the bot itself, @everyone and a role (no gateway connection)
   capture.py calls RAW_DIR MIN   what is a call and what is not: say one step after another on the terminal,
                                  wait up to MIN minutes for the person to do them all (README)
+  capture.py history RAW_DIR     read prepared test threads and messages (README)
   capture.py cleanup RAW_DIR     delete what the bot posted in the runs above
 
 Environment:
@@ -718,6 +719,38 @@ def calls_run(raw, minutes):
         gw.close()
 
 
+def history_run(raw):
+    """Read-only capture of an explicitly supplied test channel.
+
+    Prepare public active, public archived and private active threads first.
+    Uses no deployment configuration and creates/deletes no service objects.
+    """
+    ch = os.environ["HATAORI_DISCORD_CHANNEL"]
+    status, channel = rest(raw, "history-channel", "GET", f"/channels/{ch}")
+    if status != 200:
+        raise RuntimeError("test channel could not be read")
+    rest(raw, "history-active", "GET", f"/guilds/{channel['guild_id']}/threads/active")
+    before = ""
+    for page in range(1, 4):
+        from urllib.parse import urlencode
+        query = {"limit": 2}
+        if before:
+            query["before"] = before
+        status, data = rest(raw, f"history-archived-{page}", "GET",
+                            f"/channels/{ch}/threads/archived/public?" + urlencode(query))
+        if status != 200 or not data.get("has_more"):
+            break
+        before = data["threads"][-1]["thread_metadata"]["archive_timestamp"]
+    target = os.environ["HATAORI_DISCORD_HISTORY_THREAD"]
+    rest(raw, "history-thread", "GET", f"/channels/{target}")
+    status, data = rest(raw, "history-last", "GET", f"/channels/{target}/messages?limit=2")
+    if status == 200 and data:
+        oldest, newest = data[-1]["id"], data[0]["id"]
+        rest(raw, "history-before", "GET", f"/channels/{target}/messages?before={oldest}&limit=2")
+        rest(raw, "history-after", "GET", f"/channels/{target}/messages?after={oldest}&limit=2")
+        rest(raw, "history-single", "GET", f"/channels/{target}/messages/{newest}")
+
+
 def cleanup(raw):
     for conv, mid in raw.created["messages"]:
         st, _ = rest(None, None, "DELETE", f"/channels/{conv}/messages/{mid}")
@@ -737,4 +770,4 @@ if __name__ == "__main__":
      "second": lambda: second_run(raw), "lookups": lambda: lookups(raw), "pages": lambda: pages_run(raw), "rethread": lambda: rethread_run(raw),
      "commands": lambda: commands_run(raw, float(sys.argv[3])),
      "choices": lambda: choices_run(raw, float(sys.argv[3])), "lamps": lambda: lamps_run(raw),
-     "calls": lambda: calls_run(raw, float(sys.argv[3])), "cleanup": lambda: cleanup(raw)}[cmd]()
+     "history": lambda: history_run(raw), "calls": lambda: calls_run(raw, float(sys.argv[3])), "cleanup": lambda: cleanup(raw)}[cmd]()

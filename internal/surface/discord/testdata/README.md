@@ -121,3 +121,22 @@ What the service reported:
 - A webhook message made in the server settings carries `application_id` as well as `webhook_id`. So `application_id` alone does not mean an application-owned webhook. This corrects the research note on that point.
 - The webhook message's `author` has `bot: true`, so `author.bot` alone does not tell a webhook from a bot account; `webhook_id` does.
 - The thread creator could rename and archive its own thread without Manage Threads. Deleting it was refused while it was archived (403) and accepted later, after a post had unarchived it (the cleanup run).
+
+## History reads (#886): remaining captures
+
+`history_test.go` reuses the existing real message and individual thread captures.
+Its collection envelopes and before/after pages are composed from those objects;
+they are not new observations of collection endpoints. Acceptance still needs
+real active and archived collection responses, a private thread, and consecutive
+before pages. Do not replace that evidence with invented payloads.
+
+For a separate test bot and test channel, prepare at least three public threads
+(two archived), an active private thread visible to the bot, and a public thread
+with at least five messages. Set `HATAORI_DISCORD_HISTORY_THREAD` to that public
+thread's id, and the token-file and test-channel environment variables described
+above. `capture.py history RAW_DIR` reads their channel/thread objects, active
+collection, up to three public archived pages, latest/before/after messages and
+one message. It creates, changes and deletes nothing. Run `scrub.py` as above
+before committing any captures, check the scrubbed private thread is present in
+the active input but absent from the driver's output, and replay the collection
+responses in the tests. No live capture was taken for this implementation.
