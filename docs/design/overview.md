@@ -555,7 +555,12 @@ A mirror's branches and tags are made those of the remote before each clone, so 
 
 A clone is made in a directory of its own and renamed into place, so a half-made workspace never appears. Right before the rename, the core records where the workspace goes and the device and inode of the clone, which the rename keeps. A daemon that died before it recorded the finished workspace takes the directory at that place only when its device and inode match. If nothing is there, it clones again; any other directory there is refused and left as it is. Nothing is written into the workspace to mark it.
 
-### 6.4 A second host
+### 6.4 One instance, several machines
+
+**Design in progress (#949; docs only).** One main instance owns the chat clients, database, people, dashboard and supervisors. Worker machines run resident processes, session hosts and agents, and hold their own workspaces. The sections named in #949 will specify the connection, placement, away handling and trust boundary before implementation issues are opened.
+
+The following paragraphs record the earlier design, superseded by #949:
+
 
 A second host (for example a macOS machine) is another instance: its own root, database, agent logins and bot identity. Hosts share nothing and do not coordinate. A channel belongs to one instance, by config. Which bot answers tells you which host the work is on. Moving a thread between hosts is not supported; push the branch and start a thread on the other host.
 
