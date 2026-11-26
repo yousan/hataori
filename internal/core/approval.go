@@ -108,6 +108,9 @@ func (a *api) recheck(ctx context.Context, target control.ThreadID, sid, turn in
 	if errors.Is(err, session.ErrRefused) {
 		return "ended", nil
 	}
+	if errors.Is(err, control.ErrNotInterrupted) {
+		return "not_interrupted", fmt.Errorf("core: approved interrupt of thread %d: %w", target, err)
+	}
 	if err != nil {
 		return "", fmt.Errorf("core: approved interrupt of thread %d: %w", target, err)
 	}
@@ -155,6 +158,7 @@ func (a *api) answerApproval(ctx context.Context, req control.RequestID, ans con
 	}
 	allow := ans.Allow || (len(ans.Choices) == 1 && ans.Choices[0] == "approve")
 	outcome := "refused"
+	var notInterrupted error
 	if allow {
 		unlockTurn := a.c.locks.lock(fmt.Sprintf("approval-turn:%d:%d:%d", target, guard.session, guard.turn))
 		defer unlockTurn()
@@ -175,10 +179,19 @@ func (a *api) answerApproval(ctx context.Context, req control.RequestID, ans con
 				// does not decide it: the asked turn is interrupted now if it
 				// still runs, else the outcome is ended (#523).
 				if outcome, err = a.recheck(ctx, target, guard.session, guard.turn); err != nil {
-					return err
+					if !errors.Is(err, control.ErrNotInterrupted) {
+						return err
+					}
+					notInterrupted = err
 				}
 			case errors.Is(err, errGuardEnded):
 				outcome = "ended"
+			case errors.Is(err, control.ErrNotInterrupted):
+				// The reason was taken even though the window did not take
+				// the interrupt. Close this as approved before returning the
+				// error: a later refusal cannot undo the accepted input (#902).
+				outcome = "not_interrupted"
+				notInterrupted = err
 			case guard.ended || guard.interrupted:
 				// What the interrupt did stands, also when the reason could
 				// not be handed over: the approval is not left open for an
@@ -201,7 +214,7 @@ func (a *api) answerApproval(ctx context.Context, req control.RequestID, ans con
 	// interrupt that was sent or refused is recorded as such, and not left
 	// to an answer given again, which can only look at the turn (#523).
 	ctx = context.WithoutCancel(ctx)
-	return a.c.Store.Update(ctx, func(tx *store.Tx) error {
+	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
 		res, err := tx.ExecContext(ctx, `UPDATE approvals SET state = ?, closed_at = ? WHERE handle = ? AND state = 'open'`, outcome, time.Now().UnixMilli(), req)
 		if err != nil {
 			return err
@@ -218,4 +231,5 @@ func (a *api) answerApproval(ctx context.Context, req control.RequestID, ans con
 		_, err = tx.Append(ctx, control.Event{Thread: thread, Kind: "approval_answered", Data: data})
 		return err
 	})
+	return errors.Join(notInterrupted, err)
 }

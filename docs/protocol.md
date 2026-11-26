@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.42**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.43**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -1558,12 +1558,14 @@ The decision in the asker's thread, since 3.10.
 |---|---|---|---|
 | `request` | string | required | what `Answer` names |
 | `allow` | boolean | required | whether approved |
-| `outcome` | string | required | `interrupted`, `ended`, or `refused` |
+| `outcome` | string | required | `interrupted`, `ended`, `refused`, or, since 3.43, `not_interrupted` |
 | `target` | integer | required | the target thread |
 | `principal` | string | optional | the person who answered |
 | `from` | string | optional | the `<client>:<id>` it came from, as in `thread_created` |
 | `link` | object | optional | the conversation where answered |
 | `via` | string | optional | as in `input`; since 3.23 |
+
+Since 3.43, `not_interrupted` records an approval whose reason was accepted but whose interrupt the agent's window did not take. The turn continues and the reason waits for its end, as for a `Send` with busy 2 that answers `not_interrupted`. `allow` is true, the approval is closed, and `Answer` still reports the interrupt error. A later answer cannot replace this decision with a refusal.
 
 ### Event `proposal_made`
 

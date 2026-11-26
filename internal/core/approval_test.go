@@ -292,6 +292,63 @@ func TestApprovalCannotBeRefusedAfterItsInterruptWasNotTaken(t *testing.T) {
 	}
 }
 
+func TestApprovalRecordsRejectedInterruptDespiteDeliveryErrorOrCancellation(t *testing.T) {
+	for _, cancelCall := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cancel=%v", cancelCall), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			f, _, _, _, req := approvalFixture(t)
+			f.runner.interruptErr = control.ErrNotInterrupted
+			deliveryErr := errors.New("the reason could not be handed over")
+			f.runner.deliverErr = deliveryErr
+			if cancelCall {
+				f.runner.beforeInterrupt = cancel
+			}
+			err := f.owner.Answer(ctx, req, control.Answer{Allow: true})
+			if !errors.Is(err, control.ErrNotInterrupted) || !errors.Is(err, deliveryErr) {
+				t.Fatalf("the approval lost an error: %v", err)
+			}
+			if got := approvalState(t, f, req); got != "not_interrupted" {
+				t.Fatalf("approval state: %q", got)
+			}
+			if err := f.owner.Answer(context.Background(), req, control.Answer{}); !errors.Is(err, ErrNotOpen) {
+				t.Fatalf("a refusal after the input was taken: %v", err)
+			}
+		})
+	}
+}
+
+func TestApprovalAnsweredAgainWhenWindowDoesNotTakeInterrupt(t *testing.T) {
+	for _, failOutcome := range []bool{false, true} {
+		t.Run(fmt.Sprintf("outcome=%v", failOutcome), func(t *testing.T) {
+			ctx := context.Background()
+			f, _, _, _, req := approvalFixture(t)
+			if failOutcome {
+				failOutcomeOnce(f)
+			} else {
+				f.runner.interruptErr = errors.New("the session is not reconnected yet")
+			}
+			if err := f.owner.Answer(ctx, req, control.Answer{Allow: true}); err == nil {
+				t.Fatal("the first answer: no error")
+			}
+			before := f.runner.Calls()
+			f.runner.interruptErr = fmt.Errorf("the fake's window: %w", control.ErrNotInterrupted)
+			if err := f.owner.Answer(ctx, req, control.Answer{Allow: true}); !errors.Is(err, control.ErrNotInterrupted) {
+				t.Fatalf("the repeated approval: %v", err)
+			}
+			if got := approvalState(t, f, req); got != "not_interrupted" {
+				t.Fatalf("approval state: %q", got)
+			}
+			if err := f.owner.Answer(ctx, req, control.Answer{}); !errors.Is(err, ErrNotOpen) {
+				t.Fatalf("a refusal after the repeated approval: %v", err)
+			}
+			if got := f.runner.Calls(); got != before {
+				t.Fatalf("the repeated answer called the runner again: %q", got)
+			}
+		})
+	}
+}
+
 // #523: the first answer's interrupt fails (the session is not reconnected
 // yet), so the approval stays open with its reason taken. Answered again,
 // it interrupts the asked turn, which still runs, naming it to the runner,

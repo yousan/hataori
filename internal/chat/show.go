@@ -400,6 +400,8 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 			text = fmt.Sprintf("Approved by %s: thread %d's turn was interrupted, and it got the reason.", d.Principal, d.Target)
 		case "ended":
 			text = fmt.Sprintf("Approved by %s, but thread %d's turn had already ended: nothing was interrupted.", d.Principal, d.Target)
+		case "not_interrupted":
+			text = fmt.Sprintf("Approved by %s, but thread %d's window did not take the interrupt: the reason was accepted and waits for the turn to end.", d.Principal, d.Target)
 		case "refused":
 			text = fmt.Sprintf("Refused by %s: thread %d was not interrupted.", d.Principal, d.Target)
 		}
