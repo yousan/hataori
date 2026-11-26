@@ -194,8 +194,16 @@ func (f *FrontEnd) chosenRows(ctx context.Context, r *reader, e control.Event, c
 	default:
 		return nil, nil // a choice of a later version
 	}
-	m := f.failedMessage(sf, repo, false)
-	m.Text += "\n" + done
+	// Post may have split the failure and returned only its last message's
+	// reference. Replace that message with the resolution alone: repeating
+	// the full failure here duplicates earlier parts and may exceed Edit's
+	// limit. The earlier parts keep their original text.
+	max := endMax
+	if limit := f.Driver.Limits().MaxText; limit > 0 {
+		// A character may occupy two units on a UTF-16-counting service.
+		max = min(max, limit/2)
+	}
+	m := surface.Message{Text: cut(done, max)}
 	rows := []Row{{Event: e.Pos, Conv: conv, Op: Edit, Target: &RowKey{Event: sf.pos, Part: 0}, Message: m, Decoration: true}}
 	// The replies that offered the choices too (failedreply.go), each in the
 	// link it was posted in: in the others the edit has no target.
@@ -204,8 +212,6 @@ func (f *FrontEnd) chosenRows(ctx context.Context, r *reader, e control.Event, c
 		return nil, err
 	}
 	for _, p := range replies {
-		m := f.failedReplyMessage(sf, repo, false)
-		m.Text += "\n" + done
 		rows = append(rows, Row{Event: e.Pos, Part: p, Conv: conv, Op: Edit, Target: &RowKey{Event: sf.pos, Part: p}, Message: m, Decoration: true})
 	}
 	return rows, nil

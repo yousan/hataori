@@ -381,7 +381,7 @@ func TestAChoiceMadeElsewhereEndsTheButtons(t *testing.T) {
 			continue
 		}
 		waitFor(t, "the buttons to go", func() bool { return len(edits()) > 0 })
-		if got := edits(); len(got) != 1 || !strings.HasPrefix(got[0], couldNotStart) || !strings.HasSuffix(got[0], "\n"+want) {
+		if got := edits(); len(got) != 1 || got[0] != want {
 			t.Errorf("%s: edits %q, want one that ends with %q", choice, got, want)
 		}
 	}
