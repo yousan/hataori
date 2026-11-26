@@ -74,6 +74,7 @@ A complete example for one Discord channel and Claude Code, with the owner, one 
 | `context_bytes` | integer | `8192` | When the agent no longer has a thread's conversation and a new session replaces it, the thread's earlier inputs and final answers are given to the new session, cut to this many bytes. Must be greater than 0. |
 | `login_relay` | boolean | `true` | When turns fail because the agent is logged out, the owner gets one direct message about it. With `true`, hataori also runs the agent's login command, sends the owner the sign-in link, and passes the code the owner replies with back to it, or, for a login that takes no code back (Codex), shows the code to enter on the page. `false` keeps the alert and switches the relay off. |
 | `scopes` | array | empty | The channels hataori serves, one object each (below). A channel that is not listed, or not enabled, starts nothing. When a scope is taken out, its threads stay: the owner still reads, stops, closes and removes them, with the `hataori` command and in the dashboard, and nothing starts in them until the scope is back. |
+| `repositories` | array | empty | Per-repository environment variables: each entry has a repository `url` and an `env` object of names to string values. The URL matches the order's repository address exactly. For example, `{"url":"https://github.com/example/project.git","env":{"GOFLAGS":"-trimpath"}}` gives that repository's sessions `GOFLAGS=-trimpath` (see [Environment variables](#environment-variables)). |
 | `drivers` | object | empty | One section per chat surface, by name. This binary has one: `discord` (below). A name it does not have is refused at start. |
 | `forges` | object | empty | One section per forge, by name. This binary has one: `github` (below). A name this binary does not have is refused at start. |
 | `adapters` | object | empty | One section per coding agent, by name. This binary has two: `claude-code` and `codex` (below). One or more adapters must be named; with more than one, `agent` names the default. |
@@ -460,6 +461,19 @@ hataori reads these:
 Claude Code does not inherit the daemon's whole environment. It gets only `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`, `TMPDIR`, `XDG_RUNTIME_DIR`, `XDG_CONFIG_HOME`, `CLAUDE_CONFIG_DIR`, the variables named in `pass_env`, and `TERM=xterm-256color`.
 
 Codex gets only `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`, `TMPDIR`, `XDG_RUNTIME_DIR`, `XDG_CONFIG_HOME`, `CODEX_HOME`, and variables named in `pass_env`, when present.
+
+`repositories[]` adds environment variables to every agent session launched in a workspace cloned from its `url`. The address matches the order's repository exactly, including its scheme, case and any `.git` suffix. A supervisor's session, which has no clone, gets none. Each `env` value replaces the same name in the fixed list or `pass_env`; empty strings are passed as empty values, and spaces are preserved. Values are passed literally, without shell expansion. For example:
+
+```json
+"repositories": [
+  {
+    "url": "https://github.com/example/project.git",
+    "env": {"GOFLAGS": "-trimpath"}
+  }
+]
+```
+
+For Go builds, `GOFLAGS=-trimpath` removes the workspace directory from build cache keys so separate clones can reuse entries. hataori gives these variables only to agent processes, not to its own Git commands. The config refuses a duplicate `url`, an empty name, a name containing `=` or a NUL, a name starting with the reserved `HATAORI_` prefix, or a value containing a NUL. `url` must be a repository address accepted in an order. The daemon reads this list at startup. After loading a changed config, new and resumed processes use it; a process already running keeps its environment until it next starts. Environment values are not included in the stored agent spec or events; private session launch files necessarily hold the process environment.
 
 `git` gets the daemon's environment without the variables that would point it at another repository (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_NAMESPACE`, `GIT_CEILING_DIRECTORIES`), and with `GIT_TERMINAL_PROMPT=0`: a clone that would ask for a password fails instead. Credentials for private repositories must work without a prompt, for example through an SSH key or a credential helper.
 
