@@ -106,14 +106,15 @@ type AgentDefaults struct{ Model, Effort string }
 
 // Scope is the config of one scope.
 type Scope struct {
-	Key     string   // opaque; for chat, a channel
-	Name    string   // what the dashboard calls it; empty for its channel's name, else its key
-	Client  string   // name of the client that owns the scope
-	Enabled bool     // whether threads may be started in it
-	Agent   string   // "agent": the adapter of threads started here; empty for Config.Agent
-	Model   string   // default model; empty for the agent's own default
-	Effort  string   // default effort; empty for the agent's own default
-	People  []string // names of the people who may act here besides the owner
+	Unlisted bool     // stored scope omitted from config; never set by config parsing
+	Key      string   // opaque; for chat, a channel
+	Name     string   // what the dashboard calls it; empty for its channel's name, else its key
+	Client   string   // name of the client that owns the scope
+	Enabled  bool     // whether threads may be started in it
+	Agent    string   // "agent": the adapter of threads started here; empty for Config.Agent
+	Model    string   // default model; empty for the agent's own default
+	Effort   string   // default effort; empty for the agent's own default
+	People   []string // names of the people who may act here besides the owner
 	// ShowIn lists the channels, besides the scope's own, where its threads
 	// may be shown, each as "<client>:<channel>" (design, section 5.2).
 	ShowIn []string

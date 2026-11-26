@@ -24,7 +24,8 @@ import (
 // act in it is not the front end's to decide: the core checks every input
 // against the people config (design, section 5.1).
 type Scope struct {
-	Enabled bool
+	Unlisted bool // no orders or ordinary starts; conversations may still run
+	Enabled  bool
 }
 
 // FrontEnd shows threads in one chat service. It is the surface.Sink of its
@@ -240,6 +241,9 @@ func (f *FrontEnd) handle(in surface.Inbound) error {
 	if in.Service {
 		return nil
 	}
+	if f.Scopes[in.Ref.Conv.Channel].Unlisted && in.Author.Kind != surface.Person {
+		return nil
+	}
 	if in.Ref.Conv.Thread != "" {
 		if done, err := f.textCommandOnce(f.context(), in); done || err != nil {
 			return err
@@ -285,7 +289,7 @@ func (f *FrontEnd) handle(in surface.Inbound) error {
 	case in.Author.Kind == surface.Bot:
 		refuse("the author is a bot account")
 		return nil
-	case !known || !sc.Enabled:
+	case !known || !sc.Enabled || sc.Unlisted:
 		refuse("the scope is not enabled")
 		return nil
 	case o.Repo == "":

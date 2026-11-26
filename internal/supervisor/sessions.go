@@ -66,10 +66,11 @@ type Tokens interface {
 
 // Scope is a scope's supervisor, as the config names it.
 type Scope struct {
-	Model        string // the model; when empty, what the default agent's model order gives a thread of the scope
-	Effort       string // the effort; DefaultEffort when empty
-	Instructions string // the config's instructions, last in the config's layer (ConfigLayer)
-	Repos        []Repo // the only repositories its Start may clone; none: it starts nothing
+	ConversationsOnly bool   // a stored, unlisted scope has no supervisor own thread
+	Model             string // the model; when empty, what the default agent's model order gives a thread of the scope
+	Effort            string // the effort; DefaultEffort when empty
+	Instructions      string // the config's instructions, last in the config's layer (ConfigLayer)
+	Repos             []Repo // the only repositories its Start may clone; none: it starts nothing
 	// Autonomy is Watch, Propose or Act: what its token's connection may
 	// do on its own (Caller). It is read when the token is bound, at each
 	// launch and after a restart.
@@ -387,7 +388,10 @@ func (s *Sessions) Restore(ctx context.Context) error {
 // refuses is logged and not tried again.
 func (s *Sessions) Start(ctx context.Context) {
 	var keys []string
-	for k := range s.Scopes {
+	for k, policy := range s.Scopes {
+		if policy.ConversationsOnly {
+			continue
+		}
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
@@ -456,6 +460,9 @@ func (s *Sessions) StartOne(ctx context.Context, scope string) (control.ThreadID
 	sv, ok := s.Scopes[scope]
 	if !ok {
 		return 0, fmt.Errorf("supervisor: scope %q names no supervisor", scope)
+	}
+	if sv.ConversationsOnly {
+		return 0, fmt.Errorf("%w: scope %q has conversations only", ErrNoChat, scope)
 	}
 	// The scope's directory is decided before anything else, so that a
 	// thread that exists now, from before scopes had one, gives its own.

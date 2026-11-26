@@ -148,7 +148,7 @@ func (a *api) Scopes(ctx context.Context) ([]control.ScopeInfo, error) {
 				return nil, fmt.Errorf("core: scopes: %w", err)
 			}
 		}
-		out = append(out, control.ScopeInfo{Key: key, Name: name})
+		out = append(out, control.ScopeInfo{Key: key, Name: name, Unlisted: sc.Unlisted})
 	}
 	slices.SortFunc(out, func(x, y control.ScopeInfo) int { return strings.Compare(x.Key, y.Key) })
 	return out, nil

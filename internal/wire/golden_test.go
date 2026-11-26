@@ -160,7 +160,7 @@ func examples(t *testing.T) map[string]any {
 				Data: raw(`{"final":false,"session":3,"text":"Running the tests..."}`)}}},
 		"ThreadEvents": []control.Event{{Pos: 41, Thread: exampleID, Scope: "C0123", Time: exampleTime, Kind: "input",
 			Data: raw(`{"from":"discord:U0456","principal":"alice","session":3,"text":"Fix the build.","turn":1}`)}},
-		"Scopes": []control.ScopeInfo{{Key: "C0123", Name: "#builds"}, {Key: "C0456"}},
+		"Scopes": []control.ScopeInfo{{Key: "C0123", Name: "#builds"}, {Key: "C0456", Unlisted: true}},
 		"Layout": []control.ChatLayout{{Client: "discord", Groups: []control.LayoutGroup{
 			{Channels: []control.LayoutChannel{{ID: "C0100", Name: "#welcome", URL: "https://chat.example.com/C0100", Threads: []control.LayoutThread{}}}},
 			{ID: "G0200", Name: "Work", Channels: []control.LayoutChannel{{ID: "C0123", Name: "#builds", URL: "https://chat.example.com/C0123", Scope: "C0123",

@@ -93,6 +93,14 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 		return fmt.Errorf("config: key %q: name at least one agent adapter", "adapters")
 	}
 	agentName := cfg.Agent
+	st, err := store.Open(ctx, abs)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	if err := cfg.RestoreStoredScopes(ctx, st); err != nil {
+		return err
+	}
 	// The scopes that name a supervisor (design, section 7.1). It runs on the
 	// default adapter.
 	supervisors := map[string]supervisor.Scope{}
@@ -113,7 +121,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 			}
 			repos = append(repos, supervisor.Repo{Address: r.Address, Forge: r.Forge})
 		}
-		supervisors[s.Key] = supervisor.Scope{Model: sv.Model, Effort: sv.Effort, Instructions: sv.Instructions, Repos: repos,
+		supervisors[s.Key] = supervisor.Scope{ConversationsOnly: s.Unlisted, Model: sv.Model, Effort: sv.Effort, Instructions: sv.Instructions, Repos: repos,
 			Autonomy: sv.Autonomy, Trusted: sv.TrustedAuthors,
 			Limits:       supervisor.Limits{Turns: sv.TurnsPerHour, Sends: sv.SendsPerHour, Tokens: sv.TokensPerDay},
 			RemindersMax: sv.RemindersMax, Report: sv.Report, ReportEvery: sv.ReportEvery, Mention: sv.Mention, QuietHours: sv.QuietHours,
@@ -147,11 +155,6 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 		}
 		confDir.Close()
 	}
-	st, err := store.Open(ctx, abs)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
 	lg := slog.New(slog.NewTextHandler(logOut, nil))
 	// Before anything reads a thread: existing threads get their first
 	// link, once (design, section 6.2).
@@ -213,7 +216,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 	scopes := map[string]core.Scope{}
 	var keys []string
 	for _, s := range cfg.Scopes {
-		cs := core.Scope{Name: s.Name, Enabled: s.Enabled, Owner: s.Client, Agent: s.Agent, Model: s.Model, Effort: s.Effort, ShowIn: s.ShowIn}
+		cs := core.Scope{Unlisted: s.Unlisted, Name: s.Name, Enabled: s.Enabled, Owner: s.Client, Agent: s.Agent, Model: s.Model, Effort: s.Effort, ShowIn: s.ShowIn}
 		if s.Supervisor != nil {
 			cs.ConversationsAtOnce = s.Supervisor.ConversationsAtOnce
 		}
@@ -372,7 +375,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 			defer c.StopHostInput(15 * time.Second) // each end logged and its buffer deleted before the daemon exits
 		}
 	}
-	srv, err := wire.Listen(abs, c.As(control.Caller{Principal: control.Principal(cfg.Owner), Scopes: seen, May: owner}), lg)
+	srv, err := wire.Listen(abs, c.As(control.Caller{StartUnlisted: true, Principal: control.Principal(cfg.Owner), Scopes: seen, May: owner}), lg)
 	if err != nil {
 		return err
 	}
@@ -951,7 +954,7 @@ func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.St
 			if s.Client != name {
 				continue
 			}
-			scopes[s.Key] = chat.Scope{Enabled: s.Enabled}
+			scopes[s.Key] = chat.Scope{Enabled: s.Enabled, Unlisted: s.Unlisted}
 		}
 		// What a supervisor's thread posts, for the scopes of every
 		// client, as archive below.

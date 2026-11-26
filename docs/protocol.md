@@ -19,10 +19,16 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.42**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.43**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
+
+**3.43:** `Scopes` may report `unlisted: true` for a stored scope absent
+from configuration. It remains visible to its authorized callers; the dashboard
+labels it as not listed. Omission means the configured policy applies. The field
+does not grant start permission; ordinary starts there require the host command
+line. Callers never set this flag or the daemon's internal start permission.
 
 **A 2.x client and a 3.0 daemon.** 3.0 names a thread by its number. Every operation that took a thread (`Thread`, `Send`, `Stop`, `Workspace`, `Terminal`, `AttachTerminal`, `CloseThread`, `RemoveThread`) takes the number as `id`, `Start` returns it, and every event carries it as `thread`, with the thread's `scope` beside it. The chat thread a thread is shown in is a link (`LinkRef`): `ThreadInfo` lists them in `links`, and `Filter.link` finds the thread linked to one conversation. `ThreadInfo.number` is gone, since `id` is the number; `login_restored` lists numbers in `threads`; `Start.thread` names the first link's conversation in the scope's own channel. The two refuse each other as below. Events written before 3.0 are read back with their thread's number and scope.
 
@@ -747,6 +753,7 @@ One scope the caller may see; since 3.5.
 |---|---|---|---|
 | `key` | string | required | the scope's key |
 | `name` | string | optional | the config's name for it, else its channel's as the chat service shows it (`SetName`), which is text and absent for a caller that may not read text; absent when neither is known |
+| `unlisted` | boolean | optional | true for a stored scope absent from configuration; omitted for configured policies; policy origin, never a permission (since 3.43) |
 
 ### Type `TrustedFile`
 
