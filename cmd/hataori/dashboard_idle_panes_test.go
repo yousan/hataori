@@ -146,7 +146,7 @@ func TestDashboardIdleShellPanes(t *testing.T) {
 		for deadline := time.Now().Add(25 * time.Second); ; time.Sleep(100 * time.Millisecond) {
 			b.eval(fmt.Sprintf(`(() => {
 				const h = document.querySelector('%[1]s .show .hidden-count');
-				const sh = document.querySelector('%[1]s .show .hidden-terminals');
+				const sh = document.querySelector('%[1]s .show [data-hidden-terminals]');
 				return {rows: [...document.querySelectorAll('%[2]s [data-host]')].map(r => r.dataset.host).sort(),
 					hidden: h ? h.dataset.hidden + '+' + (sh ? sh.dataset.hiddenTerminals : '') : ''};
 			})()`, map[bool]string{true: ".narrow-list", false: ".tools"}[scope == ".narrow-list"], scope), &s)

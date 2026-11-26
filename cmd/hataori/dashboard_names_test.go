@@ -345,28 +345,17 @@ func TestDashboardNamesAndWidths(t *testing.T) {
 			b.eval(`window.__namesTestPrevious = true`, nil)
 			b.call("Page.navigate", map[string]any{"url": rig.base + "/?lang=" + lang.code})
 			b.until("the page in "+lang.code, `!window.__namesTestPrevious && document.documentElement.lang === `+js(lang.code))
-			b.until("both counts in "+lang.code, `document.querySelector('.tools .show .hidden-count')?.dataset.hidden === '`+fmt.Sprint(hidden)+`' && document.querySelector('.tools .show .hidden-terminals')?.dataset.hiddenTerminals === '2'`)
-			var got struct {
-				Text, Threads, Shells string
-				Gap                   float64
-				Between               string
-			}
+			b.until("both counts in "+lang.code, `document.querySelector('.tools .show .hidden-count')?.dataset.hidden === '`+fmt.Sprint(hidden)+`' && document.querySelector('.tools .show [data-hidden-terminals]')?.dataset.hiddenTerminals === '2'`)
+			var got struct{ Text, Title, Action string }
 			b.eval(`(() => {
 				const show = document.querySelector('.tools .show');
-				const a = show.querySelector('.hidden-count'), z = show.querySelector('.hidden-terminals');
-				let between = '';
-				for (let n = a.nextSibling; n && n !== z; n = n.nextSibling) between += n.textContent;
-				return {text: show.textContent, threads: a.textContent, shells: z.textContent,
-					gap: z.getBoundingClientRect().left - a.getBoundingClientRect().right, between};
+				return {text: show.querySelector('.hidden-count').textContent,
+					title: show.querySelector('.hidden-count').title,
+					action: show.querySelector('button').title};
 			})()`, &got)
-			if got.Threads != lang.threads || got.Shells != lang.shells {
-				t.Fatalf("%s: the counts say %q and %q, want %q and %q", lang.code, got.Threads, got.Shells, lang.threads, lang.shells)
-			}
-			if strings.TrimSpace(got.Between) != lang.sep {
-				t.Errorf("%s: between the counts is %q, want the separator %q (the group reads %q)", lang.code, got.Between, lang.sep, got.Text)
-			}
-			if got.Gap < 8 {
-				t.Errorf("%s: the counts are %v px apart: they run together", lang.code, got.Gap)
+			want := lang.threads + lang.sep + lang.shells
+			if got.Text != fmt.Sprint(hidden) || got.Title != want || !strings.Contains(got.Action, want) {
+				t.Fatalf("%s: compact count %+v, want %d with tooltip %q", lang.code, got, hidden, want)
 			}
 		}
 		b.eval(`localStorage.removeItem('hataori.lang')`, nil)

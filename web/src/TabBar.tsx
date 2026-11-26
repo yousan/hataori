@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { HostTerminal, ThreadInfo } from "./api";
 import { hostLabel } from "./hostTerminals";
 import { clock, left, type OpState } from "./operate";
@@ -6,7 +6,8 @@ import type { AttachState } from "./attach";
 import { t } from "./catalog";
 import { age, displayTitle, fullTitle, mark, stateName } from "./format";
 import type { Layout } from "./layout";
-import { type Show, ShowChoice } from "./show";
+import { type Show, ShowTool } from "./show";
+import { ToolIcon } from "./ToolIcon";
 import { allTab, hostOf, nextSplit, type Split, type TabKey, threadOf } from "./tabs";
 import type { Theme } from "./theme";
 
@@ -48,6 +49,12 @@ export function tabID(k: TabKey): string {
   return `tab-${k.replace(":", "-")}`;
 }
 
+function tabName(k: TabKey, x: ThreadInfo | undefined, h: HostTerminal | undefined): string {
+  const n = threadOf(k);
+  const device = hostOf(k);
+  return n !== null ? ((x && displayTitle(x)) || t("thread.number", { n })) : device !== null ? (h ? hostLabel(h) : device) : t("tabs.all");
+}
+
 // A host terminal's tab has no mark, no elapsed time and no badge:
 // hataori judges no state of it.
 function Tab(props: {
@@ -64,9 +71,7 @@ function Tab(props: {
 }) {
   const { k, x, h, op, att, active, now, onView, onClose, onKey } = props;
   const n = threadOf(k);
-  const device = hostOf(k);
-  const name =
-    n !== null ? ((x && displayTitle(x)) || t("thread.number", { n })) : device !== null ? (h ? hostLabel(h) : device) : t("tabs.all");
+  const name = tabName(k, x, h);
   const b = badge(x);
   return (
     <div className={active ? "tab active" : "tab"} data-tab={k} role="presentation">
@@ -119,6 +124,35 @@ export function TabBar(props: Props) {
   const next: Theme = theme === "dark" ? "light" : "dark";
   const bar = useRef<HTMLDivElement>(null);
   const focusing = useRef(false); // the active tab is to take the focus once it shows
+  const [listed, setListed] = useState(false);
+  const picker = useRef<HTMLDivElement>(null);
+  const list = useRef<HTMLDivElement>(null);
+  const listButton = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!listed) return;
+    list.current?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus();
+    const outside = (e: PointerEvent) => {
+      if (e.target instanceof Node && !picker.current?.contains(e.target)) setListed(false);
+    };
+    document.addEventListener("pointerdown", outside);
+    return () => document.removeEventListener("pointerdown", outside);
+  }, [listed]);
+
+  const listKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      setListed(false);
+      listButton.current?.focus();
+      return;
+    }
+    const items = [...(list.current?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? [])];
+    const at = items.indexOf(document.activeElement as HTMLButtonElement);
+    const to = e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 : e.key === "ArrowDown" ? (at + 1) % items.length : e.key === "ArrowUp" ? (at - 1 + items.length) % items.length : null;
+    if (to === null) return;
+    e.preventDefault();
+    items[to]?.focus();
+  };
 
   // After the keyboard moved or closed a tab, the active tab takes the focus.
   useEffect(() => {
@@ -222,38 +256,62 @@ export function TabBar(props: Props) {
           );
         })}
       </div>
+      <div className="tab-picker" ref={picker} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setListed(false); }}>
+        <button type="button" className="icon-tool" ref={listButton} data-tool="tab-list" title={t("tabs.list")} aria-label={t("tabs.list")} aria-haspopup="menu" aria-expanded={listed} aria-controls="open-tab-menu" onClick={() => setListed(!listed)} onKeyDown={(e) => {
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); setListed(true); }
+        }}><ToolIcon name="list" /></button>
+        {listed && <div className="tab-menu" id="open-tab-menu" role="menu" aria-label={t("tabs.label")} ref={list} onKeyDown={listKey}>
+          {open.map((k) => {
+            const n = threadOf(k);
+            const device = hostOf(k);
+            const x = n === null ? undefined : thread(n);
+            const name = tabName(k, x, device === null ? undefined : host(device));
+            return <button key={k} type="button" role="menuitemradio" aria-checked={k === active} tabIndex={-1} title={name} onClick={() => {
+              setListed(false);
+              focusing.current = true;
+              onView(k);
+              // Choosing the already active tab does not change active.
+              if (k === active) bar.current?.querySelector<HTMLElement>('.tab-main[aria-selected="true"]')?.focus();
+            }}>{name}</button>;
+          })}
+        </div>}
+      </div>
       <div className="tools">
-        <ShowChoice show={show} onShow={onShow} hidden={hidden} terminals={hiddenHosts} />
+        <ShowTool show={show} onShow={onShow} hidden={hidden} terminals={hiddenHosts} />
         <button
           type="button"
           data-tool="tree"
+          className="icon-tool"
           aria-pressed={layout.tree}
+          aria-label={t(layout.tree ? "tabs.hideTree" : "tabs.showTree")}
           title={t(layout.tree ? "tabs.hideTree" : "tabs.showTree")}
           onClick={() => onLayout({ ...layout, tree: !layout.tree })}
         >
-          {t("tabs.tree")}
+          <ToolIcon name="tree" />
         </button>
-        <button type="button" data-tool="split" data-split={split} title={t("tabs.splitNext", { n: nextSplit(split) })} onClick={() => onSplit(nextSplit(split))}>
-          {t("tabs.split", { n: split })}
+        <button type="button" className="icon-tool split-tool" data-tool="split" data-split={split} title={t("tabs.splitNext", { n: nextSplit(split) })} aria-label={t("tabs.splitNext", { n: nextSplit(split) })} onClick={() => onSplit(nextSplit(split))}>
+          <ToolIcon name="split" /><span className="split-count" aria-hidden="true">{t("show.count", { n: split })}</span>
         </button>
         <button
           type="button"
           data-tool="details"
+          className="icon-tool"
           aria-pressed={layout.details}
+          aria-label={t(layout.details ? "tabs.hideDetails" : "tabs.showDetails")}
           title={t(layout.details ? "tabs.hideDetails" : "tabs.showDetails")}
           onClick={() => onLayout({ ...layout, details: !layout.details })}
         >
-          {t("tabs.details")}
+          <ToolIcon name="details" />
         </button>
         <button
           type="button"
-          className="theme"
+          className="icon-tool"
           data-tool="theme"
           title={t(next === "dark" ? "theme.toDark" : "theme.toLight")}
           aria-label={t(next === "dark" ? "theme.toDark" : "theme.toLight")}
           onClick={() => onTheme(next)}
         >
-          {t(next === "dark" ? "theme.dark" : "theme.light")}
+          <ToolIcon name={next === "dark" ? "moon" : "sun"} />
         </button>
       </div>
     </div>

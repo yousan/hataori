@@ -40,8 +40,12 @@ func setThreadState(t *testing.T, root string, id control.ThreadID, s control.St
 // bar's control, as a person would.
 func (b *browser) showAll() {
 	b.t.Helper()
-	b.until("the choice of the threads shown", `!!document.querySelector('.tools .show [data-choice=all]')`)
-	b.click(`.tools .show [data-choice=all]`)
+	b.until("the choice of the threads shown", `!!document.querySelector('.tools .show')`)
+	var active bool
+	b.eval(`document.querySelector('.tools .show').dataset.show === 'active'`, &active)
+	if active {
+		b.click(`.tools .show [data-choice=all]`)
+	}
 }
 
 // numbersOf is what a list of thread numbers from the page holds, sorted.
@@ -174,7 +178,7 @@ func TestDashboardActiveThreadsOnly(t *testing.T) {
 			return {
 				tree: [...document.querySelectorAll('[data-section=threads] .row')].map(r => +r.dataset.thread),
 				table: [...document.querySelectorAll('.all-threads tr[data-thread]')].map(r => +r.dataset.thread),
-				choice: document.querySelector('.tools .show [aria-pressed=true]')?.dataset.choice ?? '',
+				choice: document.querySelector('.tools .show')?.dataset.show ?? '',
 				hidden: h ? h.dataset.hidden : '',
 				text: h ? h.textContent : '',
 			};
@@ -201,7 +205,7 @@ func TestDashboardActiveThreadsOnly(t *testing.T) {
 				h = fmt.Sprint(hidden)
 			}
 			return reflect.DeepEqual(s.Tree, want) && reflect.DeepEqual(s.Table, want) && s.Choice == choice && s.Hidden == h &&
-				(choice != "active" || s.Text == fmt.Sprintf("%d hidden", hidden))
+				(choice != "active" || s.Text == fmt.Sprint(hidden))
 		}
 	}
 
