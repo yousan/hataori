@@ -207,6 +207,23 @@ func TestUnknownEventKindPostsNothing(t *testing.T) {
 	}
 }
 
+func TestHeldInputFailureLeavesTheRunningReplyAlone(t *testing.T) {
+	f := newFront(t, workspaces{})
+	id, trigger := f.started(t)
+	f.showing(t)
+	turn(f, t, id, 1, trigger.Ref.ID)
+	f.event(t, id, "input_failed", map[string]any{"input": "42", "key": "held-message", "reason": "not delivered", "text": "held input", "link": control.LinkRef{Client: f.fe.Name, Channel: f.conv(id).Channel, Thread: f.conv(id).Thread}})
+	f.postedUntil(t, id, "The input was not delivered: not delivered.\nheld input")
+	f.event(t, id, "text", map[string]any{"text": "still the first answer", "final": true})
+	calls := f.postedUntil(t, id, "still the first answer")
+	if r := calls[len(calls)-2].Message.ReplyTo; r == nil || r.ID != "held-message" {
+		t.Fatalf("failure reply %+v", r)
+	}
+	if r := calls[len(calls)-1].Message.ReplyTo; r == nil || r.ID != calls[0].Ref.ID {
+		t.Fatalf("the running trigger's answer lost its prompt reply: %+v", r)
+	}
+}
+
 func TestReadingATurnAgainPostsNothing(t *testing.T) {
 	f := newFront(t, workspaces{})
 	id, trigger := f.started(t)
