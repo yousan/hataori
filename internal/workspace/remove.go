@@ -1364,6 +1364,9 @@ func (c *checker) commits(g *reader, rp repo) error {
 	if err != nil {
 		return err
 	}
+	if err := c.logFiles(logs); err != nil {
+		return err
+	}
 	// The remotes' objects are read from the scratch repository; nothing is
 	// written into this one.
 	local := *g
@@ -1738,6 +1741,36 @@ func (c *checker) tableIDs(g *reader, dir string) ([]string, error) {
 		return nil, err
 	}
 	return slices.Sorted(maps.Keys(have)), nil
+}
+
+// logFiles refuses layouts that git can silently leave out of --reflog:
+// symbolic links and names that no ref may have. A repository nested here is
+// checked separately, so its files are not taken for this one's reflogs.
+func (c *checker) logFiles(dir string) error {
+	return filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if p == dir && errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err == nil {
+			err = c.ctx.Err()
+		}
+		if err != nil {
+			return c.unreadable(p, err)
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			return c.unreadable(p, errors.New("symbolic link in reflogs"))
+		}
+		if p != dir && d.IsDir() && (c.gitDirs[p] || c.trees[p]) {
+			return filepath.SkipDir
+		}
+		if p != dir && noRefName(d.Name()) {
+			return c.unreadable(p, errors.New("name that git may omit from reflogs"))
+		}
+		if !d.IsDir() && (p == dir || !d.Type().IsRegular()) {
+			return c.unreadable(p, errors.New("not a reflog file or directory"))
+		}
+		return nil
+	})
 }
 
 // otherLogs reports whether the line, which git said, is of a file in the git
