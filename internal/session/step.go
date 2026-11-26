@@ -45,6 +45,7 @@ func (k InputKind) String() string {
 
 // Input is one thing that happened to a session.
 type Input struct {
+	Files     []control.InputFile // Send, Answer: attachment paths and skipped reasons
 	Kind      InputKind
 	Principal control.Principal // Send, Answer: who, a person
 	From      string            // Send, Answer: the "<client>:<id>" it came from, if relayed
@@ -67,6 +68,9 @@ type Input struct {
 // gave it, since protocol 2.2.
 func given(in Input) map[string]any {
 	d := map[string]any{"text": in.Text}
+	if len(in.Files) > 0 {
+		d["files"] = in.Files
+	}
 	if in.Principal != "" {
 		d["principal"] = string(in.Principal)
 	}

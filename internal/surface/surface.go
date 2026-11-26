@@ -8,6 +8,7 @@ package surface
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"time"
 
@@ -330,10 +331,18 @@ type Message struct {
 	Quiet   bool        // no notification
 }
 
-// File is a file in a message, stored on local disk.
+// AttachmentReader is an optional driver capability. It opens only a service's
+// own HTTPS attachment address, sends credentials only where required by that
+// service, and never follows redirects. The caller bounds reads and time.
+type AttachmentReader interface {
+	OpenAttachment(context.Context, string) (io.ReadCloser, error)
+}
+
+// File is a local outgoing file or a service-listed incoming attachment.
 type File struct {
 	Name string // the name shown in chat
-	Path string // where the content is
+	Path string // outgoing content on disk
+	URL  string // incoming attachment address; never an embed or proxy address
 }
 
 // Choice is one option of a message.

@@ -785,6 +785,22 @@ var migrations = []Migration{
 	{Name: "pending_inputs.written_text", Up: execAll(
 		`ALTER TABLE pending_inputs ADD COLUMN written_text TEXT`,
 	)},
+	{Name: "input_attachments", Up: execAll(
+		`CREATE TABLE input_attachments (
+   id INTEGER PRIMARY KEY AUTOINCREMENT,
+   session_id INTEGER NOT NULL REFERENCES sessions(id),
+   message TEXT NOT NULL,
+   ordinal INTEGER NOT NULL,
+   name TEXT NOT NULL,
+   path TEXT NOT NULL DEFAULT '',
+   digest TEXT NOT NULL DEFAULT '',
+   identity TEXT NOT NULL DEFAULT '',
+   size INTEGER NOT NULL DEFAULT 0,
+   given INTEGER NOT NULL DEFAULT 0,
+   reason TEXT NOT NULL DEFAULT '',
+   UNIQUE(session_id, message, ordinal)
+  )`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

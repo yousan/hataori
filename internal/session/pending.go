@@ -16,7 +16,8 @@ import (
 // The outer fields remain readable as control.Input by older runners.
 type PendingInput struct {
 	control.Input
-	Origin *InputOrigin `json:"origin,omitempty"`
+	Files  []control.InputFile `json:"files,omitempty"`
+	Origin *InputOrigin        `json:"origin,omitempty"`
 }
 
 // InputOrigin identifies the accepted call. Turn is nonzero only when the
@@ -103,4 +104,11 @@ func pendingFailure(ctx context.Context, tx *store.Tx, sid, turn int64, e agent.
 		}
 	}
 	return &Out{Kind: KindInputFailed, Data: d}, nil
+}
+
+// PendingAnswer keeps the file receipts with a question answer until the
+// host takes it. Its outer fields remain readable as control.Answer.
+type PendingAnswer struct {
+	control.Answer
+	Files []control.InputFile `json:"files,omitempty"`
 }

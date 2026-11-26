@@ -69,13 +69,13 @@ var EventKinds = map[EventKind][]Field{
 	// up (#569). Since 3.35.
 	"post_refused": {req("link", Object), req("event", Integer), req("part", Integer), opt("message", String), text("reason", String)},
 	"input": {req("session", Integer), req("turn", Integer), text("text", String), opt("principal", String), opt("from", String),
-		opt("link", Object), text("before", String), text("after", String), opt("via", String)},
+		opt("link", Object), text("before", String), text("after", String), opt("via", String), text("files", Array)},
 	// input_failed: an accepted input never reached the agent, independently
 	// of any turn that happens to run. Since 3.42.
 	"input_failed": {req("session", Integer), req("input", String), req("reason", String), text("text", String),
 		opt("key", String), opt("principal", String), opt("from", String), opt("link", Object), opt("via", String)},
 	"answer": {req("session", Integer), req("turn", Integer), text("text", String), opt("principal", String), opt("from", String),
-		opt("link", Object), opt("request", String), opt("via", String)},
+		opt("link", Object), opt("request", String), opt("via", String), text("files", Array)},
 	// stop: a Stop interrupted the running turn, written in the step that
 	// interrupts it, once per such Stop: who asked, and the way of the
 	// daemon's own it came through (Caller.Via). Since 3.23.

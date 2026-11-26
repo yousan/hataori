@@ -1875,6 +1875,23 @@ Declared in `internal/control`, `internal/surface` and `internal/agent`; the pac
 
 ### Control API
 
+Worker input attachments (#890) use daemon-only `control.Input.Attachments`
+(service-listed name and URL) and `control.Input.Files` (the resolved name and
+path or skipped reason). Neither is accepted over the control socket. Durable
+first inputs keep references until resolution; durable pending inputs and
+answers keep results until the adapter confirms delivery. The `input` and
+`answer` events add optional text field `files` in protocol 3.43; signed URLs
+are never event data. A session changed during fetching refuses acceptance so
+its input can be retried against the new session. Confined attachments remain
+refused until #891.
+
+```go
+// IncomingFile is supplied only by the daemon's chat front end.
+type IncomingFile struct { Name, URL string }
+// InputFile is an event result: Path or Reason is set, never a source URL.
+type InputFile struct { Name, Path, Reason string }
+```
+
 ```go
 // Package control: everything a client can ask of the core.
 
@@ -2999,6 +3016,15 @@ type Inbound struct {
 
 // Span is the part of a text from byte Start to before byte End.
 type Span struct{ Start, End int }
+
+// AttachmentReader opens service-listed files on the service's own HTTPS
+// attachment hosts, without redirects. The daemon bounds bytes and time after
+// the core authorizes input; bots and webhooks never request their files.
+type AttachmentReader interface {
+ OpenAttachment(ctx context.Context, address string) (io.ReadCloser, error)
+}
+// File uses Path for outgoing local files, URL for incoming service files.
+type File struct { Name, Path, URL string }
 
 type Message struct {
 	Text    string

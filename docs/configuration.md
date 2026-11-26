@@ -568,3 +568,16 @@ archives are not opened. Skipped files are named with a reason in the input.
 Only service attachment hosts are fetched, over HTTPS without redirects;
 message links, embeds and previews are never fetched. At the session limit,
 only unchanged copies already given to the agent may be removed.
+
+Copies are created under generated flat names with exclusive creation, never
+through links. The daemon records each copy's hash and filesystem identity;
+accepting or writing an input does not make its files eligible for pruning.
+Only the adapter's delivery confirmation does. Before pruning, an eligible
+entry is isolated and verified again. A copy changed or replaced meanwhile is
+preserved, with an exclusive link back when its original name is still free;
+uncertain entries remain in `state/sessions/<id>/.attachment-gc-<random>/`.
+Untracked or partially saved files are counted but never removed automatically.
+If enough space cannot be reclaimed safely, subsequent files are skipped and
+the input still reaches the agent with the reasons. There are no new config
+keys. Confined sessions, earlier messages and quoted-message files are left
+for #891.

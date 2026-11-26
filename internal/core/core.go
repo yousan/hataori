@@ -212,17 +212,19 @@ type Launch struct {
 // the session, and sets sessions.launch; the runner clears launch when it
 // launches the agent, and keeps the input until a turn reports its id.
 type FirstInput struct {
-	Principal   control.Principal `json:"principal"`
-	From        string            `json:"from,omitempty"`
-	Key         string            `json:"key"`
-	Text        string            `json:"text"`
-	Sent        bool              `json:"sent,omitempty"`         // the turn was started for it, and it was handed to the codec
-	Written     bool              `json:"written,omitempty"`      // it was written to the agent; see agent.Input.Written
-	WrittenText *string           `json:"written_text,omitempty"` // text recorded by the codec when written; nil for older inputs
-	Current     bool              `json:"current,omitempty"`      // Written was set by a runner that sets this; else it is agent.Input.Earlier
-	Wake        bool              `json:"wake,omitempty"`         // the session was asleep: its agent resumes
-	NoInput     bool              `json:"no_input,omitempty"`     // woken with no input, as for an attach: the agent is only started
-	Dir         string            `json:"dir,omitempty"`          // the workspace, once it is made; a confined thread's from its start
+	Attachments []control.IncomingFile `json:"attachments,omitempty"`
+	Files       []control.InputFile    `json:"files,omitempty"`
+	Principal   control.Principal      `json:"principal"`
+	From        string                 `json:"from,omitempty"`
+	Key         string                 `json:"key"`
+	Text        string                 `json:"text"`
+	Sent        bool                   `json:"sent,omitempty"`         // the turn was started for it, and it was handed to the codec
+	Written     bool                   `json:"written,omitempty"`      // it was written to the agent; see agent.Input.Written
+	WrittenText *string                `json:"written_text,omitempty"` // text recorded by the codec when written; nil for older inputs
+	Current     bool                   `json:"current,omitempty"`      // Written was set by a runner that sets this; else it is agent.Input.Earlier
+	Wake        bool                   `json:"wake,omitempty"`         // the session was asleep: its agent resumes
+	NoInput     bool                   `json:"no_input,omitempty"`     // woken with no input, as for an attach: the agent is only started
+	Dir         string                 `json:"dir,omitempty"`          // the workspace, once it is made; a confined thread's from its start
 	// Link is the link the input came through, if any (design, section 5.2).
 	Link *control.LinkRef `json:"link,omitempty"`
 	// Via is the way of the daemon's own the input came through
@@ -291,6 +293,11 @@ type AgentDefaults struct{ Model, Effort string }
 // Core is the core of one instance. It has no operations of its own: use
 // As to get an API bound to a caller.
 type Core struct {
+	// Attachments resolves authorized service references. Nil reports them as
+	// skipped. It is not reachable through the control socket.
+	Attachments interface {
+		Resolve(context.Context, int64, string, string, []control.IncomingFile) ([]control.InputFile, error)
+	}
 	Store   *store.Store
 	Machine *session.Machine
 	// ApprovedStart, when set, checks the Start that a person approved as
@@ -604,7 +611,7 @@ func (a *api) marked(in control.Input) control.Input {
 // Input is the first input as Start or Send gave it: its text, link, the
 // text the plugins added, and the caller's Via.
 func (f FirstInput) Input() control.Input {
-	return control.Input{Text: f.Text, Link: f.Link, Before: f.Before, After: f.After, Via: f.Via}
+	return control.Input{Text: f.Text, Link: f.Link, Before: f.Before, After: f.After, Via: f.Via, Attachments: f.Attachments, Files: f.Files}
 }
 
 // The input hook points, in the order they run (design, section 7.3).
@@ -1562,7 +1569,7 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 		// A confined thread's directory is known now, so a daemon that dies
 		// before the launch recovers it in the same one.
 		first := FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: r.Key, Text: r.Input.Text, Link: r.Input.Link,
-			Before: r.Input.Before, After: r.Input.After, Via: r.Input.Via, Dir: dir}
+			Before: r.Input.Before, After: r.Input.After, Via: r.Input.Via, Dir: dir, Attachments: r.Input.Attachments, Files: r.Input.Files}
 		kept := first
 		if waits {
 			first = FirstInput{Dir: dir}
@@ -1753,6 +1760,7 @@ func (c *Core) launch(ctx context.Context, l Launch, repo string) error {
 	record := func(f FirstInput) error {
 		f.Principal, f.From, f.Key, f.Text, f.Context, f.Link = l.Principal, l.From, l.Key, l.Input.Text, l.Context, l.Input.Link
 		f.Before, f.After, f.Via = l.Input.Before, l.Input.After, l.Input.Via
+		f.Attachments, f.Files = l.Input.Attachments, l.Input.Files
 		fi, _ := json.Marshal(f)
 		return c.Store.Update(ctx, func(tx *store.Tx) error {
 			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, string(fi), l.Session); err != nil {
@@ -1788,6 +1796,12 @@ func (c *Core) launch(ctx context.Context, l Launch, repo string) error {
 			err = record(FirstInput{Dir: l.Dir})
 		}
 	}
+	if err == nil && len(l.Input.Attachments) > 0 {
+		l.Input, err = c.resolveAttachments(ctx, l.Session, l.From, l.Key, l.Input)
+		if err == nil {
+			err = record(FirstInput{Dir: l.Dir})
+		}
+	}
 	if err == nil {
 		err = c.Runner.Start(ctx, l)
 	}
@@ -1806,7 +1820,7 @@ func (c *Core) launch(ctx context.Context, l Launch, repo string) error {
 func (c *Core) resume(ctx context.Context, sid int64, f FirstInput) error {
 	// The input as it was given: nothing of an earlier launch's progress.
 	f = FirstInput{Principal: f.Principal, From: f.From, Key: f.Key, Text: f.Text, Wake: true, Link: f.Link, Via: f.Via,
-		Context: f.Context, Before: f.Before, After: f.After}
+		Context: f.Context, Before: f.Before, After: f.After, Attachments: f.Attachments, Files: f.Files}
 	if err := c.Runner.Resume(ctx, sid, f); err != nil {
 		if ferr := c.Machine.Apply(ctx, sid, session.Input{Kind: session.Exit, Reason: "resume: " + err.Error()}); ferr != nil {
 			c.Log.Error("recording a failed resume", "session", sid, "err", ferr)
@@ -2079,6 +2093,7 @@ type sendGuard struct {
 var errGuardEnded = errors.New("the requested turn ended")
 
 var errPromptBuild = errors.New("ordinary input still needs prompt-build hooks")
+var errAttachments = errors.New("input still needs attachment copies")
 
 func (a *api) send(ctx context.Context, id control.ThreadID, key string, in control.Input, busy control.Busy, guard *sendGuard) error {
 	scope, err := a.actThread(ctx, control.OpSend, "Send", id)
@@ -2112,6 +2127,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		defer a.c.locks.lock("send:" + scope + "\x00" + key)()
 	}
 	var needsBuild bool
+	var filesSession int64
 	if in, needsBuild, err = a.sendHooks(ctx, id, scope, key, in, guard); err != nil {
 		return err
 	}
@@ -2135,6 +2151,9 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		var state control.State
 		var err error
 		sid, state, err = a.c.current(ctx, tx, id)
+		if filesSession != 0 && sid != filesSession {
+			return fmt.Errorf("core: session changed while fetching attachments; retry the input")
+		}
 		if err != nil {
 			return err
 		}
@@ -2218,8 +2237,17 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 			// transaction before accepting this as ordinary input.
 			return errPromptBuild
 		}
+		if len(in.Attachments) > 0 {
+			if state != control.Idle && state != control.Running && state != control.Waiting && state != control.Asleep {
+				return fmt.Errorf("core: send to %v: %w", id, session.ErrRefused)
+			}
+			if state == control.Waiting && a.caller.NoAnswer {
+				return fmt.Errorf("core: send to %v: %w", id, ErrBusy)
+			}
+			return errAttachments
+		}
 		marked := FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: key, Text: in.Text, Link: in.Link,
-			Before: in.Before, After: in.After, Via: a.caller.Via}
+			Before: in.Before, After: in.After, Via: a.caller.Via, Files: in.Files}
 		if guard == nil {
 			if waits, err = a.c.mustWait(ctx, tx, scope, id, state); err != nil {
 				return err
@@ -2250,10 +2278,10 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		if question != "" {
 			answer = question
 			if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Answer, Principal: a.caller.Principal, From: a.caller.From,
-				Key: key, Text: given.Text, Request: question, Link: in.Link, Via: a.caller.Via}); err != nil {
+				Key: key, Text: given.Text, Request: question, Link: in.Link, Via: a.caller.Via, Files: in.Files}); err != nil {
 				return err
 			}
-			pending, err = pend(ctx, tx, sid, question, control.Answer{Text: given.Text}, "")
+			pending, err = pend(ctx, tx, sid, question, session.PendingAnswer{Answer: control.Answer{Text: given.Text + control.FileLines(given.Files)}, Files: in.Files}, "")
 			return err
 		}
 		pending, hand, err = a.c.sendTx(ctx, tx, sid, marked)
@@ -2261,6 +2289,14 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 	}
 	for {
 		err = a.c.Store.Update(ctx, take)
+		if errors.Is(err, errAttachments) {
+			filesSession = sid
+			if in, err = a.c.resolveAttachments(ctx, sid, a.caller.From, key, in); err != nil {
+				return err
+			}
+			given.Files = in.Files
+			continue
+		}
 		if !errors.Is(err, errPromptBuild) {
 			break
 		}
@@ -2276,7 +2312,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		a.c.places.tell()
 	}
 	if answer != "" {
-		return a.c.Runner.Answer(ctx, sid, pending, answer, control.Answer{Text: given.Text})
+		return a.c.Runner.Answer(ctx, sid, pending, answer, control.Answer{Text: given.Text + control.FileLines(given.Files)})
 	}
 	if wake {
 		if err := a.c.resume(ctx, sid, first); err != nil {
@@ -2359,7 +2395,7 @@ func (c *Core) sendTx(ctx context.Context, tx *store.Tx, sid int64, in FirstInpu
 		return 0, hand, err
 	}
 	if err := c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Send, Principal: in.Principal, From: in.From, Key: in.Key,
-		Text: in.Text, Link: in.Link, Before: in.Before, After: in.After, Via: in.Via}); err != nil {
+		Text: in.Text, Link: in.Link, Before: in.Before, After: in.After, Via: in.Via, Files: in.Files}); err != nil {
 		return 0, hand, err
 	}
 	earlier, err := owed(ctx, tx, sid)
@@ -2373,7 +2409,7 @@ func (c *Core) sendTx(ctx context.Context, tx *store.Tx, sid int64, in FirstInpu
 			return 0, hand, err
 		}
 	}
-	pending, err = pend(ctx, tx, sid, "", session.PendingInput{Input: hand, Origin: origin}, earlier)
+	pending, err = pend(ctx, tx, sid, "", session.PendingInput{Input: hand, Origin: origin, Files: in.Files}, earlier)
 	hand.Text = earlier + hand.Text
 	return pending, hand, err
 }

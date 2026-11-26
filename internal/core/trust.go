@@ -320,7 +320,7 @@ func (c *Core) again(ctx context.Context, tx *store.Tx, id control.ThreadID, sco
 		dir = workspace.String
 	}
 	first := FirstInput{Principal: old.Principal, From: old.From, Key: old.Key, Text: old.Text, Link: old.Link,
-		Before: old.Before, After: old.After, Via: old.Via, Context: old.Context, Dir: dir, NoInput: old.NoInput}
+		Before: old.Before, After: old.After, Via: old.Via, Files: old.Files, Attachments: old.Attachments, Context: old.Context, Dir: dir, NoInput: old.NoInput}
 	if old.Wake {
 		// A woken session's agent would have resumed the conversation; the
 		// new one gets it before the input, as a session that replaces one

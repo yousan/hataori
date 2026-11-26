@@ -304,7 +304,7 @@ func (f *FrontEnd) handle(in surface.Inbound) error {
 		return nil // stored by a concurrent delivery of another text
 	}
 	ref := in.Ref
-	_, err = f.start(ctx, request{author: in.Author, conv: in.Ref.Conv, key: in.Ref.ID, reply: &ref}, f.newWords(o), n)
+	_, err = f.start(ctx, request{author: in.Author, conv: in.Ref.Conv, key: in.Ref.ID, reply: &ref, files: attachmentsOf(in)}, f.newWords(o), n)
 	return err
 }
 
@@ -314,6 +314,7 @@ type request struct {
 	conv   surface.Conversation // where it was asked; its channel is the scope
 	key    string               // the Start's key, under which chat_triggers keeps it
 	reply  *surface.MessageRef  // what an answer replies to
+	files  []control.IncomingFile
 }
 
 // refuseEffort answers a trigger whose effort the core does not know. It
@@ -402,7 +403,7 @@ func (f *FrontEnd) start(ctx context.Context, r request, o order, n int64) (cont
 	// No thread is named: once the core allows the Start, it asks this
 	// front end for one (NewThread), which opens it from the trigger.
 	id, startErr := api.Start(ctx, control.StartRequest{Key: r.key, Scope: channel, Repo: o.Repo,
-		Agent: o.Agent, Model: o.Model, Effort: o.Effort, Input: control.Input{Text: o.Prompt}})
+		Agent: o.Agent, Model: o.Model, Effort: o.Effort, Input: control.Input{Text: o.Prompt, Attachments: r.files}})
 	switch {
 	case errors.Is(startErr, control.ErrForbidden), errors.Is(startErr, control.ErrUnknownAgent):
 		return 0, nil // the core logged it; nothing is shown to the author
@@ -721,7 +722,7 @@ func (f *FrontEnd) followUp(in surface.Inbound) error {
 	if err := f.rememberSender(ctx, in.Ref.ID, sender{lamp: "message", msg: in.Ref, ping: pingOf(in.Author)}); err != nil {
 		return err
 	}
-	err = api.Send(ctx, id, in.Ref.ID, control.Input{Text: in.Text,
+	err = api.Send(ctx, id, in.Ref.ID, control.Input{Text: in.Text, Attachments: attachmentsOf(in),
 		Link: &control.LinkRef{Client: f.Name, Channel: conv.Channel, Thread: conv.Thread}}, control.Deliver)
 	if errors.Is(err, control.ErrForbidden) {
 		return nil // the core logged it
@@ -791,4 +792,17 @@ func (f *FrontEnd) noticeOnce(ctx context.Context, in surface.Inbound, m surface
 	}
 	f.Outbox.Wake()
 	return nil
+}
+
+// Automated posters never cause an attachment request, even when configured
+// as a relayed principal. Core authorization still decides a person's input.
+func attachmentsOf(in surface.Inbound) []control.IncomingFile {
+	if in.Author.Kind != surface.Person {
+		return nil
+	}
+	var files []control.IncomingFile
+	for _, f := range in.Files {
+		files = append(files, control.IncomingFile{Name: f.Name, URL: f.URL})
+	}
+	return files
 }
