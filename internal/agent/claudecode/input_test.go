@@ -211,6 +211,7 @@ func TestConfinedInputIsNeverACommand(t *testing.T) {
 		"\u0483!id", "\u2de0/exit", // marks of a script listed
 		"\ufe0f!id", "\u034f/exit", "\u0301!id", // marks with nothing before them
 		"\u2800!id", "\ue000!id", "\U000e0100/exit", // a blank symbol, a private use character, a variation selector
+		"½!id", "²/exit", "\u2167!id", // numbers that are not decimal digits
 		"！id", "／exit", "#x", "&x", "?", "> x", "[31m!id", "(at)x", "「x」", "😀"} {
 		if got := paste(t, confinedCodec(t), text); got != commandPrefix+text {
 			t.Errorf("confined: %q is pasted as %q, want it after %q", text, got, commandPrefix)

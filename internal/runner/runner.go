@@ -463,13 +463,14 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 	return spec, nil
 }
 
-// newAgent records, before session id's agent is launched, that what was
-// written to an agent before it is not in the new one's box: it is marked
-// writtenNow, so that no codec holds it as what an older runner may have
-// left there (#914). It is recorded before the launch, so that a daemon that
-// dies after it does not take that for what was written to the new agent.
+// newAgent removes, before session id's agent is launched, the inputs that
+// were written to an agent before it: they are not in the new one's box,
+// and nothing reports them any more, so that no codec holds one as what an
+// older runner may have left there, and none keeps the thread from being
+// closed (#914). They go before the launch, so that a daemon that dies after
+// it does not take them for what was written to the new agent.
 func (r *Runner) newAgent(ctx context.Context, id int64) error {
-	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE pending_inputs SET written = ? WHERE session_id = ? AND written != 0`, writtenNow, id); err != nil {
+	if _, err := r.Store.DB.ExecContext(ctx, `DELETE FROM pending_inputs WHERE session_id = ? AND request = '' AND written != 0`, id); err != nil {
 		return fmt.Errorf("runner: session %d: %w", id, err)
 	}
 	return nil
@@ -1073,8 +1074,9 @@ func (r *Runner) handOverWritten(lv *live) {
 		var data, earlier string
 		var in control.Input
 		if rows.Scan(&id, &data, &earlier, &written) == nil && json.Unmarshal([]byte(data), &in) == nil {
-			// One that a runner before this one wrote, maybe to this agent,
-			// also after the row was marked stale (newAgent).
+			// One that a runner from before agent.Input.Earlier wrote, maybe
+			// to this agent, also one that it wrote to an agent before and
+			// marked stale; this runner removes those at a launch (newAgent).
 			ins = append(ins, agent.Input{ID: strconv.FormatInt(id, 10), Text: earlier + in.Text, Written: true, Earlier: written != writtenNow})
 		}
 	}
@@ -1100,10 +1102,10 @@ func (r *Runner) markWritten(lv *live, ids []string) error { return r.setWritten
 
 func (r *Runner) unmarkWritten(lv *live, ids []string) { r.setWritten(lv, ids, false) }
 
-// writtenNow is pending_inputs.written of an input that this runner wrote,
-// or that was written to an agent before the one that runs (newAgent). 1 is
-// of one that a runner from before it wrote, maybe to the agent that runs:
-// agent.Input.Earlier.
+// writtenNow is pending_inputs.written of an input that a runner that knows
+// agent.Input.Earlier, this one or a later one, wrote to the agent that runs
+// (one written to an agent before is removed: newAgent). 1 is of one that a
+// runner from before it wrote, maybe to the agent that runs: agent.Input.Earlier.
 const writtenNow = 2
 
 func (r *Runner) setWritten(lv *live, ids []string, written bool) error {

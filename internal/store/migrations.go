@@ -203,8 +203,9 @@ var migrations = []Migration{
 	{Name: "pending_inputs.written", Up: execAll(
 		// written: the input was written to the agent, and its report not
 		// read yet; after a restart the codec is told, and writes nothing.
-		// 1 from a runner before #914; 2 from one since, also for one written
-		// to an agent before the one that runs (agent.Input.Earlier). A runner
+		// 1 from a runner before #914, maybe to an agent before the one that
+		// runs (agent.Input.Earlier); 2 from one since, which removes what was
+		// written to an agent before it launches another. A runner
 		// before #914 takes a row with 2 neither as pending (0) nor as
 		// written (1): before going back to one, set 2 to 1.
 		`ALTER TABLE pending_inputs ADD COLUMN written INTEGER NOT NULL DEFAULT 0`,

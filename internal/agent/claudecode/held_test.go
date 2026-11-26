@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -273,6 +274,43 @@ func TestOnlyItsOwnPromptReleasesAnInput(t *testing.T) {
 		t.Fatalf("the next input: keys %q, events %+v", a.Keys, a.Events)
 	}
 	quiet(t, c, time.Now(), 2*DefaultInputTimeout, "after it")
+}
+
+// An input that this hataori pasted before a restart, after which what an
+// older hataori pasted may be in the box, gets no Enter either: after the
+// input timeout its turn ends as not delivered, naming it, and a prompt the
+// same as its paste no longer counts as it; the older paste stays held (#914).
+func TestOwnInputBeforeAnOlderPasteEnds(t *testing.T) {
+	c := (&Adapter{}).NewCodec(agent.Spec{Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
+	for _, f := range []string{"01-SessionStart", "02-UserPromptSubmit", "05-Stop", "07-UserPromptSubmit"} {
+		decodeFile(t, c, f, held+f+".json")
+	}
+	for _, in := range []agent.Input{{ID: "in-6", Text: heldText, Written: true}, {ID: "in-7", Text: "#x", Written: true, Earlier: true}} {
+		if a, _ := c.Input(in); len(a.Keys) != 0 {
+			t.Fatalf("%s: written again: %q", in.ID, a.Keys)
+		}
+	}
+	decodeFile(t, c, "11", held+"11-Stop.json")
+	var evs []agent.Event
+	now := time.Now()
+	for end := now.Add(2 * DefaultInputTimeout); now.Before(end); now = now.Add(100 * time.Millisecond) {
+		a := c.Tick(now)
+		if len(a.Keys) != 0 {
+			t.Fatalf("keys %q while an older paste may be in the box", a.Keys)
+		}
+		evs = append(evs, a.Events...)
+	}
+	if len(evs) != 1 || evs[0].Kind != agent.TurnEnded || evs[0].Reason != agent.NotDelivered || evs[0].Input != "in-6" {
+		t.Fatalf("events %+v; want the end of in-6's turn, not delivered", evs)
+	}
+	for _, e := range decodeFile(t, c, "12", held+"12-UserPromptSubmit.json").Events {
+		if e.Input != "" {
+			t.Errorf("the prompt of its paste names %q", e.Input)
+		}
+	}
+	if !slices.Equal(c.leftover, []string{"in-7"}) {
+		t.Errorf("held %q, want in-7", c.leftover)
+	}
 }
 
 // The end of the session releases what may be in the box: after a /clear in

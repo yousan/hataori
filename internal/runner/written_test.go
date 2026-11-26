@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -109,8 +110,8 @@ func (c *handed) Input(in agent.Input) (agent.Actions, error) {
 // After a restart, the codec is told which written input a runner from
 // before agent.Input.Earlier wrote, maybe to the agent that runs, also after
 // its row was marked stale, and which one this runner wrote: the first input
-// and a pending one alike. One written to an agent before the one a runner
-// started is not earlier (#914).
+// and a pending one alike. What was written to an agent before the one a
+// runner starts is removed before it starts, and what was not stays (#914).
 func TestWrittenInputSaysWhichRunnerWroteIt(t *testing.T) {
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, "state"), 0o700)
@@ -157,5 +158,19 @@ func TestWrittenInputSaysWhichRunnerWroteIt(t *testing.T) {
 	if err := r.newAgent(context.Background(), 1); err != nil {
 		t.Fatal(err)
 	}
-	check("after a new agent started", map[string]bool{firstInputID: false, "10": false, "12": false})
+	check("after a new agent started", map[string]bool{firstInputID: false})
+	var left []int64
+	rows, err := st.DB.Query(`SELECT id FROM pending_inputs WHERE session_id = 1 ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var id int64
+		rows.Scan(&id)
+		left = append(left, id)
+	}
+	rows.Close()
+	if !slices.Equal(left, []int64{11}) {
+		t.Errorf("after a new agent started, rows %v are left, want only the one not written", left)
+	}
 }
