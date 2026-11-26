@@ -307,16 +307,39 @@ const atSign = "(at)"
 const atSignNote = "In every message you are given, each at sign (@) is written as " + atSign + ", so that your program takes none for a mention. " +
 	"In everything you write, use @ itself: where you quote such a text, where you pass it on, and where you mention a person, also when the message says whom to mention."
 
-// pasteText is what is pasted for text: without the paste markers, and in
-// a confined session, without control characters, with no "@" and with
-// commandPrefix before anything that could be a command.
+// pasteText is what is pasted for text: without the paste markers or image
+// path interpretation, and in a confined session, without control
+// characters, with no "@" and with commandPrefix before anything that
+// could be a command.
 func (c *codec) pasteText(text string) string {
 	text = cleanPaste(text)
 	if c.spec.Confine == nil {
-		return text
+		return noImagePaths(text)
 	}
-	return noCommand(strings.ReplaceAll(noControls(text), "@", atSign))
+	return noImagePaths(noCommand(strings.ReplaceAll(noControls(text), "@", atSign)))
 }
+
+// noImagePaths keeps a line naming an image from becoming an attachment.
+// The CLI reads image paths at paste time, before it reports the prompt;
+// --restricted allows images inside the session's directory too (#915).
+// A word before the line makes it text. Check each line, including quoted
+// and escaped paths, without looking at any file or the clipboard. Lines
+// already quoted by a wake or reminder need no prefix.
+func noImagePaths(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		first := strings.TrimSpace(line)
+		if strings.HasPrefix(first, commandPrefix) || strings.HasPrefix(first, "> ") {
+			continue
+		}
+		if imagePathEnd.MatchString(strings.ReplaceAll(first, "\\", "")) {
+			lines[i] = commandPrefix + line
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+var imagePathEnd = regexp.MustCompile(`(?i)\.(png|jpe?g|gif|webp)["']?$`)
 
 // noControls is text without its control characters but line feeds and
 // tabs: nothing in it starts an escape sequence, which a terminal or the
