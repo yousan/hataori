@@ -181,6 +181,10 @@ func TestPIDOneListsAndChecksPane(t *testing.T) {
 	// An attach still refuses input even though its terminal is not under
 	// a session host in the process tree.
 	ps = strings.ReplaceAll(ps, "pts/63   sh", "pts/63   hataori")
+	list, err = l.List(context.Background(), nil)
+	if err != nil || len(list) != 1 || list[0].Tmux.Pane != "%0" {
+		t.Fatalf("attach listed: %+v, %v", list, err)
+	}
 	if p, own, err := l.Check(context.Background(), "%1", nil, true); err != nil || p == nil || !own {
 		t.Fatalf("attach: %v %v %v", p, own, err)
 	}
