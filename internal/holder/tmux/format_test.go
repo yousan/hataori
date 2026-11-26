@@ -81,7 +81,7 @@ func TestStartDoesNotRunAfterARefusedSetup(t *testing.T) {
    if [ "$arg" = if-shell ]; then shift; break; fi
    shift
   done
-  shift 3
+  shift 4
   exec ` + s.tmux + ` -S ` + quote(s.sock) + ` if-shell -F -t %0 0 "$@"
  fi;; esac
 exec ` + s.tmux + ` "$@"`)
@@ -106,7 +106,7 @@ func TestARefusedGuardHandsOverNoInput(t *testing.T) {
   if [ "$arg" = if-shell ];then shift;break;fi
   shift
  done
- shift 3
+ shift 4
  exec %s -S %s if-shell -F -t %%0 0 "$@";; esac
 exec %s "$@"`, s.tmux, quote(s.sock), s.tmux))
 	sent, err := h.input(t.Context(), w, []agent.Part{{Paste: "must not arrive"}, {Key: agent.Enter}})
