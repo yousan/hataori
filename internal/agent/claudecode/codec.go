@@ -221,9 +221,12 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 		// it is pressed after that turn, unless it is a leftover, which
 		// does not end.
 		typed := c.pasteText(in.Text)
+		if in.WrittenText != nil {
+			typed = *in.WrittenText
+		}
 		text := normalize(typed)
 		q := queued{id: in.ID, text: text}
-		if c.spec.Confine != nil && in.Earlier {
+		if c.spec.Confine != nil && in.Earlier && in.WrittenText == nil {
 			clean := cleanPaste(in.Text)
 			for _, o := range []string{bangOrSlash(clean), bangOrSlash(strings.ReplaceAll(clean, "@", atSign))} {
 				q.older = append(q.older, normalize(o))
@@ -250,7 +253,8 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 }
 
 // queued is an input and its Input.ID. older is set for one that an earlier
-// hataori pasted before a restart into a confined session (Input.Earlier):
+// hataori pasted before a restart into a confined session (Input.Earlier),
+// without recording WrittenText:
 // what earlier hataoris pasted for it, one that left each "@" (before #887)
 // and one that applied only bangOrSlash (before #914). Such an input is
 // known by these, not by text, which no hataori pasted for it and which can
@@ -423,6 +427,7 @@ func (c *codec) paste() Actions {
 	})
 	if s.id != "" {
 		a.Inputs = []string{s.id}
+		a.InputText = map[string]string{s.id: s.typed}
 	}
 	return a
 }
@@ -800,6 +805,14 @@ func merge(a, b Actions) Actions {
 	a.Reply = append(a.Reply, b.Reply...)
 	a.Follow = append(a.Follow, b.Follow...)
 	a.Inputs = append(a.Inputs, b.Inputs...)
+	if len(b.InputText) > 0 {
+		if a.InputText == nil {
+			a.InputText = make(map[string]string)
+		}
+		for id, text := range b.InputText {
+			a.InputText[id] = text
+		}
+	}
 	if f, g := a.KeysFailed, b.KeysFailed; f == nil {
 		a.KeysFailed = g
 	} else if g != nil {
