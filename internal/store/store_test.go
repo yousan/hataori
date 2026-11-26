@@ -56,7 +56,7 @@ func TestOpenNewThenAgain(t *testing.T) {
 		t.Fatalf("journal_mode = %q", mode)
 	}
 	want := tables(t, s)
-	if want != "agent_limits,approvals,chat_cursors,chat_held,chat_inbound,chat_logins,chat_named,chat_notices,chat_outbox,chat_reopen_held,chat_senders,chat_triggers,events,inbox,links,login_outage_threads,login_outages,names,pending_inputs,plugin_outages,proposals,requests,schema_version,session_files,session_reads,sessions,sqlite_sequence,startup_steps,supervisor_asked,supervisor_dirs,supervisor_docs,supervisor_files,supervisor_given,supervisor_reminders,supervisor_wakes,supervisor_writes,threads,trusted_files,turns,waiting_inputs,workspaces" {
+	if want != "agent_limits,approvals,chat_cursors,chat_held,chat_inbound,chat_logins,chat_named,chat_notices,chat_outbox,chat_reopen_held,chat_senders,chat_triggers,events,inbox,links,login_outage_threads,login_outages,names,pending_inputs,plugin_outages,proposals,requests,schema_version,session_files,session_reads,sessions,sqlite_sequence,startup_steps,supervisor_asked,supervisor_dirs,supervisor_docs,supervisor_files,supervisor_given,supervisor_reminders,supervisor_session_files,supervisor_wakes,supervisor_writes,threads,trusted_files,turns,waiting_inputs,workspaces" {
 		t.Fatalf("tables = %s", want)
 	}
 	s.Close()
@@ -429,5 +429,43 @@ func TestThreadKindsOnUpgrade(t *testing.T) {
 	}
 	if len(after) != len(before) {
 		t.Fatalf("%d tables, %d before", len(after), len(before))
+	}
+}
+
+// The scope record belonged to the own thread only. Migrating must not
+// claim that any conversation, or an older own session, was given it.
+func TestSupervisorFingerprintsMigrateToOwnSession(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "db")
+	step := slices.IndexFunc(migrations, func(m Migration) bool { return m.Name == "supervisor_session_files" })
+	st, err := open(ctx, path, migrations[:step])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO threads(id,scope,key,started_by,state,kind,created_at,updated_at) VALUES(1,'s','own','p','idle','supervisor',0,0),(2,'s','talk','p','idle','conversation',0,0)`,
+		`INSERT INTO sessions(id,thread_id,agent,state,created_at,updated_at) VALUES(1,1,'fake','closed',0,0),(2,1,'fake','idle',0,0),(3,2,'fake','idle',0,0)`,
+		`INSERT INTO supervisor_files(scope,name,told,seen) VALUES('s','SOUL.md','known','known')`,
+	} {
+		if _, err := st.DB.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st.Close()
+	st, err = open(ctx, path, migrations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var sid, count int
+	var name, told string
+	if err := st.DB.QueryRow(`SELECT session_id,name,told FROM supervisor_session_files`).Scan(&sid, &name, &told); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DB.QueryRow(`SELECT count(*) FROM supervisor_session_files`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if sid != 2 || name != "SOUL.md" || told != "known" || count != 1 {
+		t.Fatalf("migrated %d %q %q (%d rows)", sid, name, told, count)
 	}
 }

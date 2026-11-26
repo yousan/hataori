@@ -17,6 +17,9 @@ import (
 type PendingInput struct {
 	control.Input
 	Origin *InputOrigin `json:"origin,omitempty"`
+	// NewContext is the daemon context added for this input alone. The rest
+	// of pending_inputs.context was already owed in sessions.context.
+	NewContext string `json:"new_context,omitempty"`
 }
 
 // InputOrigin identifies the accepted call. Turn is nonzero only when the
