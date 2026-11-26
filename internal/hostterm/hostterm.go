@@ -127,11 +127,18 @@ func (l *Lister) List(ctx context.Context, owned []int) ([]control.HostTerminal,
 	}
 	procs := parsePS(out)
 	hidden := ownedDevices(procs, slices.Concat(owned, ownPIDs(procs, l.Own)))
+	// An attach has its own terminal rather than being below a session
+	// host. Hide it by the same name check used when refusing input.
+	for _, p := range procs {
+		if p.tty != "" && matchesOwn(p.comm, l.Own) {
+			hidden[p.tty] = true
+		}
+	}
 	list := []control.HostTerminal{} // an empty list, not null, on the wire
 	inTmux := map[string]bool{}
 	for _, p := range panes {
 		inTmux[p.Device] = true
-		if !hidden[p.Device] {
+		if !hidden[p.Device] && !matchesOwn(p.Process, l.Own) {
 			list = append(list, p)
 		}
 	}
@@ -334,7 +341,7 @@ func terminalOf(ps []proc, pid int) (int, string, bool) {
 }
 
 // ownedDevices is the set of terminals used by a process in owned or under
-// one.
+// one. PID 1 is an adoption boundary: it owns only its own terminal.
 func ownedDevices(ps []proc, owned []int) map[string]bool {
 	hidden := map[string]bool{}
 	if len(owned) == 0 {
@@ -350,7 +357,7 @@ func ownedDevices(ps []proc, owned []int) map[string]bool {
 				return true
 			}
 			next, ok := parent[pid]
-			if !ok || next == pid || next <= 0 {
+			if !ok || next == pid || next <= 1 {
 				return false
 			}
 			pid = next

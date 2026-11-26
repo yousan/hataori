@@ -439,7 +439,7 @@ func (f *FrontEnd) start(ctx context.Context, r request, o order, n int64) (cont
 	case startErr != nil:
 		// Not recorded as the session's end: no event shows it.
 		rows = append(rows, Row{Event: out.first, Part: 1, Conv: conv,
-			Message: surface.Message{Text: couldNotStart + startErr.Error()}})
+			Message: surface.Message{Text: couldNotStart + "\n" + f.verbatim(startErr.Error())}})
 	}
 	if err := f.Outbox.Write(ctx, rows...); err != nil {
 		f.Log.Error("trigger: writing the prompt", "thread", id, "err", err)
@@ -604,11 +604,13 @@ func (f *FrontEnd) failedRow(sf startFailed, conv surface.Conversation, first ui
 // screen of a start that timed out: the dashboard shows it, not the chat. A
 // detail that is too long is shown up to a bound, and the message says so.
 //
+// A reason may hold remote git output or an agent's refusal (#788), so it
+// is shown verbatim on its own lines.
 // What the agent showed may hold text of the repository (#754), so it is
 // shown verbatim: the lines that the detail of a dialog quotes ("> "), and
 // any other detail whole, which is the agent's output.
 func (f *FrontEnd) failedText(sf startFailed) string {
-	t := couldNotStart + sf.reason
+	t := couldNotStart + "\n" + f.verbatim(sf.reason)
 	d, cut := readableDetail(sf.detail, len(sf.trust) > 0)
 	if d == "" {
 		return t
@@ -618,10 +620,10 @@ func (f *FrontEnd) failedText(sf startFailed) string {
 		note = "\n" + detailCut
 	}
 	if len(sf.trust) == 0 {
-		return t + ".\n" + f.verbatim(d) + note
+		return t + "\n" + f.verbatim(d) + note
 	}
 	if !cut && !strings.Contains(d, "\n") && !strings.HasPrefix(d, quoteMark) {
-		return t + ": " + d
+		return t + "\n" + d
 	}
 	var out, quoted []string
 	end := func() {
@@ -642,7 +644,7 @@ func (f *FrontEnd) failedText(sf startFailed) string {
 		out = append(out, l)
 	}
 	end()
-	return t + ".\n" + strings.Join(out, "\n") + note
+	return t + "\n" + strings.Join(out, "\n") + note
 }
 
 // quoteMark begins a line of a detail that quotes what the agent showed.

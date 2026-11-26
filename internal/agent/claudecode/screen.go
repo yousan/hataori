@@ -10,6 +10,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"golang.org/x/text/width"
+
 	"github.com/yousan/hataori/internal/agent"
 )
 
@@ -508,9 +510,11 @@ func lineTexts(lines []screenLine) []string {
 
 // A cell is one place of the grid renderScreen draws on.
 type cell struct {
-	r     rune
-	marks []rune // the combining marks drawn on r
-	bold  bool
+	r            rune
+	marks        []rune // the combining marks drawn on r
+	bold         bool
+	wide         bool // the leading cell of a two-column character
+	continuation bool // the second column, which contributes no text
 }
 
 // blank reports whether nothing shows at c.
@@ -525,9 +529,10 @@ func (c cell) blank() bool { return c.r == ' ' && len(c.marks) == 0 }
 // interface uses it) is a grid of its own. Anything else that could change
 // the screen (a reset, scrolling, inserting or deleting lines or
 // characters) makes ok false: such a screen is not read. A character takes
-// one column and a combining mark none: it goes with the character left of
-// it. The grid has no height: it grows as the cursor goes down, and a
-// cursor position counts from its top.
+// one or two columns according to its Unicode width; a combining mark
+// goes with the leading cell of the character left of it. A partial write
+// or erasure of a wide character is not read. The grid has no height: it
+// grows as the cursor goes down, and a cursor position counts from its top.
 func renderScreen(b []byte) (screen []screenLine, ok bool) {
 	var grid, mainGrid [][]cell
 	// The cursor, and whether what is written there is bold; the saved one;
@@ -539,19 +544,33 @@ func renderScreen(b []byte) (screen []screenLine, ok bool) {
 	}
 	var at, saved, main cursor
 	alt := false
-	put := func(r rune) {
+	put := func(r rune) bool {
+		cols := 1
+		switch width.LookupRune(r).Kind() {
+		case width.EastAsianWide, width.EastAsianFullwidth:
+			cols = 2
+		}
 		for len(grid) <= at.row {
 			grid = append(grid, nil)
 		}
-		for len(grid[at.row]) <= at.col {
+		for len(grid[at.row]) < at.col+cols {
 			grid[at.row] = append(grid[at.row], cell{r: ' '})
 		}
-		grid[at.row][at.col] = cell{r: r, bold: at.bold}
-		at.col++
+		l := grid[at.row]
+		if l[at.col].continuation || l[at.col].wide && cols != 2 ||
+			cols == 2 && l[at.col+1].wide {
+			return false // a partial overwrite could hide text
+		}
+		l[at.col] = cell{r: r, bold: at.bold, wide: cols == 2}
+		if cols == 2 {
+			l[at.col+1] = cell{continuation: true}
+		}
+		at.col += cols
+		return true
 	}
-	// mark draws r on the character left of the cursor. At the start of a
-	// line there is none, and what is drawn there is the terminal's choice:
-	// not readable.
+	// Marks follow the character, not its continuation cell. An emoji
+	// selector widens a narrow base, but never gives a wide base a third
+	// column. At a line's start there is no character to mark.
 	mark := func(r rune) bool {
 		if at.col == 0 {
 			return false
@@ -562,11 +581,35 @@ func renderScreen(b []byte) (screen []screenLine, ok bool) {
 		for len(grid[at.row]) < at.col {
 			grid[at.row] = append(grid[at.row], cell{r: ' '})
 		}
-		c := &grid[at.row][at.col-1]
+		l := grid[at.row]
+		i := at.col - 1
+		if l[i].continuation {
+			i--
+			if i < 0 || !l[i].wide {
+				return false
+			}
+		} else if l[i].wide {
+			return false // the cursor is inside a wide character
+		}
+		c := &l[i]
+		widen := r == '\ufe0f' && !c.wide
+		if widen && at.col < len(l) && !l[at.col].blank() {
+			return false // widening must not cover another character
+		}
 		if c.blank() {
 			c.bold = at.bold
 		}
 		c.marks = append(c.marks, r)
+		if widen {
+			c.wide = true
+			if at.col == len(l) {
+				l = append(l, cell{continuation: true})
+			} else {
+				l[at.col] = cell{continuation: true}
+			}
+			grid[at.row] = l
+			at.col++
+		}
 		return true
 	}
 	line := func() []cell {
@@ -672,10 +715,16 @@ func renderScreen(b []byte) (screen []screenLine, ok bool) {
 				l := line()
 				switch params {
 				case "", "0":
+					if at.col < len(l) && l[at.col].continuation {
+						return nil, false
+					}
 					if at.col < len(l) {
 						grid[at.row] = l[:at.col]
 					}
 				case "1":
+					if at.col < len(l) && l[at.col].wide {
+						return nil, false
+					}
 					for k := 0; k <= at.col && k < len(l); k++ {
 						l[k] = cell{r: ' '}
 					}
@@ -688,6 +737,9 @@ func renderScreen(b []byte) (screen []screenLine, ok bool) {
 				switch params {
 				case "", "0":
 					l := line()
+					if at.col < len(l) && l[at.col].continuation {
+						return nil, false
+					}
 					if at.col < len(l) {
 						grid[at.row] = l[:at.col]
 					}
@@ -772,11 +824,14 @@ func renderScreen(b []byte) (screen []screenLine, ok bool) {
 				}
 				return nil, false
 			}
-			// U+FE0F is a mark too, but makes a character an emoji of two
-			// columns: it stands for the second.
-			if r == '\ufe0f' || !unicode.In(r, unicode.Mn, unicode.Me) {
-				put(r)
-			} else if !mark(r) {
+			if r == '\u200d' || r >= '\U0001f3fb' && r <= '\U0001f3ff' {
+				return nil, false // joined/modifier emoji need cluster widths
+			}
+			if unicode.In(r, unicode.Mn, unicode.Me) {
+				if !mark(r) {
+					return nil, false
+				}
+			} else if !put(r) {
 				return nil, false
 			}
 			i += size
@@ -791,6 +846,9 @@ func gridLines(grid [][]cell) []screenLine {
 		var text strings.Builder
 		inBold, inPlain := false, false
 		for _, c := range l {
+			if c.continuation {
+				continue
+			}
 			text.WriteRune(c.r)
 			text.WriteString(string(c.marks))
 			if !c.blank() {

@@ -380,6 +380,12 @@ func Bot(id string) surface.Author { return surface.Author{Kind: surface.Bot, ID
 // A message in an archived thread un-archives it first, as a person
 // writing in it does on a service that archives threads.
 func (d *Driver) Inject(conv surface.Conversation, author surface.Author, text string) surface.Inbound {
+	return d.InjectWith(conv, author, text, nil)
+}
+
+// InjectWith is Inject of a message that set changes first, such as one
+// that is a call: the driver itself tells of no message that it is one.
+func (d *Driver) InjectWith(conv surface.Conversation, author surface.Author, text string, set func(*surface.Inbound)) surface.Inbound {
 	d.deliver.Lock()
 	defer d.deliver.Unlock()
 	d.mu.Lock()
@@ -396,6 +402,9 @@ func (d *Driver) Inject(conv surface.Conversation, author surface.Author, text s
 		if c == conv && who == author.ID {
 			in.Direct = true
 		}
+	}
+	if set != nil {
+		set(&in)
 	}
 	d.inbound[conv] = append(d.inbound[conv], in)
 	d.received[in.Ref] = true

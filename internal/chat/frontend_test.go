@@ -418,7 +418,7 @@ func TestRedeliveryAfterACrashShowsTheFirstText(t *testing.T) {
 		want string
 	}{
 		{"started", workspaces{}, "first"},
-		{"workspace failed", workspaces{err: errors.New("repository not found")}, "first|This thread could not start: repository not found"},
+		{"workspace failed", workspaces{err: errors.New("repository not found")}, "first|" + couldNotStart + "\n" + (&fake.Driver{}).Verbatim("repository not found")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFront(t, tc.ws)

@@ -110,3 +110,31 @@ func (r *Runner) AttachSocket(ctx context.Context, id int64) (string, error) {
 		}
 	}
 }
+
+// AttachedPIDs queries the host, so attachments survive daemon reconnects.
+// Missing launch data, an unreachable host, and unsupported older hosts
+// refuse the check. A held window, pipes or an ended host cannot attach.
+func (r *Runner) AttachedPIDs(ctx context.Context, id int64) ([]int, error) {
+	dir := StateDir(r.Root, id)
+	if _, ok := heldOf(dir); ok {
+		return nil, nil
+	}
+	spec, ok, err := host.ReadSpec(dir)
+	if err != nil {
+		return nil, fmt.Errorf("runner: session %d: %w", id, err)
+	}
+	if !ok {
+		return nil, fmt.Errorf("runner: session %d: its host launch is unknown", id)
+	}
+	if !spec.Terminal || spec.Relay || r.alive(dir).Ended() {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, deviceTimeout)
+	defer cancel()
+	c, err := host.DialContext(ctx, dir)
+	if err != nil {
+		return nil, fmt.Errorf("runner: session %d: %w", id, err)
+	}
+	defer c.Close()
+	return c.AttachmentPIDs(ctx)
+}

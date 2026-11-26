@@ -327,7 +327,7 @@ func Step(s Snapshot, in Input) (Result, error) {
 			return refuse()
 		}
 	case AgentEvent:
-		if !stepAgent(s, in.Agent, in.Principal, &r, to, end, start) {
+		if !stepAgent(s, in, &r, to, end, start) {
 			return refuse()
 		}
 	default:
@@ -337,10 +337,11 @@ func Step(s Snapshot, in Input) (Result, error) {
 }
 
 // stepAgent applies an agent event to r, through the helpers of Step. It
-// reports false when the event is refused. typist is the person of a turn
-// typed at the terminal (Machine.Typist).
-func stepAgent(s Snapshot, e agent.Event, typist control.Principal, r *Result,
+// reports false when the event is refused. in carries the caller of a held
+// input, or the person at the terminal (Machine.Typist).
+func stepAgent(s Snapshot, in Input, r *Result,
 	to func(control.State, string), end func(Ended), start func(OpenTurn, string)) bool {
+	e := in.Agent
 	live := s.State == control.Idle || s.State == control.Running || s.State == control.Waiting
 	switch e.Kind {
 	case agent.SessionReady:
@@ -356,12 +357,17 @@ func stepAgent(s Snapshot, e agent.Event, typist control.Principal, r *Result,
 	case agent.TurnStarted:
 		switch s.State {
 		case control.Idle:
-			by := ByAgent
-			if e.StartedBy == agent.ByTerminal {
-				by = ByTerminal
+			t := OpenTurn{By: ByAgent}
+			key := ""
+			switch e.StartedBy {
+			case agent.ByCaller:
+				t = OpenTurn{By: ByCaller, Principal: in.Principal, From: in.From}
+				key = in.Key
+			case agent.ByTerminal:
+				t.By = ByTerminal
 			}
 			to(control.Running, "")
-			start(OpenTurn{By: by}, "")
+			start(t, key)
 		case control.Running:
 			// The agent confirms the turn a caller started; or a person's
 			// prompt typed at the terminal reached it before the caller's
@@ -374,8 +380,8 @@ func stepAgent(s Snapshot, e agent.Event, typist control.Principal, r *Result,
 			// it (Machine.Typist): every chat link shows it (design,
 			// section 5.2). Since protocol 3.24.
 			d := map[string]any{"text": e.Text, "via": ViaTerminal}
-			if typist != "" {
-				d["principal"] = string(typist)
+			if in.Principal != "" {
+				d["principal"] = string(in.Principal)
 			}
 			r.Out = append(r.Out, Out{Kind: KindInput, Data: d})
 		}

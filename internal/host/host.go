@@ -41,11 +41,12 @@ type host struct {
 	term    *boundedLog // the terminal's raw log, or nil on pipes
 	run     string      // this run of the host; positions in term count from its start
 
-	follows  atomic.Int32 // follow and attach requests being served
-	attached atomic.Int32 // attach requests being served: a person's terminal is connected
-	detached atomic.Int64 // when the last attached terminal went, in Unix milliseconds; 0 for never
-	ln       *net.UnixListener
-	sock     string
+	follows     atomic.Int32 // follow and attach requests being served
+	attachMu    sync.Mutex
+	attachments map[*net.UnixConn]int // connected attach peers; zero means identity unknown
+	detached    atomic.Int64          // when the last attached terminal went, in Unix milliseconds; 0 for never
+	ln          *net.UnixListener
+	sock        string
 
 	events   *lineLog
 	calls    callTable
@@ -55,8 +56,9 @@ type host struct {
 
 	stopMu   sync.Mutex
 	stopOne  sync.Mutex     // one stop at a time
-	closing  bool           // the host is shutting down; no new stop starts
+	closing  bool           // the host is shutting down; no new stop or input starts
 	stops    sync.WaitGroup // stops in progress
+	inputs   sync.WaitGroup // input writes, through their replies
 	stopNote string         // the signals the last stop sent
 
 	terminated   chan struct{} // closed when the host first got SIGTERM: a shutdown
@@ -184,13 +186,7 @@ func Run(stateDir string) (err error) {
 	for deadline := time.Now().Add(followFlushTimeout); h.follows.Load() > 0 && time.Now().Before(deadline); {
 		time.Sleep(5 * time.Millisecond)
 	}
-	h.stopMu.Lock()
-	h.closing = true // a stop asked for from now on finds the command gone
-	h.stopMu.Unlock()
-	h.stops.Wait()
-	if h.tty != nil {
-		h.tty.Close()
-	}
+	h.finishRequests(inputReplyTimeout)
 
 	st := exitStatus(h.cmd, waitErr)
 	if h.stopNote != "" {
@@ -221,13 +217,35 @@ func (h *host) relay() error {
 	go h.serve()
 	<-h.done
 	h.log.printf("told to stop")
-	h.stopMu.Lock()
-	h.closing = true // no stop registers from now on, so Wait races no Add
-	h.stopMu.Unlock()
-	h.stops.Wait() // every stop's answer is written before the host ends
+	h.finishRequests(inputReplyTimeout)
 	h.ln.Close()
 	h.removeSocket()
 	return writeStatus(h.dir, Status{Relay: true, Stopped: true})
+}
+
+// finishRequests prevents new writes and stops, then waits up to limit
+// for input answers before Run returns and the host process exits. A final
+// input can itself make the command exit, before its reply was written.
+func (h *host) finishRequests(limit time.Duration) {
+	h.stopMu.Lock()
+	h.closing = true // no Add can race the waits below
+	h.stopMu.Unlock()
+	// The command has ended. A descendant can retain its input without
+	// reading it; release blocked writes (including attached input) before
+	// waiting for ordinary input replies. On a terminal this also closes tty.
+	if c, ok := h.input.(io.Closer); ok {
+		c.Close()
+	}
+	h.stops.Wait()
+	answered := make(chan struct{})
+	go func() { h.inputs.Wait(); close(answered) }()
+	select {
+	case <-answered:
+	case <-time.After(limit):
+		// Some PTY writes cannot be interrupted by Close. A stalled input
+		// or caller must not hold the host's final status indefinitely.
+		h.log.printf("input replies did not finish within %v", limit)
+	}
 }
 
 func exitStatus(cmd *exec.Cmd, err error) Status {
@@ -500,8 +518,10 @@ type response struct {
 	Device  string        `json:"device,omitempty"` // status: the terminal the command runs in; empty on pipes
 	// Attached, for status, is how many terminals of people are attached;
 	// Detached is when the last one went, in Unix milliseconds, 0 for never.
-	Attached int   `json:"attached,omitempty"`
-	Detached int64 `json:"detached,omitempty"`
+	Attached        int   `json:"attached,omitempty"`
+	Detached        int64 `json:"detached,omitempty"`
+	AttachPIDs      []int `json:"attach_pids,omitempty"`
+	AttachPIDsKnown bool  `json:"attach_pids_known,omitempty"`
 }
 
 func (h *host) serveConn(c *net.UnixConn) {
@@ -547,12 +567,36 @@ func (h *host) serveConn(c *net.UnixConn) {
 			}
 			continue
 		}
-		resp := h.handle(req)
-		if err := enc.Encode(resp); err != nil {
+		if err := h.reply(c, enc, req); err != nil {
 			h.log.dropped("writing the reply to "+req.Op, err)
 			return
 		}
 	}
+}
+
+// inputReplyTimeout bounds shutdown with a stalled input write or caller.
+const inputReplyTimeout = 30 * time.Second
+
+func (h *host) reply(c net.Conn, enc *json.Encoder, req request) error {
+	if req.Op == "input" {
+		h.stopMu.Lock()
+		closing := h.closing
+		if !closing {
+			h.inputs.Add(1)
+		}
+		h.stopMu.Unlock()
+		if !closing {
+			defer h.inputs.Done() // after Encode, not merely after the write
+		}
+		resp := response{Error: "the command has exited"}
+		if !closing {
+			resp = h.handle(req)
+		}
+		c.SetWriteDeadline(time.Now().Add(inputReplyTimeout))
+		defer c.SetWriteDeadline(time.Time{})
+		return enc.Encode(resp)
+	}
+	return enc.Encode(h.handle(req))
 }
 
 func (h *host) handle(req request) response {
@@ -582,8 +626,9 @@ func (h *host) handle(req request) response {
 			device = ""
 		default:
 		}
+		pids, known, detached := h.attachmentPIDs()
 		return response{OK: true, PID: h.cmd.Process.Pid, Device: device,
-			Attached: int(h.attached.Load()), Detached: h.detached.Load()}
+			Attached: len(pids), Detached: detached, AttachPIDs: pids, AttachPIDsKnown: known}
 	case "tail":
 		return response{OK: true, Data: h.tail(int(req.Interrupt))}
 	case "screen":

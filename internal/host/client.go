@@ -253,3 +253,28 @@ func hostRuns(stateDir string) bool {
 func isGoneError(err error) bool {
 	return errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE)
 }
+
+// AttachmentPIDs returns the processes connected by Attach, independently
+// of their executable names. An older host or an unidentified connection
+// refuses the ownership check instead of exposing a possible agent input.
+func (c *Client) AttachmentPIDs(ctx context.Context) ([]int, error) {
+	by, ok := ctx.Deadline()
+	if !ok {
+		by = time.Now().Add(time.Second)
+	}
+	c.conn.SetDeadline(by)
+	defer c.conn.SetDeadline(time.Time{})
+	resp, err := c.call(request{Op: "status"})
+	if err != nil {
+		return nil, err
+	}
+	if !resp.AttachPIDsKnown || len(resp.AttachPIDs) != resp.Attached {
+		return nil, errors.New("host: attached terminal processes cannot be identified")
+	}
+	for _, pid := range resp.AttachPIDs {
+		if pid < 1 {
+			return nil, errors.New("host: invalid attached terminal process")
+		}
+	}
+	return resp.AttachPIDs, nil
+}

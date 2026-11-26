@@ -776,6 +776,9 @@ func (c *checker) find() ([]repo, error) {
 			return c.unreadable(p, err)
 		}
 		if p == c.top {
+			if isGitDir(p) {
+				return c.unreadable(p, errors.New("workspace top is also a git directory"))
+			}
 			return c.part(p, nil)
 		}
 		dir := filepath.Dir(p)
@@ -787,6 +790,23 @@ func (c *checker) find() ([]repo, error) {
 			repos = append(repos, repo{dir: dir, rel: rel, kind: "nested repository"})
 		case d.Name() == ".git":
 			repos = append(repos, repo{dir: dir, rel: rel, kind: "submodule"})
+		case d.Type()&fs.ModeSymlink != 0:
+			st, err := os.Stat(p)
+			if missing(err) {
+				return nil
+			} else if err != nil {
+				return c.unreadable(p, err)
+			}
+			if !st.IsDir() {
+				return nil
+			}
+			// A Git directory outside the walk may take its objects or
+			// refs from inside it. Do not traverse links; refuse the Git
+			// directory, including one with only HEAD and commondir.
+			if isGitDir(p) {
+				return c.unreadable(p, errors.New("symbolic link to a git directory"))
+			}
+			return c.part(p, nil)
 		case d.IsDir():
 			if !isGitDir(p) {
 				in := enclosing(gitDirs, p)
@@ -1364,6 +1384,9 @@ func (c *checker) commits(g *reader, rp repo) error {
 	if err != nil {
 		return err
 	}
+	if err := c.logFiles(logs); err != nil {
+		return err
+	}
 	// The remotes' objects are read from the scratch repository; nothing is
 	// written into this one.
 	local := *g
@@ -1738,6 +1761,42 @@ func (c *checker) tableIDs(g *reader, dir string) ([]string, error) {
 		return nil, err
 	}
 	return slices.Sorted(maps.Keys(have)), nil
+}
+
+// logFiles refuses layouts that git can silently leave out of --reflog:
+// symbolic links and names that no ref may have. A repository nested here is
+// checked separately, so its files are not taken for this one's reflogs.
+func (c *checker) logFiles(dir string) error {
+	return filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if p == dir && errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err == nil {
+			err = c.ctx.Err()
+		}
+		if err != nil {
+			return c.unreadable(p, err)
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			return c.unreadable(p, errors.New("symbolic link in reflogs"))
+		}
+		if p != dir && d.IsDir() && (c.gitDirs[p] || c.trees[p]) {
+			return filepath.SkipDir
+		}
+		name := d.Name()
+		if d.IsDir() && strings.HasSuffix(name, ".") {
+			// Only the whole ref, not an intermediate component, must
+			// not end with a dot: topic./branch is a valid ref.
+			name += "x"
+		}
+		if p != dir && noRefName(name) {
+			return c.unreadable(p, errors.New("name that git may omit from reflogs"))
+		}
+		if !d.IsDir() && (p == dir || !d.Type().IsRegular()) {
+			return c.unreadable(p, errors.New("not a reflog file or directory"))
+		}
+		return nil
+	})
 }
 
 // otherLogs reports whether the line, which git said, is of a file in the git

@@ -171,6 +171,11 @@ type Actions struct {
 	// whichever call produced it: the caller records them as written before
 	// it hands them over.
 	Inputs []string
+	// InputText records the text actually written for each Input.ID, when
+	// the codec needs it to recognise the input after a restart. The caller
+	// stores it with Inputs before writing, and returns it as WrittenText.
+	// A missing entry leaves recognition to the codec's compatibility rules.
+	InputText map[string]string
 	// KeysFailed, if set, is called at once when Keys could not be handed
 	// over, before any other call of the codec: nothing of them reached the
 	// terminal (nothing), or part of them may have. The codec then does not
@@ -258,6 +263,10 @@ type Spec struct {
 	// must run with one other than the daemon's: the one the window of a
 	// session taken in used, for its resume under hataori's own host.
 	ConfigDir string `json:",omitempty"`
+	// ConfigDirDefault records that ConfigDir was the agent's default under
+	// its original home, rather than an explicit configuration override.
+	// It survives resuming a session after its taken-in window has closed.
+	ConfigDirDefault bool `json:",omitempty"`
 }
 
 // Confinement is what a confined session may use besides its file tools.
@@ -309,6 +318,10 @@ type Input struct {
 	// restarted, and its report has not been read. The codec records it as
 	// written and waiting for its report, and never writes its text again.
 	Written bool
+	// WrittenText, with Written, is the text the codec recorded when the
+	// input was written. nil means that no text was recorded, rather than
+	// that an empty text was written.
+	WrittenText *string
 	// Earlier says, with Written, that a caller from before this field
 	// wrote it, maybe to the agent that runs now, with the codec it had
 	// then: that codec may have written it otherwise than this one does.

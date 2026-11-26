@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -135,8 +138,8 @@ func TestRestoreWaitsForThePurge(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if got := treeSnapshot(t, x.clone); fmt.Sprint(got) != fmt.Sprint(inside) {
-		t.Fatal("the restored workspace's contents differ")
+	if diff := restoreSnapshotDiff(inside, treeSnapshot(t, x.clone)); diff != "" {
+		t.Fatalf("the restored workspace's contents differ:\n%s", diff)
 	}
 }
 
@@ -242,4 +245,25 @@ func sameFile(t *testing.T, a, b string) bool {
 	sa, err1 := os.Stat(a)
 	sb, err2 := os.Stat(b)
 	return err1 == nil && err2 == nil && os.SameFile(sa, sb)
+}
+
+// restoreSnapshotDiff names every added, removed, or changed path, including
+// Git metadata: a background writer must not be mistaken for restore loss.
+func restoreSnapshotDiff(before, after map[string]string) string {
+	paths := maps.Clone(before)
+	maps.Copy(paths, after)
+	var diff []string
+	for _, path := range slices.Sorted(maps.Keys(paths)) {
+		old, was := before[path]
+		now, is := after[path]
+		switch {
+		case !was:
+			diff = append(diff, fmt.Sprintf("%q added: %s", path, now))
+		case !is:
+			diff = append(diff, fmt.Sprintf("%q removed: %s", path, old))
+		case old != now:
+			diff = append(diff, fmt.Sprintf("%q changed: %s -> %s", path, old, now))
+		}
+	}
+	return strings.Join(diff, "\n")
 }

@@ -9,29 +9,30 @@ Chat surfaces (Discord, Slack, Microsoft Teams) and coding agents (Claude Code, 
 
 ## Status
 
-hataori is in phase 1 of [the design](docs/design/overview.md#8-phases): Discord and Claude Code, for orders that are posted into a channel, by a person or through a webhook. It runs real work every day in that form.
+hataori runs coding agents from Discord, with Claude Code and Codex adapters. Linux and macOS are covered by CI.
 
 What works today:
 
-- An order in an enabled Discord channel (`<trigger> repo:<url> <prompt>`) opens a thread, clones the repository into a working directory of its own, and runs Claude Code there. Messages in the thread continue the same session.
-- Model and effort per order, with defaults per channel.
-- Replies in the thread: progress text, the final answer, a progress line while a tool runs long, subagent start and end lines, long replies split, files the agent hands over.
-- A question from the agent is shown in the thread, and the next message answers it. Permission requests are allowed automatically.
-- Only the owner and the configured posters (people or webhooks) are accepted; everything else is ignored and logged.
+- An order in an enabled Discord channel opens a thread, clones the repository into its own working directory, and runs Claude Code or Codex there. Messages in the thread continue the same session.
+- Model and effort per order, with defaults per channel and agent.
+- Replies in the thread: progress text, the final answer, a progress line while a tool runs long, subagent start and end lines, long replies split, and files the agent hands over.
+- Questions in the thread, answered by buttons or a message; message status reactions, completion and attention pings, and a Stop button on the progress line. Ordinary agent sessions allow permissions automatically by default.
+- Access for the owner and configured people or automated posters, checked per channel; guests are refused and logged.
 - Agent sessions outlive the daemon: a restart does not stop running turns, and messages posted while the daemon was down are run once each, in order, after it starts.
-- Idle sessions are put to sleep and resumed by the next message.
-- When Claude Code is logged out, the owner gets one direct message, and can log in again by replying with the code.
-- `hataori threads`, `thread`, `events` and `stop` on the host, over a local control socket ([protocol](docs/protocol.md)).
-- hataori never removes a working directory.
+- Idle sessions sleep and resume on the next message.
+- When Claude Code is logged out, the owner gets a direct message and can relay the CLI's login code. Codex uses its existing CLI login; hataori does not run a Codex login.
+- Discord commands to start, stop and inspect threads, attach chat to an existing thread, and open the dashboard; incoming attachments are handed to the agent.
+- Host commands to inspect threads and events, stop turns, attach to or watch a live terminal, and close or reopen threads, over the local control socket.
+- A web dashboard with threads, events and live terminals, including access over SSH with `hataori connect`.
+- An optional Claude Code supervisor for a channel: it watches turn results, keeps notes and reminders, reads repository issues and pull requests, and proposes or takes actions within configured access and budgets.
+- External-process plugins with manifests, scoped grants and hooks.
+- Workspace removal from the host, with checks that refuse when work could be lost or safety cannot be established; removed workspaces are kept temporarily for restoration. Optional cleanup applies the same checks to closed threads. Nothing in chat removes a workspace.
 
 Not built yet:
 
-- Slack and Microsoft Teams.
-- Codex.
-- The supervisor (coordinator) agent.
-- The dashboard.
-- Plugins.
-- For people in chat: slash commands, buttons for questions, lamps, pings, a Stop button, attaching a terminal to a live session, sending attachments to the agent, and removing workspaces.
+- Slack (next) and Microsoft Teams (planned).
+- A Codex supervisor; only Claude Code can run the supervisor today.
+- An installer or release binaries; build from source, or use the macOS artifacts from CI.
 
 ## Getting started
 

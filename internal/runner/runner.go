@@ -141,6 +141,7 @@ type live struct {
 	drain  time.Time
 	late   bool   // a late usage was read while draining
 	failed bool   // the start timed out; the session is being stopped
+	ended  bool   // the follower finished; delayed dispatch must not use its codec
 	asleep bool   // put to sleep: its agent is being stopped, and nothing more is read
 	screen bool   // the codec watches the terminal; until it says StopScreen
 	seenTo uint64 // the position in the host's run up to which the codec was given its terminal
@@ -434,8 +435,9 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 	// launch = 2: the host is being started. Until it is recorded as
 	// started, a daemon that comes back launches the session again, and
 	// keeps the host it finds running instead of starting another.
-	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET spec = ?, first_input = ?, model = ?, effort = ?, launch = 2 WHERE id = ?`,
-		string(sb), string(fb), model, effort, id); err != nil {
+	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET spec = ?, first_input = ?, model = ?, effort = ?, launch = 2,
+		context = CASE WHEN set_aside IS NULL AND ? != '' THEN ? ELSE context END WHERE id = ?`,
+		string(sb), string(fb), model, effort, first.Context, first.Context, id); err != nil {
 		return agent.Spec{}, fmt.Errorf("runner: %w", err)
 	}
 	r.at("before host start")
@@ -463,15 +465,66 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 	return spec, nil
 }
 
-// newAgent removes, before session id's agent is launched, the inputs that
-// were written to an agent before it: they are not in the new one's box,
-// and nothing reports them any more, so that no codec holds one as what an
-// older runner may have left there, and none keeps the thread from being
-// closed (#914). They go before the launch, so that a daemon that dies after
-// it does not take them for what was written to the new agent.
+// newAgent retires input belonging to the previous agent before a new
+// host can start. Unwritten messages fail visibly instead of reaching a
+// later agent; written messages cannot be reported by the new process.
 func (r *Runner) newAgent(ctx context.Context, id int64) error {
-	if _, err := r.Store.DB.ExecContext(ctx, `DELETE FROM pending_inputs WHERE session_id = ? AND request = '' AND written != 0`, id); err != nil {
+	err := r.Store.Update(ctx, func(tx *store.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE pending_inputs SET stale = 1, context = '' WHERE session_id = ?`, id); err != nil {
+			return err
+		}
+		if err := r.failStaleInput(ctx, tx, id); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `DELETE FROM pending_inputs WHERE session_id = ? AND request = '' AND written != 0`, id)
+		return err
+	})
+	if err != nil {
 		return fmt.Errorf("runner: session %d: %w", id, err)
+	}
+	return nil
+}
+
+// failStaleInput also retires rows marked stale by an earlier runner.
+// Failure and deletion commit together, before any reconnect can replay
+// them. It leaves the session's current turn and conversation alone.
+func (r *Runner) failStaleInput(ctx context.Context, tx *store.Tx, id int64) error {
+	// An answer belongs to the old process's request and cannot be used
+	// by its replacement. Do not leave it blocking thread closure.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM pending_inputs WHERE session_id = ? AND stale != 0 AND request != ''`, id); err != nil {
+		return err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM pending_inputs WHERE session_id = ? AND stale != 0 AND request = '' AND written = 0 ORDER BY id`, id)
+	if err != nil {
+		return err
+	}
+	var inputs []string
+	for rows.Next() {
+		var row int64
+		if err := rows.Scan(&row); err != nil {
+			rows.Close()
+			return err
+		}
+		inputs = append(inputs, strconv.FormatInt(row, 10))
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil || len(inputs) == 0 {
+		return err
+	}
+	var seq uint64
+	if err := tx.QueryRowContext(ctx, `SELECT last_seq FROM sessions WHERE id = ?`, id).Scan(&seq); err != nil {
+		return err
+	}
+	for _, input := range inputs {
+		seq++
+		e := agent.Event{Kind: agent.TurnEnded, Seq: seq, Input: input, Status: agent.Failed, Reason: agent.NotDelivered}
+		if err := r.Machine.ApplyTx(ctx, tx, id, session.Input{Kind: session.AgentEvent, Agent: e}); err != nil {
+			return err
+		}
+		if err := clearReported(ctx, tx, id, []agent.Event{e}); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -698,7 +751,7 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 		// A new conversation is told what the thread said before with its
 		// first input, and this wake has none.
 		return fmt.Errorf("runner: session %d has no conversation to resume; a message starts a new one", id)
-	case resumeID == "":
+	case resumeID == "" && launching != 2:
 		// No conversation to resume: a reopen found none recorded, or made
 		// the thread's directory again (core's ReopenThread). A new one
 		// starts in the directory, told what the thread said before, as a
@@ -910,6 +963,11 @@ func (r *Runner) stopSleepers(ctx context.Context) error {
 // byte of the host's current run: what the agent it follows wrote, and
 // nothing an earlier run left in the log (#505, #520).
 func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) error {
+	if err := r.Store.Update(context.Background(), func(tx *store.Tx) error {
+		return r.failStaleInput(context.Background(), tx, id)
+	}); err != nil {
+		return fmt.Errorf("runner: session %d: %w", id, err)
+	}
 	resumed := m == reconnect
 	lv := &live{id: id, dir: spec.StateDir, adapter: ad, codec: ad.NewCodec(spec), spec: spec,
 		files: map[string]int64{}, stop: make(chan struct{}), done: make(chan struct{}), started: time.Now()}
@@ -924,13 +982,6 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) err
 	}
 	if err := r.compare(lv); err != nil {
 		return err
-	}
-	if !resumed {
-		// Rows left by an agent before this one are not this one's input, and
-		// carry nothing to it.
-		if _, err := r.Store.DB.Exec(`UPDATE pending_inputs SET stale = 1, context = '' WHERE session_id = ?`, id); err != nil {
-			return fmt.Errorf("runner: session %d: %w", id, err)
-		}
 	}
 	if resumed {
 		lv.started = time.UnixMilli(created)
@@ -1009,7 +1060,7 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) err
 // not hand over, or whose input the agent had not reported. lv.mu is held.
 func (r *Runner) handOverPending(lv *live) {
 	rows, err := r.Store.DB.Query(`SELECT id, request, data, context FROM pending_inputs
-		WHERE session_id = ? AND id <= ? AND written = 0 ORDER BY id`, lv.id, lv.upTo)
+		WHERE session_id = ? AND id <= ? AND written = 0 AND stale = 0 ORDER BY id`, lv.id, lv.upTo)
 	if err != nil {
 		r.Log.Error("pending input", "session", lv.id, "err", err)
 		return
@@ -1059,10 +1110,10 @@ func (r *Runner) handOverWritten(lv *live) {
 	r.Store.DB.QueryRow(`SELECT first_input FROM sessions WHERE id = ?`, lv.id).Scan(&fi)
 	var f firstInput
 	if fi != "" && json.Unmarshal([]byte(fi), &f) == nil && f.Sent && f.Written {
-		r.do(lv, r.inputActions(lv, agent.Input{ID: firstInputID, Text: f.Context + f.Input().ForAgent(), Written: true, Earlier: !f.Current}))
+		r.do(lv, r.inputActions(lv, agent.Input{ID: firstInputID, Text: f.Context + f.Input().ForAgent(), Written: true, WrittenText: f.WrittenText, Earlier: !f.Current}))
 		lv.resend = false
 	}
-	rows, err := r.Store.DB.Query(`SELECT id, data, context, written FROM pending_inputs
+	rows, err := r.Store.DB.Query(`SELECT id, data, context, written, written_text FROM pending_inputs
 		WHERE session_id = ? AND request = '' AND written != 0 ORDER BY id`, lv.id)
 	if err != nil {
 		r.Log.Error("written input", "session", lv.id, "err", err)
@@ -1072,12 +1123,13 @@ func (r *Runner) handOverWritten(lv *live) {
 	for rows.Next() {
 		var id, written int64
 		var data, earlier string
+		var writtenText *string
 		var in control.Input
-		if rows.Scan(&id, &data, &earlier, &written) == nil && json.Unmarshal([]byte(data), &in) == nil {
+		if rows.Scan(&id, &data, &earlier, &written, &writtenText) == nil && json.Unmarshal([]byte(data), &in) == nil {
 			// One that a runner from before agent.Input.Earlier wrote, maybe
 			// to this agent, also one that it wrote to an agent before and
 			// marked stale; this runner removes those at a launch (newAgent).
-			ins = append(ins, agent.Input{ID: strconv.FormatInt(id, 10), Text: earlier + in.Text, Written: true, Earlier: written != writtenNow})
+			ins = append(ins, agent.Input{ID: strconv.FormatInt(id, 10), Text: earlier + in.Text, Written: true, WrittenText: writtenText, Earlier: written != writtenNow})
 		}
 	}
 	rows.Close()
@@ -1098,9 +1150,11 @@ func (r *Runner) inputActions(lv *live, in agent.Input) agent.Actions {
 // markWritten records that the inputs ids are about to be written to the
 // agent: from now on a restart tells the codec instead of writing them
 // again. unmarkWritten records that nothing of them was.
-func (r *Runner) markWritten(lv *live, ids []string) error { return r.setWritten(lv, ids, true) }
+func (r *Runner) markWritten(lv *live, ids []string, text map[string]string) error {
+	return r.setWritten(lv, ids, true, text)
+}
 
-func (r *Runner) unmarkWritten(lv *live, ids []string) { r.setWritten(lv, ids, false) }
+func (r *Runner) unmarkWritten(lv *live, ids []string) { r.setWritten(lv, ids, false, nil) }
 
 // writtenNow is pending_inputs.written of an input that a runner that knows
 // agent.Input.Earlier, this one or a later one, wrote to the agent that runs
@@ -1108,10 +1162,14 @@ func (r *Runner) unmarkWritten(lv *live, ids []string) { r.setWritten(lv, ids, f
 // runner from before it wrote, maybe to the agent that runs: agent.Input.Earlier.
 const writtenNow = 2
 
-func (r *Runner) setWritten(lv *live, ids []string, written bool) error {
+func (r *Runner) setWritten(lv *live, ids []string, written bool, text map[string]string) error {
 	err := r.Store.Update(context.Background(), func(tx *store.Tx) error {
 		ctx := context.Background()
 		for _, id := range ids {
+			var writtenText *string
+			if t, ok := text[id]; written && ok {
+				writtenText = &t
+			}
 			if id == firstInputID {
 				var fi string
 				if err := tx.QueryRowContext(ctx, `SELECT first_input FROM sessions WHERE id = ?`, lv.id).Scan(&fi); err != nil {
@@ -1121,7 +1179,7 @@ func (r *Runner) setWritten(lv *live, ids []string, written bool) error {
 				if fi == "" || json.Unmarshal([]byte(fi), &f) != nil {
 					continue
 				}
-				f.Written, f.Current = written, written
+				f.Written, f.Current, f.WrittenText = written, written, writtenText
 				b, _ := json.Marshal(f)
 				if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, string(b), lv.id); err != nil {
 					return err
@@ -1136,7 +1194,7 @@ func (r *Runner) setWritten(lv *live, ids []string, written bool) error {
 			if written {
 				mark = writtenNow
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE pending_inputs SET written = ? WHERE id = ? AND session_id = ?`, mark, row, lv.id); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE pending_inputs SET written = ?, written_text = ? WHERE id = ? AND session_id = ?`, mark, writtenText, row, lv.id); err != nil {
 				return err
 			}
 		}
@@ -1458,7 +1516,12 @@ func (r *Runner) step(lv *live) bool {
 }
 
 // stepLocked is step with lv.mu held.
-func (r *Runner) stepLocked(lv *live) bool {
+func (r *Runner) stepLocked(lv *live) (following bool) {
+	defer func() {
+		if !following {
+			lv.ended = true
+		}
+	}()
 	if lv.asleep {
 		return !r.polled(lv.dir).Ended()
 	}
@@ -1773,6 +1836,13 @@ func (r *Runner) firstInputStep(ctx context.Context, tx *store.Tx, lv *live, b b
 	case f.Sent && notDelivered(b.events, firstInputID):
 		// The agent never reported it, or it was stopped before it was
 		// written; its turn failed, as the events say.
+		// Older launches may have kept the owed context only in this
+		// first input. Preserve it before discarding an undelivered call.
+		if f.Context != "" {
+			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET context = ? WHERE id = ? AND set_aside IS NULL`, f.Context, lv.id); err != nil {
+				return err
+			}
+		}
 		f = firstInput{}
 	case f.Sent && lv.resend:
 		// The daemon died between starting the turn and a report of it:
@@ -1932,7 +2002,7 @@ func (r *Runner) act(lv *live, a agent.Actions) error {
 		a.KeysFailed(nothing)
 	}
 	if len(a.Inputs) > 0 {
-		if err := r.markWritten(lv, a.Inputs); err != nil {
+		if err := r.markWritten(lv, a.Inputs, a.InputText); err != nil {
 			// Not written: a codec that is not told so, which counts it
 			// written, fails its turn as "not delivered" when no report comes.
 			failed(true)
@@ -2428,8 +2498,15 @@ func (r *Runner) Deliver(ctx context.Context, id, pending int64, in control.Inpu
 		r.dropPending(pending)
 		return err
 	}
+	r.at("before pending dispatch")
 	lv.mu.Lock()
 	defer lv.mu.Unlock()
+	if lv.ended {
+		return nil
+	}
+	if current, err := r.pendingCurrent(ctx, id, pending, ""); err != nil || !current {
+		return err
+	}
 	return r.handOver(lv, pending, false, func() (agent.Actions, error) {
 		return lv.codec.Input(agent.Input{ID: strconv.FormatInt(pending, 10), Text: in.Text})
 	})
@@ -2442,11 +2519,28 @@ func (r *Runner) Answer(ctx context.Context, id, pending int64, req string, ans 
 		r.dropPending(pending)
 		return err
 	}
+	r.at("before pending dispatch")
 	lv.mu.Lock()
 	defer lv.mu.Unlock()
+	if lv.ended {
+		return nil
+	}
+	if current, err := r.pendingCurrent(ctx, id, pending, req); err != nil || !current {
+		return err
+	}
 	return r.handOver(lv, pending, true, func() (agent.Actions, error) {
 		return lv.codec.Answer(agent.Answer{Request: req, Text: ans.Text, Choices: ans.Choices, Allow: ans.Allow})
 	})
+}
+
+// pendingCurrent rejects dispatch delayed until after a new agent retired
+// the accepted call. The selected live codec is locked by the caller, so
+// its follower cannot finish and permit a replacement until dispatch ends.
+func (r *Runner) pendingCurrent(ctx context.Context, id, pending int64, request string) (bool, error) {
+	var n int
+	err := r.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM pending_inputs
+		WHERE id = ? AND session_id = ? AND request = ? AND stale = 0 AND written = 0`, pending, id, request).Scan(&n)
+	return n != 0, err
 }
 
 // recordStop records that by stopped turn of session id: the person on the

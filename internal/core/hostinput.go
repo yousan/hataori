@@ -305,7 +305,7 @@ func (c *Core) StopHostInput(timeout time.Duration) {
 	}
 }
 
-// Send checks the command tmux reports for the pane, then types keys. A
+// Send refreshes attached processes and checks the pane, then types keys. A
 // pane that is gone or hataori's own ends the operation and sends nothing;
 // a command that cannot be read sends nothing. When the operation ends
 // during the batch, no further key of it is sent.
@@ -327,7 +327,11 @@ func (o *hostOp) Send(ctx context.Context, keys []control.HostKey) error {
 	ctx, cancel := context.WithTimeout(ctx, hostCmdTimeout)
 	defer cancel()
 	defer context.AfterFunc(o.live, cancel)()
-	p, own, err := o.c.HostInput.Check(ctx, o.pane.Pane, nil, false)
+	owned, err := o.c.hostPIDs(ctx)
+	if err != nil {
+		return fmt.Errorf("core: terminal ownership cannot be read; nothing was sent: %w", err)
+	}
+	p, own, err := o.c.HostInput.Check(ctx, o.pane.Pane, owned, true)
 	switch {
 	case err != nil:
 		return fmt.Errorf("core: the command of tmux pane %s cannot be read; nothing was sent: %w", o.pane.Pane, err)
