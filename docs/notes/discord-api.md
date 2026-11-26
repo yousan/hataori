@@ -199,7 +199,6 @@ The role of a bot ([role object](https://discord.com/developers/docs/topics/perm
 
 - `mentions` lists a mention that stands in a quote, and one in a code block left open; it does not list one in inline code or in a closed code block. The driver does not rely on it: a mention is the message's own only when the service lists it and the text has it outside quotes and code.
 - A reply's ping is in `mentions` when the mention is on in the client, and not when it is off. The driver does not read the ping: it goes by the replied-to post's author. Read after that post was deleted, the reply has `referenced_message: null`, and `mentions` still lists the post's author.
-- A quote begun with `>>> `, typed in Discord's desktop client, came with `> ` at the start of each line, as the person who took the capture saw; the payload holds only what came.
 
 **unverified**, until a capture checks it:
 

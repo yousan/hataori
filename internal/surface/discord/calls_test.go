@@ -493,6 +493,7 @@ func TestCapturedCalls(t *testing.T) {
 				if err != nil || len(got) != 1 {
 					t.Fatalf("%+v, %v", got, err)
 				}
+				sent := []any{p["content"]} // what each message of got is read from
 				if !c.restOnly {
 					g := capture(t, "calls/gw-"+c.name+".json")
 					if listed {
@@ -503,6 +504,7 @@ func TestCapturedCalls(t *testing.T) {
 						t.Fatalf("the gateway's message delivered %d", len(s.messages))
 					}
 					got = append(got, s.messages...)
+					sent = append(sent, g["d"].(map[string]any)["content"])
 				}
 				var want []string
 				own := c.own
@@ -512,7 +514,11 @@ func TestCapturedCalls(t *testing.T) {
 				for _, o := range own {
 					want = append(want, names.Replace(o))
 				}
-				for _, in := range got {
+				for i, in := range got {
+					if in.Text != sent[i] {
+						t.Errorf("text %q, sent %q", in.Text, sent[i])
+						continue
+					}
 					var own []string
 					for _, m := range in.OwnMentions {
 						if !mention.MatchString(in.Text[m.Start:m.End]) {

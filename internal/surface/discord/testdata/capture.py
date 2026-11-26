@@ -683,7 +683,7 @@ def calls_run(raw, minutes):
                 ("reply-silent", replies("reply to the same post with the mention off", lambda: target["id"], False)),
                 ("quoted-and-not", says(f"> {at} [hataori test] a\n{at} b")),
                 ("quoted", says(f"> {at} [hataori test] a\nb")),
-                # The desktop client sends ">>> " as "> " on each line.
+                # The same quote with "> " on each quoted line is taken as well.
                 ("quoted-lines", says(f"[hataori test] a\n>>> b\n{at} c", also=(f"[hataori test] a\n> b\n> {at} c",))),
                 ("in-code", says(f"[hataori test] `{at}`")),
                 ("in-block", says(f"[hataori test]\n```go\n{at}\n```")),
@@ -695,8 +695,7 @@ def calls_run(raw, minutes):
                 ("reply-other", replies("reply to your own message of the step before", lambda: kept["other"]["d"]["id"])),
                 ("forward", ("forward your message of the step \"mention\" to this channel", lambda ev: (
                     ev["t"] == "MESSAGE_CREATE" and (ev["d"].get("message_reference") or {}).get("type") == 1
-                    # The client offers no forward into the message's own channel: a forward of
-                    # the same text from another channel stands for it.
+                    # A forward of the same text from another channel is taken as well.
                     and (ev["d"]["message_reference"]["message_id"] == kept["mention"]["d"]["id"]
                          or any((m.get("message") or {}).get("content", "").strip() == f"{at} [hataori test] hello"
                                 for m in ev["d"].get("message_snapshots") or []))))),
