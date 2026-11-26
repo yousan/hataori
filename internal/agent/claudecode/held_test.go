@@ -340,25 +340,27 @@ func TestClearReleasesAnOlderPaste(t *testing.T) {
 	}
 }
 
-// The end of the session ends each input that was pasted while one was held
-// as not delivered, naming it, so that the caller does not keep it: the one
-// waited for first, whose turn runs, whether it is held or this hataori's,
-// then each held one, also after the turn ended after the input timeout. A
-// later prompt the same as what was pasted for it is not taken for it, and
-// no turn ends after (#914).
+// The end of the session, while an input is held, ends each input that was
+// pasted and not reported as not delivered, naming it, so that the caller
+// does not keep it: the one waited for first, whose turn runs, whether it is
+// held or this hataori's, then each other, held or not, also after the turn
+// ended after the input timeout. A later prompt the same as what was pasted
+// for it is not taken for it, and no turn ends after (#914).
 func TestClearEndsTheHeldInputs(t *testing.T) {
+	held := agent.Input{ID: "in-7", Text: "&y", Earlier: true}
 	for _, tc := range []struct {
-		name         string
-		first        agent.Input
-		turnTimedOut bool
+		name          string
+		first, second agent.Input
+		turnTimedOut  bool
 	}{
-		{"held, its turn ended", agent.Input{ID: "in-6", Text: "#x", Earlier: true}, true},
-		{"held, waited for", agent.Input{ID: "in-6", Text: "#x", Earlier: true}, false},
-		{"this hataori's, waited for", agent.Input{ID: "in-6", Text: "#x"}, false},
+		{"held, its turn ended", agent.Input{ID: "in-6", Text: "#x", Earlier: true}, held, true},
+		{"held, waited for", agent.Input{ID: "in-6", Text: "#x", Earlier: true}, held, false},
+		{"this hataori's, waited for", agent.Input{ID: "in-6", Text: "#x"}, held, false},
+		{"held, then one not held", agent.Input{ID: "in-6", Text: "#x", Earlier: true}, agent.Input{ID: "in-7", Text: "list the threads", Earlier: true}, false},
 	} {
 		c := (&Adapter{}).NewCodec(agent.Spec{Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
 		decodeFile(t, c, "01", "clear/hooks/01-SessionStart.json")
-		for _, in := range []agent.Input{tc.first, {ID: "in-7", Text: "&y", Earlier: true}} {
+		for _, in := range []agent.Input{tc.first, tc.second} {
 			in.Written = true
 			if a, _ := c.Input(in); len(a.Keys) != 0 || len(a.Events) != 0 {
 				t.Fatalf("%s: %s: keys %q, events %+v", tc.name, in.ID, a.Keys, a.Events)
@@ -378,7 +380,7 @@ func TestClearEndsTheHeldInputs(t *testing.T) {
 			t.Fatalf("%s: at the session's end: ended %q, want %q", tc.name, ended, want)
 		}
 		decodeFile(t, c, "05", "clear/hooks/05-SessionStart.json")
-		for _, prompt := range []string{"#x", "&y"} {
+		for _, prompt := range []string{tc.first.Text, tc.second.Text} {
 			if by, id := c.starter(prompt); by == agent.ByCaller {
 				t.Errorf("%s: the prompt %q counts as input %q, which ended", tc.name, prompt, id)
 			}
