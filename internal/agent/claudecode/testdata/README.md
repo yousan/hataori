@@ -253,18 +253,19 @@ Both are the same at the start and at the resume. The requests of `writes_confin
 
 `2.1.332/mention_*/`, by `mention.py RAW_DIR`, then `scrub.py` with the same `TMPDIR`. Unlike the other captures, no model and no login took part: the CLI is the real one, on `capture.py`'s pseudo-terminal, and the API is a server of the script on the loopback interface, which answers `ok` and looks at what the CLI sent. `HOME`, `CLAUDE_CONFIG_DIR`, the files that the texts name and the MCP server are made for the scenario and removed after it. Each dummy holds a word of its own, so a file was put into the conversation exactly when its word is in a request.
 
-Each scenario pastes 26 texts, each a turn of its own, after a start and once more after `--resume`.
+Each scenario pastes 26 texts, each a turn of its own, after a start and once more after `--resume`. The `_pasted` ones were taken on 2026-11-26, for #914, with the same CLI.
 
 | Scenario | Flags | Pasted |
 |---|---|---|
 | `mention_restricted` | a confined launch's | the text |
 | `mention_unrestricted` | the same without `--restricted` | the text |
 | `mention_ordinary` | neither `--restricted` nor `--tools` | the text |
-| `mention_restricted_written`, `mention_unrestricted_written` | as the first two | the text with `(at)` for each `@`, as the adapter pastes it into a confined session |
+| `mention_restricted_written`, `mention_unrestricted_written` | as the first two | the text with `(at)` for each `@`, as the adapter pasted it into a confined session from #887 to #914 |
+| `mention_restricted_pasted`, `mention_unrestricted_pasted` | as the first two | the text as the adapter pastes it into a confined session since #914: also without control characters but line breaks and tabs, and after `(message) ` unless it starts with a letter or a digit |
 
 `outcome.json` has for each text: `session` (`start` or `resume`), `case`, `text`, `pasted`, the `prompt` that `UserPromptSubmit` reported, the kinds of the transcript's `attachments` since the paste, and `content`, the dummies whose word was in a request first after it. The transcripts are not kept.
 
-| Case | `restricted` | `unrestricted` | `ordinary` | the `_written` ones |
+| Case | `restricted` | `unrestricted` | `ordinary` | the `_written` and `_pasted` ones |
 |---|---|---|---|---|
 | `absolute_outside`, `relative_outside` (`../`), `home` (`~/`), `quoted_outside`, `directory_outside`, `link_outside` (a link in the directory) | nothing | the content | the content | nothing |
 | `relative_inside`, `absolute_inside`, `first` and `last` in the text, after `。`, a no-break space, a tab, an escape sequence or a zero-width space, and at the end of a `long` text | the content | the content | the content | nothing |
@@ -274,7 +275,7 @@ Each scenario pastes 26 texts, each a turn of its own, after a start and once mo
 | `wake`, `reminder`: a file outside, one inside and a resource, each on a quoted line | the file inside; an `mcp_resource` without its content | both files; an `mcp_resource` without its content | all three | nothing |
 
 - `--append-system-prompt-file` named a file outside, one inside and a resource too: in no scenario was one of them put into the conversation.
-- The prompt reported for `after_escape` and `after_invisible` is without the escape sequence and the zero-width space. The CLI takes them out before it looks for mentions.
+- The prompt reported for `after_escape` and `after_invisible` is without the escape sequence and the zero-width space. The CLI takes them out before it looks for mentions. In the `_pasted` ones, the escape sequence's ESC is not pasted, and its prompt is the text pasted.
 - `agent_mention` puts no file into the conversation; it asks the model to start that agent.
 
 ## Pasted tabs (2.1.328, taken for #393)

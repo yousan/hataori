@@ -106,6 +106,12 @@ type Launch struct {
 	// writes, it writes with the tools of the spec's MCP servers. A confined
 	// spec whose launch does not say so is never started either.
 	NoWriteTools bool
+	// NoCommands says that the agent takes nothing that the session is given
+	// as input, whoever wrote it, for one of its own commands, such as a
+	// shell command or a command that changes what the session may do: the
+	// session's input is always a prompt. A confined spec whose launch does
+	// not say so is never started either.
+	NoCommands bool
 	// NoProjectSettings says the launch leaves the project's settings out,
 	// as Spec.NoProjectSettings asks. Unless it is confined, such a spec is
 	// never started without it either.
@@ -303,6 +309,10 @@ type Input struct {
 	// restarted, and its report has not been read. The codec records it as
 	// written and waiting for its report, and never writes its text again.
 	Written bool
+	// Earlier says, with Written, that a caller from before this field
+	// wrote it, maybe to the agent that runs now, with the codec it had
+	// then: that codec may have written it otherwise than this one does.
+	Earlier bool
 }
 
 // Answer answers a Request event.

@@ -18,6 +18,9 @@ import (
 // config's changed. One that a daemon that died had begun may find the host
 // that daemon started, with what it was given then: the record of that
 // stays, so that the session still counts as launched with another config.
+// What was written to an agent before is removed, since it is not in the
+// box of the one launched and nothing reports it any more, and what was not
+// written stays (#914).
 func TestLaunchRecordsWhatItWasGiven(t *testing.T) {
 	f := newFixture(t, options{confines: true})
 	model, effort, part := "m-1", "low", "x"
@@ -55,7 +58,11 @@ func TestLaunchRecordsWhatItWasGiven(t *testing.T) {
 	if _, err := f.st.DB.Exec(`UPDATE sessions SET model = 'm-1-reported' WHERE id = 1`); err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range []string{"y", "z", "another effort"} {
+	for i, p := range []string{"y", "z", "another effort"} {
+		if _, err := f.st.DB.Exec(`INSERT OR REPLACE INTO pending_inputs (id, session_id, request, data, written)
+			VALUES (20, 1, '', '{"text":"one"}', ?), (21, 1, '', '{"text":"two"}', 0), (22, 1, 'q-1', '{"text":"yes"}', 1)`, 1+i%2); err != nil {
+			t.Fatal(err)
+		}
 		killSessions(f.root)
 		waitFor(t, "the host's end", 10*time.Second, func() bool { return len(hosts(t, StateDir(f.root, 1))) == 0 })
 		part = p
@@ -67,6 +74,10 @@ func TestLaunchRecordsWhatItWasGiven(t *testing.T) {
 		}
 		if s, column = stored(); s.Config == nil || s.Config.Parts["a part"] != p || column != "m-1-reported" {
 			t.Fatalf("stored %+v, model %q; want the part %q, and the model the agent reported", s, column, p)
+		}
+		var n, w, a int64
+		if err := f.st.DB.QueryRow(`SELECT (SELECT count(*) FROM pending_inputs WHERE id = 20), (SELECT written FROM pending_inputs WHERE id = 21), (SELECT count(*) FROM pending_inputs WHERE id = 22)`).Scan(&n, &w, &a); err != nil || n != 0 || w != 0 || a != 1 {
+			t.Fatalf("%s: %d rows written before, the other written %d, %d answers, %v; want none, 0 and the answer", p, n, w, a, err)
 		}
 		var e string
 		if err := f.st.DB.QueryRow(`SELECT effort FROM sessions WHERE id = 1`).Scan(&e); err != nil || e != effort {

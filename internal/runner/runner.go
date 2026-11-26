@@ -375,6 +375,9 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 	if run.Confine != nil && !launch.NoWriteTools {
 		return agent.Spec{}, fmt.Errorf("runner: the agent %q cannot start a confined session: its own tools could write files; it was not started", agentName)
 	}
+	if run.Confine != nil && !launch.NoCommands {
+		return agent.Spec{}, fmt.Errorf("runner: the agent %q cannot start a confined session: its input could be taken for a command; it was not started", agentName)
+	}
 	if run.NoProjectSettings && run.Confine == nil && !launch.NoProjectSettings {
 		return agent.Spec{}, fmt.Errorf("runner: the agent %q cannot start without the repository's settings; it was not started", agentName)
 	}
@@ -425,6 +428,9 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 		}
 	}
 	sb, _ := json.Marshal(storedSpec{Agent: agentName, Spec: spec, Config: config})
+	if err := r.newAgent(ctx, id); err != nil {
+		return agent.Spec{}, err
+	}
 	// launch = 2: the host is being started. Until it is recorded as
 	// started, a daemon that comes back launches the session again, and
 	// keeps the host it finds running instead of starting another.
@@ -455,6 +461,19 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 		return agent.Spec{}, fmt.Errorf("runner: %w", err)
 	}
 	return spec, nil
+}
+
+// newAgent removes, before session id's agent is launched, the inputs that
+// were written to an agent before it: they are not in the new one's box,
+// and nothing reports them any more, so that no codec holds one as what an
+// older runner may have left there, and none keeps the thread from being
+// closed (#914). They go before the launch, so that a daemon that dies after
+// it does not take them for what was written to the new agent.
+func (r *Runner) newAgent(ctx context.Context, id int64) error {
+	if _, err := r.Store.DB.ExecContext(ctx, `DELETE FROM pending_inputs WHERE session_id = ? AND request = '' AND written != 0`, id); err != nil {
+		return fmt.Errorf("runner: session %d: %w", id, err)
+	}
+	return nil
 }
 
 // own is hataori's own session host, the holder of every session's terminal.
@@ -1040,22 +1059,25 @@ func (r *Runner) handOverWritten(lv *live) {
 	r.Store.DB.QueryRow(`SELECT first_input FROM sessions WHERE id = ?`, lv.id).Scan(&fi)
 	var f firstInput
 	if fi != "" && json.Unmarshal([]byte(fi), &f) == nil && f.Sent && f.Written {
-		r.do(lv, r.inputActions(lv, agent.Input{ID: firstInputID, Text: f.Context + f.Input().ForAgent(), Written: true}))
+		r.do(lv, r.inputActions(lv, agent.Input{ID: firstInputID, Text: f.Context + f.Input().ForAgent(), Written: true, Earlier: !f.Current}))
 		lv.resend = false
 	}
-	rows, err := r.Store.DB.Query(`SELECT id, data, context FROM pending_inputs
-		WHERE session_id = ? AND request = '' AND written = 1 ORDER BY id`, lv.id)
+	rows, err := r.Store.DB.Query(`SELECT id, data, context, written FROM pending_inputs
+		WHERE session_id = ? AND request = '' AND written != 0 ORDER BY id`, lv.id)
 	if err != nil {
 		r.Log.Error("written input", "session", lv.id, "err", err)
 		return
 	}
 	var ins []agent.Input
 	for rows.Next() {
-		var id int64
+		var id, written int64
 		var data, earlier string
 		var in control.Input
-		if rows.Scan(&id, &data, &earlier) == nil && json.Unmarshal([]byte(data), &in) == nil {
-			ins = append(ins, agent.Input{ID: strconv.FormatInt(id, 10), Text: earlier + in.Text, Written: true})
+		if rows.Scan(&id, &data, &earlier, &written) == nil && json.Unmarshal([]byte(data), &in) == nil {
+			// One that a runner from before agent.Input.Earlier wrote, maybe
+			// to this agent, also one that it wrote to an agent before and
+			// marked stale; this runner removes those at a launch (newAgent).
+			ins = append(ins, agent.Input{ID: strconv.FormatInt(id, 10), Text: earlier + in.Text, Written: true, Earlier: written != writtenNow})
 		}
 	}
 	rows.Close()
@@ -1080,6 +1102,12 @@ func (r *Runner) markWritten(lv *live, ids []string) error { return r.setWritten
 
 func (r *Runner) unmarkWritten(lv *live, ids []string) { r.setWritten(lv, ids, false) }
 
+// writtenNow is pending_inputs.written of an input that a runner that knows
+// agent.Input.Earlier, this one or a later one, wrote to the agent that runs
+// (one written to an agent before is removed: newAgent). 1 is of one that a
+// runner from before it wrote, maybe to the agent that runs: agent.Input.Earlier.
+const writtenNow = 2
+
 func (r *Runner) setWritten(lv *live, ids []string, written bool) error {
 	err := r.Store.Update(context.Background(), func(tx *store.Tx) error {
 		ctx := context.Background()
@@ -1093,7 +1121,7 @@ func (r *Runner) setWritten(lv *live, ids []string, written bool) error {
 				if fi == "" || json.Unmarshal([]byte(fi), &f) != nil {
 					continue
 				}
-				f.Written = written
+				f.Written, f.Current = written, written
 				b, _ := json.Marshal(f)
 				if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, string(b), lv.id); err != nil {
 					return err
@@ -1104,7 +1132,11 @@ func (r *Runner) setWritten(lv *live, ids []string, written bool) error {
 			if err != nil {
 				continue // not one of ours
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE pending_inputs SET written = ? WHERE id = ? AND session_id = ?`, written, row, lv.id); err != nil {
+			mark := 0
+			if written {
+				mark = writtenNow
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE pending_inputs SET written = ? WHERE id = ? AND session_id = ?`, mark, row, lv.id); err != nil {
 				return err
 			}
 		}

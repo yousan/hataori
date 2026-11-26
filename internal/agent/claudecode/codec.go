@@ -3,12 +3,15 @@ package claudecode
 import (
 	"encoding/json"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/yousan/hataori/internal/agent"
 )
@@ -62,6 +65,7 @@ type codec struct {
 	runningPrompt string        // the prompt id of that turn
 	queue         []queued      // input held until the CLI can take it
 	sent          *sentInput    // input written, not yet reported
+	leftover      []string      // the inputs whose older paste may be in the box (Input): nothing is written, and they do not end, until each one's prompt is reported or the session ends
 	timeout       time.Duration // for sent; DefaultInputTimeout when zero
 	mcp           mcpState      // the MCP servers input waits for (mcpwait.go)
 	tasks         tasks         // the background tasks that run (background.go)
@@ -214,12 +218,26 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 		// Nothing is written for it, Enter neither: if the restart came
 		// between the paste and its Enter, it ends "not delivered". Only
 		// when another turn runs meanwhile, which Enter waits for (track),
-		// it is pressed after that turn.
+		// it is pressed after that turn, unless it is a leftover, which
+		// does not end.
 		typed := c.pasteText(in.Text)
 		text := normalize(typed)
 		q := queued{id: in.ID, text: text}
-		if c.spec.Confine != nil {
-			q.older = normalize(noCommand(cleanPaste(in.Text)))
+		if c.spec.Confine != nil && in.Earlier {
+			clean := cleanPaste(in.Text)
+			for _, o := range []string{bangOrSlash(clean), bangOrSlash(strings.ReplaceAll(clean, "@", atSign))} {
+				q.older = append(q.older, normalize(o))
+				// What this hataori would not paste as it is may be in
+				// the box: it is never submitted, nor anything pasted
+				// after it, until the CLI reports it as a prompt or the
+				// session ends (#914). The input does not end meanwhile,
+				// also when the turn it was to start does (tickHeld), so
+				// that it is handed to the codec again after another
+				// restart; the session's end ends it (track).
+				if !pastedAsIs(o) && !slices.Contains(c.leftover, in.ID) {
+					c.leftover = append(c.leftover, in.ID)
+				}
+			}
 		}
 		c.pasted = append(c.pasted, q)
 		if c.sent == nil {
@@ -231,12 +249,18 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 	return c.number(c.flush()), nil
 }
 
-// queued is an input and its Input.ID. older is set for one that was pasted
-// before a restart into a confined session: what a hataori that left each
-// "@" (before #887) pasted for it. Which hataori pasted it is not recorded,
-// so a person who types just that meanwhile counts as the input, as a person
-// who types just what is pasted always does.
-type queued struct{ id, text, older string }
+// queued is an input and its Input.ID. older is set for one that an earlier
+// hataori pasted before a restart into a confined session (Input.Earlier):
+// what earlier hataoris pasted for it, one that left each "@" (before #887)
+// and one that applied only bangOrSlash (before #914). Such an input is
+// known by these, not by text, which no hataori pasted for it and which can
+// be another input's paste (#914). Which of them pasted it is not recorded,
+// so a person who types just that meanwhile counts as the input, as a
+// person who types just what is pasted always does.
+type queued struct {
+	id, text string
+	older    []string
+}
 
 // Bracketed paste: what the terminal sends around pasted text. The holder
 // adds them; pasted text must not hold them.
@@ -252,11 +276,13 @@ var (
 )
 
 // commandPrefix goes before an input of a confined session that the CLI
-// would read as one of its commands: one that starts with "!" (its shell
-// mode runs the rest, also under --restricted) or "/" (its own commands,
-// such as /add-dir, which widens the directories the file tools may use).
-// The CLI takes the input as a prompt then. A space would not do: the CLI
-// trims it when it puts an interrupted prompt back in the box.
+// could read as one of its commands (noCommand). It reads one that starts
+// with "!" as its shell mode, which runs the rest, also under --restricted,
+// and one that starts with "/" as one of its own commands, such as
+// /add-dir, which widens the directories the file tools may use; and it
+// first takes out of the start what it does not show, such as an escape
+// sequence. The CLI takes the input as a prompt then. A space would not do:
+// the CLI trims it when it puts an interrupted prompt back in the box.
 const commandPrefix = "(message) "
 
 // atSign is what is pasted for each "@" of an input of a confined session.
@@ -276,24 +302,73 @@ const atSignNote = "In every message you are given, each at sign (@) is written 
 	"In everything you write, use @ itself: where you quote such a text, where you pass it on, and where you mention a person, also when the message says whom to mention."
 
 // pasteText is what is pasted for text: without the paste markers, and in
-// a confined session, with no "@" and with commandPrefix before a command.
+// a confined session, without control characters, with no "@" and with
+// commandPrefix before anything that could be a command.
 func (c *codec) pasteText(text string) string {
 	text = cleanPaste(text)
 	if c.spec.Confine == nil {
 		return text
 	}
-	return noCommand(strings.ReplaceAll(text, "@", atSign))
+	return noCommand(strings.ReplaceAll(noControls(text), "@", atSign))
 }
 
-// noCommand is text with commandPrefix before it if it would be a command.
+// noControls is text without its control characters but line feeds and
+// tabs: nothing in it starts an escape sequence, which a terminal or the
+// CLI would act on or take out, and each line break is a line feed, since
+// a carriage return is what Enter sends: in a paste that is not bracketed
+// it would submit the text before it. An invalid byte becomes U+FFFD.
+func noControls(text string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\r':
+			return '\n'
+		case unicode.Is(unicode.Cc, r) && r != '\n' && r != '\t':
+			return -1
+		}
+		return r
+	}, strings.ReplaceAll(text, "\r\n", "\n"))
+}
+
+// noCommand is text with commandPrefix before it unless the first
+// character after its spaces is a digit or one of heads' letters. Which
+// characters the CLI takes out of the start, and which starts it reads as a
+// command, are its own, so "!", "/" and anything else are refused.
 func noCommand(text string) string {
-	// Spaces, and characters such as a zero-width space, which the CLI
-	// dropped before "/add-dir", do not count as the start.
+	first := strings.TrimLeftFunc(text, unicode.IsSpace)
+	if first == "" {
+		return text
+	}
+	r, _ := utf8.DecodeRuneInString(first)
+	if unicode.Is(unicode.Nd, r) || unicode.Is(unicode.L, r) && unicode.In(r, heads...) {
+		return text
+	}
+	return commandPrefix + text
+}
+
+// heads are the scripts whose letters an input may start with and not get
+// commandPrefix: common ones, each letter of which shows. Of Hangul, only
+// the syllables: its jamo include fillers and letters that take no width.
+var heads = []*unicode.RangeTable{unicode.Latin, unicode.Greek, unicode.Cyrillic, unicode.Han, unicode.Hiragana, unicode.Katakana, hangulSyllables}
+
+var hangulSyllables = &unicode.RangeTable{R16: []unicode.Range16{{Lo: 0xac00, Hi: 0xd7a3, Stride: 1}}}
+
+// bangOrSlash is text with commandPrefix before it if, after spaces and
+// characters such as a zero-width space, it starts with "!" or "/": all a
+// hataori before #914 refused.
+func bangOrSlash(text string) string {
 	first := strings.TrimLeftFunc(text, func(r rune) bool { return unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) })
 	if strings.HasPrefix(first, "!") || strings.HasPrefix(first, "/") {
 		return commandPrefix + text
 	}
 	return text
+}
+
+// pastedAsIs reports whether text, as an older hataori pasted it into a
+// confined session, is safe to submit as this one would paste it: as it is,
+// or after commandPrefix, which an older one put before "!" and "/". Its
+// "@" are not looked at: a mention runs no command.
+func pastedAsIs(text string) bool {
+	return noControls(text) == text && (strings.HasPrefix(text, commandPrefix) || noCommand(text) == text)
 }
 
 // cleanPaste removes the bracketed-paste markers from text, so that text
@@ -312,6 +387,15 @@ func cleanPaste(text string) string {
 // Input is one bracketed paste; Tick presses Enter after it (tickInput).
 // It counts as delivered only when UserPromptSubmit reports the same text.
 func (c *codec) flush() Actions {
+	if len(c.leftover) > 0 && len(c.queue) > 0 {
+		// Written after the box's text, it would be submitted with it.
+		var a Actions
+		for _, q := range c.queue {
+			a = merge(a, c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered, Input: q.id})))
+		}
+		c.queue = nil
+		return a
+	}
 	if !c.ready || c.running || c.sent != nil || len(c.queue) == 0 || !c.pasteReady() || !c.mcpReady() {
 		return Actions{}
 	}
@@ -439,12 +523,18 @@ func (c *codec) Tick(now time.Time) Actions {
 // Enter and the timeout wait for its end, so that the timeout never ends
 // it. The text stays in the CLI's input box meanwhile (2.1.331,
 // testdata/2.1.331/held_notification).
+//
+// While the box may hold what an older hataori pasted (Input), no Enter
+// comes (tickHeld).
 func (c *codec) tickInput(now time.Time) Actions {
 	if c.sent == nil {
 		return merge(c.holdPaste(now), c.flush())
 	}
 	if c.running {
 		return Actions{}
+	}
+	if len(c.leftover) > 0 {
+		return c.tickHeld(now)
 	}
 	switch s := c.sent; {
 	case s.refused:
@@ -483,6 +573,30 @@ func (c *codec) tickInput(now time.Time) Actions {
 	}
 	c.forget(c.sent.text)
 	return c.unsent(agent.NotDelivered)
+}
+
+// tickHeld waits without Enter for the report of c.sent while the box may
+// hold what an older hataori pasted. After the input timeout the turn that
+// it was to start ends as failed, "not delivered", as any; but an input that
+// is held does not end: that turn's end names no input, so that the caller
+// keeps it, and the codec still holds it (#914).
+func (c *codec) tickHeld(now time.Time) Actions {
+	if c.sent.at.IsZero() {
+		c.sent.at = now
+		return Actions{}
+	}
+	if now.Sub(c.sent.at) < c.inputTimeout() {
+		return Actions{}
+	}
+	id := c.sent.id
+	if slices.Contains(c.leftover, id) {
+		id = "" // still known by its prompt (c.pasted)
+	} else {
+		c.forget(c.sent.text)
+	}
+	c.sent = nil
+	a := c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered, Input: id}))
+	return merge(a, c.flush())
 }
 
 // unsent ends the turn of c.sent, which the CLI did not get, and writes the
@@ -634,6 +748,7 @@ func (c *codec) decode(src agent.Source, line []byte) Actions {
 // prompt is the prompt the events belong to; the end of another prompt's
 // turn (an interrupt line read late) does not end the running one.
 func (c *codec) track(prompt string, a Actions) Actions {
+	var ended Actions
 	for _, e := range a.Events {
 		switch e.Kind {
 		case agent.SessionReady:
@@ -653,9 +768,28 @@ func (c *codec) track(prompt string, a Actions) Actions {
 			}
 		case agent.SessionEnded:
 			c.ready, c.running = false, false
+			if len(c.leftover) > 0 {
+				// What was pasted and not reported went with the box's text
+				// and its conversation, since a prompt is reported before the
+				// session ends: each such input ends as not delivered, naming
+				// it, so that the caller does not keep it, and is not known
+				// by a later prompt; a held input is among them (#914). An
+				// input's end ends the turn that runs, whatever it names, so
+				// they end in the order of the pastes: the first pasted ends
+				// first, which is the one waited for (c.sent), if any, whose
+				// turn it is. Any other turn that runs then (one typed at the
+				// terminal, say) ends with the first, as not delivered, since
+				// the session's end ended it. They end now, not after such a
+				// turn: what the codec keeps is lost at a restart, which
+				// would hold them again.
+				for _, q := range c.pasted {
+					ended = merge(ended, c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered, Input: q.id})))
+				}
+				c.sent, c.pasted, c.leftover = nil, nil, nil
+			}
 		}
 	}
-	return c.flush()
+	return merge(ended, c.flush())
 }
 
 func merge(a, b Actions) Actions {
@@ -951,6 +1085,12 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 		if by == agent.ByAgent {
 			c.tasks.notified(p.Prompt)
 		}
+		// The box's text was submitted, if the prompt is of an input that
+		// was held. Another prompt, also another held input's, may have been
+		// before the paste: the others stay held.
+		if by == agent.ByCaller {
+			c.leftover = slices.DeleteFunc(c.leftover, func(h string) bool { return h == id })
+		}
 		started := agent.Event{Kind: agent.TurnStarted, StartedBy: by, Input: id}
 		if by == agent.ByTerminal {
 			// The prompt a person typed at the terminal, which no caller
@@ -1167,19 +1307,41 @@ func denyWrite(path string) []byte {
 // agent's own, and anything else was typed at the terminal.
 func (c *codec) starter(prompt string) (agent.Starter, string) {
 	text := normalize(unwrapPaste(prompt))
+	// shadowed is set past an input that the CLI may report as this prompt
+	// although it is not known by it (#916): the prompt may be that one's.
+	shadowed := false
 	for i, p := range c.pasted {
-		if p.text == text || p.older != "" && p.older == text {
+		held := slices.Contains(c.leftover, p.id)
+		if held && (notification(prompt) || shadowed) {
+			// A notification starts a turn with the box as it is, also
+			// one that is the text of the input that may be in it; and a
+			// prompt that may be an input's pasted before it (shadowed) is
+			// not the prompt of one in the box after it.
+			continue
+		}
+		// One that an older hataori pasted is known by what it pasted
+		// (older), and one that may be in the box also by what the CLI
+		// reports of that, since nothing else releases it. Prompts come in
+		// the order of the pastes, as c.pasted is, and the prompt of an
+		// input pasted after one in the box would have that one in it too.
+		if p.older == nil && p.text == text || slices.Contains(p.older, text) || held && p.shows(text) {
 			c.pasted = append(c.pasted[:i], c.pasted[i+1:]...)
 			if c.sent != nil && c.sent.text == p.text {
 				c.sent = nil // delivered
 			}
 			return agent.ByCaller, p.id
 		}
+		shadowed = shadowed || p.shows(text)
 	}
-	if strings.HasPrefix(strings.TrimSpace(prompt), notificationTag) {
+	if notification(prompt) {
 		return agent.ByAgent, ""
 	}
 	return agent.ByTerminal, ""
+}
+
+// notification reports whether prompt is a task notification's.
+func notification(prompt string) bool {
+	return strings.HasPrefix(strings.TrimSpace(prompt), notificationTag)
 }
 
 // unwrapPaste returns the text inside the <pasted_content> tag the CLI
@@ -1199,6 +1361,32 @@ func unwrapPaste(prompt string) string {
 		return prompt
 	}
 	return strings.TrimSuffix(s[open+1:], end)
+}
+
+// shown is text as the CLI reports a paste of it in a prompt: without the
+// escape sequences that start with ESC [ and without the characters that do
+// not show (Unicode's Cf), which it takes out (testdata, mention_*).
+func shown(text string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, controlSequence.ReplaceAllString(text, ""))
+}
+
+var controlSequence = regexp.MustCompile("\x1b\\[[0-?]*[ -/]*[@-~]") // ESC [, parameters, intermediates and a final byte
+
+// shows reports whether prompt, normalized, is what the CLI reports of a
+// paste of a text hataori pasted for q: one an older hataori pasted, if it
+// did, else this one's.
+func (q queued) shows(prompt string) bool {
+	p := normalize(shown(prompt))
+	forms := q.older
+	if forms == nil {
+		forms = []string{q.text}
+	}
+	return slices.ContainsFunc(forms, func(t string) bool { return normalize(shown(t)) == p })
 }
 
 // normalize is the text an input and a prompt are compared by: trimmed,

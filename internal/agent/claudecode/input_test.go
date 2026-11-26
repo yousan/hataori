@@ -186,34 +186,79 @@ func TestHeldInputNamedWhenWritten(t *testing.T) {
 	}
 }
 
-// In a confined session, an input the CLI would read as its shell mode
-// ("!") or as one of its commands ("/") is pasted after commandPrefix, so
-// the CLI takes it as a prompt (#426). Any other input, and every input of
-// an ordinary session, is pasted as it is.
+// paste is what c writes to the session for text.
+func paste(t *testing.T, c *codec, text string) string {
+	t.Helper()
+	a, err := c.Input(agent.Input{Text: text})
+	if err != nil || len(a.Keys) != 1 {
+		t.Fatalf("%q: writes %q, %v", text, a.Keys, err)
+	}
+	return a.Keys[0].Paste
+}
+
+// In a confined session, an input is pasted after commandPrefix, so that
+// the CLI takes it as a prompt, unless its first character after spaces is
+// a letter or a digit that shows: one that starts with "!" (the CLI's shell
+// mode) or "/" (its commands), and one that starts with anything the CLI
+// could take out before it reads the start, or read as a command (#426,
+// #914). Every input of an ordinary session is pasted as it is.
 func TestConfinedInputIsNeverACommand(t *testing.T) {
-	paste := func(c *codec, text string) string {
-		a, err := c.Input(agent.Input{Text: text})
-		if err != nil || len(a.Keys) != 1 {
-			t.Fatalf("%q: writes %q, %v", text, a.Keys, err)
-		}
-		return a.Keys[0].Paste
-	}
-	confined := func() *codec {
-		c := (&Adapter{}).NewCodec(agent.Spec{Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
-		decodeFile(t, c, "start", "plain/hooks/01-SessionStart.json")
-		return c
-	}
-	for _, text := range []string{"!touch /tmp/x", "/add-dir /", "  \n!ls", "​/model opus", "　!id"} {
-		if got := paste(confined(), text); got != commandPrefix+text {
+	for _, text := range []string{"!touch /tmp/x", "/add-dir /", "  \n!ls", "\u200b/model opus", "\u3000!id",
+		"\ufeff/exit", "\u2060!id", "\U000e0021!id", // format characters
+		"\u3164!id", "\u115f/exit", "\uffa0!id", // fillers: letters that do not show
+		"\u1161!id", "\u11a8/exit", "\ud7b0!id", // Hangul jamo that take no width
+		"\u0e01!id",                // a letter of a script not listed, which shows
+		"\u0483!id", "\u2de0/exit", // marks of a script listed
+		"\ufe0f!id", "\u034f/exit", "\u0301!id", // marks with nothing before them
+		"\u2800!id", "\ue000!id", "\U000e0100/exit", // a blank symbol, a private use character, a variation selector
+		"½!id", "²/exit", "\u2167!id", // numbers that are not decimal digits
+		"！id", "／exit", "#x", "&x", "?", "> x", "[31m!id", "(at)x", "「x」", "😀"} {
+		if got := paste(t, confinedCodec(t), text); got != commandPrefix+text {
 			t.Errorf("confined: %q is pasted as %q, want it after %q", text, got, commandPrefix)
 		}
-		if got := paste(started(t), text); got != text {
+		if got := paste(t, started(t), text); got != text {
 			t.Errorf("ordinary: %q is pasted as %q", text, got)
 		}
 	}
-	for _, text := range []string{"list the threads", "a / b", "say !"} {
-		if got := paste(confined(), text); got != text {
+	for _, text := range []string{"list the threads", "a / b", "say !", "  two", "3 threads", "スレッドの一覧", "Ünï", "ok\n!id", "hataori: a wake",
+		"Ωmega", "привет", "漢字", "ひらがな", "한국어", "ｶﾀｶﾅ", "Ａbc", "٣ things"} {
+		if got := paste(t, confinedCodec(t), text); got != text {
 			t.Errorf("confined: %q is pasted as %q", text, got)
+		}
+	}
+}
+
+// Nothing in a confined session's input starts an escape sequence or acts
+// as a key: its control characters are taken out, line feeds and tabs
+// left, a carriage return, which is Enter, becomes a line feed, and what is
+// left is pasted as any text (#914). An ordinary session is pasted them.
+func TestConfinedInputHasNoControls(t *testing.T) {
+	const esc = "\x1b"
+	for text, want := range map[string]string{
+		esc + "[31m!id":                               commandPrefix + "[31m!id",   // CSI
+		esc + "]0;x\a/exit":                           commandPrefix + "]0;x/exit", // OSC, ended by BEL
+		esc + "]0;x" + esc + "\\!id":                  commandPrefix + "]0;x\\!id", // OSC, ended by ST
+		esc + "P1$r" + esc + "\\/add-dir /":           "P1$r\\/add-dir /",
+		esc + "c!id":                                  "c!id", // ESC and a letter
+		"\u009b31m!id":                                "31m!id",
+		"\u009d0;x\u009c/exit":                        "0;x/exit",
+		"\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08!id": commandPrefix + "!id", // backspaces
+		"\x7f\x7f!id":                                 commandPrefix + "!id",
+		"\x15!id":                                     commandPrefix + "!id", // Ctrl-U
+		"\x17\x17!id":                                 commandPrefix + "!id", // Ctrl-W
+		"ok" + esc + "[2K!id":                         "ok[2K!id",
+		"a\x00b\x0bc\x0cd\re\n\tf":                    "abcd\ne\n\tf",
+		"hello\r!id":                                  "hello\n!id", // Enter, then a command
+		"hello\r\n/add-dir /\r\r":                     "hello\n/add-dir /\n\n",
+		"\r!id":                                       commandPrefix + "\n!id",
+		"\xff!id":                                     commandPrefix + "\ufffd!id", // not UTF-8
+	} {
+		got := paste(t, confinedCodec(t), text)
+		if got != want {
+			t.Errorf("confined: %q is pasted as %q, want %q", text, got, want)
+		}
+		if got := paste(t, started(t), text); got != text {
+			t.Errorf("ordinary: %q is pasted as %q", text, got)
 		}
 	}
 }
