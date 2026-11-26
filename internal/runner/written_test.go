@@ -107,8 +107,9 @@ func (c *handed) Input(in agent.Input) (agent.Actions, error) {
 }
 
 // After a restart, the codec is told which written input a runner from
-// before agent.Input.Earlier wrote, and which one this runner wrote: the
-// first input and a pending one alike (#914).
+// before agent.Input.Earlier wrote to the agent that runs, and which one
+// this runner wrote: the first input and a pending one alike. One written to
+// an agent before it (stale) is not earlier (#914).
 func TestWrittenInputSaysWhichRunnerWroteIt(t *testing.T) {
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, "state"), 0o700)
@@ -123,6 +124,7 @@ func TestWrittenInputSaysWhichRunnerWroteIt(t *testing.T) {
 		`INSERT INTO sessions (id, thread_id, agent, state, created_at, updated_at, first_input) VALUES (1, 1, 'test', 'running', 0, 0, '` + string(first) + `')`,
 		`INSERT INTO pending_inputs (id, session_id, request, data, written) VALUES (10, 1, '', '{"text":"two"}', 1)`,
 		`INSERT INTO pending_inputs (id, session_id, request, data, written) VALUES (11, 1, '', '{"text":"three"}', 0)`,
+		`INSERT INTO pending_inputs (id, session_id, request, data, written, stale) VALUES (12, 1, '', '{"text":"four"}', 1, 1)`,
 	} {
 		if _, err := st.DB.Exec(q); err != nil {
 			t.Fatal(err)
@@ -144,11 +146,11 @@ func TestWrittenInputSaysWhichRunnerWroteIt(t *testing.T) {
 		}
 		c.got = map[string]agent.Input{}
 	}
-	check("before", map[string]bool{firstInputID: true, "10": true})
+	check("before", map[string]bool{firstInputID: true, "10": true, "12": false})
 	if err := r.markWritten(lv, []string{firstInputID, "11"}); err != nil {
 		t.Fatal(err)
 	}
-	check("after this runner wrote two", map[string]bool{firstInputID: false, "10": true, "11": false})
+	check("after this runner wrote two", map[string]bool{firstInputID: false, "10": true, "11": false, "12": false})
 	r.unmarkWritten(lv, []string{"11"})
-	check("after it unmarked one", map[string]bool{firstInputID: false, "10": true})
+	check("after it unmarked one", map[string]bool{firstInputID: false, "10": true, "12": false})
 }

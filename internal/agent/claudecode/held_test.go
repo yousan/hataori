@@ -165,12 +165,12 @@ func TestHeldInputAcrossARestart(t *testing.T) {
 // a restart, which this one would not paste as it is, is never submitted,
 // nor is anything pasted after it, until the CLI reports it as a prompt: the
 // next input ends "not delivered", and the one in the box does not end, so
-// that it is written again after another restart. Another prompt, which may
-// have been before the paste, does not release it, nor does the prompt of
-// what this one pastes for it if that took a control character out. One
-// that this one pastes the same, or that the older one pasted after the
-// prefix, is submitted after the agent's own turn, as ever, and so is any
-// that this one pasted (Input.Earlier).
+// that it is handed to the codec again after another restart. Another
+// prompt, which may have been before the paste, does not release it, nor
+// does the prompt of what this one would paste for it. One that this one
+// pastes the same, or that the older one pasted after the prefix, also past
+// a character that does not show, is submitted after the agent's own turn,
+// as ever, and so is any that this one pasted (Input.Earlier).
 func TestOlderPasteIsNotSubmittedAfterARestart(t *testing.T) {
 	for _, tc := range []struct {
 		text    string
@@ -184,6 +184,7 @@ func TestOlderPasteIsNotSubmittedAfterARestart(t *testing.T) {
 		{"\u0007" + heldText, 0, false, false}, // which this one pastes as the next prompt's text
 		{heldText, 1, true, false},
 		{"/add-dir x", 1, false, false},
+		{"\u200b/add-dir x", 1, false, false},
 		{"\u001b[31m!id", 1, false, true},
 		{"#x", 1, false, true},
 	} {

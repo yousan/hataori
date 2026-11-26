@@ -225,14 +225,14 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 		q := queued{id: in.ID, text: text}
 		if c.spec.Confine != nil && in.Earlier {
 			clean := cleanPaste(in.Text)
-			q.controls = noControls(clean) != clean
 			for _, o := range []string{bangOrSlash(clean), bangOrSlash(strings.ReplaceAll(clean, "@", atSign))} {
 				q.older = append(q.older, normalize(o))
 				// What this hataori would not paste as it is may be in
 				// the box: it is never submitted, nor anything pasted
 				// after it, until the CLI reports it as a prompt or the
 				// session ends (#914). The input does not end meanwhile,
-				// so that it is written again after another restart.
+				// so that it is handed to the codec again after another
+				// restart.
 				if !pastedAsIs(o) && !slices.Contains(c.leftover, in.ID) {
 					c.leftover = append(c.leftover, in.ID)
 				}
@@ -251,17 +251,14 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 // queued is an input and its Input.ID. older is set for one that an earlier
 // hataori pasted before a restart into a confined session (Input.Earlier):
 // what earlier hataoris pasted for it, one that left each "@" (before #887)
-// and one that applied only bangOrSlash (before #914). Which of them pasted
-// it is not recorded, so a person who types just that meanwhile counts as
-// the input, as a person who types just what is pasted always does.
+// and one that applied only bangOrSlash (before #914). Such an input is
+// known by these, not by text, which no hataori pasted for it and which can
+// be another input's paste (#914). Which of them pasted it is not recorded,
+// so a person who types just that meanwhile counts as the input, as a
+// person who types just what is pasted always does.
 type queued struct {
 	id, text string
 	older    []string
-	// controls is set for one with control characters, which an older
-	// hataori pasted and this one takes out: what this one pastes for it may
-	// then be another input's paste too, of one that is not held, so it is
-	// not known by that (#914).
-	controls bool
 }
 
 // Bracketed paste: what the terminal sends around pasted text. The holder
@@ -365,9 +362,10 @@ func bangOrSlash(text string) string {
 	return text
 }
 
-// pastedAsIs reports whether this hataori would paste text as it is into a
-// confined session, or after commandPrefix, which an older one put before
-// "!" and "/".
+// pastedAsIs reports whether text, as an older hataori pasted it into a
+// confined session, is safe to submit as this one would paste it: as it is,
+// or after commandPrefix, which an older one put before "!" and "/". Its
+// "@" are not looked at: a mention runs no command.
 func pastedAsIs(text string) bool {
 	return noControls(text) == text && (strings.HasPrefix(text, commandPrefix) || noCommand(text) == text)
 }
@@ -1268,13 +1266,12 @@ func (c *codec) starter(prompt string) (agent.Starter, string) {
 			// one that is the text of the input that may be in it.
 			continue
 		}
-		// One that may be in the box is known also by what the CLI
-		// reports of what an older hataori pasted for it, since nothing
-		// else releases it; not by what the CLI reports of this one's
-		// paste, which can be another input's, and not by this one's paste
-		// if that took out control characters (controls). Without them,
-		// another input that is pasted as this one is is held too.
-		if !p.controls && p.text == text || slices.Contains(p.older, text) || held && p.shows(text) {
+		// One that an older hataori pasted is known by what it pasted
+		// (older), and one that may be in the box also by what the CLI
+		// reports of that, since nothing else releases it. Prompts come in
+		// the order of the pastes, as c.pasted is, and the prompt of an
+		// input pasted after one in the box would have that one in it too.
+		if p.older == nil && p.text == text || slices.Contains(p.older, text) || held && p.shows(text) {
 			c.pasted = append(c.pasted[:i], c.pasted[i+1:]...)
 			if c.sent != nil && c.sent.text == p.text {
 				c.sent = nil // delivered

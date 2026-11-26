@@ -186,7 +186,9 @@ func TestPromptShowsThePaste(t *testing.T) {
 // An input that may be in the box after a restart is not known by what the
 // CLI reports of a paste that no hataori made for it: one with a character
 // that does not show at its start, by the prompt of the same text without
-// it, as the CLI reports hataori's paste of either (#914).
+// it, as the CLI reports hataori's paste of either; and one that an older
+// hataori pasted as it is, by the prompt of another input that is this
+// hataori's paste for it, which an older one pasted as it is too (#914).
 func TestHeldInputIsNotKnownByAnotherPaste(t *testing.T) {
 	n := 0
 	for _, name := range []string{"mention_restricted_pasted", "mention_unrestricted_pasted"} {
@@ -201,6 +203,19 @@ func TestHeldInputIsNotKnownByAnotherPaste(t *testing.T) {
 			}
 			if by, id := c.starter(mc.Prompt); by == agent.ByCaller {
 				t.Errorf("%s %s: the prompt %q counts as input %q", name, mc.Session, mc.Prompt, id)
+			}
+			c = confinedCodec(t)
+			for _, in := range []agent.Input{{ID: "in-1", Text: mc.Text}, {ID: "in-2", Text: mc.Pasted}} {
+				in.Written, in.Earlier = true, true
+				if _, err := c.Input(in); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !slices.Equal(c.leftover, []string{"in-1"}) {
+				t.Fatalf("%s %s: held %q", name, mc.Session, c.leftover)
+			}
+			if by, id := c.starter(mc.Prompt); by != agent.ByCaller || id != "in-2" || !slices.Equal(c.leftover, []string{"in-1"}) {
+				t.Errorf("%s %s: the prompt %q counts as started by %v, input %q; held %q", name, mc.Session, mc.Prompt, by, id, c.leftover)
 			}
 		}
 	}
