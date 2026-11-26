@@ -1949,7 +1949,7 @@ func (c *checker) stashCommits(g *reader) ([]string, error) {
 	} else if err != nil {
 		return nil, err
 	}
-	out, _, err := g.run(c.ctx, "log", "--walk-reflogs", "--format=%H", "refs/stash", "--")
+	out, _, err := g.run(c.ctx, "log", "--no-show-signature", "--walk-reflogs", "--format=%H", "refs/stash", "--")
 	if err != nil {
 		return nil, err
 	}
