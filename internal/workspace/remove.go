@@ -1763,7 +1763,13 @@ func (c *checker) logFiles(dir string) error {
 		if p != dir && d.IsDir() && (c.gitDirs[p] || c.trees[p]) {
 			return filepath.SkipDir
 		}
-		if p != dir && noRefName(d.Name()) {
+		name := d.Name()
+		if d.IsDir() {
+			// Only the whole ref, not an intermediate component, must
+			// not end with a dot: topic./branch is a valid ref.
+			name = strings.TrimSuffix(name, ".")
+		}
+		if p != dir && noRefName(name) {
 			return c.unreadable(p, errors.New("name that git may omit from reflogs"))
 		}
 		if !d.IsDir() && (p == dir || !d.Type().IsRegular()) {
