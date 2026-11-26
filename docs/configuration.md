@@ -557,3 +557,27 @@ A thread can be shown in more than one chat conversation, on one chat service or
 - The channel must be the scope's own or listed in the scope's `show_in`. The person must be the owner or one of the scope's `people`, as for posting into the thread.
 - Attaching a thread where it is shown already changes nothing. A chat thread that shows one hataori thread is not linked to another.
 - A refused attach links nothing, opens nothing and writes one log line.
+
+### Files attached to worker input
+
+Ordinary worker threads receive files attached to input from people who may act.
+The daemon keeps the copies in `state/sessions/<id>/attachments/`, outside the
+checkout. Limits are 8 MB per file, 10 files and 20 MB per message, and 100 MB
+per session. PNG, JPEG, GIF, WebP, PDF and UTF-8 text are accepted by content;
+archives are not opened. Skipped files are named with a reason in the input.
+Only service attachment hosts are fetched, over HTTPS without redirects;
+message links, embeds and previews are never fetched. At the session limit,
+only unchanged copies already given to the agent may be removed.
+
+Copies are created under generated flat names with exclusive creation, never
+through links. The daemon records each copy's hash and filesystem identity;
+accepting or writing an input does not make its files eligible for pruning.
+Only the adapter's delivery confirmation does. Before pruning, an eligible
+entry is isolated and verified again. A copy changed or replaced meanwhile is
+preserved, with an exclusive link back when its original name is still free;
+uncertain entries remain in `state/sessions/<id>/.attachment-gc-<random>/`.
+Untracked or partially saved files are counted but never removed automatically.
+If enough space cannot be reclaimed safely, subsequent files are skipped and
+the input still reaches the agent with the reasons. There are no new config
+keys. Confined sessions, earlier messages and quoted-message files are left
+for #891.

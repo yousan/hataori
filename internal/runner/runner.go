@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/agent"
+	"github.com/yousan/hataori/internal/attachments"
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
 	"github.com/yousan/hataori/internal/holder"
@@ -297,7 +298,7 @@ func (r *Runner) Start(ctx context.Context, l core.Launch) error {
 	spec := agent.Spec{Dir: l.Dir, StateDir: StateDir(r.Root, l.Session), Model: l.Model, Effort: l.Effort,
 		Instructions: r.Instructions, Approvals: agent.AllowAll}
 	first := firstInput{Principal: l.Principal, From: l.From, Key: l.Key, Text: l.Input.Text, Context: l.Context, Link: l.Input.Link,
-		Before: l.Input.Before, After: l.Input.After, Via: l.Input.Via, NoInput: l.NoInput}
+		Before: l.Input.Before, After: l.Input.After, Via: l.Input.Via, NoInput: l.NoInput, Files: l.Input.Files}
 	spec, err := r.launch(ctx, l.Session, l.Agent, ad, spec, first)
 	if err != nil {
 		return err
@@ -1223,8 +1224,36 @@ func (r *Runner) handOver(lv *live, pending int64, answer bool, f func() (agent.
 			return err
 		}
 	}
+	if err == nil && answer {
+		return r.answerGiven(lv.id, pending)
+	}
 	r.dropPending(pending)
 	return err
+}
+
+// answerGiven records attachment delivery and removes the answer together,
+// both for immediate dispatch and replay after daemon recovery.
+func (r *Runner) answerGiven(sid, pending int64) error {
+	ctx := context.Background()
+	return r.Store.Update(ctx, func(tx *store.Tx) error {
+		var data string
+		err := tx.QueryRowContext(ctx, `SELECT data FROM pending_inputs WHERE id=? AND session_id=? AND request!=''`, pending, sid).Scan(&data)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		var p session.PendingAnswer
+		if err = json.Unmarshal([]byte(data), &p); err != nil {
+			return err
+		}
+		if err = attachments.GivenTx(ctx, tx, sid, p.Files); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `DELETE FROM pending_inputs WHERE id=? AND session_id=?`, pending, sid)
+		return err
+	})
 }
 
 // dropPending removes a pending input that cannot be handed over.
@@ -1820,12 +1849,15 @@ func (r *Runner) firstInputStep(ctx context.Context, tx *store.Tx, lv *live, b b
 		return nil
 	case !f.Sent && control.State(state) == control.Idle:
 		if err := r.Machine.ApplyTx(ctx, tx, lv.id, session.Input{Kind: session.Send, Principal: f.Principal, From: f.From, Key: f.Key, Text: f.Text, Link: f.Link,
-			Before: f.Before, After: f.After, Via: f.Via}); err != nil {
+			Before: f.Before, After: f.After, Via: f.Via, Files: f.Files}); err != nil {
 			return err
 		}
 		f.Sent = true
 		*first = &f
 	case f.Sent && reported(b.events, firstInputID):
+		if err := attachments.GivenTx(ctx, tx, lv.id, f.Files); err != nil {
+			return err
+		}
 		// The agent reported the turn: delivered, and with it what the
 		// agent was still to be told, except by an input that has a
 		// conversation of its own.
@@ -1914,6 +1946,20 @@ func clearReported(ctx context.Context, tx *store.Tx, id int64, evs []agent.Even
 			continue // not one of ours
 		}
 		if e.Kind != agent.TurnEnded {
+			var data string
+			err := tx.QueryRowContext(ctx, `SELECT data FROM pending_inputs WHERE id=? AND session_id=? AND request=''`, row, id).Scan(&data)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			if err == nil {
+				var p session.PendingInput
+				if err = json.Unmarshal([]byte(data), &p); err != nil {
+					return err
+				}
+				if err = attachments.GivenTx(ctx, tx, id, p.Files); err != nil {
+					return err
+				}
+			}
 			// The agent got what it was given before its text, if anything.
 			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET context = '' WHERE id = ?1
 				AND EXISTS (SELECT 1 FROM pending_inputs WHERE id = ?2 AND session_id = ?1 AND context != '')`, id, row); err != nil {
@@ -2419,7 +2465,7 @@ func (r *Runner) replaceTx(ctx context.Context, tx *store.Tx, lv *live) (*replac
 	// woken with no input, as for an attach, is replaced by one started with
 	// none (#528).
 	first := firstInput{Principal: old.Principal, From: old.From, Key: old.Key, Text: old.Text, Link: old.Link,
-		Before: old.Before, After: old.After, Via: old.Via, Context: earlier, Dir: lv.spec.Dir, NoInput: old.NoInput}
+		Before: old.Before, After: old.After, Via: old.Via, Files: old.Files, Attachments: old.Attachments, Context: earlier, Dir: lv.spec.Dir, NoInput: old.NoInput}
 	fb, _ := json.Marshal(first)
 	now := time.Now().UnixMilli()
 	res, err := tx.ExecContext(ctx, `INSERT INTO sessions (thread_id, agent, state, model, effort, first_input, launch, created_at, updated_at)

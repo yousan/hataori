@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.42**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.43**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -1446,6 +1446,8 @@ Since 3.35. The chat service, or its driver, refused a row of the chat front end
 | `after` | string | optional | the same, after it; since 3.18 |
 | `via` | string | optional | the way of the daemon's own it came through when it came through no link: `dashboard` for input given in the dashboard; `terminal` for the prompt of a turn typed at the agent's terminal, when the agent reports it, written right after that turn's `turn_started` with the owner as `principal` and no `from` or `link` (since 3.24); `proposal` for the supervisor's input that a person approved as its proposal, with the supervisor as `principal` and `from` (since 3.26); absent for input through a link, from the control socket and from the supervisor's own sends; since 3.23 |
 
+| `files` | array | optional | attachment results, in service order: each has `name` and either `path` (the saved copy) or `reason` (skipped); no source URL; text, omitted for a reader without text access; since 3.43 |
+
 ### Event `input_failed`
 
 Since 3.42. An accepted input did not reach the agent. It ends no running turn: a held message may fail while another turn runs. Written with removal of its pending input. An input that started its own still-running turn ends that turn with `turn_ended` instead. Old pending inputs without caller metadata may omit the caller fields.
@@ -1483,6 +1485,8 @@ Since 3.39. Input of a conversation with the supervisor waits for others (`Send`
 | `link` | object | optional | the link it came through, as in `input`; since 3.6 |
 | `request` | string | optional | the request it answers, as in `request`; since 3.9 |
 | `via` | string | optional | as in `input`; since 3.23 |
+
+| `files` | array | optional | attachment results, in service order: each has `name` and either `path` (the saved copy) or `reason` (skipped); no source URL; text, omitted for a reader without text access; since 3.43 |
 
 ### Event `stop`
 

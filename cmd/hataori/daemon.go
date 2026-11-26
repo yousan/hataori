@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/agent"
+	"github.com/yousan/hataori/internal/attachments"
 	"github.com/yousan/hataori/internal/chat"
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
@@ -936,6 +937,7 @@ func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.St
 	sort.Strings(names)
 	var fronts []*chat.FrontEnd
 	drivers := map[string]surface.Driver{} // filled before any front end runs
+	c.Attachments = &attachments.Manager{Root: root, Store: st, Driver: func(client string) surface.Driver { return drivers[client] }}
 	for _, name := range names {
 		f, ok := surface.Lookup(name)
 		if !ok {

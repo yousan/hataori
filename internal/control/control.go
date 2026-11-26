@@ -634,7 +634,11 @@ type StartRequest struct {
 
 // Input is what a client gives an agent.
 type Input struct {
-	Text string `json:"text"`
+	// Attachments and Files are daemon-only input metadata. Durable first and
+	// pending inputs store them explicitly; neither is accepted on the socket.
+	Attachments []IncomingFile `json:"-"`
+	Files       []InputFile    `json:"-"`
+	Text        string         `json:"text"`
 	// Link is the conversation the input came through, a link of the
 	// thread; absent for input from outside chat. The core keeps it only
 	// when it is one of the thread's links, and the input event names it,
@@ -661,7 +665,7 @@ func (in Input) ForAgent() string {
 			parts = append(parts, p)
 		}
 	}
-	return strings.Join(parts, "\n")
+	return strings.Join(parts, "\n") + FileLines(in.Files)
 }
 
 // Busy says what Send does when a turn is running.

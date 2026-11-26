@@ -418,10 +418,14 @@ type wireMessage struct {
 		MessageID snowflake.ID `json:"message_id"`
 		ChannelID snowflake.ID `json:"channel_id"`
 	} `json:"message_reference"`
-	Mentions        []wireUser        `json:"mentions"`
-	MentionRoles    []snowflake.ID    `json:"mention_roles"`
-	MentionEveryone bool              `json:"mention_everyone"`
-	Snapshots       []json.RawMessage `json:"message_snapshots"` // what it forwards
+	Mentions        []wireUser     `json:"mentions"`
+	MentionRoles    []snowflake.ID `json:"mention_roles"`
+	MentionEveryone bool           `json:"mention_everyone"`
+	Attachments     []struct {
+		Name string `json:"filename"`
+		URL  string `json:"url"`
+	} `json:"attachments"`
+	Snapshots []json.RawMessage `json:"message_snapshots"` // what it forwards
 	// Referenced is the post a reply is to, nil when the service does not
 	// report it, as when it was deleted.
 	Referenced *struct {
@@ -464,6 +468,9 @@ func (d *Driver) inbound(m wireMessage, conv surface.Conversation, direct bool) 
 	}
 	if m.Type == typeReply && m.MessageReference != nil && m.MessageReference.MessageID != 0 {
 		in.ReplyTo = &surface.MessageRef{Conv: conv, ID: m.MessageReference.MessageID.String()}
+	}
+	for _, f := range m.Attachments {
+		in.Files = append(in.Files, surface.File{Name: f.Name, URL: f.URL})
 	}
 	d.call(m, &in)
 	return in

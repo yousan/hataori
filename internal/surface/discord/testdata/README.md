@@ -121,3 +121,14 @@ What the service reported:
 - A webhook message made in the server settings carries `application_id` as well as `webhook_id`. So `application_id` alone does not mean an application-owned webhook. This corrects the research note on that point.
 - The webhook message's `author` has `bot: true`, so `author.bot` alone does not tell a webhook from a bot account; `webhook_id` does.
 - The thread creator could rename and archive its own thread without Manage Threads. Deleting it was refused while it was archived (403) and accepted later, after a post had unarchived it (the cleanup run).
+
+## Incoming attachment metadata (#890)
+
+`TestCapturedMessageAttachments` reuses `v10/bot/gw-12-MESSAGE_CREATE.json`
+(and its REST counterpart, `bot/rest-post-attachment.json`): the real service
+lists `filename`, `url`, `proxy_url`, `size` and `content_type`. Only `filename`
+and the original `url` become incoming file references. The proxy URL, embeds,
+previews, reported MIME and reported length do not select or authorize a fetch.
+Content, path and limit tests construct their own image/text and hostile file
+bytes; they do not invent Discord payloads. CDN transport tests intercept HTTP
+requests locally, without using these expired signed addresses or credentials.
