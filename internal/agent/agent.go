@@ -453,7 +453,8 @@ type Event struct {
 
 // LimitReport is what a Limits event reports. At is when the agent gave
 // the value, which a codec takes from the line it read, not from a clock;
-// Every is how often the adapter's sessions report it while they run.
+// Every is the expected interval for a fresh observation; without one,
+// consumers show the report as stale after that interval.
 type LimitReport struct {
 	At      time.Time
 	Every   time.Duration
