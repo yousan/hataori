@@ -186,12 +186,6 @@ func (a *api) answerApproval(ctx context.Context, req control.RequestID, ans con
 				}
 			case errors.Is(err, errGuardEnded):
 				outcome = "ended"
-			case errors.Is(err, control.ErrNotInterrupted):
-				// The reason was taken even though the window did not take
-				// the interrupt. Close this as approved before returning the
-				// error: a later refusal cannot undo the accepted input (#902).
-				outcome = "not_interrupted"
-				notInterrupted = err
 			case guard.ended || guard.interrupted:
 				// What the interrupt did stands, also when the reason could
 				// not be handed over: the approval is not left open for an
@@ -203,6 +197,12 @@ func (a *api) answerApproval(ctx context.Context, req control.RequestID, ans con
 				if err != nil {
 					a.c.Log.Warn("approved interrupt: the reason was not handed over", "request", string(req), "thread", int64(target), "err", err)
 				}
+			case errors.Is(err, control.ErrNotInterrupted):
+				// The reason was taken even though the window did not take
+				// the interrupt. Close this as approved before returning the
+				// error: a later refusal cannot undo the accepted input (#902).
+				outcome = "not_interrupted"
+				notInterrupted = err
 			case err != nil:
 				return err
 			default:
