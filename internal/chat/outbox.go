@@ -380,6 +380,9 @@ func (o *Outbox) drain(ctx context.Context, conv surface.Conversation) {
 		left := false
 	rows:
 		for _, r := range rows {
+			if ctx.Err() != nil {
+				return // a confirmed post is recorded, but no next post starts
+			}
 			if failed[r.id] {
 				continue
 			}
