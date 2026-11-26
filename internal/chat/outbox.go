@@ -802,6 +802,11 @@ func lockPart(k RowKey) func() {
 // link, writes its post_sent event in the same transaction: once per row,
 // also when it was posted again after a restart.
 func (o *Outbox) sent(ctx context.Context, r pending, ref surface.MessageRef, text string) outcome {
+	// The service has accepted the post. Finish its local record even if
+	// shutdown cancels the sender between the reply and this transaction,
+	// or the next daemon would post the same row again (#995).
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
 	err := o.Store.Update(ctx, func(tx *store.Tx) error {
 		x, err := tx.ExecContext(ctx, `UPDATE chat_outbox SET state = 'sent', ref = ?, sent_at = ? WHERE id = ? AND state = 'pending'`,
 			ref.ID, o.now().UnixMilli(), r.id)
