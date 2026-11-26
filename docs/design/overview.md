@@ -1563,6 +1563,23 @@ None.
 
 Claude Code 2.1.322 and codex-cli 0.163.0, Linux, 2026-11-12. Each agent was started by a script with a minimal environment (no API key variables) and driven over stdin and stdout. Cheap models were used. The captures are not in this change; Phase 1 records them again into `testdata/`.
 
+### Web-search-only look-up launch (#895): not verified
+
+The current adapter returns no look-up command. `--tools "WebSearch"` with
+`--restricted` and an empty strict MCP configuration is a candidate to check,
+not an observed tool boundary. Existing supervisor captures do not establish
+this claim: they retain file tools, hooks and context. Neither those captures
+nor unit tests can establish which host metadata the real prompt retains or
+where a search performs network access.
+
+The outstanding real-agent checks are recorded in
+`internal/agent/claudecode/testdata/lookup/README.md`. No inventory or context
+capture has been invented for this profile. The user's settings, memory and a
+plugin must each be placed in an isolated test home for that check, without
+copying a real user's files. Until its evidence is committed, the adapter
+refuses with `agent.ErrLookUpUnavailable`, including a clean empty-directory
+start. #895 remains incomplete and #896 must not treat this as available.
+
 ### Claude Code: `claude -p --input-format stream-json --output-format stream-json --verbose --permission-prompt-tool stdio`
 
 | Check | Observed |
@@ -3012,6 +3029,25 @@ type Message struct {
 ```
 
 ### Agent adapter
+
+A look-up is an optional capability distinct from an ordinary or supervisor
+launch (#895). `agent.LaunchLookUp` checks the start-only, empty-directory spec,
+requires the optional interface and the complete `Launch.WebSearchOnly`
+attestation, and returns no launch on refusal. It never falls back to
+`Adapter.Launch`. Claude Code currently refuses even a valid request because
+its real-agent evidence is outstanding; an adapter without the optional
+interface refuses with the same `ErrLookUpUnavailable` sentinel. No runner,
+control operation, scheduling or new protocol version is added here (#896).
+
+```go
+type LookUpLauncher interface { LaunchLookUp(Spec) (Launch, error) }
+func LaunchLookUp(a Adapter, spec Spec) (Launch, error)
+func CheckLookUpSpec(spec Spec) error
+// Launch.WebSearchOnly attests web search alone and the complete context
+// boundary, in addition to Confined, NoMentions, NoCommands, NoWriteTools
+// and NoProjectSettings. A launch with files to install is refused too.
+```
+
 
 ```go
 // Package agent: a coding agent.

@@ -87,10 +87,14 @@ type Health struct {
 
 // Launch is everything the session host needs to start an agent.
 type Launch struct {
-	Argv     []string
-	Env      []string
-	Terminal bool              // run on a pseudo-terminal instead of pipes
-	Files    map[string][]byte // written into the session's state directory first
+	// WebSearchOnly attests the complete independently captured look-up
+	// boundary (LookUpLauncher), including its tools and ambient context.
+	// False is the default; generic confinement does not imply it.
+	WebSearchOnly bool `json:",omitempty"`
+	Argv          []string
+	Env           []string
+	Terminal      bool              // run on a pseudo-terminal instead of pipes
+	Files         map[string][]byte // written into the session's state directory first
 	// Confined says the launch confines the session as Spec.Confine asks.
 	// A confined spec whose launch does not say so is never started, so an
 	// adapter that knows nothing of confinement refuses it.

@@ -557,3 +557,11 @@ A thread can be shown in more than one chat conversation, on one chat service or
 - The channel must be the scope's own or listed in the scope's `show_in`. The person must be the owner or one of the scope's `people`, as for posting into the thread.
 - Attaching a thread where it is shown already changes nothing. A chat thread that shows one hataori thread is not linked to another.
 - A refused attach links nothing, opens nothing and writes one log line.
+
+### Supervisor web look-ups
+
+A web-search-only launch is not verified yet. The adapter refuses look-up
+launches with that reason; it never substitutes an ordinary or supervisor
+session. No configuration key enables an unverified launch. The required
+real-agent tool and context captures for #895 remain outstanding; scheduling
+and the `LookUp` operation belong to #896.
