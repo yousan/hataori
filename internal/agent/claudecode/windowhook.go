@@ -115,7 +115,7 @@ func (h windowHook) main(args []string, stdin io.Reader, stderr io.Writer) int {
 	h.send(ctx, *root, window.Report{
 		Holder: window.Tmux, Server: server, Pane: pane, Device: device, PID: pid,
 		Agent: Name, Session: p.Session, Dir: p.Dir, ConfigDir: windowConfigDir(h.getenv),
-		Event: p.Event, Model: model,
+		Event: p.Event, Model: model, ConfigDirDefault: h.getenv("CLAUDE_CONFIG_DIR") == "",
 		// Observed, not documented: "cli" in an interactive session,
 		// "sdk-cli" under -p (design, Appendix B).
 		Interactive: h.getenv("CLAUDE_CODE_ENTRYPOINT") == "cli",

@@ -236,7 +236,18 @@ func (a *Adapter) env(spec agent.Spec) []string {
 // from spec, which holds its login.
 func (a *Adapter) loginEnv(spec agent.Spec) []string {
 	env := a.baseEnv()
-	if spec.ConfigDir != "" {
+	if spec.ConfigDirDefault {
+		// Setting CLAUDE_CONFIG_DIR even to HOME/.claude moves the CLI's
+		// global config file. Preserve the window's unset variable, and its
+		// home when recorded, instead of inheriting the daemon's override.
+		env = slices.DeleteFunc(env, func(kv string) bool {
+			return strings.HasPrefix(kv, "CLAUDE_CONFIG_DIR=") ||
+				filepath.IsAbs(spec.ConfigDir) && strings.HasPrefix(kv, "HOME=")
+		})
+		if filepath.IsAbs(spec.ConfigDir) {
+			env = append(env, "HOME="+filepath.Dir(spec.ConfigDir))
+		}
+	} else if spec.ConfigDir != "" {
 		// The configuration directory the session ran with, such as the one
 		// of a window it was taken in from: instead of the daemon's.
 		env = slices.DeleteFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "CLAUDE_CONFIG_DIR=") })

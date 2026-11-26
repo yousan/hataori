@@ -102,7 +102,7 @@ func (r *Runner) TakeIn(ctx context.Context, l core.Launch, rep window.Report) e
 	// The configuration directory the window used is the one its session
 	// resumes with under hataori's own host, after the window closes.
 	spec := agent.Spec{Dir: rep.Dir, StateDir: dir, ResumeID: rep.Session, Model: rep.Model,
-		Approvals: agent.AllowAll, TakenIn: true, ConfigDir: rep.ConfigDir}
+		Approvals: agent.AllowAll, TakenIn: true, ConfigDir: rep.ConfigDir, ConfigDirDefault: rep.ConfigDirDefault}
 	sb, _ := json.Marshal(storedSpec{Agent: l.Agent, Spec: spec})
 	fb, _ := json.Marshal(firstInput{Principal: l.Principal, Dir: rep.Dir, Wake: true, NoInput: true})
 	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET spec = ?, first_input = ? WHERE id = ?`,
