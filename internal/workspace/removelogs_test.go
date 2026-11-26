@@ -57,10 +57,14 @@ func TestRefuseReflogNamesGitMayIgnore(t *testing.T) {
 }
 
 func TestRemovableWithDotAtEndOfRefDirectory(t *testing.T) {
-	x := newRemoval(t)
-	x.git(x.clone, "checkout", "-q", "-b", "topic./branch")
-	x.git(x.clone, "push", "-q", "origin", "HEAD")
-	if err := x.check(); err != nil {
-		t.Fatal(err)
+	for _, branch := range []string{"topic./branch", "topic.lock./branch"} {
+		t.Run(branch, func(t *testing.T) {
+			x := newRemoval(t)
+			x.git(x.clone, "checkout", "-q", "-b", branch)
+			x.git(x.clone, "push", "-q", "origin", "HEAD")
+			if err := x.check(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

@@ -1764,10 +1764,10 @@ func (c *checker) logFiles(dir string) error {
 			return filepath.SkipDir
 		}
 		name := d.Name()
-		if d.IsDir() {
+		if d.IsDir() && strings.HasSuffix(name, ".") {
 			// Only the whole ref, not an intermediate component, must
 			// not end with a dot: topic./branch is a valid ref.
-			name = strings.TrimSuffix(name, ".")
+			name += "x"
 		}
 		if p != dir && noRefName(name) {
 			return c.unreadable(p, errors.New("name that git may omit from reflogs"))
