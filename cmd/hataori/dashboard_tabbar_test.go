@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -84,7 +85,7 @@ func TestDashboardTabBarNarrowWindow(t *testing.T) {
 		openThread(t, b, rig.full)
 		b.click(`.tools .show [data-choice=active]`)
 		b.until("the panels and both counts", `!!document.querySelector('.tree') && !!document.querySelector('.details') &&
-			!!document.querySelector('.tools .hidden-count') && !!document.querySelector('.tools .hidden-terminals')`)
+			!!document.querySelector('.tools .hidden-count') && !!document.querySelector('.tools [data-hidden-terminals]')`)
 		full := fmt.Sprintf("thread:%d", rig.full)
 		inView(lang+", two tabs", full)
 		l := b.barLayout()
@@ -92,8 +93,8 @@ func TestDashboardTabBarNarrowWindow(t *testing.T) {
 		if l.Shown < l.Width-1 && l.Shown < 120 {
 			t.Fatalf("%s: %v px of the active tab's %v are in view", lang, l.Shown, l.Width)
 		}
-		if l.Tools != 6 || l.Missed != "" {
-			t.Fatalf("%s: %d tools, want 6; a click does not reach: %s", lang, l.Tools, l.Missed)
+		if l.Tools != 5 || l.Missed != "" {
+			t.Fatalf("%s: %d tools, want 5; a click does not reach: %s", lang, l.Tools, l.Missed)
 		}
 		width(1920)
 		inView(lang+", two tabs, 1920 px", full)
@@ -155,5 +156,106 @@ func TestDashboardTabBarNarrowWindow(t *testing.T) {
 		if l := b.barLayout(); l.Missed != "" {
 			t.Fatalf("%s: a click does not reach: %s", lang, l.Missed)
 		}
+	}
+}
+
+// #990: real fake-agent turns provide running/waiting tabs, along with
+// enough open tabs to overflow. Check both languages/themes, keyboard and
+// pointer access to the list, and the one-line status and icon tools.
+func TestDashboardCompactTabBar(t *testing.T) {
+	rig := newNamesRig(t)
+	var ids []control.ThreadID
+	for i, text := range []string{"tool long 10m", "ask Which sample color?"} {
+		id, err := rig.c.Start(context.Background(), control.StartRequest{Key: fmt.Sprintf("compact-%d", i), Scope: "c1", Repo: bareRepo(t), Input: control.Input{Text: text}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	b := newBrowser(t)
+	// Use real pointer events here: element.click() neither focuses an
+	// outside control nor dispatches the pointerdown that dismisses menus.
+	click := func(selector string) {
+		t.Helper()
+		var at struct{ X, Y float64 }
+		b.eval(fmt.Sprintf(`(() => {
+			const e = document.querySelector(%q); e.scrollIntoView({block: 'nearest'});
+			const r = e.getBoundingClientRect(); return {x: r.left + r.width/2, y: r.top + r.height/2};
+		})()`, selector), &at)
+		for _, kind := range []string{"mousePressed", "mouseReleased"} {
+			b.call("Input.dispatchMouseEvent", map[string]any{"type": kind, "x": at.X, "y": at.Y, "button": "left", "clickCount": 1})
+		}
+	}
+	b.call("Page.enable", map[string]any{})
+	b.call("Page.navigate", map[string]any{"url": rig.link})
+	b.until("the page", `!!document.querySelector('.tabbar')`)
+	for _, lang := range []string{"ja", "en"} {
+		b.eval(`window.__oldCompactPage = true`, nil)
+		b.call("Page.navigate", map[string]any{"url": rig.base + "/?lang=" + lang})
+		b.until("the language", `!window.__oldCompactPage && document.documentElement.lang === `+js(lang))
+		b.showAll()
+		for _, id := range append([]control.ThreadID{rig.full, rig.asleep}, ids...) {
+			openThread(t, b, id)
+		}
+		for _, x := range rig.legacy {
+			openThread(t, b, x.id)
+		}
+		b.until("running and waiting tabs", `!!document.querySelector('.tab .elapsed') && !!document.querySelector('.tab [data-badge=question]')`)
+		b.click(`.tools [data-choice=active]`)
+		for _, width := range []int{1024, 1280, 1920} {
+			b.call("Emulation.setDeviceMetricsOverride", map[string]any{"width": width, "height": 900, "deviceScaleFactor": 1, "mobile": false})
+			for _, theme := range []string{"light", "dark"} {
+				b.eval(fmt.Sprintf(`document.documentElement.dataset.theme = %q, true`, theme), nil)
+				var got struct {
+					Height, Room, Scroll float64
+					Bad                  []string
+				}
+				b.eval(`(() => {
+					const bar = document.querySelector('.tabbar'), tabs = bar.querySelector('.tabs');
+					const bad = [];
+					if (getComputedStyle(tabs).scrollbarWidth !== 'none' && getComputedStyle(tabs, '::-webkit-scrollbar').display !== 'none') bad.push('scrollbar');
+					for (const el of bar.querySelectorAll('.tab-title, .elapsed, .badge, .tab-operating')) {
+						if (getComputedStyle(el).whiteSpace !== 'nowrap') bad.push('wrap: ' + el.className);
+					}
+					for (const el of bar.querySelectorAll('.tools button, [data-tool=tab-list]')) {
+						const r = el.getBoundingClientRect();
+						if (!el.title || el.getAttribute('aria-label') !== el.title || !el.querySelector('svg') || r.width !== 28 || r.height !== 28) bad.push('icon tool');
+					}
+					return {height: bar.getBoundingClientRect().height, room: tabs.clientWidth, scroll: tabs.scrollWidth, bad};
+				})()`, &got)
+				if got.Height < 32 || got.Height > 36 || got.Room < 120 || got.Scroll <= got.Room || len(got.Bad) != 0 {
+					t.Fatalf("%s %s %d: %+v", lang, theme, width, got)
+				}
+			}
+		}
+		open, _ := b.tabsOf()
+		// Every overflowed tab is selectable from the list by pointer.
+		for i, k := range open {
+			click(`[data-tool=tab-list]`)
+			b.until("all open tabs listed", fmt.Sprintf(`document.querySelectorAll('.tab-menu [role=menuitemradio]').length === %d`, len(open)))
+			click(fmt.Sprintf(`.tab-menu button:nth-child(%d)`, i+1))
+			b.until("chosen tab active and focused", fmt.Sprintf(`document.activeElement?.closest('.tab')?.dataset.tab === %q && document.querySelector('.tab.active')?.dataset.tab === %q && !document.querySelector('.tab-menu')`, k, k))
+		}
+		b.eval(`document.querySelector('[data-tool=tab-list]').focus(), true`, nil)
+		b.key("ArrowDown", "ArrowDown", 40, 0, "")
+		b.until("menu focus", `document.activeElement?.getAttribute('role') === 'menuitemradio'`)
+		b.key("Home", "Home", 36, 0, "")
+		b.until("menu Home", `document.activeElement === document.querySelector('.tab-menu button')`)
+		b.key("End", "End", 35, 0, "")
+		b.until("menu End", `document.activeElement === document.querySelector('.tab-menu button:last-child')`)
+		b.key("ArrowDown", "ArrowDown", 40, 0, "")
+		b.until("menu wrap", `document.activeElement === document.querySelector('.tab-menu button')`)
+		b.key("Escape", "Escape", 27, 0, "")
+		b.until("Escape returns focus", `!document.querySelector('.tab-menu') && document.activeElement?.dataset.tool === 'tab-list'`)
+		click(`[data-tool=tab-list]`)
+		click(`[data-tool=tree]`)
+		b.until("outside closes menu", `!document.querySelector('.tab-menu')`)
+		click(`[data-tool=tree]`)
+		// Re-selecting the active tab must consume its focus request now,
+		// rather than stealing focus from the person's next tree selection.
+		click(`[data-tool=tab-list]`)
+		click(`.tab-menu [aria-checked=true]`)
+		click(fmt.Sprintf(`.tree [data-thread="%d"]`, rig.full))
+		b.until("tree selection keeps focus", fmt.Sprintf(`document.querySelector('.tab.active')?.dataset.tab === 'thread:%d' && !!document.activeElement?.closest('.tree')`, rig.full))
 	}
 }

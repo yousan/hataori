@@ -8,6 +8,7 @@
 import { useState } from "react";
 import type { HostTerminal, State, ThreadInfo } from "./api";
 import { t } from "./catalog";
+import { ToolIcon } from "./ToolIcon";
 
 export type Show = "active" | "all";
 
@@ -93,7 +94,26 @@ export function useShow(): [Show, (s: Show) => void] {
 // same number the tree and the narrow list give. The idle shell panes the
 // same choice hides (terminals) are counted on their own, never added to
 // the threads.
-export function ShowChoice({ show, onShow, hidden, terminals = 0 }: { show: Show; onShow: (s: Show) => void; hidden: number; terminals?: number }) {
+interface ChoiceProps { show: Show; onShow: (s: Show) => void; hidden: number; terminals?: number }
+
+// The desktop toolbar keeps the full counts one hover away; the phone
+// list retains the text choice below.
+export function ShowTool({ show, onShow, hidden, terminals = 0 }: ChoiceProps) {
+  const next = show === "active" ? "all" : "active";
+  const summary = [t("show.hidden", { n: hidden }), ...(terminals > 0 ? [t("show.hiddenTerminals", { n: terminals })] : [])].join(t("show.hiddenSeparator"));
+  const action = t(next === "active" ? "show.activeTitle" : "show.allTitle");
+  const title = show === "active" ? t("show.toggleTitle", { action, hidden: summary }) : action;
+  return (
+    <div className="show show-tool" data-show={show}>
+      <button type="button" className="icon-tool" data-choice={next} aria-pressed={show === "active"} title={title} aria-label={title} onClick={() => onShow(next)}>
+        <ToolIcon name="filter" />
+      </button>
+      {show === "active" && <span className="hidden-count" data-hidden={hidden} data-hidden-terminals={terminals > 0 ? terminals : undefined} title={summary}>{t("show.count", { n: hidden })}</span>}
+    </div>
+  );
+}
+
+export function ShowChoice({ show, onShow, hidden, terminals = 0 }: ChoiceProps) {
   return (
     <div className="show" role="group" aria-label={t("show.label")} data-show={show}>
       {(["active", "all"] as const).map((s) => (

@@ -99,7 +99,7 @@ func TestDashboardFourFixes(t *testing.T) {
 		var s counts
 		b.eval(`(() => ({
 			bar: document.querySelector('.tools .show .hidden-count')?.dataset.hidden ?? '',
-			barTerminals: document.querySelector('.tools .show .hidden-terminals')?.dataset.hiddenTerminals ?? '',
+			barTerminals: document.querySelector('.tools .show [data-hidden-terminals]')?.dataset.hiddenTerminals ?? '',
 			tree: document.querySelector('[data-section=threads] .none')?.textContent ?? '',
 		}))()`, &s)
 		return s
@@ -124,7 +124,7 @@ func TestDashboardFourFixes(t *testing.T) {
 			e.querySelector('button[data-show-all]')?.textContent === 'Show all';
 	})()`, asleep))
 	b.click(`.pane.active .table-empty button[data-show-all]`)
-	b.until("every thread in the table after one click", fmt.Sprintf(`document.querySelector('.tools .show [aria-pressed=true]')?.dataset.choice === 'all' &&
+	b.until("every thread in the table after one click", fmt.Sprintf(`document.querySelector('.tools .show')?.dataset.show === 'all' &&
 		document.querySelectorAll('.pane.active .all-threads tr[data-thread]').length === %d`, asleep))
 
 	// 2. Sixty threads in the scope: twelve dots, "+48", and the name whole.
