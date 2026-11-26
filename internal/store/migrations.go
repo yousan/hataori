@@ -780,6 +780,11 @@ var migrations = []Migration{
 			told    INTEGER NOT NULL DEFAULT 0
 		)`,
 	)},
+	// The codec's actual written text, when it records one (#932). NULL
+	// leaves inputs written before this step to its compatibility rules.
+	{Name: "pending_inputs.written_text", Up: execAll(
+		`ALTER TABLE pending_inputs ADD COLUMN written_text TEXT`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

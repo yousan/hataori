@@ -61,6 +61,13 @@ function Line({ e }: { e: Entry }) {
             : t("conv.turnEnded", { outcome: e.outcome, time: clock(e.time) })}
         </li>
       );
+    case "input_failed":
+      return (
+        <li className="conv-entry conv-request" data-kind={e.kind} data-pos={e.pos}>
+          <Head who={t("events.inputFailed", { reason: e.reason })} time={e.time} />
+          <Text text={e.text} />
+        </li>
+      );
     case "input":
       return (
         <li className="conv-entry conv-input" data-kind={e.kind} data-pos={e.pos}>

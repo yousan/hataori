@@ -103,6 +103,8 @@ export function eventLine(e: Event): string {
       return str(d.text) ? t("events.request", { text: str(d.text) }) : t("events.requestHidden");
     case "answer":
       return t("events.answer");
+    case "input_failed":
+      return t("events.inputFailed", { reason: str(d.reason) });
     case "input":
       return t("events.input");
     case "start_chosen":

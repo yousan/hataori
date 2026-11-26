@@ -95,8 +95,14 @@ func TestConcurrentMirrors(t *testing.T) {
 
 func TestMirrorTimeout(t *testing.T) {
 	m := Maker{Root: t.TempDir(), FetchTimeout: 300 * time.Millisecond}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
-	defer srv.Close()
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer func() { close(release); srv.Close() }()
 	repo := srv.URL + "/o/r.git"
 	mirror := filepath.Join(m.Root, "mirrors", MirrorKey(repo)+".git")
 	if err := os.MkdirAll(filepath.Dir(mirror), 0o700); err != nil {
@@ -104,19 +110,7 @@ func TestMirrorTimeout(t *testing.T) {
 	}
 	// Simulate a mirror built earlier using a different address for the repository.
 	mirrorGit(t, m, m.Root, "clone", "--bare", "--", bareRepo(t), mirror)
-	real, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatal(err)
-	}
-	bin := t.TempDir()
-	pidfile := filepath.Join(bin, "fetch-pid")
-	barePID := filepath.Join(bin, "bare-pid")
-	script := "#!/bin/sh\ncase \" $* \" in *' fetch --no-tags '*) echo $$ > '" + pidfile + "';; *' clone --bare '*) echo $$ > '" + barePID + "';; esac\nexec '" + real + "' \"$@\"\n"
-	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	dir, err := m.Clone(ctx, 3, repo, nil)
 	if err != nil {
@@ -126,29 +120,6 @@ func TestMirrorTimeout(t *testing.T) {
 	if got := mirrorGit(t, m, dir, "remote", "get-url", "origin"); got != repo {
 		t.Fatalf("origin: %s", got)
 	}
-	checkGroupGone := func(pidfile string) {
-		t.Helper()
-		b, err := os.ReadFile(pidfile)
-		if err != nil {
-			t.Fatal(err)
-		}
-		pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		deadline := time.Now().Add(time.Second)
-		for {
-			err = syscall.Kill(-pid, 0)
-			if err == syscall.ESRCH {
-				return
-			}
-			if time.Now().After(deadline) {
-				t.Fatalf("git process group %d remains: %v", pid, err)
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-	}
-	checkGroupGone(pidfile)
 	// With no usable mirror the caller's deadline also bounds the direct clone.
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 700*time.Millisecond)
 	defer cancel2()
@@ -159,7 +130,110 @@ func TestMirrorTimeout(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(m.Root, "mirrors", MirrorKey(missing)+".git")); !os.IsNotExist(err) {
 		t.Fatalf("failed mirror appeared: %v", err)
 	}
-	checkGroupGone(barePID)
+}
+
+// Deadline policy and process cancellation are separate checks. Here the
+// cancellation starts only after git has started its HTTP transport, so a
+// slow process start cannot leave the PID file unwritten.
+func TestMirrorCancellationEndsTheProcessGroup(t *testing.T) {
+	for _, operation := range []string{"fetch", "direct clone"} {
+		t.Run(operation, func(t *testing.T) {
+			m := Maker{Root: t.TempDir()}
+			requested := make(chan struct{}, 1)
+			release := make(chan struct{})
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				select {
+				case requested <- struct{}{}:
+				default:
+				}
+				select {
+				case <-r.Context().Done():
+				case <-release:
+				}
+			}))
+			defer func() { close(release); srv.Close() }()
+			repo := srv.URL + "/o/r.git"
+			mirror := filepath.Join(m.Root, "mirrors", MirrorKey(repo)+".git")
+			if err := os.MkdirAll(mirror, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if operation == "fetch" {
+				mirrorGit(t, m, m.Root, "clone", "--bare", "--", bareRepo(t), mirror)
+			}
+			real, err := exec.LookPath("git")
+			if err != nil {
+				t.Fatal(err)
+			}
+			bin := t.TempDir()
+			pidfile := filepath.Join(bin, "git-pid")
+			script := "#!/bin/sh\ncase \" $* \" in *' fetch --no-tags '*|*' clone --quiet '*) echo $$ > '" + pidfile + "';; esac\nexec '" + real + "' \"$@\"\n"
+			if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			// Register before starting git so even an early failure cleans
+			// up this test's process group before closing the HTTP server.
+			defer func() {
+				b, _ := os.ReadFile(pidfile)
+				pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+				if err == nil && pid > 1 && syscall.Kill(-pid, 0) == nil {
+					_ = syscall.Kill(-pid, syscall.SIGKILL)
+				}
+			}()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				if operation == "fetch" {
+					mirrorRepo{dir: mirror, env: m.gitEnv()}.update(ctx, repo)
+					done <- nil
+				} else {
+					_, err := m.Clone(ctx, 4, repo, nil)
+					done <- err
+				}
+			}()
+			select {
+			case <-requested:
+			case err := <-done:
+				t.Fatalf("git ended before starting its transport: %v", err)
+			case <-time.After(30 * time.Second):
+				t.Fatal("git never started its transport")
+			}
+			cancel()
+			select {
+			case err := <-done:
+				if operation == "direct clone" && err == nil {
+					t.Fatal("cancelled clone succeeded")
+				}
+			case <-time.After(30 * time.Second):
+				t.Fatal("git did not finish after cancellation")
+			}
+			checkMirrorGroupGone(t, pidfile)
+		})
+	}
+}
+
+func checkMirrorGroupGone(t *testing.T, pidfile string) {
+	t.Helper()
+	b, err := os.ReadFile(pidfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err = syscall.Kill(-pid, 0)
+		if err == syscall.ESRCH {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("git process group %d remains: %v", pid, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func TestMirrorPublishedOnlyWhenComplete(t *testing.T) {
