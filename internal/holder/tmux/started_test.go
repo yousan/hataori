@@ -165,7 +165,12 @@ func (s *server) started(h *Holder, program string) (holder.Window, string, stri
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		s.t.Fatal(err)
 	}
-	f := strings.Fields(s.run("new-session", "-d", "-s", h.Prefix+"7", "-P", "-F", "#{pane_id} #{pid} #{pane_pid}", program+" # exec "+quote(dir)))
+	out := s.run("new-session", "-d", "-s", h.Prefix+"7", "-P", "-F", "#{pane_id} #{pid} #{pane_pid}"+formatEnd, program+" # exec "+quote(dir))
+	whole, ok := strings.CutSuffix(out, formatDone)
+	if !ok {
+		s.t.Fatalf("incomplete new-session format: %q", out)
+	}
+	f := strings.Fields(whole)
 	if len(f) != 3 {
 		s.t.Fatalf("new-session: %q", f)
 	}
@@ -179,10 +184,17 @@ func (s *server) started(h *Holder, program string) (holder.Window, string, stri
 // panes is each pane of the server with its process and its session.
 func (s *server) panes() map[string]string {
 	s.t.Helper()
-	out, _ := exec.Command(s.tmux, "-S", s.sock, "list-panes", "-a", "-F", "#{pane_id} #{pane_pid} #{session_name}").Output()
+	out, err := exec.Command(s.tmux, "-S", s.sock, "list-panes", "-a", "-F", "#{pane_id} #{pane_pid} #{s/[ \r\n]/_/:session_name}"+formatEnd).Output()
 	m := map[string]string{}
-	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if f := strings.SplitN(l, " ", 2); len(f) == 2 {
+	if err != nil && len(out) == 0 {
+		return m
+	}
+	for _, l := range strings.Split(strings.TrimSuffix(string(out), "\n"), "\n") {
+		whole, ok := strings.CutSuffix(l, formatDone)
+		if !ok {
+			s.t.Fatalf("incomplete pane listing: %q", out)
+		}
+		if f := strings.SplitN(whole, " ", 2); len(f) == 2 {
 			m[f[0]] = f[1]
 		}
 	}
