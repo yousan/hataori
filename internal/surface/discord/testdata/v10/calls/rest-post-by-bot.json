@@ -1,0 +1,90 @@
+{
+ "body": {
+  "attachments": [],
+  "author": {
+   "accent_color": null,
+   "avatar": null,
+   "avatar_decoration_data": null,
+   "banner": null,
+   "banner_color": null,
+   "bot": true,
+   "clan": null,
+   "collectibles": null,
+   "discriminator": "0000",
+   "display_name_styles": null,
+   "flags": 0,
+   "global_name": null,
+   "id": "1000000000000000004",
+   "primary_guild": null,
+   "public_flags": 0,
+   "username": "name-1"
+  },
+  "channel_id": "1000000000000000006",
+  "components": [],
+  "content": "[hataori test] <@1000000000000000001> a post of a bot",
+  "edited_timestamp": null,
+  "embeds": [],
+  "flags": 0,
+  "id": "1000000000000000012",
+  "mention_everyone": false,
+  "mention_roles": [],
+  "mentions": [
+   {
+    "accent_color": null,
+    "avatar": "00000000000000000000000000000002",
+    "avatar_decoration_data": null,
+    "banner": null,
+    "banner_color": null,
+    "clan": {
+     "badge": "00000000000000000000000000000001",
+     "identity_enabled": true,
+     "identity_guild_id": "1000000000000000002",
+     "tag": "TAG"
+    },
+    "collectibles": null,
+    "discriminator": "0",
+    "display_name_styles": null,
+    "flags": 0,
+    "global_name": "name-3",
+    "id": "1000000000000000001",
+    "primary_guild": {
+     "badge": "00000000000000000000000000000001",
+     "identity_enabled": true,
+     "identity_guild_id": "1000000000000000002",
+     "tag": "TAG"
+    },
+    "public_flags": 0,
+    "username": "name-2"
+   }
+  ],
+  "pinned": false,
+  "timestamp": "2026-11-26T13:56:36.564000+00:00",
+  "tts": false,
+  "type": 0
+ },
+ "date": "2026-11-26T13:56:37Z",
+ "headers": {
+  "content-type": "application/json",
+  "via": "1.1 google",
+  "x-ratelimit-bucket": "00000000000000000000000000000004",
+  "x-ratelimit-limit": "5",
+  "x-ratelimit-remaining": "3",
+  "x-ratelimit-reset": "1795701397.701",
+  "x-ratelimit-reset-after": "1.193"
+ },
+ "request": {
+  "body": {
+   "allowed_mentions": {
+    "users": [
+     "1000000000000000001"
+    ]
+   },
+   "content": "[hataori test] <@1000000000000000001> a post of a bot"
+  },
+  "files": [],
+  "method": "POST",
+  "path": "/channels/1000000000000000006/messages"
+ },
+ "source": "rest",
+ "status": 200
+}

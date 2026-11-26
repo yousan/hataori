@@ -1,0 +1,14 @@
+{
+ "body": {
+  "id": "1000000000000000004"
+ },
+ "request": {
+  "method": "GET",
+  "path": "/users/@me"
+ },
+ "source": "rest",
+ "status": 200,
+ "trimmed": [
+  "id"
+ ]
+}
