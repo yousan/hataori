@@ -1059,10 +1059,10 @@ func (r *Runner) handOverWritten(lv *live) {
 	r.Store.DB.QueryRow(`SELECT first_input FROM sessions WHERE id = ?`, lv.id).Scan(&fi)
 	var f firstInput
 	if fi != "" && json.Unmarshal([]byte(fi), &f) == nil && f.Sent && f.Written {
-		r.do(lv, r.inputActions(lv, agent.Input{ID: firstInputID, Text: f.Context + f.Input().ForAgent(), Written: true, Earlier: !f.Current}))
+		r.do(lv, r.inputActions(lv, agent.Input{ID: firstInputID, Text: f.Context + f.Input().ForAgent(), Written: true, WrittenText: f.WrittenText, Earlier: !f.Current}))
 		lv.resend = false
 	}
-	rows, err := r.Store.DB.Query(`SELECT id, data, context, written FROM pending_inputs
+	rows, err := r.Store.DB.Query(`SELECT id, data, context, written, written_text FROM pending_inputs
 		WHERE session_id = ? AND request = '' AND written != 0 ORDER BY id`, lv.id)
 	if err != nil {
 		r.Log.Error("written input", "session", lv.id, "err", err)
@@ -1072,12 +1072,13 @@ func (r *Runner) handOverWritten(lv *live) {
 	for rows.Next() {
 		var id, written int64
 		var data, earlier string
+		var writtenText *string
 		var in control.Input
-		if rows.Scan(&id, &data, &earlier, &written) == nil && json.Unmarshal([]byte(data), &in) == nil {
+		if rows.Scan(&id, &data, &earlier, &written, &writtenText) == nil && json.Unmarshal([]byte(data), &in) == nil {
 			// One that a runner from before agent.Input.Earlier wrote, maybe
 			// to this agent, also one that it wrote to an agent before and
 			// marked stale; this runner removes those at a launch (newAgent).
-			ins = append(ins, agent.Input{ID: strconv.FormatInt(id, 10), Text: earlier + in.Text, Written: true, Earlier: written != writtenNow})
+			ins = append(ins, agent.Input{ID: strconv.FormatInt(id, 10), Text: earlier + in.Text, Written: true, WrittenText: writtenText, Earlier: written != writtenNow})
 		}
 	}
 	rows.Close()
@@ -1098,9 +1099,11 @@ func (r *Runner) inputActions(lv *live, in agent.Input) agent.Actions {
 // markWritten records that the inputs ids are about to be written to the
 // agent: from now on a restart tells the codec instead of writing them
 // again. unmarkWritten records that nothing of them was.
-func (r *Runner) markWritten(lv *live, ids []string) error { return r.setWritten(lv, ids, true) }
+func (r *Runner) markWritten(lv *live, ids []string, text map[string]string) error {
+	return r.setWritten(lv, ids, true, text)
+}
 
-func (r *Runner) unmarkWritten(lv *live, ids []string) { r.setWritten(lv, ids, false) }
+func (r *Runner) unmarkWritten(lv *live, ids []string) { r.setWritten(lv, ids, false, nil) }
 
 // writtenNow is pending_inputs.written of an input that a runner that knows
 // agent.Input.Earlier, this one or a later one, wrote to the agent that runs
@@ -1108,10 +1111,14 @@ func (r *Runner) unmarkWritten(lv *live, ids []string) { r.setWritten(lv, ids, f
 // runner from before it wrote, maybe to the agent that runs: agent.Input.Earlier.
 const writtenNow = 2
 
-func (r *Runner) setWritten(lv *live, ids []string, written bool) error {
+func (r *Runner) setWritten(lv *live, ids []string, written bool, text map[string]string) error {
 	err := r.Store.Update(context.Background(), func(tx *store.Tx) error {
 		ctx := context.Background()
 		for _, id := range ids {
+			var writtenText *string
+			if t, ok := text[id]; written && ok {
+				writtenText = &t
+			}
 			if id == firstInputID {
 				var fi string
 				if err := tx.QueryRowContext(ctx, `SELECT first_input FROM sessions WHERE id = ?`, lv.id).Scan(&fi); err != nil {
@@ -1121,7 +1128,7 @@ func (r *Runner) setWritten(lv *live, ids []string, written bool) error {
 				if fi == "" || json.Unmarshal([]byte(fi), &f) != nil {
 					continue
 				}
-				f.Written, f.Current = written, written
+				f.Written, f.Current, f.WrittenText = written, written, writtenText
 				b, _ := json.Marshal(f)
 				if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, string(b), lv.id); err != nil {
 					return err
@@ -1136,7 +1143,7 @@ func (r *Runner) setWritten(lv *live, ids []string, written bool) error {
 			if written {
 				mark = writtenNow
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE pending_inputs SET written = ? WHERE id = ? AND session_id = ?`, mark, row, lv.id); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE pending_inputs SET written = ?, written_text = ? WHERE id = ? AND session_id = ?`, mark, writtenText, row, lv.id); err != nil {
 				return err
 			}
 		}
@@ -1932,7 +1939,7 @@ func (r *Runner) act(lv *live, a agent.Actions) error {
 		a.KeysFailed(nothing)
 	}
 	if len(a.Inputs) > 0 {
-		if err := r.markWritten(lv, a.Inputs); err != nil {
+		if err := r.markWritten(lv, a.Inputs, a.InputText); err != nil {
 			// Not written: a codec that is not told so, which counts it
 			// written, fails its turn as "not delivered" when no report comes.
 			failed(true)
