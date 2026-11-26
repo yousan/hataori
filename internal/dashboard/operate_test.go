@@ -523,12 +523,20 @@ func screenMessages(body interface{ Read([]byte) (int, error) }) <-chan hostScre
 	return out
 }
 
-// While a pane is operated, its screen stream reads it at least five times
-// a second, with the cursor; with no operation it reads once a second, as
-// before, and carries no cursor.
+// While a pane is operated, its screen stream uses the faster polling
+// interval and carries the cursor. Starting an operation wakes a stream
+// even when its ordinary polling interval has not elapsed.
 func TestScreenStreamWhileOperated(t *testing.T) {
 	a := &opAPI{}
-	s := operateServer(t, a, Config{})
+	s := operateServer(t, a, Config{}, func(s *Server) {
+		if s.hostScreenInterval != time.Second || s.operatedScreenInterval <= 0 || s.operatedScreenInterval > 200*time.Millisecond {
+			t.Fatalf("default screen intervals: idle %v, operated %v", s.hostScreenInterval, s.operatedScreenInterval)
+		}
+		// An idle timer cannot produce the reads awaited below. Speed up
+		// operated polling, and wait for reads rather than counting them
+		// within a wall-clock second on a possibly slow runner.
+		s.hostScreenInterval, s.operatedScreenInterval = time.Hour, time.Millisecond
+	})
 	l := first(s)
 	tok := signIn(t, s)
 	hr := requestTo(t, l, http.MethodGet, HostScreenPath+"?"+url.Values{"pane": {"%1"}}.Encode(), nil)
@@ -539,19 +547,31 @@ func TestScreenStreamWhileOperated(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	msgs := screenMessages(resp.Body)
-	if m := <-msgs; m.Cursor != nil || m.Screen != "a screen" {
+	next := func() hostScreen {
+		t.Helper()
+		select {
+		case m, ok := <-msgs:
+			if !ok {
+				t.Fatal("screen stream ended")
+			}
+			return m
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for the screen stream")
+			return hostScreen{}
+		}
+	}
+	quiet := func() {
+		t.Helper()
+		s0, v0 := a.reads()
+		time.Sleep(100 * time.Millisecond)
+		if sc, v := a.reads(); sc != s0 || v != v0 {
+			t.Fatalf("idle stream kept polling: before %d/%d screen/view reads, after %d/%d", s0, v0, sc, v)
+		}
+	}
+	if m := next(); m.Cursor != nil || m.Screen != "a screen" {
 		t.Fatalf("not operated: %+v", m)
 	}
-	count := func(d time.Duration) (screens, views int) {
-		s0, v0 := a.reads()
-		time.Sleep(d)
-		s1, v1 := a.reads()
-		return s1 - s0, v1 - v0
-	}
-	if sc, v := count(2100 * time.Millisecond); sc < 1 || sc > 3 || v != 0 {
-		t.Errorf("not operated: %d screen reads and %d with the cursor in 2.1 s", sc, v)
-	}
-
+	quiet()
 	c, _, err := dialOperate(t, l, origin(l))
 	if err != nil {
 		t.Fatal(err)
@@ -560,28 +580,29 @@ func TestScreenStreamWhileOperated(t *testing.T) {
 	if m := readOut(t, c); m.Started == nil {
 		t.Fatalf("not started: %+v", m)
 	}
-	// At once: a stream waiting its slow interval is woken.
-	if sc, v := count(time.Second); v < 5 || sc > 1 {
-		t.Errorf("operated: %d reads with the cursor and %d without in a second", v, sc)
+	if m := next(); m.Cursor == nil || *m.Cursor != (cursor{3, 1}) {
+		t.Fatalf("operated screen has no cursor: %+v", m)
 	}
-	var withCursor bool
-	for drained := false; !drained; {
-		select {
-		case m := <-msgs:
-			withCursor = withCursor || m.Cursor != nil && *m.Cursor == cursor{3, 1}
-		default:
-			drained = true
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		sc, v := a.reads()
+		if v >= 5 {
+			if sc != 1 {
+				t.Fatalf("operated stream read without the cursor: %d screen reads", sc-1)
+			}
+			break
 		}
-	}
-	if !withCursor {
-		t.Error("no message carried the cursor")
+		if time.Now().After(deadline) {
+			t.Fatalf("operated polling did not continue: %d reads with the cursor, %d without", v, sc)
+		}
+		time.Sleep(time.Millisecond)
 	}
 	c.WriteJSON(map[string]any{"end": true})
 	readOut(t, c)
-	time.Sleep(300 * time.Millisecond)
-	if sc, v := count(2100 * time.Millisecond); sc > 3 || v > 1 {
-		t.Errorf("after the end: %d screen reads and %d with the cursor in 2.1 s", sc, v)
+	if m := next(); m.Cursor != nil || m.Screen != "a screen" {
+		t.Fatalf("after the end: %+v", m)
 	}
+	quiet()
 }
 
 // An end the page sends after batches ends the operation after them: none
