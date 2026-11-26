@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>hataori — いつものチャットから、コーディングエージェントに指示を。</title>
+  <meta name="description" content="Discord のスレッドから Claude Code と Codex に指示。1スレッドに1セッション、1作業ディレクトリ。複数のタスクを並行して進める、オープンソースのツールです。">
+  <meta name="color-scheme" content="light dark">
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="ja_JP">
+  <meta property="og:title" content="hataori — いつものチャットから、コーディングエージェントに指示を。">
+  <meta property="og:description" content="Discord のスレッドごとにエージェントと作業場所を用意。依頼も進捗も結果も、同じ会話に残ります。">
+  <meta property="og:url" content="https://yousan.github.io/hataori/ja/">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="hataori — チャットからエージェントを動かす">
+  <meta name="twitter:description" content="1スレッド = 1セッション = 1作業ディレクトリ。Discord から Claude Code と Codex に仕事を任せられます。">
+  <link rel="canonical" href="https://yousan.github.io/hataori/ja/">
+  <link rel="alternate" hreflang="en" href="https://yousan.github.io/hataori/">
+  <link rel="alternate" hreflang="ja" href="https://yousan.github.io/hataori/ja/">
+  <link rel="stylesheet" href="/hataori/style.css">
+</head>
+<body>
+  <a class="skip" href="#main">本文へ移動</a>
+  <div class="wrap">
+    <header>
+      <a class="brand" href="/hataori/ja/" aria-label="hataori ホーム"><span class="mark" aria-hidden="true"></span>hataori</a>
+      <nav aria-label="メインナビゲーション">
+        <a class="wide" href="#features">できること</a>
+        <a class="wide" href="#compare">他のツールとの違い</a>
+        <a href="https://github.com/yousan/hataori">GitHub ↗</a>
+        <a class="language" href="/hataori/" lang="en" hreflang="en">English</a>
+      </nav>
+    </header>
+    <main id="main">
+      <section class="hero" aria-labelledby="headline" style="border-top: 0">
+        <p class="eyebrow">Open source · Agents in your chat</p>
+        <h1 id="headline"><span class="phrase">いつものチャットを、</span><br><span class="phrase">エージェントの</span><em class="phrase">司令室に。</em></h1>
+        <p class="lede">Discord で依頼すると、エージェントが専用の作業場所で仕事を始め、同じスレッドに報告します。複数のタスクを並行して進め、外出先ではスマホから続きを。</p>
+        <div class="actions">
+          <a class="button primary" href="https://github.com/yousan/hataori#getting-started">はじめる <span aria-hidden="true">↗</span></a>
+          <a class="button" href="https://github.com/yousan/hataori">GitHub <span aria-hidden="true">↗</span></a>
+        </div>
+        <p class="hero-note">Claude Code + Codex · 自分のマシンで、ログイン済みの CLI をそのまま</p>
+      </section>
+
+      <figure class="demo" aria-labelledby="demo-heading">
+        <figcaption>
+          <p class="section-label">依頼する場所は、いつものチャット</p>
+          <h2 id="demo-heading">依頼から結果まで、<br>ひとつのスレッドに。</h2>
+          <p>許可したメンバーなら誰でも依頼できます。やりとりはスレッドに残るので、後から参加した人も経緯を追えます。</p>
+          <div class="equation" aria-label="1スレッドに1セッションと1作業場所"><span>1スレッド</span> = <span>1セッション</span> = <span>1作業場所</span></div>
+          <p class="small">架空の会話例です。以下の PR は説明用のサンプルです。</p>
+        </figcaption>
+        <div class="thread">
+          <div class="thread-top">スレッド · 空の入力に対応する</div>
+          <ol aria-label="会話のサンプル">
+            <li><span class="speaker">あなた</span><p>空の入力に対応して、回帰テストも追加して。</p></li>
+            <li><span class="speaker">エージェント · 進捗</span><p>空の入力をチェックしていない箇所が見つかりました。</p></li>
+            <li><span class="speaker">エージェント · 進捗</span><p>失敗するテストを追加してから、バリデーションを修正しました。</p></li>
+            <li><span class="speaker">エージェント · 完了</span><p>テストが通りました。レビュー用の PR を用意しました。</p><p><a class="pr-link" href="#example-pr">サンプルの PR を見る <span aria-hidden="true">↗</span></a></p></li>
+          </ol>
+          <div class="example-pr" id="example-pr"><h3>サンプル PR：空の入力に対応</h3><p>空の入力のチェックと回帰テストを追加。説明用の例で、実際の PR ではありません。</p></div>
+        </div>
+      </figure>
+
+      <section id="features" aria-labelledby="features-heading">
+        <div class="section-heading"><p class="section-label">並行して進めても、会話は混ざらない</p><h2 id="features-heading">仕事ごとに、エージェントの居場所を。</h2></div>
+        <div class="features">
+          <article><span class="feature-number" aria-hidden="true">01 / WORKSPACE</span><h3>スレッドごとに作業場所を</h3><p>ひとつのスレッドが、ひとつのセッションと専用のクローンを持ちます。別の仕事は別のスレッドへ。それぞれの会話を追いながら、並行して進められます。</p></article>
+          <article><span class="feature-number" aria-hidden="true">02 / YOUR AGENTS</span><h3>使っているエージェントを、そのまま</h3><p>インストール済みの Claude Code と Codex を、今のサブスクリプションや API のログインで動かします。認証は CLI に任せ、hataori はあなたのユーザーでエージェントを起動します。</p></article>
+          <article><span class="feature-number" aria-hidden="true">03 / SUPERVISOR</span><h3>チャンネルを見守る supervisor</h3><p>任意で有効にする Claude Code の supervisor が、各ターンの結果を見て、メモやリマインダーを残し、次の仕事を提案・開始します。権限、自律性、予算は設定で制限できます。Codex の supervisor は未対応です。</p></article>
+        </div>
+      </section>
+
+      <section id="compare" aria-labelledby="compare-heading">
+        <div class="section-heading"><p class="section-label">他のツールとの違い</p><h2 id="compare-heading">どこから仕事を進めたいか。</h2><p>Orca と cmux は、自分のマシン上の専用アプリにエージェントを並べます。hataori はチャットのスレッドを、指示と報告の窓口にします。</p></div>
+        <div class="comparisons">
+          <article class="comparison"><h3>Orca</h3><p>複数の worktree とエージェントをまとめて扱う開発環境。リモート実行やモバイルアプリに加え、Slack などから仕事を受ける bot も提供しています。</p><div class="sources"><a href="https://onorca.dev/">公式サイト ↗</a><a href="https://github.com/stablyai/orca">ソース ↗</a></div></article>
+          <article class="comparison"><h3>cmux</h3><p>縦タブ、分割ペイン、エージェントの通知を備える macOS ネイティブのターミナル。SSH での作業に対応し、iOS アプリもベータ提供されています。</p><div class="sources"><a href="https://cmux.com/">公式サイト ↗</a><a href="https://github.com/manaflow-ai/cmux">ソース ↗</a></div></article>
+          <article class="comparison ours"><h3>hataori</h3><p>主な操作場所は Discord のスレッド。スレッドごとにセッションと作業ディレクトリを持ち、必要に応じてチャンネルの supervisor や Web ダッシュボードを使えます。</p><div class="sources"><a href="https://github.com/yousan/hataori">ソース ↗</a></div></article>
+        </div>
+        <p class="source-date">各ツールの公式サイトと公開リポジトリを <time datetime="2026-11-27">2026年11月27日</time>に確認。Orca の onorca.dev は <a href="https://orca.dev/">orca.dev</a> に転送されます。どちらもデスクトップ以外からの利用に対応しています。違いは、日々の仕事をどこで進めるかです。</p>
+      </section>
+
+      <section id="status" aria-labelledby="status-heading">
+        <div class="section-heading"><span class="status-badge">開発中</span><h2 id="status-heading">今、できること。</h2></div>
+        <div class="status-grid">
+          <div><h3>実装済み</h3><ul><li>Discord のスレッドで Claude Code と Codex を実行。</li><li>進捗と最終回答の投稿、質問への回答、ファイルの受け渡し、停止操作。</li><li>デーモンの再起動をまたぐセッションの維持と、スリープ後の再開。</li><li>Web ダッシュボードと、任意で有効にする Claude Code の supervisor。</li><li>Linux と macOS を CI でテスト。Windows は現在未対応。</li></ul></div>
+          <div><h3>これから</h3><ul><li>次は Slack。Microsoft Teams も対応を予定。</li><li>インストーラーとリリースバイナリはまだありません。ソースからビルドしてください。macOS 向けには CI のビルド成果物もあります。</li><li>導入には、ログイン済みのエージェント CLI と Discord bot の準備が必要です。</li></ul></div>
+        </div>
+      </section>
+
+      <section class="start" id="get-started" aria-labelledby="start-heading">
+        <p class="section-label">Get started</p><h2 id="start-heading">次の仕事を、スレッドから。</h2><p>必要なもの、ビルド方法、最初の Discord チャンネルの設定は README にまとめています。</p><div class="actions"><a class="button primary" href="https://github.com/yousan/hataori#getting-started">README の導入手順へ <span aria-hidden="true">↗</span></a></div>
+      </section>
+    </main>
+    <footer><a class="brand" href="/hataori/ja/"><span class="mark" aria-hidden="true"></span>hataori</a><div><a href="https://github.com/yousan/hataori/blob/main/LICENSE">MIT ライセンス</a><a href="https://github.com/yousan/hataori">GitHub ↗</a></div></footer>
+  </div>
+</body>
+</html>

@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>hataori — Your chat is the control room for coding agents</title>
+  <meta name="description" content="Run Claude Code and Codex side by side from Discord. One thread, one agent session, one working directory. Open source, on your own machine.">
+  <meta name="color-scheme" content="light dark">
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:title" content="hataori — Your chat is the control room for coding agents">
+  <meta property="og:description" content="Run Claude Code and Codex from Discord, with a separate workspace for every thread. Keep the conversation and the work together.">
+  <meta property="og:url" content="https://yousan.github.io/hataori/">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="hataori — Coding agents, run from your chat">
+  <meta name="twitter:description" content="One chat thread = one agent session = one working directory. Run Claude Code and Codex side by side from Discord.">
+  <link rel="canonical" href="https://yousan.github.io/hataori/">
+  <link rel="alternate" hreflang="en" href="https://yousan.github.io/hataori/">
+  <link rel="alternate" hreflang="ja" href="https://yousan.github.io/hataori/ja/">
+  <link rel="stylesheet" href="/hataori/style.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <div class="wrap">
+    <header>
+      <a class="brand" href="/hataori/" aria-label="hataori home"><span class="mark" aria-hidden="true"></span>hataori</a>
+      <nav aria-label="Main navigation">
+        <a class="wide" href="#features">How it works</a>
+        <a class="wide" href="#compare">Compare</a>
+        <a href="https://github.com/yousan/hataori">GitHub ↗</a>
+        <a class="language" href="/hataori/ja/" lang="ja" hreflang="ja">日本語</a>
+      </nav>
+    </header>
+    <main id="main">
+      <section class="hero" aria-labelledby="headline" style="border-top: 0">
+        <p class="eyebrow">Open source · Agents in your chat</p>
+        <h1 id="headline">Your chat is the <em>control room</em> for coding agents.</h1>
+        <p class="lede">Give an order in Discord. A coding agent gets its own workspace and reports back in the thread. Run several at once, and keep up from your phone.</p>
+        <div class="actions">
+          <a class="button primary" href="https://github.com/yousan/hataori#getting-started">Get started <span aria-hidden="true">↗</span></a>
+          <a class="button" href="https://github.com/yousan/hataori">GitHub <span aria-hidden="true">↗</span></a>
+        </div>
+        <p class="hero-note">Claude Code + Codex · Your machine, your existing CLI login</p>
+      </section>
+
+      <figure class="demo" aria-labelledby="demo-heading">
+        <figcaption>
+          <p class="section-label">A familiar place to ask</p>
+          <h2 id="demo-heading">The request, the progress, the result. One thread.</h2>
+          <p>Ask from the chat you already use. Anyone you allow can give an order; the conversation stays there for the next person to follow.</p>
+          <div class="equation" aria-label="One thread equals one session equals one workspace"><span>1 thread</span> = <span>1 session</span> = <span>1 workspace</span></div>
+          <p class="small">Illustrative conversation. The pull request below is an example.</p>
+        </figcaption>
+        <div class="thread">
+          <div class="thread-top">Thread · Handle empty input</div>
+          <ol aria-label="Example conversation">
+            <li><span class="speaker">You</span><p>Handle empty input and add a regression test.</p></li>
+            <li><span class="speaker">Agent · Progress</span><p>Found the missing empty-input check.</p></li>
+            <li><span class="speaker">Agent · Progress</span><p>Added a failing test, then fixed the validator.</p></li>
+            <li><span class="speaker">Agent · Done</span><p>Tests pass. The pull request is ready for review.</p><p><a class="pr-link" href="#example-pr">View example pull request <span aria-hidden="true">↗</span></a></p></li>
+          </ol>
+          <div class="example-pr" id="example-pr"><h3>Example pull request: handle empty input</h3><p>Add an empty-input check and a regression test. This is an illustration, not a real pull request.</p></div>
+        </div>
+      </figure>
+
+      <section id="features" aria-labelledby="features-heading">
+        <div class="section-heading"><p class="section-label">Parallel work, with a place for everything</p><h2 id="features-heading">More agents. A clear thread for each.</h2></div>
+        <div class="features">
+          <article><span class="feature-number" aria-hidden="true">01 / WORKSPACE</span><h3>A thread is a workspace</h3><p>Each thread owns an agent session and a working directory with its own clone. Give separate tasks to separate threads and follow each conversation on its own.</p></article>
+          <article><span class="feature-number" aria-hidden="true">02 / YOUR AGENTS</span><h3>Use what you already have</h3><p>Run the Claude Code and Codex CLIs you have installed, with your existing subscription or API login. Authentication stays with the CLI; hataori runs the agent as you.</p></article>
+          <article><span class="feature-number" aria-hidden="true">03 / SUPERVISOR</span><h3>A supervisor for the channel</h3><p>An optional Claude Code supervisor watches turn results, keeps notes and reminders, and can propose or start follow-up work. You set its access, autonomy and budgets. A Codex supervisor is not supported yet.</p></article>
+        </div>
+      </section>
+
+      <section id="compare" aria-labelledby="compare-heading">
+        <div class="section-heading"><p class="section-label">How it compares</p><h2 id="compare-heading">Choose where you want to work.</h2><p>Orca and cmux put agents side by side in a dedicated app on your machine. hataori makes a chat thread the place you give orders and get replies.</p></div>
+        <div class="comparisons">
+          <article class="comparison"><h3>Orca</h3><p>An agent development environment with parallel worktrees and an integrated app. It also offers remote runtimes, mobile companions and bots that accept jobs from services including Slack.</p><div class="sources"><a href="https://onorca.dev/">Website ↗</a><a href="https://github.com/stablyai/orca">Source ↗</a></div></article>
+          <article class="comparison"><h3>cmux</h3><p>A native macOS terminal with vertical tabs, split panes and notifications for agents. It supports SSH workspaces and offers an iOS companion in beta.</p><div class="sources"><a href="https://cmux.com/">Website ↗</a><a href="https://github.com/manaflow-ai/cmux">Source ↗</a></div></article>
+          <article class="comparison ours"><h3>hataori</h3><p>Discord threads are the primary interface. Each thread maps to one session and working directory, with an optional channel supervisor and a web dashboard.</p><div class="sources"><a href="https://github.com/yousan/hataori">Source ↗</a></div></article>
+        </div>
+        <p class="source-date">Based on their own public websites and repositories, read <time datetime="2026-11-27">27 November 2026</time>. Orca’s onorca.dev redirects to <a href="https://orca.dev/">orca.dev</a>. These are different workflows; both alternatives also support work away from the desktop.</p>
+      </section>
+
+      <section id="status" aria-labelledby="status-heading">
+        <div class="section-heading"><span class="status-badge">In development</span><h2 id="status-heading">What you can use today.</h2></div>
+        <div class="status-grid">
+          <div><h3>Implemented</h3><ul><li>Discord threads with Claude Code and Codex.</li><li>Progress and final replies, questions, file handoffs and Stop controls.</li><li>Sessions that survive daemon restarts and resume after sleeping.</li><li>A web dashboard and an optional Claude Code supervisor.</li><li>Linux and macOS, covered by CI. Windows is not currently supported.</li></ul></div>
+          <div><h3>Still ahead</h3><ul><li>Slack is next. Microsoft Teams is planned.</li><li>No installer or release binaries yet. Build from source; macOS CI artifacts are also available.</li><li>Setup requires an installed, logged-in agent CLI and a Discord bot.</li></ul></div>
+        </div>
+      </section>
+
+      <section class="start" id="get-started" aria-labelledby="start-heading">
+        <p class="section-label">Get started</p><h2 id="start-heading">Give your next task a thread.</h2><p>The README walks through requirements, building from source and connecting your first Discord channel.</p><div class="actions"><a class="button primary" href="https://github.com/yousan/hataori#getting-started">Read the getting started guide <span aria-hidden="true">↗</span></a></div>
+      </section>
+    </main>
+    <footer><a class="brand" href="/hataori/"><span class="mark" aria-hidden="true"></span>hataori</a><div><a href="https://github.com/yousan/hataori/blob/main/LICENSE">MIT license</a><a href="https://github.com/yousan/hataori">GitHub ↗</a></div></footer>
+  </div>
+</body>
+</html>
