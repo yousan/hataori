@@ -82,7 +82,7 @@ func (f *FrontEnd) call(in surface.Inbound) error {
 	}
 	conv := in.Ref.Conv
 	sc, ok := f.Scopes[conv.Channel]
-	if !ok || !sc.Enabled || f.Converse == nil || f.CheckCall == nil {
+	if !ok || !sc.Enabled || !sc.Conversations || f.Converse == nil || f.CheckCall == nil {
 		return nil
 	}
 	if err := f.CheckCall(conv.Channel, f.from(in.Author)); err != nil {

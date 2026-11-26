@@ -36,16 +36,6 @@ type Call struct {
 // starts: one that names no supervisor, or has "conversations": false.
 var ErrNoConversations = errors.New("no conversation with a supervisor starts in this scope")
 
-// CheckCall checks that this scope accepts conversations and the author may
-// start one. The chat front end calls it before reading or storing anything.
-func (s *Sessions) CheckCall(scope, from string) error {
-	sv, ok := s.Scopes[scope]
-	if !ok || !sv.Conversations {
-		return ErrNoConversations
-	}
-	return s.Core.CheckConversationCall(control.Caller{From: from, Scopes: []string{scope}, May: control.OpStart}, scope)
-}
-
 // Converse starts a conversation with the supervisor of c.Scope: a thread
 // of the kind control.KindConversation, in the scope's directory, with what
 // the supervisor's own thread has (Confine, Config) and a token of its own,

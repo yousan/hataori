@@ -1350,15 +1350,13 @@ func (a *api) Start(ctx context.Context, r control.StartRequest) (control.Thread
 var ErrKindKey = errors.New("the key started a thread of another kind")
 
 // CheckConversationCall authorizes a chat call before its client reads the
-// service or records the message. StartConfined checks again when starting.
+// service or records the message. It applies no start-only configuration
+// gates: an existing conversation continues when new starts are disabled.
+// StartConfined checks those settings when starting.
 func (c *Core) CheckConversationCall(caller control.Caller, scope string) error {
 	a := c.As(caller).(*api)
 	if err := a.act(control.OpStart, "Start", scope); err != nil {
 		return err
-	}
-	if sc, ok := c.Scopes[scope]; !ok || !sc.Enabled {
-		c.Log.Warn("start refused", "scope", scope, "reason", "scope is not enabled")
-		return ErrDisabled
 	}
 	return nil
 }

@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -18,7 +19,10 @@ func conversationsFront(t *testing.T) *front {
 	f := newFront(t, workspaces{})
 	sv := &supervisor.Sessions{Core: f.core, Root: t.TempDir(), Log: f.fe.Log,
 		Scopes: map[string]supervisor.Scope{channel: {Conversations: true}}}
-	f.fe.CheckCall = sv.CheckCall
+	f.fe.Scopes[channel] = Scope{Enabled: true, Conversations: true}
+	f.fe.CheckCall = func(scope, from string) error {
+		return f.core.CheckConversationCall(control.Caller{From: from, Scopes: []string{scope}, May: control.OpStart}, scope)
+	}
 	f.fe.Retry = func(ctx context.Context, scope string, id control.ThreadID, key, from string, in control.Input) error {
 		return f.core.RetryConversation(ctx, control.Caller{From: from, Scopes: []string{scope}, May: control.OpRead | control.OpStart}, id, key, in)
 	}
@@ -315,5 +319,45 @@ func TestExistingConversationIsNeverArchivedByLifecycle(t *testing.T) {
 		if err != nil || len(rows) != 0 {
 			t.Fatalf("lifecycle changed an existing conversation: %v, %v", rows, err)
 		}
+	}
+}
+
+func TestDisablingNewConversationsKeepsExistingInput(t *testing.T) {
+	for _, disableScope := range []bool{false, true} {
+		t.Run(fmt.Sprint("scope-disabled=", disableScope), func(t *testing.T) {
+			f := conversationsFront(t)
+			first := callMessage(chanConv, "first", fake.Person(owner), "hello")
+			if err := f.fe.handle(first); err != nil {
+				t.Fatal(err)
+			}
+			old := f.runner.all()[0]
+			conv := f.threads()[0].Opened
+			if err := f.core.Machine.Apply(context.Background(), old.Session, session.Input{Kind: session.AgentEvent, Agent: agent.Event{Seq: 1, Kind: agent.SessionReady}}); err != nil {
+				t.Fatal(err)
+			}
+			f.fe.Scopes[channel] = Scope{Enabled: !disableScope, Conversations: false}
+			if disableScope {
+				sc := f.core.Scopes[channel]
+				sc.Enabled = false
+				f.core.Scopes[channel] = sc
+			}
+			if err := f.fe.handle(surface.Inbound{Ref: surface.MessageRef{Conv: conv, ID: "plain"}, Author: fake.Person(owner), Text: "continue"}); err != nil {
+				t.Fatal(err)
+			}
+			if got := f.runner.handed(); len(got) != 1 || got[0] != "deliver continue" {
+				t.Fatalf("existing input: %v", got)
+			}
+			if err := f.fe.handle(callMessage(surface.Conversation{Channel: channel, Thread: "new"}, "new-call", fake.Person(owner), "new")); err != nil {
+				t.Fatal(err)
+			}
+			if len(f.runner.all()) != 1 {
+				t.Fatal("started a disabled new conversation")
+			}
+			var n int
+			if err := f.core.Store.DB.QueryRow(`SELECT count(*) FROM chat_triggers WHERE message = 'new-call'`).Scan(&n); err != nil || n != 0 {
+				t.Fatalf("stored disabled call: %d, %v", n, err)
+			}
+
+		})
 	}
 }

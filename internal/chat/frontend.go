@@ -25,6 +25,8 @@ import (
 // against the people config (design, section 5.1).
 type Scope struct {
 	Enabled bool
+	// Conversations allows new conversations; existing ones keep accepting input.
+	Conversations bool
 }
 
 // FrontEnd shows threads in one chat service. It is the surface.Sink of its

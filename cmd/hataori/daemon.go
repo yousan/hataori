@@ -497,7 +497,9 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 		// (#352), and writes post_sent when a plugin may read it.
 		postSent := slices.ContainsFunc(grants, func(g plugin.Grant) bool { return slices.Contains(g.Events, "post_sent") })
 		for _, fe := range fronts {
-			fe.CheckCall = sv.CheckCall
+			fe.CheckCall = func(scope, from string) error {
+				return c.CheckConversationCall(control.Caller{From: from, Scopes: []string{scope}, May: control.OpStart}, scope)
+			}
 			fe.Retry = func(ctx context.Context, scope string, id control.ThreadID, key, from string, in control.Input) error {
 				return c.RetryConversation(ctx, control.Caller{From: from, Scopes: []string{scope}, May: control.OpRead | control.OpStart}, id, key, in)
 			}
@@ -958,7 +960,7 @@ func frontEnds(root string, confDir *os.Root, cfg *instance.Config, st *store.St
 			if s.Client != name {
 				continue
 			}
-			scopes[s.Key] = chat.Scope{Enabled: s.Enabled}
+			scopes[s.Key] = chat.Scope{Enabled: s.Enabled, Conversations: s.Supervisor != nil && s.Supervisor.Conversations}
 		}
 		// What a supervisor's thread posts, for the scopes of every
 		// client, as archive below.
