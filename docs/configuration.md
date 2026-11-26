@@ -509,6 +509,34 @@ Flags may come before or after `NUMBER`. Exit codes: 0 success, 1 error (for exa
 
 Three more commands are internal, run by hataori itself, and not for people: `hataori host <state-dir>` runs one agent session, `hataori hook [--wait] [--timeout DURATION]` is the command Claude Code's hooks call, and `hataori mcp --scope SCOPE --root DIR` is a supervisor's MCP server, which its agent starts with its token in `HATAORI_TOKEN`.
 
+## Conversations with the supervisor
+
+In an enabled, listed channel with a supervisor and `conversations` enabled,
+a person who may act can call the bot to start a conversation. A call in the
+channel opens a chat thread on that message; a call in an existing chat thread
+answers there. Each chat thread has its own conversation and session.
+
+A channel or an existing chat thread needs a call for each input. A chat thread
+hataori opened for a conversation needs none. A message addressed only to
+somebody else is left alone, except in the supervisor's own thread, which keeps
+its existing listening rule. An order in the same message takes precedence;
+a call in a worker's linked thread goes to that worker.
+
+Private chat threads do not accept conversations or links to confined threads.
+A caller allowed to act gets one explanation; other authors get no reply.
+A driver that cannot determine whether an existing thread is private is treated
+as private. Messages ignored because they have no required call are not saved,
+logged or passed to plugins. Calls currently carry only their own text, without
+files, earlier messages or the message replied to.
+
+A call after a conversation fails to start retries it under the same thread
+number. The new call becomes the replacement session's first input; a failed
+resume also keeps the earlier discussion. This works through secondary links
+and when the retry waits for a conversation slot. A plain message in a failed
+conversation gets the existing failure explanation only where hataori opened
+the chat thread. In an existing chat thread whose conversation is closed,
+only a call gets the closed-thread reply.
+
 ## Orders
 
 An order is a message in an enabled channel (not in a thread):

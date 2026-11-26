@@ -118,7 +118,8 @@ type Driver struct {
 	// fromMessage is the thread opened from each message.
 	fromMessage map[MessageRef]surface.Conversation
 	names       map[surface.Conversation]string // what Name answers
-	archived    map[surface.Conversation]bool   // threads archived by SetThread
+	private     map[surface.Conversation]bool
+	archived    map[surface.Conversation]bool // threads archived by SetThread
 }
 
 var _ surface.Driver = (*Driver)(nil)
@@ -755,4 +756,20 @@ func (d *Driver) setBlocked(who string, b bool) {
 	d.mu.Lock()
 	d.blocked[who] = b
 	d.mu.Unlock()
+}
+
+// SetPrivate controls the privacy of a fake thread.
+func (d *Driver) SetPrivate(conv surface.Conversation, private bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.private == nil {
+		d.private = map[surface.Conversation]bool{}
+	}
+	d.private[conv] = private
+}
+
+func (d *Driver) PrivateThread(_ context.Context, conv surface.Conversation) (bool, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.private[conv], nil
 }

@@ -41,7 +41,7 @@ func (f *svTalks) long(t *testing.T, key string) control.ThreadID {
 
 // says posts text in the chat thread t-<key>, as a person of the scope.
 func (f *svTalks) says(key, text string) {
-	f.wt.r.driver.Inject(f.chat(key), fakesurface.Person(svCaller), text)
+	f.wt.r.driver.InjectWith(f.chat(key), fakesurface.Person(svCaller), text, func(in *surface.Inbound) { in.Call = true })
 }
 
 // waitsFor is the line of a message that waits for the conversations that

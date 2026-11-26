@@ -61,6 +61,37 @@ func (s *Sessions) Converse(ctx context.Context, c Call) (control.ThreadID, erro
 		return 0, fmt.Errorf("supervisor: scope %q: a call without a key", c.Scope)
 	}
 	caller := control.Caller{From: c.From, Scopes: []string{c.Scope}, May: control.OpRead | control.OpStart}
+	if err := s.Core.CheckConversationCall(caller, c.Scope); err != nil {
+		return 0, err
+	}
+	var started int
+	if err := s.Core.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM inbox WHERE key = ?`, "start:"+c.Scope+"\x00"+c.Key).Scan(&started); err != nil {
+		return 0, err
+	}
+	if c.Thread != "" && started == 0 {
+		link := control.LinkRef{Client: s.Core.Scopes[c.Scope].Owner, Channel: c.Scope, Thread: c.Thread}
+		threads, err := s.Core.As(caller).Threads(ctx, control.Filter{Link: &link})
+		if err != nil {
+			return 0, err
+		}
+		if len(threads) > 0 {
+			t := threads[0]
+			if t.Kind != control.KindConversation {
+				return t.ID, core.ErrKindKey
+			}
+			var retried int
+			if err := s.Core.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM inbox WHERE key = ?`, "retry:"+c.Scope+"\x00"+c.Key).Scan(&retried); err != nil {
+				return 0, err
+			}
+			if retried > 0 {
+				return t.ID, nil
+			}
+			if t.State == control.Failed {
+				return t.ID, s.Core.RetryConversation(ctx, caller, t.ID, c.Key, control.Input{Text: c.Text, Link: &link})
+			}
+			return t.ID, s.Core.As(control.Caller{From: c.From, Scopes: []string{c.Scope}, May: control.OpRead | control.OpSend}).Send(ctx, t.ID, c.Key, control.Input{Text: c.Text, Link: &link}, control.Deliver)
+		}
+	}
 	dir := func(ctx context.Context) (string, error) { return s.Dir(ctx, c.Scope) }
 	return s.Core.StartConfined(ctx, caller, control.StartRequest{Key: c.Key, Scope: c.Scope, Thread: c.Thread,
 		Input: control.Input{Text: c.Text}, Model: sv.Model, Effort: cmp.Or(sv.Effort, DefaultEffort)},

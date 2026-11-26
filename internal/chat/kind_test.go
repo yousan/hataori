@@ -34,7 +34,7 @@ func TestOnlyAClosedOwnThreadNamesTheCurrentOne(t *testing.T) {
 				}
 			}
 			conv := f.conv(id)
-			f.deliver(conv, fake.Webhook(hook), "are you there")
+			f.deliver(conv, fake.Person(hook), "are you there")
 			want := ClosedLine
 			if named {
 				want += "\n" + supervisorNow(99, "")

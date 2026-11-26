@@ -608,3 +608,23 @@ func fenceAfter(open, chunk string) string {
 	}
 	return open
 }
+
+// PrivateThread checks the service rather than assuming an unseen thread
+// is public. Unknown channel types and a mismatched parent fail closed.
+func (d *Driver) PrivateThread(ctx context.Context, conv surface.Conversation) (bool, error) {
+	if err := d.CheckIdentity(ctx); err != nil {
+		return true, err
+	}
+	ch, err := parseID("thread", conv.Thread)
+	if err != nil {
+		return true, err
+	}
+	var c wireChannel
+	if err := d.client.Do(rest.GetChannel.Compile(nil, ch), nil, &c, rest.WithCtx(ctx)); err != nil {
+		return true, wrap("look up thread privacy", err)
+	}
+	if c.ID != ch || c.ParentID.String() != conv.Channel || !isThread(c.Type) {
+		return true, nil
+	}
+	return c.Type == 12, nil
+}
