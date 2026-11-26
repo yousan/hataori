@@ -112,7 +112,17 @@ func (h *Holder) Start(ctx context.Context, stateDir string, spec holder.Spec) (
 	// replaced.
 	onServer, withProcess := fmt.Sprintf("#{==:#{pid},%d}", r.Server), fmt.Sprintf("#{==:#{pane_pid},%d}", made)
 	keep, run := h.setUp(r)
-	out, err := h.tmux(ctx, r, nil, slices.Concat(ifPane(r.Pane, keep, onServer, withProcess), []string{";"}, ifPane(r.Pane, run, onServer, withProcess))...)
+	// If the first condition is cut short, nothing runs, including the
+	// respawn. A second check still protects against changes in setup hooks.
+	ack, err := newBuffer()
+	if err != nil {
+		return holder.Window{}, err
+	}
+	checkedRun := ifPane(r.Pane, run+" ; display-message -p "+ack, onServer, withProcess)
+	for i := range checkedRun {
+		checkedRun[i] = quote(checkedRun[i])
+	}
+	out, err := h.tmux(ctx, r, nil, ifPane(r.Pane, keep+" ; "+strings.Join(checkedRun, " "), onServer, withProcess)...)
 	if err != nil {
 		// The respawn may have given it another process. Gone or a person's,
 		// it is left as it is; the next start clears what else is left.
@@ -122,10 +132,13 @@ func (h *Holder) Start(ctx context.Context, stateDir string, spec holder.Spec) (
 		return holder.Window{}, err
 	}
 	p, err := h.findStarted(ctx, r, made)
+	if err == nil && !slices.Contains(strings.Fields(string(out)), ack) {
+		err = errors.New("tmux: the pane setup did not acknowledge starting the agent")
+	}
 	// A person's hooks on these commands may print lines of their own, also
 	// this one: only a pane that is not the agent's was left as it was.
 	if err != nil && slices.Contains(strings.Split(string(out), "\n"), notDone) {
-		return holder.Window{}, fmt.Errorf("%w: the pane %s is no longer the one made for the agent; it was left as it is", errGone, r.Pane)
+		return holder.Window{}, fmt.Errorf("tmux: setup of the pane %s was refused or its condition was incomplete; it was left as it is: %w", r.Pane, err)
 	}
 	if err != nil {
 		res, _ := h.startedStop(context.WithoutCancel(ctx), r, made, time.Second, time.Second)
@@ -292,7 +305,7 @@ func (h *Holder) findStarted(ctx context.Context, r ref, process int) (pane, err
 	if err != nil || p.pid > 0 && (process <= 0 || p.pid == process) || process <= 0 && r.Dir == "" {
 		return p, err
 	}
-	out, err := h.tmux(ctx, r, nil, "list-panes", "-t", r.Pane, "-F", "#{pane_id} #{pane_pid} #{pane_start_command}")
+	out, err := h.formatted(ctx, r, "list-panes", "-t", r.Pane, "-F", "#{pane_id} #{pane_pid} #{pane_start_command}")
 	if err != nil {
 		return pane{}, err
 	}
@@ -664,7 +677,7 @@ var tellsEnds = regexp.MustCompile(`^(3\.([3-9]|[1-9][0-9])|[4-9])`)
 
 // endOf is the paneEnd of r's pane, whose process had the number pid.
 func (h *Holder) endOf(ctx context.Context, r ref, pid int) (paneEnd, error) {
-	out, err := h.tmux(ctx, r, nil, "list-panes", "-a", "-F", "#{pid},#{pane_id},#{pane_pid},#{pane_dead},#{pane_dead_time},#{pane_dead_status}#{pane_dead_signal},#{version}")
+	out, err := h.formatted(ctx, r, "list-panes", "-a", "-F", "#{pid},#{pane_id},#{pane_pid},#{pane_dead},#{pane_dead_time},#{pane_dead_status}#{pane_dead_signal},#{version}")
 	if err != nil {
 		return paneEnd{}, err
 	}
@@ -876,7 +889,7 @@ func (h *Holder) Attached(ctx context.Context, w holder.Window) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	out, err := h.tmux(ctx, r, nil, "display-message", "-p", "-t", r.Pane, "#{session_attached}")
+	out, err := h.formatted(ctx, r, "display-message", "-p", "-t", r.Pane, "#{session_attached}")
 	if err != nil {
 		return false, err
 	}
