@@ -142,17 +142,22 @@ func rawListener(t *testing.T, root string) (accepted *atomic.Int32, got func() 
 // runs, and while something accepts the connection and never answers.
 func TestWindowHookNeverHolds(t *testing.T) {
 	start := capturedPayload(t, "2.1.328/paste_tabs/hooks/01-SessionStart.json")
-	run := func(t *testing.T, root string) {
+	run := func(t *testing.T, root string) (exhausted bool) {
 		t.Helper()
 		for _, args := range [][]string{
 			{"--window", "--root", root},
 			{"--window", "--root", root, "--wait", "--timeout", "86400s"}, // PermissionRequest, AskUserQuestion
 		} {
 			r := runWindowHook(t, windowEnv(), start, args...)
-			if r.code != 0 || len(r.stdout) != 0 || len(r.stderr) != 0 || r.took >= time.Second {
+			if r.code != 0 || len(r.stdout) != 0 || len(r.stderr) != 0 {
 				t.Fatalf("hook %q: exit %d after %v, printed %q and %q", args, r.code, r.took, r.stdout, r.stderr)
 			}
+			if r.took >= time.Second {
+				t.Skipf("hook took %v including process startup; cannot check a one-second bound on this host", r.took)
+			}
+			exhausted = exhausted || r.took >= windowHookBudget
 		}
+		return exhausted
 	}
 
 	t.Run("daemon", func(t *testing.T) {
@@ -162,7 +167,7 @@ func TestWindowHookNeverHolds(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer s.Close()
-		run(t, root)
+		exhausted := run(t, root)
 		// The report arrived, from the agent's terminal: the shell on the
 		// pseudo-terminal, not the hook's own process.
 		w := "tmux:/tmp/tmux-1000/default,4242,%7"
@@ -174,6 +179,9 @@ func TestWindowHookNeverHolds(t *testing.T) {
 				break
 			}
 			if time.Now().After(deadline) {
+				if !ok && exhausted {
+					t.Skip("hook used its reporting budget before a report arrived; connection could not be checked")
+				}
 				t.Fatalf("no report for %s: %+v %v", w, r, ok)
 			}
 			time.Sleep(10 * time.Millisecond)
@@ -192,8 +200,11 @@ func TestWindowHookNeverHolds(t *testing.T) {
 	t.Run("never answers", func(t *testing.T) {
 		root := t.TempDir()
 		accepted, _ := rawListener(t, root)
-		run(t, root)
+		exhausted := run(t, root)
 		if accepted.Load() == 0 {
+			if exhausted {
+				t.Skip("hook used its reporting budget before connecting; an unanswered connection was not tried")
+			}
 			t.Fatal("the hook never connected: the case was not tried")
 		}
 	})
@@ -301,5 +312,50 @@ func TestWindowHookOutsideTmux(t *testing.T) {
 	}
 	if code := h.main([]string{"--root", "x"}, strings.NewReader(""), io.Discard); code != host.HookUsage {
 		t.Fatalf("without --window: exit %d", code)
+	}
+}
+
+// Check the budget without subprocess startup or terminal discovery. The
+// integration test above may skip when those consume the reporting budget.
+func TestWindowHookBudget(t *testing.T) {
+	for _, stage := range []string{"terminal", "send"} {
+		t.Run(stage, func(t *testing.T) {
+			wait := func(ctx context.Context) {
+				t.Helper()
+				deadline, ok := ctx.Deadline()
+				if !ok || time.Until(deadline) > windowHookBudget {
+					t.Fatal("hook did not bound its work by the reporting budget")
+				}
+				<-ctx.Done()
+				if ctx.Err() != context.DeadlineExceeded {
+					t.Fatalf("budget ended: %v", ctx.Err())
+				}
+			}
+			var reached bool
+			env := map[string]string{"TMUX": "/tmp/tmux-1000/default,4242,0", "TMUX_PANE": "%7"}
+			h := windowHook{getenv: func(k string) string { return env[k] }, ppid: 4243,
+				terminal: func(ctx context.Context, _ int) (int, string, bool, error) {
+					if stage == "terminal" {
+						reached = true
+						wait(ctx)
+						return 0, "", false, ctx.Err()
+					}
+					return 4242, "/dev/pts/9", true, nil
+				},
+				send: func(ctx context.Context, _ string, _ window.Report) error {
+					if stage != "send" {
+						t.Fatal("hook sent after terminal discovery used its budget")
+					}
+					reached = true
+					wait(ctx)
+					return ctx.Err()
+				},
+			}
+			code := h.main([]string{"--window", "--root", t.TempDir()},
+				bytes.NewReader(capturedPayload(t, "2.1.328/paste_tabs/hooks/01-SessionStart.json")), io.Discard)
+			if code != 0 || !reached {
+				t.Fatalf("exit %d, reached %s: %v", code, stage, reached)
+			}
+		})
 	}
 }
