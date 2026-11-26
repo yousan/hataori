@@ -203,7 +203,10 @@ var migrations = []Migration{
 	{Name: "pending_inputs.written", Up: execAll(
 		// written: the input was written to the agent, and its report not
 		// read yet; after a restart the codec is told, and writes nothing.
-		// 1 from a runner before #914, 2 from one since (agent.Input.Earlier).
+		// 1 from a runner before #914; 2 from one since, also for one written
+		// to an agent before the one that runs (agent.Input.Earlier). A runner
+		// before #914 does not know 2: after going back to one, such an input
+		// is not known as written.
 		`ALTER TABLE pending_inputs ADD COLUMN written INTEGER NOT NULL DEFAULT 0`,
 	)},
 	{Name: "chat: inbound cursors", Up: execAll(

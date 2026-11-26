@@ -910,10 +910,8 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) err
 		return err
 	}
 	if !resumed {
-		// Rows left by an agent before this one are not this one's input, and
-		// carry nothing to it.
-		if _, err := r.Store.DB.Exec(`UPDATE pending_inputs SET stale = 1, context = '' WHERE session_id = ?`, id); err != nil {
-			return fmt.Errorf("runner: session %d: %w", id, err)
+		if err := r.newAgent(id); err != nil {
+			return err
 		}
 	}
 	if resumed {
@@ -988,6 +986,18 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) err
 	return nil
 }
 
+// newAgent records that session id's agent is a new one. Rows left by an
+// agent before it are not its input, and carry nothing to it; and what was
+// written of them is not in its box, so it is marked writtenNow: no codec
+// holds it as what an older runner may have left there (#914).
+func (r *Runner) newAgent(id int64) error {
+	if _, err := r.Store.DB.Exec(`UPDATE pending_inputs SET stale = 1, context = '',
+		written = CASE written WHEN 0 THEN 0 ELSE ? END WHERE session_id = ?`, writtenNow, id); err != nil {
+		return fmt.Errorf("runner: session %d: %w", id, err)
+	}
+	return nil
+}
+
 // handOverPending hands the session's pending input and answers to its
 // agent, oldest first: those the core accepted and a daemon that died did
 // not hand over, or whose input the agent had not reported. lv.mu is held.
@@ -1046,7 +1056,7 @@ func (r *Runner) handOverWritten(lv *live) {
 		r.do(lv, r.inputActions(lv, agent.Input{ID: firstInputID, Text: f.Context + f.Input().ForAgent(), Written: true, Earlier: !f.Current}))
 		lv.resend = false
 	}
-	rows, err := r.Store.DB.Query(`SELECT id, data, context, written, stale FROM pending_inputs
+	rows, err := r.Store.DB.Query(`SELECT id, data, context, written FROM pending_inputs
 		WHERE session_id = ? AND request = '' AND written != 0 ORDER BY id`, lv.id)
 	if err != nil {
 		r.Log.Error("written input", "session", lv.id, "err", err)
@@ -1055,13 +1065,12 @@ func (r *Runner) handOverWritten(lv *live) {
 	var ins []agent.Input
 	for rows.Next() {
 		var id, written int64
-		var stale bool
 		var data, earlier string
 		var in control.Input
-		if rows.Scan(&id, &data, &earlier, &written, &stale) == nil && json.Unmarshal([]byte(data), &in) == nil {
-			// One that a runner before this one wrote to this agent: one that
-			// is stale went to an agent before it.
-			ins = append(ins, agent.Input{ID: strconv.FormatInt(id, 10), Text: earlier + in.Text, Written: true, Earlier: written != writtenNow && !stale})
+		if rows.Scan(&id, &data, &earlier, &written) == nil && json.Unmarshal([]byte(data), &in) == nil {
+			// One that a runner before this one wrote, maybe to this agent,
+			// also after the row was marked stale.
+			ins = append(ins, agent.Input{ID: strconv.FormatInt(id, 10), Text: earlier + in.Text, Written: true, Earlier: written != writtenNow})
 		}
 	}
 	rows.Close()
@@ -1086,9 +1095,10 @@ func (r *Runner) markWritten(lv *live, ids []string) error { return r.setWritten
 
 func (r *Runner) unmarkWritten(lv *live, ids []string) { r.setWritten(lv, ids, false) }
 
-// writtenNow is pending_inputs.written of an input that this runner wrote.
-// 1 is of one that a runner from before it wrote: agent.Input.Earlier, if it
-// was written to the agent that runs now (stale = 0).
+// writtenNow is pending_inputs.written of an input that this runner wrote,
+// or that was written to an agent before the one that runs (newAgent). 1 is
+// of one that a runner from before it wrote, maybe to the agent that runs:
+// agent.Input.Earlier.
 const writtenNow = 2
 
 func (r *Runner) setWritten(lv *live, ids []string, written bool) error {

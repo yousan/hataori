@@ -107,9 +107,10 @@ func (c *handed) Input(in agent.Input) (agent.Actions, error) {
 }
 
 // After a restart, the codec is told which written input a runner from
-// before agent.Input.Earlier wrote to the agent that runs, and which one
-// this runner wrote: the first input and a pending one alike. One written to
-// an agent before it (stale) is not earlier (#914).
+// before agent.Input.Earlier wrote, maybe to the agent that runs, also after
+// its row was marked stale, and which one this runner wrote: the first input
+// and a pending one alike. One written to an agent before the one a runner
+// started is not earlier (#914).
 func TestWrittenInputSaysWhichRunnerWroteIt(t *testing.T) {
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, "state"), 0o700)
@@ -146,11 +147,15 @@ func TestWrittenInputSaysWhichRunnerWroteIt(t *testing.T) {
 		}
 		c.got = map[string]agent.Input{}
 	}
-	check("before", map[string]bool{firstInputID: true, "10": true, "12": false})
+	check("before", map[string]bool{firstInputID: true, "10": true, "12": true})
 	if err := r.markWritten(lv, []string{firstInputID, "11"}); err != nil {
 		t.Fatal(err)
 	}
-	check("after this runner wrote two", map[string]bool{firstInputID: false, "10": true, "11": false, "12": false})
+	check("after this runner wrote two", map[string]bool{firstInputID: false, "10": true, "11": false, "12": true})
 	r.unmarkWritten(lv, []string{"11"})
-	check("after it unmarked one", map[string]bool{firstInputID: false, "10": true, "12": false})
+	check("after it unmarked one", map[string]bool{firstInputID: false, "10": true, "12": true})
+	if err := r.newAgent(1); err != nil {
+		t.Fatal(err)
+	}
+	check("after a new agent started", map[string]bool{firstInputID: false, "10": false, "12": false})
 }

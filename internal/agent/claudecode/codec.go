@@ -1259,6 +1259,9 @@ func denyWrite(path string) []byte {
 // agent's own, and anything else was typed at the terminal.
 func (c *codec) starter(prompt string) (agent.Starter, string) {
 	text := normalize(unwrapPaste(prompt))
+	// shadowed is set past an input that the CLI may report as this prompt
+	// although it is not known by it (#916): the prompt may be that one's.
+	shadowed := false
 	for i, p := range c.pasted {
 		held := slices.Contains(c.leftover, p.id)
 		if held && notification(prompt) {
@@ -1268,16 +1271,19 @@ func (c *codec) starter(prompt string) (agent.Starter, string) {
 		}
 		// One that an older hataori pasted is known by what it pasted
 		// (older), and one that may be in the box also by what the CLI
-		// reports of that, since nothing else releases it. Prompts come in
-		// the order of the pastes, as c.pasted is, and the prompt of an
-		// input pasted after one in the box would have that one in it too.
-		if p.older == nil && p.text == text || slices.Contains(p.older, text) || held && p.shows(text) {
+		// reports of that, since nothing else releases it, unless the
+		// prompt may be an input's pasted before it (shadowed). Prompts
+		// come in the order of the pastes, as c.pasted is, and the prompt of
+		// an input pasted after one in the box would have that one in it
+		// too.
+		if p.older == nil && p.text == text || slices.Contains(p.older, text) || held && !shadowed && p.shows(text) {
 			c.pasted = append(c.pasted[:i], c.pasted[i+1:]...)
 			if c.sent != nil && c.sent.text == p.text {
 				c.sent = nil // delivered
 			}
 			return agent.ByCaller, p.id
 		}
+		shadowed = shadowed || p.shows(text)
 	}
 	if notification(prompt) {
 		return agent.ByAgent, ""
@@ -1324,10 +1330,15 @@ func shown(text string) string {
 var controlSequence = regexp.MustCompile("\x1b\\[[0-?]*[ -/]*[@-~]") // ESC [, parameters, intermediates and a final byte
 
 // shows reports whether prompt, normalized, is what the CLI reports of a
-// paste of a text an older hataori pasted for q.
+// paste of a text hataori pasted for q: one an older hataori pasted, if it
+// did, else this one's.
 func (q queued) shows(prompt string) bool {
 	p := normalize(shown(prompt))
-	return slices.ContainsFunc(q.older, func(t string) bool { return normalize(shown(t)) == p })
+	forms := q.older
+	if forms == nil {
+		forms = []string{q.text}
+	}
+	return slices.ContainsFunc(forms, func(t string) bool { return normalize(shown(t)) == p })
 }
 
 // normalize is the text an input and a prompt are compared by: trimmed,

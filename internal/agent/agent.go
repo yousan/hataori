@@ -310,8 +310,8 @@ type Input struct {
 	// written and waiting for its report, and never writes its text again.
 	Written bool
 	// Earlier says, with Written, that a caller from before this field
-	// wrote it, with the codec it had then: that codec may have written it
-	// otherwise than this one does.
+	// wrote it, maybe to the agent that runs now, with the codec it had
+	// then: that codec may have written it otherwise than this one does.
 	Earlier bool
 }
 
