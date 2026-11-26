@@ -155,7 +155,7 @@ func TestStatusLineHandsOnTheLimits(t *testing.T) {
 		t.Fatalf("report %+v", r)
 	}
 
-	// Once limitsEvery has passed, the same value is handed on again.
+	// Even after limitsEvery, the cached value is not a new observation.
 	last := filepath.Join(dir, statusLineLast)
 	var prev lastHandedOn
 	b, _ := os.ReadFile(last)
@@ -164,8 +164,8 @@ func TestStatusLineHandsOnTheLimits(t *testing.T) {
 	b, _ = json.Marshal(prev)
 	os.WriteFile(last, b, 0o600)
 	run(with)
-	if n := len(calls()); n != 2 {
-		t.Fatalf("after limitsEvery: %d calls, want 2", n)
+	if n := len(calls()); n != 1 {
+		t.Fatalf("after limitsEvery: %d calls, want 1", n)
 	}
 }
 

@@ -164,6 +164,39 @@ func TestATurnsEndNamesTheSubagentsThatRun(t *testing.T) {
 	}
 }
 
+// A question blocks a turn without stopping its tasks. Combine captured
+// background-task reports with the captured question hook (#825).
+func TestAQuestionReportsTheTasksThatStillRun(t *testing.T) {
+	const dir = "../2.1.331/failure_background/hooks/"
+	const subagent = "ac9655e008ce5aebe"
+	for _, tc := range []struct {
+		name  string
+		hooks []string
+		count int
+		ids   []string
+	}{
+		{"none", nil, 0, nil},
+		{"last list", []string{"11-Stop.json"}, 2, []string{subagent}},
+		{"started since the list", []string{"05-PostToolUse.json", "08-PostToolUse.json"}, 2, []string{subagent}},
+		{"subagent ended", []string{"11-Stop.json", "15-SubagentStop.json"}, 1, nil},
+		{"all ended", []string{"11-Stop.json", "15-SubagentStop.json", "18-UserPromptSubmit.json"}, 0, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestCodec()
+			for i, hook := range tc.hooks {
+				decodeFile(t, c, strconv.Itoa(i), dir+hook)
+			}
+			a := decodeFile(t, c, "question", "question/hooks/03-PreToolUse.json")
+			if len(a.Events) != 1 || a.Events[0].Kind != agent.Request || a.Events[0].Request == nil {
+				t.Fatalf("question: %+v", a.Events)
+			}
+			if e := a.Events[0]; e.Background != tc.count || !slices.Equal(e.Subagents, tc.ids) {
+				t.Errorf("question background %d, subagents %v; want %d, %v", e.Background, e.Subagents, tc.count, tc.ids)
+			}
+		})
+	}
+}
+
 // What ended between the last list and the failure is not counted: a
 // subagent by its SubagentStop, a shell by its notification, be it the
 // prompt of a turn of the agent's own or the transcript's line of it.
